@@ -84,6 +84,25 @@ bool LuaScript::SafeRenderWidget(const std::wstring& id, const std::wstring& scr
     return rendered;
 }
 
+bool LuaScript::SafeRenderBackgroundLayer(const std::wstring& id,
+    WidgetEngine* engine, ID2D1DeviceContext* context, RECT frame,
+    int columns, int rows, float inheritedBlurRadius, float cornerRadius)
+{
+    if (!engine) return false;
+    bool rendered = false;
+    __try
+    {
+        rendered = engine->RenderWidgetBackgroundLayer(id, context, frame,
+            columns, rows, inheritedBlurRadius, cornerRadius);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        OutputDebugStringA(
+            "SnowDesktop: LuaScript::Draw backgroundLayer crash\n");
+    }
+    return rendered;
+}
+
 bool LuaScript::SafeReadFlags(WidgetEngine* engine,
     const std::wstring& scriptPath, bool& showTitle, bool& bottomBarHover)
 {
@@ -163,6 +182,48 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const int globalContentTheme =
         app_->CurrentPersonalization().contentTheme;
 
+    // Seed the widget-local layout context before package evaluation so
+    // top-level code and setup() observe the same semantic CU metrics as
+    // render(). SetWidgetLayoutMetrics also stores the values after load.
+    if (engine)
+    {
+        const POINT center = {
+            (frame.left + frame.right) / 2,
+            (frame.top + frame.bottom) / 2 };
+        const GridPage* preloadPage = preview
+            ? FindGridPage(app_->gridPages_, data_->gridCell.pageId)
+            : nullptr;
+        if (!preloadPage && !preview)
+        {
+            for (const auto& page : app_->gridPages_)
+            {
+                if (PtInRect(&page.bounds, center))
+                {
+                    preloadPage = &page;
+                    break;
+                }
+            }
+            if (!preloadPage)
+                preloadPage = FindGridPage(
+                    app_->gridPages_, data_->gridCell.pageId);
+        }
+        const int preloadCellWidth = preloadPage
+            ? preloadPage->cellWidth
+            : std::max(1, static_cast<int>(frame.right - frame.left) /
+                  std::max(1, data_->gridSpan.columns));
+        const int preloadCellHeight = preloadPage
+            ? preloadPage->cellHeight
+            : std::max(1, static_cast<int>(frame.bottom - frame.top) /
+                  std::max(1, data_->gridSpan.rows));
+        engine->SetWidgetLayoutMetrics(data_->id,
+            data_->gridSpan.columns, data_->gridSpan.rows,
+            preloadCellWidth, preloadCellHeight,
+            preloadPage ? preloadPage->gapY : Cu(8.0f),
+            static_cast<int>(GetBarHeight()), app_->GetItemFontWeight(),
+            preloadPage ? GetGridPageCuScale(*preloadPage) : data_->cellScale,
+            { app_->CurrentPersonalization().luaWidgetContentRowHeight });
+    }
+
     D2D1::ColorF fillColor(0.08f, 0.10f, 0.13f, 0.36f);
     D2D1::ColorF borderColor(1.0f, 1.0f, 1.0f, 0.40f);
     float gradientEndA = 0.65f;
@@ -197,17 +258,31 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             effectSettings = PersonalizationSettings::DarkPreset();
             float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f, alpha = 0.0f;
             float borderR = 0.0f, borderG = 0.0f, borderB = 0.0f, borderAlpha = 0.0f;
+            float luaBorderWidth = 1.0f;
+            bool luaEdgeHighlightEnabled = false;
+            float luaEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+            float luaEdgeHighlightStrength =
+                kDefaultEdgeHighlightStrength;
             float luaGradientEndA = gradientEndA;
             bool luaGlassEnabled = false;
             bool luaAcrylicEnabled = false;
             if (engine->ReadCustomColors(data_->id,
                 bgR, bgG, bgB, alpha, borderR, borderG, borderB, borderAlpha,
-                luaGradientEndA, luaGlassEnabled, luaAcrylicEnabled))
+                luaBorderWidth, luaEdgeHighlightEnabled,
+                luaEdgeHighlightWidth, luaEdgeHighlightStrength,
+                luaGradientEndA,
+                luaGlassEnabled, luaAcrylicEnabled, &effectSettings.panelGradient))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
                 gradientEndA = luaGradientEndA;
-                effectSettings = PersonalizationSettings::DarkPreset();
+                effectSettings.widgetBorderWidth = luaBorderWidth;
+                effectSettings.widgetEdgeHighlightEnabled =
+                    luaEdgeHighlightEnabled;
+                effectSettings.widgetEdgeHighlightWidth =
+                    luaEdgeHighlightWidth;
+                effectSettings.widgetEdgeHighlightStrength =
+                    luaEdgeHighlightStrength;
                 effectSettings.glassEnabled = luaGlassEnabled;
                 effectSettings.acrylicEnabled =
                     luaGlassEnabled && luaAcrylicEnabled;
@@ -248,15 +323,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
-    app_->DrawWidgetPanelBackground(context, frame, static_cast<float>(Cu(cornerRadiusCu)),
-        fillColor, borderColor, selected, selected ? 1.6f : 1.0f,
-        customStyle ? &effectSettings : nullptr,
-        !preview && registerBackdrop);
-
-    context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (engine && widgetOk)
     {
-        const POINT center = { (frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2 };
+        const POINT center = {
+            (frame.left + frame.right) / 2,
+            (frame.top + frame.bottom) / 2 };
         const GridPage* realPage = nullptr;
         if (preview)
         {
@@ -273,49 +344,68 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             }
             else
             {
-                cellWidth =
-                    std::max(1, static_cast<int>(frame.right - frame.left) /
+                cellWidth = std::max(1,
+                    static_cast<int>(frame.right - frame.left) /
                         std::max(1, data_->gridSpan.columns));
-                cellHeight =
-                    std::max(1, static_cast<int>(frame.bottom - frame.top) /
+                cellHeight = std::max(1,
+                    static_cast<int>(frame.bottom - frame.top) /
                         std::max(1, data_->gridSpan.rows));
                 gapY = Cu(8.0f);
             }
             engine->SetWidgetLayoutMetrics(data_->id,
+                data_->gridSpan.columns, data_->gridSpan.rows,
                 cellWidth, cellHeight, gapY,
                 static_cast<int>(GetBarHeight()),
-                app_->GetItemFontWeight());
+                app_->GetItemFontWeight(),
+                realPage ? GetGridPageCuScale(*realPage) : data_->cellScale,
+                { app_->CurrentPersonalization().luaWidgetContentRowHeight });
         }
         else
         {
-            for (const auto& p : app_->gridPages_)
+            for (const auto& page : app_->gridPages_)
             {
-                if (PtInRect(&p.bounds, center)) { realPage = &p; break; }
+                if (PtInRect(&page.bounds, center))
+                {
+                    realPage = &page;
+                    break;
+                }
             }
             if (!realPage)
-                realPage = FindGridPage(app_->gridPages_, data_->gridCell.pageId);
+                realPage = FindGridPage(
+                    app_->gridPages_, data_->gridCell.pageId);
             if (realPage)
             {
                 engine->SetWidgetLayoutMetrics(data_->id,
+                    data_->gridSpan.columns, data_->gridSpan.rows,
                     realPage->cellWidth, realPage->cellHeight,
                     realPage->gapY,
                     static_cast<int>(GetBarHeight()),
-                    app_->GetItemFontWeight());
+                    app_->GetItemFontWeight(),
+                    GetGridPageCuScale(*realPage),
+                    { app_->CurrentPersonalization().luaWidgetContentRowHeight });
                 if (data_->gridCell.pageId != realPage->id)
                 {
                     data_->gridCell.pageId = realPage->id;
-                    RECT correctBounds = GetGridRect(app_->gridPages_, data_->gridCell, data_->gridSpan);
-                    int hgx = std::max(Cu(2.0f), realPage->gapX / 2);
-                    int hgy = std::max(Cu(2.0f), realPage->gapY / 2);
+                    RECT correctBounds = GetGridRect(
+                        app_->gridPages_, data_->gridCell,
+                        data_->gridSpan);
+                    const int hgx = std::max(
+                        Cu(2.0f), realPage->gapX / 2);
+                    const int hgy = std::max(
+                        Cu(2.0f), realPage->gapY / 2);
                     frame = correctBounds;
-                    frame.left   -= hgx; frame.top    -= hgy;
-                    frame.right  += hgx; frame.bottom += hgy;
+                    frame.left -= hgx;
+                    frame.top -= hgy;
+                    frame.right += hgx;
+                    frame.bottom += hgy;
                     const int inset = Cu(4.0f);
-                    if (frame.right - frame.left > inset * 4 && frame.bottom - frame.top > inset * 4)
+                    if (frame.right - frame.left > inset * 4 &&
+                        frame.bottom - frame.top > inset * 4)
                         InflateRect(&frame, -inset, -inset);
                 }
             }
         }
+
         LuaWidgetSurfaceContext surfaceContext;
         if (preview)
         {
@@ -336,6 +426,53 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
             surfaceContext.primaryMonitor = realPage->isPrimary;
         }
         engine->SetWidgetSurfaceContext(data_->id, surfaceContext);
+    }
+
+    const float configuredStroke = std::clamp(
+        effectSettings.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    PersonalizationSettings backgroundEffects = effectSettings;
+    backgroundEffects.widgetEdgeHighlightEnabled = false;
+    const float panelRadius = static_cast<float>(Cu(cornerRadiusCu));
+    const float panelStroke = selected
+        ? std::max(1.6f, configuredStroke) : configuredStroke;
+    const bool hasBackgroundLayer = engine && widgetOk &&
+        engine->HasBackgroundLayer(data_->id);
+    if (hasBackgroundLayer)
+    {
+        PersonalizationSettings materialEffects = backgroundEffects;
+        materialEffects.acrylicEnabled = false;
+        D2D1_COLOR_F transparentBorder = borderColor;
+        transparentBorder.a = 0.0f;
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            fillColor, transparentBorder, false, panelStroke,
+            &materialEffects, !preview && registerBackdrop);
+
+        const float inheritedBlurRadius = effectSettings.glassEnabled
+            ? effectSettings.glassBlurRadius : 0.0f;
+        (void)SafeRenderBackgroundLayer(data_->id, engine, context, frame,
+            data_->gridSpan.columns, data_->gridSpan.rows,
+            inheritedBlurRadius, panelRadius);
+
+        D2D1_COLOR_F transparentFill = fillColor;
+        transparentFill.a = 0.0f;
+        // This pass only adds border/noise above the authored background.
+        // The material gradient was already drawn underneath it.
+        backgroundEffects.panelGradient.enabled = false;
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            transparentFill, borderColor, selected, panelStroke,
+            &backgroundEffects, false);
+    }
+    else
+    {
+        app_->DrawWidgetPanelBackground(context, frame, panelRadius,
+            fillColor, borderColor, selected, panelStroke,
+            &backgroundEffects, !preview && registerBackdrop);
+    }
+
+    context->PushAxisAlignedClip(app_->ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    if (engine && widgetOk)
+    {
         widgetOk = SafeRenderWidget(
             data_->id, data_->packageId, engine, context, frame,
             data_->gridSpan.columns, data_->gridSpan.rows);
@@ -546,7 +683,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const bool showCompactMoveHandle =
         snowdesktop::widget_chrome_rules::ShowsCompactMoveHandle(
             data_->showTitle, hovered);
-    if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
+    const auto chromeForeground =
+        snowdesktop::widget_chrome_rules::ResolveWidgetChromeForegroundStyle(
+            effectSettings.contentTheme);
 
     if (showBottomBar)
     {
@@ -599,22 +738,32 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 handle.bottom - Cu(bh * 0.083f)
             };
             auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
-                std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
+                std::max<int>(100,
+                    static_cast<int>(app_->GetItemFontWeight()) +
+                        chromeForeground.fontWeightAdjustment));
             IDWriteTextFormat* titleFormat = GetCuTextFormatWeight(bh * 0.542f, titleWeight, false);
             app_->DrawD2DText(context, data_->title, titleRect,
                 titleFormat ? titleFormat : app_->listItemTextFormat_.Get(),
-                lightTheme
+                chromeForeground.darkForeground
                     ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.96f)
                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f));
         }
     }
 
-    const D2D1_COLOR_F handleFill = selected
-        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
-        : (lightTheme
-            ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.34f)
-            : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.34f));
-    const D2D1_COLOR_F handleStroke = lightTheme
+    // Draw the independent material reflection after Lua content and the host
+    // bottom gradient so neither can erase the right/bottom transmitted light.
+    if (!selected)
+        (void)app_->DrawWidgetPanelEdgeHighlight(
+            context, frame, static_cast<float>(Cu(cornerRadiusCu)),
+            fillColor, &effectSettings);
+
+    if (!showBottomBar && !showCompactMoveHandle && !showResizeHandle) return;
+
+    const float handleFillOpacity = selected ? 0.62f : 0.34f;
+    const D2D1_COLOR_F handleFill = chromeForeground.darkForeground
+        ? D2D1::ColorF(0.06f, 0.08f, 0.12f, handleFillOpacity)
+        : D2D1::ColorF(1.0f, 1.0f, 1.0f, handleFillOpacity);
+    const D2D1_COLOR_F handleStroke = chromeForeground.darkForeground
         ? D2D1::ColorF(0.06f, 0.08f, 0.12f, 0.50f)
         : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.50f);
 

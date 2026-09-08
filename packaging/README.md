@@ -1,15 +1,13 @@
 # SnowDesktop 统一发布流程
 
 `scripts\release.bat` 是人工发布入口。它打开一个无需额外依赖的
-PowerShell TUI，集中显示当前版本、源码分支、工作区、二进制 Release 仓库和
-发行包状态，并提供以下动作：
+PowerShell TUI，集中显示当前版本、源码分支、工作区和发行包状态，并提供以下动作：
 
 1. 使用仓库标准入口 `scripts\build.bat` 构建 Release；
 2. 生成携带版、MSIX、调试符号和 Partner Center 上传包；
-3. 将携带版内容同步到 `release\` 二进制仓库，但不立即提交；
-4. 将 `release/vA.B.C.0` 压缩合并到本地 `main` 并创建本地标签；
-5. 在人工测试本地 `main` 后，推送源码及二进制仓库；
-6. 可选创建 GitHub Release 并上传公开附件。
+3. 将 `release/vA.B.C.0` 压缩合并到本地 `main` 并创建本地标签；
+4. 在人工测试本地 `main` 后，推送源码仓库的 `main` 与版本标签；
+5. 可选在 [SnowDesktop 主仓库](https://github.com/FreeFallingSnow/SnowDesktop) 创建 GitHub Release 并上传公开附件。
 
 本地压缩合并与远程发布是两个独立步骤。选择远程动作时必须再次输入当前
 版本号，避免跳过本地检查。
@@ -25,16 +23,21 @@ scripts\release.bat status
 scripts\release.bat status -Json
 scripts\release.bat package
 scripts\release.bat package -ReloadShell
-scripts\release.bat sync-release
+scripts\release.bat package-steam
+scripts\release.bat steam-preview
+scripts\release.bat steam-upload-public -Yes `
+  -ConfirmVersion 1.0.0.0 -ConfirmPublicBranch public
 scripts\release.bat prepare
 scripts\release.bat prepare -ReloadShell
 scripts\release.bat open
 ```
 
-其中 `prepare` 等价于“构建打包 + 本地同步二进制 Release 仓库”，不会创建
-提交或推送。如果二进制 Release 仓库在同步前已有未提交修改，Agent 必须先
-审查，再为 `sync-release` 或 `prepare` 增加
-`-Yes -ConfirmVersion A.B.C.0`。
+`prepare` 与 `package` 均构建并生成发行包，不创建提交或推送。发布流程不再读取、
+同步或推送本地 `release\` 目录，也不依赖该目录存在。
+
+旧 `sync-release` 命令已移除；调用方应删除同步步骤。`status -Json` 不再返回
+`ReleaseExists`、`ReleaseBranch`、`ReleaseStatus`、`ReleaseDirty` 和 `ReleaseOrigin`；
+发布状态改为记录 `sourceRepositoryPublishedAt`。已有状态文件中的旧字段仅作为历史记录保留。
 
 发布 CLI 默认不会关闭 SnowDesktop 或重启 Explorer。构建产物被正在运行的
 SnowDesktop 或 Explorer 任务栏 Hook 占用时，应先正常退出应用；需要自动解除占用时，
@@ -50,10 +53,16 @@ scripts\release.bat squash -Message "v1.0.0.0 - 更新说明" ^
 scripts\release.bat publish -Yes -ConfirmVersion 1.0.0.0
 
 scripts\release.bat github-release -Yes -ConfirmVersion 1.0.0.0
+
+scripts\release.bat steam-upload-dev -Yes `
+  -ConfirmVersion 1.0.0.0 -ConfirmPrivateBranch internal-dev
+
+scripts\release.bat steam-upload-public -Yes `
+  -ConfirmVersion 1.0.0.0 -ConfirmPublicBranch public
 ```
 
 `squash` 只执行本地压缩合并和本地标签创建。`publish` 仅适用于已经测试过的
-本地 `main`，它依次推送源码 `main`/标签，并提交和推送二进制 Release 仓库。
+本地 `main`，它只推送官方源码仓库的 `main` 和当前版本标签。
 
 `github-release` 优先使用已安装并登录的 GitHub CLI (`gh`)；没有 `gh` 时也
 可使用环境变量 `GITHUB_TOKEN` 调用 GitHub API。不要把令牌写进参数、脚本或
@@ -61,6 +70,49 @@ scripts\release.bat github-release -Yes -ConfirmVersion 1.0.0.0
 同一动作。GitHub Release 默认公开上传携带版和 SHA-256 清单；只有 MSIX
 已经签名时才会同时公开上传 MSIX。Partner Center 专用的 `.msixupload` 不会
 作为公开附件上传。
+
+## SteamPipe 分支发布
+
+Steam App/Depot 身份保存在 `packaging\steam-identity.json`。SteamPipe 私有开发分支
+和公开发布分支都显式保存在 `packaging\steam-pipe.json`。私有分支必须先在 Steamworks
+后台创建并设置密码，而且仍会拒绝 `default`、`public`、`release`、`live` 等公开名称；
+公开发布分支必须精确命名为 `public`，只能通过独立的 `steam-upload-public` 动作更新。
+
+本机配置只使用进程环境变量，不写入仓库：
+
+```powershell
+$env:SNOWDESKTOP_STEAMCMD_PATH = "D:\Steamworks SDK\tools\ContentBuilder\builder\steamcmd.exe"
+$env:SNOWDESKTOP_STEAM_BUILD_ACCOUNT = "snowdesktop_build"
+& $env:SNOWDESKTOP_STEAMCMD_PATH +login $env:SNOWDESKTOP_STEAM_BUILD_ACCOUNT +quit
+```
+
+最后一条命令用于首次人工登录和 Steam Guard 验证。后续 `steam-preview`、
+`steam-upload-dev` 与 `steam-upload-public` 只使用 SteamCMD 自身缓存的凭据，并通过
+`@NoPromptForPassword` 禁止自动化提示密码。脚本没有密码、Steam Guard 代码、分支密码
+参数，也不会把这些材料写入日志或 VDF。建议构建账号只授予 `Edit App Metadata` 和
+`Publish App Changes To Steam` 所需权限，并确认其 Dev Comp 包含 Windows depot。
+
+`steam-preview` 会重新生成 Steam 包，写出带 `Preview "1"` 的 app build VDF 后交给
+SteamCMD 校验；调用前还会按包清单逐项复核文件大小与 SHA-256。它不会上传内容或修改
+分支。`steam-upload-dev` 和 `steam-upload-public` 同样重新打包，但分别要求
+`-Yes`、当前四段版本号和对应配置分支名三项完全匹配，随后只向目标分支上传并
+`SetLive`。开发动作不能生成公开分支 VDF，公开动作也只接受精确的 `public`。
+所有 VDF、SteamPipe 缓存及日志都保存在当前版本的
+`artifacts\vA.B.C.0\steampipe\`，与 `steam\` 载荷目录分离，重新打包不会清掉上传缓存。
+
+## Steam 运行目录与数据
+
+Steam depot 只管理稳定的 `SnowDesktopLauncher.exe`、`SnowDesktop.steam.json` 和
+`distribution\`。Steam 启动项及用户自行创建的快捷方式都应指向稳定 launcher；launcher
+校验 manifest 中每个文件的大小和 SHA-256，将完整版本复制到
+`.snowdesktop\runtime\<build-id>` 后再原子切换当前指针。实际主程序只从这一不可变 runtime
+运行，因此 Steam 更新 `distribution` 时不会覆盖正在占用的 EXE/DLL；新分发不完整时继续
+启动上一个完整 runtime。
+
+唯一用户数据目录固定为 Steam 安装根的 `data\`，不复制进 distribution 或版本化 runtime。
+`.snowdesktop\` 只保存 runtime、切换状态、锁和本地开发副本，全部仍位于 Steam 安装目录内。
+携带版没有 Steam sidecar，继续使用 `exe\data`；MSIX 仍只按 Windows 包身份使用
+`LocalState\data`，两者不读取上述 Steam 状态。
 
 ## 每版本目录
 
@@ -78,7 +130,6 @@ artifacts\
    ├─ release-summary.md
    ├─ release-notes.md
    ├─ release-state.json
-   ├─ release-repository-status.txt
    └─ logs\
 ```
 
@@ -117,16 +168,18 @@ Windows App SDK 与 C++/WinRT 的许可和 NOTICE 也由同一清单
 Machine Learning、ONNX Runtime 和 DirectML DLL；清单会显式收集这三个文件及其许可和
 NOTICE，避免仅复制主 Windows App SDK 项时遗漏。WebView2 WinRT Core DLL 与 WinMD 也
 来自独立的 NuGet 项，并以同样方式连同许可和 NOTICE 纳入清单。携带版和 MSIX 包含
-`snowwidget.exe`，但不携带只适用于 Steam 的创意工坊管理器；Steam 包才包含管理器，且将
-`steam_api64.dll` 放入同一运行时目录并通过私有程序集加载。所有载荷都会校验 Agent Skill
-内嵌 CLI 与独立 CLI 完全一致。
+`snowwidget.exe`。便携版和 MSIX 安装版不携带 Steam 桥、Steam API DLL、桥的附带文件
+或创意工坊管理器，打包时会递归检查桥文件。只有 Steam 包包含 Steam 桥、创意工坊管理器
+和完整发布工具。所有载荷都会校验
+Agent Skill 内嵌 CLI 与独立 CLI 完全一致。
 
 任务栏 Hook 通过 XAML Diagnostics TAP 接入 Explorer。该接口没有对应的进程级关闭 API，
 因此 Hook 模块可能一直映射到 Explorer 重启为止。SnowDesktop 不再直接注入构建或发行目录
-里的 DLL，而是先复制到 `%TEMP%\SnowDesktop\RuntimeHooks\` 下的进程专属目录；Wallpaper
-Engine 的 32/64 位 Hook 也复用同一部署机制，避免目标进程无法加载受保护的 MSIX 安装目录。
-正常退出后即使临时副本仍在目标进程中，也不会锁住便携目录、安装目录或下一次构建的输出文件。
-启动时会清理已经不再占用的旧临时副本。
+里的 DLL，而是先复制到 SnowDesktop 数据目录的 `ShellHook\` 进程专属目录；Wallpaper Engine
+的 32/64 位 Hook 也复用同一部署机制，避免目标进程无法加载受保护的 MSIX 安装目录。正常退出后
+即使副本仍在目标进程中，也不会锁住便携目录、安装目录或下一次构建的输出文件。启动时会清理
+已经不再占用的旧副本，并回收旧版本使用过的 `%TEMP%\SnowDesktop\TaskbarHook\`、
+`RuntimeHooks\` 和 `ShellHook\` 目录。
 
 打包脚本会为任务栏、开始菜单、搜索和系统设置等 Shell 场景生成透明的
 target-size、`altform-unplated` 和 `altform-lightunplated` 图标，并通过

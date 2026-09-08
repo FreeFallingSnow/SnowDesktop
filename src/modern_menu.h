@@ -91,7 +91,31 @@ struct EventPump
     HANDLE scheduledWorkHandle = nullptr;
     std::function<void()> dispatchScheduledWork;
     std::function<void()> flushPresentation;
+    /** Receives sparse Z-order diagnostics when the observed state changes. */
+    std::function<void(const std::wstring&)> traceDiagnostic;
 };
+
+// Update values without replacing child vectors referenced by open popup windows.
+template<class Visitor> void VisitItems(std::vector<Item>& items, const Visitor& visit)
+{
+    for (auto& item : items)
+    {
+        visit(item);
+        VisitItems(item.children, visit);
+    }
+}
+
+inline void UpdateItemStates(std::vector<Item>& items, const std::vector<Item>& values)
+{
+    if (items.size() != values.size()) return;
+    for (size_t i = 0; i < items.size(); ++i)
+    {
+        items[i].label = values[i].label;
+        items[i].enabled = values[i].enabled;
+        items[i].checked = values[i].checked;
+        UpdateItemStates(items[i].children, values[i].children);
+    }
+}
 
 struct Options
 {
@@ -138,6 +162,9 @@ Result Show(const std::vector<Item>& items, const Options& options);
 
 /** Whether a modern popup menu is currently running in this process. */
 bool IsActive();
+
+/** Active root menu HWND for internal diagnostics; null outside Show(). */
+HWND ActiveRootWindow();
 
 /** Close the currently active menu without activating a command. */
 void DismissActive();

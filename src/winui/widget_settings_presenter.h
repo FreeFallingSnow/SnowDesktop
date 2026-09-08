@@ -19,6 +19,7 @@ namespace snowdesktop::winui
  */
 struct WidgetSettingsPresenterCallbacks
 {
+    std::function<void()> nameChanged;
     std::function<void(
         std::string settingKey,
         widget_runtime::WidgetSettingMutationResult result)>
@@ -31,7 +32,7 @@ struct WidgetSettingsPresenterCallbacks
 };
 
 /**
- * Thread-safe callbacks suitable for WidgetSettingsService::SetEventCallbacks.
+ * Thread-safe callbacks suitable for IWidgetSettingsService::SetEventCallbacks.
  *
  * Each callback captures only a shutdown-aware bridge. It queues the immutable
  * service hint to the presenter's DispatcherQueue, where the authoritative
@@ -39,9 +40,9 @@ struct WidgetSettingsPresenterCallbacks
  */
 struct WidgetSettingsEventDispatchers
 {
-    widget_runtime::WidgetSettingsService::SnapshotChangedCallback
+    widget_runtime::IWidgetSettingsService::SnapshotChangedCallback
         snapshotChanged;
-    widget_runtime::WidgetSettingsService::SearchCompletedCallback
+    widget_runtime::IWidgetSettingsService::SearchCompletedCallback
         searchCompleted;
 };
 
@@ -61,7 +62,7 @@ public:
         std::function<std::wstring(std::string_view key)>;
 
     WidgetSettingsPresenter(
-        widget_runtime::WidgetSettingsService& service,
+        widget_runtime::IWidgetSettingsService& service,
         LocalizeCallback localize,
         const winrt::Microsoft::UI::Xaml::Style& cardStyle);
     ~WidgetSettingsPresenter();
@@ -104,6 +105,7 @@ public:
         FocusTarget(std::string_view settingKey) const noexcept;
 
     [[nodiscard]] std::wstring_view WidgetId() const noexcept;
+    [[nodiscard]] std::string_view WidgetName() const noexcept;
     [[nodiscard]] std::uint64_t Generation() const noexcept;
     [[nodiscard]] std::uint64_t Revision() const noexcept;
 

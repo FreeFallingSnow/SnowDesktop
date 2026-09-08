@@ -184,6 +184,24 @@ int main()
     Check(!ShouldDispatchCollectionDoubleClickPress(false, false),
         "unrelated desktop double clicks retain their existing behavior");
 
+    State fade;
+    fade.Configure(true, 2.0);
+    fade.Open(10000);
+    fade.Advance(10090);
+    Check(NearlyEqual(fade.GetVisual().scale, 1.0f) &&
+        NearlyEqual(fade.GetVisual().opacity, 0.5f),
+        "fade uses fixed geometry and its configured real-time duration");
+    fade.Close(10090);
+    Check(NearlyEqual(fade.GetVisual().opacity, 0.5f),
+        "reversing a fade preserves its displayed opacity");
+    fade.Advance(10180);
+    Check(fade.IsHidden() && !OccludesSurface(fade),
+        "closed fade releases pointer occlusion");
+    fade.Open(10200);
+    fade.ShowImmediately();
+    Check(!fade.IsAnimating() && fade.GetVisual().opacity == 1.0f,
+        "disabling an in-flight fade can settle immediately");
+
     std::cout << "popup animation rules tests passed\n";
     return 0;
 }

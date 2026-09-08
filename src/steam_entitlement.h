@@ -1,0 +1,125 @@
+#pragma once
+
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+
+namespace snowdesktop::steam_entitlement
+{
+
+constexpr std::chrono::hours kRegistrationLifetime =
+    std::chrono::hours(24 * 30);
+inline constexpr std::uint32_t kSupportedBridgeProtocolVersion = 1;
+
+struct SteamBridgeConfiguration
+{
+    bool valid = false;
+    std::string version;
+    std::uint32_t protocolVersion = 0;
+    std::uint32_t expectedAppId = 0;
+    bool steamworksCompiled = false;
+};
+
+/** Parse the final JSON object returned by `configuration`. */
+[[nodiscard]] SteamBridgeConfiguration ParseSteamBridgeConfiguration(
+    std::string_view output, std::uint32_t exitCode);
+
+/** Require the deployed Bridge to match this host and its protocol exactly. */
+[[nodiscard]] bool IsSteamBridgeConfigurationCompatible(
+    const SteamBridgeConfiguration& configuration,
+    std::string_view expectedVersion) noexcept;
+
+/** Query `configuration` without initializing Steam and validate the result. */
+[[nodiscard]] bool IsSteamBridgeExecutableCompatible(
+    const std::filesystem::path& executable,
+    std::string_view expectedVersion);
+
+enum class State : std::uint8_t
+{
+    BridgeUnavailable,
+    Unregistered,
+    Checking,
+    Registered,
+    RegistrationFailed,
+};
+
+enum class Failure : std::uint8_t
+{
+    None,
+    SteamUnavailable,
+    NotOwned,
+    BridgeError,
+    StorageError,
+};
+
+struct Snapshot
+{
+    State state = State::BridgeUnavailable;
+    Failure failure = Failure::None;
+    bool bridgeAvailable = false;
+    /** An unexpired last-known ownership result remains usable while offline. */
+    bool registered = false;
+    /** Unix timestamp when the cached ownership result stops being usable. */
+    std::int64_t validUntil = 0;
+    std::uint64_t revision = 0;
+};
+
+enum class BridgeOutcome : std::uint8_t
+{
+    Owned,
+    NotOwned,
+    SteamUnavailable,
+    Failed,
+};
+
+struct BridgeResponse
+{
+    BridgeOutcome outcome = BridgeOutcome::Failed;
+    std::uint64_t steamId = 0;
+    std::string errorCode;
+};
+
+/** Parse the final JSON object returned by `entitlement status`. */
+[[nodiscard]] BridgeResponse ParseBridgeResponse(
+    std::string_view output, std::uint32_t exitCode);
+
+/**
+ * Application-lifetime Steam ownership registration service.
+ *
+ * Successful ownership checks are cached for thirty days in a Windows
+ * DPAPI-protected file. The host revalidates on every startup when the Bridge
+ * is available; a temporary failure does not renew or revoke an unexpired
+ * cache, while an authoritative owned=false result revokes it immediately.
+ */
+class Service final
+{
+public:
+    Service(std::filesystem::path bridgeExecutable,
+        std::filesystem::path steamRuntime,
+        std::filesystem::path protectedCache);
+    ~Service();
+
+    Service(const Service&) = delete;
+    Service& operator=(const Service&) = delete;
+
+    [[nodiscard]] Snapshot Current() const noexcept;
+    [[nodiscard]] bool IsRegistered() const noexcept;
+
+    /** Start one asynchronous Bridge check when not already registered/busy. */
+    [[nodiscard]] bool StartRegistration(std::function<void()> completed,
+        bool revalidateRegistered = false);
+    /** Cancel a pending check and clear the local unlock cache for debugging.
+     * Call on the same owner thread as StartRegistration and Stop. */
+    [[nodiscard]] bool ResetRegistration();
+    void Stop() noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace snowdesktop::steam_entitlement

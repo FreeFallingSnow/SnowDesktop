@@ -12,6 +12,7 @@ enum class UnifiedAutoStartOwner : std::uint8_t
     None,
     Portable,
     Packaged,
+    Steam,
     Unknown,
 };
 
@@ -23,6 +24,44 @@ enum class UnifiedAutoStartTaskState : std::uint8_t
     Foreign,
     Unavailable,
 };
+
+[[nodiscard]] constexpr bool CanExplicitlyEnableMissingAutoStart(
+    bool enabled, bool stateKnown,
+    UnifiedAutoStartTaskState taskState) noexcept
+{
+    return enabled && !stateKnown &&
+        taskState == UnifiedAutoStartTaskState::Missing;
+}
+
+enum class AutoStartOwnershipNotice : std::uint8_t
+{
+    None,
+    OtherVersion,
+    InstalledVersion,
+};
+
+[[nodiscard]] constexpr AutoStartOwnershipNotice
+ClassifyAutoStartOwnershipNotice(
+    bool stateKnown,
+    UnifiedAutoStartTaskState taskState,
+    bool taskOwnedByCurrentDeployment,
+    UnifiedAutoStartOwner taskOwner) noexcept
+{
+    if (!stateKnown || taskState != UnifiedAutoStartTaskState::Enabled ||
+        taskOwnedByCurrentDeployment)
+    {
+        return AutoStartOwnershipNotice::None;
+    }
+
+    if (taskOwner == UnifiedAutoStartOwner::Packaged)
+        return AutoStartOwnershipNotice::InstalledVersion;
+    if (taskOwner == UnifiedAutoStartOwner::Portable ||
+        taskOwner == UnifiedAutoStartOwner::Steam)
+    {
+        return AutoStartOwnershipNotice::OtherVersion;
+    }
+    return AutoStartOwnershipNotice::None;
+}
 
 enum class LegacyAutoStartState : std::uint8_t
 {
@@ -48,7 +87,8 @@ SelectAutoStartMigration(
     if (portable == LegacyAutoStartState::Unavailable ||
         packaged == LegacyAutoStartState::Unavailable ||
         (currentDeployment != UnifiedAutoStartOwner::Portable &&
-            currentDeployment != UnifiedAutoStartOwner::Packaged))
+            currentDeployment != UnifiedAutoStartOwner::Packaged &&
+            currentDeployment != UnifiedAutoStartOwner::Steam))
     {
         return {};
     }

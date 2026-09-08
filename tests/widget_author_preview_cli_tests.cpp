@@ -26,7 +26,18 @@ void Check(bool condition, const char* message)
 
 std::wstring Quote(std::wstring_view value)
 {
-    return L"\"" + std::wstring(value) + L"\"";
+    std::wstring result = L"\"";
+    std::size_t slashes = 0;
+    for (const wchar_t ch : value)
+    {
+        if (ch == L'\\') { ++slashes; continue; }
+        result.append(ch == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+        slashes = 0;
+        result.push_back(ch);
+    }
+    result.append(slashes * 2, L'\\');
+    result.push_back(L'"');
+    return result;
 }
 
 class TemporaryDirectory
@@ -180,6 +191,64 @@ std::size_t CountDifferingPixels(const RgbaBitmap& first,
     return differences;
 }
 
+std::size_t CountDarkenedPixels(const RgbaBitmap& baseline,
+    const RgbaBitmap& highlighted, const RECT& bounds)
+{
+    Check(baseline.width == highlighted.width &&
+            baseline.height == highlighted.height &&
+            bounds.left >= 0 && bounds.top >= 0 &&
+            bounds.right <= static_cast<LONG>(baseline.width) &&
+            bounds.bottom <= static_cast<LONG>(baseline.height) &&
+            bounds.left < bounds.right && bounds.top < bounds.bottom,
+        "preview darkening bounds are valid");
+    std::size_t darkened = 0;
+    for (LONG y = bounds.top; y < bounds.bottom; ++y)
+    {
+        for (LONG x = bounds.left; x < bounds.right; ++x)
+        {
+            const auto before = PixelAt(
+                baseline, static_cast<UINT>(x), static_cast<UINT>(y));
+            const auto after = PixelAt(
+                highlighted, static_cast<UINT>(x), static_cast<UINT>(y));
+            if (after[0] < before[0] || after[1] < before[1] ||
+                after[2] < before[2])
+                ++darkened;
+        }
+    }
+    return darkened;
+}
+
+std::uint64_t SumBrightnessGain(const RgbaBitmap& baseline,
+    const RgbaBitmap& highlighted, const RECT& bounds)
+{
+    Check(baseline.width == highlighted.width &&
+            baseline.height == highlighted.height &&
+            bounds.left >= 0 && bounds.top >= 0 &&
+            bounds.right <= static_cast<LONG>(baseline.width) &&
+            bounds.bottom <= static_cast<LONG>(baseline.height) &&
+            bounds.left < bounds.right && bounds.top < bounds.bottom,
+        "preview brightness bounds are valid");
+    std::uint64_t gain = 0;
+    for (LONG y = bounds.top; y < bounds.bottom; ++y)
+    {
+        for (LONG x = bounds.left; x < bounds.right; ++x)
+        {
+            const auto before = PixelAt(
+                baseline, static_cast<UINT>(x), static_cast<UINT>(y));
+            const auto after = PixelAt(
+                highlighted, static_cast<UINT>(x), static_cast<UINT>(y));
+            for (std::size_t channel = 0; channel < 3; ++channel)
+            {
+                gain += after[channel] > before[channel]
+                    ? static_cast<std::uint64_t>(
+                        after[channel] - before[channel])
+                    : 0u;
+            }
+        }
+    }
+    return gain;
+}
+
 void WriteSolidBmp(const std::filesystem::path& path,
     std::uint8_t red, std::uint8_t green, std::uint8_t blue)
 {
@@ -266,6 +335,60 @@ RgbaBitmap CheckOpaquePreview(const std::filesystem::path& path,
     }
     Check(colors.size() > 128,
         "preview stage retains a varied multicolor background");
+    return bitmap;
+}
+
+RgbaBitmap CheckTransparentPreview(const std::filesystem::path& path,
+    UINT expectedWidth, UINT expectedHeight)
+{
+    CheckPng(path);
+    const RgbaBitmap bitmap = ReadPng(path);
+    Check(bitmap.width == expectedWidth && bitmap.height == expectedHeight,
+        "transparent preview preserves the expected pixel dimensions");
+    Check(PixelAt(bitmap, 0, 0)[3] == 0 &&
+            PixelAt(bitmap, expectedWidth - 1, expectedHeight - 1)[3] == 0,
+        "transparent preview leaves canvas corners transparent");
+    std::size_t transparentPixels = 0;
+    std::size_t translucentPixels = 0;
+    std::size_t visiblePixels = 0;
+    for (std::size_t offset = 0; offset < bitmap.pixels.size(); offset += 4)
+    {
+        const std::uint8_t alpha = bitmap.pixels[offset + 3];
+        transparentPixels += alpha == 0;
+        translucentPixels += alpha > 0 && alpha < 0xff;
+        visiblePixels += alpha > 0;
+    }
+    Check(transparentPixels >
+            static_cast<std::size_t>(expectedWidth) * expectedHeight / 4,
+        "transparent preview retains a substantial empty canvas area");
+    Check(translucentPixels > 1000,
+        "transparent preview retains semi-transparent component material");
+    Check(visiblePixels > 5000,
+        "transparent preview contains nontrivial native component pixels");
+    return bitmap;
+}
+
+RgbaBitmap CheckContentLayerPreview(const std::filesystem::path& path,
+    UINT expectedWidth, UINT expectedHeight)
+{
+    CheckPng(path);
+    const RgbaBitmap bitmap = ReadPng(path);
+    Check(bitmap.width == expectedWidth && bitmap.height == expectedHeight,
+        "content-layer preview preserves the expected pixel dimensions");
+    std::size_t transparentPixels = 0;
+    std::size_t visiblePixels = 0;
+    for (std::size_t offset = 0; offset < bitmap.pixels.size(); offset += 4)
+    {
+        const std::uint8_t alpha = bitmap.pixels[offset + 3];
+        transparentPixels += alpha == 0;
+        visiblePixels += alpha > 0;
+    }
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(expectedWidth) * expectedHeight;
+    Check(transparentPixels > pixelCount / 2,
+        "content-layer preview omits the host background material");
+    Check(visiblePixels > 500,
+        "content-layer preview retains nontrivial component content");
     return bitmap;
 }
 
@@ -408,8 +531,11 @@ std::filesystem::path CreateEnvironmentFixture(
   "requiredFeatures": [
     "draw.immediate",
     "draw.marqueeText",
+    "layout.referenceAxes",
+    "layout.referencePixels",
     "layout.relativeUnits",
     "lifecycle.model",
+    "ui.semanticMetrics.rowUnit",
     "widget.context",
     "data.subscribe",
     "data.system.cpu"
@@ -440,6 +566,18 @@ return widget.define({
         assert(layout.vw(50) == 144 and layout.vh(50) == 87 and
             layout.vmin(50) == 87 and layout.vmax(50) == 144,
             "relative layout units must use the root content extents")
+        assert(layout.rpx(10) == 15 and layout.rpx(-4) == -6 and
+            pcall(layout.rpx, 1000001) == false,
+            "reference pixels must scale from the manifest default short edge")
+        assert(layout.rpxX(10) == 15 and layout.rpxY(10) == 15 and
+            pcall(layout.rpxX, 1000001) == false and
+            pcall(layout.rpxY, -1000001) == false,
+            "reference axes must scale independently from manifest defaults")
+        local metrics = ui.metrics()
+        local metricCount = 0
+        for _ in pairs(metrics) do metricCount = metricCount + 1 end
+        assert(metrics.layoutRowHeight == 42 and metricCount == 1,
+            "ui.metrics must expose only the shared row-height scale")
         assert(pcall(layout.vw, -1) == false and
             pcall(layout.vh, 101) == false,
             "relative layout units must reject out-of-range percentages")
@@ -494,6 +632,190 @@ return widget.define({
 )lua");
     return source;
 }
+
+std::filesystem::path CreateBackgroundLayerFixture(
+    const std::filesystem::path& root)
+{
+    const auto source = root / L"background-layer-widget";
+    std::error_code error;
+    Check(std::filesystem::create_directory(source, error),
+        "preview background layer fixture directory is created");
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "id": "8d6fd46f-321f-4e59-8fc2-b50778dd9fb2",
+  "slug": "preview-background-layer-fixture",
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.5.0",
+  "name": "Preview background layer fixture",
+  "description": "Validates component background drawing above material tint.",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "defaultSize": {"columns": 2, "rows": 1},
+  "requiredFeatures": [
+    "draw.immediate",
+    "interaction.region",
+    "widget.backgroundLayer"
+  ]
+})json");
+    Write(source / L"main.lua", R"lua(
+local backgroundLayer = {
+    render = function()
+        if storage.get("backgroundError") == "1" then
+            error("intentional background failure")
+        end
+        assert(pcall(interaction.region, {}) == false,
+            "background layer must reject interaction registration")
+        local width = layout.width()
+        draw.rect(0, 0, width * 0.5, layout.height(),
+            0xFF0000, 0, 1)
+        draw.rect(width * 0.5, 0, width * 0.5, layout.height(),
+            0x0000FF, 0, 1)
+    end,
+}
+if storage.get("explicitZeroBlur") == "1" then
+    backgroundLayer.blurRadius = 0
+elseif storage.get("explicitBlur") == "1" then
+    backgroundLayer.blurRadius = 8
+end
+
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = false,
+    bg = 0x000000,
+    alpha = 0.5,
+    borderAlpha = 0,
+    glassEnabled = false,
+    backgroundLayer = backgroundLayer,
+    render = function()
+        draw.rect(72, 38, 48, 40, 0x00FF00, 0, 1)
+    end,
+})
+)lua");
+    return source;
+}
+
+std::filesystem::path CreateRoundedImageFixture(
+    const std::filesystem::path& root)
+{
+    const auto source = root / L"rounded-image-widget";
+    std::error_code error;
+    Check(std::filesystem::create_directory(source, error),
+        "preview rounded image fixture directory is created");
+    WriteSolidBmp(source / L"cover.bmp", 255, 0, 0);
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "id": "73a59d68-9220-495e-846f-2da3f273f0f0",
+  "slug": "preview-rounded-image-fixture",
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.5.0",
+  "name": "Preview rounded image fixture",
+  "description": "Validates rounded image content clipping.",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "defaultSize": {"columns": 2, "rows": 1},
+  "requiredFeatures": [
+    "resource.package",
+    "view.flex.layout",
+    "view.image",
+    "view.tree.core"
+  ],
+  "resources": {
+    "cover": {"type": "image", "path": "cover.bmp"}
+  }
+})json");
+    Write(source / L"main.lua", R"lua(
+local cover = resource.image("cover")
+
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = false,
+    bg = 0x0000FF,
+    alpha = 1,
+    borderAlpha = 0,
+    glassEnabled = false,
+    view = function()
+        return view.row({
+            key = "rounded-image-root",
+            width = "fill",
+            height = "fill",
+            padding = 18,
+            children = {
+                view.image({
+                    key = "rounded-cover",
+                    source = cover,
+                    alt = "",
+                    fit = "cover",
+                    width = 80,
+                    height = 80,
+                    style = { cornerRadius = 40 },
+                }),
+            },
+        })
+    end,
+})
+)lua");
+    return source;
+}
+
+std::filesystem::path CreateImmediateRoundedImageFixture(
+    const std::filesystem::path& root)
+{
+    const auto source = root / L"immediate-rounded-image-widget";
+    std::error_code error;
+    Check(std::filesystem::create_directory(source, error),
+        "preview immediate rounded image fixture directory is created");
+    WriteSolidBmp(source / L"cover.bmp", 255, 0, 0);
+    Write(source / L"widget.json", R"json({
+  "schemaVersion": 2,
+  "apiVersion": 2,
+  "dataVersion": 1,
+  "id": "4da4497b-2508-4b74-bc73-c82e34e18145",
+  "slug": "preview-immediate-rounded-image-fixture",
+  "version": "1.0.0",
+  "entry": "main.lua",
+  "minHostVersion": "1.0.5.0",
+  "name": "Preview immediate rounded image fixture",
+  "description": "Validates immediate rounded image content clipping.",
+  "author": "SnowDesktop",
+  "license": "MIT",
+  "defaultSize": {"columns": 2, "rows": 1},
+  "requiredFeatures": [
+    "draw.advanced",
+    "draw.imageFit.roundedClip",
+    "draw.immediate",
+    "resource.package"
+  ],
+  "resources": {
+    "cover": {"type": "image", "path": "cover.bmp"}
+  }
+})json");
+    Write(source / L"main.lua", R"lua(
+local cover = resource.image("cover")
+
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = false,
+    bg = 0x0000FF,
+    alpha = 1,
+    borderAlpha = 0,
+    glassEnabled = false,
+    render = function()
+        assert(pcall(draw.imageFit, cover, 18, 18, 80, 80,
+            "cover", "center", 1, "linear", 0, 0.5, 0.5, -1) == false,
+            "negative image corner radius must be rejected")
+        draw.imageFit(cover, 18, 18, 80, 80,
+            "cover", "center", 1, "linear", 0, 0.5, 0.5, 40)
+    end,
+})
+)lua");
+    return source;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -513,6 +835,134 @@ int wmain(int argc, wchar_t** argv)
     TemporaryDirectory temporary;
     const auto background = temporary.path / L"author-background.bmp";
     WriteSolidBmp(background, 18, 126, 214);
+
+    const auto nativeOutputDirectory =
+        temporary.path / L"native-collection-previews";
+    const auto [nativeExit, nativeJson] = Run(snowwidget, {
+        L"preview-native", L"collection", nativeOutputDirectory.wstring(),
+        L"--dpi", L"96", L"--locale", L"en-US",
+        L"--appearance", L"light",
+        L"--background", background.wstring(),
+        L"--canvas-width", L"640", L"--canvas-height", L"480",
+        L"--padding", L"48", L"--host", host.wstring() });
+    Check(nativeExit == 0 &&
+            nativeJson.find("\"ok\":true") != std::string::npos &&
+            nativeJson.find("\"preset\":\"compact\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"large-folder\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"scroll-grid\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"scroll-list\"") !=
+                std::string::npos &&
+            nativeJson.find("\"preset\":\"large-folder-titleless\"") !=
+                std::string::npos &&
+            nativeJson.find("\"largeFolderTitleless\":true") !=
+                std::string::npos &&
+            nativeJson.find("\"cornerRadius\":12") !=
+                std::string::npos &&
+            nativeJson.find("\"settings\":{\"listMode\":true,") !=
+                std::string::npos,
+        "native preview exports collection property combinations and settings");
+    const auto compactCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-compact.png", 640, 480);
+    const auto largeFolderCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-large-folder.png", 640, 480);
+    const auto titlelessCollection = CheckOpaquePreview(
+        nativeOutputDirectory /
+            L"collection-large-folder-titleless.png", 640, 480);
+    const auto scrollGridCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-scroll-grid.png", 640, 480);
+    const auto scrollListCollection = CheckOpaquePreview(
+        nativeOutputDirectory / L"collection-scroll-list.png", 640, 480);
+    constexpr RECT nativeCanvasBounds{ 0, 0, 640, 480 };
+    Check(CountDifferingPixels(compactCollection, largeFolderCollection,
+              nativeCanvasBounds) > 1000 &&
+            CountDifferingPixels(largeFolderCollection,
+                scrollGridCollection, nativeCanvasBounds) > 1000 &&
+            CountDifferingPixels(largeFolderCollection,
+                titlelessCollection, nativeCanvasBounds) > 1000 &&
+            CountDifferingPixels(scrollGridCollection,
+                scrollListCollection, nativeCanvasBounds) > 1000,
+        "native collection exports retain visibly distinct configurations");
+
+    const auto transparentOutputDirectory =
+        temporary.path / L"native-transparent-previews";
+    const auto [transparentNativeExit, transparentNativeJson] = Run(snowwidget, {
+        L"preview-native", L"all", transparentOutputDirectory.wstring(),
+        L"--dpi", L"96", L"--locale", L"en-US",
+        L"--appearance", L"dark", L"--transparent",
+        L"--canvas-width", L"640", L"--canvas-height", L"480",
+        L"--padding", L"48", L"--host", host.wstring() });
+    Check(transparentNativeExit == 0 &&
+            transparentNativeJson.find("\"ok\":true") != std::string::npos &&
+            transparentNativeJson.find("\"transparent\":true") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"collection-group\"") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"file-group\"") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"file-categories\"") !=
+                std::string::npos &&
+            transparentNativeJson.find("\"component\":\"folder-mapping\"") !=
+                std::string::npos,
+        "native preview exports all component families with transparency");
+    constexpr std::array transparentFilenames{
+        L"collection-compact.png",
+        L"collection-large-folder.png",
+        L"collection-large-folder-titleless.png",
+        L"collection-scroll-grid.png",
+        L"collection-scroll-list.png",
+        L"collection-group-grid.png",
+        L"collection-group-list.png",
+        L"file-group-grid.png",
+        L"file-group-list.png",
+        L"file-categories-grid.png",
+        L"file-categories-list.png",
+        L"folder-mapping-grid.png",
+        L"folder-mapping-list.png",
+    };
+    for (const wchar_t* filename : transparentFilenames)
+        CheckPng(transparentOutputDirectory / filename);
+    Check(std::distance(
+              std::filesystem::directory_iterator(transparentOutputDirectory),
+              std::filesystem::directory_iterator{}) == 57,
+        "native all export covers every supported property combination");
+    CheckPng(transparentOutputDirectory /
+        L"collection-group-grid-search.png");
+    CheckPng(transparentOutputDirectory /
+        L"file-group-list-date-no-categories-search.png");
+    CheckPng(transparentOutputDirectory /
+        L"file-categories-grid-no-date-no-categories-no-search.png");
+    CheckPng(transparentOutputDirectory /
+        L"folder-mapping-list-date-categories-search.png");
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"collection-compact.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"collection-group-grid.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"file-group-list.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"file-categories-grid.png", 640, 480);
+    CheckTransparentPreview(
+        transparentOutputDirectory / L"folder-mapping-list.png", 640, 480);
+
+    const auto nativeContentDirectory =
+        temporary.path / L"native-content-layer-previews";
+    const auto [nativeContentExit, nativeContentJson] = Run(snowwidget, {
+        L"preview-native", L"collection-group",
+        nativeContentDirectory.wstring(), L"--dpi", L"96",
+        L"--locale", L"en-US", L"--appearance", L"light",
+        L"--content-only", L"--canvas-width", L"640",
+        L"--canvas-height", L"480", L"--padding", L"48",
+        L"--host", host.wstring() });
+    Check(nativeContentExit == 0 &&
+            nativeContentJson.find("\"contentOnly\":true") !=
+                std::string::npos,
+        "native content-only export reports the requested layer mode");
+    CheckContentLayerPreview(nativeContentDirectory /
+        L"collection-group-grid-search.png", 640, 480);
+
     const auto backgroundOutput = temporary.path / L"custom-background.png";
     const auto backgroundSource = repository / L"widgets" / L"analog-clock";
     const auto [backgroundExit, backgroundJson] = Run(snowwidget, {
@@ -529,6 +979,210 @@ int wmain(int argc, wchar_t** argv)
             selectedBackground.pixels[2] == 214 &&
             selectedBackground.pixels[3] == 255,
         "transparent preview pixels reveal the selected author background");
+
+    const auto squareOutput = temporary.path / L"square-preview.png";
+    const auto [squareExit, squareJson] = Run(snowwidget, {
+        L"preview", backgroundSource.wstring(), squareOutput.wstring(),
+        L"--background", background.wstring(),
+        L"--canvas-size", L"512", L"--padding", L"48",
+        L"--host", host.wstring() });
+    Check(squareExit == 0 &&
+            squareJson.find("\"width\":512") != std::string::npos &&
+            squareJson.find("\"height\":512") != std::string::npos &&
+            squareJson.find("\"componentWidth\":192") !=
+                std::string::npos &&
+            squareJson.find("\"componentHeight\":240") !=
+                std::string::npos &&
+            squareJson.find("\"canvasSize\":512") !=
+                std::string::npos &&
+            squareJson.find("\"padding\":48") != std::string::npos &&
+            squareJson.find("\"placementX\":89") !=
+                std::string::npos &&
+            squareJson.find("\"placementY\":48") !=
+                std::string::npos &&
+            squareJson.find("\"placementWidth\":333") !=
+                std::string::npos &&
+            squareJson.find("\"placementHeight\":416") !=
+                std::string::npos &&
+            squareJson.find("\"cornerRadius\":21") !=
+                std::string::npos,
+        "preview reports the native component layer and square canvas placement");
+    const RgbaBitmap square =
+        CheckOpaquePreview(squareOutput, 512, 512);
+    Check(PixelAt(square, 0, 0) ==
+            std::array<std::uint8_t, 4>{ 18, 126, 214, 255 } &&
+            PixelAt(square, 511, 511) ==
+                std::array<std::uint8_t, 4>{ 18, 126, 214, 255 },
+        "square composition preserves the background outside component padding");
+
+    const auto contentLayerOutput =
+        temporary.path / L"widget-content-layer.png";
+    const auto [contentLayerExit, contentLayerJson] = Run(snowwidget, {
+        L"preview", backgroundSource.wstring(),
+        contentLayerOutput.wstring(), L"--appearance", L"light",
+        L"--canvas-size", L"512", L"--padding", L"48",
+        L"--content-only", L"--host", host.wstring() });
+    Check(contentLayerExit == 0 &&
+            contentLayerJson.find("\"contentOnly\":true") !=
+                std::string::npos &&
+            contentLayerJson.find("\"foregroundTheme\":\"dark\"") !=
+                std::string::npos,
+        "component content-only export reports its layer and foreground theme");
+    CheckContentLayerPreview(contentLayerOutput, 512, 512);
+
+    const auto backgroundLayerSource =
+        CreateBackgroundLayerFixture(temporary.path);
+    const auto backgroundLayerOutput =
+        temporary.path / L"background-layer.png";
+    const auto [backgroundLayerExit, backgroundLayerJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        backgroundLayerOutput.wstring(), L"--host", host.wstring() });
+    Check(backgroundLayerExit == 0 &&
+            backgroundLayerJson.find("\"ok\":true") != std::string::npos,
+        "preview renders a declared component background layer");
+    const RgbaBitmap backgroundLayer = ReadPng(backgroundLayerOutput);
+    Check(backgroundLayer.width == 192 && backgroundLayer.height == 116,
+        "background layer preview preserves the expected dimensions");
+    for (std::size_t offset = 3;
+            offset < backgroundLayer.pixels.size(); offset += 4)
+        Check(backgroundLayer.pixels[offset] == 0xff,
+            "background layer preview remains opaque over the stage");
+    const auto materialPixel = PixelAt(backgroundLayer, 24, 58);
+    const auto foregroundPixel = PixelAt(backgroundLayer, 96, 58);
+    Check(materialPixel[0] > 240 &&
+            materialPixel[1] < 16 && materialPixel[2] < 16 &&
+            foregroundPixel[0] < 32 && foregroundPixel[1] > 220 &&
+            foregroundPixel[2] < 32,
+        "component background preserves its color above the material tint while foreground remains above it");
+
+    const auto inheritedBlurOutput =
+        temporary.path / L"background-layer-inherited-blur.png";
+    const auto explicitZeroBlurOutput =
+        temporary.path / L"background-layer-zero-blur.png";
+    const auto [inheritedBlurExit, inheritedBlurJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        inheritedBlurOutput.wstring(), L"--storage", L"glassEnabled=1",
+        L"--host", host.wstring() });
+    const auto [explicitZeroBlurExit, explicitZeroBlurJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        explicitZeroBlurOutput.wstring(), L"--storage", L"glassEnabled=1",
+        L"--storage", L"explicitZeroBlur=1",
+        L"--host", host.wstring() });
+    const RgbaBitmap inheritedBlur = ReadPng(inheritedBlurOutput);
+    const RgbaBitmap explicitZeroBlur = ReadPng(explicitZeroBlurOutput);
+    constexpr RECT backgroundBoundary{ 80, 8, 112, 34 };
+    Check(inheritedBlurExit == 0 && explicitZeroBlurExit == 0 &&
+            inheritedBlurJson.find("\"ok\":true") != std::string::npos &&
+            explicitZeroBlurJson.find("\"ok\":true") !=
+                std::string::npos &&
+            CountDifferingPixels(inheritedBlur, explicitZeroBlur,
+                backgroundBoundary) > 256,
+        "omitted background blur inherits glass while explicit zero remains sharp");
+
+    const auto explicitBlurOutput =
+        temporary.path / L"background-layer-explicit-blur.png";
+    const auto [explicitBlurExit, explicitBlurJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        explicitBlurOutput.wstring(), L"--storage", L"explicitBlur=1",
+        L"--host", host.wstring() });
+    const RgbaBitmap explicitBlur = ReadPng(explicitBlurOutput);
+    Check(explicitBlurExit == 0 &&
+            explicitBlurJson.find("\"ok\":true") != std::string::npos &&
+            CountDifferingPixels(backgroundLayer, explicitBlur,
+                backgroundBoundary) > 256,
+        "explicit background blur remains active while host glass is disabled");
+
+    const auto failedBackgroundOutput =
+        temporary.path / L"background-layer-error.png";
+    const auto [failedBackgroundExit, failedBackgroundJson] = Run(snowwidget, {
+        L"preview", backgroundLayerSource.wstring(),
+        failedBackgroundOutput.wstring(),
+        L"--storage", L"backgroundError=1",
+        L"--host", host.wstring() });
+    const RgbaBitmap failedBackground = ReadPng(failedBackgroundOutput);
+    const auto failedMaterialPixel = PixelAt(failedBackground, 24, 58);
+    const auto failedForegroundPixel = PixelAt(failedBackground, 96, 58);
+    Check(failedBackgroundExit == 0 &&
+            failedBackgroundJson.find("\"ok\":true") !=
+                std::string::npos &&
+            !(failedMaterialPixel[0] > 240 &&
+                failedMaterialPixel[1] < 16 &&
+                failedMaterialPixel[2] < 16) &&
+            failedForegroundPixel[0] < 32 &&
+            failedForegroundPixel[1] > 220 &&
+            failedForegroundPixel[2] < 32,
+        "a failed background callback drops only that layer and preserves host material plus foreground rendering");
+    // Exercise the production storage reader and material renderer together.
+    // The fixture's failed authored background leaves the host material exposed.
+    const auto gradientPreview = [&](const wchar_t* filename, const std::wstring& storage, bool follow = false) {
+        const auto path = temporary.path / filename;
+        const auto [code, result] = Run(snowwidget, {L"preview", backgroundLayerSource.wstring(), path.wstring(),
+            L"--host", host.wstring(), L"--storage", L"backgroundError=1", L"--storage", L"alpha=0",
+            L"--storage", follow ? L"followPersonalization=1" : L"followPersonalization=0",
+            L"--storage", L"__panelGradient=" + storage});
+        Check(code == 0 && result.find("\"ok\":true") != std::string::npos,
+            "host-owned gradient storage can be rendered through the existing preview command");
+        return ReadPng(path);
+    };
+    const std::wstring gradientJson = LR"({"enabled":true,"angle":0,"stops":[{"position":0,"color":16711680,"opacity":1},{"position":1,"color":255,"opacity":1}]})";
+    const auto gradientImage = gradientPreview(L"panel-gradient.png", gradientJson);
+    const auto gradientLeft = PixelAt(gradientImage, 24, 58);
+    const auto gradientRight = PixelAt(gradientImage, 168, 58);
+    Check(gradientLeft[0] > gradientLeft[2] + 100 && gradientRight[2] > gradientRight[0] + 100 &&
+            PixelAt(gradientImage, 96, 58)[1] > 220,
+        "instance gradient paints both endpoints despite zero solid opacity and retains foreground above it");
+    const auto missingGradient = gradientPreview(L"panel-gradient-missing.png", L"");
+    const auto invalidGradient = gradientPreview(L"panel-gradient-invalid.png", L"{broken}");
+    Check(missingGradient.pixels == invalidGradient.pixels,
+        "missing and corrupt optional instance gradients preserve the same legacy appearance");
+    const auto followedGradient = gradientPreview(L"panel-gradient-followed.png", gradientJson, true);
+    const auto followedWithout = gradientPreview(L"panel-gradient-followed-without.png", L"", true);
+    Check(followedGradient.pixels == followedWithout.pixels && followedGradient.pixels != gradientImage.pixels,
+        "following global settings suppresses the stored custom instance gradient");
+
+    const auto roundedImageSource =
+        CreateRoundedImageFixture(temporary.path);
+    const auto roundedImageOutput =
+        temporary.path / L"rounded-image.png";
+    const auto [roundedImageExit, roundedImageJson] = Run(snowwidget, {
+        L"preview", roundedImageSource.wstring(),
+        roundedImageOutput.wstring(), L"--host", host.wstring() });
+    const RgbaBitmap roundedImage = ReadPng(roundedImageOutput);
+    const auto roundedCenter = PixelAt(roundedImage, 58, 58);
+    const auto roundedCorner = PixelAt(roundedImage, 20, 20);
+    Check(roundedImageExit == 0 &&
+            roundedImageJson.find("\"ok\":true") != std::string::npos &&
+            roundedCenter[0] > 240 && roundedCenter[1] < 16 &&
+            roundedCenter[2] < 16 &&
+            roundedCorner[2] > 240 && roundedCorner[0] < 16 &&
+            roundedCorner[1] < 16,
+        "view.image cornerRadius clips bitmap content to the rounded shape");
+
+    const auto immediateRoundedImageSource =
+        CreateImmediateRoundedImageFixture(temporary.path);
+    const auto immediateRoundedImageOutput =
+        temporary.path / L"immediate-rounded-image.png";
+    const auto [immediateRoundedImageExit, immediateRoundedImageJson] =
+        Run(snowwidget, {
+            L"preview", immediateRoundedImageSource.wstring(),
+            immediateRoundedImageOutput.wstring(),
+            L"--host", host.wstring() });
+    const RgbaBitmap immediateRoundedImage =
+        ReadPng(immediateRoundedImageOutput);
+    const auto immediateRoundedCenter =
+        PixelAt(immediateRoundedImage, 58, 58);
+    const auto immediateRoundedCorner =
+        PixelAt(immediateRoundedImage, 20, 20);
+    Check(immediateRoundedImageExit == 0 &&
+            immediateRoundedImageJson.find("\"ok\":true") !=
+                std::string::npos &&
+            immediateRoundedCenter[0] > 240 &&
+            immediateRoundedCenter[1] < 16 &&
+            immediateRoundedCenter[2] < 16 &&
+            immediateRoundedCorner[2] > 240 &&
+            immediateRoundedCorner[0] < 16 &&
+            immediateRoundedCorner[1] < 16,
+        "draw.imageFit cornerRadius clips bitmap content to the rounded shape");
 
     const auto output = temporary.path / L"analog-clock.png";
     const auto source = repository / L"widgets" / L"analog-clock";
@@ -548,6 +1202,66 @@ int wmain(int argc, wchar_t** argv)
     CheckPng(output);
     const RgbaBitmap customDark = CheckOpaquePreview(output, 288, 360);
 
+    const auto defaultLightGlobalLightOutput =
+        temporary.path / L"analog-clock-default-light-global-light.png";
+    const auto defaultLightGlobalDarkOutput =
+        temporary.path / L"analog-clock-default-light-global-dark.png";
+    const auto userDarkGlobalLightOutput =
+        temporary.path / L"analog-clock-user-dark-global-light.png";
+    const auto userDarkGlobalDarkOutput =
+        temporary.path / L"analog-clock-user-dark-global-dark.png";
+    const auto [defaultLightGlobalLightExit,
+        defaultLightGlobalLightJson] = Run(snowwidget, {
+        L"preview", source.wstring(), defaultLightGlobalLightOutput.wstring(),
+        L"--appearance", L"acrylic-light", L"--storage",
+        L"followPersonalization=0", L"--storage", L"__contentTheme=0",
+        L"--host", host.wstring() });
+    const auto [defaultLightGlobalDarkExit,
+        defaultLightGlobalDarkJson] = Run(snowwidget, {
+        L"preview", source.wstring(), defaultLightGlobalDarkOutput.wstring(),
+        L"--appearance", L"acrylic-light", L"--storage",
+        L"followPersonalization=0", L"--storage", L"__contentTheme=1",
+        L"--host", host.wstring() });
+    const auto [userDarkGlobalLightExit, userDarkGlobalLightJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), userDarkGlobalLightOutput.wstring(),
+            L"--appearance", L"acrylic-light", L"--storage",
+            L"followPersonalization=0", L"--storage", L"__contentTheme=0",
+            L"--storage", L"faceTheme=dark", L"--host", host.wstring() });
+    const auto [userDarkGlobalDarkExit, userDarkGlobalDarkJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), userDarkGlobalDarkOutput.wstring(),
+            L"--appearance", L"acrylic-light", L"--storage",
+            L"followPersonalization=0", L"--storage", L"__contentTheme=1",
+            L"--storage", L"faceTheme=dark", L"--host", host.wstring() });
+    const RgbaBitmap defaultLightGlobalLight =
+        CheckOpaquePreview(defaultLightGlobalLightOutput, 192, 240);
+    const RgbaBitmap defaultLightGlobalDark =
+        CheckOpaquePreview(defaultLightGlobalDarkOutput, 192, 240);
+    const RgbaBitmap userDarkGlobalLight =
+        CheckOpaquePreview(userDarkGlobalLightOutput, 192, 240);
+    const RgbaBitmap userDarkGlobalDark =
+        CheckOpaquePreview(userDarkGlobalDarkOutput, 192, 240);
+    Check(defaultLightGlobalLightExit == 0 &&
+            defaultLightGlobalDarkExit == 0 &&
+            userDarkGlobalLightExit == 0 && userDarkGlobalDarkExit == 0 &&
+            defaultLightGlobalLightJson.find("\"ok\":true") !=
+                std::string::npos &&
+            defaultLightGlobalLightJson.find("\"contentTheme\":0") !=
+                std::string::npos &&
+            defaultLightGlobalDarkJson.find("\"contentTheme\":1") !=
+                std::string::npos &&
+            userDarkGlobalLightJson.find("\"contentTheme\":0") !=
+                std::string::npos &&
+            userDarkGlobalDarkJson.find("\"contentTheme\":1") !=
+                std::string::npos &&
+            defaultLightGlobalLight.pixels ==
+                defaultLightGlobalDark.pixels &&
+            userDarkGlobalLight.pixels == userDarkGlobalDark.pixels &&
+            defaultLightGlobalLight.pixels != userDarkGlobalLight.pixels,
+        "analog-clock face theme is user-selected and independent of the "
+        "preview foreground theme");
+
     const auto customGlassOutput =
         temporary.path / L"analog-clock-custom-glass.png";
     const auto [customGlassExit, customGlassJson] = Run(snowwidget, {
@@ -566,15 +1280,18 @@ int wmain(int argc, wchar_t** argv)
     const auto acrylicOutput = temporary.path / L"acrylic.png";
     const auto [transparentExit, transparentJson] = Run(snowwidget, {
         L"preview", source.wstring(), transparentOutput.wstring(),
-        L"--appearance", L"dark", L"--host", host.wstring() });
+        L"--appearance", L"dark", L"--storage",
+        L"edgeHighlightEnabled=0", L"--host", host.wstring() });
     const auto [glassExit, glassJson] = Run(snowwidget, {
         L"preview", source.wstring(), glassOutput.wstring(),
         L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
+        L"--storage", L"edgeHighlightEnabled=0",
         L"--host", host.wstring() });
     const auto [acrylicExit, acrylicJson] = Run(snowwidget, {
         L"preview", source.wstring(), acrylicOutput.wstring(),
         L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
-        L"--storage", L"acrylicEnabled=1", L"--host", host.wstring() });
+        L"--storage", L"acrylicEnabled=1", L"--storage",
+        L"edgeHighlightEnabled=0", L"--host", host.wstring() });
     Check(transparentExit == 0 && glassExit == 0 && acrylicExit == 0 &&
             transparentJson.find("\"ok\":true") != std::string::npos &&
             glassJson.find("\"ok\":true") != std::string::npos &&
@@ -601,6 +1318,180 @@ int wmain(int argc, wchar_t** argv)
     Check(customMaterialGlass.pixels != customMaterialAcrylic.pixels,
         "custom acrylic adds one stable noise layer over custom glass");
 
+    const auto standardBorderOutput =
+        temporary.path / L"border-standard.png";
+    const auto zeroStrengthBorderOutput =
+        temporary.path / L"edge-highlight-zero.png";
+    const auto borderlessOutput =
+        temporary.path / L"edge-highlight-borderless.png";
+    const auto edgeHighlightOutput =
+        temporary.path / L"edge-highlight-75.png";
+    const auto glassEdgeHighlightOutput =
+        temporary.path / L"glass-edge-highlight-75.png";
+    const auto alternateHiddenBorderOutput =
+        temporary.path / L"edge-highlight-hidden-border-color.png";
+    const auto wideEdgeHighlightOutput =
+        temporary.path / L"edge-highlight-wide.png";
+    const auto [standardBorderExit, standardBorderJson] = Run(snowwidget, {
+        L"preview", source.wstring(), standardBorderOutput.wstring(),
+        L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+        L"--storage", L"borderAlpha=0.75",
+        L"--storage", L"borderWidth=2",
+        L"--storage", L"edgeHighlightEnabled=0",
+        L"--storage", L"edgeHighlightStrength=0.75",
+        L"--host", host.wstring() });
+    const auto [zeroStrengthBorderExit, zeroStrengthBorderJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), zeroStrengthBorderOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderAlpha=0.75",
+            L"--storage", L"borderWidth=2",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0",
+            L"--host", host.wstring() });
+    const auto [borderlessExit, borderlessJson] = Run(snowwidget, {
+        L"preview", source.wstring(), borderlessOutput.wstring(),
+        L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+        L"--storage", L"borderAlpha=0",
+        L"--storage", L"edgeHighlightEnabled=0",
+        L"--host", host.wstring() });
+    const auto [edgeHighlightExit, edgeHighlightJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), edgeHighlightOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0.75",
+            L"--host", host.wstring() });
+    const auto [glassEdgeHighlightExit, glassEdgeHighlightJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(),
+            glassEdgeHighlightOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=1",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0.75",
+            L"--host", host.wstring() });
+    const auto [wideEdgeHighlightExit, wideEdgeHighlightJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), wideEdgeHighlightOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=4",
+            L"--storage", L"edgeHighlightStrength=0.75",
+            L"--host", host.wstring() });
+    const auto [alternateHiddenBorderExit, alternateHiddenBorderJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(),
+            alternateHiddenBorderOutput.wstring(),
+            L"--appearance", L"dark", L"--storage", L"glassEnabled=0",
+            L"--storage", L"border=16711680",
+            L"--storage", L"borderAlpha=0",
+            L"--storage", L"edgeHighlightEnabled=1",
+            L"--storage", L"edgeHighlightWidth=2",
+            L"--storage", L"edgeHighlightStrength=0.75",
+            L"--host", host.wstring() });
+    Check(standardBorderExit == 0 && zeroStrengthBorderExit == 0 &&
+            borderlessExit == 0 &&
+            edgeHighlightExit == 0 && glassEdgeHighlightExit == 0 &&
+            wideEdgeHighlightExit == 0 &&
+            alternateHiddenBorderExit == 0 &&
+            standardBorderJson.find("\"ok\":true") != std::string::npos &&
+            zeroStrengthBorderJson.find("\"ok\":true") !=
+                std::string::npos &&
+            borderlessJson.find("\"ok\":true") != std::string::npos &&
+            edgeHighlightJson.find("\"ok\":true") !=
+                std::string::npos &&
+            glassEdgeHighlightJson.find("\"ok\":true") !=
+                std::string::npos &&
+            wideEdgeHighlightJson.find("\"ok\":true") !=
+                std::string::npos &&
+            alternateHiddenBorderJson.find("\"ok\":true") !=
+                std::string::npos,
+        "ordinary border plus zero-strength, recommended, alternate-border, and maximum-width edge highlights render");
+    const RgbaBitmap standardBorder =
+        CheckOpaquePreview(standardBorderOutput, 192, 240);
+    const RgbaBitmap zeroStrengthBorder =
+        CheckOpaquePreview(zeroStrengthBorderOutput, 192, 240);
+    const RgbaBitmap borderless =
+        CheckOpaquePreview(borderlessOutput, 192, 240);
+    const RgbaBitmap edgeHighlight =
+        CheckOpaquePreview(edgeHighlightOutput, 192, 240);
+    const RgbaBitmap glassEdgeHighlight =
+        CheckOpaquePreview(glassEdgeHighlightOutput, 192, 240);
+    const RgbaBitmap alternateHiddenBorder =
+        CheckOpaquePreview(alternateHiddenBorderOutput, 192, 240);
+    const RgbaBitmap wideEdgeHighlight =
+        CheckOpaquePreview(wideEdgeHighlightOutput, 192, 240);
+    Check(standardBorder.pixels == zeroStrengthBorder.pixels,
+        "zero-percent edge highlight is pixel-identical to the ordinary border");
+    Check(standardBorder.pixels != edgeHighlight.pixels &&
+            edgeHighlight.pixels != wideEdgeHighlight.pixels,
+        "recommended edge highlight and maximum width produce distinct borderless output");
+    Check(edgeHighlight.pixels == alternateHiddenBorder.pixels,
+        "a transparent border color does not tint the panel-material edge highlight");
+    constexpr RECT wholePanel{ 0, 0, 192, 240 };
+    Check(CountDarkenedPixels(borderless, edgeHighlight, wholePanel) == 0 &&
+            CountDarkenedPixels(borderless, wideEdgeHighlight,
+                wholePanel) == 0,
+        "edge highlights only add light to the existing panel pixels");
+    Check(transparent.pixels != customMaterialGlass.pixels &&
+            transparent.pixels != edgeHighlight.pixels &&
+            customMaterialGlass.pixels != glassEdgeHighlight.pixels &&
+            edgeHighlight.pixels != glassEdgeHighlight.pixels &&
+            CountDarkenedPixels(customMaterialGlass,
+                glassEdgeHighlight, wholePanel) == 0,
+        "glass and edge-highlight toggles render all four explicit combinations without either control changing the other");
+    constexpr RECT outerTopLight{ 64, 0, 128, 1 };
+    constexpr RECT nearRimTopLight{ 64, 1, 128, 2 };
+    constexpr RECT softShoulderTopLight{ 64, 3, 128, 4 };
+    constexpr RECT innerTopTail{ 64, 7, 128, 8 };
+    constexpr RECT deepInterior{ 11, 11, 181, 229 };
+    const std::uint64_t outerGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, outerTopLight);
+    const std::uint64_t nearRimGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, nearRimTopLight);
+    const std::uint64_t shoulderGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, softShoulderTopLight);
+    const std::uint64_t tailGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, innerTopTail);
+    Check(outerGain > nearRimGain && nearRimGain > shoulderGain &&
+            shoulderGain > tailGain && tailGain > 0 &&
+            CountDifferingPixels(borderless, wideEdgeHighlight,
+                deepInterior) == 0,
+        "bevel reflection peaks at the outer rim and fades monotonically through a soft shoulder before the panel interior");
+    constexpr RECT topLightStrip{ 64, 0, 128, 10 };
+    constexpr RECT bottomLightStrip{ 64, 230, 128, 240 };
+    constexpr RECT leftLightStrip{ 0, 80, 10, 160 };
+    constexpr RECT rightLightStrip{ 182, 80, 192, 160 };
+    const std::uint64_t topGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, topLightStrip);
+    const std::uint64_t bottomGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, bottomLightStrip);
+    const std::uint64_t leftGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, leftLightStrip);
+    const std::uint64_t rightGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, rightLightStrip);
+    constexpr RECT topLeftCornerLight{ 0, 0, 16, 16 };
+    const std::uint64_t topLeftCornerGain = SumBrightnessGain(
+        borderless, wideEdgeHighlight, topLeftCornerLight);
+    const std::uint64_t topChangedPixels = CountDifferingPixels(
+        borderless, wideEdgeHighlight, topLightStrip);
+    const std::uint64_t topLeftCornerChangedPixels = CountDifferingPixels(
+        borderless, wideEdgeHighlight, topLeftCornerLight);
+    Check(topGain > bottomGain * 2 && leftGain > rightGain * 2 &&
+            bottomGain * 10 > topGain * 3 &&
+            rightGain * 10 > leftGain * 3,
+        "the crest-free opposite transmission remains visible at roughly one-third to one-half of the primary reflection");
+    Check(topChangedPixels > 0 && topLeftCornerChangedPixels > 0 &&
+            topLeftCornerGain * topChangedPixels * 5 <
+                topGain * topLeftCornerChangedPixels * 7,
+        "broad area light keeps the rounded corner from overpowering the connected straight edge");
+
     constexpr std::array<std::wstring_view, 6> appearances{
         L"dark", L"light", L"glass-dark", L"glass-light",
         L"acrylic-dark", L"acrylic-light" };
@@ -609,6 +1500,8 @@ int wmain(int argc, wchar_t** argv)
         "acrylic-dark", "acrylic-light" };
     constexpr std::array<std::string_view, 6> appearanceThemes{
         "dark", "light", "dark", "light", "dark", "light" };
+    constexpr std::array<int, 6> appearanceContentThemes{
+        0, 1, 0, 0, 0, 1 };
     std::vector<RgbaBitmap> materialPreviews;
     for (std::size_t index = 0; index < appearances.size(); ++index)
     {
@@ -623,10 +1516,13 @@ int wmain(int argc, wchar_t** argv)
             std::string(appearanceNames[index]) + "\"";
         const std::string expectedTheme = "\"theme\":\"" +
             std::string(appearanceThemes[index]) + "\"";
+        const std::string expectedContentTheme = "\"contentTheme\":" +
+            std::to_string(appearanceContentThemes[index]);
         Check(materialExit == 0 &&
                 materialJson.find(expectedAppearance) != std::string::npos &&
-                materialJson.find(expectedTheme) != std::string::npos,
-            "each supported appearance reports its canonical JSON identity");
+                materialJson.find(expectedTheme) != std::string::npos &&
+                materialJson.find(expectedContentTheme) != std::string::npos,
+            "each supported appearance reports its stage and resolved foreground identities");
         materialPreviews.push_back(
             CheckOpaquePreview(materialOutput, 192, 240));
     }
@@ -700,10 +1596,11 @@ int wmain(int argc, wchar_t** argv)
 
     const auto invalidOutput = temporary.path / L"invalid.png";
     const auto boundedSource =
-        repository / L"widgets" / L"media-controls";
+        repository / L"developer_assets" / L"workshop_widgets" /
+            L"audio-spectrum";
     const auto [invalidExit, invalidJson] = Run(snowwidget, {
         L"preview", boundedSource.wstring(), invalidOutput.wstring(),
-        L"--columns", L"8", L"--host", host.wstring() });
+        L"--rows", L"2", L"--host", host.wstring() });
     Check(invalidExit != 0 &&
             invalidJson.find("\"stage\":\"request.size\"") !=
                 std::string::npos &&
@@ -746,6 +1643,25 @@ int wmain(int argc, wchar_t** argv)
                 "\"stage\":\"request.background\"") !=
                 std::string::npos,
         "preview rejects a missing or undecodable author background");
+
+    const auto [paddingWithoutCanvasExit, paddingWithoutCanvasJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), invalidOutput.wstring(),
+            L"--padding", L"48", L"--host", host.wstring() });
+    Check(paddingWithoutCanvasExit == 2 &&
+            paddingWithoutCanvasJson.find("padding requires canvas-size") !=
+                std::string::npos,
+        "preview rejects padding without an independent square canvas");
+
+    const auto [oversizedPaddingExit, oversizedPaddingJson] =
+        Run(snowwidget, {
+            L"preview", source.wstring(), invalidOutput.wstring(),
+            L"--canvas-size", L"512", L"--padding", L"256",
+            L"--host", host.wstring() });
+    Check(oversizedPaddingExit == 2 &&
+            oversizedPaddingJson.find("positive canvas content area") !=
+                std::string::npos,
+        "preview rejects padding that consumes the square canvas");
 
     std::cout << "widget author preview CLI tests passed\n";
     CoUninitialize();

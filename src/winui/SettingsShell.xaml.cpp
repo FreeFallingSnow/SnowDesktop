@@ -127,6 +127,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.nav.general", L"General"},
     LocalizedFallback{"settings.nav.personalization", L"Personalization"},
     LocalizedFallback{"settings.nav.desktop", L"Desktop"},
+    LocalizedFallback{"settings.nav.pages", L"Pages & grid"},
     LocalizedFallback{"settings.nav.group.desktopShell", L"Desktop & shell"},
     LocalizedFallback{"settings.nav.group.data", L"Data"},
     LocalizedFallback{"settings.nav.categories", L"Categories & rules"},
@@ -141,6 +142,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.page.general.description", L"Startup, language, navigation, hotkeys and everyday behavior."},
     LocalizedFallback{"settings.page.personalization.description", L"Theme, widget surfaces, desktop icons and icon beautification."},
     LocalizedFallback{"settings.page.desktop.description", L"Desktop behavior, display selection and pointer interaction."},
+    LocalizedFallback{"settings.page.pages.description", L"Reorder desktop pages and adjust each page's grid."},
     LocalizedFallback{"settings.page.categories.description", L"Manage category label counts and automatic matching rules."},
     LocalizedFallback{"settings.page.dock.description", L"Configure Dock behavior, placement and items."},
     LocalizedFallback{"settings.page.taskbar.description", L"Configure Windows taskbar behavior, default appearance and scenario overrides."},
@@ -160,6 +162,22 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.home.backup.description", L"Create or restore a backup."},
     LocalizedFallback{"settings.general.startup", L"Startup and desktop"},
     LocalizedFallback{"settings.general.startup.description", L"Control startup and software desktop behavior."},
+    LocalizedFallback{"settings.general.advancedFeatures", L"Advanced features"},
+    LocalizedFallback{"settings.general.advancedFeatures.description", L"Unlock Steam-only advanced features."},
+    LocalizedFallback{"settings.general.advancedFeatures.unlockStatus", L"Unlock status"},
+    LocalizedFallback{"settings.general.advancedFeatures.registered", L"Unlocked"},
+    LocalizedFallback{"settings.general.advancedFeatures.registeredUntil", L"Unlocked · Connect to Steam before {0} for automatic renewal"},
+    LocalizedFallback{"settings.general.advancedFeatures.unregistered", L"Not unlocked"},
+    LocalizedFallback{"settings.general.advancedFeatures.checking", L"Checking Steam..."},
+    LocalizedFallback{"settings.general.advancedFeatures.unavailable", L"Steam Bridge unavailable"},
+    LocalizedFallback{"settings.general.advancedFeatures.portable", L"Available with the Steam version"},
+    LocalizedFallback{"settings.general.advancedFeatures.register", L"Register through Steam"},
+    LocalizedFallback{"settings.general.advancedFeatures.unlock", L"Unlock"},
+    LocalizedFallback{"settings.general.advancedFeatures.unlockRequired", L"Please unlock advanced features before enabling them."},
+    LocalizedFallback{"settings.general.advancedFeatures.reminder", L"Start Steam and sign in to an account that owns SnowDesktop, then register manually."},
+    LocalizedFallback{"settings.general.advancedFeatures.notOwned", L"The current Steam account does not own SnowDesktop."},
+    LocalizedFallback{"settings.general.advancedFeatures.failed", L"Steam registration failed. Start Steam and try again."},
+    LocalizedFallback{"settings.general.advancedFeatures.storageFailed", L"Steam ownership was verified, but the protected unlock state could not be saved."},
     LocalizedFallback{"settings.general.language", L"Language"},
     LocalizedFallback{"settings.general.language.description", L"Choose the language used by SnowDesktop."},
     LocalizedFallback{"settings.general.hotkeys", L"Keyboard shortcuts"},
@@ -323,6 +341,12 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
                 localize, cardStyle());
         dockPage_->SetActions(dockPageActions_);
     };
+    const auto ensureAnimation = [&]() {
+        if (animationPage_) return;
+        animationPage_ = std::make_unique<snowdesktop::winui::AnimationPerformancePagePresenter>(
+            localize, cardStyle(), [this](const SettingsRoute& route) { RequestRoute(route); });
+        animationPage_->SetActions(dockPageActions_);
+    };
     const auto ensureHomeAbout = [&]() {
         if (homeAboutPage_)
             return;
@@ -332,6 +356,14 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
                 Resources().Lookup(winrt::box_value(
                     L"SettingsShellCardButtonStyle")).as<mux::Style>());
         homeAboutPage_->SetActions(homeAboutPageActions_);
+    };
+    const auto ensurePageLayout = [&]() {
+        if (pageLayoutPage_)
+            return;
+        pageLayoutPage_ = std::make_unique<
+            snowdesktop::winui::PageLayoutPagePresenter>(
+                localize, cardStyle());
+        pageLayoutPage_->SetActions(pageLayoutPageActions_);
     };
     const auto ensureWidgets = [&]() {
         if (widgetsPage_)
@@ -366,6 +398,19 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::General:
     case SettingsPage::Desktop:
         ensureGeneral();
+        break;
+    case SettingsPage::AnimationPerformance:
+        ensureAnimation();
+        break;
+    case SettingsPage::DesktopPages:
+        ensureGeneral();
+        ensurePageLayout();
+        break;
+    case SettingsPage::LargeIcon:
+        if (!largeIconPage_) largeIconPage_ = std::make_unique<snowdesktop::winui::LargeIconPagePresenter>(
+            localize, cardStyle(), largeIconSettingsAction_, [this] {
+                if (!closed_ && navigation_.Route().page == SettingsPage::LargeIcon) RenderPageHeading();
+            });
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
@@ -433,10 +478,20 @@ void SettingsShell::Close() noexcept
             dockPage_->Deactivate();
             dockPage_->Close();
         }
+        if (animationPage_)
+        {
+            animationPage_->Deactivate();
+            animationPage_->Close();
+        }
         if (homeAboutPage_)
         {
             homeAboutPage_->Deactivate();
             homeAboutPage_->Close();
+        }
+        if (pageLayoutPage_)
+        {
+            pageLayoutPage_->Deactivate();
+            pageLayoutPage_->Close();
         }
         if (widgetSettingsPage_)
         {
@@ -470,7 +525,10 @@ void SettingsShell::Close() noexcept
     personalizationPage_.reset();
     desktopPage_.reset();
     dockPage_.reset();
+    animationPage_.reset();
     homeAboutPage_.reset();
+    pageLayoutPage_.reset();
+    largeIconPage_.reset();
     widgetSettingsPage_.reset();
     widgetSettingsService_ = nullptr;
     widgetsPage_.reset();
@@ -480,6 +538,7 @@ void SettingsShell::Close() noexcept
     desktopPageActions_ = {};
     dockPageActions_ = {};
     homeAboutPageActions_ = {};
+    pageLayoutPageActions_ = {};
     widgetsPageActions_ = {};
     backupDataPageActions_ = {};
     localizer_ = {};
@@ -518,10 +577,20 @@ void SettingsShell::ReleaseSessionResources() noexcept
             dockPage_->Deactivate();
             dockPage_->Close();
         }
+        if (animationPage_)
+        {
+            animationPage_->Deactivate();
+            animationPage_->Close();
+        }
         if (homeAboutPage_)
         {
             homeAboutPage_->Deactivate();
             homeAboutPage_->Close();
+        }
+        if (pageLayoutPage_)
+        {
+            pageLayoutPage_->Deactivate();
+            pageLayoutPage_->Close();
         }
         if (widgetSettingsPage_)
         {
@@ -543,6 +612,9 @@ void SettingsShell::ReleaseSessionResources() noexcept
         if (activeDialog_)
             activeDialog_.Hide();
         ClearSearch();
+        PageHeaderIconHost().Content(nullptr);
+        PageHeaderIconHost().Visibility(mux::Visibility::Collapsed);
+        PageBreadcrumb().ItemsSource(nullptr);
     }
     catch (...)
     {
@@ -553,7 +625,10 @@ void SettingsShell::ReleaseSessionResources() noexcept
     personalizationPage_.reset();
     desktopPage_.reset();
     dockPage_.reset();
+    animationPage_.reset();
     homeAboutPage_.reset();
+    pageLayoutPage_.reset();
+    largeIconPage_.reset();
     widgetSettingsPage_.reset();
     widgetsPage_.reset();
     backupDataPage_.reset();
@@ -576,6 +651,7 @@ void SettingsShell::RefreshLocalizedText()
 
     HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
+    AnimationItem().Content(winrt::box_value(Localize("settings.nav.animation")));
     PersonalizationItem().Content(
         winrt::box_value(Localize("app.settings.appearance")));
     AppearanceThemeItem().Content(
@@ -591,6 +667,7 @@ void SettingsShell::RefreshLocalizedText()
     DataHeader().Content(
         winrt::box_value(Localize("settings.nav.group.data")));
     DesktopItem().Content(winrt::box_value(Localize("settings.nav.desktop")));
+    PagesItem().Content(winrt::box_value(Localize("settings.nav.pages")));
     CategoriesItem().Content(
         winrt::box_value(Localize("settings.nav.categories")));
     DockItem().Content(winrt::box_value(Localize("settings.nav.dock")));
@@ -600,6 +677,7 @@ void SettingsShell::RefreshLocalizedText()
     AboutItem().Content(winrt::box_value(Localize("app.settings.about")));
     DeveloperItem().Content(
         winrt::box_value(Localize("app.settings.widgets_developer_tools")));
+    RenderAgentSkillUpdateBadge();
     DebugItem().Content(winrt::box_value(Localize("app.settings.debug")));
     SettingsSearchBox().PlaceholderText(
         Localize("settings.search.placeholder"));
@@ -627,8 +705,13 @@ void SettingsShell::RefreshLocalizedText()
         desktopPage_->RefreshLocalizedText();
     if (dockPage_)
         dockPage_->RefreshLocalizedText();
+    if (animationPage_)
+        animationPage_->RefreshLocalizedText();
     if (homeAboutPage_)
         homeAboutPage_->RefreshLocalizedText();
+    if (pageLayoutPage_)
+        pageLayoutPage_->RefreshLocalizedText();
+    if (largeIconPage_) largeIconPage_->RefreshLocalizedText();
     if (widgetSettingsPage_)
         widgetSettingsPage_->RefreshLocalizedText();
     if (widgetsPage_)
@@ -798,6 +881,8 @@ void SettingsShell::SetDockPageActions(
     dockPageActions_ = std::move(actions);
     if (dockPage_)
         dockPage_->SetActions(dockPageActions_);
+    if (animationPage_)
+        animationPage_->SetActions(dockPageActions_);
 }
 
 void SettingsShell::SetHomeAboutPageActions(
@@ -808,6 +893,19 @@ void SettingsShell::SetHomeAboutPageActions(
         homeAboutPage_->SetActions(homeAboutPageActions_);
 }
 
+void SettingsShell::SetPageLayoutPageActions(
+    snowdesktop::winui::PageLayoutPageActions actions)
+{
+    pageLayoutPageActions_ = std::move(actions);
+    if (pageLayoutPage_)
+        pageLayoutPage_->SetActions(pageLayoutPageActions_);
+}
+
+void SettingsShell::SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAction action)
+{
+    largeIconSettingsAction_ = std::move(action);
+}
+
 bool SettingsShell::ApplyHomeAboutStatusPatch(
     const snowdesktop::winui::HomeAboutStatusPatch& patch)
 {
@@ -815,7 +913,7 @@ bool SettingsShell::ApplyHomeAboutStatusPatch(
 }
 
 void SettingsShell::SetWidgetSettingsService(
-    snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept
+    snowdesktop::widget_runtime::IWidgetSettingsService* service) noexcept
 {
     if (closed_)
         return;
@@ -883,6 +981,9 @@ bool SettingsShell::EnsureWidgetSettingsPresenter() noexcept
                     .as<mux::Style>());
 
         snowdesktop::winui::WidgetSettingsPresenterCallbacks callbacks;
+        callbacks.nameChanged = [this] {
+            if (!closed_ && navigation_.Route().page == SettingsPage::WidgetSettings) RenderPageHeading();
+        };
         callbacks.mutationCompleted =
             [this](std::string,
                    snowdesktop::widget_runtime::WidgetSettingMutationResult
@@ -985,11 +1086,23 @@ void SettingsShell::SetWidgetsPageActions(
 bool SettingsShell::ApplyWidgetsPageSnapshot(
     const snowdesktop::winui::WidgetsPageSnapshot& snapshot)
 {
-    return !closed_ && ownerThreadId_ == GetCurrentThreadId() &&
+    const bool applied = !closed_ && ownerThreadId_ == GetCurrentThreadId() &&
         widgetsPage_ &&
         IsWidgetsBackendPage(navigation_.Route().page) &&
         navigation_.Generation() == snapshot.generation &&
         widgetsPage_->ApplySnapshot(snapshot);
+    if (!applied)
+        return false;
+
+    const bool updateAvailable = std::any_of(
+        snapshot.agentSkills.begin(), snapshot.agentSkills.end(),
+        [](const auto& skill) {
+            return skill.selected && skill.state ==
+                snowdesktop::winui::WidgetAgentSkillInstallState::
+                    UpdateAvailable;
+        });
+    SetAgentSkillUpdateAvailable(updateAvailable);
+    return true;
 }
 
 void SettingsShell::SetBackupDataPageActions(
@@ -1056,8 +1169,13 @@ void SettingsShell::SuspendInteraction() noexcept
             desktopPage_->Deactivate();
         if (dockPage_)
             dockPage_->Deactivate();
+        if (animationPage_)
+            animationPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
+        if (pageLayoutPage_)
+            pageLayoutPage_->Deactivate();
+        if (largeIconPage_) largeIconPage_->Deactivate();
         if (widgetSettingsPage_)
             widgetSettingsPage_->Deactivate();
         if (widgetsPage_)
@@ -1111,11 +1229,15 @@ bool SettingsShell::ApplySnapshot(
             desktopPage_->ApplySnapshot(snapshot);
         if (dockPage_)
             dockPage_->ApplySnapshot(snapshot);
+        if (animationPage_)
+            animationPage_->ApplySnapshot(snapshot);
         if (homeAboutPage_)
             homeAboutPage_->ApplySnapshot(snapshot);
         const bool routeChanged = previousRoute != navigation_.Route();
         const bool generationChanged =
             previousGeneration != navigation_.Generation();
+        if (routeChanged || generationChanged)
+            ClearInfo();
         if (routeChanged || generationChanged || !renderedPageRoute_)
             RenderRoute(false, true);
         RenderControllerStatus(snapshot);
@@ -1201,6 +1323,17 @@ void SettingsShell::SetConditionalPagesVisible(
         if (routeRequested_)
             routeRequested_(*replacement);
     }
+}
+
+void SettingsShell::SetAgentSkillUpdateAvailable(bool available)
+{
+    if (closed_ || ownerThreadId_ != GetCurrentThreadId() ||
+        agentSkillUpdateAvailable_ == available)
+    {
+        return;
+    }
+    agentSkillUpdateAvailable_ = available;
+    RenderAgentSkillUpdateBadge();
 }
 
 bool SettingsShell::SetSearchResults(
@@ -1525,11 +1658,13 @@ void SettingsShell::HookEvents()
                 return;
             for (const SettingsPage page : {
                      SettingsPage::Home, SettingsPage::General,
+                     SettingsPage::AnimationPerformance,
                      SettingsPage::AppearanceTheme,
                      SettingsPage::AppearanceWidgets,
                      SettingsPage::AppearanceDesktopIcons,
                      SettingsPage::AppearanceIconBeautification,
-                     SettingsPage::Desktop, SettingsPage::DesktopCategories,
+                     SettingsPage::Desktop, SettingsPage::DesktopPages,
+                     SettingsPage::DesktopCategories,
                      SettingsPage::Dock, SettingsPage::Taskbar,
                      SettingsPage::Widgets,
                      SettingsPage::BackupAndData, SettingsPage::About,
@@ -1664,22 +1799,31 @@ void SettingsShell::RenderRoute(
     bool scheduleFocus)
 {
     RenderNavigationSelection();
-    RenderBreadcrumb();
     const auto route = navigation_.Route();
-    std::wstring title = PageTitleText(route.page);
-    if (route.page == SettingsPage::WidgetSettings &&
-        !route.widgetInstanceId.empty())
+    if (renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::AppearanceDesktopIcons && route.page == SettingsPage::LargeIcon)
     {
-        title += L" · ";
-        title += route.widgetInstanceId;
+        largeIconParentOffset_ = PageScrollViewer().VerticalOffset();
+        largeIconParentFocus_ = {};
+        if (const auto focus = muxi::FocusManager::GetFocusedElement(ShellRoot().XamlRoot()).try_as<mux::FrameworkElement>())
+            largeIconParentFocus_ = winrt::make_weak(focus);
     }
-    PageTitle().Text(title);
-    PageSubtitle().Text(PageDescriptionText(route.page));
+    restoreLargeIconParent_ = renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::LargeIcon &&
+        route.page == SettingsPage::AppearanceDesktopIcons;
+    RenderPageHeading();
     RenderPageHeaderIcon();
-    muxa::AutomationProperties::SetName(PageTitle(), title);
     RenderPageCards(forcePageCards);
     if (scheduleFocus)
         ScheduleFocus();
+}
+
+void SettingsShell::RenderPageHeading()
+{
+    const auto page = navigation_.Route().page;
+    const auto title = PageTitleText(page);
+    PageTitle().Text(title);
+    PageSubtitle().Text(PageDescriptionText(page));
+    muxa::AutomationProperties::SetName(PageTitle(), title);
+    RenderBreadcrumb();
 }
 
 void SettingsShell::RenderNavigationSelection()
@@ -1688,6 +1832,8 @@ void SettingsShell::RenderNavigationSelection()
     SettingsPage selectedPage = navigation_.Route().page;
     if (selectedPage == SettingsPage::WidgetSettings)
         selectedPage = SettingsPage::Widgets;
+    if (selectedPage == SettingsPage::LargeIcon)
+        selectedPage = SettingsPage::AppearanceDesktopIcons;
     if (selectedPage == SettingsPage::Personalization)
         selectedPage = SettingsPage::AppearanceTheme;
     if (selectedPage == SettingsPage::AppearanceTheme ||
@@ -1728,6 +1874,8 @@ void SettingsShell::ApplyNavigationIcons()
     const std::array descriptors{
         IconDescriptor{GeneralItem(),
             L"ms-appx:///Assets/Settings/Icons/general.svg", L"\xE713"},
+        IconDescriptor{AnimationItem(),
+            L"ms-appx:///Assets/Settings/Icons/animation-performance.svg", L"\xE768"},
         IconDescriptor{PersonalizationItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance.svg", L"\xE771"},
         IconDescriptor{AppearanceThemeItem(),
@@ -1744,6 +1892,8 @@ void SettingsShell::ApplyNavigationIcons()
             L"\xE793"},
         IconDescriptor{DesktopItem(),
             L"ms-appx:///Assets/Settings/Icons/desktop.svg", L"\xE7F4"},
+        IconDescriptor{PagesItem(),
+            L"ms-appx:///Assets/Settings/Icons/pages.svg", L"\xE8A5"},
         IconDescriptor{CategoriesItem(),
             L"ms-appx:///Assets/Settings/Icons/categories.svg", L"\xE8B7"},
         IconDescriptor{DockItem(),
@@ -1763,6 +1913,11 @@ void SettingsShell::ApplyNavigationIcons()
     };
 
     const bool highContrast = IsHighContrastEnabled();
+    if (navigationIconsHighContrast_ &&
+        *navigationIconsHighContrast_ == highContrast)
+    {
+        return;
+    }
     for (const auto& descriptor : descriptors)
     {
         if (highContrast)
@@ -1776,6 +1931,7 @@ void SettingsShell::ApplyNavigationIcons()
                 descriptor.asset));
         }
     }
+    navigationIconsHighContrast_ = highContrast;
 }
 
 void SettingsShell::RenderPageHeaderIcon()
@@ -1818,9 +1974,19 @@ void SettingsShell::RenderBreadcrumb()
             SettingsRoute::ForPage(SettingsPage::Widgets));
         items.Append(winrt::box_value(Localize("settings.nav.widgets")));
         breadcrumbRoutes_.push_back(route);
-        items.Append(winrt::box_value(PageTitleText(SettingsPage::WidgetSettings)));
+        const auto name = PageSubjectName(SettingsPage::WidgetSettings);
+        items.Append(winrt::box_value(name.empty() ? PageTitleText(SettingsPage::WidgetSettings) : name));
     }
-    PageBreadcrumb().Visibility(route.page == SettingsPage::WidgetSettings
+    if (route.page == SettingsPage::LargeIcon)
+    {
+        const auto parent = navigation_.PeekBack();
+        breadcrumbRoutes_.push_back(parent && parent->page == SettingsPage::AppearanceDesktopIcons
+            ? *parent : SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons));
+        items.Append(winrt::box_value(PageTitleText(SettingsPage::AppearanceDesktopIcons)));
+        breadcrumbRoutes_.push_back(route);
+        items.Append(winrt::box_value(PageTitleText(SettingsPage::LargeIcon)));
+    }
+    PageBreadcrumb().Visibility(!breadcrumbRoutes_.empty()
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
     PageBreadcrumb().ItemsSource(items);
@@ -1847,7 +2013,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     const auto usesGeneralPresenter = [](SettingsPage page) {
         return page == SettingsPage::General ||
             page == SettingsPage::Desktop ||
-            page == SettingsPage::Dock;
+            page == SettingsPage::Dock ||
+            page == SettingsPage::DesktopPages;
     };
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
@@ -1883,6 +2050,10 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         !usesDockPresenter(pageRoute.page);
     if (leavingDock && dockPage_)
         dockPage_->Deactivate();
+    if (renderedPageRoute_ && animationPage_ &&
+        renderedPageRoute_->page == SettingsPage::AnimationPerformance &&
+        pageRoute.page != SettingsPage::AnimationPerformance)
+        animationPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
             renderedPageRoute_->page == SettingsPage::About ||
@@ -1892,6 +2063,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::Debug;
     if (leavingHomeAbout && homeAboutPage_)
         homeAboutPage_->Deactivate();
+    const bool leavingPageLayout = renderedPageRoute_ &&
+        renderedPageRoute_->page == SettingsPage::DesktopPages &&
+        pageRoute.page != SettingsPage::DesktopPages;
+    if (leavingPageLayout && pageLayoutPage_)
+        pageLayoutPage_->Deactivate();
+    if (largeIconPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::LargeIcon &&
+        (pageRoute.page != SettingsPage::LargeIcon || pageRoute.itemKey != renderedPageRoute_->itemKey))
+        largeIconPage_->Deactivate();
     const bool leavingWidgetSettings = renderedPageRoute_ &&
         renderedPageRoute_->page == SettingsPage::WidgetSettings &&
         pageRoute.page != SettingsPage::WidgetSettings;
@@ -1949,6 +2128,16 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     };
     switch (navigation_.Route().page)
     {
+    case SettingsPage::AnimationPerformance:
+        if (animationPage_)
+        {
+            PageCards().Children().Append(animationPage_->Content());
+            animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
+                RegisterFocusTarget(std::move(id), element);
+            });
+            animationPage_->Activate();
+        }
+        break;
     case SettingsPage::Home:
         if (homeAboutPage_)
         {
@@ -1989,6 +2178,10 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
                 "personalization.borderAlpha",
+                "personalization.borderWidth",
+                "personalization.edgeHighlight",
+                "personalization.edgeHighlightWidth",
+                "personalization.edgeHighlightStrength",
                 "personalization.quickNavigationTheme",
                 "personalization.collectionPopupTheme",
                 "personalization.enableGradient",
@@ -2026,6 +2219,35 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                     RegisterFocusTarget(std::move(focusId), element);
                 });
             generalPage_->Activate();
+        }
+        break;
+    case SettingsPage::DesktopPages:
+        if (pageLayoutPage_ && generalPage_)
+        {
+            PageCards().Children().Append(pageLayoutPage_->Content());
+            PageCards().Children().Append(
+                generalPage_->PageNavigationContent());
+            for (const std::string_view focusId : {
+                     "pages.order", "pages.add", "pages.grid",
+                     "pages.columns", "pages.rows"})
+            {
+                RegisterFocusTarget(std::string(focusId),
+                    pageLayoutPage_->FocusTarget(focusId));
+            }
+            generalPage_->RegisterFocusTargets(
+                [this](std::string focusId,
+                       const mux::FrameworkElement& element) {
+                    RegisterFocusTarget(std::move(focusId), element);
+                });
+            pageLayoutPage_->Activate();
+            generalPage_->Activate();
+        }
+        break;
+    case SettingsPage::LargeIcon:
+        if (largeIconPage_)
+        {
+            largeIconPage_->Activate(pageRoute.itemKey);
+            PageCards().Children().Append(largeIconPage_->Content());
         }
         break;
     case SettingsPage::AppearanceDesktopIcons:
@@ -2095,6 +2317,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 generalPage_->DockShortcutContent());
             PageCards().Children().Append(dockPage_->DockContent());
+            muxc::HyperlinkButton animationLink{};
+            animationLink.Content(winrt::box_value(Localize("settings.nav.animation")));
+            animationLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            animationLink.Click([weak = get_weak()](const auto&, const auto&) {
+                if (const auto shell = weak.get())
+                    shell->RequestRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, "animation.hover"));
+            });
+            PageCards().Children().Append(animationLink);
             generalPage_->RegisterFocusTargets(
                 [this](std::string focusId,
                        const mux::FrameworkElement& element) {
@@ -2104,6 +2334,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.enable", "dock.position", "dock.layout",
                 "dock.monitor", "dock.thickness",
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
+                "dock.floatingEdgeSwipeBlockFullscreen",
                 "dock.showWindowsButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap",
@@ -2255,6 +2486,21 @@ void SettingsShell::RenderConditionalPages()
             : mux::Visibility::Collapsed);
 }
 
+void SettingsShell::RenderAgentSkillUpdateBadge()
+{
+    DeveloperSkillUpdateBadge().Visibility(agentSkillUpdateAvailable_
+        ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    std::wstring automationName =
+        Localize("app.settings.widgets_developer_tools");
+    if (agentSkillUpdateAvailable_)
+    {
+        automationName += L", ";
+        automationName +=
+            Localize("app.settings.widgets_skill_update_available");
+    }
+    muxa::AutomationProperties::SetName(DeveloperItem(), automationName);
+}
+
 void SettingsShell::RenderControllerStatus(
     const snowdesktop::SettingsSnapshot& snapshot)
 {
@@ -2288,6 +2534,14 @@ void SettingsShell::ScheduleFocus()
 
 void SettingsShell::FocusPendingTarget()
 {
+    if (restoreLargeIconParent_)
+    {
+        restoreLargeIconParent_ = false;
+        if (auto target = largeIconParentFocus_.get()) (void)target.Focus(mux::FocusState::Keyboard);
+        else (void)PageScrollViewer().Focus(mux::FocusState::Programmatic);
+        PageScrollViewer().ChangeView(nullptr, largeIconParentOffset_, nullptr, true);
+        return;
+    }
     const auto& focusId = navigation_.Route().focusId;
     if (!focusId.empty() &&
         navigation_.Route().page == SettingsPage::WidgetSettings &&
@@ -2332,8 +2586,22 @@ std::wstring SettingsShell::Localize(std::string_view key) const
     return DefaultLocalizedString(key);
 }
 
+std::wstring SettingsShell::PageSubjectName(SettingsPage page) const
+{
+    const auto& route = navigation_.Route();
+    if (page != route.page) return {};
+    if (page == SettingsPage::LargeIcon && largeIconPage_)
+        return std::wstring(largeIconPage_->NameForKey(route.itemKey));
+    if (page == SettingsPage::WidgetSettings && widgetSettingsPage_ &&
+        widgetSettingsPage_->WidgetId() == route.widgetInstanceId)
+        return std::wstring(winrt::to_hstring(widgetSettingsPage_->WidgetName()));
+    return {};
+}
+
 std::wstring SettingsShell::PageTitleText(SettingsPage page) const
 {
+    if (const auto name = PageSubjectName(page); !name.empty())
+        return page == SettingsPage::WidgetSettings ? Localize("app.settings.widgets") + L" · " + name : name;
     switch (page)
     {
     case SettingsPage::Home: return Localize("settings.nav.home");
@@ -2349,8 +2617,12 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::AppearanceIconBeautification:
         return Localize("app.settings.icon_beautify");
     case SettingsPage::Desktop: return Localize("settings.nav.desktop");
+    case SettingsPage::LargeIcon: return Localize("app.settings.desktop_icons");
+    case SettingsPage::DesktopPages:
+        return Localize("settings.nav.pages");
     case SettingsPage::DesktopCategories:
         return Localize("settings.nav.categories");
+    case SettingsPage::AnimationPerformance: return Localize("settings.nav.animation");
     case SettingsPage::Dock: return Localize("settings.nav.dock");
     case SettingsPage::Taskbar: return Localize("settings.nav.taskbar");
     case SettingsPage::DockAndTaskbar:
@@ -2370,6 +2642,7 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
 {
     switch (page)
     {
+    case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
     case SettingsPage::Home: return Localize("settings.page.home.description");
     case SettingsPage::General:
         return Localize("settings.page.general.description");
@@ -2385,6 +2658,8 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
         return Localize("settings.desktop.beautify.description");
     case SettingsPage::Desktop:
         return Localize("settings.page.desktop.description");
+    case SettingsPage::DesktopPages:
+        return Localize("settings.page.pages.description");
     case SettingsPage::DesktopCategories:
         return Localize("settings.page.categories.description");
     case SettingsPage::Dock:
@@ -2415,6 +2690,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     {
     case SettingsPage::Home: return HomeItem();
     case SettingsPage::General: return GeneralItem();
+    case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme: return AppearanceThemeItem();
     case SettingsPage::AppearanceWidgets: return AppearanceWidgetsItem();
@@ -2423,6 +2699,8 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::AppearanceIconBeautification:
         return AppearanceIconBeautificationItem();
     case SettingsPage::Desktop: return DesktopItem();
+    case SettingsPage::LargeIcon: return AppearanceDesktopIconsItem();
+    case SettingsPage::DesktopPages: return PagesItem();
     case SettingsPage::DesktopCategories: return CategoriesItem();
     case SettingsPage::Dock:
     case SettingsPage::DockAndTaskbar: return DockItem();

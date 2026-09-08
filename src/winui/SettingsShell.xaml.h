@@ -5,10 +5,13 @@
 #include "../settings_controller.h"
 #include "../settings_search_index.h"
 #include "backup_data_page_presenter.h"
+#include "animation_performance_page_presenter.h"
 #include "desktop_page_presenter.h"
 #include "dock_page_presenter.h"
 #include "general_page_presenter.h"
 #include "home_about_page_presenter.h"
+#include "page_layout_page_presenter.h"
+#include "large_icon_page_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
 #include "widget_settings_presenter.h"
@@ -112,10 +115,13 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::winui::DockPageActions actions);
     void SetHomeAboutPageActions(
         snowdesktop::winui::HomeAboutPageActions actions);
+    void SetPageLayoutPageActions(
+        snowdesktop::winui::PageLayoutPageActions actions);
+    void SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAction action);
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
-        snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
+        snowdesktop::widget_runtime::IWidgetSettingsService* service) noexcept;
     /** Bind a current component snapshot; replaying the bound revision is safe. */
     [[nodiscard]] bool ApplyWidgetSettingsSnapshot(
         const snowdesktop::widget_runtime::WidgetSettingsSnapshot& snapshot);
@@ -163,6 +169,8 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetConditionalPagesVisible(
         bool developerToolsVisible,
         bool debugVisible);
+    /** Shows an accessible attention dot when a selected Agent Skill is stale. */
+    void SetAgentSkillUpdateAvailable(bool available);
 
     /**
      * Replaces AutoSuggestBox results for the current query.  A result from a
@@ -218,11 +226,13 @@ private:
     void RenderNavigationSelection();
     void ApplyNavigationIcons();
     void RenderPageHeaderIcon();
+    void RenderPageHeading();
     void RenderBreadcrumb();
     void RenderPageCards(bool forcePageCards = false);
     void EnsurePresentersForPage(snowdesktop::SettingsPage page);
     [[nodiscard]] bool EnsureWidgetSettingsPresenter() noexcept;
     void RenderConditionalPages();
+    void RenderAgentSkillUpdateBadge();
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
     void ScheduleFocus();
@@ -231,6 +241,8 @@ private:
     void RequestRoute(const snowdesktop::SettingsRoute& route);
     [[nodiscard]] std::wstring Localize(std::string_view key) const;
     [[nodiscard]] std::wstring PageTitleText(
+        snowdesktop::SettingsPage page) const;
+    [[nodiscard]] std::wstring PageSubjectName(
         snowdesktop::SettingsPage page) const;
     [[nodiscard]] std::wstring PageDescriptionText(
         snowdesktop::SettingsPage page) const;
@@ -271,6 +283,9 @@ private:
     snowdesktop::winui::DesktopPageActions desktopPageActions_;
     snowdesktop::winui::DockPageActions dockPageActions_;
     snowdesktop::winui::HomeAboutPageActions homeAboutPageActions_;
+    snowdesktop::winui::PageLayoutPageActions pageLayoutPageActions_;
+    snowdesktop::LargeIconSettingsAction largeIconSettingsAction_;
+    std::unique_ptr<snowdesktop::winui::LargeIconPagePresenter> largeIconPage_;
     snowdesktop::winui::WidgetsPageActions widgetsPageActions_;
     snowdesktop::winui::BackupDataPageActions backupDataPageActions_;
 
@@ -279,9 +294,12 @@ private:
         personalizationPage_;
     std::unique_ptr<snowdesktop::winui::DesktopPagePresenter> desktopPage_;
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
+    std::unique_ptr<snowdesktop::winui::AnimationPerformancePagePresenter> animationPage_;
     std::unique_ptr<snowdesktop::winui::HomeAboutPagePresenter>
         homeAboutPage_;
-    snowdesktop::widget_runtime::WidgetSettingsService*
+    std::unique_ptr<snowdesktop::winui::PageLayoutPagePresenter>
+        pageLayoutPage_;
+    snowdesktop::widget_runtime::IWidgetSettingsService*
         widgetSettingsService_ = nullptr;
     std::unique_ptr<snowdesktop::winui::WidgetSettingsPresenter>
         widgetSettingsPage_;
@@ -307,12 +325,17 @@ private:
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
     std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;
+    double largeIconParentOffset_ = 0;
+    bool restoreLargeIconParent_ = false;
+    winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> largeIconParentFocus_;
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
     bool focusSearchWhenPaneOpens_ = false;
     bool sessionActive_ = false;
     bool closed_ = false;
+    bool agentSkillUpdateAvailable_ = false;
+    std::optional<bool> navigationIconsHighContrast_;
 
     winrt::event_token actualThemeChangedToken_{};
     winrt::event_token backKeyboardAcceleratorToken_{};

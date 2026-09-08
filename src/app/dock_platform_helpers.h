@@ -4,6 +4,7 @@
 #include <ctime>
 #include <limits>
 #include <numeric>
+#include <tlhelp32.h>
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {
@@ -174,10 +175,8 @@ inline bool IsDockSteamAppRunning(const std::wstring& appId)
 inline bool IsDockPathInsideDirectory(
     const std::wstring& path, const std::wstring& directory)
 {
-    if (path.empty() || directory.empty() || path.size() <= directory.size() ||
-        path.compare(0, directory.size(), directory) != 0)
-        return false;
-    return directory.back() == L'\\' || path[directory.size()] == L'\\';
+    return snowdesktop::dock_app_identity_rules::
+        IsPathInsideDirectory(path, directory);
 }
 
 inline std::wstring ReadDockStringProperty(
@@ -215,10 +214,9 @@ inline std::wstring ReadDockShellItemStringProperty(
     return result;
 }
 
-inline std::wstring QueryDockWindowExecutablePath(HWND window)
+inline std::wstring QueryDockProcessExecutablePath(
+    DWORD processId)
 {
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
     if (!processId) return {};
 
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
@@ -228,6 +226,62 @@ inline std::wstring QueryDockWindowExecutablePath(HWND window)
     const bool queried = QueryFullProcessImageNameW(process, 0, path, &pathLength) != FALSE;
     CloseHandle(process);
     return queried ? NormalizeDockExecutablePath(std::wstring(path, pathLength)) : std::wstring{};
+}
+
+inline std::wstring QueryDockWindowExecutablePath(HWND window)
+{
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    return QueryDockProcessExecutablePath(processId);
+}
+
+using DockProcessParentMap =
+    std::unordered_map<DWORD, DWORD>;
+
+inline DockProcessParentMap QueryDockProcessParentMap()
+{
+    DockProcessParentMap parents;
+    const HANDLE snapshot = CreateToolhelp32Snapshot(
+        TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return parents;
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry))
+    {
+        do
+        {
+            parents.insert_or_assign(
+                entry.th32ProcessID,
+                entry.th32ParentProcessID);
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return parents;
+}
+
+inline std::vector<std::wstring>
+QueryDockProcessAncestorExecutablePaths(
+    DWORD processId,
+    const DockProcessParentMap& parents)
+{
+    std::vector<std::wstring> paths;
+    std::unordered_set<DWORD> visited{ processId };
+    for (size_t depth = 0; depth < 32; ++depth)
+    {
+        const auto found = parents.find(processId);
+        if (found == parents.end() || !found->second ||
+            !visited.insert(found->second).second)
+            break;
+        processId = found->second;
+        std::wstring path =
+            QueryDockProcessExecutablePath(processId);
+        if (path.empty())
+            break;
+        paths.push_back(std::move(path));
+    }
+    return paths;
 }
 
 inline std::wstring QueryDockWindowAppUserModelId(HWND window)
@@ -419,23 +473,32 @@ inline bool DockWindowMatchesAppIdentity(
 {
     if (!window || !IsWindow(window)) return false;
     window = GetAncestor(window, GA_ROOT);
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
     const std::wstring executablePath = QueryDockWindowExecutablePath(window);
-    switch (identity.kind)
+    const std::wstring appUserModelId =
+        identity.kind == DockAppIdentityKind::Executable
+        ? std::wstring{}
+        : QueryDockWindowAppUserModelId(window);
+    std::vector<std::wstring> ancestorExecutablePaths;
+    if (identity.kind == DockAppIdentityKind::Executable &&
+        executablePath != identity.executablePath)
     {
-    case DockAppIdentityKind::Executable:
-        return !identity.executablePath.empty() &&
-            executablePath == identity.executablePath;
-    case DockAppIdentityKind::Applications:
-        return !identity.appUserModelId.empty() &&
-            QueryDockWindowAppUserModelId(window) == identity.appUserModelId;
-    case DockAppIdentityKind::Steam:
-        return (!identity.appUserModelId.empty() &&
-                QueryDockWindowAppUserModelId(window) == identity.appUserModelId) ||
-            IsDockPathInsideDirectory(executablePath,
-                identity.steamInstallDirectory);
-    default:
-        return false;
+        const DockProcessParentMap parents =
+            QueryDockProcessParentMap();
+        ancestorExecutablePaths =
+            QueryDockProcessAncestorExecutablePaths(
+                processId, parents);
     }
+    return snowdesktop::dock_app_identity_rules::
+        MatchesRunningApp(
+            identity.kind,
+            identity.executablePath,
+            identity.appUserModelId,
+            identity.steamInstallDirectory,
+            executablePath,
+            appUserModelId,
+            ancestorExecutablePaths);
 }
 
 inline bool DockWindowsShareActivationGroup(HWND first, HWND second)
@@ -528,23 +591,31 @@ inline int DockRestoreShowCommand(HWND window)
 }
 
 /**
- * @brief 请求最小化窗口，并为高完整性窗口提供默认系统命令回退。
+ * @brief 异步请求应用处理最小化，并保留高完整性窗口的失败回退。
  */
-inline bool RequestDockWindowMinimize(HWND window)
+inline bool RequestDockWindowMinimize(HWND window,
+    snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute* route = nullptr)
 {
+    using Route = snowdesktop::dock_window_rules::DockWindowMinimizeRequestRoute;
+    if (route)
+        *route = Route::None;
     if (!window || !IsWindow(window))
         return false;
-    const BOOL accepted =
-        ShowWindowAsync(window, SW_MINIMIZE);
-    if (snowdesktop::dock_window_rules::
-            NeedsDockMinimizeSystemCommandFallback(
-                accepted != FALSE))
-    {
-        DefWindowProcW(
-            window, WM_SYSCOMMAND,
-            SC_MINIMIZE, 0);
-    }
-    return accepted != FALSE ||
+    const Route dispatched = snowdesktop::dock_window_rules::ApplyDockMinimizeRequest(
+        [window](WPARAM command) {
+            // Match the system minimize command path so the application can
+            // handle foreground succession. A successful post is not completion.
+            return PostMessageW(window, WM_SYSCOMMAND, command, 0) != FALSE;
+        },
+        [window](int showCommand) {
+            return ShowWindowAsync(window, showCommand) != FALSE;
+        },
+        [window](WPARAM command) {
+            DefWindowProcW(window, WM_SYSCOMMAND, command, 0);
+        });
+    if (route)
+        *route = dispatched;
+    return dispatched != Route::DefaultSystemCommandFallback ||
         IsIconic(window) != FALSE;
 }
 

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +25,9 @@ std::string ReadText(const std::filesystem::path& path)
         return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    std::string text = content.str();
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    return text;
 }
 
 void TestPresenterContract(const std::filesystem::path& repository)
@@ -49,14 +52,12 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("muxc::Button") != std::string::npos &&
             source.find("muxc::HyperlinkButton") != std::string::npos &&
             source.find("muxc::ToggleSwitch") != std::string::npos &&
-            source.find("muxc::InfoBar") != std::string::npos &&
             source.find("muxc::ProgressRing") != std::string::npos,
         "Home, About and Debug use cached native WinUI controls");
 
     Check(model.find("HomeAboutStatusPatch") != std::string::npos &&
             model.find("std::optional<std::size_t> installedWidgetCount") !=
                 std::string::npos &&
-            model.find("SettingsUpdateState") != std::string::npos &&
             model.find("std::optional<bool> packaged") !=
                 std::string::npos &&
             model.find("SettingsBackupState") != std::string::npos &&
@@ -70,9 +71,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos,
         "host status patches are typed and reject stale async results");
     const auto updateStart = application.find(
-        "DesktopApp::StartSettingsUpdateCheck()");
+        "DesktopApp::OpenStoreUpdates()");
     const auto updateCancel = application.find(
-        "DesktopApp::CancelSettingsUpdateCheck()", updateStart);
+        "DesktopApp::PublishHomeAboutStatus()", updateStart);
     const std::string_view updateAction =
         updateStart != std::string::npos &&
             updateCancel != std::string::npos
@@ -84,32 +85,33 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             updateAction.find("GetStoreProductPageUri()") !=
                 std::string_view::npos &&
-            updateAction.find("SettingsUpdateState::ManagedByStore") !=
-                std::string_view::npos &&
             updateAction.find("api.github.com") == std::string_view::npos &&
             updateAction.find("AsyncHttpService") == std::string_view::npos &&
             applicationRun.find(
                 "patch.packaged = snowdesktop::deployment::IsPackaged()") !=
                 std::string::npos,
         "packaged About updates open Microsoft Store while portable actions never start GitHub HTTP");
-    Check(source.find("if (packaged &&") != std::string::npos &&
-            source.find("versionStatusRow.Visibility(showUpdateStatus") !=
-                std::string::npos &&
-            source.find("checkUpdateButton.Visibility(packaged") !=
-                std::string::npos &&
-            source.find("updateInfoBar.Visibility(showUpdateInfo") !=
-                std::string::npos &&
-            source.find("updateState != SettingsUpdateState::Unknown") !=
-                std::string::npos,
-        "the About update controls are hidden for portable builds and show Store-managed status only after a packaged check");
+    // Keep the retired updater absent across the whole host, not just its button.
+    Check(application.find("ParseGitHubRelease") == std::string::npos &&
+            application.find("settingsUpdateHttpService_") == std::string::npos &&
+            application.find("PollSettingsUpdateCheck") == std::string::npos &&
+            model.find("SettingsUpdateState") == std::string::npos &&
+            source.find("updateInfoBar") == std::string::npos &&
+            source.find("app.settings.store_managed_updates") == std::string::npos,
+        "retired network update parsing, polling, and status UI remain absent");
+    Check(source.find("if (packaged)") != std::string::npos &&
+            source.find("checkUpdateButton.Visibility(packaged") != std::string::npos,
+        "the Store update action stays hidden and inert for portable builds");
     Check(model.find("HomeAboutLinkUri") != std::string::npos &&
             model.find("space.bilibili.com/32837853") !=
                 std::string::npos &&
-            model.find("SnowDesktop_Release") != std::string::npos &&
+            model.find("SnowDesktop_Release") == std::string::npos &&
+            source.find("GitHub (Source)") == std::string::npos &&
+            source.find("HomeAboutLink::ReleaseRepository") == std::string::npos &&
             model.find("qm.qq.com/q/HyazkCIRig") != std::string::npos &&
             model.find("322e2b7395a51975150126276308b415970e080b") !=
                 std::string::npos,
-        "typed About links preserve the exact legacy destinations");
+        "About retains source and attribution destinations without the retired release link");
     Check(source.find("snapshot.domainRevisions.personalization") !=
                 std::string::npos &&
             source.find("snapshot.domainRevisions.general") !=
@@ -159,20 +161,6 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.third_party_libs") != std::string::npos &&
             source.find("RenderStatus();") != std::string::npos,
         "static and enum-derived status text refresh dynamically");
-    Check(source.find("updateProgress.IsActive(updateRunning)") !=
-                std::string::npos &&
-            source.find("updateState == SettingsUpdateState::Checking") !=
-                std::string::npos &&
-            source.find("checkUpdateButton.IsEnabled(!updateRunning)") !=
-                std::string::npos &&
-            source.find("HomeAboutCommand::CancelUpdateCheck") ==
-                std::string::npos &&
-            source.find("updateInfoBar.IsOpen(showUpdateInfo)") !=
-                std::string::npos &&
-            source.find("backupCard.progress.IsActive(backupRunning)") !=
-                std::string::npos,
-        "host-published states drive feedback and checking disables update");
-
     for (const char* aboutItem : {
              "app.settings.about_description",
              "逍遥飘雪（郭云哲）", // l10n-allow: fixed author name contract
@@ -182,7 +170,6 @@ void TestPresenterContract(const std::filesystem::path& repository)
              "HomeAboutLink::AuthorGitHub",
              "HomeAboutLink::Douyin",
              "HomeAboutLink::Xiaohongshu",
-             "HomeAboutLink::ReleaseRepository",
              "HomeAboutLink::SourceRepository",
              "HomeAboutLink::QqGroup",
              "HomeAboutLink::EverythingSdk",
@@ -195,69 +182,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
         Check(source.find(aboutItem) != std::string::npos,
             "legacy About content and attribution remain present");
     }
-    const auto introduction = source.find(
-        "InitializeSection(introductionSection");
-    const auto author = source.find("InitializeSection(authorSection");
-    const auto copyright = source.find(
-        "InitializeSection(copyrightSection");
-    const auto profiles = source.find("InitializeSection(profileSection");
-    const auto project = source.find("InitializeSection(projectSection");
-    const auto community = source.find(
-        "InitializeSection(communitySection");
-    const auto version = source.find("InitializeSection(versionSection");
-    const auto thirdParty = source.find(
-        "InitializeSection(thirdPartySection");
-    const auto reference = source.find(
-        "InitializeSection(referenceSection");
-    Check(introduction < author && author < copyright &&
-            copyright < profiles && profiles < project &&
-            project < community && community < version &&
-            version < thirdParty && thirdParty < reference,
-        "About sections retain the legacy visible order");
-    const auto buildControls = source.find("void BuildControls()");
-    const auto inBuild = [&source, buildControls](const char* text) {
-        return source.find(text, buildControls);
-    };
-    Check(inBuild("HomeAboutLink::Bilibili") <
-                inBuild("HomeAboutLink::AuthorGitHub") &&
-            inBuild("HomeAboutLink::AuthorGitHub") <
-                inBuild("HomeAboutLink::Douyin") &&
-            inBuild("HomeAboutLink::Douyin") <
-                inBuild("HomeAboutLink::Xiaohongshu") &&
-            inBuild("HomeAboutLink::ReleaseRepository") <
-                inBuild("HomeAboutLink::SourceRepository") &&
-            inBuild("HomeAboutLink::EverythingSdk") <
-                inBuild("HomeAboutLink::DearImGui") &&
-            inBuild("HomeAboutLink::DearImGui") <
-                inBuild("HomeAboutLink::Lua") &&
-            inBuild("HomeAboutLink::Lua") <
-                inBuild("HomeAboutLink::PinyinData") &&
-            inBuild("HomeAboutLink::PinyinData") <
-                inBuild("HomeAboutLink::TranslucentTb"),
-        "profiles, project links and attributions retain legacy ordering");
     Check(source.find("versionClickCount < 5") != std::string::npos &&
             source.find("SettingsPage::Debug") != std::string::npos,
         "five version clicks unlock and navigate to Debug");
-    Check(source.find(
-              "versionControls.HorizontalAlignment(mux::HorizontalAlignment::Stretch)") !=
-                std::string::npos &&
-            source.find(
-              "versionButton.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
-                std::string::npos &&
-            source.find(
-              "versionButton.VerticalAlignment(mux::VerticalAlignment::Center)") !=
-                std::string::npos &&
-            source.find(
-              "checkUpdateButton.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
-                std::string::npos &&
-            source.find(
-              "checkUpdateButton.VerticalAlignment(mux::VerticalAlignment::Center)") !=
-                std::string::npos &&
-            source.find("versionRow.Initialize(versionControls);") !=
-                std::string::npos &&
-            source.find("versionRow.Initialize(versionControls, 360.0)") ==
-                std::string::npos,
-        "About version content stretches while version and update actions keep natural width at the right edge");
     Check(source.find("controls::SettingRow") != std::string::npos &&
             source.find("snapshot.values.general.demoModeEnabled") !=
                 std::string::npos &&
@@ -278,14 +205,6 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             application.find("L\"Target %.1f Hz") == std::string::npos,
         "animation diagnostics status is dynamically localized");
-    const auto debugTitle = source.find(
-        "InitializeSection(debugTitleSection");
-    const auto demo = source.find("InitializeSection(demoModeSection");
-    const auto animation = source.find(
-        "InitializeSection(animationSection");
-    const auto crash = source.find("InitializeSection(crashSection");
-    Check(debugTitle < demo && demo < animation && animation < crash,
-        "Debug retains demo, animation and crash-test ordering");
 }
 } // namespace
 

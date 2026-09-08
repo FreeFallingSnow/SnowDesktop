@@ -13,11 +13,13 @@
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
     (void)wp;
+    if (renameEdit_ != nullptr)
+        CommitRename(false);
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelRequest_.modal)
         return;
-    if (renameEdit_ != nullptr || mouseDown_ || dragSession_.IsActive() ||
-        widgetAction_ != WidgetAction::None)
+    if (mouseDown_ || dragSession_.IsActive() ||
+        widgetAction_ != WidgetAction::None || largeIconGesture_)
         return;
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -60,7 +62,33 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
             break;
         }
     }
-    if (widgetIndex >= widgets_.size()) return;
+    if (widgetIndex >= widgets_.size())
+    {
+        if (IsPointOccludedByOpenPopup(pt)) return;
+        auto* hit = HitTestIcon(pt);
+        auto* item = hit ? hit->GetDesktopItem() : nullptr;
+        if (!item || !item->largeIcon || hit->GetContainer() != GetDesktopGrid()) return;
+        RestoreInteractionInputFocus();
+        keyboardNavVisualFocus_ = false;
+        if (!hit->IsSelected()) { ClearSelection(); hit->SetSelected(true); }
+        else ClearSelectionOutsideDesktop();
+        mouseDown_ = true;
+        mouseDownPoint_ = lastMousePoint_ = pt;
+        mouseDownHit_ = hit;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        marqueeActive_ = false;
+        marqueeWidgetIndex_ = static_cast<size_t>(-1);
+        marqueeDockFolderPopup_ = false;
+        pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+        pendingCtrlToggleWidgetItem_ = nullptr;
+        // Reuse the existing middle-button ownership and cancellation path;
+        // pointer movement starts the ordinary desktop drag after its threshold.
+        middleButtonWidgetMove_ = true;
+        SetCapture(hwnd_);
+        SyncKeyboardNavFromSelection();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     RestoreInteractionInputFocus();
     SelectWidgetOnly(widgetIndex);
@@ -89,6 +117,16 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 void DesktopApp::OnMiddleButtonUpAt(WPARAM wp, POINT point)
 {
     if (!middleButtonWidgetMove_) return;
+    if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None)
+    {
+        // A middle click selects the large icon without entering any launch,
+        // primary-click or resize path.
+        CancelPointerPressWithoutCaptureRelease();
+        ReleaseCapture();
+        UpdateLargeIconHover();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     middleButtonWidgetMove_ = false;
     OnLeftButtonUpAt(wp, point);
 }
@@ -193,12 +231,16 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    if (HandleLargeIconPointerMove(current)) return;
+    UpdateLargeIconHover();
     UpdateSystemTaskbarRevealGuard();
     const bool activeWidgetGesture =
         (widgetAction_ == WidgetAction::Move ||
          widgetAction_ == WidgetAction::Resize) &&
         mouseDownWidgetIndex_ < widgets_.size();
-    if (!activeWidgetGesture)
+    const bool marqueePointerGesture =
+        IsMarqueePointerGesturePendingOrActive();
+    if (!activeWidgetGesture && !marqueePointerGesture)
     {
         // Once a component owns the captured pointer, Dock previews, Lua
         // hover routing and popup dwell state cannot consume this sample.
@@ -422,6 +464,8 @@ void DesktopApp::OnMouseMoveAt(
         return;
     }
 
+    if (widgetAction_ != WidgetAction::None) UpdateWidgetHandleCursor(current);
+
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
         widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
@@ -506,6 +550,13 @@ void DesktopApp::OnMouseMoveAt(
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
+            if (hwnd_ && IsWindow(hwnd_))
+            {
+                SetTimer(
+                    hwnd_, kNativeDragHoverRecoveryTimerId,
+                    kNativeDragHoverRecoveryIntervalMs,
+                    nullptr);
+            }
             dragSession_.SetVisualItemBounds(
                 std::move(visualItemBounds));
             auto* listSource =
@@ -579,6 +630,7 @@ void DesktopApp::OnMouseMoveAt(
             widgetAction_ = WidgetAction::Move;
         else if (widgetAction_ == WidgetAction::PendingResize)
             widgetAction_ = WidgetAction::Resize;
+        UpdateWidgetHandleCursor(current);
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
         HideDockWindowPreview();
@@ -755,18 +807,10 @@ void DesktopApp::OnMouseMoveAt(
             ComPtr<IDataObject> dataObj = CreateDataObjectForItems(dragSession_.Items());
             if (dataObj)
             {
-                const bool dockFolderPopupSource =
-                    dockFolderPopupOpen_ &&
-                    dragSession_.Source() ==
-                        dockFolderPopupContainer_.get();
                 auto* sourceWidget = dynamic_cast<WidgetContainer*>(dragSession_.Source());
                 DesktopWidget* sourceWidgetData = sourceWidget ? sourceWidget->GetWidgetData() : nullptr;
                 const std::wstring sourceWidgetId =
                     sourceWidgetData ? sourceWidgetData->id : L"";
-                const bool sourceFolderMapping =
-                    sourceWidgetData &&
-                    sourceWidgetData->type ==
-                        DesktopWidgetType::FolderMapping;
                 const HWND nativeCaptureHwnd = GetCapture();
 
                 HideDragHintWindow();
@@ -826,7 +870,7 @@ void DesktopApp::OnMouseMoveAt(
                             resumePoint);
                     const bool primaryButtonDown =
                         nativeResumeRequested &&
-                        (GetAsyncKeyState(VK_LBUTTON) &
+                        (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) &
                             0x8000) != 0;
                     const auto unwindAction =
                         snowdesktop::ole_drag_rules::
@@ -905,7 +949,8 @@ void DesktopApp::OnMouseMoveAt(
                         // between QueryContinueDrag and DoDragDrop returning.
                         // Commit exactly once at the live native point without
                         // reacquiring capture or flashing the custom ghost.
-                        OnLeftButtonUpAt(0, resumePoint);
+                        if (middleButtonWidgetMove_) OnMiddleButtonUpAt(0, resumePoint);
+                        else OnLeftButtonUpAt(0, resumePoint);
                     }
                     PresentPointerInteractionFrame();
                     nativeDragResumed = true;
@@ -952,36 +997,18 @@ void DesktopApp::OnMouseMoveAt(
                                 std::move(steps),
                                 [this](bool succeeded) {
                                     if (succeeded)
-                                        ReloadItems(false);
+                                        RequestShellRefresh();
                                 });
                         }
                     }
                     SaveLayoutSlots();
                 }
 
-                if (!dragDropController_.SelfDragReturned() &&
-                    sourceFolderMapping)
-                {
-                    for (size_t i = 0; i < widgets_.size(); ++i)
-                    {
-                        if (widgets_[i].id == sourceWidgetId &&
-                            widgets_[i].type ==
-                                DesktopWidgetType::FolderMapping)
-                        {
-                            RefreshFolderMappingWidget(i);
-                            break;
-                        }
-                    }
-                }
-
                 if (!dragDropController_.SelfDragReturned())
                 {
                     ClearSelection();
                     CancelActiveItemDrag();
-                    ReloadItems();
-                    if (dockFolderPopupSource &&
-                        dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
+                    RequestShellRefresh();
                 }
                 else
                 {
@@ -1055,11 +1082,23 @@ void DesktopApp::OnMouseMoveAt(
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
         {
-            if (!marqueeActive_)
+            const bool startingMarquee = !marqueeActive_;
+            if (startingMarquee)
+            {
                 dragRenderCache_.Reset();
+                marqueeFullPresentPending_ = true;
+            }
             marqueeActive_ = true;
             UpdateMarqueeSelection(current);
-            InvalidateRect(hwnd_, nullptr, FALSE);
+            if (!startingMarquee &&
+                marqueeWidgetIndex_ < widgets_.size() &&
+                popupWidgetIndex_ != marqueeWidgetIndex_)
+            {
+                (void)QueueDesktopWidgetComposition(
+                    widgets_[marqueeWidgetIndex_].id);
+            }
+            if (startingMarquee)
+                InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
     }
@@ -1302,6 +1341,7 @@ void DesktopApp::OnMouseMoveAt(
                 DesktopItem* item = icon->GetDesktopItem();
                 if (!item || item->selected || IsRectEmptyRect(item->bounds))
                     continue;
+                if (desktopIconsHidden_ && !IsRetainedLargeIcon(*item)) continue;
                 if (!item->layoutKey.empty() &&
                     collectedKeysCache_.count(ToUpperInvariant(item->layoutKey)))
                     continue;

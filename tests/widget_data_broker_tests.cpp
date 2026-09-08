@@ -295,6 +295,54 @@ void TestShutdown()
             broker.SubscriptionCount() == 0,
         "shutdown must stop providers and release every subscription");
 }
+
+// A fast spectrum subscriber must not make a slower player redraw at its
+// rate; hidden or revoked audio subscriptions must never receive those wakes.
+void TestPerSubscriptionDelivery()
+{
+    WidgetDataBroker broker;
+    std::string error;
+    Check(broker.RegisterProvider(AudioProvider(), error), "audio provider registers");
+    const WidgetDataBroker::TimePoint start{};
+    DataSubscriptionOptions options;
+    options.permissionGranted = true;
+    options.requestedInterval = 34ms;
+    const auto slow = broker.Subscribe("player", "audio.output.analysis", options, start);
+    options.requestedInterval = 16ms;
+    const auto fast = broker.Subscribe("spectrum", "audio.output.analysis", options, start);
+    options.preview = true;
+    const auto preview = broker.Subscribe("preview", "audio.output.analysis", options, start);
+    int slowUpdates = 0, fastUpdates = 0;
+    for (int ms = 0; ms < 1000; ms += 20)
+    {
+        slowUpdates += broker.ConsumeUpdateDue(slow.id, start + std::chrono::milliseconds(ms));
+        fastUpdates += broker.ConsumeUpdateDue(fast.id, start + std::chrono::milliseconds(ms));
+        Check(!broker.ConsumeUpdateDue(preview.id, start + std::chrono::milliseconds(ms)),
+            "preview must not receive live audio updates");
+    }
+    Check(slowUpdates == 25 && fastUpdates == 50,
+        "50 Hz shared samples must respect independent 34 ms and 16 ms delivery limits");
+    Check(broker.ConsumeUpdateDue(slow.id, start + 10s) &&
+            !broker.ConsumeUpdateDue(slow.id, start + 10s),
+        "a long stall delivers the latest state once without replaying a backlog");
+    broker.SetInstanceVisible("player", false, start + 10001ms);
+    Check(!broker.ConsumeUpdateDue(slow.id, start + 10002ms) &&
+            broker.ConsumeUpdateDue(fast.id, start + 10002ms),
+        "one hidden audio subscriber must pause while the visible peer continues");
+    broker.SetInstanceVisible("player", true, start + 10003ms);
+    Check(broker.ConsumeUpdateDue(slow.id, start + 10003ms),
+        "visibility recovery must accept the first fresh sample");
+    broker.SetPermission("player", "audio.output.analyze", false, start + 10004ms);
+    Check(!broker.ConsumeUpdateDue(slow.id, start + 11s),
+        "revoked audio subscriptions must not receive redraw notifications");
+    broker.SetPermission("player", "audio.output.analyze", true, start + 11001ms);
+    Check(broker.ConsumeUpdateDue(slow.id, start + 11001ms),
+        "re-authorized subscriptions must not retain an obsolete delivery deadline");
+    broker.Unsubscribe(slow.id, start + 12s);
+    Check(!broker.ConsumeUpdateDue(slow.id, start + 13s) &&
+            !broker.ConsumeUpdateDue(0, start),
+        "retired and unknown subscriptions cannot deliver updates");
+}
 }
 
 int main()
@@ -304,6 +352,7 @@ int main()
     TestVisibilityAndIdleGrace();
     TestGraceReuseAndPermissionRevocation();
     TestHighRiskAndPreviewIsolation();
+    TestPerSubscriptionDelivery();
     TestShutdown();
     std::cout << "widget data broker tests passed\n";
     return 0;

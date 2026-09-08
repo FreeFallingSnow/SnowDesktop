@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +25,9 @@ std::string ReadText(const std::filesystem::path& path)
         return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    std::string source = content.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 void TestPresenterContract(const std::filesystem::path& repository)
@@ -153,13 +156,19 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "all static page text uses the dynamic JSON localizer");
     Check(source.find("settings_presenter_controls.h") !=
                 std::string::npos &&
-            source.find("controls::SettingRow layoutCreateRow") !=
+            source.find("controls::SettingRow layoutCreateRow") ==
                 std::string::npos &&
-            source.find("controls::SettingRow fullBackupActionsRow") !=
+            source.find("controls::SettingRow fullBackupActionsRow") ==
                 std::string::npos &&
             source.find("controls::SettingRow migrationActionRow") !=
                 std::string::npos &&
-            source.find("row.settingRow.Initialize(row.commandBar)") !=
+            source.find("row.commandBar.Content(row.title)") !=
+                std::string::npos &&
+            source.find("row.item.Content(row.commandBar)") !=
+                std::string::npos &&
+            source.find("commandBar.VerticalContentAlignment(") !=
+                std::string::npos &&
+            source.find("mux::VerticalAlignment::Center") !=
                 std::string::npos &&
             source.find("migrationActionRow.SetControlAlignment(") !=
                 std::string::npos &&
@@ -169,12 +178,13 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find(
               "button.VerticalAlignment(mux::VerticalAlignment::Center)") !=
                 std::string::npos,
-        "backup rows keep responsive description/control layouts and native focus visuals");
-    Check(source.find("app.settings.save_current_layout") !=
+        "backup rows keep native focus visuals and center titles in the expanded command surface");
+    Check(source.find("app.settings.save_current_layout") ==
                 std::string::npos &&
-            source.find("layoutActions.Children().Append(layoutName)") !=
+            source.find("layoutActionBar.Content(layoutName)") !=
                 std::string::npos &&
-            source.find("layoutActions.Children().Append(layoutActionBar)") !=
+            source.find(
+              "layoutCard.content.Children().Append(layoutActionBar)") !=
                 std::string::npos &&
             source.find(
               "layoutActionBar.PrimaryCommands().Append(createLayoutButton)") !=
@@ -188,8 +198,18 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("layoutBackupSaveRunning") != std::string::npos &&
             source.find("layoutName.Text(L\"\")") != std::string::npos,
-        "layout backup keeps the name field and primary save action while moving folder access to overflow");
+        "layout backup places the name field and actions in one expanded command surface");
     Check(source.find("fullBackupActionBar = NewCommandBar()") !=
+                std::string::npos &&
+            source.find("fullBackupHint = NewCommandBarHint()") !=
+                std::string::npos &&
+            source.find("fullBackupActionBar.Content(fullBackupHint)") !=
+                std::string::npos &&
+            source.find("fullBackupHint.Text(") !=
+                std::string::npos &&
+            source.find("hint.Opacity(0.68)") !=
+                std::string::npos &&
+            source.find("migrationActionRow.SetText({},") !=
                 std::string::npos &&
             source.find(
               "fullBackupActionBar.PrimaryCommands().Append(") !=
@@ -214,7 +234,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.full_backup_item") !=
                 std::string::npos &&
             source.find("FormatBackupSize") != std::string::npos,
-        "complete-backup keeps create/restore primary and folder access in overflow without losing list metadata");
+        "complete-backup keeps explanatory text inside the expanded command surface without presenting it as a title");
     Check(source.find("commandBar.DefaultLabelPosition(") !=
                 std::string::npos &&
             source.find(

@@ -5,11 +5,21 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 
 namespace snowdesktop::floating_dock_rules
 {
+
+// Use the client area, so maximized windows with title bars are not fullscreen.
+inline bool ShouldBlockFullscreenEdgeSwipe(
+    bool enabled, const RECT& client, const RECT& monitor) noexcept
+{
+    return enabled && monitor.right > monitor.left && monitor.bottom > monitor.top &&
+        client.left <= monitor.left && client.top <= monitor.top &&
+        client.right >= monitor.right && client.bottom >= monitor.bottom;
+}
 
 inline constexpr DWORD kWindowExStyle =
     WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
@@ -23,6 +33,13 @@ inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
 // 被动 Dock hover 的同步提交限频窗口。hover 必须跟手，但也不需要每个
 // WM_MOUSEMOVE 都同步重绘整个浮动 Dock。
 inline constexpr ULONGLONG kPointerFrameIntervalMs = 8;
+// Explorer raises Progman when the Shell enters Show Desktop. Combine that
+// foreground transition with recent system-minimize evidence so an ordinary
+// desktop click cannot promote the Dock by itself.
+inline constexpr ULONGLONG kSystemShowDesktopEvidenceWindowMs = 500;
+// A temporarily unavailable foreground must not turn desktop protection into
+// an unbounded TOPMOST lease. Confirmed desktop/surface samples renew this.
+inline constexpr ULONGLONG kSystemShowDesktopForegroundGraceMs = 500;
 
 inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
@@ -115,6 +132,79 @@ inline bool ShouldSummonForDockSurface(
     bool floatingDockVisible)
 {
     return sourceBelongsToDock && !floatingDockVisible;
+}
+
+inline bool ShouldStartSystemShowDesktopLayerGuard(
+    bool persistentDockHostActive,
+    bool shellDesktopForeground,
+    ULONGLONG lastSystemMinimizeStartTick,
+    ULONGLONG currentTick,
+    ULONGLONG evidenceWindowMs =
+        kSystemShowDesktopEvidenceWindowMs)
+{
+    return persistentDockHostActive &&
+        shellDesktopForeground &&
+        lastSystemMinimizeStartTick != 0 &&
+        currentTick >= lastSystemMinimizeStartTick &&
+        currentTick - lastSystemMinimizeStartTick <=
+            evidenceWindowMs;
+}
+
+enum class SystemShowDesktopLayerGuardAction
+{
+    None,
+    Start,
+    Stop,
+};
+
+enum class SystemShowDesktopForeground
+{
+    ShellDesktop,
+    DesktopSurface,
+    Application,
+    Unavailable,
+};
+
+inline SystemShowDesktopLayerGuardAction
+ResolveSystemShowDesktopLayerGuardAction(
+    bool layerGuardActive,
+    bool persistentDockHostActive,
+    SystemShowDesktopForeground foreground,
+    ULONGLONG lastSystemMinimizeStartTick,
+    ULONGLONG currentTick,
+    ULONGLONG lastProtectedForegroundTick)
+{
+    if (layerGuardActive)
+    {
+        // MINIMIZEEND means a window is about to restore, not that its
+        // minimize animation finished. Actual foreground ownership ends the
+        // guard even when no previously minimized window has been restored.
+        if (!persistentDockHostActive ||
+            foreground == SystemShowDesktopForeground::Application)
+            return SystemShowDesktopLayerGuardAction::Stop;
+        if (foreground == SystemShowDesktopForeground::Unavailable &&
+            (lastProtectedForegroundTick == 0 ||
+                currentTick < lastProtectedForegroundTick ||
+                currentTick - lastProtectedForegroundTick >
+                    kSystemShowDesktopForegroundGraceMs))
+            return SystemShowDesktopLayerGuardAction::Stop;
+        return SystemShowDesktopLayerGuardAction::None;
+    }
+    return ShouldStartSystemShowDesktopLayerGuard(
+        persistentDockHostActive,
+        foreground == SystemShowDesktopForeground::ShellDesktop,
+        lastSystemMinimizeStartTick,
+        currentTick)
+        ? SystemShowDesktopLayerGuardAction::Start
+        : SystemShowDesktopLayerGuardAction::None;
+}
+
+inline bool ShouldDispatchDockContextMenu(
+    bool persistentDockHostActive,
+    bool pressBeganOnMatchingPersistentDockHost)
+{
+    return !persistentDockHostActive ||
+        pressBeganOnMatchingPersistentDockHost;
 }
 
 inline bool ShouldUseFloatingDockLogicalForeground(
@@ -297,6 +387,25 @@ inline bool HasNewPointerButtonPress(
         (buttonsDown & ~previousButtonsDown) != 0;
 }
 
+inline bool HasPointerButtonActivity(
+    UINT buttonsDown, UINT previousButtonsDown,
+    UINT pressedSinceLastSample,
+    bool observedPointerButtonActivity = false)
+{
+    return observedPointerButtonActivity ||
+        buttonsDown != 0 ||
+        previousButtonsDown != 0 ||
+        pressedSinceLastSample != 0;
+}
+
+inline bool IsGuiMenuModeActive(DWORD guiThreadFlags)
+{
+    return (guiThreadFlags &
+        (GUI_INMENUMODE |
+         GUI_SYSTEMMENUMODE |
+         GUI_POPUPMENUMODE)) != 0;
+}
+
 /**
  * @brief Detects a quick pointer stroke that remains on the Dock-facing edge.
  *
@@ -357,6 +466,15 @@ public:
     {
         tracking_ = false;
         awaitingEdgeLeave_ = false;
+        monitorRect_ = {};
+        startPoint_ = {};
+        startTick_ = 0;
+    }
+
+    void SuppressUntilEdgeLeave()
+    {
+        tracking_ = false;
+        awaitingEdgeLeave_ = true;
         monitorRect_ = {};
         startPoint_ = {};
         startTick_ = 0;
@@ -426,13 +544,22 @@ inline RECT ExpandHostForTitleLayer(
     return dockRect;
 }
 
-inline RECT ExpandForBorderOverdraw(
-    RECT visualRect)
+inline int ResolveBorderOverdraw(float borderWidth) noexcept
 {
-    // DrawGlassBorder's antialiased outer pass is wider than the logical
-    // one-pixel border. Desktop rendering has an unrestricted surface around
-    // it; floating layers must explicitly reserve the same pixels.
-    constexpr int borderOverdraw = 2;
+    const float width = std::clamp(borderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    return std::max(1, static_cast<int>(std::ceil(
+        (width + 1.35f) * 0.5f)));
+}
+
+inline RECT ExpandForBorderOverdraw(
+    RECT visualRect,
+    float borderWidth = 1.0f)
+{
+    // The independent edge highlight includes an antialiased outer pass wider
+    // than its logical core. Floating layers reserve pixels dynamically so
+    // the configured maximum width is not clipped by the host region.
+    const int borderOverdraw = ResolveBorderOverdraw(borderWidth);
     if (!IsRectEmpty(&visualRect))
         InflateRect(
             &visualRect,

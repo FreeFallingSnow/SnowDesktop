@@ -4,6 +4,7 @@
 #include "data_paths.h"
 #include "l10n.h"
 #include "personalization.h"
+#include "panel_gradient_renderer.h"
 #include "widget_engine.h"
 #include "widget_package.h"
 #include "widget_preview_stage.h"
@@ -370,12 +371,18 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
         resolved.theme.cornerRadius = appearance.settings.cornerRadius;
         float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f;
         float borderR = 1.0f, borderG = 1.0f, borderB = 1.0f;
+        float borderWidth = 1.0f;
+        bool edgeHighlightEnabled = false;
+        float edgeHighlightWidth = kDefaultEdgeHighlightWidth;
+        float edgeHighlightStrength = kDefaultEdgeHighlightStrength;
         float gradient = resolved.theme.gradientEndA;
         bool glass = false, acrylic = false;
         if (engine.ReadCustomColors(kPreviewWidgetId,
                 bgR, bgG, bgB, resolved.theme.alpha,
                 borderR, borderG, borderB, resolved.theme.borderAlpha,
-                gradient, glass, acrylic))
+                borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
+                edgeHighlightStrength,
+                gradient, glass, acrylic, &resolved.material.panelGradient))
         {
             resolved.theme.bg =
                 (static_cast<int>(std::lround(bgR * 255.0f)) << 16) |
@@ -386,6 +393,13 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 (static_cast<int>(std::lround(borderG * 255.0f)) << 8) |
                 static_cast<int>(std::lround(borderB * 255.0f));
             resolved.theme.gradientEndA = gradient;
+            resolved.material.widgetBorderWidth = borderWidth;
+            resolved.material.widgetEdgeHighlightEnabled =
+                edgeHighlightEnabled;
+            resolved.material.widgetEdgeHighlightWidth =
+                edgeHighlightWidth;
+            resolved.material.widgetEdgeHighlightStrength =
+                edgeHighlightStrength;
             resolved.material.glassEnabled = glass;
             resolved.material.acrylicEnabled = glass && acrylic;
         }
@@ -399,7 +413,8 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
 }
 
 void DrawHostBackground(ID2D1DeviceContext* context,
-    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale)
+    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale,
+    bool drawMaterial, bool drawOverlay)
 {
     const LuaWidgetTheme& theme = resolved.theme;
     const auto color = [](int rgb, float alpha) {
@@ -422,25 +437,61 @@ void DrawHostBackground(ID2D1DeviceContext* context,
             static_cast<float>(bounds.top),
             static_cast<float>(bounds.right),
             static_cast<float>(bounds.bottom)), radius, radius);
-    if (theme.alpha > 0.0f)
+    if (drawMaterial && !DrawPanelGradient(context, rounded.rect, radius,
+            resolved.material.panelGradient) && theme.alpha > 0.0f)
         context->FillRoundedRectangle(rounded, fill.Get());
-    if (resolved.material.glassEnabled &&
+    if (drawOverlay && resolved.material.glassEnabled &&
         resolved.material.acrylicEnabled)
     {
         snowdesktop::widget_preview::DrawAcrylicNoise(
             context, bounds, radius,
             resolved.material.contentTheme == 1);
     }
-    if (theme.borderAlpha > 0.0f)
+    if (drawOverlay && theme.borderAlpha > 0.0f)
     {
-        const float strokeWidth = std::max(1.0f, scale);
-        const bool glassDrawn = resolved.material.glassEnabled &&
-            snowdesktop::widget_preview::DrawGlassBorder(context, bounds,
-                radius, color(theme.border, theme.borderAlpha), strokeWidth);
-        if (!glassDrawn)
+        const float strokeWidth = std::clamp(
+            resolved.material.widgetBorderWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
+        const LONG borderInset = static_cast<LONG>(std::ceil(
+            strokeWidth * 0.5f));
+        RECT borderBounds = bounds;
+        InflateRect(&borderBounds, -borderInset, -borderInset);
+        if (!IsRectEmpty(&borderBounds))
+        {
+            const float borderRadius = std::max(
+                0.0f, radius - static_cast<float>(borderInset));
             context->DrawRoundedRectangle(
-                rounded, border.Get(), strokeWidth);
+                D2D1::RoundedRect(D2D1::RectF(
+                    static_cast<float>(borderBounds.left),
+                    static_cast<float>(borderBounds.top),
+                    static_cast<float>(borderBounds.right),
+                    static_cast<float>(borderBounds.bottom)),
+                    borderRadius, borderRadius), border.Get(), strokeWidth);
+        }
     }
+}
+
+void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
+    const ResolvedPreviewStyle& resolved, const RECT& bounds, float scale)
+{
+    if (!resolved.material.widgetEdgeHighlightEnabled ||
+        resolved.material.widgetEdgeHighlightStrength <= 0.0005f)
+        return;
+    const LuaWidgetTheme& theme = resolved.theme;
+    const auto color = [](int rgb, float alpha) {
+        return D2D1::ColorF(
+            static_cast<float>((rgb >> 16) & 0xff) / 255.0f,
+            static_cast<float>((rgb >> 8) & 0xff) / 255.0f,
+            static_cast<float>(rgb & 0xff) / 255.0f,
+            std::clamp(alpha, 0.0f, 1.0f));
+    };
+    const float radius = std::max(0.0f, theme.cornerRadius * scale);
+    const float edgeWidth = std::clamp(
+        resolved.material.widgetEdgeHighlightWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) * scale;
+    (void)snowdesktop::widget_preview::DrawEdgeHighlight(
+        context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
+        resolved.material.widgetEdgeHighlightStrength);
 }
 
 std::string FirstValidationError(
@@ -473,15 +524,28 @@ std::string PreviewRenderResult::ToJson() const
         << JsonString(WideToUtf8(outputPng.wstring()))
         << ",\"width\":" << width
         << ",\"height\":" << height
+        << ",\"componentWidth\":" << componentWidth
+        << ",\"componentHeight\":" << componentHeight
+        << ",\"canvasSize\":" << canvasSize
+        << ",\"padding\":" << padding
+        << ",\"placementX\":" << placementX
+        << ",\"placementY\":" << placementY
+        << ",\"placementWidth\":" << placementWidth
+        << ",\"placementHeight\":" << placementHeight
+        << ",\"cornerRadius\":" << cornerRadius
         << ",\"columns\":" << columns
         << ",\"rows\":" << rows
         << ",\"dpi\":" << dpi
         << ",\"locale\":" << JsonString(locale)
         << ",\"theme\":" << JsonString(theme)
         << ",\"appearance\":" << JsonString(appearance)
+        << ",\"contentTheme\":" << contentTheme
+        << ",\"foregroundTheme\":" << JsonString(foregroundTheme)
         << ",\"dataState\":" << JsonString(dataState)
         << ",\"background\":"
-        << JsonString(WideToUtf8(backgroundImage.wstring())) << '}';
+        << JsonString(WideToUtf8(backgroundImage.wstring()))
+        << ",\"contentOnly\":" << (contentOnly ? "true" : "false")
+        << '}';
     return output.str();
 }
 
@@ -498,6 +562,16 @@ PreviewRenderResult RenderWidgetPreview(
     result.appearance = request.appearance;
     result.dataState = request.dataState;
     result.backgroundImage = request.backgroundImage;
+    result.canvasSize = request.canvasSize;
+    result.padding = request.padding;
+    result.contentOnly = request.contentOnly;
+
+    if (request.contentOnly && !request.backgroundImage.empty())
+    {
+        result.stage = "request.background";
+        result.error = "content-only previews cannot use a background image";
+        return result;
+    }
 
     const auto appearance = ParseAppearance(request.appearance);
     if (!appearance)
@@ -584,16 +658,51 @@ PreviewRenderResult RenderWidgetPreview(
         static_cast<int>(std::lround(8.0f * dpiScale)));
     const int barHeight = std::max(1,
         static_cast<int>(std::lround(24.0f * dpiScale)));
-    result.width = request.columns * cellWidth +
+    result.componentWidth = request.columns * cellWidth +
         (request.columns - 1) * gap;
-    result.height = request.rows * cellHeight +
+    result.componentHeight = request.rows * cellHeight +
         (request.rows - 1) * gap;
-    if (result.width <= 0 || result.height <= 0 ||
-        result.width > 8192 || result.height > 8192)
+    if (result.componentWidth <= 0 || result.componentHeight <= 0 ||
+        result.componentWidth > 8192 || result.componentHeight > 8192)
     {
         result.stage = "request.pixels";
         result.error = "preview pixel dimensions exceed the renderer limit";
         return result;
+    }
+    if (request.canvasSize < 0 || request.canvasSize > 8192 ||
+        (request.canvasSize > 0 && request.canvasSize < 64) ||
+        request.padding < 0 || request.padding > 4096 ||
+        (request.padding > 0 && request.canvasSize == 0) ||
+        (request.canvasSize > 0 &&
+            request.padding * 2 >= request.canvasSize))
+    {
+        result.stage = "request.canvas";
+        result.error = "preview canvas size or padding is outside the supported range";
+        return result;
+    }
+    result.width = request.canvasSize > 0
+        ? request.canvasSize : result.componentWidth;
+    result.height = request.canvasSize > 0
+        ? request.canvasSize : result.componentHeight;
+    if (request.canvasSize > 0)
+    {
+        const int available = request.canvasSize - request.padding * 2;
+        const double scale = std::min(
+            static_cast<double>(available) / result.componentWidth,
+            static_cast<double>(available) / result.componentHeight);
+        result.placementWidth = std::max(1,
+            static_cast<int>(std::lround(result.componentWidth * scale)));
+        result.placementHeight = std::max(1,
+            static_cast<int>(std::lround(result.componentHeight * scale)));
+        result.placementWidth = std::min(available, result.placementWidth);
+        result.placementHeight = std::min(available, result.placementHeight);
+        result.placementX = (request.canvasSize - result.placementWidth) / 2;
+        result.placementY = (request.canvasSize - result.placementHeight) / 2;
+    }
+    else
+    {
+        result.placementWidth = result.componentWidth;
+        result.placementHeight = result.componentHeight;
     }
 
     ScopedComInitialization com;
@@ -632,7 +741,23 @@ PreviewRenderResult RenderWidgetPreview(
             HresultText(graphicsResult);
         return result;
     }
-    context->SetTarget(target.Get());
+    ComPtr<ID2D1Bitmap1> componentTarget;
+    if (request.canvasSize > 0)
+    {
+        const D2D1_SIZE_U componentBitmapSize = D2D1::SizeU(
+            static_cast<UINT32>(result.componentWidth),
+            static_cast<UINT32>(result.componentHeight));
+        graphicsResult = context->CreateBitmap(componentBitmapSize,
+            nullptr, 0, &targetProperties, &componentTarget);
+        if (FAILED(graphicsResult))
+        {
+            result.stage = "graphics.componentTarget";
+            result.error = "cannot create the transparent component render target: " +
+                HresultText(graphicsResult);
+            return result;
+        }
+    }
+    context->SetTarget(componentTarget ? componentTarget.Get() : target.Get());
     context->SetDpi(static_cast<float>(request.dpi),
         static_cast<float>(request.dpi));
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
@@ -647,7 +772,7 @@ PreviewRenderResult RenderWidgetPreview(
     }
     LuaWidgetAuthorPreviewConfiguration previewConfiguration;
     previewConfiguration.bounds = {
-        0, 0, result.width, result.height };
+        0, 0, result.componentWidth, result.componentHeight };
     previewConfiguration.columns = request.columns;
     previewConfiguration.rows = request.rows;
     previewConfiguration.cellWidth = cellWidth;
@@ -672,22 +797,74 @@ PreviewRenderResult RenderWidgetPreview(
         context->SetTarget(nullptr);
         return result;
     }
-    const RECT bounds{ 0, 0, result.width, result.height };
+    const RECT componentBounds{
+        0, 0, result.componentWidth, result.componentHeight };
     const ResolvedPreviewStyle resolvedStyle =
         ResolvePreviewStyle(engine, *appearance);
+    const float outputScale = request.canvasSize > 0
+        ? std::min(
+            static_cast<float>(result.placementWidth) /
+                result.componentWidth,
+            static_cast<float>(result.placementHeight) /
+                result.componentHeight)
+        : 1.0f;
+    result.cornerRadius = std::max(0, static_cast<int>(std::lround(
+        resolvedStyle.theme.cornerRadius * dpiScale * outputScale)));
+    result.contentTheme = resolvedStyle.theme.contentTheme;
+    result.foregroundTheme = result.contentTheme == 1 ? "dark" : "light";
+    // Keep component theme APIs and declarative semantic tokens in sync with
+    // the independently resolved custom material/foreground preview settings.
+    engine.SetWidgetTheme(kPreviewWidgetId, resolvedStyle.theme);
     context->BeginDraw();
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-    snowdesktop::widget_preview::DrawStage(context.Get(), bounds,
-        { resolvedStyle.lightStage,
-            resolvedStyle.material.glassEnabled,
-            resolvedStyle.material.glassBlurRadius,
+    if (request.canvasSize == 0 && !request.contentOnly)
+    {
+        snowdesktop::widget_preview::DrawStage(context.Get(), componentBounds,
+            { resolvedStyle.lightStage,
+                resolvedStyle.material.glassEnabled,
+                resolvedStyle.material.glassBlurRadius,
+                std::max(0.0f,
+                    resolvedStyle.theme.cornerRadius * dpiScale) }, {},
+            background.pixels.empty() ? nullptr : &background);
+    }
+    const bool hasBackgroundLayer =
+        engine.HasBackgroundLayer(kPreviewWidgetId);
+    if (request.contentOnly)
+    {
+        if (hasBackgroundLayer)
+        {
+            (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
+                context.Get(), componentBounds, request.columns,
+                request.rows, 0.0f,
+                std::max(0.0f,
+                    resolvedStyle.theme.cornerRadius * dpiScale));
+        }
+    }
+    else if (hasBackgroundLayer)
+    {
+        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+            dpiScale, true, false);
+        (void)engine.RenderWidgetBackgroundLayer(kPreviewWidgetId,
+            context.Get(), componentBounds, request.columns, request.rows,
+            resolvedStyle.material.glassEnabled
+                ? resolvedStyle.material.glassBlurRadius : 0.0f,
             std::max(0.0f,
-                resolvedStyle.theme.cornerRadius * dpiScale) }, {},
-        background.pixels.empty() ? nullptr : &background);
-    DrawHostBackground(
-        context.Get(), resolvedStyle, bounds, dpiScale);
-    engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), bounds,
+                resolvedStyle.theme.cornerRadius * dpiScale));
+        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+            dpiScale, false, true);
+    }
+    else
+    {
+        DrawHostBackground(context.Get(), resolvedStyle, componentBounds,
+            dpiScale, true, true);
+    }
+    engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
         request.columns, request.rows);
+    if (!request.contentOnly)
+    {
+        DrawHostEdgeHighlight(
+            context.Get(), resolvedStyle, componentBounds, dpiScale);
+    }
     graphicsResult = context->EndDraw();
     if (FAILED(graphicsResult))
     {
@@ -706,6 +883,60 @@ PreviewRenderResult RenderWidgetPreview(
         engine.Shutdown();
         context->SetTarget(nullptr);
         return result;
+    }
+    if (request.canvasSize > 0)
+    {
+        context->SetTarget(target.Get());
+        const RECT canvasBounds{ 0, 0, result.width, result.height };
+        const RECT placementBounds{
+            result.placementX,
+            result.placementY,
+            result.placementX + result.placementWidth,
+            result.placementY + result.placementHeight };
+        const float placementScale = std::min(
+            static_cast<float>(result.placementWidth) /
+                result.componentWidth,
+            static_cast<float>(result.placementHeight) /
+                result.componentHeight);
+        context->BeginDraw();
+        context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+        if (!request.contentOnly)
+        {
+            snowdesktop::widget_preview::DrawStage(context.Get(),
+                canvasBounds,
+                { resolvedStyle.lightStage, false, 0.0f, 0.0f }, {},
+                background.pixels.empty() ? nullptr : &background);
+            if (resolvedStyle.material.glassEnabled)
+            {
+                snowdesktop::widget_preview::DrawStage(context.Get(),
+                    placementBounds,
+                    { resolvedStyle.lightStage, true,
+                        resolvedStyle.material.glassBlurRadius *
+                            placementScale,
+                        std::max(0.0f,
+                            resolvedStyle.theme.cornerRadius * dpiScale *
+                                placementScale) },
+                    { result.width, result.height,
+                        result.placementX, result.placementY },
+                    background.pixels.empty() ? nullptr : &background);
+            }
+        }
+        context->DrawBitmap(componentTarget.Get(),
+            D2D1::RectF(static_cast<float>(placementBounds.left),
+                static_cast<float>(placementBounds.top),
+                static_cast<float>(placementBounds.right),
+                static_cast<float>(placementBounds.bottom)),
+            1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+        graphicsResult = context->EndDraw();
+        if (FAILED(graphicsResult))
+        {
+            result.stage = "graphics.composite";
+            result.error = "Direct2D rejected the preview canvas composition: " +
+                HresultText(graphicsResult);
+            engine.Shutdown();
+            context->SetTarget(nullptr);
+            return result;
+        }
     }
 
     const D2D1_BITMAP_PROPERTIES1 readProperties =
@@ -814,6 +1045,50 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
             WriteResultFile(resultPath, result);
             releaseArguments();
             return 2;
+        }
+        if (pair.substr(0, equals) == L"@preview.canvasSize")
+        {
+            if (!ParsePositiveInteger(pair.substr(equals + 1),
+                    64, 8192, request.canvasSize))
+            {
+                result.stage = "request.canvas";
+                result.error = "preview canvas size is outside the supported range";
+                result.outputPng = request.outputPng;
+                WriteResultFile(resultPath, result);
+                releaseArguments();
+                return 2;
+            }
+            continue;
+        }
+        if (pair.substr(0, equals) == L"@preview.padding")
+        {
+            int padding = 0;
+            if (!ParsePositiveInteger(pair.substr(equals + 1),
+                    0, 4096, padding))
+            {
+                result.stage = "request.canvas";
+                result.error = "preview padding is outside the supported range";
+                result.outputPng = request.outputPng;
+                WriteResultFile(resultPath, result);
+                releaseArguments();
+                return 2;
+            }
+            request.padding = padding;
+            continue;
+        }
+        if (pair.substr(0, equals) == L"@preview.contentOnly")
+        {
+            if (pair.substr(equals + 1) != L"1")
+            {
+                result.stage = "request.contentOnly";
+                result.error = "preview content-only flag is invalid";
+                result.outputPng = request.outputPng;
+                WriteResultFile(resultPath, result);
+                releaseArguments();
+                return 2;
+            }
+            request.contentOnly = true;
+            continue;
         }
         request.storage[WideToUtf8(pair.substr(0, equals))] =
             WideToUtf8(pair.substr(equals + 1));

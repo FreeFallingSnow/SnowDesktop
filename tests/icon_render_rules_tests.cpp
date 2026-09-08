@@ -1,8 +1,20 @@
+#include "../src/large_icon_preset_rules.h"
+#include "../src/taskbar_hook/taskbar_hook_protocol.h"
 #include "icon_render_rules.h"
+#include "large_icon_render_rules.h"
+#include "large_icon_motion.h"
+#include "icon_bitmap_pixels.h"
+#include "icon_beautify.h"
+#include "large_icon_transform.h"
+#include "large_icon_settings_rules.h"
+#include "large_icon_visibility_rules.h"
 
 #include <iostream>
 
 namespace rules = snowdesktop::icon_render_rules;
+int RunLargeIconAssetTests();
+int RunLargeIconShellAssetTests();
+int RunLargeIconRenderingTests(const char* outputDirectory);
 
 namespace
 {
@@ -17,8 +29,358 @@ void Check(bool condition, const char* message)
 }
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
+    if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
+    failures += RunLargeIconAssetTests();
+    using namespace snowdesktop::large_icon_render_rules;
+    snowdesktop::LargeIconConfig config;
+    {
+        auto c = config;
+        c.followComponentRadius = true; c.radiusPercent = 75;
+        Check(Radius(ResolveComponentRadius(c, 18), 200, 100, 1) == 18 &&
+            Radius(ResolveComponentRadius(c, 24), 400, 200, 2) == 48,
+            "following radius tracks component changes and DPI without overwriting independent ratio");
+        Check(!snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::Radius, c),
+            "custom radius editor is disclosed only after disabling follow");
+        c.followComponentRadius = false;
+        Check(Radius(ResolveComponentRadius(c, 18), 200, 100, 1) == 37.5,
+            "independent radius retains its saved short-edge ratio");
+        c.showOnHoverOnly = true;
+        using snowdesktop::large_icon_visibility_rules::Visible;
+        Check(!Visible(c, false, true, false, false, false, false) && Visible(c, false, true, true, false, false, false),
+            "hover-only icons hide while idle and reveal on pointer entry");
+        Check(Visible(c, false, true, false, true, false, false) && Visible(c, false, true, false, false, true, false),
+            "selection and drag reveal hover-only icons just like components");
+        Check(!Visible(c, true, true, true, true, true, true), "desktop hiding takes precedence unless retention is enabled");
+        c.keepWhenDesktopHidden = true;
+        Check(Visible(c, true, true, true, false, false, false) && !Visible(c, true, true, false, false, false, false) &&
+            !Visible(c, true, false, true, true, true, true), "retained hover-only icons still respect hover and desktop ownership");
+        using snowdesktop::large_icon_visibility_rules::AllowsHiddenDesktopDrop;
+        Check(AllowsHiddenDesktopDrop(false, false, false) && AllowsHiddenDesktopDrop(false, true, true) &&
+            !AllowsHiddenDesktopDrop(false, true, false),
+            "retained icons may move to empty cells but cannot target hidden ordinary icons");
+        Check(AllowsHiddenDesktopDrop(true, true, true) && AllowsHiddenDesktopDrop(true, false, true) &&
+            !AllowsHiddenDesktopDrop(true, false, false) && !AllowsHiddenDesktopDrop(true, true, false),
+            "external drops require a retained icon even outside its anchor cell");
+        JsonValue encoded; snowdesktop::LargeIconConfig restored;
+        Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), encoded) && snowdesktop::DecodeLargeIconConfig(encoded, restored) && restored == c,
+            "visibility and radius inheritance survive layout codec round trips");
+        encoded.object.erase("followComponentRadius"); encoded.object.erase("showOnHoverOnly"); encoded.object.erase("keepWhenDesktopHidden");
+        Check(snowdesktop::DecodeLargeIconConfig(encoded, restored) && !restored.followComponentRadius && !restored.showOnHoverOnly && !restored.keepWhenDesktopHidden,
+            "old large icons retain their original independent radius and visibility");
+    }
+    snowdesktop::LargeIconMotion motion;
+    Check(!motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0,
+        "no-effect mode never schedules hover animation");
+    config.effect = 2;
+    Check(motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0, "title honors initial delay");
+    motion.Advance(1071, true, true, true, 1, config);
+    Check(motion.hover == 0, "title never appears before its delay");
+    motion.Advance(1132, true, true, true, 1, config);
+    Check(std::abs(motion.hover - .5f) < .0001, "title reaches transition midpoint");
+    motion.Advance(1132, false, true, true, 1, config);
+    Check(std::abs(motion.hover - .5f) < .0001, "rapid exit preserves current pose");
+    motion.Advance(1180, false, true, true, 1, config);
+    Check(std::abs(motion.hover - .25f) < .0001, "exit uses independent duration");
+    motion.Advance(1180, true, true, true, 1, config);
+    Check(!motion.Advance(1500, true, true, true, 1, config) && motion.hover == 1, "settled title stops animation frames");
+    Check(!motion.Advance(1501, true, false, true, 1, config) && motion.hover == 0, "hidden or blocked items immediately reset");
+    Check(!motion.Advance(1502, true, true, false, 1, config) && motion.hover == 1, "reduced motion shows inner title instantly");
+    {
+        snowdesktop::LargeIconMotion menuMotion;
+        Check(!menuMotion.Advance(100, false, true, true, 1, config, true) && menuMotion.hover == 1,
+            "right-click reveals the dynamic title without waiting for pointer hover or its delay");
+        Check(!menuMotion.Advance(1000, false, true, true, 1, config, true) && menuMotion.hover == 1,
+            "moving into the menu holds the title without scheduling animation frames");
+        Check(menuMotion.Advance(1001, false, true, true, 1, config) && menuMotion.hover == 1,
+            "closing the menu outside the icon starts a continuous exit from the expanded pose");
+        Check(!menuMotion.Advance(1200, false, true, true, 1, config) && menuMotion.hover == 0,
+            "the title settles closed after dismissing a menu away from its icon");
+        Check(!menuMotion.Advance(1300, false, true, false, 1, config, true) && menuMotion.hover == 1,
+            "menu titles remain readable with reduced motion");
+        Check(!menuMotion.Advance(1400, true, false, true, 1, config, true) && menuMotion.hover == 0,
+            "menu invocation cannot reveal a hidden or interaction-blocked item");
+        auto fill = config; fill.backgroundStyle = -2;
+        Check(!menuMotion.Advance(1500, true, true, true, 1, fill, true) && menuMotion.hover == 0,
+            "image fill never reveals a title even while its menu is open");
+        auto none = config; none.effect = 0;
+        Check(!menuMotion.Advance(1600, true, true, true, 1, none, true) && menuMotion.hover == 0,
+            "switching to no effect immediately removes a menu-held title");
+    }
+    config.effect = 1;
+    Check(!motion.Advance(1503, true, true, false, 1, config) && motion.hover == 0, "reduced motion disables 3D");
+    Check(motion.AdvanceTilt(1600, 1, -1, true, true, true, 1, config), "pointer change starts a finite tilt");
+    motion.AdvanceTilt(1632.5, -1, 1, true, true, true, 1, config);
+    Check(std::abs(motion.tiltX - .875f) < .0001 && std::abs(motion.tiltY + .875f) < .0001,
+        "tilt reaches most of its target within 33ms and preserves pose on reversal");
+    snowdesktop::LargeIconMotion following;
+    following.Advance(2000, true, true, true, 1, config);
+    Check(following.hover == 1, "3D does not multiply pointer tracking by a delayed hover fade");
+    following.AdvanceTilt(2000, 1, 0, true, true, true, 1, config);
+    for (int i = 1; i <= 6; ++i) following.AdvanceTilt(2000 + i * 8, 1 - i * .02f, 0, true, true, true, 1, config);
+    Check(following.tiltX > .75f, "continuous high-rate pointer events do not restart a slow ease-in");
+    Check(!motion.AdvanceTilt(1900, -1, 1, true, true, true, 1, config) && motion.tiltX == -1,
+        "settled pointer tilt does not request idle frames");
+    Check(!motion.AdvanceTilt(1901, -1, 1, true, false, true, 1, config) && motion.tiltX == 0,
+        "hidden or blocked cards discard pointer motion");
+    const auto tilt = snowdesktop::large_icon_transform::Resolve(400, 180, 1, -.8f, 1);
+    const auto center = snowdesktop::large_icon_transform::Project(tilt.matrix, 200, 90);
+    Check(tilt.active && std::abs(center.x - 200) < .001 && std::abs(center.y - 90) < .001,
+        "shared backdrop/content transform preserves the card center");
+    Check(!snowdesktop::large_icon_transform::Resolve(400, 180, 1, 1, 0).active, "zero-strength 3D skips effect rendering");
+    config = {};
+    const MeasureTitle measured = [](double w, double h) { return TitleSize{96, 32, w >= 96 && h >= 32}; };
+    {
+        using namespace snowdesktop::large_icon_settings_rules;
+        namespace presets = snowdesktop::large_icon_preset_rules;
+        // Protect saved appearance, host authorization and the finite animation
+        // lifecycle shared by both ordinary foreground and image-fill icons.
+        for (int effect : {3, 4, 5}) for (bool fill : {false, true})
+        {
+            auto c = config; c.backgroundStyle = fill ? -2 : -5;
+            const auto locked = c;
+            Check(!presets::ApplyEffect(c, effect, false) && c == locked, "locked edits cannot select new effects");
+            Check(presets::ApplyEffect(c, effect, true), "new effects support foreground and fill sources");
+            c.zoomAmount = .07; c.glowStrength = .62; c.shineStrength = .35; c.shineDurationMs = 650;
+            JsonValue encoded; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), encoded) && snowdesktop::DecodeLargeIconConfig(encoded, restored) && restored == c,
+                "new effect selection and independent strengths survive persistence");
+            Check(Visible(Field::Zoom, c) == (effect == 3) && Visible(Field::Glow, c) == (effect == 4) &&
+                Visible(Field::Shine, c) == (effect == 5) && !Visible(Field::Title, c) && !Visible(Field::Tilt, c),
+                "settings disclose only the selected effect parameters");
+            Check(presets::ApplyEffect(c, 0, true) && presets::ApplyEffect(c, effect, true) && c == restored,
+                "quick switching retains the last detailed parameters");
+            c.effect = 6;
+            Check(!snowdesktop::ValidateLargeIconConfig(c), "unsupported effect values cannot enter layout state");
+        }
+        auto c = config;
+        JsonValue legacy; snowdesktop::LargeIconConfig restored;
+        Check(ParseJson("{\"version\":2,\"effect\":1}", legacy) && snowdesktop::DecodeLargeIconConfig(legacy, restored) &&
+            restored.effect == 1 && restored.zoomAmount == .04 && restored.glowStrength == .45 && restored.shineStrength == .22 && restored.shineDurationMs == 450,
+            "old layouts keep their existing effect while new parameters receive independent defaults");
+        c.zoomAmount = .11; Check(!snowdesktop::ValidateLargeIconConfig(c), "excessive zoom is rejected");
+        c = config; c.glowStrength = std::numeric_limits<double>::quiet_NaN();
+        Check(!snowdesktop::ValidateLargeIconConfig(c), "non-finite glow is rejected");
+        c = config; c.shineStrength = 1.1; Check(!snowdesktop::ValidateLargeIconConfig(c), "excessive shine opacity is rejected");
+        c = config; c.shineDurationMs = 0; Check(!snowdesktop::ValidateLargeIconConfig(c), "zero-duration shine is rejected");
+        for (int effect : {3, 4})
+        {
+            c = config; c.effect = effect; snowdesktop::LargeIconMotion m;
+            Check(m.Advance(1000, true, true, true, 1, c), "zoom and glow start a finite hover transition");
+            m.Advance(1060, true, true, true, 1, c);
+            Check(std::abs(m.hover - .5f) < .0001, "new hover effects respond without title delay");
+            m.Advance(1060, false, true, true, 1, c);
+            Check(std::abs(m.hover - .5f) < .0001, "new effects reverse from the current pose");
+            Check(!m.Advance(1300, false, true, true, 1, c) && m.hover == 0, "new effects stop refreshing after exit");
+            m.Advance(1400, true, true, true, 1, c);
+            Check(!m.Advance(1700, true, true, true, 1, c) && m.hover == 1, "settled hover does not refresh continuously");
+            Check(!m.Advance(1800, true, true, false, 1, c) && m.hover == (effect == 4 ? 1 : 0),
+                "reduced motion disables zoom and shows static glow");
+            Check(!m.Advance(1900, true, false, true, 1, c) && m.hover == 0, "hidden effects clear their pose without scheduling frames");
+            c.zoomAmount = c.glowStrength = 0;
+            Check(!m.Advance(2000, true, true, true, 1, c), "zero-strength effects schedule no frames");
+        }
+        c = config; c.effect = 5; snowdesktop::LargeIconMotion sweep;
+        Check(sweep.Advance(1000, true, true, true, 1, c) && sweep.shine == 0, "shine starts once on entry");
+        sweep.Advance(1225, true, true, true, 1, c);
+        Check(sweep.shine == .5f, "shine uses its own saved duration");
+        Check(!sweep.Advance(1450, true, true, true, 1, c) && sweep.shine < 0 &&
+            !sweep.Advance(4000, true, true, true, 1, c), "completed shine clears and never loops while hovered");
+        sweep.Advance(4100, false, true, true, 1, c);
+        Check(sweep.Advance(4101, true, true, true, 2, c), "reentry starts a new sweep");
+        sweep.Advance(4551, true, true, true, 2, c);
+        Check(sweep.shine == .5f, "shine obeys the global duration multiplier");
+        Check(!sweep.Advance(4560, true, false, true, 1, c) && sweep.shine < 0, "hidden or blocked items cancel the sweep");
+        Check(!sweep.Advance(4600, true, true, false, 1, c) && sweep.shine < 0, "reduced motion disables shine");
+        Check(!sweep.Advance(4700, true, true, true, 0, c), "zero global duration schedules no sweep");
+        c.shineStrength = 0; Check(!sweep.Advance(4800, true, true, true, 1, c), "invisible shine schedules no sweep");
+        c.shineStrength = .22; sweep.Advance(4900, true, true, true, 1, c);
+        c.effect = 0;
+        Check(!sweep.Advance(4901, true, true, true, 1, c) && sweep.shine < 0, "switching effects clears an in-flight sweep");
+        c.effect = 5;
+        Check(sweep.Advance(4902, true, true, true, 1, c) && sweep.shine == 0, "switching back starts from the new effect state");
+        c = config; c.iconX = .2; c.iconY = .8;
+        const auto idle = ResolveContent(c, 400, 180, 64, 64, 1, true, 0);
+        c.effect = 3;
+        const auto zoom = ResolveContent(c, 400, 180, 64, 64, 1, true, 1);
+        Check(std::abs(zoom.width - idle.width * 1.04) < .0001 &&
+            std::abs(zoom.x + zoom.width / 2 - idle.x - idle.width / 2) < .0001 &&
+            std::abs(zoom.y + zoom.height / 2 - idle.y - idle.height / 2) < .0001,
+            "zoom preserves the saved foreground center and changes only its content size");
+        c.backgroundStyle = -2; c.focusX = 1; c.focusY = 0;
+        const auto crop = ResolveContent(c, 400, 180, 800, 200, 1, false, 1);
+        const auto restingCrop = ResolveContent(c, 400, 180, 800, 200, 1, false, 0);
+        Check(crop.width == 400 && crop.height == 180 && crop.sourceWidth < restingCrop.sourceWidth &&
+            std::abs(crop.sourceX + crop.sourceWidth - 800) < .0001 && crop.sourceY == 0,
+            "zoomed fill keeps the frame and crop focus while sampling a smaller source region");
+    }
+    auto geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
+    Check(geometry.width == 32 && geometry.x == 184 && geometry.y == 74, "small original stays centered without upscaling");
+    config.iconX = 0; config.iconY = 1;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
+    Check(geometry.x == 0 && geometry.y == 148, "foreground positions use the available travel on each axis");
+    config.effect = 2;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
+    Check(geometry.x == 184 && geometry.y == 74, "dynamic title overrides saved foreground position at rest");
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 1, measured);
+    Check(geometry.leftReveal && geometry.x == 130 && geometry.width == 32 && geometry.titleLeft == 174 && geometry.titleWidth == 96,
+        "left reveal keeps original size and centers text in the remaining right column");
+    Check(CanSelectTitleDirection(config, 0, 180, 400, 64, 64, 1, measured) && CanSelectTitleDirection(config, 1, 180, 400, 64, 64, 1, measured),
+        "compact spacing permits a title when the actual icon and text fit");
+    auto largeImage = config; largeImage.contentScale = 1;
+    auto fullHeight = ResolveContent(largeImage, 400, 180, 256, 256, 1, true, 1, measured);
+    Check(fullHeight.leftReveal && fullHeight.height == 180 && fullHeight.titleWidth == 96,
+        "a full-height foreground still reveals text to its right without shrinking the icon");
+    auto fullWidth = ResolveContent(largeImage, 180, 400, 256, 256, 1, true, 1, measured);
+    Check(fullWidth.upReveal && fullWidth.width == 180,
+        "a full-width foreground still permits the lower title");
+    Check(!CanSelectTitleDirection(config, 0, 60, 60, 64, 64, 1, measured) && !CanSelectTitleDirection(config, 1, 60, 60, 64, 64, 1, measured),
+        "insufficient frames cannot enable either direction by shrinking content");
+    config.titleDirection = 1;
+    geometry = ResolveContent(config, 180, 400, 64, 64, 1, true, 1, measured);
+    Check(geometry.upReveal && geometry.y == 146 && geometry.width == 64 && geometry.titleTop == 222,
+        "up direction reserves a lower text area without resizing the icon");
+    config.backgroundStyle = -2; config.titleDirection = 0; config.focusX = 1;
+    geometry = ResolveContent(config, 400, 180, 800, 200, 1, true, 1, measured);
+    Check(!geometry.leftReveal && !geometry.upReveal && geometry.cropped && geometry.width == 400 && geometry.x == 0,
+        "saved dynamic-title settings never translate image-fill content");
+    Check(!motion.Advance(2000, true, true, true, 1, config) && motion.hover == 0,
+        "image fill schedules no dynamic-title animation");
+    config.effect = 0; config.fit = 0;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
+    Check(geometry.width == 180 && geometry.x == 110, "fill original is enlarged independently of foreground limits");
+    config.fillScale = .5;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    Check(geometry.width == 90 && geometry.x == 155 && geometry.y == 45, "fill scale can shrink the image independently of foreground scale");
+    config.fit = 1; config.fillScale = 2;
+    geometry = ResolveContent(config, 400, 180, 800, 200, 1, false, 0);
+    Check(geometry.width == 400 && geometry.sourceWidth < 400 && geometry.sourceHeight < 200,
+        "zooming cover creates crop room on both axes without growing the frame");
+    config.effect = 2;
+    const auto leftZoom = ResolveContent(config, 400, 180, 800, 200, 1, false, 1, measured);
+    Check(!leftZoom.leftReveal && !leftZoom.upReveal && leftZoom.x == 0 && leftZoom.sourceWidth == geometry.sourceWidth,
+        "zoomed image fill retains its crop with dynamic title disabled");
+    config = {};
+    Check(Radius(config, 200, 100, 2) == 24 && RadiusPercent(config, 200, 100, 2) == 48, "legacy radius preserves CU geometry");
+    config.radiusPercent = 100;
+    Check(Radius(config, 200, 100, 1) == 50 && Radius(config, 400, 200, 2) == 100, "100 percent radius follows half short edge at each DPI");
+    using snowdesktop::large_icon_settings_rules::Field;
+    using snowdesktop::large_icon_settings_rules::Visible;
+    using snowdesktop::large_icon_settings_rules::Enabled;
+    config = {};
+    Check(!Visible(Field::Custom, config) && !Visible(Field::Gradient, config) &&
+        !Visible(Field::Fill, config) && !Visible(Field::Solid, config), "neutral preset exposes no manual background controls");
+    config.backgroundStyle = -2; config.content = 2;
+    Check(Visible(Field::Steam, config) && Visible(Field::Crop, config) && !Visible(Field::Foreground, config) && !Visible(Field::Custom, config),
+        "Steam fill has its own settings and no foreground or component material");
+    config.content = 1; config.fit = 0;
+    Check(Visible(Field::FillImage, config) && !Visible(Field::Steam, config) && !Visible(Field::Crop, config), "local contain hides Steam and crop settings");
+    config.backgroundStyle = 9; config.gradient.enabled = true; config.effect = 2; config.autoTitleColor = false;
+    Check(Visible(Field::Custom, config) && !Visible(Field::Solid, config) && Visible(Field::ManualTitle, config) &&
+        !Enabled(Field::ForegroundPosition, config, false, true), "custom gradient suppresses duplicate solid parameters and dynamic title owns position");
+    config = {};
+    auto background = DefaultBackground(config, 0, false, 0);
+    Check(background.color == 0xe8ecf4 && background.opacity == .65, "first frame and failed extraction have the opaque default-beautify base");
+    config.backgroundStyle = -4;
+    background = DefaultBackground(config, 0x008800, true, 0x0112ff);
+    Check(background.color == 0x0112ff && background.opacity == 1 && !background.gradient.enabled, "reliable contour is preserved exactly and filled opaquely");
+    config.backgroundStyle = -3; config.smartFill = false;
+    background = DefaultBackground(config, 0x008800, true, 0x0112ff);
+    Check(background.color == 0xe8ecf4 && background.opacity == .65 && !background.gradient.enabled,
+        "plain icon background falls back to the beautify base, never an accent fill");
+    config.smartFill = false; config.defaultBackground = 1; config.themeOpacity = .4; config.themeAngle = 45;
+    background = DefaultBackground(config, 0x008800, true, 0x0112ff);
+    Check(background.color == 0x008800 && background.opacity == .4 && background.gradient.enabled && background.gradient.angle == 45,
+        "theme fallback supports opacity and automatic gradient direction without manual colors");
+    config.defaultGradient.enabled = true; config.defaultGradient.angle = 213;
+    config.defaultGradient.stops = {{0, 0x112233, .2}, {.3, 0x998877, .4}, {1, 0xabcdef, .8}};
+    background = DefaultBackground(config, 0, false, 0);
+    Check(background.gradient == config.defaultGradient, "manual default gradient retains every stop, opacity and direction without theme samples");
+    config.defaultBackground = 2; config.defaultSolidColor = 0x1133ff; config.defaultSolidOpacity = .37;
+    background = DefaultBackground(config, 0xff0000, true, 0x008800);
+    Check(background.color == 0x1133ff && background.opacity == .37 && !background.gradient.enabled,
+        "legacy solid retains its saved color and opacity");
+    config.backgroundStyle = -2; config.effect = 2;
+    Check(!Visible(Field::Title, config) && !Visible(Field::ManualTitle, config), "image fill hides unsupported title controls");
+    namespace presets = snowdesktop::large_icon_preset_rules;
+    config = {};
+    Check(presets::DefaultEffect(config) == 2, "new foreground icons and explicit effect resets default to dynamic title");
+    {
+        auto c = config; c.effect = presets::DefaultEffect(c);
+        Check(presets::ApplyBackground(c, -2, true, true) && c.effect == 3 && presets::DefaultEffect(c) == 3,
+            "choosing image fill replaces unsupported default title with gentle zoom");
+        for (int effect : {0, 1, 3, 4, 5})
+        {
+            c = config; c.effect = effect;
+            Check(presets::ApplyBackground(c, -2, true, true) && c.effect == effect,
+                "entering fill preserves other explicitly selected effects including none");
+        }
+        c.content = 2;
+        Check(presets::DefaultEffect(c) == 3, "Steam fill has the same zoom default as local image fill");
+        c.backgroundStyle = -5;
+        Check(presets::DefaultEffect(c) == 2, "Steam foreground resets use title according to current mode rather than item type");
+        JsonValue legacy; snowdesktop::LargeIconConfig loaded;
+        Check(ParseJson("{\"version\":2}", legacy) && snowdesktop::DecodeLargeIconConfig(legacy, loaded) && loaded.effect == 0,
+            "new creation defaults never enable effects in existing layouts missing the effect field");
+    }
+    Check(config.columns == 1 && config.rows == 1 && config.backgroundStyle == -5, "new large icons occupy one cell with neutral preset");
+    Check(DefaultBackground(config, 0x008800, true, 0x0112ff).color == 0xe8ecf4, "neutral default never auto-selects detected plate color");
+    config.columns = 4; config.rows = 3; config.radiusPercent = 78;
+    config.gradient.enabled = true; config.gradient.angle = 234; config.gradientOpacity = .4;
+    config.titleWeight = 800; config.titleColor = 0x123456; config.autoTitleDirection = false; config.titleDirection = 1;
+    const auto kept = config;
+    Check(!presets::ApplyBackground(config, -4, true, false) && config == kept, "missing plate sample cannot create plate preset");
+    for (const auto option : presets::backgrounds)
+    {
+        Check(!presets::ApplyBackground(config, option.value, false, true) && config == kept, "locked menu cannot change background");
+    }
+    Check(presets::ApplyBackground(config, -4, true, true) && presets::Background(config) == -4, "detected plate can be explicitly selected");
+    Check(presets::ApplyBackground(config, -2, true, true) && !presets::ApplyEffect(config, 2, true), "fill rejects dynamic title in common menu and settings rule");
+    Check(presets::ApplyBackground(config, 9, true, true) && presets::ApplyEffect(config, 2, true) &&
+        config.gradient == kept.gradient && config.gradientOpacity == kept.gradientOpacity && config.columns == 4 && config.rows == 3 &&
+        config.radiusPercent == 78 && config.titleWeight == 800 && config.titleColor == 0x123456 && !config.autoTitleDirection && config.titleDirection == 1,
+        "quick switching preserves custom values, span, radius and detailed title settings");
+    Check(DefaultBackground(config, 0, false, 0).gradient.stops.front().opacity == config.gradient.stops.front().opacity * .4,
+        "overall gradient opacity multiplies stop alpha without overwriting it");
+    config.backgroundStyle = -3; config.defaultBackground = 1; config.defaultGradient.enabled = true;
+    config.defaultGradient.angle = 135; config.defaultGradient.stops.insert(config.defaultGradient.stops.begin() + 1, {.4, 0x998877, .3});
+    const auto legacyBackground = DefaultBackground(config, 0x339988, false, 0);
+    presets::PrepareForEditing(config, 0x339988, false, 0);
+    Check(config.backgroundStyle == 9 && config.gradient == legacyBackground.gradient && config.gradientOpacity == 1,
+        "editing legacy defaults transfers complete gradient into custom without flattening");
+    auto wire = snowdesktop::taskbar_hook::EncodeGradient(config.gradient);
+    Check(snowdesktop::taskbar_hook::DecodeGradient(wire) == config.gradient,
+        "taskbar wire preserves multiple stops, alpha, angle and range");
+    wire.count = 6;
+    Check(!snowdesktop::taskbar_hook::DecodeGradient(wire).enabled, "taskbar rejects oversized gradient before reading stop array");
+    wire = snowdesktop::taskbar_hook::EncodeGradient(config.gradient); wire.stops[1].position = 2;
+    Check(!snowdesktop::taskbar_hook::DecodeGradient(wire).enabled, "taskbar rejects malformed gradient positions");
+    std::vector<std::uint32_t> straight{0x8000c864, 0xff00c864, 0x0000ffff};
+    snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(straight);
+    Check(straight[0] == 0x80006432 && straight[1] == 0xff00c864 && straight[2] == 0,
+        "straight Shell alpha is premultiplied before PNG encoding instead of producing cyan fringes");
+    const auto normalized = straight;
+    snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(straight);
+    Check(straight == normalized, "already-premultiplied icon samples are not darkened again");
+    std::vector<unsigned> rounded(96 * 96);
+    for (int y = 0; y < 96; ++y) for (int x = 0; x < 96; ++x)
+    {
+        const double dx = std::max({20. - x, 0., x - 75.}), dy = std::max({20. - y, 0., y - 75.});
+        const auto a = static_cast<unsigned>(255 * std::clamp(16.5 - std::sqrt(dx * dx + dy * dy), 0., 1.));
+        rounded[y * 96 + x] = a << 24 | ((32 * a / 255) << 16) | ((200 * a / 255) << 8) | (112 * a / 255);
+    }
+    for (int y = 32; y < 64; ++y) for (int x = 32; x < 64; ++x) rounded[y * 96 + x] = 0xffffffff;
+    const auto contour = snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96);
+    Check(contour && contour->r == 32 && contour->g == 200 && contour->b == 112,
+        "visible rounded contour survives transparent image margins and an opaque contrasting logo");
+    for (int y = 36; y < 60; ++y) for (int x = 36; x < 60; ++x) rounded[y * 96 + x] = 0;
+    Check(!snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96), "a hollow icon silhouette is not mistaken for a solid background plate");
+    config.backgroundStyle = 7;
+    Check(TextColor(config, 0x111111, 0x161616) == 0x161616, "component title color uses theme foreground even when luminance disagrees");
+    config.autoTitleColor = false; config.titleColor = 0x123456;
+    Check(TextColor(config, 0xffffff, 0xffffff) == 0x123456, "manual title color overrides theme and luminance");
     Check(rules::SourcePixelsForTarget(32) == 64,
         "small icons use the baseline source bucket");
     Check(rules::SourcePixelsForTarget(65) == 96,

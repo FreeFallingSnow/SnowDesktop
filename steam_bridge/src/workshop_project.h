@@ -11,7 +11,29 @@
 
 namespace snowdesktop::steam_bridge
 {
-inline constexpr int kProjectStoreSchemaVersion = 1;
+inline constexpr int kProjectStoreSchemaVersion = 2;
+
+enum class WorkshopTextSource
+{
+    Package,
+    Steam,
+    ManualEnglish,
+};
+
+enum class WorkshopAssetSource
+{
+    Local,
+    Steam,
+};
+
+struct WorkshopPublishPreferences
+{
+    WorkshopTextSource textSource = WorkshopTextSource::Package;
+    WorkshopAssetSource previewSource = WorkshopAssetSource::Local;
+    WorkshopAssetSource tagsSource = WorkshopAssetSource::Local;
+    std::string manualEnglishTitle;
+    std::string manualEnglishDescription;
+};
 
 struct WorkshopProject
 {
@@ -24,7 +46,11 @@ struct WorkshopProject
     std::string lastPublishedVersion;
     std::string lastPublishedSha256;
     std::string lastPublishedAt;
+    WorkshopPublishPreferences publishPreferences;
 };
+
+std::string_view WorkshopTextSourceName(WorkshopTextSource source);
+std::string_view WorkshopAssetSourceName(WorkshopAssetSource source);
 
 struct WorkshopMetadata
 {
@@ -35,7 +61,7 @@ struct WorkshopMetadata
 class ProjectStore
 {
 public:
-    explicit ProjectStore(std::filesystem::path root = {});
+    explicit ProjectStore(std::filesystem::path root);
 
     bool Load(std::string& error);
     bool Save(std::string& error) const;
@@ -54,6 +80,15 @@ private:
     std::filesystem::path root_;
     std::vector<WorkshopProject> projects_;
 };
+
+std::filesystem::path WorkshopManagerDataRoot(
+    const std::filesystem::path& dataDirectory);
+std::filesystem::path LegacyWorkshopManagerDataRoot();
+bool MigrateWorkshopManagerData(const std::filesystem::path& legacyRoot,
+    const std::filesystem::path& targetRoot, std::string& error);
+bool MigrateWorkshopManagerDataOnce(
+    const std::filesystem::path& targetRoot, std::string& error,
+    std::optional<std::filesystem::path> legacyRoot = std::nullopt);
 
 std::string BuildWorkshopMetadata(
     std::string_view packageId, std::string_view version);

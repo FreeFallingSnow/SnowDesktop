@@ -1,6 +1,7 @@
 #pragma once
 
 #include "types.h"
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,7 @@ struct WidgetPreviewItem
     std::wstring categoryId = L"all";
     std::wstring dateGroup;
     bool directory = false;
+    std::uint32_t backgroundRgb = 0;
 };
 
 /** In-memory data graph used only while a component preview is rendered. */

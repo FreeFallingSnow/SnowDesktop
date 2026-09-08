@@ -345,8 +345,12 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.storage.io") &&
             snowdesktop::widget_api::SupportsFeature("draw.advanced") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "draw.imageFit.roundedClip") &&
             snowdesktop::widget_api::SupportsFeature("draw.immediate") &&
             snowdesktop::widget_api::SupportsFeature("draw.marqueeText") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "widget.backgroundLayer") &&
             snowdesktop::widget_api::SupportsFeature(
                 "interaction.pointerActions") &&
             snowdesktop::widget_api::SupportsFeature(
@@ -373,7 +377,17 @@ void TestV2Contract()
                 "interaction.tooltip.rich") &&
             snowdesktop::widget_api::SupportsFeature("l10n.format") &&
             snowdesktop::widget_api::SupportsFeature(
+                "layout.referenceAxes") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "layout.referencePixels") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "layout.relativeUnits") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "ui.semanticMetrics.rowUnit") &&
+            !snowdesktop::widget_api::SupportsFeature(
+                "ui.semanticMetrics") &&
+            snowdesktop::widget_api::SupportsFeature(
+                "settings.changeEvent") &&
             snowdesktop::widget_api::SupportsFeature("module.package") &&
             snowdesktop::widget_api::SupportsFeature("resource.package") &&
             snowdesktop::widget_api::SupportsFeature(
@@ -732,6 +746,104 @@ void TestV2Contract()
         "widget.define must accept core declarative view callbacks");
     lua_pop(state, 2);
 
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "view");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_pushnumber(state, 0.75);
+    lua_setfield(state, -2, "opacity");
+    lua_pushnumber(state, 24.0);
+    lua_setfield(state, -2, "blurRadius");
+    lua_setfield(state, -2, "backgroundLayer");
+    Check(lua_pcall(state, 1, 1, 0) == LUA_OK &&
+            snowdesktop::widget_api::IsDefinedWidget(state, -1),
+        "widget.define must accept a background layer beside the foreground view");
+    lua_pop(state, 2);
+
+    lua_getglobal(state, "widget");
+    lua_getfield(state, -1, "define");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_newtable(state);
+    lua_pushcfunction(state, Noop);
+    lua_setfield(state, -2, "render");
+    lua_pushnumber(state, 49.0);
+    lua_setfield(state, -2, "blurRadius");
+    lua_setfield(state, -2, "backgroundLayer");
+    Check(lua_pcall(state, 1, 1, 0) != LUA_OK &&
+            std::string(lua_tostring(state, -1)).find("blurRadius") !=
+                std::string::npos,
+        "widget.define must reject an out-of-range background blur radius");
+    lua_pop(state, 2);
+
+    luaL_requiref(state, "_G", luaopen_base, 1);
+    lua_pop(state, 1);
+    const auto checkDefinitionScript = [&](const char* script,
+                                            const char* message) {
+        const int status = luaL_dostring(state, script);
+        if (status != LUA_OK)
+            std::cerr << "Lua definition contract failed: " <<
+                (lua_tostring(state, -1) ? lua_tostring(state, -1) :
+                    "unknown Lua error") << '\n';
+        Check(status == LUA_OK, message);
+        lua_settop(state, 0);
+    };
+    checkDefinitionScript(R"lua(
+local function rejected(definition, field)
+    local ok = pcall(widget.define, definition)
+    assert(not ok, field)
+end
+
+assert(widget.define({
+    render = function() end,
+    backgroundLayer = {
+        render = function() end,
+        opacity = 0,
+        blurRadius = 48,
+    },
+}))
+rejected({
+    backgroundLayer = { render = function() end },
+}, "choose exactly one")
+rejected({
+    render = function() end,
+    view = function() end,
+    backgroundLayer = { render = function() end },
+}, "choose exactly one")
+rejected({
+    render = function() end,
+    backgroundLayer = {},
+}, "backgroundLayer.render")
+rejected({
+    render = function() end,
+    backgroundLayer = true,
+}, "backgroundLayer")
+
+for _, value in ipairs({-0.01, 1.01, 1 / 0, "1"}) do
+    rejected({
+        render = function() end,
+        backgroundLayer = {
+            render = function() end,
+            opacity = value,
+        },
+    }, "backgroundLayer.opacity")
+end
+for _, value in ipairs({-0.01, 48.01, 1 / 0, "1"}) do
+    rejected({
+        render = function() end,
+        backgroundLayer = {
+            render = function() end,
+            blurRadius = value,
+        },
+    }, "backgroundLayer.blurRadius")
+end
+)lua", "widget.define must enforce every background-layer shape and numeric boundary");
+
     constexpr FunctionDescriptor systemFunctions[] = {
         { "capabilities",
             snowdesktop::widget_api::LuaSystemCapabilities, 2 },
@@ -829,6 +941,17 @@ void TestSystemCapabilityContract()
                 contract.valueType && contract.valueType[0] != '\0',
             "data topics must link their LuaLS option and value types");
     }
+    const auto topicInterval = [&](std::string_view name) {
+        const auto match = std::find_if(topics.begin(), topics.end(),
+            [&](const auto& contract) { return contract.name == name; });
+        return match == topics.end() ? 0 : match->minimumIntervalMs;
+    };
+    Check(topicInterval("media.sessions") == 500 &&
+            topicInterval("media.current") == 100 &&
+            topicInterval("media.timeline") == 100 &&
+            topicInterval("media.artwork") == 100,
+        "media detail topics must support responsive 100 ms updates without "
+        "raising the full session-list polling rate");
     for (const auto& contract : tasks)
     {
         checkCommon(contract.name, contract.feature,
@@ -1064,7 +1187,7 @@ void TestPublicApiContract()
 {
     const auto contracts =
         snowdesktop::widget_api::PublicApiFunctionContracts();
-    Check(contracts.size() == 164,
+    Check(contracts.size() == 168,
         "public Lua host API function count must match the reviewed catalog");
 
     std::unordered_set<std::string> sandboxLibraries;

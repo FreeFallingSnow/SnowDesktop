@@ -1,6 +1,7 @@
 #include "dock_magnification.h"
 #include "dock_launch_animation.h"
 #include "dock_rename_layout.h"
+#include "rename_edit_layout.h"
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
 #include "dock_collection_icon_rules.h"
@@ -13,16 +14,24 @@
 #include "dock_window_rules.h"
 #include "dock_window_preview.h"
 #include "dock_window_transition.h"
+#include "dock_genie_rules.h"
+#include "dock_snapshot_warmup.h"
+#include "dock_snapshot_warmup_rules.h"
+#include "dock_app_identity_rules.h"
 #include "page_navigation_rules.h"
+#include "page_layout_settings.h"
 #include "dock_settings_rules.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
 #include "app/native_menu_presentation_rules.h"
+#include "app/popup_window_pair_z_order.h"
 #include "desktop_window_discovery_rules.h"
+#include "desktop_keyboard_rules.h"
 #include "floating_dock_rules.h"
 #include "floating_popup_rules.h"
 #include "drag_visual_rules.h"
 #include "ole_drag_rules.h"
+#include "drag_input_rules.h"
 #include "display_topology_refresh.h"
 #include "item_visual_metrics.h"
 #include "collection_titleless_rules.h"
@@ -37,14 +46,18 @@
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <sstream>
 #include <string>
+#include <vector>
+#include <unordered_map>
 
 namespace rules = snowdesktop::dock_window_rules;
+namespace identityRules = snowdesktop::dock_app_identity_rules;
 
 namespace
 {
@@ -67,6 +80,14 @@ std::string ReadFile(const std::filesystem::path& path)
     std::string source = contents.str();
     source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
     return source;
+}
+
+bool ContainsIgnoringWhitespace(std::string source, std::string sequence)
+{
+    const auto whitespace = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    std::erase_if(source, whitespace);
+    std::erase_if(sequence, whitespace);
+    return source.find(sequence) != std::string::npos;
 }
 
 std::size_t CountOccurrences(
@@ -103,10 +124,459 @@ void CheckRowMargins(
     Check(std::abs(leftMargin - rightMargin) <= 1, message);
 }
 
+void CheckPopupWindowPairZOrderTransitions()
+{
+    constexpr DWORD extendedStyle =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    HWND content = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-content",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND backdrop = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-backdrop",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND menu = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-menu",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND separator = CreateWindowExW(
+        extendedStyle, L"STATIC", L"popup-pair-separator",
+        WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(content && backdrop && menu && separator,
+        "popup pair transition test windows are created");
+    if (!content || !backdrop || !menu || !separator)
+    {
+        if (separator) DestroyWindow(separator);
+        if (menu) DestroyWindow(menu);
+        if (backdrop) DestroyWindow(backdrop);
+        if (content) DestroyWindow(content);
+        return;
+    }
+
+    const POINT origin{ 0, 0 };
+    const SIZE size{ 32, 32 };
+    const auto pairMatches = [&](bool topmost) {
+        return snowdesktop::popup_window_pair_z_order::
+                IsTopmost(content) == topmost &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(backdrop) == topmost &&
+            snowdesktop::popup_window_pair_z_order::
+                IsPaired(content, backdrop);
+    };
+
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size) &&
+            pairMatches(true),
+        "popup pair promotion keeps content above its topmost backdrop");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_NOTOPMOST, false,
+            origin, size) &&
+            pairMatches(false),
+        "popup pair demotion moves both windows out of TOPMOST and preserves adjacency");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size) &&
+            pairMatches(true),
+        "popup pair can return to TOPMOST without exposing its backdrop");
+
+    Check(SetWindowPos(separator, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, backdrop, separator, false, origin, size) &&
+            pairMatches(false) &&
+            snowdesktop::popup_window_pair_z_order::IsAbove(separator, content),
+        "ending desktop protection must demote the complete Dock pair below a normal desktop-band anchor");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true, origin, size) &&
+            pairMatches(true),
+        "a later manual summon can promote the Dock pair after desktop protection ends");
+
+    const auto isAbove = [](HWND upper, HWND lower) {
+        for (HWND current = upper; current;
+             current = GetWindow(current, GW_HWNDNEXT))
+        {
+            if (current == lower)
+                return true;
+        }
+        return false;
+    };
+    Check(SetWindowPos(
+            menu, HWND_TOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE &&
+            isAbove(menu, content),
+        "a menu probe can be placed above the synchronized popup pair");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size) &&
+            pairMatches(true) &&
+            isAbove(menu, content),
+        "an idempotent popup layer refresh must not raise the pair above an existing menu");
+
+    SetWindowLongPtrW(
+        menu, GWLP_HWNDPARENT,
+        reinterpret_cast<LONG_PTR>(content));
+    constexpr UINT zOrderOnlyFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+        SWP_NOOWNERZORDER;
+    Check(GetWindow(menu, GW_OWNER) == content &&
+            SetWindowPos(
+                separator, HWND_TOPMOST,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            SetWindowPos(
+                separator, content,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            SetWindowPos(
+                backdrop, separator,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            SetWindowPos(
+                menu, HWND_TOPMOST,
+                0, 0, 0, 0, zOrderOnlyFlags) != FALSE &&
+            !snowdesktop::popup_window_pair_z_order::
+                IsPaired(content, backdrop) &&
+            isAbove(menu, content),
+        "an owned menu probe can interrupt pair adjacency while remaining above its content host");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true,
+            origin, size, menu) &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(content) &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(backdrop) &&
+            !snowdesktop::popup_window_pair_z_order::
+                IsPaired(content, backdrop) &&
+            isAbove(menu, content),
+        "a protected owned menu prevents a popup pair refresh from reclaiming the top Z-order slot");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, nullptr, HWND_NOTOPMOST, false,
+            origin, size, menu) &&
+            snowdesktop::popup_window_pair_z_order::
+                IsTopmost(content) &&
+            isAbove(menu, content),
+        "a protected owned menu also prevents a content-only popup refresh from overtaking the menu");
+
+    DestroyWindow(separator);
+    DestroyWindow(menu);
+    DestroyWindow(backdrop);
+    DestroyWindow(content);
+}
+
+void CheckDockWindowPreviewLateOwnerPromotion()
+{
+    constexpr DWORD extendedStyle =
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+    HWND host = CreateWindowExW(
+        extendedStyle, L"STATIC", L"dock-preview-owner",
+        WS_POPUP, -32000, -32000, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND preview = CreateWindowExW(
+        extendedStyle, L"STATIC", L"dock-preview-late-owned",
+        WS_POPUP, -32000, -32000, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND ordinary = CreateWindowExW(
+        extendedStyle, L"STATIC", L"dock-preview-ordinary",
+        WS_POPUP, -32000, -32000, 32, 32,
+        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(host && preview && ordinary,
+        "Dock preview late-owner test windows are created");
+    if (!host || !preview || !ordinary)
+    {
+        if (ordinary) DestroyWindow(ordinary);
+        if (preview) DestroyWindow(preview);
+        if (host) DestroyWindow(host);
+        return;
+    }
+
+    constexpr UINT bandFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+        SWP_NOOWNERZORDER;
+    Check(SetWindowPos(
+            host, HWND_TOPMOST,
+            0, 0, 0, 0, bandFlags) != FALSE,
+        "Dock preview owner enters TOPMOST before ownership is assigned");
+    SetWindowLongPtrW(
+        preview, GWLP_HWNDPARENT,
+        reinterpret_cast<LONG_PTR>(host));
+
+    const DockWindowPreviewZOrderPolicy policy =
+        ResolveDockWindowPreviewZOrderPolicy(true, false);
+    Check(SetWindowPos(
+            preview, policy.insertAfter,
+            -32000, -32000, 32, 32,
+            policy.flags) != FALSE,
+        "late-owned Dock preview applies its presentation Z-order policy");
+    SetWindowPos(
+        preview, nullptr,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+            SWP_NOOWNERZORDER | SWP_NOACTIVATE |
+            SWP_SHOWWINDOW);
+    SetWindowPos(
+        ordinary, HWND_TOP,
+        0, 0, 0, 0, bandFlags);
+
+    namespace zOrder = snowdesktop::popup_window_pair_z_order;
+    Check(zOrder::IsTopmost(host) &&
+            zOrder::IsTopmost(preview) &&
+            !zOrder::IsTopmost(ordinary) &&
+            zOrder::IsAbove(preview, host) &&
+            zOrder::IsAbove(preview, ordinary),
+        "a preview bound after owner promotion remains above ordinary windows");
+
+    DestroyWindow(ordinary);
+    DestroyWindow(preview);
+    DestroyWindow(host);
+}
+
+LRESULT CALLBACK MenuProtectedHostProc(
+    HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    if (message == WM_WINDOWPOSCHANGING && lp)
+    {
+        snowdesktop::popup_window_pair_z_order::PreserveOwnedMenuZOrder(
+            window,
+            reinterpret_cast<HWND>(GetWindowLongPtrW(window, GWLP_USERDATA)),
+            *reinterpret_cast<WINDOWPOS*>(lp));
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+void CheckMenuProtectedHostPositionChanges()
+{
+    constexpr wchar_t className[] = L"SnowDesktop.MenuProtectedHostTest";
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = MenuProtectedHostProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    Check(RegisterClassW(&windowClass) != 0,
+        "the menu-protected host test class is registered");
+    HWND host = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        className, L"", WS_POPUP, 0, 0, 32, 32,
+        nullptr, nullptr, windowClass.hInstance, nullptr);
+    HWND menu = CreateWindowExW(
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+        L"STATIC", L"", WS_POPUP | WS_VISIBLE, 0, 0, 1, 1,
+        host, nullptr, windowClass.hInstance, nullptr);
+    Check(host && menu, "the protected host and its owned menu are created");
+    if (host && menu)
+    {
+        namespace zOrder = snowdesktop::popup_window_pair_z_order;
+        constexpr UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+        SetWindowPos(host, HWND_TOPMOST, 0, 0, 32, 32, flags);
+        SetWindowPos(menu, HWND_TOPMOST, 0, 0, 1, 1, flags);
+        SetWindowLongPtrW(host, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(menu));
+        Check(SetWindowPos(host, HWND_NOTOPMOST, 12, 14, 40, 42, flags) &&
+                zOrder::IsTopmost(host) && zOrder::IsAbove(menu, host),
+            "a direct host resize cannot demote or reorder an active owned menu");
+        RECT bounds{};
+        GetWindowRect(host, &bounds);
+        Check(bounds.left == 12 && bounds.top == 14 &&
+                bounds.right == 52 && bounds.bottom == 56,
+            "protecting menu order still applies host geometry changes");
+        // Exercise a second direct path, without the window-pair policy.
+        Check(SetWindowPos(host, HWND_TOP, 0, 0, 0, 0,
+                flags | SWP_NOMOVE | SWP_NOSIZE) &&
+                zOrder::IsAbove(menu, host),
+            "direct HWND_TOP promotion preserves the active menu");
+        ShowWindow(menu, SW_HIDE);
+        Check(SetWindowPos(host, HWND_NOTOPMOST, 0, 0, 0, 0,
+                flags | SWP_NOMOVE | SWP_NOSIZE) && !zOrder::IsTopmost(host),
+            "a hidden superseded menu cannot block host band changes");
+        SetWindowLongPtrW(host, GWLP_USERDATA, 0);
+        Check(SetWindowPos(host, HWND_TOPMOST, 0, 0, 0, 0,
+                flags | SWP_NOMOVE | SWP_NOSIZE) && zOrder::IsTopmost(host),
+            "host layer policy resumes after the menu session ends");
+    }
+    if (menu) DestroyWindow(menu);
+    if (host) DestroyWindow(host);
+    UnregisterClassW(className, windowClass.hInstance);
+}
+
+LRESULT CALLBACK RenameLayoutTestOwnerProc(
+    HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
+{
+    if (message == WM_COMMAND && HIWORD(wp) == EN_UPDATE)
+    {
+        auto* layout = reinterpret_cast<
+            snowdesktop::rename_edit_layout::EditorLayout*>(
+                GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (layout)
+            layout->Update(reinterpret_cast<HWND>(lp));
+        return 0;
+    }
+    return DefWindowProcW(hwnd, message, wp, lp);
+}
+
+void CheckAdaptiveRenameEditor()
+{
+    namespace layout = snowdesktop::rename_edit_layout;
+    const RECT work{ -1920, -100, 0, 980 };
+    const RECT anchor{ -1200, 200, -1040, 226 };
+    const RECT grown = layout::CalculateRect(anchor, work, 110);
+    Check(grown.top == anchor.top && grown.bottom - grown.top == 110 &&
+            grown.left == anchor.left && grown.right == anchor.right,
+        "a multiline rename grows vertically without changing its label width");
+    const RECT bottom = layout::CalculateRect(
+        anchor, work, 110, layout::HeightAnchor::Bottom);
+    const RECT center = layout::CalculateRect(
+        anchor, work, 110, layout::HeightAnchor::Center);
+    Check(bottom.bottom == anchor.bottom &&
+            center.top + center.bottom == anchor.top + anchor.bottom,
+        "Dock editors grow away from the icon while retaining their anchor");
+    const RECT edgeAnchor{ -160, 954, 0, 980 };
+    const RECT edge = layout::CalculateRect(edgeAnchor, work, 110);
+    const RECT restored = layout::CalculateRect(edgeAnchor, work, 26);
+    const RECT capped = layout::CalculateRect(edgeAnchor, work, 10000);
+    const RECT expectedCap{
+        edgeAnchor.left, work.top, edgeAnchor.right, work.bottom };
+    Check(edge.bottom == work.bottom && edge.bottom - edge.top == 110 &&
+            EqualRect(&restored, &edgeAnchor) && EqualRect(&capped, &expectedCap),
+        "edge editors stay on screen and shrinking restores their original position");
+
+    const wchar_t* className = L"SnowDesktopRenameLayoutTestOwner";
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = RenameLayoutTestOwnerProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    Check(RegisterClassW(&windowClass) != 0,
+        "the isolated rename layout test owner can be registered");
+    HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        className, L"", WS_POPUP, 0, 0, 1, 1,
+        nullptr, nullptr, windowClass.hInstance, nullptr);
+    Check(owner != nullptr, "the hidden rename layout test owner can be created");
+    if (!owner)
+        return;
+    MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+    GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitorInfo);
+    const RECT available = monitorInfo.rcWork;
+    for (bool leftAligned : { false, true })
+    {
+        // Both grid and list alignment use the actual native wrapping engine.
+        // The owner stays hidden; this never launches or drives the desktop host.
+        layout::EditorLayout adaptive;
+        SetWindowLongPtrW(owner, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&adaptive));
+        const std::wstring longName = leftAligned
+            ? std::wstring(100, L'A') + L".txt"
+            : L"这是一个包含很多汉字的长文件名称需要完整显示自动换行后的所有文字以便在重命名时查看和编辑.txt";
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW,
+            L"EDIT", longName.c_str(), layout::EditStyle(leftAligned),
+            available.left + 40, available.top + 40, 160, 26,
+            owner, nullptr, windowClass.hInstance, nullptr);
+        Check(edit != nullptr, "the native multiline rename fixture can be created");
+        if (!edit)
+            continue;
+        HFONT font = CreateFontW(leftAligned ? -26 : -13,
+            0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+        SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+            MAKELPARAM(6, 6));
+        adaptive.Begin(edit);
+        RECT initial{};
+        GetWindowRect(edit, &initial);
+        RECT formatting{};
+        SendMessageW(edit, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&formatting));
+        HDC dc = GetDC(edit);
+        const HGDIOBJ previous = SelectObject(dc, font);
+        TEXTMETRICW metrics{};
+        GetTextMetricsW(dc, &metrics);
+        SelectObject(dc, previous);
+        ReleaseDC(edit, dc);
+        const LRESULT lines = SendMessageW(edit, EM_GETLINECOUNT, 0, 0);
+        Check(lines > 1 && initial.bottom - initial.top > 26 &&
+                formatting.bottom - formatting.top >= lines * metrics.tmHeight,
+            "initial Chinese and unbroken names fit all wrapped lines at different font sizes");
+
+        // EM_REPLACESEL follows the same EN_UPDATE route as native typing and
+        // paste. Do not manually invoke Update: missing wiring must fail here.
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        SendMessageW(edit, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"a"));
+        RECT shortened{};
+        GetWindowRect(edit, &shortened);
+        Check(shortened.bottom - shortened.top < initial.bottom - initial.top &&
+                shortened.left == initial.left && shortened.top == initial.top,
+            "deleting a long name automatically shrinks its editor without drifting");
+        SendMessageW(edit, WM_UNDO, 0, 0);
+        RECT undone{};
+        GetWindowRect(edit, &undone);
+        Check(EqualRect(&initial, &undone) &&
+                GetWindowTextLengthW(edit) == static_cast<int>(longName.size()),
+            "undo retains the original name and restores its required editor height");
+
+        const std::wstring oversized(2000, L'W');
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        SendMessageW(edit, EM_REPLACESEL, TRUE,
+            reinterpret_cast<LPARAM>(oversized.c_str()));
+        RECT overflow{};
+        GetWindowRect(edit, &overflow);
+        DWORD selectionStart = 0, selectionEnd = 0;
+        SendMessageW(edit, EM_GETSEL, reinterpret_cast<WPARAM>(&selectionStart),
+            reinterpret_cast<LPARAM>(&selectionEnd));
+        Check(overflow.top >= available.top && overflow.bottom <= available.bottom &&
+                GetWindowTextLengthW(edit) == static_cast<int>(oversized.size()) &&
+                selectionStart == oversized.size() && selectionEnd == oversized.size(),
+            "oversized names stay editable on screen without truncation or caret changes");
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        SendMessageW(edit, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(L"a"));
+        RECT finalRect{};
+        GetWindowRect(edit, &finalRect);
+        Check(EqualRect(&shortened, &finalRect) &&
+                SendMessageW(edit, EM_GETFIRSTVISIBLELINE, 0, 0) == 0,
+            "shrinking an overflowed name restores its anchor and removes stale scrolling");
+        adaptive.Reset();
+        DestroyWindow(edit);
+        DeleteObject(font);
+        SetWindowLongPtrW(owner, GWLP_USERDATA, 0);
+    }
+    DestroyWindow(owner);
+    UnregisterClassW(className, windowClass.hInstance);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
+    CheckAdaptiveRenameEditor();
+    CheckMenuProtectedHostPositionChanges();
+    CheckDockWindowPreviewLateOwnerPromotion();
+    using snowdesktop::desktop_keyboard_rules::
+        IsForegroundFocusReady;
+    using snowdesktop::desktop_keyboard_rules::
+        ShouldAttachForegroundInputQueue;
+
+    Check(!IsForegroundFocusReady(
+              true, false, false, false),
+        "a local-only focus observation cannot prove foreground key delivery");
+    Check(IsForegroundFocusReady(
+              true, true, false, false),
+        "a target focused on the foreground queue is ready without activation ownership");
+    Check(!IsForegroundFocusReady(
+              true, true, true, false) &&
+            IsForegroundFocusReady(
+              true, true, true, true),
+        "foreground activation is additionally required for popup input proxies");
+    Check(ShouldAttachForegroundInputQueue(10, 20, false) &&
+            !ShouldAttachForegroundInputQueue(10, 10, false) &&
+            !ShouldAttachForegroundInputQueue(10, 20, true),
+        "a failed cross-thread foreground focus check requires one queue attachment retry");
+
+    CheckPopupWindowPairZOrderTransitions();
+    const std::vector<std::wstring> savedPageOrder{
+        L"page-1", L"page-2", L"page-3"};
+    Check(snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-3", L"page-1", L"page-2"}),
+        "page settings must accept a complete permutation");
+    Check(!snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-1", L"page-1", L"page-3"}) &&
+            !snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-1", L"page-2"}) &&
+            !snowdesktop::IsValidPageOrder(savedPageOrder,
+              {L"page-1", L"page-2", L"unknown"}),
+        "page settings must reject duplicate, missing, or unknown page ids");
     namespace dockDrop =
         snowdesktop::dock_drop_rules;
     namespace floatingDock =
@@ -123,6 +593,26 @@ int main(int argc, char** argv)
         snowdesktop::collection_popup_layout;
     namespace shellVisibility =
         snowdesktop::shell_item_visibility;
+    {
+        const std::wstring clsid = L"{645FF040-5081-101B-9F08-00AA002F954E}";
+        std::unordered_map<std::wstring, bool> overrides{{clsid, false}, {L"other", true}};
+        bool registryVisible = false;
+        const auto write = [&](const std::wstring& key, bool visible) {
+            Check(key == clsid, "visibility changes address the requested system icon");
+            registryVisible = visible;
+            return true;
+        };
+        Check(shellVisibility::CommitDesktopIconVisibility(clsid, true, overrides, write) &&
+            registryVisible && !overrides.contains(clsid) && overrides.at(L"other"),
+            "showing a previously hidden system icon clears the stale hide override only for that icon");
+        Check(shellVisibility::CommitDesktopIconVisibility(clsid, false, overrides, write) &&
+            !registryVisible && !overrides.contains(clsid),
+            "hiding an icon leaves subsequent visibility changes to the registry");
+        overrides[clsid] = false;
+        Check(!shellVisibility::CommitDesktopIconVisibility(clsid, true, overrides,
+                [](const std::wstring&, bool) { return false; }) && !overrides.at(clsid),
+            "a failed visibility write preserves the last known override");
+    }
     namespace popupDrag =
         snowdesktop::popup_drag_rules;
     namespace itemLayout =
@@ -318,6 +808,17 @@ int main(int argc, char** argv)
             false, false, true, true, false) ==
             oleDrag::QueryContinueDragAction::Drop,
         "self OLE source continuation must wait for a live internal return and drop only after an external release");
+    Check(
+        oleDrag::SelectQueryContinueDragAction(false,
+            snowdesktop::drag_input_rules::IsPointerGestureButtonDown(true, false, true),
+            true, false, false) == oleDrag::QueryContinueDragAction::ContinueOle &&
+        oleDrag::SelectQueryContinueDragAction(false,
+            snowdesktop::drag_input_rules::IsPointerGestureButtonDown(true, true, false),
+            true, false, false) == oleDrag::QueryContinueDragAction::Drop &&
+        oleDrag::SelectQueryContinueDragAction(false,
+            snowdesktop::drag_input_rules::IsPointerGestureButtonDown(true, false, false),
+            true, true, true) == oleDrag::QueryContinueDragAction::ResumeNative,
+        "middle-button large-icon OLE drags must wait for the owning button, ignore an unrelated held primary button, and hand internal returns back to native completion");
 
     Check(
         nativeMenuPresentation::ShouldFlushAfterOwnerMessage(
@@ -378,6 +879,25 @@ int main(int argc, char** argv)
         "an invalidated drag scene must fully reconcile backdrop panels");
 
     const RECT firstBackdropFrame{100, 900, 600, 980};
+    struct RetainedBackdropPanel { int blurRadius; };
+    std::vector<RetainedBackdropPanel> retainedPanels{{24}, {24}, {12}};
+    std::unordered_map<int, int> retainedFactories{{12, 1}, {24, 2}, {48, 3}};
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.size() == 2 && retainedFactories.contains(12) &&
+            retainedFactories.contains(24),
+        "unused blur radii must be released while factories with consumers remain");
+    retainedPanels.erase(retainedPanels.begin());
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.size() == 2 && retainedFactories.at(24) == 2,
+        "removing one panel must preserve the factory shared by another panel");
+    retainedPanels[0].blurRadius = 12;
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.size() == 1 && retainedFactories.contains(12),
+        "changing the last consumer's radius must retire its old factory");
+    retainedPanels.clear();
+    backdropUpdate::PruneUnusedBlurFactories(retainedFactories, retainedPanels);
+    Check(retainedFactories.empty(),
+        "turning off every glass panel must leave no unused blur factories");
     const RECT shiftedBackdropFrame{96, 870, 608, 980};
     constexpr std::uintptr_t firstBackdropOwner = 0x101;
     constexpr std::uintptr_t secondBackdropOwner = 0x202;
@@ -520,10 +1040,18 @@ int main(int argc, char** argv)
         "empty collection popups must shrink horizontally on narrow work areas");
     Check(
         popupLayout::PreferredColumnCount(
-            1, 5) == 1 &&
+            1, 5) == 3 &&
             popupLayout::RequiredRowCount(
-                1, 1) == 1,
-        "non-empty collection popups must retain their content-driven size");
+                1, 3) == 2 &&
+            popupLayout::PreferredColumnCount(
+                2, 2) == 2 &&
+            popupLayout::RequiredRowCount(
+                2, 2) == 2 &&
+            popupLayout::PreferredColumnCount(
+                8, 5) == 5 &&
+            popupLayout::RequiredRowCount(
+                11, 5) == 3,
+        "non-empty collection popups must retain the empty-state size floor while still growing with their content");
     Check(
         popupLayout::RequiredListRowCount(0) == 5 &&
             popupLayout::RequiredListRowCount(3) == 5 &&
@@ -676,6 +1204,13 @@ int main(int argc, char** argv)
             !snowdesktop::dock_settings_rules::
               ShouldReserveDesktopWorkArea(true, false),
         "desktop work-area reservation must use effective overlap while summon-only display is active");
+    Check(snowdesktop::dock_settings_rules::
+              IsFloatingEdgeSwipeEnabled(false, true) &&
+            snowdesktop::dock_settings_rules::
+              IsFloatingEdgeSwipeEnabled(true, false) &&
+            !snowdesktop::dock_settings_rules::
+              IsFloatingEdgeSwipeEnabled(false, false),
+        "the low-level edge observer must follow effective edge-swipe enablement, including summon-only mode");
 
     namespace itemVisual = snowdesktop;
     namespace gridSpacing = snowdesktop::grid_spacing_rules;
@@ -1220,6 +1755,61 @@ int main(int argc, char** argv)
             localLayout::CollectionUsesFullFrame(false, 4, 1) &&
             !localLayout::CollectionUsesFullFrame(true, 1, 4),
         "only a 1x1 Collection is compact; single-row and single-column large-folder layouts must remain valid");
+
+    const auto belowCollectionCapacity =
+        localLayout::ResolveCollectionPresentation(
+            3, 4, false, false);
+    const auto fullCollection =
+        localLayout::ResolveCollectionPresentation(
+            4, 4, false, false);
+    const auto fullCollectionDuringDrag =
+        localLayout::ResolveCollectionPresentation(
+            4, 4, false, true);
+    const auto overflowingCollection =
+        localLayout::ResolveCollectionPresentation(
+            5, 4, false, false);
+    Check(belowCollectionCapacity.materializedItemCount == 3 &&
+            belowCollectionCapacity.visibleItemCount == 3 &&
+            !belowCollectionCapacity.showAllButton &&
+            fullCollection.materializedItemCount == 4 &&
+            fullCollection.visibleItemCount == 4 &&
+            !fullCollection.showAllButton &&
+            fullCollectionDuringDrag.materializedItemCount == 4 &&
+            fullCollectionDuringDrag.visibleItemCount == 3 &&
+            fullCollectionDuringDrag.showAllButton &&
+            fullCollectionDuringDrag.allButtonSlot == 3 &&
+            overflowingCollection.materializedItemCount == 3 &&
+            overflowingCollection.visibleItemCount == 3 &&
+            overflowingCollection.showAllButton &&
+            overflowingCollection.allButtonSlot == 3,
+        "a fixed Collection must expose its last physical slot only when one item remains and temporarily restore the all-button during a compatible drag");
+    const auto denseFullCollection =
+        localLayout::ResolveCollectionPresentation(
+            9, 9, false, false);
+    const auto denseFullCollectionDuringDrag =
+        localLayout::ResolveCollectionPresentation(
+            9, 9, false, true);
+    Check(denseFullCollection.materializedItemCount == 9 &&
+            denseFullCollection.visibleItemCount == 9 &&
+            !denseFullCollection.showAllButton &&
+            denseFullCollectionDuringDrag.materializedItemCount == 9 &&
+            denseFullCollectionDuringDrag.visibleItemCount == 8 &&
+            denseFullCollectionDuringDrag.showAllButton &&
+            denseFullCollectionDuringDrag.allButtonSlot == 8,
+        "titleless dense Collections must apply the single-overflow rule to their resolved physical grid capacity without rebuilding slots");
+    const auto compactCollection =
+        localLayout::ResolveCollectionPresentation(
+            5, 4, true, false);
+    const auto compactCollectionDuringDrag =
+        localLayout::ResolveCollectionPresentation(
+            5, 4, true, true);
+    Check(compactCollection.materializedItemCount == 4 &&
+            compactCollection.visibleItemCount == 4 &&
+            !compactCollection.showAllButton &&
+            compactCollectionDuringDrag.materializedItemCount == 4 &&
+            compactCollectionDuringDrag.visibleItemCount == 4 &&
+            !compactCollectionDuringDrag.showAllButton,
+        "1x1 compact Collections must retain their four-thumbnail presentation across drag states");
 
     constexpr float standardLineHeight =
         14.0f * 7.0f / 6.0f;
@@ -1932,8 +2522,24 @@ int main(int argc, char** argv)
             true),
         "fixed-position Dock items must not show a sortable insertion indicator");
     Check(dockDrop::ShouldDrawSortableInsertionIndicator(
-            false),
+             false),
         "regular Dock items must retain the sortable insertion indicator");
+    const std::array<long, 2> insertionMidpoints{ 40, 80 };
+    const auto insertionMidpointAt =
+        [&](size_t index) {
+            return insertionMidpoints[index - 3];
+        };
+    Check(dockDrop::ResolveRedirectedInsertionIndex(
+              20, 3, 5, insertionMidpointAt) == 3 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              40, 3, 5, insertionMidpointAt) == 4 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              79, 3, 5, insertionMidpointAt) == 4 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              80, 3, 5, insertionMidpointAt) == 5 &&
+            dockDrop::ResolveRedirectedInsertionIndex(
+              20, 7, 7, insertionMidpointAt) == 7,
+        "non-sortable Dock areas must redirect to the nearest real insertion boundary");
     Check((floatingDock::kWindowExStyle & WS_EX_TOPMOST) == 0,
         "floating Dock uses SetWindowPos to stay topmost instead of fixing WS_EX_TOPMOST to its window style");
     Check((floatingDock::kWindowExStyle & WS_EX_NOACTIVATE) != 0,
@@ -1945,12 +2551,19 @@ int main(int argc, char** argv)
             !floatingDock::ShouldSummonForDockSurface(
                 false, false),
         "a Dock-associated popup must summon only a hidden floating Dock");
+    Check(floatingDock::ShouldDispatchDockContextMenu(
+              false, false) &&
+            floatingDock::ShouldDispatchDockContextMenu(
+              true, true) &&
+            !floatingDock::ShouldDispatchDockContextMenu(
+              true, false),
+        "an active persistent DockHost must require a right-button press that began on the same Host while the desktop fallback remains usable");
     const DockWindowPreviewZOrderPolicy floatingPreviewZOrder =
         ResolveDockWindowPreviewZOrderPolicy(true, false);
-    Check(floatingPreviewZOrder.insertAfter == nullptr &&
-            (floatingPreviewZOrder.flags & SWP_NOZORDER) != 0 &&
+    Check(floatingPreviewZOrder.insertAfter == HWND_TOPMOST &&
+            (floatingPreviewZOrder.flags & SWP_NOZORDER) == 0 &&
             (floatingPreviewZOrder.flags & SWP_NOOWNERZORDER) != 0,
-        "a preview owned by the floating Dock must preserve its topmost owner Z order");
+        "a preview owned by the floating Dock must reassert TOPMOST without reordering its owner");
     const DockWindowPreviewZOrderPolicy desktopPreviewZOrder =
         ResolveDockWindowPreviewZOrderPolicy(false, false);
     Check(desktopPreviewZOrder.insertAfter == HWND_TOPMOST &&
@@ -2048,6 +2661,18 @@ int main(int argc, char** argv)
             visiblePreviewZOrder.insertAfter == HWND_TOPMOST &&
             (visiblePreviewZOrder.flags & SWP_NOZORDER) == 0,
         "every drag preview placement must reassert topmost above Dock popups opened later");
+    const auto hintWindow = reinterpret_cast<HWND>(static_cast<UINT_PTR>(123));
+    Check(dragVisual::ResolvePreviewWindowZOrderPolicy(false, hintWindow).insertAfter == hintWindow &&
+        dragVisual::ResolvePreviewWindowZOrderPolicy(true, hintWindow).insertAfter == hintWindow,
+        "first show and repeated ghost refresh keep the same order beneath the hint");
+    const RECT largeSource{100, 200, 500, 400};
+    const RECT compact = dragVisual::FitPreviewInCell(largeSource, {100, 100}, {400, 250});
+    const RECT movedCompact = dragVisual::FitPreviewInCell({107, 211, 507, 411}, {100, 100}, {407, 261});
+    Check(compact.right - compact.left == 100 && compact.bottom - compact.top == 50 &&
+        compact.left == 325 && compact.top == 237 && movedCompact.left - compact.left == 7 && movedCompact.top - compact.top == 11,
+        "large ghost fits one cell with its aspect and grab point preserved while pointer moves only translate it");
+    Check(dragVisual::EqualRect(dragVisual::FitPreviewInCell({0, 0, 60, 90}, {100, 100}, {30, 45}), {0, 0, 60, 90}),
+        "a one-cell ghost is never enlarged by compact rendering");
     Check(dragVisual::DropPreviewBelongsToRenderSurface(
               true, true, true) &&
             !dragVisual::DropPreviewBelongsToRenderSurface(
@@ -2089,7 +2714,20 @@ int main(int argc, char** argv)
                 floatingDockRect.right + 2 &&
             floatingBorderOverdraw.bottom ==
                 floatingDockRect.bottom + 2,
-        "floating layers must preserve the desktop glass-border overdraw");
+        "floating layers must preserve the default edge-highlight overdraw");
+    const RECT maximumFloatingBorderOverdraw =
+        floatingDock::ExpandForBorderOverdraw(
+            floatingDockRect,
+            kMaximumWidgetBorderWidth);
+    Check(maximumFloatingBorderOverdraw.left ==
+            floatingDockRect.left - 3 &&
+            maximumFloatingBorderOverdraw.top ==
+                floatingDockRect.top - 3 &&
+            maximumFloatingBorderOverdraw.right ==
+                floatingDockRect.right + 3 &&
+            maximumFloatingBorderOverdraw.bottom ==
+                floatingDockRect.bottom + 3,
+        "floating layers must expand for the maximum configured visual-edge width");
     Check((floatingPopup::kWindowExStyle &
             WS_EX_TOPMOST) == 0 &&
             (floatingPopup::kWindowExStyle &
@@ -2132,14 +2770,16 @@ int main(int argc, char** argv)
             !floatingPopup::ShouldBeTopmost(false, 0),
         "native menus must temporarily outrank the shared popup host");
     Check(floatingPopup::ResolveMenuZOrderOwner(
-              true, 101, true, 202) == 101 &&
+              true, 101, true, false, 202) == 101 &&
             floatingPopup::ResolveMenuZOrderOwner(
-              false, 101, true, 202) == 202 &&
+              false, 101, true, true, 202) == 202 &&
             floatingPopup::ResolveMenuZOrderOwner(
-              true, 0, true, 202) == 202 &&
+              true, 0, true, true, 202) == 202 &&
             floatingPopup::ResolveMenuZOrderOwner(
-              false, 101, false, 202) == 0,
-        "modern menus must prefer the shared popup as their Z-order owner and fall back to the floating Dock");
+              false, 101, true, false, 202) == 0 &&
+            floatingPopup::ResolveMenuZOrderOwner(
+              false, 101, false, true, 202) == 0,
+        "modern menus must prefer the shared popup as their Z-order owner, fall back only to an effectively floating visible Dock, and exclude desktop-band or hidden DockHosts");
     const POINT popupAnimationOffset =
         floatingPopup::AnimationVisualOffset(
             RECT{ 460, 280, 1260, 880 },
@@ -2293,6 +2933,29 @@ int main(int argc, char** argv)
     Check(!floatingDock::HasNewPointerButtonPress(
             1, 1, 0),
         "a held pointer button must not repeatedly dismiss");
+    Check(floatingDock::HasPointerButtonActivity(
+              1, 0, 0) &&
+            floatingDock::HasPointerButtonActivity(
+              1, 1, 0) &&
+            floatingDock::HasPointerButtonActivity(
+              0, 1, 0) &&
+            floatingDock::HasPointerButtonActivity(
+              0, 0, 1) &&
+            !floatingDock::HasPointerButtonActivity(
+              0, 0, 0),
+        "edge gestures must exclude pointer press, hold, release and between-sample click activity");
+    Check(floatingDock::HasPointerButtonActivity(
+              0, 0, 0, true) &&
+            !floatingDock::HasPointerButtonActivity(
+              0, 0, 0, false),
+        "a low-level mouse event must preserve pointer-button activity even when every sampled key state is idle");
+    Check(floatingDock::IsGuiMenuModeActive(GUI_INMENUMODE) &&
+            floatingDock::IsGuiMenuModeActive(
+              GUI_SYSTEMMENUMODE) &&
+            floatingDock::IsGuiMenuModeActive(
+              GUI_POPUPMENUMODE) &&
+            !floatingDock::IsGuiMenuModeActive(0),
+        "native menu, system-menu and popup-menu loops must suspend edge gestures");
     Check(floatingDock::IsPointInVisibleLayer(
             POINT{ 150, 930 },
             floatingDockRect,
@@ -2431,6 +3094,27 @@ int main(int argc, char** argv)
             DockPosition::Bottom, 4),
         "an inward pointer must not count as an along-edge swipe");
 
+    const RECT fullscreenMonitor{-1920, 0, 0, 1080};
+    Check(floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            true, fullscreenMonitor, fullscreenMonitor),
+        "borderless fullscreen blocks swipes on a negative-coordinate monitor");
+    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            false, fullscreenMonitor, fullscreenMonitor),
+        "fullscreen protection can be disabled");
+    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            true, RECT{-1920, 30, 0, 1040}, fullscreenMonitor),
+        "maximized client areas do not block swipes");
+    Check(!floatingDock::ShouldBlockFullscreenEdgeSwipe(
+            true, RECT{0, 0, 1920, 1080}, fullscreenMonitor),
+        "fullscreen on another monitor does not block swipes");
+    floatingDock::EdgeSwipeDetector fullscreenSwipe;
+    fullscreenSwipe.Update(POINT{-1500, 1079}, fullscreenMonitor,
+        DockPosition::Bottom, 100, 4, 72);
+    fullscreenSwipe.SuppressUntilEdgeLeave();
+    Check(!fullscreenSwipe.Update(POINT{-1400, 1079}, fullscreenMonitor,
+            DockPosition::Bottom, 200, 4, 72),
+        "exiting fullscreen cannot complete a stale edge gesture");
+
     floatingDock::EdgeSwipeDetector bottomSwipe;
     Check(!bottomSwipe.Update(
             POINT{ -1500, 1079 },
@@ -2470,6 +3154,41 @@ int main(int argc, char** argv)
             DockPosition::Bottom,
             430, 4, 72),
         "along-edge swipes must work in either direction");
+
+    floatingDock::EdgeSwipeDetector buttonSuppressedSwipe;
+    buttonSuppressedSwipe.SuppressUntilEdgeLeave();
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1500, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              100, 4, 72) &&
+            buttonSuppressedSwipe.IsAwaitingEdgeLeave(),
+        "a pointer-button interaction at the edge must suppress swipe arming");
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1400, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              180, 4, 72) &&
+            buttonSuppressedSwipe.IsAwaitingEdgeLeave(),
+        "movement along the same edge must not clear button suppression");
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1400, 1060 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              200, 4, 72) &&
+            !buttonSuppressedSwipe.IsAwaitingEdgeLeave(),
+        "leaving the edge must clear pointer-button suppression");
+    Check(!buttonSuppressedSwipe.Update(
+              POINT{ -1500, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              220, 4, 72) &&
+            buttonSuppressedSwipe.Update(
+              POINT{ -1400, 1079 },
+              negativeBottomMonitor,
+              DockPosition::Bottom,
+              300, 4, 72),
+        "a fresh buttonless edge stroke must work after leaving and returning");
 
     floatingDock::EdgeSwipeDetector timedOutSwipe;
     Check(!timedOutSwipe.Update(
@@ -2512,6 +3231,71 @@ int main(int argc, char** argv)
             floatingDock::ShouldShowPersistentDockHost(
               true, true, true, false, true, false),
         "summon-only mode must hide idle Hosts but retain every manually or passively floating Host");
+    Check(floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, 1000, 1400) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              false, true, 1000, 1400) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, false, 1000, 1400) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, 0, 1400) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, 1000, 1501) &&
+            !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
+              true, true, 1000, 999),
+        "Show Desktop protection requires an active DockHost, Shell desktop foreground, and recent minimize evidence");
+    using GuardForeground = floatingDock::SystemShowDesktopForeground;
+    using GuardAction = floatingDock::SystemShowDesktopLayerGuardAction;
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, GuardForeground::ShellDesktop, 1000, 1400, 1400) ==
+                GuardAction::Start &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, GuardForeground::DesktopSurface, 1000, 1400, 1400) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, GuardForeground::Application, 1000, 1400, 1000) ==
+                GuardAction::None,
+        "a Dock surface or application activation must not start Show Desktop protection");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Application,
+              164532875, 165075122, 164533000) == GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Application, 1000, 1100, 1050) ==
+                GuardAction::Stop,
+        "a new application must end desktop TOPMOST protection immediately without MINIMIZEEND, including the captured nine-minute stale state");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::ShellDesktop, 1000, 5000, 5000) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::DesktopSurface, 1000, 5000, 5000) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::ShellDesktop, 0, 5000, 5000) ==
+                GuardAction::None,
+        "confirmed desktop and associated surfaces retain protection without treating minimize or restore events as an animation timer");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 5500, 5000) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 5501, 5000) ==
+                GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 5000, 0) ==
+                GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 4999, 5000) ==
+                GuardAction::Stop,
+        "unavailable foreground samples allow only a bounded grace period after the last confirmed desktop surface");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, false, GuardForeground::ShellDesktop, 1000, 1400, 1400) ==
+                GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, GuardForeground::ShellDesktop, 0, 1400, 1400) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, GuardForeground::ShellDesktop, 1350, 1400, 1400) ==
+                GuardAction::Start,
+        "disabled Dock hosts end protection and a consumed minimize start cannot rearm it without new evidence");
     Check(!floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
               true, false, false) &&
             floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
@@ -2717,6 +3501,62 @@ int main(int argc, char** argv)
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Executable,
+            L"C:\\APPS\\EDITOR.EXE", L"", L"",
+            L"C:\\APPS\\EDITOR.EXE", L"") &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable,
+                L"C:\\APPS\\EDITOR.EXE", L"", L"",
+                L"C:\\APPS\\OTHER.EXE", L""),
+        "running executable identities must match only the same normalized executable path");
+    const std::vector<std::wstring> launcherAncestors{
+        L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+        L"C:\\WINDOWS\\EXPLORER.EXE",
+    };
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Executable,
+            L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+            L"", L"",
+            L"C:\\PROGRAMS\\SUITE\\UI\\HELPER.EXE",
+            L"", launcherAncestors) &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable,
+                L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+                L"", L"",
+                L"D:\\APPLICATIONS\\HELPER.EXE",
+                L"", launcherAncestors) &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable,
+                L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
+                L"", L"",
+                L"C:\\PROGRAMS\\SUITE\\UI\\HELPER.EXE",
+                L"", std::span<const std::wstring>{}),
+        "an executable launcher must match a descendant window process only inside the same installation tree");
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Applications,
+            L"", L"CONTOSO.EDITOR_123!APP", L"",
+            L"C:\\WINDOWS\\SYSTEM32\\APPLICATIONFRAMEHOST.EXE",
+            L"CONTOSO.EDITOR_123!APP") &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Applications,
+                L"", L"CONTOSO.EDITOR_123!APP", L"",
+                L"C:\\WINDOWS\\SYSTEM32\\APPLICATIONFRAMEHOST.EXE",
+                L"CONTOSO.OTHER_123!APP"),
+        "packaged applications must match by normalized application user model ID");
+    Check(identityRules::MatchesRunningApp(
+            DockAppIdentityKind::Steam,
+            L"", L"", L"D:\\STEAM\\COMMON\\GAME",
+            L"D:\\STEAM\\COMMON\\GAME\\BIN\\GAME.EXE", L"") &&
+            !identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Steam,
+                L"", L"", L"D:\\STEAM\\COMMON\\GAME",
+                L"D:\\STEAM\\COMMON\\GAME2\\GAME.EXE", L"") &&
+            identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Steam,
+                L"", L"STEAM.APP.123", L"",
+                L"C:\\GAMES\\GAME.EXE", L"STEAM.APP.123"),
+        "Steam identities must match their AUMID or a path below the install directory without accepting sibling prefixes");
     Check(rules::ResolveDockClickAction(true, false, false) ==
             rules::DockClickAction::Activate,
         "a short running indicator must activate the application");
@@ -2847,9 +3687,40 @@ int main(int argc, char** argv)
             [&]() { ++unsafeForegroundRetries; }) &&
             unsafeForegroundRetries == 0,
         "a hung activation target must not enter the attached-input retry");
-    Check(rules::NeedsDockMinimizeSystemCommandFallback(false) &&
-            !rules::NeedsDockMinimizeSystemCommandFallback(true),
-        "a rejected asynchronous minimize must use the system-command fallback");
+    using MinimizeRoute = rules::DockWindowMinimizeRequestRoute;
+    const auto checkMinimizeRequestRoute = [](
+        bool postAccepted, bool showAccepted, MinimizeRoute expectedRoute,
+        const char* expectedCalls, const char* message) {
+        std::string calls;
+        const auto route = rules::ApplyDockMinimizeRequest(
+            [&](WPARAM command) {
+                Check(command == SC_MINIMIZE,
+                    "the posted minimize request must use SC_MINIMIZE");
+                calls += 'P';
+                return postAccepted;
+            },
+            [&](int showCommand) {
+                Check(showCommand == SW_MINIMIZE,
+                    "the asynchronous minimize fallback must use SW_MINIMIZE");
+                calls += 'S';
+                return showAccepted;
+            },
+            [&](WPARAM command) {
+                Check(command == SC_MINIMIZE,
+                    "the default-procedure minimize fallback must use SC_MINIMIZE");
+                calls += 'D';
+            });
+        Check(route == expectedRoute && calls == expectedCalls, message);
+    };
+    checkMinimizeRequestRoute(
+        true, false, MinimizeRoute::PostedSystemCommand, "P",
+        "a posted minimize must return immediately without duplicate requests while native completion is pending");
+    checkMinimizeRequestRoute(
+        false, true, MinimizeRoute::AsyncShowFallback, "PS",
+        "a rejected system-command post must try one asynchronous minimize and stop when accepted");
+    checkMinimizeRequestRoute(
+        false, false, MinimizeRoute::DefaultSystemCommandFallback, "PSD",
+        "when both asynchronous routes are rejected, including by UIPI, one default system command must remain available");
     Check(rules::NeedsDockCloseSystemCommandFallback(false) &&
             !rules::NeedsDockCloseSystemCommandFallback(true),
         "a rejected graceful close must use the system-command fallback");
@@ -3087,6 +3958,27 @@ int main(int argc, char** argv)
     Check(compactSnapshot.cx == 800 &&
             compactSnapshot.cy == 600,
         "small window snapshots must not be enlarged");
+    const RECT largeWarmupWindows[] = {
+        {0, 0, 7680, 4320}, {0, 0, 4320, 32000}, {0, 0, 32000, 32000}};
+    for (const auto& bounds : largeWarmupWindows)
+    {
+        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
+        Check(pixels.cx > 0 && pixels.cy > 0 && pixels.cx <= 1600 && pixels.cy <= 1600 &&
+                static_cast<std::uint64_t>(pixels.cx) * pixels.cy <= 1600000,
+            "background capture must bound both the longest edge and allocated pixel count for huge windows");
+    }
+    const SIZE smallWarmup = snowdesktop::dock_snapshot_warmup::detail::PixelSize(
+        {-300, -200, 500, 400});
+    Check(smallWarmup.cx == 800 && smallWarmup.cy == 600,
+        "background capture must preserve small-window dimensions without enlargement");
+    const RECT invalidWarmupWindows[] = {
+        {}, {10, 0, 0, 20}, {0, 20, 10, 0}, {LONG_MIN, 0, LONG_MAX, 10}};
+    for (const auto& bounds : invalidWarmupWindows)
+    {
+        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
+        Check(pixels.cx == 0 && pixels.cy == 0,
+            "invalid or overflowing source bounds must not allocate a background snapshot");
+    }
     Check(kDockWindowSnapshotRenderDpi == 96.0f,
         "snapshot render coordinates must remain physical pixels at every monitor DPI");
     Check(kDockWindowSnapshotUsesComposition,
@@ -3129,6 +4021,112 @@ int main(int argc, char** argv)
             DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
             DockWindowTransitionSurface::None,
         "floating minimize must reject a screen snapshot when no DWM thumbnail is available");
+    const auto genieCapture = ResolveDockWindowCapturePolicy(
+        3, DockWindowTransitionCapturePolicy::LiveThumbnailOnly);
+    Check(genieCapture == DockWindowTransitionCapturePolicy::SnapshotPreferred &&
+            ResolveDockWindowTransitionSurface(true, true, genieCapture) ==
+                DockWindowTransitionSurface::Snapshot,
+        "floating Genie must try an isolated snapshot instead of silently selecting DWM scale");
+    Check(ResolveDockWindowTransitionSurface(false, true, genieCapture) ==
+            DockWindowTransitionSurface::LiveThumbnail &&
+            snowdesktop::dock_genie::EffectiveEffect(3, false) == 1 &&
+            ResolveDockWindowTransitionSurface(false, false, genieCapture) ==
+                DockWindowTransitionSurface::None,
+        "real snapshot failure must retain live scale and native-operation fallbacks");
+    Check(ResolveDockWindowCapturePolicy(
+            1, DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
+                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
+            ResolveDockWindowCapturePolicy(
+                2, DockWindowTransitionCapturePolicy::SnapshotPreferred) ==
+                DockWindowTransitionCapturePolicy::SnapshotPreferred,
+        "non-deforming effects must retain their requested capture policy");
+    Check(PreferDockSnapshotEviction(false, 300, true, 100) &&
+            !PreferDockSnapshotEviction(true, 100, false, 300) &&
+            PreferDockSnapshotEviction(true, 100, true, 200),
+        "cache pressure must evict recapturable windows before minimized ones, then use LRU");
+    namespace warmup = snowdesktop::dock_snapshot_warmup_rules;
+    Check(warmup::ShouldStart(true, false, true, false, 1000, 0, 250),
+        "the first eligible warmup may start after foreground has settled");
+    Check(!warmup::ShouldStart(false, false, true, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, true, true, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, false, false, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, false, true, true, 5000, 3000, 250),
+        "disabled, active-transition, ineligible or already-pending states must not start background capture");
+    Check(!warmup::ShouldStart(true, false, true, false, 5000, 3000, 249) &&
+            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250),
+        "foreground must settle for the complete 250ms before warmup");
+    Check(!warmup::ShouldStart(true, false, true, false, 4999, 3000, 250) &&
+            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250) &&
+            !warmup::ShouldStart(true, false, true, false, 2999, 3000, 250),
+        "warmup attempts must stay at least 2000ms apart and reject clock rollback");
+    constexpr auto maximumTick = std::numeric_limits<std::uint64_t>::max();
+    Check(!warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 1999, 250) &&
+            warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 2000, 250),
+        "warmup throttling must not overflow when the monotonic timestamp is near its limit");
+    Check(warmup::ShouldAccept(1000, 1000, false, 0) &&
+            warmup::ShouldAccept(1000, 4000, false, 0) &&
+            !warmup::ShouldAccept(1000, 4001, false, 0) &&
+            !warmup::ShouldAccept(1000, 999, false, 0),
+        "asynchronous captures may be accepted for at most 3000ms and never from a future timestamp");
+    Check(!warmup::ShouldAccept(1000, 2000, true, 1001) &&
+            !warmup::ShouldAccept(1000, 2000, true, 1000) &&
+            warmup::ShouldAccept(1001, 2000, true, 1000) &&
+            warmup::ShouldAccept(1000, 2000, false, 1001),
+        "late or duplicate background results must not replace a newer Dock capture");
+    Check(!warmup::CanEvict(true, true) && warmup::CanEvict(false, true) &&
+            warmup::CanEvict(true, false) && warmup::CanEvict(false, false),
+        "background warmup must preserve minimized windows' only restore images without blocking foreground cache eviction");
+    WINDOWPLACEMENT capturedPlacement{};
+    capturedPlacement.length = sizeof(WINDOWPLACEMENT);
+    capturedPlacement.showCmd = SW_SHOWNORMAL;
+    capturedPlacement.rcNormalPosition = {100, 200, 900, 700};
+    WINDOWPLACEMENT minimizedPlacement = capturedPlacement;
+    minimizedPlacement.showCmd = SW_SHOWMINIMIZED;
+    Check(warmup::HasSameRestorePlacement(capturedPlacement, minimizedPlacement),
+        "minimizing a normal window must retain its matching cached restore placement");
+    WINDOWPLACEMENT maximizedPlacement = capturedPlacement;
+    maximizedPlacement.showCmd = SW_SHOWMAXIMIZED;
+    WINDOWPLACEMENT restoreMaximizedPlacement = minimizedPlacement;
+    restoreMaximizedPlacement.flags = WPF_RESTORETOMAXIMIZED;
+    Check(warmup::HasSameRestorePlacement(maximizedPlacement, restoreMaximizedPlacement),
+        "a minimized window that will restore maximized must match its maximized capture");
+    Check(!warmup::HasSameRestorePlacement(capturedPlacement, restoreMaximizedPlacement) &&
+            !warmup::HasSameRestorePlacement(maximizedPlacement, minimizedPlacement),
+        "a change in the effective maximized restore state must invalidate cached placement");
+    const RECT changedBounds[] = {
+        {120, 200, 920, 700}, {100, 220, 900, 720}, // Moved without resizing.
+        {120, 200, 900, 700}, {100, 220, 900, 700}, // Resized from left or top.
+        {100, 200, 920, 700}, {100, 200, 900, 720}}; // Resized from right or bottom.
+    for (const auto& bounds : changedBounds)
+    {
+        WINDOWPLACEMENT changedPlacement = minimizedPlacement;
+        changedPlacement.rcNormalPosition = bounds;
+        Check(!warmup::HasSameRestorePlacement(capturedPlacement, changedPlacement),
+            "moving or resizing any window edge must invalidate the old snapshot endpoint");
+    }
+    const WINDOWPLACEMENT missingPlacement{};
+    Check(!warmup::HasSameRestorePlacement(missingPlacement, minimizedPlacement) &&
+            !warmup::HasSameRestorePlacement(capturedPlacement, missingPlacement),
+        "missing captured or current placement must never validate an old snapshot");
+    const RECT occlusionHost{-1920, -200, 0, 880};
+    const std::vector<RECT> dockOccluders{
+        {-1600, 760, -320, 850}, // panel
+        {-1010, 700, -910, 810}, // magnified icon protruding above panel
+        {-1090, 650, -840, 685}, // title
+        {100, 100, 200, 200}}; // different monitor, outside the host
+    HRGN occlusion = CreateDockWindowTransitionOcclusionRegion(
+        occlusionHost, 0, dockOccluders);
+    Check(occlusion && PtInRegion(occlusion, 600, 600) &&
+            !PtInRegion(occlusion, 600, 1000) &&
+            !PtInRegion(occlusion, 960, 940) &&
+            !PtInRegion(occlusion, 960, 860) &&
+            PtInRegion(occlusion, 800, 910),
+        "overlay clipping must preserve the window while excluding panel, raised icon and title on a negative-origin monitor");
+    if (occlusion) DeleteObject(occlusion);
+    HRGN restoredRegion = CreateDockWindowTransitionOcclusionRegion(occlusionHost, 0, {});
+    Check(restoredRegion && PtInRegion(restoredRegion, 960, 940),
+        "leaving Dock hover must release the former magnified-icon cutout");
+    if (restoredRegion) DeleteObject(restoredRegion);
     Check(rules::ResolveDockWindowIconSource(
             true, true, false, true) ==
             rules::DockWindowIconSource::AppUserModel,
@@ -3181,6 +4179,54 @@ int main(int argc, char** argv)
             DockWindowTransitionStartAction::ContinueActive,
         "a repeated restore request must keep waiting for its real window");
 
+    namespace genie = snowdesktop::dock_genie;
+    const genie::Rect genieSource{ 1000.0, 1000.0, 1800.0, 1800.0 };
+    const std::array<std::pair<genie::Edge, genie::Rect>, 4> reversedGenieTargets{{
+        { genie::Edge::Bottom, { 1350.0, 100.0, 1450.0, 150.0 } },
+        { genie::Edge::Top, { 1350.0, 2600.0, 1450.0, 2650.0 } },
+        { genie::Edge::Left, { 2600.0, 1350.0, 2650.0, 1450.0 } },
+        { genie::Edge::Right, { 100.0, 1350.0, 150.0, 1450.0 } },
+    }};
+    bool reversedGenieKeepsAxisExtent = true;
+    bool reversedGenieReachesEndpoints = true;
+    for (const auto& [edge, target] : reversedGenieTargets)
+    {
+        for (int step = 0; step <= 20; ++step)
+        {
+            const double collapsed = static_cast<double>(step) / 20.0;
+            for (std::size_t strip = 0; strip < genie::StripCount; ++strip)
+            {
+                const double begin = static_cast<double>(strip) / genie::StripCount;
+                const double end = static_cast<double>(strip + 1) / genie::StripCount;
+                const auto matrix = genie::StripMatrix(genieSource, target,
+                    edge, collapsed, 800.0, 800.0, begin, end, 0.0, 0.0);
+                const bool vertical = genie::Vertical(edge);
+                const double axisExtent = (vertical ? matrix.m22 : matrix.m11) * 800.0;
+                const double targetExtent = vertical
+                    ? target.bottom - target.top : target.right - target.left;
+                reversedGenieKeepsAxisExtent = reversedGenieKeepsAxisExtent &&
+                    std::isfinite(matrix.m11) && std::isfinite(matrix.m12) &&
+                    std::isfinite(matrix.m21) && std::isfinite(matrix.m22) &&
+                    std::isfinite(matrix.dx) && std::isfinite(matrix.dy) &&
+                    axisExtent >= targetExtent - 0.001;
+                if (step == 0 || step == 20)
+                {
+                    const auto& expected = step == 0 ? genieSource : target;
+                    reversedGenieReachesEndpoints = reversedGenieReachesEndpoints &&
+                        std::abs(matrix.dx - expected.left) < 0.001 &&
+                        std::abs(matrix.dy - expected.top) < 0.001 &&
+                        std::abs(matrix.m11 * 800.0 - (expected.right - expected.left)) < 0.001 &&
+                        std::abs(matrix.m22 * 800.0 - (expected.bottom - expected.top)) < 0.001 &&
+                        std::abs(matrix.m12) < 0.001 && std::abs(matrix.m21) < 0.001;
+                }
+            }
+        }
+    }
+    Check(reversedGenieKeepsAxisExtent,
+        "Genie must not collapse to a thin line when the target is across the opposite monitor edge");
+    Check(reversedGenieReachesEndpoints,
+        "Genie strips must still match the window and Dock target at both endpoints on all four edges");
+
     namespace launchAnimation =
         snowdesktop::dock_launch_animation;
     Check(launchAnimation::NormalizedOffset(0) == 0.0 &&
@@ -3215,8 +4261,54 @@ int main(int argc, char** argv)
             launchAnimation::IsRestingPoint(
                 launchAnimation::kMinimumDurationMs),
         "Dock launch bounce must complete at least two cycles");
+    const double normalLaunchElapsed =
+        launchAnimation::AdvanceElapsed(0.0, 100.0, 1.0);
+    const double fastLaunchElapsed =
+        launchAnimation::AdvanceElapsed(normalLaunchElapsed, 70.0, 0.7);
+    const double slowLaunchElapsed =
+        launchAnimation::AdvanceElapsed(fastLaunchElapsed, 140.0, 1.4);
+    Check(std::abs(slowLaunchElapsed - 300.0) < 0.001 &&
+            launchAnimation::AdvanceElapsed(fastLaunchElapsed, 0.0, 1.4) ==
+                fastLaunchElapsed &&
+            launchAnimation::AdvanceElapsed(fastLaunchElapsed, -10.0, 0.7) ==
+                fastLaunchElapsed,
+        "changing Dock launch speed must preserve accumulated progress and never rewind");
+    Check(launchAnimation::PulseScale(0.0) == 1.0f &&
+            launchAnimation::PulseScale(launchAnimation::kMaximumDurationMs) == 1.0f &&
+            launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs / 2) < 1.0f &&
+            launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs / 2) >= 0.85f &&
+            launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs * 1.5) >
+                launchAnimation::PulseScale(launchAnimation::kBouncePeriodMs / 2),
+        "Dock launch pulse must return to rest and remain inside the icon bounds");
 
     namespace magnification = snowdesktop::dock_magnification;
+    Check(magnification::ResolveFocusScale(0, 2.0f, true) == 1.0f &&
+            magnification::ResolveFocusScale(2, 2.0f, false) == 1.0f &&
+            magnification::ResolveFocusScale(2, 0.5f, true) == 1.0f &&
+            magnification::ResolveFocusScale(2, 3.0f, true) == 2.0f &&
+            magnification::ResolveFocusScale(2,
+                std::numeric_limits<float>::quiet_NaN(), true) ==
+                magnification::kFocusScale,
+        "Dock hover settings must honor global off and keep magnification within safe limits");
+    Check(magnification::ScaleForEffect(0, true, 0.0f, 76, 2.0f) == 1.0f &&
+            magnification::ScaleForEffect(1, true, 0.0f, 76, 2.0f) == 2.0f &&
+            magnification::ScaleForEffect(1, false, 76.0f, 76, 2.0f) == 1.0f &&
+            std::abs(magnification::ScaleForEffect(2, false, 76.0f, 76, 2.0f) -
+                1.5f) < 0.001f,
+        "single hover must leave neighbors unscaled while wave hover grows them proportionally");
+    Check(magnification::ScaleForEffect(2, true, 0.0f, 76, 1.0f) == 1.0f &&
+            magnification::AxisShiftForDistance(76, 76, 64, 1.0f) == 0 &&
+            magnification::SingleFocusAxisShift(76, 64, 1.0f) == 0,
+        "disabled hover must remove both icon growth and neighboring layout displacement");
+    const RECT singleFocusBase{ 0, 100, 76, 176 };
+    const RECT singleNeighborBase{ 76, 100, 152, 176 };
+    const RECT singleFocusVisual = magnification::MagnifyRect(
+        singleFocusBase, DockPosition::Bottom, 2.0f, 64);
+    const RECT singleNeighborVisual = magnification::MagnifyRect(
+        singleNeighborBase, DockPosition::Bottom, 1.0f, 64,
+        magnification::SingleFocusAxisShift(76, 64, 2.0f));
+    Check(singleFocusVisual.right <= singleNeighborVisual.left,
+        "a 2x single hover must push its unscaled neighbor out of the enlarged icon");
     Check(!magnification::ShouldSuppressMagnification(
               false, false, false) &&
             magnification::ShouldSuppressMagnification(
@@ -3419,6 +4511,13 @@ int main(int argc, char** argv)
     const RECT baseIsland{ 80, 190, 300, 300 };
     const RECT expandedIsland = magnification::ExpandInteractionBounds(
         baseIsland, DockPosition::Bottom, 64);
+    const RECT unexpandedIsland = magnification::ExpandInteractionBounds(
+        baseIsland, DockPosition::Bottom, 64, 1.0f);
+    const RECT unexpandedViewport = magnification::ExpandPerpendicularBounds(
+        baseIsland, DockPosition::Bottom, 64, 1.0f);
+    Check(EqualRect(&baseIsland, &unexpandedIsland) &&
+            EqualRect(&baseIsland, &unexpandedViewport),
+        "disabled Dock magnification must not keep an invisible expanded hit-test corridor");
     Check(expandedIsland.left < baseIsland.left &&
             expandedIsland.right > baseIsland.right &&
             expandedIsland.top < baseIsland.top,
@@ -3432,45 +4531,48 @@ int main(int argc, char** argv)
     const std::array<int, 8> magnificationIconSizes{
         1, 32, 64, 77, 96, 128, 192, 256,
     };
-    const std::array<float, 4> magnificationScales{
-        1.0f,
-        magnification::kSecondNeighborScale,
-        magnification::kFirstNeighborScale,
-        magnification::kFocusScale,
-    };
     bool hoverPresentationCoversRetainedFocus = true;
-    for (const int iconSize : magnificationIconSizes)
+    for (const float maximumScale : { 1.0f, magnification::kFocusScale, 2.0f })
     {
-        const int maximumAxisShift =
-            magnification::MaximumAxisShift(iconSize);
-        for (const DockPosition position : dockPositions)
+        const std::array<float, 4> magnificationScales{
+            1.0f,
+            magnification::ScaleForAxisDistance(2.0f, 1, maximumScale),
+            magnification::ScaleForAxisDistance(1.0f, 1, maximumScale),
+            maximumScale,
+        };
+        for (const int iconSize : magnificationIconSizes)
         {
-            const RECT interactionBounds =
-                magnification::ExpandInteractionBounds(
-                    baseIsland, position, iconSize);
-            const RECT presentationBounds =
-                magnification::ExpandHoverPresentationBounds(
-                    interactionBounds);
-            for (const float scale : magnificationScales)
+            const int maximumAxisShift =
+                magnification::MaximumAxisShift(iconSize, maximumScale);
+            for (const DockPosition position : dockPositions)
             {
-                for (const int axisShift : {
-                        -maximumAxisShift,
-                        maximumAxisShift })
+                const RECT interactionBounds =
+                    magnification::ExpandInteractionBounds(
+                        baseIsland, position, iconSize, maximumScale);
+                const RECT presentationBounds =
+                    magnification::ExpandHoverPresentationBounds(
+                        interactionBounds);
+                for (const float scale : magnificationScales)
                 {
-                    const RECT maximumVisual =
-                        magnification::MagnifyRect(
-                            baseIsland, position,
-                            scale, iconSize,
-                            axisShift);
-                    const RECT retainedVisual =
-                        magnification::ExpandFocusRetentionBounds(
-                            maximumVisual);
-                    hoverPresentationCoversRetainedFocus =
-                        hoverPresentationCoversRetainedFocus &&
-                        presentationBounds.left <= retainedVisual.left &&
-                        presentationBounds.top <= retainedVisual.top &&
-                        presentationBounds.right >= retainedVisual.right &&
-                        presentationBounds.bottom >= retainedVisual.bottom;
+                    for (const int axisShift : {
+                            -maximumAxisShift,
+                            maximumAxisShift })
+                    {
+                        const RECT maximumVisual =
+                            magnification::MagnifyRect(
+                                baseIsland, position,
+                                scale, iconSize,
+                                axisShift);
+                        const RECT retainedVisual =
+                            magnification::ExpandFocusRetentionBounds(
+                                maximumVisual);
+                        hoverPresentationCoversRetainedFocus =
+                            hoverPresentationCoversRetainedFocus &&
+                            presentationBounds.left <= retainedVisual.left &&
+                            presentationBounds.top <= retainedVisual.top &&
+                            presentationBounds.right >= retainedVisual.right &&
+                            presentationBounds.bottom >= retainedVisual.bottom;
+                    }
                 }
             }
         }
@@ -3967,6 +5069,65 @@ int main(int argc, char** argv)
             "ShowWindow(hwnd_, SW_SHOWNOACTIVATE);");
         Check(!lifecycleSource.empty(),
             "application lifecycle source is readable");
+        const std::size_t desktopFocusBegin = lifecycleSource.find(
+            "void DesktopApp::FocusDesktopInputWindow()");
+        const std::size_t floatingDockInputBegin = lifecycleSource.find(
+            "bool DesktopApp::EnsureFloatingDockInputWindow()",
+            desktopFocusBegin);
+        const std::string desktopFocus =
+            desktopFocusBegin == std::string::npos ||
+                floatingDockInputBegin == std::string::npos
+            ? std::string{}
+            : lifecycleSource.substr(
+                desktopFocusBegin,
+                floatingDockInputBegin - desktopFocusBegin);
+        const std::size_t createInputBegin = lifecycleSource.find(
+            "bool DesktopApp::CreateDesktopInputWindow(HWND host)");
+        const std::size_t attachInputBegin = lifecycleSource.find(
+            "void DesktopApp::AttachInputWindowToDesktopHost(HWND host)",
+            createInputBegin);
+        const std::string createInput =
+            createInputBegin == std::string::npos ||
+                attachInputBegin == std::string::npos
+            ? std::string{}
+            : lifecycleSource.substr(
+                createInputBegin,
+                attachInputBegin - createInputBegin);
+        Check(createInput.find("WS_POPUP | WS_VISIBLE") !=
+                    std::string::npos &&
+                createInput.find("WS_CHILD | WS_VISIBLE") ==
+                    std::string::npos,
+            "desktop keyboard input uses an app-owned popup instead of an Explorer-owned cross-process child");
+        const std::size_t watchHostBegin = lifecycleSource.find(
+            "void DesktopApp::WatchDesktopHost()");
+        const std::size_t invalidateSlotsBegin = lifecycleSource.find(
+            "void DesktopApp::InvalidateAllWidgetSlots()",
+            watchHostBegin);
+        const std::string watchHost =
+            watchHostBegin == std::string::npos ||
+                invalidateSlotsBegin == std::string::npos
+            ? std::string{}
+            : lifecycleSource.substr(
+                watchHostBegin,
+                invalidateSlotsBegin - watchHostBegin);
+        Check(watchHost.find("inputMissing") != std::string::npos &&
+                watchHost.find("GetParent(inputHwnd_)") ==
+                    std::string::npos &&
+                watchHost.find("inputDetached") == std::string::npos,
+            "desktop host polling treats the app-owned top-level input proxy as healthy instead of recovering every interval");
+        Check(desktopFocus.find("FocusKeyboardWindow(") !=
+                    std::string::npos &&
+                desktopFocus.find("GetForegroundWindow()") !=
+                    std::string::npos &&
+                desktopFocus.find("GetGUIThreadInfo(") !=
+                    std::string::npos &&
+                desktopFocus.find("target, true") !=
+                    std::string::npos &&
+                desktopFocus.find("AttachThreadInput(") !=
+                    std::string::npos &&
+                desktopFocus.find("TRUE") != std::string::npos &&
+                desktopFocus.find("FALSE") != std::string::npos,
+            "desktop text input validates foreground-queue delivery and retries through a short-lived attachment");
         Check(hostReady != std::string::npos &&
                 rebind != std::string::npos &&
                 show != std::string::npos &&
@@ -3979,6 +5140,9 @@ int main(int argc, char** argv)
         const std::string popupRenderSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_popup_render.cpp");
+        const std::string panelRenderPrimitivesSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_render_primitives.cpp");
         const std::string compositionAnimationSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_composition_animation_overlay.cpp");
@@ -4012,15 +5176,56 @@ int main(int argc, char** argv)
         const std::string pointerContextSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_context.cpp");
+
+        const std::size_t floatingDockMessageHandler =
+            floatingDockRenderSource.find(
+                "LRESULT DesktopApp::HandleFloatingDockMessage(");
+        const std::size_t floatingPopupMessageHandler =
+            floatingPopupSource.find(
+                "LRESULT DesktopApp::HandleFloatingPopupMessage(");
+        Check(floatingDockMessageHandler != std::string::npos &&
+                floatingDockRenderSource.find(
+                    "app.FlushNativeMenuPresentation();",
+                    floatingDockMessageHandler) != std::string::npos &&
+                floatingPopupMessageHandler != std::string::npos &&
+                floatingPopupSource.find(
+                    "app.FlushNativeMenuPresentation();",
+                    floatingPopupMessageHandler) != std::string::npos,
+            "floating Dock and popup hosts must flush content composition "
+            "after native-menu modal-loop messages");
+        Check(popupRenderSource.find(
+                  "popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;") !=
+                    std::string::npos &&
+                popupRenderSource.find(
+                  "DrawWidgetPanelEdgeHighlight(") !=
+                    std::string::npos &&
+                popupRenderSource.find(
+                  "&collectionPopupAppearance_, popupMetrics.scale") !=
+                    std::string::npos &&
+                panelRenderPrimitivesSource.find(
+                  "std::max(0.0f, effectScale)") !=
+                    std::string::npos,
+            "collection popup edge highlights must render above content and "
+            "scale with the popup while ordinary border scaling stays independent");
+
+        const std::string menuIconsSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_menu_icons.cpp");
         const std::string pointerDownSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_down.cpp");
         const std::string pointerReleaseSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_pointer_release.cpp");
+        const std::string itemMenuSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_item_menu.cpp");
         const std::string messageDispatchSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_message_dispatch.cpp");
+        const std::string appRunSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_run.cpp");
         const std::string dragHintWindowSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_drag_hint_window.cpp");
@@ -4072,9 +5277,18 @@ int main(int argc, char** argv)
         const std::string backdropCompositorSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "desktop_backdrop_compositor.cpp");
+        const std::string popupPairZOrderSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "popup_window_pair_z_order.h");
         const std::string quickNavigationWindowSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_window.cpp");
+        Check(quickNavigationWindowSource.find(
+                  "FocusKeyboardWindow(") != std::string::npos &&
+                quickNavigationWindowSource.find(
+                  "L\"Quick navigation search edit\"") !=
+                    std::string::npos,
+            "Quick Navigation uses the verified foreground focus path for its native search edit");
         const std::string quickNavigationInteractionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_quick_navigation_interaction.cpp");
@@ -4090,9 +5304,125 @@ int main(int argc, char** argv)
         const std::string shellMenuSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_shell_menu.cpp");
+        const std::string timerDispatchSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_timer_dispatch.cpp");
         const std::string renderPrimitivesSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_render_primitives.cpp");
+        const std::size_t liveNativeMenuPumpBegin =
+            shellMenuSource.find(
+                "UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(");
+        const std::size_t shellMenuLayerGuardBegin =
+            shellMenuSource.find(
+                "ShellPopupMenuLayerGuard(DesktopApp& app)");
+        const std::string shellMenuLayerGuardSource =
+            shellMenuLayerGuardBegin != std::string::npos &&
+                    liveNativeMenuPumpBegin != std::string::npos
+                ? shellMenuSource.substr(
+                    shellMenuLayerGuardBegin,
+                    liveNativeMenuPumpBegin - shellMenuLayerGuardBegin)
+                : std::string{};
+        const std::size_t firstShellMenuEntry =
+            shellMenuSource.find(
+                "void DesktopApp::ShowNewMenuAndInvoke(",
+                liveNativeMenuPumpBegin);
+        const std::string liveNativeMenuPumpSource =
+            liveNativeMenuPumpBegin != std::string::npos &&
+                    firstShellMenuEntry != std::string::npos
+                ? shellMenuSource.substr(
+                    liveNativeMenuPumpBegin,
+                    firstShellMenuEntry - liveNativeMenuPumpBegin)
+                : std::string{};
+        Check(!liveNativeMenuPumpSource.empty() &&
+                !shellMenuLayerGuardSource.empty() &&
+                shellMenuLayerGuardSource.find(
+                    "active_(!app.ShouldKeepFloatingPopupTopmostForShellMenu())") !=
+                    std::string::npos &&
+                CountOccurrences(
+                    shellMenuLayerGuardSource,
+                    "if (active_)") == 2 &&
+                shellMenuLayerGuardSource.find(
+                    "app_.BeginShellPopupMenuLayer();") !=
+                    std::string::npos &&
+                shellMenuLayerGuardSource.find(
+                    "app_.EndShellPopupMenuLayer();") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "std::thread") != std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "CreateWindowExW(") != std::string::npos &&
+                shellMenuSource.find(
+                    "ShellMenuTrackerWindowProc") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "topmost ? WS_EX_TOPMOST : 0") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "ShouldKeepFloatingPopupTopmostForShellMenu();") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "SetForegroundWindow(trackerOwner);") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "trackerOwner, nullptr);") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "MsgWaitForMultipleObjectsEx(") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "PeekMessageW(") != std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "uiAnimationScheduler_.DispatchDue();") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "FlushPendingCompositionCommit();") !=
+                    std::string::npos &&
+                CountOccurrences(
+                    shellMenuSource,
+                    "TrackShellPopupMenuWithDesktopPump(") == 5 &&
+                CountOccurrences(
+                    itemMenuSource,
+                    "TrackShellPopupMenuWithDesktopPump(") == 1 &&
+                CountOccurrences(
+                    shellMenuSource,
+                    "ShellPopupMenuLayerGuard shellMenuLayer(*this);") == 4 &&
+                CountOccurrences(
+                    itemMenuSource,
+                    "ShellPopupMenuLayerGuard shellMenuLayer(*this);") == 1 &&
+                CountOccurrences(
+                    shellMenuSource,
+                    "TrackPopupMenuEx(") ==
+                    1 &&
+                CountOccurrences(
+                    itemMenuSource,
+                    "TrackPopupMenuEx(") == 0 &&
+                popupLifecycleSource.find(
+                    "shellPopupTrackerOwnerHwnd_.load(") !=
+                    std::string::npos &&
+                popupLifecycleSource.find(
+                    "SendMessageW(trackerOwner, WM_CANCELMODE") !=
+                    std::string::npos &&
+                appHeaderSource.find(
+                    "std::atomic<HWND> shellPopupTrackerOwnerHwnd_") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_INITMENUPOPUP") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_DRAWITEM") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_MEASUREITEM") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                    "message == WM_MENUCHAR") !=
+                    std::string::npos &&
+                liveNativeMenuPumpSource.find(
+                    "synchronous fallback") == std::string::npos &&
+                popupLifecycleSource.find(
+                    "EndMenu();") == std::string::npos,
+            "native Shell menus must use a tracker-thread-owned window while preserving the floating popup Z-order band");
         const std::size_t dockSurfacePrepareBegin =
             floatingDockInteractionSource.find(
                 "HRESULT DesktopApp::\n"
@@ -4394,7 +5724,7 @@ int main(int argc, char** argv)
                 "const bool activeWidgetGesture =");
         const std::size_t widgetGestureInactiveBranch =
             pointerMoveSource.find(
-                "if (!activeWidgetGesture)",
+                "if (!activeWidgetGesture && !marqueePointerGesture)",
                 widgetGestureGuard);
         const std::size_t guardedDockPreview =
             pointerMoveSource.find(
@@ -4423,7 +5753,88 @@ int main(int argc, char** argv)
                 guardedDockPreview < guardedLuaHover &&
                 guardedLuaHover < guardedPopupDwell &&
                 guardedPopupDwell < widgetGestureThreshold,
-            "active widget drags must bypass unrelated Dock, Lua hover and popup dwell work");
+            "active widget drags and marquees must bypass unrelated Dock, Lua hover and popup dwell work");
+        const std::size_t runLatencyGesture = appRunSource.find(
+            "IsLatencySensitivePointerGesture(");
+        const std::size_t runWidgetAction = appRunSource.rfind(
+            "widgetAction_ != WidgetAction::None", runLatencyGesture);
+        const std::size_t runWidgetTarget = appRunSource.find(
+            "mouseDownWidgetIndex_ < widgets_.size()", runLatencyGesture);
+        const std::size_t dispatchLatencyGesture =
+            messageDispatchSource.find(
+                "IsLatencySensitivePointerGesture(");
+        const std::size_t dispatchWidgetAction =
+            messageDispatchSource.rfind(
+                "widgetAction_ != WidgetAction::None",
+                dispatchLatencyGesture);
+        const std::size_t dispatchWidgetTarget =
+            messageDispatchSource.find(
+                "mouseDownWidgetIndex_ < widgets_.size()",
+                dispatchLatencyGesture);
+        const std::size_t dispatchMiddleButton =
+            messageDispatchSource.find(
+                "GetAsyncKeyState(VK_MBUTTON)",
+                dispatchLatencyGesture);
+        const std::size_t dispatchPrimaryButton =
+            messageDispatchSource.find(
+                "GetAsyncKeyState(VK_LBUTTON)",
+                dispatchLatencyGesture);
+        const std::size_t dispatchPrimaryLatencyGate =
+            messageDispatchSource.rfind(
+                "latencySensitivePointerActive &&",
+                dispatchPrimaryButton);
+        const std::size_t dispatchPrimaryOwnershipGate =
+            messageDispatchSource.rfind(
+                "!middleButtonWidgetMove_ &&",
+                dispatchPrimaryButton);
+        const std::size_t dispatchMiddleLatencyGate =
+            messageDispatchSource.rfind(
+                "latencySensitivePointerActive &&",
+                dispatchMiddleButton);
+        const std::size_t dispatchMiddleOwnershipGate =
+            messageDispatchSource.rfind(
+                "middleButtonWidgetMove_ &&",
+                dispatchMiddleButton);
+        const std::size_t dispatchOwningButton =
+            messageDispatchSource.find(
+                "IsPointerGestureButtonDown(",
+                dispatchMiddleButton);
+        Check(runLatencyGesture != std::string::npos &&
+                runWidgetAction != std::string::npos &&
+                runWidgetTarget != std::string::npos &&
+                runWidgetAction < runLatencyGesture &&
+                runLatencyGesture < runWidgetTarget &&
+                dispatchLatencyGesture != std::string::npos &&
+                dispatchWidgetAction != std::string::npos &&
+                dispatchWidgetTarget != std::string::npos &&
+                dispatchWidgetAction < dispatchLatencyGesture &&
+                dispatchLatencyGesture < dispatchWidgetTarget &&
+                dispatchPrimaryButton != std::string::npos &&
+                dispatchPrimaryLatencyGate != std::string::npos &&
+                dispatchPrimaryOwnershipGate != std::string::npos &&
+                dispatchPrimaryLatencyGate < dispatchPrimaryOwnershipGate &&
+                dispatchPrimaryOwnershipGate < dispatchPrimaryButton &&
+                dispatchMiddleButton != std::string::npos &&
+                dispatchMiddleLatencyGate != std::string::npos &&
+                dispatchMiddleOwnershipGate != std::string::npos &&
+                dispatchMiddleLatencyGate < dispatchMiddleOwnershipGate &&
+                dispatchMiddleOwnershipGate < dispatchMiddleButton &&
+                dispatchOwningButton != std::string::npos &&
+                dispatchMiddleButton < dispatchOwningButton,
+            "the message pump and dispatcher must route valid widget gestures through shared low-latency coalescing and query only the owning mouse button");
+        const std::size_t middleReleaseHandler =
+            pointerMoveSource.find(
+                "void DesktopApp::OnMiddleButtonUpAt(");
+        const std::size_t middleMoveClear = pointerMoveSource.find(
+            "middleButtonWidgetMove_ = false;", middleReleaseHandler);
+        const std::size_t middleReleaseDelegate = pointerMoveSource.find(
+            "OnLeftButtonUpAt(wp, point);", middleMoveClear);
+        Check(middleReleaseHandler != std::string::npos &&
+                middleMoveClear != std::string::npos &&
+                middleReleaseDelegate != std::string::npos &&
+                middleReleaseHandler < middleMoveClear &&
+                middleMoveClear < middleReleaseDelegate,
+            "middle-button widget release must clear its ownership flag before delegating to the primary widget completion path");
         const std::string oleDropSessionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_ole_drop_session.cpp");
@@ -4448,9 +5859,6 @@ int main(int argc, char** argv)
         const std::string popupDwellInteractionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_popup_dwell_interaction.cpp");
-        const std::string timerDispatchSource = ReadFile(
-            std::filesystem::path(argv[1]) / "src" / "app" /
-                "app_timer_dispatch.cpp");
         const std::string collectionSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "widgets" /
                 "collection.cpp");
@@ -4515,12 +5923,38 @@ int main(int argc, char** argv)
                   "collectionPopupBackdropCompositor_.SetVisible(false);") !=
                     std::string::npos,
             "the collection popup backdrop must follow the shared host lifecycle, cache hidden resources, and preserve z-order");
+        const std::size_t popupLayerPolicyBegin =
+            floatingPopupSource.find(
+                "void DesktopApp::ApplyFloatingPopupLayerPolicy()");
+        const std::size_t popupLayerPolicyEnd =
+            floatingPopupSource.find(
+                "void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()",
+                popupLayerPolicyBegin);
+        const std::string popupLayerPolicySource =
+            popupLayerPolicyBegin != std::string::npos &&
+                    popupLayerPolicyEnd != std::string::npos
+                ? floatingPopupSource.substr(
+                    popupLayerPolicyBegin,
+                    popupLayerPolicyEnd - popupLayerPolicyBegin)
+                : std::string{};
+        Check(!popupLayerPolicySource.empty() &&
+                popupLayerPolicySource.find(
+                  "SetPopupWindowPairZOrder(") !=
+                    std::string::npos &&
+                popupLayerPolicySource.find(
+                  "SetWindowPos(") == std::string::npos &&
+                popupLayerPolicySource.find(
+                  "SetPopupTopmost(") == std::string::npos,
+            "native menu layer changes must move the floating popup content and backdrop through the shared pair policy");
         Check(compositionAnimationSource.find(
                   "ApplyCollectionPopupBackdropAnimationFrame();") !=
                     std::string::npos &&
-                compositionAnimationSource.find(
-                  "StartVisualScaleAnimation(") !=
-                    std::string::npos &&
+                ContainsIgnoringWhitespace(
+                  compositionAnimationSource,
+                  "collectionPopupBackdropCompositor_.StartVisualTransformAnimation(") &&
+                ContainsIgnoringWhitespace(
+                  animationSchedulerSource,
+                  "if (!popupAnimationFrameToken_ && popupAnimation_.IsAnimating() && !popupAnimationCompositorDriven_)") &&
                 compositionAnimationSource.find(
                   "if (collectionPopupGlassTheme_)\n        return false;") ==
                     std::string::npos &&
@@ -4738,26 +6172,37 @@ int main(int argc, char** argv)
                     pairZOrderBegin,
                     pairZOrderEnd - pairZOrderBegin)
                 : std::string{};
-        const std::size_t zOrderBatchBegin =
-            pairZOrderSource.find("BeginDeferWindowPos(2)");
-        const std::size_t zOrderContent =
-            pairZOrderSource.find(
-                "deferred, contentWindow,", zOrderBatchBegin);
-        const std::size_t zOrderBackdrop =
-            pairZOrderSource.find(
-                "deferred, backdropWindow,", zOrderContent);
-        const std::size_t zOrderBatchEnd =
-            pairZOrderSource.find(
-                "EndDeferWindowPos(deferred)", zOrderBackdrop);
         Check(!pairZOrderSource.empty() &&
-                zOrderBatchBegin != std::string::npos &&
-                zOrderContent != std::string::npos &&
-                zOrderBackdrop != std::string::npos &&
-                zOrderBatchEnd != std::string::npos &&
-                zOrderBatchBegin < zOrderContent &&
-                zOrderContent < zOrderBackdrop &&
-                zOrderBackdrop < zOrderBatchEnd,
-            "a popup content/backdrop pair must change Z-order in one window transaction");
+                pairZOrderSource.find(
+                  "popup_window_pair_z_order::Apply(") !=
+                    std::string::npos,
+            "popup backdrop compositor Z-order changes must use the shared pair transition policy");
+        const std::size_t bandChange =
+            popupPairZOrderSource.find(
+                "const bool changesZOrderBand");
+        const std::size_t demoteBackdrop =
+            popupPairZOrderSource.find(
+                "backdropWindow, HWND_NOTOPMOST", bandChange);
+        const std::size_t moveContent =
+            popupPairZOrderSource.find(
+                "contentWindow, contentInsertAfter", demoteBackdrop);
+        const std::size_t crossBandPairBackdrop =
+            popupPairZOrderSource.find(
+                "backdropWindow, contentWindow", moveContent);
+        const std::size_t sameBandBatch =
+            popupPairZOrderSource.find(
+                "BeginDeferWindowPos(2)", crossBandPairBackdrop);
+        Check(!popupPairZOrderSource.empty() &&
+                bandChange != std::string::npos &&
+                demoteBackdrop != std::string::npos &&
+                moveContent != std::string::npos &&
+                crossBandPairBackdrop != std::string::npos &&
+                sameBandBatch != std::string::npos &&
+                bandChange < demoteBackdrop &&
+                demoteBackdrop < moveContent &&
+                moveContent < crossBandPairBackdrop &&
+                crossBandPairBackdrop < sameBandBatch,
+            "cross-band popup demotion must move glass first, content second, and only batch windows already in one Z-order band");
         const std::size_t syncBackdropPlacementBegin =
             backdropCompositorSource.find(
                 "bool SyncWindowPlacement()");
@@ -5027,6 +6472,168 @@ int main(int argc, char** argv)
                   "dockAssociatedPopupPointerPressClaimed_") ==
                     std::string::npos,
             "popup and floating Dock lifecycles must observe one outside press independently without ownership claims or cross-close calls");
+        const std::size_t edgeMouseHookCallbackBegin =
+            floatingDockLifecycleSource.find(
+                "LRESULT CALLBACK DesktopApp::FloatingDockEdgeSwipeMouseHookProc(");
+        const std::size_t edgeMouseHookStartBegin =
+            floatingDockLifecycleSource.find(
+                "bool DesktopApp::StartFloatingDockEdgeSwipeMouseMonitor()",
+                edgeMouseHookCallbackBegin);
+        const std::size_t edgeMouseHookStopBegin =
+            floatingDockLifecycleSource.find(
+                "void DesktopApp::StopFloatingDockEdgeSwipeMouseMonitor()",
+                edgeMouseHookStartBegin);
+        const std::size_t floatingDockUnregisterBegin =
+            floatingDockLifecycleSource.find(
+                "void DesktopApp::UnregisterFloatingDockHotkey()",
+                edgeMouseHookStopBegin);
+        const std::size_t floatingDockApplyBegin =
+            floatingDockLifecycleSource.find(
+                "void DesktopApp::ApplyFloatingDockHotkey()",
+                floatingDockUnregisterBegin);
+        const std::size_t floatingDockPassiveRevealBegin =
+            floatingDockLifecycleSource.find(
+                "bool DesktopApp::UpdatePassiveDragRevealHosts(",
+                floatingDockApplyBegin);
+        const std::string edgeMouseHookCallbackSource =
+            edgeMouseHookCallbackBegin != std::string::npos &&
+                    edgeMouseHookStartBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    edgeMouseHookCallbackBegin,
+                    edgeMouseHookStartBegin - edgeMouseHookCallbackBegin)
+                : std::string{};
+        const std::string edgeMouseHookStartSource =
+            edgeMouseHookStartBegin != std::string::npos &&
+                    edgeMouseHookStopBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    edgeMouseHookStartBegin,
+                    edgeMouseHookStopBegin - edgeMouseHookStartBegin)
+                : std::string{};
+        const std::string edgeMouseHookStopSource =
+            edgeMouseHookStopBegin != std::string::npos &&
+                    floatingDockUnregisterBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    edgeMouseHookStopBegin,
+                    floatingDockUnregisterBegin - edgeMouseHookStopBegin)
+                : std::string{};
+        const std::string floatingDockUnregisterSource =
+            floatingDockUnregisterBegin != std::string::npos &&
+                    floatingDockApplyBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    floatingDockUnregisterBegin,
+                    floatingDockApplyBegin - floatingDockUnregisterBegin)
+                : std::string{};
+        const std::string floatingDockApplySource =
+            floatingDockApplyBegin != std::string::npos &&
+                    floatingDockPassiveRevealBegin != std::string::npos
+                ? floatingDockLifecycleSource.substr(
+                    floatingDockApplyBegin,
+                    floatingDockPassiveRevealBegin - floatingDockApplyBegin)
+                : std::string{};
+        Check(!edgeMouseHookCallbackSource.empty() &&
+                edgeMouseHookCallbackSource.find("WM_LBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_LBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_RBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_RBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_MBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_MBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_XBUTTONDOWN") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("WM_XBUTTONUP") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find(
+                  "floatingDockEdgeSwipeMouseActivity_.store(") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find(
+                  "CallNextHookEx(nullptr, code, message, data)") !=
+                    std::string::npos &&
+                edgeMouseHookCallbackSource.find("PostMessage") ==
+                    std::string::npos,
+            "the edge-swipe mouse hook must only record low-level L/R/M/X button down/up activity and continue the hook chain");
+        const std::size_t edgeMouseHookInstall =
+            edgeMouseHookStartSource.find("floatingDockEdgeSwipeMouseHook_.Start(");
+        const std::size_t edgeMouseHookUninstall =
+            edgeMouseHookStopSource.find("floatingDockEdgeSwipeMouseHook_.Stop(");
+        const std::size_t edgeMouseHookClear =
+            edgeMouseHookStopSource.find(
+                "floatingDockEdgeSwipeMouseActivity_.store(",
+                edgeMouseHookUninstall);
+        Check(!edgeMouseHookStartSource.empty() &&
+                !edgeMouseHookStopSource.empty() &&
+                edgeMouseHookInstall != std::string::npos &&
+                edgeMouseHookUninstall != std::string::npos &&
+                edgeMouseHookClear != std::string::npos &&
+                edgeMouseHookUninstall < edgeMouseHookClear &&
+                appHeaderSource.find(
+                  "LowLevelMouseHook floatingDockEdgeSwipeMouseHook_;") !=
+                    std::string::npos &&
+                appHeaderSource.find("LowLevelMouseHook floatingPopupMouseHook_;") !=
+                    std::string::npos &&
+                floatingDockLifecycleSource.find("SetWindowsHookExW(") ==
+                    std::string::npos &&
+                floatingPopupSource.find("SetWindowsHookExW(") ==
+                    std::string::npos &&
+                appHeaderSource.find(
+                  "floatingDockEdgeSwipeMouseActivity_{ false };") !=
+                    std::string::npos,
+            "global mouse observers must use dedicated hook owners instead of installing on the UI thread, with explicit activity cleanup");
+        const std::size_t repeatedApplyCleanup =
+            floatingDockApplySource.find(
+                "UnregisterFloatingDockHotkey();");
+        const std::size_t effectiveEdgeState =
+            floatingDockApplySource.find(
+                "const bool edgeSwipeEnabled =",
+                repeatedApplyCleanup);
+        const std::size_t effectiveEdgeRule =
+            floatingDockApplySource.find(
+                "IsFloatingEdgeSwipeEnabled(", effectiveEdgeState);
+        const std::size_t edgeSamplerTimerInstall =
+            floatingDockApplySource.find(
+                "SetTimer(", effectiveEdgeRule);
+        const std::size_t effectiveEdgeHookGuard =
+            floatingDockApplySource.find(
+                "if (edgeSwipeEnabled)", edgeSamplerTimerInstall);
+        const std::size_t effectiveEdgeHookStart =
+            floatingDockApplySource.find(
+                "StartFloatingDockEdgeSwipeMouseMonitor();",
+                effectiveEdgeHookGuard);
+        Check(!floatingDockApplySource.empty() &&
+                repeatedApplyCleanup != std::string::npos &&
+                effectiveEdgeState != std::string::npos &&
+                effectiveEdgeRule != std::string::npos &&
+                edgeSamplerTimerInstall != std::string::npos &&
+                effectiveEdgeHookGuard != std::string::npos &&
+                effectiveEdgeHookStart != std::string::npos &&
+                repeatedApplyCleanup < effectiveEdgeState &&
+                effectiveEdgeState < effectiveEdgeRule &&
+                effectiveEdgeRule < edgeSamplerTimerInstall &&
+                edgeSamplerTimerInstall < effectiveEdgeHookGuard &&
+                effectiveEdgeHookGuard < effectiveEdgeHookStart &&
+                CountOccurrences(
+                  floatingDockApplySource,
+                  "StartFloatingDockEdgeSwipeMouseMonitor();") == 1 &&
+                floatingDockUnregisterSource.find(
+                  "StopFloatingDockEdgeSwipeMouseMonitor();") !=
+                    std::string::npos &&
+                lifecycleSource.find(
+                  "DesktopApp::~DesktopApp()") !=
+                    std::string::npos &&
+                lifecycleSource.find(
+                  "UnregisterFloatingDockHotkey();",
+                  lifecycleSource.find(
+                    "DesktopApp::~DesktopApp()")) !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                  "UnregisterFloatingDockHotkey();",
+                  messageDispatchSource.find("case WM_DESTROY:")) !=
+                    std::string::npos,
+            "effective edge-swipe setup must install one observer after timer setup while repeated apply, unregister and destruction tear it down first");
         const std::size_t dockPointerSamplerBegin =
             floatingDockLifecycleSource.find(
                 "void DesktopApp::UpdateFloatingDockEdgeSwipe()");
@@ -5066,15 +6673,42 @@ int main(int argc, char** argv)
         const std::size_t passiveDragSamplerCall =
             dockPointerSamplerSource.find(
                 "UpdatePassiveDragRevealHosts(cursor)");
-        const std::size_t legacyDragButtonGuard =
+        const std::size_t pointerActivityReducer =
             dockPointerSamplerSource.find(
-                "dragSession_.IsActive() ||\n"
-                "        dragDropController_.IsTransportActive() ||\n"
-                "        buttonsDown != 0");
+                "const bool pointerButtonActivity =",
+                passiveDragSamplerCall);
+        const std::size_t edgeMouseHookActivityConsume =
+            dockPointerSamplerSource.find(
+                "floatingDockEdgeSwipeMouseActivity_.exchange(",
+                pointerActivityReducer);
+        const std::size_t foregroundGuiMenuQuery =
+            dockPointerSamplerSource.find(
+                "GetGUIThreadInfo(0, &foregroundGuiThreadInfo)",
+                edgeMouseHookActivityConsume);
+        const std::size_t foregroundGuiMenuRule =
+            dockPointerSamplerSource.find(
+                "IsGuiMenuModeActive(",
+                foregroundGuiMenuQuery);
+        const std::size_t edgeSwipeSuppressionState =
+            dockPointerSamplerSource.find(
+                "const bool suppressEdgeSwipeUntilLeave =",
+                foregroundGuiMenuRule);
+        const std::size_t contextMenuGestureGuard =
+            dockPointerSamplerSource.find(
+                "HasActiveContextMenuSession() ||",
+                edgeSwipeSuppressionState);
+        const std::size_t foregroundGuiMenuGuard =
+            dockPointerSamplerSource.find(
+                "foregroundGuiMenuActive ||",
+                contextMenuGestureGuard);
+        const std::size_t edgeSwipeSuppressionCall =
+            dockPointerSamplerSource.find(
+                "SuppressUntilEdgeLeave();",
+                contextMenuGestureGuard);
         const std::size_t edgeSwipeDetectorUpdate =
             dockPointerSamplerSource.find(
                 "floatingDockEdgeSwipeDetector_.Update(",
-                legacyDragButtonGuard);
+                edgeSwipeSuppressionCall);
         const std::size_t edgeSwipeTriggerBranch =
             dockPointerSamplerSource.find(
                 "if (triggered &&",
@@ -5083,6 +6717,30 @@ int main(int argc, char** argv)
             dockPointerSamplerSource.find(
                 "ShowFloatingDock(monitor);",
                 edgeSwipeTriggerBranch);
+        Check(passiveDragSamplerCall != std::string::npos &&
+                pointerActivityReducer != std::string::npos &&
+                edgeMouseHookActivityConsume != std::string::npos &&
+                foregroundGuiMenuQuery != std::string::npos &&
+                foregroundGuiMenuRule != std::string::npos &&
+                edgeSwipeSuppressionState != std::string::npos &&
+                contextMenuGestureGuard != std::string::npos &&
+                foregroundGuiMenuGuard != std::string::npos &&
+                edgeSwipeSuppressionCall != std::string::npos &&
+                edgeSwipeDetectorUpdate != std::string::npos &&
+                passiveDragSamplerCall < pointerActivityReducer &&
+                pointerActivityReducer < edgeMouseHookActivityConsume &&
+                edgeMouseHookActivityConsume <
+                    foregroundGuiMenuQuery &&
+                foregroundGuiMenuQuery < foregroundGuiMenuRule &&
+                foregroundGuiMenuRule <
+                    edgeSwipeSuppressionState &&
+                edgeSwipeSuppressionState <
+                    contextMenuGestureGuard &&
+                contextMenuGestureGuard < foregroundGuiMenuGuard &&
+                foregroundGuiMenuGuard <
+                    edgeSwipeSuppressionCall &&
+                edgeSwipeSuppressionCall < edgeSwipeDetectorUpdate,
+            "the sampler must preserve passive drag reveal ordering, consume low-level button activity, hold suppression throughout native menu loops, and suppress before edge detection");
         const std::string edgeSwipeTriggerSource =
             edgeSwipeTriggerBranch != std::string::npos &&
                     edgeSwipeSummon != std::string::npos
@@ -5169,7 +6827,7 @@ int main(int argc, char** argv)
                   "dockWindowPreview_->IsVisible()") !=
                     std::string::npos &&
                 passiveDragUpdateSource.find(
-                  "HasActiveContextMenuSession()") !=
+                  "HasActiveContextMenuSession()") ==
                     std::string::npos &&
                 passiveDragUpdateSource.find(
                   "ShowFloatingDock(") ==
@@ -5198,7 +6856,9 @@ int main(int argc, char** argv)
                   "                dockSettings_.showOnlyWhenSummoned,\n"
                   "                dockSettings_.floatingEdgeSwipeEnabled)") !=
                     std::string::npos &&
-                legacyDragButtonGuard != std::string::npos &&
+                contextMenuGestureGuard != std::string::npos &&
+                edgeSwipeSuppressionState != std::string::npos &&
+                edgeSwipeSuppressionCall != std::string::npos &&
                 edgeSwipeDetectorUpdate != std::string::npos &&
                 edgeSwipeTriggerBranch != std::string::npos &&
                 edgeSwipeSummon != std::string::npos &&
@@ -5208,11 +6868,13 @@ int main(int argc, char** argv)
                 edgeSwipeTriggerSource.find(
                   "showOnlyWhenSummoned") ==
                     std::string::npos &&
-                passiveDragSamplerCall < legacyDragButtonGuard &&
-                legacyDragButtonGuard < edgeSwipeDetectorUpdate &&
+                passiveDragSamplerCall < edgeSwipeSuppressionState &&
+                edgeSwipeSuppressionState < contextMenuGestureGuard &&
+                contextMenuGestureGuard < edgeSwipeSuppressionCall &&
+                edgeSwipeSuppressionCall < edgeSwipeDetectorUpdate &&
                 edgeSwipeDetectorUpdate < edgeSwipeTriggerBranch &&
                 edgeSwipeTriggerBranch < edgeSwipeSummon,
-            "ordinary edge swipe must always keep the manual summon path while internal and OLE drags are excluded after passive reveal sampling");
+            "ordinary edge swipe must keep the manual summon path while pointer-button activity, context menus, internal drags and OLE drags remain suppressed until the pointer leaves the edge");
         const std::size_t containsPointBegin =
             dockContainerSource.find(
                 "bool DockContainer::ContainsInteractivePoint(");
@@ -5405,6 +7067,9 @@ int main(int argc, char** argv)
         const std::size_t closeDemoted =
             closeFloatingDockSource.find(
                 "host.promoted = false;");
+        const std::size_t closeRightButtonPressCleared =
+            closeFloatingDockSource.find(
+                "rightButtonDownDockHost_ = nullptr;");
         const std::size_t closeAggregateUpdated =
             closeFloatingDockSource.find(
                 "RefreshFloatingDockVisibilityState();",
@@ -5422,11 +7087,13 @@ int main(int argc, char** argv)
                 "if (action)",
                 closeVisibilityUpdated);
         Check(!closeFloatingDockSource.empty() &&
+                closeRightButtonPressCleared != std::string::npos &&
                 closeDemoted != std::string::npos &&
                 closeAggregateUpdated != std::string::npos &&
                 closeVisibilityUpdated != std::string::npos &&
                 closeKeyboardEnded != std::string::npos &&
                 closeActionRun != std::string::npos &&
+                closeRightButtonPressCleared < closeDemoted &&
                 closeDemoted < closeAggregateUpdated &&
                 closeAggregateUpdated < closeVisibilityUpdated &&
                 closeVisibilityUpdated < closeKeyboardEnded &&
@@ -5443,7 +7110,7 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 closeFloatingDockSource.find(
                   "DwmFlush()") == std::string::npos,
-            "closing a persistent DockHost must demote its window pair before changing foreground focus or running the queued command");
+            "closing a persistent DockHost must cancel its pending right-button press and demote its window pair before changing foreground focus or running the queued command");
         const std::size_t closeAllFloatingDocksBegin =
             floatingDockInteractionSource.find(
                 "void DesktopApp::CloseAllFloatingDocks(");
@@ -5462,6 +7129,9 @@ int main(int argc, char** argv)
         const std::size_t closeAllDemoted =
             closeAllFloatingDocksSource.find(
                 "host->promoted = false;");
+        const std::size_t closeAllRightButtonPressCleared =
+            closeAllFloatingDocksSource.find(
+                "rightButtonDownDockHost_ = nullptr;");
         const std::size_t closeAllVisibilityUpdated =
             closeAllFloatingDocksSource.find(
                 "UpdatePersistentDockHostVisibility(*host);",
@@ -5471,12 +7141,15 @@ int main(int argc, char** argv)
                 "EndFloatingDockKeyboardSession(focusPolicy);",
                 closeAllVisibilityUpdated);
         Check(!closeAllFloatingDocksSource.empty() &&
+                closeAllRightButtonPressCleared !=
+                    std::string::npos &&
                 closeAllDemoted != std::string::npos &&
                 closeAllVisibilityUpdated != std::string::npos &&
                 closeAllKeyboardEnded != std::string::npos &&
+                closeAllRightButtonPressCleared < closeAllDemoted &&
                 closeAllDemoted < closeAllVisibilityUpdated &&
                 closeAllVisibilityUpdated < closeAllKeyboardEnded,
-            "closing every promoted Dock must finish all pair demotions before the foreground input proxy is hidden");
+            "closing every promoted Dock must cancel pending right-button ownership and finish all pair demotions before the foreground input proxy is hidden");
 
         const std::size_t showFloatingDockBegin =
             floatingDockInteractionSource.find(
@@ -5649,7 +7322,7 @@ int main(int argc, char** argv)
 
         const std::size_t desktopBandPolicyBegin =
             shellMenuSource.find(
-                "if (!promoted)");
+                "if (!promoted && !systemShowDesktopGuard)");
         const std::size_t floatingBandPolicyBegin =
             shellMenuSource.find(
                 "const bool shouldBeTopmost =",
@@ -5661,7 +7334,16 @@ int main(int argc, char** argv)
                     desktopBandPolicyBegin,
                     floatingBandPolicyBegin - desktopBandPolicyBegin)
                 : std::string{};
-        Check(!desktopBandPolicySource.empty() &&
+        Check(shellMenuSource.find(
+                  "systemShowDesktopDockLayerGuardActive_") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                  "ShouldShowPersistentDockHost(host)") !=
+                    std::string::npos &&
+                shellMenuSource.find(
+                  "const bool shouldBeTopmost = systemShowDesktopGuard ||") !=
+                    std::string::npos &&
+                !desktopBandPolicySource.empty() &&
                 desktopBandPolicySource.find(
                   "desktopWindows_.host") != std::string::npos &&
                 desktopBandPolicySource.find(
@@ -5669,14 +7351,14 @@ int main(int argc, char** argv)
                 desktopBandPolicySource.find(
                   "host.backdrop.SetPopupWindowPairZOrder(") !=
                     std::string::npos,
-            "desktop mode must transactionally place the persistent DockHost pair above WorkerW");
+            "desktop mode must place the persistent DockHost pair above WorkerW through the shared policy");
         Check(shellMenuSource.find(
                   "host.backdrop.SetPopupTopmost(") ==
                     std::string::npos &&
                 shellMenuSource.find(
                   "host.backdrop.Reattach(host.hwnd)") ==
                     std::string::npos,
-            "Dock promotion and demotion must not restack its content and backdrop in separate operations");
+            "Dock callers must not bypass the shared pair policy with separate content and backdrop restacks");
         Check(appHeaderSource.find(
                   "struct PersistentDockHost") !=
                     std::string::npos &&
@@ -5765,36 +7447,35 @@ int main(int argc, char** argv)
                   "collectionPopupDockHost_ == requestedDockHost") !=
                     std::string::npos,
             "popup toggle identity must include the originating DockHost when switching between monitors");
+        // Protect the shared-panel/owner routing boundary without constraining
+        // whitespace or whether the compositor result is used by an if clause.
+        std::string compactNavigationSource = quickNavigationWindowSource;
+        std::erase_if(compactNavigationSource,
+            [](unsigned char ch) { return std::isspace(ch) != 0; });
         const std::size_t quickNavigationRetargetBegin =
-            quickNavigationWindowSource.find(
-                "if (quickNavigationOpen_)\n    {");
+            compactNavigationSource.find("if(quickNavigationOpen_){");
         const std::size_t quickNavigationRetargetEnd =
-            quickNavigationWindowSource.find(
-                "quickNavigationPostCloseAction_ = {};",
+            compactNavigationSource.find(
+                "quickNavigationPostCloseAction_={};",
                 quickNavigationRetargetBegin);
         const std::string quickNavigationRetargetSource =
             quickNavigationRetargetBegin != std::string::npos &&
                     quickNavigationRetargetEnd != std::string::npos
-                ? quickNavigationWindowSource.substr(
+                ? compactNavigationSource.substr(
                     quickNavigationRetargetBegin,
                     quickNavigationRetargetEnd -
                         quickNavigationRetargetBegin)
                 : std::string{};
-        Check(appHeaderSource.find(
-                  "PersistentDockHost* quickNavigationDockHost_") !=
-                    std::string::npos &&
-                quickNavigationInteractionSource.find(
-                  "requestedDockHost != quickNavigationDockHost_") !=
-                    std::string::npos &&
-                quickNavigationRetargetSource.find(
-                  "quickNavigationDockHost_ = requestedDockHost;") !=
-                    std::string::npos &&
-                quickNavigationRetargetSource.find(
-                  "PositionQuickNavigationWindow();") !=
-                    std::string::npos &&
-                quickNavigationRetargetSource.find(
-                  "StartQuickNavigationCompositionAnimation();") !=
-                    std::string::npos,
+        Check(ContainsIgnoringWhitespace(appHeaderSource,
+                  "PersistentDockHost* quickNavigationDockHost_") &&
+                ContainsIgnoringWhitespace(quickNavigationInteractionSource,
+                  "requestedDockHost != quickNavigationDockHost_") &&
+                ContainsIgnoringWhitespace(quickNavigationRetargetSource,
+                  "quickNavigationDockHost_ = requestedDockHost;") &&
+                ContainsIgnoringWhitespace(quickNavigationRetargetSource,
+                  "PositionQuickNavigationWindow()") &&
+                ContainsIgnoringWhitespace(quickNavigationRetargetSource,
+                  "StartQuickNavigationCompositionAnimation()"),
             "an open Dock-search panel must retarget its owner, anchor and monitor instead of consuming another Dock's search press");
         Check(floatingDockSource.find(
                   "void DesktopApp::ApplyPersistentDockHostAppearance()") !=
@@ -6032,10 +7713,164 @@ int main(int argc, char** argv)
                 proxyForegroundRequest < proxyActivationReturn &&
                 proxyActivationReturn < ordinaryActivationRequest,
             "taskbar document proxies must activate directly without showing the hidden helper window");
-        Check(pointerContextSource.find(
-                  "EnsureFloatingDockVisibleForAssociatedSurface(") !=
+        const std::size_t modernMenuBegin =
+            menuIconsSource.find(
+                "UINT DesktopApp::ShowModernMenu(");
+        const std::size_t dockMenuOwnerWindowVisible =
+            menuIconsSource.find(
+                "const bool floatingDockHostWindowVisible =",
+                modernMenuBegin);
+        const std::size_t dockMenuOwnerPhysicalVisibility =
+            menuIconsSource.find(
+                "IsWindowVisible(floatingDockHwnd_)",
+                dockMenuOwnerWindowVisible);
+        const std::size_t dockMenuOwnerEffectiveFloating =
+            menuIconsSource.find(
+                "IsPersistentDockHostEffectivelyFloating(",
+                dockMenuOwnerPhysicalVisibility);
+        const std::size_t dockMenuOwnerResolve =
+            menuIconsSource.find(
+                "ResolveMenuZOrderOwner(",
+                dockMenuOwnerEffectiveFloating);
+        const std::size_t dockMenuOwnerVisibleArgument =
+            menuIconsSource.find(
+                "floatingDockHostWindowVisible,",
+                dockMenuOwnerResolve);
+        const std::size_t dockMenuOwnerFloatingArgument =
+            menuIconsSource.find(
+                "floatingDockHostEffectivelyFloating,",
+                dockMenuOwnerVisibleArgument);
+        const std::size_t modernMenuEnd =
+            menuIconsSource.find(
+                "void DesktopApp::ConfigureModernMenuEventPump(",
+                modernMenuBegin);
+        const std::string modernMenuSource =
+            modernMenuBegin != std::string::npos &&
+                    modernMenuEnd != std::string::npos
+                ? menuIconsSource.substr(
+                    modernMenuBegin,
+                    modernMenuEnd - modernMenuBegin)
+                : std::string{};
+        Check(!modernMenuSource.empty() &&
+                dockMenuOwnerWindowVisible != std::string::npos &&
+                dockMenuOwnerPhysicalVisibility != std::string::npos &&
+                dockMenuOwnerEffectiveFloating != std::string::npos &&
+                dockMenuOwnerResolve != std::string::npos &&
+                dockMenuOwnerVisibleArgument != std::string::npos &&
+                dockMenuOwnerFloatingArgument != std::string::npos &&
+                dockMenuOwnerWindowVisible <
+                    dockMenuOwnerPhysicalVisibility &&
+                dockMenuOwnerPhysicalVisibility <
+                    dockMenuOwnerEffectiveFloating &&
+                dockMenuOwnerEffectiveFloating <
+                    dockMenuOwnerResolve &&
+                dockMenuOwnerResolve <
+                    dockMenuOwnerVisibleArgument &&
+                dockMenuOwnerVisibleArgument <
+                    dockMenuOwnerFloatingArgument &&
+                modernMenuSource.find(
+                  "floatingDockHostActive_") == std::string::npos,
+            "modern menus must never use an active desktop-band or hidden DockHost as their Z-order owner; only the selected visible, effectively floating Host is eligible");
+        const std::size_t dockContextHit =
+            pointerContextSource.find(
+                "DockContainer* dock = GetDockContainerAtPoint(pt);");
+        const std::size_t rightButtonDownHandler =
+            pointerContextSource.find(
+                "void DesktopApp::OnRightButtonDown(");
+        const std::size_t synchronousGestureCancel =
+            pointerContextSource.find(
+                "SuppressUntilEdgeLeave();",
+                rightButtonDownHandler);
+        const std::size_t rightButtonPressConsume =
+            pointerContextSource.find(
+                "std::exchange(rightButtonDownDockHost_, nullptr)");
+        const std::size_t dockContextSourceGate =
+            pointerContextSource.find(
+                "ShouldDispatchDockContextMenu(",
+                dockContextHit);
+        const std::size_t dockContextHostMatch =
+            pointerContextSource.find(
+                "rightButtonPressDockHost ==",
+                dockContextSourceGate);
+        const std::size_t dockContextRejectedLog =
+            pointerContextSource.find(
+                "Floating Dock context summon ignored:",
+                dockContextHostMatch);
+        const std::size_t dockContextRejectedReturn =
+            pointerContextSource.find(
+                "return;",
+                dockContextRejectedLog);
+        const std::size_t dockContextBranch =
+            pointerContextSource.find(
+                "if (dockOwnsContextInput)",
+                dockContextHostMatch);
+        const std::size_t dockContextSummon =
+            pointerContextSource.find(
+                "EnsureFloatingDockVisibleForAssociatedSurface(",
+                dockContextBranch);
+        const std::size_t dockContextEnd =
+            pointerContextSource.find(
+                "const size_t standaloneInputWidget",
+                dockContextHit);
+        Check(dockContextHit != std::string::npos &&
+                rightButtonDownHandler != std::string::npos &&
+                synchronousGestureCancel != std::string::npos &&
+                rightButtonPressConsume != std::string::npos &&
+                dockContextSourceGate != std::string::npos &&
+                dockContextHostMatch != std::string::npos &&
+                dockContextRejectedLog != std::string::npos &&
+                dockContextRejectedReturn != std::string::npos &&
+                dockContextBranch != std::string::npos &&
+                dockContextSummon != std::string::npos &&
+                dockContextEnd != std::string::npos &&
+                dockContextHit < dockContextSourceGate &&
+                dockContextSourceGate < dockContextHostMatch &&
+                dockContextHostMatch < dockContextRejectedLog &&
+                dockContextRejectedLog < dockContextRejectedReturn &&
+                dockContextRejectedReturn < dockContextBranch &&
+                dockContextHostMatch < dockContextBranch &&
+                dockContextBranch < dockContextSummon &&
+                dockContextSummon < dockContextEnd &&
+                rightButtonDownHandler < synchronousGestureCancel &&
+                rightButtonPressConsume < dockContextHit &&
+                pointerContextSource.find(
+                  "EnsureFloatingDockVisibleForAssociatedSurface(",
+                  dockContextSummon + 1) == std::string::npos,
+            "only a right-button press that began on the persistent Host owning a Dock hit may summon its floating host, rejected releases must not fall through, and every press cancels an armed edge gesture synchronously");
+        const std::size_t dockRightButtonDown =
+            floatingDockRenderSource.find(
+                "case WM_RBUTTONDOWN:");
+        const std::size_t dockRightButtonPressRecord =
+            floatingDockRenderSource.find(
+                "OnRightButtonDown(&host);",
+                dockRightButtonDown);
+        const std::size_t dockRightButtonDoubleClick =
+            floatingDockRenderSource.find(
+                "case WM_RBUTTONDBLCLK:",
+                dockRightButtonDown);
+        const std::size_t dockRightButtonUp =
+            floatingDockRenderSource.find(
+                "case WM_RBUTTONUP:",
+                dockRightButtonPressRecord);
+        Check(dockRightButtonDown != std::string::npos &&
+                dockRightButtonDoubleClick != std::string::npos &&
+                dockRightButtonPressRecord != std::string::npos &&
+                dockRightButtonUp != std::string::npos &&
+                dockRightButtonDown < dockRightButtonPressRecord &&
+                dockRightButtonDoubleClick <
+                    dockRightButtonPressRecord &&
+                dockRightButtonPressRecord < dockRightButtonUp &&
+                messageDispatchSource.find(
+                  "case WM_RBUTTONDOWN:\n"
+                  "    case WM_RBUTTONDBLCLK:\n"
+                  "        OnRightButtonDown(nullptr);") !=
+                    std::string::npos &&
+                floatingPopupSource.find(
+                  "case WM_RBUTTONDOWN:\n"
+                  "    case WM_RBUTTONDBLCLK:\n"
+                  "        OnRightButtonDown(nullptr);") !=
                     std::string::npos,
-            "context menus opened from the Dock must reveal its floating host");
+            "Dock, desktop and floating-popup surfaces must record right-button press ownership for single and double clicks before release dispatch");
         Check(pointerContextSource.find(
                   "if (mouseDownHit_ == popupItem)") !=
                     std::string::npos &&
@@ -6245,6 +8080,10 @@ int main(int argc, char** argv)
             timerDispatchSource.find(
                 "TryOpenDwellCollectionPopup(",
                 popupTimerDispatch);
+        const std::size_t popupTimerRefresh =
+            timerDispatchSource.find(
+                "RefreshDwellDragTarget(lastMousePoint_);",
+                popupTimerOpen);
         const std::size_t groupTimerDispatch =
             timerDispatchSource.find(
                 "timerId == kCollectionGroupTabDwellTimerId");
@@ -6259,12 +8098,58 @@ int main(int argc, char** argv)
         Check(popupTimerDispatch != std::string::npos &&
                 popupTimerStaleGuard != std::string::npos &&
                 popupTimerOpen != std::string::npos &&
+                popupTimerRefresh != std::string::npos &&
                 popupTimerStaleGuard < popupTimerOpen &&
+                popupTimerOpen < popupTimerRefresh &&
+                popupTimerRefresh < groupTimerDispatch &&
                 groupTimerDispatch != std::string::npos &&
                 groupTimerStaleGuard != std::string::npos &&
                 groupTimerActivate != std::string::npos &&
                 groupTimerStaleGuard < groupTimerActivate,
-            "queued dwell timer messages must stop at the armed-state guard after cancellation");
+            "queued dwell timer messages must stop after cancellation and refresh the opened popup through the active drag transport");
+        const std::size_t nativeDragBegin =
+            pointerMoveSource.find("dragSession_.Begin(");
+        const std::size_t nativeRecoveryArm =
+            pointerMoveSource.find(
+                "kNativeDragHoverRecoveryTimerId",
+                nativeDragBegin);
+        const std::size_t nativeRecoveryDispatch =
+            timerDispatchSource.find(
+                "timerId == kNativeDragHoverRecoveryTimerId");
+        const std::size_t nativeRecoveryTransportGuard =
+            timerDispatchSource.find(
+                "dragDropController_.IsTransportActive()",
+                nativeRecoveryDispatch);
+        const std::size_t nativeRecoverySample =
+            timerDispatchSource.find(
+                "TryGetNativeDragHoverPointFromCursor(",
+                nativeRecoveryTransportGuard);
+        const std::size_t nativeRecoveryPopupDwell =
+            timerDispatchSource.find(
+                "UpdateCollectionPopupDwell(recoveredPoint);",
+                nativeRecoverySample);
+        const std::size_t nativeRecoveryTabDwell =
+            timerDispatchSource.find(
+                "UpdateCollectionGroupTabDwell(recoveredPoint);",
+                nativeRecoveryPopupDwell);
+        const std::size_t nativeRecoveryStop =
+            dragLifecycleSource.find(
+                "KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId)");
+        Check(nativeDragBegin != std::string::npos &&
+                nativeRecoveryArm != std::string::npos &&
+                nativeRecoveryDispatch != std::string::npos &&
+                nativeRecoveryTransportGuard != std::string::npos &&
+                nativeRecoverySample != std::string::npos &&
+                nativeRecoveryPopupDwell != std::string::npos &&
+                nativeRecoveryTabDwell != std::string::npos &&
+                nativeRecoveryStop != std::string::npos &&
+                nativeDragBegin < nativeRecoveryArm &&
+                nativeRecoveryDispatch <
+                    nativeRecoveryTransportGuard &&
+                nativeRecoveryTransportGuard < nativeRecoverySample &&
+                nativeRecoverySample < nativeRecoveryPopupDwell &&
+                nativeRecoveryPopupDwell < nativeRecoveryTabDwell,
+            "native item drags must recover collection dwell from the physical pointer without entering an active OLE transport");
         Check(dragLifecycleSource.find(
                   "CancelCollectionPopupDwell();") !=
                     std::string::npos &&
@@ -6552,19 +8437,44 @@ int main(int argc, char** argv)
         const std::size_t clearPointer =
             onMouseLeaveHandler.find(
                 "lastMousePoint_ = { LONG_MIN, LONG_MIN };");
+        const std::size_t holdNativeMenuHover =
+            onMouseLeaveHandler.find(
+                "ShouldHoldHoverDuringNativeShellPopup(");
         const std::size_t shrinkFloatingRegion =
             onMouseLeaveHandler.find(
                 "UpdateFloatingDockWindowBounds(false);");
         const std::size_t presentClearedHover =
             onMouseLeaveHandler.find(
                 "PresentPassiveHoverVisualChange();");
+        const std::size_t sampleRetainedDragDwell =
+            onMouseLeaveHandler.find(
+                "TryGetDesktopHoverPointFromCursor(retainedDragPoint)");
+        const std::size_t refreshRetainedDragDwell =
+            onMouseLeaveHandler.find(
+                "UpdateCollectionPopupDwell(retainedDragPoint);",
+                sampleRetainedDragDwell);
+        const std::size_t cancelDepartedDragDwell =
+            onMouseLeaveHandler.find(
+                "CancelCollectionPopupDwell();",
+                refreshRetainedDragDwell);
         Check(!onMouseLeaveHandler.empty() &&
+                holdNativeMenuHover != std::string::npos &&
                 clearPointer != std::string::npos &&
                 shrinkFloatingRegion != std::string::npos &&
                 presentClearedHover != std::string::npos &&
+                holdNativeMenuHover < clearPointer &&
                 clearPointer < shrinkFloatingRegion &&
                 shrinkFloatingRegion < presentClearedHover,
-            "clearing hover must remove the floating title input region before presenting its empty frame");
+            "native menu capture must hold the paired hover frame before ordinary leave clears and presents it");
+        Check(sampleRetainedDragDwell != std::string::npos &&
+                refreshRetainedDragDwell != std::string::npos &&
+                cancelDepartedDragDwell != std::string::npos &&
+                onMouseLeaveHandler.find(
+                    "dragDropController_.IsTransportActive()") !=
+                    std::string::npos &&
+                sampleRetainedDragDwell < refreshRetainedDragDwell &&
+                refreshRetainedDragDwell < cancelDepartedDragDwell,
+            "mouse leave must retain collection dwell across SnowDesktop surface HWNDs and cancel it only after a real departure");
         Check(oleDropRoutingSource.find(
                   "bool DesktopApp::IsBaseDesktopHoverSurfaceWindow(") !=
                     std::string::npos &&
@@ -6584,6 +8494,30 @@ int main(int argc, char** argv)
                   "if (refreshActiveHover)\n                UpdateFloatingDockWindowBounds(false);") !=
                     std::string::npos,
             "periodic hover recovery must refresh active coordinates and the floating title region only from uncaptured base desktop surfaces");
+        const std::size_t nativeResumeSurfaceBegin =
+            oleDropRoutingSource.find(
+                "bool DesktopApp::TryGetNativeDragResumePointFromCursor(");
+        const std::size_t nativeResumeSurfaceEnd =
+            oleDropRoutingSource.find(
+                "bool DesktopApp::IsExternalDropWindowAt(",
+                nativeResumeSurfaceBegin);
+        const std::string nativeResumeSurfaceHandler =
+            nativeResumeSurfaceBegin == std::string::npos ||
+                nativeResumeSurfaceEnd == std::string::npos
+            ? std::string{}
+            : oleDropRoutingSource.substr(
+                nativeResumeSurfaceBegin,
+                nativeResumeSurfaceEnd - nativeResumeSurfaceBegin);
+        Check(nativeResumeSurfaceHandler.find(
+                  "IsBaseDesktopHoverSurfaceWindow(hit)") !=
+                    std::string::npos &&
+                nativeResumeSurfaceHandler.find(
+                  "IsPersistentDockHostWindow(hit)") !=
+                    std::string::npos &&
+                nativeResumeSurfaceHandler.find(
+                  "belongsTo(floatingPopupHwnd_)") !=
+                    std::string::npos,
+            "self OLE hand-back must resume native dragging from base desktop, Dock, and popup surfaces");
         Check(dockContainerSource.find(
                   "bool DockContainer::IsMagnificationSuppressed() const") !=
                     std::string::npos &&
@@ -6604,6 +8538,46 @@ int main(int argc, char** argv)
                   "ShowDragHintWindow(current, hint);\n        InvalidateRect(hwnd_, nullptr, FALSE);") ==
                     std::string::npos,
             "ordinary drag movement must not invalidate the full desktop after every pointer pixel");
+        const std::size_t marqueeMoveBegin =
+            pointerMoveSource.find(
+                "if (mouseDown_ && !mouseDownHit_");
+        const std::size_t marqueeMoveEnd =
+            pointerMoveSource.find(
+                "    {\n        int oldHover = navHoverSide_;",
+                marqueeMoveBegin);
+        const std::string marqueeMoveHotPath =
+            marqueeMoveBegin != std::string::npos &&
+                    marqueeMoveEnd != std::string::npos
+                ? pointerMoveSource.substr(
+                    marqueeMoveBegin,
+                    marqueeMoveEnd - marqueeMoveBegin)
+                : std::string{};
+        Check(!marqueeMoveHotPath.empty() &&
+                marqueeMoveHotPath.find(
+                    "const bool startingMarquee = !marqueeActive_;") !=
+                    std::string::npos &&
+                marqueeMoveHotPath.find(
+                    "QueueDesktopWidgetComposition(") !=
+                    std::string::npos &&
+                marqueeMoveHotPath.find(
+                    "if (startingMarquee)\n                InvalidateRect(") !=
+                    std::string::npos &&
+                CountOccurrences(
+                    marqueeMoveHotPath,
+                    "InvalidateRect(hwnd_, nullptr, FALSE);") == 1 &&
+                dragLifecycleSource.find(
+                    "marqueeInteractionPresented =\n            PresentDesktopForegroundComposition(client);") !=
+                    std::string::npos &&
+                dragLifecycleSource.find(
+                    "!marqueeInteractionPresented &&") !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                    "const bool marqueePointerActive =") !=
+                    std::string::npos &&
+                messageDispatchSource.find(
+                    "const bool sampleLivePointer =") !=
+                    std::string::npos,
+            "marquee moves must use live pointer input and redraw only the foreground plus their target widget after the first frame");
         const std::size_t widgetTransitionPaint =
             pointerMoveSource.find(
                 "PresentDesktopPointerUpdate();",
@@ -6817,7 +8791,7 @@ int main(int argc, char** argv)
                 openCollectionPopupBegin);
         const std::size_t refreshFolderPopupBegin =
             popupTransitionSource.find(
-                "void DesktopApp::RefreshDockFolderPopup()");
+                "void DesktopApp::RefreshDockFolderPopup(");
         const std::size_t refreshFolderPopupClear =
             popupTransitionSource.find(
                 "ClearPopupDragTarget();",
@@ -6870,7 +8844,7 @@ int main(int argc, char** argv)
                 closePopupClosingGuard);
         const std::size_t closePopupAnimation =
             popupLifecycleSource.find(
-                "SystemAnimationsEnabled()",
+                "RuntimePopupEffect()",
                 closePopupLoadCancel);
         Check(openDockPopupBegin != std::string::npos &&
                 openDockPopupClear != std::string::npos &&
@@ -7053,7 +9027,7 @@ int main(int argc, char** argv)
                 reloadItemsBegin);
         const std::size_t reloadDesktopItems =
             desktopReloadSource.find(
-                "LoadDesktopItems();",
+                "LoadDesktopItems(",
                 reloadItemsBegin);
         Check(reloadItemsBegin != std::string::npos &&
                 reloadItemsDragDeferral != std::string::npos &&
@@ -7117,17 +9091,21 @@ int main(int argc, char** argv)
                 shellReloadDragDeferral);
         const std::size_t shellReloadExecute =
             timerDispatchSource.find(
-                "ReloadItems(reloadLayoutFromDisk);",
+                "ReloadItems(true);",
                 shellReloadRetry);
+        const std::size_t shellAsyncRefreshExecute =
+            timerDispatchSource.find("RefreshShellItemsAsync();", shellReloadRetry);
         Check(shellReloadTimer != std::string::npos &&
                 shellReloadDragDeferral != std::string::npos &&
                 shellReloadRetainedContext != std::string::npos &&
                 shellReloadRetry != std::string::npos &&
                 shellReloadExecute != std::string::npos &&
+                shellAsyncRefreshExecute != std::string::npos &&
                 shellReloadTimer < shellReloadDragDeferral &&
                 shellReloadRetainedContext < shellReloadRetry &&
                 shellReloadDragDeferral < shellReloadRetry &&
-                shellReloadRetry < shellReloadExecute,
+                shellReloadRetry < shellReloadExecute &&
+                shellReloadRetry < shellAsyncRefreshExecute,
             "Shell debounce must keep reload pending while native or OLE drag ownership is active");
         const std::size_t selfOleEnter =
             oleDropSessionSource.find(
@@ -7152,6 +9130,19 @@ int main(int argc, char** argv)
             ? std::string{}
             : oleDropSessionSource.substr(
                 selfOleOver, selfOleLeave - selfOleOver);
+        const std::size_t selfOleEnterBranchEnd =
+            selfOleEnterHandler.find("ExternalDragSummary externalSummary;");
+        const std::string selfOleEnterBranch =
+            selfOleEnterBranchEnd == std::string::npos
+                ? std::string{}
+                : selfOleEnterHandler.substr(0, selfOleEnterBranchEnd);
+        const std::size_t selfOleOverBranchEnd =
+            selfOleOverHandler.find(
+                "dragDropController_.ContinueExternalDrag();");
+        const std::string selfOleOverBranch =
+            selfOleOverBranchEnd == std::string::npos
+                ? std::string{}
+                : selfOleOverHandler.substr(0, selfOleOverBranchEnd);
         Check(selfOleEnterHandler.find(
                   "MarkSelfDragReturned();") !=
                     std::string::npos &&
@@ -7169,8 +9160,83 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 selfOleOverHandler.find(
                   "dragSession_.SetVisualVisible(true);") ==
+                    std::string::npos &&
+                selfOleEnterBranch.find(
+                  "UpdateCollectionPopupDwell(client);") !=
+                    std::string::npos &&
+                selfOleEnterBranch.find(
+                  "CancelCollectionPopupDwell();") ==
+                    std::string::npos &&
+                selfOleOverBranch.find(
+                  "UpdateCollectionPopupDwell(client);") !=
                     std::string::npos,
             "self OLE callbacks must keep custom feedback hidden while requesting a native hand-back");
+
+        const std::size_t selfOleDrop =
+            oleDropSessionSource.find(
+                "HRESULT DesktopApp::HandleOleDrop(",
+                selfOleLeave);
+        const std::string selfOleLeaveHandler =
+            selfOleLeave == std::string::npos ||
+                selfOleDrop == std::string::npos
+                ? std::string{}
+                : oleDropSessionSource.substr(
+                    selfOleLeave,
+                    selfOleDrop - selfOleLeave);
+        Check(selfOleLeaveHandler.find(
+                  "SelfDragNativeResumeRequested() &&") !=
+                    std::string::npos &&
+                selfOleLeaveHandler.find(
+                  "TryGetDesktopHoverPointFromCursor(hoverPoint)") !=
+                    std::string::npos &&
+                selfOleLeaveHandler.find(
+                  "kExternalOleDragLeaveGraceTimerId") !=
+                    std::string::npos &&
+                selfOleLeaveHandler.find(
+                  "FinalizePendingExternalOleDragLeave();") !=
+                    std::string::npos &&
+                timerDispatchSource.find(
+                  "timerId == kExternalOleDragLeaveGraceTimerId") !=
+                    std::string::npos &&
+                timerDispatchSource.find(
+                  "FinalizePendingExternalOleDragLeave();") !=
+                    std::string::npos &&
+                lifecycleSource.find(
+                  "CancelPendingExternalOleDragLeave();") !=
+                    std::string::npos,
+            "OLE surface handoffs must preserve dwell briefly and still finalize abandoned external drags");
+
+        const std::size_t externalEnterBegin =
+            selfOleEnterHandler.find("BeginExternalDrag(");
+        const std::size_t externalEnterPopupDwell =
+            selfOleEnterHandler.find(
+                "UpdateCollectionPopupDwell(client);",
+                externalEnterBegin);
+        const std::size_t externalEnterHitTest =
+            selfOleEnterHandler.find(
+                "HitTestPopupForDrag(",
+                externalEnterPopupDwell);
+        const std::size_t externalOverBegin =
+            selfOleOverHandler.find("ContinueExternalDrag();");
+        const std::size_t externalOverPopupDwell =
+            selfOleOverHandler.find(
+                "UpdateCollectionPopupDwell(client);",
+                externalOverBegin);
+        const std::size_t externalOverHitTest =
+            selfOleOverHandler.find(
+                "HitTestPopupForDrag(",
+                externalOverPopupDwell);
+        Check(externalEnterBegin != std::string::npos &&
+                externalEnterPopupDwell != std::string::npos &&
+                externalEnterHitTest != std::string::npos &&
+                externalEnterBegin < externalEnterPopupDwell &&
+                externalEnterPopupDwell < externalEnterHitTest &&
+                externalOverBegin != std::string::npos &&
+                externalOverPopupDwell != std::string::npos &&
+                externalOverHitTest != std::string::npos &&
+                externalOverBegin < externalOverPopupDwell &&
+                externalOverPopupDwell < externalOverHitTest,
+            "external OLE enter and over must arm collection dwell before resolving popup targets");
 
         const std::size_t doDragDrop =
             pointerMoveSource.find(
@@ -7348,15 +9414,12 @@ int main(int argc, char** argv)
                 cancelDragHandler.find(
                   "ReleaseCapture();") !=
                     std::string::npos &&
-                keyboardInputSource.find(
-                  "if (dragSession_.IsActive())\n        {\n            CancelActiveItemDrag();") !=
-                    std::string::npos &&
-                pointerMoveSource.find(
-                  "ClearSelection();\n                    CancelActiveItemDrag();\n                    ReloadItems();") !=
-                    std::string::npos &&
-                pointerMoveSource.find(
-                  "ClearDockPressedState();\n                ReleaseCapturePreservingPointerState();") !=
-                    std::string::npos,
+                ContainsIgnoringWhitespace(keyboardInputSource,
+                  "if (dragSession_.IsActive()) { CancelActiveItemDrag();") &&
+                ContainsIgnoringWhitespace(pointerMoveSource,
+                  "ClearSelection(); CancelActiveItemDrag(); RequestShellRefresh();") &&
+                ContainsIgnoringWhitespace(pointerMoveSource,
+                  "ClearDockPressedState(); ReleaseCapturePreservingPointerState();"),
             "Escape and terminal OLE exits must clear every pressed item-drag state before a later button-up");
         Check(cancelPressHandler.find(
                   "widgetAction_ = WidgetAction::None;") !=

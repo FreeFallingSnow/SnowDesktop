@@ -1,4 +1,5 @@
 #include "widget_system_data_provider.h"
+#include "performance_trace.h"
 #include "widget_media_contract.h"
 
 #include <windows.h>
@@ -634,6 +635,70 @@ std::optional<WidgetDisplayDataSnapshot> MatchDisplayByPixelBounds(
         : std::optional<WidgetDisplayDataSnapshot>(*display);
 }
 
+WidgetMediaArtworkDataSnapshot StabilizeMediaArtworkDataEnvelope(
+    WidgetMediaArtworkDataSnapshot snapshot,
+    const std::optional<WidgetMediaArtworkDataSnapshot>& previous,
+    WidgetDataSemanticDebouncer& debouncer,
+    WidgetMediaArtworkTransitionState& transition)
+{
+    constexpr std::int64_t SameArtworkConfirmationWindowMs = 1000;
+    const bool mediaChanged = previous && previous->available &&
+        previous->mediaIdentity != 0 && snapshot.mediaIdentity != 0 &&
+        previous->mediaIdentity != snapshot.mediaIdentity;
+    if (mediaChanged)
+    {
+        transition.pendingIdentity = snapshot.mediaIdentity;
+        transition.previousResourceToken = previous->resourceToken;
+        transition.startedAtMs = snapshot.timestampMs;
+    }
+    else if (transition.pendingIdentity != 0 &&
+        snapshot.mediaIdentity != 0 &&
+        transition.pendingIdentity != snapshot.mediaIdentity)
+    {
+        // The track changed again before its thumbnail settled. Keep comparing
+        // against the last confirmed image, but restart the bounded wait.
+        transition.pendingIdentity = snapshot.mediaIdentity;
+        transition.startedAtMs = snapshot.timestampMs;
+    }
+
+    bool rejectRepeatedPreviousArtwork = false;
+    if (transition.pendingIdentity != 0 &&
+        transition.pendingIdentity == snapshot.mediaIdentity &&
+        snapshot.available && !transition.previousResourceToken.empty() &&
+        snapshot.resourceToken == transition.previousResourceToken)
+    {
+        const std::int64_t elapsed = std::max<std::int64_t>(0,
+            snapshot.timestampMs - transition.startedAtMs);
+        rejectRepeatedPreviousArtwork =
+            elapsed < SameArtworkConfirmationWindowMs;
+    }
+
+    if (rejectRepeatedPreviousArtwork)
+    {
+        // GSMTC may expose new metadata for several samples before replacing
+        // the old thumbnail. Release the previous handle and keep sampling.
+        // The bounded window still permits consecutive tracks that genuinely
+        // share the same album artwork.
+        snapshot.available = false;
+        snapshot.resourceToken.clear();
+        snapshot.pixels.reset();
+        if (snapshot.error.empty()) snapshot.error = "notPresent";
+        debouncer.Reset();
+    }
+    else if (transition.pendingIdentity != 0 &&
+        transition.pendingIdentity == snapshot.mediaIdentity &&
+        snapshot.available)
+    {
+        transition.Reset();
+    }
+    else if (!previous && snapshot.mediaIdentity == 0)
+    {
+        transition.Reset();
+    }
+    return StabilizeWidgetDataEnvelope(
+        std::move(snapshot), previous, debouncer);
+}
+
 bool WidgetNetworkStatusDebouncer::SemanticallyEqual(
     const WidgetNetworkStatusDataSnapshot& left,
     const WidgetNetworkStatusDataSnapshot& right) noexcept
@@ -1107,6 +1172,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
 
 WidgetCpuDataSnapshot WidgetSystemDataProvider::SampleCpu()
 {
+    performance::Scope performanceScope("shared.system", "SampleCpu");
     WidgetCpuDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     SYSTEM_INFO systemInfo{};
@@ -1154,6 +1220,7 @@ WidgetCpuDataSnapshot WidgetSystemDataProvider::SampleCpu()
 
 WidgetMemoryDataSnapshot WidgetSystemDataProvider::SampleMemory()
 {
+    performance::Scope performanceScope("shared.system", "SampleMemory");
     WidgetMemoryDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     MEMORYSTATUSEX status{ sizeof(status) };
@@ -1189,6 +1256,7 @@ WidgetMemoryDataSnapshot WidgetSystemDataProvider::SampleMemory()
 WidgetProcessSummaryDataSnapshot
 WidgetSystemDataProvider::SampleProcessSummary()
 {
+    performance::Scope performanceScope("shared.system", "SampleProcessSummary");
     WidgetProcessSummaryDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     const auto sampleTime = Clock::now();
@@ -1301,6 +1369,7 @@ WidgetSystemDataProvider::SampleProcessSummary()
 
 WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
 {
+    performance::Scope performanceScope("shared.system", "SamplePower");
     WidgetPowerDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     SYSTEM_POWER_STATUS status{};
@@ -1336,6 +1405,7 @@ WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
 WidgetNetworkStatusDataSnapshot
 WidgetSystemDataProvider::SampleNetworkStatus()
 {
+    performance::Scope performanceScope("shared.system", "SampleNetworkStatus");
     using namespace winrt::Windows::Networking::Connectivity;
     WidgetNetworkStatusDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
@@ -1387,6 +1457,7 @@ WidgetSystemDataProvider::SampleNetworkStatus()
 WidgetNetworkTrafficDataSnapshot
 WidgetSystemDataProvider::SampleNetworkTraffic()
 {
+    performance::Scope performanceScope("shared.system", "SampleNetworkTraffic");
     WidgetNetworkTrafficDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     const auto sampleTime = Clock::now();
@@ -1511,6 +1582,7 @@ void WidgetSystemDataProvider::CloseGpuQuery()
 
 WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 {
+    performance::Scope performanceScope("shared.system", "SampleGpu");
     struct AdapterEntry
     {
         std::uint64_t luid = 0;
@@ -1682,6 +1754,7 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 WidgetStorageVolumesDataSnapshot
 WidgetSystemDataProvider::SampleStorageVolumes()
 {
+    performance::Scope performanceScope("shared.system", "SampleStorageVolumes");
     WidgetStorageVolumesDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     const DWORD required = GetLogicalDriveStringsW(0, nullptr);
@@ -1813,6 +1886,7 @@ void WidgetSystemDataProvider::CloseStorageIoQuery()
 
 WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
 {
+    performance::Scope performanceScope("shared.system", "SampleStorageIo");
     WidgetStorageIoDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     snapshot.available = true;
@@ -1873,6 +1947,7 @@ WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
 WidgetDisplayTopologyDataSnapshot
 WidgetSystemDataProvider::SampleDisplayTopology()
 {
+    performance::Scope performanceScope("shared.system", "SampleDisplayTopology");
     struct EnumContext
     {
         WidgetDisplayTopologyDataSnapshot* snapshot = nullptr;
@@ -1983,6 +2058,7 @@ WidgetSystemDataProvider::SampleDisplayTopology()
 WidgetAudioOutputDefaultDataSnapshot
 WidgetSystemDataProvider::SampleAudioOutputDefault()
 {
+    performance::Scope performanceScope("shared.system", "SampleAudioOutputDefault");
     WidgetAudioOutputDefaultDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     std::string error;
@@ -2024,6 +2100,7 @@ WidgetSystemDataProvider::SampleAudioOutputDefault()
 WidgetAudioOutputVolumeDataSnapshot
 WidgetSystemDataProvider::SampleAudioOutputVolume()
 {
+    performance::Scope performanceScope("shared.system", "SampleAudioOutputVolume");
     WidgetAudioOutputVolumeDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     std::string error;
@@ -2062,6 +2139,7 @@ WidgetSystemDataProvider::SampleAudioOutputVolume()
 WidgetMediaSessionsDataSnapshot
 WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
 {
+    performance::Scope performanceScope("shared.system", "SampleMediaSessions");
     using namespace winrt::Windows::Media::Control;
     WidgetMediaSessionsDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
@@ -2460,8 +2538,10 @@ void WidgetSystemDataProvider::PublishMediaArtwork(
     if (!snapshot.available && artwork.error.empty())
         artwork.error = snapshot.error.empty()
             ? "mediaSessionQueryFailed" : snapshot.error;
-    artwork = StabilizeWidgetDataEnvelope(std::move(artwork), mediaArtwork_,
-        semanticDebouncers_[std::string(MediaArtworkTopic)]);
+    artwork = StabilizeMediaArtworkDataEnvelope(
+        std::move(artwork), mediaArtwork_,
+        semanticDebouncers_[std::string(MediaArtworkTopic)],
+        mediaArtworkTransition_);
     artwork.revision = mediaArtwork_ ? mediaArtwork_->revision + 1 : 1;
     mediaArtwork_ = std::move(artwork);
     changedTopics_.insert(std::string(MediaArtworkTopic));

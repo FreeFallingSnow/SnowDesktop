@@ -11,6 +11,7 @@
 #include "constants.h"
 #include "folder_sort_rules.h"
 #include "list_detail_rules.h"
+#include "large_icon_config.h"
 
 #include <cstdint>
 #include <optional>
@@ -60,6 +61,7 @@ struct LayoutRecord
 {
     GridCell cell;
     GridSpan span;
+    std::optional<snowdesktop::LargeIconConfig> largeIcon;
     bool hasGrid = false;
     int legacySlot = -1;
 };
@@ -195,6 +197,7 @@ struct DesktopItem
     int slot = 0;
     GridCell gridCell;
     GridSpan gridSpan;
+    std::optional<snowdesktop::LargeIconConfig> largeIcon;
     bool selected = false;
     bool shortcutArrow = false;
     bool isShortcut = false;
@@ -222,6 +225,7 @@ struct DesktopItem
           slot(other.slot),
           gridCell(std::move(other.gridCell)),
           gridSpan(other.gridSpan),
+          largeIcon(std::move(other.largeIcon)),
           selected(other.selected),
           shortcutArrow(other.shortcutArrow),
           isShortcut(other.isShortcut),
@@ -259,6 +263,7 @@ struct DesktopItem
             slot = other.slot;
             gridCell = std::move(other.gridCell);
             gridSpan = other.gridSpan;
+            largeIcon = std::move(other.largeIcon);
             selected = other.selected;
             shortcutArrow = other.shortcutArrow;
             isShortcut = other.isShortcut;

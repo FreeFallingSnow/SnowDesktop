@@ -58,11 +58,15 @@ void DesktopApp::ApplyDragPreviewLayerPolicy()
         !IsWindow(dragPreviewHwnd_) ||
         !IsWindowVisible(dragPreviewHwnd_))
         return;
-    SetWindowPos(
-        dragPreviewHwnd_, HWND_TOPMOST,
-        0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE |
-            SWP_NOACTIVATE);
+    const HWND visibleHint = hintHwnd_ && IsWindowVisible(hintHwnd_) ? hintHwnd_ : nullptr;
+    const auto policy = snowdesktop::drag_visual_rules::ResolvePreviewWindowZOrderPolicy(true, visibleHint);
+    constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    // Raise the pair together above a newly opened Dock popup. A fixed order
+    // keeps the DComp ghost from alternating over the layered hint on refresh.
+    HDWP batch = BeginDeferWindowPos(visibleHint ? 2 : 1);
+    if (batch && visibleHint) batch = DeferWindowPos(batch, visibleHint, HWND_TOPMOST, 0, 0, 0, 0, flags);
+    if (batch) batch = DeferWindowPos(batch, dragPreviewHwnd_, policy.insertAfter, 0, 0, 0, 0, flags);
+    if (batch) EndDeferWindowPos(batch);
 }
 
 void DesktopApp::DestroyDragPreviewWindow()
@@ -193,10 +197,26 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         Item* item = dragItems[itemIndex];
         if (!item)
             continue;
-        item->Draw(
-            context.Get(),
-            dragPreviewItemBounds_[previewIndex],
-            3);
+        const RECT destination = dragPreviewItemBounds_[previewIndex];
+        auto* icon = dynamic_cast<DesktopIcon*>(item);
+        const auto* data = icon ? icon->GetDesktopItem() : nullptr;
+        if (data && data->largeIcon)
+        {
+            const RECT source = dragSession_.ResolveDraggedBounds(itemIndex, item->GetBounds(), dragSession_.CurrentPoint());
+            DesktopWidget geometry; geometry.bounds = source; geometry.gridCell = data->gridCell;
+            const RECT frame = GetStandaloneWidgetFrameRect(geometry);
+            const float sx = static_cast<float>(destination.right - destination.left) / std::max(1L, frame.right - frame.left);
+            const float sy = static_cast<float>(destination.bottom - destination.top) / std::max(1L, frame.bottom - frame.top);
+            context->SetTransform(D2D1::Matrix3x2F::Translation(-static_cast<float>(frame.left), -static_cast<float>(frame.top)) *
+                D2D1::Matrix3x2F::Scale(sx, sy) * D2D1::Matrix3x2F::Translation(
+                    static_cast<float>(destination.left + updateOffset.x - desktopBounds.left),
+                    static_cast<float>(destination.top + updateOffset.y - desktopBounds.top)));
+            item->Draw(context.Get(), source, 3);
+            context->SetTransform(D2D1::Matrix3x2F::Translation(
+                static_cast<float>(updateOffset.x - desktopBounds.left),
+                static_cast<float>(updateOffset.y - desktopBounds.top)));
+        }
+        else item->Draw(context.Get(), destination, 3);
     }
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context.Reset();
@@ -274,6 +294,20 @@ void DesktopApp::SyncDragPreviewWindow()
         primaryBounds = firstValidBounds;
     }
 
+    const auto compactLargeIcon = [&](std::size_t index, RECT bounds) {
+        auto* icon = dynamic_cast<DesktopIcon*>(dragItems[index]);
+        const auto* data = icon ? icon->GetDesktopItem() : nullptr;
+        if (!data || !data->largeIcon) return bounds;
+        DesktopWidget geometry; geometry.gridCell = data->gridCell; geometry.bounds = bounds;
+        const RECT sourceFrame = GetStandaloneWidgetFrameRect(geometry);
+        geometry.bounds = GetGridRect(gridPages_, data->gridCell, {1, 1});
+        const RECT cellFrame = GetStandaloneWidgetFrameRect(geometry);
+        return snowdesktop::drag_visual_rules::FitPreviewInCell(sourceFrame,
+            {cellFrame.right - cellFrame.left, cellFrame.bottom - cellFrame.top}, current);
+    };
+    firstValidBounds = compactLargeIcon(firstValidIndex, firstValidBounds);
+    primaryBounds = compactLargeIcon(primaryItemIndex, primaryBounds);
+
     dragPreviewItemIndices_.clear();
     dragPreviewItemBounds_.clear();
     dragPreviewItemIndices_.reserve(
@@ -311,8 +345,8 @@ void DesktopApp::SyncDragPreviewWindow()
                 continue;
             secondaryIndices[secondaryCount] = itemIndex;
             secondaryBounds[secondaryCount] =
-                dragSession_.ResolveDraggedBounds(
-                    itemIndex, itemBounds, current);
+                compactLargeIcon(itemIndex, dragSession_.ResolveDraggedBounds(
+                    itemIndex, itemBounds, current));
             ++secondaryCount;
         }
 
@@ -397,7 +431,7 @@ void DesktopApp::SyncDragPreviewWindow()
     {
         const auto zOrder = snowdesktop::drag_visual_rules::
             ResolvePreviewWindowZOrderPolicy(
-                previewWasVisible);
+                previewWasVisible, hintHwnd_ && IsWindowVisible(hintHwnd_) ? hintHwnd_ : nullptr);
         const bool placementSizeChanged =
             !dragPreviewWindowBoundsValid_ ||
             dragPreviewWindowBounds_.right -
@@ -426,7 +460,7 @@ void DesktopApp::SyncDragPreviewWindow()
     {
         // A Dock popup can enter the topmost band while the pointer is held
         // still for dwell activation. Reassert the ghost even without a
-        // geometry update so it remains the foremost presentation surface.
+        // geometry update, while keeping the hint above the ghost.
         ApplyDragPreviewLayerPolicy();
     }
 
@@ -457,7 +491,12 @@ void DesktopApp::SyncDragPreviewWindow()
         FlushPendingCompositionCommit();
     }
     if (!previewWasVisible)
-        ShowWindow(dragPreviewHwnd_, SW_SHOWNOACTIVATE);
+    {
+        const auto policy = snowdesktop::drag_visual_rules::ResolvePreviewWindowZOrderPolicy(false,
+            hintHwnd_ && IsWindowVisible(hintHwnd_) ? hintHwnd_ : nullptr);
+        SetWindowPos(dragPreviewHwnd_, policy.insertAfter, 0, 0, 0, 0,
+            policy.flags | SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    }
 }
 
 bool DesktopApp::IsDragPresentationOnlyWindow(HWND window) const

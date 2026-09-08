@@ -255,6 +255,9 @@ public:
     const InteractionAction* ActionAt(
         float x, float y, std::string_view eventName,
         std::string* targetKey = nullptr) const noexcept;
+    const InteractionAction* ContextMenuActionAt(
+        float x, float y, bool componentScopeOnly,
+        std::string* targetKey = nullptr) const noexcept;
 
     std::vector<std::string> KeyboardFocusableKeys() const;
     const InteractionRegion* FindAccessKey(
@@ -291,4 +294,10 @@ private:
     std::chrono::steady_clock::time_point pointerPressStarted_{};
     std::uint64_t generation_ = 0;
 };
+
+bool IsWidgetMenuSelectionCurrent(
+    const WidgetInteractionRegions& regions,
+    std::string_view targetKey,
+    std::uint64_t capturedRuntimeToken,
+    std::uint64_t currentRuntimeToken) noexcept;
 }

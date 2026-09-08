@@ -32,6 +32,14 @@ struct Layout
     bool scrolling = false;
 };
 
+struct CollectionPresentation
+{
+    std::size_t materializedItemCount = 0;
+    std::size_t visibleItemCount = 0;
+    std::size_t allButtonSlot = 0;
+    bool showAllButton = false;
+};
+
 inline bool IsCompactCollectionSpan(int columns, int rows)
 {
     return columns <= 1 && rows <= 1;
@@ -41,6 +49,41 @@ inline bool CollectionUsesFullFrame(
     bool scrolling, int columns, int rows)
 {
     return !scrolling && !IsCompactCollectionSpan(columns, rows);
+}
+
+inline CollectionPresentation ResolveCollectionPresentation(
+    std::size_t itemCount, std::size_t physicalCapacity,
+    bool compact, bool compatibleItemDrag)
+{
+    if (compact)
+    {
+        const std::size_t visible = std::min<std::size_t>(
+            itemCount, 4);
+        return { visible, visible, 0, false };
+    }
+
+    physicalCapacity = std::max<std::size_t>(
+        1, physicalCapacity);
+    const std::size_t ordinaryCapacity =
+        physicalCapacity - 1;
+    const bool exactlyFillsPhysicalGrid =
+        itemCount == physicalCapacity;
+    const bool showAllButton =
+        itemCount > ordinaryCapacity &&
+        (!exactlyFillsPhysicalGrid || compatibleItemDrag);
+    const std::size_t materializedItemCount =
+        std::min(itemCount,
+            exactlyFillsPhysicalGrid
+                ? physicalCapacity : ordinaryCapacity);
+    const std::size_t visibleItemCount = showAllButton
+        ? std::min(itemCount, ordinaryCapacity)
+        : materializedItemCount;
+    return {
+        materializedItemCount,
+        visibleItemCount,
+        ordinaryCapacity,
+        showAllButton,
+    };
 }
 
 inline int DesiredGap(int pitch, float percent, float spacingScale)

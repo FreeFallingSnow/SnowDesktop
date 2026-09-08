@@ -1,4 +1,6 @@
 #include "app.h"
+#include "../performance_capture.h"
+#include "../performance_trace.h"
 #include "../drag_input_rules.h"
 #include "../popup_icon_load_rules.h"
 
@@ -408,6 +410,77 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
+    {
+        return snowdesktop::performance::HandleControlMessage(
+            hwnd, msg, wp, lp, +[](void* context) {
+                auto* app = static_cast<DesktopApp*>(context);
+                snowdesktop::performance::Scope sample("profiler", "sample.widgets");
+                using snowdesktop::performance::Value;
+                if (app->widgetEngine_)
+                {
+                    app->widgetEngine_->RecordPerformanceResources();
+                    for (const auto& widget : app->widgetEngine_->GetWidgets())
+                    {
+                        if (widget.quota)
+                            Value("widget.memory", "lua_bytes", widget.widgetId,
+                                static_cast<double>(widget.quota->memoryBytes));
+                        Value("widget.state", "valid", widget.widgetId, widget.valid ? 1 : 0);
+                        Value("widget.state", "visible", widget.widgetId, widget.hostVisible ? 1 : 0);
+                        Value("widget.state", "timers", widget.widgetId,
+                            static_cast<double>(widget.namedTimers.Size()));
+                        Value("widget.state", "animation_requests", widget.widgetId,
+                            static_cast<double>(widget.animationFrames.Size()));
+                        Value("widget.package", widget.packageId, widget.widgetId, 1);
+                    }
+                }
+                double hiddenBytes = 0;
+                std::size_t hiddenResident = 0;
+                for (const auto& [id, item] : app->desktopWidgetCompositionItems_)
+                {
+                    const double mainBytes = item.surface
+                        ? static_cast<double>(item.width) * item.height * 4 : 0;
+                    const double totalBytes = static_cast<double>(
+                        app->GetDesktopWidgetSurfaceBytes(id));
+                    Value("widget.memory", "surface_bgra_bytes_estimate", id, mainBytes);
+                    Value("widget.memory", "marquee_surface_bgra_bytes_estimate", id,
+                        totalBytes - mainBytes);
+                    Value("widget.composition", "surface_visible", id, item.visible ? 1 : 0);
+                    Value("widget.composition", "surface_resident", id, item.surface ? 1 : 0);
+                    Value("widget.memory", "hidden_surface_bgra_bytes_estimate", id,
+                        item.visible ? 0 : totalBytes);
+                    if (!item.visible)
+                    {
+                        hiddenBytes += totalBytes;
+                        if (totalBytes != 0) ++hiddenResident;
+                    }
+                }
+                Value("composition.memory", "hidden_surface_bgra_bytes_estimate", {}, hiddenBytes);
+                Value("composition.memory", "hidden_surface_instance_count", {},
+                    static_cast<double>(hiddenResident));
+                Value("composition.memory", "surface_reclaim_count", {},
+                    static_cast<double>(app->widgetSurfaceReclaimCount_));
+                Value("composition.memory", "surface_reclaimed_bytes", {},
+                    static_cast<double>(app->widgetSurfaceReclaimedBytes_));
+                const auto recordBackdrop = [](const DesktopBackdropCompositor& backdrop,
+                    const std::wstring& owner) {
+                    Value("backdrop.state", "available", owner, backdrop.IsAvailable() ? 1 : 0);
+                    Value("backdrop.state", "panels", owner,
+                        static_cast<double>(backdrop.PanelCount()));
+                    Value("backdrop.state", "blur_factories", owner,
+                        static_cast<double>(backdrop.BlurFactoryCount()));
+                };
+                recordBackdrop(app->desktopBackdropCompositor_, L"desktop");
+                recordBackdrop(app->collectionPopupBackdropCompositor_, L"collection_popup");
+                recordBackdrop(app->quickNavBackdropCompositor_, L"quick_navigation");
+                for (const auto& host : app->persistentDockHosts_)
+                    if (host)
+                        recordBackdrop(host->backdrop, L"dock:" + std::to_wstring(
+                            reinterpret_cast<std::uintptr_t>(host.get())));
+            }, this);
+    }
+    if (msg == WM_DESTROY)
+        snowdesktop::performance::Shutdown();
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;
@@ -456,11 +529,23 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case kLargeIconAssetsReadyMessage:
+        ProcessLargeIconAssets();
+        return 0;
     case kForegroundInteractionChangedMessage:
-        ReconcileDesktopHoverState();
+        HandleDockForegroundInteractionChanged();
         return 0;
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
+        return 0;
+    case kUrlDropDownloadCompletedMessage:
+        OnUrlDropDownloadCompleted(lp);
+        return 0;
+    case kSteamEntitlementChangedMessage:
+        UpdateLargeIconHover();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (settingsWindow_)
+            settingsWindow_->RefreshGeneralRuntimeState();
         return 0;
     case kWidgetAudioAnalysisWakeMessage:
         if (widgetEngine_)
@@ -474,6 +559,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_SETTINGCHANGE:
     {
+        ApplyAnimationPreferences(true);
         const wchar_t* settingArea =
             reinterpret_cast<const wchar_t*>(lp);
         const bool traySettings = settingArea &&
@@ -582,14 +668,15 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
  * @brief 重新加载桌面项，可选择是否重新从磁盘读取布局。
  * @param reloadLayoutFromDisk 是否重新加载布局文件。
  */
-void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
+void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
+    snowdesktop::shell_refresh::Snapshot* snapshot)
 {
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     const bool deferForDrag =
         snowdesktop::drag_input_rules::ShouldDeferModelReload(
             dragSession_.HasContext(),
             dragDropController_.IsTransportActive());
-    if (shellFileOperationInFlight_ > 0 || deferForDrag)
+    if (shellFileOperationInFlight_ > 0 || deferForDrag || !pendingRenames_.empty())
     {
         shellReloadPending_ = true;
         shellReloadLayoutFromDiskPending_ =
@@ -598,7 +685,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         // debounce timer can no longer use that field as a drag-lifetime
         // proxy. Keep one pending reload alive until both native and OLE drag
         // ownership have ended.
-        if (deferForDrag && hwnd_ && IsWindow(hwnd_))
+        if ((deferForDrag || !pendingRenames_.empty()) && hwnd_ && IsWindow(hwnd_))
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);
@@ -606,17 +693,25 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         return;
     }
     if (reloading_) return;
+    shellRefreshRevision_.Invalidate();
+    readyShellRefresh_.reset();
     ClearPopupDragTarget();
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kShellChangeTimerId);
     shellReloadPending_ = false;
     shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
-    dockAppIdentityCache_.clear();
-    dockRunningWindows_.clear();
+    ULONGLONG stageStarted = GetTickCount64();
+    if (!snapshot)
+    {
+        shellMetadataCache_ = {};
+        dockAppIdentityCache_.clear();
+        dockRunningWindows_.clear();
+    }
     dockFolderTargetCache_.clear();
     dockFolderIconIndexCache_.clear();
-    BeginIconLoadGeneration();
+    if (!snapshot)
+        BeginIconLoadGeneration();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     if (reloadLayoutFromDisk)
     {
@@ -634,10 +729,19 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         for (auto& widget : widgets_)
         {
             if (widget.type == DesktopWidgetType::FolderMapping)
-                EnumerateFolderMappingEntries(widget);
+            {
+                if (!snapshot)
+                    EnumerateFolderMappingEntries(widget);
+                else if (const auto folder = snapshot->folders.find(
+                        ToUpperInvariant(widget.sourceFolderPath));
+                    folder != snapshot->folders.end())
+                    EnumerateFolderMappingEntries(widget, true, &folder->second);
+                else
+                    RequestShellRefresh(); // The mapping changed during the read.
+            }
         }
     }
-    LoadDesktopItems();
+    LoadDesktopItems(snapshot);
     // LoadLayoutSlots may normalize Dock entries before the freshly
     // enumerated desktop items are available. Discard those provisional
     // resolutions so paths and shortcut targets are classified from the new
@@ -648,13 +752,15 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     // otherwise survives and still consumes a slot.  Only prune references
     // that are confirmed missing on disk: hidden files and temporarily
     // unenumerated Shell items must remain pinned.
-    std::erase_if(dockEntries_, [this](const DockEntry& entry) {
+    std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
         if (entry.type != DockEntryType::DesktopItem)
             return false;
         if (IsRecycleBinDockEntry(entry))
             return FindItemIndexByKey(entry.reference) == static_cast<size_t>(-1);
 
         const std::wstring& path = entry.reference;
+        if (snapshot)
+            return snapshot->missingDockPaths.contains(ToUpperInvariant(path));
         const bool driveAbsolute = path.size() >= 3 &&
             ((path[0] >= L'A' && path[0] <= L'Z') ||
              (path[0] >= L'a' && path[0] <= L'z')) &&
@@ -674,6 +780,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
     if (!generalSettings_.dockEnabled && !dockEntries_.empty())
         RestoreDockEntriesToDesktop();
     ApplyAutoCollectFileCategoryWidgets();
+    if (snapshot) snapshot->modelMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
 
     // Mark widgets as used
     std::unordered_set<std::wstring> usedSlots;
@@ -712,6 +820,12 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
             continue;
         }
 
+        if (item.largeIcon)
+        {
+            item.gridSpan = {std::clamp(item.largeIcon->columns, 1, page->columns), std::clamp(item.largeIcon->rows, 1, page->rows)};
+            item.gridCell.column = std::clamp(item.gridCell.column, 0, page->columns - item.gridSpan.columns);
+            item.gridCell.row = std::clamp(item.gridCell.row, 0, page->rows - item.gridSpan.rows);
+        }
         bool validSlot = page != nullptr &&
             item.gridCell.column + item.gridSpan.columns <= page->columns &&
             item.gridCell.row + item.gridSpan.rows <= page->rows &&
@@ -726,7 +840,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         else
         {
             item.gridCell = {};
-            item.gridSpan = {1, 1};
+            if (!item.largeIcon) item.gridSpan = {1, 1};
         }
     }
 
@@ -833,6 +947,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
             item->gridCell.pageId = newPageId;
             item->gridCell.column = 0;
             item->gridCell.row    = 0;
+            if (item->largeIcon)
+                item->gridSpan = {std::clamp(item->largeIcon->columns, 1, lastPage.columns), std::clamp(item->largeIcon->rows, 1, lastPage.rows)};
             MarkGridArea(usedSlots, item->gridCell, item->gridSpan);
             overflowSlots[newPageId] = 1;
         }
@@ -863,12 +979,20 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk)
         w.itemKeys.erase(it, w.itemKeys.end());
     }
 
+    if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
     SaveLayoutSlots();
+    if (snapshot) snapshot->saveMs = GetTickCount64() - stageStarted;
+    stageStarted = GetTickCount64();
     RebuildContainersAndItems();
+    if (snapshot) snapshot->rebuildMs = GetTickCount64() - stageStarted;
     reloading_ = false;
-    RefreshDockRunningWindows(false);
+    if (!snapshot)
+        RefreshDockRunningWindows(false);
+    stageStarted = GetTickCount64();
     if (widgetEngine_)
         widgetEngine_->NotifyDesktopChanged("reload");
+    if (snapshot) snapshot->notifyMs = GetTickCount64() - stageStarted;
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 

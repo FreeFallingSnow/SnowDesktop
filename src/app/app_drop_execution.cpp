@@ -948,9 +948,8 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
                 if (action == DropAction::Move)
                     RemoveDesktopKeysFromWidgets(desktopKeys);
 
-                ReloadItems(false);
-                if (dockFolderPopupOpen_)
-                    RefreshDockFolderPopup();
+                RequestShellRefresh();
+
             }
             if (completion)
                 completion(succeeded);
@@ -1011,9 +1010,8 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
                     landingCache->tick = GetTickCount();
                     pendingLandingCache_ = std::move(*landingCache);
                 }
-                ReloadItems(false);
-                if (dockFolderPopupOpen_)
-                    RefreshDockFolderPopup();
+                RequestShellRefresh();
+
             }
             else
             {
@@ -1060,9 +1058,8 @@ bool DesktopApp::ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
             pendingLandingCache_ = std::move(landingCache);
             if (action == DropAction::Move && hasDesktopIcons)
                 RemoveDesktopKeysFromWidgets(desktopKeys);
-            ReloadItems(false);
-            if (dockFolderPopupOpen_)
-                RefreshDockFolderPopup();
+            RequestShellRefresh();
+
         }
         if (completion)
             completion(succeeded);

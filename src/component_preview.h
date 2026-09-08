@@ -65,6 +65,7 @@ struct ApplySettings
     int rows = 1;
     bool listMode = false;
     bool scrollContainerMode = false;
+    bool largeFolderTitleless = false;
     bool dateHeaders = false;
     bool showFileCategories = false;
     bool showSearchBox = false;
@@ -74,6 +75,7 @@ enum class OptionSetting
 {
     ListMode,
     ScrollContainerMode,
+    LargeFolderTitleless,
     DateHeaders,
     ShowFileCategories,
     ShowSearchBox,
@@ -97,6 +99,7 @@ struct StagePlacement
     int offsetY = 0;
     bool lightTheme = false;
     const widget_preview::Wallpaper* wallpaper = nullptr;
+    bool transparent = false;
 };
 
 struct Card
@@ -131,6 +134,8 @@ struct Model
     std::wstring resizeHint;
     std::wstring applyLabel;
     std::vector<Card> cards;
+    /// Page selected when a newly identified preview model is first shown.
+    std::size_t initialCard = 0;
 
     bool Empty() const { return title.empty() || cards.empty(); }
 };

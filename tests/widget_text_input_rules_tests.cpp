@@ -161,6 +161,29 @@ void TestCaretVisibilityRequest()
         "later caret movement restores caret-follow scrolling");
 }
 
+void TestVerticalExtents()
+{
+    using snowdesktop::widget_runtime::ResolveHostInputVerticalExtents;
+
+    const auto fractionalViewport = ResolveHostInputVerticalExtents(
+        48.4f, 40.0f);
+    Check(fractionalViewport.viewport == 48 &&
+            fractionalViewport.content == 48,
+        "fractional viewport height does not create one pixel of false overflow");
+
+    const auto fittingFractionalContent = ResolveHostInputVerticalExtents(
+        48.4f, 48.2f);
+    Check(fittingFractionalContent.content ==
+            fittingFractionalContent.viewport,
+        "content that fits before pixel rounding remains non-scrollable");
+
+    const auto overflowingContent = ResolveHostInputVerticalExtents(
+        48.4f, 48.6f);
+    Check(overflowingContent.viewport == 48 &&
+            overflowingContent.content == 49,
+        "measured content beyond the viewport retains real overflow");
+}
+
 void TestWrappedLineVerticalCaretMovement()
 {
     using Microsoft::WRL::ComPtr;
@@ -237,6 +260,7 @@ int main()
     TestContextMenuState();
     TestDeferredFocusRequest();
     TestCaretVisibilityRequest();
+    TestVerticalExtents();
     TestWrappedLineVerticalCaretMovement();
     if (failures != 0)
     {

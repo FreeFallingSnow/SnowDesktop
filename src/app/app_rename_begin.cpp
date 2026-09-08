@@ -164,12 +164,7 @@ void DesktopApp::BeginRenameSelected(
         RECT screenRect = rect;
         MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
-        const DWORD editStyle = groupedTabRename
-            ? (WS_POPUP | WS_VISIBLE |
-                ES_CENTER | ES_AUTOHSCROLL)
-            : (WS_POPUP | WS_VISIBLE |
-                ES_MULTILINE | ES_CENTER |
-                ES_AUTOVSCROLL | ES_WANTRETURN);
+        const DWORD editStyle = snowdesktop::rename_edit_layout::EditStyle();
         renameEdit_ = CreateWindowExW(
             WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             L"EDIT",
@@ -199,8 +194,9 @@ void DesktopApp::BeginRenameSelected(
             MAKELPARAM(renameMargin, renameMargin));
         SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
             reinterpret_cast<DWORD_PTR>(this));
-        SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
-            screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
+        renameEditLayout_.Begin(renameEdit_);
+        SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         SendMessageW(renameEdit_, EM_SETSEL, 0, -1);
         SetFocus(renameEdit_);
         if (visibilityWidgetIndex < widgets_.size())
@@ -279,13 +275,8 @@ void DesktopApp::BeginRenameSelected(
     RECT screenRect = textRect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
-    DWORD renameStyle =
-        WS_POPUP | WS_VISIBLE |
-        ES_AUTOVSCROLL;
-    renameStyle |= popupListRename
-        ? ES_LEFT
-        : (ES_MULTILINE | ES_CENTER |
-            ES_WANTRETURN);
+    const DWORD renameStyle =
+        snowdesktop::rename_edit_layout::EditStyle(popupListRename);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"EDIT",
@@ -316,8 +307,9 @@ void DesktopApp::BeginRenameSelected(
         MAKELPARAM(renameMargin, renameMargin));
     SetWindowSubclass(renameEdit_, &DesktopApp::RenameEditSubclassProc, 1,
         reinterpret_cast<DWORD_PTR>(this));
-    SetWindowPos(renameEdit_, HWND_TOPMOST, screenRect.left, screenRect.top,
-        screenRect.right - screenRect.left, screenRect.bottom - screenRect.top, SWP_SHOWWINDOW);
+    renameEditLayout_.Begin(renameEdit_);
+    SetWindowPos(renameEdit_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameEdit_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(items_[selectedIndex].name, isDirectory));
     SetFocus(renameEdit_);

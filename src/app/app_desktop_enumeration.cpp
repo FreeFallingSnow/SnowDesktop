@@ -1,55 +1,19 @@
 #include "app.h"
+#include "../desktop_namespace_registry.h"
 
 // Shell desktop enumeration and display-topology refresh.
 
-void DesktopApp::LoadDesktopItems()
+bool snowdesktop::shell_refresh::ReadDesktop(
+    const std::unordered_map<std::wstring, bool>& visibility,
+    bool showHiddenItems, std::vector<DesktopItem>& items, MetadataCache* cache)
 {
-    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
-
-    struct OldIcon {
-        HBITMAP bitmap = nullptr;
-        SIZE size{};
-        int sysIconIndex = -1;
-        bool shortcutArrow = false;
-        bool isShortcut = false;
-        bool isApplicationShortcut = false;
-        bool iconIsMediaThumbnail = false;
-        IconState iconState = IconState::Loading;
-    };
-    std::unordered_map<std::wstring, OldIcon> oldIconCache;
-    for (auto& item : items_) {
-        if (!item.layoutKey.empty() && item.iconBitmap) {
-            OldIcon old;
-            old.bitmap = item.iconBitmap;
-            old.size = item.iconBitmapSize;
-            old.sysIconIndex = item.sysIconIndex;
-            old.shortcutArrow = item.shortcutArrow;
-            old.isShortcut = item.isShortcut;
-            old.isApplicationShortcut = item.isApplicationShortcut;
-            old.iconIsMediaThumbnail = item.iconIsMediaThumbnail;
-            old.iconState = item.iconState;
-            oldIconCache.emplace(ToUpperInvariant(item.layoutKey), std::move(old));
-            item.iconBitmap = nullptr;
-        }
-    }
-items_.clear();
-    itemIndexByKeyCache_.clear();
-    itemTextLayoutCache_.clear();
-    itemTextShadowCache_.clear();
-    componentListTextLayoutCache_.clear();
-    componentListTextShadowCache_.clear();
-    WriteDiagnosticLogEntry(L"LoadItems start");
-
-    HRESULT hr = SHGetDesktopFolder(&desktopFolder_);
-    if (FAILED(hr) || !desktopFolder_) { WriteDiagnosticLogEntry(L"SHGetDesktopFolder FAILED"); return; }
-    WriteDiagnosticLogEntry(L"DesktopFolder ok");
-
+    ComPtr<IShellFolder> desktopFolder;
+    HRESULT hr = SHGetDesktopFolder(&desktopFolder);
+    if (FAILED(hr) || !desktopFolder) return false;
     LPITEMIDLIST raw = nullptr;
     hr = SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &raw);
-    if (FAILED(hr) || !raw) { WriteDiagnosticLogEntry(L"SHGetSpecialFolderLocation FAILED"); return; }
-    desktopPidl_.reset(raw);
-    WriteDiagnosticLogEntry(L"DesktopPidl ok");
-
+    if (FAILED(hr) || !raw) return false;
+    Pidl desktopPidl(raw);
     wchar_t userDesktopPath[MAX_PATH]{};
     wchar_t commonDesktopPath[MAX_PATH]{};
     wchar_t userProfilePath[MAX_PATH]{};
@@ -58,30 +22,31 @@ items_.clear();
     SHGetSpecialFolderPathW(nullptr, userProfilePath, CSIDL_PROFILE, FALSE);
     size_t userDesktopLen = wcslen(userDesktopPath);
     size_t commonDesktopLen = wcslen(commonDesktopPath);
+    const auto namespaceRegistrations =
+        snowdesktop::LoadDesktopNamespaceRegistrations();
 
-    const bool showHiddenItems = AreExplorerHiddenItemsVisible();
     SHCONTF enumFlags = SHCONTF_FOLDERS | SHCONTF_NONFOLDERS;
     if (showHiddenItems)
         enumFlags = static_cast<SHCONTF>(enumFlags | SHCONTF_INCLUDEHIDDEN);
 
     ComPtr<IEnumIDList> enumerator;
-    hr = desktopFolder_->EnumObjects(hwnd_, enumFlags, &enumerator);
-    if (FAILED(hr) || !enumerator) { WriteDiagnosticLogEntry(L"EnumObjects FAILED"); return; }
-    WriteDiagnosticLogEntry(L"EnumObjects ok");
+    hr = desktopFolder->EnumObjects(nullptr, enumFlags, &enumerator);
+    if (FAILED(hr)) return false;
+    if (!enumerator) return true;
 
     PITEMID_CHILD child = nullptr;
     ULONG fetched = 0;
-    int count = 0;
-    wchar_t buf[64];
     std::unordered_set<std::wstring> seenKeys;
-    while (enumerator->Next(1, &child, &fetched) == S_OK)
+    std::unordered_set<std::wstring> seenMetadata;
+    HRESULT next = S_OK;
+    while ((next = enumerator->Next(1, &child, &fetched)) == S_OK)
     {
-        PIDLIST_ABSOLUTE absolute = ILCombine(desktopPidl_.get(), child);
+        PIDLIST_ABSOLUTE absolute = ILCombine(desktopPidl.get(), child);
         if (!absolute) { ILFree(child); continue; }
 
         // Get parsing name (used for CLSID detection)
         std::wstring parsingName = StrRetToString(
-            desktopFolder_.Get(), reinterpret_cast<PCUITEMID_CHILD>(child), SHGDN_FORPARSING);
+            desktopFolder.Get(), reinterpret_cast<PCUITEMID_CHILD>(child), SHGDN_FORPARSING);
 
         // Get file system path
         wchar_t itemPath[MAX_PATH]{};
@@ -100,16 +65,27 @@ items_.clear();
             continue;
         }
 
-        std::wstring clsid = ResolveDesktopIconClsid(parsingName, itemPathStr, userProfilePath);
+        bool registeredNamespaceVisibleByDefault = false;
+        std::wstring clsid = ResolveDesktopIconClsid(
+            parsingName, itemPathStr, userProfilePath);
+        if (clsid.empty())
+        {
+            clsid = snowdesktop::
+                ResolveRegisteredDesktopNamespaceClsid(
+                    absolute, itemPathStr,
+                    namespaceRegistrations,
+                    &registeredNamespaceVisibleByDefault);
+        }
         bool isDesktopIcon = !clsid.empty();
 
-        // Non-desktop-icon: always skip non-enumerated shell items, and follow
-        // Explorer's "Hidden items" setting for ordinary hidden entries.
-        if (!isDesktopIcon)
+        // Standard desktop icons use the Explorer visibility registry. Other
+        // entries, including third-party namespace aliases, still obey their
+        // Shell hidden/non-enumerated attributes.
+        if (!snowdesktop::IsStandardDesktopIconClsid(clsid))
         {
             SFGAOF attrs = SFGAO_HIDDEN | SFGAO_NONENUMERATED;
             LPCITEMIDLIST childConst = child;
-            if (SUCCEEDED(desktopFolder_->GetAttributesOf(1, &childConst, &attrs)))
+            if (SUCCEEDED(desktopFolder->GetAttributesOf(1, &childConst, &attrs)))
             {
                 if ((attrs & SFGAO_NONENUMERATED) ||
                     (!showHiddenItems && (attrs & SFGAO_HIDDEN)))
@@ -117,13 +93,10 @@ items_.clear();
             }
         }
 
-        // Get display name and icon
-        SHFILEINFOW info{};
-        SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0, &info, sizeof(info),
-            SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_DISPLAYNAME | SHGFI_TYPENAME);
-
         // Check visibility (applies to all items)
-        if (!IsVisibleByDesktopIconSettings(clsid, settingsIconVisibility_))
+        if (!IsVisibleByDesktopIconSettings(
+                clsid, visibility,
+                registeredNamespaceVisibleByDefault))
         { ILFree(absolute); ILFree(child); continue; }
 
         // Non-desktop-icon: must be physically on desktop
@@ -139,19 +112,47 @@ items_.clear();
             { ILFree(absolute); ILFree(child); continue; }
         }
 
+        // Enumerate membership every time, but do not repeatedly ask Shell
+        // extensions to resolve unchanged shortcut icons and display metadata.
+        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
+        const bool hasAttributes = !parsingName.empty() &&
+            GetFileAttributesExW(parsingName.c_str(), GetFileExInfoStandard, &fileAttributes);
+        const auto stamp = FileStamp::From(fileAttributes);
+        const auto metadataKey = ToUpperInvariant(parsingName);
+        SHFILEINFOW info{};
+        const auto cached = cache ? cache->desktop.find(metadataKey) : MetadataMap::iterator{};
+        if (cache && hasAttributes && cached != cache->desktop.end() &&
+            cached->second.Matches(parsingName, stamp))
+        {
+            info = cached->second.info;
+            ++cache->hits;
+            seenMetadata.insert(metadataKey);
+        }
+        else
+        {
+            if (cache) ++cache->queries;
+            const auto loaded = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0,
+                &info, sizeof(info), SHGFI_PIDL | SHGFI_SYSICONINDEX |
+                    SHGFI_DISPLAYNAME | SHGFI_TYPENAME);
+            if (cache && hasAttributes && loaded)
+            {
+                auto& metadata = cache->desktop[metadataKey];
+                metadata.path = parsingName;
+                metadata.stamp = stamp;
+                metadata.info = info;
+                seenMetadata.insert(metadataKey);
+            }
+        }
+
         DesktopItem item;
         item.absolutePidl.reset(absolute);
         item.childPidl.reset(reinterpret_cast<PIDLIST_ABSOLUTE>(child));
         item.parsingName = std::move(parsingName);
         item.desktopIconClsid = std::move(clsid);
         item.name = info.szDisplayName[0] ? info.szDisplayName
-            : StrRetToString(desktopFolder_.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
+            : StrRetToString(desktopFolder.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
         item.typeName = info.szTypeName;
-        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
-        if (!item.parsingName.empty() &&
-            GetFileAttributesExW(
-                item.parsingName.c_str(), GetFileExInfoStandard,
-                &fileAttributes))
+        if (hasAttributes)
         {
             item.modifiedTime = fileAttributes.ftLastWriteTime;
             if ((fileAttributes.dwFileAttributes &
@@ -165,85 +166,96 @@ items_.clear();
             }
         }
         item.sysIconIndex = info.iIcon;
-        item.layoutKey = GetStableLayoutKey(item.absolutePidl.get(), item.parsingName, item.desktopIconClsid);
+        item.layoutKey = ToUpperInvariant(!item.desktopIconClsid.empty()
+            ? item.desktopIconClsid : !itemPathStr.empty()
+                ? itemPathStr : item.parsingName);
 
-auto oldIt = oldIconCache.find(ToUpperInvariant(item.layoutKey));
-        if (oldIt != oldIconCache.end() && oldIt->second.sysIconIndex == item.sysIconIndex) {
-            item.iconBitmap = oldIt->second.bitmap;
-            item.iconBitmapSize = oldIt->second.size;
-            item.shortcutArrow = oldIt->second.shortcutArrow;
-            item.isShortcut = oldIt->second.isShortcut;
-            item.isApplicationShortcut = oldIt->second.isApplicationShortcut;
-            item.iconIsMediaThumbnail = oldIt->second.iconIsMediaThumbnail;
-            item.iconState = oldIt->second.iconState;
-            oldIt->second.bitmap = nullptr;
-            oldIconCache.erase(oldIt);
-            if (item.iconState == IconState::IconReady)
-            {
-                IconLoadTask phase2;
-                phase2.serial = iconLoadSerial_;
-                phase2.layoutKey = item.layoutKey;
-                phase2.absolutePidl.reset(ILClone(item.absolutePidl.get()));
-                phase2.sysIconIndex = item.sysIconIndex;
-                phase2.parsingName = item.parsingName;
-                phase2.isDesktopItem = true;
-                phase2.phase = IconLoadPhase::Phase2;
-                EnqueueIconLoad(std::move(phase2));
-            }
-        } else {
-            if (oldIt != oldIconCache.end()) {
-                if (oldIt->second.bitmap) {
-                    EraseD2DIconCacheForBitmap(oldIt->second.bitmap);
-                    DeleteObject(oldIt->second.bitmap);
-                }
-                oldIconCache.erase(oldIt);
-            }
-            item.iconBitmap = nullptr;
-            item.iconState = IconState::Loading;
+        if (!seenKeys.insert(item.layoutKey).second)
+            continue; // The local item owns both PIDLs, including duplicates.
+        items.push_back(std::move(item));
+    }
+    if (cache && SUCCEEDED(next))
+        std::erase_if(cache->desktop, [&](const auto& entry) {
+            return !seenMetadata.contains(entry.first);
+        });
+    return SUCCEEDED(next);
+}
 
-            IconLoadTask task;
-            task.serial = iconLoadSerial_;
-            task.layoutKey = item.layoutKey;
-            task.absolutePidl.reset(ILClone(item.absolutePidl.get()));
-            task.sysIconIndex = item.sysIconIndex;
-            task.parsingName = item.parsingName;
-            task.isDesktopItem = true;
-            task.phase = IconLoadPhase::Phase1;
-            EnqueueIconLoad(std::move(task));
-        }
-
-        if (seenKeys.contains(item.layoutKey))
-        { ILFree(absolute); ILFree(child); continue; }
-        seenKeys.insert(item.layoutKey);
-
-        auto knownRecord = layoutRecords_.find(item.layoutKey);
-        if (knownRecord != layoutRecords_.end() && knownRecord->second.hasGrid)
+void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot)
+{
+    extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
+    // Menu COM interfaces belong to the UI STA and are never shared with reads.
+    if (!desktopFolder_ && FAILED(SHGetDesktopFolder(&desktopFolder_)))
+        return;
+    if (!desktopPidl_.get())
+    {
+        LPITEMIDLIST raw = nullptr;
+        if (FAILED(SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &raw)))
+            return;
+        desktopPidl_.reset(raw);
+    }
+    std::vector<DesktopItem> fresh;
+    if (snapshot)
+        fresh = std::move(snapshot->desktopItems);
+    else
+    {
+        shellMetadataCache_.desktop.clear(); // Explicit refresh invalidates metadata too.
+        if (!snowdesktop::shell_refresh::ReadDesktop(settingsIconVisibility_,
+                AreExplorerHiddenItemsVisible(), fresh, &shellMetadataCache_))
         {
-            item.gridCell = knownRecord->second.cell;
-            item.gridSpan = knownRecord->second.span;
-            item.slot = SlotFromCell(gridPages_, item.gridCell);
+            WriteDiagnosticLogEntry(L"Desktop enumeration failed; retaining current items");
+            return;
         }
-        else
+    }
+    auto previous = std::exchange(items_, std::move(fresh));
+    std::unordered_map<std::wstring, size_t> previousByKey;
+    for (size_t i = 0; i < previous.size(); ++i)
+        previousByKey.emplace(ToUpperInvariant(previous[i].layoutKey), i);
+    itemIndexByKeyCache_.clear();
+    itemTextLayoutCache_.clear();
+    itemTextShadowCache_.clear();
+    componentListTextLayoutCache_.clear();
+    componentListTextShadowCache_.clear();
+    for (auto& item : items_)
+    {
+        const auto found = previousByKey.find(ToUpperInvariant(item.layoutKey));
+        if (found != previousByKey.end())
+            snowdesktop::shell_refresh::PreserveRuntime(item, previous[found->second]);
+        if (!snapshot || found == previousByKey.end())
         {
             item.gridCell = {};
             item.gridSpan = {1, 1};
             item.slot = -1;
+            const auto known = layoutRecords_.find(item.layoutKey);
+            if (known != layoutRecords_.end() && known->second.hasGrid)
+            {
+                item.gridCell = known->second.cell;
+                item.gridSpan = known->second.span;
+                item.largeIcon = known->second.largeIcon;
+                item.slot = SlotFromCell(gridPages_, item.gridCell);
+            }
         }
-
-        items_.push_back(std::move(item));
-        ++count;
-    }
-    // child PIDL ownership transferred to last DesktopItem — do NOT ILFree
-
-    for (auto& [key, old] : oldIconCache) {
-        if (old.bitmap) {
-            EraseD2DIconCacheForBitmap(old.bitmap);
-            DeleteObject(old.bitmap);
+        // Explicit refresh/settings changes must still rebuild icons even if
+        // Shell reuses an image-list index and the file timestamps are equal.
+        if (!snapshot)
+            item.iconState = IconState::Loading;
+        if (!item.iconBitmap || item.iconState != IconState::FullQuality)
+        {
+            IconLoadTask task;
+            task.serial = iconLoadSerial_;
+            task.layoutKey = item.layoutKey;
+            task.absolutePidl.reset(ILCloneFull(item.absolutePidl.get()));
+            task.sysIconIndex = item.sysIconIndex;
+            task.parsingName = item.parsingName;
+            task.isDesktopItem = true;
+            task.phase = item.iconState == IconState::IconReady
+                ? IconLoadPhase::Phase2 : IconLoadPhase::Phase1;
+            EnqueueIconLoad(std::move(task));
         }
     }
-
-    wsprintfW(buf, L"Loaded %d items", count);
-    WriteDiagnosticLogEntry(buf);
+    for (const auto& oldItem : previous)
+        if (oldItem.iconBitmap)
+            EraseD2DIconCacheForBitmap(oldItem.iconBitmap);
     RefreshDesktopItemIndexCache();
 }
 

@@ -59,6 +59,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_NCHITTEST:
         if (!quickNavigationOpen_)
             return HTTRANSPARENT;
+        // During the warp, controls are not at their final hit rectangles.
+        // Keep keyboard focus in the hidden edit, but let Dock clicks through.
+        if (quickNavigationAnimation_.IsAnimating() &&
+            quickNavigationAnimation_.GetEffect() ==
+                snowdesktop::quick_navigation_animation_rules::Effect::Genie)
+            return HTTRANSPARENT;
         {
             POINT point{
                 GET_X_LPARAM(lp) - virtualLeft_,
@@ -213,6 +219,10 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         HandleQuickNavigationClick(appPoint);
         return 0;
     }
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+        OnRightButtonDown(nullptr);
+        return 0;
     case WM_RBUTTONUP:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -426,6 +436,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         OnMouseWheel(wp, lp);
         return 0;
     case WM_COMMAND:
+        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+            HIWORD(wp) == EN_UPDATE)
+        {
+            renameEditLayout_.Update(renameEdit_);
+            return 0;
+        }
         if (reinterpret_cast<HWND>(lp) == quickNavigationSearchEdit_ && HIWORD(wp) == EN_CHANGE)
         {
             RefreshQuickNavigationSearchText();
@@ -580,7 +596,11 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
         app->CloseQuickNavigation();
         return 0;
     }
-    if (message == WM_KEYDOWN && app->quickNavigationSearchCompositionText_.empty() &&
+    if (message == WM_KEYDOWN &&
+        snowdesktop::quick_navigation_rules::
+            ShouldRouteSearchEditKeyToResults(
+                wParam) &&
+        app->quickNavigationSearchCompositionText_.empty() &&
         app->HandleQuickNavigationKeyboardInput(wParam))
     {
         return 0;

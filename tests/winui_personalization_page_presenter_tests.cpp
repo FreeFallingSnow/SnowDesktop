@@ -88,7 +88,10 @@ void TestPresenterContract(const std::filesystem::path& repository)
         "personalization numeric snapshots are quantized to their declared slider step");
 
     for (const char* member : {
-             "widgetAlpha", "widgetBorderAlpha", "gradientEndA",
+             "widgetAlpha", "widgetBorderAlpha", "widgetBorderWidth",
+             "widgetEdgeHighlightEnabled", "widgetEdgeHighlightWidth",
+             "widgetEdgeHighlightStrength",
+             "gradientEndA",
              "glassBlurRadius", "cornerRadius", "barHeight",
              "categorizedTabHeight",
              "glassEnabled", "acrylicEnabled",
@@ -115,6 +118,15 @@ void TestPresenterContract(const std::filesystem::path& repository)
             source.find("app.settings.category_show_count") ==
                 std::string::npos,
         "widget layout owns category tab height while category count behavior stays elsewhere");
+    Check(source.find("ContinuousControl luaWidgetContentRowHeight") !=
+                std::string::npos &&
+            source.find(
+              "&PersonalizationSettings::luaWidgetContentRowHeight") !=
+                std::string::npos &&
+            source.find("SetContinuousText(luaWidgetContentRowHeight") !=
+                std::string::npos &&
+            source.find("SemanticUiMetricTokens::") == std::string::npos,
+        "widget layout exposes one row-height control and derives semantic metrics");
     for (const char* control : {
              "muxc::Slider", "muxc::NumberBox",
              "muxc::ToggleSwitch", "muxc::ComboBox"})
@@ -154,6 +166,20 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("kAppearancePresetCustom") != std::string::npos,
         "all seven global appearance presets remain selectable");
+    Check(source.find("personalization.borderWidth") != std::string::npos &&
+            source.find("personalization.edgeHighlight") !=
+                std::string::npos &&
+            source.find("personalization.edgeHighlightWidth") !=
+                std::string::npos &&
+            source.find("personalization.edgeHighlightStrength") !=
+                std::string::npos &&
+            source.find("edgeHighlightToggle.IsOn()") !=
+                std::string::npos &&
+            source.find("edgeHighlightWidth.row.SetEnabled") !=
+                std::string::npos &&
+            source.find("edgeHighlightStrength.row.SetEnabled") !=
+                std::string::npos,
+        "custom themes expose searchable independent border and conditional edge-highlight controls");
     Check(source.find(
               "gradientToggle.HorizontalAlignment(mux::HorizontalAlignment::Right)") !=
                 std::string::npos &&

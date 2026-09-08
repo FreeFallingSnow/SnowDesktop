@@ -1,9 +1,11 @@
 #include "app.h"
+#include "../large_icon_backup.h"
 #include "../collection_titleless_rules.h"
 #include "../font_cu_rules.h"
 #include "../widgets/collection_group_rules.h"
 
 #include "../layout_storage.h"
+#include "../full_data_backup.h"
 
 // ── 布局持久化 ──────────────────────────────────────────────
 
@@ -260,6 +262,7 @@ void DesktopApp::LoadLayoutSlots()
     for (const auto& item : document.items)
     {
         LayoutRecord record;
+        record.largeIcon = item.largeIcon;
         if (item.page && item.column && item.row)
         {
             record.cell.pageId = Utf8ToWide(*item.page);
@@ -773,8 +776,44 @@ void DesktopApp::LoadLayoutSlots()
  *
  * 写入内容包括：首选监视器、页面列表、桌面项（排除组件所属项）以及所有组件的完整定义。
  */
-void DesktopApp::SaveLayoutSlots()
+bool DesktopApp::SaveLayoutSlots()
 {
+    // Container membership is committed before this persistence boundary.
+    // Rendering a temporary drag target or sending files to an application never
+    // changes membership and therefore never reaches this conversion.
+    RefreshCollectedKeysCache();
+    for (auto& item : items_)
+        if (item.largeIcon && (IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId))
+        {
+            item.largeIcon.reset();
+            item.gridSpan = {1, 1};
+            if (largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
+        }
+    // Separate from rotating layout snapshots and normal full-backup retention.
+    // The on-disk layout still describes the pre-upgrade state at this point.
+    if (std::any_of(items_.begin(), items_.end(), [](const auto& item) { return item.largeIcon.has_value(); }))
+    {
+        const std::filesystem::path data = GetDataDirectoryPath();
+        auto state = std::filesystem::path(snowdesktop::deployment::GetPackageLocalStatePath());
+        if (state.empty()) state = data.parent_path();
+        const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 2);
+        if (!result.ok)
+        {
+            WriteDiagnosticLogEntry((L"Large icon upgrade backup failed: " + Utf8ToWide(result.error)).c_str(), DiagnosticLogLevel::Error);
+            return false;
+        }
+        if (std::any_of(items_.begin(), items_.end(), [](const auto& item) {
+            return item.largeIcon && item.largeIcon->backgroundStyle <= -4;
+        }))
+        {
+            const auto presetBackup = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 3);
+            if (!presetBackup.ok)
+            {
+                WriteDiagnosticLogEntry((L"Large icon preset upgrade backup failed: " + Utf8ToWide(presetBackup.error)).c_str(), DiagnosticLogLevel::Error);
+                return false;
+            }
+        }
+    }
     demoCollectionIdentityCache_.clear();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     layoutRecords_.clear();
@@ -786,6 +825,7 @@ void DesktopApp::SaveLayoutSlots()
             LayoutRecord record;
             record.cell = item.gridCell;
             record.span = item.gridSpan;
+            record.largeIcon = item.largeIcon;
             record.hasGrid = true;
             record.legacySlot = item.slot;
             layoutRecords_[item.layoutKey] = record;
@@ -903,7 +943,10 @@ void DesktopApp::SaveLayoutSlots()
              << ", \"y\": " << it->gridCell.row
              << ", \"w\": " << std::max(1, it->gridSpan.columns)
              << ", \"h\": " << std::max(1, it->gridSpan.rows)
-             << ", \"slot\": " << it->slot << " }";
+             << ", \"slot\": " << it->slot;
+        if (it->largeIcon)
+            file << ", \"largeIcon\": " << snowdesktop::EncodeLargeIconConfig(*it->largeIcon);
+        file << " }";
     }
     if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
@@ -1057,7 +1100,9 @@ void DesktopApp::SaveLayoutSlots()
             Utf8ToWide(saveError);
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Error);
+        return false;
     }
+    return true;
 }
 
 /**

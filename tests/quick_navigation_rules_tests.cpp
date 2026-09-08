@@ -1,5 +1,6 @@
 #include "navigation_settings.h"
 #include "quick_navigation_animation_rules.h"
+#include "quick_navigation_genie_rules.h"
 #include "quick_navigation_rules.h"
 
 #include <cmath>
@@ -495,6 +496,213 @@ void TestAnimationRules()
         "reset returns to hidden");
 }
 
+void TestAnimationEffects()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    struct EffectCase
+    {
+        bool dockSource;
+        int windowEffect;
+        int popupEffect;
+        Effect expected;
+    };
+    const EffectCase cases[] = {
+        {true, 1, 0, Effect::Scale},
+        {true, 2, 2, Effect::Fade},
+        {true, 3, 1, Effect::Genie},
+        {true, 0, 0, Effect::None},
+        {true, 0, 1, Effect::Fade},
+        {true, 0, 2, Effect::Scale},
+        {false, 3, 0, Effect::None},
+        {false, 3, 1, Effect::Fade},
+        {false, 3, 2, Effect::Scale},
+    };
+    for (const auto& item : cases)
+    {
+        Check(ResolveEffect(true, item.dockSource, item.windowEffect,
+                item.popupEffect) == item.expected,
+            "only a Dock source with a valid anchor may override popup animation preferences");
+        Check(ResolveEffect(false, item.dockSource, item.windowEffect,
+                item.popupEffect) == Effect::None,
+            "global animation disable must override both Dock and popup effects");
+    }
+
+    State genie;
+    genie.Configure(Effect::Genie, 0.7, true);
+    Check(genie.GetEffect() == Effect::Genie &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(true)), 252.0f) &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(false)), 252.0f),
+        "Dock Genie uses the window transition's 360ms duration with the selected speed in both directions");
+    genie.Configure(Effect::Fade, 1.0, true);
+    Check(genie.DurationMilliseconds(true) == 180.0 &&
+            genie.DurationMilliseconds(false) == 180.0,
+        "Dock fade matches the window transition duration");
+    genie.Configure(Effect::Scale, 1.0, true);
+    Check(genie.DurationMilliseconds(true) == 240.0 &&
+            genie.DurationMilliseconds(false) == 240.0,
+        "Dock scale matches the window transition duration");
+    genie.Configure(true, 1.0);
+    Check(genie.GetEffect() == Effect::Fade && genie.HiddenScale() == 1.0f &&
+            genie.DurationMilliseconds(true) == kOpenDurationMs &&
+            genie.DurationMilliseconds(false) == kCloseDurationMs,
+        "legacy fade configuration must restore the original popup timings");
+    genie.Configure(false, 1.0);
+    Check(genie.GetEffect() == Effect::Scale && genie.HiddenScale() == kMinimumScale,
+        "legacy scale configuration keeps its original hidden scale");
+
+    genie.Configure(Effect::Genie, 1.0, true);
+    genie.Open(1000);
+    genie.Advance(1090);
+    const Visual quarterOpen = genie.GetVisual();
+    Check(NearlyEqual(quarterOpen.progress, 0.25f) &&
+            quarterOpen.scale == 1.0f && quarterOpen.opacity == 1.0f,
+        "Genie leaves geometric deformation to the renderer and becomes opaque early in opening");
+    genie.Close(1090);
+    Check(genie.IsClosing() &&
+            NearlyEqual(genie.GetVisual().progress, quarterOpen.progress),
+        "reversing Genie into close must preserve its current deformation progress");
+    genie.Advance(1135);
+    const Visual closing = genie.GetVisual();
+    Check(NearlyEqual(closing.progress, 0.125f) &&
+            closing.opacity > 0.0f && closing.opacity < 1.0f && closing.scale == 1.0f,
+        "closing Genie fades only near the collapsed end");
+    genie.Open(1135);
+    Check(genie.IsOpening() && NearlyEqual(genie.GetVisual().progress, closing.progress) &&
+            NearlyEqual(genie.GetVisual().opacity, closing.opacity),
+        "reopening Genie must preserve both deformation and opacity");
+    genie.Advance(1450);
+    Check(!genie.IsAnimating() && genie.GetVisual().opacity == 1.0f,
+        "reversed Genie completes using only its remaining duration");
+    genie.Close(2000);
+    genie.Advance(2360);
+    Check(genie.IsHidden() && !genie.IsAnimating() && genie.GetVisual().opacity == 0.0f,
+        "completed Genie close must release the visible animation state");
+
+    genie.Open(3000);
+    genie.Advance(3090);
+    genie.Configure(Effect::None, 1.0);
+    Check(!genie.IsAnimating() && genie.GetVisual().progress == 1.0f,
+        "disabling an in-flight animation must settle its requested visible state");
+    genie.Close(3100);
+    Check(genie.IsHidden() && !genie.IsAnimating(),
+        "None must close immediately without scheduling animation work");
+    genie.Open(3200);
+    Check(genie.GetVisual().opacity == 1.0f && !genie.IsAnimating(),
+        "None must open immediately at full opacity");
+}
+
+void TestGenieTranslucentContentCoverage()
+{
+    namespace genie = snowdesktop::dock_genie;
+    namespace navigation = snowdesktop::quick_navigation_animation_rules;
+    const double sizes[][2] = {{481.375, 613.625}, {96.125, 47.875},
+        {1281.2, 721.6}, {3840.5, 2160.25}};
+    const genie::Edge edges[] = {genie::Edge::Bottom, genie::Edge::Top,
+        genie::Edge::Left, genie::Edge::Right};
+    for (const auto& size : sizes)
+    {
+        const double width = static_cast<float>(size[0]);
+        const double height = static_cast<float>(size[1]);
+        const genie::Rect window{-2840.25, -1200.75, -2840.25 + width, -1200.75 + height};
+        const genie::Rect docks[] = {
+            {-725.5, window.bottom + 200.125, -674.25, window.bottom + 242.625},
+            {-725.5, window.top - 242.625, -674.25, window.top - 200.125},
+            {window.left - 242.625, -325.5, window.left - 200.125, -274.25},
+            {window.right + 200.125, -325.5, window.right + 242.625, -274.25}};
+        for (std::size_t direction = 0; direction < std::size(edges); ++direction)
+        {
+            const auto edge = edges[direction];
+            const bool vertical = genie::Vertical(edge);
+            // Also cover a Dock on another monitor, physically opposite to
+            // its configured edge. Geometry must not fold during transit.
+            for (const auto& dock : {docks[direction], docks[direction ^ 1]})
+            for (double collapsed : {0.0, 0.08, 0.12, 0.20, 0.33, 0.45,
+                    0.55, 0.70, 0.81, 0.94, 1.0})
+            {
+                struct Interval { double begin, end; };
+                std::vector<Interval> coverage;
+                navigation::GenieStripProjection previous;
+                // DComp consumes float matrices. Compare well below a pixel,
+                // allowing the rounding of homogeneous coordinates.
+                constexpr double tolerance = 0.002;
+                for (std::size_t index = 0; index < genie::StripCount; ++index)
+                {
+                    const auto matrix = navigation::GenieProjection(window, dock, edge,
+                        collapsed, width, height, index, -3200.25, -1500.75);
+                    const auto band = navigation::GenieBandClip(matrix, index, edge);
+                    // Intersect the parent clip with the child bitmap, matching
+                    // the actual renderer, including its float clip coordinates.
+                    const double left = std::max(0.0,
+                        matrix.sourceX + static_cast<double>(static_cast<float>(band.left)));
+                    const double top = std::max(0.0,
+                        matrix.sourceY + static_cast<double>(static_cast<float>(band.top)));
+                    const double right = std::min(width,
+                        matrix.sourceX + static_cast<double>(static_cast<float>(band.right)));
+                    const double bottom = std::min(height,
+                        matrix.sourceY + static_cast<double>(static_cast<float>(band.bottom)));
+                    const auto mapAxis = [vertical, &matrix](double x, double y) {
+                        const auto point = matrix.Map(x, y);
+                        return vertical ? point.y : point.x;
+                    };
+                    const Interval strip{mapAxis(left, top), mapAxis(right, bottom)};
+                    Check(strip.end > strip.begin,
+                        "each transformed Genie strip must retain positive axial coverage");
+                    if (!coverage.empty())
+                    {
+                        Check(std::fabs(strip.begin - coverage.back().end) < tolerance,
+                            "adjacent translucent Genie strips must meet without overlap or a gap");
+                        for (double across : {0.0, 0.25, 0.5, 0.75, 1.0})
+                        {
+                            const double x = vertical ? width * across : matrix.sourceX;
+                            const double y = vertical ? matrix.sourceY : height * across;
+                            const auto before = previous.Map(x, y);
+                            const auto after = matrix.Map(x, y);
+                            Check(std::hypot(before.x - after.x, before.y - after.y) < tolerance,
+                                "the entire shared edge must meet, preventing staircase sides and displaced text");
+                        }
+                    }
+                    coverage.push_back(strip);
+                    previous = matrix;
+                    for (const double x : {left, right})
+                    for (const double y : {top, bottom})
+                    {
+                        const double w = (x - matrix.sourceX) * matrix.m14 +
+                            (y - matrix.sourceY) * matrix.m24 + matrix.m44;
+                        const auto point = matrix.Map(x, y);
+                        Check(w > 0.0 && std::isfinite(point.x) && std::isfinite(point.y),
+                            "projected Genie content must stay finite and in front of the camera");
+                        if (collapsed == 0.0 || collapsed == 1.0)
+                        {
+                            const auto& extent = collapsed == 0.0 ? window : dock;
+                            const double expectedX = extent.left + 3200.25 +
+                                (extent.right - extent.left) * x / width;
+                            const double expectedY = extent.top + 1500.75 +
+                                (extent.bottom - extent.top) * y / height;
+                            Check(std::hypot(point.x - expectedX, point.y - expectedY) < tolerance,
+                                "Genie endpoints must preserve the complete panel and Dock geometry");
+                        }
+                    }
+                }
+                for (std::size_t index = 1; index < coverage.size(); ++index)
+                {
+                    const double seam = (coverage[index - 1].end + coverage[index].begin) * 0.5;
+                    // Probe either side outside float rounding uncertainty;
+                    // even a small overlap of translucent strips must fail.
+                    for (double offset : {-0.01, 0.01})
+                    {
+                        double alpha = 0.0;
+                        for (const auto& strip : coverage)
+                            if (seam + offset >= strip.begin && seam + offset < strip.end)
+                                alpha += 0.4 * (1.0 - alpha);
+                        Check(std::fabs(alpha - 0.4) < 0.00001,
+                            "source-over beside a warped seam must not darken content or reveal a gap");
+                    }
+                }
+            }
+        }
+    }
+}
+
 void TestDeactivateRules()
 {
     Check(!rules::ShouldCloseOnDeactivate(
@@ -509,6 +717,24 @@ void TestDeactivateRules()
     Check(rules::ShouldOpenFromDockSearchPress(false),
         "a fresh Dock search press opens Quick Navigation");
 
+}
+
+void TestSearchEditKeyboardRouting()
+{
+    Check(
+        !rules::ShouldRouteSearchEditKeyToResults(
+            VK_LEFT) &&
+            !rules::ShouldRouteSearchEditKeyToResults(
+                VK_RIGHT) &&
+            !rules::ShouldRouteSearchEditKeyToResults(
+                VK_UP) &&
+            !rules::ShouldRouteSearchEditKeyToResults(
+                VK_DOWN),
+        "arrow keys in the focused search edit must remain available for caret movement");
+    Check(
+        rules::ShouldRouteSearchEditKeyToResults(
+            VK_RETURN),
+        "Enter in the focused search edit must still activate a search result");
 }
 
 void TestAnimatedPointerHitRules()
@@ -546,7 +772,10 @@ int main()
     TestMappingSectionsFollowTabOrder();
     TestSectionLayout();
     TestAnimationRules();
+    TestAnimationEffects();
+    TestGenieTranslucentContentCoverage();
     TestDeactivateRules();
+    TestSearchEditKeyboardRouting();
     TestAnimatedPointerHitRules();
     if (failures == 0)
     {

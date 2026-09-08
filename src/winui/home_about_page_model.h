@@ -11,16 +11,6 @@
 namespace snowdesktop::winui
 {
 
-enum class SettingsUpdateState : std::uint8_t
-{
-    Unknown,
-    Checking,
-    UpToDate,
-    UpdateAvailable,
-    ManagedByStore,
-    Failed,
-};
-
 enum class SettingsBackupState : std::uint8_t
 {
     Unknown,
@@ -38,11 +28,8 @@ struct HomeAboutStatusPatch
     std::uint64_t revision = 0;
     std::optional<std::wstring> applicationVersion;
     std::optional<std::size_t> installedWidgetCount;
-    /** Deployment ownership controls whether the legacy update row exists. */
+    /** Deployment ownership controls whether the Store update button exists. */
     std::optional<bool> packaged;
-    std::optional<SettingsUpdateState> updateState;
-    std::optional<std::wstring> availableVersion;
-    std::optional<std::wstring> updateDetail;
     std::optional<SettingsBackupState> backupState;
     std::optional<std::size_t> backupCount;
     std::optional<std::wstring> backupDetail;
@@ -58,14 +45,15 @@ enum class HomeAboutLink : std::uint8_t
     AuthorGitHub,
     Douyin,
     Xiaohongshu,
-    ReleaseRepository,
-    SourceRepository,
+    // Value 4 belonged to the retired release-repository link.
+    SourceRepository = 5,
     QqGroup,
     EverythingSdk,
     DearImGui,
     Lua,
     PinyinData,
     TranslucentTb,
+    OfficialWebsite,
 };
 
 [[nodiscard]] constexpr std::wstring_view HomeAboutLinkUri(
@@ -73,6 +61,8 @@ enum class HomeAboutLink : std::uint8_t
 {
     switch (link)
     {
+    case HomeAboutLink::OfficialWebsite:
+        return L"https://snowdesktop.com/";
     case HomeAboutLink::Bilibili:
         return L"https://space.bilibili.com/32837853";
     case HomeAboutLink::AuthorGitHub:
@@ -83,8 +73,6 @@ enum class HomeAboutLink : std::uint8_t
     case HomeAboutLink::Xiaohongshu:
         return L"https://www.xiaohongshu.com/user/profile/"
                L"6819eed7000000000403bf0e";
-    case HomeAboutLink::ReleaseRepository:
-        return L"https://github.com/FreeFallingSnow/SnowDesktop_Release";
     case HomeAboutLink::SourceRepository:
         return L"https://github.com/FreeFallingSnow/SnowDesktop";
     case HomeAboutLink::QqGroup:
@@ -107,8 +95,8 @@ enum class HomeAboutLink : std::uint8_t
 enum class HomeAboutCommand : std::uint8_t
 {
     CheckForUpdates,
-    CancelUpdateCheck,
-    OpenProject,
+    // Value 1 belonged to the removed network-update cancellation.
+    OpenProject = 2,
     OpenLicense,
     OpenThirdPartyNotices,
 };

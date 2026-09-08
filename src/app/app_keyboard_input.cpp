@@ -102,6 +102,21 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    if (largeIconGesture_)
+    {
+        if (key == VK_ESCAPE) { CancelLargeIconGesture(); return true; }
+        if (largeIconGesture_->creating && (key == VK_LEFT || key == VK_RIGHT || key == VK_UP || key == VK_DOWN))
+        {
+            auto& config = largeIconGesture_->config;
+            if (key == VK_LEFT) config.columns = std::max(1, config.columns - 1);
+            if (key == VK_RIGHT) config.columns = std::min(1024, config.columns + 1);
+            if (key == VK_UP) config.rows = std::max(1, config.rows - 1);
+            if (key == VK_DOWN) config.rows = std::min(1024, config.rows + 1);
+            HandleLargeIconPointerMove(lastMousePoint_);
+            return true;
+        }
+        if (key == VK_RETURN && largeIconGesture_->creating) { HandleLargeIconPointerDown(lastMousePoint_); return true; }
+    }
     if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)
     {
         RefreshDragHintFromKeyboard();
@@ -303,7 +318,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 std::move(steps),
                 [this](bool succeeded) {
                     if (succeeded)
-                        ReloadItems();
+                        RequestShellRefresh();
                 });
         }
         break;
@@ -456,7 +471,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 info.nShow = SW_SHOWNORMAL;
                 SafeInvokeCommand(bgMenu.Get(), &info);
                 cutPaths_.clear();
-                ReloadItems();
+                RequestShellRefresh();
             }
         }
     }
@@ -485,6 +500,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             if (!icon) continue;
             DesktopItem* di = icon->GetDesktopItem();
             if (!di || di->name.empty()) continue;
+            if (desktopIconsHidden_ && !IsRetainedLargeIcon(*di)) continue;
             di->selected = true;
         }
         InvalidateRect(hwnd_, nullptr, FALSE);

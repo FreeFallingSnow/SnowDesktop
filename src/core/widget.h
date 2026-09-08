@@ -1014,6 +1014,10 @@ private:
     bool SafeRenderWidget(const std::wstring& id, const std::wstring& scriptPath,
         WidgetEngine* engine, ID2D1DeviceContext* context,
         RECT frame, int columns, int rows);
+    bool SafeRenderBackgroundLayer(const std::wstring& id,
+        WidgetEngine* engine, ID2D1DeviceContext* context, RECT frame,
+        int columns, int rows, float inheritedBlurRadius,
+        float cornerRadius);
     bool SafeReadFlags(WidgetEngine* engine, const std::wstring& scriptPath,
         bool& showTitle, bool& bottomBarHover);
     void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,

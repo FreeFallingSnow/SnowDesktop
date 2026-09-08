@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <ctime>
 #include <utility>
 
 namespace snowdesktop::winui
@@ -26,6 +27,21 @@ struct SettingsCard
     muxc::StackPanel content{nullptr};
     muxc::TextBlock title{nullptr};
 };
+
+[[nodiscard]] std::wstring FormatEntitlementExpiryDate(
+    std::int64_t unixSeconds) noexcept
+{
+    if (unixSeconds <= 0) return {};
+    const std::time_t timestamp = static_cast<std::time_t>(unixSeconds);
+    if (static_cast<std::int64_t>(timestamp) != unixSeconds) return {};
+    std::tm localTime{};
+    if (localtime_s(&localTime, &timestamp) != 0) return {};
+    std::array<wchar_t, 11> buffer{};
+    if (std::wcsftime(buffer.data(), buffer.size(), L"%Y-%m-%d",
+            &localTime) == 0)
+        return {};
+    return buffer.data();
+}
 
 void InitializeCard(
     SettingsCard& card,
@@ -83,9 +99,11 @@ struct GeneralPagePresenter::Impl
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel desktopRoot{nullptr};
+    muxc::StackPanel pageNavigationRoot{nullptr};
     muxc::StackPanel dockShortcutRoot{nullptr};
 
     SettingsCard startupCard;
+    SettingsCard advancedFeaturesCard;
     SettingsCard desktopBehaviorCard;
     SettingsCard languageCard;
     SettingsCard quickNavigationCard;
@@ -94,6 +112,9 @@ struct GeneralPagePresenter::Impl
     SettingsCard floatingDockCard;
 
     muxc::ToggleSwitch autoStartToggle{nullptr};
+    muxc::StackPanel advancedFeatureControls{nullptr};
+    muxc::TextBlock advancedFeatureStatus{nullptr};
+    muxc::Button registerAdvancedFeaturesButton{nullptr};
     muxc::ToggleSwitch softwareDesktopToggle{nullptr};
     muxc::ToggleSwitch doubleClickHideToggle{nullptr};
     muxc::ComboBox languageCombo{nullptr};
@@ -115,6 +136,7 @@ struct GeneralPagePresenter::Impl
     HotkeyRecorder floatingDockHotkey;
 
     SettingRow autoStartRow;
+    SettingRow advancedFeatureRow;
     SettingRow softwareDesktopRow;
     SettingRow doubleClickHideRow;
     SettingRow languageRow;
@@ -128,6 +150,7 @@ struct GeneralPagePresenter::Impl
     SettingRow floatingDockToggleRow;
     HotkeySettingRow floatingDockHotkeyRow;
     muxc::InfoBar startupOwnershipNotice{nullptr};
+    muxc::InfoBar advancedFeatureNotice{nullptr};
 
     std::vector<SettingsLanguageOption> languageOptions;
     std::string selectedLanguage = "system";
@@ -138,10 +161,12 @@ struct GeneralPagePresenter::Impl
     bool dockEnabled = false;
     bool hasSnapshot = false;
     bool updatingControls = false;
+    bool advancedFeatureStoreAction = false;
     bool active = false;
     bool closed = false;
 
     winrt::event_token autoStartToken{};
+    winrt::event_token registerAdvancedFeaturesToken{};
     winrt::event_token softwareDesktopToken{};
     winrt::event_token doubleClickHideToken{};
     winrt::event_token languageSelectionToken{};
@@ -161,6 +186,8 @@ struct GeneralPagePresenter::Impl
         root.Spacing(8.0);
         desktopRoot = muxc::StackPanel{};
         desktopRoot.Spacing(8.0);
+        pageNavigationRoot = muxc::StackPanel{};
+        pageNavigationRoot.Spacing(8.0);
         dockShortcutRoot = muxc::StackPanel{};
         dockShortcutRoot.Spacing(8.0);
 
@@ -177,6 +204,31 @@ struct GeneralPagePresenter::Impl
         startupOwnershipNotice.IsClosable(false);
         startupOwnershipNotice.IsOpen(false);
         startupCard.content.Children().Append(startupOwnershipNotice);
+
+        InitializeCard(advancedFeaturesCard, cardStyle, root);
+        advancedFeatureControls = muxc::StackPanel{};
+        advancedFeatureControls.Orientation(muxc::Orientation::Horizontal);
+        advancedFeatureControls.Spacing(10.0);
+        advancedFeatureControls.HorizontalAlignment(
+            mux::HorizontalAlignment::Right);
+        advancedFeatureStatus = muxc::TextBlock{};
+        advancedFeatureStatus.TextWrapping(mux::TextWrapping::Wrap);
+        advancedFeatureStatus.MaxWidth(380.0);
+        advancedFeatureStatus.VerticalAlignment(
+            mux::VerticalAlignment::Center);
+        registerAdvancedFeaturesButton = muxc::Button{};
+        advancedFeatureControls.Children().Append(advancedFeatureStatus);
+        advancedFeatureControls.Children().Append(
+            registerAdvancedFeaturesButton);
+        advancedFeatureRow.Initialize(advancedFeatureControls, 380.0);
+        advancedFeatureRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
+        advancedFeaturesCard.content.Children().Append(
+            advancedFeatureRow.root);
+        advancedFeatureNotice = muxc::InfoBar{};
+        advancedFeatureNotice.IsClosable(false);
+        advancedFeatureNotice.IsOpen(false);
+        advancedFeaturesCard.content.Children().Append(advancedFeatureNotice);
 
         InitializeCard(desktopBehaviorCard, cardStyle, desktopRoot);
         softwareDesktopToggle = muxc::ToggleSwitch{};
@@ -213,7 +265,7 @@ struct GeneralPagePresenter::Impl
         quickNavigationCard.content.Children().Append(
             quickNavigationHotkeyRow.row.root);
 
-        InitializeCard(pageNavigationCard, cardStyle, root);
+        InitializeCard(pageNavigationCard, cardStyle, pageNavigationRoot);
         pageNavigationToggle = muxc::ToggleSwitch{};
         pageNavigationToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -308,6 +360,19 @@ struct GeneralPagePresenter::Impl
                 }
                 const bool enabled = autoStartToggle.IsOn();
                 actions.setAutoStart(generation, enabled);
+            });
+        registerAdvancedFeaturesToken = registerAdvancedFeaturesButton.Click(
+            [this](const auto&, const auto&) {
+                if (closed || !active)
+                    return;
+                if (advancedFeatureStoreAction)
+                {
+                    if (actions.openAdvancedFeaturesStore)
+                        actions.openAdvancedFeaturesStore();
+                }
+                else if (actions.registerAdvancedFeatures)
+                    actions.registerAdvancedFeatures();
+                RefreshAdvancedFeatureStatus();
             });
         softwareDesktopToken = softwareDesktopToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -616,6 +681,8 @@ struct GeneralPagePresenter::Impl
         updatingControls = true;
 
         SetCardText(startupCard, "settings.general.startup");
+        SetCardText(advancedFeaturesCard,
+            "settings.general.advancedFeatures");
         SetCardText(desktopBehaviorCard, "settings.desktop.behavior");
         SetCardText(languageCard, "app.settings.language");
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
@@ -627,6 +694,11 @@ struct GeneralPagePresenter::Impl
             "settings.dock.floatingShortcut");
 
         autoStartRow.SetText(L("app.settings.auto_start"));
+        advancedFeatureRow.SetText(
+            L("settings.general.advancedFeatures.unlockStatus"),
+            L("settings.general.advancedFeatures.description"));
+        registerAdvancedFeaturesButton.Content(winrt::box_value(
+            L("settings.general.advancedFeatures.register")));
         softwareDesktopRow.SetText(L("app.settings.software_desktop"));
         doubleClickHideRow.SetText(L("app.settings.double_click_hide"));
         languageRow.SetText(L("app.settings.language"));
@@ -671,6 +743,9 @@ struct GeneralPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             autoStartToggle, autoStartRow.label.Text());
         muxa::AutomationProperties::SetName(
+            registerAdvancedFeaturesButton,
+            L("settings.general.advancedFeatures.register"));
+        muxa::AutomationProperties::SetName(
             softwareDesktopToggle, softwareDesktopRow.label.Text());
         muxa::AutomationProperties::SetName(
             doubleClickHideToggle, doubleClickHideRow.label.Text());
@@ -688,6 +763,7 @@ struct GeneralPagePresenter::Impl
 
         RebuildLanguageOptions();
         RefreshStartupConflict();
+        RefreshAdvancedFeatureStatus();
         UpdateConditionalHintVisibility();
         updatingControls = wasUpdating;
     }
@@ -715,6 +791,115 @@ struct GeneralPagePresenter::Impl
             message.replace(marker, 3, conflict.ownerCommand);
         }
         startupOwnershipNotice.Message(message);
+    }
+
+    void RefreshAdvancedFeatureStatus()
+    {
+        GeneralAdvancedFeatureStatus status;
+        if (actions.queryAdvancedFeatureStatus)
+            status = actions.queryAdvancedFeatureStatus();
+
+        advancedFeaturesCard.root.Visibility(status.cardVisible
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        if (!status.cardVisible)
+        {
+            advancedFeatureStoreAction = false;
+            registerAdvancedFeaturesButton.Visibility(
+                mux::Visibility::Collapsed);
+            advancedFeatureNotice.Visibility(mux::Visibility::Collapsed);
+            advancedFeatureNotice.IsOpen(false);
+            return;
+        }
+
+        std::string_view statusKey =
+            "settings.general.advancedFeatures.unavailable";
+        std::string_view buttonKey =
+            "settings.general.advancedFeatures.register";
+        bool showButton = false;
+        bool buttonEnabled = false;
+        bool showNotice = false;
+        std::string_view noticeKey =
+            "settings.general.advancedFeatures.reminder";
+        auto severity = muxc::InfoBarSeverity::Informational;
+
+        advancedFeatureStoreAction = status.offerSteamStore &&
+            !status.registered && !status.bridgeAvailable;
+        if (advancedFeatureStoreAction)
+        {
+            statusKey = "settings.general.advancedFeatures.portable";
+            buttonKey = "settings.general.advancedFeatures.unlock";
+            showButton = true;
+            buttonEnabled = true;
+        }
+        else if (status.registered)
+        {
+            statusKey = "settings.general.advancedFeatures.registered";
+        }
+        else
+        {
+            switch (status.state)
+            {
+            case GeneralAdvancedFeatureState::Registered:
+                statusKey = "settings.general.advancedFeatures.registered";
+                break;
+            case GeneralAdvancedFeatureState::Checking:
+                statusKey = "settings.general.advancedFeatures.checking";
+                showButton = true;
+                break;
+            case GeneralAdvancedFeatureState::Unregistered:
+                statusKey = "settings.general.advancedFeatures.unregistered";
+                showButton = status.bridgeAvailable;
+                buttonEnabled = showButton;
+                showNotice = status.bridgeAvailable;
+                break;
+            case GeneralAdvancedFeatureState::RegistrationFailed:
+                statusKey = "settings.general.advancedFeatures.unregistered";
+                showButton = status.bridgeAvailable;
+                buttonEnabled = showButton;
+                showNotice = status.bridgeAvailable;
+                severity = muxc::InfoBarSeverity::Warning;
+                if (status.failure == GeneralAdvancedFeatureFailure::NotOwned)
+                    noticeKey = "settings.general.advancedFeatures.notOwned";
+                else if (status.failure ==
+                    GeneralAdvancedFeatureFailure::StorageError)
+                    noticeKey =
+                        "settings.general.advancedFeatures.storageFailed";
+                else
+                    noticeKey = "settings.general.advancedFeatures.failed";
+                break;
+            case GeneralAdvancedFeatureState::BridgeUnavailable:
+                break;
+            }
+        }
+
+        std::wstring statusText = L(statusKey);
+        if (status.registered)
+        {
+            const std::wstring expiryDate =
+                FormatEntitlementExpiryDate(status.validUntil);
+            if (!expiryDate.empty())
+            {
+                statusText = L(
+                    "settings.general.advancedFeatures.registeredUntil");
+                const std::wstring_view marker = L"{0}";
+                const auto position = statusText.find(marker);
+                if (position != std::wstring::npos)
+                    statusText.replace(position, marker.size(), expiryDate);
+            }
+        }
+        advancedFeatureStatus.Text(statusText);
+        registerAdvancedFeaturesButton.Content(
+            winrt::box_value(L(buttonKey)));
+        muxa::AutomationProperties::SetName(
+            registerAdvancedFeaturesButton, L(buttonKey));
+        registerAdvancedFeaturesButton.Visibility(showButton
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        registerAdvancedFeaturesButton.IsEnabled(buttonEnabled);
+        advancedFeatureNotice.Severity(severity);
+        advancedFeatureNotice.Message(L(noticeKey));
+        advancedFeatureNotice.Visibility(showNotice
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        advancedFeatureNotice.IsOpen(showNotice);
     }
 
     void ApplySnapshot(const SettingsSnapshot& snapshot)
@@ -780,6 +965,8 @@ struct GeneralPagePresenter::Impl
         try
         {
             autoStartToggle.Toggled(autoStartToken);
+            registerAdvancedFeaturesButton.Click(
+                registerAdvancedFeaturesToken);
             softwareDesktopToggle.Toggled(softwareDesktopToken);
             doubleClickHideToggle.Toggled(doubleClickHideToken);
             languageCombo.SelectionChanged(languageSelectionToken);
@@ -830,6 +1017,11 @@ muxc::StackPanel GeneralPagePresenter::DesktopBehaviorContent() const noexcept
     return impl_ ? impl_->desktopRoot : nullptr;
 }
 
+muxc::StackPanel GeneralPagePresenter::PageNavigationContent() const noexcept
+{
+    return impl_ ? impl_->pageNavigationRoot : nullptr;
+}
+
 muxc::StackPanel GeneralPagePresenter::DockShortcutContent() const noexcept
 {
     return impl_ ? impl_->dockShortcutRoot : nullptr;
@@ -851,6 +1043,7 @@ void GeneralPagePresenter::RefreshRuntimeState() noexcept
     try
     {
         impl_->RefreshStartupConflict();
+        impl_->RefreshAdvancedFeatureStatus();
     }
     catch (...)
     {
@@ -870,6 +1063,8 @@ void GeneralPagePresenter::RegisterFocusTargets(
 
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
+    registerAliases(impl_->registerAdvancedFeaturesButton,
+        {"general.advancedFeatures", "general.advancedFeatures.unlockRequired"});
     registerAliases(impl_->softwareDesktopToggle,
         {"desktop.softwareDesktop", "general.softwareDesktop"});
     registerAliases(impl_->languageCombo, {"general.language"});
@@ -911,6 +1106,7 @@ void GeneralPagePresenter::Activate() noexcept
         // Re-probe every saved chord now that the generation gate is live.
         impl_->UpdateDependentEnabledStates();
         impl_->RefreshStartupConflict();
+        impl_->RefreshAdvancedFeatureStatus();
     }
     catch (...)
     {

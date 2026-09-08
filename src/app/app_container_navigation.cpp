@@ -417,7 +417,7 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
                 }
                 else if (item &&
                          !item->GetPath().empty())
-                    shellLaunchWorker_.Enqueue(
+                    LaunchPathWithShortcutPolicy(
                         hwnd_, item->GetPath());
                 break;
             }
@@ -455,7 +455,7 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
                         activeData->
                             folderEntries[entryIndex];
                     if (!entry.fullPath.empty())
-                        shellLaunchWorker_.Enqueue(
+                        LaunchPathWithShortcutPolicy(
                             hwnd_, entry.fullPath);
                 }
             }
@@ -468,7 +468,7 @@ void DesktopApp::OpenWidgetMember(size_t widgetIndex, int memberIndex)
         {
             const auto& entry = widget.folderEntries[static_cast<size_t>(memberIndex)];
             if (!entry.fullPath.empty())
-                shellLaunchWorker_.Enqueue(
+                LaunchPathWithShortcutPolicy(
                     hwnd_, entry.fullPath);
         }
     }

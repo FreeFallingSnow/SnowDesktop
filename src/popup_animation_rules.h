@@ -52,6 +52,7 @@ struct Visual
     float progress = 0.0f;
     float scale = kMinimumScale;
     bool visible = false;
+    float opacity = 1.0f;
 };
 
 enum class ExistingSourceAction
@@ -108,6 +109,17 @@ inline bool ShouldUsePopupItemBounds(
 class State
 {
 public:
+    void Configure(bool fade, double durationScale)
+    {
+        fade_ = fade;
+        durationScale_ = std::clamp(durationScale, 0.1, 10.0);
+    }
+    [[nodiscard]] double DurationMilliseconds(bool opening) const
+    {
+        return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_;
+    }
+    [[nodiscard]] float HiddenScale() const { return fade_ ? 1.0f : kMinimumScale; }
+    [[nodiscard]] float EndpointOpacity(bool opening) const { return fade_ && !opening ? 0.0f : 1.0f; }
     void Open(std::uint64_t now)
     {
         Advance(now);
@@ -139,7 +151,7 @@ public:
             return false;
 
         const float duration = static_cast<float>(
-            targetVisible_ ? kOpenDurationMs : kCloseDurationMs);
+            DurationMilliseconds(targetVisible_));
         const float delta =
             static_cast<float>(elapsed) / duration;
         const float previous = progress_;
@@ -173,8 +185,9 @@ public:
     {
         return {
             progress_,
-            ScaleForProgress(progress_),
-            progress_ > 0.0f
+            fade_ ? 1.0f : ScaleForProgress(progress_),
+            progress_ > 0.0f,
+            fade_ ? EaseInOutSmooth(progress_) : 1.0f
         };
     }
 
@@ -199,6 +212,8 @@ public:
     }
 
 private:
+    bool fade_ = false;
+    double durationScale_ = 1.0;
     float progress_ = 0.0f;
     bool targetVisible_ = false;
     bool animating_ = false;

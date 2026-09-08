@@ -181,14 +181,33 @@ void DesktopApp::PresentPointerInteractionFrame(
             widgetInteractionPresented = true;
         }
     }
+    bool marqueeInteractionPresented = false;
+    if (marqueeActive_ && !marqueeFullPresentPending_ &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        // The first marquee frame still repaints the complete desktop so
+        // selected icon pixels move from the background to the interaction
+        // layer. Later frames change only that layer (and, when applicable,
+        // the one widget surface queued by OnMouseMoveAt).
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        marqueeInteractionPresented =
+            PresentDesktopForegroundComposition(client);
+    }
     bool desktopFallbackPresented = false;
     if (immediateDesktopPresent &&
+        !marqueeInteractionPresented &&
         (!widgetPreviewActive || !widgetInteractionPresented) &&
         hwnd_ && IsWindow(hwnd_))
     {
         InvalidateRect(hwnd_, nullptr, FALSE);
         PresentDesktopPointerUpdate();
         desktopFallbackPresented = true;
+    }
+    if (marqueeActive_ && marqueeFullPresentPending_ &&
+        desktopFallbackPresented)
+    {
+        marqueeFullPresentPending_ = false;
     }
     bool pageNavDragHintPresented =
         pageNavDragHintChanged &&
@@ -400,6 +419,8 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
     ResetDockHandoffDwell();
     ResetCompactCollectionHandoffDwell();
     CancelCollectionPopupDwell();
@@ -522,6 +543,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         }
     }
     widgetAction_ = WidgetAction::None;
+    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     middleButtonWidgetMove_ = false;
     detailColumnResizeActive_ = false;
     detailColumnResizePopup_ = false;

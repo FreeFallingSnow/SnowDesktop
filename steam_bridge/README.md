@@ -104,6 +104,7 @@ App Admin. Workshop visibility is configured and published separately there.
 ```powershell
 SnowDesktopSteamBridge.exe configuration
 SnowDesktopSteamBridge.exe status
+SnowDesktopSteamBridge.exe entitlement status
 SnowDesktopSteamBridge.exe workshop list-subscribed --details
 SnowDesktopSteamBridge.exe workshop item-details --item 1234567890
 SnowDesktopSteamBridge.exe workshop item-state --item 1234567890
@@ -133,11 +134,21 @@ partially written, or in-progress cache states never trigger automatic removal.
 
 The supported graphical workflow is `SnowDesktopWorkshopManager.exe`. It keeps
 its schema-v1 project library at
-`%LOCALAPPDATA%\SnowDesktop\SteamWorkshopManager\projects.json`, discovers the
+`<SnowDesktop data>\SteamWorkshopManager\projects.json` (and migrates the
+former `%LOCALAPPDATA%` store once, recording completion under the new data
+root so later launches do not scan the old directory), discovers the
 directory supplied with `--development-root`, and runs the separate
 `snowwidget.exe` process for authoritative validation and packaging. It never
 stores a Steam password or token. Removing a project removes only the local
-record.
+record. Manager package staging, Steam upload staging, previews, and the
+standalone CLI's scratch files all stay below the SnowDesktop `data` directory;
+they do not use the system temporary directory.
+
+On the first launch after upgrading, an older
+`%LOCALAPPDATA%\SnowDesktop\CreatorProjects` tree is preserved under
+`<SnowDesktop data>\CreatorProjects`, while obsolete LocalAppData Hook copies
+are removed. A marker below `<SnowDesktop data>\migrations` prevents later
+launches from touching that legacy root again.
 
 New items are created private. On update, title, description, and visibility
 are left untouched; primary preview and tags change only when selected. After a

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../drag_input_rules.h"
 #include "../ole_drag_rules.h"
 #include "../collection_titleless_rules.h"
@@ -303,6 +304,19 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kLargeIconRetryTimerId)
+    {
+        KillTimer(controlHwnd_, kLargeIconRetryTimerId);
+        for (size_t index = 0; index < items_.size(); ++index)
+            if (items_[index].largeIcon) RequestLargeIconAsset(index);
+        return;
+    }
+    if (timerId == kExternalOleDragLeaveGraceTimerId)
+    {
+        FinalizePendingExternalOleDragLeave();
+        return;
+    }
+
     if (timerId == kSettingsWindowRetryTimerId)
     {
         if (controlHwnd_ && IsWindow(controlHwnd_))
@@ -331,6 +345,28 @@ void DesktopApp::OnTimer(WPARAM timerId)
         }
         FlushPendingCompositionCommit();
         FlushPendingQuickNavigationCompositionCommit();
+        return;
+    }
+
+    if (timerId == kNativeDragHoverRecoveryTimerId)
+    {
+        if (!dragSession_.IsActive())
+        {
+            if (hwnd_ && IsWindow(hwnd_))
+                KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
+            return;
+        }
+        if (dragDropController_.IsTransportActive() ||
+            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) == 0)
+            return;
+
+        POINT recoveredPoint{};
+        if (TryGetNativeDragHoverPointFromCursor(
+                recoveredPoint))
+        {
+            UpdateCollectionPopupDwell(recoveredPoint);
+            UpdateCollectionGroupTabDwell(recoveredPoint);
+        }
         return;
     }
 
@@ -370,24 +406,32 @@ void DesktopApp::OnTimer(WPARAM timerId)
             snowdesktop::drag_input_rules::ShouldDeferModelReload(
                 dragSession_.HasContext(),
                 dragDropController_.IsTransportActive());
-        if (mouseDown_ || reloading_ || deferForDrag)
+        if (mouseDown_ || reloading_ || deferForDrag ||
+            renameEdit_ || HasActiveContextMenuSession())
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);
             return;
         }
+        ApplyPendingRenames();
         if (shellReloadPending_)
         {
             const bool reloadLayoutFromDisk =
                 shellReloadLayoutFromDiskPending_;
-            shellReloadPending_ = false;
-            shellReloadLayoutFromDiskPending_ = false;
-            ReloadItems(reloadLayoutFromDisk);
+            if (reloadLayoutFromDisk)
+            {
+                shellReloadPending_ = false;
+                shellReloadLayoutFromDiskPending_ = false;
+                ReloadItems(true);
+            }
+            else
+                RefreshShellItemsAsync();
         }
         if (shellDockFolderPopupRefreshPending_)
         {
             shellDockFolderPopupRefreshPending_ = false;
-            RefreshDockFolderPopup();
+            if (!shellReloadPending_)
+                RequestShellRefresh();
         }
     }
     else if (timerId == kRecycleBinPollTimerId)
@@ -442,9 +486,9 @@ void DesktopApp::OnTimer(WPARAM timerId)
         PollDisplayTopology();
         if (widgetEngine_)
             widgetEngine_->TickRuntime();
-        PollSettingsUpdateCheck();
+        TrimHiddenDesktopWidgetSurfaces();
         if (uiAnimationScheduler_.DiagnosticsEnabled())
-            PublishSettingsUpdateStatus();
+            PublishHomeAboutStatus();
         PollSteamWorkshopSubscriptions();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick =
@@ -460,6 +504,21 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (generalSettings_.dockEnabled &&
             (dockStateChanged || fallbackRefreshDue))
             RefreshDockRunningWindows();
+        if (dockWindowTransition_)
+        {
+            const HWND foreground = GetForegroundWindow();
+            const bool tracked = generalSettings_.dockEnabled &&
+                !dragSession_.HasContext() &&
+                !quickNavigationAnimation_.IsAnimating() &&
+                (std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
+                    [foreground](const auto& entry) {
+                        return entry.second.running && entry.second.window == foreground;
+                    }) ||
+                 std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
+                    [foreground](const auto& entry) { return entry.window == foreground; }));
+            dockWindowTransition_->UpdateSnapshotWarmup(
+                tracked ? foreground : nullptr, now - foregroundTick);
+        }
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {
@@ -471,6 +530,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kTaskbarRevealGuardTimerId)
     {
+        snowdesktop::dock_taskbar_diagnostics::Poll();
+        UpdateSystemShowDesktopDockLayerGuard();
         UpdateSystemTaskbarRevealGuard();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();
@@ -504,9 +565,20 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (!collectionPopupDwellTimerArmed_)
             return;
 
+#if 0
+        if (!collectionPopupDwellTimerObserved_)
+        {
+            collectionPopupDwellTimerObserved_ = true;
+            TraceCollectionPopupDwell(
+                L"timer-delivered", L"candidate",
+                lastMousePoint_,
+                popupDwellController_.Candidate());
+        }
+#endif
+
         if (TryOpenDwellCollectionPopup(GetTickCount()))
         {
-            OnMouseMoveAt(0, lastMousePoint_);
+            RefreshDwellDragTarget(lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }

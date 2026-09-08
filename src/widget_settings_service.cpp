@@ -581,6 +581,31 @@ struct SessionCopy
     bool previewActive = false;
 };
 
+WidgetHostAppearancePatch PreserveIndependentEdgeState(
+    const WidgetHostAppearancePatch& patch,
+    const WidgetHostAppearanceState& current)
+{
+    WidgetHostAppearancePatch resolved = patch;
+    if (!patch.glassEnabled && !patch.acrylicEnabled)
+        return resolved;
+
+    // Older component instances derive their edge treatment from glass while
+    // their new storage fields are still absent. A material-only edit must
+    // persist the effective edge state in the same transaction; otherwise
+    // reloading the component silently couples the two controls again.
+    if (!resolved.borderOpacity)
+        resolved.borderOpacity = current.borderOpacity;
+    if (!resolved.borderWidth)
+        resolved.borderWidth = current.borderWidth;
+    if (!resolved.edgeHighlightEnabled)
+        resolved.edgeHighlightEnabled = current.edgeHighlightEnabled;
+    if (!resolved.edgeHighlightWidth)
+        resolved.edgeHighlightWidth = current.edgeHighlightWidth;
+    if (!resolved.edgeHighlightStrength)
+        resolved.edgeHighlightStrength = current.edgeHighlightStrength;
+    return resolved;
+}
+
 WidgetSettingMutationResult GuardSession(
     const std::shared_ptr<WidgetSettingsService::State>& state,
     const WidgetSettingMutationGuard& guard, SessionCopy& copy)
@@ -666,6 +691,24 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         patch.acrylicEnabled = value == "1" || value == "true";
         return true;
     }
+    if (key == "edgeHighlightEnabled")
+    {
+        patch.edgeHighlightEnabled = value == "1" || value == "true";
+        return true;
+    }
+    if (key == "borderStyle")
+    {
+        char* end = nullptr;
+        const long parsed = std::strtol(value.c_str(), &end, 10);
+        if (end == value.c_str() || !end || *end != '\0' ||
+            parsed < 0 || parsed > 1)
+        {
+            error = "invalidBorderStyle";
+            return false;
+        }
+        patch.edgeHighlightEnabled = parsed == 1;
+        return true;
+    }
     if (key == "bg" || key == "border")
     {
         char* end = nullptr;
@@ -683,7 +726,7 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         return true;
     }
     if (key == "alpha" || key == "borderAlpha" ||
-        key == "gradientEndA")
+        key == "gradientEndA" || key == "edgeHighlightStrength")
     {
         char* end = nullptr;
         const float parsed = std::strtof(value.c_str(), &end);
@@ -695,7 +738,25 @@ bool ApplyHostAppearancePresetValue(WidgetHostAppearancePatch& patch,
         }
         if (key == "alpha") patch.backgroundOpacity = parsed;
         else if (key == "borderAlpha") patch.borderOpacity = parsed;
-        else patch.gradientEndOpacity = parsed;
+        else if (key == "gradientEndA") patch.gradientEndOpacity = parsed;
+        else patch.edgeHighlightStrength = parsed;
+        return true;
+    }
+    if (key == "borderWidth" || key == "edgeHighlightWidth")
+    {
+        char* end = nullptr;
+        const float parsed = std::strtof(value.c_str(), &end);
+        if (end == value.c_str() || !end || *end != '\0' ||
+            !std::isfinite(parsed) ||
+            parsed < kMinimumWidgetBorderWidth ||
+            parsed > kMaximumWidgetBorderWidth)
+        {
+            error = key == "borderWidth"
+                ? "invalidBorderWidth" : "invalidEdgeHighlightWidth";
+            return false;
+        }
+        if (key == "borderWidth") patch.borderWidth = parsed;
+        else patch.edgeHighlightWidth = parsed;
         return true;
     }
     if (key == "__contentTheme")
@@ -1162,18 +1223,22 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
     appearance.presetId = preset->id;
     if (session.snapshot.customStyle)
     {
-        // Component themes default both effects off when a preset omits them,
-        // exactly as the legacy editor did before applying its values.
+        // Component themes default both background materials off when a
+        // preset omits them, exactly as the legacy editor did before applying
+        // its values. Border defaults are resolved independently below.
         appearance.glassEnabled = false;
         appearance.acrylicEnabled = false;
+        // Existing authored presets describe solid materials, not the new
+        // host-only gradient. Keep its colors for later custom editing.
+        appearance.panelGradient = session.snapshot.hostAppearance.panelGradient;
+        appearance.panelGradient->enabled = false;
     }
     std::string appearanceError;
     for (const auto& [key, value] : preset->hostAppearanceValues)
     {
         if (key == "__preset" ||
             (session.snapshot.customStyle &&
-                (key == "followPersonalization" ||
-                    key == "__contentTheme")))
+                key == "followPersonalization"))
             continue;
         if (!ApplyHostAppearancePresetValue(
                 appearance, key, value, appearanceError))
@@ -1185,8 +1250,31 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
     }
     if (session.snapshot.customStyle)
     {
-        // A component preset inherits the current global content theme until
-        // the user explicitly chooses Light or Dark again.
+        const bool legacyEdgeHighlight =
+            appearance.glassEnabled.value_or(false);
+        if (!preset->hostAppearanceValues.contains("edgeHighlightEnabled") &&
+            !preset->hostAppearanceValues.contains("borderStyle"))
+            appearance.edgeHighlightEnabled = legacyEdgeHighlight;
+        if (!preset->hostAppearanceValues.contains("borderWidth"))
+            appearance.borderWidth = 1.0f;
+        if (!preset->hostAppearanceValues.contains("edgeHighlightWidth"))
+            appearance.edgeHighlightWidth =
+                kDefaultEdgeHighlightWidth;
+        if (!preset->hostAppearanceValues.contains(
+                "edgeHighlightStrength"))
+        {
+            appearance.edgeHighlightStrength =
+                kDefaultEdgeHighlightStrength;
+        if (legacyEdgeHighlight &&
+            !preset->hostAppearanceValues.contains("borderAlpha"))
+            appearance.borderOpacity = 0.0f;
+        }
+    }
+    if (session.snapshot.customStyle &&
+        !preset->hostAppearanceValues.contains("__contentTheme"))
+    {
+        // Presets without an explicit foreground keep inheriting the global
+        // content theme until the user chooses Light or Dark independently.
         appearance.contentTheme.reset();
         appearance.clearContentTheme = true;
     }
@@ -1207,6 +1295,9 @@ WidgetSettingMutationResult WidgetSettingsService::UpdateHostAppearance(
     WidgetSettingMutationResult checked =
         GuardSession(state_, guard, session);
     if (!checked.Succeeded()) return checked;
+    if (patch.panelGradient && !ValidatePanelGradient(*patch.panelGradient))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision, "invalidPanelGradient", {} };
     if (patch.Empty())
         return { WidgetSettingMutationStatus::Unchanged,
             session.snapshot.generation, session.snapshot.revision, {}, {} };
@@ -1214,9 +1305,12 @@ WidgetSettingMutationResult WidgetSettingsService::UpdateHostAppearance(
         return { WidgetSettingMutationStatus::Unavailable,
             session.snapshot.generation, session.snapshot.revision,
             "customStyleUnavailable", {} };
+    const WidgetHostAppearancePatch resolved =
+        PreserveIndependentEdgeState(
+            patch, session.snapshot.hostAppearance);
     return ReloadAfterMutation(*this, session,
         state_->backend.ApplyHostAppearanceTransaction(
-            session.descriptor, guard, patch, {}));
+            session.descriptor, guard, resolved, {}));
 }
 
 WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
@@ -1227,6 +1321,9 @@ WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
     WidgetSettingMutationResult checked =
         GuardSession(state_, guard, session);
     if (!checked.Succeeded()) return checked;
+    if (patch.panelGradient && !ValidatePanelGradient(*patch.panelGradient))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision, "invalidPanelGradient", {} };
     if (patch.Empty())
         return { WidgetSettingMutationStatus::Unchanged,
             session.snapshot.generation, session.snapshot.revision, {}, {} };
@@ -1234,9 +1331,12 @@ WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
         return { WidgetSettingMutationStatus::Unavailable,
             session.snapshot.generation, session.snapshot.revision,
             "customStyleUnavailable", {} };
+    const WidgetHostAppearancePatch resolved =
+        PreserveIndependentEdgeState(
+            patch, session.snapshot.hostAppearance);
     return ReloadAfterPreview(*this, state_, session, guard,
         state_->backend.PreviewHostAppearanceTransaction(
-            session.descriptor, guard, patch, {}));
+            session.descriptor, guard, resolved, {}));
 }
 
 WidgetSettingMutationResult WidgetSettingsService::CommitPreview(
@@ -1327,6 +1427,49 @@ WidgetSettingMutationResult WidgetSettingsService::Reset(
     if (backendResult.Succeeded())
         InvalidateSearches(state_, session.snapshot.widgetId,
             invalidatedSearchKeys);
+    return ReloadAfterMutation(*this, session, backendResult);
+}
+
+WidgetSettingMutationResult WidgetSettingsService::ResetField(
+    const WidgetSettingMutationGuard& guard, std::string_view key)
+{
+    SessionCopy session;
+    WidgetSettingMutationResult checked =
+        GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return checked;
+    const auto* field = FindField(session.snapshot, key);
+    if (!field)
+        return { WidgetSettingMutationStatus::SettingNotFound,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingNotFound", {} };
+    if (field->schema.Channel() != WidgetSettingValueChannel::Ordinary)
+        return { WidgetSettingMutationStatus::WrongValueChannel,
+            session.snapshot.generation, session.snapshot.revision,
+            "wrongValueChannel", {} };
+    if (!field->enabled)
+        return { WidgetSettingMutationStatus::Disabled,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingDisabled", {} };
+
+    const bool resetSearchQuery =
+        field->schema.Kind() == WidgetSettingKind::AppSearch;
+    if (field->currentValue == field->defaultValue &&
+        (!resetSearchQuery || field->searchQuery.empty()))
+    {
+        return { WidgetSettingMutationStatus::Unchanged,
+            session.snapshot.generation, session.snapshot.revision, {}, {} };
+    }
+
+    WidgetSettingOrdinaryWrite write{ field->schema.key,
+        field->defaultValue,
+        WidgetSettingUsesTypedStorage(field->schema.Kind()) };
+    if (resetSearchQuery) write.searchQuery = std::string{};
+    WidgetSettingsBackendResult backendResult =
+        state_->backend.ApplyOrdinaryTransaction(
+            session.descriptor, guard, { std::move(write) });
+    if (backendResult.Succeeded() && resetSearchQuery)
+        InvalidateSearches(state_, session.snapshot.widgetId,
+            { field->schema.key });
     return ReloadAfterMutation(*this, session, backendResult);
 }
 

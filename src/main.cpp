@@ -12,14 +12,18 @@
  */
 
 #include "app.h"
+#include "settings_process.h"
+#include "shell_launch_process.h"
 #include "crashlog.h"
 #include "application_crash_watchdog.h"
 #include "application_restart_policy.h"
 #include "data_paths.h"
+#include "deployment_context.h"
 #include "general_settings.h"
 #include "l10n.h"
 #include "single_instance.h"
 #include "widget_author_preview.h"
+#include "native_component_preview_export.h"
 
 #include <commctrl.h>
 
@@ -174,6 +178,27 @@ ExistingInstanceResolution ResolveExistingInstance(
     const snowdesktop::single_instance::InstanceInfo& requested,
     snowdesktop::single_instance::InstanceInfo* switchTarget)
 {
+    if (snowdesktop::single_instance::
+            IsManagedSteamRuntimeReplacement(running, requested))
+    {
+        if (snowdesktop::single_instance::RequestExistingInstanceExit(
+                running, 30000))
+        {
+            if (switchTarget)
+                *switchTarget = running;
+            return ExistingInstanceResolution::RetryLaunch;
+        }
+
+        const std::wstring message = _LFW(
+            "app.run.other_version_switch_failed",
+            running.version,
+            DeploymentSuffix(running));
+        MessageBoxW(nullptr, message.c_str(),
+            _LW("app.run.other_version_title"),
+            MB_OK | MB_ICONERROR);
+        return ExistingInstanceResolution::ExitNewInstance;
+    }
+
     const bool versionsMatch =
         running.version.empty() || requested.version.empty() ||
         snowdesktop::single_instance::VersionsMatch(
@@ -215,6 +240,22 @@ ExistingInstanceResolution ResolveExistingInstance(
         _LW("app.run.other_version_title"),
         MB_OK | MB_ICONERROR);
     return ExistingInstanceResolution::ExitNewInstance;
+}
+
+void RequestSteamRuntimePrune()
+{
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    if (context.kind != snowdesktop::deployment::
+            RuntimeDeploymentKind::SteamManaged ||
+        context.launcher.empty())
+    {
+        return;
+    }
+
+    ShellExecuteW(nullptr, L"open", context.launcher.c_str(),
+        L"--snowdesktop-launcher-prune-only",
+        context.installRoot.c_str(), SW_HIDE);
 }
 }
 
@@ -322,14 +363,36 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    if (const auto result = snowdesktop::shell_launch_process::TryRunCommand())
+        return *result;
+
+    if (snowdesktop::settings_ipc::IsSettingsProcessCommand())
+        return snowdesktop::settings_ipc::RunSettingsProcess(instance);
+
     if (snowdesktop::deployment::TryHandlePackagedAutoStartQueryCommand())
         return 0;
+
+    if (snowdesktop::deployment::HasInvalidRuntimeDeploymentContext())
+    {
+        const auto& context =
+            snowdesktop::deployment::GetRuntimeDeploymentContext();
+        OutputDebugStringA(("SnowDesktop: invalid runtime deployment "
+            "context: " + context.error + "\n").c_str());
+        return ERROR_INVALID_DATA;
+    }
 
     bool previewCommandHandled = false;
     const int previewCommandResult = snowdesktop::widget_authoring::
         TryRunWidgetAuthorPreviewHostCommand(previewCommandHandled);
     if (previewCommandHandled)
         return previewCommandResult;
+
+    bool nativePreviewCommandHandled = false;
+    const int nativePreviewCommandResult =
+        snowdesktop::native_component_preview::TryRunHostCommand(
+            instance, nativePreviewCommandHandled);
+    if (nativePreviewCommandHandled)
+        return nativePreviewCommandResult;
 
     const std::uintptr_t watchedProcessHandle =
         snowdesktop::application_restart_policy::
@@ -445,6 +508,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     {
         return 0;
     }
+
+    // The stable launcher owns runtime retirement. At this point this process
+    // is the primary instance, so a previous immutable Steam runtime can no
+    // longer be the active application and may be removed out of process.
+    RequestSteamRuntimePrune();
 
     /* 注册全局未处理异常过滤器与崩溃日志处理器 */
     SetUnhandledExceptionFilter(UnhandledFilter);

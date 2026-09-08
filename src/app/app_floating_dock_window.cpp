@@ -1,4 +1,5 @@
 #include "app.h"
+#include "popup_window_pair_z_order.h"
 
 // Floating-Dock window, composition surface and bounds management.
 
@@ -219,10 +220,24 @@ void DesktopApp::SelectPersistentDockHost(
 void DesktopApp::DestroyPersistentDockHost(
     PersistentDockHost& host)
 {
+    if (rightButtonDownDockHost_ == &host)
+        rightButtonDownDockHost_ = nullptr;
     if (collectionPopupDockHost_ == &host)
         collectionPopupDockHost_ = nullptr;
     if (quickNavigationDockHost_ == &host)
+    {
         quickNavigationDockHost_ = nullptr;
+        StopQuickNavigationAnimationTimeline();
+        if (quickNavigationAnimation_.IsClosing())
+            FinalizeCloseQuickNavigation();
+        else if (quickNavigationOpen_)
+        {
+            quickNavigationAnimation_.ShowImmediately();
+            ApplyQuickNavigationAnimationFrame();
+        }
+        quickNavigationAnimationDockRect_ = {};
+        ConfigureQuickNavigationAnimation();
+    }
     host.active = false;
     host.promoted = false;
     host.passivelyRevealed = false;
@@ -342,7 +357,7 @@ bool DesktopApp::SyncPersistentDockHosts()
     SelectPersistentDockHost(selected);
 
     floatingDockPersonalization_ =
-        CurrentPersonalization();
+        CurrentDockAppearance();
     for (const auto& ownedHost : persistentDockHosts_)
     {
         PersistentDockHost& host = *ownedHost;
@@ -439,7 +454,7 @@ bool DesktopApp::SyncPersistentDockHost(
 void DesktopApp::ApplyPersistentDockHostAppearance()
 {
     floatingDockPersonalization_ =
-        CurrentPersonalization();
+        CurrentDockAppearance();
     for (const auto& ownedHost : persistentDockHosts_)
     {
         if (!ownedHost || !ownedHost->active)
@@ -476,6 +491,8 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         host.backdrop.ShowPopupWindowPair(host.hwnd);
     else
         ShowWindow(host.hwnd, SW_SHOWNOACTIVATE);
+    if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
+        ApplyFloatingDockLayerPolicy(host);
 }
 
 void DesktopApp::UpdatePersistentDockHostVisibility()
@@ -577,7 +594,15 @@ CalculateFloatingDockStableSourceRect(
 
     const RECT dockRect =
         host.container->
-            GetInteractiveBounds();
+            GetAnimationVisualBounds();
+    const PersonalizationSettings& appearance =
+        IsPersistentDockHostEffectivelyFloating(host)
+            ? floatingDockPersonalization_
+            : CurrentDockAppearance();
+    const float visualEdgeWidth = appearance.widgetEdgeHighlightEnabled
+        ? std::max(appearance.widgetBorderWidth,
+            appearance.widgetEdgeHighlightWidth)
+        : appearance.widgetBorderWidth;
     RECT sourceRect =
         snowdesktop::floating_dock_rules::
             ExpandForBorderOverdraw(
@@ -585,9 +610,54 @@ CalculateFloatingDockStableSourceRect(
                     floating_dock_rules::
                         ExpandHostForTitleLayer(
                             dockRect,
-                            dockSettings_.position));
+                            dockSettings_.position),
+                visualEdgeWidth);
 
     return sourceRect;
+}
+
+std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
+{
+    std::vector<RECT> result;
+    if (!generalSettings_.dockEnabled || !hwnd_ || !IsWindowVisible(hwnd_) ||
+        ((!customDesktopVisible_ || desktopIconsHidden_) &&
+            !dockSettings_.keepWhenDesktopHidden))
+        return result;
+    const auto& appearance = CurrentDockAppearance();
+    const float borderWidth = appearance.widgetEdgeHighlightEnabled
+        ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)
+        : appearance.widgetBorderWidth;
+    for (const auto& container : containers_)
+    {
+        const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+        if (!dock)
+            continue;
+        if (IsDockHostedByPersistentHost(dock))
+        {
+            const auto* host = FindPersistentDockHost(dock);
+            const HWND transition = dockWindowTransition_
+                ? dockWindowTransition_->GetPresentationWindow() : nullptr;
+            if (!host || !IsWindowVisible(host->hwnd) || !transition)
+                continue;
+            const HWND next = GetWindow(host->hwnd, GW_HWNDNEXT);
+            const HWND pairEnd = host->backdrop.IsBackdropWindow(next) ? next : host->hwnd;
+            if (snowdesktop::popup_window_pair_z_order::IsTopmost(pairEnd) &&
+                snowdesktop::popup_window_pair_z_order::IsAbove(pairEnd, transition))
+                continue;
+            // If Windows refused to restack an independent Host, mask just its
+            // visible content instead of sinking the whole effect to desktop.
+        }
+        const auto visualRects = dock->GetOcclusionRects(lastMousePoint_);
+        for (size_t index = 0; index < visualRects.size(); ++index)
+        {
+            RECT screenRect = snowdesktop::floating_dock_rules::
+                ExpandForBorderOverdraw(visualRects[index], index == 0 ? borderWidth : 1.0f);
+            OffsetRect(&screenRect, virtualLeft_, virtualTop_);
+            if (!IsRectEmpty(&screenRect))
+                result.push_back(screenRect);
+        }
+    }
+    return result;
 }
 
 void DesktopApp::UpdateFloatingDockWindowBounds(
@@ -597,6 +667,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         if (host)
             UpdateFloatingDockWindowBounds(
                 *host, immediatePresent);
+    if (dockWindowTransition_)
+        dockWindowTransition_->RefreshOcclusion();
 }
 
 void DesktopApp::UpdateFloatingDockWindowBounds(
@@ -691,10 +763,22 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         1, floatingDockSourceRect_.bottom -
             floatingDockSourceRect_.top);
 
+    const PersonalizationSettings& dockAppearance = promoted
+        ? floatingDockPersonalization_
+        : CurrentDockAppearance();
+    const float dockBorderWidth = std::clamp(
+        dockAppearance.widgetEdgeHighlightEnabled
+            ? std::max(dockAppearance.widgetBorderWidth,
+                dockAppearance.widgetEdgeHighlightWidth)
+            : dockAppearance.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    const int borderOverdraw =
+        snowdesktop::floating_dock_rules::ResolveBorderOverdraw(
+            dockBorderWidth);
     const RECT dockRegionRect =
         snowdesktop::floating_dock_rules::
             ExpandForBorderOverdraw(
-                floatingDockRect_);
+                floatingDockRect_, dockBorderWidth);
     const RECT dockLocal =
         snowdesktop::floating_dock_rules::
             DesktopRectToWindowRect(
@@ -704,8 +788,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         static_cast<int>(std::round(
             promoted
                 ? floatingDockPersonalization_.cornerRadius
-                : CurrentPersonalization().cornerRadius)));
-    constexpr int borderOverdraw = 2;
+                : CurrentDockAppearance().cornerRadius)));
     HRGN windowRegion = CreateRoundRectRgn(
         dockLocal.left, dockLocal.top,
         dockLocal.right + 1, dockLocal.bottom + 1,
@@ -866,4 +949,6 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     // never be revived by a later layout update.
     if (!floatingDockRevealPending_)
         UpdatePersistentDockHostVisibility(host);
+    if (dockWindowTransition_)
+        dockWindowTransition_->RefreshOcclusion();
 }

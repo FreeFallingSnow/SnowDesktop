@@ -355,6 +355,14 @@ constexpr bool ShouldOpenFromDockSearchPress(
     return !dismissedBySamePress;
 }
 
+constexpr bool ShouldRouteSearchEditKeyToResults(
+    WPARAM key)
+{
+    // Keep caret/navigation keys owned by the native edit control while it
+    // has focus. Enter remains the explicit way to activate a search result.
+    return key == VK_RETURN;
+}
+
 inline bool ShouldAcceptPointerHit(
     bool open,
     POINT desktopPoint,

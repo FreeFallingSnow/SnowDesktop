@@ -15,12 +15,14 @@ SnowDesktop's embedded Regular font:
 | Asset | Fluent glyph composition |
 | --- | --- |
 | `general.svg` | Settings 24 Regular + Filled |
+| `animation-performance.svg` | Filmstrip Play 24 Regular + Filled |
 | `appearance.svg` | Paint Brush 24 Regular + Filled |
 | `appearance-theme.svg` | Dark Theme 24 Regular + Filled |
 | `appearance-widgets.svg` | Window Apps 24 Regular + Filled |
 | `appearance-desktop-icons.svg` | Icons 24 Regular + Filled |
 | `appearance-icon-beautification.svg` | Paint Brush Sparkle 24 Regular + Filled |
 | `desktop.svg` | Desktop 24 Regular + Filled |
+| `pages.svg` | Table Multiple 24 Regular + Filled |
 | `categories.svg` | Collections 24 Regular + Filled |
 | `dock.svg` | Dock Row 24 Regular + Filled |
 | `taskbar.svg` | Panel Bottom 20 Regular + Filled |

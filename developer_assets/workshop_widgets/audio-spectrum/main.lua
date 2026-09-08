@@ -178,8 +178,7 @@ local function dataSeriesAccessibility(hidden)
 end
 
 local function spectrumNode(model)
-    local padding = math.max(layout.cu(4), math.min(
-        layout.cu(10), layout.vmin(5)))
+    local padding = layout.vmin(5)
     local values = spectrum.display(model.values, model.barCount)
     local plan = spectrum.seriesPlan(model.alignment)
     local function properties(key, seriesValues, hidden, trackOpacity)
@@ -227,8 +226,8 @@ local function statusNode(status)
         text = l10n.tr(key),
         width = "fill",
         height = "fill",
-        padding = layout.cu(8),
-        fontSize = layout.fontCu(12),
+        padding = layout.vmin(8),
+        fontSize = layout.vmin(10),
         textAlign = "center",
         verticalAlign = "center",
         textWrap = "wrap",

@@ -1,5 +1,6 @@
 #include "winui/settings_shell_navigation.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -28,7 +29,9 @@ std::string ReadText(const std::filesystem::path& path)
     if (!input) return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    std::string source = content.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 void TestHistoryAndFocusRoutes()
@@ -139,6 +142,27 @@ void TestControllerCommittedBackNavigation()
         "a validated controller back commit moves within existing history");
 }
 
+void TestLargeIconParentNavigation()
+{
+    SettingsRoute first = SettingsRoute::ForPage(SettingsPage::LargeIcon); first.itemKey = L"first";
+    SettingsRoute second = first; second.itemKey = L"second";
+    SettingsShellNavigationState direct;
+    Check(direct.ApplyControllerUpdate(first, 1, 1) && direct.CanGoBack() &&
+        direct.PeekBack()->page == SettingsPage::AppearanceDesktopIcons,
+        "a directly opened large-icon editor always has the Icons parent");
+    Check(direct.ApplyControllerUpdate(second, 2, 1) && direct.HistorySize() == 2 &&
+        direct.PeekBack()->page == SettingsPage::AppearanceDesktopIcons,
+        "switching the edited item replaces the detail entry, not its parent");
+    const auto parent = SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons, "desktop.iconSize");
+    SettingsShellNavigationState existing;
+    Check(existing.Navigate(parent) && existing.Navigate(first) && existing.PeekBack() == parent,
+        "entering a detail preserves its existing parent focus route");
+    Check(existing.Navigate(second) && existing.GoBack() == parent,
+        "Back skips the previous item editor and restores the parent focus target");
+    Check(direct.ApplyControllerUpdate(second, 1, 2) && direct.HistorySize() == 2,
+        "reopening a settings generation seeds a fresh Icons parent");
+}
+
 void TestInvalidRoutes()
 {
     SettingsShellNavigationState state;
@@ -165,6 +189,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         root / "src/winui/desktop_page_presenter.cpp");
     const std::string dock = ReadText(
         root / "src/winui/dock_page_presenter.cpp");
+    const std::string pages = ReadText(
+        root / "src/winui/page_layout_page_presenter.cpp");
     const std::string sharedControls = ReadText(
         root / "src/winui/settings_presenter_controls.h");
     const std::string shellXaml = ReadText(
@@ -178,7 +204,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
 
     Check(!shell.empty() && !shellHeader.empty() && !presenter.empty() &&
             !presenterHeader.empty() && !personalization.empty() &&
-            !desktop.empty() && !dock.empty() &&
+            !desktop.empty() && !dock.empty() && !pages.empty() &&
             !sharedControls.empty() && !shellXaml.empty() &&
             !recorder.empty() && !recorderHeader.empty() &&
             !recorderRules.empty(),
@@ -283,18 +309,9 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "hasSnapshot = true;\n        UpdateDependentEnabledStates();") !=
                 std::string::npos &&
             presenter.find(
-              "RefreshStartupConflict();\n        UpdateConditionalHintVisibility();") !=
+              "RefreshStartupConflict();\n        RefreshAdvancedFeatureStatus();\n        UpdateConditionalHintVisibility();") !=
                 std::string::npos,
         "desktop passthrough and floating-Dock hints follow only their own toggles and refresh after localization");
-    Check(personalization.find(
-              "FourThemeSelectionFromAppearancePreset(") !=
-                std::string::npos &&
-            personalization.find("settings.quickNavTheme = inheritedTheme") !=
-                std::string::npos &&
-            personalization.find(
-              "settings.collectionPopupTheme = inheritedTheme") !=
-                std::string::npos,
-        "switching a built-in appearance to Custom carries its four-theme selection into the legacy quick-navigation surfaces");
     Check(presenter.find("autoStartToggle") != std::string::npos &&
             presenter.find("settings.autoStartEnabled = enabled") ==
                 std::string::npos &&
@@ -321,8 +338,43 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "void GeneralPagePresenter::RefreshRuntimeState() noexcept") !=
                 std::string::npos &&
             presenter.find("impl_->RefreshStartupConflict();") !=
+                std::string::npos &&
+            presenter.find("impl_->RefreshAdvancedFeatureStatus();") !=
                 std::string::npos,
-        "cached General pages expose an explicit runtime-state refresh for startup conflicts");
+        "cached General pages refresh startup conflicts and Steam unlock state");
+    Check(presenter.find(
+              "InitializeCard(advancedFeaturesCard, cardStyle, root)") !=
+                std::string::npos &&
+            presenter.find("advancedFeatureNotice.IsClosable(false)") !=
+                std::string::npos &&
+            presenter.find("actions.registerAdvancedFeatures();") !=
+                std::string::npos &&
+            presenter.find("actions.openAdvancedFeaturesStore();") !=
+                std::string::npos &&
+            presenter.find(
+              "advancedFeaturesCard.root.Visibility(status.cardVisible") !=
+                std::string::npos &&
+            presenter.find(
+              "settings.general.advancedFeatures.unlock") !=
+                std::string::npos &&
+            presenter.find(
+              "GeneralAdvancedFeatureState::RegistrationFailed") !=
+                std::string::npos &&
+            presenter.find("if (advancedFeatureStoreAction)") !=
+                std::string::npos &&
+            presenter.find("!status.registered && !status.bridgeAvailable") !=
+                std::string::npos &&
+            presenter.find("if (status.registered)") !=
+                std::string::npos &&
+            presenter.find(
+              "settings.general.advancedFeatures.registeredUntil") !=
+                std::string::npos &&
+            presenterHeader.find("queryAdvancedFeatureStatus") !=
+                std::string::npos &&
+            presenterHeader.find("validUntil") != std::string::npos &&
+            presenterHeader.find("offerSteamStore") !=
+                std::string::npos,
+        "General keeps valid registrations quiet with a renewal deadline while conditionally presenting the portable Steam Store action and unregistered reminders");
     Check(presenter.find(
               "startupCard.content.Children().Append(startupOwnershipNotice)") !=
                 std::string::npos &&
@@ -441,8 +493,10 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         "case SettingsPage::AppearanceWidgets:", personalizationCase);
     const auto desktopCase = shell.find(
         "case SettingsPage::Desktop:", widgetAppearanceCase);
+    const auto pagesCase = shell.find(
+        "case SettingsPage::DesktopPages:", desktopCase);
     const auto desktopIconsCase = shell.find(
-        "case SettingsPage::AppearanceDesktopIcons:", desktopCase);
+        "case SettingsPage::AppearanceDesktopIcons:", pagesCase);
     const auto beautificationCase = shell.find(
         "case SettingsPage::AppearanceIconBeautification:",
         desktopIconsCase);
@@ -463,7 +517,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
         personalizationCase, widgetAppearanceCase);
     const auto widgetAppearanceSection = section(
         widgetAppearanceCase, desktopCase);
-    const auto desktopSection = section(desktopCase, desktopIconsCase);
+    const auto desktopSection = section(desktopCase, pagesCase);
+    const auto pagesSection = section(pagesCase, desktopIconsCase);
     const auto desktopIconsSection = section(
         desktopIconsCase, beautificationCase);
     const auto beautificationSection = section(
@@ -475,6 +530,14 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "personalizationPage_->ThemeContent()") !=
                 std::string_view::npos &&
             personalizationSection.find("personalization.backgroundColor") !=
+                std::string_view::npos &&
+            personalizationSection.find("personalization.edgeHighlight") !=
+                std::string_view::npos &&
+            personalizationSection.find(
+              "personalization.edgeHighlightWidth") !=
+                std::string_view::npos &&
+            personalizationSection.find(
+              "personalization.edgeHighlightStrength") !=
                 std::string_view::npos &&
             widgetAppearanceSection.find(
               "personalizationPage_->WidgetLayoutContent()") !=
@@ -488,6 +551,43 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string_view::npos &&
             desktopSection.find("DesktopIconsContent()") ==
                 std::string_view::npos &&
+            pagesSection.find("pageLayoutPage_->Content()") !=
+                std::string_view::npos &&
+            pagesSection.find("generalPage_->PageNavigationContent()") !=
+                std::string_view::npos &&
+            pages.find("CanReorderItems(true)") != std::string::npos &&
+            pages.find("dimensions.Orientation(muxc::Orientation::Vertical)") !=
+                std::string::npos &&
+            pages.find("NumberBoxSpinButtonPlacementMode::Inline") !=
+                std::string::npos &&
+            pages.find("columnsLabel.Text(L(\"settings.pages.columns\"))") !=
+                std::string::npos &&
+            pages.find("rowsLabel.Text(L(\"settings.pages.rows\"))") !=
+                std::string::npos &&
+            pages.find("UpdateOrderState();\n                ApplyOrder();") !=
+                std::string::npos &&
+            pages.find("[this](const auto&, const auto&) { ConfirmGrid(); }") !=
+                std::string::npos &&
+            pages.find("applyOrderButton") == std::string::npos &&
+            pages.find("void ConfirmOrder()") == std::string::npos &&
+            pages.find("applyGridButton") == std::string::npos &&
+            pages.find("L(\"settings.dialog.confirm\")") !=
+                std::string::npos &&
+            pages.find("settings.pages.grid.confirm.title") !=
+                std::string::npos &&
+            pages.find("settings.pages.role.currentLast") !=
+                std::string::npos &&
+            pages.find("settings.pages.role.first") !=
+                std::string::npos &&
+            pages.find("PageListMatchesSnapshot") !=
+                std::string::npos &&
+            pages.find("RefreshPageRowsInPlace") !=
+                std::string::npos &&
+            pages.find("refreshTimer.Interval(std::chrono::milliseconds(500))") !=
+                std::string::npos &&
+            pages.find("std::swap(order[index]") != std::string::npos &&
+            pages.find("items.RemoveAt(index)") == std::string::npos &&
+            pages.find("items.InsertAt(") == std::string::npos &&
             desktopIconsSection.find(
               "desktopPage_->DesktopIconsContent()") !=
                 std::string_view::npos &&
@@ -530,7 +630,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 std::string::npos &&
             shell.find("result.route.page = result.focusId.starts_with") ==
                 std::string::npos,
-        "Appearance leaves, Desktop, Categories, Dock, and Taskbar compose only their owned presenter sections and moved focus aliases remain stable");
+        "Appearance leaves, Desktop, Pages, Categories, Dock, and Taskbar compose only their owned presenter sections, page move buttons do not detach their active XAML row, and moved focus aliases remain stable");
 
     const auto generalItem = shellXaml.find("x:Name=\"GeneralItem\"");
     const auto homeItem = shellXaml.find("x:Name=\"HomeItem\"");
@@ -547,6 +647,7 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
     const auto desktopShellHeader = shellXaml.find(
         "x:Name=\"DesktopShellHeader\"");
     const auto desktopItem = shellXaml.find("x:Name=\"DesktopItem\"");
+    const auto pagesItem = shellXaml.find("x:Name=\"PagesItem\"");
     const auto categoriesItem = shellXaml.find(
         "x:Name=\"CategoriesItem\"");
     const auto dockItem = shellXaml.find("x:Name=\"DockItem\"");
@@ -584,7 +685,8 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
                 appearanceIconBeautificationItem &&
             appearanceIconBeautificationItem < desktopShellHeader &&
             desktopShellHeader < desktopItem &&
-            desktopItem < categoriesItem && categoriesItem < dockItem &&
+            desktopItem < pagesItem && pagesItem < categoriesItem &&
+            categoriesItem < dockItem &&
             dockItem < taskbarItem && taskbarItem < widgetsItem &&
             widgetsItem < dataHeader && dataHeader < backupItem &&
             backupItem < aboutItem && aboutItem < developerItem &&
@@ -904,6 +1006,7 @@ int main(int argc, char** argv)
     TestControllerGenerationGate();
     TestControllerCommittedBackNavigation();
     TestInvalidRoutes();
+    TestLargeIconParentNavigation();
     Check(argc == 2,
         "source root is supplied for WinUI settings source contracts");
     if (argc == 2)

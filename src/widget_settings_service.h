@@ -277,7 +277,72 @@ struct WidgetSettingSearchCompleted
  * and monotonically increasing revision. Public methods may be called from the
  * UI thread; search completions may arrive from any thread.
  */
-class WidgetSettingsService
+/** Internal value/service boundary used by the settings UI process. */
+class IWidgetSettingsService
+{
+public:
+    virtual ~IWidgetSettingsService() = default;
+    using SnapshotChangedCallback =
+        std::function<void(WidgetSettingsSnapshotChanged)>;
+    using SearchCompletedCallback =
+        std::function<void(WidgetSettingSearchCompleted)>;
+    virtual void SetEventCallbacks(
+        SnapshotChangedCallback snapshotChanged,
+        SearchCompletedCallback searchCompleted) = 0;
+    virtual WidgetSettingsLoadResult Load(std::wstring widgetId) = 0;
+    virtual WidgetSettingsLoadResult Reload(std::wstring_view widgetId) = 0;
+    virtual std::optional<WidgetSettingsSnapshot> Snapshot(
+        std::wstring_view widgetId) const = 0;
+    virtual void Close(std::wstring_view widgetId) = 0;
+    virtual void CloseAll() = 0;
+    virtual WidgetSettingMutationResult SetOrdinary(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        const InteractionValue& value) = 0;
+    virtual WidgetSettingMutationResult PreviewOrdinary(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        const InteractionValue& value) = 0;
+    virtual WidgetSettingMutationResult SetSearchQuery(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        std::string query) = 0;
+    virtual WidgetSettingMutationResult SetSecret(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        std::string_view plaintext) = 0;
+    virtual WidgetSettingMutationResult ChooseFilesystemHandle(
+        const WidgetSettingMutationGuard& guard, std::string_view key) = 0;
+    virtual WidgetSettingMutationResult OpenEntityReferencePicker(
+        const WidgetSettingMutationGuard& guard, std::string_view key) = 0;
+    virtual WidgetSettingMutationResult ClearOpaque(
+        const WidgetSettingMutationGuard& guard, std::string_view key) = 0;
+    virtual WidgetSettingMutationResult ApplyPreset(
+        const WidgetSettingMutationGuard& guard,
+        std::string_view presetId) = 0;
+    virtual WidgetSettingMutationResult UpdateHostAppearance(
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& patch) = 0;
+    virtual WidgetSettingMutationResult PreviewHostAppearance(
+        const WidgetSettingMutationGuard& guard,
+        const WidgetHostAppearancePatch& patch) = 0;
+    virtual WidgetSettingMutationResult CommitPreview(
+        const WidgetSettingMutationGuard& guard) = 0;
+    virtual WidgetSettingMutationResult RevertPreview(
+        const WidgetSettingMutationGuard& guard) = 0;
+    virtual WidgetSettingMutationResult ResetField(
+        const WidgetSettingMutationGuard& guard, std::string_view key) = 0;
+    virtual WidgetSettingMutationResult Reset(
+        const WidgetSettingMutationGuard& guard) = 0;
+    virtual WidgetSettingMutationResult StartSearch(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        std::string query, std::size_t maximumResults = 8) = 0;
+    virtual WidgetSettingMutationResult CancelSearch(
+        const WidgetSettingMutationGuard& guard, std::string_view key) = 0;
+    virtual WidgetSettingMutationResult CommitSearchResult(
+        const WidgetSettingMutationGuard& guard, std::string_view key,
+        std::uint64_t requestId, std::string_view resultId) = 0;
+    virtual std::optional<WidgetSettingSearchSnapshot> SearchSnapshot(
+        std::wstring_view widgetId, std::string_view key) const = 0;
+};
+
+class WidgetSettingsService : public IWidgetSettingsService
 {
 public:
     struct State;
@@ -340,6 +405,8 @@ public:
         const WidgetSettingMutationGuard& guard);
     WidgetSettingMutationResult RevertPreview(
         const WidgetSettingMutationGuard& guard);
+    WidgetSettingMutationResult ResetField(
+        const WidgetSettingMutationGuard& guard, std::string_view key);
     WidgetSettingMutationResult Reset(
         const WidgetSettingMutationGuard& guard);
 

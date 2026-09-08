@@ -70,7 +70,7 @@ DragSourceList DesktopApp::BuildDragSourceList(
                     const DesktopItem& item = items_[entry.desktopIndex];
                     entry.filePath = item.parsingName;
                     entry.originalCell = item.gridCell;
-                    entry.originalSpan = item.gridSpan;
+                    entry.originalSpan = {1, 1}; // A Dock entry always has ordinary icon geometry.
                     entry.protectedDesktopIcon = IsProtectedDesktopIcon(item);
                 }
             }
@@ -469,7 +469,7 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             sourceList, dropPoint);
         bool internalMove = !IsDropFileBacked(sourceList, preview.targetKind, preview.action);
         if (internalMove)
-            targetCell = FindBestDropCell(targetCell);
+            targetCell = FindBestDropCell(sourceList, targetCell);
         preview.anchorCell = targetCell;
         preview.fileBacked = !internalMove;
         preview.landings = BuildDesktopLandings(sourceList, targetCell, internalMove);

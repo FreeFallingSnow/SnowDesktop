@@ -9,6 +9,9 @@
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
 #include "app/rename_controller.h"
+#include "app/rename_notification_tracker.h"
+#include "app/rename_model_update.h"
+#include "app/shell_refresh_snapshot.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
 #include "drag_input_rules.h"
@@ -792,6 +795,58 @@ void TestDropActionModifiers()
         "reapplying the same action must not invalidate state");
 }
 
+void TestDockPayloadSurvivesPageTurnWithoutSelection()
+{
+    using snowdesktop::drag_source_rebind::ResolveRecordedDockItems;
+    using snowdesktop::slot_contract::SlotSurfaceKind;
+    for (const POINT pointer : { POINT{600, 300}, POINT{2400, 300},
+                                 POINT{-600, 300} })
+    {
+        ContractContainer source(BarStyle::VBar, SlotSurfaceKind::Dock);
+        ContractItem original(RECT{20, 700, 80, 760});
+        DragSourceList list;
+        list.BindRuntimeOrigin(&source);
+        DragSourceEntry entry;
+        entry.fromDock = true;
+        entry.kind = DropSourceKind::Widget;
+        entry.dockReference = L"dragged-widget";
+        entry.dockEntryType = DockEntryType::Collection;
+        entry.originalCell = {L"__dock", 0, 0};
+        list.entries.push_back(entry);
+        list.hasWidgets = true;
+        DragSession session;
+        session.Begin(&source, {&original}, list, POINT{40, 720}, pointer);
+        // Repeated turns must keep the same payload even with no selection,
+        // including after crossing to either side of the source display.
+        for (int turn = 0; turn < 3; ++turn)
+        {
+            session.DetachRuntimeBindings();
+            ContractContainer rebuilt(BarStyle::VBar, SlotSurfaceKind::Dock);
+            ContractItem item(RECT{1920, 900, 1980, 960});
+            auto items = ResolveRecordedDockItems(session.SourceList(),
+                [&](const DragSourceEntry& saved) -> Item* {
+                    return saved.dockReference == L"dragged-widget" &&
+                        saved.dockEntryType == DockEntryType::Collection
+                        ? &item : nullptr;
+                });
+            Check(items.size() == 1 && items.front() == &item,
+                "Dock page turns must restore the pressed widget without selection");
+            auto rebound = session.SourceList();
+            rebound.BindRuntimeOrigin(&rebuilt);
+            rebound.entries.front().item = &item;
+            session.RebindSource(&rebuilt, std::move(items), rebound);
+            const POINT target = session.SourceList().UsesPointerDesktopPlacement()
+                ? pointer : session.ResolveTargetPoint({20, 700}, pointer);
+            Check(session.IsActive() && target.x == pointer.x && target.y == pointer.y &&
+                    session.SourceList().SourceSurfaceKind() == SlotSurfaceKind::Dock,
+                "Dock landing must follow the pointer across displays and repeated page turns");
+            Check(ResolveRecordedDockItems(session.SourceList(),
+                [](const DragSourceEntry&) -> Item* { return nullptr; }).empty(),
+                "A missing Dock entry must not substitute another selected item");
+        }
+    }
+}
+
 void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
 {
     namespace contract = snowdesktop::slot_contract;
@@ -1446,16 +1501,16 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
     {
         MSG current = queue.front();
         queue.pop_front();
-        const bool nativeSurface =
+        const bool pointerSurface =
             snowdesktop::drag_input_rules::
-                IsNativeDragMessageSurface(
+                IsLatencySensitivePointerMessageSurface(
                     current.hwnd == mainWindow,
                     current.hwnd == floatingDock,
                     current.hwnd == floatingPopup);
         coalesced += snowdesktop::drag_input_rules::
             CoalesceQueuedMouseMoves(
                 nativeDragActive,
-                nativeSurface,
+                pointerSurface,
                 current,
                 [&](MSG& next) {
                     if (queue.empty()) return false;
@@ -1738,6 +1793,273 @@ void TestRenameControllerKeepsTargetsExclusive()
         "an inactive rename cannot acquire presentation state or lock scrolling");
 }
 
+void TestRenameControllerRejectsStaleFocusCommits()
+{
+    RenameController controller;
+    Check(!controller.MatchesSession(0),
+        "an inactive editor must reject a queued commit");
+
+    controller.BeginDesktopItem(2);
+    const auto firstSession = controller.SessionId();
+    Check(controller.MatchesSession(firstSession),
+        "the active editor must accept its own focus-loss notification");
+    controller.Reset();
+    Check(!controller.MatchesSession(firstSession),
+        "a pointer commit must retire the old focus-loss notification");
+
+    // Reopening even the same item must not consume its previous EDIT's
+    // queued notification, regardless of native HWND reuse.
+    controller.BeginDesktopItem(2);
+    Check(!controller.MatchesSession(firstSession) &&
+            controller.MatchesSession(controller.SessionId()),
+        "reopening the same item must reject the previous editor's commit");
+    const auto secondSession = controller.SessionId();
+    controller.BeginDockFolderEntry(3);
+    Check(!controller.MatchesSession(secondSession) &&
+            controller.MatchesSession(controller.SessionId()),
+        "switching rename surfaces must invalidate the previous session");
+}
+
+void TestShellRefreshRejectsStaleSnapshots()
+{
+    snowdesktop::shell_refresh::Revision revision;
+    revision.Invalidate();
+    const auto initial = revision.Begin();
+    Check(initial.has_value() && !revision.Begin().has_value(),
+        "a burst of file notifications cannot queue concurrent reads");
+    revision.Invalidate(); // A create/delete/rename arrives during the read.
+    Check(!revision.Finish(*initial) && !revision.Running(),
+        "an older directory snapshot must not resurrect a deleted or renamed file");
+    const auto latest = revision.Begin();
+    Check(latest && *latest != *initial && !revision.Finish(*initial) &&
+            revision.Running() && revision.Finish(*latest),
+        "late completions cannot retire a newer read and only its latest result applies");
+    const auto beforeManualReload = revision.Begin();
+    revision.Invalidate(); // A manual/settings reload has newer UI state.
+    Check(!revision.Finish(*beforeManualReload),
+        "a manual model reload invalidates an already running background read");
+}
+
+void TestShellMetadataCacheRejectsChangedFiles()
+{
+    using namespace snowdesktop::shell_refresh;
+    WIN32_FILE_ATTRIBUTE_DATA file{};
+    file.dwFileAttributes = FILE_ATTRIBUTE_ARCHIVE;
+    file.ftCreationTime = {1, 0};
+    file.ftLastWriteTime = {2, 0};
+    file.nFileSizeLow = 12;
+    ShellMetadata entry;
+    entry.path = L"C:\\mapped\\link.lnk";
+    entry.stamp = FileStamp::From(file);
+    entry.info.iIcon = 7;
+    entry.absoluteId.reset(static_cast<PIDLIST_ABSOLUTE>(CoTaskMemAlloc(sizeof(USHORT))));
+    Check(entry.absoluteId.get() != nullptr, "metadata fixture owns a PIDL");
+    if (!entry.absoluteId.get()) return;
+    entry.absoluteId.get()->mkid.cb = 0;
+    Check(entry.Matches(entry.path, FileStamp::From(file)), "unchanged metadata can be reused");
+    Check(!entry.Matches(L"C:\\mapped\\Link.lnk", FileStamp::From(file)),
+        "case-only renames must refresh cached display names");
+    auto changed = file;
+    ++changed.nFileSizeLow;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "size changes invalidate metadata");
+    changed = file; ++changed.ftLastWriteTime.dwLowDateTime;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "same-size overwrites invalidate metadata");
+    changed = file; ++changed.ftCreationTime.dwLowDateTime;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "delete/recreate at the same path invalidates metadata");
+    changed = file; changed.dwFileAttributes |= FILE_ATTRIBUTE_HIDDEN;
+    Check(!entry.Matches(entry.path, FileStamp::From(changed)), "attribute changes invalidate metadata");
+    changed = file; ++changed.ftLastAccessTime.dwLowDateTime;
+    Check(entry.Matches(entry.path, FileStamp::From(changed)), "read-induced access time changes keep metadata reusable");
+
+    MetadataCache ui;
+    const auto key = L"C:\\MAPPED\\LINK.LNK";
+    ui.desktop.emplace(key, entry);
+    ui.folders[L"C:\\MAPPED"].emplace(key, entry);
+    ui.folders[L"C:\\MAPPED\\CHILD"].emplace(key, entry);
+    ui.folders[L"C:\\MAPPED-OTHER"].emplace(key, entry);
+    auto worker = ui;
+    Check(worker.desktop.at(key).absoluteId.get() != ui.desktop.at(key).absoluteId.get() &&
+        ILIsEqual(worker.desktop.at(key).absoluteId.get(), ui.desktop.at(key).absoluteId.get()),
+        "a worker cache owns an independent copy of each Shell identity");
+    ui.Invalidate(key);
+    Check(!ui.desktop.contains(key) && ui.folders.at(L"C:\\MAPPED").empty() &&
+        worker.desktop.at(key).Matches(entry.path, entry.stamp),
+        "an explicit update invalidates every UI alias without mutating an in-flight snapshot");
+    ui.Invalidate(L"C:\\MAPPED", true);
+    Check(!ui.folders.contains(L"C:\\MAPPED") && !ui.folders.contains(L"C:\\MAPPED\\CHILD") &&
+        ui.folders.contains(L"C:\\MAPPED-OTHER"),
+        "renamed/deleted folders retire descendant caches without matching sibling prefixes");
+}
+
+void TestShellRefreshPreservesCurrentItemState()
+{
+    DesktopItem previous;
+    previous.name = L"kept.txt";
+    previous.gridCell = { L"current-page", 3, 4 };
+    previous.gridSpan = { 2, 1 };
+    previous.largeIcon = snowdesktop::LargeIconConfig{};
+    previous.largeIcon->columns = 4; previous.largeIcon->rows = 3;
+    previous.largeIcon->image = "import-kept.png";
+    previous.slot = 8;
+    previous.selected = true;
+    previous.isCut = true;
+    previous.sysIconIndex = 9;
+    previous.fileSize = 12;
+    previous.modifiedTime = FILETIME{ 1, 2 };
+    previous.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    previous.iconState = IconState::FullQuality;
+    const HBITMAP bitmap = previous.iconBitmap;
+    Check(bitmap != nullptr, "the snapshot preservation fixture owns a real bitmap");
+    DesktopItem read;
+    read.name = previous.name;
+    read.sysIconIndex = previous.sysIconIndex;
+    read.fileSize = previous.fileSize;
+    read.modifiedTime = previous.modifiedTime;
+    snowdesktop::shell_refresh::PreserveRuntime(read, previous);
+    Check(read.largeIcon && read.largeIcon->columns == 4 && read.largeIcon->rows == 3 &&
+        read.largeIcon->image == "import-kept.png", "Shell refresh preserves desired large-icon spans and owned image references");
+    Check(read.gridCell.pageId == L"current-page" && read.gridCell.column == 3 &&
+            read.gridCell.row == 4 && read.gridSpan.columns == 2 && read.slot == 8 &&
+            read.selected && read.isCut && read.iconBitmap == bitmap &&
+            !previous.iconBitmap && read.iconState == IconState::FullQuality,
+        "create/delete refreshes retain current placement, selection and the owned icon");
+    DesktopItem changed;
+    changed.sysIconIndex = read.sysIconIndex;
+    changed.fileSize = 24;
+    changed.modifiedTime = FILETIME{ 3, 2 };
+    snowdesktop::shell_refresh::PreserveRuntime(changed, read);
+    Check(changed.iconBitmap == bitmap && !read.iconBitmap &&
+            changed.iconState == IconState::Loading && changed.selected,
+        "overwriting a file keeps its visible icon while requesting new thumbnail content");
+    FolderEntry folderPrevious;
+    folderPrevious.fullPath = L"C:\\mapped\\kept.txt";
+    folderPrevious.selected = true;
+    folderPrevious.isCut = true;
+    folderPrevious.sysIconIndex = 4;
+    folderPrevious.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    folderPrevious.iconState = IconState::FullQuality;
+    FolderEntry folderRead;
+    folderRead.sysIconIndex = 4;
+    snowdesktop::shell_refresh::PreserveRuntime(folderRead, folderPrevious);
+    Check(folderRead.selected && folderRead.isCut && folderRead.iconBitmap &&
+            !folderPrevious.iconBitmap && folderRead.iconState == IconState::FullQuality,
+        "mapped folders and popup aliases retain their independent selection and icon ownership");
+}
+
+void TestRenameNotificationsPreserveUnrelatedChanges()
+{
+    RenameNotificationTracker tracker;
+    Check(tracker.Begin(L"C:\\Desktop\\old.txt", 0) &&
+            !tracker.Begin(L"c:\\desktop\\OLD.txt", 1),
+        "one source cannot be renamed twice while its result is pending");
+    Check(!tracker.Observe(L"C:\\Desktop\\other.txt", L"C:\\Desktop\\x.txt", 2),
+        "an unrelated rename must still trigger normal Shell refresh");
+    Check(tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 3) &&
+            !tracker.Finish(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", true, 4),
+        "a notification before completion must not cause a duplicate full reload");
+    Check(!tracker.Observe(L"C:\\Desktop\\old.txt", L"C:\\Desktop\\new.txt", 5),
+        "an already consumed rename must not hide future changes with the same path pair");
+    tracker.Begin(L"late-old", 6);
+    Check(!tracker.Finish(L"late-old", L"Late-New", true, 7) &&
+            !tracker.Observe(L"late-old", L"late-new", 8) &&
+            tracker.Observe(L"late-old", L"Late-New", 9) &&
+            !tracker.Observe(L"late-old", L"Late-New", 10),
+        "late matching consumes one exact destination and preserves external case changes");
+    tracker.Begin(L"expired", 11);
+    tracker.Finish(L"expired", L"new", true, 12);
+    Check(!tracker.Observe(L"expired", L"new", 60000),
+        "completed rename notifications must expire instead of hiding future changes");
+    tracker.Begin(L"failed", 60001);
+    tracker.Observe(L"failed", L"external", 60002);
+    Check(tracker.Finish(L"failed", {}, false, 60003),
+        "a failed local operation must replay a deferred external rename");
+    tracker.Begin(L"raced", 60004);
+    tracker.Observe(L"raced", L"external", 60005);
+    Check(tracker.Finish(L"raced", L"ours", true, 60006),
+        "a different concurrent destination must not be suppressed by local success");
+}
+
+void TestRenameUpdatesOnlyMatchingModels()
+{
+    snowdesktop::ShellRenameResult result;
+    result.status = S_OK;
+    result.sourcePath = L"C:\\Desktop\\before.txt";
+    result.path = L"C:\\Desktop\\after.txt";
+    result.displayName = L"after.txt";
+    result.typeName = L"Text document";
+    result.metadataComplete = true;
+    result.attributes.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+    result.attributes.nFileSizeLow = 37;
+    // An empty desktop-root PIDL is sufficient for ownership/clone checks;
+    // path matching and metadata application must perform no Shell lookup.
+    result.absoluteId = { 0, 0 };
+    result.desktopChildId = { 0, 0 };
+    std::vector<DesktopItem> items(2);
+    items[0].parsingName = L"C:\\Desktop\\unrelated.txt";
+    items[0].name = L"unrelated.txt";
+    items[1].parsingName = result.sourcePath;
+    items[1].layoutKey = L"C:\\DESKTOP\\BEFORE.TXT";
+    items[1].name = L"before.txt";
+    items[1].selected = true;
+    items[1].slot = 17;
+    items[1].gridCell = { L"page", 3, 2 };
+    items[1].largeIcon = snowdesktop::LargeIconConfig{};
+    items[1].largeIcon->manualColor = 0x123456;
+    items[1].iconState = IconState::FullQuality;
+    items[1].iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    items[1].childPidl.reset(ILCloneFull(
+        reinterpret_cast<PCIDLIST_ABSOLUTE>(result.desktopChildId.data())));
+    snowdesktop::ShellRenameRequest aliasRequest{result.sourcePath, L"after.txt", {}};
+    snowdesktop::rename_model_update::AttachDesktopIdentity(aliasRequest, items);
+    Check(aliasRequest.desktopChildId == result.desktopChildId,
+        "mapped-popup desktop aliases must retain desktop identity for incremental completion");
+    const auto originalBitmap = items[1].iconBitmap;
+    const auto* originalAddress = &items[1];
+    std::vector<DesktopWidget> widgets(2);
+    widgets[0].type = DesktopWidgetType::Collection;
+    widgets[0].itemKeys = { result.sourcePath, items[0].parsingName };
+    widgets[1].type = DesktopWidgetType::FolderMapping;
+    widgets[1].id = L"mapped";
+    widgets[1].folderSortMode = snowdesktop::folder_sort_rules::kManual;
+    widgets[1].folderEntries.resize(2);
+    widgets[1].folderEntries[0].fullPath = items[0].parsingName;
+    widgets[1].folderEntries[1].fullPath = result.sourcePath;
+    widgets[1].folderEntries[1].selected = true;
+    DesktopWidget popup = widgets[1];
+    std::vector<DockEntry> dock(1);
+    dock[0].type = DockEntryType::DesktopItem;
+    dock[0].reference = result.sourcePath;
+
+    const auto changes = snowdesktop::rename_model_update::Apply(
+        result, L"C:\\DESKTOP\\AFTER.TXT", items, widgets, dock, &popup);
+    Check(items[1].largeIcon && items[1].largeIcon->manualColor == 0x123456 && !items[0].largeIcon,
+        "renaming migrates the same large-icon instance without copying its style onto unrelated items");
+    Check(!changes.needsReload && changes.desktopItems == std::vector<size_t>{1} &&
+            changes.folders == std::vector<std::wstring>{L"mapped"} && changes.popup,
+        "one renamed path must identify only its desktop, mapped and popup views");
+    Check(&items[1] == originalAddress && items[1].selected && items[1].slot == 17 &&
+            items[1].gridCell.pageId == L"page" && items[1].gridCell.column == 3 &&
+            items[1].gridCell.row == 2 && items[1].iconBitmap == originalBitmap &&
+            items[1].iconState == IconState::FullQuality && items[1].fileSize == 37,
+        "incremental rename must preserve position, selection, adapters and visible bitmap");
+    Check(items[1].name == result.displayName && items[1].parsingName == result.path &&
+            items[1].layoutKey == L"C:\\DESKTOP\\AFTER.TXT" &&
+            items[0].name == L"unrelated.txt" &&
+            widgets[0].itemKeys[0] == result.path && dock[0].reference == result.path &&
+            widgets[1].folderEntries[1].fullPath == result.path &&
+            widgets[1].folderEntries[1].selected &&
+            popup.folderEntries[1].fullPath == result.path,
+        "rename must migrate every matching reference without reordering manual lists");
+
+    result.status = E_ACCESSDENIED;
+    result.sourcePath = items[0].parsingName;
+    const auto failed = snowdesktop::rename_model_update::Apply(
+        result, L"wrong", items, widgets, dock, &popup);
+    Check(failed.desktopItems.empty() && items[0].name == L"unrelated.txt" &&
+            widgets[0].itemKeys[1] == result.sourcePath,
+        "failed async renames must leave the displayed name and references unchanged");
+}
+
 void TestPopupDwellControllerHandlesCandidateChanges()
 {
     PopupDwellController controller;
@@ -1786,6 +2108,7 @@ int main()
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
+    TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestDragDropControllerOwnsTransportTransitions();
     TestModelReloadDeferralCoversRetainedDragLifecycle();
@@ -1796,6 +2119,12 @@ int main()
     TestTrayCallbackClassification();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
+    TestRenameControllerRejectsStaleFocusCommits();
+    TestShellRefreshRejectsStaleSnapshots();
+    TestShellMetadataCacheRejectsChangedFiles();
+    TestShellRefreshPreservesCurrentItemState();
+    TestRenameNotificationsPreserveUnrelatedChanges();
+    TestRenameUpdatesOnlyMatchingModels();
     TestPopupDwellControllerHandlesCandidateChanges();
     if (failures != 0)
     {

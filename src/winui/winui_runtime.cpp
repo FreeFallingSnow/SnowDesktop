@@ -307,15 +307,29 @@ void WinUiRuntime::Detach() noexcept
         }
         impl_->systemBackdropEnabled = false;
 
-        try
+        if (impl_->takeFocusRequestedToken.value != 0)
         {
-            if (impl_->takeFocusRequestedToken.value != 0)
+            try
             {
                 impl_->xamlSource.TakeFocusRequested(
                     impl_->takeFocusRequestedToken);
             }
-            impl_->takeFocusRequestedToken = {};
+            catch (...)
+            {
+            }
+        }
+        impl_->takeFocusRequestedToken = {};
+
+        try
+        {
             impl_->xamlSource.Content(nullptr);
+        }
+        catch (...)
+        {
+        }
+
+        try
+        {
             impl_->xamlSource.Close();
         }
         catch (...)
@@ -420,6 +434,8 @@ bool WinUiRuntime::PreTranslateMessage(MSG* message) noexcept
     if (!impl_->initialized || !impl_->OnOwnerThread() || !message)
         return false;
     if (!impl_->parentWindow || !impl_->islandWindow || !message->hwnd)
+        return false;
+    if (!IsWindowVisible(impl_->parentWindow))
         return false;
 
     // ContentPreTranslateMessage is process-global. Feeding it input for the

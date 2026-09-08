@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <utility>
@@ -15,6 +16,8 @@ constexpr wchar_t kOwnerClass[] =
     L"SnowDesktop.ModernMenuInteractionTestOwner";
 constexpr UINT_PTR kDriveTimer = 1;
 constexpr UINT_PTR kWatchdogTimer = 2;
+constexpr UINT kReorderMenuMessage = WM_APP + 90;
+constexpr UINT kInspectMenuMessage = WM_APP + 91;
 enum class DriveMode
 {
     Cascade,
@@ -34,6 +37,9 @@ bool gCaptureTopmost = false;
 bool gObservedTopmost = false;
 bool gCaptureRootOwner = false;
 HWND gObservedRootOwner = nullptr;
+bool gCaptureAboveZOrderOwner = false;
+bool gObservedAboveZOrderOwner = false;
+HWND gZOrderOwnerProbe = nullptr;
 bool gDismissOnDrive = false;
 bool gObservedDismissHidden = false;
 bool gSelectEnd = false;
@@ -42,13 +48,31 @@ UINT gNestedMenuCommand = 0;
 bool gWatchdogFired = false;
 HWND gPersistentSubmenuWindow = nullptr;
 bool gPersistentSubmenuStayedOpen = false;
+bool gRepeatSubmenuValue = false;
 bool gRebuiltRootSubmenuClosed = false;
+bool gMessageReorderObserved = false;
+bool gMessageOrderRestored = false;
+bool gPresentationSawWrongOrder = false;
+bool gReorderCascade = false;
 
 struct MenuWindows
 {
     HWND root = nullptr;
     HWND child = nullptr;
 };
+
+bool IsWindowAbove(HWND upper, HWND lower)
+{
+    if (!upper || !lower)
+        return false;
+    for (HWND current = upper; current;
+         current = GetWindow(current, GW_HWNDNEXT))
+    {
+        if (current == lower)
+            return true;
+    }
+    return false;
+}
 
 BOOL CALLBACK FindMenuWindows(HWND hwnd, LPARAM parameter)
 {
@@ -69,6 +93,55 @@ BOOL CALLBACK FindMenuWindows(HWND hwnd, LPARAM parameter)
 LRESULT CALLBACK OwnerWindowProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == kReorderMenuMessage)
+    {
+        const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+        // Inject the ordering captured in the user's log. Merely raising an
+        // owned window's owner does not invert the pair on every Windows build.
+        if (root && gZOrderOwnerProbe)
+        {
+            HWND reorderedMenu = root;
+            HWND lowerWindow = gZOrderOwnerProbe;
+            if (gReorderCascade)
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                MenuWindows menus;
+                EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows,
+                    reinterpret_cast<LPARAM>(&menus));
+                reorderedMenu = menus.child;
+                lowerWindow = root;
+            }
+            SetWindowPos(reorderedMenu, lowerWindow, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                    SWP_NOOWNERZORDER);
+            gMessageReorderObserved = reorderedMenu &&
+                !IsWindowAbove(reorderedMenu, lowerWindow);
+        }
+        PostMessageW(hwnd, kInspectMenuMessage, 0, 0);
+        return 0;
+    }
+    if (message == kInspectMenuMessage)
+    {
+        const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+        gMessageOrderRestored = IsWindowAbove(root, gZOrderOwnerProbe);
+        HWND selectedMenu = root;
+        if (gReorderCascade)
+        {
+            MenuWindows menus;
+            EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows,
+                reinterpret_cast<LPARAM>(&menus));
+            selectedMenu = menus.child;
+            gMessageOrderRestored = gMessageOrderRestored &&
+                IsWindowAbove(selectedMenu, root);
+        }
+        if (selectedMenu)
+        {
+            SendMessageW(selectedMenu, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(selectedMenu, WM_KEYDOWN, VK_RETURN, 0);
+        }
+        return 0;
+    }
     if (message == WM_TIMER && wParam == kWatchdogTimer)
     {
         KillTimer(hwnd, kWatchdogTimer);
@@ -127,6 +200,11 @@ LRESULT CALLBACK OwnerWindowProc(
             if (gCaptureRootOwner)
                 gObservedRootOwner =
                     GetWindow(menus.root, GW_OWNER);
+            if (gCaptureAboveZOrderOwner)
+            {
+                gObservedAboveZOrderOwner =
+                    IsWindowAbove(menus.root, gZOrderOwnerProbe);
+            }
             if (gDismissOnDrive)
             {
                 snowdesktop::modern_menu::DismissActive();
@@ -181,7 +259,14 @@ LRESULT CALLBACK OwnerWindowProc(
         {
             gPersistentSubmenuStayedOpen =
                 menus.child == gPersistentSubmenuWindow;
-            SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
+            if (gRepeatSubmenuValue)
+            {
+                // Repeated Enter must apply the same value command without
+                // having to reselect it or reopen its submenu.
+                SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
+                SendMessageW(menus.child, WM_KEYDOWN, VK_END, 0);
+            }
+            else SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
             SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
             KillTimer(hwnd, kDriveTimer);
@@ -238,11 +323,9 @@ LRESULT CALLBACK OwnerWindowProc(
             SendMessageW(menus.root, WM_KEYDOWN, VK_SPACE, 0);
             SendMessageW(menus.root, WM_CHAR, L' ', 0);
             SendMessageW(menus.root, WM_KEYDOWN, VK_BACK, 0);
-            gDrivePhase = 1;
-        }
-        else if (gDriveMode == DriveMode::TextInput && menus.root &&
-            gDrivePhase == 1)
-        {
+            // Text refresh is synchronous. Keep result navigation in this
+            // drive step, just like Simple mode: a later timer can run after
+            // an unrelated foreground transfer has already cancelled the menu.
             SendMessageW(menus.root, WM_KEYDOWN, VK_DOWN, 0);
             SendMessageW(menus.root, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
@@ -281,10 +364,33 @@ void Expect(bool condition, const char* message)
     }
 }
 
+struct IsolatedMenuDesktop
+{
+    HDESK original = GetThreadDesktop(GetCurrentThreadId());
+    HDESK isolated = nullptr;
+
+    IsolatedMenuDesktop()
+    {
+        const std::wstring name = L"SnowDesktop.MenuTests." + std::to_wstring(GetCurrentProcessId());
+        isolated = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+        Expect(isolated != nullptr, "an isolated desktop is created for menu tests");
+        Expect(SetThreadDesktop(isolated) != FALSE, "menu tests attach to their isolated desktop");
+    }
+
+    ~IsolatedMenuDesktop()
+    {
+        SetThreadDesktop(original);
+        if (isolated) CloseDesktop(isolated);
+    }
+};
+
 } // namespace
 
 int wmain()
 {
+    // Do not switch the user's input desktop. Test windows need real activation
+    // and Z-order, but unrelated applications must not cancel their menu loops.
+    IsolatedMenuDesktop isolatedDesktop;
     using snowdesktop::modern_menu::Appearance;
     using snowdesktop::modern_menu::appearance_rules::ResolveForWindows;
     Expect(ResolveForWindows(
@@ -468,10 +574,34 @@ int wmain()
     gObservedTopmost = false;
     gCaptureRootOwner = true;
     gObservedRootOwner = nullptr;
+    gCaptureAboveZOrderOwner = true;
+    gObservedAboveZOrderOwner = false;
+    gZOrderOwnerProbe = zOrderOwner;
     gWatchdogFired = false;
     options.anchor = { 220, 220 };
     options.topmost = true;
     options.zOrderOwner = zOrderOwner;
+    HANDLE zOrderRefresh = CreateEventW(
+        nullptr, FALSE, FALSE, nullptr);
+    Expect(zOrderRefresh != nullptr,
+        "the Z-order refresh event is created");
+    options.eventPump.scheduledWorkHandle = zOrderRefresh;
+    std::vector<std::wstring> zOrderDiagnostics;
+    bool observedActiveRootWindow = false;
+    options.eventPump.traceDiagnostic =
+        [&](const std::wstring& message) {
+            zOrderDiagnostics.push_back(message);
+            observedActiveRootWindow = observedActiveRootWindow ||
+                snowdesktop::modern_menu::ActiveRootWindow() != nullptr;
+        };
+    options.eventPump.dispatchScheduledWork = [&]() {
+        SetWindowPos(
+            zOrderOwner, HWND_TOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                SWP_NOOWNERZORDER);
+    };
+    SetEvent(zOrderRefresh);
     SetTimer(owner, kDriveTimer, 10, nullptr);
     SetTimer(owner, kWatchdogTimer, 3000, nullptr);
     const auto ownedMenuResult =
@@ -485,8 +615,73 @@ int wmain()
     Expect(gObservedTopmost &&
             gObservedRootOwner == zOrderOwner,
         "a floating-host menu is topmost and owned by its Z-order host");
+    Expect(gObservedAboveZOrderOwner,
+        "a floating-host menu recovers after scheduled work raises its owner");
+    const auto hasZOrderDiagnostic =
+        [&](const wchar_t* stage) {
+            return std::any_of(
+                zOrderDiagnostics.begin(), zOrderDiagnostics.end(),
+                [&](const std::wstring& message) {
+                    return message.find(stage) != std::wstring::npos;
+                });
+        };
+    Expect(observedActiveRootWindow &&
+            snowdesktop::modern_menu::ActiveRootWindow() == nullptr,
+        "the active root menu diagnostic is scoped to the menu session");
+    Expect(hasZOrderDiagnostic(L"stage=session-start") &&
+            hasZOrderDiagnostic(L"stage=session-end"),
+        "Z-order diagnostics record the menu session boundaries");
+    options.eventPump = {};
+    CloseHandle(zOrderRefresh);
+
+    // No scheduler handle and no timer-driven recovery: the ordinary message
+    // must restore menu order before presentation or the next queued input.
+    gMessageReorderObserved = false;
+    gMessageOrderRestored = false;
+    gPresentationSawWrongOrder = false;
+    gWatchdogFired = false;
+    options.eventPump.flushPresentation = [&]() {
+        const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+        if (root && gMessageReorderObserved &&
+            !IsWindowAbove(root, zOrderOwner))
+        {
+            gPresentationSawWrongOrder = true;
+        }
+    };
+    PostMessageW(owner, kReorderMenuMessage, 0, 0);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto messageReorderedResult =
+        snowdesktop::modern_menu::Show(adjustmentItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired && messageReorderedResult.command == 21,
+        "the message-only Z-order regression completes without animation work");
+    Expect(gMessageReorderObserved,
+        "the regression actually puts the menu behind its owner");
+    Expect(gMessageOrderRestored && !gPresentationSawWrongOrder,
+        "ordinary messages restore menu order before presentation and queued input");
+    options.eventPump = {};
+
+    gReorderCascade = true;
+    gMessageReorderObserved = false;
+    gMessageOrderRestored = false;
+    gWatchdogFired = false;
+    const std::vector<Item> cascadeZOrderItems{
+        { 0, L"Parent", L"", true, false, false,
+            { { 23, L"Child", L"", true } } },
+    };
+    PostMessageW(owner, kReorderMenuMessage, 0, 0);
+    SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto cascadeReorderedResult =
+        snowdesktop::modern_menu::Show(cascadeZOrderItems, options);
+    KillTimer(owner, kWatchdogTimer);
+    Expect(!gWatchdogFired && cascadeReorderedResult.command == 23 &&
+            gMessageReorderObserved && gMessageOrderRestored,
+        "a displaced cascade recovers even when its root remains above the host");
+    gReorderCascade = false;
     options.zOrderOwner = nullptr;
     gCaptureRootOwner = false;
+    gCaptureAboveZOrderOwner = false;
+    gZOrderOwnerProbe = nullptr;
     DestroyWindow(zOrderOwner);
 
     gDriveMode = DriveMode::Simple;
@@ -725,6 +920,30 @@ int wmain()
         "submenu page update keeps the existing popup window visible");
     Expect(persistentSubmenuResult.command == 53,
         "updated submenu remains interactive after changing page");
+
+    persistentSubmenuCommandCount = 0;
+    gRepeatSubmenuValue = true;
+    options.onCommand = [&](UINT command, auto& currentItems) {
+        if (command != 51) return false;
+        ++persistentSubmenuCommandCount;
+        auto replacement = currentItems.front().children;
+        replacement.front().checked = !replacement.front().checked;
+        replacement.back().enabled = true;
+        const auto* children = &currentItems.front().children;
+        snowdesktop::modern_menu::UpdateItemStates(currentItems.front().children, replacement);
+        Expect(children == &currentItems.front().children, "value updates preserve submenu tree references");
+        currentItems.front().label = L"Values updated";
+        return true;
+    };
+    gDriveMode = DriveMode::PersistentSubmenu; gDrivePhase = 0; gInputPosted = false;
+    gWatchdogFired = false; gPersistentSubmenuStayedOpen = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr); SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto valueResult = snowdesktop::modern_menu::Show(persistentSubmenuItems, options);
+    KillTimer(owner, kWatchdogTimer); gRepeatSubmenuValue = false;
+    Expect(!gWatchdogFired && persistentSubmenuCommandCount == 2,
+        "a retained submenu selection accepts repeated value changes");
+    Expect(gPersistentSubmenuStayedOpen && valueResult.command == 52,
+        "value changes preserve the same popup and subsequent closing commands");
 
     const std::vector<Item> rebuiltRootSubmenuItems{
         { 0, L"Widgets", L"W", true, false, false,

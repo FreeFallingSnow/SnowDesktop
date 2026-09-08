@@ -57,6 +57,25 @@ public:
     using FrameCallback = std::function<bool(double nowMilliseconds)>;
     using TimerCallback = std::function<void(UiScheduleToken)>;
 
+    // Shell verbs may run a nested message loop that does not wait on our
+    // timer handle. Keep deadlines moving only for the duration of that call.
+    class MessagePumpScope
+    {
+    public:
+        MessagePumpScope(UiAnimationScheduler& scheduler,
+            std::function<void()> flushPresentation);
+        ~MessagePumpScope();
+        MessagePumpScope(const MessagePumpScope&) = delete;
+        MessagePumpScope& operator=(const MessagePumpScope&) = delete;
+        [[nodiscard]] bool IsAvailable() const noexcept { return window_ != nullptr; }
+
+    private:
+        static LRESULT CALLBACK WindowProc(HWND, UINT, WPARAM, LPARAM);
+        UiAnimationScheduler& scheduler_;
+        std::function<void()> flushPresentation_;
+        HWND window_ = nullptr;
+    };
+
     UiAnimationScheduler() = default;
     ~UiAnimationScheduler();
 
@@ -131,6 +150,7 @@ private:
     double lastPresentationMilliseconds_ = 0.0;
     bool softwareRendering_ = false;
     bool diagnosticsEnabled_ = false;
+    bool dispatching_ = false;
     std::uint64_t requestedFrames_ = 0;
     std::uint64_t deliveredFrames_ = 0;
     std::uint64_t skippedFrames_ = 0;

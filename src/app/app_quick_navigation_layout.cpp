@@ -837,6 +837,12 @@ bool DesktopApp::LaunchQuickNavigationAppEntry(
     if (!entry.absolutePidl.get())
         return false;
 
+    if (snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(entry.parsingName))
+    {
+        return RunPathAsAdministrator(entry.parsingName);
+    }
+
     Pidl launchPidl;
     launchPidl.reset(
         ILClone(entry.absolutePidl.get()));

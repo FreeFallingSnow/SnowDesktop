@@ -21,6 +21,8 @@ namespace snowdesktop::steam_bridge
 {
 namespace
 {
+bool IsReparsePoint(const std::filesystem::path& path);
+
 std::string WideToUtf8(std::wstring_view value)
 {
     if (value.empty()) return {};
@@ -49,17 +51,38 @@ std::wstring Utf8ToWide(std::string_view value)
     return result;
 }
 
-std::filesystem::path DefaultRoot()
+bool MoveDataFile(const std::filesystem::path& source,
+    const std::filesystem::path& target, std::string& error)
 {
-    PWSTR value = nullptr;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,
-            KF_FLAG_DEFAULT, nullptr, &value)))
-        return {};
-    const std::filesystem::path result =
-        std::filesystem::path(value) / L"SnowDesktop" /
-        L"SteamWorkshopManager";
-    CoTaskMemFree(value);
-    return result;
+    std::error_code ec;
+    if (!std::filesystem::exists(source, ec)) return !ec;
+    if (ec || !std::filesystem::is_regular_file(source, ec) || ec ||
+        IsReparsePoint(source))
+    {
+        error = "legacy Workshop Manager data contains an unsafe file";
+        return false;
+    }
+    if (std::filesystem::exists(target, ec))
+        return !ec;
+    if (ec)
+    {
+        error = "cannot inspect the Workshop Manager data target";
+        return false;
+    }
+    std::filesystem::copy_file(source, target,
+        std::filesystem::copy_options::none, ec);
+    if (ec)
+    {
+        error = "cannot migrate Workshop Manager data into data directory";
+        return false;
+    }
+    std::filesystem::remove(source, ec);
+    if (ec)
+    {
+        error = "Workshop Manager data was copied but the legacy file could not be removed";
+        return false;
+    }
+    return true;
 }
 
 bool IsReparsePoint(const std::filesystem::path& path)
@@ -160,6 +183,21 @@ JsonValue ProjectToJson(const WorkshopProject& project)
         JsonValue::String(project.lastPublishedSha256);
     value.object["lastPublishedAt"] =
         JsonValue::String(project.lastPublishedAt);
+    JsonValue preferences = JsonValue::Object();
+    preferences.object["textSource"] = JsonValue::String(
+        std::string(WorkshopTextSourceName(
+            project.publishPreferences.textSource)));
+    preferences.object["previewSource"] = JsonValue::String(
+        std::string(WorkshopAssetSourceName(
+            project.publishPreferences.previewSource)));
+    preferences.object["tagsSource"] = JsonValue::String(
+        std::string(WorkshopAssetSourceName(
+            project.publishPreferences.tagsSource)));
+    preferences.object["manualEnglishTitle"] = JsonValue::String(
+        project.publishPreferences.manualEnglishTitle);
+    preferences.object["manualEnglishDescription"] = JsonValue::String(
+        project.publishPreferences.manualEnglishDescription);
+    value.object["publishPreferences"] = std::move(preferences);
     return value;
 }
 
@@ -177,8 +215,8 @@ bool ReadRequiredString(const JsonValue& object, std::string_view key,
     return true;
 }
 
-bool ProjectFromJson(const JsonValue& value, WorkshopProject& project,
-    std::string& error)
+bool ProjectFromJson(const JsonValue& value, std::uint64_t schemaVersion,
+    WorkshopProject& project, std::string& error)
 {
     if (!value.IsObject())
     {
@@ -248,13 +286,263 @@ bool ProjectFromJson(const JsonValue& value, WorkshopProject& project,
         error = "project store publishedFileId must be a string or null";
         return false;
     }
+    if (schemaVersion == 1)
+    {
+        if (project.publishedFileId)
+        {
+            project.publishPreferences.textSource =
+                WorkshopTextSource::Steam;
+            project.publishPreferences.previewSource =
+                WorkshopAssetSource::Steam;
+            project.publishPreferences.tagsSource =
+                WorkshopAssetSource::Steam;
+        }
+    }
+    else
+    {
+        const JsonValue* preferences = value.Find("publishPreferences");
+        if (!preferences || !preferences->IsObject())
+        {
+            error = "project store publishPreferences field is invalid";
+            return false;
+        }
+        const auto textSource = JsonString(*preferences, "textSource");
+        const auto previewSource = JsonString(*preferences, "previewSource");
+        const auto tagsSource = JsonString(*preferences, "tagsSource");
+        if (!textSource || !previewSource || !tagsSource ||
+            !ReadRequiredString(*preferences, "manualEnglishTitle",
+                project.publishPreferences.manualEnglishTitle, error) ||
+            !ReadRequiredString(*preferences, "manualEnglishDescription",
+                project.publishPreferences.manualEnglishDescription, error))
+            return false;
+        if (*textSource == "package")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::Package;
+        else if (*textSource == "steam")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::Steam;
+        else if (*textSource == "manual-english")
+            project.publishPreferences.textSource =
+                WorkshopTextSource::ManualEnglish;
+        else
+        {
+            error = "project store textSource field is invalid";
+            return false;
+        }
+        const auto parseAssetSource = [&](std::string_view source,
+            WorkshopAssetSource& output, std::string_view field)
+        {
+            if (source == "local") output = WorkshopAssetSource::Local;
+            else if (source == "steam") output = WorkshopAssetSource::Steam;
+            else
+            {
+                error = "project store " + std::string(field) +
+                    " field is invalid";
+                return false;
+            }
+            return true;
+        };
+        if (!parseAssetSource(*previewSource,
+                project.publishPreferences.previewSource,
+                "previewSource") ||
+            !parseAssetSource(*tagsSource,
+                project.publishPreferences.tagsSource, "tagsSource"))
+            return false;
+    }
     return !project.localId.empty();
 }
 }
 
-ProjectStore::ProjectStore(std::filesystem::path root)
-    : root_(root.empty() ? DefaultRoot() : std::move(root))
+std::string_view WorkshopTextSourceName(WorkshopTextSource source)
 {
+    switch (source)
+    {
+    case WorkshopTextSource::Package: return "package";
+    case WorkshopTextSource::Steam: return "steam";
+    case WorkshopTextSource::ManualEnglish: return "manual-english";
+    }
+    return "package";
+}
+
+std::string_view WorkshopAssetSourceName(WorkshopAssetSource source)
+{
+    switch (source)
+    {
+    case WorkshopAssetSource::Local: return "local";
+    case WorkshopAssetSource::Steam: return "steam";
+    }
+    return "local";
+}
+
+ProjectStore::ProjectStore(std::filesystem::path root)
+    : root_(std::move(root))
+{
+}
+
+std::filesystem::path WorkshopManagerDataRoot(
+    const std::filesystem::path& dataDirectory)
+{
+    if (dataDirectory.empty()) return {};
+    return dataDirectory / L"SteamWorkshopManager";
+}
+
+std::filesystem::path LegacyWorkshopManagerDataRoot()
+{
+    PWSTR value = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,
+            KF_FLAG_DEFAULT, nullptr, &value)))
+        return {};
+    const std::filesystem::path result =
+        std::filesystem::path(value) / L"SnowDesktop" /
+        L"SteamWorkshopManager";
+    CoTaskMemFree(value);
+    return result;
+}
+
+bool MigrateWorkshopManagerData(const std::filesystem::path& legacyRoot,
+    const std::filesystem::path& targetRoot, std::string& error)
+{
+    if (legacyRoot.empty() || targetRoot.empty() ||
+        legacyRoot == targetRoot)
+        return true;
+
+    std::error_code ec;
+    if (!std::filesystem::exists(legacyRoot, ec)) return !ec;
+    if (ec || !std::filesystem::is_directory(legacyRoot, ec) || ec ||
+        IsReparsePoint(legacyRoot) || IsReparsePoint(targetRoot))
+    {
+        error = "Workshop Manager data directory is unavailable or unsafe";
+        return false;
+    }
+    std::filesystem::create_directories(targetRoot, ec);
+    if (ec)
+    {
+        error = "cannot create Workshop Manager data directory";
+        return false;
+    }
+
+    for (const wchar_t* filename : { L"projects.json",
+             L"projects.json.bak", L"projects.json.tmp" })
+    {
+        if (!MoveDataFile(legacyRoot / filename,
+                targetRoot / filename, error))
+            return false;
+    }
+
+    const auto legacyCache = legacyRoot / L"preview-cache";
+    if (std::filesystem::exists(legacyCache, ec))
+    {
+        if (ec || !std::filesystem::is_directory(legacyCache, ec) || ec ||
+            IsReparsePoint(legacyCache))
+        {
+            error = "legacy Workshop Manager preview cache is unsafe";
+            return false;
+        }
+        const auto targetCache = targetRoot / L"preview-cache";
+        std::filesystem::create_directories(targetCache, ec);
+        if (ec)
+        {
+            error = "cannot create Workshop Manager preview cache";
+            return false;
+        }
+        for (std::filesystem::directory_iterator iterator(legacyCache,
+                 std::filesystem::directory_options::skip_permission_denied,
+                 ec), end;
+             !ec && iterator != end; iterator.increment(ec))
+        {
+            if (!iterator->is_regular_file(ec) || ec ||
+                IsReparsePoint(iterator->path()))
+            {
+                error = "legacy Workshop Manager preview cache contains an unsafe entry";
+                return false;
+            }
+            if (!MoveDataFile(iterator->path(),
+                    targetCache / iterator->path().filename(), error))
+                return false;
+        }
+        if (ec)
+        {
+            error = "cannot enumerate legacy Workshop Manager preview cache";
+            return false;
+        }
+        std::filesystem::remove(legacyCache, ec);
+    }
+    ec.clear();
+    std::filesystem::remove(legacyRoot, ec);
+    ec.clear();
+    std::filesystem::remove(legacyRoot.parent_path(), ec);
+    return true;
+}
+
+bool MigrateWorkshopManagerDataOnce(
+    const std::filesystem::path& targetRoot, std::string& error,
+    std::optional<std::filesystem::path> legacyRoot)
+{
+    error.clear();
+    if (targetRoot.empty() || IsReparsePoint(targetRoot))
+    {
+        error = "Workshop Manager data directory is unavailable or unsafe";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(targetRoot, ec);
+    if (ec || IsReparsePoint(targetRoot))
+    {
+        error = "cannot create Workshop Manager data directory";
+        return false;
+    }
+    const auto marker = targetRoot /
+        L".legacy-localappdata-migrated-v1";
+    if (std::filesystem::exists(marker, ec))
+    {
+        if (!ec && std::filesystem::is_regular_file(marker, ec) && !ec &&
+            !IsReparsePoint(marker))
+            return true;
+        error = "Workshop Manager migration marker is unsafe";
+        return false;
+    }
+    if (ec)
+    {
+        error = "cannot inspect Workshop Manager migration state";
+        return false;
+    }
+
+    if (!legacyRoot)
+    {
+        const auto resolved = LegacyWorkshopManagerDataRoot();
+        if (resolved.empty())
+        {
+            error = "cannot resolve the legacy Workshop Manager data directory";
+            return false;
+        }
+        legacyRoot = resolved;
+    }
+    if (!MigrateWorkshopManagerData(*legacyRoot, targetRoot, error))
+        return false;
+
+    HANDLE file = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        if (GetLastError() == ERROR_FILE_EXISTS &&
+            !IsReparsePoint(marker))
+            return true;
+        error = "cannot record Workshop Manager data migration";
+        return false;
+    }
+    static constexpr char content[] = "completed\n";
+    DWORD written = 0;
+    const bool saved = WriteFile(file, content,
+        static_cast<DWORD>(sizeof(content) - 1), &written, nullptr) &&
+        written == static_cast<DWORD>(sizeof(content) - 1);
+    CloseHandle(file);
+    if (!saved)
+    {
+        DeleteFileW(marker.c_str());
+        error = "cannot record Workshop Manager data migration";
+        return false;
+    }
+    return true;
 }
 
 std::filesystem::path ProjectStore::StorePath() const
@@ -279,6 +567,7 @@ bool ProjectStore::Load(std::string& error)
         return false;
     }
     const std::string text((std::istreambuf_iterator<char>(input)), {});
+    input.close();
     if (text.size() > 4u * 1024u * 1024u)
     {
         error = "projects.json exceeds the 4 MiB safety limit";
@@ -292,7 +581,8 @@ bool ProjectStore::Load(std::string& error)
     }
     const auto schema = JsonUnsigned(root, "schemaVersion");
     const JsonValue* projects = root.Find("projects");
-    if (!schema || *schema != kProjectStoreSchemaVersion ||
+    if (!schema || (*schema != 1 &&
+            *schema != kProjectStoreSchemaVersion) ||
         !projects || !projects->IsArray())
     {
         error = "unsupported or malformed project store schema";
@@ -301,7 +591,7 @@ bool ProjectStore::Load(std::string& error)
     for (const auto& value : projects->array)
     {
         WorkshopProject project;
-        if (!ProjectFromJson(value, project, error))
+        if (!ProjectFromJson(value, *schema, project, error))
         {
             projects_.clear();
             return false;
@@ -318,6 +608,11 @@ bool ProjectStore::Load(std::string& error)
         }
         projects_.push_back(std::move(project));
     }
+    if (*schema == 1 && !Save(error))
+    {
+        projects_.clear();
+        return false;
+    }
     return true;
 }
 
@@ -325,7 +620,7 @@ bool ProjectStore::Save(std::string& error) const
 {
     if (root_.empty())
     {
-        error = "LocalAppData is unavailable";
+        error = "SnowDesktop data directory is unavailable";
         return false;
     }
     std::error_code ec;

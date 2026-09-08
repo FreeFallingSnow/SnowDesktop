@@ -1,13 +1,38 @@
 #include "widget_author_lint.h"
 
+#include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
 namespace
 {
 using snowdesktop::widget::PackageManifest;
+using snowdesktop::widget::LocalizedMetadata;
+using snowdesktop::widget_authoring::LintWidgetDirectory;
 using snowdesktop::widget_authoring::LintWidgetSource;
+
+class TemporaryDirectory
+{
+public:
+    TemporaryDirectory()
+    {
+        path = std::filesystem::temp_directory_path() /
+            ("SnowDesktopWidgetAuthorLintTests-" + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(path);
+    }
+
+    ~TemporaryDirectory()
+    {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+    }
+
+    std::filesystem::path path;
+};
 
 void Check(bool condition, const char* message)
 {
@@ -120,6 +145,158 @@ void TestSyntaxFailure()
             report.issues[0].line == 3,
         "lint must stop at Lua compiler errors and retain the source line");
 }
+
+void TestImmediateDrawingQualityWarnings()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    const auto report = LintWidgetSource(manifest, "main.lua", R"lua(
+draw.text(0, 0, "Hard coded", 14, 0xFFFFFF)
+draw.rect(0, 0, layout.contentWidth(), layout.contentHeight(), 0x101010)
+)lua");
+    Check(report.Ok() && HasIssue(report, "l10n.hardcoded") &&
+            HasIssue(report, "surface.full-background") &&
+            report.WarningCount() == 2,
+        "lint warns about literal immediate-mode text and duplicated host surfaces");
+
+    const auto intentional = LintWidgetSource(manifest, "main.lua", R"lua(
+-- snowwidget: allow-full-surface-content
+draw.text(0, 0, l10n.tr("title"), 14, 0xFFFFFF)
+draw.gradientRect(0, 0, layout.width(), layout.height(), 0, 0)
+)lua");
+    Check(intentional.Ok() && intentional.issues.empty(),
+        "localized canvas content can explicitly document an intentional full-surface exception");
+}
+
+void TestBackgroundLayerContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.requiredFeatures = { "widget.backgroundLayer" };
+    const auto report = LintWidgetSource(manifest, "main.lua", R"lua(
+return widget.define({
+    backgroundLayer = {
+        render = function()
+            draw.gradientRect(0, 0, layout.width(), layout.height(),
+                0x101030, 0x304080)
+        end,
+    },
+    render = function()
+        draw.text(12, 12, l10n.tr("title"), 14, 0xFFFFFF)
+    end,
+})
+)lua");
+    Check(report.Ok() &&
+            !HasIssue(report, "surface.full-background") &&
+            !HasIssue(report, "feature.undeclared"),
+        "declared background layers may intentionally draw the full surface");
+
+    manifest.requiredFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua", R"lua(
+return widget.define({
+    backgroundLayer = { render = function() end },
+    render = function() end,
+})
+)lua");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "background layers must declare their host capability");
+}
+
+void TestReferencePixelFeatureContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.requiredFeatures = { "layout.referencePixels" };
+    const auto declared = LintWidgetSource(manifest, "main.lua",
+        "local padding = layout.rpx(12)\n");
+    Check(declared.Ok() && !HasIssue(declared, "feature.undeclared"),
+        "layout.rpx is valid when its host capability is declared");
+
+    manifest.requiredFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua",
+        "local padding = layout.rpx(12)\n");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "layout.rpx must declare its host capability");
+
+    manifest.requiredFeatures = { "layout.referenceAxes" };
+    const auto axesDeclared = LintWidgetSource(manifest, "main.lua",
+        "local width = layout.rpxX(12)\n"
+        "local height = layout.rpxY(8)\n");
+    Check(axesDeclared.Ok() &&
+            !HasIssue(axesDeclared, "feature.undeclared"),
+        "reference axes are valid when their host capability is declared");
+
+    manifest.requiredFeatures.clear();
+    const auto axesMissing = LintWidgetSource(manifest, "main.lua",
+        "local height = layout.rpxY(8)\n");
+    Check(!axesMissing.Ok() &&
+            HasIssue(axesMissing, "feature.undeclared"),
+        "reference axes must declare their host capability");
+}
+
+void TestSemanticUiMetricsFeatureContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.requiredFeatures = { "ui.semanticMetrics.rowUnit" };
+    const auto declared = LintWidgetSource(manifest, "main.lua",
+        "local metrics = ui.metrics()\n"
+        "local row = metrics.layoutRowHeight\n");
+    Check(declared.Ok() && !HasIssue(declared, "feature.undeclared"),
+        "semantic UI metrics are valid when their capability is declared");
+
+    manifest.requiredFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua",
+        "local metrics = ui.metrics()\n");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "semantic UI metrics must declare their host capability");
+}
+
+void TestRoundedImageFeatureContract()
+{
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    manifest.optionalFeatures = { "draw.imageFit.roundedClip" };
+    const auto declared = LintWidgetSource(manifest, "main.lua", R"lua(
+draw.imageFit(image, 0, 0, 80, 80, "cover", "center", 1, "linear",
+    0, 0.5, 0.5, 12)
+)lua");
+    Check(declared.Ok() && !HasIssue(declared, "feature.undeclared"),
+        "rounded immediate images are valid when their capability is declared");
+
+    manifest.optionalFeatures.clear();
+    const auto missing = LintWidgetSource(manifest, "main.lua", R"lua(
+draw.imageFit(image, 0, 0, 80, 80, "cover", "center", 1, "linear",
+    0, 0.5, 0.5, 12)
+)lua");
+    Check(!missing.Ok() && HasIssue(missing, "feature.undeclared"),
+        "draw.imageFit cornerRadius must declare its host capability");
+}
+
+void TestLocaleAndPreviewQuality()
+{
+    TemporaryDirectory temporary;
+    {
+        std::ofstream source(temporary.path / "main.lua");
+        source << "return widget.define({ render = function() end })\n";
+    }
+    PackageManifest manifest;
+    manifest.apiVersion = 2;
+    LocalizedMetadata english;
+    english.strings.emplace("title", "Title");
+    LocalizedMetadata chinese;
+    manifest.locales.emplace("en-US", std::move(english));
+    manifest.locales.emplace("zh-CN", std::move(chinese));
+    const auto report = LintWidgetDirectory(temporary.path, manifest);
+    Check(!report.Ok() && HasIssue(report, "l10n.locale-key-set") &&
+            HasIssue(report, "package.preview.missing"),
+        "directory lint rejects incomplete locale catalogs and warns before a final preview is declared");
+
+    const auto sourceReport = LintWidgetSource(manifest, "main.lua",
+        "return l10n.tr(\"title\")\n");
+    Check(!sourceReport.Ok() && HasIssue(sourceReport, "l10n.missing-key"),
+        "literal localization calls must resolve in every declared locale");
+}
 }
 
 int main()
@@ -129,6 +306,12 @@ int main()
     TestQualifiedModuleRequire();
     TestViewKeysAndLiteralText();
     TestSyntaxFailure();
+    TestImmediateDrawingQualityWarnings();
+    TestBackgroundLayerContract();
+    TestReferencePixelFeatureContract();
+    TestSemanticUiMetricsFeatureContract();
+    TestRoundedImageFeatureContract();
+    TestLocaleAndPreviewQuality();
     std::cout << "widget author lint tests passed\n";
     return 0;
 }

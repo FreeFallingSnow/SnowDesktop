@@ -1,6 +1,10 @@
 #include "shell_file_operation_worker.h"
 #include "item_location.h"
+#include "app/shell_change_notification.h"
+#include "low_level_mouse_hook.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -8,6 +12,7 @@
 #include <future>
 #include <iostream>
 #include <string>
+#include <stdexcept>
 
 namespace
 {
@@ -35,10 +40,293 @@ std::filesystem::path CreateTemporaryDirectory()
     std::filesystem::remove(root, error);
     Expect(!error && std::filesystem::create_directory(root, error),
         "worker-test directory can be created");
-    return root;
+    wchar_t longPath[MAX_PATH]{};
+    const DWORD length = GetLongPathNameW(root.c_str(), longPath, MAX_PATH);
+    Expect(length != 0 && length < MAX_PATH,
+        "temporary fixture paths normalize 8.3 aliases before Shell comparisons");
+    return std::filesystem::path(longPath);
+}
+
+void TestAsyncRenames(const std::filesystem::path& root)
+{
+    constexpr UINT notificationMessage = WM_APP + 1;
+    const wchar_t* className = L"SnowDesktopRenameNotificationTest";
+    WNDCLASSW windowClass{};
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = className;
+    windowClass.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+        if (message == WM_NCCREATE)
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+                reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        if (message == WM_APP + 1)
+        {
+            auto* changes = reinterpret_cast<std::vector<ShellChangeNotification>*>(
+                GetWindowLongPtrW(window, GWLP_USERDATA));
+            if (const auto change = ReadShellChangeNotification(wp, lp); change && changes)
+                changes->push_back(*change);
+            return 0;
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    };
+    Expect(RegisterClassW(&windowClass) != 0, "notification test class is registered");
+    std::vector<ShellChangeNotification> notifications;
+    const HWND notificationWindow = CreateWindowExW(0, className, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, windowClass.hInstance, &notifications);
+    PIDLIST_ABSOLUTE rootId = nullptr;
+    Expect(notificationWindow && SUCCEEDED(SHParseDisplayName(
+        root.c_str(), nullptr, &rootId, 0, nullptr)), "isolated notification root is available");
+    SHChangeNotifyEntry watch{rootId, FALSE};
+    const ULONG registration = SHChangeNotifyRegister(notificationWindow,
+        SHCNRF_ShellLevel | SHCNRF_NewDelivery, SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER,
+        notificationMessage, 1, &watch);
+    ILFree(rootId);
+    Expect(registration != 0, "real Shell rename notifications are registered");
+    const auto source = root / L"rename-source.txt";
+    const auto collision = root / L"occupied.txt";
+    { std::ofstream(source) << "rename payload"; }
+    { std::ofstream(collision) << "keep original"; }
+    snowdesktop::ShellFileOperationWorker worker;
+    std::promise<snowdesktop::ShellRenameResult> firstPromise;
+    auto firstFuture = firstPromise.get_future();
+    std::promise<void> releaseWorker;
+    auto gate = releaseWorker.get_future().share();
+    std::atomic<DWORD> workerThread{0};
+    std::atomic<bool> workerIsSta{false};
+    const DWORD callerThread = GetCurrentThreadId();
+    const auto enqueueStart = std::chrono::steady_clock::now();
+    Expect(worker.Enqueue(
+        snowdesktop::ShellRenameRequest{source.wstring(), L"renamed.txt", {}},
+        [&](snowdesktop::ShellRenameResult result) {
+            workerThread = GetCurrentThreadId();
+            APTTYPE apartment{};
+            APTTYPEQUALIFIER qualifier{};
+            workerIsSta = SUCCEEDED(CoGetApartmentType(&apartment, &qualifier)) &&
+                (apartment == APTTYPE_STA || apartment == APTTYPE_MAINSTA);
+            firstPromise.set_value(std::move(result));
+            gate.wait();
+        }), "rename request is accepted without waiting for Shell");
+    const auto enqueueMs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - enqueueStart).count();
+    Expect(firstFuture.wait_for(std::chrono::seconds(15)) == std::future_status::ready,
+        "background rename completes within the test deadline");
+    const auto first = firstFuture.get();
+    Expect(SUCCEEDED(first.status), "background Shell rename reports success");
+    Expect(first.metadataComplete, "background Shell rename returns complete metadata");
+    Expect(!std::filesystem::exists(source) &&
+            std::filesystem::equivalent(first.path, root / L"renamed.txt"),
+        "rename returns the actual Shell destination, including canonicalized paths");
+    Expect(workerThread != callerThread && workerIsSta,
+        "rename executes on a separate STA");
+
+    // Deliberately hold the worker callback. A second enqueue must still
+    // return, while its dependent operation waits in the serial queue.
+    std::promise<snowdesktop::ShellRenameResult> secondPromise;
+    auto secondFuture = secondPromise.get_future();
+    Expect(worker.Enqueue(
+        snowdesktop::ShellRenameRequest{first.path, L"occupied.txt", {}},
+        [&](snowdesktop::ShellRenameResult result) {
+            secondPromise.set_value(std::move(result));
+        }), "a blocked worker still accepts another rename");
+    Expect(secondFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout,
+        "dependent renames wait for the preceding operation without blocking the caller");
+    releaseWorker.set_value();
+    Expect(secondFuture.wait_for(std::chrono::seconds(15)) == std::future_status::ready,
+        "queued rename completes after releasing the preceding callback");
+    const auto second = secondFuture.get();
+    Expect(SUCCEEDED(second.status) &&
+            std::filesystem::equivalent(second.path, root / L"occupied (2).txt"),
+        "collision renaming reports its actual suffixed destination");
+    std::string contents;
+    { std::ifstream stream(collision); std::getline(stream, contents); }
+    Expect(contents == "keep original", "rename must not overwrite the colliding file");
+    worker.Stop();
+
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    bool receivedRename = false;
+    while (!receivedRename && GetTickCount64() < deadline)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            DispatchMessageW(&message);
+        receivedRename = std::any_of(notifications.begin(), notifications.end(),
+            [&](const auto& change) {
+                return change.event == SHCNE_RENAMEITEM &&
+                    _wcsicmp(change.source.c_str(), source.c_str()) == 0 &&
+                    _wcsicmp(change.target.c_str(), first.path.c_str()) == 0;
+            });
+        if (!receivedRename)
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+    }
+    Expect(receivedRename,
+        "NewDelivery decoding recovers the actual old/new paths and releases the notification");
+    SHChangeNotifyDeregister(registration);
+    DestroyWindow(notificationWindow);
+    UnregisterClassW(className, windowClass.hInstance);
+
+    const auto caseOnly = snowdesktop::ShellFileOperationWorker::Execute(
+        snowdesktop::ShellRenameRequest{second.path, L"OCCUPIED (2).txt", {}});
+    Expect(SUCCEEDED(caseOnly.status) &&
+            std::filesystem::path(caseOnly.path).filename() == L"OCCUPIED (2).txt",
+        "case-only rename must not add an unnecessary collision suffix");
+    const auto directory = root / L"rename-directory";
+    std::filesystem::create_directory(directory);
+    { std::ofstream(directory / L"child.txt") << "preserve child"; }
+    const auto folder = snowdesktop::ShellFileOperationWorker::Execute(
+        snowdesktop::ShellRenameRequest{directory.wstring(), L"renamed-directory", {}});
+    Expect(SUCCEEDED(folder.status) && folder.metadataComplete &&
+            (folder.attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+            std::filesystem::exists(std::filesystem::path(folder.path) / L"child.txt"),
+        "directory renames retain their children and return directory metadata");
+    const auto invalid = snowdesktop::ShellFileOperationWorker::Execute(
+        snowdesktop::ShellRenameRequest{caseOnly.path, L"invalid/name.txt", {}});
+    Expect(FAILED(invalid.status) && std::filesystem::exists(caseOnly.path),
+        "invalid names fail without changing the source");
+    Expect(!worker.Enqueue(
+        snowdesktop::ShellRenameRequest{caseOnly.path, L"after-stop.txt", {}},
+        [](snowdesktop::ShellRenameResult) {}),
+        "shutdown rejects new rename requests");
+    std::cout << "rename enqueue us=" << enqueueMs
+              << " worker ms=" << first.elapsedMs << '\n';
+}
+
+// Use a message-only fixture in place of a global hook: this checks the actual
+// hook owner's thread/pump/shutdown boundary without capturing or injecting
+// desktop input. Regressing to UI-thread installation would fail this test.
+HWND hookFixtureWindow = nullptr;
+DWORD hookInstallThread = 0;
+DWORD hookUninstallThread = 0;
+bool hookInstallShouldFail = false;
+constexpr wchar_t hookFixtureClass[] = L"SnowDesktopHookThreadFixture";
+
+HHOOK WINAPI InstallHookFixture(int kind, HOOKPROC, HINSTANCE instance, DWORD targetThread)
+{
+    Expect(kind == WH_MOUSE_LL && targetThread == 0,
+        "the dedicated monitor requests a global low-level mouse hook");
+    hookInstallThread = GetCurrentThreadId();
+    if (hookInstallShouldFail)
+        return nullptr;
+    hookFixtureWindow = CreateWindowExW(0, hookFixtureClass, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, instance, nullptr);
+    return reinterpret_cast<HHOOK>(hookFixtureWindow);
+}
+
+BOOL WINAPI UninstallHookFixture(HHOOK hook)
+{
+    hookUninstallThread = GetCurrentThreadId();
+    return DestroyWindow(reinterpret_cast<HWND>(hook));
+}
+
+void TestMouseHookRemainsResponsiveWhileCallerWaits()
+{
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSW windowClass{};
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = hookFixtureClass;
+    windowClass.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+        if (message == WM_APP + 9)
+        {
+            SetEvent(reinterpret_cast<HANDLE>(wp));
+            return 0;
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    };
+    Expect(RegisterClassW(&windowClass) != 0, "hook fixture class is available");
+    HANDLE answered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Expect(answered != nullptr, "hook response event is available");
+    const DWORD caller = GetCurrentThreadId();
+    snowdesktop::LowLevelMouseHook hook({&InstallHookFixture, &UninstallHookFixture});
+    for (int run = 0; run != 2; ++run)
+    {
+        Expect(hook.Start(instance, nullptr) && static_cast<bool>(hook),
+            "hook monitor can start and restart");
+        Expect(hookInstallThread != caller,
+            "global mouse monitoring must never install on the caller/UI thread");
+        ResetEvent(answered);
+        Expect(PostMessageW(hookFixtureWindow, WM_APP + 9,
+            reinterpret_cast<WPARAM>(answered), 0) != FALSE,
+            "hook thread receives a queued response request");
+        Expect(WaitForSingleObject(answered, 5000) == WAIT_OBJECT_0,
+            "hook message pump responds while caller is blocked without pumping messages");
+        hook.Stop();
+        Expect(!hook && hookUninstallThread == hookInstallThread &&
+            !IsWindow(hookFixtureWindow),
+            "stop uninstalls on the owning thread before returning");
+    }
+    hookInstallShouldFail = true;
+    Expect(!hook.Start(instance, nullptr) && !hook,
+        "hook installation failure leaves no running monitor");
+    hook.Stop();
+    hookInstallShouldFail = false;
+    CloseHandle(answered);
+    UnregisterClassW(hookFixtureClass, instance);
 }
 
 } // namespace
+
+void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& root)
+{
+    const auto temporaryFile = root / L"read-worker-delete.txt";
+    std::ofstream(temporaryFile) << "temporary read fixture";
+    snowdesktop::ShellFileOperationWorker reader;
+    snowdesktop::ShellFileOperationWorker operations;
+    const DWORD callerThread = GetCurrentThreadId();
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    std::promise<bool> completed;
+    auto completedFuture = completed.get_future();
+    const auto started = std::chrono::steady_clock::now();
+    Expect(reader.Enqueue(snowdesktop::ShellReadRequest{[&] {
+        APTTYPE apartment{};
+        APTTYPEQUALIFIER qualifier{};
+        const bool separateSta = GetCurrentThreadId() != callerThread &&
+            SUCCEEDED(CoGetApartmentType(&apartment, &qualifier)) &&
+            apartment == APTTYPE_STA;
+        entered.set_value();
+        releaseFuture.wait();
+        return separateSta && !std::filesystem::exists(temporaryFile);
+    }}, [&](bool success) { completed.set_value(success); }),
+        "metadata work can be queued without waiting for its I/O");
+    const auto enqueueUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - started).count();
+    Expect(enteredFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+        "the metadata read reaches its deterministic I/O gate");
+    Expect(completedFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready,
+        "the caller remains available while metadata I/O is deliberately blocked");
+    std::promise<bool> deleted;
+    auto deletedFuture = deleted.get_future();
+    snowdesktop::ShellFileOperationRequest request;
+    request.steps.push_back({FO_DELETE, {temporaryFile.wstring()}, {},
+        static_cast<FILEOP_FLAGS>(FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI)});
+    Expect(operations.Enqueue(std::move(request), [&](bool success) { deleted.set_value(success); }),
+        "file deletion can be queued while the independent reader is blocked");
+    Expect(deletedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready &&
+            deletedFuture.get(),
+        "a slow directory read must not block later file operations");
+    release.set_value();
+    Expect(completedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready &&
+            completedFuture.get(),
+        "the STA read completes with data after the concurrent deletion");
+    std::promise<bool> exceptionResult, nextResult;
+    auto exceptionFuture = exceptionResult.get_future();
+    auto nextFuture = nextResult.get_future();
+    Expect(reader.Enqueue(snowdesktop::ShellReadRequest{[]() -> bool {
+        throw std::runtime_error("fixture read failed");
+    }}, [&](bool success) { exceptionResult.set_value(success); }),
+        "a failing read can report failure through the completion channel");
+    Expect(reader.Enqueue(snowdesktop::ShellReadRequest{[] { return true; }},
+        [&](bool success) { nextResult.set_value(success); }),
+        "a later read remains queued after a failed read");
+    Expect(exceptionFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready &&
+            !exceptionFuture.get() &&
+            nextFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready && nextFuture.get(),
+        "a read exception neither terminates the worker nor falsely reports success");
+    reader.Stop();
+    operations.Stop();
+    Expect(!reader.Enqueue(snowdesktop::ShellReadRequest{[] { return true; }}, {}),
+        "a stopped metadata worker cannot accept new reads");
+    std::cout << "metadata read enqueue us=" << enqueueUs << '\n';
+}
 
 int wmain()
 {
@@ -47,6 +335,9 @@ int wmain()
     Expect(SUCCEEDED(comResult),
         "COM initializes for copied folder-shortcut validation");
     const std::filesystem::path root = CreateTemporaryDirectory();
+    TestAsyncRenames(root);
+    TestBackgroundReadsDoNotBlockFileOperations(root);
+    TestMouseHookRemainsResponsiveWhileCallerWaits();
     const std::filesystem::path sourceDirectory = root / L"source";
     const std::filesystem::path firstDirectory = root / L"first";
     const std::filesystem::path secondDirectory = root / L"second";
@@ -59,6 +350,8 @@ int wmain()
         root / L"rejected-handoff";
     const std::filesystem::path noneEffectDirectory =
         root / L"none-effect";
+    const std::filesystem::path preflightDirectory =
+        root / L"preflight";
     const std::filesystem::path shortcutDirectory =
         root / L"shortcuts";
     const std::filesystem::path folderShortcutTarget =
@@ -73,6 +366,7 @@ int wmain()
     std::filesystem::create_directories(multiHandoffDirectory);
     std::filesystem::create_directories(rejectedHandoffDirectory);
     std::filesystem::create_directories(noneEffectDirectory);
+    std::filesystem::create_directories(preflightDirectory);
     std::filesystem::create_directories(shortcutDirectory);
     std::filesystem::create_directories(folderShortcutTarget);
     std::filesystem::create_directories(secondFolderShortcutTarget);
@@ -105,6 +399,21 @@ int wmain()
     constexpr FILEOP_FLAGS kTestFlags =
         FOF_SILENT | FOF_NOCONFIRMATION |
         FOF_NOERRORUI | FOF_NOCONFIRMMKDIR;
+    const std::vector<std::wstring> recycleSources = {
+        (sourceDirectory / L"recycle-one.txt").wstring(),
+        (sourceDirectory / L"recycle-two.txt").wstring() };
+    const auto recycleRequest =
+        snowdesktop::CreateRecycleBinDeleteRequest(recycleSources);
+    Expect(recycleRequest.steps.size() == 1 &&
+            recycleRequest.steps[0].function == FO_DELETE &&
+            recycleRequest.steps[0].sources == recycleSources &&
+            recycleRequest.steps[0].destination.empty(),
+        "Recycle Bin drops build one path-backed delete operation");
+    Expect((recycleRequest.steps[0].flags & FOF_ALLOWUNDO) != 0 &&
+            (recycleRequest.steps[0].flags & FOF_WANTNUKEWARNING) != 0,
+        "Recycle Bin deletes stay recoverable and warn before permanent deletion");
+    Expect(snowdesktop::CreateRecycleBinDeleteRequest({}).steps.empty(),
+        "an empty Recycle Bin drop does not create a delete operation");
     snowdesktop::ShellFileOperationRequest copyRequest;
     copyRequest.steps.push_back({
         FO_COPY,
@@ -142,6 +451,17 @@ int wmain()
     noneEffectRequest.targetParsingName = noneEffectDirectory.wstring();
     noneEffectRequest.keyState = MK_LBUTTON;
     noneEffectRequest.allowedEffects = DROPEFFECT_NONE;
+    std::atomic<int> preflightCalls{0};
+    snowdesktop::ShellDropRequest preflightRequest;
+    preflightRequest.sources = { handoffSource.wstring() };
+    preflightRequest.targetParsingName = preflightDirectory.wstring();
+    preflightRequest.keyState = MK_LBUTTON | MK_CONTROL;
+    preflightRequest.allowedEffects = DROPEFFECT_COPY;
+    preflightRequest.dataObjectPreflight =
+        [&preflightCalls](IDataObject* dataObject) {
+            ++preflightCalls;
+            return dataObject != nullptr;
+        };
     snowdesktop::ShellFileOperationRequest shortcutRequest;
     const std::filesystem::path shortcutPath =
         shortcutDirectory / L"handoff.lnk";
@@ -195,6 +515,7 @@ int wmain()
     std::promise<bool> multiHandoffPromise;
     std::promise<bool> partialSourcePromise;
     std::promise<bool> noneEffectPromise;
+    std::promise<bool> preflightPromise;
     std::promise<bool> shortcutPromise;
     std::promise<bool> partialShortcutPromise;
     std::promise<bool> createFolderShortcutPromise;
@@ -207,6 +528,7 @@ int wmain()
     auto multiHandoffFuture = multiHandoffPromise.get_future();
     auto partialSourceFuture = partialSourcePromise.get_future();
     auto noneEffectFuture = noneEffectPromise.get_future();
+    auto preflightFuture = preflightPromise.get_future();
     auto shortcutFuture = shortcutPromise.get_future();
     auto partialShortcutFuture =
         partialShortcutPromise.get_future();
@@ -256,6 +578,12 @@ int wmain()
                 noneEffectPromise.set_value(succeeded);
             }),
         "none-effect IDropTarget request is accepted for rejection");
+    Expect(worker.Enqueue(
+            std::move(preflightRequest),
+            [&preflightPromise](bool succeeded) {
+                preflightPromise.set_value(succeeded);
+            }),
+        "data-object preflight request is accepted");
     Expect(worker.Enqueue(
             std::move(shortcutRequest),
             [&shortcutPromise](bool succeeded) {
@@ -314,6 +642,10 @@ int wmain()
     Expect(noneEffectFuture.wait_for(std::chrono::seconds(15)) ==
             std::future_status::ready && !noneEffectFuture.get(),
         "DROPEFFECT_NONE remains rejected");
+    Expect(preflightFuture.wait_for(std::chrono::seconds(15)) ==
+            std::future_status::ready && preflightFuture.get() &&
+            preflightCalls.load() == 1,
+        "a successful data-object preflight bypasses Shell on the worker");
     Expect(shortcutFuture.wait_for(std::chrono::seconds(15)) ==
             std::future_status::ready && shortcutFuture.get(),
         "Shell shortcut creation completes successfully");
@@ -367,6 +699,9 @@ int wmain()
     Expect(!std::filesystem::exists(
             noneEffectDirectory / rejectedHandoffSource.filename()),
         "a none-effect handoff performs no operation");
+    Expect(!std::filesystem::exists(
+            preflightDirectory / handoffSource.filename()),
+        "a handled preflight does not also execute the Shell drop");
     Expect(std::filesystem::exists(shortcutPath),
         "Shell shortcut creation writes the link file");
     Expect(std::filesystem::exists(partialShortcutPath),

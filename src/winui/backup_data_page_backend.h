@@ -107,14 +107,30 @@ struct BackupDataPageBackendOptions
  * not publish stale view state. This class never flushes the pre-restore
  * snapshot.
  */
-class BackupDataPageBackend final
+/** Internal value/service boundary used by the settings UI process. */
+class IBackupDataPageBackend
+{
+public:
+    virtual ~IBackupDataPageBackend() = default;
+    using SnapshotChangedCallback =
+        std::function<void(const BackupDataPageSnapshot&)>;
+    virtual BackupDataPageActions Actions() = 0;
+    virtual void SetSnapshotChangedCallback(SnapshotChangedCallback callback) = 0;
+    virtual BackupDataPageSnapshot CurrentSnapshot() const = 0;
+    virtual void Activate(std::uint64_t generation) = 0;
+    virtual void Deactivate() noexcept = 0;
+    virtual void Refresh() = 0;
+    virtual void Close() noexcept = 0;
+};
+
+class BackupDataPageBackend final : public IBackupDataPageBackend
 {
 public:
     using SnapshotChangedCallback =
         std::function<void(const BackupDataPageSnapshot&)>;
 
     BackupDataPageBackend(
-        SettingsController& controller,
+        ISettingsController& controller,
         BackupDataPageBackendOptions options);
     ~BackupDataPageBackend();
 

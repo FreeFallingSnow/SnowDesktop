@@ -1,6 +1,7 @@
 #include "single_instance.h"
 
 #include "constants.h"
+#include "steam_runtime_context.h"
 
 #include <algorithm>
 #include <array>
@@ -83,7 +84,7 @@ std::wstring QueryPackageFamilyName(HANDLE process)
     return familyName;
 }
 
-std::wstring BuildDataDirectory(
+std::wstring BuildLegacyDataDirectory(
     const std::wstring& executablePath,
     const std::wstring& packageFamilyName)
 {
@@ -191,7 +192,7 @@ InstanceInfo DescribeProcess(
     const std::wstring packageFamilyName =
         QueryPackageFamilyName(process);
     info.packaged = !packageFamilyName.empty();
-    info.dataDirectory = BuildDataDirectory(
+    info.dataDirectory = ResolveInstanceDataDirectory(
         info.executablePath, packageFamilyName);
     info.version = knownVersion.empty()
         ? ReadExecutableVersion(info.executablePath)
@@ -199,6 +200,33 @@ InstanceInfo DescribeProcess(
     CloseHandle(process);
     return info;
 }
+}
+
+std::wstring ResolveInstanceDataDirectory(
+    std::wstring_view executablePath,
+    std::wstring_view packageFamilyName)
+{
+    const std::wstring executable(executablePath);
+    const std::wstring familyName(packageFamilyName);
+    if (!executable.empty() || !familyName.empty())
+    {
+        const auto context =
+            snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+                std::filesystem::path(executable), !familyName.empty());
+        switch (context.kind)
+        {
+        case snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged:
+        case snowdesktop::deployment::RuntimeDeploymentKind::
+            SteamLocalDevelopment:
+            return context.dataRoot.wstring();
+        case snowdesktop::deployment::RuntimeDeploymentKind::Invalid:
+            return {};
+        case snowdesktop::deployment::RuntimeDeploymentKind::Portable:
+        case snowdesktop::deployment::RuntimeDeploymentKind::Packaged:
+            break;
+        }
+    }
+    return BuildLegacyDataDirectory(executable, familyName);
 }
 
 Guard::~Guard()
@@ -337,6 +365,37 @@ bool DataDirectoriesMatch(
     if (left.empty() || right.empty())
         return false;
     return NormalizePath(left) == NormalizePath(right);
+}
+
+bool IsManagedSteamRuntimeReplacement(
+    const InstanceInfo& running, const InstanceInfo& requested)
+{
+    if (running.packaged || requested.packaged ||
+        running.executablePath.empty() || requested.executablePath.empty())
+    {
+        return false;
+    }
+
+    const auto runningContext =
+        snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+            std::filesystem::path(running.executablePath), false);
+    const auto requestedContext =
+        snowdesktop::deployment::ResolveRuntimeDeploymentContext(
+            std::filesystem::path(requested.executablePath), false);
+    if (runningContext.kind !=
+            snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged ||
+        requestedContext.kind !=
+            snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged)
+    {
+        return false;
+    }
+
+    return NormalizePath(runningContext.installRoot.wstring()) ==
+            NormalizePath(requestedContext.installRoot.wstring()) &&
+        NormalizePath(std::filesystem::path(running.executablePath)
+                .parent_path().wstring()) !=
+            NormalizePath(std::filesystem::path(requested.executablePath)
+                .parent_path().wstring());
 }
 
 bool NotifyExistingInstance(const InstanceInfo& instance)

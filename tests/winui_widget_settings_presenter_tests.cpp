@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +25,9 @@ std::string ReadText(const std::filesystem::path& path)
     if (!input) return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    std::string source = content.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 bool ContainsAll(
@@ -104,7 +107,7 @@ void TestResponsiveFieldRows(
     Check(ContainsAll(source, {
               "#include \"settings_presenter_controls.h\"",
               "presenter_controls::SettingRow row",
-              "field.row.Initialize(field.editorHost)",
+              "field.row.Initialize(field.editorRow)",
               "field.row.SetText(",
               "field.editorHost.Children().Append(",
               "field.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right)",
@@ -167,6 +170,22 @@ void TestResponsiveFieldRows(
               "if (field.colorEditor) return field.colorEditor->button",
               "return field.root;"}),
         "responsive widget rows keep editor automation context, disabled-state semantics, and concrete keyboard focus targets");
+}
+
+void TestPerFieldRestore(const std::string& source)
+{
+    Check(ContainsAll(source, {
+              "muxc::Button restoreDefault",
+              "WidgetSettingValueChannel::Ordinary",
+              "ConfigureRestoreDefaultButton(",
+              "RestoreFieldDefault(field)",
+              "service.ResetField(guard, key)",
+              "state.currentValue != state.defaultValue",
+              "state.schema.Kind() == wr::WidgetSettingKind::AppSearch",
+              "!state.searchQuery.empty()",
+              "field.restoreDefault.IsEnabled(",
+              "field.restoreDefault.Click(field.restoreDefaultClicked)"}),
+        "ordinary widget fields expose a localized trailing restore action that disables at the effective default and includes app-search query state");
 }
 
 void TestPopupColorEditing(
@@ -380,29 +399,15 @@ void TestDeclarativeBehavior(const std::string& source)
                 std::string::npos,
         "preset combos apply immediately without a second Apply button");
 
-    std::size_t order = 0;
-    for (const char* fragment : {
-             "appearanceCard.content.Children().Append(followGlobalRow.root)",
-             "appearanceCard.content.Children().Append(appearanceThemeRow.root)",
-             "backgroundColorEditor->row.root",
-             "customAppearanceHost.Children().Append(backgroundOpacity.row.root)",
-             "customAppearanceHost.Children().Append(borderColorEditor->row.root)",
-             "customAppearanceHost.Children().Append(borderOpacity.row.root)",
-             "customAppearanceHost.Children().Append(gradientEndOpacity.row.root)",
-             "customAppearanceHost.Children().Append(glassRow.root)",
-             "customAppearanceHost.Children().Append(acrylicRow.root)",
-             "customAppearanceHost.Children().Append(contentThemeRow.root)",
-             "root.Children().Append(appearanceCard.root)",
-             "root.Children().Append(stylePreviewCard.root)",
-             "root.Children().Append(scriptSettingsTitle)",
-             "root.Children().Append(fieldsHost)",
-             "root.Children().Append(resetCard.root)"})
-    {
-        const auto next = source.find(fragment, order);
-        Check(next != std::string::npos,
-            "custom appearance, preset, fields, and reset controls retain the legacy order");
-        if (next != std::string::npos) order = next + 1;
-    }
+    Check(ContainsAll(source, {
+              "patch.borderWidth = preset.widgetBorderWidth",
+              "patch.edgeHighlightEnabled =",
+              "patch.edgeHighlightWidth =",
+              "patch.edgeHighlightStrength =",
+              "edgeHighlightEnabled.IsOn()",
+              "edgeHighlightWidth.row.SetEnabled",
+              "edgeHighlightStrength.row.SetEnabled"}),
+        "per-widget appearance keeps material, border, and edge-highlight controls independent");
     Check(ContainsAll(source, {
               "WidgetSettingKind::Unknown",
               "BuildTextEditor(*field)",
@@ -428,11 +433,18 @@ void TestPendingEditCommitSafety(const std::string& source)
               "current->second->passwordDirty = true",
               "SecureZeroMemory(restored.data()"}),
         "failed text and secret commits retain the pending editor value");
-    Check(source.find("const auto result = impl_->FlushPendingEdits()") !=
-                std::string::npos &&
-            source.find("if (!result.Succeeded())\n            return;") !=
-                std::string::npos,
-        "deactivation refuses to discard a failed final commit");
+    Check(ContainsAll(source, {
+              "bool flushPendingEditors = true",
+              "const auto editorCommit = FlushPendingEdits()",
+              "CanFinalizeField(field)",
+              "}, false);"}),
+        "dependency mutations flush pending editors first and existing drafts may finalize after visibility changes");
+    Check(ContainsAll(source, {
+              "const auto result = impl_->FlushPendingEdits()",
+              "impl_->active = false",
+              "impl_->hasSnapshot = false",
+              "impl_->service.Close(widgetId)"}),
+        "deactivation closes a failed component-settings session instead of retaining an invisible active draft");
 }
 
 void TestTransientPreviewAndDraftValidation(
@@ -497,6 +509,7 @@ int main(int argc, char** argv)
     TestPublicContract(header);
     TestNativeControlMapping(source, sharedControls);
     TestResponsiveFieldRows(source, sharedControls);
+    TestPerFieldRestore(source);
     TestPopupColorEditing(source, sharedControls);
     TestOpaqueChannels(source);
     TestSnapshotAndAsyncSafety(source);

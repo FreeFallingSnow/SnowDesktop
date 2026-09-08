@@ -293,6 +293,13 @@ void DesktopApp::RelayoutDisplacedItems()
         GridCell freeCell;
         if (findFreeCellOrGrow(item.gridSpan, freeCell, item.gridCell.pageId))
         {
+            if (item.largeIcon)
+            {
+                if (const auto* target = FindGridPage(gridPages_, freeCell.pageId))
+                { item.gridSpan.columns = std::min(item.gridSpan.columns, target->columns); item.gridSpan.rows = std::min(item.gridSpan.rows, target->rows); }
+                else if (savedPageColumns_.contains(freeCell.pageId) && savedPageRows_.contains(freeCell.pageId))
+                { item.gridSpan.columns = std::min(item.gridSpan.columns, savedPageColumns_[freeCell.pageId]); item.gridSpan.rows = std::min(item.gridSpan.rows, savedPageRows_[freeCell.pageId]); }
+            }
             item.gridCell = freeCell;
             item.slot = SlotFromCell(gridPages_, freeCell);
             MarkGridArea(usedSlots, freeCell, item.gridSpan);

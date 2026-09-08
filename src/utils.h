@@ -190,7 +190,7 @@ bool TryWriteDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const st
  * @param clsid 图标的 CLSID 字符串
  * @param visible true 表示显示该图标，false 表示隐藏该图标
  */
-void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible);
+bool WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible);
 
 /**
  * @brief 尝试从任意根键读取桌面图标注册表值
@@ -210,7 +210,10 @@ bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& va
  * @param settingsIconVisibility CLSID 到可见性布尔值的映射表
  * @return 图标可见返回 true，不可见返回 false
  */
-bool IsVisibleByDesktopIconSettings(const std::wstring& desktopIconClsid, const std::unordered_map<std::wstring, bool>& settingsIconVisibility);
+bool IsVisibleByDesktopIconSettings(
+    const std::wstring& desktopIconClsid,
+    const std::unordered_map<std::wstring, bool>& settingsIconVisibility,
+    bool registeredNamespaceVisibleByDefault = false);
 
 /**
  * @brief 判断 Windows 资源管理器是否启用了“隐藏的项目”。

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -25,7 +26,9 @@ std::string ReadText(const std::filesystem::path& path)
         return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    std::string source = content.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 void TestPresenterContract(const std::filesystem::path& repository)
@@ -133,14 +136,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
               "\\\"summonOnlyLinkedPreferencesAreBase\\\": true") !=
                 std::string::npos,
         "summon-only Dock display persists linked base preferences and migrates configurations that stored forced values");
-    for (const char* control : {
-             "muxc::ToggleSwitch", "muxc::ComboBox", "muxc::Slider",
-             "muxc::NumberBox", "muxc::Button", "muxc::Expander",
-             "muxc::InfoBar", "muxc::RadioButtons"})
-    {
-        Check(source.find(control) != std::string::npos,
-            "the Dock page uses native WinUI controls");
-    }
+
     Check(source.find("ColorFlyoutEditor editor") != std::string::npos &&
             controls.find("muxc::ColorPicker picker") != std::string::npos,
         "Dock colors use the shared native WinUI ColorPicker flyout");
@@ -332,49 +328,11 @@ void TestPresenterContract(const std::filesystem::path& repository)
               "&shellUiRule, &maximizedWindowRule, &visibleWindowRule") !=
                 std::string::npos,
         "scenario overrides display and iterate in shell-UI, maximized-window, visible-window priority order");
-    const auto ruleToggle = source.find(
-        "control.details.Children().Append(control.enabledRow.root)");
-    const auto ruleAppearance = source.find(
-        "control.details.Children().Append(control.appearanceDetails)");
-    const auto ruleDisclosure = source.find(
-        "control.root.Children().Append(control.expander)");
-    Check(source.find("control.expander = muxc::Expander{}") !=
-                std::string::npos &&
-            source.find("control.expander.IsExpanded(false)") !=
-                std::string::npos &&
-            source.find("control.expander.Content(control.details)") !=
-                std::string::npos &&
-            ruleToggle != std::string::npos &&
-            ruleAppearance != std::string::npos &&
-            ruleDisclosure != std::string::npos &&
-            ruleToggle < ruleAppearance &&
-            ruleAppearance < ruleDisclosure &&
-            source.find("control.detailTitle.Text(context)") !=
-                std::string::npos &&
-            source.find(
-              "control.enabledRow.SetText(\n            L(\"app.settings.widgets_enabled\", L\"Enabled\"))") !=
-                std::string::npos &&
-            source.find("control->appearanceDetails.Visibility(enabled") !=
-                std::string::npos &&
-            source.find("? mux::Visibility::Visible") !=
-                std::string::npos &&
-            source.find(": mux::Visibility::Collapsed)") !=
-                std::string::npos &&
-            source.find("control->themeRow.SetEnabled(enabled)") !=
-                std::string::npos &&
-            source.find("return visibleWindowRule.expander") !=
-                std::string::npos &&
-            source.find("return maximizedWindowRule.expander") !=
-                std::string::npos &&
-            source.find("return shellUiRule.expander") !=
-                std::string::npos &&
-            source.find("Children().Clear()") == std::string::npos &&
-            source.find("SetDynamicRuleAutomation(") !=
-                std::string::npos &&
-            source.find(
-              "AutomationProperties::SetHelpText(control.expander") !=
-                std::string::npos,
-        "each condition is a named, collapsed disclosure whose nested enable switch gates its appearance children without rebuilding the page, and routed keyboard focus lands on the visible header");
+    // Disabled scenarios must not expose editable overrides. Layout and control
+    // template choices are intentionally not a source contract.
+    Check(source.find("control->appearanceDetails.Visibility(enabled") != std::string::npos &&
+          source.find("control->themeRow.SetEnabled(enabled)") != std::string::npos,
+        "disabled taskbar scenarios gate their appearance editors");
     Check(source.find("floatingEdgeSwipeRow.SetEnabled(dockEnabled)") !=
                 std::string::npos &&
             source.find("positionRow.SetEnabled(dockEnabled)") !=

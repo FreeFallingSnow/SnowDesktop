@@ -1,3 +1,4 @@
+#include "namespace_menu_actions.h"
 #include "right_click_contract.h"
 #include "app/shell_item_action_rules.h"
 
@@ -156,16 +157,43 @@ void TestSlotItemMenuMatrix()
                 std::string(descriptor.name) +
                 ": item right-click must route to the expected menu");
 
-            const Menu protectedExpected =
-                item == Item::DesktopItem &&
-                        expected == Menu::DesktopItem
-                    ? Menu::ShellDesktopItem
-                    : expected;
-            Check(protectedMenu == protectedExpected,
+            Check(protectedMenu == expected,
                 std::string(descriptor.name) +
-                ": protected desktop icons must route to Shell");
+                ": protected namespace icons expose the host menu without changing item capabilities");
         }
     }
+}
+
+
+void TestNamespaceCommonActions()
+{
+    class Context final : public IContextMenu
+    {
+    public:
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void**) override { return E_NOINTERFACE; }
+        ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+        ULONG STDMETHODCALLTYPE Release() override { return 1; }
+        HRESULT STDMETHODCALLTYPE QueryContextMenu(HMENU, UINT, UINT, UINT, UINT) override { return E_NOTIMPL; }
+        HRESULT STDMETHODCALLTYPE InvokeCommand(CMINVOKECOMMANDINFO*) override { return E_NOTIMPL; }
+        HRESULT STDMETHODCALLTYPE GetCommandString(UINT_PTR offset, UINT type, UINT*, LPSTR text, UINT count) override
+        {
+            if (type != GCS_VERBW || offset > 1) return E_INVALIDARG;
+            return wcscpy_s(reinterpret_cast<wchar_t*>(text), count, offset == 0 ? L"Manage" : L"empty") == 0 ? S_OK : E_FAIL;
+        }
+    } context;
+    HMENU menu = CreatePopupMenu(), child = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, 1, L"Manage command");
+    AppendMenuW(child, MF_STRING | MF_GRAYED, 2, L"Empty bin");
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(child), L"Actions");
+    const auto manage = snowdesktop::namespace_menu_actions::Find(&context, menu, L"manage");
+    const auto empty = snowdesktop::namespace_menu_actions::Find(&context, menu, L"empty");
+    Check(manage && manage->offset == 0 && manage->enabled && manage->label == L"Manage command",
+        "namespace quick actions match canonical verbs case-insensitively and preserve the system label");
+    Check(empty && empty->offset == 1 && !empty->enabled && empty->label == L"Empty bin",
+        "namespace actions preserve disabled states even inside nested Shell menus");
+    Check(!snowdesktop::namespace_menu_actions::Find(&context, menu, L"properties"),
+        "unsupported system commands are not invented");
+    DestroyMenu(menu);
 }
 
 void TestSelectionContract()
@@ -242,6 +270,30 @@ void TestShellItemActionContract()
         !actions::IsAdministratorRunnableExtension(L".txt") &&
         !actions::IsAdministratorRunnableExtension(L""),
         "ordinary documents must not expose the administrator action");
+    Check(
+        actions::ResolveRemovalAction(1, 0, 1, false) ==
+            actions::RemovalAction::HideDesktopNamespace,
+        "a single third-party desktop namespace must expose an explicit hide action");
+    Check(
+        actions::ResolveRemovalAction(1, 0, 1, false, true) ==
+            actions::RemovalAction::Disabled,
+        "protected system icons must not expose hide or delete actions");
+    Check(
+        actions::ResolveRemovalAction(1, 0, 1, true, true) ==
+            actions::RemovalAction::RemoveDockMapping,
+        "system-icon Dock mappings remain removable without hiding their source");
+    Check(
+        actions::ResolveRemovalAction(2, 1, 1, false) ==
+            actions::RemovalAction::Disabled,
+        "mixed file and namespace selections must not partially delete their file items");
+    Check(
+        actions::ResolveRemovalAction(2, 2, 0, false) ==
+            actions::RemovalAction::DeleteFiles,
+        "a path-backed file selection must retain its delete action");
+    Check(
+        actions::ResolveRemovalAction(1, 0, 1, true) ==
+            actions::RemovalAction::RemoveDockMapping,
+        "removing a Dock mapping must take precedence over hiding its source namespace");
 }
 
 } // namespace
@@ -251,6 +303,7 @@ int main()
     TestContainerMenuMatrix();
     TestSlotItemMenuMatrix();
     TestSelectionContract();
+    TestNamespaceCommonActions();
     TestLuaWidgetMenuScope();
     TestMenuFocusRestoreContract();
     TestShellItemActionContract();

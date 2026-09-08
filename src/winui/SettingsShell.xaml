@@ -168,8 +168,10 @@
                                             Tag="appearance-icon-beautification" />
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance" />
                 <NavigationViewItemHeader x:Name="DesktopShellHeader" />
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
+                <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
                 <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
                 <NavigationViewItem x:Name="DockItem" Tag="dock" />
                 <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
@@ -181,7 +183,13 @@
                 <NavigationViewItem x:Name="AboutItem" Tag="about" />
                 <NavigationViewItem x:Name="DeveloperItem"
                                     Tag="developer-tools"
-                                    Visibility="Collapsed" />
+                                    Visibility="Collapsed">
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge x:Name="DeveloperSkillUpdateBadge"
+                                   Style="{StaticResource AttentionDotInfoBadgeStyle}"
+                                   Visibility="Collapsed" />
+                    </NavigationViewItem.InfoBadge>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="DebugItem"
                                     Tag="debug"
                                     Visibility="Collapsed" />

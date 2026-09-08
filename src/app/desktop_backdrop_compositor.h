@@ -5,6 +5,7 @@
 #pragma once
 
 #include <windows.h>
+#include <d2d1_1.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -39,13 +40,14 @@ public:
         HWND contentWindow, bool topmost = true,
         bool initiallyVisible = true);
     /**
-     * @brief 在一个延迟窗口事务中同步 popup 内容与 backdrop 的 Z 序。
+     * @brief 安全同步 popup 内容与 backdrop 的 Z 序及 TOPMOST 状态。
      * @param contentInsertAfter 内容窗口应插入到其后的窗口或特殊 HWND 值。
-     * @param topmost 事务完成后窗口对是否位于 TOPMOST 带。
+     * @param topmost 操作完成后窗口对是否位于 TOPMOST 带。
+     * @param preserveAboveWindow 已在内容窗口上方且不可被本次刷新越过的窗口。
      */
     void SetPopupWindowPairZOrder(
         HWND contentWindow, HWND contentInsertAfter,
-        bool topmost);
+        bool topmost, HWND preserveAboveWindow = nullptr);
     /** @brief 临时切换顶层 popup backdrop 所在的 Z 序带。 */
     void SetPopupTopmost(bool topmost);
     /** @brief 内容窗口更换桌面宿主后，同步 backdrop 窗口的 parent 和层级。 */
@@ -78,6 +80,15 @@ public:
         float anchorX, float anchorY,
         std::uint32_t durationMilliseconds,
         float normalizedStartSlope = 0.0f);
+    /**
+     * @brief 使用与 Dock 内容相同的分片规则变形一个玻璃面板；矩形均为宿主坐标。
+     *        由 CommitVisualChanges 或 EndFrame 统一提交，稳定几何不逐帧分配资源。
+     */
+    [[nodiscard]] bool SetGenieTransform(
+        const RECT& panelFrame, const RECT& dockFrame,
+        int edge, float collapsed, float opacity);
+    /** @brief 恢复普通面板及根视觉；与后续正常属性更新一起提交。 */
+    void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
     /**
@@ -88,6 +99,9 @@ public:
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
         std::uintptr_t ownerKey = 0);
+    /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
+    bool SetPanelTransform(std::uintptr_t ownerKey,
+        const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);
     /** @brief 立即移除指定矩形对应的玻璃面板并同步辅助窗口区域。 */
     bool RemovePanel(const RECT& frame);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
@@ -119,6 +133,7 @@ public:
     /** @brief 判断窗口是否为该实例创建的 backdrop 辅助窗口。 */
     bool IsBackdropWindow(HWND window) const;
     std::size_t PanelCount() const;
+    std::size_t BlurFactoryCount() const;
     const std::wstring& LastError() const;
 
 private:

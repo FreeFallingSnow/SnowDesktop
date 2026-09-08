@@ -324,6 +324,18 @@ bool AnimationFrameRequests::Cancel(std::string_view name)
     return removed;
 }
 
+bool AnimationFrameRequests::RequestDataRefresh()
+{
+    if (!visible_) return false;
+    dataRefreshPending_ = true;
+    return true;
+}
+
+bool AnimationFrameRequests::ConsumeDataRefresh() noexcept
+{
+    return std::exchange(dataRefreshPending_, false);
+}
+
 bool AnimationFrameRequests::SetVisible(bool visible)
 {
     if (visible_ == visible) return false;
@@ -360,11 +372,12 @@ void AnimationFrameRequests::Clear()
 {
     pending_.clear();
     previousFrames_.clear();
+    dataRefreshPending_ = false;
 }
 
 bool AnimationFrameRequests::HasPending() const noexcept
 {
-    return !pending_.empty();
+    return !pending_.empty() || dataRefreshPending_;
 }
 
 std::size_t AnimationFrameRequests::Size() const noexcept

@@ -1,4 +1,6 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
+#include "../data_paths.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
 #include "../steam_app_identity.h"
@@ -171,6 +173,8 @@ bool LaunchSteamWorkshopPublisher(
     std::wstring commandLine = QuoteProcessArgument(manager.wstring()) +
         L" --development-root " +
         QuoteProcessArgument(developmentRoot.wstring()) +
+        L" --data-directory " +
+        QuoteProcessArgument(GetDataDirectoryPath()) +
         L" --language " + QuoteProcessArgument(managerLanguage) +
         L" --settings-file " +
         QuoteProcessArgument(GetGeneralSettingsPath());
@@ -187,8 +191,7 @@ bool LaunchSteamWorkshopPublisher(
         snowdesktop::BuildSnowDesktopSteamChildEnvironment();
     if (environment.empty())
         return false;
-    const std::wstring workingDirectory =
-        manager.parent_path().wstring();
+    const std::wstring workingDirectory = GetDataDirectoryPath();
     if (!CreateProcessW(manager.c_str(), commandLine.data(), nullptr,
             nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT,
             environment.data(), workingDirectory.c_str(), &startup,
@@ -200,9 +203,82 @@ bool LaunchSteamWorkshopPublisher(
     CloseHandle(process.hProcess);
     return true;
 }
+
+snowdesktop::winui::GeneralAdvancedFeatureStatus
+ToGeneralAdvancedFeatureStatus(
+    const snowdesktop::steam_entitlement::Snapshot& source,
+    snowdesktop::deployment::RuntimeDeploymentKind deploymentKind)
+{
+    using SourceFailure = snowdesktop::steam_entitlement::Failure;
+    using SourceState = snowdesktop::steam_entitlement::State;
+    using TargetFailure =
+        snowdesktop::winui::GeneralAdvancedFeatureFailure;
+    using TargetState = snowdesktop::winui::GeneralAdvancedFeatureState;
+
+    snowdesktop::winui::GeneralAdvancedFeatureStatus target;
+    target.bridgeAvailable = source.bridgeAvailable;
+    target.registered = source.registered;
+    target.validUntil = source.validUntil;
+    target.cardVisible = source.registered || source.bridgeAvailable ||
+        deploymentKind == snowdesktop::deployment::RuntimeDeploymentKind::Portable;
+    target.offerSteamStore = !source.registered && !source.bridgeAvailable &&
+        deploymentKind == snowdesktop::deployment::RuntimeDeploymentKind::Portable;
+    switch (source.state)
+    {
+    case SourceState::BridgeUnavailable:
+        target.state = TargetState::BridgeUnavailable;
+        break;
+    case SourceState::Unregistered:
+        target.state = TargetState::Unregistered;
+        break;
+    case SourceState::Checking:
+        target.state = TargetState::Checking;
+        break;
+    case SourceState::Registered:
+        target.state = TargetState::Registered;
+        break;
+    case SourceState::RegistrationFailed:
+        target.state = TargetState::RegistrationFailed;
+        break;
+    }
+    switch (source.failure)
+    {
+    case SourceFailure::None:
+        target.failure = TargetFailure::None;
+        break;
+    case SourceFailure::SteamUnavailable:
+        target.failure = TargetFailure::SteamUnavailable;
+        break;
+    case SourceFailure::NotOwned:
+        target.failure = TargetFailure::NotOwned;
+        break;
+    case SourceFailure::BridgeError:
+        target.failure = TargetFailure::BridgeError;
+        break;
+    case SourceFailure::StorageError:
+        target.failure = TargetFailure::StorageError;
+        break;
+    }
+    return target;
+}
 }
 
 // Application bootstrap and top-level message loop.
+
+void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
+{
+    if (!steamEntitlementService_)
+        return;
+    const HWND notificationWindow = controlHwnd_;
+    const bool started = steamEntitlementService_->StartRegistration(
+        [notificationWindow]() {
+            if (notificationWindow && IsWindow(notificationWindow))
+                PostMessageW(notificationWindow,
+                    kSteamEntitlementChangedMessage, 0, 0);
+        }, revalidateRegistered);
+    if (started && settingsWindow_)
+        settingsWindow_->RefreshGeneralRuntimeState();
+}
 
 int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
@@ -431,6 +507,22 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             instance_, &uiAnimationScheduler_,
             d2dDevice_.Get(), dcompDevice_.Get()))
         dockWindowTransition_.reset();
+    if (dockWindowTransition_)
+    {
+        dockWindowTransition_->SetOcclusionRectsProvider([this] {
+            return GetDockWindowTransitionOcclusionRects();
+        });
+        dockWindowTransition_->SetPresentationCallback([this](HWND) {
+            ApplyFloatingDockLayerPolicy();
+        });
+        dockWindowTransition_->SetDiagnosticCallback([this](const wchar_t* message) {
+            snowdesktop::dock_taskbar_diagnostics::Record(message,
+                dockWindowTransition_->GetPresentationWindow());
+            if (std::wcsncmp(message, L"Dock taskbar phase:", 19) == 0)
+                return; // Buffered until the bounded observation ends.
+            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+        });
+    }
 
     // Create control window for tray icon ownership
     {
@@ -509,7 +601,18 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         kTaskbarRevealGuardIntervalMs, nullptr);
     StartDockForegroundMonitor();
 
+    const std::filesystem::path executableDirectory(
+        GetExecutableDirectoryPath());
+    steamEntitlementService_ =
+        std::make_unique<snowdesktop::steam_entitlement::Service>(
+            executableDirectory / L"SnowDesktopSteamBridge.exe",
+            std::filesystem::path(snowdesktop::deployment::
+                GetRuntimeFilePath(L"steam_api64.dll")),
+            std::filesystem::path(
+                GetDataFilePath(L"SnowDesktop.entitlement.bin")));
+
     snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
+    settingsHostOptions.largeIconSettings = [this](auto request) { return EditLargeIcon(std::move(request)); };
     settingsHostOptions.windowTitle = _LW("app.settings.title");
     settingsHostOptions.localize = [](std::string_view key) {
         const std::string ownedKey(key);
@@ -589,10 +692,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
         patch.installedWidgetCount = widgets_.size();
         patch.packaged = snowdesktop::deployment::IsPackaged();
-        patch.updateState = settingsUpdateState_;
-        patch.availableVersion = settingsUpdateAvailableVersion_;
-        patch.updateDetail = settingsUpdateDetailKey_.empty()
-            ? std::wstring{} : _LW(settingsUpdateDetailKey_.c_str());
         patch.animationDiagnosticsEnabled =
             uiAnimationScheduler_.DiagnosticsEnabled();
         patch.animationDiagnosticsStatus =
@@ -606,30 +705,66 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         GeneralStartupConflict conflict;
         const snowdesktop::AutoStartQueryResult state =
             QueryAutoStartState();
-        const bool otherOwnerActive = state.stateKnown &&
-            state.taskStatus ==
-                snowdesktop::UnifiedAutoStartTaskState::Enabled &&
-            !state.taskOwnedByCurrentDeployment;
-        if (state.packaged && otherOwnerActive &&
-            state.taskOwner == snowdesktop::UnifiedAutoStartOwner::Portable)
+        const snowdesktop::AutoStartOwnershipNotice notice =
+            snowdesktop::ClassifyAutoStartOwnershipNotice(
+                state.stateKnown, state.taskStatus,
+                state.taskOwnedByCurrentDeployment, state.taskOwner);
+        if (notice == snowdesktop::AutoStartOwnershipNotice::OtherVersion)
         {
             conflict.kind =
                 GeneralStartupConflictKind::NonPackagedVersionOwnsStartup;
             conflict.ownerCommand = state.ownerCommand;
         }
-        else if (!state.packaged && otherOwnerActive &&
-            state.taskOwner == snowdesktop::UnifiedAutoStartOwner::Packaged)
+        else if (notice ==
+            snowdesktop::AutoStartOwnershipNotice::InstalledVersion)
         {
             conflict.kind =
                 GeneralStartupConflictKind::InstalledVersionOwnsStartup;
         }
         return conflict;
     };
+    settingsHostOptions.advancedFeatureStatus = [this]() {
+        return steamEntitlementService_
+            ? ToGeneralAdvancedFeatureStatus(
+                  steamEntitlementService_->Current(),
+                  snowdesktop::deployment::GetRuntimeDeploymentContext().kind)
+            : snowdesktop::winui::GeneralAdvancedFeatureStatus{};
+    };
+    settingsHostOptions.registerAdvancedFeatures = [this]() {
+        StartSteamEntitlementRegistration();
+    };
+    settingsHostOptions.resetAdvancedFeatures = [this]() {
+        const bool reset = steamEntitlementService_ &&
+            steamEntitlementService_->ResetRegistration();
+        if (controlHwnd_)
+            PostMessageW(controlHwnd_, kSteamEntitlementChangedMessage, 0, 0);
+        return reset;
+    };
+    settingsHostOptions.pageLayoutPage.capture = [this]() {
+        return CapturePageLayoutSnapshot();
+    };
+    settingsHostOptions.pageLayoutPage.analyzeGrid = [this](
+        const std::wstring& pageId, int columns, int rows) {
+        return AnalyzePageGridChange(pageId, columns, rows);
+    };
+    settingsHostOptions.pageLayoutPage.applyOrder = [this](
+        std::uint64_t expectedRevision,
+        const std::vector<std::wstring>& pageIds) {
+        return ApplyPageOrderFromSettings(expectedRevision, pageIds);
+    };
+    settingsHostOptions.pageLayoutPage.applyGrid = [this](
+        std::uint64_t expectedRevision,
+        const std::wstring& pageId, int columns, int rows) {
+        return ApplyPageGridFromSettings(
+            expectedRevision, pageId, columns, rows);
+    };
+    settingsHostOptions.pageLayoutPage.addPage = [this](
+        std::uint64_t expectedRevision) {
+        return AddPageFromSettings(expectedRevision);
+    };
     settingsHostOptions.refreshExternalState = [this]() {
         if (!settingsController_)
             return;
-        if (const auto snapshot = settingsController_->Snapshot())
-            PrepareSettingsUpdateSession(snapshot->generation);
         GeneralSettings general = generalSettings_;
         general.autoStartEnabled = QueryAutoStartEnabled();
         if (settingsController_->SynchronizeGeneral(general))
@@ -718,31 +853,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }
         }
         return generalSettings_.widgetDeveloperToolsEnabled;
-    };
-    settingsHostOptions.widgetsPage.agentSkillTargetMask = [this]() {
-        if (settingsController_)
-        {
-            const auto snapshot = settingsController_->Snapshot();
-            if (snapshot)
-                return snapshot->values.general.agentSkillTargetMask;
-        }
-        return generalSettings_.agentSkillTargetMask;
-    };
-    settingsHostOptions.widgetsPage.setAgentSkillTargetMask = [this](
-        int mask) {
-        if (!settingsController_)
-            return false;
-        const auto snapshot = settingsController_->Snapshot();
-        if (!snapshot || !snapshot->sessionActive)
-            return false;
-        mask = std::clamp(mask, 0,
-            GeneralSettings::kAllAgentSkillTargetsMask);
-        GeneralSettings general = snapshot->values.general;
-        general.agentSkillTargetMask = mask;
-        settingsController_->UpdateGeneral(std::move(general),
-            snowdesktop::SettingsUpdateMode::PreviewAndCommit);
-        const auto updated = settingsController_->Snapshot();
-        return updated && updated->values.general.agentSkillTargetMask == mask;
     };
     settingsHostOptions.widgetsPage.openDevelopmentFolder = [this]() {
         const auto paths = WidgetEngine::GetWidgetPackagePaths();
@@ -833,20 +943,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.widgetsPage.openWorkshop = [this](
         std::string_view) {
-        const std::wstring client =
-            snowdesktop::SnowDesktopSteamWorkshopClientUrl();
-        if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
-                client.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-        {
-            const std::wstring web =
-                snowdesktop::SnowDesktopSteamWorkshopUrl();
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
-                    web.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-            {
-                return snowdesktop::winui::WidgetsPageHostOperationResult::
-                    Failure(_LW("settings.widgets.workshop.openFailed"));
-            }
-        }
+        if (!OpenSteamWorkshop())
+            return snowdesktop::winui::WidgetsPageHostOperationResult::
+                Failure(_LW("settings.widgets.workshop.openFailed"));
         return snowdesktop::winui::WidgetsPageHostOperationResult::Success(
             false);
     };
@@ -1022,6 +1121,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         WriteDiagnosticLogEntry(message.c_str());
     }
+    StartSteamEntitlementRegistration(true);
 
     widgetEngine_ = std::make_unique<WidgetEngine>();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
@@ -1399,17 +1499,28 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
                     dragDropController_.IsTransportActive());
-            const bool nativeDragMessageSurface =
+            const bool marqueePointerActive =
+                IsMarqueePointerGesturePendingOrActive();
+            const bool widgetActionActive =
+                widgetAction_ != WidgetAction::None;
+            const bool latencySensitivePointerActive =
                 snowdesktop::drag_input_rules::
-                    IsNativeDragMessageSurface(
+                    IsLatencySensitivePointerGesture(
+                        nativeDragActive,
+                        marqueePointerActive,
+                        widgetActionActive,
+                        mouseDownWidgetIndex_ < widgets_.size());
+            const bool pointerMessageSurface =
+                snowdesktop::drag_input_rules::
+                    IsLatencySensitivePointerMessageSurface(
                         msg.hwnd == hwnd_,
                         IsPersistentDockHostWindow(msg.hwnd),
                         floatingPopupHwnd_ != nullptr &&
                             msg.hwnd == floatingPopupHwnd_);
             snowdesktop::drag_input_rules::
                 CoalesceQueuedMouseMoves(
-                    nativeDragActive,
-                    nativeDragMessageSurface,
+                    latencySensitivePointerActive,
+                    pointerMessageSurface,
                     msg,
                     [](MSG& next) {
                         return PeekMessageW(

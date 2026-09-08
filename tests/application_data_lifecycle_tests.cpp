@@ -1,10 +1,12 @@
 #include "full_data_backup.h"
+#include "large_icon_backup.h"
 #include "layout_storage.h"
 #include "widget_package.h"
 #include "portable_data_migration.h"
 #include "single_instance.h"
 
 #include <windows.h>
+#include <objbase.h>
 
 #include <algorithm>
 #include <atomic>
@@ -222,12 +224,25 @@ PackagePaths TestPaths(const std::filesystem::path& root)
 
 int main()
 {
+    // PIDs are reused across runs, and a previous interrupted cleanup can
+    // leave an installed version behind. Never reuse or delete that tree.
+    GUID runId{};
+    wchar_t runIdText[39]{};
+    if (FAILED(CoCreateGuid(&runId)) ||
+        StringFromGUID2(runId, runIdText, 39) == 0)
+    {
+        std::cerr << "FAILED: cannot create an isolated test run ID\n";
+        return 1;
+    }
     const auto root = std::filesystem::temp_directory_path() /
-        (L"SnowDesktopApplicationDataLifecycleTests-" +
-            std::to_wstring(GetCurrentProcessId()));
+        (L"SDDataTest-" + std::wstring(runIdText + 1, 36));
     std::error_code ec;
-    std::filesystem::remove_all(root, ec);
-    std::filesystem::create_directories(root);
+    if (!std::filesystem::create_directory(root, ec))
+    {
+        std::cerr << "FAILED: cannot create an isolated test directory: "
+            << ec.message() << '\n';
+        return 1;
+    }
 
     const auto hashInput = root / L"sha256-input.bin";
     Write(hashInput, "abc");
@@ -425,6 +440,85 @@ int main()
                 invalid.name).c_str());
     }
     snowdesktop::layout_storage::Document typedLayout;
+    {
+        snowdesktop::LargeIconConfig large;
+        large.columns = 5;
+        large.rows = 3;
+        large.opacity = 0;
+        large.manualColor = 0x12abff;
+        large.image = "imported-123.png";
+        large.localOnly = true;
+        large.titleMode = 1;
+        large.radiusPercent = 100; large.revealTitleSize = 30;
+        large.backgroundStyle = 9;
+        large.foregroundContent = 1; large.foregroundImage = "imported-foreground.png";
+        large.iconX = .2; large.iconY = .75;
+        large.effect = 2; large.titleDirection = 1; large.titleWeight = 800;
+        large.fillScale = 1.75; large.autoTitleDirection = true;
+        large.autoTitleColor = false; large.titleColor = 0xabcdef;
+        large.defaultSolidColor = 0x775599; large.defaultSolidOpacity = .31;
+        large.defaultGradient.enabled = true; large.defaultGradient.angle = 260;
+        large.defaultGradient.stops.insert(large.defaultGradient.stops.begin() + 1, {.2, 0x123456, .15});
+        large.gradient.enabled = true; large.gradient.angle = 137;
+        large.gradientOpacity = .47;
+        large.gradient.stops.insert(large.gradient.stops.begin() + 1, {.4, 0x00ff77, .25});
+        const std::string encoded = snowdesktop::EncodeLargeIconConfig(large);
+        snowdesktop::layout_storage::Document roundTrip;
+        const std::string document = "{\"layoutSchemaVersion\":1,\"items\":[{\"key\":\"game\",\"page\":\"p\",\"x\":0,\"y\":0,\"w\":2,\"h\":2,\"largeIcon\":" + encoded + "}]}";
+        Expect(snowdesktop::layout_storage::ParseDocument(document, roundTrip, &layoutError) &&
+            roundTrip.items[0].largeIcon == large && roundTrip.items[0].width == 2,
+            "large icon settings preserve desired span independently of adapted layout and without entitlement data");
+        for (const auto invalid : {R"({"version":3})", R"({"version":1,"columns":0})",
+                 R"({"version":1,"radius":-1})", R"({"version":1,"image":"../secret.png"})",
+                 R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})",
+                 R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",
+                 R"({"version":1,"revealTitleSize":73})", R"({"version":2,"titleWeight":650})",
+                 R"({"version":2,"foregroundImage":"../outside.png"})", R"({"version":2,"backgroundStyle":12})",
+                 R"({"version":2,"iconX":1.1})", R"({"version":2,"fillScale":3.1})", R"({"version":2,"gradientOpacity":1.1})",
+                 R"({"version":2,"defaultBackground":3})", R"({"version":2,"defaultSolidOpacity":2})",
+                 R"({"version":2,"defaultGradient":{"start":0.5,"end":0.5}})", R"({"version":2,"fillScale":0})", R"({"version":2,"gradient":{"start":0.5,"end":0.5}})"})
+        {
+            JsonValue value;
+            snowdesktop::LargeIconConfig candidate;
+            Expect(ParseJson(invalid, value) && !snowdesktop::DecodeLargeIconConfig(value, candidate),
+                "large icon codec rejects unsupported versions, unsafe asset references and invalid numeric boundaries");
+        }
+        JsonValue legacyValue; snowdesktop::LargeIconConfig legacy;
+        Expect(ParseJson(R"({"version":2})", legacyValue) && snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) &&
+            legacy.columns == 2 && legacy.rows == 2 && legacy.backgroundStyle == -3,
+            "omitted legacy span and style do not adopt new creation defaults");
+        for (const int preset : {-5, -4})
+        {
+            auto modern = snowdesktop::LargeIconConfig{}; modern.backgroundStyle = preset;
+            Expect(ParseJson(snowdesktop::EncodeLargeIconConfig(modern), legacyValue) &&
+                snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy == modern,
+                "neutral and plate presets survive restart with one-cell desired spans");
+        }
+        Expect(ParseJson(R"({"version":2,"titleDirection":1,"themeColor":true,"themeGradient":true})", legacyValue) &&
+            snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.fillScale == 1 && !legacy.autoTitleDirection &&
+            legacy.titleDirection == 1 && legacy.themeGradient && !legacy.themeColor && legacy.defaultBackground == 1 && !legacy.defaultGradient.enabled,
+            "earlier v2 preserves explicit title direction and gradient while adopting exclusive background modes");
+        Expect(ParseJson(R"({"version":1,"radius":27,"titleSize":14})", legacyValue) &&
+            snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.radius == 27 && legacy.radiusPercent == -1 &&
+            legacy.titleSize == 14 && legacy.revealTitleSize == 24 && legacy.version == 2 && legacy.backgroundStyle == -3,
+            "v1 layouts migrate to the default background while retaining their independent radius and stored title sizes");
+        Expect(ParseJson(R"({"version":1,"content":1,"image":"imported-old.png","titleMode":1,"opacity":0.4})", legacyValue) &&
+            snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.backgroundStyle == -2 &&
+            legacy.image == "imported-old.png" && legacy.foregroundImage.empty() && legacy.effect == 2 &&
+            legacy.titleDirection == 0 && legacy.themeOpacity == .4,
+            "legacy full-frame images migrate to fill without overwriting the independent foreground source");
+        Expect(snowdesktop::LargeIconActiveImage(large) == "imported-foreground.png" &&
+            snowdesktop::LargeIconActiveContent(large) == 1,
+            "component backgrounds use the independently retained foreground image");
+        large.backgroundStyle = -2; large.content = 2;
+        Expect(snowdesktop::LargeIconActiveImage(large) == "imported-123.png" &&
+            snowdesktop::LargeIconActiveContent(large) == 2 && large.foregroundImage == "imported-foreground.png",
+            "switching to fill preserves inactive foreground settings and selects the fill source");
+        Expect(snowdesktop::layout_storage::ParseDocument(
+            R"({"items":[{"key":"ordinary","w":3,"h":2}]})", roundTrip, &layoutError) &&
+            !roundTrip.items[0].largeIcon,
+            "an ordinary item's saved span alone never enables the premium presentation");
+    }
     Expect(snowdesktop::layout_storage::ParseDocument(
             firstLayout, typedLayout, &layoutError) &&
             typedLayout.sourceSchemaVersion == 0 &&
@@ -1052,10 +1146,13 @@ int main()
     Expect(nestedManager.Initialize(error),
         "nested-entry package manager initializes");
     InstalledPackage nestedInstalled;
-    Expect(nestedManager.InstallDirectory(nestedSource,
+    if (!nestedManager.InstallDirectory(nestedSource,
             { "local", "nested-entry" }, false,
-            nestedInstalled, report, error),
-        "nested-entry package installs");
+            nestedInstalled, report, error))
+    {
+        std::cerr << "FAILED: nested-entry package installs: " << error << '\n';
+        return 1;
+    }
     Expect(nestedInstalled.permissionState ==
             PermissionDecisionState::Granted,
         "new package records an explicit granted permission state");
@@ -1273,6 +1370,44 @@ int main()
             PermissionDecisionState::Granted &&
             permissionFreeBuiltin->grantedPermissions.empty(),
         "removing every permission clears a stale built-in consent block");
+
+    const auto hotReloadPaths =
+        TestPaths(root / L"development-hot-reload-permissions");
+    const auto hotReloadRoot =
+        hotReloadPaths.development / L"hot-reload-permissions";
+    const std::string hotReloadId =
+        "3c215a89-a294-44c3-a2bb-6b4c6c13a776";
+    MakePackage(hotReloadRoot, "1.0.0", hotReloadId,
+        "\"desktop.read\"");
+    WidgetPackageManager hotReloadManager(hotReloadPaths);
+    bool permissionScopeChanged = false;
+    error.clear();
+    Expect(hotReloadManager.Initialize(error) &&
+            hotReloadManager.SetDevelopmentOverride(
+                hotReloadId, true, error) &&
+            hotReloadManager.SetPermissionDecision(hotReloadId,
+                PermissionDecisionState::Granted,
+                { "desktop.read" }, {}, error),
+        "a development package is granted before an in-place hot update");
+    MakePackage(hotReloadRoot, "1.0.1", hotReloadId,
+        "\"desktop.read\"", "", "main.lua", "\"app.launch\"");
+    Expect(hotReloadManager.RefreshChangedPermissionScope(
+                hotReloadId, permissionScopeChanged, error) &&
+            permissionScopeChanged,
+        "a development hot update detects an in-place permission change");
+    const auto hotReloadPackage = hotReloadManager.Resolve(hotReloadId);
+    Expect(hotReloadPackage && hotReloadPackage->development &&
+            hotReloadPackage->manifest.version == "1.0.1" &&
+            hotReloadPackage->permissionState ==
+                PermissionDecisionState::Pending &&
+            hotReloadPackage->grantedPermissions.empty(),
+        "a development hot update requires fresh consent for its new scope");
+    permissionScopeChanged = true;
+    Expect(hotReloadManager.RefreshChangedPermissionScope(
+                hotReloadId, permissionScopeChanged, error) &&
+            !permissionScopeChanged,
+        "an unchanged development permission scope avoids redundant refresh");
+
     Expect(manager.ResolveEntry(manifest.id).value_or(L"").filename() == L"main.lua",
         "entry resolves inside the package");
     Expect(manager.SetEnabled(manifest.id, false, error),
@@ -1525,7 +1660,9 @@ int main()
         !sourceTrustManager.Resolve(manifest.id).has_value(),
         "source artifacts cannot request undeclared permissions");
 
-    LocalCatalogPublisher publisher(root / L"catalog");
+    LocalCatalogPublisher publisher(root / L"catalog",
+        root / L"data" / L"widgets" / L"staging" /
+            L"local-catalog");
     PublishRequest request;
     request.artifact = artifact;
     request.title = "Package Test";
@@ -1712,12 +1849,22 @@ int main()
         "excluded diagnostic log\n");
     Write(fullBackupData / L"SnowDesktop.log.1",
         "excluded rotated diagnostic log\n");
+    Write(fullBackupData / L"SnowDesktop.entitlement.bin",
+        "excluded machine-bound protected entitlement\n");
     Write(fullBackupData / L"crashdumps" / L"test.dmp",
         "excluded dump\n");
+    Write(fullBackupData / L"ShellHook" / L"1.0.5.0-test" /
+        L"SnowDesktopTaskbarHook.dll", "excluded runtime hook\n");
     Write(fullBackupData / L"widgets" / L"staging" /
         L"temporary.txt", "excluded staging\n");
     Write(fullBackupData / L"widgets" / L"quarantine" /
         L"bad.txt", "excluded quarantine\n");
+    Write(fullBackupData / L"snowwidget" / L"preview-results" /
+        L"result.json", "excluded tool scratch\n");
+    Write(fullBackupData / L"SteamWorkshop" / L"staging" /
+        L"uploads" / L"package.snowwidget", "excluded upload staging\n");
+    Write(fullBackupData / L"SteamWorkshopManager" / L"staging" /
+        L"packages" / L"package.snowwidget", "excluded manager staging\n");
     std::filesystem::path longBackupRelative;
     for (int index = 0; index < 4; ++index)
     {
@@ -1728,6 +1875,42 @@ int main()
     Write(fullBackupData / longBackupRelative,
         "{ \"longPath\": true }\n");
 
+    Write(fullBackupData / L"large-icons" / L"import-user.png", "retained original image bytes");
+    Write(fullBackupData / L"large-icons" / L"steam-999-portrait-english.png", "retained offline cover bytes");
+    const auto upgradeState = root / L"large-icon-upgrade-state";
+    const auto upgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0");
+    Expect(upgrade.ok && Read(upgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout &&
+        Read(upgrade.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
+        !std::filesystem::exists(upgrade.backup.data / L"SnowDesktop.entitlement.bin"),
+        "first large-icon write establishes an independent complete backup without entitlement data");
+    Write(fullBackupData / L"SnowDesktop.layout.json", modifiedLayout);
+    const auto keptUpgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0");
+    Expect(keptUpgrade.ok && keptUpgrade.backup.id == upgrade.backup.id &&
+        Read(upgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout,
+        "subsequent large-icon saves never replace the pre-upgrade snapshot with a newer layout");
+    const auto v2Upgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0", 2);
+    Expect(v2Upgrade.ok && v2Upgrade.backup.root != upgrade.backup.root &&
+        Read(v2Upgrade.backup.data / L"SnowDesktop.layout.json") == modifiedLayout &&
+        Read(upgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout,
+        "v2 migration creates a separate complete backup even when a v1 upgrade snapshot already exists");
+    Write(fullBackupData / L"SnowDesktop.layout.json", originalLayout);
+    const auto blockedUpgrade = root / L"large-icon-upgrade-blocked";
+    const auto presetUpgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0", 3);
+    Expect(presetUpgrade.ok && presetUpgrade.backup.root != v2Upgrade.backup.root &&
+        Read(presetUpgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout &&
+        Read(presetUpgrade.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
+        !std::filesystem::exists(presetUpgrade.backup.data / L"SnowDesktop.entitlement.bin"),
+        "new preset values establish their own full rollback backup instead of reusing an older v2 snapshot");
+    Write(fullBackupData / L"SnowDesktop.layout.json", modifiedLayout);
+    const auto keptPreset = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0", 3);
+    Expect(keptPreset.ok && keptPreset.backup.id == presetUpgrade.backup.id &&
+        Read(presetUpgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout,
+        "later preset saves preserve the original rollback snapshot");
+    Write(fullBackupData / L"SnowDesktop.layout.json", originalLayout);
+    Write(blockedUpgrade, "a file prevents creation of the backup directory");
+    const auto failedUpgrade = snowdesktop::EnsureLargeIconUpgradeBackup(blockedUpgrade, fullBackupData, "1.0.5.0");
+    Expect(!failedUpgrade.ok && !failedUpgrade.error.empty() && Read(fullBackupData / L"SnowDesktop.layout.json") == originalLayout,
+        "upgrade-backup failure is reported without changing the active layout");
     snowdesktop::backup::FullDataBackupManager fullBackupManager(
         fullBackupState, fullBackupData, "1.0.1.0", "portable");
 
@@ -1757,6 +1940,9 @@ int main()
         "a rejected backup commit gate removes its staging directory");
 
     const auto createdFullBackup = fullBackupManager.Create();
+    Expect(Read(createdFullBackup.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
+        Read(createdFullBackup.backup.data / L"large-icons" / L"steam-999-portrait-english.png") == "retained offline cover bytes",
+        "complete backups retain user image sources and the currently needed offline covers");
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
             createdFullBackup.backup.root / L"backup.json"),
@@ -1781,12 +1967,25 @@ int main()
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"SnowDesktop.log.1") &&
         !std::filesystem::exists(
+            createdFullBackup.backup.data /
+                L"SnowDesktop.entitlement.bin") &&
+        !std::filesystem::exists(
             createdFullBackup.backup.data / L"crashdumps") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"ShellHook") &&
         !std::filesystem::exists(
             createdFullBackup.backup.data / L"widgets" / L"staging") &&
         !std::filesystem::exists(
-            createdFullBackup.backup.data / L"widgets" / L"quarantine"),
-        "complete backup excludes logs, dumps, staging, and quarantine");
+            createdFullBackup.backup.data / L"widgets" / L"quarantine") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"snowwidget") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"SteamWorkshop" /
+                L"staging") &&
+        !std::filesystem::exists(
+            createdFullBackup.backup.data / L"SteamWorkshopManager" /
+                L"staging"),
+        "complete backup excludes logs, machine-bound entitlement, dumps, runtime hooks, tool scratch, staging, and quarantine");
     Expect(!std::filesystem::exists(
             createdFullBackup.backup.root / L"PrivateState") &&
         !std::filesystem::exists(

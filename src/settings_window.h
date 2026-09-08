@@ -21,10 +21,11 @@ class WidgetSettingsService;
 class WidgetEngine;
 
 /**
- * Thin compatibility facade for the application-owned WinUI settings host.
+ * Application-side facade for the on-demand settings UI process.
  *
  * All public entry points resolve to Open(SettingsRoute). This class owns no
- * configuration state, graphics device, ImGui context, or render loop.
+ * configuration state, XAML runtime, graphics device or render loop. Closing
+ * settings acknowledges host-owned commits and exits the UI process.
  */
 class SettingsWindow final
 {
@@ -63,6 +64,7 @@ public:
         snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;
     void SetWidgetEngine(WidgetEngine* engine);
     void RefreshWidgetsPage();
+    void RefreshGeneralRuntimeState();
     [[nodiscard]] bool PrepareLanguageChange();
     void ApplyLanguageChange(bool widgetRuntimeReloaded);
     [[nodiscard]] bool PublishHomeAboutStatus(

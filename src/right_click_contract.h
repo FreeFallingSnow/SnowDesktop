@@ -71,7 +71,7 @@ constexpr bool HasLuaElementMenuAction(const MenuItems& items) noexcept
 constexpr ContextMenuKind ResolveSlotItemMenu(
     slot_contract::SlotSurfaceKind surface,
     SlotItemKind item,
-    bool protectedDesktopItem)
+    bool /*protectedDesktopItem*/)
 {
     using Surface = slot_contract::SlotSurfaceKind;
 
@@ -85,9 +85,8 @@ constexpr ContextMenuKind ResolveSlotItemMenu(
         case Surface::FileCategories:
         case Surface::CollectionGroup:
         case Surface::FileGroup:
-            return protectedDesktopItem
-                ? ContextMenuKind::ShellDesktopItem
-                : ContextMenuKind::DesktopItem;
+            // Namespace icons use the same host menu; Shell verbs remain available there.
+            return ContextMenuKind::DesktopItem;
         default:
             return ContextMenuKind::None;
         }

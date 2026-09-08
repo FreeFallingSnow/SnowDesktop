@@ -148,6 +148,18 @@ return {
         for _ in pairs(distinct) do distinctCount = distinctCount + 1 end
         assert(minimum >= 0.018 and maximum <= 0.88)
         assert(maximum > 0.65 and distinctCount > 24)
+        local localPeaks = 0
+        for index = 2, #first - 1 do
+            if first[index] > first[index - 1] and
+                first[index] > first[index + 1] then
+                localPeaks = localPeaks + 1
+            end
+        end
+        assert(localPeaks >= 10)
+        local coverProfile = spectrum.preview(48, 1.5)
+        assert(coverProfile[8] > 0.7 and coverProfile[16] > 0.8)
+        assert(coverProfile[26] == 0.88 and coverProfile[36] > 0.8)
+        assert(coverProfile[48] < 0.1)
         local softer = spectrum.preview(64, 0.5)
         local stronger = spectrum.preview(64, 3.0)
         assert(softer[10] < first[10])

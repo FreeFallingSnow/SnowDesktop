@@ -1,4 +1,5 @@
 #include "shell_launch_worker.h"
+#include "shell_launch_process.h"
 
 #include <array>
 #include <chrono>
@@ -10,6 +11,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <shellapi.h>
+#include <shlwapi.h>
 #include <wrl/client.h>
 
 namespace
@@ -262,7 +265,131 @@ void TestShellItemPidlIsCopiedBeforeExecution()
     worker.Stop();
 }
 
-void TestShellContextMenuOpenLaunchesShortcut()
+void TestAdministratorShortcutMetadataIsDetected()
+{
+    const HRESULT comResult = CoInitializeEx(
+        nullptr, COINIT_APARTMENTTHREADED);
+    Check(
+        SUCCEEDED(comResult),
+        "the administrator shortcut test must initialize COM");
+    if (FAILED(comResult))
+        return;
+
+    wchar_t modulePath[32768]{};
+    wchar_t tempPath[MAX_PATH]{};
+    GUID identifier{};
+    wchar_t identifierText[64]{};
+    const bool pathsReady = GetModuleFileNameW(
+            nullptr, modulePath,
+            static_cast<DWORD>(std::size(modulePath))) > 0 &&
+        GetTempPathW(
+            static_cast<DWORD>(std::size(tempPath)), tempPath) > 0 &&
+        SUCCEEDED(CoCreateGuid(&identifier)) &&
+        StringFromGUID2(
+            identifier, identifierText,
+            static_cast<int>(std::size(identifierText))) > 0;
+    Check(pathsReady,
+        "the administrator shortcut test paths must be available");
+
+    std::wstring linkPath;
+    std::wstring manifestLinkPath;
+    Microsoft::WRL::ComPtr<IShellLinkW> shellLink;
+    Microsoft::WRL::ComPtr<IPersistFile> persistFile;
+    Microsoft::WRL::ComPtr<IShellLinkDataList> dataList;
+    constexpr CLSID shellLinkClsid{
+        0x00021401, 0x0000, 0x0000,
+        { 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 }
+    };
+    if (pathsReady)
+    {
+        linkPath = std::wstring(tempPath) +
+            L"SnowDesktopAdministratorShortcut-" +
+            identifierText + L".lnk";
+        const bool ordinaryLinkCreated = SUCCEEDED(CoCreateInstance(
+                shellLinkClsid, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(shellLink.GetAddressOf()))) &&
+            shellLink &&
+            SUCCEEDED(shellLink->SetPath(modulePath)) &&
+            SUCCEEDED(shellLink.As(&persistFile)) && persistFile &&
+            SUCCEEDED(persistFile->Save(linkPath.c_str(), TRUE));
+        Check(ordinaryLinkCreated,
+            "an ordinary shortcut fixture must be created");
+        if (ordinaryLinkCreated)
+        {
+            Check(
+                !snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(linkPath),
+                "ordinary shortcuts must keep normal Open behavior");
+        }
+
+        DWORD flags = 0;
+        const bool runAsFlagSaved = ordinaryLinkCreated &&
+            SUCCEEDED(shellLink.As(&dataList)) && dataList &&
+            SUCCEEDED(dataList->GetFlags(&flags)) &&
+            SUCCEEDED(dataList->SetFlags(flags | SLDF_RUNAS_USER)) &&
+            SUCCEEDED(persistFile->Save(linkPath.c_str(), TRUE));
+        Check(runAsFlagSaved,
+            "the run-as-user flag must be saved to the shortcut fixture");
+        if (runAsFlagSaved)
+        {
+            Check(
+                snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(linkPath),
+                "the SLDF_RUNAS_USER flag must select administrator launch");
+        }
+
+        wchar_t windowsDirectory[MAX_PATH]{};
+        const UINT windowsDirectoryLength = GetWindowsDirectoryW(
+            windowsDirectory,
+            static_cast<UINT>(std::size(windowsDirectory)));
+        manifestLinkPath = std::wstring(tempPath) +
+            L"SnowDesktopManifestAdministratorShortcut-" +
+            identifierText + L".lnk";
+        const std::wstring regeditPath =
+            windowsDirectoryLength > 0 &&
+                windowsDirectoryLength < std::size(windowsDirectory)
+            ? std::wstring(windowsDirectory) + L"\\regedit.exe"
+            : std::wstring();
+
+        Microsoft::WRL::ComPtr<IShellLinkW> manifestShellLink;
+        Microsoft::WRL::ComPtr<IPersistFile> manifestPersistFile;
+        const bool manifestLinkCreated = !regeditPath.empty() &&
+            SUCCEEDED(CoCreateInstance(
+                shellLinkClsid, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(manifestShellLink.GetAddressOf()))) &&
+            manifestShellLink &&
+            SUCCEEDED(manifestShellLink->SetPath(regeditPath.c_str())) &&
+            SUCCEEDED(manifestShellLink.As(&manifestPersistFile)) &&
+            manifestPersistFile &&
+            SUCCEEDED(manifestPersistFile->Save(
+                manifestLinkPath.c_str(), TRUE));
+        Check(manifestLinkCreated,
+            "an executable-manifest shortcut fixture must be created");
+        if (manifestLinkCreated)
+        {
+            Check(
+                snowdesktop::ShellLaunchWorker::
+                    ShortcutRequestsAdministrator(manifestLinkPath),
+                "a highestAvailable target manifest must select administrator launch");
+        }
+    }
+
+    Check(
+        !snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(L"C:\\Temp\\ordinary.txt"),
+        "non-shortcut paths must not select administrator launch");
+
+    dataList.Reset();
+    persistFile.Reset();
+    shellLink.Reset();
+    if (!linkPath.empty())
+        DeleteFileW(linkPath.c_str());
+    if (!manifestLinkPath.empty())
+        DeleteFileW(manifestLinkPath.c_str());
+    CoUninitialize();
+}
+
+void TestIsolatedOpenLaunchesShortcut()
 {
     const HRESULT comResult = CoInitializeEx(
         nullptr, COINIT_APARTMENTTHREADED);
@@ -346,6 +473,15 @@ void TestShellContextMenuOpenLaunchesShortcut()
         Check(
             WaitForSingleObject(launchedEvent, 10000) == WAIT_OBJECT_0,
             "the shortcut must launch through its Shell context menu");
+
+        ResetEvent(launchedEvent);
+        Check(
+            snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                nullptr, linkPath, absolutePidl),
+            "interactive Shell context-menu Open must accept the shortcut");
+        Check(
+            WaitForSingleObject(launchedEvent, 10000) == WAIT_OBJECT_0,
+            "the shortcut must launch through the isolated interactive Open request");
     }
 
     if (absolutePidl)
@@ -359,10 +495,187 @@ void TestShellContextMenuOpenLaunchesShortcut()
     CoUninitialize();
 }
 
+std::wstring UniqueEventName(const wchar_t* prefix)
+{
+    GUID id{};
+    wchar_t text[64]{};
+    if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, text, 64)) return {};
+    return std::wstring(L"Local\\SnowDesktopShellProcess-") + prefix + text;
+}
+
+void TestRequestPayloadPreservesPathsAndRejectsInvalidPidls()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    process::Request request;
+    request.path = L"C:\\用户目录\\开题答辩\\带 空格 & 引号\".lnk";
+    request.owner = reinterpret_cast<HWND>(std::uintptr_t{0x1234});
+    request.showCommand = SW_SHOWMAXIMIZED;
+    request.action = process::Action::OpenWithShortcutPolicy;
+    request.absolutePidl = {6, 0, 0x2A, 0x11, 0x22, 0x33, 0, 0};
+    const auto encoded = process::Encode(request);
+    const auto decoded = process::Decode(encoded);
+    Check(decoded && decoded->path == request.path &&
+            decoded->absolutePidl == request.absolutePidl &&
+            decoded->owner == request.owner &&
+            decoded->showCommand == request.showCommand && decoded->action == request.action,
+        "the helper transport must preserve Unicode, shell metacharacters and complete PIDL bytes");
+    for (std::size_t size = 0; size < encoded.size(); ++size)
+    {
+        if (process::Decode(std::span(encoded.data(), size)))
+        {
+            Check(false, "a truncated helper payload must never reach Shell code");
+            break;
+        }
+    }
+    auto malformed = encoded;
+    malformed[12] = 0xFF;
+    malformed[13] = 0xFF;
+    malformed[14] = 0xFF;
+    malformed[15] = 0xFF;
+    Check(!process::Decode(malformed), "oversized path lengths must be rejected before allocation");
+    malformed = encoded;
+    malformed[4] = 2;
+    Check(!process::Decode(malformed), "unknown helper protocol versions must be rejected");
+    malformed = encoded;
+    malformed.back() = 1;
+    Check(!process::Decode(malformed), "a PIDL without a complete terminal item must be rejected");
+    request.path.push_back(L'\0');
+    Check(process::Encode(request).empty(), "embedded NUL must not silently truncate an open target");
+    request.path = L"valid";
+    request.absolutePidl = {1, 0, 0, 0};
+    Check(process::Encode(request).empty(), "PIDL items shorter than their size field must be rejected");
+}
+
+bool ExecuteHelperFixture(const snowdesktop::shell_launch_process::Request& request)
+{
+    int argumentCount = 0;
+    wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+    bool privateHandles = arguments && argumentCount == 4;
+    for (int i = 2; privateHandles && i < argumentCount; ++i)
+    {
+        const auto handle = reinterpret_cast<HANDLE>(
+            static_cast<std::uintptr_t>(_wcstoui64(arguments[i], nullptr, 10)));
+        DWORD flags = 0;
+        privateHandles = GetHandleInformation(handle, &flags) &&
+            (flags & HANDLE_FLAG_INHERIT) == 0;
+    }
+    if (arguments) LocalFree(arguments);
+    if (!privateHandles) return false;
+    constexpr std::wstring_view blockPrefix = L"test:block:";
+    constexpr std::wstring_view signalPrefix = L"test:signal:";
+    const std::wstring_view path(request.path);
+    const bool block = path.starts_with(blockPrefix);
+    if (!block && !path.starts_with(signalPrefix))
+        return snowdesktop::shell_launch_process::ExecuteRequest(request);
+    const std::wstring eventName(path.substr(block ? blockPrefix.size() : signalPrefix.size()));
+    HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, eventName.c_str());
+    if (!event) return false;
+    const BOOL signaled = SetEvent(event);
+    CloseHandle(event);
+    if (block)
+    {
+        wchar_t executable[32768]{};
+        const DWORD length = GetModuleFileNameW(nullptr, executable, 32768);
+        if (!length || length >= 32768) return false;
+        std::wstring command = L"\"" + std::wstring(executable) +
+            L"\" --shell-open-survivor " + eventName;
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESHOWWINDOW;
+        startup.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION opened{};
+        if (!CreateProcessW(executable, command.data(), nullptr, nullptr, FALSE,
+                CREATE_NO_WINDOW, nullptr, nullptr, &startup, &opened)) return false;
+        CloseHandle(opened.hThread);
+        CloseHandle(opened.hProcess);
+        // Deliberately never finish this one request. Only the supervised
+        // helper is blocked; no third-party registration or live desktop UI.
+        HANDLE neverSignaled = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!neverSignaled) return false;
+        WaitForSingleObject(neverSignaled, INFINITE);
+        CloseHandle(neverSignaled);
+    }
+    return signaled != FALSE;
+}
+
+void TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    const auto startedName = UniqueEventName(L"blocked-");
+    const auto nextName = UniqueEventName(L"next-");
+    HANDLE started = CreateEventW(nullptr, TRUE, FALSE, startedName.c_str());
+    HANDLE next = CreateEventW(nullptr, TRUE, FALSE, nextName.c_str());
+    HANDLE survivor = CreateEventW(nullptr, TRUE, FALSE, (startedName + L"-survivor").c_str());
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, (startedName + L"-release").c_str());
+    HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, (startedName + L"-finished").c_str());
+    Check(started && next && survivor && release && finished &&
+            !startedName.empty() && !nextName.empty(),
+        "the helper isolation events must be created");
+    if (!started || !next || !survivor || !release || !finished)
+    {
+        for (HANDLE event : {started, next, survivor, release, finished})
+            if (event) CloseHandle(event);
+        return;
+    }
+    process::Request request;
+    request.path = L"test:block:" + startedName;
+    const auto blocked = process::Start(request, 8000);
+    Check(static_cast<bool>(blocked), "the blocked helper must be dispatched");
+    HANDLE child = blocked ? OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE, blocked.id) : nullptr;
+    Check(child != nullptr, "the exact blocked helper process must be observable");
+    if (child)
+    {
+        Check(WaitForSingleObject(started, 5000) == WAIT_OBJECT_0,
+            "the helper must start with its private handles made non-inheritable");
+        Check(WaitForSingleObject(survivor, 5000) == WAIT_OBJECT_0,
+            "the helper must start the independent target process before blocking");
+        request.path = L"test:signal:" + nextName;
+        const auto following = process::Start(request);
+        Check(following && following.id != blocked.id,
+            "a later open must use an independent helper process");
+        Check(WaitForSingleObject(next, 5000) == WAIT_OBJECT_0,
+            "a later open must complete while the previous Shell handler is blocked");
+        Check(WaitForSingleObject(child, 0) == WAIT_TIMEOUT,
+            "the successor must run before the blocked request reaches its deadline");
+        Check(WaitForSingleObject(child, 10000) == WAIT_OBJECT_0,
+            "a blocked helper must be reaped within its bounded deadline");
+        DWORD result = 0;
+        Check(GetExitCodeProcess(child, &result) && result == ERROR_TIMEOUT,
+            "the deadline must terminate only the stuck helper with a timeout result");
+        SetEvent(release);
+        Check(WaitForSingleObject(finished, 5000) == WAIT_OBJECT_0,
+            "a program opened by the helper must survive timeout cleanup and continue running");
+        CloseHandle(child);
+    }
+    SetEvent(release);
+    CloseHandle(started);
+    CloseHandle(next);
+    CloseHandle(survivor);
+    CloseHandle(release);
+    CloseHandle(finished);
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv)
 {
+    if (const auto result = snowdesktop::shell_launch_process::TryRunCommand(ExecuteHelperFixture))
+        return *result;
+    if (argc == 3 && wcscmp(argv[1], L"--shell-open-survivor") == 0)
+    {
+        const std::wstring name(argv[2]);
+        HANDLE started = OpenEventW(EVENT_MODIFY_STATE, FALSE, (name + L"-survivor").c_str());
+        HANDLE release = OpenEventW(SYNCHRONIZE, FALSE, (name + L"-release").c_str());
+        HANDLE finished = OpenEventW(EVENT_MODIFY_STATE, FALSE, (name + L"-finished").c_str());
+        const bool ready = started && release && finished;
+        if (ready) SetEvent(started);
+        const bool survived = ready && WaitForSingleObject(release, 20000) == WAIT_OBJECT_0;
+        if (survived) SetEvent(finished);
+        for (HANDLE event : {started, release, finished})
+            if (event) CloseHandle(event);
+        return survived ? 0 : 4;
+    }
     if (argc == 3 &&
         wcscmp(argv[1], L"--shell-launch-child") == 0)
     {
@@ -379,7 +692,10 @@ int wmain(int argc, wchar_t** argv)
     TestStopDoesNotJoinABlockedShellHandler();
     TestInvalidRequestsAreRejected();
     TestShellItemPidlIsCopiedBeforeExecution();
-    TestShellContextMenuOpenLaunchesShortcut();
+    TestAdministratorShortcutMetadataIsDetected();
+    TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
+    TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped();
+    TestIsolatedOpenLaunchesShortcut();
     if (failures != 0)
     {
         std::cerr << failures

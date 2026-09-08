@@ -1,13 +1,197 @@
 #include "app.h"
+#include "../drop_image_data.h"
 #include "../ole_drag_rules.h"
+#include "../drag_input_rules.h"
+#include "../virtual_file_drop.h"
 #include "../widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
+
+namespace
+{
+using DirectoryPathSet = std::unordered_set<std::wstring>;
+
+std::wstring UserDesktopDirectory()
+{
+    wchar_t desktopPath[MAX_PATH]{};
+    if (!SHGetSpecialFolderPathW(
+            nullptr, desktopPath,
+            CSIDL_DESKTOPDIRECTORY, FALSE))
+        return {};
+    return TrimTrailingPathSeparators(desktopPath);
+}
+
+std::optional<DirectoryPathSet> SnapshotDirectoryPaths(
+    const std::wstring& directory)
+{
+    DirectoryPathSet paths;
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(
+        directory,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    if (error)
+        return std::nullopt;
+
+    const std::filesystem::directory_iterator end;
+    while (iterator != end)
+    {
+        paths.insert(ToUpperInvariant(
+            iterator->path().lexically_normal().wstring()));
+        iterator.increment(error);
+        if (error)
+            return std::nullopt;
+    }
+    return paths;
+}
+
+std::optional<std::vector<std::wstring>> FindNewDirectoryPaths(
+    const std::wstring& directory,
+    const DirectoryPathSet& previousPaths)
+{
+    std::vector<std::wstring> paths;
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(
+        directory,
+        std::filesystem::directory_options::skip_permission_denied,
+        error);
+    if (error)
+        return std::nullopt;
+
+    const std::filesystem::directory_iterator end;
+    while (iterator != end)
+    {
+        const std::wstring path =
+            iterator->path().lexically_normal().wstring();
+        if (!previousPaths.contains(ToUpperInvariant(path)))
+            paths.push_back(path);
+        iterator.increment(error);
+        if (error)
+            return std::nullopt;
+    }
+
+    std::stable_sort(
+        paths.begin(), paths.end(),
+        [](const std::wstring& left,
+            const std::wstring& right) {
+            return _wcsicmp(
+                left.c_str(), right.c_str()) < 0;
+        });
+    return paths;
+}
+
+bool IsInternetShortcutPath(const std::wstring& path)
+{
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    return extension &&
+        (_wcsicmp(extension, L".lnk") == 0 ||
+         _wcsicmp(extension, L".url") == 0 ||
+         _wcsicmp(extension, L".website") == 0);
+}
+
+bool IsInternetShortcutDescriptor(
+    const snowdesktop::virtual_file_drop::VirtualFileDescriptor& descriptor)
+{
+    return IsInternetShortcutPath(snowdesktop::virtual_file_drop::
+        SanitizeSuggestedFileName(descriptor.suggestedFileName));
+}
+
+std::wstring ReadInternetShortcutTarget(const std::wstring& path)
+{
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    if (!extension) return {};
+    if (_wcsicmp(extension, L".url") == 0 ||
+        _wcsicmp(extension, L".website") == 0)
+    {
+        std::array<wchar_t, 8192> target{};
+        const DWORD length = GetPrivateProfileStringW(
+            L"InternetShortcut", L"URL", L"",
+            target.data(), static_cast<DWORD>(target.size()),
+            path.c_str());
+        return std::wstring(target.data(), length);
+    }
+    if (_wcsicmp(extension, L".lnk") != 0)
+        return {};
+
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink))) ||
+        !shellLink)
+        return {};
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)) ||
+        FAILED(persistFile->Load(path.c_str(), STGM_READ)))
+        return {};
+    std::array<wchar_t, 8192> target{};
+    WIN32_FIND_DATAW findData{};
+    if (FAILED(shellLink->GetPath(target.data(),
+            static_cast<int>(target.size()), &findData,
+            SLGP_RAWPATH)))
+        return {};
+    return target.data();
+}
+
+class StagedDropPathLease final
+{
+public:
+    explicit StagedDropPathLease(
+        std::vector<std::wstring> paths)
+        : paths_(std::move(paths))
+    {
+    }
+
+    ~StagedDropPathLease()
+    {
+        if (keep_) return;
+        for (const auto& path : paths_)
+            (void)DeleteFileW(path.c_str());
+    }
+
+    StagedDropPathLease(const StagedDropPathLease&) = delete;
+    StagedDropPathLease& operator=(
+        const StagedDropPathLease&) = delete;
+
+    // Dock links and logical-slot references use the staged path as their
+    // durable backing file instead of copying it to another destination.
+    void Keep() noexcept
+    {
+        keep_ = true;
+    }
+
+private:
+    std::vector<std::wstring> paths_;
+    bool keep_ = false;
+};
+
+}
+
+void DesktopApp::CancelPendingExternalOleDragLeave()
+{
+    externalOleDragLeavePending_ = false;
+    if (hwnd_ && IsWindow(hwnd_))
+        KillTimer(hwnd_, kExternalOleDragLeaveGraceTimerId);
+}
+
+void DesktopApp::FinalizePendingExternalOleDragLeave()
+{
+    if (!externalOleDragLeavePending_)
+        return;
+
+    CancelPendingExternalOleDragLeave();
+    if (!dragDropController_.IsExternalDragActive())
+        return;
+
+    dragDropController_.EndExternalDrag();
+    EndDragSession();
+    HideDragHintWindow();
+    PresentOleDragInteractionFrame();
+}
 
 HRESULT DesktopApp::HandleOleDragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelPendingExternalOleDragLeave();
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -27,7 +211,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
                 nullptr, nullptr, HitRegion::None);
         }
         ResetDockHandoffDwell();
-        CancelCollectionPopupDwell();
+        UpdateCollectionPopupDwell(client);
         CancelCollectionGroupTabDwell();
         HideDragHintWindow();
         *effect = DROPEFFECT_NONE;
@@ -38,10 +222,21 @@ HRESULT DesktopApp::HandleOleDragEnter(
     ExternalDragSummary externalSummary;
     if (dataObject)
     {
-        const std::vector<std::wstring> paths =
-            GetDropPaths(dataObject);
+        const bool delayedFileDrop = snowdesktop::virtual_file_drop::
+            UsesAsyncMode(dataObject);
+        const std::vector<std::wstring> paths = delayedFileDrop
+            ? std::vector<std::wstring>{}
+            : GetDropPaths(dataObject);
+        const auto virtualFiles = delayedFileDrop
+            ? std::vector<snowdesktop::virtual_file_drop::
+                VirtualFileDescriptor>{}
+            : snowdesktop::virtual_file_drop::ReadDescriptors(dataObject);
         externalSummary.fileCount =
-            static_cast<int>(paths.size());
+            static_cast<int>(!paths.empty()
+                ? paths.size()
+                : !virtualFiles.empty()
+                    ? virtualFiles.size()
+                    : delayedFileDrop ? 1 : 0);
         externalSummary.hasShortcut =
             std::any_of(
                 paths.begin(), paths.end(),
@@ -49,6 +244,14 @@ HRESULT DesktopApp::HandleOleDragEnter(
                     return _wcsicmp(
                         PathFindExtensionW(
                             path.c_str()),
+                        L".lnk") == 0;
+                }) ||
+            std::any_of(
+                virtualFiles.begin(), virtualFiles.end(),
+                [](const auto& file) {
+                    return _wcsicmp(
+                        PathFindExtensionW(
+                            file.suggestedFileName.c_str()),
                         L".lnk") == 0;
                 });
         externalSummary.foldersOnly =
@@ -87,6 +290,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         PresentOleDragInteractionFrame();
         return S_OK;
     }
+    UpdateCollectionPopupDwell(client);
 
     // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;
@@ -157,6 +361,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelPendingExternalOleDragLeave();
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -173,6 +378,7 @@ HRESULT DesktopApp::HandleOleDragOver(
             dragSession_.UpdateTarget(
                 nullptr, nullptr, HitRegion::None);
         }
+        UpdateCollectionPopupDwell(client);
         HideDragHintWindow();
         *effect = DROPEFFECT_NONE;
         return S_OK;
@@ -194,6 +400,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         PresentOleDragInteractionFrame();
         return S_OK;
     }
+    UpdateCollectionPopupDwell(client);
 
     // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;
@@ -264,10 +471,15 @@ HRESULT DesktopApp::HandleOleDragLeave()
     navAutoFlipTick_ = 0;
     if (dragDropController_.IsSelfDragActive())
     {
+        POINT hoverPoint{};
+        const bool returningToDesktopSurface =
+            dragDropController_.SelfDragNativeResumeRequested() &&
+            TryGetDesktopHoverPointFromCursor(hoverPoint);
         if (!dragDropController_.SelfDragNativeResumeRequested())
             dragDropController_.ClearSelfDragReturned();
         ResetDockHandoffDwell();
-        CancelCollectionPopupDwell();
+        if (!returningToDesktopSurface)
+            CancelCollectionPopupDwell();
         CancelCollectionGroupTabDwell();
         dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
         dragSession_.SetVisualVisible(false);
@@ -275,10 +487,22 @@ HRESULT DesktopApp::HandleOleDragLeave()
         PresentOleDragInteractionFrame();
         return S_OK;
     }
-    dragDropController_.EndExternalDrag();
-    EndDragSession();
-    HideDragHintWindow();
-    PresentOleDragInteractionFrame();
+
+    POINT hoverPoint{};
+    if (dragDropController_.IsExternalDragActive() &&
+        TryGetDesktopHoverPointFromCursor(hoverPoint) &&
+        hwnd_ && IsWindow(hwnd_))
+    {
+        externalOleDragLeavePending_ =
+            SetTimer(
+                hwnd_, kExternalOleDragLeaveGraceTimerId,
+                kExternalOleDragLeaveGraceMs, nullptr) != 0;
+        if (externalOleDragLeavePending_)
+            return S_OK;
+    }
+
+    externalOleDragLeavePending_ = true;
+    FinalizePendingExternalOleDragLeave();
     return S_OK;
 }
 
@@ -294,6 +518,7 @@ HRESULT DesktopApp::HandleOleDrop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelPendingExternalOleDragLeave();
     HideDragHintWindow();
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
@@ -457,16 +682,10 @@ HRESULT DesktopApp::HandleOleDrop(
                             : DropAction::Move;
                 DragSourceList fileSources =
                     dragSession_.SourceList();
-                auto finished = [this,
-                    dockFolderPopupSource,
-                    dockFolderPopupTarget](bool succeeded) {
+                auto finished = [this](bool succeeded) {
                     if (!succeeded)
                         return;
-                    ReloadItems(false);
-                    if ((dockFolderPopupSource ||
-                         dockFolderPopupTarget) &&
-                        dockFolderPopupOpen_)
-                        RefreshDockFolderPopup();
+                    RequestShellRefresh();
                 };
                 if (MaterializeFilesToFolder(
                         fileSources, targetPath, action,
@@ -650,13 +869,68 @@ HRESULT DesktopApp::HandleOleDrop(
     dragSession_.DeactivateForDrop();
     CommitDragVisualEndBeforeShellOperation();
 
-    std::vector<std::wstring> dropPaths = dataObject
-        ? GetDropPaths(dataObject) : std::vector<std::wstring>();
+    const bool sourceUsesAsyncMode = dataObject &&
+        snowdesktop::virtual_file_drop::UsesAsyncMode(dataObject);
+    std::vector<std::wstring> dropPaths =
+        dataObject && !sourceUsesAsyncMode
+            ? GetDropPaths(dataObject) : std::vector<std::wstring>();
+    bool forceCopyDrop = false;
+    std::unique_ptr<StagedDropPathLease> stagedDropPathLease;
+    const auto adoptStagedDropPaths =
+        [&dropPaths, &stagedDropPathLease](
+            std::vector<std::wstring> paths) {
+            if (paths.empty()) return false;
+            try
+            {
+                auto lease = std::make_unique<StagedDropPathLease>(
+                    paths);
+                dropPaths = std::move(paths);
+                stagedDropPathLease = std::move(lease);
+                return true;
+            }
+            catch (...)
+            {
+                for (const auto& path : paths)
+                    (void)DeleteFileW(path.c_str());
+                return false;
+            }
+        };
+    const DropReferenceSnapshot dropReferenceSnapshot =
+        dataObject && dropPaths.empty() && !sourceUsesAsyncMode
+            ? ReadDropReferenceSnapshot(dataObject)
+            : DropReferenceSnapshot{};
+    const bool fileUrlReference = std::any_of(
+        dropReferenceSnapshot.candidates.begin(),
+        dropReferenceSnapshot.candidates.end(),
+        [](const auto& candidate) {
+            return candidate.kind ==
+                snowdesktop::drop_text_rules::Kind::FileUrl;
+        });
+    const std::vector<std::wstring> localFileUrlPaths =
+        fileUrlReference
+            ? TryExtractLocalFileUrlFromDataObject(
+                dropReferenceSnapshot)
+            : std::vector<std::wstring>{};
+    if (!localFileUrlPaths.empty() &&
+        ((*effect & DROPEFFECT_COPY) != 0))
+    {
+        dropPaths = localFileUrlPaths;
+        forceCopyDrop = true;
+        *effect = DROPEFFECT_COPY;
+    }
 
     if (dragSession_.TargetRegion() == HitRegion::Handoff && dataObject)
     {
         // ── Handoff on item (desktop OR widget member) ──
         Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
+        auto* targetDesktopIcon =
+            dynamic_cast<DesktopIcon*>(targetItem);
+        DesktopItem* targetDesktopItem = targetDesktopIcon
+            ? targetDesktopIcon->GetDesktopItem() : nullptr;
+        const bool recycleBinTarget = targetDesktopItem &&
+            _wcsicmp(
+                targetDesktopItem->desktopIconClsid.c_str(),
+                kDesktopIconClsidRecycleBin) == 0;
         const bool dockFolderPopupTarget =
             IsOpenDockFolderPopupDropTarget(
                 dragSession_.TargetContainer(),
@@ -672,7 +946,33 @@ HRESULT DesktopApp::HandleOleDrop(
         const DWORD targetAttributes = targetPath.empty()
             ? INVALID_FILE_ATTRIBUTES
             : GetFileAttributesW(targetPath.c_str());
-        if (dropPaths.empty() && !targetPath.empty() &&
+        if (recycleBinTarget && !dropPaths.empty())
+        {
+            const bool queued = QueueShellFileOperation(
+                snowdesktop::CreateRecycleBinDeleteRequest(
+                    std::move(dropPaths)),
+                [this](bool succeeded) {
+                    if (!succeeded)
+                    {
+                        MessageBeep(MB_ICONWARNING);
+                        return;
+                    }
+                    RequestShellRefresh();
+                    CheckRecycleBinStatus();
+                });
+            if (queued)
+            {
+                // The target owns this optimized move and will recycle the
+                // source paths. Tell Explorer not to delete them a second time.
+                ReportPerformedDropEffect(
+                    dataObject, DROPEFFECT_NONE);
+            }
+            *effect = DROPEFFECT_NONE;
+            EndDragSession();
+            return S_OK;
+        }
+        if (dropPaths.empty() && !fileUrlReference &&
+            !targetPath.empty() &&
             QueueAsyncShellDrop(
                 dataObject,
                 targetPath,
@@ -689,14 +989,31 @@ HRESULT DesktopApp::HandleOleDrop(
             targetAttributes != INVALID_FILE_ATTRIBUTES &&
             (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
         {
-            dropPaths = TryGetNonFileDropPaths(dataObject);
+            if (!sourceUsesAsyncMode &&
+                (*effect & DROPEFFECT_COPY) != 0)
+            {
+                dropPaths = localFileUrlPaths;
+                if (dropPaths.empty())
+                {
+                    (void)adoptStagedDropPaths(
+                        TryGetNonFileDropPaths(
+                            dataObject,
+                            dropReferenceSnapshot));
+                }
+                if (!dropPaths.empty())
+                {
+                    forceCopyDrop = true;
+                    *effect = DROPEFFECT_COPY;
+                }
+            }
         }
         if (!dropPaths.empty() &&
             targetAttributes != INVALID_FILE_ATTRIBUTES &&
             (targetAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
         {
-            const DWORD selectedEffect = ChooseDropEffect(
-                keyState, *effect);
+            const DWORD selectedEffect = forceCopyDrop
+                ? DROPEFFECT_COPY
+                : ChooseDropEffect(keyState, *effect);
             if (selectedEffect == DROPEFFECT_NONE)
             {
                 *effect = DROPEFFECT_NONE;
@@ -720,13 +1037,10 @@ HRESULT DesktopApp::HandleOleDrop(
                 entry.displayName = FileNameFromPath(path);
                 fileSources.entries.push_back(std::move(entry));
             }
-            auto finished = [this,
-                dockFolderPopupTarget](bool succeeded) {
+            auto finished = [this](bool succeeded) {
                 if (!succeeded)
                     return;
-                ReloadItems(false);
-                if (dockFolderPopupTarget && dockFolderPopupOpen_)
-                    RefreshDockFolderPopup();
+                RequestShellRefresh();
             };
             FileOperationCompletion asyncCompletion;
             const bool sourceSupportsAsync =
@@ -755,7 +1069,7 @@ HRESULT DesktopApp::HandleOleDrop(
             EndDragSession();
             return S_OK;
         }
-        if (!targetPath.empty() &&
+        if (!fileUrlReference && !targetPath.empty() &&
             QueueAsyncShellDrop(
                 dataObject,
                 targetPath,
@@ -795,7 +1109,7 @@ HRESULT DesktopApp::HandleOleDrop(
             }
         }
 
-        if (dt)
+        if (dt && !fileUrlReference && !sourceUsesAsyncMode)
         {
             DWORD le = *effect;
             POINTL spl{ point.x, point.y };
@@ -825,7 +1139,7 @@ HRESULT DesktopApp::HandleOleDrop(
             BuildPendingFolderPlacement(
                 dockFolderPopupWidget_,
                 popupInsertIndex);
-        if (dropPaths.empty() &&
+        if (dropPaths.empty() && !fileUrlReference &&
             !dockFolderPopupWidget_.sourceFolderPath.empty() &&
             QueueAsyncShellDrop(
                 dataObject,
@@ -846,13 +1160,29 @@ HRESULT DesktopApp::HandleOleDrop(
             EndDragSession();
             return S_OK;
         }
-        if (dropPaths.empty())
-            dropPaths = TryGetNonFileDropPaths(dataObject);
+        if (dropPaths.empty() && !sourceUsesAsyncMode &&
+            ((*effect & DROPEFFECT_COPY) != 0))
+        {
+            dropPaths = localFileUrlPaths;
+            if (dropPaths.empty())
+            {
+                (void)adoptStagedDropPaths(
+                    TryGetNonFileDropPaths(
+                        dataObject,
+                        dropReferenceSnapshot));
+            }
+            if (!dropPaths.empty())
+            {
+                forceCopyDrop = true;
+                *effect = DROPEFFECT_COPY;
+            }
+        }
         if (!dropPaths.empty() &&
             !dockFolderPopupWidget_.sourceFolderPath.empty())
         {
-            const DWORD selectedEffect = ChooseDropEffect(
-                keyState, *effect);
+            const DWORD selectedEffect = forceCopyDrop
+                ? DROPEFFECT_COPY
+                : ChooseDropEffect(keyState, *effect);
             if (selectedEffect == DROPEFFECT_NONE)
             {
                 *effect = DROPEFFECT_NONE;
@@ -888,9 +1218,7 @@ HRESULT DesktopApp::HandleOleDrop(
                     return;
                 ActivatePendingFolderPlacement(
                     std::move(folderPlacement));
-                ReloadItems(false);
-                if (dockFolderPopupOpen_)
-                    RefreshDockFolderPopup();
+                RequestShellRefresh();
             };
             FileOperationCompletion asyncCompletion;
             const bool sourceSupportsAsync =
@@ -956,7 +1284,8 @@ HRESULT DesktopApp::HandleOleDrop(
                 nullptr, BHID_SFUIObject,
                 IID_PPV_ARGS(&folderDropTarget));
         }
-        if (folderDropTarget)
+        if (folderDropTarget && !fileUrlReference &&
+            !sourceUsesAsyncMode)
         {
             DwmFlush();
             DWORD shellEffect = *effect;
@@ -989,8 +1318,715 @@ HRESULT DesktopApp::HandleOleDrop(
         }
     }
 
-    if (dropPaths.empty() && dataObject)
-        dropPaths = TryGetNonFileDropPaths(dataObject);
+    // Browsers and desktop clients can advertise the resource bytes through
+    // standard virtual-file, image, or inline-data formats. Consume those
+    // bounded payloads before handing the source to Shell: async sources may
+    // stop serving their IDataObject content as soon as EndOperation runs.
+    Container* delayedFileTarget =
+        dragSession_.TargetContainer();
+    const GridCell delayedFileTargetCell =
+        CellFromPoint(clientPoint);
+    const bool bareDesktopTarget =
+        (delayedFileTarget == GetDesktopGrid() ||
+         (!delayedFileTarget &&
+          dragSession_.TargetRegion() == HitRegion::None)) &&
+        !delayedFileTargetCell.pageId.empty() &&
+        dragSession_.TargetRegion() != HitRegion::Handoff &&
+        dragSession_.TargetRegion() != HitRegion::Blocked;
+    const bool canCopyDrop = ((*effect & DROPEFFECT_COPY) != 0);
+    const std::vector<std::wstring> bareDesktopUrls =
+        dropPaths.empty() && dataObject && bareDesktopTarget
+            ? ExtractDropUrls(dropReferenceSnapshot)
+            : std::vector<std::wstring>{};
+    const std::wstring bareDesktopUrl = bareDesktopUrls.empty()
+        ? std::wstring{} : bareDesktopUrls.front();
+    const auto delayedFileDescriptors =
+        dropPaths.empty() && dataObject && bareDesktopTarget &&
+            !sourceUsesAsyncMode
+        ? snowdesktop::virtual_file_drop::ReadDescriptors(dataObject)
+        : std::vector<snowdesktop::virtual_file_drop::
+            VirtualFileDescriptor>{};
+    const bool preferVirtualFilePayload = std::any_of(
+        delayedFileDescriptors.begin(), delayedFileDescriptors.end(),
+        [](const auto& descriptor) {
+            return !IsInternetShortcutDescriptor(descriptor);
+        });
+    const bool offersImageData =
+        dropPaths.empty() && dataObject && bareDesktopTarget &&
+        canCopyDrop && !sourceUsesAsyncMode &&
+        snowdesktop::drop_image_data::OffersImageData(dataObject);
+    if (dropPaths.empty() && dataObject && bareDesktopTarget &&
+        canCopyDrop && preferVirtualFilePayload &&
+        !sourceUsesAsyncMode)
+    {
+        bool allVirtualFilesMaterialized = false;
+        auto stagedVirtualPaths =
+            TryMaterializeVirtualFilesFromDataObject(
+            dataObject, delayedFileDescriptors,
+            &allVirtualFilesMaterialized);
+        if (!allVirtualFilesMaterialized)
+        {
+            for (const auto& stagedPath : stagedVirtualPaths)
+                (void)DeleteFileW(stagedPath.c_str());
+            stagedVirtualPaths.clear();
+            MessageBeep(MB_ICONWARNING);
+        }
+        else
+        {
+            (void)adoptStagedDropPaths(
+                std::move(stagedVirtualPaths));
+        }
+        if (!dropPaths.empty())
+        {
+            forceCopyDrop = true;
+            *effect = DROPEFFECT_COPY;
+        }
+    }
+    if (dropPaths.empty() && offersImageData)
+    {
+        (void)adoptStagedDropPaths(
+            TryExtractImageFromDataObject(dataObject));
+        if (!dropPaths.empty())
+        {
+            forceCopyDrop = true;
+            *effect = DROPEFFECT_COPY;
+        }
+    }
+    if (dropPaths.empty() && dataObject && bareDesktopTarget &&
+        canCopyDrop)
+    {
+        (void)adoptStagedDropPaths(
+            TryExtractDataUrlFromDataObject(
+                dropReferenceSnapshot));
+        if (!dropPaths.empty())
+        {
+            forceCopyDrop = true;
+            *effect = DROPEFFECT_COPY;
+        }
+    }
+    if (dropPaths.empty() && dataObject && !fileUrlReference &&
+        bareDesktopTarget &&
+        canCopyDrop &&
+        sourceUsesAsyncMode)
+    {
+        const std::wstring desktopDirectory =
+            UserDesktopDirectory();
+        if (!desktopDirectory.empty())
+        {
+            const auto previousDirectoryPaths =
+                SnapshotDirectoryPaths(desktopDirectory);
+            const auto existingDesktopKeys =
+                SnapshotDesktopKeys();
+            struct AsyncDropPreflightState final
+            {
+                mutable std::mutex mutex;
+                DropReferenceSnapshot snapshot;
+                std::vector<snowdesktop::virtual_file_drop::
+                    VirtualFileDescriptor> descriptors;
+                std::vector<std::wstring> contentPaths;
+                bool deleteContentPaths = false;
+                bool handledByPreflight = false;
+
+                ~AsyncDropPreflightState()
+                {
+                    std::vector<std::wstring> pathsToDelete;
+                    {
+                        std::lock_guard lock(mutex);
+                        if (deleteContentPaths)
+                            pathsToDelete.swap(contentPaths);
+                    }
+                    for (const auto& path : pathsToDelete)
+                        (void)DeleteFileW(path.c_str());
+                }
+
+                void Store(DropReferenceSnapshot newSnapshot,
+                    std::vector<snowdesktop::virtual_file_drop::
+                        VirtualFileDescriptor> newDescriptors,
+                    std::vector<std::wstring> newContentPaths,
+                    bool shouldDeleteContentPaths,
+                    bool newHandledByPreflight)
+                {
+                    std::lock_guard lock(mutex);
+                    snapshot = std::move(newSnapshot);
+                    descriptors = std::move(newDescriptors);
+                    contentPaths = std::move(newContentPaths);
+                    deleteContentPaths = shouldDeleteContentPaths;
+                    handledByPreflight = newHandledByPreflight;
+                }
+
+                DropReferenceSnapshot Snapshot() const
+                {
+                    std::lock_guard lock(mutex);
+                    return snapshot;
+                }
+
+                std::vector<snowdesktop::virtual_file_drop::
+                    VirtualFileDescriptor> Descriptors() const
+                {
+                    std::lock_guard lock(mutex);
+                    return descriptors;
+                }
+
+                std::vector<std::wstring> ContentPaths() const
+                {
+                    std::lock_guard lock(mutex);
+                    return contentPaths;
+                }
+
+                bool HandledByPreflight() const
+                {
+                    std::lock_guard lock(mutex);
+                    return handledByPreflight;
+                }
+
+            };
+            auto preflightState =
+                std::make_shared<AsyncDropPreflightState>();
+            std::function<bool(IDataObject*)> dataObjectPreflight =
+                [preflightState](IDataObject* workerDataObject) {
+                    DropReferenceSnapshot workerSnapshot =
+                        ReadDropReferenceSnapshot(workerDataObject);
+                    const bool privateResource = std::any_of(
+                        workerSnapshot.candidates.begin(),
+                        workerSnapshot.candidates.end(),
+                        [](const auto& candidate) {
+                            return snowdesktop::drop_text_rules::
+                                IsPrivateHierarchicalResource(candidate);
+                        });
+                    const bool fileResource = std::any_of(
+                        workerSnapshot.candidates.begin(),
+                        workerSnapshot.candidates.end(),
+                        [](const auto& candidate) {
+                            return candidate.kind == snowdesktop::
+                                drop_text_rules::Kind::FileUrl;
+                        });
+                    auto workerDescriptors =
+                        snowdesktop::virtual_file_drop::ReadDescriptors(
+                            workerDataObject);
+                    const bool offersStandardVirtualFile = std::any_of(
+                        workerDescriptors.begin(), workerDescriptors.end(),
+                        [](const auto& descriptor) {
+                            return !IsInternetShortcutDescriptor(
+                                descriptor);
+                        });
+
+                    std::vector<std::wstring> contentPaths;
+                    bool deleteContentPaths = false;
+                    if (fileResource)
+                    {
+                        contentPaths =
+                            TryExtractLocalFileUrlFromDataObject(
+                                workerSnapshot);
+                        deleteContentPaths = false;
+                    }
+                    // When no real virtual file is offered, prefer image
+                    // bytes that the source already placed on the data
+                    // object.  This runs on the Shell STA worker after
+                    // StartOperation, so producer-backed streams can be read
+                    // here without blocking the immediate UI-thread probe.
+                    // A valid file: reference was resolved first so the
+                    // original local file is never re-encoded as PNG.
+                    if (contentPaths.empty() &&
+                        (privateResource ||
+                         !offersStandardVirtualFile))
+                    {
+                        contentPaths = TryExtractImageFromDataObject(
+                            workerDataObject, true);
+                        deleteContentPaths = !contentPaths.empty();
+                    }
+                    if (contentPaths.empty())
+                    {
+                        contentPaths = TryExtractDataUrlFromDataObject(
+                            workerSnapshot);
+                        deleteContentPaths = !contentPaths.empty();
+                    }
+                    const bool handled = !contentPaths.empty();
+                    const bool handledByPreflight =
+                        !offersStandardVirtualFile &&
+                        (handled || privateResource || fileResource);
+                    preflightState->Store(
+                        std::move(workerSnapshot),
+                        std::move(workerDescriptors),
+                        std::move(contentPaths),
+                        deleteContentPaths,
+                        handledByPreflight);
+                    // A private marker without a standard virtual file must
+                    // never be delegated to Shell as a fake .url/.txt file.
+                    // If no standard bytes were exposed, consume the drop
+                    // without manufacturing a link the OS cannot resolve.
+                    return handledByPreflight;
+                };
+
+            auto completed = [
+                this, desktopDirectory,
+                previousDirectoryPaths,
+                existingDesktopKeys, delayedFileTargetCell,
+                bareDesktopUrl, bareDesktopUrls,
+                preflightState](bool succeeded) mutable {
+                const DropReferenceSnapshot workerSnapshot =
+                    preflightState->Snapshot();
+                const auto descriptors =
+                    preflightState->Descriptors();
+                const std::vector<std::wstring> workerContentPaths =
+                    preflightState->ContentPaths();
+                const bool handledByPreflight =
+                    preflightState->HandledByPreflight();
+                std::optional<std::vector<std::wstring>> newPaths;
+                if (previousDirectoryPaths)
+                {
+                    newPaths = FindNewDirectoryPaths(
+                        desktopDirectory,
+                        *previousDirectoryPaths);
+                }
+                const size_t expectedFileCount = std::max({
+                    size_t{1}, descriptors.size(),
+                    workerContentPaths.size(),
+                    newPaths ? newPaths->size() : size_t{0}});
+                const DropPreviewList requestedPreview =
+                    BuildExternalDesktopPreviewList(
+                        delayedFileTargetCell,
+                        expectedFileCount);
+                std::vector<std::wstring> privateResourceTargets;
+                for (const auto& candidate : workerSnapshot.candidates)
+                {
+                    if (snowdesktop::drop_text_rules::
+                            IsPrivateHierarchicalResource(candidate) &&
+                        std::find(privateResourceTargets.begin(),
+                            privateResourceTargets.end(),
+                            candidate.value) ==
+                            privateResourceTargets.end())
+                    {
+                        privateResourceTargets.push_back(
+                            candidate.value);
+                    }
+                }
+                const bool privateResource =
+                    !privateResourceTargets.empty();
+                const bool fileResource = std::any_of(
+                    workerSnapshot.candidates.begin(),
+                    workerSnapshot.candidates.end(),
+                    [](const auto& candidate) {
+                        return candidate.kind == snowdesktop::
+                            drop_text_rules::Kind::FileUrl;
+                    });
+                std::vector<std::wstring> resolvedBareDesktopUrls =
+                    bareDesktopUrls;
+                for (auto& url : ExtractDropUrls(workerSnapshot))
+                {
+                    if (std::find(resolvedBareDesktopUrls.begin(),
+                            resolvedBareDesktopUrls.end(), url) ==
+                        resolvedBareDesktopUrls.end())
+                    {
+                        resolvedBareDesktopUrls.push_back(
+                            std::move(url));
+                    }
+                }
+                const std::wstring resolvedBareDesktopUrl =
+                    resolvedBareDesktopUrls.empty()
+                        ? bareDesktopUrl
+                        : resolvedBareDesktopUrls.front();
+                bool shouldTryUrlFallback = false;
+                std::vector<UrlDropReplacementShortcut>
+                    replacementShortcuts;
+                std::wstring replacementShortcutTarget;
+                bool replacementShortcutTargetIsPrivate = false;
+                if (newPaths)
+                {
+                    shouldTryUrlFallback =
+                        newPaths->empty();
+                    if (!newPaths->empty())
+                    {
+                        const bool onlyInternetShortcuts =
+                            std::all_of(
+                                newPaths->begin(), newPaths->end(),
+                                IsInternetShortcutPath);
+                        if (onlyInternetShortcuts)
+                        {
+                            const auto allShortcutsTarget =
+                                [&newPaths](const std::wstring& target) {
+                                    return !target.empty() && std::all_of(
+                                        newPaths->begin(), newPaths->end(),
+                                        [&target](const auto& path) {
+                                            return ReadInternetShortcutTarget(
+                                                path) == target;
+                                        });
+                                };
+                            if (allShortcutsTarget(
+                                    resolvedBareDesktopUrl))
+                            {
+                                replacementShortcutTarget =
+                                    resolvedBareDesktopUrl;
+                            }
+                            else
+                            {
+                                const auto privateTarget = std::find_if(
+                                    privateResourceTargets.begin(),
+                                    privateResourceTargets.end(),
+                                    allShortcutsTarget);
+                                if (privateTarget !=
+                                    privateResourceTargets.end())
+                                {
+                                    replacementShortcutTarget =
+                                        *privateTarget;
+                                    replacementShortcutTargetIsPrivate =
+                                        true;
+                                }
+                            }
+                        }
+                        if (!replacementShortcutTarget.empty())
+                        {
+                            shouldTryUrlFallback = true;
+                            replacementShortcuts.reserve(
+                                newPaths->size());
+                            for (const auto& path : *newPaths)
+                            {
+                                UrlDropReplacementShortcut replacement;
+                                replacement.path = path;
+                                HANDLE file = CreateFileW(
+                                    path.c_str(), FILE_READ_ATTRIBUTES,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                        FILE_SHARE_DELETE,
+                                    nullptr, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL |
+                                        FILE_FLAG_OPEN_REPARSE_POINT,
+                                    nullptr);
+                                BY_HANDLE_FILE_INFORMATION information{};
+                                if (file != INVALID_HANDLE_VALUE)
+                                {
+                                    if (GetFileInformationByHandle(
+                                            file, &information) &&
+                                        (information.dwFileAttributes &
+                                            (FILE_ATTRIBUTE_DIRECTORY |
+                                             FILE_ATTRIBUTE_REPARSE_POINT)) == 0)
+                                    {
+                                        replacement.volumeSerialNumber =
+                                            information.dwVolumeSerialNumber;
+                                        replacement.fileIndexHigh =
+                                            information.nFileIndexHigh;
+                                        replacement.fileIndexLow =
+                                            information.nFileIndexLow;
+                                        replacement.identityValid = true;
+                                    }
+                                    CloseHandle(file);
+                                }
+                                replacementShortcuts.push_back(
+                                    std::move(replacement));
+                            }
+                            if (std::any_of(
+                                    replacementShortcuts.begin(),
+                                    replacementShortcuts.end(),
+                                    [](const auto& replacement) {
+                                        return !replacement.identityValid;
+                                    }))
+                            {
+                                shouldTryUrlFallback = false;
+                                replacementShortcuts.clear();
+                                replacementShortcutTarget.clear();
+                                replacementShortcutTargetIsPrivate = false;
+                            }
+                        }
+                        std::vector<std::optional<std::wstring>>
+                            pathsBySource(expectedFileCount);
+                        std::vector<bool> pathUsed(
+                            newPaths->size(), false);
+                        if (descriptors.empty())
+                        {
+                            // Without descriptors there is no stable way to
+                            // distinguish multiple Shell outputs from files
+                            // concurrently created on the real desktop.
+                            if (newPaths->size() == 1)
+                                pathsBySource[0] =
+                                    newPaths->front();
+                        }
+                        else
+                        {
+                            const auto assignUniqueMatchingPath =
+                                [&](size_t sourceIndex,
+                                    bool exactNameOnly) {
+                                if (pathsBySource[sourceIndex])
+                                    return;
+                                size_t matchingPath =
+                                    newPaths->size();
+                                size_t matchCount = 0;
+                                for (size_t index = 0;
+                                    index < newPaths->size();
+                                    ++index)
+                                {
+                                    if (pathUsed[index] ||
+                                        !(exactNameOnly
+                                            ? _wcsicmp(
+                                                FileNameFromPath(
+                                                    (*newPaths)[index]).
+                                                    c_str(),
+                                                descriptors[sourceIndex].
+                                                    suggestedFileName.
+                                                    c_str()) == 0
+                                            : MatchPendingName(
+                                                FileNameFromPath(
+                                                    (*newPaths)[index]),
+                                                descriptors[sourceIndex].
+                                                    suggestedFileName)))
+                                        continue;
+                                    matchingPath = index;
+                                    ++matchCount;
+                                }
+                                if (matchCount != 1)
+                                    return;
+                                pathUsed[matchingPath] = true;
+                                pathsBySource[sourceIndex] =
+                                    (*newPaths)[matchingPath];
+                            };
+                            // Reserve every exact descriptor name first.
+                            // Only the remaining sources may use the fuzzy
+                            // localized/Shell collision suffix rules; this
+                            // prevents a legitimate "a (2).txt" descriptor
+                            // from making the separate "a.txt" ambiguous.
+                            for (size_t sourceIndex = 0;
+                                sourceIndex < descriptors.size() &&
+                                sourceIndex < pathsBySource.size();
+                                ++sourceIndex)
+                            {
+                                assignUniqueMatchingPath(
+                                    sourceIndex, true);
+                            }
+                            for (size_t sourceIndex = 0;
+                                sourceIndex < descriptors.size() &&
+                                sourceIndex < pathsBySource.size();
+                                ++sourceIndex)
+                            {
+                                assignUniqueMatchingPath(
+                                    sourceIndex, false);
+                            }
+                        }
+
+                        DragSourceList sourceList;
+                        sourceList.hasExternalFiles = true;
+                        std::unordered_map<size_t,
+                            std::wstring>
+                                createdPathsBySource;
+                        for (size_t sourceIndex = 0;
+                            sourceIndex < pathsBySource.size();
+                            ++sourceIndex)
+                        {
+                            const auto& path =
+                                pathsBySource[sourceIndex];
+                            if (!path)
+                                continue;
+                            DragSourceEntry entry;
+                            entry.kind =
+                                DropSourceKind::ExternalFile;
+                            entry.sourceIndex = sourceIndex;
+                            entry.filePath = *path;
+                            entry.displayName =
+                                FileNameFromPath(*path);
+                            entry.originalSpan = {1, 1};
+                            createdPathsBySource.emplace(
+                                entry.sourceIndex, *path);
+                            sourceList.entries.push_back(
+                                std::move(entry));
+                        }
+                        if (!sourceList.entries.empty() &&
+                            !requestedPreview.Empty())
+                        {
+                            StorePendingLandingCache(
+                                sourceList,
+                                requestedPreview,
+                                existingDesktopKeys,
+                                &createdPathsBySource);
+                        }
+                    }
+                }
+                bool contentFallbackExecuted = false;
+                if (!workerContentPaths.empty() &&
+                    (handledByPreflight || shouldTryUrlFallback))
+                {
+                    DragSourceList fallbackSources;
+                    fallbackSources.hasExternalFiles = true;
+                    for (size_t index = 0;
+                        index < workerContentPaths.size(); ++index)
+                    {
+                        DragSourceEntry entry;
+                        entry.kind = DropSourceKind::ExternalFile;
+                        entry.sourceIndex = index;
+                        entry.filePath =
+                            workerContentPaths[index];
+                        entry.displayName = FileNameFromPath(
+                            workerContentPaths[index]);
+                        entry.originalSpan = {1, 1};
+                        fallbackSources.entries.push_back(
+                            std::move(entry));
+                    }
+                    auto contentCompletion = [
+                        this, preflightState,
+                        replacementShortcuts,
+                        replacementShortcutTarget,
+                        replacementShortcutTargetIsPrivate,
+                        requestedPreview, existingDesktopKeys,
+                        workerContentPaths](bool copySucceeded) mutable {
+                        if (!copySucceeded)
+                        {
+                            if (replacementShortcutTargetIsPrivate &&
+                                RemoveMatchingUrlDropShortcuts(
+                                    replacementShortcuts,
+                                    replacementShortcutTarget))
+                            {
+                                MessageBeep(MB_ICONWARNING);
+                                RequestShellRefresh();
+                            }
+                            return;
+                        }
+
+                        if (replacementShortcuts.empty() ||
+                            !RemoveMatchingUrlDropShortcuts(
+                                replacementShortcuts,
+                                replacementShortcutTarget))
+                            return;
+
+                        DragSourceList placementSources;
+                        placementSources.hasExternalFiles = true;
+                        for (size_t index = 0;
+                            index < workerContentPaths.size(); ++index)
+                        {
+                            DragSourceEntry entry;
+                            entry.kind = DropSourceKind::ExternalFile;
+                            entry.sourceIndex = index;
+                            entry.filePath = workerContentPaths[index];
+                            entry.displayName = FileNameFromPath(
+                                workerContentPaths[index]);
+                            entry.originalSpan = {1, 1};
+                            placementSources.entries.push_back(
+                                std::move(entry));
+                        }
+                        StorePendingLandingCache(
+                            placementSources, requestedPreview,
+                            existingDesktopKeys, nullptr);
+                        RequestShellRefresh();
+                    };
+                    contentFallbackExecuted = ExecuteDropPipeline(
+                        fallbackSources, requestedPreview,
+                        std::move(contentCompletion), false);
+                }
+                bool removedUnusablePrivateShortcut = false;
+                if (!contentFallbackExecuted &&
+                    replacementShortcutTargetIsPrivate &&
+                    !replacementShortcuts.empty())
+                {
+                    removedUnusablePrivateShortcut =
+                        RemoveMatchingUrlDropShortcuts(
+                            replacementShortcuts,
+                            replacementShortcutTarget);
+                    if (removedUnusablePrivateShortcut)
+                        replacementShortcuts.clear();
+                }
+                bool urlFallbackQueued = false;
+                if (!contentFallbackExecuted &&
+                    (handledByPreflight || shouldTryUrlFallback) &&
+                    expectedFileCount == 1 &&
+                    !resolvedBareDesktopUrl.empty() &&
+                    replacementShortcuts.size() <= 1 &&
+                    (!replacementShortcutTargetIsPrivate ||
+                        replacementShortcuts.empty()))
+                {
+                    std::vector<std::wstring> fallbackUrls =
+                        replacementShortcuts.empty()
+                            ? resolvedBareDesktopUrls
+                            : std::vector<std::wstring>{
+                                resolvedBareDesktopUrl};
+                    urlFallbackQueued = QueueUrlDropDownload(
+                        std::move(fallbackUrls),
+                        requestedPreview,
+                        std::move(replacementShortcuts));
+                }
+                if (!urlFallbackQueued && !contentFallbackExecuted)
+                {
+                    if (removedUnusablePrivateShortcut ||
+                        (replacementShortcutTargetIsPrivate &&
+                         !replacementShortcuts.empty()) ||
+                        (succeeded && privateResource &&
+                         workerContentPaths.empty() &&
+                         resolvedBareDesktopUrls.empty()) ||
+                        (succeeded && fileResource &&
+                         workerContentPaths.empty() &&
+                         resolvedBareDesktopUrls.empty()))
+                        MessageBeep(MB_ICONWARNING);
+                    RequestShellRefresh();
+                }
+            };
+
+            const bool shellDropQueued = QueueAsyncShellDrop(
+                    dataObject, desktopDirectory,
+                    keyState, point,
+                    DROPEFFECT_COPY,
+                    std::move(completed),
+                    std::move(dataObjectPreflight));
+            if (shellDropQueued)
+            {
+                *effect = DROPEFFECT_COPY;
+                EndDragSession();
+                return S_OK;
+            }
+        }
+    }
+
+    // Some browsers expose a dragged network resource only as a URL. Resolve
+    // its response off-thread so extensionless images and documents are saved
+    // while actual HTML pages still materialize as URL shortcuts.
+    const DWORD urlDropEffect = (*effect & DROPEFFECT_COPY) != 0
+        ? DROPEFFECT_COPY
+        : ((*effect & DROPEFFECT_LINK) != 0
+            ? DROPEFFECT_LINK : DROPEFFECT_NONE);
+    if (dropPaths.empty() && dataObject && bareDesktopTarget &&
+        delayedFileDescriptors.size() <= 1 &&
+        urlDropEffect != DROPEFFECT_NONE)
+    {
+        if (!bareDesktopUrl.empty())
+        {
+            DropPreviewList requestedPreview =
+                BuildExternalDesktopPreviewList(
+                    delayedFileTargetCell, 1);
+            if (QueueUrlDropDownload(
+                    bareDesktopUrls,
+                    std::move(requestedPreview)))
+            {
+                *effect = urlDropEffect;
+                EndDragSession();
+                return S_OK;
+            }
+        }
+    }
+
+    if (dropPaths.empty() && dataObject && bareDesktopTarget &&
+        !bareDesktopUrl.empty() && canCopyDrop)
+    {
+        (void)adoptStagedDropPaths(
+            TryExtractUrlFromDataObject(
+                dropReferenceSnapshot));
+        if (!dropPaths.empty())
+        {
+            forceCopyDrop = true;
+            *effect = DROPEFFECT_COPY;
+        }
+    }
+
+    if (dropPaths.empty() && dataObject && canCopyDrop &&
+        !sourceUsesAsyncMode &&
+        (!bareDesktopTarget || bareDesktopUrl.empty()) &&
+        (!bareDesktopTarget || delayedFileDescriptors.size() <= 1))
+    {
+        dropPaths = localFileUrlPaths;
+        if (dropPaths.empty())
+        {
+            (void)adoptStagedDropPaths(
+                TryGetNonFileDropPaths(
+                    dataObject,
+                    dropReferenceSnapshot));
+        }
+        if (!dropPaths.empty())
+        {
+            forceCopyDrop = true;
+            *effect = DROPEFFECT_COPY;
+        }
+    }
 
     if (dataObject && !dropPaths.empty())
     {
@@ -1020,6 +2056,8 @@ HRESULT DesktopApp::HandleOleDrop(
                 dragSession_.TargetContainer()
                     ? dragSession_.TargetSlot() : nullptr,
                 targetRegion);
+            if (committed && stagedDropPathLease)
+                stagedDropPathLease->Keep();
             EndDragSession();
             InvalidateRect(hwnd_, nullptr, FALSE);
             *effect = committed ? DROPEFFECT_COPY : DROPEFFECT_NONE;
@@ -1072,6 +2110,8 @@ HRESULT DesktopApp::HandleOleDrop(
                 !sourceSupportsAsync);
             if (executed)
             {
+                if (stagedDropPathLease)
+                    stagedDropPathLease->Keep();
                 EndDragSession();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 *effect = mappingEffect;
@@ -1081,13 +2121,15 @@ HRESULT DesktopApp::HandleOleDrop(
 
         DropPreviewList preview = BuildDropPreviewList(sourceList, target,
             dragSession_.TargetContainer() ? dragSession_.TargetSlot() : nullptr, targetRegion, mods, clientPoint);
+        if (forceCopyDrop)
+            preview.action = DropAction::Copy;
         const bool dockFolderPopupTarget =
             IsOpenDockFolderPopupDropTarget(
                 target,
                 dragSession_.TargetSlot()
                     ? dragSession_.TargetSlot()->GetItem()
                     : nullptr);
-        if (dockFolderPopupTarget)
+        if (dockFolderPopupTarget && !forceCopyDrop)
         {
             if ((*effect & DROPEFFECT_MOVE) != 0)
                 preview.action = DropAction::Move;
@@ -1153,7 +2195,9 @@ HRESULT DesktopApp::HandleOleQueryContinueDrag(
         TryGetNativeDragResumePointFromCursor(desktopPoint);
     return dragDropController_.QueryContinueSelfDrag(
         escapePressed != FALSE,
-        (keyState & MK_LBUTTON) != 0,
+        snowdesktop::drag_input_rules::IsPointerGestureButtonDown(
+            middleButtonWidgetMove_, (keyState & MK_LBUTTON) != 0,
+            (keyState & MK_MBUTTON) != 0),
         pointerOnDesktopSurface);
 }
 

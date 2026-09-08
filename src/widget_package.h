@@ -331,6 +331,13 @@ public:
         const std::string& packageId) const;
     std::optional<InstalledPackage> ResolveEntryPath(
         const std::filesystem::path& entryPath) const;
+    /**
+     * Re-scan the package catalog when the active package changed its
+     * declared permission scope in place. This keeps development hot reloads
+     * on the same consent path as a host restart.
+     */
+    bool RefreshChangedPermissionScope(const std::string& packageId,
+        bool& changed, std::string& error);
 
     ValidationReport ValidateDirectory(const std::filesystem::path& root,
         PackageManifest* manifest = nullptr) const;
@@ -505,12 +512,14 @@ private:
 class LocalCatalogPublisher final : public IWidgetPackagePublisher
 {
 public:
-    explicit LocalCatalogPublisher(std::filesystem::path catalogDirectory);
+    LocalCatalogPublisher(std::filesystem::path catalogDirectory,
+        std::filesystem::path validationStaging);
     std::string ProviderId() const override;
     ProviderCapabilities Capabilities() const override;
     PublishResult Publish(const PublishRequest& request) override;
 
 private:
     std::filesystem::path catalogDirectory_;
+    std::filesystem::path validationStaging_;
 };
 }

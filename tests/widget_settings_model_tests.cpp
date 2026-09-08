@@ -246,6 +246,24 @@ int main()
                 preset.hostAppearanceValues,
         "opaque preset entries are skipped while ordinary and host-owned preset values still apply");
 
+    WidgetHostAppearanceState hostAppearance;
+    Check(hostAppearance.borderWidth == 1.0f &&
+            !hostAppearance.edgeHighlightEnabled &&
+            hostAppearance.edgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            hostAppearance.edgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength,
+        "host appearance exposes independent border and edge-highlight defaults");
+    WidgetHostAppearancePatch borderPatch;
+    Check(borderPatch.Empty(),
+        "an untouched host appearance patch is empty");
+    borderPatch.borderWidth = 2.5f;
+    borderPatch.edgeHighlightEnabled = true;
+    borderPatch.edgeHighlightWidth = 3.0f;
+    borderPatch.edgeHighlightStrength = 0.6f;
+    Check(!borderPatch.Empty(),
+        "border and edge-highlight values participate in atomic patches");
+
     WidgetSettingsSnapshot snapshot;
     snapshot.widgetId = L"weather-instance";
     snapshot.generation = 7;

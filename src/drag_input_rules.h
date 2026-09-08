@@ -14,6 +14,16 @@ constexpr bool IsNativeDragActive(
     return dragSessionActive && !dragTransportActive;
 }
 
+constexpr bool IsLatencySensitivePointerGesture(
+    bool nativeDragActive,
+    bool marqueePointerActive,
+    bool widgetActionActive,
+    bool widgetTargetValid)
+{
+    return nativeDragActive || marqueePointerActive ||
+        (widgetActionActive && widgetTargetValid);
+}
+
 constexpr bool ShouldDeferModelReload(
     bool retainedDragContext,
     bool dragTransportActive)
@@ -27,13 +37,43 @@ constexpr bool ShouldDeferModelReload(
 }
 
 constexpr bool ShouldSampleLivePointer(
-    bool nativeDragActive,
-    bool primaryButtonDown)
+    bool latencySensitivePointerActive,
+    bool gestureButtonDown)
 {
     // A queued move can be dispatched after the physical button was released
-    // but before WM_LBUTTONUP reaches the queue head. In that interval the
-    // release message remains authoritative; do not sample a later position.
-    return nativeDragActive && primaryButtonDown;
+    // but before its button-up reaches the queue head. In that interval the
+    // queued release remains authoritative; do not sample a later position.
+    return latencySensitivePointerActive && gestureButtonDown;
+}
+
+constexpr bool IsPointerGestureButtonDown(
+    bool middleButtonWidgetMove,
+    bool primaryButtonDown,
+    bool middleButtonDown)
+{
+    return middleButtonWidgetMove ? middleButtonDown : primaryButtonDown;
+}
+
+constexpr bool IsMarqueePointerGesture(
+    bool marqueeActive,
+    bool mouseDown,
+    bool hasMouseDownHit,
+    bool guideActionPending,
+    bool widgetActionActive,
+    bool middleButtonWidgetMove,
+    bool detailColumnResizeActive,
+    bool widgetScrollbarDragging,
+    bool popupScrollbarDragging,
+    bool luaWidgetPanelMouseDown,
+    bool hasMarqueeTarget)
+{
+    if (marqueeActive)
+        return true;
+    return mouseDown && !hasMouseDownHit &&
+        !guideActionPending && !widgetActionActive &&
+        !middleButtonWidgetMove && !detailColumnResizeActive &&
+        !widgetScrollbarDragging && !popupScrollbarDragging &&
+        !luaWidgetPanelMouseDown && hasMarqueeTarget;
 }
 
 constexpr bool ShouldSampleFloatingWindowPointer(
@@ -47,7 +87,7 @@ constexpr bool ShouldSampleFloatingWindowPointer(
     return !nativeDragActive || primaryButtonDown;
 }
 
-constexpr bool IsNativeDragMessageSurface(
+constexpr bool IsLatencySensitivePointerMessageSurface(
     bool mainDesktopWindow,
     bool floatingDockWindow,
     bool floatingPopupWindow)
@@ -57,28 +97,29 @@ constexpr bool IsNativeDragMessageSurface(
 }
 
 constexpr bool ShouldStartQueuedMouseMoveCoalescing(
-    bool nativeDragActive,
+    bool latencySensitivePointerActive,
     bool nativeDragMessageSurface,
     bool messageIsMouseMove)
 {
-    return nativeDragActive &&
+    return latencySensitivePointerActive &&
         nativeDragMessageSurface && messageIsMouseMove;
 }
 
 constexpr bool ShouldCoalesceQueuedMouseMove(
-    bool nativeDragActive,
+    bool latencySensitivePointerActive,
     bool sameWindow,
     bool nextMessageIsMouseMove)
 {
     // The caller only inspects the queue head. This preserves ordering with
     // button, key, timer and window messages while dropping superseded points.
-    return nativeDragActive && sameWindow && nextMessageIsMouseMove;
+    return latencySensitivePointerActive &&
+        sameWindow && nextMessageIsMouseMove;
 }
 
 template <typename Message, typename PeekNext, typename RemoveNext,
     typename SameWindow, typename IsMouseMove>
 std::size_t CoalesceQueuedMouseMoves(
-    bool nativeDragActive,
+    bool latencySensitivePointerActive,
     bool nativeDragMessageSurface,
     Message& current,
     PeekNext&& peekNext,
@@ -87,7 +128,7 @@ std::size_t CoalesceQueuedMouseMoves(
     IsMouseMove&& isMouseMove)
 {
     if (!ShouldStartQueuedMouseMoveCoalescing(
-            nativeDragActive,
+            latencySensitivePointerActive,
             nativeDragMessageSurface,
             isMouseMove(current)))
     {
@@ -99,7 +140,7 @@ std::size_t CoalesceQueuedMouseMoves(
     while (peekNext(next))
     {
         if (!ShouldCoalesceQueuedMouseMove(
-                nativeDragActive,
+                latencySensitivePointerActive,
                 sameWindow(current, next),
                 isMouseMove(next)))
         {

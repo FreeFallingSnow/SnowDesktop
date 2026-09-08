@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cwctype>
 #include <memory>
+#include <sstream>
 #include <string_view>
 
 namespace snowdesktop::modern_menu
@@ -219,6 +220,8 @@ public:
             }
             SetForegroundWindow(rootWindow);
             SetFocus(rootWindow);
+            TraceOwnedPopupZOrder(
+                L"session-start", nullptr, true);
         }
 
         MSG message{};
@@ -254,8 +257,14 @@ public:
                 }
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
+                TraceOwnedPopupZOrder(
+                    L"after-dispatch", &message, false);
+                RestoreOwnedPopupZOrder();
                 if (options_.eventPump.flushPresentation)
                     options_.eventPump.flushPresentation();
+                TraceOwnedPopupZOrder(
+                    L"after-presentation", &message, false);
+                RestoreOwnedPopupZOrder();
                 ++processedMessages;
             }
 
@@ -270,11 +279,19 @@ public:
                         WAIT_OBJECT_0))
             {
                 options_.eventPump.dispatchScheduledWork();
+                TraceOwnedPopupZOrder(
+                    L"after-scheduled-work", nullptr, false);
+                RestoreOwnedPopupZOrder();
                 if (options_.eventPump.flushPresentation)
                     options_.eventPump.flushPresentation();
+                TraceOwnedPopupZOrder(
+                    L"after-scheduled-presentation", nullptr,
+                    false);
+                RestoreOwnedPopupZOrder();
             }
         }
 
+        TraceOwnedPopupZOrder(L"session-end", nullptr, true);
         HWND expectedRoot = rootWindow;
         gActiveRootMenu.compare_exchange_strong(expectedRoot, nullptr);
         CloseFromDepth(0);
@@ -1174,7 +1191,7 @@ private:
         if (options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
-            RefreshAfterCommand(popup);
+            if (!done_) RefreshAfterCommand(popup, command);
             return;
         }
 
@@ -1874,7 +1891,7 @@ private:
         return -1;
     }
 
-    void RefreshAfterCommand(Popup& commandPopup)
+    void RefreshAfterCommand(Popup& commandPopup, UINT command)
     {
         const int detachedDepth = FirstDetachedPopupDepth();
         if (detachedDepth > 0)
@@ -1889,7 +1906,31 @@ private:
             return;
         }
 
-        RefreshPopup(commandPopup);
+        const bool sameAction = std::ranges::any_of(*commandPopup.items,
+            [command](const Item& item) { return item.command == command; });
+        if (!sameAction)
+        {
+            RefreshPopup(commandPopup);
+            return;
+        }
+        // Value changes retain every popup HWND, pointer/keyboard selection and
+        // scroll position. Parent captions may contain the updated value too.
+        for (auto& current : popups_)
+        {
+            auto& popup = *current;
+            CalculateLayout(popup);
+            popup.scrollOffset = std::clamp(popup.scrollOffset, 0, MaxScroll(popup));
+            const auto validSelection = [&](int index) {
+                return index >= 0 && static_cast<size_t>(index) < popup.items->size() && IsSelectable((*popup.items)[index]);
+            };
+            if (!validSelection(popup.hoveredItem)) popup.hoveredItem = -1;
+            if (!validSelection(popup.keyboardItem)) popup.keyboardItem = -1;
+            SetWindowPos(popup.hwnd, nullptr,
+                popup.panelScreenOrigin.x - shadowSize_, popup.panelScreenOrigin.y - shadowSize_,
+                popup.windowWidth, popup.windowHeight, SWP_NOACTIVATE | SWP_NOZORDER);
+            ApplyBlurClipRegion(popup);
+            Render(popup);
+        }
     }
 
     void EnsureVisible(Popup& popup, int index)
@@ -1963,6 +2004,185 @@ private:
     {
         return std::clamp(activeDepth_, 0,
             std::max(0, static_cast<int>(popups_.size()) - 1));
+    }
+
+    struct OwnedPopupZOrderSnapshot
+    {
+        HWND root = nullptr;
+        HWND zOrderOwner = nullptr;
+        HWND rootOwner = nullptr;
+        HWND foreground = nullptr;
+        HWND rootPrevious = nullptr;
+        HWND rootNext = nullptr;
+        HWND ownerPrevious = nullptr;
+        HWND ownerNext = nullptr;
+        LONG_PTR rootExStyle = 0;
+        LONG_PTR ownerExStyle = 0;
+        bool rootAboveOwner = false;
+
+        bool operator==(const OwnedPopupZOrderSnapshot& other) const
+        {
+            return root == other.root &&
+                zOrderOwner == other.zOrderOwner &&
+                rootOwner == other.rootOwner &&
+                foreground == other.foreground &&
+                rootPrevious == other.rootPrevious &&
+                rootNext == other.rootNext &&
+                ownerPrevious == other.ownerPrevious &&
+                ownerNext == other.ownerNext &&
+                rootExStyle == other.rootExStyle &&
+                ownerExStyle == other.ownerExStyle &&
+                rootAboveOwner == other.rootAboveOwner;
+        }
+    };
+
+    OwnedPopupZOrderSnapshot CaptureOwnedPopupZOrder() const
+    {
+        OwnedPopupZOrderSnapshot snapshot;
+        if (popups_.empty() || !popups_.front() ||
+            !popups_.front()->hwnd ||
+            !IsWindow(popups_.front()->hwnd))
+        {
+            return snapshot;
+        }
+
+        snapshot.root = popups_.front()->hwnd;
+        snapshot.zOrderOwner = options_.zOrderOwner;
+        snapshot.rootOwner = GetWindow(snapshot.root, GW_OWNER);
+        snapshot.foreground = GetForegroundWindow();
+        snapshot.rootPrevious =
+            GetWindow(snapshot.root, GW_HWNDPREV);
+        snapshot.rootNext = GetWindow(snapshot.root, GW_HWNDNEXT);
+        snapshot.rootExStyle =
+            GetWindowLongPtrW(snapshot.root, GWL_EXSTYLE);
+        if (snapshot.zOrderOwner &&
+            IsWindow(snapshot.zOrderOwner))
+        {
+            snapshot.ownerPrevious = GetWindow(
+                snapshot.zOrderOwner, GW_HWNDPREV);
+            snapshot.ownerNext = GetWindow(
+                snapshot.zOrderOwner, GW_HWNDNEXT);
+            snapshot.ownerExStyle = GetWindowLongPtrW(
+                snapshot.zOrderOwner, GWL_EXSTYLE);
+            for (HWND current = snapshot.root; current;
+                 current = GetWindow(current, GW_HWNDNEXT))
+            {
+                if (current == snapshot.zOrderOwner)
+                {
+                    snapshot.rootAboveOwner = true;
+                    break;
+                }
+            }
+        }
+        return snapshot;
+    }
+
+    void TraceOwnedPopupZOrder(
+        const wchar_t* stage, const MSG* message, bool force)
+    {
+        if (!options_.eventPump.traceDiagnostic)
+            return;
+
+        const OwnedPopupZOrderSnapshot snapshot =
+            CaptureOwnedPopupZOrder();
+        if (!force && hasTracedZOrderSnapshot_ &&
+            snapshot == tracedZOrderSnapshot_)
+        {
+            return;
+        }
+
+        tracedZOrderSnapshot_ = snapshot;
+        hasTracedZOrderSnapshot_ = true;
+        std::wostringstream line;
+        line << L"ModernMenuZOrder stage=" << stage;
+        if (message)
+        {
+            line << L" message=0x" << std::hex
+                 << message->message << std::dec
+                 << L" messageHwnd=" << message->hwnd;
+        }
+        line << L" root=" << snapshot.root
+             << L" zOrderOwner=" << snapshot.zOrderOwner
+             << L" rootOwner=" << snapshot.rootOwner
+             << L" foreground=" << snapshot.foreground
+             << L" rootAboveOwner="
+             << (snapshot.rootAboveOwner ? 1 : 0)
+             << L" rootTopmost="
+             << ((snapshot.rootExStyle & WS_EX_TOPMOST) ? 1 : 0)
+             << L" ownerTopmost="
+             << ((snapshot.ownerExStyle & WS_EX_TOPMOST) ? 1 : 0)
+             << L" rootPrev=" << snapshot.rootPrevious
+             << L" rootNext=" << snapshot.rootNext
+             << L" ownerPrev=" << snapshot.ownerPrevious
+             << L" ownerNext=" << snapshot.ownerNext;
+        options_.eventPump.traceDiagnostic(line.str());
+    }
+
+    void RestoreOwnedPopupZOrder()
+    {
+        if (done_ || !options_.topmost ||
+            !options_.zOrderOwner ||
+            !IsWindow(options_.zOrderOwner) ||
+            popups_.empty() ||
+            !popups_.front()->hwnd ||
+            !IsWindow(popups_.front()->hwnd) ||
+            !IsWindowVisible(popups_.front()->hwnd) ||
+            gActiveRootMenu.load() != popups_.front()->hwnd)
+        {
+            return;
+        }
+
+        bool needsRestore = false;
+        HWND precedingWindow = options_.zOrderOwner;
+        for (const auto& popup : popups_)
+        {
+            if (!popup || !popup->hwnd || !IsWindowVisible(popup->hwnd))
+                continue;
+            bool abovePrecedingWindow = false;
+            for (HWND current = popup->hwnd; current;
+                 current = GetWindow(current, GW_HWNDNEXT))
+            {
+                if (current == precedingWindow)
+                {
+                    abovePrecedingWindow = true;
+                    break;
+                }
+            }
+            needsRestore = needsRestore || !abovePrecedingWindow ||
+                (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
+                    WS_EX_TOPMOST) == 0;
+            precedingWindow = popup->hwnd;
+        }
+        if (!needsRestore)
+            return;
+
+        TraceOwnedPopupZOrder(L"restore-needed", nullptr, true);
+
+        // Host paints, input, presentation and animations can all change
+        // HWND order. Reconcile before presentation and the next queued
+        // input, independently of whether animation work is scheduled.
+        // Include cascades and never revive a superseded nested session.
+        constexpr UINT flags =
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER;
+        bool allRepositionsSucceeded = true;
+        for (const auto& popup : popups_)
+        {
+            if (popup && popup->hwnd && IsWindow(popup->hwnd) &&
+                IsWindowVisible(popup->hwnd))
+            {
+                if (!SetWindowPos(
+                    popup->hwnd, HWND_TOPMOST,
+                    0, 0, 0, 0, flags))
+                {
+                    allRepositionsSucceeded = false;
+                }
+            }
+        }
+        TraceOwnedPopupZOrder(
+            allRepositionsSucceeded
+                ? L"restore-result" : L"restore-failed",
+            nullptr, true);
     }
 
     Popup* ActivePopup()
@@ -2286,6 +2506,8 @@ private:
     bool done_ = false;
     bool closing_ = false;
     bool superseded_ = false;
+    bool hasTracedZOrderSnapshot_ = false;
+    OwnedPopupZOrderSnapshot tracedZOrderSnapshot_{};
     Result result_{};
 };
 
@@ -2301,6 +2523,12 @@ bool IsActive()
 {
     const HWND root = gActiveRootMenu.load();
     return root && IsWindow(root);
+}
+
+HWND ActiveRootWindow()
+{
+    const HWND root = gActiveRootMenu.load();
+    return root && IsWindow(root) ? root : nullptr;
 }
 
 void DismissActive()

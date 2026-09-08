@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <shlwapi.h>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -103,10 +104,14 @@ PersonalizationSettings PersonalizationSettings::GlassDarkPreset()
     PersonalizationSettings s = DarkPreset();
     s.widgetBgR = 0.05f; s.widgetBgG = 0.07f; s.widgetBgB = 0.10f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.28f; s.widgetBorderAlpha = 0.30f;
+    s.widgetAlpha = 0.28f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassDark;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 24.0f;
     return s;
 }
@@ -115,11 +120,15 @@ PersonalizationSettings PersonalizationSettings::GlassLightPreset()
 {
     PersonalizationSettings s = LightPreset();
     s.widgetBgR = 0.92f; s.widgetBgG = 0.96f; s.widgetBgB = 1.0f;
-    s.widgetBorderR = 0.5f; s.widgetBorderG = 0.5f; s.widgetBorderB = 0.55f;
-    s.widgetAlpha = 0.15f; s.widgetBorderAlpha = 0.35f;
+    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
+    s.widgetAlpha = 0.15f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetGlassLight;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 22.0f;
     s.contentTheme = 0;
     return s;
@@ -131,11 +140,15 @@ PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
     // Match the neutral #202020 tint used by Windows dark shell panels.
     s.widgetBgR = 0.125f; s.widgetBgG = 0.125f; s.widgetBgB = 0.125f;
     s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
-    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.10f;
+    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicDark;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.acrylicEnabled = true;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 0;
     return s;
@@ -146,12 +159,16 @@ PersonalizationSettings PersonalizationSettings::AcrylicLightPreset()
     PersonalizationSettings s = LightPreset();
     // Match the neutral #F3F3F3 tint used by Windows light shell panels.
     s.widgetBgR = 0.953f; s.widgetBgG = 0.953f; s.widgetBgB = 0.953f;
-    s.widgetBorderR = 0.0f; s.widgetBorderG = 0.0f; s.widgetBorderB = 0.0f;
-    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.08f;
+    s.widgetBorderR = 1.0f; s.widgetBorderG = 1.0f; s.widgetBorderB = 1.0f;
+    s.widgetAlpha = 0.80f; s.widgetBorderAlpha = 0.0f;
     s.backgroundPreset = kAppearancePresetAcrylicLight;
     s.gradientEndA = 0.0f;
     s.glassEnabled = true;
     s.acrylicEnabled = true;
+    s.widgetBorderWidth = 1.0f;
+    s.widgetEdgeHighlightEnabled = true;
+    s.widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    s.widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
     s.glassBlurRadius = 30.0f;
     s.contentTheme = 1;
     return s;
@@ -248,6 +265,20 @@ case kAppearancePresetAcrylicLight:
     return s;
 }
 
+PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId)
+{
+    PersonalizationSettings s =
+        MakeQuickNavigationAppearancePreset(presetId);
+    if (s.widgetEdgeHighlightEnabled)
+    {
+        // Collection popups participate in the independent edge-light
+        // treatment. Keep the readability-tuned panel tint, but do not stack
+        // the Quick Navigation outline underneath the additive bevel.
+        s.widgetBorderAlpha = 0.0f;
+    }
+    return s;
+}
+
 /**
  * @brief 获取个性化配置文件的完整路径
  *
@@ -294,7 +325,52 @@ bool LoadPersonalization(
     if (ReadDoubleField(text, "widgetBorderB", v)) s.widgetBorderB = (float)v;
     if (ReadDoubleField(text, "widgetAlpha", v)) s.widgetAlpha = (float)v;
     if (ReadDoubleField(text, "widgetBorderAlpha", v)) s.widgetBorderAlpha = (float)v;
+    bool edgeHighlightEnabled = false;
+    const bool edgeHighlightEnabledLoaded = ReadBoolField(
+        text, "widgetEdgeHighlightEnabled", edgeHighlightEnabled);
+    if (edgeHighlightEnabledLoaded)
+        s.widgetEdgeHighlightEnabled = edgeHighlightEnabled;
+    int legacyBorderStyle = 0;
+    const bool legacyBorderStyleLoaded =
+        ReadDoubleField(text, "widgetBorderStyle", v) && std::isfinite(v);
+    if (legacyBorderStyleLoaded)
+        legacyBorderStyle = static_cast<int>(v);
+    bool borderWidthLoaded = false;
+    if (ReadDoubleField(text, "widgetBorderWidth", v) && std::isfinite(v))
+    {
+        s.widgetBorderWidth = std::clamp(static_cast<float>(v),
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        borderWidthLoaded = true;
+    }
+    bool edgeHighlightWidthLoaded = false;
+    if (ReadDoubleField(text, "widgetEdgeHighlightWidth", v) &&
+        std::isfinite(v))
+    {
+        s.widgetEdgeHighlightWidth = std::clamp(static_cast<float>(v),
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+        edgeHighlightWidthLoaded = true;
+    }
+    bool edgeHighlightStrengthLoaded = false;
+    if (ReadDoubleField(text, "widgetEdgeHighlightStrength", v) &&
+        std::isfinite(v))
+    {
+        s.widgetEdgeHighlightStrength = std::clamp(
+            static_cast<float>(v), 0.0f, 1.0f);
+        edgeHighlightStrengthLoaded = true;
+    }
+    else if (ReadDoubleField(text, "widgetBorderEffectStrength", v) &&
+        std::isfinite(v))
+    {
+        s.widgetEdgeHighlightStrength = std::clamp(
+            static_cast<float>(v), 0.0f, 1.0f);
+        edgeHighlightStrengthLoaded = true;
+    }
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
+    s.panelGradient = {};
+    JsonValue gradientDocument;
+    if (ParseJson(text, gradientDocument))
+        if (const auto* gradient = gradientDocument.Find("panelGradient"))
+            if (!snowdesktop::DecodePanelGradient(*gradient, s.panelGradient)) return false;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
     if (ReadDoubleField(text, "categorizedTabHeight", v))
     {
@@ -313,6 +389,19 @@ bool LoadPersonalization(
         if (categorizedTabHeightLoaded)
             *categorizedTabHeightLoaded = true;
     }
+    if (ReadDoubleField(text, "luaWidgetContentRowHeight", v) &&
+        std::isfinite(v))
+    {
+        s.luaWidgetContentRowHeight = std::clamp(
+            static_cast<float>(v), 18.0f, 48.0f);
+    }
+    else if ((ReadDoubleField(text, "luaWidgetRowHeight", v) ||
+              ReadDoubleField(text, "luaWidgetTitleAreaHeight", v)) &&
+             std::isfinite(v))
+    {
+        s.luaWidgetContentRowHeight = std::clamp(
+            static_cast<float>(v) * 0.70f, 18.0f, 48.0f);
+    }
     if (ReadDoubleField(text, "backgroundPreset", v))
     {
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
@@ -329,16 +418,41 @@ bool LoadPersonalization(
     bool b3 = false;
     if (ReadBoolField(text, "showCategoryTabCounts", b3))
         s.showCategoryTabCounts = b3;
+    // Legacy releases tied edge reflection to glass and used border alpha as
+    // its intensity. New edge-highlight fields take priority when present.
+    if (!edgeHighlightEnabledLoaded)
+        s.widgetEdgeHighlightEnabled = legacyBorderStyleLoaded
+            ? legacyBorderStyle == 1 : s.glassEnabled;
+    if (!borderWidthLoaded)
+        s.widgetBorderWidth = 1.0f;
+    if (!edgeHighlightWidthLoaded)
+        s.widgetEdgeHighlightWidth = legacyBorderStyleLoaded &&
+            legacyBorderStyle == 1 && borderWidthLoaded
+            ? s.widgetBorderWidth : kDefaultEdgeHighlightWidth;
+    if (!edgeHighlightStrengthLoaded)
+        s.widgetEdgeHighlightStrength =
+            kDefaultEdgeHighlightStrength;
+    if (!edgeHighlightEnabledLoaded && s.glassEnabled)
+        s.widgetBorderAlpha = 0.0f;
     // Presets are immutable choices in the UI. Refresh persisted acrylic
     // values so palette refinements and the old placeholder migration are
     // applied without requiring users to reselect the theme.
     if (s.backgroundPreset == kAppearancePresetAcrylicDark ||
         s.backgroundPreset == kAppearancePresetAcrylicLight)
     {
+        const float explicitBorderWidth = s.widgetBorderWidth;
+        const bool explicitEdgeHighlightEnabled =
+            s.widgetEdgeHighlightEnabled;
+        const float explicitEdgeHighlightWidth =
+            s.widgetEdgeHighlightWidth;
+        const float explicitEdgeHighlightStrength =
+            s.widgetEdgeHighlightStrength;
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
+        const float luaWidgetContentRowHeight =
+            s.luaWidgetContentRowHeight;
         const bool showCategoryTabCounts =
             s.showCategoryTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
@@ -347,9 +461,18 @@ bool LoadPersonalization(
         s.barHeight = barHeight;
         s.categorizedTabHeight =
             categorizedTabHeight;
+        s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
         s.showCategoryTabCounts =
             showCategoryTabCounts;
         s.contextMenuStyle = contextMenuStyle;
+        if (borderWidthLoaded)
+            s.widgetBorderWidth = explicitBorderWidth;
+        if (edgeHighlightEnabledLoaded)
+            s.widgetEdgeHighlightEnabled = explicitEdgeHighlightEnabled;
+        if (edgeHighlightWidthLoaded)
+            s.widgetEdgeHighlightWidth = explicitEdgeHighlightWidth;
+        if (edgeHighlightStrengthLoaded)
+            s.widgetEdgeHighlightStrength = explicitEdgeHighlightStrength;
     }
     return true;
 }
@@ -367,6 +490,7 @@ bool LoadPersonalization(
  */
 bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
 {
+    if (!snowdesktop::ValidatePanelGradient(s.panelGradient)) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
@@ -378,12 +502,35 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"widgetBorderB\": " << s.widgetBorderB << ",\n";
     file << "  \"widgetAlpha\": " << s.widgetAlpha << ",\n";
     file << "  \"widgetBorderAlpha\": " << s.widgetBorderAlpha << ",\n";
+    file << "  \"widgetBorderWidth\": "
+         << (std::isfinite(s.widgetBorderWidth)
+                ? std::clamp(s.widgetBorderWidth,
+                    kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth)
+                : 1.0f)
+         << ",\n";
+    file << "  \"widgetEdgeHighlightEnabled\": "
+         << (s.widgetEdgeHighlightEnabled ? "true" : "false") << ",\n";
+    file << "  \"widgetEdgeHighlightWidth\": "
+         << (std::isfinite(s.widgetEdgeHighlightWidth)
+                ? std::clamp(s.widgetEdgeHighlightWidth,
+                    kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth)
+                : kDefaultEdgeHighlightWidth)
+         << ",\n";
+    file << "  \"widgetEdgeHighlightStrength\": "
+         << (std::isfinite(s.widgetEdgeHighlightStrength)
+                ? std::clamp(s.widgetEdgeHighlightStrength, 0.0f, 1.0f)
+                : kDefaultEdgeHighlightStrength)
+         << ",\n";
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
+    file << "  \"panelGradient\": " << snowdesktop::EncodePanelGradient(s.panelGradient) << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";
     file << "  \"categorizedTabHeight\": "
          << std::clamp(
                 s.categorizedTabHeight,
                 24.0f, 48.0f)
+         << ",\n";
+    file << "  \"luaWidgetContentRowHeight\": "
+         << std::clamp(s.luaWidgetContentRowHeight, 18.0f, 48.0f)
          << ",\n";
     file << "  \"showCategoryTabCounts\": "
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";

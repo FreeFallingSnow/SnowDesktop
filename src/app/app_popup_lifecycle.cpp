@@ -20,10 +20,16 @@ DismissActiveContextMenuForPopupTransition()
         activeContextMenu2_.Get() != nullptr ||
         activeContextMenu3_.Get() != nullptr)
     {
-        // EndMenu is safe from the UI thread while TrackPopupMenuEx pumps its
-        // nested loop. The RAII layer guard remains responsible for restoring
-        // the floating Dock after TrackPopupMenuEx unwinds.
-        EndMenu();
+        // The tracker thread owns the native menu window. Remember an early
+        // cancellation request until that window exists, then ask its menu
+        // loop to unwind without blocking the desktop UI pump.
+        shellPopupTrackerCancelRequested_.store(
+            true, std::memory_order_release);
+        const HWND trackerOwner =
+            shellPopupTrackerOwnerHwnd_.load(
+                std::memory_order_acquire);
+        if (trackerOwner && IsWindow(trackerOwner))
+            SendMessageW(trackerOwner, WM_CANCELMODE, 0, 0);
     }
 }
 
@@ -372,8 +378,7 @@ void DesktopApp::StartCollectionPopupAnimation(
 {
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
-    if (!snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+    if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         popupAnimation_.ShowImmediately();
         ResetCollectionPopupAnimationCache();
@@ -538,8 +543,7 @@ void DesktopApp::CloseCollectionPopup(
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
 
-    if (!snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+    if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         FinalizeCloseCollectionPopup();
         return;

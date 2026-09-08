@@ -13,12 +13,16 @@
 #include "desktop_backdrop_compositor.h"
 
 #include "desktop_backdrop_update_rules.h"
+#include "popup_window_pair_z_order.h"
+#include "../dock_genie_rules.h"
+#include "../quick_navigation_genie_rules.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
 #include <DispatcherQueue.h>
 #include <dwmapi.h>
 #include <windows.graphics.effects.interop.h>
+#include <windows.graphics.interop.h>
 #include <windows.ui.composition.interop.h>
 
 #include "l10n.h"
@@ -27,6 +31,7 @@
 #undef GetCurrentTime
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Numerics.h>
+#include <winrt/Windows.Graphics.h>
 #include <winrt/Windows.Graphics.Effects.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Composition.h>
@@ -190,6 +195,105 @@ struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
     winrt::hstring effectName = L"SnowDesktopBackdropBlur";
 };
 
+/** @brief CompositionPath 对不可变 D2D 路径的原生适配。 */
+struct BackdropGeometrySource : winrt::implements<BackdropGeometrySource,
+    winrt::Windows::Graphics::IGeometrySource2D,
+    ABI::Windows::Graphics::IGeometrySource2DInterop>
+{
+    explicit BackdropGeometrySource(winrt::com_ptr<ID2D1PathGeometry> geometry)
+        : geometry_(std::move(geometry))
+    {
+    }
+
+    HRESULT STDMETHODCALLTYPE GetGeometry(ID2D1Geometry** value) noexcept override
+    {
+        if (!value) return E_INVALIDARG;
+        geometry_.copy_to(value);
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE TryGetGeometryUsingFactory(
+        ID2D1Factory*, ID2D1Geometry** value) noexcept override
+    {
+        if (!value) return E_INVALIDARG;
+        *value = nullptr;
+        // Composition can consume the original immutable geometry through
+        // GetGeometry; no factory-specific copy is supplied by this adapter.
+        return E_NOTIMPL;
+    }
+
+private:
+    winrt::com_ptr<ID2D1Geometry> geometry_;
+};
+
+struct GenieOutlinePoint
+{
+    D2D1_POINT_2F source{};
+    std::size_t strip = 0;
+};
+
+std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
+    float width, float height, float cornerRadius, bool vertical)
+{
+    namespace genie = snowdesktop::dock_genie;
+    const float axisLength = vertical ? height : width;
+    const float crossLength = vertical ? width : height;
+    const float radius = std::clamp(cornerRadius, 0.0f,
+        std::min(width, height) * 0.5f);
+    // Uniform angle samples preserve the rounded corners even when a whole
+    // corner falls inside one strip. Cache source points until geometry changes.
+    constexpr std::size_t cornerSamples = 12;
+    constexpr double halfPi = 1.57079632679489661923;
+    std::array<float, cornerSamples * 2> cornerAxes{};
+    for (std::size_t index = 0; index < cornerSamples; ++index)
+    {
+        const double angle = halfPi * static_cast<double>(index + 1) /
+            static_cast<double>(cornerSamples);
+        const float offset = radius * static_cast<float>(1.0 - std::cos(angle));
+        cornerAxes[index] = offset;
+        cornerAxes[cornerAxes.size() - 1 - index] = axisLength - offset;
+    }
+
+    std::vector<GenieOutlinePoint> outline;
+    outline.reserve(genie::StripCount * 4 + cornerAxes.size() * 2);
+    const auto appendLowSide = [&](std::size_t strip, float axis) {
+        const float distance = std::max(0.0f,
+            radius - std::min(axis, axisLength - axis));
+        const float inset = radius > 0.0f
+            ? radius - std::sqrt(std::max(0.0f,
+                radius * radius - distance * distance))
+            : 0.0f;
+        outline.push_back({vertical ? D2D1_POINT_2F{inset, axis}
+                                   : D2D1_POINT_2F{axis, inset}, strip});
+    };
+    for (std::size_t index = 0; index < genie::StripCount; ++index)
+    {
+        const float begin = static_cast<float>(
+            static_cast<double>(axisLength) * index / genie::StripCount);
+        const float end = static_cast<float>(
+            static_cast<double>(axisLength) * (index + 1) / genie::StripCount);
+        appendLowSide(index, begin);
+        for (const float axis : cornerAxes)
+        {
+            if (axis > begin && axis < end)
+                appendLowSide(index, axis);
+        }
+        appendLowSide(index, end);
+    }
+    // Walk back along the opposite side. Adjacent projections share their
+    // boundary, keeping the glass outline continuous with the live content.
+    for (std::size_t remaining = outline.size(); remaining > 0; --remaining)
+    {
+        auto point = outline[remaining - 1];
+        if (vertical)
+            point.source.x = crossLength - point.source.x;
+        else
+            point.source.y = crossLength - point.source.y;
+        outline.push_back(point);
+    }
+    return outline;
+}
+
 using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
     ABI::Windows::System::IDispatcherQueueController**);
 
@@ -216,6 +320,7 @@ struct DesktopBackdropCompositor::Impl
     struct PanelVisual
     {
         RECT frame{};
+        RECT regionFrame{};
         std::uintptr_t ownerKey = 0;
         int cornerRadius = 0;
         int blurRadius = 0;
@@ -233,8 +338,21 @@ struct DesktopBackdropCompositor::Impl
     wuc::ContainerVisual root{nullptr};
     std::unordered_map<int, wuc::CompositionEffectFactory> blurFactories;
     std::vector<PanelVisual> panels;
+    wuc::SpriteVisual genieRoot{nullptr};
+    wuc::SpriteVisual genieSource{nullptr};
+    wuc::CompositionPathGeometry genieGeometry{nullptr};
+    winrt::com_ptr<ID2D1Factory> genieGeometryFactory;
+    std::vector<GenieOutlinePoint> genieOutline;
+    RECT geniePanelFrame{};
+    SIZE genieHostSize{};
+    int genieCornerRadius = 0;
+    bool genieVertical = true;
+    float genieSourceOpacity = 1.0f;
+    float genieOpacity = 1.0f;
     std::wstring lastError;
     bool completeCollection = true;
+    bool collectingFrame = false;
+    bool blurFactoriesDirty = false;
     bool available = false;
     bool popupMode = false;
     bool popupTopmost = false;
@@ -389,7 +507,7 @@ struct DesktopBackdropCompositor::Impl
         {
             // Ordinary panel paints do not own HWND placement. In
             // particular, a Dock demotion has already moved the content and
-            // glass pair in one DeferWindowPos transaction; issuing another
+            // glass pair through the coordinated Z-order policy; issuing another
             // helper-only SetWindowPos/SWP_SHOWWINDOW here would make DWM
             // re-evaluate the BackdropBrush source for an extra frame.
             return true;
@@ -425,10 +543,10 @@ struct DesktopBackdropCompositor::Impl
             // rectangular bounds so a binary GDI region cannot cut off the
             // partially covered pixels along the rounded edge.
             HRGN frameRegion = CreateRectRgn(
-                panel.frame.left,
-                panel.frame.top,
-                panel.frame.right + 1,
-                panel.frame.bottom + 1);
+                panel.regionFrame.left,
+                panel.regionFrame.top,
+                panel.regionFrame.right + 1,
+                panel.regionFrame.bottom + 1);
             if (!frameRegion)
             {
                 DeleteObject(panelRegion);
@@ -553,6 +671,7 @@ struct DesktopBackdropCompositor::Impl
         blur->blurAmount = static_cast<float>(blurRadius);
         auto factory = compositor.CreateEffectFactory(*blur);
         blurFactories.emplace(blurRadius, factory);
+        blurFactoriesDirty = true;
         return factory;
     }
 
@@ -569,11 +688,55 @@ struct DesktopBackdropCompositor::Impl
         return brush;
     }
 
+    void PruneUnusedBlurFactories()
+    {
+        if (collectingFrame || !blurFactoriesDirty)
+            return;
+        snowdesktop::desktop_backdrop_update_rules::PruneUnusedBlurFactories(
+            blurFactories, panels);
+        blurFactoriesDirty = false;
+    }
+
+    void ClearGenieTransform()
+    {
+        if (!genieRoot)
+            return;
+        if (root)
+        {
+            root.StopAnimation(L"Scale");
+            root.StopAnimation(L"Opacity");
+            root.Scale(wfn::float3{1.0f, 1.0f, 1.0f});
+            root.CenterPoint(wfn::float3{});
+            root.Opacity(1.0f);
+            root.Children().Remove(genieRoot);
+        }
+        if (genieSource)
+            genieSource.Opacity(genieSourceOpacity);
+        genieRoot = nullptr;
+        genieSource = nullptr;
+        genieGeometry = nullptr;
+        genieOutline.clear();
+        geniePanelFrame = {};
+        genieHostSize = {};
+        genieOpacity = 1.0f;
+        SetAnimationPathRegionExpanded(false);
+    }
+
     void Reset()
     {
         available = false;
+        genieOutline.clear();
+        genieGeometry = nullptr;
+        genieGeometryFactory = nullptr;
+        genieRoot = nullptr;
+        genieSource = nullptr;
+        geniePanelFrame = {};
+        genieHostSize = {};
+        genieOpacity = 1.0f;
         panels.clear();
         blurFactories.clear();
+        collectingFrame = false;
+        blurFactoriesDirty = false;
         try
         {
             if (target)
@@ -629,7 +792,7 @@ bool DesktopBackdropCompositor::InitializePopup(
 
 void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
     HWND contentWindow, HWND contentInsertAfter,
-    bool topmost)
+    bool topmost, HWND preserveAboveWindow)
 {
     const bool contentValid =
         contentWindow && IsWindow(contentWindow);
@@ -647,44 +810,35 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
         impl_->popupTopmost = topmost;
     }
 
-    constexpr UINT contentFlags =
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-        SWP_NOOWNERZORDER;
     bool positionedTogether = false;
+    POINT origin{};
+    SIZE size{};
     if (backdropWindow)
     {
-        POINT origin{};
-        SIZE size{};
         if (impl_->QueryContentPlacement(
                 nullptr, origin, size))
         {
-            HDWP deferred = BeginDeferWindowPos(2);
-            if (deferred)
-            {
-                deferred = DeferWindowPos(
-                    deferred, contentWindow,
-                    contentInsertAfter,
-                    0, 0, 0, 0, contentFlags);
-            }
-            if (deferred)
-            {
-                deferred = DeferWindowPos(
-                    deferred, backdropWindow,
-                    contentWindow,
-                    origin.x, origin.y,
-                    size.cx, size.cy,
-                    SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-            }
-            if (deferred)
-            {
-                positionedTogether =
-                    EndDeferWindowPos(deferred) != FALSE;
-            }
+            positionedTogether =
+                snowdesktop::popup_window_pair_z_order::Apply(
+                    contentWindow, backdropWindow,
+                    contentInsertAfter, topmost,
+                    origin, size, preserveAboveWindow);
         }
+    }
+    else
+    {
+        positionedTogether =
+            snowdesktop::popup_window_pair_z_order::Apply(
+                contentWindow, nullptr,
+                contentInsertAfter, topmost,
+                origin, size, preserveAboveWindow);
     }
 
     if (!positionedTogether)
     {
+        constexpr UINT contentFlags =
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER;
         SetWindowPos(
             contentWindow, contentInsertAfter,
             0, 0, 0, 0, contentFlags);
@@ -990,6 +1144,10 @@ void DesktopBackdropCompositor::SetVisualTransform(
         !impl_->contentWindow || !IsWindow(impl_->contentWindow))
         return;
 
+    ClearGenieTransform();
+    if (!impl_->available)
+        return;
+
     const float clampedScale = std::clamp(scale, 0.01f, 1.0f);
     const float clampedOpacity = std::clamp(opacity, 0.0f, 1.0f);
 
@@ -1034,6 +1192,10 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
     if (!impl_ || !impl_->available || !impl_->root ||
         !impl_->compositor || durationMilliseconds == 0 ||
         !impl_->contentWindow || !IsWindow(impl_->contentWindow))
+        return false;
+
+    ClearGenieTransform();
+    if (!impl_->available)
         return false;
 
     const float clampedFrom =
@@ -1119,11 +1281,160 @@ bool DesktopBackdropCompositor::StartVisualTransformAnimation(
     return false;
 }
 
+bool DesktopBackdropCompositor::SetGenieTransform(
+    const RECT& panelFrame, const RECT& dockFrame,
+    int edge, float collapsed, float opacity)
+{
+    if (!impl_ || !impl_->available || !impl_->root || !impl_->compositor ||
+        !impl_->contentWindow || !IsWindow(impl_->contentWindow) ||
+        panelFrame.right <= panelFrame.left || panelFrame.bottom <= panelFrame.top ||
+        dockFrame.right <= dockFrame.left || dockFrame.bottom <= dockFrame.top ||
+        !std::isfinite(collapsed) || !std::isfinite(opacity))
+    {
+        ClearGenieTransform();
+        return false;
+    }
+
+    namespace genie = snowdesktop::dock_genie;
+    const auto direction = static_cast<genie::Edge>(std::clamp(edge, 0, 3));
+    const bool vertical = genie::Vertical(direction);
+    try
+    {
+        const auto panel = std::find_if(impl_->panels.begin(), impl_->panels.end(),
+            [&panelFrame](const Impl::PanelVisual& item) {
+                return EqualRect(&item.frame, &panelFrame) != FALSE;
+            });
+        if (panel == impl_->panels.end() || !panel->visual.Brush())
+        {
+            impl_->ClearGenieTransform();
+            return false;
+        }
+        const float width = static_cast<float>(panelFrame.right - panelFrame.left);
+        const float height = static_cast<float>(panelFrame.bottom - panelFrame.top);
+        RECT hostFrame{};
+        if (!GetClientRect(impl_->contentWindow, &hostFrame) ||
+            hostFrame.right <= 0 || hostFrame.bottom <= 0)
+        {
+            impl_->ClearGenieTransform();
+            return false;
+        }
+        if (!impl_->genieRoot || impl_->genieSource != panel->visual ||
+            impl_->genieVertical != vertical ||
+            impl_->genieCornerRadius != panel->cornerRadius ||
+            impl_->genieHostSize.cx != hostFrame.right ||
+            impl_->genieHostSize.cy != hostFrame.bottom ||
+            !EqualRect(&impl_->geniePanelFrame, &panelFrame))
+        {
+            impl_->ClearGenieTransform();
+            if (!impl_->genieGeometryFactory)
+            {
+                winrt::check_hresult(D2D1CreateFactory(
+                    D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                    impl_->genieGeometryFactory.put()));
+            }
+            auto glass = impl_->compositor.CreateSpriteVisual();
+            glass.Size(wfn::float2{static_cast<float>(hostFrame.right),
+                static_cast<float>(hostFrame.bottom)});
+            // Backdrop brushes sample the region behind each consuming visual.
+            // One host-sized visual avoids repeated blur evaluation and does
+            // not resize/share the ordinary panel's smaller effect brush.
+            glass.Brush(impl_->CreateBlurBrush(panel->blurRadius));
+            auto geometry = impl_->compositor.CreatePathGeometry();
+            glass.Clip(impl_->compositor.CreateGeometricClip(geometry));
+            auto outline = BuildGenieSourceOutline(width, height,
+                static_cast<float>(panel->cornerRadius), vertical);
+            impl_->root.StopAnimation(L"Scale");
+            impl_->root.StopAnimation(L"Opacity");
+            impl_->root.Scale(wfn::float3{1.0f, 1.0f, 1.0f});
+            impl_->root.CenterPoint(wfn::float3{});
+            impl_->root.Opacity(1.0f);
+            impl_->genieRoot = glass;
+            impl_->genieSource = panel->visual;
+            impl_->genieSourceOpacity = panel->visual.Opacity();
+            impl_->genieGeometry = geometry;
+            impl_->genieOutline = std::move(outline);
+            impl_->geniePanelFrame = panelFrame;
+            impl_->genieHostSize = {hostFrame.right, hostFrame.bottom};
+            impl_->genieCornerRadius = panel->cornerRadius;
+            impl_->genieVertical = vertical;
+            impl_->root.Children().InsertAtTop(glass);
+            panel->visual.Opacity(0.0f);
+        }
+
+        const genie::Rect source{static_cast<double>(panelFrame.left),
+            static_cast<double>(panelFrame.top), static_cast<double>(panelFrame.right),
+            static_cast<double>(panelFrame.bottom)};
+        const genie::Rect target{static_cast<double>(dockFrame.left),
+            static_cast<double>(dockFrame.top), static_cast<double>(dockFrame.right),
+            static_cast<double>(dockFrame.bottom)};
+        namespace navigation = snowdesktop::quick_navigation_animation_rules;
+        std::array<navigation::GenieStripProjection, genie::StripCount> matrices;
+        for (std::size_t index = 0; index < matrices.size(); ++index)
+        {
+            matrices[index] = navigation::GenieProjection(source, target, direction,
+                std::clamp(collapsed, 0.0f, 1.0f), width, height, index);
+        }
+        const auto transformPoint = [&matrices](const GenieOutlinePoint& point) {
+            const auto mapped = matrices[point.strip].Map(point.source.x, point.source.y);
+            return D2D1_POINT_2F{static_cast<float>(mapped.x), static_cast<float>(mapped.y)};
+        };
+        // D2D paths are immutable once closed. Replace only the path value;
+        // retain the Composition geometry, clip, visual and brush throughout
+        // the animation. A single outline has no internal antialiased seams.
+        winrt::com_ptr<ID2D1PathGeometry> path;
+        winrt::check_hresult(impl_->genieGeometryFactory->CreatePathGeometry(path.put()));
+        winrt::com_ptr<ID2D1GeometrySink> sink;
+        winrt::check_hresult(path->Open(sink.put()));
+        sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+        sink->BeginFigure(transformPoint(impl_->genieOutline.front()),
+            D2D1_FIGURE_BEGIN_FILLED);
+        for (std::size_t index = 1; index < impl_->genieOutline.size(); ++index)
+            sink->AddLine(transformPoint(impl_->genieOutline[index]));
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        winrt::check_hresult(sink->Close());
+        impl_->genieGeometry.Path(wuc::CompositionPath(
+            winrt::make<BackdropGeometrySource>(std::move(path))));
+        impl_->genieOpacity = std::clamp(opacity, 0.0f, 1.0f);
+        impl_->genieRoot.Opacity(impl_->genieOpacity *
+            impl_->genieSourceOpacity);
+        impl_->SetAnimationPathRegionExpanded(true);
+        if (!impl_->animationPathRegionExpanded)
+        {
+            impl_->ClearGenieTransform();
+            return false;
+        }
+        return true;
+    }
+    catch (...)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.genie_transform", winrt::to_hresult());
+        ClearGenieTransform();
+        return false;
+    }
+}
+
+void DesktopBackdropCompositor::ClearGenieTransform()
+{
+    if (!impl_ || !impl_->genieRoot)
+        return;
+    try
+    {
+        impl_->ClearGenieTransform();
+    }
+    catch (...)
+    {
+        impl_->lastError = FormatHresult(L"backdrop.clear_genie", winrt::to_hresult());
+        // A failed restore must not strand hidden originals or animated glass.
+        impl_->Reset();
+    }
+}
+
 void DesktopBackdropCompositor::BeginFrame(bool completeCollection)
 {
     if (!impl_->available)
         return;
     impl_->completeCollection = completeCollection;
+    impl_->collectingFrame = true;
     if (completeCollection)
     {
         for (auto& panel : impl_->panels)
@@ -1170,10 +1481,18 @@ bool DesktopBackdropCompositor::AddPanel(
         // place. Treating every magnified RECT as a new identity leaves all
         // earlier rectangles alive during partial frames, causing the native
         // backdrop region and per-move work to grow without bound.
+        if (impl_->genieSource == existing->visual &&
+            (!EqualRect(&existing->frame, &frame) || existing->blurRadius != blurKey))
+        {
+            impl_->ClearGenieTransform();
+        }
         existing->frame = frame;
+        existing->regionFrame = frame;
+        existing->visual.TransformMatrix(wfn::float4x4{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
 
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {
+            impl_->blurFactoriesDirty = true;
             existing->blurRadius = blurKey;
             existing->visual.Brush(impl_->CreateBlurBrush(blurKey));
         }
@@ -1194,8 +1513,40 @@ bool DesktopBackdropCompositor::AddPanel(
         // change. Handoff callers that need an invisible target explicitly
         // call SetPanelOpacity(0) before EndFrame, so no intermediate visible
         // commit is introduced here.
-        existing->visual.Opacity(1.0f);
+        if (impl_->genieSource == existing->visual)
+        {
+            impl_->genieSourceOpacity = 1.0f;
+            impl_->genieRoot.Opacity(impl_->genieOpacity);
+            existing->visual.Opacity(0.0f);
+        }
+        else
+            existing->visual.Opacity(1.0f);
         existing->seen = true;
+        impl_->PruneUnusedBlurFactories();
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
+    const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame)
+{
+    if (!impl_->available || !ownerKey || IsRectEmpty(&projectedFrame)) return false;
+    const auto found = std::find_if(impl_->panels.begin(), impl_->panels.end(),
+        [ownerKey](const auto& panel) { return panel.ownerKey == ownerKey; });
+    if (found == impl_->panels.end()) return false;
+    try
+    {
+        found->visual.TransformMatrix(wfn::float4x4{
+            matrix._11, matrix._12, matrix._13, matrix._14,
+            matrix._21, matrix._22, matrix._23, matrix._24,
+            matrix._31, matrix._32, matrix._33, matrix._34,
+            matrix._41, matrix._42, matrix._43, matrix._44 });
+        found->regionFrame = projectedFrame;
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -1218,9 +1569,17 @@ bool DesktopBackdropCompositor::RemovePanel(const RECT& frame)
 
     try
     {
+        if (impl_->genieSource == existing->visual)
+            impl_->ClearGenieTransform();
         impl_->root.Children().Remove(existing->visual);
+        existing->visual.Brush(nullptr);
         impl_->panels.erase(existing);
-        impl_->SyncPanelWindowRegion();
+        impl_->blurFactoriesDirty = true;
+        impl_->PruneUnusedBlurFactories();
+        if (impl_->genieRoot)
+            impl_->SetAnimationPathRegionExpanded(true);
+        else
+            impl_->SyncPanelWindowRegion();
         impl_->RequestCommit();
         return true;
     }
@@ -1261,8 +1620,14 @@ bool DesktopBackdropCompositor::SetPanelOpacity(
         return false;
     try
     {
-        existing->visual.Opacity(
-            std::clamp(opacity, 0.0f, 1.0f));
+        const float clampedOpacity = std::clamp(opacity, 0.0f, 1.0f);
+        if (impl_->genieSource == existing->visual)
+        {
+            impl_->genieSourceOpacity = clampedOpacity;
+            impl_->genieRoot.Opacity(impl_->genieOpacity * clampedOpacity);
+        }
+        else
+            existing->visual.Opacity(clampedOpacity);
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -1309,6 +1674,7 @@ CommitVisualChangesAndNotify(
 void DesktopBackdropCompositor::EndFrame(
     bool requestCommit)
 {
+    impl_->collectingFrame = false;
     if (!impl_->available)
         return;
     try
@@ -1324,11 +1690,19 @@ void DesktopBackdropCompositor::EndFrame(
                     ++iterator;
                     continue;
                 }
+                if (impl_->genieSource == iterator->visual)
+                    impl_->ClearGenieTransform();
                 children.Remove(iterator->visual);
+                iterator->visual.Brush(nullptr);
                 iterator = impl_->panels.erase(iterator);
+                impl_->blurFactoriesDirty = true;
             }
         }
-        impl_->SyncPanelWindowRegion();
+        impl_->PruneUnusedBlurFactories();
+        if (impl_->genieRoot)
+            impl_->SetAnimationPathRegionExpanded(true);
+        else
+            impl_->SyncPanelWindowRegion();
         if (requestCommit)
             impl_->RequestCommit();
     }
@@ -1357,6 +1731,11 @@ bool DesktopBackdropCompositor::IsBackdropWindow(HWND window) const
 std::size_t DesktopBackdropCompositor::PanelCount() const
 {
     return impl_ ? impl_->panels.size() : 0;
+}
+
+std::size_t DesktopBackdropCompositor::BlurFactoryCount() const
+{
+    return impl_ ? impl_->blurFactories.size() : 0;
 }
 
 const std::wstring& DesktopBackdropCompositor::LastError() const

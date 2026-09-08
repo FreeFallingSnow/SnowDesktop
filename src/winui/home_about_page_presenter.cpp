@@ -18,24 +18,6 @@ namespace controls = presenter_controls;
 namespace
 {
 
-std::wstring FormatOne(std::wstring text, std::wstring_view value)
-{
-    constexpr std::wstring_view token = L"{0}";
-    if (const std::size_t position = text.find(token);
-        position != std::wstring::npos)
-    {
-        text.replace(position, token.size(), value);
-        return text;
-    }
-    if (!value.empty())
-    {
-        if (!text.empty())
-            text.push_back(L' ');
-        text.append(value);
-    }
-    return text;
-}
-
 struct HomeCard
 {
     muxc::Button root{nullptr};
@@ -195,15 +177,12 @@ struct HomeAboutPagePresenter::Impl
     controls::SettingRow versionRow;
     muxc::StackPanel versionControls{nullptr};
     muxc::Button versionButton{nullptr};
-    muxc::StackPanel versionStatusRow{nullptr};
-    muxc::ProgressRing updateProgress{nullptr};
-    muxc::TextBlock updateStatus{nullptr};
-    muxc::InfoBar updateInfoBar{nullptr};
     muxc::Button checkUpdateButton{nullptr};
 
     Section debugTitleSection;
     Section demoModeSection;
     Section animationSection;
+    Section resetUnlockSection;
     Section crashSection;
     muxc::TextBlock debugPageDescription{nullptr};
     controls::SettingRow demoModeRow;
@@ -212,6 +191,8 @@ struct HomeAboutPagePresenter::Impl
     muxc::StackPanel animationControls{nullptr};
     muxc::ToggleSwitch animationToggle{nullptr};
     muxc::TextBlock animationStatus{nullptr};
+    controls::SettingRow resetUnlockRow;
+    muxc::Button resetUnlockButton{nullptr};
     muxc::Expander crashExpander{nullptr};
     muxc::StackPanel crashHeader{nullptr};
     muxc::TextBlock crashTitle{nullptr};
@@ -239,9 +220,6 @@ struct HomeAboutPagePresenter::Impl
     std::wstring applicationVersion;
     std::optional<std::size_t> installedWidgetCount;
     bool packaged = false;
-    SettingsUpdateState updateState = SettingsUpdateState::Unknown;
-    std::wstring availableVersion;
-    std::wstring updateDetail;
     SettingsBackupState backupState = SettingsBackupState::Unknown;
     std::size_t backupCount = 0;
     std::wstring backupDetail;
@@ -256,6 +234,7 @@ struct HomeAboutPagePresenter::Impl
     winrt::event_token versionClickToken{};
     winrt::event_token demoModeToken{};
     winrt::event_token animationToken{};
+    winrt::event_token resetUnlockToken{};
     winrt::event_token crashToken{};
 
     [[nodiscard]] std::wstring L(
@@ -370,9 +349,10 @@ struct HomeAboutPagePresenter::Impl
 
         InitializeSection(projectSection, cardStyle, aboutRoot);
         (void)AddLink(projectSection.content,
-            HomeAboutLink::ReleaseRepository, {}, L"GitHub (Release)");
+            HomeAboutLink::SourceRepository, {}, L"GitHub");
         (void)AddLink(projectSection.content,
-            HomeAboutLink::SourceRepository, {}, L"GitHub (Source)");
+            HomeAboutLink::OfficialWebsite,
+            "settings.about.officialWebsite", L"Official website");
 
         InitializeSection(communitySection, cardStyle, aboutRoot);
         (void)AddLink(communitySection.content,
@@ -384,35 +364,21 @@ struct HomeAboutPagePresenter::Impl
         versionControls = muxc::StackPanel{};
         versionControls.Spacing(7.0);
         versionControls.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxc::StackPanel versionActions;
+        versionActions.Orientation(muxc::Orientation::Horizontal);
+        versionActions.Spacing(8.0);
+        versionActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         versionButton = muxc::Button{};
         versionButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         versionButton.VerticalAlignment(mux::VerticalAlignment::Center);
         versionButton.UseSystemFocusVisuals(true);
-        versionStatusRow = muxc::StackPanel{};
-        versionStatusRow.Orientation(muxc::Orientation::Horizontal);
-        versionStatusRow.Spacing(8.0);
-        updateProgress = muxc::ProgressRing{};
-        updateProgress.Width(18.0);
-        updateProgress.Height(18.0);
-        updateProgress.IsActive(false);
-        updateProgress.Visibility(mux::Visibility::Collapsed);
-        updateStatus = MakeBodyText(0.72);
-        updateStatus.VerticalAlignment(mux::VerticalAlignment::Center);
-        muxa::AutomationProperties::SetLiveSetting(updateStatus,
-            muxa::Peers::AutomationLiveSetting::Polite);
-        versionStatusRow.Children().Append(updateProgress);
-        versionStatusRow.Children().Append(updateStatus);
-        updateInfoBar = muxc::InfoBar{};
-        updateInfoBar.IsClosable(false);
-        updateInfoBar.IsOpen(false);
         checkUpdateButton = muxc::Button{};
         checkUpdateButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         checkUpdateButton.VerticalAlignment(mux::VerticalAlignment::Center);
         checkUpdateButton.UseSystemFocusVisuals(true);
-        versionControls.Children().Append(versionButton);
-        versionControls.Children().Append(versionStatusRow);
-        versionControls.Children().Append(updateInfoBar);
-        versionControls.Children().Append(checkUpdateButton);
+        versionActions.Children().Append(versionButton);
+        versionActions.Children().Append(checkUpdateButton);
+        versionControls.Children().Append(versionActions);
         versionRow.Initialize(versionControls);
         versionSection.content.Children().Append(versionRow.root);
 
@@ -458,6 +424,14 @@ struct HomeAboutPagePresenter::Impl
         animationControls.Children().Append(animationStatus);
         animationRow.Initialize(animationControls, 420.0);
         animationSection.content.Children().Append(animationRow.root);
+
+        InitializeSection(resetUnlockSection, cardStyle, debugRoot);
+        resetUnlockSection.title.Visibility(mux::Visibility::Collapsed);
+        resetUnlockButton = muxc::Button{};
+        resetUnlockButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        resetUnlockButton.UseSystemFocusVisuals(true);
+        resetUnlockRow.Initialize(resetUnlockButton);
+        resetUnlockSection.content.Children().Append(resetUnlockRow.root);
 
         InitializeSection(crashSection, cardStyle, debugRoot);
         crashSection.title.Visibility(mux::Visibility::Collapsed);
@@ -517,8 +491,7 @@ struct HomeAboutPagePresenter::Impl
 
         checkUpdateToken = checkUpdateButton.Click(
             [this](const auto&, const auto&) {
-                if (packaged &&
-                    updateState != SettingsUpdateState::Checking)
+                if (packaged)
                     Invoke(HomeAboutCommand::CheckForUpdates);
             });
         versionClickToken = versionButton.Click(
@@ -560,6 +533,11 @@ struct HomeAboutPagePresenter::Impl
                 }
                 actions.setAnimationDiagnostics(
                     generation, animationToggle.IsOn());
+            });
+        resetUnlockToken = resetUnlockButton.Click(
+            [this](const auto&, const auto&) {
+                if (CanInvokeDebug() && actions.requestResetUnlockConfirmation)
+                    actions.requestResetUnlockConfirmation(generation);
             });
         crashToken = crashButton.Click(
             [this](const auto&, const auto&) {
@@ -610,30 +588,6 @@ struct HomeAboutPagePresenter::Impl
             return L("app.settings.custom", L"Custom");
         default:
             return L("app.settings.dark", L"Dark");
-        }
-    }
-
-    [[nodiscard]] std::wstring UpdateSummary() const
-    {
-        if (!updateDetail.empty())
-            return updateDetail;
-        switch (updateState)
-        {
-        case SettingsUpdateState::Checking:
-            return L("app.settings.checking", L"Checking...");
-        case SettingsUpdateState::UpToDate:
-            return L("app.settings.already_latest", L"Already up to date");
-        case SettingsUpdateState::UpdateAvailable:
-            return FormatOne(L("app.settings.new_version",
-                L"New version v{0} available"), availableVersion);
-        case SettingsUpdateState::ManagedByStore:
-            return L("app.settings.store_managed_updates",
-                L"Updates are managed automatically by Microsoft Store");
-        case SettingsUpdateState::Failed:
-            return L("settings.home.update.failed",
-                L"Could not check for updates");
-        default:
-            return L("settings.home.update.unknown", L"Not checked");
         }
     }
 
@@ -706,12 +660,7 @@ struct HomeAboutPagePresenter::Impl
             ? std::to_wstring(*installedWidgetCount)
             : L("settings.home.widgets.unknown", L"Status unavailable"));
 
-        const bool updateRunning =
-            updateState == SettingsUpdateState::Checking;
-        updateCard.progress.IsActive(updateRunning);
-        updateCard.progress.Visibility(updateRunning
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateCard.value.Text(UpdateSummary());
+        updateCard.value.Text(applicationVersion);
         const bool backupRunning =
             backupState == SettingsBackupState::Running;
         backupCard.progress.IsActive(backupRunning);
@@ -726,32 +675,10 @@ struct HomeAboutPagePresenter::Impl
         SetAutomation(versionButton, version,
             L("settings.page.debug.description",
                 L"Click five times to unlock Debug."));
-        updateProgress.IsActive(updateRunning);
-        const bool showUpdateStatus = packaged &&
-            updateState != SettingsUpdateState::Unknown;
-        versionStatusRow.Visibility(showUpdateStatus
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateProgress.Visibility(updateRunning && packaged
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateStatus.Text(UpdateSummary());
-        checkUpdateButton.IsEnabled(!updateRunning);
         checkUpdateButton.Visibility(packaged
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         SetButtonText(checkUpdateButton,
             "app.settings.check_update", L"Check for Updates");
-        const bool showUpdateInfo =
-            packaged &&
-            (updateState == SettingsUpdateState::UpdateAvailable ||
-                updateState == SettingsUpdateState::Failed);
-        updateInfoBar.Visibility(showUpdateInfo
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        updateInfoBar.IsOpen(showUpdateInfo);
-        updateInfoBar.Severity(
-            updateState == SettingsUpdateState::Failed
-                ? muxc::InfoBarSeverity::Error
-                : muxc::InfoBarSeverity::Informational);
-        updateInfoBar.Message(showUpdateInfo ? UpdateSummary() : L"");
-
         updatingControls = true;
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
@@ -775,7 +702,6 @@ struct HomeAboutPagePresenter::Impl
         updateCardHelp(widgetCard);
         updateCardHelp(updateCard);
         updateCardHelp(backupCard);
-        SetAutomation(updateStatus, updateStatus.Text());
     }
 
     void RefreshLocalizedText()
@@ -797,7 +723,7 @@ struct HomeAboutPagePresenter::Impl
         SetHomeCardText(updateCard,
             "settings.home.update", L"Updates",
             "settings.home.update.description",
-            L"Review the installed version and update status.");
+            L"Review the installed version.");
         SetHomeCardText(backupCard,
             "settings.home.backup", L"Backup status",
             "settings.home.backup.description",
@@ -854,6 +780,13 @@ struct HomeAboutPagePresenter::Impl
             L("app.settings.animation_diagnostics_desc"));
         SetAutomation(animationToggle,
             animationRow.label.Text(), animationRow.help.Text());
+        resetUnlockRow.SetText(
+            L("settings.debug.resetUnlock", L"Clear unlock state"),
+            L("settings.debug.resetUnlock.description"));
+        SetButtonText(resetUnlockButton,
+            "settings.debug.resetUnlock", L"Clear unlock state");
+        muxa::AutomationProperties::SetHelpText(
+            resetUnlockButton, resetUnlockRow.help.Text());
         SetSectionTitle(crashSection,
             "app.settings.crash_test", L"Crash Test");
         crashTitle.Text(L("app.settings.crash_test", L"Crash Test"));
@@ -865,8 +798,6 @@ struct HomeAboutPagePresenter::Impl
             crashButton, crashDescription.Text());
         SetAutomation(crashExpander,
             crashTitle.Text(), crashDescription.Text());
-        SetAutomation(updateInfoBar,
-            L("app.settings.version", L"Version"));
         RenderStatus();
     }
 
@@ -877,9 +808,6 @@ struct HomeAboutPagePresenter::Impl
         applicationVersion.clear();
         installedWidgetCount.reset();
         packaged = false;
-        updateState = SettingsUpdateState::Unknown;
-        availableVersion.clear();
-        updateDetail.clear();
         backupState = SettingsBackupState::Unknown;
         backupCount = 0;
         backupDetail.clear();
@@ -932,23 +860,6 @@ struct HomeAboutPagePresenter::Impl
             installedWidgetCount = *patch.installedWidgetCount;
         if (patch.packaged)
             packaged = *patch.packaged;
-        if (patch.updateState)
-        {
-            if (*patch.updateState != updateState)
-            {
-                updateDetail.clear();
-                if (*patch.updateState !=
-                    SettingsUpdateState::UpdateAvailable)
-                {
-                    availableVersion.clear();
-                }
-            }
-            updateState = *patch.updateState;
-        }
-        if (patch.availableVersion)
-            availableVersion = *patch.availableVersion;
-        if (patch.updateDetail)
-            updateDetail = *patch.updateDetail;
         if (patch.backupState)
         {
             if (*patch.backupState != backupState)
@@ -986,14 +897,16 @@ struct HomeAboutPagePresenter::Impl
         {
             if (focusId == "about.profile") return links[0].button;
             if (focusId == "about.project") return links[4].button;
-            if (focusId == "about.community") return links[6].button;
-            if (focusId == "about.thirdparty") return links[7].button;
+            if (focusId == "about.website") return links[6].button;
+            if (focusId == "about.community") return links[7].button;
+            if (focusId == "about.thirdparty") return links[8].button;
             return versionButton;
         }
         if (page == SettingsPage::Debug)
         {
             if (focusId == "debug.demo_mode") return demoModeToggle;
             if (focusId == "debug.animation") return animationToggle;
+            if (focusId == "debug.resetUnlock") return resetUnlockButton;
             if (focusId == "debug.crash") return crashExpander;
             return animationToggle;
         }
@@ -1019,11 +932,9 @@ struct HomeAboutPagePresenter::Impl
             versionButton.Click(versionClickToken);
             demoModeToggle.Toggled(demoModeToken);
             animationToggle.Toggled(animationToken);
+            resetUnlockButton.Click(resetUnlockToken);
             crashButton.Click(crashToken);
-            updateCard.progress.IsActive(false);
             backupCard.progress.IsActive(false);
-            updateProgress.IsActive(false);
-            updateInfoBar.IsOpen(false);
         }
         catch (...)
         {

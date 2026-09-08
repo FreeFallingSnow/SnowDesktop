@@ -2,6 +2,8 @@
 
 #include "dock_page_presenter.h"
 #include "settings_presenter_controls.h"
+#include "appearance_sections.h"
+#include "panel_gradient_editor.h"
 
 #include "../dock_settings.h"
 
@@ -106,10 +108,16 @@ struct ColorControl
     SystemTaskbarDynamicRule DockSettings::* ruleMember = nullptr;
 };
 
+struct TaskbarGradientControl
+{
+    AppearanceSections sections;
+    std::shared_ptr<PanelGradientEditor> editor;
+    bool enabled = false;
+};
+
 struct DynamicRuleControl
 {
     muxc::StackPanel root{nullptr};
-    muxc::Expander expander{nullptr};
     muxc::TextBlock detailTitle{nullptr};
     muxc::TextBlock summary{nullptr};
     muxc::ToggleSwitch enabled{nullptr};
@@ -121,6 +129,7 @@ struct DynamicRuleControl
     SettingRow enabledRow;
     SettingRow themeRow;
     SettingRow contentThemeRow;
+    TaskbarGradientControl gradient;
     ColorControl backgroundColor;
     ColorControl borderColor;
     ContinuousControl backgroundAlpha;
@@ -162,23 +171,6 @@ void InitializeCard(
     card.content.Children().Append(card.title);
     card.root.Child(card.content);
     page.Children().Append(card.root);
-}
-
-void StretchExpanderBody(
-    const muxc::Expander& expander,
-    const mux::FrameworkElement& body)
-{
-    const auto weakBody = winrt::make_weak(body);
-    expander.SizeChanged(
-        [weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
-            if (const auto currentBody = weakBody.get())
-            {
-                // The WinUI Expander template contributes 16 DIP of padding
-                // on each side. Keep rule rows aligned with the card body.
-                currentBody.Width(std::max(0.0,
-                    static_cast<double>(args.NewSize().Width) - 32.0));
-            }
-        });
 }
 
 bool IsEnter(const muxi::KeyRoutedEventArgs& args) noexcept
@@ -356,6 +348,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch floatingShortcutToggle{nullptr};
     muxc::TextBlock floatingShortcutHint{nullptr};
     muxc::ToggleSwitch floatingEdgeSwipeToggle{nullptr};
+    muxc::ToggleSwitch fullscreenSwipeToggle{nullptr};
     muxc::TextBlock floatingEdgeSwipeHint{nullptr};
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch showFrequentItemsToggle{nullptr};
@@ -373,6 +366,7 @@ struct DockPagePresenter::Impl
     muxc::StackPanel taskbarCustomAppearance{nullptr};
     muxc::TextBlock taskbarCustomTitle{nullptr};
     muxc::TextBlock taskbarRulesHint{nullptr};
+    TaskbarGradientControl taskbarGradient;
     ColorControl taskbarBackgroundColor;
     ColorControl taskbarBorderColor;
     ContinuousControl taskbarBackgroundAlpha;
@@ -388,6 +382,7 @@ struct DockPagePresenter::Impl
     SettingRow layoutRow;
     SettingRow monitorScopeRow;
     SettingRow floatingEdgeSwipeRow;
+    SettingRow fullscreenSwipeRow;
     SettingRow showWindowsButtonRow;
     SettingRow showFrequentItemsRow;
     SettingRow allowDesktopContentOverlapRow;
@@ -441,6 +436,7 @@ struct DockPagePresenter::Impl
     winrt::event_token monitorScopeToken{};
     winrt::event_token floatingShortcutToken{};
     winrt::event_token floatingEdgeSwipeToken{};
+    winrt::event_token fullscreenSwipeToken{};
     winrt::event_token showWindowsButtonToken{};
     winrt::event_token showFrequentItemsToken{};
     winrt::event_token keepWhenDesktopHiddenToken{};
@@ -535,6 +531,7 @@ struct DockPagePresenter::Impl
         InitializeCard(behaviorCard, cardStyle, dockRoot);
         floatingShortcutToggle = muxc::ToggleSwitch{};
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
+        fullscreenSwipeToggle = muxc::ToggleSwitch{};
         showWindowsButtonToggle = muxc::ToggleSwitch{};
         showFrequentItemsToggle = muxc::ToggleSwitch{};
         keepWhenDesktopHiddenToggle = muxc::ToggleSwitch{};
@@ -543,6 +540,7 @@ struct DockPagePresenter::Impl
         for (const auto& toggle : {
                  floatingShortcutToggle,
                  floatingEdgeSwipeToggle,
+                 fullscreenSwipeToggle,
                  showWindowsButtonToggle,
                  showFrequentItemsToggle,
                  keepWhenDesktopHiddenToggle,
@@ -554,6 +552,8 @@ struct DockPagePresenter::Impl
         floatingShortcutHint = NewHint();
         floatingEdgeSwipeHint = NewHint();
         floatingEdgeSwipeRow.Initialize(floatingEdgeSwipeToggle);
+        fullscreenSwipeRow.Initialize(fullscreenSwipeToggle);
+        fullscreenSwipeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
         showFrequentItemsRow.Initialize(showFrequentItemsToggle);
         allowDesktopContentOverlapRow.Initialize(
@@ -573,6 +573,7 @@ struct DockPagePresenter::Impl
             ContinuousField::FrequentItemCount, 1.0, 8.0, 1.0);
         // Floating shortcut mode/hotkey is rendered once by General.
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
+        edgeSwipeCard.content.Children().Append(fullscreenSwipeRow.root);
         behaviorCard.content.Children().Append(
             allowDesktopContentOverlapRow.root);
         behaviorCard.content.Children().Append(showOnlyWhenSummonedRow.root);
@@ -632,14 +633,14 @@ struct DockPagePresenter::Impl
         taskbarAcrylicRow.Initialize(taskbarAcrylicToggle);
         taskbarGlassRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarAcrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        taskbarCustomAppearance.Children().Append(taskbarCustomTitle);
-        taskbarCustomAppearance.Children().Append(taskbarBackgroundColor.root);
-        taskbarCustomAppearance.Children().Append(taskbarBorderColor.root);
-        taskbarCustomAppearance.Children().Append(taskbarBackgroundAlpha.root);
-        taskbarCustomAppearance.Children().Append(taskbarBorderAlpha.root);
-        taskbarCustomAppearance.Children().Append(taskbarGlassRow.root);
-        taskbarCustomAppearance.Children().Append(taskbarBlurRadius.root);
-        taskbarCustomAppearance.Children().Append(taskbarAcrylicRow.root);
+        InitializeTaskbarGradient(taskbarGradient, taskbarCustomAppearance);
+        taskbarGradient.sections.colors.Children().Append(taskbarBackgroundColor.root);
+        taskbarGradient.sections.border.Children().Append(taskbarBorderColor.root);
+        taskbarGradient.sections.colors.Children().Append(taskbarBackgroundAlpha.root);
+        taskbarGradient.sections.border.Children().Append(taskbarBorderAlpha.root);
+        taskbarGradient.sections.material.Children().Append(taskbarGlassRow.root);
+        taskbarGradient.sections.material.Children().Append(taskbarBlurRadius.root);
+        taskbarGradient.sections.material.Children().Append(taskbarAcrylicRow.root);
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
@@ -808,6 +809,33 @@ struct DockPagePresenter::Impl
         control.root = control.editor.row.root;
     }
 
+    void InitializeTaskbarGradient(TaskbarGradientControl& control,
+        const muxc::StackPanel& parent,
+        SystemTaskbarDynamicRule DockSettings::* member = nullptr)
+    {
+        control.sections.Initialize(parent, false, false, false);
+        control.editor = PanelGradientEditor::Create(
+            [this](auto key) { return L(key, L""); },
+            [this, &control, member](const PanelGradient& gradient, bool commit) {
+                if (!CanEmitDock()) return;
+                control.enabled = gradient.enabled;
+                EmitDock(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [member, gradient](DockSettings& settings) {
+                        auto& appearance = member ? (settings.*member).appearance : settings.systemTaskbarAppearance;
+                        appearance.backgroundPreset = kAppearancePresetCustom;
+                        appearance.panelGradient = gradient;
+                    });
+                UpdateDependentStates();
+            }, false, {}, true);
+        control.sections.colors.Children().Append(control.editor->Content());
+    }
+
+    static void PatchGradient(TaskbarGradientControl& control, const PanelGradient& gradient, bool force = false)
+    {
+        control.editor->SetValue(gradient, force);
+        control.enabled = control.editor->Value().enabled;
+    }
+
     void InitializeDynamicRule(
         DynamicRuleControl& control,
         SystemTaskbarDynamicRule DockSettings::* member)
@@ -822,13 +850,6 @@ struct DockPagePresenter::Impl
         control.enabledRow.Initialize(control.enabled);
         control.enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
 
-        control.expander = muxc::Expander{};
-        control.expander.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
-        control.expander.HorizontalContentAlignment(
-            mux::HorizontalAlignment::Stretch);
-        control.expander.IsExpanded(false);
-        control.expander.UseSystemFocusVisuals(true);
         muxc::StackPanel header{};
         header.Spacing(3.0);
         control.detailTitle = muxc::TextBlock{};
@@ -838,7 +859,8 @@ struct DockPagePresenter::Impl
         control.summary = NewHint();
         header.Children().Append(control.detailTitle);
         header.Children().Append(control.summary);
-        control.expander.Header(header);
+        header.Margin({0,12,0,0});
+        control.root.Children().Append(header);
 
         control.details = muxc::StackPanel{};
         control.details.Spacing(12.0);
@@ -846,8 +868,7 @@ struct DockPagePresenter::Impl
             mux::HorizontalAlignment::Stretch);
         control.themeRow.Initialize(control.theme);
         control.contentThemeRow.Initialize(control.contentTheme);
-        // Keep the rule switch inside its named scenario.  The scenario is the
-        // parent disclosure and all appearance editors are dependent children.
+        // The always-visible scenario switch discloses its appearance editors.
         control.details.Children().Append(control.enabledRow.root);
         control.appearanceDetails = muxc::StackPanel{};
         control.appearanceDetails.Spacing(12.0);
@@ -859,6 +880,7 @@ struct DockPagePresenter::Impl
 
         control.customAppearance = muxc::StackPanel{};
         control.customAppearance.Spacing(12.0);
+        InitializeTaskbarGradient(control.gradient, control.customAppearance, member);
         InitializeColorControl(control.backgroundColor,
             ColorField::TaskbarBackground, member);
         InitializeColorControl(control.borderColor,
@@ -880,19 +902,16 @@ struct DockPagePresenter::Impl
         control.acrylic.HorizontalAlignment(mux::HorizontalAlignment::Right);
         control.acrylicRow.Initialize(control.acrylic);
         control.acrylicRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        control.customAppearance.Children().Append(
-            control.backgroundColor.root);
-        control.customAppearance.Children().Append(control.borderColor.root);
-        control.customAppearance.Children().Append(control.backgroundAlpha.root);
-        control.customAppearance.Children().Append(control.borderAlpha.root);
-        control.customAppearance.Children().Append(control.glassRow.root);
-        control.customAppearance.Children().Append(control.blurRadius.root);
-        control.customAppearance.Children().Append(control.acrylicRow.root);
+        control.gradient.sections.colors.Children().Append(control.backgroundColor.root);
+        control.gradient.sections.border.Children().Append(control.borderColor.root);
+        control.gradient.sections.colors.Children().Append(control.backgroundAlpha.root);
+        control.gradient.sections.border.Children().Append(control.borderAlpha.root);
+        control.gradient.sections.material.Children().Append(control.glassRow.root);
+        control.gradient.sections.material.Children().Append(control.blurRadius.root);
+        control.gradient.sections.material.Children().Append(control.acrylicRow.root);
         control.appearanceDetails.Children().Append(control.customAppearance);
         control.details.Children().Append(control.appearanceDetails);
-        control.expander.Content(control.details);
-        StretchExpanderBody(control.expander, control.details);
-        control.root.Children().Append(control.expander);
+        control.root.Children().Append(control.details);
         taskbarRulesCard.content.Children().Append(control.root);
     }
 
@@ -979,6 +998,8 @@ struct DockPagePresenter::Impl
         floatingEdgeSwipeToken = floatingEdgeSwipeToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateEdgeSwipeHintVisibility();
+                fullscreenSwipeRow.SetEnabled(
+                    dockEnabledToggle.IsOn() && floatingEdgeSwipeToggle.IsOn());
                 const bool value = floatingEdgeSwipeToggle.IsOn();
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
@@ -987,6 +1008,14 @@ struct DockPagePresenter::Impl
                             DisableSummonOnlyWhenPrerequisiteDisabled(
                                 settings.floatingEdgeSwipeEnabled,
                                 settings.showOnlyWhenSummoned);
+                    });
+            });
+        fullscreenSwipeToken = fullscreenSwipeToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = fullscreenSwipeToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) {
+                        settings.floatingEdgeSwipeBlockFullscreen = value;
                     });
             });
         showWindowsButtonToken = showWindowsButtonToggle.Toggled(
@@ -1517,6 +1546,7 @@ struct DockPagePresenter::Impl
         const DockSettings& settings)
     {
         const auto& rule = settings.*control.member;
+        PatchGradient(control.gradient, rule.appearance.panelGradient);
         control.enabled.IsOn(rule.enabled);
         control.theme.SelectedIndex(std::clamp(
             static_cast<int>(rule.themeMode), 0, 9));
@@ -1542,12 +1572,14 @@ struct DockPagePresenter::Impl
 
     void PatchDock(const DockSettings& settings)
     {
+        PatchGradient(taskbarGradient, settings.systemTaskbarAppearance.panelGradient);
         positionCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.position), 0, 3));
         layoutCombo.SelectedIndex(settings.edgeAttached ? 1 : 0);
         monitorScopeCombo.SelectedIndex(std::clamp(
             static_cast<int>(settings.monitorScope), 0, 2));
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
+        fullscreenSwipeToggle.IsOn(settings.floatingEdgeSwipeBlockFullscreen);
         floatingEdgeSwipeToggle.IsOn(
             snowdesktop::dock_settings_rules::
                 IsFloatingEdgeSwipeEnabled(
@@ -1612,6 +1644,7 @@ struct DockPagePresenter::Impl
         // ContentControl host to remove its descendants from keyboard/Tab
         // input. IsHitTestVisible on the card remains the pointer guard.
         floatingEdgeSwipeRow.SetEnabled(dockEnabled);
+        fullscreenSwipeRow.SetEnabled(dockEnabledToggle.IsOn() && floatingEdgeSwipeToggle.IsOn());
         positionRow.SetEnabled(dockEnabled);
         monitorScopeRow.SetEnabled(dockEnabled);
         layoutRow.SetEnabled(dockEnabled);
@@ -1645,6 +1678,11 @@ struct DockPagePresenter::Impl
         taskbarCustomAppearance.Visibility(taskbarCustom
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
+        taskbarBackgroundColor.root.Visibility(taskbarGradient.enabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        taskbarBackgroundAlpha.root.Visibility(taskbarGradient.enabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        taskbarGradient.editor->Content().IsHitTestVisible(taskbarCustom);
+        taskbarBlurRadius.root.Visibility(taskbarGlassToggle.IsOn() && !taskbarAcrylicToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        taskbarAcrylicRow.root.Visibility(taskbarGlassToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         taskbarBackgroundColor.editor.row.SetEnabled(taskbarCustom);
         taskbarBorderColor.editor.row.SetEnabled(taskbarCustom);
         taskbarBackgroundAlpha.row.SetEnabled(taskbarCustom);
@@ -1674,6 +1712,11 @@ struct DockPagePresenter::Impl
                     : mux::Visibility::Collapsed);
             control->themeRow.SetEnabled(enabled);
             control->contentThemeRow.SetEnabled(enabled && !native);
+            control->backgroundColor.root.Visibility(control->gradient.enabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+            control->backgroundAlpha.root.Visibility(control->gradient.enabled ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+            control->gradient.editor->Content().IsHitTestVisible(enabled && custom);
+            control->blurRadius.root.Visibility(control->glass.IsOn() && !control->acrylic.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            control->acrylicRow.root.Visibility(control->glass.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             control->backgroundColor.editor.row.SetEnabled(
                 enabled && custom);
             control->borderColor.editor.row.SetEnabled(enabled && custom);
@@ -1946,8 +1989,8 @@ struct DockPagePresenter::Impl
         const winrt::hstring contextText = control.detailTitle.Text();
         const std::wstring context{
             contextText.c_str(), contextText.size()};
-        muxa::AutomationProperties::SetName(control.expander, context);
-        muxa::AutomationProperties::SetHelpText(control.expander,
+        muxa::AutomationProperties::SetName(control.enabled, context);
+        muxa::AutomationProperties::SetHelpText(control.enabled,
             ContextualText(context, summary));
     }
 
@@ -2058,6 +2101,12 @@ struct DockPagePresenter::Impl
 
     void RefreshLocalizedText()
     {
+        const auto refresh = [this](TaskbarGradientControl& gradient) {
+            gradient.sections.RefreshLocalizedText([this](auto key) { return L(key, L""); });
+            gradient.editor->RefreshLocalizedText();
+        };
+        refresh(taskbarGradient);
+        for (auto* control : dynamicRules) refresh(control->gradient);
         if (closed)
             return;
         const bool previousUpdating = updatingControls;
@@ -2142,6 +2191,12 @@ struct DockPagePresenter::Impl
             L("app.dock.floating_edge_swipe", L"Edge Swipe"),
             L("app.dock.floating_edge_swipe_hint",
                 L"Reveal the floating Dock from a screen edge."));
+        fullscreenSwipeRow.SetText(
+            L("settings.dock.blockFullscreenSwipe", L"Disable edge swipe in fullscreen apps"),
+            L("settings.dock.blockFullscreenSwipe.description",
+                L"Pause edge swipe on the screen covered by the active fullscreen app. Keyboard shortcuts remain available."));
+        muxa::AutomationProperties::SetName(
+            fullscreenSwipeToggle, fullscreenSwipeRow.label.Text());
         allowDesktopContentOverlapRow.SetText(
             L("settings.dock.allowDesktopContentOverlap",
                 L"Allow Dock to overlap desktop content"),
@@ -2312,6 +2367,12 @@ struct DockPagePresenter::Impl
             std::memory_order_release);
         const bool previousUpdating = updatingControls;
         updatingControls = true;
+        if (newGeneration)
+        {
+            PatchGradient(taskbarGradient, snapshot.values.dock.systemTaskbarAppearance.panelGradient, true);
+            for (auto* control : dynamicRules)
+                PatchGradient(control->gradient, (snapshot.values.dock.*control->member).appearance.panelGradient, true);
+        }
 
         if (newGeneration ||
             snapshot.domainRevisions.general != generalRevision)
@@ -2360,6 +2421,8 @@ struct DockPagePresenter::Impl
             return thicknessScale.slider;
         if (id == "dock.floatingShortcutMode")
             return floatingShortcutToggle;
+        if (id == "dock.floatingEdgeSwipeBlockFullscreen")
+            return fullscreenSwipeToggle;
         if (id == "dock.floatingEdgeSwipe" ||
             id == "dock.floatingEdgeSwipeEnabled")
             return floatingEdgeSwipeToggle;
@@ -2398,13 +2461,13 @@ struct DockPagePresenter::Impl
         if (id == "taskbar.restartExplorer") return restartExplorerButton;
         if (id == "taskbar.dynamic.visibleWindow" ||
             id == "taskbar.visibleWindow")
-            return visibleWindowRule.expander;
+            return visibleWindowRule.enabled;
         if (id == "taskbar.dynamic.maximizedWindow" ||
             id == "taskbar.maximizedWindow")
-            return maximizedWindowRule.expander;
+            return maximizedWindowRule.enabled;
         if (id == "taskbar.dynamic.shellUi" ||
             id == "taskbar.shellUi")
-            return shellUiRule.expander;
+            return shellUiRule.enabled;
         return nullptr;
     }
 
@@ -2412,6 +2475,8 @@ struct DockPagePresenter::Impl
     {
         try
         {
+            taskbarGradient.editor->Flush();
+            for (auto* rule : dynamicRules) rule->gradient.editor->Flush();
             for (ContinuousControl* control : continuousControls)
                 Commit(*control);
             for (DynamicRuleControl* rule : dynamicRules)
@@ -2491,6 +2556,8 @@ struct DockPagePresenter::Impl
         CommitContinuousEdits();
         active = false;
         closed = true;
+        taskbarGradient.editor->Close();
+        for (auto* rule : dynamicRules) rule->gradient.editor->Close();
         confirmationGate->alive.store(false, std::memory_order_release);
         try
         {
@@ -2501,6 +2568,7 @@ struct DockPagePresenter::Impl
             monitorScopeCombo.SelectionChanged(monitorScopeToken);
             floatingShortcutToggle.Toggled(floatingShortcutToken);
             floatingEdgeSwipeToggle.Toggled(floatingEdgeSwipeToken);
+            fullscreenSwipeToggle.Toggled(fullscreenSwipeToken);
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
             showFrequentItemsToggle.Toggled(showFrequentItemsToken);
             keepWhenDesktopHiddenToggle.Toggled(keepWhenDesktopHiddenToken);

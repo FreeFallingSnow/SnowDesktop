@@ -166,12 +166,21 @@ function Copy-Payload {
         -BuildOutput $buildOutput `
         -Destination $Destination `
         -RuntimeDirectory $runtimeDirectory
-    Enable-SnowDesktopPrivateRuntimeAssembly `
-        -BuildOutput $buildOutput `
-        -PackageRoot $Destination `
-        -Version $version `
-        -RuntimeDirectory $runtimeDirectory
+    $privateAssemblyArguments = @{
+        BuildOutput = $buildOutput
+        PackageRoot = $Destination
+        Version = $version
+        RuntimeDirectory = $runtimeDirectory
+    }
+    Enable-SnowDesktopPrivateRuntimeAssembly @privateAssemblyArguments
 
+    $steamFiles = @(Get-ChildItem -LiteralPath $Destination -File -Recurse -Force |
+        Where-Object {
+            $_.Name -match '^SnowDesktopSteamBridge[.-]|^steam_api(?:64)?\.dll$'
+        })
+    if ($steamFiles.Count -ne 0) {
+        throw "Portable and MSIX payloads must not contain Steam bridge files: $($steamFiles.Name -join ', ')"
+    }
     Assert-NoDeveloperAssets -Destination $Destination
 }
 

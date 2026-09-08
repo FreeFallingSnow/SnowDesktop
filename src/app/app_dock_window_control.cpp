@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
+#include "dock_taskbar_diagnostics.h"
 
 // Dock window closing and hover-preview control.
 
@@ -476,8 +477,30 @@ std::wstring DockItemWindowKey(const DesktopItem& item)
 }
 
 void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
-    DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD)
+    DWORD event, HWND window, LONG objectId, LONG childId, DWORD, DWORD eventTime)
 {
+    // Observe before the business filters discard taskbar location changes.
+    snowdesktop::dock_taskbar_diagnostics::ObserveWinEvent(
+        event, window, objectId, childId, eventTime);
+    if (event == EVENT_SYSTEM_MINIMIZESTART ||
+        event == EVENT_SYSTEM_MINIMIZEEND)
+    {
+        // These events announce minimizing/restoring a window, not the
+        // beginning/end of one animation. Keep only recent start evidence;
+        // the layer guard's lifetime follows the actual foreground instead.
+        dockSystemMinimizeStartedTick_.store(
+            event == EVENT_SYSTEM_MINIMIZESTART ? GetTickCount64() : 0);
+        if (const HWND target =
+                dockForegroundNotificationWindow_.load())
+        {
+            PostMessageW(
+                target,
+                kForegroundInteractionChangedMessage,
+                0,
+                0);
+        }
+    }
+
     if (event == EVENT_SYSTEM_FOREGROUND && window)
     {
         const HWND previous = dockForegroundWindow_.exchange(window);

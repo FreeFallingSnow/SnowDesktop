@@ -63,6 +63,8 @@ int main(int argc, char** argv)
     const std::filesystem::path root(argv[1]);
     const std::string source = ReadFile(
         root / "src" / "app" / "app_settings_apply.cpp");
+    const std::string pageGrid = ReadFile(
+        root / "src" / "app" / "app_page_grid.cpp");
     const std::string run = ReadFile(
         root / "src" / "app" / "app_run.cpp");
     const std::string controllerHeader = ReadFile(
@@ -71,7 +73,8 @@ int main(int argc, char** argv)
         root / "src" / "winui" / "settings_window_host.h");
     const std::string host = ReadFile(
         root / "src" / "winui" / "settings_window_host.cpp");
-    Check(!source.empty() && !run.empty() && !controllerHeader.empty() &&
+    Check(!source.empty() && !pageGrid.empty() && !run.empty() &&
+            !controllerHeader.empty() &&
             !hostHeader.empty() && !host.empty(),
         "settings host action sources are readable");
 
@@ -122,6 +125,21 @@ int main(int argc, char** argv)
             preview.find("app_.PreviewItemFontWeight(") !=
                 std::string_view::npos,
         "desktop typography sliders repaint without persisting each drag step");
+
+    const std::string_view iconBeautifyUpdate = Between(pageGrid,
+        "void DesktopApp::SetIconBeautifySettings(",
+        "size_t DesktopApp::FirstMonitorOrderIndex() const");
+    Check(iconBeautifyUpdate.find("InvalidateDockRects(TRUE);") !=
+                std::string_view::npos,
+        "icon beautification changes invalidate embedded and persistent Dock surfaces");
+    Check(iconBeautifyUpdate.find(
+              "snowdesktop::IconBeautifyUpdateKind::Preview") !=
+                std::string_view::npos &&
+            iconBeautifyUpdate.find("PresentDesktopPointerUpdate();") !=
+                std::string_view::npos &&
+            iconBeautifyUpdate.find("FlushPendingCompositionCommit();") !=
+                std::string_view::npos,
+        "icon beautification previews present without waiting for desktop pointer input");
 
     const std::size_t dockAssignment = commit.find(
         "app_.dockSettings_ = requestedDockSettings;");
@@ -254,7 +272,15 @@ int main(int argc, char** argv)
                 std::string_view::npos,
         "auto-start publishes the authoritative Windows result even after a rejected request");
     Check(hostHeader.find("startupConflict") != std::string::npos &&
+            hostHeader.find("advancedFeatureStatus") !=
+                std::string::npos &&
+            hostHeader.find("registerAdvancedFeatures") !=
+                std::string::npos &&
             host.find("general.setAutoStart") != std::string::npos &&
+            host.find("general.openAdvancedFeaturesStore") !=
+                std::string::npos &&
+            host.find("SnowDesktopSteamStoreUrl()") !=
+                std::string::npos &&
             host.find("general.openStartupAppsSettings") ==
                 std::string::npos &&
             host.find("general.queryStartupConflict") !=
@@ -263,16 +289,29 @@ int main(int argc, char** argv)
                 std::string::npos &&
             host.find("Action::OpenStartupAppsSettings") ==
                 std::string::npos,
-        "the General WinUI presenter owns auto-start changes and exposes only runtime ownership conflicts");
+        "the General WinUI presenter owns auto-start changes and receives runtime startup and Steam entitlement state");
+    Check(run.find("target.cardVisible = source.registered || source.bridgeAvailable ||") !=
+                std::string::npos &&
+            run.find("target.validUntil = source.validUntil") !=
+                std::string::npos &&
+            run.find("RuntimeDeploymentKind::Portable") !=
+                std::string::npos &&
+            run.find("target.offerSteamStore = !source.registered && !source.bridgeAvailable &&") !=
+                std::string::npos &&
+            host.find("descriptor.focusId == \"general.advancedFeatures\"") !=
+                std::string::npos,
+        "only locked portable builds without a Bridge offer the Steam Store; other builds without either entitlement or a Bridge hide the card and its search entry");
     Check(run.find("settingsHostOptions.startupConflict") !=
                 std::string::npos &&
             run.find("QueryAutoStartState()") != std::string::npos &&
-            run.find("UnifiedAutoStartTaskState::Enabled") !=
+            run.find("ClassifyAutoStartOwnershipNotice") !=
+                std::string::npos &&
+            run.find("state.packaged && otherOwnerActive") ==
                 std::string::npos &&
             run.find("NonPackagedVersionOwnsStartup") !=
                 std::string::npos &&
             run.find("InstalledVersionOwnsStartup") != std::string::npos,
-        "DesktopApp projects active non-packaged or installed startup ownership without labeling Steam as portable");
+        "DesktopApp projects startup ownership by the active task owner so Steam detects portable and stale Steam targets");
     Check(host.find("personalization.updateGeneral") !=
                 std::string::npos &&
             host.find("actions.setDeveloperToolsEnabled") !=
@@ -302,17 +341,15 @@ int main(int argc, char** argv)
             host.find("Action::TriggerCrashTest") !=
                 std::string::npos,
         "About links and legacy Debug controls use localized generation-gated host actions and confirmation");
-    Check(run.find("widgetsPage.agentSkillTargetMask") !=
+    Check(run.find("widgetsPage.agentSkillTargetMask") ==
                 std::string::npos &&
-            run.find("widgetsPage.setAgentSkillTargetMask") !=
-                std::string::npos &&
-            run.find("general.agentSkillTargetMask = mask") !=
+            run.find("widgetsPage.setAgentSkillTargetMask") ==
                 std::string::npos &&
             run.find("widgetsPage.openDevelopmentFolder") !=
                 std::string::npos &&
             run.find("WidgetEngine::GetWidgetPackagePaths()") !=
                 std::string::npos,
-        "Developer Tools reads and persists the controller-owned Agent Skill selection and opens the authoritative workspace");
+        "Developer Tools does not persist detected Agent Skill installation scope and opens the authoritative workspace");
     Check(run.find("WidgetSettingsService searchReader(") !=
                 std::string::npos &&
             run.find("searchReader.Load(widget.id)") !=

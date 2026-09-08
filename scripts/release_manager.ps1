@@ -6,7 +6,9 @@ param(
         "status",
         "package",
         "package-steam",
-        "sync-release",
+        "steam-preview",
+        "steam-upload-dev",
+        "steam-upload-public",
         "prepare",
         "squash",
         "publish",
@@ -18,6 +20,9 @@ param(
     [string]$ConfirmVersion = "",
     [string]$CertificatePath = "",
     [string]$CertificateThumbprint = "",
+    [string]$SteamCmdPath = "",
+    [string]$ConfirmPrivateBranch = "",
+    [string]$ConfirmPublicBranch = "",
     [ValidateSet("CurrentUser", "LocalMachine")]
     [string]$CertificateStoreLocation = "CurrentUser",
     [switch]$Development,
@@ -32,15 +37,13 @@ $ErrorActionPreference = "Stop"
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $scriptDirectory ".."))
-$releaseRepository = Join-Path $repositoryRoot "release"
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
 $packageScript = Join-Path $scriptDirectory "package_release.ps1"
 $steamPackageScript = Join-Path $scriptDirectory "package_steam.ps1"
+$steamPipeScript = Join-Path $scriptDirectory "steam_pipe.ps1"
 $buildScript = Join-Path $scriptDirectory "build.bat"
 $squashScript = Join-Path $scriptDirectory "squash_release_to_main.bat"
 $sourceRemote = "https://github.com/FreeFallingSnow/SnowDesktop.git"
-$binaryRemote =
-    "https://github.com/FreeFallingSnow/SnowDesktop_Release.git"
 $githubRepository = "FreeFallingSnow/SnowDesktop"
 $isMenu = $Command -eq "menu"
 
@@ -110,24 +113,6 @@ function Get-ReleaseContext {
         -WorkingDirectory $repositoryRoot `
         -Arguments @("rev-parse", "--short=12", "HEAD")
 
-    $releaseExists = Test-Path `
-        -LiteralPath (Join-Path $releaseRepository ".git") `
-        -PathType Container
-    $releaseBranch = "(not found)"
-    $releaseStatus = ""
-    $releaseOrigin = ""
-    if ($releaseExists) {
-        $releaseBranch = Get-GitValue `
-            -WorkingDirectory $releaseRepository `
-            -Arguments @("branch", "--show-current")
-        $releaseStatus = Get-GitValue `
-            -WorkingDirectory $releaseRepository `
-            -Arguments @("status", "--short")
-        $releaseOrigin = Get-GitValue `
-            -WorkingDirectory $releaseRepository `
-            -Arguments @("remote", "get-url", "origin")
-    }
-
     $requiredNames = @(
         "SnowDesktop-portable-x64-$version.zip",
         "SnowDesktop-Store-x64-$version.msix",
@@ -159,11 +144,6 @@ function Get-ReleaseContext {
         SourceOrigin = $sourceOrigin
         SourceCommit = $sourceCommit
         SourceTagExists = $tagResult.ExitCode -eq 0
-        ReleaseExists = $releaseExists
-        ReleaseBranch = $releaseBranch
-        ReleaseStatus = $releaseStatus
-        ReleaseDirty = -not [string]::IsNullOrWhiteSpace($releaseStatus)
-        ReleaseOrigin = $releaseOrigin
         PackagesReady = $missing.Count -eq 0
         MissingPackages = $missing
     }
@@ -208,18 +188,6 @@ function Show-Dashboard {
         -Value (-not $context.SourceDirty) `
         -TrueText "干净" `
         -FalseText "有未提交修改"
-    Write-Host -NoNewline "Release 仓库: "
-    Write-StatusFlag `
-        -Value $context.ReleaseExists `
-        -TrueText "$($context.ReleaseBranch)，已连接" `
-        -FalseText "未找到"
-    if ($context.ReleaseExists) {
-        Write-Host -NoNewline "Release 状态 : "
-        Write-StatusFlag `
-            -Value (-not $context.ReleaseDirty) `
-            -TrueText "干净" `
-            -FalseText "有待发布修改"
-    }
     Write-Host ("=" * 66) -ForegroundColor DarkGray
     return $context
 }
@@ -503,174 +471,6 @@ function Invoke-Package {
     return $true
 }
 
-function Reset-TemporaryDirectory {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$Parent
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($Path)
-    $fullParent = [System.IO.Path]::GetFullPath($Parent).TrimEnd("\") + "\"
-    if (-not $fullPath.StartsWith(
-        $fullParent, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to reset path outside $Parent`: $fullPath"
-    }
-    if (Test-Path -LiteralPath $fullPath) {
-        Remove-Item -LiteralPath $fullPath -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path $fullPath -Force | Out-Null
-}
-
-function Copy-MirroredDirectory {
-    param(
-        [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Destination,
-        [Parameter(Mandatory = $true)][string]$LogPath
-    )
-
-    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
-        throw "Package directory is missing: $Source"
-    }
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    & robocopy.exe $Source $Destination `
-        /MIR /NFL /NDL /NJH /NJS /NP 2>&1 |
-        Tee-Object -FilePath $LogPath -Append
-    $robocopyExit = $LASTEXITCODE
-    if ($robocopyExit -ge 8) {
-        throw "robocopy failed with exit code $robocopyExit."
-    }
-}
-
-function Sync-ReleaseRepository {
-    $context = Get-ReleaseContext
-    if (-not $context.ReleaseExists) {
-        throw "Binary release repository was not found at $releaseRepository"
-    }
-    Assert-Remote `
-        -Actual $context.ReleaseOrigin `
-        -Expected $binaryRemote `
-        -RepositoryName "Binary release repository"
-    if ($context.ReleaseBranch -ne "main") {
-        throw "Binary release repository must be on main; current branch is $($context.ReleaseBranch)."
-    }
-    if ($context.ReleaseDirty) {
-        if ($isMenu) {
-            Write-Host "二进制 Release 仓库已有未提交修改：" `
-                -ForegroundColor Yellow
-            Write-Host $context.ReleaseStatus
-            if (-not (Confirm-Interactive `
-                "同步可能覆盖上述发行文件，确认继续吗？")) {
-                Write-Host "已取消同步。"
-                return $false
-            }
-        }
-        elseif (-not $Yes -or
-            ($ConfirmVersion -ne $context.Version -and
-            $ConfirmVersion -ne $context.Tag)) {
-            throw "Binary release repository is dirty. Retry with -Yes -ConfirmVersion $($context.Version) after reviewing its changes."
-        }
-    }
-    if (-not $context.PackagesReady) {
-        throw "Package files are incomplete. Run 'package' first."
-    }
-
-    $portablePath = Join-Path $context.VersionDirectory `
-        "SnowDesktop-portable-x64-$($context.Version).zip"
-    $temporary = Join-Path $context.VersionDirectory "_release-payload"
-    Reset-TemporaryDirectory `
-        -Path $temporary `
-        -Parent $context.VersionDirectory
-    try {
-        Expand-Archive `
-            -LiteralPath $portablePath `
-            -DestinationPath $temporary `
-            -Force
-        $logsDirectory = Get-LogsDirectory -Context $context
-        $syncLog = Join-Path $logsDirectory `
-            "release-sync-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-        foreach ($name in @(
-                "SnowDesktop.exe",
-                "snowwidget.exe",
-                "THIRD_PARTY_NOTICES.md",
-                "README.md",
-                "README.en.md")) {
-            $source = Join-Path $temporary $name
-            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-                throw "Portable package is missing $name."
-            }
-            Copy-Item `
-                -LiteralPath $source `
-                -Destination (Join-Path $releaseRepository $name) `
-                -Force
-        }
-        Copy-MirroredDirectory `
-            -Source (Join-Path $temporary "SnowDesktop.Runtime") `
-            -Destination (Join-Path $releaseRepository `
-                "SnowDesktop.Runtime") `
-            -LogPath $syncLog
-        foreach ($legacyName in @(
-                "SnowDesktopTaskbarHook.dll",
-                "SnowDesktopWallpaperHook.dll",
-                "SnowDesktopWallpaperHook32.dll",
-                "SnowDesktopWallpaperInjector32.exe",
-                "SnowDesktopWorkshopManager.exe")) {
-            $legacyPath = Join-Path $releaseRepository $legacyName
-            if (Test-Path -LiteralPath $legacyPath -PathType Leaf) {
-                Remove-Item -LiteralPath $legacyPath -Force
-            }
-        }
-        $license = Join-Path $temporary "LICENSE"
-        if (Test-Path -LiteralPath $license -PathType Leaf) {
-            Copy-Item `
-                -LiteralPath $license `
-                -Destination (Join-Path $releaseRepository "LICENSE") `
-                -Force
-        }
-        $thirdPartyLicenses = Join-Path $temporary "licenses"
-        if (Test-Path -LiteralPath $thirdPartyLicenses -PathType Container) {
-            Copy-MirroredDirectory `
-                -Source $thirdPartyLicenses `
-                -Destination (Join-Path $releaseRepository "licenses") `
-                -LogPath $syncLog
-        }
-
-        Copy-MirroredDirectory `
-            -Source (Join-Path $temporary "widgets") `
-            -Destination (Join-Path $releaseRepository "widgets") `
-            -LogPath $syncLog
-        Copy-MirroredDirectory `
-            -Source (Join-Path $temporary "lang") `
-            -Destination (Join-Path $releaseRepository "lang") `
-            -LogPath $syncLog
-
-        $status = Get-GitValue `
-            -WorkingDirectory $releaseRepository `
-            -Arguments @("status", "--short")
-        $statusPath = Join-Path `
-            $context.VersionDirectory "release-repository-status.txt"
-        $status | Set-Content -LiteralPath $statusPath -Encoding utf8
-        Set-ReleaseState `
-            -Context $context `
-            -Name "releaseRepositorySyncedAt" `
-            -Value (Get-Date).ToUniversalTime().ToString("o")
-        Write-Host ""
-        Write-Host "二进制 Release 仓库已同步（尚未提交或推送）：" `
-            -ForegroundColor Green
-        if ([string]::IsNullOrWhiteSpace($status)) {
-            Write-Host "  内容与当前仓库相同。"
-        }
-        else {
-            Write-Host $status
-        }
-        return $true
-    }
-    finally {
-        if (Test-Path -LiteralPath $temporary) {
-            Remove-Item -LiteralPath $temporary -Recurse -Force
-        }
-    }
-}
-
 function Invoke-LocalSquash {
     $context = Get-ReleaseContext
     Assert-Remote `
@@ -757,19 +557,15 @@ function Invoke-CheckedGit {
     }
 }
 
-function Publish-SourceAndReleaseRepositories {
+function Publish-SourceRepository {
     $context = Get-ReleaseContext
     Assert-ExplicitVersionConfirmation `
-        -ActionName "远程发布源码与二进制仓库" `
+        -ActionName "远程发布源码仓库" `
         -Context $context
     Assert-Remote `
         -Actual $context.SourceOrigin `
         -Expected $sourceRemote `
         -RepositoryName "Source repository"
-    Assert-Remote `
-        -Actual $context.ReleaseOrigin `
-        -Expected $binaryRemote `
-        -RepositoryName "Binary release repository"
     if ($context.SourceBranch -ne "main") {
         throw "Source repository must be on main; current branch is $($context.SourceBranch)."
     }
@@ -788,39 +584,9 @@ function Publish-SourceAndReleaseRepositories {
     if ($head -ne $tagCommit) {
         throw "Tag $($context.Tag) does not point to local main HEAD."
     }
-    if ($context.ReleaseBranch -ne "main") {
-        throw "Binary release repository must be on main."
-    }
-
     $logsDirectory = Get-LogsDirectory -Context $context
     $logPath = Join-Path $logsDirectory `
         "publish-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
-
-    $releaseTagResult = Invoke-GitCapture `
-        -WorkingDirectory $releaseRepository `
-        -Arguments @("rev-parse", "-q", "--verify",
-            "refs/tags/$($context.Tag)") `
-        -AllowFailure
-    if ($releaseTagResult.ExitCode -ne 0) {
-        if (-not $context.ReleaseDirty) {
-            throw "Binary release repository has no changes to commit for $($context.Tag)."
-        }
-        Invoke-CheckedGit `
-            -WorkingDirectory $releaseRepository `
-            -Arguments @("add", "-A") `
-            -LogPath $logPath
-        Invoke-CheckedGit `
-            -WorkingDirectory $releaseRepository `
-            -Arguments @("commit", "-m", $context.Tag) `
-            -LogPath $logPath
-        Invoke-CheckedGit `
-            -WorkingDirectory $releaseRepository `
-            -Arguments @("tag", "-a", $context.Tag, "-m", $context.Tag) `
-            -LogPath $logPath
-    }
-    elseif ($context.ReleaseDirty) {
-        throw "Binary tag $($context.Tag) already exists but its repository is dirty."
-    }
 
     Write-Host "推送源码 main 与 $($context.Tag)..." -ForegroundColor Cyan
     Invoke-CheckedGit `
@@ -832,21 +598,11 @@ function Publish-SourceAndReleaseRepositories {
         -Arguments @("push", "origin", $context.Tag) `
         -LogPath $logPath
 
-    Write-Host "推送二进制 Release 仓库..." -ForegroundColor Cyan
-    Invoke-CheckedGit `
-        -WorkingDirectory $releaseRepository `
-        -Arguments @("push", "origin", "main") `
-        -LogPath $logPath
-    Invoke-CheckedGit `
-        -WorkingDirectory $releaseRepository `
-        -Arguments @("push", "origin", $context.Tag) `
-        -LogPath $logPath
-
     Set-ReleaseState `
         -Context $context `
-        -Name "repositoriesPublishedAt" `
+        -Name "sourceRepositoryPublishedAt" `
         -Value (Get-Date).ToUniversalTime().ToString("o")
-    Write-Host "源码与二进制仓库发布完成。" -ForegroundColor Green
+    Write-Host "源码仓库发布完成。" -ForegroundColor Green
 }
 
 function Publish-GitHubRelease {
@@ -974,6 +730,83 @@ function Open-VersionDirectory {
     Start-Process explorer.exe -ArgumentList $context.VersionDirectory
 }
 
+function Get-PrivateSteamDevelopmentBranch {
+    $configurationPath = Join-Path $repositoryRoot `
+        "packaging\steam-pipe.json"
+    $configuration = Get-Content -LiteralPath $configurationPath `
+        -Encoding UTF8 -Raw | ConvertFrom-Json
+    $branch = [string]$configuration.privateDevelopmentBranch
+    if ([string]::IsNullOrWhiteSpace($branch)) {
+        throw "packaging\steam-pipe.json does not define a private development branch."
+    }
+    return $branch
+}
+
+function Get-PublicSteamReleaseBranch {
+    $configurationPath = Join-Path $repositoryRoot `
+        "packaging\steam-pipe.json"
+    $configuration = Get-Content -LiteralPath $configurationPath `
+        -Encoding UTF8 -Raw | ConvertFrom-Json
+    $branch = [string]$configuration.publicReleaseBranch
+    if ($branch -cne "public") {
+        throw "packaging\steam-pipe.json must define public as the release branch."
+    }
+    return $branch
+}
+
+function Invoke-SteamPipeAction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("Preview", "UploadDev", "UploadPublic")]
+        [string]$Mode
+    )
+
+    $arguments = @{
+        Mode = $Mode
+        ReloadShell = $ReloadShell
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SteamCmdPath)) {
+        $arguments["SteamCmdPath"] = $SteamCmdPath
+    }
+
+    if ($Mode -eq "UploadDev") {
+        $version = Get-Version
+        $branch = Get-PrivateSteamDevelopmentBranch
+        $confirmedVersion = $ConfirmVersion
+        $confirmedBranch = $ConfirmPrivateBranch
+        $confirmed = $Yes
+        if ($isMenu) {
+            $confirmedVersion = Read-Host `
+                "上传只允许私有开发分支。请输入版本 $version"
+            $confirmedBranch = Read-Host `
+                "请确认 Steamworks 中已为分支设置密码，再输入分支名 $branch"
+            $confirmed = $true
+        }
+        $arguments["Yes"] = $confirmed
+        $arguments["ConfirmVersion"] = $confirmedVersion
+        $arguments["ConfirmPrivateBranch"] = $confirmedBranch
+    }
+    elseif ($Mode -eq "UploadPublic") {
+        $version = Get-Version
+        $branch = Get-PublicSteamReleaseBranch
+        $confirmedVersion = $ConfirmVersion
+        $confirmedBranch = $ConfirmPublicBranch
+        $confirmed = $Yes
+        if ($isMenu) {
+            $confirmedVersion = Read-Host `
+                "这会立即更新所有 Steam 用户的公开构建。请输入版本 $version"
+            $confirmedBranch = Read-Host `
+                "请输入公开分支名 $branch"
+            $confirmed = $true
+        }
+        $arguments["Yes"] = $confirmed
+        $arguments["ConfirmVersion"] = $confirmedVersion
+        $arguments["ConfirmPublicBranch"] = $confirmedBranch
+    }
+
+    & $steamPipeScript @arguments
+}
+
 function Invoke-Prepare {
     param(
         [switch]$AskBeforeBuild,
@@ -986,12 +819,8 @@ function Invoke-Prepare {
     if (-not $packaged) {
         return
     }
-    $synced = Sync-ReleaseRepository
-    if (-not $synced) {
-        return
-    }
     Write-Host ""
-    Write-Host "发布准备完成：包已生成，Release 仓库已同步但未提交。" `
+    Write-Host "发布准备完成：发行包已生成。" `
         -ForegroundColor Green
     Write-Host "提交源码修改后，可执行本地 squash；测试 main 后再远程发布。"
 }
@@ -1014,10 +843,16 @@ function Invoke-CommandAction {
                 -ReloadShellBeforeBuild:$ReloadShell)
         }
         "package-steam" {
-            & $steamPackageScript
+            & $steamPackageScript -ReloadShell:$ReloadShell
         }
-        "sync-release" {
-            [void](Sync-ReleaseRepository)
+        "steam-preview" {
+            Invoke-SteamPipeAction -Mode "Preview"
+        }
+        "steam-upload-dev" {
+            Invoke-SteamPipeAction -Mode "UploadDev"
+        }
+        "steam-upload-public" {
+            Invoke-SteamPipeAction -Mode "UploadPublic"
         }
         "prepare" {
             Invoke-Prepare `
@@ -1028,7 +863,7 @@ function Invoke-CommandAction {
             Invoke-LocalSquash
         }
         "publish" {
-            Publish-SourceAndReleaseRepositories
+            Publish-SourceRepository
         }
         "github-release" {
             Publish-GitHubRelease
@@ -1048,12 +883,13 @@ function Start-ReleaseMenu {
         Write-Host ""
         Write-Host "[1] 构建并生成全部发行包"
         Write-Host "[S] 构建并生成 Steam 专属包"
-        Write-Host "[2] 同步二进制 Release 仓库（不提交）"
-        Write-Host "[3] 发布准备（构建打包 + 同步 Release 仓库）"
-        Write-Host "[4] 压缩合并版本分支到本地 main，并创建标签"
-        Write-Host "[5] 发布源码与二进制仓库（需先测试本地 main）"
-        Write-Host "[6] 创建 GitHub Release 并上传公开附件"
-        Write-Host "[7] 刷新状态"
+        Write-Host "[V] SteamPipe 安全预览（不上传）"
+        Write-Host "[U] 上传并设为私有 Steam 开发分支"
+        Write-Host "[R] 上传并设为公开 Steam 分支"
+        Write-Host "[2] 压缩合并版本分支到本地 main，并创建标签"
+        Write-Host "[3] 发布源码仓库（需先测试本地 main）"
+        Write-Host "[4] 创建 GitHub Release 并上传公开附件"
+        Write-Host "[5] 刷新状态"
         Write-Host "[O] 打开当前版本目录"
         Write-Host "[Q] 退出"
         Write-Host ""
@@ -1065,12 +901,13 @@ function Start-ReleaseMenu {
             switch ($selection) {
                 "1" { Invoke-CommandAction -Name "package" }
                 "S" { Invoke-CommandAction -Name "package-steam" }
-                "2" { Invoke-CommandAction -Name "sync-release" }
-                "3" { Invoke-CommandAction -Name "prepare" }
-                "4" { Invoke-CommandAction -Name "squash" }
-                "5" { Invoke-CommandAction -Name "publish" }
-                "6" { Invoke-CommandAction -Name "github-release" }
-                "7" { continue }
+                "V" { Invoke-CommandAction -Name "steam-preview" }
+                "U" { Invoke-CommandAction -Name "steam-upload-dev" }
+                "R" { Invoke-CommandAction -Name "steam-upload-public" }
+                "2" { Invoke-CommandAction -Name "squash" }
+                "3" { Invoke-CommandAction -Name "publish" }
+                "4" { Invoke-CommandAction -Name "github-release" }
+                "5" { continue }
                 "O" { Invoke-CommandAction -Name "open" }
                 default {
                     Write-Host "无效选项。" -ForegroundColor Yellow

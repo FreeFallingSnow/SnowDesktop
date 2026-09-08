@@ -36,6 +36,8 @@ constexpr wchar_t kPortableArgument[] =
     L"--snowdesktop-autostart-owner=portable";
 constexpr wchar_t kPackagedArgument[] =
     L"--snowdesktop-autostart-owner=packaged";
+constexpr wchar_t kSteamArgument[] =
+    L"--snowdesktop-autostart-owner=steam";
 constexpr wchar_t kPackagedExecutionAlias[] = L"SnowDesktopStore.exe";
 
 class ScopedBstr final
@@ -177,6 +179,8 @@ UnifiedAutoStartOwner OwnerFromArguments(std::wstring_view arguments) noexcept
         return UnifiedAutoStartOwner::Portable;
     if (arguments == kPackagedArgument)
         return UnifiedAutoStartOwner::Packaged;
+    if (arguments == kSteamArgument)
+        return UnifiedAutoStartOwner::Steam;
     return UnifiedAutoStartOwner::Unknown;
 }
 
@@ -415,7 +419,8 @@ bool ConfigureTask(const Target& target, bool enabled,
     std::wstring_view description) noexcept
 {
     if ((target.owner != UnifiedAutoStartOwner::Portable &&
-            target.owner != UnifiedAutoStartOwner::Packaged) ||
+            target.owner != UnifiedAutoStartOwner::Packaged &&
+            target.owner != UnifiedAutoStartOwner::Steam) ||
         target.executable.empty() || target.arguments.empty())
     {
         return false;
@@ -472,8 +477,24 @@ namespace snowdesktop::auto_start
 {
 Target CurrentDeploymentTarget() noexcept
 {
-    if (deployment::IsPackaged())
+    const auto& context = deployment::GetRuntimeDeploymentContext();
+    if (context.kind == deployment::RuntimeDeploymentKind::Packaged)
         return PackagedDeploymentTarget();
+
+    if (context.kind == deployment::RuntimeDeploymentKind::SteamManaged)
+    {
+        Target target;
+        target.owner = UnifiedAutoStartOwner::Steam;
+        target.executable = context.launcher.wstring();
+        target.arguments = kSteamArgument;
+        target.workingDirectory = context.installRoot.wstring();
+        return target;
+    }
+
+    // Local Steam development profiles are intentionally unable to replace
+    // the production login task.
+    if (!deployment::CanOwnProductionAutoStart(context.kind))
+        return {};
 
     Target target;
     target.owner = UnifiedAutoStartOwner::Portable;

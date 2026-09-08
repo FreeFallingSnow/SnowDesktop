@@ -1,4 +1,6 @@
 #include "dock_settings.h"
+#include "dock_gradient_storage.h"
+#include "surface_theme.h"
 
 #include "data_paths.h"
 #include "deployment_context.h"
@@ -506,6 +508,7 @@ public:
         state_->borderGreen = std::clamp(appearance.widgetBorderG, 0.0f, 1.0f);
         state_->borderBlue = std::clamp(appearance.widgetBorderB, 0.0f, 1.0f);
         state_->borderAlpha = std::clamp(appearance.widgetBorderAlpha, 0.0f, 1.0f);
+        state_->gradient = snowdesktop::taskbar_hook::EncodeGradient(appearance.panelGradient);
         const LONG targetCount = static_cast<LONG>(std::min<std::size_t>(
             targets.size(),
             snowdesktop::taskbar_hook::kMaximumTaskbarTargets));
@@ -546,6 +549,7 @@ public:
                 source.appearance.widgetBorderB, 0.0f, 1.0f);
             destination.borderAlpha = std::clamp(
                 source.appearance.widgetBorderAlpha, 0.0f, 1.0f);
+            destination.gradient = snowdesktop::taskbar_hook::EncodeGradient(source.appearance.panelGradient);
         }
         for (std::size_t index = static_cast<std::size_t>(targetCount);
              index < snowdesktop::taskbar_hook::kMaximumTaskbarTargets;
@@ -963,6 +967,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "floatingEdgeSwipeEnabled",
         settings.floatingEdgeSwipeEnabled);
+    ReadBoolField(text, "floatingEdgeSwipeBlockFullscreen",
+        settings.floatingEdgeSwipeBlockFullscreen);
     if (ReadDoubleField(text, "monitorScope", value))
     {
         settings.monitorScope = static_cast<DockMonitorScope>(
@@ -1012,6 +1018,14 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
         settings.thicknessScale = ClampDockScale(static_cast<float>(value));
+    if (ReadDoubleField(text, "hoverEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
+        settings.hoverEffect = static_cast<int>(value);
+    if (ReadDoubleField(text, "hoverScale", value))
+        settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(static_cast<float>(value));
+    if (ReadDoubleField(text, "launchEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
+        settings.launchEffect = static_cast<int>(value);
+    if (ReadDoubleField(text, "windowEffect", value) && std::isfinite(value) && value >= 0 && value <= 3 && std::floor(value) == value)
+        settings.windowEffect = static_cast<int>(value);
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
     if (ReadDoubleField(text, "systemTaskbarAlignment", value))
         settings.systemTaskbarAlignment = std::clamp(static_cast<int>(value), 0, 1);
@@ -1050,12 +1064,24 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     ReadDynamicRule(text, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    JsonValue gradientDocument;
+    if (!ParseJson(text, gradientDocument) ||
+        !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
+    ReadBoolField(text, "followComponentAppearance", settings.followComponentAppearance);
+    if (ReadDoubleField(text, "dockAppearancePreset", value))
+        settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
+    if (const auto* appearance = gradientDocument.Find("customAppearance"))
+        if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
     NormalizeDockSettings(settings);
     return true;
 }
 
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
 {
+    std::ostringstream gradientFields;
+    if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
+    const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
+    if (customAppearance.empty()) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
@@ -1072,6 +1098,9 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << settings.floatingHotkeyVirtualKey << ",\n";
     file << "  \"floatingEdgeSwipeEnabled\": "
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
+         << ",\n";
+    file << "  \"floatingEdgeSwipeBlockFullscreen\": "
+         << (settings.floatingEdgeSwipeBlockFullscreen ? "true" : "false")
          << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";
@@ -1093,6 +1122,10 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
+    file << "  \"hoverEffect\": " << snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect) << ",\n";
+    file << "  \"hoverScale\": " << snowdesktop::animation::NormalizeHoverScale(settings.hoverScale) << ",\n";
+    file << "  \"launchEffect\": " << snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect) << ",\n";
+    file << "  \"windowEffect\": " << snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect) << ",\n";
     file << "  \"systemTaskbarAutoHide\": "
          << (settings.systemTaskbarAutoHide ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAlignment\": " << settings.systemTaskbarAlignment << ",\n";
@@ -1122,6 +1155,10 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
         settings.systemTaskbarMaximizedWindow);
     WriteDynamicRule(file, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
+    file << gradientFields.str();
+    file << "  \"followComponentAppearance\": " << (settings.followComponentAppearance ? "true" : "false") << ",\n";
+    file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";
+    file << "  \"customAppearance\": " << customAppearance << ",\n";
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";
     return true;

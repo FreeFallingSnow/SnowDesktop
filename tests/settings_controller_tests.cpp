@@ -1,4 +1,6 @@
 #include "settings_controller.h"
+#include "settings_ipc_services.h"
+#include "settings_ipc_values.h"
 
 #include <array>
 #include <cstring>
@@ -6,6 +8,8 @@
 #include <iostream>
 #include <memory>
 #include <utility>
+#include <future>
+#include <thread>
 
 // The controller tests intentionally avoid linking the native persistence
 // implementations. Supply only the value factories used by aggregate default
@@ -215,14 +219,16 @@ void TestRoutes()
             static_cast<unsigned>(SettingsPage::AppearanceDesktopIcons) ==
                 16u &&
             static_cast<unsigned>(
-                SettingsPage::AppearanceIconBeautification) == 17u,
-        "appearance leaves append without changing existing route values");
+                SettingsPage::AppearanceIconBeautification) == 17u &&
+            static_cast<unsigned>(SettingsPage::DesktopPages) == 18u,
+        "new settings leaves append without changing existing route values");
 
     constexpr std::array appearanceLeaves{
         SettingsPage::AppearanceTheme,
         SettingsPage::AppearanceWidgets,
         SettingsPage::AppearanceDesktopIcons,
         SettingsPage::AppearanceIconBeautification,
+        SettingsPage::DesktopPages,
     };
     bool leafKeysAreUnique = true;
     for (std::size_t left = 0; left < appearanceLeaves.size(); ++left)
@@ -238,7 +244,7 @@ void TestRoutes()
         }
     }
     Check(leafKeysAreUnique,
-        "every Appearance leaf is valid and has a unique stable page key");
+        "every appended settings leaf is valid and has a unique stable page key");
 
     const SettingsRoute legacyAppearance = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization));
@@ -248,6 +254,9 @@ void TestRoutes()
     const SettingsRoute legacyWidgetAppearance = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.backgroundColor"));
+    const SettingsRoute edgeHighlight = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.edgeHighlight"));
     const SettingsRoute legacyTabHeight = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.tabHeight"));
@@ -257,6 +266,7 @@ void TestRoutes()
     Check(legacyAppearance.page == SettingsPage::AppearanceTheme &&
             legacyTheme.page == SettingsPage::AppearanceTheme &&
             legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
+            edgeHighlight.page == SettingsPage::AppearanceTheme &&
             legacyTabHeight.page == SettingsPage::AppearanceWidgets &&
             legacyTabHeight.focusId == "desktop.categoryLayout" &&
             legacyCounts.page == SettingsPage::DesktopCategories &&
@@ -280,6 +290,9 @@ void TestRoutes()
             SettingsPage::DesktopCategories, "desktop.categoryLayout"));
     const SettingsRoute desktopBehavior = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Desktop));
+    const SettingsRoute pageNavigation = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(
+            SettingsPage::General, "general.pageNavigation.next"));
     Check(desktopIcons.page == SettingsPage::AppearanceDesktopIcons &&
             iconBeautification.page ==
                 SettingsPage::AppearanceIconBeautification &&
@@ -287,8 +300,9 @@ void TestRoutes()
             desktopTabHeight.focusId == "desktop.categoryLayout" &&
             categoryRules.page == SettingsPage::DesktopCategories &&
             legacyCategoryLayout.page == SettingsPage::AppearanceWidgets &&
+            pageNavigation.page == SettingsPage::DesktopPages &&
             desktopBehavior.page == SettingsPage::Desktop,
-        "Desktop focus aliases route appearance, category, and behavior tasks to distinct owners");
+        "legacy focus aliases route appearance, page, category, and behavior tasks to distinct owners");
 }
 
 void TestLoadRouteAndImmutableSnapshots()
@@ -971,10 +985,112 @@ void TestExternalReplacementDuringCommitPreventsLateSave()
         "from being saved afterward");
 }
 
+void TestRemoteSaveFailureKeepsSessionOpen()
+{
+    using namespace snowdesktop::settings_ipc;
+    auto store = std::make_shared<FakeStore>();
+    SettingsController controller(store);
+    HANDLE hostRead = nullptr, uiWrite = nullptr, uiRead = nullptr, hostWrite = nullptr;
+    Check(CreatePipe(&hostRead, &uiWrite, nullptr, 0) &&
+        CreatePipe(&uiRead, &hostWrite, nullptr, 0), "create remote controller test pipes");
+    const auto processHandle = [] {
+        HANDLE handle = nullptr;
+        (void)DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(), GetCurrentProcess(),
+            &handle, SYNCHRONIZE, FALSE, 0);
+        return handle;
+    };
+    Channel host;
+    host.Open(hostRead, hostWrite, processHandle());
+    BindController(host, controller);
+    std::promise<DWORD> started;
+    std::atomic<int> phaseReached = 0;
+    std::thread peer([&] {
+        Channel ui;
+        ui.Open(uiRead, uiWrite, processHandle());
+        std::unique_ptr<ISettingsController> proxy;
+        ui.Bind<bool, int>("test.edit", [&](int phase) {
+            phaseReached = 1;
+            if (!proxy) proxy = CreateControllerProxy(ui);
+            phaseReached = 2;
+            if (phase == 0)
+            {
+                if (!proxy->Initialize().Succeeded() ||
+                    !proxy->Open(SettingsRoute::ForPage(SettingsPage::General)).Succeeded()) return false;
+                auto general = proxy->Snapshot()->values.general;
+                phaseReached = 3;
+                general.demoModeEnabled = true;
+                proxy->UpdateGeneral(general, SettingsUpdateMode::Commit);
+                phaseReached = 4;
+                return !proxy->FlushAll().Succeeded() && !proxy->CloseSession().Succeeded() &&
+                    proxy->Snapshot()->sessionActive &&
+                    HasSettingsDomain(proxy->Snapshot()->dirtyDomains, SettingsDomain::General);
+            }
+            phaseReached = 5;
+            return proxy->RetryPending() && proxy->CloseSession().Succeeded() &&
+                !proxy->Snapshot()->sessionActive;
+        });
+        ui.Bind<bool>("test.stale", [&] {
+            if (!proxy || !proxy->Open(SettingsRoute::ForPage(SettingsPage::General)).Succeeded())
+                return false;
+            const auto original = proxy->Snapshot();
+            auto changed = original->values.general;
+            changed.demoModeEnabled = !changed.demoModeEnabled;
+            using Reply = std::pair<SettingsActionResult, ISettingsController::SnapshotPtr>;
+            const auto badRevision = ui.Call<Reply>("controller.UpdateGeneral", original->generation,
+                original->domainRevisions.general + 1, original->domainRevisions.systemTaskbar,
+                changed, SettingsUpdateMode::Commit);
+            const auto badGeneration = ui.Call<Reply>("controller.UpdateGeneral", original->generation + 1,
+                original->domainRevisions.general, original->domainRevisions.systemTaskbar,
+                changed, SettingsUpdateMode::Commit);
+            const auto badTaskbarRevision = ui.Call<Reply>("controller.UpdateDock", original->generation,
+                original->domainRevisions.dock, original->domainRevisions.systemTaskbar + 1,
+                original->values.dock, SettingsUpdateMode::Commit);
+            const bool unchanged = badRevision.second && badGeneration.second && badTaskbarRevision.second &&
+                badRevision.second->values.general.demoModeEnabled == original->values.general.demoModeEnabled &&
+                badGeneration.second->values.general.demoModeEnabled == original->values.general.demoModeEnabled &&
+                badTaskbarRevision.second->domainRevisions.dock == original->domainRevisions.dock;
+            return !badRevision.first.Succeeded() && !badGeneration.first.Succeeded() &&
+                !badTaskbarRevision.first.Succeeded() && unchanged && proxy->CloseSession().Succeeded();
+        });
+        ui.Bind<void>("test.quit", [] { PostQuitMessage(0); });
+        started.set_value(GetCurrentThreadId());
+        MSG message{};
+        while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+    });
+    const DWORD thread = started.get_future().get();
+    store->failingDomains = SettingsDomain::General;
+    try
+    {
+        Check(host.Call<bool>("test.edit", 0),
+            "remote save failure preserves dirty state and refuses close acknowledgement");
+        store->failingDomains = SettingsDomain::None;
+        Check(host.Call<bool>("test.edit", 1) && store->lastSavedGeneral.demoModeEnabled,
+            "remote retry closes only after authoritative host persistence succeeds");
+        Check(host.Call<bool>("test.stale"),
+            "remote stale domain, generation and system taskbar edits cannot overwrite authoritative state");
+        host.Notify("test.quit");
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "Remote save test phase " << phaseReached.load() << ": ";
+        Check(false, error.what());
+        PostThreadMessageW(thread, WM_QUIT, 0, 0);
+    }
+    peer.join();
+    controller.SetSnapshotChangedCallback({});
+    controller.SetPendingWorkCallback({});
+}
+
 } // namespace
+
+int RunSettingsIpcTests();
+int RunSettingsIpcChildIfRequested();
 
 int main()
 {
+    const int childResult = RunSettingsIpcChildIfRequested();
+    if (childResult >= 0) return childResult;
+    failures += RunSettingsIpcTests();
     TestRoutes();
     TestLoadRouteAndImmutableSnapshots();
     TestDomainRevisionsTrackChangedDomain();
@@ -991,6 +1107,7 @@ int main()
     TestReentrantCommitKeepsNewerValuePending();
     TestExternalReplacementDiscardsWithoutStorageIo();
     TestExternalReplacementDuringCommitPreventsLateSave();
+    TestRemoteSaveFailureKeepsSessionOpen();
 
     if (failures == 0)
         std::cout << "All settings controller tests passed.\n";

@@ -1,6 +1,8 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 #include "../quick_navigation_rules.h"
 #include "../widget_scroll_rules.h"
+#include "../animation_settings.h"
 
 // Primary-button press handling and drag-source initialization.
 
@@ -8,12 +10,16 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
     dockPressedClosedCollectionPopup_ = false;
     if (middleButtonWidgetMove_) return;
-    if (renameEdit_ != nullptr) return;
+    // Popup/Dock hosts do not activate on clicks, so the EDIT may never
+    // receive WM_KILLFOCUS. Finish before hit testing can change its target.
+    if (renameEdit_ != nullptr)
+        CommitRename(false);
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
     pendingGuideAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    if (HandleLargeIconPointerDown(pt)) return;
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())
     {
@@ -188,6 +194,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     mouseDown_ = true;
     mouseDownPoint_ = pt;
     marqueeActive_ = false;
+    marqueeFullPresentPending_ = false;
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
     dockFolderPopupMarqueeInitialSelection_.clear();
@@ -528,7 +535,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             const auto primeDockMinimizeSnapshot =
                 [this, dock]() {
-                    if (IsDockContainerEffectivelyFloating(dock) ||
+                    if ((IsDockContainerEffectivelyFloating(dock) &&
+                            snowdesktop::animation::RuntimeWindowEffect() != 3) ||
                         dockPressedWindowAction_ !=
                             snowdesktop::dock_window_rules::
                                 DockClickAction::Minimize ||
@@ -539,6 +547,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     // Paint the pressed state before snapshot capture blocks
                     // this UI thread, then overlap capture with the natural
                     // button-down/button-up interval.
+                    snowdesktop::dock_taskbar_diagnostics::Begin(
+                        dockPressedTargetWindow_, L"dock-snapshot-prime");
                     UpdateWindow(hwnd_);
                     dockWindowTransition_->
                         PrimeMinimizeSnapshot(

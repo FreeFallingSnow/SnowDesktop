@@ -4,6 +4,8 @@
 #include "../right_click_contract.h"
 #include "../widgets/lua_logical_slot.h"
 
+#include <utility>
+
 // Page-navigation clicks and right-button context dispatch.
 
 void DesktopApp::ClearPopupMouseDownItem()
@@ -150,7 +152,7 @@ bool DesktopApp::ShowHostInputContextMenu(
         if (widgetIndex < widgets_.size())
         {
             ShowWidgetContextMenu(screenPoint, widgetIndex,
-                std::nullopt, std::nullopt, surface, true);
+                std::nullopt, localPoint, surface, true);
         }
         else
         {
@@ -194,11 +196,31 @@ bool DesktopApp::ShowHostInputContextMenu(
 }
 
 /**
+ * @brief 记录鼠标右键按下所属的输入表面。
+ * @param dockHost 按下发生于 Dock 时为对应 Host，否则为空。
+ */
+void DesktopApp::OnRightButtonDown(
+    PersistentDockHost* dockHost)
+{
+    if (renameEdit_ != nullptr)
+        CommitRename(false);
+    rightButtonDownDockHost_ = dockHost;
+    // Right-click menu interaction is never an edge-swipe gesture. Cancel an
+    // already armed stroke synchronously instead of waiting for the sampler.
+    floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+}
+
+/**
  * @brief 处理鼠标右键释放事件（显示上下文菜单）
  * @param lp LPARAM（含鼠标坐标）
  */
 void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
+    PersistentDockHost* const rightButtonPressDockHost =
+        std::exchange(rightButtonDownDockHost_, nullptr);
+    // A right click cancels placement as one complete press/release gesture.
+    // Preserve surface ownership on press, then consume release without a menu.
+    if (largeIconGesture_) { CancelLargeIconGesture(); return; }
     if (renameEdit_ != nullptr) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -238,7 +260,33 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             return;
     }
 
-    if (DockContainer* dock = GetDockContainerAtPoint(pt))
+    DockContainer* dock = GetDockContainerAtPoint(pt);
+    PersistentDockHost* contextDockHost = dock
+        ? FindPersistentDockHost(dock)
+        : nullptr;
+    // A menu can dismiss between button-down and button-up, allowing the up
+    // message to land on an overlapping desktop-band DockHost. Only a press
+    // that began on the matching Host may claim that Dock's context menu and
+    // promote it to the floating band.
+    const bool dockOwnsContextInput =
+        dock &&
+        snowdesktop::floating_dock_rules::
+            ShouldDispatchDockContextMenu(
+                contextDockHost && contextDockHost->active,
+                contextDockHost &&
+                    rightButtonPressDockHost ==
+                        contextDockHost);
+    if (dock && contextDockHost && contextDockHost->active &&
+        !dockOwnsContextInput)
+    {
+        WriteDiagnosticLogEntry(
+            L"Floating Dock context summon ignored: right-button press did not begin on matching DockHost");
+        // The release belongs to a press handled by another surface (most
+        // commonly a menu that disappeared after button-down). Do not let it
+        // fall through to an unrelated desktop or widget context menu.
+        return;
+    }
+    if (dockOwnsContextInput)
     {
         EnsureFloatingDockVisibleForAssociatedSurface(
             screenPt);
@@ -261,13 +309,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                             dockItem->IsSelected();
                         items_[itemIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
-                        if (IsProtectedDesktopIcon(items_[itemIndex]))
-                            ShowShellContextMenu(
-                                screenPt,
-                                static_cast<int>(itemIndex),
-                                false, dockItemBounds);
-                        else
-                            ShowItemContextMenu(
+                        ShowItemContextMenu(
                                 screenPt,
                                 static_cast<int>(itemIndex),
                                 false, false, dockItemBounds,
@@ -307,14 +349,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 items_[itemIndex].bounds = dock->GetElementVisualRect(
                     frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                if (IsProtectedDesktopIcon(items_[itemIndex]))
-                    ShowShellContextMenu(
-                        screenPt,
-                        static_cast<int>(itemIndex),
-                        false, dock->GetElementVisualRect(
-                            frequentItem->GetBounds(), pt));
-                else
-                    ShowItemContextMenu(
+                ShowItemContextMenu(
                         screenPt,
                         static_cast<int>(itemIndex),
                         true, false,
@@ -504,10 +539,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     if (!items_[itemIndex].selected)
                         SelectOnly(static_cast<int>(itemIndex));
                     InvalidateRect(hwnd_, nullptr, FALSE);
-                    if (IsProtectedDesktopIcon(items_[itemIndex]))
-                        ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
-                    else
-                        ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+                    ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
                     return;
                 }
             }
@@ -819,10 +851,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             if (!items_[itemIndex].selected)
                 SelectOnly(static_cast<int>(itemIndex));
             InvalidateRect(hwnd_, nullptr, FALSE);
-            if (IsProtectedDesktopIcon(items_[itemIndex]))
-                ShowShellContextMenu(screenPt, static_cast<int>(itemIndex));
-            else
-                ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
+            ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
             return;
         }
     }

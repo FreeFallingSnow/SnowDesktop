@@ -15,6 +15,7 @@
 #include "constants.h"
 #include "utils.h"
 #include "../l10n.h"
+#include "../large_icon_visibility_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -296,6 +297,16 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
 {
     outSlot = nullptr;
     HitRegion region = HitTestAtPoint(pt, outSlot);
+    if (app_ && app_->desktopIconsHidden_ && region != HitRegion::None)
+    {
+        const auto* target = app_->HitTestIcon(pt);
+        const bool retainedTarget = target && target->GetDesktopItem() &&
+            app_->IsRetainedLargeIcon(*target->GetDesktopItem());
+        if (!snowdesktop::large_icon_visibility_rules::AllowsHiddenDesktopDrop(
+                app_->dragSession_.Items().empty(),
+                region != HitRegion::Empty, retainedTarget))
+            return HitRegion::Blocked;
+    }
     if (app_ && app_->dragSession_.IsActive() &&
         (app_->dragSession_.SourceList().
                 hasCollectionGroupEntries ||
@@ -313,20 +324,29 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
         !app_ || !app_->dragSession_.IsActive() ||
         app_->dragSession_.SourceList().
             SupportsDesktopShellHandoff();
-    if (region == HitRegion::SortBefore && app_ &&
+    if (region != HitRegion::None && app_ &&
         supportsShellHandoff)
     {
         // Check for Handoff: mouse on an unselected icon
         int hit = app_->HitTestItem(pt);
-        if (hit >= 0 && !(*items_)[hit].selected)
+        if (hit >= 0 && !(*items_)[hit].selected &&
+            (region == HitRegion::SortBefore || (*items_)[hit].largeIcon))
         {
-            RECT iconRect = app_->GetItemIconRect((*items_)[hit].bounds);
-            RECT hf = { iconRect.left - 4, iconRect.top - 2,
-                        iconRect.right + 4, iconRect.bottom + 4 };
+            const auto& item = (*items_)[hit];
+            RECT iconRect = app_->GetItemIconRect(item.bounds);
+            RECT hf = item.largeIcon ? app_->GetLargeIconFrameRect(item)
+                : RECT{iconRect.left - 4, iconRect.top - 2,
+                       iconRect.right + 4, iconRect.bottom + 4};
             if (PtInRect(&hf, pt))
                 region = HitRegion::Handoff;
         }
     }
+    // A retained desktop is not a destination for creating hidden ordinary
+    // files. External input must actually resolve to a Shell handoff.
+    if (app_ && app_->desktopIconsHidden_ &&
+        app_->dragSession_.Items().empty() &&
+        region != HitRegion::None && region != HitRegion::Handoff)
+        return HitRegion::Blocked;
     return region;
 }
 
@@ -456,6 +476,7 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     if (ctrlDown) return _LW("core.drag.release_copy_here");
 
     GridCell bestCell = app_->FindBestDropCell(
+        sourceList,
         app_->ResolveDesktopRequestCell(sourceList, dragPoint));
 
     // When dragging from a widget (not from desktop itself), the selected items
@@ -543,9 +564,9 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                 }
                 else
                 {
-                    size_t itemIndex = app_->FindItemIndexByKey(dockItem->GetReference());
-                    if (itemIndex < app_->items_.size())
-                        span = app_->items_[itemIndex].gridSpan;
+                    // A retained desktop source can be large, but its Dock
+                    // entry has a separate, ordinary presentation.
+                    span = {1, 1};
                 }
                 span.columns = std::max(1, span.columns);
                 span.rows = std::max(1, span.rows);
@@ -695,6 +716,38 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         hasItemDrag ? app_->dragSession_.SourceList() : DragSourceList{},
         this, slot, region, mods, dragPoint);
     app_->DrawDesktopDropPreviewList(ctx, preview);
+    if (hasItemDrag && preview.Empty() && !preview.fileBacked &&
+        app_->dragSession_.SourceList().origin == this)
+    {
+        const auto& entries = app_->dragSession_.SourceList().entries;
+        const bool hasLarge = std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
+            return !entry.fromDock && entry.desktopIndex < app_->items_.size() &&
+                app_->items_[entry.desktopIndex].largeIcon.has_value();
+        });
+        if (hasLarge)
+        {
+            // Use the rejected group anchor and offsets, just as commit does.
+            // Clip only the paint at page edges; never shrink the requested span.
+            const auto anchor = app_->ResolveDesktopRequestCell(app_->dragSession_.SourceList(), dragPoint);
+            if (const auto* page = FindGridPage(app_->gridPages_, anchor.pageId))
+            {
+                int left = INT_MAX, top = INT_MAX;
+                for (const auto& entry : entries)
+                { left = std::min(left, entry.originalCell.column); top = std::min(top, entry.originalCell.row); }
+                ctx->PushAxisAlignedClip(app_->ToD2DRect(page->bounds), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                for (const auto& entry : entries)
+                {
+                    GridCell cell{anchor.pageId, anchor.column + entry.originalCell.column - left,
+                        anchor.row + entry.originalCell.row - top};
+                    DesktopWidget geometry; geometry.gridCell = cell;
+                    geometry.bounds = GetGridRect(app_->gridPages_, cell, entry.originalSpan);
+                    app_->DrawD2DRoundedRectangle(ctx, app_->GetStandaloneWidgetFrameRect(geometry), 8.f,
+                        D2D1::ColorF(1.f, .30f, .30f, .18f), D2D1::ColorF(1.f, .25f, .25f, .85f), 2.f);
+                }
+                ctx->PopAxisAlignedClip();
+            }
+        }
+    }
     if (hasItemDrag &&
         (app_->dragSession_.SourceList().
                 hasCollectionGroupEntries ||

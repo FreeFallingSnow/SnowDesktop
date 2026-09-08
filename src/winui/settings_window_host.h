@@ -1,10 +1,12 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "../large_icon_settings.h"
 #include "../settings_search_index.h"
 #include "backup_data_page_backend.h"
 #include "general_page_presenter.h"
 #include "home_about_page_model.h"
+#include "page_layout_page_presenter.h"
 #include "widgets_page_backend.h"
 
 #include <windows.h>
@@ -18,7 +20,7 @@
 
 namespace snowdesktop::widget_runtime
 {
-class WidgetSettingsService;
+class IWidgetSettingsService;
 }
 
 class WidgetEngine;
@@ -45,6 +47,9 @@ struct SettingsWindowHostOptions
     HomeAboutStatusProvider homeAboutStatus;
     /** Runtime-only ownership warnings for the Windows auto-start setting. */
     std::function<GeneralStartupConflict()> startupConflict;
+    std::function<GeneralAdvancedFeatureStatus()> advancedFeatureStatus;
+    std::function<void()> registerAdvancedFeatures;
+    std::function<bool()> resetAdvancedFeatures;
 
     /** Ensure a persisted component instance is loaded before its declarative
      * settings session is created. The application owns the instance-to-
@@ -56,6 +61,16 @@ struct SettingsWindowHostOptions
      * dispatch and snapshot publication are supplied by SettingsWindowHost. */
     WidgetsPageBackendOptions widgetsPage;
     BackupDataPageBackendOptions backupDataPage;
+    PageLayoutPageActions pageLayoutPage;
+    LargeIconSettingsAction largeIconSettings;
+
+    // The settings child supplies IPC adapters; the application supplies the
+    // concrete backends. UI callbacks in the configured options stay local.
+    std::function<std::unique_ptr<IWidgetsPageBackend>(WidgetsPageBackendOptions)>
+        createWidgetsBackend;
+    std::function<std::unique_ptr<IBackupDataPageBackend>(BackupDataPageBackendOptions)>
+        createBackupBackend;
+    std::function<void()> sessionClosed;
 
     /** Reconcile host-owned system state after a persisted-state reload. */
     std::function<void()> refreshExternalState;
@@ -88,8 +103,8 @@ public:
 
     [[nodiscard]] bool Initialize(
         HINSTANCE instance,
-        SettingsController& controller,
-        widget_runtime::WidgetSettingsService* widgetSettingsService,
+        ISettingsController& controller,
+        widget_runtime::IWidgetSettingsService* widgetSettingsService,
         SettingsWindowHostOptions options = {});
     void Shutdown() noexcept;
 
@@ -106,11 +121,13 @@ public:
     [[nodiscard]] bool FlushPendingChanges();
 
     void SetWidgetSettingsService(
-        widget_runtime::WidgetSettingsService* service) noexcept;
+        widget_runtime::IWidgetSettingsService* service) noexcept;
     /** Attach/detach the application-lifetime component engine. */
     void SetWidgetEngine(WidgetEngine* engine);
     /** Re-capture the component page after an external subscription change. */
     void RefreshWidgetsPage();
+    /** Re-query General-page state owned by the application runtime. */
+    void RefreshGeneralRuntimeState();
     /** Commit the active component editor before its runtime generation changes. */
     [[nodiscard]] bool PrepareLanguageChange();
     /** Rebind localized component schema after the runtime reload completes. */

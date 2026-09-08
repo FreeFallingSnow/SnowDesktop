@@ -102,6 +102,8 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
             widgetMarqueeCompositionItems_.erase(widgetId);
             continue;
         }
+        if (!parent->second.visible)
+            continue;
         auto& items = widgetMarqueeCompositionItems_[widgetId];
         std::unordered_set<std::string> liveKeys;
         liveKeys.reserve(request.marquees.size());
@@ -264,6 +266,8 @@ bool DesktopApp::FlushPendingWidgetMarqueeComposition()
                 return false;
 
             item.surface = std::move(surface);
+            item.surfaceWidth = surfaceWidth;
+            item.surfaceHeight = surfaceHeight;
             item.cycle = animate ? cycle : 0.0f;
             item.speed = animate ? marquee.speed : 0.0f;
             item.phase = phase;

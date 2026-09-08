@@ -36,6 +36,37 @@ struct GeneralStartupConflict
     std::wstring ownerCommand;
 };
 
+enum class GeneralAdvancedFeatureState : std::uint8_t
+{
+    BridgeUnavailable,
+    Unregistered,
+    Checking,
+    Registered,
+    RegistrationFailed,
+};
+
+enum class GeneralAdvancedFeatureFailure : std::uint8_t
+{
+    None,
+    SteamUnavailable,
+    NotOwned,
+    BridgeError,
+    StorageError,
+};
+
+struct GeneralAdvancedFeatureStatus
+{
+    GeneralAdvancedFeatureState state =
+        GeneralAdvancedFeatureState::BridgeUnavailable;
+    GeneralAdvancedFeatureFailure failure =
+        GeneralAdvancedFeatureFailure::None;
+    bool bridgeAvailable = false;
+    bool registered = false;
+    std::int64_t validUntil = 0;
+    bool cardVisible = false;
+    bool offerSteamStore = false;
+};
+
 /** Commands emitted by the cached General settings presenter. */
 struct GeneralPageActions
 {
@@ -54,6 +85,9 @@ struct GeneralPageActions
     std::function<void(std::uint64_t generation, bool enabled)>
         setAutoStart;
     std::function<GeneralStartupConflict()> queryStartupConflict;
+    std::function<GeneralAdvancedFeatureStatus()> queryAdvancedFeatureStatus;
+    std::function<void()> registerAdvancedFeatures;
+    std::function<void()> openAdvancedFeaturesStore;
 
     std::function<void(
         SettingsHostActions::HotkeyTarget target,
@@ -97,6 +131,9 @@ public:
     /** Desktop behavior and interaction settings, rendered on Desktop. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         DesktopBehaviorContent() const noexcept;
+    /** Page-navigation shortcuts, rendered on Pages & grid. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
+        PageNavigationContent() const noexcept;
     /** Legacy Dock shortcut/hotkey block, inserted after Dock enablement. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::Controls::StackPanel
         DockShortcutContent() const noexcept;

@@ -1,9 +1,15 @@
 #include "app.h"
+#include "../large_icon_steam.h"
+#include "../large_icon_preset_rules.h"
+#include "../large_icon_edit_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../right_click_contract.h"
 #include "shell_item_action_rules.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
+#include "../namespace_menu_actions.h"
+
+namespace { constexpr UINT kContextNamespaceActionFirst = 42000; }
 
 // Desktop-item and Shell-backed context menus.
 
@@ -68,20 +74,42 @@ void DesktopApp::CopyPathsToClipboard(
     CloseClipboard();
 }
 
-void DesktopApp::RunPathAsAdministrator(
+bool DesktopApp::RunPathAsAdministrator(
     const std::wstring& path)
 {
     if (!IsAdministratorRunnablePath(path))
-        return;
+        return false;
 
-    SHELLEXECUTEINFOW executeInfo{};
-    executeInfo.cbSize = sizeof(executeInfo);
-    executeInfo.fMask = SEE_MASK_FLAG_NO_UI;
-    executeInfo.hwnd = ShellDialogOwnerHwnd();
-    executeInfo.lpVerb = L"runas";
-    executeInfo.lpFile = path.c_str();
-    executeInfo.nShow = SW_SHOWNORMAL;
-    ShellExecuteExW(&executeInfo);
+    // ShellExecuteEx(runas) can wait for the consent UI or a third-party
+    // shortcut handler. Keep that wait off the rendering/input thread while
+    // using a dedicated queue so a pending prompt cannot delay ordinary Open.
+    // Pass the stable desktop HWND instead of a quick panel that closes as
+    // soon as this request is accepted; the worker performs the foreground
+    // handoff immediately before invoking runas.
+    return shellElevationWorker_.Enqueue(
+        hwnd_ && IsWindow(hwnd_) ? hwnd_ : ShellDialogOwnerHwnd(),
+        path);
+}
+
+bool DesktopApp::RunPathAsAdministratorAfterMenu(
+    const std::wstring& path)
+{
+    if (!IsAdministratorRunnablePath(path))
+        return false;
+
+    // The elevation worker can race the tail of the menu's input handler.
+    // Defer one UI turn so Windows has retired the active menu before the
+    // worker requests foreground access for the consent broker.
+    return uiAnimationScheduler_.ScheduleOnce(
+        1,
+        [this, path](snowdesktop::UiScheduleToken) {
+            const HWND owner = hwnd_ && IsWindow(hwnd_)
+                ? hwnd_
+                : ShellDialogOwnerHwnd();
+            if (owner)
+                SetForegroundWindow(owner);
+            RunPathAsAdministrator(path);
+        }) != 0;
 }
 
 void DesktopApp::ShowPathProperties(
@@ -131,7 +159,16 @@ void DesktopApp::ShowItemContextMenu(
         : nullptr;
 
     int selectedCount = 0;
-    for (const auto& item : items_) if (item.selected) ++selectedCount;
+    size_t selectedFileCount = 0;
+    size_t selectedNamespaceCount = 0;
+    for (const auto& item : items_)
+    {
+        if (!item.selected)
+            continue;
+        ++selectedCount;
+        if (!item.desktopIconClsid.empty())
+            ++selectedNamespaceCount;
+    }
 
     std::vector<std::wstring> selectedFilePaths;
     for (const auto& item : items_)
@@ -140,7 +177,11 @@ void DesktopApp::ShowItemContextMenu(
             continue;
         wchar_t path[MAX_PATH]{};
         if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
+        {
             selectedFilePaths.emplace_back(path);
+            if (item.desktopIconClsid.empty())
+                ++selectedFileCount;
+        }
     }
 
     bool canFile = !items_[itemIndex].desktopIconClsid.empty() ? false : true;
@@ -161,8 +202,56 @@ void DesktopApp::ShowItemContextMenu(
     const bool canRunAsAdministrator =
         selectedCount == 1 &&
         IsAdministratorRunnablePath(itemPath);
-    const bool canShowProperties =
-        selectedCount == 1 && canFile && !itemPath.empty();
+    const bool administratorShortcut =
+        selectedCount == 1 &&
+        snowdesktop::ShellLaunchWorker::
+            ShortcutRequestsAdministrator(itemPath);
+    const bool canOpen =
+        selectedCount == 1 && !administratorShortcut;
+    const bool protectedDesktopIcon = selectedCount == 1 && IsProtectedDesktopIcon(items_[itemIndex]);
+    const bool namespaceItem = selectedCount == 1 &&
+        (!items_[itemIndex].desktopIconClsid.empty() || protectedDesktopIcon);
+    // Query supported verbs without displaying the native popup. Keep its site,
+    // menu and COM object alive until a selected command has been invoked.
+    snowdesktop::ShellContextMenuSite namespaceSite;
+    ComPtr<IContextMenu> namespaceContext;
+    struct NativeMenuOwner { HMENU value = nullptr; ~NativeMenuOwner() { if (value) DestroyMenu(value); } } namespaceNative;
+    std::vector<std::pair<UINT, snowdesktop::namespace_menu_actions::Command>> namespaceActions;
+    if (namespaceItem && desktopFolder_)
+    {
+        const HWND owner = ShellDialogOwnerHwnd();
+        namespaceSite.Initialize(desktopFolder_.Get(), owner);
+        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[itemIndex].childPidl.get());
+        if (child && SUCCEEDED(desktopFolder_->GetUIObjectOf(namespaceSite.HostWindow() ? namespaceSite.HostWindow() : owner,
+            1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(namespaceContext.GetAddressOf()))))
+        {
+            namespaceSite.Attach(namespaceContext.Get()); namespaceNative.value = CreatePopupMenu();
+            if (SUCCEEDED(namespaceContext->QueryContextMenu(namespaceNative.value, 0, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU)))
+            {
+                const wchar_t* verbs[] = {L"manage", L"empty", L"connectNetworkDrive", L"disconnectNetworkDrive", L"properties"};
+                for (size_t i = 0; i < std::size(verbs); ++i)
+                    if (auto action = snowdesktop::namespace_menu_actions::Find(namespaceContext.Get(), namespaceNative.value, verbs[i]))
+                        namespaceActions.emplace_back(i == 4 ? kContextPropertiesCommand : kContextNamespaceActionFirst + static_cast<UINT>(i), std::move(*action));
+            }
+        }
+    }
+    const auto namespaceProperty = std::find_if(namespaceActions.begin(), namespaceActions.end(), [](const auto& entry) { return entry.first == kContextPropertiesCommand; });
+    const bool canShowProperties = (selectedCount == 1 && canFile && !itemPath.empty()) ||
+        (namespaceProperty != namespaceActions.end() && namespaceProperty->second.enabled);
+    const auto removalAction =
+        snowdesktop::shell_item_action_rules::
+            ResolveRemovalAction(
+                static_cast<size_t>(selectedCount),
+                selectedFileCount,
+                selectedNamespaceCount,
+                dockMapping,
+                protectedDesktopIcon);
+    const bool canRemove = removalAction !=
+        snowdesktop::shell_item_action_rules::
+            RemovalAction::Disabled;
+    const bool hidesDesktopNamespace = removalAction ==
+        snowdesktop::shell_item_action_rules::
+            RemovalAction::HideDesktopNamespace;
     const bool canCloseDockApplication =
         dockApplicationItem &&
         GetDockWindowVisualState(
@@ -171,39 +260,113 @@ void DesktopApp::ShowItemContextMenu(
 
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
-    AppendMenuW(menu, selectedCount == 1 ? MF_STRING : MF_STRING | MF_GRAYED, kContextOpenCommand, _LW("app.menu.open"));
-    AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextCopyPathCommand, _LW("app.menu.copy_path"));
-    AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
+    const auto largeIconKey = items_[itemIndex].layoutKey;
+    const bool largeIconMenu = selectedCount == 1 && !dockFrequentItem && !dockApplicationItem &&
+        !dockMapping && !dockEntryIndex && !keepQuickNavigationOpen &&
+        !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
+    const auto entitlement = steamEntitlementService_
+        ? steamEntitlementService_->Current() : snowdesktop::steam_entitlement::Snapshot{};
+    using snowdesktop::large_icon_edit_rules::EntryAccess;
+    const auto largeIconAccess = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
+        entitlement.bridgeAvailable, entitlement.registered);
+    if (largeIconMenu)
+    {
+        if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
+        {
+            namespace presets = snowdesktop::large_icon_preset_rules;
+            const auto& config = *items_[itemIndex].largeIcon;
+            const auto runtime = largeIconRuntime_.find(largeIconKey);
+            const bool hasEdge = runtime != largeIconRuntime_.end() && runtime->second.asset && runtime->second.asset->hasEdgeColor;
+            const bool editable = CanEditLargeIcons();
+            HMENU settings = CreatePopupMenu();
+            HMENU backgrounds = CreatePopupMenu(), effects = CreatePopupMenu();
+            for (size_t i = 0; i < presets::backgrounds.size(); ++i)
+            {
+                const auto option = presets::backgrounds[i];
+                if (!presets::BackgroundVisible(option.value, hasEdge, config)) continue;
+                const auto id = kContextLargeIconBackgroundFirst + static_cast<UINT>(i);
+                AppendMenuW(backgrounds, MF_STRING | (editable ? 0 : MF_GRAYED) |
+                    (presets::Background(config) == option.value ? MF_CHECKED : 0), id, _LW(option.label));
+            }
+            for (size_t i = 0; i < presets::effects.size(); ++i)
+            {
+                const auto option = presets::effects[i];
+                const bool enabled = editable && (option.value != 2 || !snowdesktop::IsLargeIconFill(config));
+                AppendMenuW(effects, MF_STRING | (enabled ? 0 : MF_GRAYED) |
+                    (presets::Effect(config) == option.value ? MF_CHECKED : 0),
+                    kContextLargeIconEffectFirst + static_cast<UINT>(i), _LW(option.label));
+            }
+            AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundSettings"));
+            AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (config.showOnHoverOnly ? MF_CHECKED : 0), kContextLargeIconHoverOnly, _LW("app.interact.hover_only"));
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (config.keepWhenDesktopHidden ? MF_CHECKED : 0), kContextLargeIconKeepWhenHidden, _LW("app.interact.keep_when_hidden"));
+            SetMenuItemIcon(settings, kContextLargeIconHoverOnly, L"\uF06E");
+            SetMenuItemIcon(settings, kContextLargeIconKeepWhenHidden, L"\uF108");
+            AppendMenuW(settings, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.detailedSettings"));
+            SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(backgrounds), L"\uF53F");
+            SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(effects), L"\uF0D0");
+            SetMenuItemIcon(settings, kContextLargeIconSettings, L"\uF013");
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(settings), _LW("largeIcon.settings"));
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(settings), L"\uF013");
+        }
+        else if (largeIconAccess != EntryAccess::Hidden)
+        {
+            // A locked Steam-capable build opens the unlock settings directly.
+            if (items_[itemIndex].largeIcon)
+                AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
+            else
+                AppendMenuW(menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
+        }
+        // Returning to ordinary icons must remain available without the Bridge.
+        if (items_[itemIndex].largeIcon)
+            AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
+        if (largeIconAccess != EntryAccess::Hidden || items_[itemIndex].largeIcon)
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
+    AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
+        kContextOpenCommand, _LW("app.menu.open"));
+    if (!namespaceItem)
+    {
+        AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextCopyPathCommand, _LW("app.menu.copy_path"));
+        AppendMenuW(menu, canReveal ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextRevealLocationCommand, _LW("app.menu.open_file_location"));
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        canRunAsAdministrator ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextRunAsAdministratorCommand,
-        _LW("app.menu.run_as_administrator"));
+    if (!namespaceItem)
+    {
+        AppendMenuW(menu,
+            canRunAsAdministrator ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextRunAsAdministratorCommand,
+            _LW("app.menu.run_as_administrator"));
+    }
     AppendMenuW(menu,
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand, _LW("app.menu.properties"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        selectedCount == 1 && canFile && !dockMapping
-            ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextRenameCommand, _LW("app.menu.rename"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu,
-        canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextCutCommand, _LW("app.menu.cut"));
-    AppendMenuW(menu,
-        canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextCopyCommand, _LW("app.menu.copy"));
-    AppendMenuW(menu,
-        (canFile || dockMapping)
-            ? MF_STRING
-            : MF_STRING | MF_GRAYED,
-        kContextDeleteCommand,
-        dockMapping
-            ? _LW("app.dock.remove_mapping")
-            : _LW("app.settings.delete"));
+    if (!namespaceItem)
+    {
+        AppendMenuW(menu,
+            selectedCount == 1 && canFile && !dockMapping
+                ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextRenameCommand, _LW("app.menu.rename"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu,
+            canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextCutCommand, _LW("app.menu.cut"));
+        AppendMenuW(menu,
+            canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextCopyCommand, _LW("app.menu.copy"));
+    }
+    if (!protectedDesktopIcon || dockMapping)
+        AppendMenuW(menu,
+            canRemove ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextDeleteCommand,
+            dockMapping
+                ? _LW("app.dock.remove_mapping")
+                : hidesDesktopNamespace
+                ? _LW("app.menu.hide_desktop_icon")
+                : _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFolderEntry)
@@ -282,7 +445,22 @@ void DesktopApp::ShowItemContextMenu(
             _LW("app.dock.close_application"));
     }
 
+    for (const auto& [id, action] : namespaceActions)
+    {
+        if (id == kContextPropertiesCommand) continue;
+        // Keep commonly used system actions next to Open, before generic file commands.
+        MENUITEMINFOW info{sizeof(info)}; info.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE;
+        info.wID = id; info.dwTypeData = const_cast<wchar_t*>(action.label.c_str());
+        info.fState = action.enabled ? MFS_ENABLED : MFS_GRAYED;
+        InsertMenuItemW(menu, kContextPropertiesCommand, FALSE, &info);
+        SetMenuItemIcon(menu, id, id == kContextNamespaceActionFirst + 1 ? L"\uF2ED" : id == kContextNamespaceActionFirst ? L"\uF085" : L"\uF6FF");
+    }
+    if (namespaceItem && namespaceProperty == namespaceActions.end()) DeleteMenu(menu, kContextPropertiesCommand, MF_BYCOMMAND);
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    SetMenuItemIcon(menu, kContextLargeIconCreate, L"\uF0B2");
+    SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
+    SetMenuItemIcon(menu, kContextLargeIconRestore,
+        snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
     SetMenuItemIcon(menu, kContextCopyPathCommand,
         snowdesktop::menu_fluent_glyphs::kCopy,
@@ -337,8 +515,77 @@ void DesktopApp::ShowItemContextMenu(
     SetForegroundWindow(menuOwner);
     const bool placeOutsideDock = dockRenameAnchor.has_value() ||
         dockFrequentItem || dockApplicationItem;
-    UINT command = ShowModernMenu(
-        menu, screenPoint, menuOwner, placeOutsideDock);
+    namespace presets = snowdesktop::large_icon_preset_rules;
+    const auto applyLargeIconCommand = [&](UINT command) {
+
+        const bool backgroundCommand = command >= kContextLargeIconBackgroundFirst && command < kContextLargeIconBackgroundFirst + presets::backgrounds.size();
+        const bool effectCommand = command >= kContextLargeIconEffectFirst && command < kContextLargeIconEffectFirst + presets::effects.size();
+        const bool visibilityCommand = command == kContextLargeIconHoverOnly || command == kContextLargeIconKeepWhenHidden;
+        if (largeIconMenu && (backgroundCommand || effectCommand || visibilityCommand))
+        {
+            // The menu runs a nested loop: resolve identity and entitlement again at commit time.
+            const auto index = FindItemIndexByKey(largeIconKey);
+            if (index < items_.size() && items_[index].largeIcon)
+            {
+                auto config = *items_[index].largeIcon;
+                const auto runtime = largeIconRuntime_.find(largeIconKey);
+                const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
+                if (visibilityCommand && CanEditLargeIcons())
+                {
+                    if (command == kContextLargeIconHoverOnly) config.showOnHoverOnly = !config.showOnHoverOnly;
+                    else config.keepWhenDesktopHidden = !config.keepWhenDesktopHidden;
+                }
+                const bool changed = visibilityCommand ? CanEditLargeIcons() : backgroundCommand ? presets::ApplyBackground(config,
+                    presets::backgrounds[command - kContextLargeIconBackgroundFirst].value, CanEditLargeIcons(),
+                    asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0) :
+                    presets::ApplyEffect(config, static_cast<int>(command - kContextLargeIconEffectFirst), CanEditLargeIcons());
+                if (changed)
+                {
+                    if (!SetLargeIconConfig(index, config))
+                        MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                    else if (backgroundCommand && config.backgroundStyle == kAppearancePresetCustom)
+                        OpenLargeIconSettings(index);
+                }
+            }
+        }
+    };
+    const auto changeLargeIcon = [&](UINT command, auto& currentItems) {
+        const bool background = command >= kContextLargeIconBackgroundFirst && command < kContextLargeIconBackgroundFirst + presets::backgrounds.size();
+        const bool effect = command >= kContextLargeIconEffectFirst && command < kContextLargeIconEffectFirst + presets::effects.size();
+        const bool visibility = command == kContextLargeIconHoverOnly || command == kContextLargeIconKeepWhenHidden;
+        if (!largeIconMenu || (!background && !effect && !visibility)) return false;
+        // Custom opens a separate editor after the menu has relinquished focus.
+        if (background && presets::backgrounds[command - kContextLargeIconBackgroundFirst].value == kAppearancePresetCustom) return false;
+        applyLargeIconCommand(command);
+        UpdateLargeIconHover();
+        const auto index = FindItemIndexByKey(largeIconKey);
+        if (index >= items_.size() || !items_[index].largeIcon) { snowdesktop::modern_menu::DismissActive(); return true; }
+        const auto config = *items_[index].largeIcon;
+        const bool editable = CanEditLargeIcons();
+        snowdesktop::modern_menu::VisitItems(currentItems, [&](auto& item) {
+            if (item.command == kContextLargeIconHoverOnly) { item.checked = config.showOnHoverOnly; item.enabled = editable; }
+            if (item.command == kContextLargeIconKeepWhenHidden) { item.checked = config.keepWhenDesktopHidden; item.enabled = editable; }
+            if (item.command >= kContextLargeIconBackgroundFirst && item.command < kContextLargeIconBackgroundFirst + presets::backgrounds.size())
+            {
+                item.checked = presets::Background(config) == presets::backgrounds[item.command - kContextLargeIconBackgroundFirst].value;
+                item.enabled = editable;
+            }
+            if (item.command >= kContextLargeIconEffectFirst && item.command < kContextLargeIconEffectFirst + presets::effects.size())
+            {
+                const int value = static_cast<int>(item.command - kContextLargeIconEffectFirst);
+                item.checked = presets::Effect(config) == value;
+                item.enabled = editable && (value != 2 || !snowdesktop::IsLargeIconFill(config));
+            }
+        });
+        return true;
+    };
+    UINT command = 0;
+    {
+        LargeIconMenuScope titleScope(*this,
+            largeIconMenu && items_[itemIndex].largeIcon ? largeIconKey : std::wstring{});
+        command = ShowModernMenu(
+            menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon);
+    }
     DestroyMenu(menu);
     ClearMenuIcons();
     bool inlineEditorStarted = false;
@@ -382,10 +629,58 @@ void DesktopApp::ShowItemContextMenu(
         RefreshDockFolderPopupGeometry();
     };
 
+    const auto nativeAction = std::find_if(namespaceActions.begin(), namespaceActions.end(), [command](const auto& entry) { return entry.first == command; });
+    if (namespaceContext && nativeAction != namespaceActions.end())
+    {
+        if (nativeAction->second.enabled)
+        {
+            RestoreDesktopWindowLayer();
+            CMINVOKECOMMANDINFOEX invoke{sizeof(invoke)};
+            invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE;
+            invoke.hwnd = ShellDialogOwnerHwnd(); invoke.nShow = SW_SHOWNORMAL; invoke.ptInvoke = screenPoint;
+            invoke.lpVerb = MAKEINTRESOURCEA(nativeAction->second.offset);
+            invoke.lpVerbW = MAKEINTRESOURCEW(nativeAction->second.offset);
+            const auto directory = snowdesktop::DesktopShellInvocationDirectory(); std::string ansiDirectory;
+            snowdesktop::SetShellInvocationDirectory(invoke, directory, ansiDirectory);
+            // No no-confirmation flags: Windows owns its usual confirmation/UAC UI.
+            InvokeShellMenuCommand(namespaceContext.Get(), invoke, &namespaceSite);
+            RequestShellRefresh();
+        }
+        return;
+    }
+    applyLargeIconCommand(command);
     switch (command)
     {
+    case kContextLargeIconCreate:
+        if (largeIconMenu && largeIconAccess != EntryAccess::Hidden)
+        {
+            if (!CanEditLargeIcons()) { OpenLargeIconSettings(itemIndex); break; }
+            auto config = MakeLargeIconDefaults(itemIndex);
+            const auto& item = items_[itemIndex];
+            const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
+            std::unordered_set<std::wstring> occupied;
+            for (size_t i = 0; i < items_.size(); ++i)
+                if (i != itemIndex && !IsItemInAnyWidget(items_[i])) MarkGridArea(occupied, items_[i].gridCell, items_[i].gridSpan);
+            for (const auto& widget : widgets_) if (!IsGroupedWidget(widget)) MarkGridArea(occupied, widget.gridCell, widget.gridSpan);
+            const GridSpan span{config.columns, config.rows};
+            const bool fits = page && item.gridCell.column + span.columns <= page->columns &&
+                item.gridCell.row + span.rows <= page->rows && !AreGridSlotsMarked(occupied, item.gridCell, span);
+            if (!fits) BeginLargeIconPlacement(itemIndex, config);
+            else if (!SetLargeIconConfig(itemIndex, config))
+                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        }
+        break;
+    case kContextLargeIconSettings:
+        if (largeIconMenu) OpenLargeIconSettings(FindItemIndexByKey(largeIconKey));
+        break;
+    case kContextLargeIconRestore:
+        if (largeIconMenu && !SetLargeIconConfig(itemIndex, std::nullopt))
+            MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+        break;
     case kContextOpenCommand:
     {
+        if (!canOpen)
+            break;
         for (size_t i = 0; i < items_.size(); ++i)
         {
             if (items_[i].selected)
@@ -401,7 +696,20 @@ void DesktopApp::ShowItemContextMenu(
         break;
     case kContextRunAsAdministratorCommand:
         if (canRunAsAdministrator)
-            RunPathAsAdministrator(itemPath);
+        {
+            if (keepQuickNavigationOpen)
+            {
+                CloseQuickNavigationThen(
+                    [this, itemPath]() {
+                        RunPathAsAdministratorAfterMenu(
+                            itemPath);
+                    });
+            }
+            else
+            {
+                RunPathAsAdministratorAfterMenu(itemPath);
+            }
+        }
         break;
     case kContextPropertiesCommand:
         if (canShowProperties)
@@ -530,9 +838,32 @@ void DesktopApp::ShowItemContextMenu(
     }
     case kContextDeleteCommand:
     {
-        if (dockMapping &&
+        if (removalAction ==
+                snowdesktop::shell_item_action_rules::
+                    RemovalAction::RemoveDockMapping &&
             RemoveDockMappingAt(
                 *dockMappingEntryIndex))
+        {
+            break;
+        }
+        if (removalAction ==
+            snowdesktop::shell_item_action_rules::
+                RemovalAction::HideDesktopNamespace)
+        {
+            const std::wstring clsid = ToUpperInvariant(
+                items_[static_cast<size_t>(itemIndex)].
+                    desktopIconClsid);
+            if (!clsid.empty() &&
+                snowdesktop::shell_item_visibility::CommitDesktopIconVisibility(
+                    clsid, false, settingsIconVisibility_, WriteDesktopIconRegistryValue))
+            {
+                ReloadItems();
+            }
+            break;
+        }
+        if (removalAction !=
+            snowdesktop::shell_item_action_rules::
+                RemovalAction::DeleteFiles)
         {
             break;
         }
@@ -562,7 +893,7 @@ void DesktopApp::ShowItemContextMenu(
                 std::move(steps),
                 [this](bool succeeded) {
                     if (succeeded)
-                        ReloadItems();
+                        RequestShellRefresh();
                 });
         }
         break;
@@ -599,7 +930,8 @@ void DesktopApp::ShowItemContextMenu(
         break;
     }
     RestoreDesktopWindowLayer();
-    if (snowdesktop::right_click_contract::
+    if (command != kContextMoreCommand &&
+        snowdesktop::right_click_contract::
             ShouldRestoreInteractionFocusAfterMenu(
                 keepQuickNavigationOpen,
                 inlineEditorStarted))
@@ -655,9 +987,16 @@ void DesktopApp::ShowShellContextMenu(
         SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    UINT cmd = TrackPopupMenuEx(
-        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint.x, screenPoint.y, menuOwner, nullptr);
+    UINT cmd = 0;
+    {
+        const bool desktopLargeIcon = itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size() &&
+            items_[itemIndex].largeIcon && !keepQuickNavigationOpen && !dockRenameAnchor && !dockMappingEntryIndex &&
+            !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
+        LargeIconMenuScope titleScope(*this, desktopLargeIcon ? items_[itemIndex].layoutKey : std::wstring{});
+        cmd = TrackShellPopupMenuWithDesktopPump(
+            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint, menuOwner);
+    }
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(true);
 
@@ -747,7 +1086,7 @@ void DesktopApp::ShowShellContextMenu(
                     std::move(steps),
                     [this](bool succeeded) {
                         if (succeeded)
-                            ReloadItems();
+                            RequestShellRefresh();
                     });
                 return;
             }
@@ -766,12 +1105,12 @@ void DesktopApp::ShowShellContextMenu(
             invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        SafeInvokeCommand(ctxMenu.Get(), reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
-        ReloadItems();
+        InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);
+        RequestShellRefresh();
     }
     DestroyMenu(menu);
     RestoreDesktopWindowLayer();
-    if (!keepQuickNavigationOpen)
+    if (!keepQuickNavigationOpen && cmd == 0)
         RestoreInteractionInputFocus();
 }
 

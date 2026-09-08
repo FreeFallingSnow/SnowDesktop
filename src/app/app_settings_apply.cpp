@@ -2,7 +2,6 @@
 #include "../atomic_file.h"
 #include "../auto_start_manager.h"
 #include "../deployment_context.h"
-#include "../http_runtime.h"
 #include "../layout_storage.h"
 #include "../page_navigation_rules.h"
 #include "../settings_update_rules.h"
@@ -19,8 +18,6 @@ constexpr wchar_t kAutoStartRunValue[] = L"SnowDesktop";
 constexpr wchar_t kAutoStartApprovalSubKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\"
     L"StartupApproved\\Run";
-constexpr wchar_t kSettingsUpdateRequestOwner[] =
-    L"snowdesktop.settings.update";
 
 std::wstring RegisteredExecutablePath(std::wstring_view command) noexcept
 {
@@ -349,10 +346,19 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
 
     if (result.task.status == UnifiedAutoStartTaskState::Missing)
     {
+        const auto deploymentKind = snowdesktop::deployment::
+            GetRuntimeDeploymentContext().kind;
         const UnifiedAutoStartOwner currentOwner =
-            snowdesktop::deployment::IsPackaged()
+            deploymentKind == snowdesktop::deployment::
+                    RuntimeDeploymentKind::Packaged
                 ? UnifiedAutoStartOwner::Packaged
-                : UnifiedAutoStartOwner::Portable;
+                : deploymentKind == snowdesktop::deployment::
+                        RuntimeDeploymentKind::SteamManaged
+                    ? UnifiedAutoStartOwner::Steam
+                    : deploymentKind == snowdesktop::deployment::
+                            RuntimeDeploymentKind::Portable
+                        ? UnifiedAutoStartOwner::Portable
+                        : UnifiedAutoStartOwner::Unknown;
         const snowdesktop::AutoStartMigrationDecision decision =
             snowdesktop::SelectAutoStartMigration(
                 currentOwner, portable.state, packaged);
@@ -481,7 +487,10 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     };
 
     const snowdesktop::AutoStartQueryResult before = QueryAutoStartState();
-    if (!before.stateKnown)
+    const bool explicitlyEnableMissing =
+        snowdesktop::CanExplicitlyEnableMissingAutoStart(
+            enabled, before.stateKnown, before.taskStatus);
+    if (!before.stateKnown && !explicitlyEnableMissing)
     {
         return finish(AutoStartApplyStatus::StateUnavailable,
             _LW(enabled
@@ -522,152 +531,36 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
             : "app.settings.auto_start_disable_failed"));
 }
 
-snowdesktop::SettingsActionResult DesktopApp::StartSettingsUpdateCheck()
+snowdesktop::SettingsActionResult DesktopApp::OpenStoreUpdates()
 {
     using snowdesktop::SettingsActionResult;
-    using snowdesktop::winui::SettingsUpdateState;
-
+    // Portable deployments have no managed update action.
     if (!snowdesktop::deployment::IsPackaged())
-    {
-        // The portable build has no update row in the legacy settings UI.
-        // Keep this typed action inert if a stale accessibility invocation
-        // reaches the host; portable settings must not start GitHub HTTP.
         return SettingsActionResult::Success();
-    }
 
+    const std::wstring target =
+        snowdesktop::deployment::GetStoreProductPageUri();
+    if (target.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
+            controlHwnd_, L"open", target.c_str(), nullptr, nullptr,
+            SW_SHOWNORMAL)) <= 32)
     {
-        const std::wstring target =
-            snowdesktop::deployment::GetStoreProductPageUri();
-        if (target.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(
-                controlHwnd_, L"open", target.c_str(), nullptr, nullptr,
-                SW_SHOWNORMAL)) <= 32)
-        {
-            return SettingsActionResult::Failure(
-                _LW("app.settings.update_connect_failed"));
-        }
-        settingsUpdateState_ = SettingsUpdateState::ManagedByStore;
-        PublishSettingsUpdateStatus();
-        return SettingsActionResult::Success();
+        return SettingsActionResult::Failure(
+            _LW("settings.about.link.openFailed"));
     }
+    return SettingsActionResult::Success();
 }
 
-void DesktopApp::CancelSettingsUpdateCheck() noexcept
-{
-    if (settingsUpdateRequestId_ != 0 && settingsUpdateHttpService_)
-    {
-        (void)settingsUpdateHttpService_->Cancel(
-            kSettingsUpdateRequestOwner, settingsUpdateRequestId_);
-    }
-    settingsUpdateRequestId_ = 0;
-    settingsUpdateRequestGeneration_ = 0;
-    if (settingsUpdateState_ ==
-        snowdesktop::winui::SettingsUpdateState::Checking)
-    {
-        settingsUpdateState_ =
-            snowdesktop::winui::SettingsUpdateState::Unknown;
-        settingsUpdateDetailKey_.clear();
-        PublishSettingsUpdateStatus();
-    }
-}
-
-void DesktopApp::PrepareSettingsUpdateSession(std::uint64_t generation)
-{
-    if (generation == 0 || generation == settingsUpdateSessionGeneration_)
-        return;
-    CancelSettingsUpdateCheck();
-    settingsUpdateSessionGeneration_ = generation;
-    settingsUpdateAvailableVersion_.clear();
-    settingsUpdateDownloadUrl_.clear();
-    settingsUpdateDetailKey_.clear();
-    settingsUpdateState_ =
-        snowdesktop::winui::SettingsUpdateState::Unknown;
-    PublishSettingsUpdateStatus();
-}
-
-void DesktopApp::PollSettingsUpdateCheck()
-{
-    if (!settingsUpdateHttpService_) return;
-
-    const auto snapshot = settingsController_
-        ? settingsController_->Snapshot() : nullptr;
-    if (settingsUpdateRequestId_ != 0 &&
-        (!snapshot || !snapshot->sessionActive ||
-            snapshot->generation != settingsUpdateRequestGeneration_))
-    {
-        CancelSettingsUpdateCheck();
-    }
-
-    for (HttpResponse& response : settingsUpdateHttpService_->Drain())
-    {
-        if (response.id != settingsUpdateRequestId_) continue;
-        const std::uint64_t generation = settingsUpdateRequestGeneration_;
-        settingsUpdateRequestId_ = 0;
-        settingsUpdateRequestGeneration_ = 0;
-        if (!snapshot || !snapshot->sessionActive ||
-            snapshot->generation != generation)
-        {
-            continue;
-        }
-
-        settingsUpdateDetailKey_.clear();
-        if (!response.error.empty() || response.status < 200 ||
-            response.status >= 300)
-        {
-            settingsUpdateState_ =
-                snowdesktop::winui::SettingsUpdateState::Failed;
-            settingsUpdateDetailKey_ =
-                "app.settings.update_receive_failed";
-        }
-        else if (response.body.empty())
-        {
-            settingsUpdateState_ =
-                snowdesktop::winui::SettingsUpdateState::Failed;
-            settingsUpdateDetailKey_ =
-                "app.settings.update_empty_response";
-        }
-        else
-        {
-            const auto release =
-                snowdesktop::settings_update_rules::ParseGitHubRelease(
-                    response.body, SNOWDESKTOP_VERSION);
-            if (!release.parsed)
-            {
-                settingsUpdateState_ =
-                    snowdesktop::winui::SettingsUpdateState::Failed;
-                settingsUpdateDetailKey_ =
-                    "app.settings.update_parse_failed";
-            }
-            else
-            {
-                settingsUpdateState_ = release.updateAvailable
-                    ? snowdesktop::winui::SettingsUpdateState::UpdateAvailable
-                    : snowdesktop::winui::SettingsUpdateState::UpToDate;
-                settingsUpdateAvailableVersion_ =
-                    Utf8ToWide(release.version);
-                settingsUpdateDownloadUrl_ = release.updateAvailable
-                    ? Utf8ToWide(release.downloadUrl)
-                    : std::wstring{};
-            }
-        }
-        PublishSettingsUpdateStatus();
-    }
-}
-
-void DesktopApp::PublishSettingsUpdateStatus()
+void DesktopApp::PublishHomeAboutStatus()
 {
     const auto snapshot = settingsController_
         ? settingsController_->Snapshot() : nullptr;
     if (!snapshot || !snapshot->sessionActive || !settingsWindow_) return;
     snowdesktop::winui::HomeAboutStatusPatch patch;
     patch.generation = snapshot->generation;
-    settingsUpdateStatusRevision_ = std::max(
-        settingsUpdateStatusRevision_ + 1, snapshot->revision + 1);
-    patch.revision = settingsUpdateStatusRevision_;
+    homeAboutStatusRevision_ = std::max(
+        homeAboutStatusRevision_ + 1, snapshot->revision + 1);
+    patch.revision = homeAboutStatusRevision_;
     patch.packaged = snowdesktop::deployment::IsPackaged();
-    patch.updateState = settingsUpdateState_;
-    patch.availableVersion = settingsUpdateAvailableVersion_;
-    patch.updateDetail = settingsUpdateDetailKey_.empty()
-        ? std::wstring{} : _LW(settingsUpdateDetailKey_.c_str());
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
     patch.animationDiagnosticsStatus =
@@ -843,6 +736,23 @@ public:
         using snowdesktop::HasSettingsDomain;
         using snowdesktop::SettingsDomain;
 
+        if (HasSettingsDomain(domains, SettingsDomain::General))
+        {
+            // Preview animation and surface appearance only; other General fields
+            // retain their commit side effects and old-value comparisons.
+            const auto& general = snapshot.values.general;
+            app_.generalSettings_.animationMode = general.animationMode;
+            app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
+            app_.generalSettings_.animationSpeed = general.animationSpeed;
+            app_.generalSettings_.animationFrameLimit = general.animationFrameLimit;
+            app_.generalSettings_.animationEnergySaver = general.animationEnergySaver;
+            app_.generalSettings_.animationOnBattery = general.animationOnBattery;
+            app_.generalSettings_.quickNavigationAppearance = general.quickNavigationAppearance;
+            app_.generalSettings_.collectionPopupAppearance = general.collectionPopupAppearance;
+            app_.ApplyQuickNavigationAppearance();
+            app_.ApplyCollectionPopupAppearance();
+            app_.ApplyAnimationPreferences();
+        }
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
@@ -866,7 +776,9 @@ public:
             const int committedTaskbarAlignment =
                 app_.dockSettings_.systemTaskbarAlignment;
             app_.dockSettings_ = snapshot.values.dock;
+            app_.ApplyPersistentDockHostAppearance();
             NormalizeDockSettings(app_.dockSettings_);
+            app_.ApplyAnimationPreferences();
             app_.dockSettings_.systemTaskbarAutoHide =
                 committedTaskbarAutoHide;
             app_.dockSettings_.systemTaskbarAlignment =
@@ -937,6 +849,7 @@ public:
                     app_.dockSettings_, snapshot.values.dock))
         {
             app_.dockSettings_ = snapshot.values.dock;
+            app_.ApplyPersistentDockHostAppearance();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyFloatingDockHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
@@ -986,6 +899,8 @@ public:
         if (HasSettingsDomain(domains, SettingsDomain::Dock))
         {
             app_.dockSettings_ = requestedDockSettings;
+            app_.ApplyPersistentDockHostAppearance();
+            app_.ApplyAnimationPreferences();
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -1008,6 +923,7 @@ public:
                 snapshot.values.general.language) != 0;
             app_.generalSettings_ = snapshot.values.general;
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
+            app_.ApplyAnimationPreferences();
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
             app_.ApplyDesktopPassthroughHotkey();
@@ -1196,10 +1112,7 @@ public:
             break;
         }
         case Action::CheckForUpdates:
-            return app_.StartSettingsUpdateCheck();
-        case Action::CancelUpdateCheck:
-            app_.CancelSettingsUpdateCheck();
-            break;
+            return app_.OpenStoreUpdates();
         case Action::OpenProject:
             if (reinterpret_cast<INT_PTR>(ShellExecuteW(
                     app_.controlHwnd_, L"open",
@@ -1238,7 +1151,7 @@ public:
         case Action::SetAnimationDiagnostics:
             app_.uiAnimationScheduler_.SetDiagnosticsEnabled(
                 request.boolValue);
-            app_.PublishSettingsUpdateStatus();
+            app_.PublishHomeAboutStatus();
             break;
         case Action::TriggerCrashTest:
             TriggerCrashForTesting();
@@ -1451,12 +1364,11 @@ void DesktopApp::InitializeSettingsController()
         dockSettings_ = snapshot->values.dock;
         navigationSettings_ = snapshot->values.navigation;
         generalSettings_ = snapshot->values.general;
+        ApplyAnimationPreferences();
         categorySettings_ = snapshot->values.category;
         generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
     }
-    settingsUpdateState_ =
-        snowdesktop::winui::SettingsUpdateState::Unknown;
     if (!result.Succeeded())
     {
         std::wstring message =
@@ -1473,6 +1385,16 @@ void DesktopApp::InitializeSettingsController()
 void DesktopApp::ShowSettingsWindow(snowdesktop::SettingsRoute route)
 {
     settingsWindowOpenRequest_.Request(std::move(route));
+    TryShowPendingSettingsWindow();
+}
+
+void DesktopApp::ShowSettingsExitConfirmation()
+{
+    settingsWindowOpenRequest_.Request(
+        snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::General),
+        snowdesktop::settings_window_open_rules::PostOpenAction::
+            ShowExitConfirmation);
     TryShowPendingSettingsWindow();
 }
 
@@ -1504,11 +1426,29 @@ void DesktopApp::TryShowPendingSettingsWindow()
     const bool shown = settingsWindow_ && settingsWindow_->Open(route);
     if (shown)
     {
-        settingsWindowOpenRequest_.MarkShown();
+        const auto postOpenAction =
+            settingsWindowOpenRequest_.MarkShown();
         if (controlHwnd_ && IsWindow(controlHwnd_))
             KillTimer(controlHwnd_, kSettingsWindowRetryTimerId);
         RefreshDockRunningWindows();
-        WriteDiagnosticLogEntry(L"SettingsWindow shown");
+        const HWND settingsHwnd = settingsWindow_->Window();
+        const HWND foregroundHwnd = GetForegroundWindow();
+        wchar_t message[256]{};
+        swprintf_s(message,
+            L"SettingsWindow shown (hwnd=%p, visible=%d, foreground=%p, foregroundMatch=%d)",
+            settingsHwnd,
+            settingsHwnd && IsWindowVisible(settingsHwnd) ? 1 : 0,
+            foregroundHwnd,
+            settingsHwnd && foregroundHwnd == settingsHwnd ? 1 : 0);
+        WriteDiagnosticLogEntry(message);
+        if (postOpenAction ==
+                snowdesktop::settings_window_open_rules::PostOpenAction::
+                    ShowExitConfirmation &&
+            !settingsWindow_->ShowExitConfirm())
+        {
+            WriteDiagnosticLogEntry(
+                L"SettingsWindow exit confirmation failed after show");
+        }
         return;
     }
 
@@ -1519,8 +1459,14 @@ void DesktopApp::TryShowPendingSettingsWindow()
         if (SetTimer(controlHwnd_, kSettingsWindowRetryTimerId,
                 kSettingsWindowRetryIntervalMs, nullptr) != 0)
         {
-            WriteDiagnosticLogEntry(
-                L"SettingsWindow show failed; retry scheduled");
+            std::wstring message =
+                L"SettingsWindow show failed; retry scheduled";
+            if (settingsWindow_ && !settingsWindow_->LastError().empty())
+            {
+                message += L": ";
+                message += settingsWindow_->LastError();
+            }
+            WriteDiagnosticLogEntry(message.c_str());
             return;
         }
         wchar_t message[192]{};
@@ -1530,8 +1476,14 @@ void DesktopApp::TryShowPendingSettingsWindow()
         WriteDiagnosticLogEntry(message);
     }
 
-    WriteDiagnosticLogEntry(
-        L"SettingsWindow show failed; request remains pending");
+    std::wstring message =
+        L"SettingsWindow show failed; request remains pending";
+    if (settingsWindow_ && !settingsWindow_->LastError().empty())
+    {
+        message += L": ";
+        message += settingsWindow_->LastError();
+    }
+    WriteDiagnosticLogEntry(message.c_str());
 }
 
 /**
@@ -1720,6 +1672,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    ApplyAnimationPreferences();
     generalSettings_.autoStartEnabled = autoStartEnabled;
     if (std::strcmp(generalSettings_.language, "system") != 0 &&
         !Locale::Instance().HasLanguage(generalSettings_.language))
@@ -1751,18 +1704,10 @@ void DesktopApp::LoadGeneralSettingsAndApply()
 void DesktopApp::ApplyQuickNavigationAppearance()
 {
     const PersonalizationSettings globalAppearance = CurrentPersonalization();
-    const int presetId = globalAppearance.backgroundPreset == kAppearancePresetCustom
-        ? AppearancePresetFromFourThemeSelection(
-            generalSettings_.quickNavTheme)
-        : globalAppearance.backgroundPreset;
-    const PersonalizationSettings appearance =
-        MakeQuickNavigationAppearancePreset(presetId);
-
-    const float luminance = appearance.widgetBgR * 0.2126f +
-        appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
-    quickNavLightTheme_ = (presetId == kAppearancePresetLight ||
-        presetId == kAppearancePresetAcrylicLight) ||
-        luminance >= 0.55f;
+    const PersonalizationSettings appearance = snowdesktop::ResolveSurfaceTheme(
+        generalSettings_.quickNavigationAppearance, globalAppearance,
+        generalSettings_.quickNavTheme, true);
+    quickNavLightTheme_ = appearance.contentTheme == 1;
     quickNavGlassTheme_ = appearance.glassEnabled;
     quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
     quickNavAppearance_ = appearance;
@@ -1774,17 +1719,9 @@ void DesktopApp::ApplyCollectionPopupAppearance()
 {
     const PersonalizationSettings globalAppearance = CurrentPersonalization();
 
-    const int selection =
-        globalAppearance.backgroundPreset == kAppearancePresetCustom
-        ? NormalizeFourThemeSelection(
-            generalSettings_.collectionPopupTheme)
-        : FourThemeSelectionFromAppearancePreset(
-            NormalizeAppearancePresetId(
-                globalAppearance.backgroundPreset));
-    const int presetId =
-        AppearancePresetFromFourThemeSelection(selection);
-    collectionPopupAppearance_ =
-        MakeQuickNavigationAppearancePreset(presetId);
+    collectionPopupAppearance_ = snowdesktop::ResolveSurfaceTheme(
+        generalSettings_.collectionPopupAppearance, globalAppearance,
+        generalSettings_.collectionPopupTheme, false);
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =
@@ -1804,6 +1741,7 @@ void DesktopApp::LoadDockSettingsAndApply()
     LoadDockSettings(GetDockSettingsPath().c_str(), settings);
     NormalizeDockSettings(settings);
     dockSettings_ = settings;
+    ApplyAnimationPreferences();
     SyncSystemTaskbarSettingsFromWindows();
     ApplyFloatingDockHotkey();
     systemTaskbarWindowStateChangedTick_.fetch_add(1,
@@ -1881,7 +1819,7 @@ void DesktopApp::ApplyLanguageChange()
     LoadCategorySettingsAndApply();
     const bool widgetRuntimeReloadAllowed = !settingsWindow_ ||
         settingsWindow_->PrepareLanguageChange();
-    PublishSettingsUpdateStatus();
+    PublishHomeAboutStatus();
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         SetWindowTextW(quickNavigationHwnd_, _LW("app.interact.snow_nav_title"));
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
@@ -1971,6 +1909,7 @@ void DesktopApp::ToggleDesktopIconsVisibility()
 
     if (desktopIconsHidden_)
     {
+        for (auto& item : items_) if (!IsRetainedLargeIcon(item)) item.selected = false;
         if (GetOpenPopupWidget() && !IsOpenPopupRetained())
             CloseCollectionPopup();
         if (!luaWidgetPanelRequest_.widgetId.empty())
@@ -1993,11 +1932,14 @@ void DesktopApp::ToggleDesktopIconsVisibility()
 
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdateLargeIconHover();
+    InvalidateDragStaticScene();
     UpdatePersistentDockHostVisibility();
 }
 
 bool DesktopApp::HasRetainedElements() const
 {
+    for (const auto& item : items_) if (IsRetainedLargeIcon(item)) return true;
     if (dockSettings_.keepWhenDesktopHidden)
     {
         for (const auto& container : containers_)
@@ -2033,6 +1975,22 @@ bool DesktopApp::IsRetainedContainer(
         return false;
     if (!desktopIconsHidden_)
         return true;
+    if (dynamic_cast<const DesktopGrid*>(container))
+    {
+        if (!dragSession_.IsActive()) return false;
+        const auto& sources = dragSession_.Items();
+        if (sources.empty())
+        {
+            const auto* target = HitTestIcon(dragSession_.CurrentPoint());
+            return target && target->GetDesktopItem() &&
+                IsRetainedLargeIcon(*target->GetDesktopItem());
+        }
+        return std::all_of(sources.begin(), sources.end(), [&](const Item* item) {
+            const auto* icon = dynamic_cast<const DesktopIcon*>(item);
+            return icon && icon->GetDesktopItem() &&
+                IsRetainedLargeIcon(*icon->GetDesktopItem());
+        });
+    }
     if (dynamic_cast<const DockContainer*>(container))
         return dockSettings_.keepWhenDesktopHidden ||
             IsDockContainerEffectivelyFloating(
@@ -2053,6 +2011,12 @@ bool DesktopApp::IsRetainedContainer(
 
 bool DesktopApp::IsPointOnRetainedElement(POINT pt) const
 {
+    for (const auto& item : items_)
+    {
+        if (!IsRetainedLargeIcon(item)) continue;
+        const auto frame = GetLargeIconFrameRect(item);
+        if (PtInRect(&frame, pt)) return true;
+    }
     if (IsOpenPopupRetained() &&
         IsPointInsideOpenPopup(pt))
         return true;

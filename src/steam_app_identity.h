@@ -13,6 +13,12 @@ namespace snowdesktop
 inline constexpr std::uint32_t kSnowDesktopSteamAppId =
     static_cast<std::uint32_t>(SNOWDESKTOP_STEAM_APP_ID);
 
+inline std::wstring SnowDesktopSteamStoreUrl()
+{
+    return L"https://store.steampowered.com/app/" +
+        std::to_wstring(kSnowDesktopSteamAppId) + L"/";
+}
+
 inline std::wstring SnowDesktopSteamWorkshopUrl()
 {
     return L"https://steamcommunity.com/app/" +

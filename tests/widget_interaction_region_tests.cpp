@@ -12,6 +12,7 @@ using snowdesktop::widget_runtime::InteractionAction;
 using snowdesktop::widget_runtime::InteractionControlKind;
 using snowdesktop::widget_runtime::InteractionRegion;
 using snowdesktop::widget_runtime::InteractionShapeType;
+using snowdesktop::widget_runtime::IsWidgetMenuSelectionCurrent;
 using snowdesktop::widget_runtime::ShouldShowInteractionFocusCue;
 using snowdesktop::widget_runtime::WidgetInteractionRegions;
 
@@ -149,6 +150,91 @@ void TestPointerPairingAndActions()
     Check(removed.leftKey == "left" && removed.enteredKey.empty() &&
             leave && leave->id == "left.leave",
         "removed hovered region must retain its leave action for dispatch");
+}
+
+void TestComponentMenuRegistrationIsSurfaceScoped()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto component = Rect("component-provider", 0, 0, 20, 20);
+    InteractionAction componentMenu{ "component.menu", {} };
+    componentMenu.contextMenuScope =
+        InteractionAction::ContextMenuScope::Component;
+    component.events.emplace("contextMenu", std::move(componentMenu));
+    auto article = Rect("article", 30, 0, 30, 20);
+    article.events.emplace("contextMenu",
+        InteractionAction{ "article.menu", {} });
+    auto date = Rect("date", 0, 30, 60, 20);
+    date.events.emplace("click", InteractionAction{ "date.select", {} });
+
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(component), error) &&
+            regions.Submit(std::move(article), error) &&
+            regions.Submit(std::move(date), error),
+        "component, element, and non-menu regions must stage");
+    regions.CommitFrame();
+
+    std::string targetKey;
+    const auto* elementAction = regions.ContextMenuActionAt(
+        40, 10, false, &targetKey);
+    Check(elementAction && elementAction->id == "article.menu" &&
+            targetKey == "article",
+        "a directly hit element menu must retain priority");
+    const auto* componentAction = regions.ContextMenuActionAt(
+        40, 10, true, &targetKey);
+    Check(componentAction && componentAction->id == "component.menu" &&
+            targetKey == "component-provider",
+        "the component panel must ignore a directly hit element menu");
+    const auto* blankAction = regions.ContextMenuActionAt(
+        90, 90, false, &targetKey);
+    Check(blankAction && blankAction->id == "component.menu" &&
+            targetKey == "component-provider",
+        "a component menu registration must be available on blank surface areas");
+    const auto* dateAction = regions.ContextMenuActionAt(
+        10, 40, false, &targetKey);
+    Check(dateAction && dateAction->id == "component.menu" &&
+            targetKey == "component-provider",
+        "a hit region without its own menu must fall back to the surface component menu");
+
+    WidgetInteractionRegions empty;
+    empty.BeginFrame();
+    Check(empty.Submit(Rect("plain", 0, 0, 20, 20), error),
+        "a surface without menu registrations must stage");
+    empty.CommitFrame();
+    Check(!empty.ContextMenuActionAt(10, 10, false, &targetKey) &&
+            targetKey.empty(),
+        "a surface without a component menu must not synthesize one");
+}
+
+void TestOpenMenuSurvivesRerenderWithinSameRuntime()
+{
+    WidgetInteractionRegions regions;
+    std::string error;
+    auto provider = Rect("player", 0, 0, 80, 40);
+    provider.events.emplace("contextMenu",
+        InteractionAction{ "player.menu", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(provider), error),
+        "menu provider must stage");
+    regions.CommitFrame();
+    const std::uint64_t openedGeneration = regions.Generation();
+
+    auto rerendered = Rect("player", 0, 0, 96, 40);
+    rerendered.events.emplace("contextMenu",
+        InteractionAction{ "player.menu", {} });
+    regions.BeginFrame();
+    Check(regions.Submit(std::move(rerendered), error),
+        "rerendered menu provider must stage");
+    regions.CommitFrame();
+    Check(regions.Generation() != openedGeneration &&
+            IsWidgetMenuSelectionCurrent(
+                regions, "player", 42, 42),
+        "an open menu must remain actionable across ordinary rerenders");
+    Check(!IsWidgetMenuSelectionCurrent(
+              regions, "player", 42, 43) &&
+            !IsWidgetMenuSelectionCurrent(
+              regions, "missing", 42, 42),
+        "runtime replacement or target removal must invalidate an open menu");
 }
 
 void TestOptInPointerCapture()
@@ -572,6 +658,8 @@ int main()
     TestFocusCueModality();
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
+    TestComponentMenuRegistrationIsSurfaceScoped();
+    TestOpenMenuSurvivesRerenderWithinSameRuntime();
     TestOptInPointerCapture();
     TestShapesAndValidation();
     TestClippedHitTesting();

@@ -659,10 +659,10 @@ bool TryWriteDesktopIconRegistryValue(HKEY root, const wchar_t* subKey, const st
  * @param clsid 桌面图标的 CLSID 字符串。
  * @param visible 是否可见。
  */
-void WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
+bool WriteDesktopIconRegistryValue(const std::wstring& clsid, bool visible)
 {
     DWORD value = visible ? 0 : 1;
-    TryWriteDesktopIconRegistryValue(HKEY_CURRENT_USER,
+    return TryWriteDesktopIconRegistryValue(HKEY_CURRENT_USER,
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
         clsid, value);
 }
@@ -754,13 +754,17 @@ bool TryReadDesktopIconRegistryValueAnyRoot(const std::wstring& clsid, DWORD& va
  *
  * 优先级：1) settingsIconVisibility 缓存；2) 注册表设置；
  * 3) 系统桌面图标默认可见性（此电脑、用户文件、网络、控制面板
- * 默认为隐藏，回收站默认为显示）；4) 其他图标默认为隐藏。
+ * 默认为隐藏，回收站默认为显示）；4) 其他已由 Shell 枚举的
+ * 用户范围注册的命名空间图标可由调用方指定为默认显示。
  *
  * @param desktopIconClsid 桌面图标的 CLSID。
  * @param settingsIconVisibility 来自应用设置的图标可见性映射表。
  * @return 如果图标应可见则返回 true，否则返回 false。
  */
-bool IsVisibleByDesktopIconSettings(const std::wstring& desktopIconClsid, const std::unordered_map<std::wstring, bool>& settingsIconVisibility)
+bool IsVisibleByDesktopIconSettings(
+    const std::wstring& desktopIconClsid,
+    const std::unordered_map<std::wstring, bool>& settingsIconVisibility,
+    bool registeredNamespaceVisibleByDefault)
 {
     std::wstring clsid = ToUpperInvariant(desktopIconClsid);
     if (clsid.empty())
@@ -794,7 +798,7 @@ bool IsVisibleByDesktopIconSettings(const std::wstring& desktopIconClsid, const 
         return found->second;
     }
 
-    return false;
+    return registeredNamespaceVisibleByDefault;
 }
 
 // ============================================================================

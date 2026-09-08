@@ -85,7 +85,7 @@
 ---@field borderAlpha number
 ---@field gradientEndA number
 ---@field cornerRadius number
----@field contentTheme integer
+---@field contentTheme integer Resolved foreground scheme, independent of background/material: 0 = light/white foreground, 1 = dark/black foreground.
 
 ---@class SnowSettingCondition
 ---@field key string Stable key of another declared setting field.
@@ -129,7 +129,7 @@
 ---@field id string
 ---@field label string
 ---@field default? boolean
----@field values table<string, string|number|boolean|string[]>
+---@field values table<string, string|number|boolean|string[]> May include host-owned __contentTheme=0|1 so a component appearance preset keeps host chrome aligned with its foreground.
 
 ---@class SnowWidgetSettings
 ---@field groups? SnowSettingGroup[]
@@ -139,7 +139,7 @@
 ---@class SnowInteractionAction
 ---@field id string Stable action identifier delivered through event.kind == 'action'.
 ---@field value? SnowStateValue Deep-copied JSON-like payload.
----@field scope? 'element'|'component' Context-menu scope; defaults to element. Component scope is appended to the widget menu; element menus retain a host-provided entry that opens the component panel.
+---@field scope? 'element'|'component' Context-menu scope; defaults to element. Component scope registers the menu for the current widget surface and appends it to the widget menu everywhere on that surface; element menus retain a host-provided entry that opens the component panel.
 
 ---@alias SnowViewLength number|'auto'|'fill'
 ---@alias SnowViewFlexBasis number|'auto'
@@ -224,7 +224,7 @@
 ---@field foreground? SnowViewColor RGB or host theme token.
 ---@field borderColor? SnowViewColor RGB or host theme token.
 ---@field borderWidth? number
----@field cornerRadius? number
+---@field cornerRadius? number Rounded frame radius; image nodes also clip bitmap content to this shape.
 ---@field opacity? number Between 0 and 1.
 
 ---@class SnowViewAccessibility
@@ -641,10 +641,16 @@
 
 ---@alias SnowMenuModel SnowMenuItem[]
 
+---@class SnowWidgetBackgroundLayer
+---@field render fun(context: SnowWidgetContext, model: any) Draws a decorative, non-interactive desktop layer above the host material tint and below foreground content with the immediate draw API.
+---@field opacity? number Composited opacity from 0..1; defaults to 1.
+---@field blurRadius? number Explicit host-scaled blur radius from 0..48. Omit to inherit the glass material radius, or zero when glass is disabled.
+
 ---@class SnowWidgetDefinition
 ---@field name? string
 ---@field render? fun(context: SnowWidgetContext, model: any) Exactly one of render or view is required in API v2.
 ---@field view? fun(context: SnowWidgetContext, model: any): SnowViewNode Exactly one of view or render is required; requires view.tree.core for the current node subset.
+---@field backgroundLayer? SnowWidgetBackgroundLayer Optional decorative desktop background above the host material tint and below foreground content; requires widget.backgroundLayer and can coexist with render or view.
 ---@field panel? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the host-owned auxiliary panel surface opened with widget.openPanel. Return a declarative view after probing view.surface.panel, or nil for immediate drawing.
 ---@field dialog? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the non-blocking modal surface opened with widget.openDialog. Return a declarative view after probing view.surface.dialog, or nil for immediate drawing.
 ---@field popover? fun(context: SnowWidgetContext, model: any): SnowViewNode? Renders the element-anchored surface opened with widget.openPopover. Return a declarative view after probing view.surface.popover, or nil for immediate drawing.
@@ -666,7 +672,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent Lifecycle event. Raw pointer events are emitted only for immediate render surfaces; declarative views use explicit node pointer actions and host-owned visual state.
----@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
+---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
 ---@field name? string
@@ -680,6 +686,8 @@
 ---@field reload? boolean True on the final entry when the timeline requested reload = 'atEnd'.
 ---@field visible? boolean
 ---@field selected? boolean
+---@field keys? string[] Complete sorted setting keys affected by a host settings change.
+---@field preview? boolean True for an uncommitted live settings preview; false after a direct write, preview commit, or preview cancellation.
 ---@field columns? integer
 ---@field rows? integer
 ---@field x? integer
@@ -1487,6 +1495,8 @@ function animation.cancelFrame(id) end
 ---@class SnowMediaTimelineDataValue
 ---@field timeline SnowMediaTimelineValue
 
+---A media identity change briefly publishes an unavailable snapshot before
+---fresh artwork is exposed; render a placeholder during that transition.
 ---@class SnowMediaArtworkDataValue
 ---@field sessionId string Opaque current media session identifier.
 ---@field image SnowImageResource Temporary host-decoded image resource handle.
@@ -2080,7 +2090,11 @@ function draw.image(image, x, y, width, height, alpha) end
 ---@param alignment? SnowDrawImageAlignment Applies to both axes; defaults to center.
 ---@param alpha? number
 ---@param interpolation? SnowDrawImageInterpolation Defaults to linear.
-function draw.imageFit(image, x, y, width, height, fit, alignment, alpha, interpolation) end
+---@param rotationDegrees? number Clockwise rotation from -360 through 360 degrees; defaults to 0.
+---@param originX? number Normalized horizontal rotation origin from 0 through 1; defaults to 0.5.
+---@param originY? number Normalized vertical rotation origin from 0 through 1; defaults to 0.5.
+---@param cornerRadius? number Rounded destination clip radius; requires draw.imageFit.roundedClip when supplied.
+function draw.imageFit(image, x, y, width, height, fit, alignment, alpha, interpolation, rotationDegrees, originX, originY, cornerRadius) end
 
 ---@param x number
 ---@param y number
@@ -2271,6 +2285,9 @@ function control.focus(key) end
 ---@return 'trustedGestureRequired'|'controlNotFocused'|'hostUnavailable'|nil error
 function control.blur(key) end
 
+---@class SnowUiMetrics
+---@field layoutRowHeight number Visible content height for a search field, input, ordinary button or single-line item. Exterior insets and row gaps are excluded.
+
 ---@class snow.ui
 ui = {}
 
@@ -2278,6 +2295,10 @@ ui = {}
 ---@param items SnowMenuModel
 ---@return SnowMenuModel
 function ui.menu(items) end
+
+---Return the page-CU semantic content-row height. Components derive their own fonts, spacing, icons and strokes as proportions of this single scale. The row stays at the page baseline for one or two rows, grows slowly for taller widgets, includes accessibility text scaling, and never depends on horizontal span.
+---@return SnowUiMetrics
+function ui.metrics() end
 
 ---@class snow.layout
 layout = {}
@@ -2310,6 +2331,18 @@ function layout.vmin(percent) end
 ---@return number
 function layout.vmax(percent) end
 
+---@param value number Design-space pixels measured against the canonical short edge of the manifest defaultSize. The result scales linearly with the current root content short edge.
+---@return number
+function layout.rpx(value) end
+
+---@param value number Horizontal design-space pixels measured against the canonical width of the manifest defaultSize. The result scales linearly with the current root content width.
+---@return number
+function layout.rpxX(value) end
+
+---@param value number Vertical design-space pixels measured against the canonical content height of the manifest defaultSize. The result scales linearly with the current root content height.
+---@return number
+function layout.rpxY(value) end
+
 ---@return integer
 function layout.columns() end
 
@@ -2328,11 +2361,11 @@ function layout.cellHeight() end
 ---@return number
 function layout.cellScale() end
 
----@param value number
+---@param value number Grid-density unit for content that explicitly aligns to host grid metrics, such as a system-status card matrix. It does not scale linearly with the whole widget.
 ---@return integer
 function layout.cu(value) end
 
----@param value number
+---@param value number Grid-density font unit for content that explicitly aligns to host grid metrics. It does not scale linearly with the whole widget.
 ---@return number
 function layout.fontCu(value) end
 

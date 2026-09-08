@@ -2,12 +2,29 @@
 local descriptor
 local noteTheme = module.require("modules/theme.lua")
 
+local function componentMetrics()
+    local row = ui.metrics().layoutRowHeight
+    local scale = row / 28
+    return {
+        layoutRowHeight = row,
+        spacingXs = 4 * scale,
+        spacingSm = 8 * scale,
+        spacingMd = 12 * scale,
+        spacingLg = 16 * scale,
+        captionFontSize = 10 * scale,
+        bodyFontSize = 12 * scale,
+        titleFontSize = 14 * scale,
+        controlFontSize = 12 * scale,
+        iconSize = 16 * scale,
+        controlRadius = 8 * scale,
+        strokeWidth = scale,
+    }
+end
+
 local fluent = {
     clear = utf8.char(0xE5E4),
     style = utf8.char(0xF592),
 }
-
-local presetTextColors = noteTheme.presetTextColors
 
 local settings = {
     presets = {
@@ -21,6 +38,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -32,6 +50,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -43,6 +62,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -54,6 +74,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -65,6 +86,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -76,6 +98,7 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.85,
                 gradientEndA = 0.0,
+                __contentTheme = 1,
             },
         },
         {
@@ -87,17 +110,18 @@ local settings = {
                 alpha = 1.0,
                 borderAlpha = 0.95,
                 gradientEndA = 0.0,
+                __contentTheme = 0,
             },
         },
     },
     fields = {
         {
-            key = "fontSize",
-            label = l10n.tr("lua_widget.common.font_size"),
+            key = "fontScale",
+            label = l10n.tr("lua_widget.common.font_scale"),
             type = "int",
-            default = 15,
-            min = 10,
-            max = 24,
+            default = 100,
+            min = 70,
+            max = 160,
         },
     },
 }
@@ -124,14 +148,15 @@ end
 
 local function textColor()
     local theme = widget.theme()
-    return noteTheme.resolveTextColor(storage.get("__preset"),
-        storage.get("followPersonalization") == "1",
-        theme and theme.contentTheme or nil)
+    return noteTheme.resolveTextColor(theme and theme.contentTheme or nil)
 end
 
-local function fontSize()
-    return math.max(10, math.min(24,
+local function fontScale()
+    local value = tonumber(storage.get("fontScale"))
+    if value then return math.max(70, math.min(160, value)) / 100 end
+    local legacy = math.max(10, math.min(24,
         tonumber(storage.get("fontSize")) or 15))
+    return legacy / 15
 end
 
 local function resetDefaults()
@@ -140,7 +165,7 @@ local function resetDefaults()
     storage.set("alpha", "1")
     storage.set("borderAlpha", "0.85")
     storage.set("gradientEndA", "0")
-    storage.set("fontSize", "15")
+    storage.set("fontScale", "100")
     storage.set("followPersonalization", "1")
     storage.set("__preset", "classic")
 end
@@ -151,16 +176,16 @@ end
 
 local function render()
     loadStyle()
-    local width = layout.width()
-    local height = layout.height()
-    local padding = layout.cu(14)
-    local bottomBarHeight = layout.cu(layout.barHeight())
+    local width = layout.contentWidth()
+    local height = layout.contentHeight()
+    local metrics = componentMetrics()
+    local padding = metrics.spacingMd
     local shape = {
         type = "rect",
         x = padding,
         y = padding,
-        width = math.max(1, width - padding * 2),
-        height = math.max(1, height - padding - bottomBarHeight),
+        width = math.max(metrics.strokeWidth, width - padding * 2),
+        height = math.max(metrics.strokeWidth, height - padding * 2),
     }
     local color = textColor()
     control.textArea({
@@ -169,7 +194,7 @@ local function render()
         shape = shape,
         placeholder = l10n.tr("lua_widget.sticky_note.empty_hint"),
         placeholderWhenWhitespace = true,
-        fontSize = layout.fontCu(fontSize()),
+        fontSize = metrics.bodyFontSize * fontScale(),
         textColor = color,
         placeholderColor = color,
         backgroundColor = color,
@@ -179,9 +204,9 @@ local function render()
         focusedBackgroundAlpha = 0.0,
         borderAlpha = 0.0,
         focusedBorderAlpha = 0.0,
-        radius = layout.cu(7),
-        padding = layout.cu(2),
-        borderThickness = layout.cu(1),
+        radius = metrics.controlRadius,
+        padding = metrics.spacingXs,
+        borderThickness = metrics.strokeWidth,
         selectAll = false,
         liveUpdate = true,
         maxBytes = 65536,

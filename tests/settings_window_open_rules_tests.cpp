@@ -1,5 +1,6 @@
 #include "settings_window_open_rules.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -23,12 +24,15 @@ std::string ReadFile(const std::filesystem::path& path)
     if (!file) return {};
     std::ostringstream contents;
     contents << file.rdbuf();
-    return contents.str();
+    auto result = contents.str();
+    result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
+    return result;
 }
 }
 
 int main(int argc, char** argv)
 {
+    using snowdesktop::settings_window_open_rules::PostOpenAction;
     using snowdesktop::settings_window_open_rules::RequestState;
 
     RequestState state;
@@ -56,11 +60,21 @@ int main(int argc, char** argv)
         "a new user request restores the retry budget");
     Check(state.Route() == widgetRoute,
         "a replacement request retains its typed route across retries");
-    state.MarkShown();
+    Check(state.MarkShown() == PostOpenAction::None,
+        "ordinary completion has no post-open action");
     Check(!state.Pending() && state.RetryCount() == 0,
         "successful display clears pending state and retries");
     Check(!state.RecordFailure(3),
         "completed requests cannot schedule retries");
+
+    state.Request({}, PostOpenAction::ShowExitConfirmation);
+    Check(state.RecordFailure(3),
+        "post-open actions survive an automatic open retry");
+    Check(state.MarkShown() == PostOpenAction::ShowExitConfirmation,
+        "successful display returns its deferred exit confirmation action");
+    state.Request();
+    Check(state.MarkShown() == PostOpenAction::None,
+        "a later ordinary request cannot inherit a consumed action");
 
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
@@ -141,16 +155,17 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 source.find("SettingsPage::Personalization") !=
                     std::string::npos &&
-                source.find("SettingsRoute::ForWidget(widgetId)") !=
+                source.find("SettingsRoute::ForWidget(") !=
                     std::string::npos,
             "compatibility entry points canonicalize legacy routes and use current typed destinations");
         Check(header.find("HWND Window() const noexcept") !=
                     std::string::npos &&
                 source.find("HWND SettingsWindow::Window() const noexcept") !=
                     std::string::npos &&
-                source.find("impl_->host->Window()") !=
-                    std::string::npos,
-            "the settings facade exposes its lazy application-level HWND for window classification");
+                source.find("GetWindowThreadProcessId(impl_->window, &owner)") !=
+                    std::string::npos &&
+                source.find("owner == impl_->process.ProcessId()") != std::string::npos,
+            "the settings facade only exposes an HWND owned by its current child process");
         Check(appSettings.find(
                   "bool DesktopApp::IsSettingsApplicationWindow(") !=
                     std::string::npos &&
@@ -185,29 +200,77 @@ int main(int argc, char** argv)
                 markSettingsShown < refreshDockAfterShow &&
                 refreshDockAfterShow < logSettingsShown,
             "showing settings refreshes the Dock immediately after the window becomes visible");
-        Check(source.find("bool EnsureInitialized()") !=
+        const std::size_t openFacadeBegin = source.find(
+            "bool SettingsWindow::Open(");
+        const std::size_t openFacadeEnd = source.find(
+            "bool SettingsWindow::Show()", openFacadeBegin);
+        const std::string_view openFacade =
+            openFacadeBegin != std::string::npos &&
+                    openFacadeEnd != std::string::npos
+                ? std::string_view(source).substr(
+                      openFacadeBegin, openFacadeEnd - openFacadeBegin)
+                : std::string_view{};
+        const std::string entry = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "main.cpp");
+        const std::string child = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "winui" /
+                "settings_process_entry.cpp");
+        Check(source.find("std::unique_ptr<winui::SettingsWindowHost>") == std::string::npos &&
+                source.find("SettingsWindowHost>();") == std::string::npos &&
+                source.find("process.Start(*channel)") != std::string::npos &&
+                openFacade.find("ui.open") != std::string_view::npos &&
+                child.find("SettingsWindowHost>();") != std::string::npos,
+            "only the child entry creates the XAML host; the application facade opens routes over IPC");
+        const auto settingsEntry = entry.find("return snowdesktop::settings_ipc::RunSettingsProcess(instance)");
+        Check(settingsEntry != std::string::npos &&
+                settingsEntry < entry.find("snowdesktop::single_instance::Guard singleInstance") &&
+                settingsEntry < entry.find("StartForCurrentProcess(GetCurrentExecutablePath())") &&
+                settingsEntry < entry.find("DesktopApp app;"),
+            "settings mode returns before owning the desktop, single-instance guard, or crash watchdog");
+        Check(child.find("options.sessionClosed =") != std::string::npos &&
+                child.find("PostQuitMessage(0)") != std::string::npos &&
+                source.find("SetDisconnected([this] { EndSession(); })") != std::string::npos,
+            "a settings session close exits its message loop and disconnect tears down application-side session resources");
+        Check(appSettings.find("foregroundMatch=%d") !=
                     std::string::npos &&
-                source.find("auto candidate =") != std::string::npos &&
-                source.find("host = std::move(candidate)") !=
-                    std::string::npos &&
-                source.find("return impl_->EnsureInitialized() &&") !=
+                appSettings.find("settingsWindow_->LastError()") !=
                     std::string::npos,
-            "each failed lazy initialization is retried with a newly constructed WinUI host");
+            "settings open diagnostics distinguish visibility and foreground activation and retain the host failure stage");
         Check(host.find("shell->ReleaseSessionResources();") !=
                     std::string::npos &&
+                host.find("QueueViewRelease();") != std::string::npos &&
+                host.find("owner->ReleaseSessionView();") !=
+                    std::string::npos &&
+                host.find("runtime.Detach();") != std::string::npos &&
                 host.find("releaseAfterClose") == std::string::npos &&
                 source.find("ReleaseClosedHost") == std::string::npos,
-            "a successful close releases route-specific resources without restarting the process WinUI runtime");
+            "the child releases route resources safely beyond the input callback before final process teardown");
         Check(appRun.find("ensureWidgetSettingsInstance") !=
                     std::string::npos &&
                 appRun.find("widgetEngine_->EnsureWidgetLoaded(") !=
                     std::string::npos,
             "the application supplies persisted instance loading before widget settings navigation");
+        const std::size_t exitCase = tray.find(
+            "case kTrayExitCommand:");
+        const std::size_t exitCaseEnd = tray.find("break;", exitCase);
+        const std::string exitCommand = exitCase == std::string::npos ||
+                exitCaseEnd == std::string::npos
+            ? std::string{}
+            : tray.substr(exitCase, exitCaseEnd - exitCase);
         Check(!tray.empty() &&
-                tray.find("!settingsWindow_->ShowExitConfirm()") !=
+                exitCommand.find("ShowSettingsExitConfirmation();") !=
                     std::string::npos &&
-                tray.find("RequestExit();") != std::string::npos,
-            "tray exit falls back safely when the WinUI confirmation cannot be shown");
+                exitCommand.find("RequestExit();") == std::string::npos &&
+                appSettings.find(
+                    "PostOpenAction::\n            ShowExitConfirmation") !=
+                    std::string::npos &&
+                appSettings.find(
+                    "settingsWindowOpenRequest_.MarkShown()") !=
+                    std::string::npos &&
+                appSettings.find(
+                    "!settingsWindow_->ShowExitConfirm()") !=
+                    std::string::npos,
+            "tray exit uses the recoverable settings-open request and shows confirmation only after the window opens");
         Check(host.find("controller->CloseSession()") !=
                     std::string::npos &&
                 appRun.find("settingsWindow_->PreTranslateMessage(&msg)") !=
@@ -216,7 +279,7 @@ int main(int argc, char** argv)
                     std::string::npos &&
                 appRun.find("settingsWindow_->Render()") ==
                     std::string::npos,
-            "the reusable WinUI session flushes on close and participates in the native message pump");
+            "the WinUI host retains durable close flushing and the application has no frame-render loop for settings");
 
         const std::string pageGridSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /

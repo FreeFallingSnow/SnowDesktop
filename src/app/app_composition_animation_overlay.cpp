@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../performance_trace.h"
 #include "native_menu_presentation_rules.h"
 
 namespace
@@ -255,7 +256,8 @@ bool DesktopApp::AnimateCompositionAnimationOverlay(
     {
         hr = CreateSmoothStepAnimation(
             dcompDevice_.Get(), fromOpacity, toOpacity,
-            durationMilliseconds, &opacityAnimation);
+            durationMilliseconds, &opacityAnimation,
+            normalizedScaleStartSlope);
     }
     if (SUCCEEDED(hr))
         hr = overlay.scaleTransform->SetCenterX(localAnchor.x);
@@ -288,6 +290,7 @@ bool DesktopApp::FlushPendingCompositionCommit()
 {
     if (!compositionCommitPending_)
         return true;
+    snowdesktop::performance::Scope performanceScope("composition.shared", "commit");
     if (!dcompDevice_)
     {
         compositionCommitPending_ = false;
@@ -409,6 +412,14 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     // native animations. This also disconnects a previous animation during a
     // rapid open/close reversal and hides the native search edit until rest.
     ApplyQuickNavigationAnimationFrame();
+    ApplyFloatingDockLayerPolicy();
+    if (quickNavigationAnimation_.GetEffect() ==
+        snowdesktop::quick_navigation_animation_rules::Effect::Genie)
+    {
+        // Content and native glass share the scheduler's progress and warp;
+        // a separate uniform compositor timeline would separate the layers.
+        return false;
+    }
     if (!quickNavDcompDevice_ || !quickNavDcompVisual_ ||
         !quickNavDcompEffect_ || !quickNavDcompScaleTransform_)
     {
@@ -419,8 +430,7 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     const bool opening = quickNavigationAnimation_.IsOpening();
     const float targetScale = opening
         ? 1.0f
-        : snowdesktop::quick_navigation_animation_rules::
-            kMinimumScale;
+        : quickNavigationAnimation_.HiddenScale();
     const float targetOpacity = opening ? 1.0f : 0.0f;
     const float normalizedStartSlope =
         snowdesktop::quick_navigation_animation_rules::
@@ -430,31 +440,7 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
         1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(opening
-                ? snowdesktop::quick_navigation_animation_rules::
-                    kOpenDurationMs
-                : snowdesktop::quick_navigation_animation_rules::
-                    kCloseDurationMs))));
-
-    bool backdropAnimationStarted = false;
-    if (quickNavGlassTheme_ &&
-        quickNavBackdropCompositor_.IsAvailable())
-    {
-        backdropAnimationStarted =
-            quickNavBackdropCompositor_.
-                StartVisualTransformAnimation(
-                    visual.scale, targetScale,
-                    visual.opacity, targetOpacity,
-                    static_cast<float>(
-                        quickNavigationAnimationAnchorPoint_.x -
-                        quickNavigationHostRect_.left),
-                    static_cast<float>(
-                        quickNavigationAnimationAnchorPoint_.y -
-                        quickNavigationHostRect_.top),
-                    duration, normalizedStartSlope);
-        if (!backdropAnimationStarted)
-            return false;
-    }
+            remaining * static_cast<float>(quickNavigationAnimation_.DurationMilliseconds(opening)))));
 
     Microsoft::WRL::ComPtr<IDCompositionAnimation> scaleAnimation;
     Microsoft::WRL::ComPtr<IDCompositionAnimation> opacityAnimation;
@@ -480,6 +466,26 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     if (SUCCEEDED(hr))
         hr = quickNavDcompEffect_->SetOpacity(opacityAnimation.Get());
     if (FAILED(hr) || !CommitQuickNavigationCompositionFrame())
+    {
+        ApplyQuickNavigationAnimationFrame();
+        return false;
+    }
+
+    // Prepare content before starting the glass timeline, then submit both
+    // channels together at this call site. Deferring the DComp half until the
+    // message returns lets unrelated UI work separate the two start times.
+    if (quickNavGlassTheme_ && quickNavBackdropCompositor_.IsAvailable() &&
+        !quickNavBackdropCompositor_.StartVisualTransformAnimation(
+            visual.scale, targetScale, visual.opacity, targetOpacity,
+            static_cast<float>(quickNavigationAnimationAnchorPoint_.x -
+                quickNavigationHostRect_.left),
+            static_cast<float>(quickNavigationAnimationAnchorPoint_.y -
+                quickNavigationHostRect_.top), duration, normalizedStartSlope))
+    {
+        ApplyQuickNavigationAnimationFrame();
+        return false;
+    }
+    if (!FlushPendingQuickNavigationCompositionCommit())
     {
         ApplyQuickNavigationAnimationFrame();
         return false;
@@ -513,6 +519,7 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
                     return;
                 }
                 ApplyQuickNavigationAnimationFrame();
+                ApplyFloatingDockLayerPolicy();
             });
     if (!quickNavigationAnimationCompletionToken_)
     {
@@ -609,9 +616,11 @@ void DesktopApp::ResetCompositionAnimationOverlay(
 bool DesktopApp::UpdateCollectionPopupCompositionAnimation(
     bool commit)
 {
-    ApplyCollectionPopupBackdropAnimationFrame();
     if (!popupAnimationOverlay_.active)
+    {
+        ApplyCollectionPopupBackdropAnimationFrame();
         return false;
+    }
     const auto visual = popupAnimation_.GetVisual();
     POINT anchor{
         (popupRect_.left + popupRect_.right) / 2,
@@ -624,10 +633,12 @@ bool DesktopApp::UpdateCollectionPopupCompositionAnimation(
         anchor.y = std::clamp(
             popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
     }
-    return UpdateCompositionAnimationOverlay(
+    const bool updated = UpdateCompositionAnimationOverlay(
         popupAnimationOverlay_, visual.scale,
-        anchor, visual.visible ? 1.0f : 0.0f,
+        anchor, visual.visible ? visual.opacity : 0.0f,
         commit);
+    ApplyCollectionPopupBackdropAnimationFrame();
+    return updated;
 }
 
 bool DesktopApp::UpdateLuaWidgetPanelCompositionAnimation(
@@ -648,7 +659,7 @@ bool DesktopApp::UpdateLuaWidgetPanelCompositionAnimation(
         };
     return UpdateCompositionAnimationOverlay(
         luaWidgetPanelAnimationOverlay_, visual.scale,
-        anchor, visual.visible ? 1.0f : 0.0f,
+        anchor, visual.visible ? visual.opacity : 0.0f,
         commit);
 }
 
@@ -665,6 +676,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         uiAnimationScheduler_.Cancel(
             popupAnimationFrameToken_);
     popupAnimationFrameToken_ = 0;
+    popupAnimationCompositorDriven_ = false;
 
     const auto visual = popupAnimation_.GetVisual();
     const bool opening = popupAnimation_.IsInteractive();
@@ -676,9 +688,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
         1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(opening
-                ? snowdesktop::popup_animation_rules::kOpenDurationMs
-                : snowdesktop::popup_animation_rules::kCloseDurationMs))));
+            remaining * static_cast<float>(popupAnimation_.DurationMilliseconds(opening)))));
     POINT anchor{
         (popupRect_.left + popupRect_.right) / 2,
         (popupRect_.top + popupRect_.bottom) / 2,
@@ -690,37 +700,32 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         anchor.y = std::clamp(
             popupAnchorPoint_.y, popupRect_.top, popupRect_.bottom);
     }
-    bool backdropAnimationStarted = false;
-    if (collectionPopupGlassTheme_ &&
-        collectionPopupBackdropCompositor_.IsAvailable())
-    {
-        backdropAnimationStarted =
-            collectionPopupBackdropCompositor_.
-                StartVisualScaleAnimation(
-                    visual.scale,
-                    opening ? 1.0f :
-                        snowdesktop::popup_animation_rules::
-                            kMinimumScale,
-                    1.0f,
-                    static_cast<float>(
-                        anchor.x - floatingPopupWindowBounds_.left),
-                    static_cast<float>(
-                        anchor.y - floatingPopupWindowBounds_.top),
-                    duration,
-                    normalizedScaleStartSlope);
-        if (!backdropAnimationStarted)
-            return false;
-    }
     if (!AnimateCompositionAnimationOverlay(
             popupAnimationOverlay_,
             visual.scale,
-            opening ? 1.0f :
-                snowdesktop::popup_animation_rules::kMinimumScale,
-            anchor, 1.0f, 1.0f, duration,
+            opening ? 1.0f : popupAnimation_.HiddenScale(),
+            anchor, visual.opacity, popupAnimation_.EndpointOpacity(opening), duration,
             normalizedScaleStartSlope))
     {
-        if (backdropAnimationStarted)
-            ApplyCollectionPopupBackdropAnimationFrame();
+        UpdateCollectionPopupCompositionAnimation();
+        return false;
+    }
+    if (collectionPopupGlassTheme_ && collectionPopupBackdropCompositor_.IsAvailable() &&
+        !collectionPopupBackdropCompositor_.StartVisualTransformAnimation(
+            visual.scale, opening ? 1.0f : popupAnimation_.HiddenScale(),
+            visual.opacity, popupAnimation_.EndpointOpacity(opening),
+            static_cast<float>(anchor.x - floatingPopupWindowBounds_.left),
+            static_cast<float>(anchor.y - floatingPopupWindowBounds_.top),
+            duration, normalizedScaleStartSlope))
+    {
+        // If either animation cannot start, detach both native timelines.
+        // The scheduler must own both layers during the fallback.
+        UpdateCollectionPopupCompositionAnimation();
+        return false;
+    }
+    if (!FlushPendingCompositionCommit())
+    {
+        UpdateCollectionPopupCompositionAnimation();
         return false;
     }
 
@@ -764,7 +769,7 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     if (!popupAnimationCompletionToken_)
     {
         popupAnimationCompositorDriven_ = false;
-        ApplyCollectionPopupBackdropAnimationFrame();
+        UpdateCollectionPopupCompositionAnimation();
         return false;
     }
     return true;
@@ -785,6 +790,7 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
         uiAnimationScheduler_.Cancel(
             luaPanelAnimationFrameToken_);
     luaPanelAnimationFrameToken_ = 0;
+    luaWidgetPanelAnimationCompositorDriven_ = false;
 
     const auto visual = luaWidgetPanelAnimation_.GetVisual();
     const bool opening =
@@ -797,9 +803,7 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
         ? 1.0f - visual.progress : visual.progress;
     const UINT duration = std::max<UINT>(
         1, static_cast<UINT>(std::lround(
-            remaining * static_cast<float>(opening
-                ? snowdesktop::popup_animation_rules::kOpenDurationMs
-                : snowdesktop::popup_animation_rules::kCloseDurationMs))));
+            remaining * static_cast<float>(luaWidgetPanelAnimation_.DurationMilliseconds(opening)))));
     const RECT panel = GetLuaWidgetPanelRect();
     const POINT anchor = luaWidgetPanelRequest_.surface == "dialog"
         ? POINT{ (panel.left + panel.right) / 2,
@@ -813,11 +817,18 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
     if (!AnimateCompositionAnimationOverlay(
             luaWidgetPanelAnimationOverlay_,
             visual.scale,
-            opening ? 1.0f :
-                snowdesktop::popup_animation_rules::kMinimumScale,
-            anchor, 1.0f, 1.0f, duration,
+            opening ? 1.0f : luaWidgetPanelAnimation_.HiddenScale(),
+            anchor, visual.opacity, luaWidgetPanelAnimation_.EndpointOpacity(opening), duration,
             normalizedScaleStartSlope))
+    {
+        UpdateLuaWidgetPanelCompositionAnimation();
         return false;
+    }
+    if (!FlushPendingCompositionCommit())
+    {
+        UpdateLuaWidgetPanelCompositionAnimation();
+        return false;
+    }
 
     luaWidgetPanelAnimationCompositorDriven_ = true;
     luaWidgetPanelAnimationCompletionToken_ =
@@ -855,6 +866,7 @@ bool DesktopApp::StartLuaWidgetPanelCompositionAnimation()
     if (!luaWidgetPanelAnimationCompletionToken_)
     {
         luaWidgetPanelAnimationCompositorDriven_ = false;
+        UpdateLuaWidgetPanelCompositionAnimation();
         return false;
     }
     return true;

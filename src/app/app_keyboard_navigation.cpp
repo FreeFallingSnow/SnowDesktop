@@ -98,6 +98,7 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
     {
         const auto& item = items_[i];
         if (item.name.empty()) continue;
+        if (desktopIconsHidden_ && !IsRetainedLargeIcon(item)) continue;
         if (IsRectEmptyRect(item.bounds)) continue;
         if (collectedKeysCache_.contains(ToUpperInvariant(item.layoutKey))) continue;
         if (hasVisiblePages && !visiblePageIds.contains(item.gridCell.pageId)) continue;
@@ -112,6 +113,7 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
     {
         const auto& w = widgets_[i];
         if (IsGroupedWidget(w)) continue;
+        if (desktopIconsHidden_ && !w.keepWhenDesktopHidden) continue;
         if (hasVisiblePages && !visiblePageIds.contains(w.gridCell.pageId)) continue;
         targets.push_back({ true, i,
             w.gridCell.column, w.gridCell.row,
@@ -1347,8 +1349,22 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     {
         int cols = std::max(1, widget.gridSpan.columns);
         int rows = std::max(1, widget.gridSpan.rows);
-        size_t inlineCap = (cols <= 1 && rows <= 1) ? 4
-                           : static_cast<size_t>(cols * rows - 1);
+        Collection* collection = nullptr;
+        for (const auto& container : containers_)
+        {
+            auto* candidate =
+                dynamic_cast<Collection*>(container.get());
+            if (!candidate ||
+                candidate->GetWidgetData() != &widget)
+                continue;
+            collection = candidate;
+            break;
+        }
+        const size_t inlineCap = collection
+            ? collection->GetSlotCount()
+            : ((cols <= 1 && rows <= 1)
+                ? 4
+                : static_cast<size_t>(cols * rows - 1));
         if (static_cast<size_t>(nextIdx) >= inlineCap)
         {
             if (popupWidgetIndex_ != keyboardNavWidgetIndex_)
@@ -1357,13 +1373,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                     widget.bounds.right - 1,
                     widget.bounds.bottom - 1,
                 };
-                for (const auto& container : containers_)
+                if (collection)
                 {
-                    auto* collection =
-                        dynamic_cast<Collection*>(container.get());
-                    if (!collection ||
-                        collection->GetWidgetData() != &widget)
-                        continue;
                     const RECT allButton =
                         collection->GetAllButtonRect();
                     if (!IsRectEmptyRect(allButton))
@@ -1375,7 +1386,6 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                                 (allButton.bottom - allButton.top) / 2,
                         };
                     }
-                    break;
                 }
                 OpenCollectionPopupAt(keyboardNavWidgetIndex_,
                     popupAnchor);

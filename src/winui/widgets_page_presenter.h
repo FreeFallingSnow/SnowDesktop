@@ -230,6 +230,8 @@ struct WidgetAgentSkillTargetSnapshot
     std::wstring targetPath;
     WidgetAgentSkillInstallState state =
         WidgetAgentSkillInstallState::Unavailable;
+    unsigned int installedRevision = 0;
+    unsigned int bundledRevision = 0;
     bool selected = false;
     bool installed = false;
 

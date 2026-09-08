@@ -5,13 +5,23 @@
 void DesktopApp::ShowPageNotify(const std::wstring& text)
 {
     if (text.empty()) return;
+    if (pageNotifyAnimationFrameToken_)
+        uiAnimationScheduler_.Cancel(pageNotifyAnimationFrameToken_);
+    pageNotifyAnimationFrameToken_ = 0;
     pageNotifyText_ = text;
     PreparePageNotifyTextCache();
     pageNotifyStartTick_ = GetTickCount();
     pageNotifyActive_ = true;
     pageNotifyUseAnimation_ =
-        snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled();
+        snowdesktop::animation::RuntimeAnimationsEnabled();
+    pageNotifyFadeMs_ = static_cast<DWORD>(std::max(1.0,
+        std::round(kPageNotifyFadeMs *
+            snowdesktop::animation::RuntimeDurationScale())));
+    // Keep the reading pause unchanged while both fades follow animation speed.
+    const DWORD visibleMs = pageNotifyUseAnimation_
+        ? kPageNotifyVisibleMs - 2 * kPageNotifyFadeMs +
+            2 * pageNotifyFadeMs_
+        : kPageNotifyVisibleMs;
     if (pageNotifyUseAnimation_)
     {
         PreparePageNotifyAnimationCache();
@@ -25,7 +35,7 @@ void DesktopApp::ShowPageNotify(const std::wstring& text)
                 pageNotifyAnimationOverlay_,
                 1.0f, 1.0f, anchor,
                 0.0f, 1.0f,
-                kPageNotifyFadeMs);
+                pageNotifyFadeMs_);
         if (!pageNotifyCompositorDriven_)
             UpdatePageNotifyCompositionAnimation(0.0f);
     }
@@ -36,17 +46,21 @@ void DesktopApp::ShowPageNotify(const std::wstring& text)
     if (pageNotifyFadeOutToken_)
         uiAnimationScheduler_.Cancel(pageNotifyFadeOutToken_);
     const UINT wakeDelay = pageNotifyUseAnimation_
-        ? kPageNotifyVisibleMs - kPageNotifyFadeMs
-        : kPageNotifyVisibleMs;
+        ? visibleMs - pageNotifyFadeMs_
+        : visibleMs;
     pageNotifyFadeOutToken_ =
         uiAnimationScheduler_.ScheduleOnce(
             wakeDelay,
-            [this](snowdesktop::UiScheduleToken token) {
-                if (pageNotifyFadeOutToken_ == token)
-                    pageNotifyFadeOutToken_ = 0;
+            [this, visibleMs](snowdesktop::UiScheduleToken token) {
+                if (pageNotifyFadeOutToken_ != token)
+                    return;
+                pageNotifyFadeOutToken_ = 0;
                 if (!pageNotifyActive_)
                     return;
-                if (pageNotifyUseAnimation_)
+                const DWORD elapsed = GetTickCount() - pageNotifyStartTick_;
+                if (pageNotifyUseAnimation_ &&
+                    snowdesktop::animation::RuntimeAnimationsEnabled() &&
+                    elapsed < visibleMs)
                 {
                     if (pageNotifyCompositorDriven_)
                     {
@@ -60,11 +74,11 @@ void DesktopApp::ShowPageNotify(const std::wstring& text)
                                 pageNotifyAnimationOverlay_,
                                 1.0f, 1.0f, anchor,
                                 1.0f, 0.0f,
-                                kPageNotifyFadeMs))
+                                std::min(pageNotifyFadeMs_, visibleMs - elapsed)))
                         {
                             pageNotifyFadeOutToken_ =
                                 uiAnimationScheduler_.ScheduleOnce(
-                                    kPageNotifyFadeMs + 2,
+                                    visibleMs - elapsed + 2,
                                     [this](
                                         snowdesktop::UiScheduleToken
                                             completionToken) {
@@ -156,11 +170,14 @@ void DesktopApp::ResetPageNotifyTextCache()
 
 void DesktopApp::ResetPageNotifyAnimationCache()
 {
+    const bool hadOverlay = pageNotifyAnimationOverlay_.active;
     pageNotifyCompositorDriven_ = false;
     ResetCompositionAnimationOverlay(
         pageNotifyAnimationOverlay_);
     pageNotifyAnimationRenderCache_.Reset();
     pageNotifyAnimationCacheRect_ = {};
+    if (hadOverlay)
+        CommitCompositionAnimationFrame();
 }
 
 void DesktopApp::PreparePageNotifyAnimationCache()
@@ -266,7 +283,7 @@ void DesktopApp::PreparePageNotifyTextCache()
 /**
  * @brief 绘制换页通知覆盖层（左上角角标，类似电视台换台）。
  *
- * 显示 kPageNotifyVisibleMs 毫秒，最后 kPageNotifyFadeMs 毫秒淡出。
+ * 保留固定阅读停留时间，淡入淡出时长遵循动画速度设置。
  * 位置：末屏左上角（若有末屏），否则主屏左上角。
  * @param ctx D2D 设备上下文。
  */
@@ -281,7 +298,11 @@ void DesktopApp::DrawPageNotify(
 
     const DWORD now = GetTickCount();
     const DWORD elapsed = now - pageNotifyStartTick_;
-    if (applyAnimation && elapsed >= kPageNotifyVisibleMs)
+    const DWORD visibleMs = pageNotifyUseAnimation_
+        ? kPageNotifyVisibleMs - 2 * kPageNotifyFadeMs +
+            2 * pageNotifyFadeMs_
+        : kPageNotifyVisibleMs;
+    if (applyAnimation && elapsed >= visibleMs)
     {
         pageNotifyActive_ = false;
         pageNotifyText_.clear();
@@ -289,15 +310,15 @@ void DesktopApp::DrawPageNotify(
         return;
     }
 
-    // 计算透明度：前 kPageNotifyFadeMs 淡入，最后 kPageNotifyFadeMs 淡出。
-    // 系统关闭动画时直接呈现稳定终态，由单次截止时间负责清理。
+    // 动画关闭时直接呈现稳定终态，由单次截止时间负责清理。
     float alpha = 1.0f;
-    const DWORD fadeMs = kPageNotifyFadeMs;
-    if (applyAnimation && pageNotifyUseAnimation_ && elapsed < fadeMs)
+    const DWORD fadeMs = pageNotifyFadeMs_;
+    const bool animate = applyAnimation && pageNotifyUseAnimation_ &&
+        snowdesktop::animation::RuntimeAnimationsEnabled();
+    if (animate && elapsed < fadeMs)
         alpha = static_cast<float>(elapsed) / static_cast<float>(fadeMs);
-    else if (applyAnimation && pageNotifyUseAnimation_ &&
-        elapsed > kPageNotifyVisibleMs - fadeMs)
-        alpha = static_cast<float>(kPageNotifyVisibleMs - elapsed) / static_cast<float>(fadeMs);
+    else if (animate && elapsed > visibleMs - fadeMs)
+        alpha = static_cast<float>(visibleMs - elapsed) / static_cast<float>(fadeMs);
     alpha = std::clamp(alpha, 0.0f, 1.0f);
 
     // 定位：渲染顺序的末屏显示器（不依赖 lastMonitorPageId_，单屏时也能定位）

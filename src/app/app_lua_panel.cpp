@@ -58,8 +58,7 @@ void DesktopApp::OpenLuaWidgetPanel(
         {
             AdvanceFloatingPopupContentGeneration();
             luaWidgetPanelRequest_ = request;
-            if (snowdesktop::dock_launch_animation::
-                    SystemAnimationsEnabled())
+            if ((snowdesktop::animation::RuntimePopupEffect() != 0))
             {
                 UpdateFloatingPopupWindowBounds(false);
                 PrepareLuaWidgetPanelAnimationCache();
@@ -120,8 +119,7 @@ void DesktopApp::OpenLuaWidgetPanel(
     luaWidgetPanelMouseDown_ = false;
     luaWidgetPanelAnimation_.ResetHidden();
     const bool animate =
-        snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled();
+        (snowdesktop::animation::RuntimePopupEffect() != 0);
     if (animate)
     {
         luaWidgetPanelAnimation_.Open(
@@ -265,8 +263,7 @@ void DesktopApp::CloseLuaWidgetPanel(
     luaWidgetPanelMouseDown_ = false;
     ReleaseLuaWidgetPanelCaptureIfOwned();
     UpdateHostInputImePosition();
-    if (!snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+    if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
     {
         FinalizeCloseLuaWidgetPanel();
         return;

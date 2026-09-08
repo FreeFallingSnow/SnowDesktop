@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -12,6 +13,9 @@ void DesktopApp::StartDockForegroundMonitor()
     dockForegroundWindow_.store(foreground);
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(GetTickCount());
+    dockSystemMinimizeStartedTick_.store(0);
+    systemShowDesktopDockLayerGuardActive_ = false;
+    systemShowDesktopLastProtectedForegroundTick_ = 0;
     dockForegroundEventHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
         EVENT_SYSTEM_FOREGROUND, nullptr, &DesktopApp::DockForegroundWinEventProc,
         0, 0, WINEVENT_OUTOFCONTEXT);
@@ -48,6 +52,7 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
 
 void DesktopApp::StopDockForegroundMonitor()
 {
+    snowdesktop::dock_taskbar_diagnostics::Stop();
     dockForegroundNotificationWindow_.store(nullptr);
     if (dockForegroundEventHook_)
     {
@@ -60,6 +65,9 @@ void DesktopApp::StopDockForegroundMonitor()
     dockForegroundWindow_.store(nullptr);
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(0);
+    dockSystemMinimizeStartedTick_.store(0);
+    systemShowDesktopDockLayerGuardActive_ = false;
+    systemShowDesktopLastProtectedForegroundTick_ = 0;
     systemTaskbarWindowStateChangedTick_.store(0);
     dockWindowListChangedTick_.store(0);
     systemTaskbarWindowStateObservedTick_ = 0;
@@ -78,6 +86,93 @@ void DesktopApp::StopDockForegroundMonitor()
     taskbarAppVisibility_.Reset();
     taskbarAppVisibilityAttempted_ = false;
     taskbarSearchVisibility_.reset();
+}
+
+bool DesktopApp::IsShellDesktopForegroundWindow(HWND window) const
+{
+    if (!window || !IsWindow(window))
+        return false;
+    if (window == desktopWindows_.progman ||
+        window == desktopWindows_.host)
+        return true;
+
+    wchar_t className[96]{};
+    GetClassNameW(window, className,
+        static_cast<int>(std::size(className)));
+    return _wcsicmp(className, L"Progman") == 0 ||
+        _wcsicmp(className, L"WorkerW") == 0;
+}
+
+void DesktopApp::HandleDockForegroundInteractionChanged()
+{
+    ReconcileDesktopHoverState();
+    UpdateSystemShowDesktopDockLayerGuard();
+}
+
+void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
+{
+    using GuardAction = snowdesktop::floating_dock_rules::
+        SystemShowDesktopLayerGuardAction;
+    using Foreground = snowdesktop::floating_dock_rules::
+        SystemShowDesktopForeground;
+    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG evidenceTick = dockSystemMinimizeStartedTick_.load();
+    // Also called by the periodic guard timer: sample Windows directly so a
+    // missed/delayed WinEvent cannot keep a stale desktop foreground alive.
+    const HWND foreground = GetForegroundWindow();
+    Foreground foregroundKind = Foreground::Unavailable;
+    if (foreground && IsWindow(foreground) &&
+        IsWindowVisible(foreground) && !IsIconic(foreground))
+    {
+        if (IsShellDesktopForegroundWindow(foreground))
+            foregroundKind = Foreground::ShellDesktop;
+        else if (IsDesktopInteractionSurfaceWindow(foreground) ||
+            foreground == floatingDockInputHwnd_ ||
+            foreground == snowdesktop::modern_menu::ActiveRootWindow() ||
+            (shellPopupMenuLayerDepth_ > 0 &&
+                foreground == shellPopupTrackerOwnerHwnd_.load()))
+            foregroundKind = Foreground::DesktopSurface;
+        else
+            foregroundKind = Foreground::Application;
+    }
+    if (foregroundKind == Foreground::ShellDesktop ||
+        foregroundKind == Foreground::DesktopSurface)
+        systemShowDesktopLastProtectedForegroundTick_ = now;
+    const GuardAction action =
+        snowdesktop::floating_dock_rules::
+            ResolveSystemShowDesktopLayerGuardAction(
+                systemShowDesktopDockLayerGuardActive_,
+                generalSettings_.dockEnabled && floatingDockHostActive_,
+                foregroundKind,
+                evidenceTick,
+                now,
+                systemShowDesktopLastProtectedForegroundTick_);
+    if (action == GuardAction::None)
+        return;
+
+    systemShowDesktopDockLayerGuardActive_ =
+        action == GuardAction::Start;
+    if (action == GuardAction::Stop)
+    {
+        systemShowDesktopLastProtectedForegroundTick_ = 0;
+        // Returning to the desktop after an application switch must require
+        // new minimize evidence, not reuse the start that owned this guard.
+        ULONGLONG consumedEvidence = evidenceTick;
+        dockSystemMinimizeStartedTick_.compare_exchange_strong(
+            consumedEvidence, 0);
+    }
+    wchar_t guardTrace[256]{};
+    swprintf_s(guardTrace,
+        L"System Show Desktop Dock layer guard %ls foreground=%p "
+        L"foregroundKind=%d evidenceTick=%llu now=%llu",
+        systemShowDesktopDockLayerGuardActive_ ? L"started" : L"completed",
+        static_cast<void*>(foreground),
+        static_cast<int>(foregroundKind),
+        evidenceTick, now);
+    snowdesktop::dock_taskbar_diagnostics::Record(
+        guardTrace, foreground);
+    ApplyFloatingDockLayerPolicy();
+    WriteDiagnosticLogEntry(guardTrace);
 }
 
 bool DesktopApp::IsSystemTaskbarHookRequired(
@@ -484,7 +579,10 @@ void DesktopApp::UpdateSystemTaskbarRevealGuard()
 
     const int guardedEdgeTop = screen.bottom - kRevealGuardPixels;
     if (cursor.y >= guardedEdgeTop)
+    {
+        snowdesktop::dock_taskbar_diagnostics::Record(L"cursor-edge-guard");
         SetCursorPos(cursor.x, guardedEdgeTop - 1);
+    }
 }
 
 void DesktopApp::ToggleWindowsStartMenu()

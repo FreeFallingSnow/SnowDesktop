@@ -39,6 +39,10 @@ Shell、系统数据、存储或其他副作用 API。命令输出文件数、�
 `dark/light/glass-dark/glass-light/acrylic-dark/acrylic-light`；旧参数 `--theme dark/light`
 继续作为普通深/浅外观的简写，但不能和 `--appearance` 同时使用。生成最终打包预览时应通过
 `--background <图片文件>` 显式选择背景；该图片只参与合成，不会被 `pack` 自动加入组件包。
+需要正方形创意工坊图片时，可继续用组件真实的 `--columns/--rows` 渲染透明组件层，并加上
+`--canvas-size 512 --padding 48`。宿主会保持组件原始宽高比，将透明层等比放入带内边距的
+正方形画布，再把它合成到按 center-cover 裁切的背景上；不会拉伸背景，也不会为了方图改变
+组件布局跨度。`--padding` 只在指定 `--canvas-size` 时有效，且必须为画布留下正尺寸内容区。
 未指定时使用中性的兼容背景。输出 PNG 始终包含背景、解析后的普通/毛玻璃/亚克力材质层和组件
 内容，像素完全不透明；组件自定义材质
 优先，`followPersonalization` 则回到所选宿主外观。应先用 `preview` 生成清单声明的最终预览图，
@@ -63,7 +67,13 @@ topic/task 目录生成机器可读报告。每个必选/可选声明包含风�
 类别。属性策略为 `closed-world`，每个节点的 `properties` 与 `prohibitedProperties` 明确划分
 全部公共属性；未知字段和节点禁止字段都不会被静默忽略。`limits` 直接导出宿主当前使用的
 全树、文本、资源、集合与虚拟化额度；`transitions`
-登记更新/入退场动画允许字段、时长、easing 及 preview/reducedMotion 的静态终点策略；
+登记更新/入退场动画允许字段、基础时长、easing 及预览/宿主有效动画偏好关闭时的静态终点行为；
+其中宿主的有效动画偏好与 Lua 返回的系统 `reducedMotion` 不同，见下文“宿主动画偏好”。
+`transitions.runtime.reducedMotionSource="host-effective-animation-preference"` 与
+`durationScaleSource="host-animation-speed"` 说明这两项宿主呈现策略的来源；既有
+`reducedMotion="final-state"` 表示宿主有效策略关闭动画时直接采用终点。这两个字段只作
+补充说明，旧宿主可能不返回；它们不改变 Lua 系统状态，也不新增组件 feature、`apiVersion`
+或 `minHostVersion` 要求。
 每个属性的 `transitionEffects` 进一步标出该字段变化可驱动 visual、transform 或 layout
 过渡。`directionality` 固定 auto/ltr/rtl 的解析、start/end 对齐以及声明顺序不随视觉方向反转；
 `validation` 则说明未知/禁止/错误值会原子拒绝整棵候选树并保留上一棵成功树。
@@ -84,7 +94,8 @@ topic/task 目录生成机器可读报告。每个必选/可选声明包含风�
 ## 入口契约
 
 `main.lua` 必须返回 `widget.define({...})` 的结果，并且必须且只能提供
-`render` 或 `view`。宿主会把当前上下文和实例 model 传给所选回调：
+`render` 或 `view`。可选的 `backgroundLayer.render` 与前景回调并存，宿主会把当前上下文和
+实例 model 传给这些回调：
 
 ```lua
 local function setup(context)
@@ -95,6 +106,11 @@ end
 local function render(context, model)
     draw.text(layout.cu(12), layout.cu(12),
         "Hello from " .. model.createdOn)
+end
+
+local function renderBackground(context, model)
+    draw.gradientRect(0, 0, layout.width(), layout.height(),
+        0x172554, 0x581C87, "diagonalDown")
 end
 
 local function dispose(context, model, reason)
@@ -110,6 +126,11 @@ end
 return widget.define({
     name = l10n.tr("lua_widget.example.name"),
     setup = setup,
+    backgroundLayer = {
+        render = renderBackground,
+        opacity = 0.85,
+        -- Omit blurRadius to inherit glass, or zero without glass.
+    },
     render = render,
     event = event,
     dispose = dispose,
@@ -124,7 +145,7 @@ reason)`。没有 `setup` 时 model 为
 VM。
 
 event 覆盖宿主 surface 级事件：`visibility`、`resize`、`timer`、
-`schedule`、`action`、`selection`、`environment`、`panel`、`dialog`、`popover`、
+`schedule`、`action`、`selection`、`environment`、`settings.changed`、`panel`、`dialog`、`popover`、
 `data.change` 和
 `task.complete`。
 使用 `render`/即时绘制的 surface 还会收到原始 `pointer` 生命周期事件，其中包含
@@ -139,8 +160,17 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 宿主滚动消费 wheel 时仍先更新滚动偏移并投递对应节点动作，动作不能取消滚动。
 事件驱动的数据 topic 发生变更时，持有对应订阅的组件收到 `data.change`，其中包含
 `topic/revision`；组件可在该事件中重建依赖日期范围等参数的订阅。
+声明 `settings.changeEvent` 后，宿主设置界面改变普通值、宿主外观、密码、文件系统句柄或
+实体引用时会发送 `settings.changed`。`keys` 是经过排序和去重的完整受影响设置键数组；
+`preview=true` 表示设置页正在应用尚未提交的实时预览，直接写入以及预览提交或取消后的
+最终事件为 `preview=false`。组件自身调用 `storage.set` 不触发该事件。组件应在该事件中
+调整订阅和描述符级视觉参数，不要在 `render` 或 `view` 热路径中创建订阅或修改描述符。
 
 `menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
+宿主在菜单打开时冻结该次 `ui.menu(...)` 描述；同一组件运行时内的普通重绘不会使已打开菜单的
+选择失效。组件重载、销毁或目标稳定 key 消失后，宿主会丢弃旧菜单选择。有效的菜单选择以
+`source == "contextMenu"` 和 `trustedGesture == true` 投递，因此可以在对应 action 处理中启动
+要求可信手势的 task。
 不要定义已移除的全局回调；入口必须返回 v2 描述符。
 
 ## 已实现能力
@@ -155,6 +185,18 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `layout.relativeUnits`：与声明式 View Tree 根内容框同坐标系的
   `layout.contentWidth/contentHeight/vw/vh/vmin/vmax`，以及
   `widget.context().layoutSize`；
+- `layout.referencePixels`：`layout.rpx` 按 manifest `defaultSize` 的标准短边
+  将设计坐标线性缩放到当前内容短边；
+- `layout.referenceAxes`：`layout.rpxX/rpxY` 分别按 manifest `defaultSize`
+  的标准内容宽、高缩放设计坐标；
+- `ui.semanticMetrics.rowUnit`：`ui.metrics()` 仅返回
+  `layoutRowHeight`，表示输入框、普通按钮或单行条目的可见内容高度，不包含外边距和行间距；
+  组件按固定比例自行派生字体、间距、图标和描边，一至两行使用页面基准，更高组件只随
+  纵向跨度缓慢增长，横向跨度不影响；
+- `settings.changeEvent`：宿主设置界面改变已声明设置或宿主外观后发送结构化
+  `settings.changed` 生命周期事件；
+- `draw.imageFit.roundedClip`：允许即时绘制的 `draw.imageFit` 通过可选
+  `cornerRadius` 对目标矩形执行抗锯齿圆角裁切；
 - `module.package`：安全包内模块；`resource.package`：包内图片、字体和资源状态；
 - `state.transient`：仅存活于当前实例 VM 的瞬态状态；`schedule.visibility`：计划的
   `whenHidden=pause|throttle|continue` 生命周期；
@@ -166,7 +208,16 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 ### `widget`
 
 - `widget.define(definition)`：校验并返回 v2 描述符。`render` 与 `view` 必须二选一，可选
-  `setup`、`panel`、`dialog`、`popover`、`event`、`menu` 和 `dispose`。`panel` 只在
+  `backgroundLayer`、`setup`、`panel`、`dialog`、`popover`、`event`、`menu` 和 `dispose`。
+  `backgroundLayer={render,opacity?,blurRadius?}` 要求 feature `widget.backgroundLayer`，只为
+  desktop surface 绘制非交互装饰层。它复用现有 `draw.*` 图元和图片句柄，但不能注册
+  `interaction.region` 或原生 marquee。宿主将其离屏录制并按圆角裁切，合成顺序为原生
+  backdrop、宿主材质色调、组件背景层、亚克力噪点/外轮廓、前景 `view`/`render` 和最终
+  边缘高光。组件背景不会被主题色调再次覆盖；其透明像素仍会露出主题材质。`opacity` 默认为 1，
+  范围为 0–1；`blurRadius` 显式范围为 0–48，省略时在玻璃开启时继承宿主半径，关闭玻璃时
+  为 0。宿主在每次背景绘制前读取这两个合成字段，因此 `settings.changed` 处理期间更新描述符
+  会作用于紧随其后的绘制帧。
+  `panel` 只在
   `widget.openPanel` 打开的宿主辅助面板中执行，收到的 `context.surface` 为
   `panel`。探测 `view.surface.panel` 后，回调可返回一棵声明式视图；返回 `nil`
   则保留即时绘制。面板中的声明式输入与 `control.textInput/textArea` 均复用宿主
@@ -183,9 +234,16 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 - `widget.hasFeature(id)`：探测 feature。
 - `widget.context()`：返回逻辑/像素尺寸、DPI、网格跨度、显示器范围、主题、
   辅助功能、语言区域、时区、可见/预览/选择状态和 surface。
-- `widget.info()`、`widget.theme()`：兼容的实例与外观快照。
+- `widget.info()`、`widget.theme()`：兼容的实例与外观快照。`widget.theme().contentTheme`
+  是宿主已经解析的前景配色：`0` 表示浅色/白色前景，`1` 表示深色/黑色前景；它与
+  `bg`、alpha、壁纸和 normal/glass/acrylic 材质相互独立。`widget.context().theme.mode`
+  的等价映射为 `"dark"` 使用浅色前景、`"light"` 使用深色前景。组件不得根据背景
+  RGB 亮度或材质名称反推前景主题。
 - `widget.hasPermission(name)`：查询当前实例已授予权限。
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
+- `widget.invalidate()` 请求刷新当前 surface。同一宿主事件/计时器回调内的重复请求
+  可合并，宿主在回调结束、Lua 上下文恢复后绘制最终状态；不要依赖回调中途立即绘制。
+  事件成功执行后的自动刷新仍保留，主动请求与自动刷新可以同时使用。
 - v2 不暴露旧 `widget.setTimer/cancelTimer`；周期、延迟和绝对时间调度统一使用
   `schedule.every/after/at/timeline`。
 - `widget.openSettings()`、`widget.openPanel(options)`、`widget.closePanel()`、
@@ -301,6 +359,20 @@ hoverStyle = { background = "surfaceVariant" }
 文本、选中和禁用色；Token 不会把系统颜色数值暴露为可持久化品牌色，也不适用于即时绘制 API。
 该能力无需权限。未知字符串会拒绝整棵新树并保留上一棵成功树。
 
+语义 Token 使用宿主已经解析的前景主题，不根据组件背景色、壁纸亮度或材质名称自行切换。
+因此浅色 glass/acrylic 可以配浅色前景，深色材质也可以配深色前景。组件若允许用户分别选择
+材质和前景配色，必须把两者作为独立状态；跟随个性化时应让 Token 或上述
+`contentTheme`/`context.theme.mode` 决定前景。预览时应分别覆盖材质与前景主题，至少检查
+`--appearance acrylic-light --storage followPersonalization=0 --storage __contentTheme=0/1`
+以及对应的深色材质组合，不能只检查 dark/light 外观默认配对。
+内置预设的默认值不是按名称后缀推导：`dark/glass-dark/glass-light/acrylic-dark` 默认
+`contentTheme=0`（浅色/白色前景），`light/acrylic-light` 默认 `contentTheme=1`
+（深色/黑色前景）。其中 `glass-light` 默认仍是浅色文字；组件和工具不得把所有 `*-light`
+直接解释为深色文字。
+`textPrimary/textSecondary/textDisabled` 直接表达前景层级；`surface/surfaceVariant` 仍会混入
+组件背景色，组件必须验证它们与独立前景组合后的对比度。若内部表面和所选前景不能保持可读，
+应按 `contentTheme` 选择对比明确的内部表面调色板，而不是重新读取背景亮度来决定前景。
+
 探测 `view.transform.basic` 后，任意节点可声明
 `transform={translateX?,translateY?,scale?,originX?,originY?}`。平移每轴限制在
 -4096–4096，统一正数 scale 限制为 0.05–8，归一化原点限制为 0–1；嵌套累计缩放必须保持
@@ -322,6 +394,9 @@ transition = {
     properties = { "background", "opacity", "transform" },
 }
 ```
+
+`durationMs` 是作者声明的基础时长；用户选择的宿主动画速度会调整实际呈现时长，
+不改写组件提交的树或描述符。更新、入场和退场采用同一倍率，见下文“宿主动画偏好”。
 
 `properties` 必须包含 1–4 个不重复的白名单名称；`durationMs` 默认为 120、范围为
 1–2000，`easing` 默认为 `easeOut`，也可使用 `linear/easeIn/easeInOut`。稳定 key 节点的
@@ -351,7 +426,7 @@ enterTransition = {
 `opacity` 与 `transform` 至少提供一个；它们表示入场起点，终点仍是节点正常解析出的目标样式和
 transform。transform 是完整起始变换，省略字段使用单位变换默认值，不从目标 transform 逐字段
 继承。首次整棵 scene 提交不会让全部节点集体入场；只有宿主已经成功提交过该 surface 后首次
-出现的新稳定 key 才执行。预览、计时器不可用或 `reducedMotion` 开启时直接显示终点。入场只影响
+出现的新稳定 key 才执行。预览、计时器不可用或宿主有效动画偏好关闭时直接显示终点。入场只影响
 呈现，节点的命中、宿主控件和 UIA 从 scene 提交起即使用目标几何。
 
 探测 `view.transition.exit` 后，同一描述结构也可用于 `exitTransition`，其中 opacity/transform
@@ -360,7 +435,7 @@ transform。transform 是完整起始变换，省略字段使用单位变换默�
 继续接收动作、右键菜单或可信手势。移除的父节点声明退场时由它承载仍被移除的后代，已经在新
 scene 中复用的后代 key 会从快照剔除；没有退场的祖先不会阻止更深层节点使用自己的声明。
 同一 surface 最多保留 512 个快照节点，快速连续更新超过额度时最早的退场直接结束；key 在后续
-scene 重新出现会取消同 key 的旧快照。预览、无计时器或 `reducedMotion` 下不保留快照。
+scene 重新出现会取消同 key 的旧快照。预览、无计时器或宿主有效动画偏好关闭时不保留快照。
 
 阴影参数、圆角和边框宽度仍不能作为 transition 插值属性；出现/移除期间只开放 opacity 与
 完整 transform 端点。
@@ -369,8 +444,26 @@ scene 重新出现会取消同 key 的旧快照。预览、无计时器或 `redu
 不会每帧重新调用 Lua `view()`。未绑定节点 pointer action 的 hover/pressed 状态变化也走
 同一条已提交 scene 快速重绘路径；绑定动作时先向 `event.kind="action"` 投递精确节点事件，
 再由组件提交下一棵树。目标样式来自新 scene 或宿主 hover/pressed/focus 等状态；
-预览、宿主计时器不可用或系统开启“减少动态效果”时直接显示最终样式。隐藏、关闭 surface、
-热重载和卸载会清理待执行过渡。该能力不要求权限，也不能用于绕过 reducedMotion。
+预览、宿主计时器不可用或宿主有效动画偏好关闭时直接显示最终样式。隐藏、关闭 surface、
+热重载和卸载会清理待执行过渡。该能力不要求权限，组件不能覆盖宿主用户选择的动画偏好。
+
+**宿主动画偏好。** 动画与性能设置对宿主管理的声明式过渡、不确定进度动画和原生 marquee
+提供“跟随系统 / 始终开启 / 关闭动画”。跟随系统读取 Windows 动画偏好；始终开启允许这些
+宿主视觉效果忽略 Windows 动画开关；关闭动画直接显示目标样式，释放退场快照，并将 marquee
+停在起点。此偏好不改写 `widget.context().accessibility.reducedMotion`：该字段继续表示系统
+减少动态效果状态，也不修改 `animation.requestFrame` 的既有系统状态拒绝规则。因此始终开启
+不保证所有 Lua 自制动画运行，关闭宿主动画也不会强行取消第三方已接受的逐帧请求。
+
+“快 / 标准 / 慢”的实际过渡时长分别为基础 `durationMs` 的 0.7 / 1 / 1.4 倍，按毫秒取整。
+不确定进度动画采用相同周期倍率，marquee 的实际滚动速度为基础 `speed` 除以该倍率。
+更改宿主启停或速度会结算当前声明式过渡，后续目标变化使用新偏好；重复应用相同偏好不会
+重新启动过渡。预览始终静态，不依赖用户当前动画偏好。
+
+动画更新上限与节能策略可延后逐帧更新，但不缩放业务时钟、`frame.now/deltaMs` 或命名定时器
+的截止时间，也不改写 `whenHidden`、数据源采样间隔和权限。刷新合并仍可能等待下一次宿主帧；
+直接交给 Windows 合成器运行的动画不承诺服从同一逐帧更新上限。旧宿主没有这些偏好，仍按其
+原有系统动画策略和基础时长运行；组件不能把偏好是否存在作为新 feature 可用的证据。
+
 探测 `view.state.visibility` 后，节点可声明 `visibility="visible"|"hidden"|"collapsed"`。
 `hidden` 仍参与父布局，但整棵子树不绘制、不可命中、不创建宿主输入，也不进入 UI Automation；
 `collapsed` 则不占用布局空间。旧 `visible=false` 固定等价于 collapsed，`visible=true` 等价于 visible。
@@ -434,8 +527,11 @@ hover/pressed 覆盖。按钮 `action` 是 click 简写；events 还支持 point
 down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` 投递。
 `contextMenu` 动作默认 `scope="element"`：命中后菜单只显示该元素返回的操作，不混入组件
 设置、悬浮和移除等总菜单，但宿主会固定追加“打开组件面板”入口，确保组件总菜单始终可达。
-覆盖整张组件表面的菜单应显式写
-`{ id="component.menu", scope="component" }`，其返回项会附加到组件总菜单。
+组件总菜单应显式写 `{ id="component.menu", scope="component" }`。只要当前 surface 的任意启用
+region 声明过该作用域，其返回项就会注册到整个组件表面，并与组件设置、悬浮和移除等宿主项目
+合并；它不要求声明 region 的几何范围覆盖右键位置。元素菜单仍优先于组件菜单，从元素菜单选择
+“打开组件面板”时则忽略元素绑定，直接使用该 surface 已注册的组件菜单。面向具体目标的操作应
+使用默认的 `scope="element"`；同一 surface 重复声明组件作用域时应使用同一个稳定绑定。
 
 事件名称和节点适用性由宿主公共契约固定，未知名称会拒绝整棵 scene，而不是被静默忽略：
 
@@ -459,6 +555,13 @@ down/up、doubleClick 和 contextMenu，动作通过 `event.kind == "action"` �
 `verticalAlign="start|center|end"`。普通文本/label 默认 noWrap+ellipsis，styledText 为保持
 多段正文语义默认 wrap+clip；两者默认垂直居中。宿主在同一个 DirectWrite layout 中应用
 换行、行数高度门限、字符级省略和文本块偏移，最终绘制仍受节点 frame 裁剪。
+
+省略号是显式可选行为：短计时、金额或计数等必须完整显示的单行文本可设置
+`overflowText="clip"`，并以 `width="auto"`、足以容纳完整内容的 `minWidth` 和
+`flexShrink=0` 保留其布局宽度；直接父栏在会参与 flex 收缩时也应保留对应 `minWidth`。
+`minWidth` 扩展的是节点布局框，不会扩大桌面组件表面，因此组件仍需从相邻栏重新分配空间，
+并在极限尺寸下降低字号或切换布局。长标题和任意本地化正文不应强制扩宽，应继续使用换行或
+ellipsis。
 
 探测 `view.text.typography` 后，上述文本与 label 节点还可使用 100–900、步长 100 的
 `fontWeight`、`fontStyle="normal|italic"`、1–1024 的统一 `lineHeight` 和 -64–256 的
@@ -776,8 +879,8 @@ view.virtualList({
     itemExtent = 44,
     firstIndex = range.firstIndex,
     busy = model.loading,
-    loadingContent = view.text({ key = "loading", text = l10n.t("loading") }),
-    emptyContent = view.text({ key = "empty", text = l10n.t("noResults") }),
+    loadingContent = view.text({ key = "loading", text = l10n.tr("loading") }),
+    emptyContent = view.text({ key = "empty", text = l10n.tr("noResults") }),
     children = items,
 })
 ```
@@ -956,7 +1059,9 @@ UIA VirtualizedItem，
 `image` 的 `source` 只接受入口加载期间创建的 `resource.image()` 句柄，必须显式提供
 `alt`（装饰图片使用空字符串），支持 `fill/contain/cover/none` fit、
 `start/center/end` alignment 和 `nearest/linear` interpolation；对应 feature 为
-`view.image`。`referenceIcon` 使用相同的 `alt/fit/alignment/interpolation`，但以当前
+`view.image`。图片节点的 `style.cornerRadius` 同时裁切位图内容和节点表面；半径最大按
+节点短边的一半处理，因此可用正方形节点和半边长半径显示圆形图片。
+`referenceIcon` 使用相同的 `alt/fit/alignment/interpolation`，但以当前
 组件实例从宿主搜索、文件引用任务或逻辑槽位获得的 1–128 字节 opaque `reference`
 代替图片资源句柄；宿主在异步 Shell 图标缓存就绪后重绘，不在渲染热路径同步解码，
 也不会把目标路径交给 Lua。该节点本身不授予启动、打开、定位或文件内容权限，对应
@@ -982,7 +1087,7 @@ view.referenceIcon({
 进度色。探测 `view.progress.indeterminate` 后，两者还可声明 `indeterminate=true`；此时
 `value` 仍须处于 0–1 但不参与绘制，`meter` 不接受该状态。宿主只在对应 desktop/panel
 surface 可见时推进动画，不向 Lua 投递逐帧回调；组件隐藏、面板关闭后停止请求帧，预览和
-系统“减少动态效果”状态使用静态片段。这些节点均由宿主直接绘制，不开放路径、字体文件或
+宿主有效动画偏好关闭时使用静态片段。这些节点均由宿主直接绘制，不开放路径、字体文件或
 原生绘图对象。
 
 `styledText` 要求 1–64 个非空 `spans`，每个 span 可独立指定
@@ -1428,6 +1533,21 @@ end
 移除入口合并。该 API 不要求 `ui.contextMenu` 权限；对应 feature 为
 `interaction.region`、`interaction.pointerActions` 和 `interaction.contextMenu`；嵌套菜单另需
 `interaction.contextMenu.submenu`，包内图片另需 `interaction.contextMenu.resourceImage`。
+
+探测 `ui.semanticMetrics.rowUnit` 后，`ui.metrics()` 仅返回
+`layoutRowHeight`。它表示搜索框、普通输入、按钮或单行条目的可见内容高度，不包含组件
+外边距和行间距。宿主在“外观 > 组件与布局”中以页面 `cu` 保存 Lua 组件行高；运行时
+结合页面 CU、纵向跨度和 Windows 文本缩放解析该值。一至两行组件使用页面基准，更高
+组件的行高缓慢增长；同一纵向跨度的组件获得相同行高，横向跨度不会改变它。
+宿主会在包入口和 `setup()` 执行前应用当前初始跨度；后续调整大小仍会改变该值，因此组件应在
+每次 `view` 或 `render` 中读取，不要在 `setup()` 中缓存。
+
+组件以 `layoutRowHeight / 28` 作为自己的统一比例，自行派生字体、间距、图标、圆角和
+描边。例如普通正文可用 `row * 12 / 28`，辅助文字可用 `row * 10 / 28`。搜索框、普通
+输入、导航按钮和单行条目使用 `1x layoutRowHeight`，外边距和行间距由组件另行添加；
+多行列表项使用行高的明确倍数，月历网格和空状态继续按剩余内容矩形排布。不要再对
+该值应用 `rpxY`，宽度也不得决定纵向控件或行高。组件字体设置作为派生字号的百分比乘数。
+
 - v2 不暴露旧 `widget.editText(...)`；文本编辑统一使用声明式输入节点或
   `control.textInput/textArea`。
 
@@ -1529,16 +1649,23 @@ timeline 跨过多个条目时也只分发最新到期值，并额外返回 `val
 - `animation.cancelFrame(id)` 取消尚未分发的同名请求；确有请求被取消时返回 `true`。
 
 ID 必须是 1–128 字节有效 UTF-8；同名请求在同一帧内合并，每实例最多同时保留 16 个
-不同 ID。宿主约 16 ms 后分发 `event.kind == "frame"`，并提供 `id`、单调时钟
+不同 ID。宿主默认按约 16 ms 的更新间隔分发 `event.kind == "frame"`；动画更新上限、
+节能策略和调度延迟可能延后投递，不保证固定帧率。事件提供 `id`、单调时钟
 `now` 和相对同一 ID 上一帧的 `deltaMs`；首帧和隐藏后恢复的首帧为 0，过长间隔
 封顶为 1000 ms。一次请求只产生一次事件，组件必须在 frame 事件中再次调用
 `requestFrame` 才会继续，因而不会创建永久隐式 60 FPS 循环。
+
+`now/deltaMs` 保持真实经过时间及上述 1000 ms 封顶规则，不乘宿主动画速度倍率；组件应按
+时间推进自制动画，不能依赖每次回调固定移动一段距离来维持速度。
 
 隐藏、卸载、热重载和宿主关闭会立即取消请求且不补帧；预览不启动真实计时器，系统启用
 “减少动态效果”时也拒绝逐帧回调。稳定失败码为 `hidden`、`reducedMotion`、
 `previewUnavailable`、`quotaExceeded`、`hostUnavailable` 或 `apiVersion`。此 API 不要求
 权限，对应 feature `animation.frame`；它只适合短时即时视觉更新，低频刷新仍应使用
 `schedule`，系统状态、媒体和音频数据仍应使用按需 `data.subscribe`。
+
+宿主“始终开启”不取消这里的系统 `reducedMotion` 拒绝；“关闭动画”也不新增拒绝码或取消
+已接受的第三方请求。它们控制的宿主视觉效果范围见“宿主动画偏好”。
 
 ### `data`
 
@@ -1576,7 +1703,8 @@ end
 表达请求采样周期；快照在连续错过下一次完整采样机会后才标记 `stale=true`，
 不会因为线程调度比请求周期晚几毫秒而短暂过期。CPU 最快 500 ms，内存和进程摘要最快 1000 ms，
 电源、存储卷和显示拓扑最快 2000 ms；存储 I/O、默认音频端点和主音量最快
-1000 ms，媒体三个 topic 最快 500 ms，桌面和日历事件 topic 最快 100 ms，
+1000 ms；`media.sessions` 最快 500 ms，`media.current`、`media.timeline` 和
+`media.artwork` 最快 100 ms；桌面和日历事件 topic 最快 100 ms，
 音频分析最快 16 ms。`whenHidden` 可为
 `pause`、`throttle`（默认）或 `continue`；
 当前系统 provider 不承诺后台 continue，因此会收敛为隐藏 throttle。
@@ -1664,6 +1792,11 @@ Lua 不取得 PCM、无限历史或每进程音频。
 `whenHidden="pause"`。宿主在所有已授权可见订阅间取特征并集、最大点数和最高刷新率，
 只运行一条捕获/分析管线，再按每个订阅的配置裁剪字段和降采样。
 
+音频变化触发的宿主重绘按各订阅自己的间隔限频，并与同实例的下一次宿主动画帧
+合并；调度延迟可能使实际投递频率低于请求值。取消命名动画或启用 reducedMotion
+不会取消已排队的数据刷新；隐藏会清理排队刷新，重新可见后重新接收更新。
+主动读取快照仍取得最新共享样本，`updateHz` 不限制组件因交互或其他动画而重绘。
+
 四个媒体 topic 受 `media.read` 保护，并在同一 provider 采样周期内合并读取：
 `media.sessions` value 返回最多 32 个会话和当前会话的不透明 ID，`media.current`
 value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timeline` 返回当前
@@ -1674,7 +1807,9 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 512×512 的 `width/height`。宿主在工作线程读取最多 4 MiB 的编码数据，拒绝边长超过
 16384 的源图，并解码为有界 PBGRA 像素；Lua 不取得编码原图、缓存路径或像素字节。
 该句柄可直接传给 `draw.image` 或 `view.image.source`，最后一个订阅取消后对应 CPU/GPU
-缓存立即清除，因此不应持久化句柄。无封面使用 `notPresent`；读取、查询、解码、尺寸等
+缓存立即清除，因此不应持久化句柄。媒体身份改变时，宿主先发布一次
+`available=false,error="notPresent"` 并重新读取封面，避免把仍在更新的旧缩略图绑定到新媒体；
+组件应在这个短暂过渡中显示占位内容。无封面使用 `notPresent`；读取、查询、解码、尺寸等
 失败分别使用稳定错误码。预览返回固定 64×64 模拟封面，不读取开发机媒体状态。
 
 三个桌面 topic 受 `desktop.read` 保护且由宿主变更事件驱动，不启动轮询线程。
@@ -2208,7 +2343,7 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 - `draw.pushClip(x, y, width, height)`、`draw.popClip()`
 - `draw.fa(...)`、`draw.fluent(...)`
 - `draw.image(imageHandle, x, y, width, height, alpha?)`
-- `draw.imageFit(imageHandle, x, y, width, height, fit?, alignment?, alpha?, interpolation?)`
+- `draw.imageFit(imageHandle, x, y, width, height, fit?, alignment?, alpha?, interpolation?, rotationDegrees?, originX?, originY?, cornerRadius?)`
 - `draw.icon(ref, x, y, size?, alpha?)`：要求 `desktop.read`，只接受当前实例由
   `app.search`、`desktop.search` 或 `everything.search` 返回且仍有效的不透明 ref；
   不接受路径、v1 项目表或其他实例的引用。
@@ -2222,7 +2357,8 @@ HTTPS URL；`http:`、`file:`、自定义 scheme、localhost、局域网和 IP �
 feature，并且只能在桌面 surface 的 `render()` 中调用。`key` 必须在一次 render 中
 唯一且稳定；同一 key 在数据刷新或重新布局后会尽量保留滚动相位。`width/height` 定义
 裁剪视口，文字在视口内纵向居中；文字宽度不超过视口时返回 `false` 并静态绘制，否则
-返回 `true`。`speed` 默认每秒 24 个逻辑像素，`gap` 默认 24；一次 render 最多提交
+返回 `true`。`speed` 的基础值默认每秒 24 个逻辑像素，宿主动画速度倍率按前述规则调整实际
+呈现速度，不改写组件命令；`gap` 默认 24。一次 render 最多提交
 32 项，文字最多 4096 个 UTF-8 字节。
 
 宿主会把同一次即时 render 中的其他绘制录制为静态命令，后续滚动帧只重放这份缓存、
@@ -2231,7 +2367,7 @@ feature，并且只能在桌面 surface 的 `render()` 中调用。`key` 必须�
 `animation.requestFrame`/`schedule.every` 修改偏移。marquee 作为宿主原生覆盖层绘制在
 该次即时绘制缓存之上；不要依赖在它之后用其他即时绘制内容遮盖文字。数据、交互、主题
 或组件主动失效仍会正常重新执行 render 并更新缓存。组件隐藏时动画暂停；预览、
-reduced-motion 或宿主没有动画调度器时从起点静态显示，但返回值仍只表示是否发生溢出。
+宿主有效动画偏好关闭或宿主没有动画调度器时从起点静态显示，但返回值仍只表示是否发生溢出。
 
 上述 `arc/path/gradientRect/shadow/sparkline/imageFit` 属于可探测 feature
 `draw.advanced`，仅注册到 API v2。它们遵守以下确定性边界：
@@ -2247,7 +2383,11 @@ reduced-motion 或宿主没有动画调度器时从起点静态显示，但返�
   `diagonalDown` 或 `diagonalUp`；圆角不能超过短边一半。
 - `imageFit` 仍只接受当前实例的图片句柄。`fit` 为 `fill/contain/cover/none`，
   `alignment` 为 `start/center/end` 并同时作用于两轴，采样为 `linear/nearest`；
-  `cover` 由宿主计算源图裁切，不向 Lua 暴露资源路径或像素。
+  `cover` 由宿主计算源图裁切，不向 Lua 暴露资源路径或像素。可选旋转角限制为
+  `-360–360` 度，正角度顺时针；`originX/originY` 是绘制后图片边界内的归一化支点，
+  范围均为 `0–1`，默认以中心 `(0.5, 0.5)` 旋转。探测并声明
+  `draw.imageFit.roundedClip` 后，可传入非负 `cornerRadius`；宿主将它裁到目标短边的一半，
+  用抗锯齿圆角几何裁切最终图片，省略或传入 0 时保持原有矩形绘制。
 - `shadow` 的 blur 为 `0–64`，最多产生 16 层宿主受控的柔和衰减；它不是任意
   shader 或无界高斯效果。圆角不能超过短边一半，偏移和扩散后的区域仍受坐标预算约束。
 - `sparkline` 接受 1–512 个有限数值。`min/max` 必须成对提供且严格递增；省略时宿主
@@ -2266,12 +2406,40 @@ content height 已扣除该保留区；panel/dialog/popover 则使用各自完�
 `layout.vmax(percent)` 接受 0–100 的有限百分比，分别返回根内容宽、高、短边和长边的
 对应比例。圆形、方形和跨宽高比保持一致的控件优先使用 `vmin`；横向或纵向结构分别
 使用 `vw`、`vh`。这些函数直接返回可用于声明式数值尺寸和即时绘制坐标的布局值，
-不要再与 DPI 归一化的 `context.logicalSize` 混用。
+不要再与 DPI 归一化的 `context.logicalSize` 混用。图像、媒体、时钟、乐器等视觉构图型
+组件应优先采用比例布局，并让全部可见尺寸随宽高线性变化。仅当内容关系确实受益时，
+才根据 `contentWidth/contentHeight` 的横纵比切换结构；木鱼等纵向构图可以在全部比例下
+保持一种结构，频谱等横向内容可以通过清单限定可用格子范围。相同横纵比的不同尺寸应
+呈现同一构图的等比缩放结果。
+
+探测 `layout.referencePixels` 后，可用 `layout.rpx(value)` 直接按设计坐标书写
+上述比例布局。宿主用标准网格单元 92×116、间距 8 和 manifest `defaultSize`
+计算参考短边，再乘以“当前内容短边 / 参考短边”。例如默认 3×2 的参考短边为
+240，`layout.rpx(16)` 在默认大小返回 16，在同宽高比且短边为 480 的 surface
+返回 32；默认 2×2 的参考短边为 192。间距、行高、图标、描边、字体和命中区域
+使用同一函数后，相同宽高比会保持完整等比。它接受绝对值不超过 1,000,000 的
+有限数值，负值可用于相对偏移。该单位不决定结构分支，也不替组件限制无意义的
+尺寸；木鱼可以始终保持纵向构图，频谱可在 manifest 中限制为横向跨度。
+
+探测 `layout.referenceAxes` 后，可用 `layout.rpxX(value)` 和
+`layout.rpxY(value)` 分别按 manifest `defaultSize` 的标准内容宽度和内容高度
+缩放设计值。横向坐标、宽度和左右间距使用 `rpxX`；纵向坐标、高度和组件特有的
+上下间距使用 `rpxY`。若 manifest 默认开启固定占位的桌面
+底栏，`rpxY` 会自动从参考高度和当前高度中扣除对应占位，组件不需要自行补偿。
+相同宽高比缩放时，`rpxX` 与 `rpxY` 的比例相同；圆形封面、唱片等需要严格
+保持各向等比的装饰仍应使用 `rpx` 或 `vmin`。`rpxX/rpxY` 接受与 `rpx`
+相同范围的有限数值。
 
 `columns/rows/sizeClass` 返回跨度与尺寸档位。
 `cellWidth/cellHeight/cellScale/cellGap/barHeight` 提供宿主网格指标。
-`layout.cu(value)` 和 `layout.fontCu(value)` 用于保持最小点击尺寸、描边、局部间距和
-字体在不同网格密度下的视觉尺度；它们不会随组件跨度同比增长，不能代替总宽高比例单位。
+`layout.cu(value)` 和 `layout.fontCu(value)` 只应用于组件自己定义、且明确要和宿主
+网格指标对齐的内容，例如系统状态组件的卡片矩阵。日程、日历、列表、搜索、RSS、
+启动器和便签的桌面主表面中，搜索框、输入框、普通按钮和单行条目的可见内容高度使用
+`ui.metrics().layoutRowHeight`，外边距和行间距由组件按该行高的固定比例自行组合。
+多行列表项可使用 `layoutRowHeight` 的明确倍数，月历网格则按扣除顶部内容行与组件自定
+间距后的剩余矩形分配。行高已经随纵向跨度缓慢增长，不要再次乘 `rpxY`。组件特有几何
+仍可使用 `rpxX/rpxY` 或百分比单位，
+但任何纵向控件或正文行高都不应由宽度决定。
 
 ### `storage`
 
@@ -2380,6 +2548,10 @@ string[]；后两项使用 `storage.typed` 持久化，首次读取默认值、�
 保持相同 Lua 类型。无效清单或 preset 会使组件加载失败；设置页不会提交输入过程中的无效
 URL、日期或时间。对应 feature 分别为 `settings.url`、`settings.date`、`settings.time`、
 `settings.range`、`settings.multiSelect`。
+
+外观 preset 的 `values` 可声明宿主管理的 `__contentTheme=0|1`：`0` 表示浅色/白色前景，
+`1` 表示深色/黑色前景。宿主在应用该 preset 时同步组件语义前景、底部标题、拖拽点和缩放手柄；
+未声明时继续继承当前全局前景。组件 Lua 不得通过 `storage` 读写该键。
 
 设置字段可提供不超过 2048 字节的本地化 `description`，宿主在控件下方以辅助文本显示。
 `settings.groups` 按声明顺序定义最多 32 个分组，每组包含稳定 ASCII `id`、本地化 `label`、

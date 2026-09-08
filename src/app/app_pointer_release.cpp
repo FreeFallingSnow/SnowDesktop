@@ -37,6 +37,18 @@ void DesktopApp::OnMouseLeave()
 {
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
+    if (snowdesktop::desktop_hover_rules::
+            ShouldHoldHoverDuringNativeShellPopup(
+                shellPopupMenuLayerDepth_ > 0))
+    {
+        // A native Shell menu owns mouse capture while its modal session is
+        // active. Preserve the complete Dock hover frame so its content and
+        // paired backdrop cannot diverge; EndShellPopupMenuLayer reconciles
+        // once against the real pointer location.
+        RecordShellHoverTrace(
+            ShellHoverTraceEvent::MouseLeaveEnd);
+        return;
+    }
     POINT cursorScreen{};
     GetCursorPos(&cursorScreen);
     const bool pointerStillInteractsWithDockPreview =
@@ -50,8 +62,26 @@ void DesktopApp::OnMouseLeave()
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
 
-    CancelCollectionPopupDwell();
-    CancelCollectionGroupTabDwell();
+    POINT retainedDragPoint{};
+    const bool preserveDragDwell =
+        (dragSession_.IsActive() ||
+         dragDropController_.IsTransportActive()) &&
+        TryGetDesktopHoverPointFromCursor(retainedDragPoint);
+    if (preserveDragDwell)
+    {
+        // WM_MOUSELEAVE belongs to one native HWND, while collection dwell
+        // belongs to the complete SnowDesktop interaction surface. A desktop
+        // icon returning from OLE and an external OLE source may have no local
+        // capture, so crossing a backdrop, Dock host, or popup HWND must not
+        // erase the candidate that a component-origin drag can retain.
+        UpdateCollectionPopupDwell(retainedDragPoint);
+        UpdateCollectionGroupTabDwell(retainedDragPoint);
+    }
+    else
+    {
+        CancelCollectionPopupDwell();
+        CancelCollectionGroupTabDwell();
+    }
     ResetDockHandoffDwell();
 
     // Capture-based dragging continues to receive coordinates outside the
@@ -782,6 +812,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
+    if (HandleLargeIconPointerUp()) return;
     if (middleButtonWidgetMove_) return;
     (void)wp;
     int dropPreviewMods = 0;
@@ -1100,6 +1131,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
         }
         // PendingMove/PendingResize: just cancel without displacement
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        UpdateWidgetHandleCursor(upPoint);
         widgetDockTarget_ = false;
         widgetDockTargetContainer_ = nullptr;
         widgetDockInsertIndex_ = 0;

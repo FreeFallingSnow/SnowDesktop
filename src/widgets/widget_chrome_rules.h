@@ -29,6 +29,20 @@ constexpr bool ShowsCompactMoveHandle(
     return !HasBottomBar(showTitle) && hovered;
 }
 
+struct WidgetChromeForegroundStyle
+{
+    bool darkForeground = false;
+    int fontWeightAdjustment = 0;
+};
+
+constexpr WidgetChromeForegroundStyle ResolveWidgetChromeForegroundStyle(
+    int contentTheme) noexcept
+{
+    return contentTheme == 1
+        ? WidgetChromeForegroundStyle{ true, -200 }
+        : WidgetChromeForegroundStyle{ false, 0 };
+}
+
 inline int CompactEdgeHandleWidth(
     int availableWidth, int preferredWidth) noexcept
 {

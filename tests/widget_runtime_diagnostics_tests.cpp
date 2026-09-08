@@ -4,6 +4,10 @@
 #include <iostream>
 #include <string>
 
+void RunPerformanceCaptureTests();
+int RunPerformanceControlFixture();
+int RunPerformanceOverheadBenchmark(const char* directory);
+
 namespace
 {
 void Check(bool condition, const char* message)
@@ -60,10 +64,15 @@ void TestBoundedHistory()
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 3 && std::string(argv[1]) == "--performance-overhead")
+        return RunPerformanceOverheadBenchmark(argv[2]);
+    if (argc == 2 && std::string(argv[1]) == "--performance-control-fixture")
+        return RunPerformanceControlFixture();
     TestLevelNormalizationAndFiltering();
     TestBoundedHistory();
+    RunPerformanceCaptureTests();
     std::cout << "widget runtime diagnostics tests passed\n";
     return 0;
 }

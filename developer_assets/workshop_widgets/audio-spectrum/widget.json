@@ -240,6 +240,14 @@
     "columns": 3,
     "rows": 1
   },
+  "minSize": {
+    "columns": 2,
+    "rows": 1
+  },
+  "maxSize": {
+    "columns": 0,
+    "rows": 1
+  },
   "resources": {},
   "slots": {},
   "permissions": [

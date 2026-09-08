@@ -15,6 +15,10 @@ bool IsCustomThemeFocus(std::string_view focusId) noexcept
         focusId == "personalization.backgroundOpacity" ||
         focusId == "personalization.borderAlpha" ||
         focusId == "personalization.borderOpacity" ||
+        focusId == "personalization.borderWidth" ||
+        focusId == "personalization.edgeHighlight" ||
+        focusId == "personalization.edgeHighlightWidth" ||
+        focusId == "personalization.edgeHighlightStrength" ||
         focusId == "personalization.enableGradient" ||
         focusId == "personalization.gradientEndAlpha" ||
         focusId == "personalization.glass" ||
@@ -67,7 +71,13 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
     if (route.page == SettingsPage::General)
     {
-        if (route.focusId == "general.softwareDesktop")
+        if (route.focusId == "general.pageNavigation" ||
+            route.focusId == "general.pageNavigation.previous" ||
+            route.focusId == "general.pageNavigation.next")
+        {
+            route.page = SettingsPage::DesktopPages;
+        }
+        else if (route.focusId == "general.softwareDesktop")
         {
             route.page = SettingsPage::Desktop;
             route.focusId = "desktop.softwareDesktop";
@@ -194,11 +204,17 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::AppearanceWidgets:
     case SettingsPage::AppearanceDesktopIcons:
     case SettingsPage::AppearanceIconBeautification:
+    case SettingsPage::DesktopPages:
+    case SettingsPage::AnimationPerformance:
+    case SettingsPage::LargeIcon:
         break;
     default:
         return false;
     }
 
+    if (page == SettingsPage::LargeIcon)
+        return !itemKey.empty() && widgetInstanceId.empty();
+    if (!itemKey.empty()) return false;
     if (page == SettingsPage::WidgetSettings)
         return !widgetInstanceId.empty();
     return widgetInstanceId.empty();
@@ -228,6 +244,9 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
         return "appearance-desktop-icons";
     case SettingsPage::AppearanceIconBeautification:
         return "appearance-icon-beautification";
+    case SettingsPage::DesktopPages: return "desktop-pages";
+    case SettingsPage::AnimationPerformance: return "animation-performance";
+    case SettingsPage::LargeIcon: return "large-icon";
     }
     return "home";
 }

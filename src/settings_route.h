@@ -32,6 +32,10 @@ enum class SettingsPage : std::uint8_t
     AppearanceWidgets,
     AppearanceDesktopIcons,
     AppearanceIconBeautification,
+    // Desktop page ordering and per-page grid settings.
+    DesktopPages,
+    AnimationPerformance,
+    LargeIcon,
 };
 
 /**
@@ -46,6 +50,7 @@ struct SettingsRoute
     SettingsPage page = SettingsPage::General;
     std::wstring widgetInstanceId;
     std::string focusId;
+    std::wstring itemKey;
 
     [[nodiscard]] static SettingsRoute ForPage(
         SettingsPage page,

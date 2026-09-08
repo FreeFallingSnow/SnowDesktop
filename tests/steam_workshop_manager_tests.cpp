@@ -1,22 +1,31 @@
 #include "authoring_toolchain.h"
 #include "bridge_json.h"
+#include "component_workshop_publish.h"
+#include "manager_frame_scheduler.h"
 #include "manager_localization.h"
 #include "package_tool.h"
+#include "preview_cache.h"
 #include "publish_lifecycle.h"
 #include "steam_app_identity.h"
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
 #include "steam_workshop_sync.h"
+#include "workshop_localization.h"
 #include "workshop_project.h"
 
 #include <windows.h>
 #include <shellapi.h>
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,6 +61,126 @@ struct TemporaryDirectory
     }
 };
 
+struct ScopedEnvironmentVariable
+{
+    std::wstring name;
+    std::optional<std::wstring> original;
+
+    ScopedEnvironmentVariable(std::wstring variableName,
+        const wchar_t* value) : name(std::move(variableName))
+    {
+        SetLastError(ERROR_SUCCESS);
+        const DWORD size = GetEnvironmentVariableW(name.c_str(), nullptr, 0);
+        if (size != 0)
+        {
+            std::wstring current(size, L'\0');
+            const DWORD length = GetEnvironmentVariableW(
+                name.c_str(), current.data(), size);
+            current.resize(length);
+            original = std::move(current);
+        }
+        else if (GetLastError() != ERROR_ENVVAR_NOT_FOUND)
+        {
+            original = L"";
+        }
+        SetEnvironmentVariableW(name.c_str(), value);
+    }
+
+    ~ScopedEnvironmentVariable()
+    {
+        SetEnvironmentVariableW(name.c_str(),
+            original ? original->c_str() : nullptr);
+    }
+};
+
+void TestManagerFrameScheduler()
+{
+    Check(ManagerInteractiveFrameInterval(
+            { true, true, false, false, false }) == 0,
+        "an idle foreground Manager has no recurring frame timer");
+    Check(ManagerInteractiveFrameInterval(
+            { true, true, false, true, false }) == 16,
+        "a held Manager pointer uses short interactive frames");
+    Check(ManagerInteractiveFrameInterval(
+            { true, true, false, false, true }) == 250,
+        "Manager text input keeps only a low-frequency cursor frame");
+    Check(ManagerInteractiveFrameInterval(
+            { false, true, false, true, true }) == 0 &&
+            ManagerInteractiveFrameInterval(
+                { true, false, false, true, true }) == 0 &&
+            ManagerInteractiveFrameInterval(
+                { true, true, true, true, true }) == 0,
+        "background, hidden, and minimized Managers stop interactive timers");
+    Check(ClassifyManagerTimer(kManagerLanguagePollTimer) ==
+            ManagerTimerAction::PollLanguage &&
+            ClassifyManagerTimer(kManagerLanguagePollTimer) !=
+                ManagerTimerAction::RequestFrame &&
+            ClassifyManagerTimer(kManagerInteractiveFrameTimer) ==
+                ManagerTimerAction::RequestFrame,
+        "language polling does not request frames while the interactive timer does");
+
+    ManagerFrameScheduler scheduler;
+    Check(!scheduler.IsFrameRequested(),
+        "the Workshop Manager frame scheduler starts idle");
+    Check(scheduler.RequestFrame() && !scheduler.RequestFrame(),
+        "duplicate Workshop Manager invalidations collapse into one frame");
+    Check(!scheduler.BeginFrame(false) && scheduler.IsFrameRequested(),
+        "a minimized or occluded Manager retains its pending frame");
+    Check(scheduler.BeginFrame(true) && !scheduler.IsFrameRequested(),
+        "a renderable Manager consumes exactly one pending frame");
+    Check(!scheduler.BeginFrame(true),
+        "an idle Manager does not render an unsolicited frame");
+
+    Check(scheduler.RequestFrame() && scheduler.BeginFrame(true) &&
+            scheduler.RequestFrame() && scheduler.IsFrameRequested(),
+        "an invalidation raised during rendering is retained for a later frame");
+    Check(scheduler.TryQueueWake() && !scheduler.TryQueueWake() &&
+            scheduler.IsWakeQueued(),
+        "pending Manager work queues at most one cross-thread wake message");
+    scheduler.AcknowledgeWake();
+    Check(!scheduler.IsWakeQueued() && scheduler.TryQueueWake(),
+        "consuming a Manager wake allows a retained frame to be woken again");
+}
+
+void TestPreviewCacheNotifications()
+{
+    TemporaryDirectory temporary;
+    const auto preview = temporary.path / L"preview.png";
+    std::ofstream(preview, std::ios::binary) << "preview";
+    std::atomic<int> localNotifications = 0;
+    PreviewCache localCache(temporary.path / L"local-cache",
+        [&] { localNotifications.fetch_add(1); });
+    localCache.RequestLocal(17, preview);
+    localCache.RequestLocal(17, preview);
+    Check(localNotifications.load() == 1,
+        "a new local preview wakes the Manager exactly once");
+    localCache.RequestLocal(17, temporary.path / L"missing.png");
+    Check(localNotifications.load() == 2,
+        "a changed local preview identity wakes the Manager even on failure");
+
+    std::mutex waitMutex;
+    std::condition_variable changed;
+    std::atomic<int> remoteNotifications = 0;
+    PreviewCache remoteCache(temporary.path / L"remote-cache", [&]
+    {
+        remoteNotifications.fetch_add(1);
+        changed.notify_all();
+    });
+    remoteCache.Request(29, "http://example.invalid/preview.png");
+    {
+        std::unique_lock lock(waitMutex);
+        changed.wait_for(lock, std::chrono::seconds(2), [&]
+        {
+            return remoteNotifications.load() != 0;
+        });
+    }
+    Check(remoteNotifications.load() == 1,
+        "a terminal remote preview failure wakes the Manager");
+    remoteCache.Request(29, "http://example.invalid/preview.png");
+    Check(remoteNotifications.load() == 1,
+        "an unchanged remote preview request does not create another wakeup");
+}
+
 void TestJson()
 {
     JsonValue value;
@@ -79,15 +208,27 @@ void TestSteamIdentity()
     Check(IsExpectedSteamAppId(5080330u) &&
         !IsExpectedSteamAppId(480u),
         "Steam runtime identity rejects placeholder App IDs");
+    Check(snowdesktop::SnowDesktopSteamStoreUrl() ==
+            L"https://store.steampowered.com/app/5080330/",
+        "portable builds link to the production Steam Store page");
     Check(SteamWorkshopHomeUrl() ==
         "https://steamcommunity.com/app/5080330/workshop/",
         "Workshop links target the SnowDesktop application hub");
     Check(SteamWorkshopClientUrl() ==
         "steam://openurl/https://steamcommunity.com/app/5080330/workshop/",
         "Workshop home links prefer the Steam client");
+    Check(SteamClientHomeUrl() == "steam://open/main",
+        "Workshop Manager can launch the Steam client home window");
     Check(SteamCommunityItemClientUrl(1234567890) ==
         "steam://url/CommunityFilePage/1234567890",
         "Workshop item links use Valve's Steam client protocol");
+    Check(SuggestOpeningSteamClient({ kSteamInitializationFailed,
+              "steam_initialization_failed", "IPC unavailable" }) &&
+            !SuggestOpeningSteamClient({ kSteamInitializationFailed,
+              "steam_app_id_mismatch", "wrong app" }) &&
+            !SuggestOpeningSteamClient({ kSteamOperationFailed,
+              "query_failed", "request failed" }),
+        "only a missing Steam client initialization exposes launch recovery");
     const std::string mismatch = SteamAppIdMismatchMessage(480u);
     Check(mismatch.find("5080330") != std::string::npos &&
         mismatch.find("480") != std::string::npos,
@@ -112,6 +253,42 @@ void TestSteamChildEnvironment()
     }
     Check(appIdEntries == 1 && gameIdEntries == 1,
         "Steam child environment carries exactly one production App ID context");
+
+    ScopedEnvironmentVariable appId(L"SteamAppId", L"480");
+    ScopedEnvironmentVariable gameId(L"SteamGameId", L"480");
+    ScopedEnvironmentVariable overlayId(L"SteamOverlayGameId", L"480");
+    ScopedEnvironmentVariable clientLaunch(L"SteamClientLaunch", L"1");
+    ScopedEnvironmentVariable steamPath(L"SteamPath", L"C:\\Steam");
+    ScopedEnvironmentVariable mixedCaseMarker(
+        L"sTeAmTestMarker", L"inherited");
+    ScopedEnvironmentVariable retainedMarker(
+        L"SNOWDESKTOP_ENVIRONMENT_SENTINEL", L"retained");
+
+    const std::vector<wchar_t> detachedBlock =
+        snowdesktop::BuildSnowDesktopDetachedRuntimeEnvironment();
+    Check(detachedBlock.size() >= 2 &&
+            detachedBlock[detachedBlock.size() - 1] == L'\0' &&
+            detachedBlock[detachedBlock.size() - 2] == L'\0',
+        "detached runtime environment is a double-null-terminated "
+        "Unicode block");
+    std::size_t inheritedSteamEntries = 0;
+    bool retainedSentinel = false;
+    for (const wchar_t* current = detachedBlock.data(); *current != L'\0';
+         current += std::wcslen(current) + 1)
+    {
+        const std::wstring_view entry(current);
+        const std::size_t delimiter = entry.find(L'=');
+        const std::wstring_view name = entry.substr(0, delimiter);
+        if (name.size() >= 5 && CompareStringOrdinal(name.data(), 5,
+                L"Steam", 5, TRUE) == CSTR_EQUAL)
+            ++inheritedSteamEntries;
+        if (entry == L"SNOWDESKTOP_ENVIRONMENT_SENTINEL=retained")
+            retainedSentinel = true;
+    }
+    Check(inheritedSteamEntries == 0,
+        "detached runtime environment removes every inherited Steam marker");
+    Check(retainedSentinel,
+        "detached runtime environment preserves unrelated variables");
 }
 
 void TestManagerLocalization()
@@ -297,17 +474,100 @@ void TestProjectStore()
     project->packageId = "11111111-2222-3333-4444-555555555555";
     project->publishedFileId = 76561198000000001ull;
     project->tags = { "Widget", "Clock" };
-    Check(store.Save(error), "project store saves schema v1");
+    project->publishPreferences.textSource =
+        WorkshopTextSource::ManualEnglish;
+    project->publishPreferences.previewSource =
+        WorkshopAssetSource::Steam;
+    project->publishPreferences.tagsSource =
+        WorkshopAssetSource::Local;
+    project->publishPreferences.manualEnglishTitle = "Manual title";
+    project->publishPreferences.manualEnglishDescription =
+        "Manual description";
+    Check(store.Save(error), "project store saves schema v2");
     project->lastPublishedVersion = "1.2.3";
     Check(store.Save(error), "second save creates a backup and replaces atomically");
     Check(std::filesystem::is_regular_file(
         store.Root() / L"projects.json.bak"), "project store keeps .bak");
     ProjectStore loaded(store.Root());
-    Check(loaded.Load(error), "project store loads schema v1");
+    Check(loaded.Load(error), "project store loads schema v2");
     Check(loaded.Projects().size() == 1 &&
         loaded.Projects()[0].publishedFileId == 76561198000000001ull &&
-        loaded.Projects()[0].tags.size() == 2,
-        "project store round-trips strings, 64-bit IDs, and tags");
+        loaded.Projects()[0].tags.size() == 2 &&
+        loaded.Projects()[0].publishPreferences.textSource ==
+            WorkshopTextSource::ManualEnglish &&
+        loaded.Projects()[0].publishPreferences.previewSource ==
+            WorkshopAssetSource::Steam &&
+        loaded.Projects()[0].publishPreferences.tagsSource ==
+            WorkshopAssetSource::Local &&
+        loaded.Projects()[0].publishPreferences.manualEnglishTitle ==
+            "Manual title",
+        "project store round-trips IDs, tags, and per-project publish preferences");
+
+    const auto legacyFixtureRoot = temporary.path / L"legacy fixtures";
+    const auto legacySource = legacyFixtureRoot / L"bound";
+    std::filesystem::create_directories(legacySource);
+    std::ofstream(legacySource / L"widget.json") << "{}";
+    const auto legacyRoot = legacyFixtureRoot / L"store";
+    ProjectStore legacy(legacyRoot);
+    WorkshopProject* legacyProject = nullptr;
+    Check(legacy.AddDirectory(legacySource, legacyProject, error) &&
+            legacyProject,
+        "legacy migration fixture adds a project");
+    if (legacyProject)
+    {
+        legacyProject->publishedFileId = 100;
+        const auto legacyUnboundSource =
+            legacyFixtureRoot / L"unbound";
+        std::filesystem::create_directory(legacyUnboundSource);
+        std::ofstream(legacyUnboundSource / L"widget.json") << "{}";
+        WorkshopProject* legacyUnboundProject = nullptr;
+        Check(legacy.AddDirectory(legacyUnboundSource,
+                legacyUnboundProject, error) && legacyUnboundProject,
+            "legacy migration fixture adds an unbound project");
+        Check(legacy.Save(error),
+            "legacy migration fixture first saves a valid project store");
+        std::ifstream legacyInput(legacy.StorePath(), std::ios::binary);
+        const std::string legacyText(
+            (std::istreambuf_iterator<char>(legacyInput)), {});
+        legacyInput.close();
+        JsonValue legacyJson;
+        Check(ParseJson(legacyText, legacyJson, error),
+            "legacy migration fixture parses its project store");
+        legacyJson.object["schemaVersion"] = JsonValue::Number(1);
+        for (auto& entry : legacyJson.object["projects"].array)
+            entry.object.erase("publishPreferences");
+        std::ofstream(legacy.StorePath(),
+            std::ios::binary | std::ios::trunc) <<
+            WriteJson(legacyJson, 2) << '\n';
+        ProjectStore migrated(legacyRoot);
+        const bool migrationLoaded = migrated.Load(error);
+        if (!migrationLoaded)
+            std::cerr << "schema v1 migration error: " << error << '\n';
+        Check(migrationLoaded && migrated.Projects().size() == 2,
+            "project store migrates schema v1 automatically");
+        if (migrated.Projects().size() == 2)
+        {
+            const auto& bound = migrated.Projects()[0].publishPreferences;
+            const auto& unbound = migrated.Projects()[1].publishPreferences;
+            Check(bound.textSource == WorkshopTextSource::Steam &&
+                    bound.previewSource ==
+                        WorkshopAssetSource::Steam &&
+                    bound.tagsSource == WorkshopAssetSource::Steam,
+                "a bound schema v1 project migrates to preserving Steam-managed fields");
+            Check(unbound.textSource == WorkshopTextSource::Package &&
+                    unbound.previewSource == WorkshopAssetSource::Local &&
+                    unbound.tagsSource == WorkshopAssetSource::Local,
+                "an unbound schema v1 project migrates to package and local sources");
+        }
+        std::ifstream migratedInput(migrated.StorePath(), std::ios::binary);
+        const std::string migratedText(
+            (std::istreambuf_iterator<char>(migratedInput)), {});
+        JsonValue migratedJson;
+        Check(ParseJson(migratedText, migratedJson, error) &&
+                JsonUnsigned(migratedJson, "schemaVersion") ==
+                    kProjectStoreSchemaVersion,
+            "schema v1 migration is persisted as schema v2");
+    }
     WorkshopProject* duplicate = nullptr;
     Check(loaded.AddDirectory(source, duplicate, error) &&
         loaded.Projects().size() == 1,
@@ -344,6 +604,54 @@ void TestProjectStore()
     Check(loaded.Remove(loaded.Projects()[0].localId, error) &&
         std::filesystem::is_directory(source),
         "removing a record does not delete source content");
+}
+
+void TestWorkshopManagerDataMigration()
+{
+    TemporaryDirectory temporary;
+    const auto legacyRoot = temporary.path / L"legacy-manager";
+    const auto dataDirectory = temporary.path / L"data";
+    const auto targetRoot = WorkshopManagerDataRoot(dataDirectory);
+    ProjectStore legacyStore(legacyRoot);
+    std::string error;
+    Check(legacyStore.Save(error),
+        "legacy Workshop Manager project store can be created");
+    Check(legacyStore.Save(error),
+        "legacy Workshop Manager project backup can be created");
+    std::ofstream(legacyRoot / L"projects.json.tmp", std::ios::binary)
+        << "stale temporary data";
+    std::filesystem::create_directory(legacyRoot / L"preview-cache");
+    std::ofstream(legacyRoot / L"preview-cache" / L"123.preview",
+        std::ios::binary) << "preview data";
+
+    Check(MigrateWorkshopManagerDataOnce(
+            targetRoot, error, legacyRoot),
+        "Workshop Manager data migrates into the SnowDesktop data root");
+    Check(targetRoot == dataDirectory / L"SteamWorkshopManager" &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"projects.json") &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"projects.json.bak") &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"projects.json.tmp") &&
+            std::filesystem::is_regular_file(
+                targetRoot / L"preview-cache" / L"123.preview") &&
+            std::filesystem::is_regular_file(targetRoot /
+                L".legacy-localappdata-migrated-v1"),
+        "project state, backup, temporary state, and previews share the data directory");
+    Check(!std::filesystem::exists(legacyRoot),
+        "successful Workshop Manager migration removes the empty legacy root");
+    ProjectStore migratedStore(targetRoot);
+    Check(migratedStore.Load(error),
+        "the migrated Workshop Manager project store remains readable");
+    std::filesystem::create_directories(legacyRoot);
+    std::ofstream(legacyRoot / L"projects.json.tmp", std::ios::binary)
+        << "must remain untouched after the migration marker";
+    Check(MigrateWorkshopManagerDataOnce(
+            targetRoot, error, legacyRoot) &&
+            std::filesystem::is_regular_file(
+                legacyRoot / L"projects.json.tmp"),
+        "the completed migration marker prevents later legacy-directory access");
 }
 
 void TestMetadataBinding()
@@ -459,6 +767,116 @@ void TestPublishLifecycle()
         "publish cannot cancel after SubmitItemUpdate starts");
 }
 
+void TestWorkshopLocalization()
+{
+    Check(SteamApiLanguageForLocale("en-US") == "english" &&
+        SteamApiLanguageForLocale("zh-Hans-CN") == "schinese" &&
+        SteamApiLanguageForLocale("zh-Hant-HK") == "tchinese" &&
+        SteamApiLanguageForLocale("pt-BR") == "brazilian" &&
+        SteamApiLanguageForLocale("es-419") == "latam" &&
+        SteamApiLanguageForLocale("ko-KR") == "koreana" &&
+        !SteamApiLanguageForLocale("eo-001"),
+        "BCP-47 component locales map to Steam API language codes");
+
+    const std::vector<WidgetLocalization> source = {
+        { "zh-TW", "音訊頻譜", "繁體說明" },
+        { "es-419", "Espectro", "Descripción" },
+        { "en-US", "Audio Spectrum", "English description" },
+        { "eo-001", "Spektro", "Priskribo" },
+    };
+    const auto localized = BuildSteamWorkshopLocalizations(
+        "Fallback", "Fallback description", source);
+    Check(localized.size() == 3 &&
+        localized[0].language == "english" &&
+        localized[0].title == "Audio Spectrum" &&
+        localized[1].language == "latam" &&
+        localized[2].language == "tchinese",
+        "Workshop localizations are deduplicated and order English first");
+
+    const auto withFallback = BuildSteamWorkshopLocalizations(
+        "Fallback title", "Fallback description",
+        { { "ja-JP", "オーディオスペクトラム", "日本語の説明" } });
+    Check(withFallback.size() == 2 &&
+        withFallback[0].language == "english" &&
+        withFallback[0].title == "Fallback title" &&
+        withFallback[1].language == "japanese",
+        "manifest defaults supply the required English Workshop fallback");
+
+}
+
+void TestComponentPublishPlan()
+{
+    TemporaryDirectory temporary;
+    const auto preview = temporary.path / L"preview.png";
+    const auto packagePath = temporary.path / L"package.snowwidget";
+    std::ofstream(preview, std::ios::binary) << "preview";
+    std::ofstream(packagePath, std::ios::binary) << "package";
+
+    WidgetInspection inspection;
+    inspection.valid = true;
+    inspection.packageId =
+        "11111111-2222-3333-4444-555555555555";
+    inspection.version = "1.2.3";
+    inspection.name = "Example widget";
+    inspection.description = "Example description";
+    inspection.preview = preview;
+    inspection.localizations = {
+        { "zh-CN", "示例组件", "示例说明" },
+    };
+    PackagedWidget package;
+    package.packagePath = packagePath;
+    package.packageId = inspection.packageId;
+    package.version = inspection.version;
+    package.sha256 = std::string(64, 'a');
+
+    WorkshopProject project;
+    project.packageId = inspection.packageId;
+    project.tags = { "Widget" };
+    ComponentPublishPlan plan;
+    ComponentPublishOptions options;
+    std::string error;
+    Check(BuildComponentPublishPlan(project, inspection, package,
+            options, plan, error) &&
+            plan.action == ComponentPublishAction::Create &&
+            plan.updateContent && plan.preview == preview &&
+            plan.tags && plan.tags->size() == 1 &&
+            plan.localizations.size() == 2 &&
+            plan.localizations.front().language == "english" &&
+            plan.localizations[1].language == "schinese",
+        "a new component plan creates a private-ready multilingual item from package and local sources");
+
+    project.publishedFileId = 100;
+    project.lastPublishedSha256 = package.sha256;
+    project.publishPreferences.textSource = WorkshopTextSource::Steam;
+    project.publishPreferences.previewSource = WorkshopAssetSource::Steam;
+    project.publishPreferences.tagsSource = WorkshopAssetSource::Steam;
+    Check(BuildComponentPublishPlan(project, inspection, package,
+            options, plan, error) &&
+            plan.action == ComponentPublishAction::UpdateMetadata &&
+            !plan.updateContent && plan.localizations.empty() &&
+            !plan.preview && !plan.tags,
+        "an unchanged bound component plan preserves Steam-managed listing fields without reuploading content");
+
+    project.publishPreferences.textSource = WorkshopTextSource::Package;
+    package.sha256 = std::string(64, 'b');
+    Check(BuildComponentPublishPlan(project, inspection, package,
+            options, plan, error) &&
+            plan.action == ComponentPublishAction::UpdateContent &&
+            plan.updateContent && plan.localizations.size() == 2,
+        "a changed bound component plan uploads content and synchronizes package localizations");
+
+    WorkshopProject invalidCreation;
+    invalidCreation.publishPreferences.textSource = WorkshopTextSource::Steam;
+    Check(!BuildComponentPublishPlan(invalidCreation, inspection, package,
+            options, plan, error) &&
+            error.find("cannot preserve Steam-managed text") !=
+                std::string::npos,
+        "a creation plan rejects preservation of nonexistent Steam text");
+    Check(ComponentPublishActionName(ComponentPublishAction::UpdateContent) ==
+            "update-content",
+        "component publish action names are stable for JSON CLI output");
+}
+
 void TestSteamWorkshopLocalCache()
 {
     TemporaryDirectory temporary;
@@ -534,7 +952,7 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
         auto status = InspectAgentSkill(
             bundled, snowwidget, target, error);
         Check(status.state == SkillInstallState::NotInstalled &&
-            status.bundledRevision == 5,
+            status.bundledRevision == 13,
             "each supported agent reports a clean not-installed state");
         Check(InstallOrUpdateAgentSkill(status, error),
             "Agent Skill installs transactionally into every selected root");
@@ -557,7 +975,10 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
 void TestRealPackageTool(const std::filesystem::path& executable,
     const std::filesystem::path& repositoryRoot)
 {
-    PackageTool tool(executable);
+    TemporaryDirectory temporaryRoot;
+    const auto stagingRoot = temporaryRoot.path / L"data" /
+        L"SteamWorkshopManager" / L"staging" / L"packages";
+    PackageTool tool(executable, stagingRoot);
     const std::wstring capabilitiesCommand = L"\"" + executable.wstring() +
         L"\" capabilities";
     FILE* capabilitiesPipe = _wpopen(capabilitiesCommand.c_str(), L"rt");
@@ -578,6 +999,10 @@ void TestRealPackageTool(const std::filesystem::path& executable,
             JsonUnsigned(capabilities, "protocolVersion") == 2u &&
             JsonUnsigned(capabilities, "recommendedSchemaVersion") == 2u &&
             JsonUnsigned(capabilities, "recommendedApiVersion") == 2u &&
+            capabilities.Find("authoringSkill") &&
+            capabilities.Find("authoringSkill")->IsObject() &&
+            JsonUnsigned(*capabilities.Find("authoringSkill"), "revision") ==
+                13u &&
             capabilities.Find("executableSchemaVersions") &&
             capabilities.Find("executableSchemaVersions")->IsArray() &&
             capabilities.Find("executableSchemaVersions")->array.size() == 1 &&
@@ -600,9 +1025,16 @@ void TestRealPackageTool(const std::filesystem::path& executable,
     Check(tool.Inspect(source, inspection, error),
         "snowwidget inspect returns a validated manifest JSON object");
     if (!inspection.valid) return;
+    const auto localizations = BuildSteamWorkshopLocalizations(
+        inspection.name, inspection.description, inspection.localizations);
+    Check(inspection.localizations.size() >= 5 &&
+        localizations.size() >= 5 &&
+        localizations.front().language == "english",
+        "snowwidget inspect exposes reusable component package localizations");
     Check(tool.Pack(source, inspection, package, error),
         "package tool validates the pack result against inspect");
     Check(std::filesystem::is_regular_file(package.packagePath) &&
+        package.temporaryDirectory.parent_path() == stagingRoot &&
         package.packageId == inspection.packageId &&
         package.version == inspection.version && package.sha256.size() == 64,
         "packed package has matching ID, version, hash, and output file");
@@ -611,6 +1043,46 @@ void TestRealPackageTool(const std::filesystem::path& executable,
     Check(!std::filesystem::exists(temporary),
         "package cleanup deletes only its package and empty unique directory");
 }
+
+void TestManagerFontCoverage(const std::filesystem::path& repositoryRoot)
+{
+    std::ifstream input(repositoryRoot / L"steam_bridge" / L"src" /
+        L"manager_main.cpp", std::ios::binary);
+    const std::string source((std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    Check(input.good() || input.eof(),
+        "Workshop Manager source is readable for the font contract");
+    Check(source.find("malgun.ttf") != std::string::npos &&
+            source.find("MergeMode = true") != std::string::npos &&
+            source.find("GetGlyphRangesKorean()") != std::string::npos,
+        "Workshop Manager merges a Korean system font and Hangul glyph range");
+    Check(source.find("BuildComponentPublishPlan(") != std::string::npos &&
+            source.find("ExecuteComponentPublishPlan(") !=
+                std::string::npos &&
+            source.find("steam_.Publish(") == std::string::npos,
+        "Workshop Manager and Agent CLI share one component publish planner and executor");
+    Check(source.find("PreparedManagerPublish") != std::string::npos &&
+            source.find("StartPreparePublish(") != std::string::npos &&
+            source.find("StartPreparedPublishUnlocked(") !=
+                std::string::npos &&
+            source.find("Prepare publish plan") != std::string::npos &&
+            source.find("Confirm metadata update") != std::string::npos &&
+            source.find("prepared-localization-plan") !=
+                std::string::npos,
+        "Workshop Manager requires a visible prepared plan with exact localized text before create, content update, or metadata update confirmation");
+    Check(source.find("io.IniFilename = nullptr") != std::string::npos &&
+            source.find("DefaultDataDirectory()") != std::string::npos &&
+            source.find("executableDirectory.filename() == L\"distribution\"") !=
+                std::string::npos &&
+            source.find("result.developmentRoot = result.dataDirectory") !=
+                std::string::npos,
+        "Workshop Manager keeps ImGui settings and default data out of immutable Steam payloads");
+    Check(source.find("GetMessageW(") != std::string::npos &&
+            source.find("PeekMessageW(") == std::string::npos &&
+            source.find("RequestManagerFrame()") != std::string::npos &&
+            source.find("DXGI_PRESENT_TEST") != std::string::npos,
+        "Workshop Manager blocks while idle and explicitly wakes for state changes and occlusion recovery");
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -618,17 +1090,23 @@ int wmain(int argc, wchar_t** argv)
     TestJson();
     TestSteamIdentity();
     TestSteamChildEnvironment();
+    TestManagerFrameScheduler();
+    TestPreviewCacheNotifications();
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
     TestSteamWorkshopLocalCache();
     TestProjectStore();
+    TestWorkshopManagerDataMigration();
     TestMetadataBinding();
     TestCommandLineQuoting();
     TestPublishLifecycle();
+    TestWorkshopLocalization();
+    TestComponentPublishPlan();
     if (argc == 3)
     {
         TestAuthoringToolchain(argv[2], argv[1]);
         TestRealPackageTool(argv[1], argv[2]);
+        TestManagerFontCoverage(argv[2]);
     }
     else Check(false, "test requires snowwidget.exe and repository root arguments");
     if (failures == 0)

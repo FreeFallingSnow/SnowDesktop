@@ -1,0 +1,403 @@
+#include "settings_ipc_channel.h"
+#include "settings_ipc_values.h"
+#include "large_icon_edit_rules.h"
+#include "settings_process.h"
+
+#include <atomic>
+#include <future>
+#include <iostream>
+#include <limits>
+#include <thread>
+
+namespace
+{
+using namespace snowdesktop::settings_ipc;
+int failures = 0;
+void Check(bool condition, const char* message)
+{
+    if (condition) return;
+    ++failures;
+    std::cerr << "FAIL: " << message << '\n';
+}
+template<class F> void Reject(F operation, const char* message)
+{
+    try { operation(); Check(false, message); }
+    catch (const ProtocolError&) {}
+}
+HANDLE CurrentProcessHandle()
+{
+    HANDLE result = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(),
+        GetCurrentProcess(), &result, SYNCHRONIZE, FALSE, 0))
+        throw std::runtime_error("test process handle failed");
+    return result;
+}
+
+void TestCodec()
+{
+    // These types exercise Unicode paths, optional values, wide counters and
+    // nested metadata used by settings and component editor snapshots.
+    using Value = std::tuple<std::wstring, std::uint64_t,
+        std::vector<std::optional<std::string>>, std::map<std::string, double>>;
+    const Value original{L"中文 / 日本語 / \U0001F3B5", UINT64_MAX,
+        {"", std::nullopt, std::string("a\0b", 3)}, {{"scale", 0.75}}};
+    auto encoded = Pack(original);
+    Check(Unpack<Value>(encoded) == original, "IPC value round trip preserves Unicode and exact counters");
+    for (std::size_t size = 0; size < encoded.size(); ++size)
+        Reject([&] { (void)Unpack<Value>(std::span(encoded).first(size)); },
+            "truncated snapshots must be rejected before dispatch");
+    encoded.push_back(std::byte{});
+    Reject([&] { (void)Unpack<Value>(encoded); }, "trailing snapshot fields reject protocol mismatch");
+    Reject([] { (void)Unpack<bool>(Pack(std::uint8_t{2})); }, "invalid boolean is rejected");
+    Reject([] { (void)Unpack<std::string>(Pack(UINT32_MAX)); }, "oversized string rejected before allocation");
+    Reject([] { (void)Unpack<std::vector<std::string>>(Pack(UINT32_MAX)); },
+        "oversized collection rejected before allocation");
+    Reject([] { (void)Pack(std::numeric_limits<double>::infinity()); },
+        "nonfinite slider values cannot cross IPC");
+    Reject([] { (void)Unpack<std::filesystem::path>(Pack(std::wstring(L"a\0b", 3))); },
+        "embedded null paths cannot change the filesystem operation target");
+    Reject([] { (void)Unpack<std::map<std::string, int>>(Pack(std::uint32_t{2},
+        std::string("a"), 1, std::string("a"), 2)); }, "duplicate metadata keys rejected");
+
+    snowdesktop::SettingsSnapshot settings;
+    settings.generation = 17;
+    settings.revision = UINT64_MAX;
+    settings.externalReplacementPending = true;
+    settings.values.general.animationMode = 1;
+    settings.values.general.popupAnimationEffect = 1;
+    settings.values.general.animationSpeed = 2;
+    settings.values.general.animationFrameLimit = 120;
+    settings.values.general.animationEnergySaver = false;
+    settings.values.general.animationOnBattery = true;
+    settings.values.general.quickNavigationAppearance.mode = 4;
+    settings.values.general.quickNavigationAppearance.customized = true;
+    settings.values.general.quickNavigationAppearance.appearance.panelGradient.enabled = true;
+    settings.values.general.quickNavigationAppearance.appearance.panelGradient.angle = 37;
+    settings.values.general.collectionPopupAppearance.mode = 3;
+    settings.values.dock.followComponentAppearance = false;
+    settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
+    settings.values.dock.customAppearance.widgetBgR = .2f;
+    settings.values.dock.floatingEdgeSwipeBlockFullscreen = true;
+    settings.values.dock.hoverEffect = 1;
+    settings.values.dock.hoverScale = 1.75f;
+    settings.values.dock.launchEffect = 2;
+    settings.values.dock.windowEffect = 3;
+    settings.values.general.language[0] = 'z';
+    settings.values.general.language[1] = 'h';
+    settings.values.general.language[2] = '\0';
+    settings.values.dock.systemTaskbarShellUi.enabled = true;
+    settings.values.dock.systemTaskbarShellUi.appearance.widgetEdgeHighlightWidth = 3.5f;
+    settings.values.desktop.iconBeautify.filterTintR = 0.123f;
+    settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
+    settings.values.personalization.panelGradient.enabled = true;
+    settings.values.personalization.panelGradient.angle = 213;
+    settings.values.personalization.panelGradient.stops.insert(
+        settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
+    const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&
+        restored.values.general.collectionPopupAppearance == settings.values.general.collectionPopupAppearance,
+        "independent surface modes and custom gradients reach the settings process intact");
+    Check(restored.values.general.animationMode == 1 &&
+        restored.values.general.popupAnimationEffect == 1 &&
+        restored.values.general.animationSpeed == 2 &&
+        restored.values.general.animationFrameLimit == 120 &&
+        !restored.values.general.animationEnergySaver &&
+        restored.values.general.animationOnBattery,
+        "animation preferences reach the independent settings process intact");
+    Check(restored.externalReplacementPending && restored.revision == UINT64_MAX &&
+        restored.values.dock == settings.values.dock &&
+        restored.values.desktop.iconBeautify.filterTintR == 0.123f &&
+        restored.values.category.rules.front().customLabel == L"文档" &&
+        std::string(restored.values.general.language) == "zh",
+        "controller IPC preserves replacement marker, draft fields and language array");
+    Check(restored.values.personalization.panelGradient == settings.values.personalization.panelGradient,
+        "full-panel gradient stops, opacities and angle reach the settings process without flattening");
+
+    using namespace snowdesktop::widget_runtime;
+    snowdesktop::LargeIconSettingsSnapshot large;
+    large.key = L"图标 / 日本語"; large.session = UINT64_MAX; large.revision = 47;
+    large.config = snowdesktop::EncodeLargeIconConfig({}); large.landscapePath = L"file:///C:/图片/preview.png";
+    large.hasEdgeColor = true; large.edgeColor = 0x119955; large.loading = true;
+    large.portraitSource = "steam-local"; large.accent = 0x445566; large.steam = true;
+    large.frameWidth = 436; large.frameHeight = 213; large.frameColumns = 4; large.frameRows = 2;
+    large.unitScale = 1.5; large.durationScale = 2; large.frameLimit = 30; large.animations = false; large.neutral = 0x123456;
+    large.frameWidths = {100, 212, 324, 436}; large.frameHeights = {100, 213};
+    auto defaults = snowdesktop::LargeIconConfig{}; defaults.radius = 27; defaults.titleSize = 15;
+    large.defaultConfig = snowdesktop::EncodeLargeIconConfig(defaults); large.imageWidth = 64; large.imageHeight = 48;
+    const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
+    Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
+        largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
+        largeCopy.hasEdgeColor && largeCopy.edgeColor == large.edgeColor && largeCopy.loading && largeCopy.config == large.config && largeCopy.steam && largeCopy.accent == large.accent &&
+        largeCopy.frameWidth == 436 && largeCopy.frameHeight == 213 && largeCopy.frameColumns == 4 && largeCopy.frameRows == 2 &&
+        largeCopy.unitScale == 1.5 && largeCopy.durationScale == 2 && largeCopy.frameLimit == 30 && !largeCopy.animations && largeCopy.neutral == large.neutral &&
+        largeCopy.frameWidths == large.frameWidths && largeCopy.frameHeights == large.frameHeights &&
+        largeCopy.defaultConfig == large.defaultConfig && largeCopy.imageWidth == 64 && largeCopy.imageHeight == 48,
+        "large-icon editing guards, Unicode references and thumbnail provenance survive private IPC");
+    WidgetSettingsSnapshot widget;
+    widget.widgetId = L"music-1";
+    widget.generation = 3;
+    widget.revision = 9;
+    widget.hostAppearance.panelGradient = settings.values.personalization.panelGradient;
+    WidgetHostAppearancePatch gradientPatch;
+    gradientPatch.panelGradient = widget.hostAppearance.panelGradient;
+    Check(Unpack<WidgetHostAppearancePatch>(Pack(gradientPatch)) == gradientPatch && !gradientPatch.Empty(),
+        "per-widget gradient patches preserve stops and are not mistaken for empty edits");
+    WidgetSettingFieldState field;
+    field.schema.rawType = "password";
+    field.schema.key = "secret";
+    field.currentValue = MakeWidgetSettingString("must-not-leave-host");
+    field.defaultValue = field.currentValue;
+    field.opaque.configured = true;
+    field.opaque.displayLabel = "must-not-leave-host";
+    widget.fields.push_back(field);
+    PrepareWidgetSettingsSnapshot(widget);
+    const auto wire = Pack(widget);
+    const std::string serialized(reinterpret_cast<const char*>(wire.data()), wire.size());
+    Check(serialized.find("must-not-leave-host") == std::string::npos &&
+        Unpack<WidgetSettingsSnapshot>(wire) == widget,
+        "prepared secret fields retain only opaque status across IPC");
+}
+
+void TestChannel()
+{
+    DWORD handlesBefore = 0;
+    // Creating the first USER message queue can lazily initialize shared
+    // Windows/CRT resources. Compare equal, warmed process states.
+    for (int iteration = -1; iteration < 12; ++iteration)
+    {
+        if (iteration == 0) GetProcessHandleCount(GetCurrentProcess(), &handlesBefore);
+        HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+        if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) ||
+            !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+            throw std::runtime_error("test pipe creation failed");
+        Channel parent;
+        parent.Open(mainRead, mainWrite, CurrentProcessHandle());
+        parent.Bind<int, int>("host.preview", [](int value) { return value + 1; });
+        std::promise<HWND> started;
+        std::atomic<bool> childFailed = false;
+        std::thread child([&] {
+            try
+            {
+                Channel ui;
+                ui.Open(uiRead, uiWrite, CurrentProcessHandle());
+                ui.Bind<int, int>("ui.flush", [&ui](int value) {
+                    return ui.Call<int>("host.preview", value) + 1;
+                });
+                ui.Bind<std::string, std::string>("ui.snapshot", [](std::string value) { return value; });
+                ui.Bind<void>("ui.close", [] { PostQuitMessage(0); });
+                started.set_value(ui.Window());
+                MSG message{};
+                while (GetMessageW(&message, nullptr, 0, 0) > 0)
+                    DispatchMessageW(&message);
+            }
+            catch (...) { childFailed = true; try { started.set_value(nullptr); } catch (...) {} }
+        });
+        Check(started.get_future().get() != nullptr, "settings endpoint starts");
+        try
+        {
+            Check(parent.Call<int>("ui.flush", 40) == 42,
+                "nested host callback completes without deadlocking owner STAs");
+            const std::string large(2 * 1024 * 1024, 'x');
+            Check(parent.Call<std::string>("ui.snapshot", large) == large,
+                "snapshots larger than pipe buffer arrive intact");
+            parent.Notify("ui.close");
+            child.join();
+            Reject([&] { (void)parent.Request("ui.flush", Pack(1), 1000); },
+                "closed child cannot acknowledge an unsaved edit");
+            parent.Close();
+            bool finalized = false;
+            Check(parent.Post([&] { finalized = true; }),
+                "host completion queue survives settings disconnect");
+            MSG message{};
+            while (PeekMessageW(&message, parent.Window(), 0, 0, PM_REMOVE))
+                DispatchMessageW(&message);
+            Check(finalized, "durable backend completion runs after UI connection closes");
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "IPC session iteration " << iteration << ": ";
+            Check(false, error.what());
+            PostThreadMessageW(GetThreadId(child.native_handle()), WM_QUIT, 0, 0);
+            if (child.joinable()) child.join();
+        }
+        Check(!childFailed, "settings peer remained healthy");
+    }
+    DWORD handlesAfter = 0;
+    GetProcessHandleCount(GetCurrentProcess(), &handlesAfter);
+    if (handlesAfter > handlesBefore)
+        std::cerr << "IPC handles: " << handlesBefore << " -> " << handlesAfter << '\n';
+    Check(handlesAfter <= handlesBefore, "repeated IPC sessions release pipes, threads, events and process handles");
+}
+
+void TestRetiredUpdateProtocol()
+{
+    HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+    if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) ||
+        !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+        throw std::runtime_error("test pipe creation failed");
+    {
+        Channel channel;
+        channel.Open(mainRead, mainWrite, CurrentProcessHandle());
+        // Version 7 carried network-update fields removed from About status.
+        // An old peer must disconnect before its payload can be interpreted.
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{7},
+            std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
+        DWORD written = 0;
+        Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
+                  &written, nullptr) && written == header.size(),
+            "retired update-protocol frame reaches the channel");
+        const auto deadline = GetTickCount64() + 2000;
+        while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
+        Check(!channel.Connected(),
+            "settings peers carrying retired update fields disconnect before dispatch");
+    }
+    CloseHandle(uiWrite);
+    CloseHandle(uiRead);
+}
+
+void TestStalledPeer()
+{
+    HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+    if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) ||
+        !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+        throw std::runtime_error("test pipe creation failed");
+    const auto started = GetTickCount64();
+    {
+        Channel channel;
+        channel.Open(mainRead, mainWrite, CurrentProcessHandle());
+        // No peer reader: this exceeds pipe capacity and stalls its writer.
+        Reject([&] { (void)channel.Request("ui.flush", Pack(std::string(1024 * 1024, 'x')), 100); },
+            "unresponsive peer fails instead of acknowledging an edit");
+    }
+    Check(GetTickCount64() - started < 3000,
+        "a stalled pipe writer cannot block timeout or endpoint destruction");
+    CloseHandle(uiWrite);
+    CloseHandle(uiRead);
+}
+
+void TestProcessLifecycle()
+{
+    for (int iteration = 0; iteration < 3; ++iteration)
+    {
+        Channel channel;
+        SettingsProcess process;
+        process.Start(channel);
+        Check(process.Running() && process.ProcessId() != GetCurrentProcessId(),
+            "settings UI runs in a distinct supervised process");
+        Check(channel.Call<bool>("test.identity", ExecutableIdentity()),
+            "child validates inherited channel and exact executable identity");
+        snowdesktop::SettingsRoute route = snowdesktop::SettingsRoute::ForWidget(L"组件-42");
+        Check(channel.Call<snowdesktop::SettingsRoute>("test.route", route) == route,
+            "real child receives component route without sharing pointers");
+        channel.Notify("test.exit");
+        const auto deadline = GetTickCount64() + 5000;
+        while (process.Running() && GetTickCount64() < deadline) Sleep(10);
+        Check(!process.Running(), "settings child exits after close, without a resident UI process");
+        channel.Close();
+        process.Stop();
+    }
+    Channel channel;
+    SettingsProcess process;
+    process.Start(channel);
+    Check(channel.Call<bool>("test.identity", ExecutableIdentity()),
+        "supervised child starts before application shutdown simulation");
+    HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, process.ProcessId());
+    process.Stop();
+    Check(child && WaitForSingleObject(child, 5000) == WAIT_OBJECT_0,
+        "closing the application-owned job terminates the settings UI without an orphan process");
+    if (child) CloseHandle(child);
+    channel.Close();
+}
+}
+
+int RunSettingsIpcChildIfRequested()
+{
+    using namespace snowdesktop::settings_ipc;
+    if (!IsSettingsProcessCommand()) return -1;
+    try
+    {
+        Channel channel;
+        OpenInheritedSettingsChannel(channel);
+        channel.Bind<bool, std::string>("test.identity", [](const std::string& identity) {
+            return identity == ExecutableIdentity();
+        });
+        channel.Bind<snowdesktop::SettingsRoute, snowdesktop::SettingsRoute>("test.route", [](auto route) { return route; });
+        channel.Bind<void>("test.exit", [] { PostQuitMessage(0); });
+        channel.SetDisconnected([] { PostQuitMessage(ERROR_BROKEN_PIPE); });
+        MSG message{};
+        while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        return 0;
+    }
+    catch (...) { return 1; }
+}
+
+void TestLargeIconEditing()
+{
+    using namespace snowdesktop;
+    using namespace snowdesktop::large_icon_edit_rules;
+    Check(ResolveEntryAccess(false, false) == EntryAccess::Hidden &&
+            ResolveEntryAccess(false, true) == EntryAccess::Hidden,
+        "large-icon authoring entries stay hidden without a Bridge, even with a retained unlock flag");
+    Check(ResolveEntryAccess(true, false) == EntryAccess::Unlock,
+        "a locked build with a Bridge directs authoring entries to unlock settings");
+    Check(ResolveEntryAccess(true, true) == EntryAccess::Edit,
+        "an unlocked build with a Bridge exposes normal large-icon editing");
+    struct Item { std::optional<LargeIconConfig> largeIcon; std::pair<int, int> gridSpan{1, 1}; } item;
+    LargeIconConfig config; config.columns = 3; config.rows = 2; config.opacity = .2;
+    int writes = 0;
+    auto persist = [&] { ++writes; return true; };
+    Check(!Store(item, config, std::pair{3, 2}, false, true, persist) && !item.largeIcon && writes == 0,
+        "host rejects creation without effective unlock before touching state or persistence");
+    Check(!Store(item, config, std::pair{3, 2}, true, false, persist) && writes == 0,
+        "host rejects large-icon creation inside a storage container");
+    Check(Store(item, config, std::pair{3, 2}, true, true, persist) && item.largeIcon == config && writes == 1,
+        "effective unlock permits a new large icon, including an offline-valid entitlement result");
+    auto changed = config; changed.opacity = .8;
+    Check(!Store(item, changed, std::pair{2, 2}, false, true, persist) && item.largeIcon == config && item.gridSpan == std::pair{3, 2} && writes == 1,
+        "unlock loss preserves committed appearance and size while preventing edits");
+    Check(!Store(item, changed, std::pair{2, 2}, true, true, [] { return false; }) && item.largeIcon == config && item.gridSpan == std::pair{3, 2},
+        "failed persistence rolls back both appearance and span");
+    Check(!Store(item, changed, std::pair{2, 2}, true, true, []() -> bool { throw std::runtime_error("write failed"); }) && item.largeIcon == config,
+        "exceptional persistence failure also preserves the committed configuration");
+    Check(Store(item, changed, std::pair{2, 2}, true, true, persist) && item.largeIcon == changed,
+        "editing can retry successfully after re-unlock or a persistence failure");
+    Check(Store(item, std::nullopt, std::pair{1, 1}, false, true, persist) && !item.largeIcon && item.gridSpan == std::pair{1, 1},
+        "returning to an ordinary icon remains available after unlock loss");
+    config.radius = -1;
+    Check(!Store(item, config, std::pair{2, 2}, true, true, persist) && !item.largeIcon,
+        "host transaction rejects invalid configuration even with an effective unlock");
+
+    LargeIconEditSession edit{L"game", 11, 7, LargeIconConfig{}};
+    LargeIconSettingsRequest request{L"game", 11, 7, "preview", EncodeLargeIconConfig({}), {}};
+    Check(CheckRequest(edit, request, true).empty(), "current item session may preview");
+    for (const auto action : {"preview", "commit", "cancel", "import", "refresh"})
+    {
+        request.action = action; request.revision = 6;
+        Check(CheckRequest(edit, request, true) == "largeIcon.stale", "all edit operations reject an obsolete revision");
+        request.revision = 7; request.session = 10;
+        Check(CheckRequest(edit, request, true) == "largeIcon.stale", "all edit operations reject an obsolete editor session");
+        request.session = 11; request.key = L"other";
+        Check(CheckRequest(edit, request, true) == "largeIcon.stale", "all edit operations validate the original project identity");
+        request.key = L"game"; edit.preview = LargeIconConfig{};
+        Check(CheckRequest(edit, request, false) == "largeIcon.locked" && !edit.preview,
+            "unlock loss rejects every editing operation and cancels its uncommitted preview");
+    }
+    request.action = "status"; request.revision = 1;
+    Check(CheckRequest(edit, request, true).empty(), "status can observe a newer revision in the same editor session");
+    request.action = "commit"; request.revision = 7;
+    edit = {};
+    Check(CheckRequest(edit, request, true) == "largeIcon.stale", "deletion, conversion or editor teardown invalidates old requests");
+    request.action = "read";
+    Check(CheckRequest(edit, request, true).empty(), "reopening may establish a fresh session after re-unlock");
+}
+
+int RunSettingsIpcTests()
+{
+    TestCodec();
+    TestLargeIconEditing();
+    TestChannel();
+    TestRetiredUpdateProtocol();
+    TestStalledPeer();
+    TestProcessLifecycle();
+    return failures;
+}

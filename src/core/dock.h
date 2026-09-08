@@ -127,6 +127,8 @@ public:
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
     RECT GetInteractiveBounds() const;
+    RECT GetAnimationVisualBounds() const;
+    std::vector<RECT> GetOcclusionRects(POINT pointer) const;
     bool ContainsInteractivePoint(POINT pt) const;
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
     RECT GetVisualPanelBounds(POINT pointer) const;
@@ -148,6 +150,8 @@ private:
     };
 
     bool IsMagnificationSuppressed() const;
+    float GetMaximumMagnificationScale() const;
+    int GetLaunchAnimationPadding() const;
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;
@@ -184,11 +188,14 @@ private:
         int tooltipHeight) const;
     bool IsFocusedElementRect(const RECT& baseRect, POINT pointer) const;
     RECT GetScrollViewport(const RECT& bounds) const;
+    RECT GetVisualScrollViewport(POINT pointer) const;
     // Folder entries share the Dock's single scroll viewport/offset. These
     // accessors keep the semantic group boundary explicit for hit testing.
     int GetMaxScrollOffset(const RECT& bounds) const;
     bool IsPointInScrollViewport(POINT point) const;
     size_t InsertIndexFor(Slot* slot, HitRegion region) const;
+    HitRegion RedirectDragToNearestInsertion(
+        POINT point, Slot*& outSlot);
 
     DesktopApp* app_ = nullptr;
     std::vector<DockEntry>* entries_ = nullptr;

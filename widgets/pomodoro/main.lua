@@ -68,23 +68,20 @@ local function loadStyle()
 end
 
 local function getPalette()
-    local background = descriptor and descriptor.bg or 0x151A21
-    local red = math.floor(background / 0x10000) % 0x100
-    local green = math.floor(background / 0x100) % 0x100
-    local blue = background % 0x100
-    local isLight = red * 299 + green * 587 + blue * 114 >= 160000
-    if isLight then
+    local theme = widget.theme()
+    local darkForeground = theme and theme.contentTheme == 1
+    if darkForeground then
         return {
-            text = 0x162033,
-            muted = 0x667085,
+            text = "textPrimary",
+            muted = "textSecondary",
             track = 0xDCE3EC,
             statusSurface = 0xEEF2F6,
             button = 0xE3E9F1,
         }
     end
     return {
-        text = 0xF8FAFC,
-        muted = 0xAAB4C3,
+        text = "textPrimary",
+        muted = "textSecondary",
         track = 0x2A3648,
         statusSurface = 0x222D3D,
         button = 0x273449,
@@ -361,7 +358,8 @@ local function buildView(context)
     loadStyle()
     local config = loadConfig()
     local palette = getPalette()
-    local width = math.max(1, context.layoutSize.width)
+    local width = context.layoutSize.width
+    local height = context.layoutSize.height
     local state = getState()
     local remaining = remainingSeconds(config, nowSeconds())
     local activePhase = state
@@ -378,28 +376,17 @@ local function buildView(context)
         completedInSet = config.longBreakInterval
     end
 
-    local padding = math.max(layout.cu(8), math.min(
-        layout.cu(14), layout.vmin(4)))
-    local availableWidth = math.max(1, width - padding * 2)
-    local infoGap = math.max(layout.cu(7), math.min(
-        layout.cu(13), layout.vmin(3.8)))
-    local majorGap = math.max(layout.cu(14), math.min(
-        layout.cu(26), layout.vmin(7)))
-    local buttonGap = math.max(layout.cu(6), math.min(
-        layout.cu(9), layout.vmin(2.8)))
-    local statusFont = math.max(layout.fontCu(10), math.min(
-        layout.fontCu(14), layout.vmin(4)))
-    local statusHeight = math.max(layout.cu(25), math.min(
-        layout.cu(31), layout.vmin(9)))
-    local timeFont = math.max(layout.fontCu(38), math.min(
-        layout.fontCu(68), layout.vmin(20)))
-    local timeHeight = timeFont * 1.18
-    local progressHeight = math.max(layout.cu(4), math.min(
-        layout.cu(7), layout.vmin(2)))
-    local buttonHeight = math.max(layout.cu(39), math.min(
-        layout.cu(48), layout.vmin(14)))
-    local actionFont = math.max(layout.fontCu(11), math.min(
-        layout.fontCu(15), buttonHeight * 0.34))
+    local vertical = height > width * 1.05
+    local short = math.min(width, height)
+    local padding = short * 0.06
+    local availableWidth = width - padding * 2
+    local infoGap = short * 0.035
+    local majorGap = short * 0.07
+    local buttonGap = short * 0.03
+    local statusHeight = short * 0.14
+    local timeFont = short * 0.20
+    local progressHeight = short * 0.025
+    local buttonHeight = short * 0.22
 
     local subline = ""
     if activePhase == "work" then
@@ -411,6 +398,7 @@ local function buildView(context)
     end
     local label = stateLabel(state) .. subline
     local timeText = formatTime(remaining)
+    local actionFont
 
     local function actionButton(id, buttonLabel, height,
         background, foreground, primary)
@@ -459,16 +447,31 @@ local function buildView(context)
             l10n.tr("lua_widget.pomodoro.skip") }
     end
 
-    local infoWidth = math.min(availableWidth, math.max(
-        layout.cu(148), math.min(layout.cu(300), layout.vmin(88))))
-    local actionWidth = math.min(availableWidth * 0.82, math.max(
-        layout.cu(145), math.min(layout.cu(240), layout.vmin(75))))
-    local timeLayoutFactor = #timeText > 5 and 4.00 or 3.35
-    local timeLayoutWidth = math.min(infoWidth, math.max(
-        layout.cu(124), timeFont * timeLayoutFactor))
-    local progressWidthFactor = #timeText > 5 and 3.15 or 2.62
-    local progressWidth = math.min(infoWidth, math.max(
-        layout.cu(96), timeFont * progressWidthFactor))
+    local timeGlyphs = math.max(1, #timeText)
+    local timeWidthFactor = timeGlyphs * 0.55 +
+        math.max(0, timeGlyphs - 1) * 0.018
+    local infoWidth
+    local actionWidth
+    if vertical then
+        infoWidth = availableWidth * 0.90
+        actionWidth = availableWidth * 0.88
+    else
+        local sharedWidth = availableWidth - majorGap
+        local maximumTimeWidth = sharedWidth * 0.70
+        timeFont = math.min(timeFont, maximumTimeWidth / timeWidthFactor)
+        local requiredTimeWidth = timeFont * timeWidthFactor
+        infoWidth = math.max(sharedWidth * 0.56, requiredTimeWidth)
+        actionWidth = sharedWidth - infoWidth
+    end
+    local timeLetterSpacing = timeFont * 0.018
+    local requiredTimeWidth = math.max(timeFont,
+        timeGlyphs * timeFont * 0.55 +
+            math.max(0, timeGlyphs - 1) * timeLetterSpacing)
+    infoWidth = math.max(infoWidth, requiredTimeWidth)
+    local timeHeight = timeFont * 1.18
+    local statusFont = math.min(short * 0.055, infoWidth * 0.075)
+    actionFont = math.min(short * 0.065, actionWidth * 0.15)
+    local progressWidth = infoWidth * 0.76
 
     local status = view.badge({
         key = "pomodoro.state",
@@ -488,12 +491,16 @@ local function buildView(context)
     local timer = view.text({
         key = "pomodoro.time",
         text = timeText,
-        width = timeLayoutWidth,
+        width = "auto",
+        minWidth = requiredTimeWidth,
         height = timeHeight,
+        flexShrink = 0,
         fontSize = timeFont,
         bold = true,
         textAlign = "center",
-        letterSpacing = timeFont * 0.018,
+        textWrap = "noWrap",
+        overflowText = "clip",
+        letterSpacing = timeLetterSpacing,
         style = { foreground = palette.text },
     })
     local progressBar = view.progressBar({
@@ -519,7 +526,9 @@ local function buildView(context)
     local overview = view.column({
         key = "pomodoro.overview",
         width = infoWidth,
+        minWidth = infoWidth,
         height = overviewHeight,
+        flexShrink = 0,
         gap = infoGap,
         alignItems = "center",
         justifyContent = "center",
@@ -534,13 +543,13 @@ local function buildView(context)
         justifyContent = "center",
         children = {
             actionButton(primaryAction[1], primaryAction[2], buttonHeight,
-                accent, 0xFFFFFF, true),
+                accent, palette.text, true),
             actionButton(secondaryAction[1], secondaryAction[2], buttonHeight,
                 palette.button, palette.muted, false),
         },
     })
 
-    return view.column({
+    local content = {
         key = "pomodoro.surface",
         width = "fill",
         height = "fill",
@@ -557,7 +566,8 @@ local function buildView(context)
             label = l10n.tr("lua_widget.pomodoro.name"),
         },
         children = { overview, actions },
-    })
+    }
+    return vertical and view.column(content) or view.row(content)
 end
 
 local function event(_context, model, value)

@@ -64,8 +64,13 @@ bool PumpMessagesUntil(
 
 } // namespace
 
+void RunWidgetBackgroundCacheTests();
+void RunWidgetTextLayoutCacheTests();
+
 int wmain()
 {
+    RunWidgetBackgroundCacheTests();
+    RunWidgetTextLayoutCacheTests();
     using namespace snowdesktop::component_preview;
 
     bool hasPartialRoundedCoverage = false;
@@ -90,7 +95,7 @@ int wmain()
 
     snowdesktop::WidgetPreviewScene scene;
     scene.AddItem({ L"sample-a", L"Sample A", L"A",
-        L"documents", L"today", false });
+        L"documents", L"today", false, 0x425D79 });
     scene.PreparePlaceholderModels(96, false);
     DesktopWidget child;
     child.id = L"child";
@@ -113,8 +118,13 @@ int wmain()
     BITMAP previewIcon{};
     Expect(GetObjectW(scene.FindDesktopItem(L"sample-a")->iconBitmap,
                sizeof(previewIcon), &previewIcon) != 0 &&
-            previewIcon.bmBitsPixel == 32,
-        "preview placeholder uses a 32-bit icon bitmap");
+            previewIcon.bmBitsPixel == 32 && previewIcon.bmBits != nullptr,
+        "preview placeholder uses an inspectable 32-bit icon bitmap");
+    const auto* previewPixels =
+        static_cast<const std::uint32_t*>(previewIcon.bmBits);
+    Expect((previewPixels[16 * previewIcon.bmWidth + 16] & 0x00ffffffu) ==
+            0x425D79u,
+        "preview placeholder honors its semantic background color");
     Expect(scene.FindWidget(L"child") != nullptr,
         "preview scene resolves temporary child widgets");
     Expect(scene.FindWidget(L"missing") == nullptr,
@@ -336,6 +346,17 @@ int wmain()
     Expect(IsWindowVisible(window.Handle()) == FALSE,
         "the title-bar close button hides only the preview window");
 
+    firstPageRenders = 0;
+    secondPageRenders = 0;
+    pagedModel.title = L"Paged preview with initial selection";
+    pagedModel.initialCard = 1;
+    pagedModel.cards[1].cacheKey = L"paged:list-initial";
+    Expect(window.Show(pagedModel, menuBounds, nullptr, 96, false),
+        "paged preview accepts an explicit initial page");
+    Expect(firstPageRenders == 0 && secondPageRenders == 1,
+        "a newly identified preview opens on its requested initial page");
+    window.Hide();
+
     Model optionModel;
     optionModel.title = L"Same-size options";
     optionModel.applyLabel = L"Add to Desktop";
@@ -395,15 +416,20 @@ int wmain()
         OptionSetting::ScrollContainerMode,
         L"Collection mode", L"Large folder", L"Scroll container" });
     collectionCard.options.push_back({
+        OptionSetting::LargeFolderTitleless,
+        L"Label-free compact mode", L"Off", L"On" });
+    collectionCard.options.push_back({
         OptionSetting::ListMode,
         L"Layout", L"Icons", L"List" });
     bool collectionRenderScrolling = false;
     bool collectionRenderList = false;
+    bool collectionRenderTitleless = false;
     collectionCard.render = [&](int width, int height, UINT,
             const StagePlacement&,
             const ApplySettings& settings, bool) {
         collectionRenderScrolling = settings.scrollContainerMode;
         collectionRenderList = settings.listMode;
+        collectionRenderTitleless = settings.largeFolderTitleless;
         return SolidBitmap(width, height, 0xff406080u);
     };
     collectionOptionsModel.cards.push_back(std::move(collectionCard));
@@ -414,12 +440,23 @@ int wmain()
         "collection option constraints render successfully");
     RECT largeFolderBounds{};
     GetClientRect(window.Handle(), &largeFolderBounds);
-    Expect(!collectionRenderScrolling && !collectionRenderList,
+    Expect(!collectionRenderScrolling && !collectionRenderList &&
+            !collectionRenderTitleless,
         "large-folder preview starts without a list layout");
     RECT hiddenListModeButton = window.OptionBoundsForTesting(
         OptionSetting::ListMode, true);
     Expect(IsRectEmpty(&hiddenListModeButton),
         "large-folder preview does not expose list controls");
+    RECT titlelessModeButton = window.OptionBoundsForTesting(
+        OptionSetting::LargeFolderTitleless, true);
+    Expect(!IsRectEmpty(&titlelessModeButton),
+        "large-folder preview exposes label-free compact mode");
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM(
+            (titlelessModeButton.left + titlelessModeButton.right) / 2,
+            (titlelessModeButton.top + titlelessModeButton.bottom) / 2));
+    Expect(collectionRenderTitleless,
+        "label-free compact mode rerenders the large-folder preview");
     RECT scrollingModeButton = window.OptionBoundsForTesting(
         OptionSetting::ScrollContainerMode, true);
     Expect(!IsRectEmpty(&scrollingModeButton),
@@ -427,11 +464,12 @@ int wmain()
     SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
         MAKELPARAM((scrollingModeButton.left + scrollingModeButton.right) / 2,
             (scrollingModeButton.top + scrollingModeButton.bottom) / 2));
-    RECT scrollingBounds{};
-    GetClientRect(window.Handle(), &scrollingBounds);
-    Expect(collectionRenderScrolling &&
-            scrollingBounds.bottom > largeFolderBounds.bottom,
-        "list layout appears only after enabling scrolling-container mode");
+    Expect(collectionRenderScrolling && !collectionRenderTitleless,
+        "scrolling-container mode disables label-free compact mode");
+    RECT hiddenTitlelessModeButton = window.OptionBoundsForTesting(
+        OptionSetting::LargeFolderTitleless, true);
+    Expect(IsRectEmpty(&hiddenTitlelessModeButton),
+        "scrolling-container preview removes label-free compact controls");
     RECT listModeButton = window.OptionBoundsForTesting(
         OptionSetting::ListMode, true);
     Expect(!IsRectEmpty(&listModeButton),
@@ -455,10 +493,18 @@ int wmain()
         OptionSetting::ListMode, true);
     Expect(IsRectEmpty(&hiddenListModeButton),
         "large-folder preview removes list click targets");
+    titlelessModeButton = window.OptionBoundsForTesting(
+        OptionSetting::LargeFolderTitleless, true);
+    Expect(!IsRectEmpty(&titlelessModeButton),
+        "returning to large-folder mode restores label-free compact controls");
+    SendMessageW(window.Handle(), WM_LBUTTONUP, 0,
+        MAKELPARAM(
+            (titlelessModeButton.left + titlelessModeButton.right) / 2,
+            (titlelessModeButton.top + titlelessModeButton.bottom) / 2));
     SendMessageW(window.Handle(), WM_KEYDOWN, VK_RETURN, 0);
     Expect(applied.has_value() && !applied->scrollContainerMode &&
-            !applied->listMode,
-        "large-folder settings cannot apply a hidden list layout");
+            !applied->listMode && applied->largeFolderTitleless,
+        "large-folder settings apply label-free compact mode without a hidden list layout");
 
     window.Hide();
     const RECT itemBounds{ 130, 200, 260, 232 };

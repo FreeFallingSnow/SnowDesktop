@@ -1,5 +1,6 @@
 #pragma once
 
+#include "personalization.h"
 #include "widget_interaction_region.h"
 #include "widget_setting_rules.h"
 
@@ -157,10 +158,15 @@ struct WidgetHostAppearanceState
     int borderColor = 0xFFFFFF;
     float backgroundOpacity = 0.36f;
     float borderOpacity = 0.40f;
+    float borderWidth = 1.0f;
+    bool edgeHighlightEnabled = false;
+    float edgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    float edgeHighlightStrength = kDefaultEdgeHighlightStrength;
     float gradientEndOpacity = 0.0f;
     bool glassEnabled = false;
     bool acrylicEnabled = false;
     int contentTheme = 0;
+    PanelGradient panelGradient;
 
     bool operator==(const WidgetHostAppearanceState&) const = default;
 };
@@ -174,18 +180,25 @@ struct WidgetHostAppearancePatch
     std::optional<int> borderColor;
     std::optional<float> backgroundOpacity;
     std::optional<float> borderOpacity;
+    std::optional<float> borderWidth;
+    std::optional<bool> edgeHighlightEnabled;
+    std::optional<float> edgeHighlightWidth;
+    std::optional<float> edgeHighlightStrength;
     std::optional<float> gradientEndOpacity;
     std::optional<bool> glassEnabled;
     std::optional<bool> acrylicEnabled;
     std::optional<int> contentTheme;
     bool clearContentTheme = false;
+    std::optional<PanelGradient> panelGradient;
 
     [[nodiscard]] bool Empty() const noexcept
     {
         return !followPersonalization && !presetId && !backgroundColor &&
             !borderColor && !backgroundOpacity && !borderOpacity &&
+            !borderWidth && !edgeHighlightEnabled && !edgeHighlightWidth &&
+            !edgeHighlightStrength &&
             !gradientEndOpacity && !glassEnabled && !acrylicEnabled &&
-            !contentTheme && !clearContentTheme;
+            !contentTheme && !clearContentTheme && !panelGradient;
     }
 
     bool operator==(const WidgetHostAppearancePatch&) const = default;

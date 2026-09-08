@@ -17,9 +17,28 @@ void Expect(bool condition, const char* message)
 int main()
 {
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
+    using snowdesktop::http_security::IsAllowedHttpOrHttpsUrl;
     using snowdesktop::http_security::IsAllowedPublicHttpsUrl;
     using snowdesktop::http_security::IsAllowedUrlForDomains;
     using snowdesktop::http_security::HaveSameOrigin;
+
+    snowdesktop::http_stream::Result candidateFailure;
+    candidateFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::Candidate;
+    snowdesktop::http_stream::Result transportFailure;
+    transportFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::Transport;
+    snowdesktop::http_stream::Result sinkFailure;
+    sinkFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::Sink;
+    snowdesktop::http_stream::Result localFailure;
+    localFailure.failureKind =
+        snowdesktop::http_stream::FailureKind::LocalSetup;
+    Expect(candidateFailure.CanRetryAlternateCandidate() &&
+            transportFailure.CanRetryAlternateCandidate() &&
+            !sinkFailure.CanRetryAlternateCandidate() &&
+            !localFailure.CanRetryAlternateCandidate(),
+        "only candidate-specific or transport HTTP failures are retryable");
 
     Expect(IsAllowedRemoteIpLiteral(L"8.8.8.8"),
         "a public IPv4 address is accepted");
@@ -160,6 +179,17 @@ int main()
     Expect(!IsAllowedPublicHttpsUrl(L"https://localhost/article") &&
             !IsAllowedPublicHttpsUrl(L"https://192.168.1.2/article"),
         "shell HTTPS policy rejects local targets");
+
+    Expect(IsAllowedHttpOrHttpsUrl(L"http://localhost/image.webp") &&
+            IsAllowedHttpOrHttpsUrl(L"http://192.168.1.2/file.pdf") &&
+            IsAllowedHttpOrHttpsUrl(L"https://example.com/archive.zip"),
+        "URL-drop downloads accept HTTP, HTTPS, and local targets");
+    Expect(!IsAllowedHttpOrHttpsUrl(
+                L"http://user:password@localhost/file") &&
+            !IsAllowedHttpOrHttpsUrl(L"ftp://example.com/file") &&
+            !IsAllowedHttpOrHttpsUrl(L"file:///C:/Temp/file.txt") &&
+            !IsAllowedHttpOrHttpsUrl(L"not a URL"),
+        "URL-drop downloads reject credentials and non-HTTP schemes");
 
     Expect(HaveSameOrigin(L"https://Example.com/path",
             L"https://example.com/other?q=1") &&

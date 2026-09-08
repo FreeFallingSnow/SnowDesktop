@@ -1,6 +1,7 @@
 #include "widget_lua_lifecycle.h"
 
 #include "lua_runtime.h"
+#include "performance_trace.h"
 
 #include <chrono>
 #include <cstdint>
@@ -12,6 +13,16 @@ namespace
 {
 constexpr std::int64_t LifecycleInstructionBudget = 1000000;
 constexpr auto LifecycleTimeBudget = std::chrono::milliseconds(100);
+
+void PushMeasuredContext(lua_State* state,
+    WidgetLuaLifecycle::PushContext pushContext)
+{
+    // This is host argument construction, not the lifetime of the execution
+    // context guard or the subsequent Lua callback. Owner is inherited from
+    // the surrounding widget scope, as with lua/protectedCall.
+    snowdesktop::performance::Scope scope("lua", "context.arguments");
+    pushContext(state);
+}
 
 void PushModel(lua_State* state, int modelRef)
 {
@@ -89,7 +100,7 @@ bool WidgetLuaLifecycle::Setup(lua_State* state, int definitionRef,
         return false;
     }
 
-    pushContext(state);
+    PushMeasuredContext(state, pushContext);
     if (snowdesktop::lua_runtime::ProtectedCall(
             state, 1, 1, LifecycleInstructionBudget,
             LifecycleTimeBudget) != LUA_OK)
@@ -109,7 +120,7 @@ bool WidgetLuaLifecycle::PushRenderArguments(lua_State* state,
 {
     if (!state || !pushContext || !setupCompleted_ || disposeInvoked_)
         return false;
-    pushContext(state);
+    PushMeasuredContext(state, pushContext);
     PushModel(state, modelRef_);
     return true;
 }
@@ -150,7 +161,7 @@ bool WidgetLuaLifecycle::Event(lua_State* state, int definitionRef,
         return false;
     }
 
-    pushContext(state);
+    PushMeasuredContext(state, pushContext);
     PushModel(state, modelRef_);
     lua_pushvalue(state, eventIndex);
     invoked = true;
@@ -202,7 +213,7 @@ bool WidgetLuaLifecycle::Menu(lua_State* state, int definitionRef,
         return false;
     }
 
-    pushContext(state);
+    PushMeasuredContext(state, pushContext);
     PushModel(state, modelRef_);
     lua_pushvalue(state, requestIndex);
     invoked = true;
@@ -254,7 +265,7 @@ bool WidgetLuaLifecycle::Dispose(lua_State* state, int definitionRef,
         return false;
     }
 
-    pushContext(state);
+    PushMeasuredContext(state, pushContext);
     PushModel(state, modelRef_);
     lua_pushstring(state, reason ? reason : "unknown");
     if (snowdesktop::lua_runtime::ProtectedCall(

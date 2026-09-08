@@ -1,7 +1,9 @@
 #include "widget_runtime_scheduler.h"
+#include "widget_invalidation_batch.h"
 
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,6 +22,112 @@ void Check(bool condition, const char* message)
         std::cerr << "FAIL: " << message << '\n';
         std::exit(1);
     }
+}
+
+// Protect the host refresh contract: explicit + automatic invalidation must
+// render the final model once, without losing another owner/surface or region.
+void TestEventInvalidationBatch()
+{
+    using Batch = snowdesktop::widget_runtime::WidgetInvalidationBatch;
+    Batch batch;
+    int model = 0;
+    struct Draw { std::wstring owner; std::string surface; std::optional<RECT> dirty; int model; };
+    std::vector<Draw> draws;
+    Batch::Callback callback = [&](const auto& owner, const auto& dirty,
+                                   std::string_view surface) {
+        draws.push_back({ owner, std::string(surface), dirty, model });
+    };
+    {
+        Batch::Scope timer(batch, callback);
+        {
+            Batch::Scope event(batch, callback);
+            batch.Invalidate(callback, L"music", RECT{ 0, 0, 10, 10 }, "desktop");
+            model = 1;
+            batch.Invalidate(callback, L"music", RECT{ -2, 3, 20, 12 }, "desktop");
+            batch.Invalidate(callback, L"music", std::nullopt, "panel");
+        }
+        Check(draws.empty(), "nested events must not draw a half-updated model");
+        batch.Invalidate(callback, L"clock", std::nullopt, "desktop");
+        model = 2;
+    }
+    Check(draws.size() == 3 && draws[0].owner == L"music" &&
+            draws[0].model == 2 && draws[0].dirty &&
+            draws[0].dirty->left == -2 && draws[0].dirty->top == 0 &&
+            draws[0].dirty->right == 20 && draws[0].dirty->bottom == 12 &&
+            draws[1].surface == "panel" && draws[2].owner == L"clock",
+        "coalescing must preserve dirty region unions, owners and surfaces");
+    draws.clear();
+    {
+        Batch::Scope event(batch, callback);
+        batch.Invalidate(callback, L"music", RECT{ 0, 0, 1, 1 }, "");
+        batch.Invalidate(callback, L"music", std::nullopt, "");
+        batch.Invalidate(callback, L"music", RECT{ 2, 2, 3, 3 }, "");
+        batch.Invalidate(callback, L"music", std::nullopt, "desktop");
+    }
+    Check(draws.size() == 2 && !draws[0].dirty && draws[0].surface.empty() &&
+            draws[1].surface == "desktop",
+        "full refresh dominates rectangles without narrowing an all-surface request");
+    draws.clear();
+    batch.Invalidate(callback, L"pointer", std::nullopt, "desktop");
+    Check(draws.size() == 1,
+        "invalidation outside an event must remain synchronous for pointer feedback");
+
+    draws.clear();
+    Batch::Callback reentrant = [&](const auto& owner, const auto& dirty,
+                                    std::string_view surface) {
+        callback(owner, dirty, surface);
+        if (owner == L"outer")
+        {
+            Batch::Scope event(batch, callback);
+            batch.Invalidate(callback, L"inner", std::nullopt, "panel");
+        }
+    };
+    {
+        Batch::Scope event(batch, reentrant);
+        batch.Invalidate(reentrant, L"outer", std::nullopt, "desktop");
+        batch.Invalidate(reentrant, L"sibling", std::nullopt, "desktop");
+    }
+    Check(draws.size() == 3 && draws[0].owner == L"outer" &&
+            draws[1].owner == L"inner" && draws[2].owner == L"sibling",
+        "reentrant delivery must not lose pending siblings or strand new requests");
+    draws.clear();
+    try
+    {
+        Batch::Scope event(batch, callback);
+        batch.Invalidate(callback, L"failed", std::nullopt, "desktop");
+        throw std::runtime_error("native failure");
+    }
+    catch (const std::runtime_error&) {}
+    batch.Invalidate(callback, L"next", std::nullopt, "desktop");
+    Check(draws.size() == 1 && draws[0].owner == L"next",
+        "native unwinding must restore dispatch without drawing stale requests");
+}
+
+// Protect data freshness when a music animation is cancelled or disallowed.
+// A host data wake uses no Lua request quota and must not create fake events.
+void TestDataRefreshWithAnimation()
+{
+    FrameRequests requests;
+    Check(requests.Request("record") && requests.RequestDataRefresh() &&
+            requests.RequestDataRefresh() && requests.Size() == 1,
+        "audio and animation must share a deadline without duplicate Lua requests");
+    Check(requests.Cancel("record") && requests.HasPending() &&
+            requests.Consume(FrameRequests::TimePoint{}).empty(),
+        "cancelling a record animation must retain data refresh without synthesizing a frame event");
+    Check(requests.ConsumeDataRefresh() && !requests.ConsumeDataRefresh() &&
+            !requests.HasPending(),
+        "repeated audio wakes must produce one refresh then stop");
+    Check(!requests.Request("record", true) && requests.RequestDataRefresh() &&
+            requests.HasPending(),
+        "reduced motion must not suppress data freshness");
+    Check(requests.SetVisible(false) && !requests.HasPending() &&
+            !requests.RequestDataRefresh() && !requests.ConsumeDataRefresh(),
+        "hiding must discard pending data refresh and reject hidden wakes");
+    Check(requests.SetVisible(true) && requests.RequestDataRefresh(),
+        "visible widgets may resume data refresh");
+    requests.Clear();
+    Check(!requests.HasPending() && !requests.ConsumeDataRefresh(),
+        "runtime teardown must not leave an implicit frame loop");
 }
 
 void TestLimitsAndReplacement()
@@ -351,6 +459,8 @@ void TestAnimationFrameRequests()
 
 int main()
 {
+    TestEventInvalidationBatch();
+    TestDataRefreshWithAnimation();
     TestLimitsAndReplacement();
     TestDueConsumption();
     TestDelayClampingAndRounding();

@@ -9,12 +9,20 @@
 #include <cstdint>
 #include <string>
 
+#include "steam_runtime_context.h"
+
 namespace snowdesktop::deployment
 {
 /**
  * @brief 当前进程是否具有 MSIX 包身份。
  */
 bool IsPackaged() noexcept;
+
+/** Resolve the current explicit Steam/MSIX/portable runtime identity. */
+const RuntimeDeploymentContext& GetRuntimeDeploymentContext() noexcept;
+
+/** True when a Steam sidecar was present but failed validation. */
+bool HasInvalidRuntimeDeploymentContext() noexcept;
 
 /**
  * @brief 获取 MSIX 的 LocalState 目录。
@@ -32,7 +40,8 @@ std::wstring GetRuntimeFilePath(const wchar_t* filename);
 
 /**
  * @brief 获取可供其他进程加载的运行时 DLL 路径。
- * @details 将随软件分发的 DLL 复制到用户临时目录的进程专属目录后再返回，
+ * @details 将随软件分发的 DLL 复制到 SnowDesktop 数据目录的 ShellHook
+ * 进程专属目录后再返回，
  * 避免目标进程无法加载受保护的 MSIX 安装目录文件，也避免已注入模块继续锁住
  * 构建、便携或安装目录。
  * @param filename 不包含目录的 DLL 文件名。

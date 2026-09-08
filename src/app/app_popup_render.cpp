@@ -1,4 +1,5 @@
 #include "app.h"
+#include "popup_opacity_scope.h"
 #include "quick_navigation_theme.h"
 #include "../item_render_layer_rules.h"
 
@@ -31,6 +32,7 @@ void DesktopApp::DrawCollectionPopup(
         return;
     if (applyAnimation && popupAnimationOverlay_.active)
         return;
+    PopupOpacityScope opacity(ctx, applyAnimation, animation.opacity);
 
     D2D1_MATRIX_3X2_F previousTransform{};
     const bool animationApplied =
@@ -83,6 +85,9 @@ void DesktopApp::DrawCollectionPopup(
 
     std::vector<std::wstring> popupKeys =
         GetPopupItemKeys(widget);
+    PersonalizationSettings popupBackgroundAppearance =
+        collectionPopupAppearance_;
+    popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
     DrawWidgetPanelBackground(
         ctx, popupRect_, 18.0f * popupMetrics.scale,
         D2D1::ColorF(
@@ -100,8 +105,10 @@ void DesktopApp::DrawCollectionPopup(
                 collectionPopupAppearance_.widgetBorderAlpha,
                 0.0f, 1.0f)),
         false,
-        std::max(1.0f, 1.4f * popupMetrics.scale),
-        &collectionPopupAppearance_, false);
+        std::clamp(collectionPopupAppearance_.widgetBorderWidth,
+            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
+            popupMetrics.scale,
+        &popupBackgroundAppearance, false, 0, popupMetrics.scale);
 
     const auto headerBounds =
         snowdesktop::collection_popup_layout::
@@ -381,6 +388,17 @@ void DesktopApp::DrawCollectionPopup(
         ctx, content, contentHeight, visibleHeight,
         popupScrollOffset_, popupHovered,
         collectionPopupLightTheme_);
+
+    (void)DrawWidgetPanelEdgeHighlight(
+        ctx, popupRect_, 18.0f * popupMetrics.scale,
+        D2D1::ColorF(
+            collectionPopupAppearance_.widgetBgR,
+            collectionPopupAppearance_.widgetBgG,
+            collectionPopupAppearance_.widgetBgB,
+            std::clamp(
+                collectionPopupAppearance_.widgetAlpha,
+                0.0f, 1.0f)),
+        &collectionPopupAppearance_, popupMetrics.scale);
 
     if (animationApplied)
         ctx->SetTransform(previousTransform);

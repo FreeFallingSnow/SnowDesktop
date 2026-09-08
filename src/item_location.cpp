@@ -49,9 +49,11 @@ std::wstring ResolveShellLinkTarget(const std::wstring& linkPath)
         FAILED(persistFile->Load(linkPath.c_str(), STGM_READ)))
         return {};
 
-    // Resolve without UI so stale links can still use the path stored in the
-    // shortcut without interrupting a context-menu action.
-    shellLink->Resolve(nullptr, SLR_NO_UI | SLR_NOUPDATE | SLR_NOTRACK);
+    // Keep the stored path for stale links without letting the Shell search
+    // local volumes for a missing target. SLR_NO_UI alone still uses the
+    // default three-second resolution timeout.
+    shellLink->Resolve(nullptr,
+        SLR_NO_UI | SLR_NOUPDATE | SLR_NOSEARCH | SLR_NOTRACK);
 
     std::vector<wchar_t> target(32768);
     WIN32_FIND_DATAW findData{};
@@ -127,9 +129,10 @@ FolderTarget ResolveFolderTarget(const std::wstring& path)
 
 bool CanReveal(const std::wstring& path)
 {
-    const std::wstring resolved = ResolveRevealPath(path);
-    return !resolved.empty() &&
-        GetFileAttributesW(resolved.c_str()) != INVALID_FILE_ATTRIBUTES;
+    // An existing shortcut can always be revealed even when its target is
+    // unavailable. Avoid resolving it while a context menu is being built.
+    return !path.empty() &&
+        GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 
 bool Reveal(HWND owner, const std::wstring& path)

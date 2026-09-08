@@ -10,11 +10,11 @@
 #include <windows.h>
 
 #include <string>
+#include "animation_settings.h"
+#include "surface_theme.h"
 
 struct GeneralSettings
 {
-    static constexpr int kAllAgentSkillTargetsMask = 0x3F;
-
     // Runtime projection of SnowDesktop's unified per-user logon task. The
     // scheduled task remains the source of truth; this field is deliberately
     // not serialized into SnowDesktop.general.json.
@@ -34,11 +34,27 @@ struct GeneralSettings
     // 0=dark, 1=light, 2=dark acrylic, 3=light acrylic.
     // Dark preserves the legacy collection-popup appearance when absent.
     int collectionPopupTheme = 0;
+    snowdesktop::SurfaceTheme quickNavigationAppearance;
+    snowdesktop::SurfaceTheme collectionPopupAppearance;
     bool dockEnabled = false;
     bool widgetDeveloperToolsEnabled = false;
-    int agentSkillTargetMask = kAllAgentSkillTargetsMask;
+    int animationMode = 0;
+    int popupAnimationEffect = 2;
+    int animationSpeed = 1;
+    int animationFrameLimit = 0;
+    bool animationEnergySaver = true;
+    bool animationOnBattery = false;
     char language[85] = "system";
 };
+
+inline void NormalizeGeneralAnimationSettings(GeneralSettings& settings) noexcept
+{
+    using namespace snowdesktop::animation;
+    settings.animationMode = NormalizeMode(settings.animationMode);
+    settings.popupAnimationEffect = NormalizePopupEffect(settings.popupAnimationEffect);
+    settings.animationSpeed = NormalizeSpeed(settings.animationSpeed);
+    settings.animationFrameLimit = NormalizeFrameLimit(settings.animationFrameLimit);
+}
 
 std::wstring GetGeneralSettingsPath();
 bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings);

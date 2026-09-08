@@ -102,6 +102,61 @@ void DesktopApp::RebindDragSourceAfterRebuild()
     // with empty source bindings; the next DragOver will rebuild its target.
     if (oldSourceList.Empty()) return;
 
+    if (oldSourceList.SourceSurfaceKind() ==
+        snowdesktop::slot_contract::SlotSurfaceKind::Dock)
+    {
+        // All monitor Docks share the same entries. Prefer the source display,
+        // not the display currently under the pointer after a cross-screen drag.
+        const GridPage* sourcePage = GridPageFromPoint(
+            { dragGroupOriginX_, dragGroupOriginY_ });
+        DockContainer* dock = nullptr;
+        for (auto& container : containers_)
+        {
+            auto* candidate = dynamic_cast<DockContainer*>(container.get());
+            if (!candidate) continue;
+            if (!dock) dock = candidate;
+            const RECT bounds = candidate->GetBounds();
+            const GridPage* page = GridPageFromPoint(
+                { bounds.left, bounds.top });
+            if (sourcePage && page && page->monitorId == sourcePage->monitorId)
+            {
+                dock = candidate;
+                break;
+            }
+        }
+        auto reboundItems = snowdesktop::drag_source_rebind::
+            ResolveRecordedDockItems(oldSourceList,
+                [&](const DragSourceEntry& entry) -> Item* {
+                    if (!dock) return nullptr;
+                    for (const auto& slot : dock->GetSlots())
+                    {
+                        auto* item = slot->GetItem();
+                        auto* dockItem = dynamic_cast<DockEntryItem*>(item);
+                        if (dockItem && !entry.dockReference.empty() &&
+                            dockItem->GetReference() == entry.dockReference &&
+                            dockItem->GetEntryType() == entry.dockEntryType)
+                            return item;
+                        auto* frequent = dynamic_cast<DockFrequentItem*>(item);
+                        if (frequent && entry.dockReference.empty() &&
+                            frequent->GetItemIndex() == entry.desktopIndex)
+                            return item;
+                    }
+                    return nullptr;
+                });
+        if (reboundItems.empty())
+        {
+            EndDragSession();
+            return;
+        }
+        DragSourceList reboundList = oldSourceList;
+        reboundList.BindRuntimeOrigin(dock);
+        for (size_t i = 0; i < reboundItems.size(); ++i)
+            reboundList.entries[i].item = reboundItems[i];
+        dragSession_.RebindSource(dock, std::move(reboundItems),
+            std::move(reboundList));
+        return;
+    }
+
     if (oldSourceList.hasOriginWidget)
     {
         for (auto& c : containers_)
@@ -595,6 +650,8 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         return true;
 
     const bool hasInternalItems = !dragSession_.Items().empty();
+    const bool dockEntryDrag = dragSession_.SourceList().SourceSurfaceKind() ==
+        snowdesktop::slot_contract::SlotSurfaceKind::Dock;
     const bool groupedEntryDrag =
         dragSession_.SourceList().
             hasCollectionGroupEntries ||
@@ -604,7 +661,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         dragGroupOriginX_, dragGroupOriginY_ };
     pageOffset_ = newOffset;
     ApplyPageMapping();
-    if (hasInternalItems && !groupedEntryDrag)
+    if (hasInternalItems && !groupedEntryDrag && !dockEntryDrag)
         MigrateSelectedItemsToLastMonitorPage();
     LayoutItems();
     RefreshPageNavHotEdgeHoverAt(clientPoint);
@@ -616,7 +673,7 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     }
 
     InvalidateDragStaticScene();
-    if (hasInternalItems && !groupedEntryDrag)
+    if (hasInternalItems && !groupedEntryDrag && !dockEntryDrag)
     {
         UpdateDragGroupOrigin();
         dragSession_.AdjustForGroupOriginChange(

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -22,7 +23,9 @@ std::string ReadText(const std::filesystem::path& path)
     std::ifstream input(path, std::ios::binary);
     std::ostringstream output;
     output << input.rdbuf();
-    return output.str();
+    std::string text = output.str();
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    return text;
 }
 
 void TestPinnedToolchain(const std::string& cmake,
@@ -178,22 +181,63 @@ void TestPackagers(const std::string& module,
         "release payloads isolate third-party runtime files in one private assembly directory");
     Check(release.find("SnowDesktopWorkshopManager.exe") ==
             std::string::npos &&
+            release.find("SnowDesktopSteamBridge.exe") ==
+                std::string::npos &&
+            release.find("steam_api64.dll") == std::string::npos &&
             release.find("widgets\\snowdesktop-lua-widget\\bin\\snowwidget.exe") !=
                 std::string::npos &&
             steam.find("SnowDesktopWorkshopManager.exe") !=
+                std::string::npos &&
+            steam.find("SnowDesktopSteamBridge.exe") !=
+                std::string::npos &&
+            steam.find("$bundledSkillPublisherFiles") !=
+                std::string::npos &&
+            steam.find("$payloadSkillPublisher") !=
                 std::string::npos,
-        "only the Steam payload includes the Workshop manager while every release keeps the Agent Skill tool");
+        "only the Steam payload includes the Steam bridge, Steam API, Workshop manager, and complete publishing CLI");
+    Check(release.find("AllowOwnershipBridge") == std::string::npos &&
+            release.find("Portable and MSIX payloads must not contain Steam bridge files") !=
+                std::string::npos,
+        "portable and MSIX packaging reject leaked Steam files without a bridge opt-in");
+    Check(release.find("SnowDesktopLauncher.exe") == std::string::npos &&
+            release.find("SnowDesktop.runtime-context.json") ==
+                std::string::npos &&
+            release.find("SnowDesktop.steam.json") == std::string::npos &&
+            release.find(".snowdesktop/runtime") == std::string::npos &&
+            release.find("Join-Path $payload \"distribution\"") ==
+                std::string::npos,
+        "traditional portable and MSIX packaging contain no Steam launcher, context, manifest, distribution, or managed runtime state");
+    Check(steam.find("schemaVersion = 3") != std::string::npos &&
+            steam.find("fileMetadata = $payloadFileMetadata") !=
+                std::string::npos &&
+            steam.find("sha256 = Get-Sha256") != std::string::npos,
+        "Steam packages retain compatible file paths plus size and SHA-256 metadata");
+    Check(steam.find("SnowDesktopLauncher.exe") != std::string::npos &&
+            steam.find("$distribution = Join-Path $payload \"distribution\"") !=
+                std::string::npos &&
+            steam.find("SnowDesktop.steam.json") != std::string::npos &&
+            steam.find("kind = \"steam-managed\"") !=
+                std::string::npos &&
+            steam.find("runtimeDirectory = \".snowdesktop/runtime\"") !=
+                std::string::npos &&
+            steam.find("dataDirectory = \"data\"") !=
+                std::string::npos,
+        "Steam packages separate the tracked distribution from the stable launcher, runtime copies, and data");
     Check(release.find("$runtimeDestination") != std::string::npos &&
             release.find("SnowDesktopWallpaperInjector32.exe") !=
                 std::string::npos &&
             steam.find("$runtimeFiles = @(") != std::string::npos &&
             steam.find(
-                "steamworksRedistributable = \"$runtimeDirectory/steam_api64.dll\"") !=
+                "\"distribution/$runtimeDirectory/steam_api64.dll\"") !=
                 std::string::npos,
         "first-party runtime helpers and the Steam redistributable are routed into the runtime directory");
     Check(module.find("AdditionalRuntimeDlls") != std::string::npos &&
             module.find("AdditionalExecutables") != std::string::npos &&
             module.find("existingPrivateManifest") != std::string::npos &&
+            release.find("AdditionalRuntimeDlls") ==
+                std::string::npos &&
+            release.find("AdditionalExecutables") ==
+                std::string::npos &&
             steam.find("-AdditionalRuntimeDlls @(") !=
                 std::string::npos &&
             steam.find("$packagedConfigurationText") !=
@@ -225,7 +269,8 @@ void TestPackagers(const std::string& module,
 
 void TestBuildOutputLayout(const std::string& cmake,
     const std::string& arranger,
-    const std::string& testScript)
+    const std::string& testScript,
+    const std::string& testManager)
 {
     Check(cmake.find(
               "${CMAKE_BINARY_DIR}/$<CONFIG>/tests") !=
@@ -235,6 +280,8 @@ void TestBuildOutputLayout(const std::string& cmake,
             cmake.find("scripts/arrange_build_output.ps1") !=
                 std::string::npos &&
             cmake.find("-AllowMissingFirstPartyRuntime") !=
+                std::string::npos &&
+            cmake.find("SnowDesktopFastTests") !=
                 std::string::npos,
         "CTest executables and symbols use the dedicated configuration tests directory");
     Check(arranger.find("SnowDesktop.Runtime") != std::string::npos &&
@@ -252,15 +299,31 @@ void TestBuildOutputLayout(const std::string& cmake,
             arranger.find("Build output still contains root-level DLLs") !=
                 std::string::npos,
         "standard builds become directly runnable private-runtime layouts without root DLLs");
-    Check(testScript.find(".build\\Release\\tests") !=
+    Check(testScript.find("test_manager.ps1") !=
                 std::string::npos &&
-            testScript.find("rootTests.Count -ne 0") !=
+            testScript.find("MODE=fast") !=
                 std::string::npos &&
-            testScript.find("rootDlls.Count -ne 0") !=
+            testScript.find("MODE=core") !=
                 std::string::npos &&
-            testScript.find("emptyRuntimeDirs.Count -ne 0") !=
+            testScript.find("MODE=label") !=
+                std::string::npos &&
+            testScript.find("MODE=name") !=
+                std::string::npos &&
+            testManager.find("--show-only=json-v1") !=
+                std::string::npos &&
+            testManager.find("^SnowDesktop.+Tests\\.exe$") !=
+                std::string::npos &&
+            testManager.find("-LE\", \"^integration$") !=
+                std::string::npos &&
+            testManager.find("BuildPreset \"fast-tests\"") !=
+                std::string::npos &&
+            testManager.find("rootTests.Count -ne 0") !=
+                std::string::npos &&
+            testManager.find("rootDlls.Count -ne 0") !=
+                std::string::npos &&
+            testManager.find("emptyRuntimeDirs.Count -ne 0") !=
                 std::string::npos,
-        "the standard test entry point rejects flat test executables");
+        "the standard test entry point supports layered CTest selection without duplicating target lists");
 }
 
 void TestReleaseManagerShellReload(const std::string& manager,
@@ -278,20 +341,13 @@ void TestReleaseManagerShellReload(const std::string& manager,
             manager.find("-ReloadShellBeforeBuild:$ReloadShell") !=
                 std::string::npos,
         "release CLI and TUI only treat the build-directory hook as build occupancy");
-    Check(manager.find("SnowDesktop.Runtime") != std::string::npos &&
-            manager.find("SnowDesktopWorkshopManager.exe") !=
-                std::string::npos &&
-            manager.find("Remove-Item -LiteralPath $legacyPath") !=
-                std::string::npos,
-        "release repository synchronization mirrors the runtime directory and removes obsolete root helpers");
-    Check(manager.find("$thirdPartyLicenses = Join-Path $temporary \"licenses\"") !=
-                std::string::npos &&
-            manager.find("-Source $thirdPartyLicenses") !=
-                std::string::npos &&
-            manager.find("-Destination (Join-Path $releaseRepository \"licenses\")") !=
-                std::string::npos &&
-            manager.find("-LogPath $syncLog") != std::string::npos,
-        "release repository synchronization mirrors third-party licenses without nesting the licenses directory");
+    // Prevent retired binary-repository writes from returning to package/publish.
+    Check(manager.find("$releaseRepository") == std::string::npos &&
+            manager.find("$binaryRemote") == std::string::npos &&
+            manager.find("Sync-ReleaseRepository") == std::string::npos &&
+            manager.find("SnowDesktop_Release") == std::string::npos &&
+            manager.find("sync-release") == std::string::npos,
+        "release automation cannot inspect, synchronize, or publish the retired repository");
     Check(documentation.find(
               "scripts\\release.bat package -ReloadShell") !=
             std::string::npos &&
@@ -299,6 +355,93 @@ void TestReleaseManagerShellReload(const std::string& manager,
               "scripts\\release.bat prepare -ReloadShell") !=
                 std::string::npos,
         "release documentation describes shell reload for package and prepare");
+}
+
+void TestSteamPipeAutomation(const std::string& steamPipe,
+    const std::string& steamPipeConfiguration,
+    const std::string& manager,
+    const std::string& scriptDocumentation,
+    const std::string& packagingDocumentation)
+{
+    Check(steamPipe.find(
+              "ValidateSet(\"Preview\", \"UploadDev\", \"UploadPublic\")") !=
+                std::string::npos &&
+            steamPipe.find("\"Preview\" \"1\"") != std::string::npos &&
+            steamPipe.find("SetLive") != std::string::npos &&
+            steamPipe.find("Assert-PublicReleaseBranch") !=
+                std::string::npos,
+        "SteamPipe exposes separate preview, private-development, and public upload modes");
+    Check(steamPipe.find("SNOWDESKTOP_STEAMCMD_PATH") !=
+                std::string::npos &&
+            steamPipe.find("SNOWDESKTOP_STEAM_BUILD_ACCOUNT") !=
+                std::string::npos &&
+            steamPipe.find("+@NoPromptForPassword") !=
+                std::string::npos &&
+            steamPipe.find("+run_app_build") != std::string::npos &&
+            steamPipe.find("[string]$Password") == std::string::npos &&
+            steamPipe.find("-betapassword") == std::string::npos,
+        "SteamPipe uses a pre-authenticated build account without accepting password arguments");
+    Check(steamPipe.find("Tee-Object -FilePath $logPath -Append") !=
+                std::string::npos &&
+            steamPipe.find("Tee-Object -LiteralPath $logPath -Append") ==
+                std::string::npos,
+        "SteamPipe appends SteamCMD output with a valid Tee-Object parameter set");
+    Check(steamPipe.find("-not $Yes") != std::string::npos &&
+            steamPipe.find("$ConfirmVersion -ne $version") !=
+                std::string::npos &&
+            steamPipe.find("$ConfirmPrivateBranch -cne $privateBranch") !=
+                std::string::npos &&
+            steamPipe.find("$ConfirmPublicBranch -cne $publicBranch") !=
+                std::string::npos &&
+            steamPipe.find("Assert-SteamPayloadManifest") !=
+                std::string::npos &&
+            steamPipe.find("Compare-Object -ReferenceObject $listed") !=
+                std::string::npos &&
+            steamPipe.find("Steam payload metadata mismatch") !=
+                std::string::npos,
+        "Steam development and public uploads require explicit version and branch confirmation over a current payload manifest");
+    Check(steamPipe.find("FileExclusion\" \"steam_appid.txt") !=
+                std::string::npos &&
+            steamPipe.find("FileExclusion\" \"data\\*") !=
+                std::string::npos &&
+            steamPipe.find("FileExclusion\" \"runtime\\*") !=
+                std::string::npos &&
+            steamPipe.find("artifacts\\v$version") !=
+                std::string::npos &&
+            steamPipe.find("\"steampipe\"") != std::string::npos,
+        "SteamPipe keeps generated state out of the depot and stores upload state beside version artifacts");
+    Check(manager.find("\"steam-preview\"") != std::string::npos &&
+            manager.find("\"steam-upload-dev\"") != std::string::npos &&
+            manager.find("\"steam-upload-public\"") !=
+                std::string::npos &&
+            manager.find("Invoke-SteamPipeAction") != std::string::npos &&
+            manager.find("ConfirmPrivateBranch") != std::string::npos &&
+            manager.find("ConfirmPublicBranch") != std::string::npos,
+        "the shared release manager exposes preview and separately confirmed private and public upload commands");
+    Check(steamPipeConfiguration.find("\"privateDevelopmentBranch\"") !=
+                std::string::npos &&
+            steamPipeConfiguration.find("internal-dev") !=
+                std::string::npos &&
+            steamPipeConfiguration.find("\"publicReleaseBranch\"") !=
+                std::string::npos &&
+            steamPipeConfiguration.find("\"public\"") !=
+                std::string::npos &&
+            steamPipeConfiguration.find("password") == std::string::npos &&
+            steamPipeConfiguration.find("account") == std::string::npos &&
+            steamPipeConfiguration.find("token") == std::string::npos,
+        "committed SteamPipe configuration contains explicit private and public branches but no credentials");
+    Check(scriptDocumentation.find("steam-preview") != std::string::npos &&
+            scriptDocumentation.find("steam-upload-dev") !=
+                std::string::npos &&
+            scriptDocumentation.find("steam-upload-public") !=
+                std::string::npos &&
+            packagingDocumentation.find("@NoPromptForPassword") !=
+                std::string::npos &&
+            packagingDocumentation.find("Preview \"1\"") !=
+                std::string::npos &&
+            packagingDocumentation.find("不会上传内容") !=
+                std::string::npos,
+        "SteamPipe documentation distinguishes preview safety from private branch upload");
 }
 
 void TestRuntimeResolution(const std::string& deploymentHeader,
@@ -317,10 +460,23 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             std::string::npos &&
             deploymentSource.find("DeployInjectableRuntimeCopy") !=
             std::string::npos &&
-            deploymentSource.find("GetTemporaryDirectory") !=
+            deploymentSource.find("GetDataDirectoryPath") !=
                 std::string::npos &&
-            deploymentSource.find("RuntimeHooks") != std::string::npos,
-        "cross-process hooks use one process-specific temporary runtime directory");
+            deploymentSource.find("ShellHook") != std::string::npos &&
+            deploymentSource.find(".owner.lock") != std::string::npos &&
+            deploymentSource.find("RuntimeDirectoryHasLiveOwner") !=
+                std::string::npos &&
+            deploymentSource.find("CleanupLegacyRuntimeRootsOnce") !=
+                std::string::npos &&
+            deploymentSource.find("CleanupLegacyLocalAppDataRoot") !=
+                std::string::npos &&
+            deploymentSource.find("MigrateLegacyCreatorProjects") !=
+                std::string::npos &&
+            deploymentSource.find("legacy-runtime-roots-v2.done") !=
+                std::string::npos &&
+            deploymentSource.find("~InjectableRuntimeDirectory") !=
+                std::string::npos,
+        "cross-process hooks use a leased data directory with legacy, startup, and exit cleanup");
     Check(wallpaperCapture.find("GetInjectableRuntimeFilePath") !=
             std::string::npos &&
             wallpaperCapture.find("GetRuntimeFilePath") !=
@@ -386,6 +542,48 @@ void TestAutoStartTransitionManifest(const std::string& manifest)
                 std::string::npos,
         "the transition package retains the legacy StartupTask long enough to migrate its user state");
 }
+
+void TestOwnedRuntimeStaging(const std::string& dropExtraction,
+    const std::string& widgetPackages, const std::string& snowwidget,
+    const std::string& packageTool, const std::string& workshopCore,
+    const std::string& workshopManager, const std::string& workshopSource,
+    const std::string& workshopProjects)
+{
+    Check(dropExtraction.find("GetTempPathW") == std::string::npos &&
+            dropExtraction.find("GetDataSubdirectoryPath(L\"DropContent\")") !=
+                std::string::npos,
+        "non-file drop content is materialized only below the SnowDesktop data root");
+    Check(widgetPackages.find("temp_directory_path") == std::string::npos &&
+            widgetPackages.find("CreateStagingPath(\"validation\")") !=
+                std::string::npos,
+        "component archive validation uses the configured data staging root");
+    Check(snowwidget.find("GetTempPathW") == std::string::npos &&
+            snowwidget.find("GetTempFileNameW") == std::string::npos &&
+            snowwidget.find("L\"data\"") != std::string::npos &&
+            snowwidget.find("L\"snowwidget\"") != std::string::npos &&
+            snowwidget.find("preview-results") != std::string::npos &&
+            snowwidget.find("publish-staging") != std::string::npos,
+        "snowwidget scratch files stay under its software data directory");
+    Check(packageTool.find("temp_directory_path") == std::string::npos &&
+            packageTool.find("stagingRoot_") != std::string::npos &&
+            packageTool.find("SteamWorkshopManager") != std::string::npos,
+        "Workshop packaging uses a manager data staging directory");
+    Check(workshopCore.find("temp_directory_path") == std::string::npos &&
+            workshopCore.find("stagingRoot_") != std::string::npos &&
+            workshopCore.find("SteamWorkshop") != std::string::npos,
+        "Steam uploads use a software data staging directory");
+    Check(workshopManager.find("managerRoot_ / L\"staging\"") !=
+                std::string::npos &&
+            workshopProjects.find(
+                ".legacy-localappdata-migrated-v1") != std::string::npos &&
+            workshopProjects.find("MigrateWorkshopManagerDataOnce") !=
+                std::string::npos,
+        "the Workshop Manager shares the main data root and scans its former store only once");
+    Check(workshopSource.find("PackagePaths{}") == std::string::npos &&
+            workshopSource.find("PackagePaths::ForCurrentDeployment()") !=
+                std::string::npos,
+        "Workshop subscription validation uses the deployment data staging directory");
+}
 }
 
 int main(int argc, char** argv)
@@ -407,9 +605,16 @@ int main(int argc, char** argv)
         TestBuildOutputLayout(
             ReadText(root / "CMakeLists.txt"),
             ReadText(root / "scripts/arrange_build_output.ps1"),
-            ReadText(root / "scripts/test.bat"));
+            ReadText(root / "scripts/test.bat"),
+            ReadText(root / "scripts/test_manager.ps1"));
         TestReleaseManagerShellReload(
             ReadText(root / "scripts/release_manager.ps1"),
+            ReadText(root / "packaging/README.md"));
+        TestSteamPipeAutomation(
+            ReadText(root / "scripts/steam_pipe.ps1"),
+            ReadText(root / "packaging/steam-pipe.json"),
+            ReadText(root / "scripts/release_manager.ps1"),
+            ReadText(root / "scripts/README.md"),
             ReadText(root / "packaging/README.md"));
         TestRuntimeResolution(
             ReadText(root / "src/deployment_context.h"),
@@ -420,6 +625,15 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/build_debug.bat"));
         TestAutoStartTransitionManifest(
             ReadText(root / "packaging/AppxManifest.xml.in"));
+        TestOwnedRuntimeStaging(
+            ReadText(root / "src/app/app_drop_data_extraction.cpp"),
+            ReadText(root / "src/widget_package.cpp"),
+            ReadText(root / "tools/snowwidget/main.cpp"),
+            ReadText(root / "steam_bridge/src/package_tool.cpp"),
+            ReadText(root / "steam_bridge/src/steam_workshop_core.cpp"),
+            ReadText(root / "steam_bridge/src/manager_main.cpp"),
+            ReadText(root / "src/steam_workshop_source.cpp"),
+            ReadText(root / "steam_bridge/src/workshop_project.cpp"));
     }
 
     if (failures != 0)

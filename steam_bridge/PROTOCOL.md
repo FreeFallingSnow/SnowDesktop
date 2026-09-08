@@ -8,6 +8,20 @@ explicit command, or load component code.
 the compiled version, expected App ID (`5080330`), Windows depot ID (`5080331`),
 protocol version, and whether the binary was built with Steamworks. Packaging
 and local-development scripts use it to reject stale or placeholder binaries.
+The resident host also requires an exact application-version and protocol
+match before it exposes Steam-backed features or Workshop entry points.
+
+`entitlement status` initializes Steam for App ID `5080330`, requires an
+online signed-in user, and returns `owned` from `ISteamApps::BIsSubscribed()`
+for that current account and App ID. It does not treat installation as proof of
+ownership and does not relaunch the process through Steam.
+
+The SnowDesktop host invokes this command after every application startup when
+the Bridge and Steamworks runtime are present, including when SnowDesktop.exe
+was started directly. A successful ownership result is stored for 30 days in a
+current-Windows-user DPAPI-protected cache. Temporary Steam or Bridge failures
+do not renew or revoke an unexpired cache. An authoritative `owned: false`
+result revokes the cache immediately.
 
 ## Transport
 
@@ -21,6 +35,9 @@ and local-development scripts use it to reject stale or placeholder binaries.
 - `status` reports both expected and runtime App IDs. Every runtime command
   rejects a Steam context whose actual App ID differs before accessing
   Workshop content.
+- `entitlement status` returns `loggedOn`, `owned`, and the current `steamId`.
+  `owned: false` is an authoritative successful query, while initialization or
+  sign-in failures are errors and must not be interpreted as ownership.
 
 Exit codes:
 
@@ -86,6 +103,39 @@ Uploads emit:
 Callers must ignore unknown fields and event names for forward compatibility.
 `protocolVersion` changes only when an incompatible transport or content
 contract is introduced.
+
+## Component publishing workflow
+
+The higher-level creator commands share the Workshop Manager project store and
+package pipeline:
+
+```text
+workshop component-plan --source DIR --data-directory DIR [policy options]
+workshop component-publish --source DIR --data-directory DIR [same options]
+    (--confirm-create|--confirm-update)
+```
+
+`--data-directory` is mandatory so an Agent cannot silently create a second
+project store. Both commands use its `SteamWorkshopManager` child for project
+associations and staging. `component-plan` performs local inspection,
+validation, and packaging, but never initializes Steam or submits an item. Its
+single JSON result includes the action, content hash, localizations, preview,
+tags, visibility, and the exact required confirmation flag.
+
+`component-publish` rebuilds the plan and refuses to proceed unless the caller
+passes the matching confirmation. New items require `--confirm-create` and are
+always private; bound items require `--confirm-update`. It emits
+`component-plan` and `component-publish-progress` JSON Lines before the final
+result. A newly allocated PublishedFileId is persisted as soon as Steam returns
+it, including when upload or a later localization fails.
+
+Source policies are persistent per local project. Package text submits all
+supported manifest localizations; Steam text preserves the listing during an
+update; manual English requires an explicit title. Local preview/tags submit
+the corresponding project values, while Steam preview/tags preserve the
+remote values. Steam-managed sources are invalid for creation. When the packed
+SHA-256 is unchanged, listing, preview, tag, and visibility changes use a
+metadata-only update unless `--force-content` is specified.
 
 ## Author query and association
 

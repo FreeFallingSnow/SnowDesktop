@@ -9,6 +9,7 @@
 
 #include <d2d1_1.h>
 #include <string>
+#include "panel_gradient.h"
 
 constexpr int kAppearancePresetDark = 0;
 constexpr int kAppearancePresetLight = 1;
@@ -26,6 +27,11 @@ constexpr int kFourThemeDark = 0;
 constexpr int kFourThemeLight = 1;
 constexpr int kFourThemeAcrylicDark = 2;
 constexpr int kFourThemeAcrylicLight = 3;
+
+inline constexpr float kMinimumWidgetBorderWidth = 0.5f;
+inline constexpr float kMaximumWidgetBorderWidth = 4.0f;
+inline constexpr float kDefaultEdgeHighlightWidth = 2.0f;
+inline constexpr float kDefaultEdgeHighlightStrength = 0.75f;
 
 /** @brief Clamp a persisted four-theme selection without changing its wire values. */
 constexpr int NormalizeFourThemeSelection(int selection)
@@ -113,12 +119,27 @@ struct PersonalizationSettings
      */
     float widgetBorderAlpha = 0.40f;
 
+    /** @brief Host panel border width in logical pixels, clamped to [0.5, 4.0]. */
+    float widgetBorderWidth = 1.0f;
+
+    /** @brief Whether the independent upper-left/lower-right edge reflection is drawn. */
+    bool widgetEdgeHighlightEnabled = false;
+
+    /** @brief Edge-highlight width in logical pixels, clamped to [0.5, 4.0]. */
+    float widgetEdgeHighlightWidth = kDefaultEdgeHighlightWidth;
+
+    /** @brief Edge-highlight intensity, stored in [0.0, 1.0]. */
+    float widgetEdgeHighlightStrength = kDefaultEdgeHighlightStrength;
+
     /**
      * @brief 渐变底部末端 Alpha
      * @details 组件底部渐变结束端的 Alpha 通道值，与 widgetAlpha 配合
      *          形成从上到下的渐变透明效果，取值范围 [0.0f, 1.0f]。
      */
     float gradientEndA = 0.65f;
+
+    // Optional whole-panel gradient; does not change legacy bottom-bar alpha.
+    snowdesktop::PanelGradient panelGradient;
 
     /** @brief 独立的组件底栏高度，不属于主题预设。 */
     float barHeight = 24.0f;
@@ -129,6 +150,9 @@ struct PersonalizationSettings
      *          按比例（×15/34）随高度联动。
      */
     float categorizedTabHeight = 34.0f;
+
+    /** Lua desktop widget semantic row height in page CU. */
+    float luaWidgetContentRowHeight = 28.0f;
 
     /**
      * @brief 分类标签（桌面文件、映射文件夹）是否显示文件数量。
@@ -150,7 +174,7 @@ struct PersonalizationSettings
     /**
      * @brief 毛玻璃背景开关（苹果 Dock 效果）
      * @details 开启后由 DWM 原生合成器模糊面板背后的桌面内容，
-     *          填充色作为半透明色调叠加，边框切换为玻璃边缘光渐变描边。
+     *          填充色作为半透明色调叠加；边框样式由独立字段控制。
      */
     bool glassEnabled = false;
 
@@ -198,6 +222,9 @@ PersonalizationSettings MakeAppearancePreset(int presetId);
 
 /** @brief 根据预设 ID 创建针对快捷搜索可读性优化的外观主题。 */
 PersonalizationSettings MakeQuickNavigationAppearancePreset(int presetId);
+
+/** @brief 创建集合弹窗主题，保留弹窗可读性配色并拆分普通边框与边缘高光。 */
+PersonalizationSettings MakeCollectionPopupAppearancePreset(int presetId);
 
 /**
  * @brief 从 JSON 文件加载个性化设置

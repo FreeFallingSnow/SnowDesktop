@@ -21,6 +21,16 @@ constexpr ReconcileMode ShellPopupCloseReconcileMode()
     return ReconcileMode::DeactivateOnly;
 }
 
+constexpr bool ShouldHoldHoverDuringNativeShellPopup(
+    bool nativeShellPopupLayerActive)
+{
+    // TrackPopupMenuEx captures the pointer for a transient Shell-owned
+    // window. Its WM_MOUSELEAVE does not mean that the pointer left the Dock's
+    // logical content/backdrop pair, so keep one frame until the menu session
+    // has unwound and the live cursor can be sampled again.
+    return nativeShellPopupLayerActive;
+}
+
 constexpr bool ShouldRetainHoverAcrossMouseLeave(
     bool pointerOnContentWindow,
     bool pointerOnPairedBackdropWindow)

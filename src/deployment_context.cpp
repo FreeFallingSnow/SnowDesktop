@@ -14,6 +14,7 @@
 #include <shobjidl_core.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cwctype>
 #include <filesystem>
 #include <future>
@@ -36,6 +37,7 @@ namespace
 constexpr wchar_t kStartupTaskId[] = L"SnowDesktopStartup";
 constexpr wchar_t kRuntimeDirectory[] = L"SnowDesktop.Runtime";
 constexpr wchar_t kTaskbarHookFilename[] = L"SnowDesktopTaskbarHook.dll";
+constexpr wchar_t kRuntimeHookOwnerLockFilename[] = L".owner.lock";
 constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
 constexpr wchar_t kPackageFamilyName[] =
@@ -367,40 +369,338 @@ std::filesystem::path GetTemporaryDirectory()
     return std::filesystem::path(buffer);
 }
 
-std::filesystem::path CreateInjectableRuntimeDirectory()
+std::filesystem::path GetLegacyLocalAppDataRoot()
+{
+    PWSTR localAppData = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,
+            KF_FLAG_DEFAULT, nullptr, &localAppData)))
+        return {};
+    std::filesystem::path result =
+        std::filesystem::path(localAppData) / L"SnowDesktop";
+    CoTaskMemFree(localAppData);
+    return result;
+}
+
+bool IsReparsePoint(const std::filesystem::path& path)
+{
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+bool IsLegacyRuntimeDirectoryOwnerAlive(
+    const std::filesystem::path& directory)
+{
+    const std::wstring name = directory.filename().wstring();
+    const std::size_t suffix = name.rfind(L'-');
+    const std::size_t separator = suffix == std::wstring::npos
+        ? std::wstring::npos : name.rfind(L'-', suffix - 1);
+    if (separator == std::wstring::npos || suffix == std::wstring::npos ||
+        separator + 1 >= suffix)
+        return true;
+    const std::wstring processText =
+        name.substr(separator + 1, suffix - separator - 1);
+    wchar_t* end = nullptr;
+    const unsigned long processId =
+        std::wcstoul(processText.c_str(), &end, 10);
+    if (processId == 0 || !end || *end != L'\0')
+        return true;
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE,
+        static_cast<DWORD>(processId));
+    if (!process)
+        return GetLastError() == ERROR_ACCESS_DENIED;
+    const DWORD state = WaitForSingleObject(process, 0);
+    CloseHandle(process);
+    return state == WAIT_TIMEOUT || state == WAIT_FAILED;
+}
+
+bool RuntimeDirectoryHasLiveOwner(const std::filesystem::path& directory)
+{
+    const auto ownerLock = directory / kRuntimeHookOwnerLockFilename;
+    const DWORD attributes = GetFileAttributesW(ownerLock.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return IsLegacyRuntimeDirectoryOwnerAlive(directory);
+    if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return true;
+    HANDLE probe = CreateFileW(ownerLock.c_str(), DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (probe == INVALID_HANDLE_VALUE)
+        return true;
+    CloseHandle(probe);
+    return false;
+}
+
+void CleanupStaleRuntimeDirectories(
+    const std::filesystem::path& copiesRoot)
+{
+    std::error_code error;
+    for (std::filesystem::directory_iterator iterator(copiesRoot,
+             std::filesystem::directory_options::skip_permission_denied,
+             error), end;
+         !error && iterator != end; iterator.increment(error))
+    {
+        std::error_code entryError;
+        if (!iterator->is_directory(entryError) || entryError ||
+            IsReparsePoint(iterator->path()) ||
+            RuntimeDirectoryHasLiveOwner(iterator->path()))
+            continue;
+        std::filesystem::remove_all(iterator->path(), entryError);
+    }
+}
+
+bool MigrateLegacyCreatorProjects(
+    const std::filesystem::path& legacyParent,
+    const std::filesystem::path& data)
+{
+    const auto source = legacyParent / L"CreatorProjects";
+    std::error_code error;
+    if (!std::filesystem::exists(source, error))
+        return !error;
+    if (error || !std::filesystem::is_directory(source, error) || error ||
+        IsReparsePoint(source) || IsReparsePoint(data))
+        return false;
+
+    std::filesystem::path destination = data / L"CreatorProjects";
+    for (unsigned int suffix = 1;
+         std::filesystem::exists(destination, error) && !error; ++suffix)
+    {
+        destination = data /
+            (L"CreatorProjects-legacy-localappdata-" +
+                std::to_wstring(suffix));
+    }
+    if (error)
+        return false;
+
+    std::filesystem::create_directories(destination, error);
+    if (error || IsReparsePoint(destination))
+        return false;
+
+    bool complete = true;
+    for (std::filesystem::recursive_directory_iterator iterator(source,
+             std::filesystem::directory_options::none, error), end;
+         complete && !error && iterator != end; iterator.increment(error))
+    {
+        if (IsReparsePoint(iterator->path()))
+        {
+            complete = false;
+            break;
+        }
+        const auto relative = iterator->path().lexically_relative(source);
+        if (relative.empty())
+        {
+            complete = false;
+            break;
+        }
+        const auto target = destination / relative;
+        std::error_code entryError;
+        if (iterator->is_directory(entryError) && !entryError)
+        {
+            std::filesystem::create_directories(target, entryError);
+        }
+        else if (!entryError && iterator->is_regular_file(entryError) &&
+                 !entryError)
+        {
+            std::filesystem::create_directories(
+                target.parent_path(), entryError);
+            if (!entryError)
+                std::filesystem::copy_file(iterator->path(), target,
+                    std::filesystem::copy_options::none, entryError);
+        }
+        else
+        {
+            complete = false;
+        }
+        if (entryError)
+            complete = false;
+    }
+    if (error)
+        complete = false;
+    if (!complete)
+    {
+        error.clear();
+        std::filesystem::remove_all(destination, error);
+        return false;
+    }
+
+    std::filesystem::remove_all(source, error);
+    return !error;
+}
+
+bool CleanupLegacyLocalAppDataRoot(const std::filesystem::path& data)
+{
+    const auto legacyParent = GetLegacyLocalAppDataRoot();
+    if (legacyParent.empty())
+        return false;
+    std::error_code error;
+    if (!std::filesystem::exists(legacyParent, error))
+        return !error;
+    if (error || !std::filesystem::is_directory(legacyParent, error) ||
+        error || IsReparsePoint(legacyParent))
+        return false;
+    if (!MigrateLegacyCreatorProjects(legacyParent, data))
+        return false;
+
+    bool complete = true;
+    for (const wchar_t* name : {
+             L"RuntimeHooks", L"TaskbarHook", L"ShellHook" })
+    {
+        const auto root = legacyParent / name;
+        error.clear();
+        if (!std::filesystem::exists(root, error))
+        {
+            if (error) complete = false;
+            continue;
+        }
+        if (error || !std::filesystem::is_directory(root, error) || error ||
+            IsReparsePoint(root))
+        {
+            complete = false;
+            continue;
+        }
+        CleanupStaleRuntimeDirectories(root);
+        error.clear();
+        std::filesystem::remove(root, error);
+        error.clear();
+        if (std::filesystem::exists(root, error) || error)
+            complete = false;
+    }
+    error.clear();
+    std::filesystem::remove(legacyParent, error);
+    return complete;
+}
+
+bool CleanupLegacyRuntimeRoots()
 {
     const std::filesystem::path temporary = GetTemporaryDirectory();
     if (temporary.empty())
-        return {};
-    const std::filesystem::path copiesRoot = temporary /
-        L"SnowDesktop" / L"RuntimeHooks";
+        return false;
+    const std::filesystem::path legacyParent = temporary / L"SnowDesktop";
+    if (IsReparsePoint(legacyParent))
+        return false;
+    bool complete = true;
+    for (const wchar_t* name : {
+             L"RuntimeHooks", L"TaskbarHook", L"ShellHook" })
+    {
+        const std::filesystem::path root = legacyParent / name;
+        std::error_code error;
+        if (!std::filesystem::exists(root, error))
+        {
+            if (error) complete = false;
+            continue;
+        }
+        if (error || !std::filesystem::is_directory(root, error) || error ||
+            IsReparsePoint(root))
+        {
+            complete = false;
+            continue;
+        }
+        CleanupStaleRuntimeDirectories(root);
+        error.clear();
+        std::filesystem::remove(root, error);
+        error.clear();
+        if (std::filesystem::exists(root, error) || error)
+            complete = false;
+    }
+    std::error_code error;
+    std::filesystem::remove(legacyParent, error);
+    return complete;
+}
+
+void CleanupLegacyRuntimeRootsOnce(const std::filesystem::path& data)
+{
+    const auto markerRoot = data / L"migrations";
+    const auto marker = markerRoot / L"legacy-runtime-roots-v2.done";
+    const DWORD attributes = GetFileAttributesW(marker.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+        return;
+    if (!CleanupLegacyRuntimeRoots() ||
+        !CleanupLegacyLocalAppDataRoot(data))
+        return;
 
     std::error_code error;
-    std::filesystem::create_directories(copiesRoot, error);
-    if (error)
-        return {};
+    std::filesystem::create_directories(markerRoot, error);
+    if (error || IsReparsePoint(markerRoot))
+        return;
+    HANDLE file = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+    static constexpr char content[] = "completed\n";
+    DWORD written = 0;
+    const bool saved = WriteFile(file, content,
+        static_cast<DWORD>(sizeof(content) - 1), &written, nullptr) &&
+        written == static_cast<DWORD>(sizeof(content) - 1);
+    CloseHandle(file);
+    if (!saved)
+        DeleteFileW(marker.c_str());
+}
 
-    // Injected modules can remain mapped after the owner exits. Remove only
-    // stale copies that Windows no longer considers busy; locked copies are
-    // kept until their target process releases them.
-    for (std::filesystem::directory_iterator iterator(copiesRoot, error), end;
-         !error && iterator != end; iterator.increment(error))
+class InjectableRuntimeDirectory
+{
+public:
+    InjectableRuntimeDirectory()
     {
-        std::error_code cleanupError;
-        if (iterator->is_directory(cleanupError))
-            std::filesystem::remove_all(iterator->path(), cleanupError);
-    }
+        const std::filesystem::path data = GetDataDirectoryPath();
+        if (data.empty())
+            return;
+        copiesRoot_ = data / L"ShellHook";
 
-    const std::filesystem::path targetDirectory = copiesRoot /
-        (std::wstring(kVersion) + L"-" +
+        std::error_code error;
+        std::filesystem::create_directories(copiesRoot_, error);
+        if (error || IsReparsePoint(copiesRoot_))
+        {
+            copiesRoot_.clear();
+            return;
+        }
+        CleanupLegacyRuntimeRootsOnce(data);
+        CleanupStaleRuntimeDirectories(copiesRoot_);
+
+        path_ = copiesRoot_ / (std::wstring(kVersion) + L"-" +
             std::to_wstring(GetCurrentProcessId()) + L"-" +
             std::to_wstring(GetTickCount64()));
-    error.clear();
-    std::filesystem::create_directories(targetDirectory, error);
-    if (error)
-        return {};
-    return targetDirectory;
-}
+        std::filesystem::create_directories(path_, error);
+        if (error || IsReparsePoint(path_))
+        {
+            path_.clear();
+            return;
+        }
+        ownerHandle_ = CreateFileW(
+            (path_ / kRuntimeHookOwnerLockFilename).c_str(), GENERIC_READ,
+            FILE_SHARE_READ, nullptr, CREATE_NEW,
+            FILE_ATTRIBUTE_HIDDEN, nullptr);
+        if (ownerHandle_ == INVALID_HANDLE_VALUE)
+        {
+            std::filesystem::remove_all(path_, error);
+            path_.clear();
+        }
+    }
+
+    ~InjectableRuntimeDirectory()
+    {
+        if (ownerHandle_ != INVALID_HANDLE_VALUE)
+            CloseHandle(ownerHandle_);
+        if (path_.empty())
+            return;
+        std::error_code error;
+        std::filesystem::remove_all(path_, error);
+        error.clear();
+        std::filesystem::remove(copiesRoot_, error);
+    }
+
+    InjectableRuntimeDirectory(const InjectableRuntimeDirectory&) = delete;
+    InjectableRuntimeDirectory& operator=(
+        const InjectableRuntimeDirectory&) = delete;
+
+    const std::filesystem::path& Path() const noexcept { return path_; }
+
+private:
+    std::filesystem::path copiesRoot_;
+    std::filesystem::path path_;
+    HANDLE ownerHandle_ = INVALID_HANDLE_VALUE;
+};
 
 std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
 {
@@ -409,8 +709,8 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
     if (!std::filesystem::is_regular_file(source))
         return source.wstring();
 
-    static const std::filesystem::path targetDirectory =
-        CreateInjectableRuntimeDirectory();
+    static const InjectableRuntimeDirectory runtimeDirectory;
+    const std::filesystem::path& targetDirectory = runtimeDirectory.Path();
     if (targetDirectory.empty())
         return source.wstring();
 
@@ -586,6 +886,32 @@ bool IsPackaged() noexcept
             ERROR_INSUFFICIENT_BUFFER;
     }();
     return packaged;
+}
+
+const RuntimeDeploymentContext& GetRuntimeDeploymentContext() noexcept
+{
+    static const RuntimeDeploymentContext context = [] {
+        std::wstring executable(32768, L'\0');
+        const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+            static_cast<DWORD>(executable.size()));
+        if (length == 0 || length >= executable.size())
+        {
+            RuntimeDeploymentContext failed;
+            failed.kind = RuntimeDeploymentKind::Invalid;
+            failed.explicitContext = true;
+            failed.error = "Current executable path is unavailable";
+            return failed;
+        }
+        executable.resize(length);
+        return ResolveRuntimeDeploymentContext(executable, IsPackaged());
+    }();
+    return context;
+}
+
+bool HasInvalidRuntimeDeploymentContext() noexcept
+{
+    return GetRuntimeDeploymentContext().kind ==
+        RuntimeDeploymentKind::Invalid;
 }
 
 std::wstring GetPackageLocalStatePath()

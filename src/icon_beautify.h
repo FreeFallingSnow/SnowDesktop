@@ -127,6 +127,10 @@ std::vector<std::uint32_t> Render(
     const IconBeautifySettings& settings,
     std::optional<EdgeColor> detectedEdgeFill = std::nullopt);
 
+/** Shared host plate detector: follows visible contours through transparent margins. */
+std::optional<EdgeColor> DetectPlateFill(
+    const std::vector<std::uint32_t>& pixels, int width, int height);
+
 /** Detect a solid application-icon plate that smart beautification should clip. */
 std::optional<EdgeColor> DetectEdgeFill(
     const std::vector<std::uint32_t>& pixels, int width, int height);

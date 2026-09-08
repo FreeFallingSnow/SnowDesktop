@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
+#include "animation_settings.h"
 
 // Dock launch animation, item activation and application identity resolution.
 
@@ -8,8 +9,8 @@ bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
     if (!hwnd_ || !IsWindow(hwnd_) ||
         itemIndex >= items_.size() ||
         !generalSettings_.dockEnabled ||
-        !snowdesktop::dock_launch_animation::
-            SystemAnimationsEnabled())
+        dockSettings_.launchEffect == 0 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
         return false;
 
     const std::wstring key =
@@ -50,7 +51,8 @@ bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
 float DesktopApp::GetDockLaunchBounceOffset(
     size_t itemIndex, int iconSize) const
 {
-    if (itemIndex >= items_.size())
+    if (itemIndex >= items_.size() || dockSettings_.launchEffect != 1 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
         return 0.0f;
     const auto found = dockLaunchBounces_.find(
         DockItemWindowKey(items_[itemIndex]));
@@ -58,10 +60,29 @@ float DesktopApp::GetDockLaunchBounceOffset(
         return 0.0f;
     return snowdesktop::dock_launch_animation::
         OffsetPixels(
-            snowdesktop::dock_launch_animation::
-                MonotonicTimeMilliseconds() -
-                found->second.startTimeMs,
+            snowdesktop::dock_launch_animation::AdvanceElapsed(
+                found->second.elapsedMs,
+                snowdesktop::dock_launch_animation::
+                    MonotonicTimeMilliseconds() - found->second.startTimeMs,
+                snowdesktop::animation::RuntimeDurationScale()),
             iconSize);
+}
+
+float DesktopApp::GetDockLaunchPulseScale(size_t itemIndex) const
+{
+    if (itemIndex >= items_.size() || dockSettings_.launchEffect != 2 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
+        return 1.0f;
+    const auto found = dockLaunchBounces_.find(
+        DockItemWindowKey(items_[itemIndex]));
+    if (found == dockLaunchBounces_.end())
+        return 1.0f;
+    return snowdesktop::dock_launch_animation::PulseScale(
+        snowdesktop::dock_launch_animation::AdvanceElapsed(
+            found->second.elapsedMs,
+            snowdesktop::dock_launch_animation::MonotonicTimeMilliseconds() -
+                found->second.startTimeMs,
+            snowdesktop::animation::RuntimeDurationScale()));
 }
 
 void DesktopApp::OnDockLaunchBounceTimer()
@@ -79,13 +100,24 @@ void DesktopApp::OnDockLaunchBounceTimer()
     // last translated pixels are cleared by the same coalesced paint.
     InvalidateDockLaunchBounceRects();
 
+    if (!generalSettings_.dockEnabled || dockSettings_.launchEffect == 0 ||
+        !snowdesktop::animation::RuntimeAnimationsEnabled())
+    {
+        dockLaunchBounces_.clear();
+        return;
+    }
+
     for (auto bounce = dockLaunchBounces_.begin();
         bounce != dockLaunchBounces_.end();)
     {
         const size_t itemIndex =
             FindItemIndexByKey(bounce->first);
         const double elapsed =
-            now - bounce->second.startTimeMs;
+            snowdesktop::dock_launch_animation::AdvanceElapsed(
+                bounce->second.elapsedMs, now - bounce->second.startTimeMs,
+                snowdesktop::animation::RuntimeDurationScale());
+        bounce->second.elapsedMs = elapsed;
+        bounce->second.startTimeMs = now;
         if (itemIndex >= items_.size() ||
             elapsed >=
                 static_cast<double>(
@@ -181,6 +213,13 @@ void DesktopApp::InvalidateDockLaunchBounceRects()
         InvalidateFloatingDockWindow(false);
 }
 
+bool DesktopApp::LaunchPathWithShortcutPolicy(
+    HWND owner, const std::wstring& path)
+{
+    return snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+        owner, path, nullptr);
+}
+
 bool DesktopApp::LaunchDesktopItem(
     size_t itemIndex, bool animateDockLaunch)
 {
@@ -206,18 +245,13 @@ bool DesktopApp::LaunchDesktopItem(
         GetDockWindowVisualState(itemIndex) ==
             DockWindowVisualState::Closed;
     const DesktopItem& item = items_[itemIndex];
-    const wchar_t* extension =
-        PathFindExtensionW(item.parsingName.c_str());
-    const bool useShellItemActivation = item.isShortcut ||
-        (extension &&
-            (_wcsicmp(extension, L".lnk") == 0 ||
-                _wcsicmp(extension, L".url") == 0));
+    // Resolve shortcuts and invoke Shell handlers in a separate process.
+    // Even a worker-thread loader-lock deadlock can poison the whole host;
+    // one helper per launch also keeps later opens out of a blocked queue.
     const bool launchAccepted =
-        useShellItemActivation && item.absolutePidl.get()
-        ? shellLaunchWorker_.EnqueueShellItem(
-            hwnd_, item.parsingName, item.absolutePidl.get())
-        : shellLaunchWorker_.Enqueue(
-            hwnd_, item.parsingName);
+        snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+            ShellDialogOwnerHwnd(), item.parsingName,
+            item.absolutePidl.get());
     if (!launchAccepted)
         return false;
     RecordDockItemUsage(itemIndex);

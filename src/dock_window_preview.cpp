@@ -141,15 +141,11 @@ ResolveDockWindowPreviewZOrderPolicy(
     bool useDockLayer, bool wasVisible)
 {
     DockWindowPreviewZOrderPolicy policy;
-    policy.insertAfter = useDockLayer
-        ? nullptr : HWND_TOPMOST;
+    policy.insertAfter = HWND_TOPMOST;
     policy.flags = SWP_NOACTIVATE |
         (wasVisible ? 0 : SWP_NOREDRAW);
     if (useDockLayer)
-    {
-        policy.flags |=
-            SWP_NOZORDER | SWP_NOOWNERZORDER;
-    }
+        policy.flags |= SWP_NOOWNERZORDER;
     return policy;
 }
 
@@ -628,8 +624,10 @@ void DockWindowPreview::Show(
     // exposes one empty rectangular frame; the floating Dock made that frame
     // especially noticeable because it also performed a second visible
     // Z-order transition.
-    // A popup owned by a topmost window is promoted with its owner. Never
-    // pass HWND_NOTOPMOST here: Windows would demote the owner and every
+    // A reused popup does not reliably inherit TOPMOST when its owner is
+    // assigned after the DockHost has already been promoted. Reassert the
+    // preview's own band while SWP_NOOWNERZORDER keeps that owner stationary.
+    // Never pass HWND_NOTOPMOST here: Windows would demote the owner and every
     // window in the owned chain, burying the promoted DockHost as well.
     const DockWindowPreviewZOrderPolicy zOrder =
         ResolveDockWindowPreviewZOrderPolicy(

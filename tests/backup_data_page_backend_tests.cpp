@@ -1,5 +1,6 @@
 #include "../src/winui/backup_operation_control.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -33,7 +34,9 @@ std::string ReadText(const std::filesystem::path& path)
         return {};
     std::ostringstream text;
     text << input.rdbuf();
-    return text.str();
+    std::string source = text.str();
+    source.erase(std::remove(source.begin(), source.end(), '\r'), source.end());
+    return source;
 }
 
 void TestPresenterAdapterBoundary(const std::string& header,

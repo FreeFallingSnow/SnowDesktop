@@ -1,7 +1,9 @@
 #include "app.h"
+#include "../performance_trace.h"
 #include "grid_geometry.h"
 #include "../item_render_layer_rules.h"
 #include "../drag_visual_rules.h"
+#include "../large_icon_render_rules.h"
 #include "../widget_composition_layer_rules.h"
 #include "../widget_visibility_rules.h"
 #include "../widgets/collection_group_rules.h"
@@ -13,6 +15,8 @@ void DesktopApp::DrawStaticBackground(
     const RECT* updateRect,
     bool hiddenMode)
 {
+    snowdesktop::performance::Scope performanceScope("desktop", "background");
+    UpdateLargeIconHover();
     auto intersectsUpdate =
         [&](RECT bounds, int overdraw = 0) {
         if (!updateRect)
@@ -41,7 +45,6 @@ void DesktopApp::DrawStaticBackground(
 
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
-    if (!hiddenMode)
     {
         struct ForegroundTitle
         {
@@ -60,6 +63,8 @@ void DesktopApp::DrawStaticBackground(
             if (!icon) continue;
             DesktopItem* di = icon->GetDesktopItem();
             if (!di || IsRectEmptyRect(di->bounds)) continue;
+            if (hiddenMode && !IsRetainedLargeIcon(*di)) continue;
+            if (di->largeIcon && !IsLargeIconVisible(*di, lastMousePoint_, hiddenMode)) continue;
             if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
                 dragSession_.IsMoveAction() && di->selected)
                 continue;
@@ -70,12 +75,12 @@ void DesktopApp::DrawStaticBackground(
             const auto titleLayers =
                 snowdesktop::item_render_layer_rules::
                     ResolveTitleLayerPlan(selected);
-            if (titleLayers.drawInForeground)
+            if (titleLayers.drawInForeground && !di->largeIcon)
             {
                 foregroundTitles.push_back(
                     { icon, di->bounds });
             }
-            if (!intersectsUpdate(di->bounds, 8))
+            if (!intersectsUpdate(di->largeIcon ? GetLargeIconFrameRect(*di) : di->bounds, 8))
                 continue;
             int state = selected ? 2 : (hovered ? 1 : 0);
             icon->Draw(
@@ -195,6 +200,7 @@ void DesktopApp::DrawDesktopForeground(
     ID2D1DeviceContext* ctx,
     bool hiddenMode)
 {
+    snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
@@ -209,10 +215,13 @@ void DesktopApp::DrawDesktopForeground(
     }
 
     DrawDynamicOverlays(ctx, hiddenMode);
+    DrawLargeIconInteractionOverlay(ctx);
     if (desktopIconsHidden_ && showHiddenHint_)
         DrawHiddenHintOverlay(ctx);
     if (showWidgetAddedHint_)
         DrawWidgetAddedHintOverlay(ctx);
+    if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
+        dockWindowTransition_->RefreshOcclusion();
 }
 
 // ── Dynamic overlays (drag preview, dragged items, marquee, nav) ──
@@ -221,6 +230,7 @@ void DesktopApp::DrawDynamicOverlays(
     ID2D1DeviceContext* ctx,
     bool hiddenMode)
 {
+    snowdesktop::performance::Scope performanceScope("desktop", "overlays");
     auto beginPopupAnimationTransform =
         [&](const RECT& popup,
             D2D1_MATRIX_3X2_F& previousTransform) {
@@ -466,7 +476,23 @@ void DesktopApp::DrawDynamicOverlays(
         if (targetRegion == HitRegion::Handoff && targetSlot)
         {
             RECT bounds = targetSlot->GetBounds();
-            DrawD2DRoundedRectangle(ctx, bounds, 6.0f,
+            float radius = 6.f;
+            if (dynamic_cast<DesktopGrid*>(targetContainer))
+            {
+                // The pointer may be in a covered cell whose Slot is empty.
+                // Resolve the same actual item used by Shell handoff hit testing.
+                const auto* icon = HitTestIcon(dragSession_.CurrentPoint());
+                const auto* item = icon ? icon->GetDesktopItem() : nullptr;
+                if (item && item->largeIcon)
+                {
+                    bounds = GetLargeIconFrameRect(*item);
+                    const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
+                        EffectiveLargeIconConfig(*item), CurrentPersonalization().cornerRadius);
+                    radius = static_cast<float>(snowdesktop::large_icon_render_rules::Radius(config,
+                        bounds.right - bounds.left, bounds.bottom - bounds.top, GetItemLayoutScale(item->bounds)));
+                }
+            }
+            DrawD2DRoundedRectangle(ctx, bounds, radius,
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
         }

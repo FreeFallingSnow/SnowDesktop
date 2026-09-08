@@ -1138,7 +1138,7 @@ bool QueuesExternalReplacement(BackupDataCommand command) noexcept
 struct BackupDataPageBackend::State final
     : std::enable_shared_from_this<BackupDataPageBackend::State>
 {
-    State(SettingsController& owner, BackupDataPageBackendOptions configured)
+    State(ISettingsController& owner, BackupDataPageBackendOptions configured)
         : controller(&owner), options(std::move(configured)),
           paths(ResolvePaths(options))
     {
@@ -1154,7 +1154,7 @@ struct BackupDataPageBackend::State final
         snapshot.fullBackupDirectory = paths.fullBackupDirectory.wstring();
     }
 
-    SettingsController* controller = nullptr;
+    ISettingsController* controller = nullptr;
     BackupDataPageBackendOptions options;
     BackendPaths paths;
     BackupDataPageSnapshot snapshot;
@@ -2042,7 +2042,7 @@ struct BackupDataPageBackend::State final
 };
 
 BackupDataPageBackend::BackupDataPageBackend(
-    SettingsController& controller,
+    ISettingsController& controller,
     BackupDataPageBackendOptions options)
     : state_(std::make_shared<State>(controller, std::move(options)))
 {

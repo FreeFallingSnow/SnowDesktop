@@ -24,6 +24,7 @@
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
+#include "personalization.h"
 #include "system_snapshot.h"
 #include "http_runtime.h"
 #include "calendar_service.h"
@@ -35,6 +36,7 @@
 #include "widget_runtime_health.h"
 #include "widget_host_state.h"
 #include "widget_runtime_scheduler.h"
+#include "widget_invalidation_batch.h"
 #include "widget_lua_lifecycle.h"
 #include "widget_data_broker.h"
 #include "widget_task_broker.h"
@@ -232,7 +234,7 @@ struct LuaWidgetMenuItem
     std::string targetKey;
     std::string surface = "desktop";
     snowdesktop::widget_runtime::InteractionValue contextValue;
-    std::uint64_t interactionGeneration = 0;
+    std::uint64_t runtimeToken = 0;
     std::vector<LuaWidgetMenuItem> children; ///< 子菜单；仅叶子项投递动作
 };
 
@@ -638,6 +640,7 @@ struct LuaWidget
     bool valid = false;                  ///< 是否已成功加载且可执行
     bool customStyle = false;            ///< 是否启用了自定义主题样式
     bool followPersonalizationDefault = false; ///< 尚未保存外观状态时是否默认跟随全局
+    bool hasBackgroundLayer = false;     ///< 是否声明桌面装饰背景层
     LuaWidgetTheme theme;                ///< 自定义主题配置（当 customStyle 为 true 时生效）
     LuaWidgetPreviewDataState previewDataState =
         LuaWidgetPreviewDataState::Ready; ///< 作者预览的确定性数据状态
@@ -704,6 +707,7 @@ struct LuaWidget
     bool panelActive = false;
     bool panelInitialKeyboardFocusPending = false;
     bool panelFrameOpen = false;
+    std::string backgroundLayerError;
     std::uint64_t runtimeToken = 0;
     bool preview = false;
     std::unordered_map<std::string, std::string> previewStorage;
@@ -950,12 +954,19 @@ public:
      */
     void RenderWidget(const std::wstring& widgetId, const std::wstring& scriptPath,
         ID2D1DeviceContext* context, RECT bounds, int columns = 1, int rows = 1);
+    /** Render the optional decorative layer above the host material tint. */
+    bool RenderWidgetBackgroundLayer(const std::wstring& widgetId,
+        ID2D1DeviceContext* context, RECT bounds, int columns, int rows,
+        float inheritedBlurRadius, float cornerRadius);
     /** Synchronize semantic visibility of one widget's desktop surface. */
     void SetWidgetDesktopVisible(
         const std::wstring& widgetId, bool visible,
         bool keepRuntimeActive = false);
     /** Hide or show the desktop surface of every loaded non-preview widget. */
     void SetAllWidgetDesktopVisible(bool visible);
+    // Applies host-owned presentation settings without changing Lua callbacks,
+    // accessibility context, named timers, or pending data refresh requests.
+    void ApplyHostAnimationPreferences();
     bool RenderWidgetPanel(const std::wstring& widgetId,
         ID2D1DeviceContext* context, RECT bounds,
         std::string_view surface = "panel");
@@ -978,6 +989,8 @@ public:
      * @return 启用了自定义主题返回 true，否则返回 false
      */
     bool HasCustomStyle(const std::wstring& widgetId) const;
+    /** Return whether the loaded widget declares a desktop background layer. */
+    bool HasBackgroundLayer(const std::wstring& widgetId) const;
 
     /**
      * @brief 触发小部件的打开回调
@@ -1022,7 +1035,8 @@ public:
      */
     std::vector<LuaWidgetMenuItem> GetContextMenu(
         const std::wstring& widgetId, int x = -1, int y = -1,
-        std::string_view surface = "desktop");
+        std::string_view surface = "desktop",
+        bool componentScopeOnly = false);
 
     void InvokeMenu(const std::wstring& widgetId,
         const LuaWidgetMenuItem& menuItem);
@@ -1047,8 +1061,11 @@ public:
     bool ReadCustomColors(const std::wstring& widgetId,
         float& bgR, float& bgG, float& bgB, float& alpha,
         float& borderR, float& borderG, float& borderB, float& borderAlpha,
-        float& gradientEndA, bool& glassEnabled,
-        bool& acrylicEnabled) const;
+        float& borderWidth, bool& edgeHighlightEnabled,
+        float& edgeHighlightWidth, float& edgeHighlightStrength,
+        float& gradientEndA,
+        bool& glassEnabled, bool& acrylicEnabled,
+        snowdesktop::PanelGradient* panelGradient = nullptr) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表
@@ -1061,6 +1078,8 @@ public:
      * @return 诊断条目数组
      */
     std::vector<WidgetDiagnosticEntry> GetWidgetDiagnostics() const;
+    // Internal UI-thread probe callback; does no work while capture is off.
+    void RecordPerformanceResources() const noexcept;
     std::string GetSystemSnapshotError() const;
 
     /**
@@ -1385,6 +1404,9 @@ public:
     void RuntimeInvalidateHost(const std::wstring& widgetId = {},
         std::optional<RECT> dirtyRect = std::nullopt,
         std::string_view surface = {});
+    /** Notify a component that a host-owned setting has changed. */
+    bool RuntimeNotifySettingsChanged(const std::wstring& widgetId,
+        std::vector<std::string> keys, bool preview);
     bool RuntimeSubmitNativeMarquee(const std::wstring& widgetId,
         LuaWidget::NativeMarqueeText marquee, std::string& error);
     bool RuntimeSubmitInteractionRegion(const std::wstring& widgetId,
@@ -1461,13 +1483,16 @@ public:
      */
     void SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme);
 
-    /** Store host layout metrics for one widget without mutating an active
-     * callback belonging to another widget. The metrics are applied when the
-     * target widget's execution context is entered.
+    /** Store host layout context for one widget without mutating an active
+     * callback belonging to another widget. The context is also applied to a
+     * pending package load so top-level code and setup() see the target span.
      */
     void SetWidgetLayoutMetrics(const std::wstring& widgetId,
-        int cellWidth, int cellHeight, int gapY, int barHeight,
-        DWRITE_FONT_WEIGHT fontWeight);
+        int columns, int rows, int cellWidth, int cellHeight,
+        int gapY, int barHeight,
+        DWRITE_FONT_WEIGHT fontWeight, float semanticCuScale,
+        const snowdesktop::widget_runtime::SemanticUiMetricTokens&
+            semanticUiMetrics);
     void SetWidgetSurfaceContext(const std::wstring& widgetId,
         const LuaWidgetSurfaceContext& context);
     LuaWidgetContextState RuntimeGetWidgetContextState(
@@ -1748,6 +1773,10 @@ private:
     bool SyncNativeMarqueeComposition(
         LuaWidget& widget, bool reducedMotion);
     void ClearNativeMarqueeComposition(LuaWidget& widget);
+    bool hostAnimationPreferencesKnown_ = false;
+    bool hostAnimationsEnabled_ = true;
+    double hostAnimationDurationScale_ = 1.0;
+    int hostAnimationFrameLimit_ = 0;
 
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
     ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文
@@ -1770,6 +1799,7 @@ private:
     WidgetPanelOpenCallback openWidgetPanelCallback_;
     WidgetPanelCloseCallback closeWidgetPanelCallback_;
     InvalidateCallback invalidateCallback_;            ///< 请求宿主重绘的回调
+    snowdesktop::widget_runtime::WidgetInvalidationBatch invalidationBatch_;
     NativeMarqueeSyncCallback nativeMarqueeSyncCallback_;
     DesktopPathAction desktopOpenCallback_;            ///< 打开桌面路径的回调
     DesktopPathAction applicationLaunchCallback_;      ///< 启动已解析应用引用的回调

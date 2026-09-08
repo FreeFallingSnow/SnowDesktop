@@ -4,6 +4,7 @@
  */
 
 #include "data_paths.h"
+#include "data_path_policy.h"
 #include "deployment_context.h"
 #include "portable_data_migration.h"
 
@@ -51,9 +52,7 @@ namespace
 
     void EnsureDirectoryLocal(const std::wstring& path)
     {
-        if (path.empty() || DirectoryExistsLocal(path))
-            return;
-        CreateDirectoryW(path.c_str(), nullptr);
+        (void)snowdesktop::data_paths::EnsureDirectoryTree(path);
     }
 
     void MigratePathIfNeeded(const std::wstring& legacyPath, const std::wstring& currentPath)
@@ -123,13 +122,13 @@ std::wstring GetExecutableDirectoryPath()
 
 std::wstring GetDataDirectoryPath()
 {
-    const std::wstring packageLocalState =
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    const std::filesystem::path packageLocalState =
         snowdesktop::deployment::GetPackageLocalStatePath();
-    std::wstring dataDir;
-    if (!packageLocalState.empty())
-        dataDir = JoinPathLocal(packageLocalState, L"data");
-    else
-        dataDir = JoinPathLocal(GetExecutableDirectoryPath(), L"data");
+    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
+        context, packageLocalState, GetExecutableDirectoryPath());
+    const std::wstring dataDir = policy.dataRoot.wstring();
     EnsureDirectoryLocal(dataDir);
     return dataDir;
 }
@@ -139,14 +138,21 @@ std::wstring GetDataFilePath(const wchar_t* filename)
     if (!LooksLikeBareName(filename))
         return filename ? std::wstring(filename) : std::wstring();
 
-    std::wstring legacyDir =
+    const std::filesystem::path packageLocalState =
         snowdesktop::deployment::GetPackageLocalStatePath();
-    if (legacyDir.empty())
-        legacyDir = GetExecutableDirectoryPath();
-    const std::wstring dataDir = GetDataDirectoryPath();
-    const std::wstring legacyPath = JoinPathLocal(legacyDir, filename);
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
+        context, packageLocalState, GetExecutableDirectoryPath());
+    const std::wstring dataDir = policy.dataRoot.wstring();
+    EnsureDirectoryLocal(dataDir);
     const std::wstring currentPath = JoinPathLocal(dataDir, filename);
-    MigratePathIfNeeded(legacyPath, currentPath);
+    if (policy.legacyRoot)
+    {
+        const std::wstring legacyPath =
+            JoinPathLocal(policy.legacyRoot->wstring(), filename);
+        MigratePathIfNeeded(legacyPath, currentPath);
+    }
     return currentPath;
 }
 
@@ -155,30 +161,42 @@ std::wstring GetDataSubdirectoryPath(const wchar_t* dirname)
     if (!LooksLikeBareName(dirname))
         return dirname ? std::wstring(dirname) : std::wstring();
 
-    std::wstring legacyDir =
+    const std::filesystem::path packageLocalState =
         snowdesktop::deployment::GetPackageLocalStatePath();
-    if (legacyDir.empty())
-        legacyDir = GetExecutableDirectoryPath();
-    const std::wstring dataDir = GetDataDirectoryPath();
-    const std::wstring legacyPath = JoinPathLocal(legacyDir, dirname);
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
+        context, packageLocalState, GetExecutableDirectoryPath());
+    const std::wstring dataDir = policy.dataRoot.wstring();
+    EnsureDirectoryLocal(dataDir);
     const std::wstring currentPath = JoinPathLocal(dataDir, dirname);
-    MigrateDirectoryPathIfNeeded(legacyPath, currentPath);
+    if (policy.legacyRoot)
+    {
+        const std::wstring legacyPath =
+            JoinPathLocal(policy.legacyRoot->wstring(), dirname);
+        MigrateDirectoryPathIfNeeded(legacyPath, currentPath);
+    }
     EnsureDirectoryLocal(currentPath);
     return currentPath;
 }
 
 void MigrateLegacyDataPaths()
 {
-    std::filesystem::path stateRoot =
+    const std::filesystem::path packageLocalState =
         snowdesktop::deployment::GetPackageLocalStatePath();
-    if (stateRoot.empty())
-        stateRoot = GetExecutableDirectoryPath();
-    const auto portableMigration =
-        snowdesktop::migration::ApplyPending(stateRoot);
-    if (!portableMigration.ok)
+    const auto& context =
+        snowdesktop::deployment::GetRuntimeDeploymentContext();
+    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
+        context, packageLocalState, GetExecutableDirectoryPath());
+    if (policy.pendingMigrationStateRoot)
     {
-        OutputDebugStringA(("SnowDesktop: pending portable data migration "
-            "failed: " + portableMigration.error + "\n").c_str());
+        const auto portableMigration = snowdesktop::migration::ApplyPending(
+            *policy.pendingMigrationStateRoot);
+        if (!portableMigration.ok)
+        {
+            OutputDebugStringA(("SnowDesktop: pending portable data migration "
+                "failed: " + portableMigration.error + "\n").c_str());
+        }
     }
 
     static const wchar_t* files[] = {

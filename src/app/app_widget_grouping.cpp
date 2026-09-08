@@ -438,6 +438,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     widget.id = MakeNewWidgetId();
     widget.listMode = settings.listMode;
     widget.scrollContainerMode = settings.scrollContainerMode;
+    widget.largeFolderTitleless = settings.largeFolderTitleless;
     widget.dateHeaders = settings.dateHeaders;
     widget.showFileCategories = settings.showFileCategories;
     widget.showSearchBox = settings.showSearchBox;

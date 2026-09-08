@@ -1,4 +1,5 @@
 #include "app.h"
+#include "shell_change_notification.h"
 #include "../desktop_keyboard_rules.h"
 #include "../drag_input_rules.h"
 
@@ -85,6 +86,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg)
     {
+    case WM_COMMAND:
+        if (renameEdit_ && reinterpret_cast<HWND>(lp) == renameEdit_ &&
+            HIWORD(wp) == EN_UPDATE)
+        {
+            renameEditLayout_.Update(renameEdit_);
+            return 0;
+        }
+        break;
     case WM_GETOBJECT:
     {
         LRESULT accessibilityResult = 0;
@@ -115,7 +124,30 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_SETCURSOR:
     {
+        if (largeIconGesture_ && LOWORD(lp) == HTCLIENT)
+        {
+            SetCursor(LoadCursorW(nullptr, largeIconGesture_->valid ? IDC_SIZENWSE : IDC_NO));
+            return TRUE;
+        }
         if (LOWORD(lp) != HTCLIENT) break;
+        POINT handlePoint{};
+        if (GetCursorPos(&handlePoint) && ScreenToClient(hwnd_, &handlePoint) && UpdateWidgetHandleCursor(handlePoint)) return TRUE;
+        if (CanEditLargeIcons() && !HasActiveContextMenuSession())
+        {
+            POINT pointer{};
+            if (GetCursorPos(&pointer) && ScreenToClient(hwnd_, &pointer) && !IsPointOccludedByOpenPopup(pointer))
+            {
+                const auto index = HitTestItem(pointer);
+                if (index >= 0 && static_cast<size_t>(index) < items_.size() && items_[index].largeIcon)
+                {
+                    DesktopWidget geometry;
+                    geometry.bounds = items_[index].bounds; geometry.gridCell = items_[index].gridCell; geometry.showTitle = false;
+                    if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
+                    const auto handle = GetStandaloneWidgetResizeHandleRect(geometry);
+                    if (PtInRect(&handle, pointer)) { SetCursor(LoadCursorW(nullptr, IDC_SIZENWSE)); return TRUE; }
+                }
+            }
+        }
         bool resizeCursor = detailColumnResizeActive_;
         bool cursorPointAvailable = false;
         bool pointInsideCollectionPopup = false;
@@ -287,14 +319,37 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             snowdesktop::drag_input_rules::IsNativeDragActive(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
-        const bool primaryButtonDown = nativeDragActive &&
+        const bool marqueePointerActive =
+            IsMarqueePointerGesturePendingOrActive();
+        const bool widgetActionActive =
+            widgetAction_ != WidgetAction::None;
+        const bool latencySensitivePointerActive =
+            snowdesktop::drag_input_rules::
+                IsLatencySensitivePointerGesture(
+                    nativeDragActive,
+                    marqueePointerActive,
+                    widgetActionActive,
+                    mouseDownWidgetIndex_ < widgets_.size());
+        const bool primaryButtonDown =
+            latencySensitivePointerActive &&
+            !middleButtonWidgetMove_ &&
             (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-        const bool sampleNativeDrag =
+        const bool middleButtonDown =
+            latencySensitivePointerActive &&
+            middleButtonWidgetMove_ &&
+            (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
+        const bool gestureButtonDown =
+            snowdesktop::drag_input_rules::
+                IsPointerGestureButtonDown(
+                    middleButtonWidgetMove_,
+                    primaryButtonDown,
+                    middleButtonDown);
+        const bool sampleLivePointer =
             snowdesktop::drag_input_rules::ShouldSampleLivePointer(
-                nativeDragActive, primaryButtonDown);
+                latencySensitivePointerActive, gestureButtonDown);
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
-            widgetAction_ != WidgetAction::None ||
+            widgetActionActive ||
             detailColumnResizeActive_ ||
             luaWidgetPanelMouseDown_;
         const bool samplePassiveHover =
@@ -303,18 +358,20 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     mouseDown_,
                     dragSession_.IsActive(),
                     widgetInteractionActive);
-        if (sampleNativeDrag || samplePassiveHover)
+        if (sampleLivePointer || samplePassiveHover)
         {
             // Costly frames and modal Shell loops can leave old WM_MOUSEMOVE
-            // messages queued for this HWND. Native item drags must follow the
-            // physical pointer; passive hover additionally verifies that the
-            // sample still belongs to the paired desktop surface.
+            // messages queued for this HWND. Native item drags, marquee
+            // selection, and widget move/resize must follow the physical
+            // pointer; passive hover additionally verifies that the sample
+            // still belongs to the paired desktop surface.
             POINT cursorScreen{};
             if (!GetCursorPos(&cursorScreen))
             {
-                // A captured drag must keep making progress even if the live
-                // sample fails transiently. Passive hover has no equivalent
-                // gesture state, so retain its existing drop-on-failure rule.
+                // A captured drag, marquee, or widget gesture must keep making
+                // progress even if the live sample fails transiently. Passive
+                // hover has no equivalent gesture state, so retain its
+                // drop-on-failure rule.
                 if (samplePassiveHover)
                     return 0;
             }
@@ -450,6 +507,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             }
         }
         OnMouseLeave();
+        UpdateLargeIconHover();
         return 0;
     }
     case WM_LBUTTONUP:
@@ -488,6 +546,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnMouseWheel(wp, lp);
         return 0;
     }
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONDBLCLK:
+        OnRightButtonDown(nullptr);
+        return 0;
     case WM_RBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -723,7 +785,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     const std::wstring path =
                         dockFolderPopupWidget_.
                             folderEntries[i].fullPath;
-                    if (shellLaunchWorker_.Enqueue(
+                    if (LaunchPathWithShortcutPolicy(
                             hwnd_, path))
                         CloseCollectionPopup();
                     return 0;
@@ -813,7 +875,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     if (entry)
                     {
                         clearSelectionAfterAcceptedOpen(
-                            shellLaunchWorker_.Enqueue(
+                            LaunchPathWithShortcutPolicy(
                                 hwnd_, entry->fullPath));
                         return 0;
                     }
@@ -952,6 +1014,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (largeIconGesture_ && (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
+            CancelLargeIconGesture();
         ForgetLuaWidgetPanelCapture(hwnd);
         if (msg == WM_CANCELMODE ||
             !IsOwnedPointerCaptureWindow(
@@ -970,6 +1034,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_SETTINGCHANGE:
     {
+        ApplyAnimationPreferences(true);
         InvalidateDragHintRaster();
         const wchar_t* settingArea =
             reinterpret_cast<const wchar_t*>(lp);
@@ -999,21 +1064,34 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case kShellChangeMessage:
     {
-        // SHCNRF_NewDelivery 模式下 lParam 携带通知句柄，
-        // 必须 Lock/Unlock 消费释放，否则每次事件泄漏句柄。
-        // 本应用不依赖事件 PIDL 细节（debounce 后全量刷新），
-        // 因此只消费不处理。自身 PostMessage(0, 0) 的 lParam 为 0。
-        const HANDLE notify = reinterpret_cast<HANDLE>(lp);
-        if (notify)
+        // Match our own rename by both paths; unrelated notifications must
+        // still reach the normal debounce/reload path.
+        const auto change = ReadShellChangeNotification(wp, lp);
+        if (change)
         {
-            LONG eventId = 0;
-            PIDLIST_ABSOLUTE* pidls = nullptr;
-            if (SHChangeNotification_Lock(notify, 1, &pidls, &eventId))
-                SHChangeNotification_Unlock(notify);
+            const bool descendants = (change->event & (SHCNE_RENAMEFOLDER | SHCNE_RMDIR)) != 0;
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->source), descendants);
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->target), descendants);
         }
-        shellReloadPending_ = true;
-        shellReloadLayoutFromDiskPending_ = true;
-        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+        if (change && !change->source.empty() && !change->target.empty() &&
+            renameNotifications_.Observe(change->source, change->target, GetTickCount64()))
+            return 0;
+        if (change && (change->event & SHCNE_ASSOCCHANGED) != 0)
+        {
+            shellMetadataCache_ = {};
+            // Association changes can keep both file timestamps and Shell
+            // image indices unchanged. Retain visible bitmaps while requesting
+            // fresh icons, without falling back to a synchronous model reload.
+            BeginIconLoadGeneration();
+            for (auto& item : items_)
+                item.iconState = IconState::Loading;
+            for (auto& widget : widgets_)
+                for (auto& entry : widget.folderEntries)
+                    entry.iconState = IconState::Loading;
+            for (auto& entry : dockFolderPopupWidget_.folderEntries)
+                entry.iconState = IconState::Loading;
+        }
+        RequestShellRefresh();
         return 0;
     }
     case kIconLoadedMessage:
@@ -1039,14 +1117,23 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         OnQuickNavigationEverythingSearchCompleted(wp);
         return 0;
     case kCommitRenameMessage:
+        // A pointer-down can commit synchronously before this queued focus
+        // notification arrives. Never let it close a later rename session.
+        if (!renameController_.MatchesSession(
+                static_cast<std::size_t>(lp)))
+            return 0;
         renameCommitPending_ = false;
-        CommitRename(wp != 0);
+        if (GetFocus() != renameEdit_)
+            CommitRename(wp != 0);
         return 0;
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
         return 0;
+    case kUrlDropDownloadCompletedMessage:
+        OnUrlDropDownloadCompleted(lp);
+        return 0;
     case kForegroundInteractionChangedMessage:
-        ReconcileDesktopHoverState();
+        HandleDockForegroundInteractionChanged();
         return 0;
     case kSteamWorkshopSubscriptionReadyMessage:
         PollSteamWorkshopSubscriptions();

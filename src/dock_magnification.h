@@ -18,6 +18,22 @@ constexpr int kMinimumFocusSwitchHysteresisPixels = 3;
 constexpr int kMaximumFocusSwitchHysteresisPixels = 8;
 constexpr int kFocusExitHysteresisPixels = 5;
 
+inline float ResolveFocusScale(
+    int effect, float configuredScale, bool animationsEnabled) noexcept
+{
+    if (!animationsEnabled || effect == 0)
+        return 1.0f;
+    return std::isfinite(configuredScale)
+        ? std::clamp(configuredScale, 1.0f, 2.0f)
+        : kFocusScale;
+}
+
+inline float ScaleGrowthMultiplier(float focusScale) noexcept
+{
+    return (ResolveFocusScale(2, focusScale, true) - 1.0f) /
+        (kFocusScale - 1.0f);
+}
+
 inline constexpr bool ShouldSuppressMagnification(
     bool itemDragActive,
     bool widgetMoveActive,
@@ -111,30 +127,47 @@ inline int GrowthForScale(float scale, int baseIconSize)
 }
 
 inline float ScaleForAxisDistance(
-    float centerDistance, int itemPitch)
+    float centerDistance, int itemPitch, float focusScale = kFocusScale)
 {
+    focusScale = ResolveFocusScale(2, focusScale, true);
+    const float multiplier = ScaleGrowthMultiplier(focusScale);
+    const float firstNeighborScale =
+        1.0f + (kFirstNeighborScale - 1.0f) * multiplier;
+    const float secondNeighborScale =
+        1.0f + (kSecondNeighborScale - 1.0f) * multiplier;
     const int pitch = std::max(1, itemPitch);
     const float distanceInItems =
         static_cast<float>(std::abs(centerDistance)) /
         static_cast<float>(pitch);
     if (distanceInItems < 1.0f)
         return InterpolateScale(
-            kFocusScale, kFirstNeighborScale,
+            focusScale, firstNeighborScale,
             distanceInItems);
     if (distanceInItems < 2.0f)
         return InterpolateScale(
-            kFirstNeighborScale,
-            kSecondNeighborScale,
+            firstNeighborScale,
+            secondNeighborScale,
             distanceInItems - 1.0f);
     if (distanceInItems < kInfluenceRadiusInItems)
         return InterpolateScale(
-            kSecondNeighborScale, 1.0f,
+            secondNeighborScale, 1.0f,
             distanceInItems - 2.0f);
     return 1.0f;
 }
 
+inline float ScaleForEffect(
+    int effect, bool focused, float centerDistance, int itemPitch,
+    float focusScale)
+{
+    if (effect == 0)
+        return 1.0f;
+    if (effect == 1)
+        return focused ? ResolveFocusScale(effect, focusScale, true) : 1.0f;
+    return ScaleForAxisDistance(centerDistance, itemPitch, focusScale);
+}
+
 inline double IntegratedGrowthInItems(
-    double distanceInItems)
+    double distanceInItems, float focusScale = kFocusScale)
 {
     const double distance = std::clamp(
         distanceInItems, 0.0,
@@ -177,11 +210,12 @@ inline double IntegratedGrowthInItems(
                 growth[wholeSegments]) *
             smoothStepIntegral;
     }
-    return integral;
+    return integral * ScaleGrowthMultiplier(focusScale);
 }
 
 inline int AxisShiftForDistance(
-    int centerDistance, int itemPitch, int baseIconSize)
+    int centerDistance, int itemPitch, int baseIconSize,
+    float focusScale = kFocusScale)
 {
     if (centerDistance == 0)
         return 0;
@@ -195,13 +229,24 @@ inline int AxisShiftForDistance(
         std::lround(
             std::max(1, baseIconSize) *
             IntegratedGrowthInItems(
-                distanceInItems)));
+                distanceInItems, focusScale)));
     return centerDistance < 0 ? -magnitude : magnitude;
 }
 
-inline int MaximumAxisShift(int baseIconSize)
+inline int MaximumAxisShift(
+    int baseIconSize, float focusScale = kFocusScale)
 {
-    return AxisShiftForDistance(3, 1, baseIconSize);
+    return AxisShiftForDistance(3, 1, baseIconSize, focusScale);
+}
+
+inline int SingleFocusAxisShift(
+    int centerDistanceFromFocus, int baseIconSize, float focusScale)
+{
+    if (centerDistanceFromFocus == 0)
+        return 0;
+    const int growth = GrowthForScale(focusScale, baseIconSize);
+    return centerDistanceFromFocus < 0
+        ? -(growth / 2) : growth - growth / 2;
 }
 
 inline int PackedAxisShift(
@@ -320,12 +365,14 @@ inline RECT AnchorTooltipBounds(
 }
 
 inline RECT ExpandInteractionBounds(
-    RECT bounds, DockPosition position, int baseIconSize)
+    RECT bounds, DockPosition position, int baseIconSize,
+    float focusScale = kFocusScale)
 {
-    const int growth = std::max(
-        1, GrowthForScale(kFocusScale, baseIconSize));
+    const int growth = GrowthForScale(focusScale, baseIconSize);
+    if (growth == 0)
+        return bounds;
     const int axisPadding = std::max(1,
-        MaximumAxisShift(baseIconSize) +
+        MaximumAxisShift(baseIconSize, focusScale) +
         (growth + 1) / 2);
     switch (position)
     {
@@ -355,10 +402,10 @@ inline RECT ExpandInteractionBounds(
 }
 
 inline RECT ExpandPerpendicularBounds(
-    RECT bounds, DockPosition position, int baseIconSize)
+    RECT bounds, DockPosition position, int baseIconSize,
+    float focusScale = kFocusScale)
 {
-    const int growth = std::max(
-        1, GrowthForScale(kFocusScale, baseIconSize));
+    const int growth = GrowthForScale(focusScale, baseIconSize);
     switch (position)
     {
     case DockPosition::Top:
@@ -385,19 +432,20 @@ inline RECT ExpandPerpendicularBounds(
  * 需要继续由最近的图标接管 focus，避免放大波形短暂归零。
  */
 inline RECT ExpandSeparatorHoverBounds(
-    RECT bounds, DockPosition position, int baseIconSize)
+    RECT bounds, DockPosition position, int baseIconSize,
+    float focusScale = kFocusScale)
 {
     return ExpandPerpendicularBounds(
-        bounds, position, baseIconSize);
+        bounds, position, baseIconSize, focusScale);
 }
 
 inline RECT ResolveFocusInteractionBounds(
     RECT bounds, DockPosition position, int baseIconSize,
-    bool magnificationActive)
+    bool magnificationActive, float focusScale = kFocusScale)
 {
     return magnificationActive
         ? ExpandSeparatorHoverBounds(
-            bounds, position, baseIconSize)
+            bounds, position, baseIconSize, focusScale)
         : bounds;
 }
 

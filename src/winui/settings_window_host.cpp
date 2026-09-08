@@ -1,13 +1,18 @@
 #include "pch.h"
 
 #include "settings_window_host.h"
+#include "../performance_trace.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
+#include "authoring_toolchain.h"
+#include "../steam_app_identity.h"
+#include "../widget_engine.h"
 #include "../widget_settings_service.h"
 
 #include <shobjidl.h>
 #include <dwmapi.h>
+#include <psapi.h>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Windowing.h>
@@ -46,6 +51,74 @@ constexpr UINT kDispatchOwnerTaskMessage = WM_APP + 0x347;
 constexpr UINT kApplyXamlBackdropMessage = WM_APP + 0x348;
 constexpr UINT kUpdateIntegratedTitleBarInsetsMessage = WM_APP + 0x349;
 constexpr UINT kRefreshExternalStateMessage = WM_APP + 0x34a;
+constexpr UINT_PTR kWorkingSetTrimTimerIdSeed = 0x53440000;
+constexpr UINT kWorkingSetTrimDelayMs = 2000;
+constexpr ULONGLONG kWorkingSetTrimCooldownMs = 30000;
+constexpr SIZE_T kWorkingSetTrimMinimumGrowth =
+    static_cast<SIZE_T>(64) * 1024 * 1024;
+
+bool HasSignificantWorkingSetGrowth(
+    SIZE_T current, SIZE_T baseline) noexcept
+{
+    return current >= baseline &&
+        current - baseline >= kWorkingSetTrimMinimumGrowth;
+}
+
+std::optional<SIZE_T> QueryCurrentProcessWorkingSet() noexcept
+{
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (!K32GetProcessMemoryInfo(
+            GetCurrentProcess(), &counters, sizeof(counters)))
+    {
+        return std::nullopt;
+    }
+    return counters.WorkingSetSize;
+}
+
+bool TrimProcessWorkingSet() noexcept
+{
+    // This releases pageable physical memory, not committed virtual memory.
+    // The caller delays and rate-limits the process-wide operation so routine
+    // settings visits do not evict active desktop, Dock, or widget pages.
+    return SetProcessWorkingSetSize(GetCurrentProcess(),
+               static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1)) != FALSE;
+}
+
+bool ActivateSettingsWindow(HWND window) noexcept
+{
+    if (!window || !IsWindow(window))
+        return false;
+
+    const auto requestActivation = [window]() {
+        (void)SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(window);
+        SetActiveWindow(window);
+    };
+    requestActivation();
+    if (GetForegroundWindow() == window)
+        return true;
+
+    // The tray and single-instance messages can be dispatched after Windows
+    // has transferred foreground ownership to another process. Match the
+    // existing Dock activation policy: briefly share input queues only for a
+    // retry against SnowDesktop's own responsive window, then always detach.
+    const HWND foreground = GetForegroundWindow();
+    const DWORD foregroundThread = foreground
+        ? GetWindowThreadProcessId(foreground, nullptr)
+        : 0;
+    const DWORD currentThread = GetCurrentThreadId();
+    const bool attached = foregroundThread != 0 &&
+        foregroundThread != currentThread &&
+        AttachThreadInput(currentThread, foregroundThread, TRUE) != FALSE;
+    if (attached)
+    {
+        requestActivation();
+        AttachThreadInput(currentThread, foregroundThread, FALSE);
+    }
+    return GetForegroundWindow() == window;
+}
 
 bool QueryHighContrastEnabled(bool& enabled) noexcept
 {
@@ -141,9 +214,33 @@ struct StaticSearchDefinition
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
+    {SettingsPage::AnimationPerformance, "animation.mode",
+        "settings.animation.mode", "settings.animation.mode.description"},
+    {SettingsPage::AnimationPerformance, "animation.popup",
+        "settings.animation.popup", "settings.animation.popup.description"},
+    {SettingsPage::AnimationPerformance, "animation.speed",
+        "settings.animation.speed", "settings.animation.speed.description"},
+    {SettingsPage::AnimationPerformance, "animation.hover",
+        "settings.animation.hover", "settings.animation.hover.description"},
+    {SettingsPage::AnimationPerformance, "animation.hoverScale",
+        "settings.animation.hoverScale", "settings.animation.hoverScale.description"},
+    {SettingsPage::AnimationPerformance, "animation.launch",
+        "settings.animation.launch", "settings.animation.launch.description"},
+    {SettingsPage::AnimationPerformance, "animation.window",
+        "settings.animation.window", "settings.animation.window.description"},
+    {SettingsPage::AnimationPerformance, "animation.frameLimit",
+        "settings.animation.frameLimit", "settings.animation.frameLimit.description"},
+    {SettingsPage::AnimationPerformance, "animation.energySaver",
+        "settings.animation.energySaver", "settings.animation.energySaver.description"},
+    {SettingsPage::AnimationPerformance, "animation.onBattery",
+        "settings.animation.onBattery", "settings.animation.onBattery.description"},
+
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
         "settings.general.startup.description"},
+    {SettingsPage::General, "general.advancedFeatures",
+        "settings.general.advancedFeatures",
+        "settings.general.advancedFeatures.description"},
     {SettingsPage::Desktop, "desktop.softwareDesktop",
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
@@ -159,15 +256,24 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "general.quickNavigation.hotkey",
         "app.settings.hotkey",
         "settings.general.quickNavigation.description"},
-    {SettingsPage::General, "general.pageNavigation",
+    {SettingsPage::DesktopPages, "general.pageNavigation",
         "settings.general.pageNavigation",
         "settings.general.pageNavigation.description"},
-    {SettingsPage::General, "general.pageNavigation.previous",
+    {SettingsPage::DesktopPages, "general.pageNavigation.previous",
         "app.settings.page_navigation_previous",
         "settings.general.pageNavigation.description"},
-    {SettingsPage::General, "general.pageNavigation.next",
+    {SettingsPage::DesktopPages, "general.pageNavigation.next",
         "app.settings.page_navigation_next",
         "settings.general.pageNavigation.description"},
+    {SettingsPage::DesktopPages, "pages.order",
+        "settings.pages.manage",
+        "settings.pages.manage.description"},
+    {SettingsPage::DesktopPages, "pages.add",
+        "app.menu.add_page",
+        "settings.pages.manage.description"},
+    {SettingsPage::DesktopPages, "pages.grid",
+        "settings.pages.grid",
+        "settings.pages.grid.description"},
     {SettingsPage::Desktop, "desktop.passthrough",
         "settings.general.desktopPassthrough",
         "settings.general.desktopPassthrough.description"},
@@ -202,6 +308,19 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.personalization.colors.description"},
     {SettingsPage::AppearanceTheme, "personalization.borderAlpha",
         "app.settings.border_opacity",
+        "settings.personalization.colors.description"},
+    {SettingsPage::AppearanceTheme, "personalization.borderWidth",
+        "app.settings.border_width",
+        "settings.personalization.colors.description"},
+    {SettingsPage::AppearanceTheme, "personalization.edgeHighlight",
+        "app.settings.edge_highlight",
+        "settings.personalization.colors.description"},
+    {SettingsPage::AppearanceTheme, "personalization.edgeHighlightWidth",
+        "app.settings.edge_highlight_width",
+        "settings.personalization.colors.description"},
+    {SettingsPage::AppearanceTheme,
+        "personalization.edgeHighlightStrength",
+        "app.settings.edge_highlight_strength",
         "settings.personalization.colors.description"},
     {SettingsPage::AppearanceTheme, "personalization.enableGradient",
         "app.settings.enable_gradient",
@@ -371,6 +490,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.floatingEdgeSwipe",
         "app.dock.floating_edge_swipe",
         "settings.dock.items.description"},
+    {SettingsPage::Dock, "dock.floatingEdgeSwipeBlockFullscreen",
+        "settings.dock.blockFullscreenSwipe",
+        "settings.dock.blockFullscreenSwipe.description"},
     {SettingsPage::Dock, "dock.showWindowsButton",
         "app.dock.show_windows_button",
         "settings.dock.items.description"},
@@ -456,6 +578,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "app.settings.about_description"},
     {SettingsPage::About, "about.project", "settings.about.project",
         "settings.about.project.description"},
+    {SettingsPage::About, "about.website", "settings.about.officialWebsite",
+        "settings.about.project.description"},
     {SettingsPage::About, "about.community", "app.settings.community",
         "app.settings.join_qq"},
     {SettingsPage::About, "about.thirdparty", "settings.about.thirdparty",
@@ -489,6 +613,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Debug, "debug.animation",
         "app.settings.animation_diagnostics",
         "app.settings.animation_diagnostics_desc"},
+    {SettingsPage::Debug, "debug.resetUnlock", "settings.debug.resetUnlock",
+        "settings.debug.resetUnlock.description"},
     {SettingsPage::Debug, "debug.crash", "app.settings.crash_test",
         "app.settings.crash_test_desc"},
 };
@@ -503,7 +629,7 @@ std::wstring FormatWin32Error(const wchar_t* operation, DWORD error)
 }
 
 bool IsUsableControllerSnapshot(
-    const SettingsController::SnapshotPtr& snapshot) noexcept
+    const ISettingsController::SnapshotPtr& snapshot) noexcept
 {
     return snapshot && snapshot->initialized;
 }
@@ -625,7 +751,7 @@ struct SettingsWindowHost::Impl
         std::atomic<bool> snapshotQueued{false};
         std::atomic<bool> flushQueued{false};
         std::mutex snapshotMutex;
-        SettingsController::SnapshotPtr latestSnapshot;
+        ISettingsController::SnapshotPtr latestSnapshot;
         mud::DispatcherQueue dispatcher{nullptr};
         Impl* owner = nullptr;
     };
@@ -633,8 +759,8 @@ struct SettingsWindowHost::Impl
     DWORD ownerThreadId = 0;
     HINSTANCE instance = nullptr;
     HWND window = nullptr;
-    SettingsController* controller = nullptr;
-    widget_runtime::WidgetSettingsService* widgetSettingsService = nullptr;
+    ISettingsController* controller = nullptr;
+    widget_runtime::IWidgetSettingsService* widgetSettingsService = nullptr;
     WidgetEngine* widgetEngine = nullptr;
     SettingsWindowHostOptions options;
     WinUiRuntime runtime;
@@ -643,8 +769,8 @@ struct SettingsWindowHost::Impl
     muw::AppWindowTitleBar appWindowTitleBar{nullptr};
     SettingsSearchIndex searchIndex;
     std::shared_ptr<CallbackState> callbacks;
-    std::unique_ptr<WidgetsPageBackend> widgetsPageBackend;
-    std::unique_ptr<BackupDataPageBackend> backupDataPageBackend;
+    std::unique_ptr<IWidgetsPageBackend> widgetsPageBackend;
+    std::unique_ptr<IBackupDataPageBackend> backupDataPageBackend;
     std::uint64_t viewEpoch = 0;
     bool widgetsPageActive = false;
     SettingsPage widgetsBackendPage = SettingsPage::Home;
@@ -653,6 +779,13 @@ struct SettingsWindowHost::Impl
     bool shuttingDown = false;
     bool interactionSuspended = true;
     bool darkTheme = false;
+    bool viewReleaseQueued = false;
+    bool workingSetTrimQueued = false;
+    std::uint64_t workingSetTrimEpoch = 0;
+    UINT_PTR nextWorkingSetTrimTimerId = kWorkingSetTrimTimerIdSeed;
+    UINT_PTR activeWorkingSetTrimTimerId = 0;
+    std::optional<SIZE_T> settingsSessionWorkingSetBaseline;
+    ULONGLONG lastWorkingSetTrimTick = 0;
     /** Legacy five-click About unlock; retained for this host lifetime. */
     bool debugUnlocked = false;
     bool systemBackdropUpdateQueued = false;
@@ -1047,6 +1180,9 @@ struct SettingsWindowHost::Impl
         input.developerToolsVisible = options.developerToolsVisible &&
             options.developerToolsVisible();
         input.debugVisible = DebugPageVisible();
+        const bool advancedFeaturesVisible =
+            options.advancedFeatureStatus &&
+            options.advancedFeatureStatus().cardVisible;
         if (input.languageTag.empty())
             input.languageTag = "runtime";
 
@@ -1057,6 +1193,8 @@ struct SettingsWindowHost::Impl
                 {
                 case SettingsPage::General:
                     return L("app.settings.general");
+                case SettingsPage::AnimationPerformance:
+                    return L("settings.nav.animation");
                 case SettingsPage::Personalization:
                     return L("app.settings.appearance");
                 case SettingsPage::AppearanceTheme:
@@ -1069,6 +1207,8 @@ struct SettingsWindowHost::Impl
                     return L("app.settings.icon_beautify");
                 case SettingsPage::Desktop:
                     return L("settings.nav.desktop");
+                case SettingsPage::DesktopPages:
+                    return L("settings.nav.pages");
                 case SettingsPage::DesktopCategories:
                     return L("settings.nav.categories");
                 case SettingsPage::Dock:
@@ -1110,11 +1250,24 @@ struct SettingsWindowHost::Impl
                     input.staticSettings.push_back(std::move(descriptor));
             }
         }
+        if (!advancedFeaturesVisible)
+        {
+            for (auto& descriptor : input.staticSettings)
+            {
+                if (descriptor.focusId == "general.advancedFeatures")
+                    descriptor.visible = false;
+            }
+        }
         return input;
     }
 
     void RebuildSearchIndex()
     {
+        if (!shell)
+        {
+            searchIndex = {};
+            return;
+        }
         try
         {
             SettingsSearchIndexInput input = BuildSearchInput();
@@ -1131,7 +1284,7 @@ struct SettingsWindowHost::Impl
         }
     }
 
-    void QueueSnapshot(SettingsController::SnapshotPtr snapshot)
+    void QueueSnapshot(ISettingsController::SnapshotPtr snapshot)
     {
         if (!callbacks || !snapshot)
             return;
@@ -1157,7 +1310,7 @@ struct SettingsWindowHost::Impl
                         // coalesced snapshot after a visible-window Open.
                         if (!state->alive.load() || !state->owner)
                             return;
-                        SettingsController::SnapshotPtr latest;
+                        ISettingsController::SnapshotPtr latest;
                         {
                             std::lock_guard lock(state->snapshotMutex);
                             latest = std::move(state->latestSnapshot);
@@ -1174,8 +1327,9 @@ struct SettingsWindowHost::Impl
         }
     }
 
-    void ApplySnapshotNow(SettingsController::SnapshotPtr snapshot)
+    void ApplySnapshotNow(ISettingsController::SnapshotPtr snapshot)
     {
+        performance::Scope performanceScope("settings", "snapshot.apply");
         if (!shell || !snapshot || shuttingDown)
             return;
         if (!Visible() && !snapshot->sessionActive)
@@ -1281,9 +1435,44 @@ struct SettingsWindowHost::Impl
         }
     }
 
+    void RefreshAgentSkillNavigationState() noexcept
+    {
+        if (!shell)
+            return;
+
+        bool updateAvailable = false;
+        try
+        {
+            const auto packagePaths = WidgetEngine::GetWidgetPackagePaths();
+            const auto bundledSkill =
+                packagePaths.builtin / L"snowdesktop-lua-widget";
+            const auto bundledCli =
+                bundledSkill / L"bin" / L"snowwidget.exe";
+            for (auto target :
+                snowdesktop::steam_bridge::DefaultAgentSkillTargets())
+            {
+                std::string error;
+                const auto status =
+                    snowdesktop::steam_bridge::InspectAgentSkill(
+                        bundledSkill, bundledCli, std::move(target), error);
+                if (status.state == snowdesktop::steam_bridge::
+                        SkillInstallState::UpdateAvailable)
+                {
+                    updateAvailable = true;
+                    break;
+                }
+            }
+        }
+        catch (...)
+        {
+            updateAvailable = false;
+        }
+        shell->SetAgentSkillUpdateAvailable(updateAvailable);
+    }
+
     void ConfigureWidgetsPageBackend()
     {
-        if (!shell || !callbacks || !widgetEngine || widgetsPageBackend)
+        if (!shell || !callbacks || (!widgetEngine && !options.createWidgetsBackend) || widgetsPageBackend)
             return;
         const std::weak_ptr<CallbackState> weak = callbacks;
         auto configured = options.widgetsPage;
@@ -1365,8 +1554,9 @@ struct SettingsWindowHost::Impl
                 std::move(completed));
         };
 
-        widgetsPageBackend = std::make_unique<WidgetsPageBackend>(
-            *widgetEngine, std::move(configured));
+        widgetsPageBackend = options.createWidgetsBackend
+            ? options.createWidgetsBackend(std::move(configured))
+            : std::make_unique<WidgetsPageBackend>(*widgetEngine, std::move(configured));
         WidgetsPageActions actions;
         actions.invoke = [weak](std::uint64_t generation,
                              WidgetsPageRequest request) {
@@ -1571,8 +1761,9 @@ struct SettingsWindowHost::Impl
                 done(std::move(selected));
         };
 
-        backupDataPageBackend = std::make_unique<BackupDataPageBackend>(
-            *controller, std::move(configured));
+        backupDataPageBackend = options.createBackupBackend
+            ? options.createBackupBackend(std::move(configured))
+            : std::make_unique<BackupDataPageBackend>(*controller, std::move(configured));
         backupDataPageBackend->SetSnapshotChangedCallback(
             [weak](const BackupDataPageSnapshot& snapshot) {
                 const auto state = weak.lock();
@@ -1604,7 +1795,7 @@ struct SettingsWindowHost::Impl
         }
         if (backupDataPageBackend)
         {
-            // Must precede SettingsController::CloseSession: a completed
+            // Must precede ISettingsController::CloseSession: a completed
             // replacement can discard dirty state or reload the layout here.
             backupDataPageBackend->Close();
             backupDataPageBackend.reset();
@@ -1770,7 +1961,78 @@ struct SettingsWindowHost::Impl
             }
             return state->owner->options.startupConflict();
         };
+        general.queryAdvancedFeatureStatus = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->options.advancedFeatureStatus)
+            {
+                return GeneralAdvancedFeatureStatus{};
+            }
+            return state->owner->options.advancedFeatureStatus();
+        };
+        general.registerAdvancedFeatures = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->options.registerAdvancedFeatures)
+            {
+                return;
+            }
+            state->owner->options.registerAdvancedFeatures();
+        };
+        general.openAdvancedFeaturesStore = [weak]() {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner)
+                return;
+            const std::wstring uri = snowdesktop::SnowDesktopSteamStoreUrl();
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    state->owner->window, L"open", uri.c_str(), nullptr,
+                    nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                state->owner->ShowActionError(
+                    SettingsActionResult::Failure(
+                        state->owner->L(
+                            "settings.about.link.openFailed")));
+            }
+        };
         shell->SetGeneralPageActions(std::move(general));
+
+        PageLayoutPageActions pageLayout = options.pageLayoutPage;
+        pageLayout.confirm = [weak](
+                                 std::wstring title,
+                                 std::wstring message,
+                                 std::wstring primaryButtonText,
+                                 PageLayoutPageActions::
+                                     ConfirmationCompletion completed) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->shell)
+            {
+                if (completed)
+                    completed(false);
+                return;
+            }
+            state->owner->ShowGenerationConfirmation(
+                state->owner->shell->CurrentGeneration(),
+                std::move(title), std::move(message),
+                std::move(completed), true,
+                std::move(primaryButtonText));
+        };
+        shell->SetPageLayoutPageActions(std::move(pageLayout));
+        shell->SetLargeIconSettingsAction([weak](LargeIconSettingsRequest request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->options.largeIconSettings)
+                return LargeIconSettingsSnapshot{};
+            if (request.action == "import" && request.path.empty())
+            {
+                auto selected = ShowOpenPathDialog(state->owner->window,
+                    state->owner->L("largeIcon.image"),
+                    {{state->owner->L("largeIcon.image"), L"*.png;*.jpg;*.jpeg;*.bmp;*.ico"}}, false);
+                if (selected) request.path = selected->wstring();
+                else request.action = "status";
+            }
+            if (!state->alive.load() || !state->owner) return LargeIconSettingsSnapshot{};
+            return state->owner->options.largeIconSettings(std::move(request));
+        });
 
         PersonalizationPageActions personalization;
         personalization.update = [weak](
@@ -1794,6 +2056,13 @@ struct SettingsWindowHost::Impl
                 state->owner->EditGeneral(
                     generation, mode, std::move(edit));
             }
+        };
+        personalization.updateDock = [weak](std::uint64_t generation, SettingsUpdateMode mode, PersonalizationPageActions::DockEdit edit) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->EditDock(generation, mode, std::move(edit));
+        };
+        personalization.navigate = [weak](const SettingsRoute& route) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner) state->owner->RequestRoute(route);
         };
         shell->SetPersonalizationPageActions(std::move(personalization));
 
@@ -1933,10 +2202,6 @@ struct SettingsWindowHost::Impl
             case HomeAboutCommand::CheckForUpdates:
                 request.action = SettingsHostActions::Action::CheckForUpdates;
                 break;
-            case HomeAboutCommand::CancelUpdateCheck:
-                request.action =
-                    SettingsHostActions::Action::CancelUpdateCheck;
-                break;
             case HomeAboutCommand::OpenProject:
                 request.action = SettingsHostActions::Action::OpenProject;
                 break;
@@ -2013,6 +2278,38 @@ struct SettingsWindowHost::Impl
             state->owner->debugUnlocked = true;
             state->owner->RebuildSearchIndex();
             return state->owner->DebugPageVisible();
+        };
+        homeAbout.requestResetUnlockConfirmation = [weak](
+            std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->DebugPageVisible())
+                return;
+            state->owner->ShowGenerationConfirmation(
+                generation,
+                state->owner->L("settings.debug.resetUnlock"),
+                state->owner->L("settings.debug.resetUnlock.description"),
+                [weak, generation](bool confirmed) {
+                    if (!confirmed) return;
+                    const auto current = weak.lock();
+                    if (!current || !current->alive.load() ||
+                        !current->owner || !current->owner->controller ||
+                        !current->owner->shell ||
+                        !current->owner->controller->IsGenerationCurrent(
+                            generation) ||
+                        !current->owner->DebugPageVisible())
+                        return;
+                    auto& owner = *current->owner;
+                    const bool reset = owner.options.resetAdvancedFeatures &&
+                        owner.options.resetAdvancedFeatures();
+                    owner.shell->RefreshRuntimeState();
+                    (void)owner.shell->ShowInfoForGeneration(generation,
+                        reset ? shell_impl::SettingsShellInfoSeverity::Success
+                              : shell_impl::SettingsShellInfoSeverity::Error,
+                        owner.L("settings.debug.resetUnlock"),
+                        owner.L(reset ? "settings.debug.resetUnlock.success"
+                                      : "settings.debug.resetUnlock.failed"));
+                }, true, state->owner->L("settings.debug.resetUnlock"));
         };
         homeAbout.requestCrashTestConfirmation = [weak](
             std::uint64_t generation) {
@@ -2130,6 +2427,7 @@ struct SettingsWindowHost::Impl
     [[nodiscard]] bool CommitRoute(const SettingsRoute& route,
         SettingsActionResult* controllerResult = nullptr)
     {
+        performance::Scope performanceScope("settings.navigate", SettingsPageKey(route.page));
         if (!controller || !route.IsValid() || shuttingDown)
             return false;
         if ((route.page == SettingsPage::DeveloperTools &&
@@ -2159,7 +2457,9 @@ struct SettingsWindowHost::Impl
                     message = L("settings.widget.saveFailed");
                 ShowActionError(SettingsActionResult::Failure(
                     std::move(message)));
-                return false;
+                // A component draft may be unsaved, but navigation must not
+                // trap the user on this page. Deactivation closes the failed
+                // component-settings session and discards that draft.
             }
         }
 
@@ -2416,7 +2716,10 @@ struct SettingsWindowHost::Impl
                         shell_impl::SettingsShellInfoSeverity::Error,
                         L("settings.status.error"), std::move(message));
                 }
-                return false;
+                // Component settings are isolated from the application
+                // settings controller. Report the failed component draft but
+                // continue flushing the remaining settings so Close can
+                // always leave the component editor.
             }
         }
 
@@ -2474,6 +2777,13 @@ struct SettingsWindowHost::Impl
             }
             return 0;
         }
+        case WM_TIMER:
+            if (self->HandleWorkingSetTrimTimer(
+                    static_cast<UINT_PTR>(wParam)))
+            {
+                return 0;
+            }
+            break;
         case WM_NCMOUSELEAVE:
         {
             // The integrated title bar keeps Windows-owned caption buttons.
@@ -2548,6 +2858,7 @@ struct SettingsWindowHost::Impl
             self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         case WM_NCDESTROY:
+            self->CancelWorkingSetTrim();
             self->systemBackdropUpdateQueued = false;
             self->integratedTitleBarInsetsUpdateQueued = false;
             self->externalStateRefreshQueued = false;
@@ -2613,8 +2924,274 @@ struct SettingsWindowHost::Impl
         return true;
     }
 
+    void ReleaseView() noexcept
+    {
+        viewReleaseQueued = false;
+        CancelWorkingSetTrim();
+        settingsSessionWorkingSetBaseline.reset();
+        systemBackdropUpdateQueued = false;
+        integratedTitleBarInsetsUpdateQueued = false;
+        externalStateRefreshQueued = false;
+        interactionSuspended = true;
+
+        if (shell)
+            shell->SetActualThemeChangedCallback({});
+        if (shell)
+            shell->SetWidgetSettingsService(nullptr);
+        DisposePageBackends();
+        if (shell)
+            shell->SetSystemBackdropActive(false);
+        if (shell)
+        {
+            shell->Close();
+            shell = nullptr;
+        }
+        runtime.Detach();
+        ResetIntegratedTitleBar();
+        searchIndex = {};
+    }
+
+    void ReleaseSessionView() noexcept
+    {
+        viewReleaseQueued = false;
+        systemBackdropUpdateQueued = false;
+        integratedTitleBarInsetsUpdateQueued = false;
+        externalStateRefreshQueued = false;
+        interactionSuspended = true;
+
+        // Keep one process-lifetime Shell and Island. WinUI retains SVG file,
+        // mapping, and composition handles when either root is reconstructed;
+        // route presenters and their controls remain safe to release here.
+        if (shell)
+            shell->ReleaseSessionResources();
+        DisposePageBackends();
+        searchIndex = {};
+        QueueWorkingSetTrim();
+    }
+
+    void QueueViewRelease() noexcept
+    {
+        if (viewReleaseQueued || shuttingDown || Visible() || !callbacks ||
+            !callbacks->alive.load())
+        {
+            return;
+        }
+
+        viewReleaseQueued = true;
+        const std::uint64_t expectedEpoch = viewEpoch;
+        const std::weak_ptr<CallbackState> weak = callbacks;
+        try
+        {
+            if (callbacks->dispatcher.TryEnqueue([weak, expectedEpoch]() {
+                    const auto state = weak.lock();
+                    if (!state || !state->alive.load() || !state->owner)
+                        return;
+                    auto* owner = state->owner;
+                    owner->viewReleaseQueued = false;
+                    if (owner->shuttingDown || owner->Visible() ||
+                        owner->viewEpoch != expectedEpoch)
+                    {
+                        return;
+                    }
+                    owner->ReleaseSessionView();
+                }))
+            {
+                return;
+            }
+        }
+        catch (...)
+        {
+        }
+        viewReleaseQueued = false;
+    }
+
+    void QueueWorkingSetTrim() noexcept
+    {
+        if (workingSetTrimQueued || shuttingDown || Visible() ||
+            !window || !IsWindow(window) ||
+            !settingsSessionWorkingSetBaseline)
+        {
+            return;
+        }
+
+        const auto current = QueryCurrentProcessWorkingSet();
+        if (!current || !HasSignificantWorkingSetGrowth(
+                *current, *settingsSessionWorkingSetBaseline))
+        {
+            return;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (lastWorkingSetTrimTick != 0 &&
+            now - lastWorkingSetTrimTick < kWorkingSetTrimCooldownMs)
+        {
+            return;
+        }
+
+        do
+        {
+            ++nextWorkingSetTrimTimerId;
+        } while (nextWorkingSetTrimTimerId == 0);
+        const UINT_PTR timerId = SetTimer(window,
+            nextWorkingSetTrimTimerId, kWorkingSetTrimDelayMs, nullptr);
+        if (timerId != 0)
+        {
+            workingSetTrimQueued = true;
+            workingSetTrimEpoch = viewEpoch;
+            activeWorkingSetTrimTimerId = timerId;
+            return;
+        }
+        workingSetTrimQueued = false;
+        workingSetTrimEpoch = 0;
+        activeWorkingSetTrimTimerId = 0;
+    }
+
+    void CancelWorkingSetTrim() noexcept
+    {
+        if (activeWorkingSetTrimTimerId != 0 &&
+            window && IsWindow(window))
+        {
+            KillTimer(window, activeWorkingSetTrimTimerId);
+        }
+        workingSetTrimQueued = false;
+        workingSetTrimEpoch = 0;
+        activeWorkingSetTrimTimerId = 0;
+    }
+
+    bool HandleWorkingSetTrimTimer(UINT_PTR timerId) noexcept
+    {
+        // KillTimer does not remove an already-posted WM_TIMER. Ignore stale
+        // request IDs without touching a newer timer scheduled after reopen.
+        if (!workingSetTrimQueued || timerId == 0 ||
+            timerId != activeWorkingSetTrimTimerId)
+        {
+            return false;
+        }
+        if (window && IsWindow(window))
+            KillTimer(window, timerId);
+
+        const std::uint64_t expectedEpoch = workingSetTrimEpoch;
+        workingSetTrimQueued = false;
+        workingSetTrimEpoch = 0;
+        activeWorkingSetTrimTimerId = 0;
+        if (shuttingDown || Visible() || expectedEpoch == 0 ||
+            viewEpoch != expectedEpoch ||
+            !settingsSessionWorkingSetBaseline)
+        {
+            return true;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        if (lastWorkingSetTrimTick != 0 &&
+            now - lastWorkingSetTrimTick < kWorkingSetTrimCooldownMs)
+        {
+            return true;
+        }
+
+        const auto current = QueryCurrentProcessWorkingSet();
+        if (!current || !HasSignificantWorkingSetGrowth(
+                *current, *settingsSessionWorkingSetBaseline))
+        {
+            return true;
+        }
+
+        if (TrimProcessWorkingSet())
+            lastWorkingSetTrimTick = GetTickCount64();
+        return true;
+    }
+
+    [[nodiscard]] bool CreateView()
+    {
+        performance::Scope performanceScope("settings", "view.create");
+        if (shell && runtime.IsAttached())
+            return true;
+        if (!window || !IsWindow(window) || !runtime.IsInitialized() ||
+            !callbacks)
+        {
+            SetError(L"Create settings view before host initialization");
+            return false;
+        }
+
+        // A partial view cannot be repaired in place. Keep the process-level
+        // XAML runtime and stable top-level HWND, then rebuild only the Island
+        // and its complete visual tree.
+        ReleaseView();
+        if (!ConfigureIntegratedTitleBar())
+            return false;
+
+        try
+        {
+            shell = winrt::make_self<shell_impl::SettingsShell>();
+            const std::weak_ptr<CallbackState> weak = callbacks;
+            shell->SetLocalizer([weak](std::string_view key) {
+                const auto state = weak.lock();
+                return state && state->alive.load() && state->owner
+                    ? state->owner->L(key)
+                    : std::wstring{};
+            });
+            shell->SetRouteRequestedCallback(
+                [weak](const SettingsRoute& route) {
+                    if (const auto state = weak.lock();
+                        state && state->alive.load() && state->owner)
+                    {
+                        state->owner->RequestRoute(route);
+                    }
+                });
+            shell->SetSearchRequestedCallback(
+                [weak](std::wstring query, std::uint64_t generation,
+                       std::uint64_t requestId) {
+                    if (const auto state = weak.lock();
+                        state && state->alive.load() && state->owner)
+                    {
+                        state->owner->RequestSearch(
+                            std::move(query), generation, requestId);
+                    }
+                });
+            shell->SetCancelOperationCallback([](std::uint64_t) {});
+            shell->SetWidgetSettingsService(widgetSettingsService);
+            ConfigurePageActions();
+            RebuildSearchIndex();
+
+            if (!runtime.Attach(window, shell.as<mux::UIElement>()))
+            {
+                SetError(runtime.LastError());
+                ReleaseView();
+                return false;
+            }
+            shell->SetSystemBackdropActive(false);
+            shell->SetActualThemeChangedCallback(
+                [weak](bool isDark) {
+                    if (const auto state = weak.lock();
+                        state && state->alive.load() && state->owner)
+                    {
+                        state->owner->ApplyActualTheme(isDark);
+                    }
+                });
+            QueueIntegratedTitleBarInsetsUpdate();
+            QueueSystemBackdropUpdate();
+            interactionSuspended = true;
+            return true;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            SetError(
+                L"Initialize WinUI settings shell (" +
+                std::to_wstring(
+                    static_cast<unsigned int>(error.code().value)) +
+                L")");
+        }
+        catch (...)
+        {
+            SetError(L"Initialize WinUI settings shell failed");
+        }
+
+        ReleaseView();
+        return false;
+    }
+
     [[nodiscard]] bool HideWindow()
     {
+        performance::Scope performanceScope("settings", "hide");
         if (!controller || !window || shuttingDown)
             return false;
         if (!FlushPendingChanges())
@@ -2633,13 +3210,17 @@ struct SettingsWindowHost::Impl
         }
         if (widgetSettingsService)
             widgetSettingsService->CloseAll();
-        if (shell)
-            shell->ReleaseSessionResources();
         ShowWindow(window, SW_HIDE);
         // AppWindow keeps caption-button interaction state with its customized
         // title bar even while the HWND is hidden. Reset only that platform
         // object after hiding; the XAML runtime and settings host stay alive.
         ResetIntegratedTitleBar();
+        // Releasing route controls from WM_CLOSE can unwind controls that are
+        // still on the XAML input stack. Defer session cleanup to the next
+        // DispatcherQueue turn. A newer Open advances viewEpoch and cancels
+        // this stale release safely.
+        QueueViewRelease();
+        if (options.sessionClosed) options.sessionClosed();
         return true;
     }
 };
@@ -2656,8 +3237,8 @@ SettingsWindowHost::~SettingsWindowHost()
 
 bool SettingsWindowHost::Initialize(
     HINSTANCE instance,
-    SettingsController& controller,
-    widget_runtime::WidgetSettingsService* widgetSettingsService,
+    ISettingsController& controller,
+    widget_runtime::IWidgetSettingsService* widgetSettingsService,
     SettingsWindowHostOptions options)
 {
     if (impl_->initialized)
@@ -2676,7 +3257,7 @@ bool SettingsWindowHost::Initialize(
     impl_->lastError.clear();
 
     if (!impl_->runtime.Initialize() || !impl_->RegisterWindowClass() ||
-        !impl_->CreateHostWindow() || !impl_->ConfigureIntegratedTitleBar())
+        !impl_->CreateHostWindow())
     {
         if (impl_->lastError.empty())
             impl_->lastError = impl_->runtime.LastError();
@@ -2686,7 +3267,6 @@ bool SettingsWindowHost::Initialize(
 
     try
     {
-        impl_->shell = winrt::make_self<shell_impl::SettingsShell>();
         impl_->callbacks =
             std::make_shared<Impl::CallbackState>();
         impl_->callbacks->owner = impl_.get();
@@ -2694,58 +3274,15 @@ bool SettingsWindowHost::Initialize(
             mud::DispatcherQueue::GetForCurrentThread();
         if (!impl_->callbacks->dispatcher)
             winrt::throw_hresult(E_UNEXPECTED);
-
-        const std::weak_ptr<Impl::CallbackState> weak = impl_->callbacks;
-        impl_->shell->SetLocalizer([weak](std::string_view key) {
-            const auto state = weak.lock();
-            return state && state->alive.load() && state->owner
-                ? state->owner->L(key)
-                : std::wstring{};
-        });
-        impl_->shell->SetRouteRequestedCallback(
-            [weak](const SettingsRoute& route) {
-                if (const auto state = weak.lock();
-                    state && state->alive.load() && state->owner)
-                {
-                    state->owner->RequestRoute(route);
-                }
-            });
-        impl_->shell->SetSearchRequestedCallback(
-            [weak](std::wstring query, std::uint64_t generation,
-                   std::uint64_t requestId) {
-                if (const auto state = weak.lock();
-                    state && state->alive.load() && state->owner)
-                {
-                    state->owner->RequestSearch(
-                        std::move(query), generation, requestId);
-                }
-            });
-        impl_->shell->SetCancelOperationCallback([](std::uint64_t) {});
-        impl_->shell->SetWidgetSettingsService(widgetSettingsService);
-        impl_->ConfigurePageActions();
-        impl_->RebuildSearchIndex();
-
-        if (!impl_->runtime.Attach(impl_->window,
-                impl_->shell.as<mux::UIElement>()))
+        if (!impl_->CreateView())
         {
-            impl_->SetError(impl_->runtime.LastError());
             Shutdown();
             return false;
         }
-        impl_->shell->SetSystemBackdropActive(false);
-        impl_->shell->SetActualThemeChangedCallback(
-            [weak](bool darkTheme) {
-                if (const auto state = weak.lock();
-                    state && state->alive.load() && state->owner)
-                {
-                    state->owner->ApplyActualTheme(darkTheme);
-                }
-            });
-        impl_->QueueIntegratedTitleBarInsetsUpdate();
-        impl_->QueueSystemBackdropUpdate();
 
+        const std::weak_ptr<Impl::CallbackState> weak = impl_->callbacks;
         controller.SetSnapshotChangedCallback(
-            [weak](SettingsController::SnapshotPtr snapshot) {
+            [weak](ISettingsController::SnapshotPtr snapshot) {
                 if (const auto state = weak.lock();
                     state && state->alive.load() && state->owner)
                 {
@@ -2813,17 +3350,7 @@ void SettingsWindowHost::Shutdown() noexcept
         }
     }
 
-    impl_->systemBackdropUpdateQueued = false;
-    impl_->externalStateRefreshQueued = false;
-    if (impl_->shell)
-        impl_->shell->SetSystemBackdropActive(false);
-    if (impl_->shell)
-    {
-        impl_->shell->Close();
-        impl_->shell = nullptr;
-    }
-    impl_->runtime.Detach();
-    impl_->ResetIntegratedTitleBar();
+    impl_->ReleaseView();
     impl_->DiscardPostedOwnerTasks();
     if (impl_->window && IsWindow(impl_->window))
         DestroyWindow(impl_->window);
@@ -2843,14 +3370,45 @@ void SettingsWindowHost::Shutdown() noexcept
 
 bool SettingsWindowHost::Open(const SettingsRoute& route)
 {
-    if (!impl_->initialized || !impl_->OnOwnerThread() || !route.IsValid())
+    performance::Scope performanceScope("settings.open", SettingsPageKey(route.page));
+    impl_->lastError.clear();
+    if (!impl_->initialized)
+    {
+        impl_->SetError(L"Open settings before host initialization");
         return false;
+    }
+    if (!impl_->OnOwnerThread())
+    {
+        impl_->SetError(L"Open settings from a different thread");
+        return false;
+    }
+    if (!route.IsValid())
+    {
+        impl_->SetError(L"Open settings with an invalid route");
+        return false;
+    }
+    if (!impl_->window || !IsWindow(impl_->window))
+    {
+        impl_->SetError(L"Open settings with an invalid host window");
+        return false;
+    }
 
     ++impl_->viewEpoch;
+    impl_->viewReleaseQueued = false;
+    impl_->CancelWorkingSetTrim();
     const bool reopening = !impl_->Visible();
     SettingsActionResult reloadResult = SettingsActionResult::Success();
     if (reopening)
     {
+        if ((!impl_->shell || !impl_->runtime.IsAttached()) &&
+            !impl_->CreateView())
+        {
+            return false;
+        }
+        // Sample only after any stable Shell/Island recovery so retained root
+        // pages are not mistaken for settings-session growth.
+        impl_->settingsSessionWorkingSetBaseline =
+            QueryCurrentProcessWorkingSet();
         if (!impl_->appWindowTitleBar)
         {
             if (!impl_->ConfigureIntegratedTitleBar())
@@ -2868,16 +3426,42 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
 
     SettingsActionResult openResult;
     if (!impl_->CommitRoute(route, &openResult))
+    {
+        if (impl_->lastError.empty())
+            impl_->SetError(L"Commit settings route failed");
         return false;
+    }
     const auto snapshot = impl_->controller->Snapshot();
     impl_->ApplySnapshotNow(snapshot);
+    impl_->RefreshAgentSkillNavigationState();
     impl_->ResumeInteraction();
     if (IsIconic(impl_->window))
         ShowWindow(impl_->window, SW_RESTORE);
     else
         ShowWindow(impl_->window, SW_SHOWNORMAL);
-    SetForegroundWindow(impl_->window);
-    SetActiveWindow(impl_->window);
+    (void)ActivateSettingsWindow(impl_->window);
+
+    if (!IsWindowVisible(impl_->window))
+    {
+        impl_->SetError(L"Settings host window remained hidden after show");
+        return false;
+    }
+
+    if (snapshot && impl_->shell &&
+        route.page == SettingsPage::General &&
+        route.focusId == "general.advancedFeatures.unlockRequired" &&
+        impl_->options.advancedFeatureStatus)
+    {
+        // Opening settings is asynchronous; unlocking may have finished meanwhile.
+        const auto status = impl_->options.advancedFeatureStatus();
+        if (status.bridgeAvailable && !status.registered)
+        {
+            (void)impl_->shell->ShowInfoForGeneration(snapshot->generation,
+                shell_impl::SettingsShellInfoSeverity::Informational,
+                impl_->L("settings.general.advancedFeatures"),
+                impl_->L("settings.general.advancedFeatures.unlockRequired"));
+        }
+    }
 
     if (!reloadResult.Succeeded())
         impl_->ShowActionError(reloadResult);
@@ -2899,7 +3483,7 @@ bool SettingsWindowHost::FlushPendingChanges()
 }
 
 void SettingsWindowHost::SetWidgetSettingsService(
-    widget_runtime::WidgetSettingsService* service) noexcept
+    widget_runtime::IWidgetSettingsService* service) noexcept
 {
     if (impl_->shell)
         impl_->shell->SetWidgetSettingsService(service);
@@ -2936,6 +3520,13 @@ void SettingsWindowHost::RefreshWidgetsPage()
     if (impl_->widgetsPageBackend)
         (void)impl_->widgetsPageBackend->Refresh();
     impl_->RebuildSearchIndex();
+}
+
+void SettingsWindowHost::RefreshGeneralRuntimeState()
+{
+    if (!impl_->initialized || !impl_->OnOwnerThread() || !impl_->shell)
+        return;
+    impl_->shell->RefreshRuntimeState();
 }
 
 bool SettingsWindowHost::PrepareLanguageChange()

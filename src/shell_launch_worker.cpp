@@ -1,9 +1,11 @@
 #include "shell_launch_worker.h"
 #include "shell_context_menu_invoke.h"
+#include "shell_launch_process.h"
 
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shlwapi.h>
 #include <wrl/client.h>
 
 #include <cstring>
@@ -16,6 +18,40 @@ namespace
 {
 
 using Microsoft::WRL::ComPtr;
+
+bool ExecutableManifestRequestsAdministrator(
+    const std::wstring& executablePath)
+{
+    if (executablePath.empty())
+        return false;
+    const wchar_t* extension = PathFindExtensionW(executablePath.c_str());
+    if (!extension || _wcsicmp(extension, L".exe") != 0)
+        return false;
+
+    ACTCTXW context{};
+    context.cbSize = sizeof(context);
+    context.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
+    context.lpSource = executablePath.c_str();
+    context.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
+    const HANDLE activationContext = CreateActCtxW(&context);
+    if (activationContext == INVALID_HANDLE_VALUE)
+        return false;
+
+    ACTIVATION_CONTEXT_RUN_LEVEL_INFORMATION runLevel{};
+    SIZE_T writtenOrRequired = 0;
+    const bool queried = QueryActCtxW(
+        0,
+        activationContext,
+        nullptr,
+        RunlevelInformationInActivationContext,
+        &runLevel,
+        sizeof(runLevel),
+        &writtenOrRequired) != FALSE;
+    ReleaseActCtx(activationContext);
+    return queried &&
+        (runLevel.RunLevel == ACTCTX_RUN_LEVEL_REQUIRE_ADMIN ||
+         runLevel.RunLevel == ACTCTX_RUN_LEVEL_HIGHEST_AVAILABLE);
+}
 
 bool SafeInvokeContextMenu(
     IContextMenu* contextMenu,
@@ -113,7 +149,9 @@ bool InvokeShellItemOpen(
 
     CMINVOKECOMMANDINFOEX invoke{};
     invoke.cbSize = sizeof(invoke);
-    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE;
+    // This STA belongs to a short-lived helper. Finish Shell/DDE handoff
+    // before it exits; the desktop does not wait for this call.
+    invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE | CMIC_MASK_NOASYNC;
     invoke.hwnd = validOwner;
     if (openOffset != static_cast<UINT_PTR>(-1))
     {
@@ -139,6 +177,94 @@ bool InvokeShellItemOpen(
     return opened;
 }
 
+bool ExecuteShellOpen(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand,
+    ULONG launchMask)
+{
+    if (path.empty())
+        return false;
+
+    // Opening an ordinary folder does not require collecting third-party
+    // context-menu entries just to find the Open verb. Attribute lookup also
+    // stays in the helper, since network/removable paths can block here.
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    const bool fileSystemDirectory = attributes != INVALID_FILE_ATTRIBUTES &&
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    if (!fileSystemDirectory && absolutePidl &&
+        InvokeShellItemOpen(owner, absolutePidl, showCommand))
+    {
+        return true;
+    }
+
+    if (path.size() >= 6 &&
+        _wcsnicmp(path.c_str(), L"shell:", 6) == 0)
+    {
+        PIDLIST_ABSOLUTE rawPidl = nullptr;
+        const HRESULT parseResult = SHParseDisplayName(
+            path.c_str(), nullptr, &rawPidl, 0, nullptr);
+        if (SUCCEEDED(parseResult) && rawPidl)
+        {
+            SHELLEXECUTEINFOW namespaceExecuteInfo{};
+            namespaceExecuteInfo.cbSize = sizeof(namespaceExecuteInfo);
+            namespaceExecuteInfo.fMask = launchMask | SEE_MASK_IDLIST;
+            namespaceExecuteInfo.hwnd =
+                owner && IsWindow(owner) ? owner : nullptr;
+            namespaceExecuteInfo.lpIDList = rawPidl;
+            namespaceExecuteInfo.nShow = showCommand;
+            const bool opened =
+                ShellExecuteExW(&namespaceExecuteInfo) != FALSE;
+            CoTaskMemFree(rawPidl);
+            if (opened)
+                return true;
+        }
+        else if (rawPidl)
+        {
+            CoTaskMemFree(rawPidl);
+        }
+    }
+
+    SHELLEXECUTEINFOW executeInfo{};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = launchMask;
+    executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
+    executeInfo.lpVerb = L"open";
+    executeInfo.lpFile = path.c_str();
+    executeInfo.nShow = showCommand;
+    return ShellExecuteExW(&executeInfo) != FALSE;
+}
+
+} // namespace
+
+namespace
+{
+bool DispatchShellOpen(HWND owner, const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl, int showCommand,
+    shell_launch_process::Action action)
+{
+    try
+    {
+        shell_launch_process::Request request;
+        request.owner = owner;
+        request.path = path;
+        request.showCommand = showCommand;
+        request.action = action;
+        if (absolutePidl)
+        {
+            const UINT size = ILGetSize(absolutePidl);
+            if (!size || size > 65536) return false;
+            const auto* data = reinterpret_cast<const unsigned char*>(absolutePidl);
+            request.absolutePidl.assign(data, data + size);
+        }
+        return static_cast<bool>(shell_launch_process::Start(request));
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
 } // namespace
 
 ShellLaunchWorker::ShellLaunchWorker()
@@ -260,54 +386,116 @@ bool ShellLaunchWorker::Execute(
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand)
 {
+    return DispatchShellOpen(owner, path, absolutePidl, showCommand,
+        shell_launch_process::Action::Open);
+}
+
+bool ShellLaunchWorker::ExecuteInteractive(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand)
+{
+    return DispatchShellOpen(owner, path, absolutePidl, showCommand,
+        shell_launch_process::Action::OpenWithShortcutPolicy);
+}
+
+bool ShellLaunchWorker::ExecuteRunAsAdministrator(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE,
+    int showCommand)
+{
+    return DispatchShellOpen(owner, path, nullptr, showCommand,
+        shell_launch_process::Action::RunAs);
+}
+
+bool shell_launch_process::ExecuteRequest(const Request& request)
+{
+    const auto& path = request.path;
     if (path.empty())
         return false;
+    const HWND validOwner = request.owner && IsWindow(request.owner)
+        ? request.owner : nullptr;
+    const bool runAs = request.action == Action::RunAs ||
+        (request.action == Action::OpenWithShortcutPolicy &&
+            ShellLaunchWorker::ShortcutRequestsAdministrator(path));
+    if (!runAs)
+    {
+        const auto pidl = request.absolutePidl.empty() ? nullptr :
+            reinterpret_cast<PCIDLIST_ABSOLUTE>(request.absolutePidl.data());
+        return ExecuteShellOpen(validOwner, path, pidl, request.showCommand,
+            SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE);
+    }
+    SHELLEXECUTEINFOW executeInfo{};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
+    executeInfo.hwnd = validOwner;
+    executeInfo.lpVerb = L"runas";
+    executeInfo.lpFile = path.c_str();
+    executeInfo.nShow = request.showCommand;
+    return ShellExecuteExW(&executeInfo) != FALSE;
+}
 
-    if (absolutePidl &&
-        InvokeShellItemOpen(owner, absolutePidl, showCommand))
+bool ShellLaunchWorker::ShortcutRequestsAdministrator(
+    const std::wstring& path)
+{
+    if (path.empty())
+        return false;
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    if (!extension || _wcsicmp(extension, L".lnk") != 0)
+        return false;
+
+    constexpr CLSID shellLinkClsid{
+        0x00021401, 0x0000, 0x0000,
+        { 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 }
+    };
+    ComPtr<IShellLinkW> shellLink;
+    if (FAILED(CoCreateInstance(
+            shellLinkClsid, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(shellLink.GetAddressOf()))) ||
+        !shellLink)
+    {
+        return false;
+    }
+
+    ComPtr<IPersistFile> persistFile;
+    if (FAILED(shellLink.As(&persistFile)) || !persistFile ||
+        FAILED(persistFile->Load(path.c_str(), STGM_READ)))
+    {
+        return false;
+    }
+
+    ComPtr<IShellLinkDataList> dataList;
+    DWORD flags = 0;
+    if (SUCCEEDED(shellLink.As(&dataList)) && dataList &&
+        SUCCEEDED(dataList->GetFlags(&flags)) &&
+        (flags & SLDF_RUNAS_USER) != 0)
     {
         return true;
     }
 
-    constexpr ULONG launchMask =
-        SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE;
-    if (path.size() >= 6 &&
-        _wcsnicmp(path.c_str(), L"shell:", 6) == 0)
+    wchar_t targetPath[32768]{};
+    if (FAILED(shellLink->GetPath(
+            targetPath,
+            static_cast<int>(std::size(targetPath)),
+            nullptr,
+            SLGP_RAWPATH)) ||
+        targetPath[0] == L'\0')
     {
-        PIDLIST_ABSOLUTE rawPidl = nullptr;
-        const HRESULT parseResult = SHParseDisplayName(
-            path.c_str(), nullptr, &rawPidl, 0, nullptr);
-        if (SUCCEEDED(parseResult) && rawPidl)
-        {
-            SHELLEXECUTEINFOW namespaceExecuteInfo{};
-            namespaceExecuteInfo.cbSize = sizeof(namespaceExecuteInfo);
-            namespaceExecuteInfo.fMask = launchMask | SEE_MASK_IDLIST;
-            namespaceExecuteInfo.hwnd =
-                owner && IsWindow(owner) ? owner : nullptr;
-            namespaceExecuteInfo.lpIDList = rawPidl;
-            namespaceExecuteInfo.nShow = showCommand;
-            const bool opened =
-                ShellExecuteExW(&namespaceExecuteInfo) != FALSE;
-            CoTaskMemFree(rawPidl);
-            if (opened)
-                return true;
-        }
-        else if (rawPidl)
-        {
-            CoTaskMemFree(rawPidl);
-        }
+        return false;
     }
 
-    SHELLEXECUTEINFOW executeInfo{};
-    executeInfo.cbSize = sizeof(executeInfo);
-    // This thread has no message pump. Complete DDE and execution-delegate
-    // handoffs here instead of borrowing the desktop UI thread's message pump.
-    executeInfo.fMask = launchMask;
-    executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
-    executeInfo.lpVerb = L"open";
-    executeInfo.lpFile = path.c_str();
-    executeInfo.nShow = showCommand;
-    return ShellExecuteExW(&executeInfo) != FALSE;
+    wchar_t expandedPath[32768]{};
+    const DWORD expandedLength = ExpandEnvironmentStringsW(
+        targetPath,
+        expandedPath,
+        static_cast<DWORD>(std::size(expandedPath)));
+    const std::wstring executablePath =
+        expandedLength > 0 && expandedLength <= std::size(expandedPath)
+        ? expandedPath
+        : targetPath;
+    return ExecutableManifestRequestsAdministrator(executablePath);
 }
 
 void ShellLaunchWorker::Run(const std::shared_ptr<State>& state)

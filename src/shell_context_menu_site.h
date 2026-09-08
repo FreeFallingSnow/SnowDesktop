@@ -27,6 +27,9 @@ public:
     bool Initialize(IShellFolder* folder, HWND owner);
     bool Attach(IContextMenu* contextMenu);
     HWND HostWindow() const;
+    // Verb dialogs must use the same persistent, activatable owner as the
+    // invocation structure, rather than the hidden view used to build menus.
+    void SetInvocationOwner(HWND owner);
 
 private:
     struct Impl;

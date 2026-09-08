@@ -3,6 +3,33 @@
 
 // Desktop-item and standalone-widget hit testing.
 
+bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
+{
+    LPCWSTR cursor = nullptr;
+    if (widgetAction_ == WidgetAction::Resize) cursor = IDC_SIZENWSE;
+    else if (widgetAction_ == WidgetAction::Move) cursor = IDC_SIZEALL;
+    else if (!dragSession_.IsActive() && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(point))
+    {
+        WidgetHit hit = WidgetHit::None;
+        const auto standalone = HitTestStandaloneWidgetIndex(point);
+        if (standalone < widgets_.size()) hit = HitTestStandaloneWidget(standalone, point);
+        if (hit == WidgetHit::None)
+            for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+            {
+                if (desktopIconsHidden_ && !IsRetainedContainer(it->get())) continue;
+                const auto* widget = dynamic_cast<WidgetContainer*>(it->get());
+                if (!widget) continue;
+                hit = widget->HitTestWidget(point);
+                if (hit != WidgetHit::None) break;
+            }
+        if (hit == WidgetHit::ResizeHandle) cursor = IDC_SIZENWSE;
+        else if (hit == WidgetHit::MoveHandle) cursor = IDC_SIZEALL;
+    }
+    if (!cursor) return false;
+    SetCursor(LoadCursorW(nullptr, cursor));
+    return true;
+}
+
 int DesktopApp::HitTestItem(POINT pt) const
 {
     // Backward-compat wrapper: returns items_ index for Shell/COM code
@@ -27,7 +54,9 @@ DesktopIcon* DesktopApp::HitTestIcon(POINT pt) const
         if (!icon) continue;
         DesktopItem* di = icon->GetDesktopItem();
         if (!di || IsRectEmptyRect(di->bounds)) continue;
-        RECT selRect = GetItemSelectionRect(di->bounds, di->selected);
+        if (desktopIconsHidden_ && !IsRetainedLargeIcon(*di)) continue;
+        RECT selRect = di->largeIcon ? GetLargeIconFrameRect(*di)
+            : GetItemSelectionRect(di->bounds, di->selected);
         if (!PtInRect(&selRect, pt)) continue;
         if (!di->layoutKey.empty() &&
             collectedKeysCache_.count(

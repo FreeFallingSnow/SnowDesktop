@@ -241,10 +241,8 @@ bool DesktopApp::DeleteSelectedFolderEntries(bool permanentDelete)
         [this](bool succeeded) {
             if (!succeeded)
                 return;
-            ReloadItems(false);
-            if (IsCollectionPopupInteractive() &&
-                dockFolderPopupOpen_)
-                RefreshDockFolderPopup();
+            RequestShellRefresh();
+
         });
     return true;
 }
@@ -343,9 +341,8 @@ bool DesktopApp::PasteClipboardToFolderPath(
                 CloseClipboard();
             }
         }
-        ReloadItems(false);
-        if (dockFolderPopupOpen_)
-            RefreshDockFolderPopup();
+        RequestShellRefresh();
+
     };
 
     return MaterializeFilesToFolder(
@@ -451,7 +448,7 @@ bool DesktopApp::PasteClipboardToDesktop()
         info.lpVerb = "paste";
         info.nShow = SW_SHOWNORMAL;
         SafeInvokeCommand(bgMenu.Get(), &info);
-        ReloadItems();
+        RequestShellRefresh();
     }
     return true;
 }

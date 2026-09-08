@@ -189,6 +189,17 @@ public:
         if (appearance.borderOpacity)
             descriptor.hostAppearance.borderOpacity =
                 *appearance.borderOpacity;
+        if (appearance.borderWidth)
+            descriptor.hostAppearance.borderWidth = *appearance.borderWidth;
+        if (appearance.edgeHighlightEnabled)
+            descriptor.hostAppearance.edgeHighlightEnabled =
+                *appearance.edgeHighlightEnabled;
+        if (appearance.edgeHighlightWidth)
+            descriptor.hostAppearance.edgeHighlightWidth =
+                *appearance.edgeHighlightWidth;
+        if (appearance.edgeHighlightStrength)
+            descriptor.hostAppearance.edgeHighlightStrength =
+                *appearance.edgeHighlightStrength;
         if (appearance.gradientEndOpacity)
             descriptor.hostAppearance.gradientEndOpacity =
                 *appearance.gradientEndOpacity;
@@ -201,6 +212,8 @@ public:
         if (appearance.contentTheme)
             descriptor.hostAppearance.contentTheme =
                 *appearance.contentTheme;
+        if (appearance.panelGradient)
+            descriptor.hostAppearance.panelGradient = *appearance.panelGradient;
         for (const auto& write : writes)
         {
             ordinary.insert_or_assign(write.key, write.value);
@@ -688,6 +701,7 @@ int main()
         *transientSnapshot);
     WidgetHostAppearancePatch transientAppearance;
     transientAppearance.backgroundColor = 0x123456;
+    transientAppearance.glassEnabled = true;
     const auto appearancePreview =
         transientService.PreviewHostAppearance(
             transientGuard, transientAppearance);
@@ -702,9 +716,20 @@ int main()
             transientSnapshot &&
             transientSnapshot->hostAppearance.backgroundColor ==
                 transientBackend.persistedAppearance.backgroundColor &&
+            transientBackend.lastAppearancePatch.glassEnabled == true &&
+            transientBackend.lastAppearancePatch.borderOpacity ==
+                transientBackend.persistedAppearance.borderOpacity &&
+            transientBackend.lastAppearancePatch.borderWidth ==
+                transientBackend.persistedAppearance.borderWidth &&
+            transientBackend.lastAppearancePatch.edgeHighlightEnabled ==
+                transientBackend.persistedAppearance.edgeHighlightEnabled &&
+            transientBackend.lastAppearancePatch.edgeHighlightWidth ==
+                transientBackend.persistedAppearance.edgeHighlightWidth &&
+            transientBackend.lastAppearancePatch.edgeHighlightStrength ==
+                transientBackend.persistedAppearance.edgeHighlightStrength &&
             transientBackend.persistCalls == 1 &&
             transientBackend.revertCalls == 1,
-        "appearance preview can be reverted without a persistent write");
+        "material appearance preview preserves independent edge state and can be reverted without a persistent write");
 
     transientGuard = WidgetSettingMutationGuard::FromSnapshot(
         *transientSnapshot);
@@ -719,6 +744,53 @@ int main()
 
     WidgetSettingMutationGuard guard =
         WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot);
+    {
+        FakeBackend gradientBackend = MakeBackend();
+        gradientBackend.descriptor.customStyle = true;
+        gradientBackend.persistedAppearance = gradientBackend.descriptor.hostAppearance;
+        WidgetSettingsService gradientService(gradientBackend);
+        auto gradientLoad = gradientService.Load(L"widget-1");
+        Check(gradientLoad.Succeeded() && gradientLoad.snapshot.has_value(), "gradient instance session loads");
+        const auto currentGuard = [&] {
+            return WidgetSettingMutationGuard::FromSnapshot(*gradientService.Snapshot(L"widget-1"));
+        };
+        WidgetHostAppearancePatch patch;
+        patch.panelGradient = snowdesktop::PanelGradient{};
+        patch.panelGradient->enabled = true;
+        patch.panelGradient->angle = 27;
+        patch.panelGradient->stops.insert(patch.panelGradient->stops.begin() + 1, {.35, 0x44aaee, .4});
+        const auto originalGuard = currentGuard();
+        auto result = gradientService.PreviewHostAppearance(originalGuard, patch);
+        Check(result.Changed() && gradientBackend.persistCalls == 0 &&
+                gradientService.Snapshot(L"widget-1")->hostAppearance.panelGradient == *patch.panelGradient &&
+                !gradientBackend.persistedAppearance.panelGradient.enabled,
+            "gradient preview is visible for its instance without changing persistent appearance");
+        Check(gradientService.CommitPreview(originalGuard).status == WidgetSettingMutationStatus::StaleSnapshot,
+            "an older revision cannot commit the gradient preview");
+        result = gradientService.RevertPreview(currentGuard());
+        Check(result.Changed() && !gradientBackend.descriptor.hostAppearance.panelGradient.enabled && gradientBackend.persistCalls == 0,
+            "cancelling gradient preview restores the prior stops and enabled state without saving");
+        (void)gradientService.PreviewHostAppearance(currentGuard(), patch);
+        result = gradientService.CommitPreview(currentGuard());
+        Check(result.Changed() && gradientBackend.persistedAppearance.panelGradient == *patch.panelGradient && gradientBackend.persistCalls == 1,
+            "committing a gradient persists its complete description in one appearance transaction");
+        const auto saved = gradientBackend.persistedAppearance;
+        const auto calls = gradientBackend.ordinaryCalls;
+        patch.panelGradient->stops[1].position = 1;
+        Check(gradientService.UpdateHostAppearance(currentGuard(), patch).status == WidgetSettingMutationStatus::InvalidValue &&
+                gradientService.PreviewHostAppearance(currentGuard(), patch).status == WidgetSettingMutationStatus::InvalidValue &&
+                gradientBackend.ordinaryCalls == calls && gradientBackend.persistedAppearance == saved,
+            "invalid or unordered gradient stops are rejected before either preview or persistent backend mutation");
+        WidgetHostAppearancePatch follow;
+        follow.followPersonalization = true;
+        (void)gradientService.UpdateHostAppearance(currentGuard(), follow);
+        Check(gradientBackend.persistedAppearance.panelGradient == saved.panelGradient,
+            "following global appearance keeps the independent gradient available for later editing");
+        gradientService.Close(L"widget-1");
+        auto reopened = gradientService.Load(L"widget-1");
+        Check(reopened.snapshot && reopened.snapshot->hostAppearance.panelGradient == saved.panelGradient,
+            "reopening the instance editor restores its saved gradient");
+    }
     WidgetHostAppearancePatch unavailableAppearance;
     unavailableAppearance.backgroundColor = 0x123456;
     Check(service.UpdateHostAppearance(
@@ -789,6 +861,47 @@ int main()
         "preset selection is one transaction, persists __preset and legacy host values immediately, and preserves typed values");
 
     snapshot = service.Snapshot(L"widget-1");
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t transactionsBeforeFieldReset =
+        backend.transactions.size();
+    WidgetSettingMutationResult fieldReset =
+        service.ResetField(guard, "scale");
+    snapshot = service.Snapshot(L"widget-1");
+    Check(fieldReset.status == WidgetSettingMutationStatus::Applied &&
+            backend.transactions.size() ==
+                transactionsBeforeFieldReset + 1 &&
+            backend.lastWrites.size() == 1 &&
+            backend.lastWrites[0].key == "scale" &&
+            backend.lastWrites[0].typedStorage &&
+            backend.lastWrites[0].value.number == 1.0 && snapshot &&
+            Find(*snapshot, "scale")->currentValue.number == 1.0 &&
+            Find(*snapshot, "feeds")->currentValue.array.front().string ==
+                "news",
+        "per-field reset writes only the selected ordinary default and preserves sibling settings");
+
+    guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const std::size_t transactionsBeforeUnchangedFieldReset =
+        backend.transactions.size();
+    Check(service.ResetField(guard, "scale").status ==
+                WidgetSettingMutationStatus::Unchanged &&
+            backend.transactions.size() ==
+                transactionsBeforeUnchangedFieldReset &&
+            service.ResetField(guard, "token").status ==
+                WidgetSettingMutationStatus::WrongValueChannel,
+        "per-field reset skips unchanged values and never routes opaque fields through ordinary storage");
+
+    WidgetSettingMutationResult searchFieldReset =
+        service.ResetField(guard, "appSearch");
+    snapshot = service.Snapshot(L"widget-1");
+    Check(searchFieldReset.status == WidgetSettingMutationStatus::Applied &&
+            backend.lastWrites.size() == 1 &&
+            backend.lastWrites[0].key == "appSearch" &&
+            backend.lastWrites[0].searchQuery &&
+            backend.lastWrites[0].searchQuery->empty() && snapshot &&
+            Find(*snapshot, "appSearch")->currentValue.string.empty() &&
+            Find(*snapshot, "appSearch")->searchQuery.empty(),
+        "per-field appSearch reset restores its value and clears the separate query in one transaction");
+
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
     WidgetSettingMutationResult reset = service.Reset(guard);
     bool resetHasOpaque = false;
@@ -1209,8 +1322,21 @@ int main()
     FakeBackend appearanceBackend = MakeBackend();
     appearanceBackend.descriptor.customStyle = true;
     appearanceBackend.descriptor.hostAppearance = {
-        false, "__custom", 0x102030, 0xE0D0C0,
-        0.25f, 0.5f, 0.75f, false, false, 0 };
+        .followPersonalization = false,
+        .presetId = "__custom",
+        .backgroundColor = 0x102030,
+        .borderColor = 0xE0D0C0,
+        .backgroundOpacity = 0.25f,
+        .borderOpacity = 0.5f,
+        .borderWidth = 1.0f,
+        .edgeHighlightEnabled = false,
+        .edgeHighlightWidth = kDefaultEdgeHighlightWidth,
+        .edgeHighlightStrength = kDefaultEdgeHighlightStrength,
+        .gradientEndOpacity = 0.75f,
+        .glassEnabled = false,
+        .acrylicEnabled = false,
+        .contentTheme = 0,
+    };
     appearanceBackend.descriptor.scriptPresets[0]
         .hostAppearanceValues = {
             { "bg", "1193046" },
@@ -1222,6 +1348,50 @@ int main()
             { "__contentTheme", "1" },
             { "__preset", "must-not-win" },
         };
+    WidgetSettingPresetSchema explicitBorderPreset;
+    explicitBorderPreset.id = "outlined";
+    explicitBorderPreset.label = "Outlined";
+    explicitBorderPreset.hostAppearanceValues = {
+        { "glassEnabled", "0" },
+        { "borderWidth", "2.5" },
+        { "edgeHighlightEnabled", "1" },
+        { "edgeHighlightWidth", "3.5" },
+        { "edgeHighlightStrength", "0.25" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        explicitBorderPreset);
+    WidgetSettingPresetSchema invalidBorderStrengthPreset;
+    invalidBorderStrengthPreset.id = "invalid-border-strength";
+    invalidBorderStrengthPreset.label = "Invalid border strength";
+    invalidBorderStrengthPreset.hostAppearanceValues = {
+        { "edgeHighlightStrength", "1.1" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        invalidBorderStrengthPreset);
+    WidgetSettingPresetSchema invalidBorderStylePreset;
+    invalidBorderStylePreset.id = "invalid-border-style";
+    invalidBorderStylePreset.label = "Invalid border style";
+    invalidBorderStylePreset.hostAppearanceValues = {
+        { "borderStyle", "2" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        invalidBorderStylePreset);
+    WidgetSettingPresetSchema invalidBorderWidthPreset;
+    invalidBorderWidthPreset.id = "invalid-border-width";
+    invalidBorderWidthPreset.label = "Invalid border width";
+    invalidBorderWidthPreset.hostAppearanceValues = {
+        { "borderWidth", "4.5" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        invalidBorderWidthPreset);
+    WidgetSettingPresetSchema invalidEdgeWidthPreset;
+    invalidEdgeWidthPreset.id = "invalid-edge-width";
+    invalidEdgeWidthPreset.label = "Invalid edge width";
+    invalidEdgeWidthPreset.hostAppearanceValues = {
+        { "edgeHighlightWidth", "0.25" },
+    };
+    appearanceBackend.descriptor.scriptPresets.push_back(
+        invalidEdgeWidthPreset);
     // Opaque entries authored in a preset are ignored without preventing the
     // ordinary and host appearance values from applying.
     appearanceBackend.descriptor.scriptPresets[0].values["token"] =
@@ -1249,6 +1419,54 @@ int main()
         "live custom appearance updates round-trip through a typed snapshot");
     appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
         *appearanceSnapshot);
+    WidgetHostAppearancePatch materialOnlyPatch;
+    materialOnlyPatch.glassEnabled = true;
+    const auto materialOnlyResult =
+        appearanceService.UpdateHostAppearance(
+            appearanceGuard, materialOnlyPatch);
+    appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(materialOnlyResult.status ==
+                WidgetSettingMutationStatus::Applied &&
+            appearanceBackend.lastAppearancePatch.glassEnabled == true &&
+            appearanceBackend.lastAppearancePatch.borderOpacity == 0.5f &&
+            appearanceBackend.lastAppearancePatch.borderWidth == 1.0f &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightEnabled ==
+                false &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength &&
+            appearanceSnapshot &&
+            appearanceSnapshot->hostAppearance.glassEnabled &&
+            !appearanceSnapshot->hostAppearance.edgeHighlightEnabled,
+        "material-only appearance updates atomically persist the effective independent border and edge-highlight state");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    WidgetHostAppearancePatch explicitMaterialPatch;
+    explicitMaterialPatch.glassEnabled = false;
+    explicitMaterialPatch.borderOpacity = 0.2f;
+    explicitMaterialPatch.borderWidth = 2.5f;
+    explicitMaterialPatch.edgeHighlightEnabled = true;
+    explicitMaterialPatch.edgeHighlightWidth = 3.0f;
+    explicitMaterialPatch.edgeHighlightStrength = 0.4f;
+    const auto explicitMaterialResult =
+        appearanceService.UpdateHostAppearance(
+            appearanceGuard, explicitMaterialPatch);
+    appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(explicitMaterialResult.status ==
+                WidgetSettingMutationStatus::Applied &&
+            appearanceBackend.lastAppearancePatch ==
+                explicitMaterialPatch && appearanceSnapshot &&
+            !appearanceSnapshot->hostAppearance.glassEnabled &&
+            appearanceSnapshot->hostAppearance.borderOpacity == 0.2f &&
+            appearanceSnapshot->hostAppearance.borderWidth == 2.5f &&
+            appearanceSnapshot->hostAppearance.edgeHighlightEnabled &&
+            appearanceSnapshot->hostAppearance.edgeHighlightWidth == 3.0f &&
+            appearanceSnapshot->hostAppearance.edgeHighlightStrength ==
+                0.4f,
+        "explicit border and edge-highlight values take priority in a material update");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
     const auto appearancePreset = appearanceService.ApplyPreset(
         appearanceGuard, "compact");
     appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
@@ -1260,13 +1478,71 @@ int main()
                 0.625f &&
             appearanceBackend.lastAppearancePatch.glassEnabled == true &&
             appearanceBackend.lastAppearancePatch.acrylicEnabled == false &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightEnabled ==
+                true &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightWidth ==
+                kDefaultEdgeHighlightWidth &&
+            appearanceBackend.lastAppearancePatch.borderWidth == 1.0f &&
+            appearanceBackend.lastAppearancePatch.borderOpacity == 0.0f &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightStrength ==
+                kDefaultEdgeHighlightStrength &&
             !appearanceBackend.lastAppearancePatch.followPersonalization &&
-            !appearanceBackend.lastAppearancePatch.contentTheme &&
-            appearanceBackend.lastAppearancePatch.clearContentTheme &&
+            appearanceBackend.lastAppearancePatch.contentTheme == 1 &&
+            !appearanceBackend.lastAppearancePatch.clearContentTheme &&
             !appearanceBackend.ordinary.contains("token") &&
             appearanceSnapshot &&
             appearanceSnapshot->hostAppearance.presetId == "compact",
-        "component themes atomically persist __preset, editable host appearance, and ordinary values while skipping opaque and host-shared or retired entries");
+        "component themes atomically persist their explicit foreground with editable host appearance and ordinary values");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    const auto explicitBorderResult = appearanceService.ApplyPreset(
+        appearanceGuard, "outlined");
+    appearanceSnapshot = appearanceService.Snapshot(L"widget-1");
+    Check(explicitBorderResult.status ==
+                WidgetSettingMutationStatus::Applied &&
+            appearanceBackend.lastAppearancePatch.glassEnabled == false &&
+            appearanceBackend.lastAppearancePatch.borderWidth == 2.5f &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightEnabled ==
+                true &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightWidth ==
+                3.5f &&
+            appearanceBackend.lastAppearancePatch.edgeHighlightStrength ==
+                0.25f &&
+            !appearanceBackend.lastAppearancePatch.contentTheme &&
+            appearanceBackend.lastAppearancePatch.clearContentTheme &&
+            appearanceSnapshot &&
+            !appearanceSnapshot->hostAppearance.glassEnabled &&
+            appearanceSnapshot->hostAppearance.edgeHighlightEnabled,
+        "component presets without a foreground keep inheriting the global theme while border and edge-highlight fields remain independent");
+    appearanceGuard = WidgetSettingMutationGuard::FromSnapshot(
+        *appearanceSnapshot);
+    const std::size_t appearanceTransactionsBeforeInvalid =
+        appearanceBackend.appearanceTransactions.size();
+    const auto invalidBorderStrengthResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-border-strength");
+    const auto invalidBorderStyleResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-border-style");
+    const auto invalidBorderWidthResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-border-width");
+    const auto invalidEdgeWidthResult = appearanceService.ApplyPreset(
+        appearanceGuard, "invalid-edge-width");
+    Check(invalidBorderStrengthResult.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidBorderStrengthResult.errorCode ==
+                "invalidAppearanceOpacity" &&
+            invalidBorderStyleResult.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidBorderStyleResult.errorCode == "invalidBorderStyle" &&
+            invalidBorderWidthResult.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidBorderWidthResult.errorCode == "invalidBorderWidth" &&
+            invalidEdgeWidthResult.status ==
+                WidgetSettingMutationStatus::InvalidValue &&
+            invalidEdgeWidthResult.errorCode ==
+                "invalidEdgeHighlightWidth" &&
+            appearanceBackend.appearanceTransactions.size() ==
+                appearanceTransactionsBeforeInvalid,
+        "invalid component border and edge-highlight preset ranges are rejected before persistence");
 
     FakeBackend utf8Backend = MakeBackend();
     WidgetSettingsService utf8Service(utf8Backend);

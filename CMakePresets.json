@@ -34,9 +34,10 @@
       "name": "release",
       "configurePreset": "release",
       "configuration": "Release",
-      "jobs": 2,
+      "jobs": 4,
       "targets": [
         "SnowDesktop",
+        "SnowDesktopLauncher",
         "SnowDesktopSteamBridge",
         "SnowDesktopWorkshopManager",
         "snowwidget"
@@ -46,7 +47,7 @@
       "name": "debug",
       "configurePreset": "debug",
       "configuration": "Debug",
-      "jobs": 2,
+      "jobs": 4,
       "targets": [
         "SnowDesktop",
         "SnowDesktopSteamBridge",
@@ -57,7 +58,7 @@
       "name": "tests",
       "configurePreset": "tests",
       "configuration": "Release",
-      "jobs": 2,
+      "jobs": 4,
       "targets": [
         "SnowDesktopTests"
       ]
@@ -67,9 +68,19 @@
       "displayName": "Release core tests",
       "configurePreset": "tests",
       "configuration": "Release",
-      "jobs": 2,
+      "jobs": 4,
       "targets": [
         "SnowDesktopCoreTests"
+      ]
+    },
+    {
+      "name": "fast-tests",
+      "displayName": "Release tests excluding integration",
+      "configurePreset": "tests",
+      "configuration": "Release",
+      "jobs": 4,
+      "targets": [
+        "SnowDesktopFastTests"
       ]
     }
   ],

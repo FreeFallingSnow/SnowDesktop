@@ -2437,7 +2437,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     float radius = static_cast<float>(Cu(cornerRadiusCu));
-    float strokeW = selected ? 1.6f : 1.0f;
+    const PersonalizationSettings& borderAppearance = appearanceOverride
+        ? *appearanceOverride : app_->CurrentPersonalization();
+    const float configuredStroke = std::clamp(
+        borderAppearance.widgetBorderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    float strokeW = selected
+        ? std::max(1.6f, configuredStroke) : configuredStroke;
 
     auto getBrush = [&](const D2D1_COLOR_F& c) -> ID2D1SolidColorBrush* {
         const auto key = D2DColorBrushKey(c);
@@ -2452,8 +2458,10 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     };
 
     // ── 1. Background + border ────────────────────────────────
+    PersonalizationSettings backgroundAppearance = borderAppearance;
+    backgroundAppearance.widgetEdgeHighlightEnabled = false;
     app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
-        selected, strokeW, appearanceOverride, ShouldRegisterBackdrop());
+        selected, strokeW, &backgroundAppearance, ShouldRegisterBackdrop());
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     {
@@ -2605,6 +2613,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     // ── Scrollbar (on top of everything, hover only) ──────────
     DrawScrollbar(context, hovered);
+
+    // The material reflection must remain visible after component content and
+    // the bottom gradient have been composited. Selection keeps its flat
+    // accent outline without an additional reflection.
+    if (!selected)
+        (void)app_->DrawWidgetPanelEdgeHighlight(
+            context, frame, radius, fillColor, &borderAppearance);
 }
 
 void WidgetContainer::DrawPreview(ID2D1DeviceContext* context, RECT frame,

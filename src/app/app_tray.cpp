@@ -1,5 +1,7 @@
 #include "app.h"
 
+#include "../desktop_namespace_registry.h"
+
 // ── Tray ────────────────────────────────────────────────────
 
 namespace
@@ -59,6 +61,7 @@ void DesktopApp::OnTrayCallback(LPARAM lParam)
     {
     case TrayCallbackAction::ShowContextMenu:
     {
+        OnRightButtonDown(nullptr);
         POINT pt{};
         GetCursorPos(&pt);
         ShowTrayMenu(pt);
@@ -93,7 +96,11 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         return label;
     };
 
+    std::vector<snowdesktop::DesktopNamespaceRegistration>
+        namespaceRegistrations;
+    std::vector<size_t> dynamicNamespaceIndexes;
     HMENU iconMenu = CreatePopupMenu();
+    HMENU nonSystemIconMenu = nullptr;
     if (iconMenu)
     {
         struct IS { UINT cmd; const wchar_t* clsid; const wchar_t* label; };
@@ -126,6 +133,61 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                         : _LW("app.interact.hidden"));
             AppendMenuW(iconMenu, MF_STRING, s.cmd, label.c_str());
         }
+
+        namespaceRegistrations =
+            snowdesktop::LoadDesktopNamespaceRegistrations();
+        nonSystemIconMenu = CreatePopupMenu();
+        for (size_t index = 0;
+             nonSystemIconMenu &&
+             index < namespaceRegistrations.size() &&
+             dynamicNamespaceIndexes.size() <=
+                kTrayDesktopNamespaceLast -
+                    kTrayDesktopNamespaceFirst;
+             ++index)
+        {
+            const auto& registration =
+                namespaceRegistrations[index];
+            if (snowdesktop::IsStandardDesktopIconClsid(
+                    registration.clsid))
+            {
+                continue;
+            }
+
+            DWORD value = 0;
+            if (!TryReadDesktopIconRegistryValueAnyRoot(
+                    registration.clsid, value))
+            {
+                continue;
+            }
+            const UINT command =
+                kTrayDesktopNamespaceFirst +
+                static_cast<UINT>(
+                    dynamicNamespaceIndexes.size());
+            const std::wstring label = statusLabel(
+                registration.displayName.c_str(),
+                value == 0
+                    ? _LW("app.interact.shown")
+                    : _LW("app.interact.hidden"));
+            AppendMenuW(
+                nonSystemIconMenu, MF_STRING,
+                command, label.c_str());
+            dynamicNamespaceIndexes.push_back(index);
+        }
+        if (nonSystemIconMenu &&
+            !dynamicNamespaceIndexes.empty())
+        {
+            AppendMenuW(iconMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(
+                iconMenu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(
+                    nonSystemIconMenu),
+                _LW("app.interact.non_system_icons"));
+        }
+        else if (nonSystemIconMenu)
+        {
+            DestroyMenu(nonSystemIconMenu);
+            nonSystemIconMenu = nullptr;
+        }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("app.interact.desktop_icon_settings"));
     }
 
@@ -148,6 +210,14 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
 
     if (iconMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), L"");
+    if (nonSystemIconMenu)
+    {
+        SetMenuItemIcon(
+            iconMenu,
+            reinterpret_cast<UINT_PTR>(
+                nonSystemIconMenu),
+            L"");
+    }
     SetMenuItemIcon(menu, kTrayToggleDesktopMode,
         nativeActive ? L"" : L"");
     SetMenuItemIcon(menu, kTraySettingsCommand, L"");
@@ -183,8 +253,7 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                 L"SnowDesktop", MB_OK | MB_ICONWARNING);
         break;
     case kTrayExitCommand:
-        if (!settingsWindow_ || !settingsWindow_->ShowExitConfirm())
-            RequestExit();
+        ShowSettingsExitConfirmation();
         break;
     case kTrayDesktopIconThisPC:
     case kTrayDesktopIconUserFiles:
@@ -204,18 +273,42 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         {
             if (t.cmd == command)
             {
-                DWORD val = 0;
-                bool visible = true;
-                if (TryReadDesktopIconRegistryValueAnyRoot(t.clsid, val))
-                    visible = (val == 0);
-                WriteDesktopIconRegistryValue(t.clsid, !visible);
-                ReloadItems();
+                const std::wstring clsid = ToUpperInvariant(t.clsid);
+                const bool visible = IsVisibleByDesktopIconSettings(clsid, {});
+                if (snowdesktop::shell_item_visibility::CommitDesktopIconVisibility(
+                        clsid, !visible, settingsIconVisibility_, WriteDesktopIconRegistryValue))
+                    ReloadItems();
                 break;
             }
         }
         break;
     }
     default:
+        if (command >= kTrayDesktopNamespaceFirst &&
+            command <= kTrayDesktopNamespaceLast)
+        {
+            const size_t commandIndex =
+                command - kTrayDesktopNamespaceFirst;
+            if (commandIndex <
+                dynamicNamespaceIndexes.size())
+            {
+                const auto& registration =
+                    namespaceRegistrations[
+                        dynamicNamespaceIndexes[
+                            commandIndex]];
+                DWORD value = 0;
+                const bool visible =
+                    !TryReadDesktopIconRegistryValueAnyRoot(
+                        registration.clsid, value) ||
+                    value == 0;
+                if (snowdesktop::shell_item_visibility::CommitDesktopIconVisibility(
+                        ToUpperInvariant(registration.clsid), !visible,
+                        settingsIconVisibility_, WriteDesktopIconRegistryValue))
+                {
+                    ReloadItems();
+                }
+            }
+        }
         break;
     }
 }

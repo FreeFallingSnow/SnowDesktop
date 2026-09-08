@@ -20,9 +20,9 @@ namespace snowdesktop
  * @brief Dedicated STA worker for interactive Shell path launches.
  *
  * Enqueue copies the launch request and, for Shell items, its absolute PIDL.
- * Shell activation runs off the desktop UI thread, so a slow shortcut
- * resolver, DDE server, or execution delegate cannot prevent pointer and
- * foreground messages from being dispatched.
+ * The default executor dispatches a supervised helper process per request.
+ * A slow Shell handler therefore cannot hold the desktop's loader lock or
+ * leave subsequent launches queued behind it. Custom executors run on the STA.
  */
 class ShellLaunchWorker
 {
@@ -46,9 +46,8 @@ public:
     /**
      * @brief Queue a Shell item activation using a private copy of its PIDL.
      *
-     * Shortcut activation uses IContextMenu on the worker STA so it follows
-     * the same Shell handler path as Explorer's Open command. The path remains
-     * available as a compatibility fallback.
+     * Shortcut activation uses IContextMenu inside the helper process. The
+     * path remains available as a compatibility fallback.
      */
     bool EnqueueShellItem(
         HWND owner,
@@ -64,12 +63,35 @@ public:
      */
     void Stop();
 
-    /** @brief Execute one launch synchronously on the calling worker STA. */
+    /** @brief Dispatch one isolated launch; true means the helper was started. */
     static bool Execute(
         HWND owner,
         const std::wstring& path,
         PCIDLIST_ABSOLUTE absolutePidl,
         int showCommand = SW_SHOWNORMAL);
+
+    /**
+     * @brief Dispatch a user-initiated Open and its shortcut elevation policy.
+     *
+     * Foreground eligibility is handed to a private helper STA. Shell/DDE
+     * completion is synchronous there and never waited for on the desktop.
+     */
+    static bool ExecuteInteractive(
+        HWND owner,
+        const std::wstring& path,
+        PCIDLIST_ABSOLUTE absolutePidl,
+        int showCommand = SW_SHOWNORMAL);
+
+    /** @brief Dispatch one explicit runas launch in an isolated helper. */
+    static bool ExecuteRunAsAdministrator(
+        HWND owner,
+        const std::wstring& path,
+        PCIDLIST_ABSOLUTE absolutePidl,
+        int showCommand = SW_SHOWNORMAL);
+
+    /** @brief Whether a shortcut or its target requests administrator launch. */
+    static bool ShortcutRequestsAdministrator(
+        const std::wstring& path);
 
 private:
     struct Task

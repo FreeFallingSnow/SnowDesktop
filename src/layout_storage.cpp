@@ -263,6 +263,13 @@ bool DecodeItems(const JsonValue& root, Document& document,
         if (gridParts != 0 && gridParts != 3)
             return Fail(error, path,
                 "must provide page, x, and y together");
+        if (const auto* large = object.Find("largeIcon"))
+        {
+            LargeIconConfig config;
+            if (!DecodeLargeIconConfig(*large, config))
+                return Fail(error, path + ".largeIcon", "invalid or unsupported large icon configuration");
+            record.largeIcon = std::move(config);
+        }
         document.items.push_back(std::move(record));
     }
     return true;

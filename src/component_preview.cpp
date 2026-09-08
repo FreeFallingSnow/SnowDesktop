@@ -469,6 +469,8 @@ bool OptionValue(const ApplySettings& settings, OptionSetting setting)
     case OptionSetting::ListMode: return settings.listMode;
     case OptionSetting::ScrollContainerMode:
         return settings.scrollContainerMode;
+    case OptionSetting::LargeFolderTitleless:
+        return settings.largeFolderTitleless;
     case OptionSetting::DateHeaders: return settings.dateHeaders;
     case OptionSetting::ShowFileCategories:
         return settings.showFileCategories;
@@ -484,6 +486,11 @@ bool IsOptionVisible(const Card& card, const Option& option)
     if (card.applySettings.kind == ApplyKind::Collection &&
         option.setting == OptionSetting::ListMode)
         return card.applySettings.scrollContainerMode;
+    if (card.applySettings.kind == ApplyKind::Collection &&
+        option.setting == OptionSetting::LargeFolderTitleless)
+        return !card.applySettings.scrollContainerMode &&
+            !(card.applySettings.columns <= 1 &&
+                card.applySettings.rows <= 1);
     return true;
 }
 
@@ -495,6 +502,8 @@ void SetOptionValue(ApplySettings& settings,
     case OptionSetting::ListMode: settings.listMode = value; break;
     case OptionSetting::ScrollContainerMode:
         settings.scrollContainerMode = value; break;
+    case OptionSetting::LargeFolderTitleless:
+        settings.largeFolderTitleless = value; break;
     case OptionSetting::DateHeaders: settings.dateHeaders = value; break;
     case OptionSetting::ShowFileCategories:
         settings.showFileCategories = value; break;
@@ -509,6 +518,7 @@ std::wstring SettingsCacheSuffix(
     return std::wstring(L":settings:") +
         (settings.listMode ? L"1" : L"0") +
         (settings.scrollContainerMode ? L"1" : L"0") +
+        (settings.largeFolderTitleless ? L"1" : L"0") +
         (settings.dateHeaders ? L"1" : L"0") +
         (settings.showFileCategories ? L"1" : L"0") +
         (settings.showSearchBox ? L"1" : L"0") +
@@ -612,7 +622,8 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
     const std::wstring identity = ModelIdentity(model);
     if (identity != modelIdentity_)
     {
-        currentCard_ = 0;
+        currentCard_ = std::min(
+            model.initialCard, model.cards.size() - 1);
         modelIdentity_ = identity;
     }
     model_ = model;
@@ -769,7 +780,8 @@ RECT Window::OptionBoundsForTesting(
 std::wstring Window::ModelIdentity(const Model& model) const
 {
     std::wstring result = model.title + L"|" +
-        std::to_wstring(model.cards.size());
+        std::to_wstring(model.cards.size()) + L"|initial:" +
+        std::to_wstring(model.initialCard);
     for (const Card& card : model.cards)
     {
         result += L"|" + card.cacheKey +
@@ -1524,8 +1536,13 @@ void Window::SetOption(OptionSetting setting, bool value)
     if (OptionValue(settings, setting) == value) return;
     SetOptionValue(settings, setting, value);
     if (settings.kind == ApplyKind::Collection &&
-        setting == OptionSetting::ScrollContainerMode && !value)
-        settings.listMode = false;
+        setting == OptionSetting::ScrollContainerMode)
+    {
+        if (value)
+            settings.largeFolderTitleless = false;
+        else
+            settings.listMode = false;
+    }
     RenderCurrent();
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
 }

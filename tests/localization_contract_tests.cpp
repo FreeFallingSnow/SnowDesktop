@@ -1127,6 +1127,9 @@ size_t TestWidgetManifests(
             : catalogs.begin();
         for (const auto& [language, catalog] : catalogs)
         {
+            Check(globalCatalogs.contains(language),
+                label + ": widget locale is not supported by "
+                    "the main application: " + language);
             for (const auto& [key, value] : baseline->second)
             {
                 (void)value;
@@ -1342,12 +1345,17 @@ int wmain(int argc, wchar_t* argv[])
         projectRoot / "src";
     const fs::path widgetDirectory =
         projectRoot / "widgets";
+    const fs::path officialCommunityWidgetDirectory =
+        projectRoot / "developer_assets" /
+        "workshop_widgets";
     Check(fs::is_directory(languageDirectory),
         "language directory must exist");
     Check(fs::is_directory(sourceDirectory),
         "source directory must exist");
     Check(fs::is_directory(widgetDirectory),
         "widget directory must exist");
+    Check(fs::is_directory(officialCommunityWidgetDirectory),
+        "official community widget directory must exist");
     if (failures != 0) return 1;
 
     const auto catalogs =
@@ -1358,27 +1366,39 @@ int wmain(int argc, wchar_t* argv[])
 
     const std::vector<fs::path> cppFiles =
         SortedFiles(sourceDirectory, IsCppSource);
-    const std::vector<fs::path> luaFiles =
-        SortedFiles(
-            widgetDirectory,
-            [](const fs::path& path) {
-                if (LowerAscii(path.extension().string()) != ".lua")
-                    return false;
-                const std::string normalized = LowerAscii(
-                    path.lexically_normal().generic_string());
-                return normalized.find(
-                    "/snowdesktop-lua-widget/library/") ==
-                    std::string::npos;
-            });
-    const std::vector<fs::path> manifestFiles =
-        SortedFiles(
-            widgetDirectory,
-            [](const fs::path& path) {
-                const std::string filename =
-                    LowerAscii(path.filename().string());
-                return filename == "widget.json" ||
-                    filename.ends_with(".widget.json");
-            });
+    const auto isWidgetLua = [](const fs::path& path) {
+        if (LowerAscii(path.extension().string()) != ".lua")
+            return false;
+        const std::string normalized = LowerAscii(
+            path.lexically_normal().generic_string());
+        return normalized.find(
+            "/snowdesktop-lua-widget/library/") ==
+            std::string::npos;
+    };
+    const auto isWidgetManifest = [](const fs::path& path) {
+        const std::string filename =
+            LowerAscii(path.filename().string());
+        return filename == "widget.json" ||
+            filename.ends_with(".widget.json");
+    };
+    std::vector<fs::path> luaFiles;
+    std::vector<fs::path> manifestFiles;
+    for (const fs::path& directory :
+         {widgetDirectory, officialCommunityWidgetDirectory})
+    {
+        std::vector<fs::path> discoveredLuaFiles =
+            SortedFiles(directory, isWidgetLua);
+        luaFiles.insert(luaFiles.end(),
+            discoveredLuaFiles.begin(),
+            discoveredLuaFiles.end());
+        std::vector<fs::path> discoveredManifestFiles =
+            SortedFiles(directory, isWidgetManifest);
+        manifestFiles.insert(manifestFiles.end(),
+            discoveredManifestFiles.begin(),
+            discoveredManifestFiles.end());
+    }
+    std::sort(luaFiles.begin(), luaFiles.end());
+    std::sort(manifestFiles.begin(), manifestFiles.end());
     Check(!cppFiles.empty(),
         "at least one C/C++ source file must exist");
     Check(!luaFiles.empty(),

@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../widget_preview_stage.h"
+#include "../panel_gradient_renderer.h"
 
 // Reusable Direct2D drawing primitives.
 
@@ -63,7 +64,7 @@ void DesktopApp::DrawD2DRoundedRectangle(
 void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, float radius,
     D2D1_COLOR_F fill, D2D1_COLOR_F border, bool selected, float strokeWidth,
     const PersonalizationSettings* effectSettings, bool registerBackdrop,
-    std::uintptr_t backdropOwnerKey)
+    std::uintptr_t backdropOwnerKey, float effectScale)
 {
     if (!ctx || IsRectEmptyRect(frame)) return;
     if (ctx != brushCacheContext_ || brushCache_.size() >= 512)
@@ -120,7 +121,7 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         }
     }
 
-    if (fill.a > 0.0f)
+    if (!snowdesktop::DrawPanelGradient(ctx, ToD2DRect(frame), radius, p.panelGradient) && fill.a > 0.0f)
     {
         if (auto* fillBrush = getBrush(fill))
             ctx->FillRoundedRectangle(rr, fillBrush);
@@ -143,14 +144,35 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         : border;
     if (stroke.a > 0.0f)
     {
-        const bool glassDrawn = p.glassEnabled && !selected &&
-            DrawGlassBorder(ctx, frame, radius, stroke, strokeWidth);
-        if (!glassDrawn)
-        {
-            if (auto* strokeBrush = getBrush(stroke))
-                ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
-        }
+        strokeWidth = std::max(kMinimumWidgetBorderWidth, strokeWidth);
+        if (auto* strokeBrush = getBrush(stroke))
+            ctx->DrawRoundedRectangle(rr, strokeBrush, strokeWidth, nullptr);
     }
+    if (!selected)
+        (void)DrawWidgetPanelEdgeHighlight(
+            ctx, frame, radius, fill, &p, effectScale);
+}
+
+bool DesktopApp::DrawWidgetPanelEdgeHighlight(
+    ID2D1DeviceContext* ctx, RECT frame, float radius,
+    D2D1_COLOR_F fill, const PersonalizationSettings* effectSettings,
+    float effectScale)
+{
+    if (!ctx || IsRectEmptyRect(frame)) return false;
+    const PersonalizationSettings p = effectSettings
+        ? *effectSettings
+        : CurrentPersonalization();
+    if (!p.widgetEdgeHighlightEnabled ||
+        p.widgetEdgeHighlightStrength <= 0.0005f)
+        return false;
+
+    // Edge light belongs to the panel material, not to the optional outline.
+    // Keep it stable when the border is transparent or recolored.
+    const float edgeWidth = std::clamp(p.widgetEdgeHighlightWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
+        std::max(0.0f, effectScale);
+    return DrawEdgeHighlight(ctx, frame, std::max(0.0f, radius), fill,
+        edgeWidth, p.widgetEdgeHighlightStrength);
 }
 
 void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,

@@ -75,6 +75,12 @@ public:
     RenameTargetKind Kind() const { return kind_; }
     std::size_t Index() const { return index_; }
     std::size_t OwnerIndex() const { return ownerIndex_; }
+    std::size_t SessionId() const { return sessionId_; }
+    bool MatchesSession(std::size_t sessionId) const
+    {
+        return IsActive() && sessionId != 0 &&
+            sessionId == sessionId_;
+    }
     bool IsActive() const
     {
         return kind_ != RenameTargetKind::None;
@@ -111,6 +117,9 @@ private:
         std::size_t index,
         std::size_t ownerIndex)
     {
+        ++sessionId_;
+        if (sessionId_ == 0)
+            ++sessionId_;
         kind_ = kind;
         index_ = index;
         ownerIndex_ = ownerIndex;
@@ -118,6 +127,8 @@ private:
     }
 
     RenameTargetKind kind_ = RenameTargetKind::None;
+    // Reset retires the target without reusing its queued focus-loss messages.
+    std::size_t sessionId_ = 0;
     std::size_t index_ = InvalidIndex;
     std::size_t ownerIndex_ = InvalidIndex;
     bool quickNavigationPresentation_ = false;

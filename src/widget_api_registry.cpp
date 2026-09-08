@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 201> kHostFeatures = {
+constexpr std::array<std::string_view, 207> kHostFeatures = {
     "animation.frame",
     "calendar.dateMath",
     "calendar.selection",
@@ -55,6 +55,7 @@ constexpr std::array<std::string_view, 201> kHostFeatures = {
     "data.system.storage.volumes",
     "data.system.storage.io",
     "draw.advanced",
+    "draw.imageFit.roundedClip",
     "draw.immediate",
     "draw.marqueeText",
     "interaction.accessibility.metadata",
@@ -73,6 +74,8 @@ constexpr std::array<std::string_view, 201> kHostFeatures = {
     "lifecycle.model",
     "l10n.basic",
     "l10n.format",
+    "layout.referenceAxes",
+    "layout.referencePixels",
     "layout.relativeUnits",
     "module.package",
     "resource.package",
@@ -82,6 +85,7 @@ constexpr std::array<std::string_view, 201> kHostFeatures = {
     "schedule.visibility",
     "settings.appReference",
     "settings.appSearch",
+    "settings.changeEvent",
     "settings.date",
     "settings.dependencies",
     "settings.description",
@@ -146,6 +150,8 @@ constexpr std::array<std::string_view, 201> kHostFeatures = {
     "time.basic",
     "time.calendar",
     "time.previewClock",
+    "ui.semanticMetrics.rowUnit",
+    "widget.backgroundLayer",
     "widget.context",
     "widget.dialog",
     "widget.panel",
@@ -332,13 +338,13 @@ kSystemDataTopicContracts = {{
         500, 2000, 2000, false, false, "SnowDataSubscribeOptions",
         "SnowMediaSessionsDataValue" },
     { "media.current", "data.media.current", "media.read",
-        500, 2000, 2000, false, false, "SnowDataSubscribeOptions",
+        100, 2000, 2000, false, false, "SnowDataSubscribeOptions",
         "SnowMediaCurrentDataValue" },
     { "media.timeline", "data.media.timeline", "media.read",
-        500, 2000, 2000, false, false, "SnowDataSubscribeOptions",
+        100, 2000, 2000, false, false, "SnowDataSubscribeOptions",
         "SnowMediaTimelineDataValue" },
     { "media.artwork", "data.media.artwork", "media.read",
-        500, 2000, 0, false, false, "SnowDataSubscribeOptions",
+        100, 2000, 0, false, false, "SnowDataSubscribeOptions",
         "SnowMediaArtworkDataValue" },
     { "audio.output.default", "data.audio.output.default",
         "audio.output.read", 1000, 5000, 2000, false, false,
@@ -964,6 +970,41 @@ int LuaDefineWidget(lua_State* state)
         return luaL_error(state,
             "widget.define: unsupported host feature 'view.tree'");
     }
+
+    lua_getfield(state, descriptor, "backgroundLayer");
+    if (!lua_isnil(state, -1))
+    {
+        if (!lua_istable(state, -1))
+            return luaL_error(state,
+                "widget.define: 'backgroundLayer' must be a table when present");
+        const int background = lua_absindex(state, -1);
+        lua_getfield(state, background, "render");
+        if (!lua_isfunction(state, -1))
+            return luaL_error(state,
+                "widget.define: 'backgroundLayer.render' must be a function");
+        lua_pop(state, 1);
+
+        for (const char* field : { "opacity", "blurRadius" })
+        {
+            lua_getfield(state, background, field);
+            if (!lua_isnil(state, -1))
+            {
+                if (lua_type(state, -1) != LUA_TNUMBER)
+                    return luaL_error(state,
+                        "widget.define: 'backgroundLayer.%s' must be a number when present",
+                        field);
+                const double value = lua_tonumber(state, -1);
+                const double maximum = std::strcmp(field, "opacity") == 0
+                    ? 1.0 : 48.0;
+                if (!std::isfinite(value) || value < 0.0 || value > maximum)
+                    return luaL_error(state,
+                        "widget.define: 'backgroundLayer.%s' must be finite and between 0 and %d",
+                        field, static_cast<int>(maximum));
+            }
+            lua_pop(state, 1);
+        }
+    }
+    lua_pop(state, 1);
     lua_pushlightuserdata(state, &kDefinedWidgetMarker);
     lua_pushboolean(state, 1);
     lua_rawset(state, descriptor);

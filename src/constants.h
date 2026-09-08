@@ -79,6 +79,8 @@ constexpr UINT kTrayDesktopIconControlPanel = 40010;
 constexpr UINT kTrayDesktopIconRecycleBin = 40011;
 constexpr UINT kTrayRestartCommand = 40013;
 constexpr UINT kTrayRestartExplorerCommand = 40014;
+constexpr UINT kTrayDesktopNamespaceFirst = 40100;
+constexpr UINT kTrayDesktopNamespaceLast = 40299;
 
 // ── 桌面特殊图标CLSID ─────────────────────────
 constexpr wchar_t kDesktopIconClsidThisPC[] = L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
@@ -90,6 +92,13 @@ constexpr wchar_t kDesktopIconClsidApplications[] = L"{4234D49B-0245-4DF3-B780-3
 
 // ── 右键菜单命令ID ────────────────────────────
 constexpr UINT kContextOpenCommand = 41001;
+constexpr UINT kContextLargeIconCreate = 41970;
+constexpr UINT kContextLargeIconSettings = 41971;
+constexpr UINT kContextLargeIconRestore = 41972;
+constexpr UINT kContextLargeIconBackgroundFirst = 41980; // 11 preset commands
+constexpr UINT kContextLargeIconEffectFirst = 41992; // Six effect commands; ends at 41997.
+constexpr UINT kContextLargeIconHoverOnly = 41998;
+constexpr UINT kContextLargeIconKeepWhenHidden = 41999;
 constexpr UINT kContextRenameCommand = 41002;
 constexpr UINT kContextCutCommand = 41003;
 constexpr UINT kContextCopyCommand = 41004;
@@ -125,6 +134,7 @@ constexpr UINT kContextAddLuaWidgetFilterAll = 41491;
 constexpr UINT kContextAddLuaWidgetFilterBuiltin = 41492;
 constexpr UINT kContextAddLuaWidgetFilterInstalled = 41493;
 constexpr UINT kContextAddLuaWidgetFilterDevelopment = 41494;
+constexpr UINT kContextOpenSteamWorkshop = 41495;
 constexpr UINT kContextAddLuaWidgetEmpty = 41496;
 constexpr UINT kContextAddLuaWidgetPageStatus = 41497;
 constexpr UINT kContextAddLuaWidgetPreviousPage = 41498;
@@ -213,6 +223,8 @@ constexpr UINT kContextLuaLogicalSlotMovePrevious = 41813;
 constexpr UINT kContextLuaLogicalSlotMoveNext = 41814;
 constexpr UINT kContextLuaLogicalSlotRemove = 41815;
 constexpr UINT kContextWidgetOpenComponentPanel = 41816;
+constexpr UINT kContextDockPinMoveToDock = 41817;
+constexpr UINT kContextDockCreateMapping = 41818;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -224,13 +236,18 @@ constexpr UINT kForegroundInteractionChangedMessage = WM_APP + 8;
 constexpr UINT kSteamWorkshopSubscriptionReadyMessage = WM_APP + 10;
 constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
 constexpr UINT kDemoIconDecodedMessage = WM_APP + 12;
+constexpr UINT kLargeIconAssetsReadyMessage = WM_APP + 97;
 constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
 constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
 constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
 constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
+constexpr UINT kUrlDropDownloadCompletedMessage = WM_APP + 18;
+constexpr UINT kSteamEntitlementChangedMessage = WM_APP + 19;
 constexpr UINT_PTR kShellChangeTimerId = 2;
-constexpr UINT kShellChangeDebounceMs = 500;
+// Briefly coalesce external notifications/retry after an active interaction.
+// Completed file operations and metadata reads bypass this delay entirely.
+constexpr UINT kShellChangeDebounceMs = 50;
 
 // ── 定时器ID与间隔 ────────────────────────────
 constexpr UINT_PTR kRecycleBinPollTimerId = 3;
@@ -295,6 +312,17 @@ constexpr UINT kSettingsWindowRetryIntervalMs = 250;
 constexpr unsigned kSettingsWindowMaximumAutomaticRetries = 3;
 constexpr UINT_PTR kQuickNavigationEverythingSearchTimerId = 23;
 constexpr UINT kQuickNavigationEverythingSearchDebounceMs = 120;
+// Registered SnowDesktop surfaces share one OLE handler, but OLE still emits
+// DragLeave/DragEnter while crossing their individual top-level HWNDs. Keep
+// the external session alive briefly so hover dwell survives that handoff.
+constexpr UINT_PTR kExternalOleDragLeaveGraceTimerId = 24;
+constexpr UINT kExternalOleDragLeaveGraceMs = 80;
+// Native item drags normally advance from captured WM_MOUSEMOVE messages.
+// Recover collection dwell from the physical pointer when another desktop
+// surface transition starves that captured stream before it reaches an opener.
+constexpr UINT_PTR kNativeDragHoverRecoveryTimerId = 25;
+constexpr UINT_PTR kLargeIconRetryTimerId = 26;
+constexpr UINT kNativeDragHoverRecoveryIntervalMs = 50;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;
 constexpr DWORD kQuickNavigationEverythingResultBatchSize = 200;

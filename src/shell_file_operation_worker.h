@@ -51,6 +51,44 @@ struct ShellFileOperationRequest
     std::vector<ShellShortcutOperationStep> shortcuts;
 };
 
+/** A rename owns only copied paths/PIDL bytes, never UI-thread COM objects. */
+struct ShellRenameRequest
+{
+    std::wstring sourcePath;
+    std::wstring newName;
+    std::vector<BYTE> desktopChildId;
+};
+
+struct ShellRenameResult
+{
+    HRESULT status = E_ABORT;
+    std::wstring sourcePath;
+    std::wstring path;
+    std::wstring displayName;
+    std::wstring typeName;
+    std::vector<BYTE> absoluteId;
+    std::vector<BYTE> desktopChildId;
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    int sysIconIndex = -1;
+    bool metadataComplete = false;
+    ULONGLONG elapsedMs = 0;
+};
+
+/** Value-only metadata capture on the worker STA; must not access UI state. */
+struct ShellReadRequest
+{
+    std::function<bool()> read;
+};
+
+/**
+ * @brief Build a recoverable delete request for path-backed Recycle Bin drops.
+ *
+ * The permanent-delete warning remains enabled for paths that the Shell cannot
+ * place in the Recycle Bin (for example, unsupported volumes).
+ */
+ShellFileOperationRequest CreateRecycleBinDeleteRequest(
+    std::vector<std::wstring> sources);
+
 /** @brief Path-backed Shell IDropTarget handoff executed on the worker STA. */
 struct ShellDropRequest
 {
@@ -65,6 +103,10 @@ struct ShellDropRequest
     POINTL screenPoint{};
     DWORD allowedEffects = DROPEFFECT_COPY | DROPEFFECT_MOVE |
         DROPEFFECT_LINK;
+    // Optional bounded materialization performed on this worker after the
+    // caller's StartOperation and before Shell/EndOperation. Returning true
+    // means the preflight fully handled the data object and Shell is skipped.
+    std::function<bool(IDataObject*)> dataObjectPreflight;
 };
 
 /**
@@ -78,6 +120,7 @@ class ShellFileOperationWorker
 {
 public:
     using Completion = std::function<void(bool)>;
+    using RenameCompletion = std::function<void(ShellRenameResult)>;
 
     ShellFileOperationWorker() = default;
     ~ShellFileOperationWorker();
@@ -87,18 +130,23 @@ public:
 
     bool Enqueue(ShellFileOperationRequest request, Completion completion);
     bool Enqueue(ShellDropRequest request, Completion completion);
+    bool Enqueue(ShellRenameRequest request, RenameCompletion completion);
+    bool Enqueue(ShellReadRequest request, Completion completion);
     void Stop();
 
     /** @brief Execute a request synchronously on the calling STA. */
     static bool Execute(const ShellFileOperationRequest& request);
     /** @brief Execute a path-backed IDropTarget handoff on the calling STA. */
     static bool Execute(ShellDropRequest request);
+    static ShellRenameResult Execute(const ShellRenameRequest& request);
 
 private:
     struct Task
     {
-        std::variant<ShellFileOperationRequest, ShellDropRequest> request;
+        std::variant<ShellFileOperationRequest, ShellDropRequest,
+            ShellRenameRequest, ShellReadRequest> request;
         Completion completion;
+        RenameCompletion renameCompletion;
     };
 
     void Run();

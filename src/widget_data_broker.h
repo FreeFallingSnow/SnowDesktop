@@ -154,6 +154,9 @@ public:
         std::string_view topic) const;
     std::optional<DataSubscriptionSnapshot> SubscriptionSnapshot(
         std::uint64_t subscriptionId) const;
+    // Gate host redraw notifications independently from the shared provider.
+    // Explicit snapshot reads continue to return the latest shared sample.
+    bool ConsumeUpdateDue(std::uint64_t subscriptionId, TimePoint now);
     std::vector<DataSubscriptionSnapshot> SubscriptionSnapshots(
         std::string_view topic) const;
     std::vector<DataBrokerAction> DrainActions();
@@ -166,6 +169,7 @@ private:
         std::string instanceId;
         std::string topic;
         DataSubscriptionOptions options;
+        std::optional<TimePoint> nextDelivery;
     };
 
     struct Provider

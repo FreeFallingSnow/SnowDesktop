@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +25,9 @@ std::string ReadText(const std::filesystem::path& path)
         return {};
     std::ostringstream content;
     content << input.rdbuf();
-    return content.str();
+    auto result = content.str();
+    result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
+    return result;
 }
 
 std::size_t Count(std::string_view text, std::string_view token)
@@ -162,7 +165,7 @@ void TestHostContract(const std::filesystem::path& repository)
             !shellHeader.empty() && !shell.empty(),
         "WinUI settings host contract sources are readable");
     Check(source.find("DesktopWindowXamlSource") == std::string::npos &&
-            source.find("runtime.Attach(impl_->window") !=
+            source.find("runtime.Attach(window") !=
                 std::string::npos &&
             runtime.find("muxh::DesktopWindowXamlSource xamlSource") !=
                 std::string::npos &&
@@ -439,7 +442,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string::npos &&
             source.find("shell->SetActualThemeChangedCallback(") !=
                 std::string::npos &&
-            source.find("state->owner->ApplyActualTheme(darkTheme)") !=
+            source.find("state->owner->ApplyActualTheme(isDark)") !=
                 std::string::npos &&
             source.find("darkTheme = isDark;") != std::string::npos &&
             source.find(
@@ -514,6 +517,15 @@ void TestHostContract(const std::filesystem::path& repository)
             staticSearchMapsTo(
                 "personalization.backgroundColor", "AppearanceTheme") &&
             staticSearchMapsTo(
+                "personalization.borderWidth", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.edgeHighlight", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.edgeHighlightWidth", "AppearanceTheme") &&
+            staticSearchMapsTo(
+                "personalization.edgeHighlightStrength",
+                "AppearanceTheme") &&
+            staticSearchMapsTo(
                 "personalization.cornerRadius", "AppearanceWidgets") &&
             staticSearchMapsTo(
                 "desktop.categoryLayout", "AppearanceWidgets") &&
@@ -528,8 +540,11 @@ void TestHostContract(const std::filesystem::path& repository)
             staticSearchMapsTo(
                 "desktop.categoryCounts", "DesktopCategories") &&
             staticSearchMapsTo(
-                "desktop.categoryRules", "DesktopCategories"),
-        "production search definitions route each Appearance leaf and keep category behavior with Categories");
+                "desktop.categoryRules", "DesktopCategories") &&
+            staticSearchMapsTo("pages.order", "DesktopPages") &&
+            staticSearchMapsTo("pages.grid", "DesktopPages") &&
+            staticSearchMapsTo("general.pageNavigation", "DesktopPages"),
+        "production search definitions route each settings leaf and keep page layout behavior with Pages");
     Check(staticSearchMapsTo(
               "dock.allowDesktopContentOverlap", "Dock") &&
             staticSearchMapsTo("dock.showOnlyWhenSummoned", "Dock") &&
@@ -547,8 +562,9 @@ void TestHostContract(const std::filesystem::path& repository)
             pageContextMapsTo(
               "AppearanceDesktopIcons", "app.settings.desktop_icons") &&
             pageContextMapsTo("AppearanceIconBeautification",
-              "app.settings.icon_beautify"),
-        "Appearance search results expose their localized leaf-page context");
+              "app.settings.icon_beautify") &&
+            pageContextMapsTo("DesktopPages", "settings.nav.pages"),
+        "settings search results expose their localized leaf-page context");
     Check(source.find("ImGui") == std::string::npos &&
             source.find("ID3D11") == std::string::npos &&
             source.find("IDXGISwapChain") == std::string::npos &&
@@ -596,7 +612,7 @@ void TestHostContract(const std::filesystem::path& repository)
         "coalesced preview and commit work does not rewrite localized XAML while a continuous control owns pointer or flyout interaction");
 
     const std::size_t snapshotQueueBegin = source.find(
-        "void QueueSnapshot(SettingsController::SnapshotPtr snapshot)");
+        "void QueueSnapshot(");
     const std::size_t snapshotQueueEnd = source.find(
         "void ApplySnapshotNow", snapshotQueueBegin);
     const std::string_view snapshotQueueFunction =
@@ -661,6 +677,22 @@ void TestHostContract(const std::filesystem::path& repository)
             commitFunction.find("ApplyWidgetSettingsSnapshot(") !=
                 std::string::npos,
         "widget routes load the instance and validate the exact presenter snapshot before activation");
+    const std::size_t widgetFlushFailure = commitFunction.find(
+        "if (!flushed.Succeeded())");
+    const std::size_t widgetLoadBegin = commitFunction.find(
+        "std::optional<widget_runtime::WidgetSettingsSnapshot>",
+        widgetFlushFailure);
+    const std::string_view widgetFlushFailureBlock =
+        widgetFlushFailure != std::string_view::npos &&
+                widgetLoadBegin != std::string_view::npos
+            ? commitFunction.substr(
+                  widgetFlushFailure,
+                  widgetLoadBegin - widgetFlushFailure)
+            : std::string_view{};
+    Check(!widgetFlushFailureBlock.empty() &&
+            widgetFlushFailureBlock.find("return false;") ==
+                std::string_view::npos,
+        "a failed component-settings flush reports the error without blocking back navigation");
     Check(source.find("controller->CloseSession()") != std::string::npos &&
             source.find("FlushPendingChanges()") != std::string::npos &&
             source.find("shell->FlushPendingWidgetSettings()") !=
@@ -670,6 +702,26 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("ShowWindow(window, SW_HIDE)") !=
                 std::string::npos,
         "closing flushes the controller and widget sessions before hiding");
+    const std::size_t widgetClosePendingFlushBegin = source.find(
+        "const auto widgetResult =");
+    const std::size_t controllerFlushBegin = source.find(
+        "const SettingsActionResult result = controller->FlushAll()",
+        widgetClosePendingFlushBegin);
+    const std::string_view widgetCloseFlushBlock =
+        widgetClosePendingFlushBegin != std::string::npos &&
+                controllerFlushBegin != std::string::npos
+            ? std::string_view(source).substr(
+                  widgetClosePendingFlushBegin,
+                  controllerFlushBegin - widgetClosePendingFlushBegin)
+            : std::string_view{};
+    Check(!widgetCloseFlushBlock.empty() &&
+            widgetCloseFlushBlock.find("return false;") ==
+                std::string_view::npos,
+        "a failed component-settings flush does not block closing the settings window");
+    Check(shell.find(
+              "if (routeChanged || generationChanged)\n            ClearInfo();") !=
+                std::string::npos,
+        "route and session changes clear page-scoped settings errors");
     const std::size_t nonClientLeave =
         source.find("case WM_NCMOUSELEAVE:");
     const std::size_t dwmNonClientLeave = source.find(
@@ -696,10 +748,151 @@ void TestHostContract(const std::filesystem::path& repository)
         "ShowWindow(window, SW_HIDE)");
     const std::size_t resetHiddenTitleBar = hideWindow.find(
         "ResetIntegratedTitleBar()");
+    const std::size_t queueViewRelease = hideWindow.find(
+        "QueueViewRelease()");
     Check(hideReusableWindow != std::string_view::npos &&
             resetHiddenTitleBar != std::string_view::npos &&
-            hideReusableWindow < resetHiddenTitleBar,
-        "a hidden reusable settings HWND discards its customized caption state");
+            queueViewRelease != std::string_view::npos &&
+            hideWindow.find("shell->Close()") == std::string_view::npos &&
+            hideWindow.find("runtime.Detach()") == std::string_view::npos &&
+            hideReusableWindow < resetHiddenTitleBar &&
+            resetHiddenTitleBar < queueViewRelease,
+        "WM_CLOSE hides the reusable HWND and defers route-resource teardown beyond its input stack");
+
+    const std::size_t releaseViewBegin = source.find(
+        "void ReleaseView() noexcept");
+    const std::size_t releaseViewEnd = source.find(
+        "void ReleaseSessionView() noexcept", releaseViewBegin);
+    const std::string_view releaseView =
+        releaseViewBegin != std::string::npos &&
+                releaseViewEnd != std::string::npos
+            ? std::string_view(source).substr(
+                releaseViewBegin, releaseViewEnd - releaseViewBegin)
+            : std::string_view{};
+    Check(releaseView.find("shell->Close()") != std::string_view::npos &&
+            releaseView.find("runtime.Detach()") !=
+                std::string_view::npos &&
+            releaseView.find("searchIndex = {}") !=
+                std::string_view::npos &&
+            releaseView.find("runtime.Shutdown()") ==
+                std::string_view::npos &&
+            releaseView.find("DestroyWindow(") ==
+                std::string_view::npos &&
+            releaseView.find("callbacks->alive.store(false)") ==
+                std::string_view::npos &&
+            releaseView.find("shell->Close()") <
+                releaseView.find("runtime.Detach()"),
+        "final view teardown releases the Shell, Island, and search index before process runtime shutdown");
+
+    const std::size_t releaseSessionBegin = source.find(
+        "void ReleaseSessionView() noexcept", releaseViewEnd);
+    const std::size_t releaseSessionEnd = source.find(
+        "void QueueViewRelease() noexcept", releaseSessionBegin);
+    const std::string_view releaseSession =
+        releaseSessionBegin != std::string::npos &&
+                releaseSessionEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  releaseSessionBegin,
+                  releaseSessionEnd - releaseSessionBegin)
+            : std::string_view{};
+    Check(releaseSession.find("shell->ReleaseSessionResources()") !=
+                std::string_view::npos &&
+            releaseSession.find("DisposePageBackends()") !=
+                std::string_view::npos &&
+            releaseSession.find("searchIndex = {}") !=
+                std::string_view::npos &&
+            releaseSession.find("QueueWorkingSetTrim()") !=
+                std::string_view::npos &&
+            releaseSession.find("shell->Close()") ==
+                std::string_view::npos &&
+            releaseSession.find("runtime.Detach()") ==
+                std::string_view::npos &&
+            releaseSession.find("SetSystemBackdropEnabled(false)") ==
+                std::string_view::npos,
+        "ordinary close releases route controls, backends, and search data before optionally scheduling conservative working-set reclamation while retaining the Shell, Island, and backdrop roots");
+
+    const std::size_t releasePresenters = releaseSession.find(
+        "shell->ReleaseSessionResources()");
+    const std::size_t releaseBackends = releaseSession.find(
+        "DisposePageBackends()");
+    const std::size_t releaseSearch = releaseSession.find(
+        "searchIndex = {}");
+    const std::size_t queueWorkingSetTrim = releaseSession.find(
+        "QueueWorkingSetTrim()");
+    Check(releasePresenters < releaseBackends &&
+            releaseBackends < releaseSearch &&
+            releaseSearch < queueWorkingSetTrim &&
+            source.find("SetProcessWorkingSetSize(GetCurrentProcess()") !=
+                std::string::npos &&
+            source.find("static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1)") !=
+                std::string::npos &&
+            source.find("kWorkingSetTrimMinimumGrowth") !=
+                std::string::npos &&
+            source.find("current - baseline >= kWorkingSetTrimMinimumGrowth") !=
+                std::string::npos &&
+            source.find("kWorkingSetTrimCooldownMs") !=
+                std::string::npos &&
+            source.find("kWorkingSetTrimDelayMs") !=
+                std::string::npos &&
+            source.find("HeapOptimizeResources") == std::string::npos &&
+            source.find("EmptyWorkingSet(") == std::string::npos,
+        "session close can request a delayed, growth-gated, rate-limited working-set trim only after synchronous session resources are released");
+
+    const std::size_t queueReleaseBegin = source.find(
+        "void QueueViewRelease() noexcept");
+    const std::size_t queueReleaseEnd = source.find(
+        "void QueueWorkingSetTrim() noexcept", queueReleaseBegin);
+    const std::string_view queueRelease =
+        queueReleaseBegin != std::string::npos &&
+                queueReleaseEnd != std::string::npos
+            ? std::string_view(source).substr(
+                queueReleaseBegin, queueReleaseEnd - queueReleaseBegin)
+            : std::string_view{};
+    Check(queueRelease.find("dispatcher.TryEnqueue") !=
+                std::string_view::npos &&
+            queueRelease.find("expectedEpoch") !=
+                std::string_view::npos &&
+            queueRelease.find("owner->Visible()") !=
+                std::string_view::npos &&
+            queueRelease.find("owner->ReleaseSessionView()") !=
+                std::string_view::npos,
+        "session teardown runs on a later owner DispatcherQueue turn and rejects stale or reopened sessions");
+
+    const std::size_t queueTrimBegin = source.find(
+        "void QueueWorkingSetTrim() noexcept", queueReleaseEnd);
+    const std::size_t queueTrimEnd = source.find(
+        "[[nodiscard]] bool CreateView()", queueTrimBegin);
+    const std::string_view queueTrim =
+        queueTrimBegin != std::string::npos &&
+                queueTrimEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  queueTrimBegin, queueTrimEnd - queueTrimBegin)
+            : std::string_view{};
+    Check(queueTrim.find("SetTimer(window,") !=
+                std::string_view::npos &&
+            queueTrim.find("nextWorkingSetTrimTimerId") !=
+                std::string_view::npos &&
+            queueTrim.find("kWorkingSetTrimDelayMs") !=
+                std::string_view::npos &&
+            queueTrim.find("activeWorkingSetTrimTimerId") !=
+                std::string_view::npos &&
+            queueTrim.find("timerId != activeWorkingSetTrimTimerId") !=
+                std::string_view::npos &&
+            queueTrim.find("KillTimer(window, timerId)") !=
+                std::string_view::npos &&
+            queueTrim.find("settingsSessionWorkingSetBaseline") !=
+                std::string_view::npos &&
+            queueTrim.find("HasSignificantWorkingSetGrowth") !=
+                std::string_view::npos &&
+            queueTrim.find("kWorkingSetTrimCooldownMs") !=
+                std::string_view::npos &&
+            queueTrim.find("expectedEpoch") != std::string_view::npos &&
+            queueTrim.find("Visible()") != std::string_view::npos &&
+            queueTrim.find("viewEpoch != expectedEpoch") !=
+                std::string_view::npos &&
+            queueTrim.find("TrimProcessWorkingSet()") !=
+                std::string_view::npos,
+        "working-set trimming waits on an idle window timer, rechecks growth and cooldown, and rejects stale or reopened sessions");
     const std::size_t reopenWindowBegin = source.find(
         "bool SettingsWindowHost::Open(");
     const std::size_t reopenWindowEnd = source.find(
@@ -712,20 +905,66 @@ void TestHostContract(const std::filesystem::path& repository)
             : std::string_view{};
     const std::size_t missingTitleBarGuard = reopenWindow.find(
         "!impl_->appWindowTitleBar");
+    const std::size_t recreateView = reopenWindow.find(
+        "impl_->CreateView()");
     const std::size_t reconfigureTitleBar = reopenWindow.find(
         "impl_->ConfigureIntegratedTitleBar()");
     const std::size_t refreshTitleBarInsets = reopenWindow.find(
         "impl_->QueueIntegratedTitleBarInsetsUpdate()");
     const std::size_t showReopenedWindow = reopenWindow.find(
         "ShowWindow(impl_->window");
-    Check(missingTitleBarGuard != std::string_view::npos &&
+    const std::size_t raiseReopenedWindow = reopenWindow.find(
+        "ActivateSettingsWindow(impl_->window)");
+    const std::size_t validateShownWindow = reopenWindow.find(
+        "IsWindowVisible(impl_->window)");
+    const std::size_t sampleWorkingSet = reopenWindow.find(
+        "QueryCurrentProcessWorkingSet()");
+    Check(recreateView != std::string_view::npos &&
+            reopenWindow.find("impl_->CancelWorkingSetTrim()") !=
+                std::string_view::npos &&
+            sampleWorkingSet != std::string_view::npos &&
+            missingTitleBarGuard != std::string_view::npos &&
             reconfigureTitleBar != std::string_view::npos &&
             refreshTitleBarInsets != std::string_view::npos &&
             showReopenedWindow != std::string_view::npos &&
+            raiseReopenedWindow != std::string_view::npos &&
+            validateShownWindow != std::string_view::npos &&
+            recreateView < sampleWorkingSet &&
+            recreateView < missingTitleBarGuard &&
             missingTitleBarGuard < reconfigureTitleBar &&
             reconfigureTitleBar < refreshTitleBarInsets &&
-            refreshTitleBarInsets < showReopenedWindow,
-        "reopening rebuilds caption customization while the settings HWND remains hidden");
+            refreshTitleBarInsets < showReopenedWindow &&
+            showReopenedWindow < raiseReopenedWindow &&
+            raiseReopenedWindow < validateShownWindow,
+        "reopening cancels stale working-set work, records its closed baseline, reuses the retained XAML root, rebuilds caption customization, raises the requested app window, and verifies that it became visible");
+    const std::size_t activateSettingsBegin = source.find(
+        "bool ActivateSettingsWindow(HWND window) noexcept");
+    const std::size_t activateSettingsEnd = source.find(
+        "bool QueryHighContrastEnabled", activateSettingsBegin);
+    const std::string_view activateSettings =
+        activateSettingsBegin != std::string::npos &&
+                activateSettingsEnd != std::string::npos
+            ? std::string_view(source).substr(
+                  activateSettingsBegin,
+                  activateSettingsEnd - activateSettingsBegin)
+            : std::string_view{};
+    Check(activateSettings.find("GetForegroundWindow() == window") !=
+                std::string_view::npos &&
+            activateSettings.find("AttachThreadInput(") !=
+                std::string_view::npos &&
+            activateSettings.find("TRUE") != std::string_view::npos &&
+            activateSettings.find("FALSE") != std::string_view::npos &&
+            activateSettings.find("SetWindowPos(window, HWND_TOP") !=
+                std::string_view::npos &&
+            activateSettings.find("SetForegroundWindow(window)") !=
+                std::string_view::npos,
+        "settings activation retries with a short-lived foreground input-queue attachment and always detaches after raising only its own window");
+    Check(source.find("case WM_TIMER:") != std::string::npos &&
+            source.find("static_cast<UINT_PTR>(wParam)") !=
+                std::string::npos &&
+            source.find("self->HandleWorkingSetTrimTimer(") !=
+                std::string::npos,
+        "the settings HWND owns and dispatches the delayed working-set timer");
     Check(source.find("QueueIntegratedTitleBarUpdate(true)") ==
                 std::string::npos &&
             source.find("bool force = false") == std::string::npos &&
@@ -760,21 +999,25 @@ void TestHostContract(const std::filesystem::path& repository)
             shutdown.find("impl_->FlushPendingChanges()") !=
                 std::string::npos &&
             source.find("shell->ReleaseSessionResources();") !=
+                std::string::npos &&
+            shutdown.find("impl_->ReleaseView();") !=
                 std::string::npos,
-        "ordinary shutdown flushes pending settings while close releases only route-specific session resources");
+        "ordinary shutdown flushes pending settings and reuses the same view-release boundary before process runtime shutdown");
     Check(source.find("viewEpoch") != std::string::npos &&
             source.find("expectedEpoch") != std::string::npos &&
             source.find("DispatcherQueue") != std::string::npos &&
             source.find("latestSnapshot") != std::string::npos,
         "snapshot and view-scoped async work are coalesced on the DispatcherQueue with their respective stale-result gates");
 
-    Check(runtime.find("GetAncestor(target, GA_ROOTOWNER)") !=
+    Check(runtime.find("IsWindowVisible(impl_->parentWindow)") !=
+                std::string::npos &&
+            runtime.find("GetAncestor(target, GA_ROOTOWNER)") !=
                 std::string::npos &&
             runtime.find("!IsChild(impl_->parentWindow, target)") !=
                 std::string::npos &&
             runtime.find("return ::ContentPreTranslateMessage(message)") !=
                 std::string::npos,
-        "WinUI message preprocessing is restricted to the settings HWND tree");
+        "WinUI message preprocessing is restricted to the visible settings HWND tree");
 
     const std::size_t attachBegin = runtime.find(
         "bool WinUiRuntime::Attach(");
@@ -820,6 +1063,7 @@ void TestHostContract(const std::filesystem::path& repository)
                 std::string_view::npos &&
             detachFunction.find("xamlSource.SystemBackdrop(") <
                 detachFunction.find("xamlSource.Content(nullptr)") &&
+            Count(detachFunction, "catch (...)") >= 4 &&
             source.find("DWMWA_SYSTEMBACKDROP_TYPE") !=
                 std::string::npos &&
             source.find("DWMSBT_MAINWINDOW") != std::string::npos &&
@@ -827,6 +1071,32 @@ void TestHostContract(const std::filesystem::path& repository)
             source.find("DwmExtendFrameIntoClientArea") ==
                 std::string::npos,
         "Detach clears the Island material while the integrated top-level frame uses the matching DWM system backdrop with a contrast fallback");
+
+    const std::size_t navigationIconsBegin = shell.find(
+        "void SettingsShell::ApplyNavigationIcons()");
+    const std::size_t navigationIconsEnd = shell.find(
+        "void SettingsShell::RenderPageHeaderIcon()", navigationIconsBegin);
+    const std::string_view navigationIcons =
+        navigationIconsBegin != std::string::npos &&
+                navigationIconsEnd != std::string::npos
+            ? std::string_view(shell).substr(
+                  navigationIconsBegin,
+                  navigationIconsEnd - navigationIconsBegin)
+            : std::string_view{};
+    Check(shellHeader.find("navigationIconsHighContrast_") !=
+                std::string::npos &&
+            navigationIcons.find("navigationIconsHighContrast_ &&") !=
+                std::string_view::npos &&
+            navigationIcons.find(
+                "*navigationIconsHighContrast_ == highContrast") !=
+                std::string_view::npos &&
+            navigationIcons.find(
+                "navigationIconsHighContrast_ = highContrast") !=
+                std::string_view::npos &&
+            navigationIcons.find(
+                "navigationIconsHighContrast_ = highContrast") >
+                navigationIcons.find("for (const auto& descriptor"),
+        "navigation SVG sources are rebuilt only when high-contrast mode changes, not on every reopen or localization refresh");
     const std::size_t shutdownBegin = source.find(
         "void SettingsWindowHost::Shutdown() noexcept");
     const std::size_t openBegin = source.find(
@@ -836,27 +1106,27 @@ void TestHostContract(const std::filesystem::path& repository)
         ? std::string_view(source).substr(
             shutdownBegin, openBegin - shutdownBegin)
         : std::string_view{};
-    Check(shutdownFunction.find("ResetIntegratedTitleBar()") !=
-                std::string_view::npos &&
-            shutdownFunction.find("SetActualThemeChangedCallback({})") !=
+    Check(shutdownFunction.find("SetActualThemeChangedCallback({})") !=
                 std::string_view::npos &&
             shutdownFunction.find("callbacks->alive.store(false)") !=
                 std::string_view::npos &&
-            shutdownFunction.find("shell->Close()") !=
-                std::string_view::npos &&
-            shutdownFunction.find("runtime.Detach()") !=
+            shutdownFunction.find("impl_->ReleaseView();") !=
                 std::string_view::npos &&
             shutdownFunction.find("DestroyWindow(") !=
                 std::string_view::npos &&
+            shutdownFunction.find("impl_->runtime.Shutdown()") !=
+                std::string_view::npos &&
             shutdownFunction.find("SetActualThemeChangedCallback({})") <
                 shutdownFunction.find("callbacks->alive.store(false)") &&
-            shutdownFunction.find("shell->Close()") <
-                shutdownFunction.find("runtime.Detach()") &&
-            shutdownFunction.find("runtime.Detach()") <
-                shutdownFunction.find("ResetIntegratedTitleBar()") &&
-            shutdownFunction.find("ResetIntegratedTitleBar()") <
-                shutdownFunction.find("DestroyWindow("),
-        "the Shell theme callback closes before the Island detaches and AppWindow title-bar state resets ahead of HWND destruction");
+            shutdownFunction.find("callbacks->alive.store(false)") <
+                shutdownFunction.find("impl_->ReleaseView();") &&
+            shutdownFunction.find("impl_->ReleaseView();") <
+                shutdownFunction.find("DestroyWindow(") &&
+            shutdownFunction.find("DestroyWindow(") <
+                shutdownFunction.find("impl_->runtime.Shutdown()") &&
+            releaseView.find("ResetIntegratedTitleBar()") !=
+                std::string_view::npos,
+        "final shutdown invalidates callbacks, releases the view, destroys the HWND, and only then stops the process WinUI runtime");
     Check(source.find("QueryHighContrastEnabled(highContrast)") !=
                 std::string::npos &&
             source.find("SupportsMicaBackdrop()") != std::string::npos &&

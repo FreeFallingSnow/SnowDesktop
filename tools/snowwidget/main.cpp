@@ -8,6 +8,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cwchar>
 #include <cwctype>
@@ -17,6 +18,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -32,16 +34,26 @@ void PrintUsage()
         << "  snowwidget view-contract\n"
         << "  snowwidget inspect <package-directory>\n"
         << "  snowwidget lint <package-directory>\n"
+        << "  snowwidget quality <package-directory>\n"
         << "  snowwidget test <package-directory>\n"
         << "  snowwidget permissions <package-directory>\n"
         << "  snowwidget preview <package-directory> <output.png>"
            " [--columns N] [--rows N] [--dpi N]"
+           " [--canvas-size N] [--padding N]"
            " [--locale CODE]"
            " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
            " [--theme dark|light]"
            " [--data-state ready|empty|loading|error|stale|permission-denied]"
            " [--background image-file]"
+           " [--content-only]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
+        << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|all> <output-directory>"
+           " [--dpi N] [--locale CODE]"
+           " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
+           " [--background image-file]"
+           " [--transparent] [--content-only]"
+           " [--canvas-width N] [--canvas-height N] [--padding N]"
+           " [--host SnowDesktop.exe]\n"
         << "  snowwidget validate <package-directory>\n"
         << "  snowwidget pack <package-directory> <output.snowwidget>\n"
         << "  snowwidget publish-local <package-directory> <catalog-directory>\n";
@@ -115,6 +127,45 @@ std::filesystem::path CurrentExecutablePath()
         if (buffer.size() >= 32768) return {};
         buffer.resize(std::min<std::size_t>(buffer.size() * 2, 32768));
     }
+}
+
+std::optional<std::filesystem::path> ToolOwnedDirectory(
+    std::wstring_view name)
+{
+    const auto executable = CurrentExecutablePath();
+    if (executable.empty()) return std::nullopt;
+    const auto directory = executable.parent_path() / L"data" /
+        L"snowwidget" / std::wstring(name);
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) return std::nullopt;
+    const DWORD attributes = GetFileAttributesW(directory.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES ||
+        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        return std::nullopt;
+    return directory;
+}
+
+std::optional<std::filesystem::path> CreateOwnedTransactionDirectory(
+    std::wstring_view area, std::wstring_view prefix)
+{
+    const auto root = ToolOwnedDirectory(area);
+    if (!root) return std::nullopt;
+    for (unsigned int attempt = 0; attempt < 100; ++attempt)
+    {
+        const auto candidate = *root /
+            (std::wstring(prefix) + L"-" +
+                std::to_wstring(GetCurrentProcessId()) + L"-" +
+                std::to_wstring(GetTickCount64()) + L"-" +
+                std::to_wstring(attempt));
+        std::error_code error;
+        if (std::filesystem::create_directory(candidate, error))
+            return candidate;
+        if (error && error != std::errc::file_exists)
+            return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 std::optional<std::filesystem::path> FindPreviewHost(
@@ -206,12 +257,27 @@ bool ParseInteger(std::wstring_view text, int minimum,
 
 std::optional<std::filesystem::path> CreateResultPath()
 {
-    wchar_t temporaryDirectory[MAX_PATH]{};
-    if (!GetTempPathW(MAX_PATH, temporaryDirectory)) return std::nullopt;
-    wchar_t temporaryFile[MAX_PATH]{};
-    if (!GetTempFileNameW(temporaryDirectory, L"swp", 0, temporaryFile))
-        return std::nullopt;
-    return std::filesystem::path(temporaryFile);
+    const auto directory = ToolOwnedDirectory(L"preview-results");
+    if (!directory) return std::nullopt;
+    for (unsigned int attempt = 0; attempt < 100; ++attempt)
+    {
+        const auto candidate = *directory /
+            (L"result-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                std::to_wstring(GetTickCount64()) + L"-" +
+                std::to_wstring(attempt) + L".json");
+        HANDLE file = CreateFileW(candidate.c_str(), GENERIC_WRITE, 0,
+            nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(file);
+            return candidate;
+        }
+        const DWORD createError = GetLastError();
+        if (createError != ERROR_FILE_EXISTS &&
+            createError != ERROR_ALREADY_EXISTS)
+            return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 std::string ReadUtf8File(const std::filesystem::path& path)
@@ -230,6 +296,8 @@ int RunPreviewHost(const std::filesystem::path& host,
     std::wstring_view appearance,
     std::wstring_view dataState,
     const std::filesystem::path& backgroundImage,
+    int canvasSize, int padding,
+    bool contentOnly,
     const std::vector<std::wstring>& storage)
 {
     const auto resultPath = CreateResultPath();
@@ -256,6 +324,11 @@ int RunPreviewHost(const std::filesystem::path& host,
     append(appearance);
     append(dataState);
     append(backgroundImage.wstring());
+    if (canvasSize > 0)
+        append(L"@preview.canvasSize=" + std::to_wstring(canvasSize));
+    if (padding > 0)
+        append(L"@preview.padding=" + std::to_wstring(padding));
+    if (contentOnly) append(L"@preview.contentOnly=1");
     for (const auto& pair : storage) append(pair);
 
     STARTUPINFOW startup{};
@@ -298,6 +371,81 @@ int RunPreviewHost(const std::filesystem::path& host,
     return wait == WAIT_OBJECT_0 && exitCode == 0 && !json.empty()
         ? 0 : 1;
 }
+
+int RunNativePreviewHost(const std::filesystem::path& host,
+    std::wstring_view component,
+    const std::filesystem::path& outputDirectory,
+    int dpi, std::wstring_view locale, std::wstring_view appearance,
+    const std::filesystem::path& backgroundImage,
+    int canvasWidth, int canvasHeight, int padding, bool transparent,
+    bool contentOnly)
+{
+    const auto resultPath = CreateResultPath();
+    if (!resultPath)
+    {
+        std::cerr << "{\"ok\":false,\"stage\":\"host.result\","
+            "\"error\":\"cannot create the native preview result file\"}\n";
+        return 1;
+    }
+    std::wstring commandLine = QuoteWindowsArgument(host.wstring());
+    const auto append = [&](std::wstring_view value) {
+        commandLine.push_back(L' ');
+        commandLine += QuoteWindowsArgument(value);
+    };
+    append(L"--native-component-preview");
+    append(component);
+    append(outputDirectory.wstring());
+    append(std::to_wstring(dpi));
+    append(locale);
+    append(appearance);
+    append(backgroundImage.wstring());
+    append(std::to_wstring(canvasWidth));
+    append(std::to_wstring(canvasHeight));
+    append(std::to_wstring(padding));
+    append(transparent ? L"1" : L"0");
+    append(contentOnly ? L"1" : L"0");
+    append(resultPath->wstring());
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    std::vector<wchar_t> mutableCommand(
+        commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+    const BOOL launched = CreateProcessW(host.c_str(),
+        mutableCommand.data(), nullptr, nullptr, FALSE,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+    if (!launched)
+    {
+        std::error_code removeError;
+        std::filesystem::remove(*resultPath, removeError);
+        std::cerr << "{\"ok\":false,\"stage\":\"host.launch\","
+            "\"error\":\"cannot launch SnowDesktop native preview host "
+            "(Windows error " << GetLastError() << ")\"}\n";
+        return 1;
+    }
+    CloseHandle(process.hThread);
+    const DWORD wait = WaitForSingleObject(process.hProcess, 120000);
+    if (wait == WAIT_TIMEOUT)
+    {
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(process.hProcess, 5000);
+    }
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hProcess);
+    const std::string json = ReadUtf8File(*resultPath);
+    std::error_code removeError;
+    std::filesystem::remove(*resultPath, removeError);
+    if (!json.empty())
+        std::cout << json << (json.back() == '\n' ? "" : "\n");
+    else
+        std::cerr << "{\"ok\":false,\"stage\":\"host.result\","
+            "\"error\":\"native preview host exited without a result\","
+            "\"exitCode\":" << exitCode << "}\n";
+    return wait == WAIT_OBJECT_0 && exitCode == 0 && !json.empty()
+        ? 0 : 1;
+}
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -315,13 +463,21 @@ int wmain(int argc, wchar_t** argv)
             << JsonEscape(SNOWDESKTOP_VERSION)
             << ",\"format\":\"snowdesktop-widget\","
                "\"authoringSkill\":{\"id\":\"snowdesktop-lua-widget\","
-               "\"revision\":2},\"recommendedSchemaVersion\":2,"
+               "\"revision\":"
+            << SNOWDESKTOP_WIDGET_SKILL_REVISION
+            << "},\"recommendedSchemaVersion\":2,"
                "\"recommendedApiVersion\":2,"
                "\"executableSchemaVersions\":[2],"
-               "\"executableApiVersions\":[2],\"commands\":["
+               "\"executableApiVersions\":[2],"
+               "\"preview\":{\"contentOnly\":true},"
+               "\"nativePreview\":{\"resultVersion\":2,"
+               "\"contentOnly\":true,"
+               "\"settings\":[\"listMode\",\"scrollContainerMode\","
+               "\"dateHeaders\",\"showFileCategories\","
+               "\"showSearchBox\"]},\"commands\":["
                "\"api-contract\",\"system-contract\",\"view-contract\",\"inspect\","
-               "\"lint\",\"test\",\"preview\",\"permissions\","
-               "\"validate\",\"pack\",\"publish-local\"]}"
+               "\"lint\",\"quality\",\"test\",\"preview\",\"permissions\","
+               "\"preview-native\",\"validate\",\"pack\",\"publish-local\"]}"
             << '\n';
         return 0;
     }
@@ -354,10 +510,141 @@ int wmain(int argc, wchar_t** argv)
     const std::wstring command = argv[1];
     const std::filesystem::path source = argv[2];
     snowdesktop::widget::PackagePaths paths;
+    if (const auto staging = ToolOwnedDirectory(L"package-staging"))
+        paths.staging = *staging;
     snowdesktop::widget::WidgetPackageManager manager(paths);
     snowdesktop::widget::ValidationReport report;
     snowdesktop::widget::PackageArtifact artifact;
     std::string error;
+
+    if (command == L"preview-native")
+    {
+        const std::wstring_view component = argc >= 3
+            ? std::wstring_view(argv[2]) : std::wstring_view{};
+        if (argc < 4 ||
+            (component != L"collection" &&
+             component != L"collection-group" &&
+             component != L"file-group" &&
+             component != L"file-categories" &&
+             component != L"folder-mapping" && component != L"all"))
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"preview-native requires a supported component or all and an output directory\"}\n";
+            return 2;
+        }
+        const std::filesystem::path outputDirectory = argv[3];
+        int dpi = 144;
+        int canvasWidth = 1280;
+        int canvasHeight = 720;
+        int padding = 72;
+        std::wstring locale = L"en-US";
+        std::wstring appearance = L"dark";
+        std::filesystem::path backgroundImage;
+        std::filesystem::path explicitHost;
+        bool transparent = false;
+        bool contentOnly = false;
+        for (int index = 4; index < argc; ++index)
+        {
+            const std::wstring_view option(argv[index]);
+            if ((option == L"--dpi" || option == L"--locale" ||
+                    option == L"--appearance" ||
+                    option == L"--background" ||
+                    option == L"--canvas-width" ||
+                    option == L"--canvas-height" ||
+                    option == L"--padding" || option == L"--host") &&
+                index + 1 >= argc)
+            {
+                std::cerr << "{\"ok\":false,\"error\":\"preview-native option is missing its value\"}\n";
+                return 2;
+            }
+            if (option == L"--dpi")
+            {
+                if (!ParseInteger(argv[++index], 96, 480, dpi))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"DPI must be an integer from 96 to 480\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--locale")
+            {
+                locale = argv[++index];
+                if (locale.empty() || locale.size() > 35)
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"locale must contain 1 to 35 characters\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--appearance")
+            {
+                appearance = argv[++index];
+                if (appearance != L"dark" && appearance != L"light" &&
+                    appearance != L"glass-dark" &&
+                    appearance != L"glass-light" &&
+                    appearance != L"acrylic-dark" &&
+                    appearance != L"acrylic-light")
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"appearance must be dark, light, glass-dark, glass-light, acrylic-dark, or acrylic-light\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--background")
+                backgroundImage = argv[++index];
+            else if (option == L"--transparent")
+                transparent = true;
+            else if (option == L"--content-only")
+                contentOnly = true;
+            else if (option == L"--canvas-width")
+            {
+                if (!ParseInteger(argv[++index], 320, 8192, canvasWidth))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"canvas width must be an integer from 320 to 8192\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--canvas-height")
+            {
+                if (!ParseInteger(argv[++index], 240, 8192, canvasHeight))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"canvas height must be an integer from 240 to 8192\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--padding")
+            {
+                if (!ParseInteger(argv[++index], 0, 4096, padding))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"padding must be an integer from 0 to 4096\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--host")
+                explicitHost = argv[++index];
+            else
+            {
+                std::cerr << "{\"ok\":false,\"error\":\"unknown preview-native option\"}\n";
+                return 2;
+            }
+        }
+        if (padding * 2 >= canvasWidth || padding * 2 >= canvasHeight)
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"padding must leave a positive canvas content area\"}\n";
+            return 2;
+        }
+        if ((transparent || contentOnly) && !backgroundImage.empty())
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"--transparent and --content-only cannot be combined with --background\"}\n";
+            return 2;
+        }
+        const auto host = FindPreviewHost(explicitHost);
+        if (!host)
+        {
+            std::cerr << "{\"ok\":false,\"stage\":\"host.locate\","
+                "\"error\":\"SnowDesktop.exe was not found; pass --host or set SNOWDESKTOP_HOST\"}\n";
+            return 1;
+        }
+        return RunNativePreviewHost(*host, argv[2], outputDirectory,
+            dpi, locale, appearance, backgroundImage,
+            canvasWidth, canvasHeight, padding, transparent, contentOnly);
+    }
 
     if (command == L"inspect")
     {
@@ -384,6 +671,25 @@ int wmain(int argc, wchar_t** argv)
         WriteStringArray(std::cout, manifest.permissions);
         std::cout << ",\"networkDomains\":";
         WriteStringArray(std::cout, manifest.networkDomains);
+        std::vector<std::pair<std::string,
+            const snowdesktop::widget::LocalizedMetadata*>> locales;
+        locales.reserve(manifest.locales.size());
+        for (const auto& [locale, localized] : manifest.locales)
+            locales.emplace_back(locale, &localized);
+        std::sort(locales.begin(), locales.end(),
+            [](const auto& left, const auto& right)
+            { return left.first < right.first; });
+        std::cout << ",\"locales\":{";
+        for (std::size_t index = 0; index < locales.size(); ++index)
+        {
+            if (index) std::cout << ',';
+            std::cout << JsonEscape(locales[index].first)
+                << ":{\"title\":"
+                << JsonEscape(locales[index].second->title)
+                << ",\"description\":"
+                << JsonEscape(locales[index].second->description) << '}';
+        }
+        std::cout << '}';
         std::cout << "},\"migration\":{\"required\":"
             << (manifest.schemaVersion < 2 || manifest.apiVersion < 2
                 ? "true" : "false")
@@ -420,6 +726,29 @@ int wmain(int argc, wchar_t** argv)
             LintWidgetDirectory(source, manifest);
         std::cout << lint.ToJson() << '\n';
         return lint.Ok() ? 0 : 1;
+    }
+    if (command == L"quality")
+    {
+        if (argc != 3 || source.extension() == L".snowwidget")
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"quality requires an unpacked component directory\"}\n";
+            return 2;
+        }
+        snowdesktop::widget::PackageManifest manifest;
+        report = manager.ValidateDirectory(source, &manifest);
+        if (!report.Ok())
+        {
+            std::cout << "{\"ok\":false,\"validation\":"
+                << report.ToJson() << ",\"lint\":null}\n";
+            return 1;
+        }
+        const auto lint = snowdesktop::widget_authoring::
+            LintWidgetDirectory(source, manifest);
+        const bool qualityOk = lint.Ok() && lint.WarningCount() == 0;
+        std::cout << "{\"ok\":" << (qualityOk ? "true" : "false")
+            << ",\"validation\":" << report.ToJson()
+            << ",\"lint\":" << lint.ToJson() << "}\n";
+        return qualityOk ? 0 : 1;
     }
     if (command == L"test")
     {
@@ -488,6 +817,8 @@ int wmain(int argc, wchar_t** argv)
         int columns = manifest.defaultColumns;
         int rows = manifest.defaultRows;
         int dpi = 96;
+        int canvasSize = 0;
+        int padding = 0;
         std::wstring locale = L"en-US";
         std::wstring theme = L"dark";
         std::wstring appearance = L"dark";
@@ -495,13 +826,15 @@ int wmain(int argc, wchar_t** argv)
         std::filesystem::path backgroundImage;
         bool themeSpecified = false;
         bool appearanceSpecified = false;
+        bool contentOnly = false;
         std::filesystem::path explicitHost;
         std::vector<std::wstring> storage;
         for (int index = 4; index < argc; ++index)
         {
             const std::wstring_view option(argv[index]);
             if ((option == L"--columns" || option == L"--rows" ||
-                    option == L"--dpi" || option == L"--storage" ||
+                    option == L"--dpi" || option == L"--canvas-size" ||
+                    option == L"--padding" || option == L"--storage" ||
                     option == L"--host" || option == L"--locale" ||
                     option == L"--theme" || option == L"--appearance" ||
                     option == L"--data-state" ||
@@ -532,6 +865,22 @@ int wmain(int argc, wchar_t** argv)
                 if (!ParseInteger(argv[++index], 96, 480, dpi))
                 {
                     std::cerr << "{\"ok\":false,\"error\":\"DPI must be an integer from 96 to 480\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--canvas-size")
+            {
+                if (!ParseInteger(argv[++index], 64, 8192, canvasSize))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"canvas size must be an integer from 64 to 8192\"}\n";
+                    return 2;
+                }
+            }
+            else if (option == L"--padding")
+            {
+                if (!ParseInteger(argv[++index], 0, 4096, padding))
+                {
+                    std::cerr << "{\"ok\":false,\"error\":\"padding must be an integer from 0 to 4096\"}\n";
                     return 2;
                 }
             }
@@ -608,6 +957,8 @@ int wmain(int argc, wchar_t** argv)
                 explicitHost = argv[++index];
             else if (option == L"--background")
                 backgroundImage = argv[++index];
+            else if (option == L"--content-only")
+                contentOnly = true;
             else
             {
                 std::cerr << "{\"ok\":false,\"error\":\"unknown preview option\"}\n";
@@ -621,6 +972,21 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << "{\"ok\":false,\"stage\":\"request.size\",\"error\":\"preview size is outside the component manifest bounds\"}\n";
             return 2;
         }
+        if (padding > 0 && canvasSize == 0)
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"padding requires canvas-size\"}\n";
+            return 2;
+        }
+        if (canvasSize > 0 && padding * 2 >= canvasSize)
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"padding must leave a positive canvas content area\"}\n";
+            return 2;
+        }
+        if (contentOnly && !backgroundImage.empty())
+        {
+            std::cerr << "{\"ok\":false,\"error\":\"--content-only cannot be combined with --background\"}\n";
+            return 2;
+        }
         const auto host = FindPreviewHost(explicitHost);
         if (!host)
         {
@@ -630,7 +996,8 @@ int wmain(int argc, wchar_t** argv)
         }
         return RunPreviewHost(*host, source, output,
             columns, rows, dpi, locale, theme, appearance,
-            dataState, backgroundImage, storage);
+            dataState, backgroundImage, canvasSize, padding,
+            contentOnly, storage);
     }
     if (command == L"pack")
     {
@@ -666,29 +1033,30 @@ int wmain(int argc, wchar_t** argv)
             std::cerr << report.ToJson() << '\n';
             return 1;
         }
-        wchar_t temporaryRoot[MAX_PATH]{};
-        if (!GetTempPathW(MAX_PATH, temporaryRoot))
+        const auto transaction = CreateOwnedTransactionDirectory(
+            L"publish-staging", L"publish");
+        if (!transaction)
         {
-            std::cerr << "cannot resolve temporary directory\n";
+            std::cerr << "cannot create the data staging directory\n";
             return 1;
         }
-        const auto temporary = std::filesystem::path(temporaryRoot) /
-            (L"SnowDesktop-" + std::wstring(argv[2]).substr(
-                std::wstring(argv[2]).find_last_of(L"\\/") + 1) +
-                L".snowwidget");
+        const auto temporary = *transaction / L"package.snowwidget";
         if (!manager.ExportDirectory(source, temporary, artifact, report, error))
         {
+            std::error_code cleanupError;
+            std::filesystem::remove_all(*transaction, cleanupError);
             std::cerr << report.ToJson() << '\n' << error << '\n';
             return 1;
         }
-        snowdesktop::widget::LocalCatalogPublisher publisher(argv[3]);
+        snowdesktop::widget::LocalCatalogPublisher publisher(
+            argv[3], paths.staging);
         snowdesktop::widget::PublishRequest request;
         request.artifact = artifact;
         request.title = manifest.name;
         request.description = manifest.description;
         const auto result = publisher.Publish(request);
         std::error_code ec;
-        std::filesystem::remove(temporary, ec);
+        std::filesystem::remove_all(*transaction, ec);
         if (!result.ok)
         {
             std::cerr << result.error << '\n';

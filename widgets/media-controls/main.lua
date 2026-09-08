@@ -7,6 +7,10 @@ local fluent = {
     settings = utf8.char(0xF6A9),
 }
 
+local fontAwesome = {
+    music = utf8.char(0xF001),
+}
+
 local palettes = {
     dark = {
         title = 0xFFFFFF,
@@ -180,6 +184,20 @@ local function drawButton(model, id, taskName, glyph, label,
     })
 end
 
+local function drawArtworkPlaceholder(x, y, size, palette)
+    local radius = size * 0.10
+    draw.rect(x, y, size, size, palette.btnBg, radius, 0.07)
+    draw.fa(fontAwesome.music,
+        x + size * 0.29, y + size * 0.29,
+        size * 0.42, palette.btnDisabled)
+    draw.strokeRect(x, y, size, size,
+        palette.btnText, radius, size * 0.012, 0.14)
+end
+
+local function horizontalArtworkInset(width, height)
+    return math.min(width * 0.025, height * 0.055)
+end
+
 local function render(_context, model)
     local width = layout.width()
     local height = layout.height()
@@ -188,7 +206,8 @@ local function render(_context, model)
     local available = session ~= nil
     local controls = available and session.controls or {}
     local canControl = widget.hasPermission("media.action")
-    local artwork = currentArtwork(session)
+    local showArtwork = storage.get("showArtwork") ~= "0"
+    local artwork = showArtwork and currentArtwork(session) or nil
     local launcher = currentLauncher()
 
     local isPlaying = available and session.playbackStatus == "playing"
@@ -211,7 +230,6 @@ local function render(_context, model)
         subtitle = l10n.tr("lua_widget.media_control.configure_launcher")
     end
 
-    local interactiveHeight = math.max(1, height)
     interaction.region({
         key = "media.surface",
         shape = {
@@ -219,7 +237,7 @@ local function render(_context, model)
             x = 0,
             y = 0,
             width = width,
-            height = interactiveHeight,
+            height = height,
         },
         events = {
             doubleClick = { id = "launcher.open" },
@@ -231,37 +249,176 @@ local function render(_context, model)
         },
     })
 
-    local buttonSize = layout.cu(40)
-    local buttonGap = layout.cu(12)
-    local total = buttonSize * 3 + buttonGap * 2
-    local buttonY = height - buttonSize - layout.cu(8)
-    local buttonX = (width - total) / 2
+    if not available then
+        local semanticMetrics = widget.hasFeature("ui.semanticMetrics.rowUnit") and
+            ui.metrics() or nil
+        local semanticScale = semanticMetrics and
+            semanticMetrics.layoutRowHeight / 28 or nil
+        local emptyTitleFont = semanticMetrics and
+            14 * semanticScale or layout.fontCu(14)
+        local emptyHintFont = semanticMetrics and
+            10 * semanticScale or layout.fontCu(10)
+        local emptyGap = semanticMetrics and
+            4 * semanticScale or layout.cu(4)
+        local titleMetrics = draw.measureText(
+            title, emptyTitleFont, 0, true)
+        local subtitleMetrics = draw.measureText(
+            subtitle, emptyHintFont, 0, false)
+        local blockHeight = titleMetrics.height + emptyGap +
+            subtitleMetrics.height
+        local textX = 0
+        local textWidth = width
+        local blockTop = math.max(0, (height - blockHeight) / 2)
 
-    local textX = layout.cu(18)
-    if artwork then
-        local artworkSize = math.min(layout.cu(52),
-            buttonY - layout.cu(16))
-        if artworkSize >= layout.cu(24) then
-            local artworkY = math.max(layout.cu(8),
-                (buttonY - artworkSize) / 2)
-            draw.imageFit(artwork.image, textX, artworkY,
-                artworkSize, artworkSize, "cover", "center", 1.0, "linear")
-            draw.strokeRect(textX, artworkY, artworkSize, artworkSize,
-                palette.btnText, layout.cu(5), layout.cu(1), 0.16)
-            textX = textX + artworkSize + layout.cu(12)
+        if showArtwork then
+            local vertical = height > width * 1.05
+            local padding = math.min(width * 0.045, height * 0.075)
+            local contentWidth = width - padding * 2
+            local contentHeight = height - padding * 2
+            local artworkSize
+            local contentGap = math.min(width * 0.035, height * 0.08)
+            local artworkX
+            local artworkY
+
+            if vertical then
+                artworkSize = math.min(contentWidth * 0.62,
+                    contentHeight * 0.45)
+                local groupHeight = artworkSize + contentGap + blockHeight
+                local groupY = math.max(0, (height - groupHeight) * 0.5)
+                artworkX = (width - artworkSize) * 0.5
+                artworkY = groupY
+                textX = padding
+                textWidth = contentWidth
+                blockTop = groupY + artworkSize + contentGap
+            else
+                artworkSize = math.min(contentHeight * 0.72,
+                    contentWidth * 0.38)
+                local artworkInset = horizontalArtworkInset(width, height)
+                artworkX = padding + artworkInset
+                artworkY = (height - artworkSize) * 0.5
+                textX = artworkX + artworkSize + contentGap
+                textWidth = math.max(1,
+                    contentWidth - artworkInset - artworkSize - contentGap)
+            end
+
+            drawArtworkPlaceholder(artworkX, artworkY,
+                artworkSize, palette)
+        end
+
+        local titleWidth = math.min(textWidth, titleMetrics.width)
+        local subtitleWidth = math.min(textWidth, subtitleMetrics.width)
+        draw.text(textX + math.max(0, (textWidth - titleWidth) / 2), blockTop,
+            title, emptyTitleFont, palette.title,
+            math.min(textWidth, math.max(1, titleWidth + 1)),
+            true, true, 0, 0.78)
+        draw.text(textX + math.max(0, (textWidth - subtitleWidth) / 2),
+            blockTop + titleMetrics.height + emptyGap,
+            subtitle, emptyHintFont, palette.subtitle,
+            math.min(textWidth, math.max(1, subtitleWidth + 1)),
+            false, true, 0, 0.62)
+        return
+    end
+
+    local vertical = height > width * 1.05
+    local padding = math.min(width * 0.045, height * 0.075)
+    local contentWidth = width - padding * 2
+    local contentHeight = height - padding * 2
+    local artworkSize = 0
+    local contentGap = 0
+    if showArtwork then
+        if vertical then
+            artworkSize = math.min(contentWidth * 0.62,
+                contentHeight * 0.45)
+        else
+            artworkSize = math.min(contentHeight * 0.72,
+                contentWidth * 0.38)
+        end
+        contentGap = math.min(width * 0.035, height * 0.08)
+    end
+
+    local artworkInset = showArtwork and not vertical and
+        horizontalArtworkInset(width, height) or 0
+    local detailsWidth = vertical and contentWidth or
+        contentWidth - artworkInset - artworkSize - contentGap
+    local buttonSize
+    local titleFont
+    if vertical then
+        buttonSize = math.min(contentWidth * 0.16,
+            contentHeight * 0.14)
+        titleFont = math.min(contentWidth * 0.075,
+            contentHeight * 0.06)
+    else
+        buttonSize = math.min(contentHeight * 0.30,
+            detailsWidth * 0.18)
+        titleFont = math.min(contentHeight * 0.15,
+            detailsWidth * 0.09)
+    end
+    local subtitleFont = titleFont * 0.76
+    local buttonGap = buttonSize * 0.30
+    local buttonTotal = buttonSize * 3 + buttonGap * 2
+    local titleHeight = titleFont * 1.45
+    local subtitleHeight = subtitle ~= "" and subtitleFont * 1.45 or 0
+    local textGap = subtitle ~= "" and titleFont * 0.16 or 0
+    local controlGap = titleFont * 0.38
+    local detailsHeight = titleHeight + subtitleHeight + textGap +
+        controlGap + buttonSize
+
+    local artworkX
+    local artworkY
+    local textX
+    local detailsY
+    if vertical then
+        local groupHeight = artworkSize + contentGap + detailsHeight
+        local groupY = (height - groupHeight) * 0.5
+        artworkX = (width - artworkSize) * 0.5
+        artworkY = groupY
+        textX = padding
+        detailsY = groupY + artworkSize + contentGap
+    else
+        artworkX = padding + artworkInset
+        artworkY = (height - artworkSize) * 0.5
+        textX = artworkX + artworkSize + contentGap
+        detailsY = (height - detailsHeight) * 0.5
+    end
+
+    if artworkSize > 0 then
+        if artwork then
+            if widget.hasFeature("draw.imageFit.roundedClip") then
+                draw.imageFit(artwork.image, artworkX, artworkY,
+                    artworkSize, artworkSize, "cover", "center",
+                    1.0, "linear", 0, 0.5, 0.5, artworkSize * 0.10)
+            else
+                draw.imageFit(artwork.image, artworkX, artworkY,
+                    artworkSize, artworkSize, "cover", "center",
+                    1.0, "linear")
+            end
+            draw.strokeRect(artworkX, artworkY, artworkSize, artworkSize,
+                palette.btnText, artworkSize * 0.10,
+                artworkSize * 0.012, 0.16)
+        else
+            drawArtworkPlaceholder(artworkX, artworkY,
+                artworkSize, palette)
         end
     end
 
-    local titleY = subtitle ~= "" and height * 0.14 or height * 0.25
-    local textWidth = math.max(layout.cu(24),
-        width - textX - layout.cu(18))
-    draw.text(textX, titleY, title, layout.fontCu(15),
-        palette.title, textWidth, true, true)
-    if subtitle ~= "" then
-        draw.text(textX, titleY + layout.cu(22), subtitle,
-            layout.fontCu(12), palette.subtitle,
-            textWidth, true, true)
+    local function drawLabel(text, y, font, color, bold)
+        local x = textX
+        if vertical then
+            local metrics = draw.measureText(text, font, detailsWidth, bold)
+            x = textX + (detailsWidth - metrics.width) * 0.5
+        end
+        draw.text(x, y, text, font, color, detailsWidth, bold, true)
     end
+
+    drawLabel(title, detailsY, titleFont, palette.title, true)
+    if subtitle ~= "" then
+        drawLabel(subtitle, detailsY + titleHeight + textGap,
+            subtitleFont, palette.subtitle, false)
+    end
+
+    local buttonY = detailsY + titleHeight + subtitleHeight + textGap +
+        controlGap
+    local buttonX = textX + (detailsWidth - buttonTotal) * 0.5
 
     drawButton(model, "media.previous", "media.previous", "",
         l10n.tr("lua_widget.media_control.previous"),

@@ -705,6 +705,10 @@ void TestDesktopHoverDeactivation()
             ReconcileMode::DeactivateOnly,
         "closing a Shell popup must not reactivate hover from the menu's last cursor position");
     Check(
+        hoverRules::ShouldHoldHoverDuringNativeShellPopup(true) &&
+            !hoverRules::ShouldHoldHoverDuringNativeShellPopup(false),
+        "native Shell popup capture must hold the complete hover frame until the menu closes");
+    Check(
         hoverRules::ShouldRetainHoverAcrossMouseLeave(
             true, false) &&
             hoverRules::ShouldRetainHoverAcrossMouseLeave(
@@ -848,6 +852,18 @@ void TestDragInputSampling()
             !dragInputRules::IsNativeDragActive(true, true),
         "only drag sessions outside OLE transport may use native pointer routing");
     Check(
+        dragInputRules::IsLatencySensitivePointerGesture(
+            true, false, false, false) &&
+            dragInputRules::IsLatencySensitivePointerGesture(
+                false, true, false, false) &&
+            dragInputRules::IsLatencySensitivePointerGesture(
+                false, false, true, true) &&
+            !dragInputRules::IsLatencySensitivePointerGesture(
+                false, false, true, false) &&
+            !dragInputRules::IsLatencySensitivePointerGesture(
+                false, false, false, true),
+        "native drags, marquee selection, and valid widget move or resize targets must share latency-sensitive pointer routing");
+    Check(
         !dragInputRules::ShouldDeferModelReload(false, false) &&
             dragInputRules::ShouldDeferModelReload(true, false) &&
             dragInputRules::ShouldDeferModelReload(false, true) &&
@@ -857,7 +873,37 @@ void TestDragInputSampling()
         dragInputRules::ShouldSampleLivePointer(true, true) &&
             !dragInputRules::ShouldSampleLivePointer(false, true) &&
             !dragInputRules::ShouldSampleLivePointer(true, false),
-        "live drag sampling must stop after the physical primary button is released");
+        "live pointer sampling must stop after the active gesture button is released");
+    Check(
+        dragInputRules::IsPointerGestureButtonDown(
+            false, true, false) &&
+            !dragInputRules::IsPointerGestureButtonDown(
+                false, false, true) &&
+            dragInputRules::IsPointerGestureButtonDown(
+                true, false, true) &&
+            !dragInputRules::IsPointerGestureButtonDown(
+                true, true, false),
+        "primary gestures must follow the left button while middle-button widget moves preserve their own release barrier");
+    Check(
+        dragInputRules::IsMarqueePointerGesture(
+            true, false, true, true, true,
+            true, true, true, true, true, false) &&
+        dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, false,
+            false, false, false, false, false, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, true, false, false,
+            false, false, false, false, false, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, true,
+            false, false, false, false, false, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, false,
+            false, false, false, false, true, true) &&
+        !dragInputRules::IsMarqueePointerGesture(
+            false, true, false, false, false,
+            false, false, false, false, false, false),
+        "only an active marquee or an unclaimed pressed marquee target may use latency-sensitive pointer routing");
     Check(
         dragInputRules::ShouldSampleFloatingWindowPointer(true, true) &&
             !dragInputRules::ShouldSampleFloatingWindowPointer(true, false) &&
@@ -865,15 +911,15 @@ void TestDragInputSampling()
             dragInputRules::ShouldSampleFloatingWindowPointer(false, false),
         "floating windows must keep ordinary live hover sampling but preserve a queued native-drag release point");
     Check(
-        dragInputRules::IsNativeDragMessageSurface(
+        dragInputRules::IsLatencySensitivePointerMessageSurface(
             true, false, false) &&
-        dragInputRules::IsNativeDragMessageSurface(
+        dragInputRules::IsLatencySensitivePointerMessageSurface(
             false, true, false) &&
-        dragInputRules::IsNativeDragMessageSurface(
+        dragInputRules::IsLatencySensitivePointerMessageSurface(
             false, false, true) &&
-        !dragInputRules::IsNativeDragMessageSurface(
+        !dragInputRules::IsLatencySensitivePointerMessageSurface(
             false, false, false),
-        "native drag message coalescing must cover the desktop, floating Dock, and floating popup windows");
+        "latency-sensitive pointer coalescing must cover the desktop, floating Dock, and floating popup windows");
     Check(
         dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
             true, true, true) &&
@@ -883,7 +929,7 @@ void TestDragInputSampling()
             true, false, true) &&
         !dragInputRules::ShouldStartQueuedMouseMoveCoalescing(
             true, true, false),
-        "native drag coalescing must start only for a move on an eligible input surface");
+        "latency-sensitive pointer coalescing must start only for a move on an eligible input surface");
     Check(
         dragInputRules::ShouldCoalesceQueuedMouseMove(
             true, true, true) &&
@@ -893,7 +939,7 @@ void TestDragInputSampling()
                 true, false, true) &&
             !dragInputRules::ShouldCoalesceQueuedMouseMove(
                 true, true, false),
-        "native drag coalescing must stop at another window or message kind");
+        "latency-sensitive pointer coalescing must stop at another window or message kind");
 }
 
 void TestPopupIconLoadCancellationRules()
@@ -1025,6 +1071,16 @@ void TestBottomBarContentReservation()
             chromeRules::ShowsCompactMoveHandle(false, true) &&
             !chromeRules::ShowsCompactMoveHandle(true, true),
         "only hovered titleless widgets expose a compact move handle");
+    const auto lightForegroundChrome =
+        chromeRules::ResolveWidgetChromeForegroundStyle(0);
+    const auto darkForegroundChrome =
+        chromeRules::ResolveWidgetChromeForegroundStyle(1);
+    Check(
+        !lightForegroundChrome.darkForeground &&
+            lightForegroundChrome.fontWeightAdjustment == 0 &&
+            darkForegroundChrome.darkForeground &&
+            darkForegroundChrome.fontWeightAdjustment == -200,
+        "widget titles and handles must resolve their foreground from the widget content theme");
     Check(
         chromeRules::CompactEdgeHandleWidth(120, 24) == 24 &&
             chromeRules::CompactEdgeHandleWidth(30, 24) == 15 &&

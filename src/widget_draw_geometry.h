@@ -50,6 +50,9 @@ DrawImagePlacement ResolveDrawImagePlacement(float sourceWidth,
     float sourceHeight, const DrawRect& destination, DrawImageFit fit,
     DrawImageAlignment alignment) noexcept;
 
+bool ValidateDrawImageTransform(float rotationDegrees, float originX,
+    float originY, std::string& error) noexcept;
+
 enum class DrawPathCommandType
 {
     Move,

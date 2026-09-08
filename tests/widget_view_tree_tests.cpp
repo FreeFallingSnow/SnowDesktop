@@ -4255,6 +4255,30 @@ void TestVisualTransitionRuntime()
     Check(runtime.Size() == 0,
         "transition runtime must release nodes not observed in the next frame");
 
+    ViewTransitionRuntime speedRuntime;
+    speedRuntime.SetDurationScale(1.4);
+    speedRuntime.BeginFrame();
+    (void)speedRuntime.Resolve("speed", start, transition, origin, false);
+    speedRuntime.EndFrame();
+    speedRuntime.BeginFrame();
+    (void)speedRuntime.Resolve("speed", target, transition, origin, false);
+    speedRuntime.EndFrame();
+    speedRuntime.SetDurationScale(1.4);
+    speedRuntime.BeginFrame();
+    const auto slowerMiddle = speedRuntime.Resolve("speed", target, transition,
+        origin + std::chrono::milliseconds(70), false);
+    speedRuntime.EndFrame();
+    Check(slowerMiddle.opacity && Near(*slowerMiddle.opacity, 0.5f) &&
+            speedRuntime.HasActive() && transition.durationMilliseconds == 100,
+        "host speed must scale presentation time without mutating the Lua descriptor or settling unchanged preferences");
+    speedRuntime.Settle();
+    speedRuntime.BeginFrame();
+    Check(speedRuntime.Resolve("speed", target, transition,
+            origin + std::chrono::milliseconds(70), false) == target &&
+            !speedRuntime.HasActive(),
+        "disabling host motion must settle at the existing target without replaying it");
+    speedRuntime.EndFrame();
+
     ViewTransition transformTransition;
     transformTransition.durationMilliseconds = 100;
     transformTransition.easing = ViewTransitionEasing::Linear;
@@ -4386,6 +4410,23 @@ void TestVisualTransitionRuntime()
     Check(reducedEnter.style == enteredStyle && !reducedEnter.transform,
         "reducedMotion must suppress enterTransition for newly inserted nodes");
 
+    ViewTransitionRuntime fastEnterRuntime;
+    fastEnterRuntime.SetDurationScale(0.7);
+    fastEnterRuntime.BeginFrame();
+    fastEnterRuntime.EndFrame();
+    fastEnterRuntime.BeginFrame();
+    (void)fastEnterRuntime.ResolvePresentation("fast-enter", enteredStyle,
+        std::nullopt, std::nullopt, std::nullopt, enterTransition, origin, false);
+    fastEnterRuntime.EndFrame();
+    fastEnterRuntime.BeginFrame();
+    const auto fastMiddle = fastEnterRuntime.ResolvePresentation("fast-enter", enteredStyle,
+        std::nullopt, std::nullopt, std::nullopt, enterTransition,
+        origin + std::chrono::milliseconds(35), false);
+    fastEnterRuntime.EndFrame();
+    Check(fastMiddle.style.opacity && Near(*fastMiddle.style.opacity, 0.5f) &&
+            enterTransition.durationMilliseconds == 100,
+        "host speed must also scale presence entry while retaining the authored duration");
+
     ViewNode previousRoot;
     previousRoot.type = ViewNodeType::Box;
     previousRoot.key = "exit-root";
@@ -4449,6 +4490,19 @@ void TestVisualTransitionRuntime()
     Check(reducedExitRuntime.ExitFrames(origin, true).empty() &&
             !reducedExitRuntime.HasActive(),
         "reducedMotion must suppress and release queued exit snapshots");
+
+    ViewTransitionRuntime slowExitRuntime;
+    slowExitRuntime.SetDurationScale(1.4);
+    slowExitRuntime.QueueExitTransitions(previousRoot, currentRoot, origin, false);
+    const auto slowExitMiddle = slowExitRuntime.ExitFrames(
+        origin + std::chrono::milliseconds(70), false);
+    Check(slowExitMiddle.size() == 1 && slowExitMiddle[0].presentation.style.opacity &&
+            Near(*slowExitMiddle[0].presentation.style.opacity, 0.5f) &&
+            previousRoot.children[0].exitTransition->durationMilliseconds == 100,
+        "host speed must scale exit snapshots without changing the component view tree");
+    slowExitRuntime.Settle();
+    Check(!slowExitRuntime.HasActive() && slowExitRuntime.ExitFrames(origin, false).empty(),
+        "disabling host motion must discard retained exit pictures immediately");
 }
 
 void TestThemeColorTokens()
@@ -4688,11 +4742,84 @@ void TestAccessibilityMetadataParsingAndValidation()
 }
 }
 
+// Protect per-parse field discovery from stale table state, false/nil confusion
+// and changes to the existing rejection path for metatables or oversized input.
+void TestLuaFieldPresenceAfterMutation()
+{
+    lua_State* state = luaL_newstate();
+    Check(state != nullptr, "field presence fixture must allocate a Lua state");
+    luaL_openlibs(state);
+    Check(luaL_dostring(state,
+        "return {type='box',key='mutable'}") == LUA_OK,
+        "mutable node fixture must evaluate");
+    std::string error;
+    ViewNode node;
+    Check(ParseLuaViewTree(state, 1, node, error),
+        "a sparse box must parse");
+    lua_pushnumber(state, 72); lua_setfield(state, 1, "width");
+    lua_pushboolean(state, false); lua_setfield(state, 1, "visible");
+    node = {};
+    Check(ParseLuaViewTree(state, 1, node, error) &&
+            node.width.kind == ViewLengthKind::Fixed &&
+            Near(node.width.value, 72) && !node.visible,
+        "reusing a Lua table must observe added fields including false");
+    lua_pushboolean(state, false); lua_setfield(state, 1, "checked");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "a false forbidden property must still reject the node");
+    lua_pushnil(state); lua_setfield(state, 1, "checked");
+    lua_pushnil(state); lua_setfield(state, 1, "width");
+    lua_pushnil(state); lua_setfield(state, 1, "visible");
+    node = {};
+    Check(ParseLuaViewTree(state, 1, node, error) && node.visible &&
+            node.width.kind != ViewLengthKind::Fixed,
+        "removed fields must recover defaults on the next parse");
+    lua_pushliteral(state, "checked\0suffix");
+    lua_pushboolean(state, false);
+    lua_rawset(state, 1);
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) && lua_gettop(state) == 1,
+        "an embedded-NUL unknown key must not masquerade as an absent valid field");
+    lua_pop(state, 1);
+
+    Check(luaL_dostring(state, R"lua(
+        return setmetatable({type='box',key='meta'}, {
+            __index=function(_,key) if key=='checked' then return false end end
+        })
+    )lua") == LUA_OK, "metatable fixture must evaluate");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "metatables must preserve the original lookup and rejection path");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        local node={type='box',key='large',checked=false}
+        for i=1,100 do node['unknown-'..i]=i end
+        return node
+    )lua") == LUA_OK, "oversized field fixture must evaluate");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "bounded field discovery must preserve the old oversized-table rejection");
+    lua_pop(state, 1);
+    Check(luaL_dostring(state, R"lua(
+        return {type='box',key='long-key',checked=false,
+            [string.rep('x',16384)]=true}
+    )lua") == LUA_OK, "long field-name fixture must evaluate");
+    node = {};
+    Check(!ParseLuaViewTree(state, 1, node, error) &&
+            error.find("checked") != std::string::npos && lua_gettop(state) == 1,
+        "long names must retain the normal lookup and rejection path");
+    lua_close(state);
+}
+
 int main()
 {
     TestLayoutAndRegions();
     TestValidationFailures();
     TestLuaParsing();
+    TestLuaFieldPresenceAfterMutation();
     TestVisualNodeParsing();
     TestDataSeriesParsingAndLimits();
     TestStatusVisualParsing();

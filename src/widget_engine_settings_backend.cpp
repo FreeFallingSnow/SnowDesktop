@@ -48,20 +48,26 @@ bool IsReservedDeclarativeSettingKey(std::string_view key) noexcept
 {
     return key == "cornerRadius" || key == "barHeight" ||
         key == "bg" || key == "border" || key == "alpha" ||
-        key == "borderAlpha" || key == "gradientEndA" ||
+        key == "borderAlpha" || key == "borderStyle" ||
+        key == "borderWidth" || key == "edgeHighlightEnabled" ||
+        key == "edgeHighlightWidth" || key == "edgeHighlightStrength" ||
+        key == "gradientEndA" ||
         key == "shadowAlpha" || key == "shadowBlur" ||
         key == "shadowOffsetY" || key == "highlightAlpha" ||
         key == "noiseAlpha" || key == "glassEnabled" ||
         key == "glassBlurRadius" || key == "acrylicEnabled" ||
         key == "followPersonalization" || key == "__preset" ||
-        key == "__contentTheme";
+        key == "__contentTheme" || key == "__panelGradient";
 }
 
 bool IsHostAppearancePresetKey(std::string_view key) noexcept
 {
     return key == "followPersonalization" || key == "bg" ||
         key == "border" || key == "alpha" || key == "borderAlpha" ||
-        key == "gradientEndA" || key == "shadowAlpha" ||
+        key == "borderStyle" || key == "borderWidth" ||
+        key == "edgeHighlightEnabled" || key == "edgeHighlightWidth" ||
+        key == "edgeHighlightStrength" || key == "gradientEndA" ||
+        key == "shadowAlpha" ||
         key == "shadowBlur" || key == "shadowOffsetY" ||
         key == "highlightAlpha" || key == "noiseAlpha" ||
         key == "glassEnabled" || key == "glassBlurRadius" ||
@@ -439,6 +445,7 @@ struct WidgetEngineSettingsBackend::PreviewState
 {
     WidgetSettingsBackendDescriptor descriptor;
     std::unordered_map<std::string, std::optional<std::string>> originals;
+    std::unordered_set<std::string> affectedKeys;
 };
 
 WidgetEngineSettingsBackend::WidgetEngineSettingsBackend(
@@ -515,13 +522,19 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     float borderB = 1.0f;
     float backgroundOpacity = 0.36f;
     float borderOpacity = 0.40f;
+    float borderWidth = 1.0f;
+    bool edgeHighlightEnabled = false;
+    float edgeHighlightWidth = kDefaultEdgeHighlightWidth;
+    float edgeHighlightStrength = kDefaultEdgeHighlightStrength;
     float gradientEndOpacity = 0.0f;
     bool glassEnabled = false;
     bool acrylicEnabled = false;
     (void)engine_.ReadCustomColors(widget.widgetId,
         bgR, bgG, bgB, backgroundOpacity,
         borderR, borderG, borderB, borderOpacity,
-        gradientEndOpacity, glassEnabled, acrylicEnabled);
+        borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
+        edgeHighlightStrength,
+        gradientEndOpacity, glassEnabled, acrylicEnabled, &appearance.panelGradient);
     const auto colorToInteger = [](float red, float green, float blue) {
         const auto channel = [](float value) {
             if (!std::isfinite(value)) value = 0.0f;
@@ -541,6 +554,13 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::Describe(
     appearance.backgroundOpacity = finiteOpacity(
         backgroundOpacity, 0.36f);
     appearance.borderOpacity = finiteOpacity(borderOpacity, 0.40f);
+    appearance.borderWidth = std::clamp(borderWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    appearance.edgeHighlightEnabled = edgeHighlightEnabled;
+    appearance.edgeHighlightWidth = std::clamp(edgeHighlightWidth,
+        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    appearance.edgeHighlightStrength = finiteOpacity(
+        edgeHighlightStrength, kDefaultEdgeHighlightStrength);
     appearance.gradientEndOpacity = finiteOpacity(
         gradientEndOpacity, 0.0f);
     appearance.glassEnabled = glassEnabled;
@@ -887,6 +907,7 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
         return BackendResult(WidgetSettingsBackendStatus::WidgetNotFound,
             "widgetNotFound");
     const LuaWidget& widget = engine_.widgets_[index];
+    const std::wstring widgetId = widget.widgetId;
     if (!widget_settings_backend_detail::MutationIdentityMatches(
             descriptor, guard, widget.widgetId, widget.packageId,
             widget.runtimeToken))
@@ -912,6 +933,9 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
     if (appearance.contentTheme && appearance.clearContentTheme)
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "ambiguousContentThemeWrite");
+    if (appearance.panelGradient && !ValidatePanelGradient(*appearance.panelGradient))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "invalidPanelGradient");
 
     auto& storage = engine_.WidgetSettingsPersistentStorageForBackend();
     WidgetStorageTransaction transaction(storage,
@@ -934,6 +958,10 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
             TypedStorageMetadataKey(key), metadataChanged, error);
     };
     std::string appearanceError;
+    if (appearance.panelGradient &&
+        !setAppearance("__panelGradient", EncodePanelGradient(*appearance.panelGradient), appearanceError))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
     if (appearance.followPersonalization &&
         !setAppearance("followPersonalization",
             *appearance.followPersonalization ? "1" : "0",
@@ -972,9 +1000,39 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
     };
     if (!setOpacity("alpha", appearance.backgroundOpacity) ||
         !setOpacity("borderAlpha", appearance.borderOpacity) ||
-        !setOpacity("gradientEndA", appearance.gradientEndOpacity))
+        !setOpacity("gradientEndA", appearance.gradientEndOpacity) ||
+        !setOpacity("edgeHighlightStrength",
+            appearance.edgeHighlightStrength))
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "invalidAppearanceOpacity", std::move(appearanceError));
+    const auto setWidth = [&](std::string key,
+                              const std::optional<float>& value,
+                              std::string_view errorCode) {
+        if (!value) return std::optional<WidgetSettingsBackendResult>{};
+        if (!std::isfinite(*value) ||
+            *value < kMinimumWidgetBorderWidth ||
+            *value > kMaximumWidgetBorderWidth)
+            return std::optional<WidgetSettingsBackendResult>{BackendResult(
+                WidgetSettingsBackendStatus::InvalidValue,
+                std::string(errorCode))};
+        if (!setAppearance(std::move(key), std::to_string(*value),
+                appearanceError))
+            return std::optional<WidgetSettingsBackendResult>{BackendResult(
+                WidgetSettingsBackendStatus::InvalidValue,
+                "appearanceWriteRejected", std::move(appearanceError))};
+        return std::optional<WidgetSettingsBackendResult>{};
+    };
+    if (const auto error = setWidth("borderWidth", appearance.borderWidth,
+            "invalidBorderWidth"))
+        return *error;
+    if (appearance.edgeHighlightEnabled &&
+        !setAppearance("edgeHighlightEnabled",
+            *appearance.edgeHighlightEnabled ? "1" : "0", appearanceError))
+        return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
+            "appearanceWriteRejected", std::move(appearanceError));
+    if (const auto error = setWidth("edgeHighlightWidth",
+            appearance.edgeHighlightWidth, "invalidEdgeHighlightWidth"))
+        return *error;
     if (appearance.glassEnabled &&
         !setAppearance("glassEnabled",
             *appearance.glassEnabled ? "1" : "0", appearanceError))
@@ -1079,6 +1137,7 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
         return BackendResult(WidgetSettingsBackendStatus::InvalidValue,
             "storageQuotaExceeded", std::move(error));
     if (!transaction.Changed()) return Success(false);
+    std::vector<std::string> affectedKeys(keys.begin(), keys.end());
     auto candidate = transaction.TakeCandidate();
     if (!persist)
     {
@@ -1102,8 +1161,11 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
                 continue;
             preview_->originals.try_emplace(key, std::nullopt);
         }
+        preview_->affectedKeys.insert(keys.begin(), keys.end());
         storage.swap(candidate);
-        engine_.RuntimeInvalidateHost(widget.widgetId);
+        if (!engine_.RuntimeNotifySettingsChanged(
+                widgetId, affectedKeys, true))
+            engine_.RuntimeInvalidateHost(widgetId);
         return Success();
     }
 
@@ -1115,7 +1177,9 @@ WidgetEngineSettingsBackend::ApplyHostAppearanceTransactionImpl(
             WidgetSettingsBackendStatus::PersistenceFailed,
             "storagePersistenceFailed");
     }
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widgetId, std::move(affectedKeys), false))
+        engine_.RuntimeInvalidateHost(widgetId);
     return Success();
 }
 
@@ -1143,8 +1207,13 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::CommitPreview(
     if (!engine_.PersistWidgetSettingsStorageForBackend())
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "storagePersistenceFailed");
+    std::vector<std::string> affectedKeys(
+        preview_->affectedKeys.begin(), preview_->affectedKeys.end());
+    const std::wstring widgetId = widget.widgetId;
     preview_.reset();
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widgetId, std::move(affectedKeys), false))
+        engine_.RuntimeInvalidateHost(widgetId);
     return Success();
 }
 
@@ -1187,8 +1256,12 @@ void WidgetEngineSettingsBackend::RestorePreviewNoexcept() noexcept
                 storage.erase(key);
         }
         const std::wstring widgetId = preview_->descriptor.widgetId;
+        std::vector<std::string> affectedKeys(
+            preview_->affectedKeys.begin(), preview_->affectedKeys.end());
         preview_.reset();
-        if (!widgetId.empty()) engine_.RuntimeInvalidateHost(widgetId);
+        if (!widgetId.empty() && !engine_.RuntimeNotifySettingsChanged(
+                widgetId, std::move(affectedKeys), false))
+            engine_.RuntimeInvalidateHost(widgetId);
     }
     catch (...)
     {
@@ -1234,7 +1307,9 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::SetSecret(
             reference, error))
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "secretPersistenceFailed", std::move(error));
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success();
 }
 
@@ -1271,7 +1346,9 @@ WidgetSettingsBackendResult WidgetEngineSettingsBackend::ClearSecret(
             WideToUtf8(widget.widgetId), field.key, removed, error))
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "secretPersistenceFailed", std::move(error));
-    if (removed) engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (removed && !engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success(removed);
 }
 
@@ -1414,7 +1491,9 @@ WidgetEngineSettingsBackend::ChooseFilesystemHandle(
             engine_.RuntimeRecordError(widgetId,
                 "settings filesystem handle cleanup: " + revokeError);
     }
-    engine_.RuntimeInvalidateHost(widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widgetId);
     return Success();
 }
 
@@ -1489,7 +1568,9 @@ WidgetEngineSettingsBackend::ClearFilesystemHandle(
         !revokeError.empty())
         engine_.RuntimeRecordError(widget.widgetId,
             "settings filesystem handle cleanup: " + revokeError);
-    engine_.RuntimeInvalidateHost(widget.widgetId);
+    if (!engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false))
+        engine_.RuntimeInvalidateHost(widget.widgetId);
     return Success();
 }
 
@@ -1540,6 +1621,8 @@ WidgetEngineSettingsBackend::OpenEntityReferencePicker(
     request.referenceType =
         std::string(EntityReferenceTypeFilter(setting->type));
     request.targetIndex = 0;
+    const std::uint64_t previousRevision = snapshot->revision;
+    const std::string binding = setting->binding;
     try
     {
         if (!engine_.logicalSlotPickerCallback_(request))
@@ -1554,7 +1637,13 @@ WidgetEngineSettingsBackend::OpenEntityReferencePicker(
             return BackendResult(
                 WidgetSettingsBackendStatus::StaleSnapshot,
                 "staleSnapshot");
-        return Success();
+        const auto* current =
+            engine_.widgets_[currentIndex].logicalSlots.Find(binding);
+        const bool changed = current && current->revision != previousRevision;
+        if (changed)
+            (void)engine_.RuntimeNotifySettingsChanged(
+                descriptor.widgetId, { field.key }, false);
+        return Success(changed);
     }
     catch (...)
     {
@@ -1605,7 +1694,11 @@ WidgetEngineSettingsBackend::ClearEntityReference(
             "host.settings.winui"))
         return BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
             "entityReferenceClearFailed", std::move(error));
-    return Success(change.operation != "unchanged");
+    const bool changed = change.operation != "unchanged";
+    if (changed)
+        (void)engine_.RuntimeNotifySettingsChanged(
+            widget.widgetId, { field.key }, false);
+    return Success(changed);
 }
 
 WidgetSettingsBackendResult WidgetEngineSettingsBackend::StartSearch(
