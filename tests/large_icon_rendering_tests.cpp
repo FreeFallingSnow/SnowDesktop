@@ -153,8 +153,13 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
             "production press feedback shrinks an exact-aspect cover rather than recropping it unchanged");
         Save(outputDirectory, "07-cover-pressed.png", pixels);
         view.pressed = false; view.selected = true; pixels = canvas.Draw(config, view);
-        Check(Pixel(pixels, 109, 69) != 0, "selection remains independently visible on a transparent frame corner");
+        Check(Pixel(pixels, 109, 66) == 0, "selected rounded covers do not retain a top-left circle outside the frame");
         Save(outputDirectory, "08-selected-transparent.png", pixels);
+        view.bitmap = nullptr; config.radius = 0; pixels = canvas.Draw(config, view);
+        Check(Visible(pixels, {105, 65, 114, 74}) == 0,
+            "transparent selected frames do not draw an extra top-left badge");
+        Check(Visible(pixels, {190, 59, 210, 62}) > 0 && Pixel(pixels, 200, 160) == 0,
+            "an independent selection outline remains visible without an image or background");
 
         config = {}; config.shadow = true; config.shadowStrength = 1; config.radius = 14;
         view = {}; view.frame = {120, 80, 360, 320}; view.scale = 2;

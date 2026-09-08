@@ -105,11 +105,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     if (view.animations && config.launch == 2 && view.launchWave > 0)
         Rounded(target, frame, radius, Color(0, 0), Color(0xffffff, std::min(1., view.launchWave * .65 * config.amplitude)), 2 * scale);
     if (view.selected)
-    {
         Rounded(target, frame, radius, Color(0, 0), Color(0x75baff, .95), scale);
-        Rounded(target, D2D1::RectF(frame.left + 5 * scale, frame.top + 5 * scale, frame.left + 13 * scale, frame.top + 13 * scale),
-            4 * scale, Color(0x75baff, 1), Color(0x75baff, 1));
-    }
 }
 
 void DrawFloatingTitle(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIconConfig& config, const View& view, RECT workArea)
