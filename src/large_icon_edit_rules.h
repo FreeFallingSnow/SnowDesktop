@@ -4,6 +4,14 @@
 
 namespace snowdesktop::large_icon_edit_rules
 {
+enum class EntryAccess { Hidden, Unlock, Edit };
+
+inline constexpr EntryAccess ResolveEntryAccess(bool bridgeAvailable, bool unlocked)
+{
+    if (!bridgeAvailable) return EntryAccess::Hidden;
+    return unlocked ? EntryAccess::Edit : EntryAccess::Unlock;
+}
+
 inline bool CanStore(const std::optional<LargeIconConfig>& config, bool unlocked, bool desktop)
 {
     // A null configuration is the always-available return to ordinary icons.

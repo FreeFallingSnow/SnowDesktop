@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../large_icon_steam.h"
 #include "../large_icon_preset_rules.h"
+#include "../large_icon_edit_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../right_click_contract.h"
 #include "shell_item_action_rules.h"
@@ -263,9 +264,14 @@ void DesktopApp::ShowItemContextMenu(
     const bool largeIconMenu = selectedCount == 1 && !dockFrequentItem && !dockApplicationItem &&
         !dockMapping && !dockEntryIndex && !keepQuickNavigationOpen &&
         !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
+    const auto entitlement = steamEntitlementService_
+        ? steamEntitlementService_->Current() : snowdesktop::steam_entitlement::Snapshot{};
+    using snowdesktop::large_icon_edit_rules::EntryAccess;
+    const auto largeIconAccess = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
+        entitlement.bridgeAvailable, entitlement.registered);
     if (largeIconMenu)
     {
-        if (items_[itemIndex].largeIcon)
+        if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
         {
             namespace presets = snowdesktop::large_icon_preset_rules;
             const auto& config = *items_[itemIndex].largeIcon;
@@ -302,10 +308,20 @@ void DesktopApp::ShowItemContextMenu(
             SetMenuItemIcon(settings, kContextLargeIconSettings, L"\uF013");
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(settings), _LW("largeIcon.settings"));
             SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(settings), L"\uF013");
-            AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
         }
-        else AppendMenuW(menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        else if (largeIconAccess != EntryAccess::Hidden)
+        {
+            // A locked Steam-capable build opens the unlock settings directly.
+            if (items_[itemIndex].largeIcon)
+                AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
+            else
+                AppendMenuW(menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
+        }
+        // Returning to ordinary icons must remain available without the Bridge.
+        if (items_[itemIndex].largeIcon)
+            AppendMenuW(menu, MF_STRING, kContextLargeIconRestore, _LW("largeIcon.restore"));
+        if (largeIconAccess != EntryAccess::Hidden || items_[itemIndex].largeIcon)
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
@@ -636,7 +652,7 @@ void DesktopApp::ShowItemContextMenu(
     switch (command)
     {
     case kContextLargeIconCreate:
-        if (largeIconMenu)
+        if (largeIconMenu && largeIconAccess != EntryAccess::Hidden)
         {
             if (!CanEditLargeIcons()) { OpenLargeIconSettings(itemIndex); break; }
             auto config = MakeLargeIconDefaults(itemIndex);

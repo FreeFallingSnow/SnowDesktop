@@ -211,7 +211,13 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
 
 void DesktopApp::OpenLargeIconSettings(size_t index)
 {
-    if (!CanEditLargeIcons())
+    const auto entitlement = steamEntitlementService_
+        ? steamEntitlementService_->Current() : snowdesktop::steam_entitlement::Snapshot{};
+    using snowdesktop::large_icon_edit_rules::EntryAccess;
+    const auto access = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
+        entitlement.bridgeAvailable, entitlement.registered);
+    if (access == EntryAccess::Hidden) return;
+    if (access == EntryAccess::Unlock)
     {
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
             snowdesktop::SettingsPage::General, "general.advancedFeatures"));

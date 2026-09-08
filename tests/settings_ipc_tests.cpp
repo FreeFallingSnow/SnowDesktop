@@ -309,6 +309,13 @@ void TestLargeIconEditing()
 {
     using namespace snowdesktop;
     using namespace snowdesktop::large_icon_edit_rules;
+    Check(ResolveEntryAccess(false, false) == EntryAccess::Hidden &&
+            ResolveEntryAccess(false, true) == EntryAccess::Hidden,
+        "large-icon authoring entries stay hidden without a Bridge, even with a retained unlock flag");
+    Check(ResolveEntryAccess(true, false) == EntryAccess::Unlock,
+        "a locked build with a Bridge directs authoring entries to unlock settings");
+    Check(ResolveEntryAccess(true, true) == EntryAccess::Edit,
+        "an unlocked build with a Bridge exposes normal large-icon editing");
     struct Item { std::optional<LargeIconConfig> largeIcon; std::pair<int, int> gridSpan{1, 1}; } item;
     LargeIconConfig config; config.columns = 3; config.rows = 2; config.opacity = .2;
     int writes = 0;
