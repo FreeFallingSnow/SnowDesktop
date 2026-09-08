@@ -155,6 +155,25 @@ bool DesktopApp::SetLargeIconConfig(size_t index, std::optional<snowdesktop::Lar
     return true;
 }
 
+snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
+{
+    snowdesktop::LargeIconConfig config;
+    const auto& style = CurrentPersonalization();
+    config.radius = style.cornerRadius;
+    config.titleSize = itemFontSizeCu_;
+    config.borderWidth = style.widgetBorderWidth;
+    config.borderOpacity = style.widgetBorderAlpha;
+    config.borderColor = (static_cast<UINT>(style.widgetBorderR * 255) << 16) |
+        (static_cast<UINT>(style.widgetBorderG * 255) << 8) | static_cast<UINT>(style.widgetBorderB * 255);
+    if (index < items_.size())
+    {
+        wchar_t url[2048]{};
+        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), items_[index].parsingName.c_str());
+        if (snowdesktop::large_icon_steam::AppId(url)) { config.content = 2; config.fit = 1; }
+    }
+    return config;
+}
+
 void DesktopApp::OpenLargeIconSettings(size_t index)
 {
     if (!CanEditLargeIcons())
@@ -192,6 +211,7 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     result.available = true;
     result.editable = CanEditLargeIcons();
     result.name = item.name;
+    result.defaultConfig = snowdesktop::EncodeLargeIconConfig(MakeLargeIconDefaults(index));
     const auto frame = GetLargeIconFrameRect(item);
     result.frameWidth = std::max<LONG>(1, frame.right - frame.left);
     result.frameHeight = std::max<LONG>(1, frame.bottom - frame.top);
@@ -304,6 +324,8 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
             result.imagePath = L"file:///" + path.generic_wstring();
             result.source = runtime->second.asset->source;
             result.accent = runtime->second.asset->accent;
+            result.imageWidth = runtime->second.asset->width;
+            result.imageHeight = runtime->second.asset->height;
         }
         for (int i = 0; i < 2; ++i) if (const auto& asset = runtime->second.previews[i])
         {
@@ -333,6 +355,9 @@ RECT DesktopApp::GetLargeIconFrameRect(const DesktopItem& item) const
 
 void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state)
 {
+    // Match component resizing: only the grid placeholder is painted until
+    // commit/cancel; do not request or redraw content from pointer updates.
+    if (largeIconGesture_ && largeIconGesture_->resizing && largeIconGesture_->key == item.layoutKey) return;
     RequestLargeIconAsset(FindItemIndexByKey(item.layoutKey));
     const auto& config = EffectiveLargeIconConfig(item);
     DesktopWidget geometry; geometry.bounds = bounds; geometry.gridCell = item.gridCell;

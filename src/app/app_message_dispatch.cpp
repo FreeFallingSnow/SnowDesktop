@@ -130,6 +130,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return TRUE;
         }
         if (LOWORD(lp) != HTCLIENT) break;
+        POINT handlePoint{};
+        if (GetCursorPos(&handlePoint) && ScreenToClient(hwnd_, &handlePoint) && UpdateWidgetHandleCursor(handlePoint)) return TRUE;
         if (CanEditLargeIcons() && !HasActiveContextMenuSession() && !desktopIconsHidden_)
         {
             POINT pointer{};

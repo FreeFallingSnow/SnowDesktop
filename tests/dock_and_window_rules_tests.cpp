@@ -2629,6 +2629,18 @@ int main(int argc, char** argv)
             visiblePreviewZOrder.insertAfter == HWND_TOPMOST &&
             (visiblePreviewZOrder.flags & SWP_NOZORDER) == 0,
         "every drag preview placement must reassert topmost above Dock popups opened later");
+    const auto hintWindow = reinterpret_cast<HWND>(static_cast<UINT_PTR>(123));
+    Check(dragVisual::ResolvePreviewWindowZOrderPolicy(false, hintWindow).insertAfter == hintWindow &&
+        dragVisual::ResolvePreviewWindowZOrderPolicy(true, hintWindow).insertAfter == hintWindow,
+        "first show and repeated ghost refresh keep the same order beneath the hint");
+    const RECT largeSource{100, 200, 500, 400};
+    const RECT compact = dragVisual::FitPreviewInCell(largeSource, {100, 100}, {400, 250});
+    const RECT movedCompact = dragVisual::FitPreviewInCell({107, 211, 507, 411}, {100, 100}, {407, 261});
+    Check(compact.right - compact.left == 100 && compact.bottom - compact.top == 50 &&
+        compact.left == 325 && compact.top == 237 && movedCompact.left - compact.left == 7 && movedCompact.top - compact.top == 11,
+        "large ghost fits one cell with its aspect and grab point preserved while pointer moves only translate it");
+    Check(dragVisual::EqualRect(dragVisual::FitPreviewInCell({0, 0, 60, 90}, {100, 100}, {30, 45}), {0, 0, 60, 90}),
+        "a one-cell ghost is never enlarged by compact rendering");
     Check(dragVisual::DropPreviewBelongsToRenderSurface(
               true, true, true) &&
             !dragVisual::DropPreviewBelongsToRenderSurface(

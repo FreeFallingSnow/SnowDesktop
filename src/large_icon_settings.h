@@ -28,7 +28,8 @@ struct LargeIconSettingsSnapshot
     std::vector<int> frameWidths, frameHeights;
     bool animations = true;
     std::uint32_t neutral = 0x414751;
-    std::string config, error;
+    std::string config, error, defaultConfig;
+    int imageWidth = 0, imageHeight = 0;
 };
 
 using LargeIconSettingsAction = std::function<LargeIconSettingsSnapshot(LargeIconSettingsRequest)>;

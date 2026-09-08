@@ -20,17 +20,18 @@ void Rounded(ID2D1RenderTarget* target, D2D1_RECT_F rect, float radius, D2D1_COL
     brush.Reset();
     if (stroke.a > 0 && width > 0 && SUCCEEDED(target->CreateSolidColorBrush(stroke, &brush))) target->DrawRoundedRectangle(shape, brush.Get(), width);
 }
-ComPtr<IDWriteTextFormat> Format(IDWriteFactory* fonts, const LargeIconConfig& config, float scale)
+ComPtr<IDWriteTextFormat> Format(IDWriteFactory* fonts, const LargeIconConfig& config, float scale, bool reveal = false)
 {
     ComPtr<IDWriteTextFormat> format;
     if (!fonts) return format;
-    fonts->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(config.titleSize) * scale, L"", &format);
+    const float size = static_cast<float>(reveal ? config.revealTitleSize : config.titleSize) * scale;
+    fonts->CreateTextFormat(L"Segoe UI", nullptr, reveal ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
     if (format)
     {
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
         format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
-            static_cast<float>(config.titleSize) * scale * 1.3f, static_cast<float>(config.titleSize) * scale);
+            size * 1.3f, size);
     }
     return format;
 }
@@ -47,8 +48,8 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     if (!target || view.frame.right <= view.frame.left || view.frame.bottom <= view.frame.top) return;
     const auto frame = Rect(view.frame);
     const float scale = view.scale, hover = view.hover;
-    const float radius = std::min(static_cast<float>(config.radius) * scale,
-        std::min(frame.right - frame.left, frame.bottom - frame.top) / 2);
+    const float radius = static_cast<float>(large_icon_render_rules::Radius(config,
+        frame.right - frame.left, frame.bottom - frame.top, scale));
     const auto geometry = Content(config, view);
     if (config.shadow || (config.hoverFrame == 3 && hover > 0))
         for (int spread = 5; spread >= 1; --spread)
@@ -75,25 +76,30 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
 
     if ((geometry.leftReveal || (!view.original && config.coverHover == 2)) && hover > 0)
     {
-        const float lineHeight = static_cast<float>(config.titleSize) * scale * 1.3f;
+        const float lineHeight = static_cast<float>(geometry.leftReveal ? config.revealTitleSize : config.titleSize) * scale * 1.3f;
         // A fractional rectangle can lose a few ulps after adding its origin;
         // DirectWrite then fits only one line into an apparent two-line box.
-        const float titleHeight = std::ceil(lineHeight * 2);
+        const float titleHeight = geometry.leftReveal ? static_cast<float>(geometry.titleHeight) : std::ceil(lineHeight * 2);
         const float top = geometry.leftReveal ? (frame.top + frame.bottom) / 2 - titleHeight / 2 : frame.bottom - titleHeight - 6 * scale;
         const auto title = D2D1::RectF(frame.left + static_cast<float>(geometry.leftReveal ? geometry.titleLeft : 6 * scale),
             top, frame.right - 12 * scale, top + titleHeight);
-        const unsigned textColor = config.autoTitleColor ? 0xffffff : config.titleColor;
-        Rounded(target, title, 4 * scale, Color(large_icon_render_rules::TitleBackdrop(textColor), .88 * hover), Color(0, 0));
-        auto format = Format(fonts, config, scale);
+        const unsigned textColor = large_icon_render_rules::TextColor(config,
+            large_icon_render_rules::Background(config, view.neutral, view.accent), geometry.leftReveal);
+        if (!geometry.leftReveal)
+            Rounded(target, title, 4 * scale, Color(large_icon_render_rules::TitleBackdrop(textColor), .88 * hover), Color(0, 0));
+        auto format = Format(fonts, config, scale, geometry.leftReveal);
         ComPtr<ID2D1SolidColorBrush> brush;
         target->CreateSolidColorBrush(Color(textColor, hover), &brush);
         if (format && brush && title.right > title.left + 12 * scale)
         {
             format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            if (geometry.leftReveal) format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
             ComPtr<IDWriteInlineObject> ellipsis; fonts->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
             format->SetTrimming(&trimming, ellipsis.Get());
-            auto text = title; text.left += (6 + (1 - hover) * 6) * scale; text.right -= 6 * scale;
+            auto text = title;
+            text.left += (geometry.leftReveal ? (1 - hover) * 6 : 6) * scale;
+            if (!geometry.leftReveal) text.right -= 6 * scale;
             target->DrawText(view.name.data(), static_cast<UINT32>(view.name.size()), format.Get(), text, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
@@ -120,9 +126,10 @@ void DrawFloatingTitle(ID2D1RenderTarget* target, IDWriteFactory* fonts, const L
     {
         ComPtr<IDWriteTextLayout> inner;
         DWRITE_TEXT_METRICS metrics{};
-        const float width = static_cast<float>(view.frame.right - view.frame.left - geometry.titleLeft) - 24 * view.scale;
-        if (width > 0 && SUCCEEDED(fonts->CreateTextLayout(view.name.data(), static_cast<UINT32>(view.name.size()), format.Get(), width, 100000.f, &inner)) &&
-            SUCCEEDED(inner->GetMetrics(&metrics)) && metrics.lineCount <= 2) return;
+        auto innerFormat = Format(fonts, config, view.scale, true);
+        const float width = static_cast<float>(geometry.titleWidth);
+        if (innerFormat && width > 0 && SUCCEEDED(fonts->CreateTextLayout(view.name.data(), static_cast<UINT32>(view.name.size()), innerFormat.Get(), width, 100000.f, &inner)) &&
+            SUCCEEDED(inner->GetMetrics(&metrics)) && metrics.height <= geometry.titleHeight + .1) return;
     }
     const int width = std::min<LONG>(workArea.right - workArea.left, std::max(160, static_cast<int>(260 * view.scale)));
     ComPtr<IDWriteTextLayout> text;

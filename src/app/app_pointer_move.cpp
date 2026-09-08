@@ -464,6 +464,8 @@ void DesktopApp::OnMouseMoveAt(
         return;
     }
 
+    if (widgetAction_ != WidgetAction::None) UpdateWidgetHandleCursor(current);
+
     if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None &&
         mouseDownWidgetIndex_ < widgets_.size() &&
         widgets_[mouseDownWidgetIndex_].type == DesktopWidgetType::LuaScript &&
@@ -628,6 +630,7 @@ void DesktopApp::OnMouseMoveAt(
             widgetAction_ = WidgetAction::Move;
         else if (widgetAction_ == WidgetAction::PendingResize)
             widgetAction_ = WidgetAction::Resize;
+        UpdateWidgetHandleCursor(current);
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
         HideDockWindowPreview();

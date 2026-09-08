@@ -449,6 +449,7 @@ int main()
         large.image = "imported-123.png";
         large.localOnly = true;
         large.titleMode = 1;
+        large.radiusPercent = 100; large.revealTitleSize = 30;
         const std::string encoded = snowdesktop::EncodeLargeIconConfig(large);
         snowdesktop::layout_storage::Document roundTrip;
         const std::string document = "{\"layoutSchemaVersion\":1,\"items\":[{\"key\":\"game\",\"page\":\"p\",\"x\":0,\"y\":0,\"w\":2,\"h\":2,\"largeIcon\":" + encoded + "}]}";
@@ -457,13 +458,20 @@ int main()
             "large icon settings preserve desired span independently of adapted layout and without entitlement data");
         for (const auto invalid : {R"({"version":2})", R"({"version":1,"columns":0})",
                  R"({"version":1,"radius":-1})", R"({"version":1,"image":"../secret.png"})",
-                 R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})"})
+                 R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})",
+                 R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",
+                 R"({"version":1,"revealTitleSize":73})"})
         {
             JsonValue value;
             snowdesktop::LargeIconConfig candidate;
             Expect(ParseJson(invalid, value) && !snowdesktop::DecodeLargeIconConfig(value, candidate),
                 "large icon codec rejects unsupported versions, unsafe asset references and invalid numeric boundaries");
         }
+        JsonValue legacyValue; snowdesktop::LargeIconConfig legacy;
+        Expect(ParseJson(R"({"version":1,"radius":27,"titleSize":14})", legacyValue) &&
+            snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.radius == 27 && legacy.radiusPercent == -1 &&
+            legacy.titleSize == 14 && legacy.revealTitleSize == 24,
+            "old large-icon layouts keep their pixel radius and floating font when optional relative and reveal fields are absent");
         Expect(snowdesktop::layout_storage::ParseDocument(
             R"({"items":[{"key":"ordinary","w":3,"h":2}]})", roundTrip, &layoutError) &&
             !roundTrip.items[0].largeIcon,

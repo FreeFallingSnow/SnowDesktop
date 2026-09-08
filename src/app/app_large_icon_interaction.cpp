@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../animation_settings.h"
 #include "../widgets/widget_chrome_rules.h"
+#include "../large_icon_render_rules.h"
 
 void DesktopApp::BeginLargeIconPlacement(size_t index, snowdesktop::LargeIconConfig config)
 {
@@ -17,6 +18,8 @@ void DesktopApp::CancelLargeIconGesture()
     if (GetCapture() == hwnd_) ReleaseCapture();
     mouseDown_ = false;
     mouseDownHit_ = nullptr;
+    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+    UpdateLargeIconHover();
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -50,6 +53,7 @@ bool DesktopApp::HandleLargeIconPointerDown(POINT point)
     largeIconGesture_ = LargeIconGesture{items_[index].layoutKey, *items_[index].largeIcon, items_[index].gridCell, false, true, true};
     SetCapture(hwnd_);
     UpdateLargeIconHover();
+    InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }
 
@@ -103,7 +107,8 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
         geometry.bounds = GetGridRect(gridPages_, gesture.cell, {gesture.config.columns, gesture.config.rows});
         const auto rect = GetStandaloneWidgetFrameRect(geometry);
         const UINT rgb = gesture.valid ? 0x68b5ff : 0xf16d70;
-        DrawD2DRoundedRectangle(context, rect, static_cast<float>(gesture.config.radius),
+        DrawD2DRoundedRectangle(context, rect, static_cast<float>(snowdesktop::large_icon_render_rules::Radius(
+            gesture.config, rect.right - rect.left, rect.bottom - rect.top, GetItemLayoutScale(geometry.bounds))),
             D2D1::ColorF(rgb, .2f), D2D1::ColorF(rgb, .95f), 2);
         if (gesture.creating)
         {
@@ -177,6 +182,11 @@ void DesktopApp::UpdateLargeIconHover()
         moving = state.motion.Advance(now, hover, visible && interactive, snowdesktop::animation::RuntimeAnimationsEnabled(),
             snowdesktop::animation::RuntimeDurationScale(), config) || moving;
         ++it;
+    }
+    if (!moving && largeIconAnimationToken_)
+    {
+        uiAnimationScheduler_.Cancel(largeIconAnimationToken_);
+        largeIconAnimationToken_ = 0;
     }
     if (moving && !largeIconAnimationToken_)
         largeIconAnimationToken_ = uiAnimationScheduler_.StartAnimation(snowdesktop::UiAnimationSurface::Desktop,

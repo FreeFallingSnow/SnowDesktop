@@ -461,17 +461,7 @@ void DesktopApp::ShowItemContextMenu(
         if (largeIconMenu)
         {
             if (!CanEditLargeIcons()) { OpenLargeIconSettings(itemIndex); break; }
-            snowdesktop::LargeIconConfig config;
-            const auto& style = CurrentPersonalization();
-            config.radius = style.cornerRadius;
-            config.titleSize = itemFontSizeCu_;
-            config.borderWidth = style.widgetBorderWidth;
-            config.borderOpacity = style.widgetBorderAlpha;
-            config.borderColor = (static_cast<UINT>(style.widgetBorderR * 255) << 16) |
-                (static_cast<UINT>(style.widgetBorderG * 255) << 8) | static_cast<UINT>(style.widgetBorderB * 255);
-            wchar_t steamUrl[2048]{};
-            GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", steamUrl, static_cast<DWORD>(std::size(steamUrl)), items_[itemIndex].parsingName.c_str());
-            if (snowdesktop::large_icon_steam::AppId(steamUrl)) { config.content = 2; config.fit = 1; }
+            auto config = MakeLargeIconDefaults(itemIndex);
             const auto& item = items_[itemIndex];
             const auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
             std::unordered_set<std::wstring> occupied;

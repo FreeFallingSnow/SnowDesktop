@@ -1,6 +1,7 @@
 #include "icon_render_rules.h"
 #include "large_icon_render_rules.h"
 #include "large_icon_motion.h"
+#include "large_icon_settings_rules.h"
 
 #include <iostream>
 
@@ -68,8 +69,8 @@ int main(int argc, char** argv)
     Check(std::abs(zoomed.width - 32 * 1.06) < .0001 && !zoomed.leftReveal, "hover enlargement also affects small original icons");
     config.titleMode = 1; config.hoverContent = 1;
     geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, true, 1, false, 0);
-    Check(geometry.leftReveal && geometry.x == 12 && geometry.width == 32 && geometry.titleLeft == 56,
-        "left reveal uses the actual original image size and keeps room for the title");
+    Check(geometry.leftReveal && geometry.x == 64 && geometry.width == 32 && geometry.titleLeft == 172 && geometry.titleWidth == 216,
+        "left reveal centers the unchanged original in the left column and reserves the right for large text");
     geometry = ResolveContent(config, 180, 400, 256, 256, 1, true, true, 1, false, 0);
     Check(!geometry.leftReveal && geometry.x == 36 && geometry.width == 108, "portrait fallback does not shrink the icon to fit text");
     geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, false, 1, false, 0);
@@ -81,6 +82,44 @@ int main(int argc, char** argv)
     config.focusX = 1;
     geometry = ResolveContent(config, 100, 200, 400, 200, 1, false, true, 0, false, 0);
     Check(geometry.x == -300 && geometry.width == 400 && geometry.height == 200, "fill focus crops without stretching the source");
+    config = {};
+    Check(Radius(config, 200, 100, 2) == 24 && RadiusPercent(config, 200, 100, 2) == 48,
+        "legacy component radius keeps its CU geometry and displays a normalized percentage");
+    config.radiusPercent = 100;
+    Check(Radius(config, 200, 100, 1) == 50 && Radius(config, 400, 200, 2) == 100,
+        "maximum relative radius follows half the short edge through resize and DPI changes");
+    config.radiusPercent = 50;
+    Check(Radius(config, 300, 100, 1) == 25, "relative rounding uses the short edge, not frame width");
+    config.radiusPercent = 0;
+    Check(Radius(config, 200, 100, 2) == 0, "zero relative radius overrides the retained legacy fallback");
+    using snowdesktop::large_icon_settings_rules::Field;
+    using snowdesktop::large_icon_settings_rules::Visible;
+    using snowdesktop::large_icon_settings_rules::CanSelectLeftTitle;
+    config = {};
+    Check(!Visible(Field::Image, config) && !Visible(Field::Crop, config) && !Visible(Field::Imported, config) &&
+        !Visible(Field::Steam, config) && !Visible(Field::ManualBackground, config) && !Visible(Field::ManualTitle, config),
+        "original and automatic modes hide unsupported media and manual color editors");
+    config.content = 1;
+    Check(Visible(Field::Imported, config) && Visible(Field::Image, config) && !Visible(Field::Original, config) && !Visible(Field::Crop, config),
+        "contain images expose import and fit but hide crop focus and original scaling");
+    config.fit = 1; config.content = 2; config.autoColor = false; config.autoTitleColor = false;
+    Check(Visible(Field::Crop, config) && Visible(Field::Steam, config) && !Visible(Field::Imported, config) &&
+        Visible(Field::ManualBackground, config) && !Visible(Field::AutomaticBackground, config) && Visible(Field::ManualTitle, config),
+        "Steam fill and manual modes reveal only their applicable child settings");
+    config.border = false; config.shadow = false; config.hoverFrame = 0;
+    Check(!Visible(Field::BorderAppearance, config) && !Visible(Field::BorderOpacity, config) && !Visible(Field::ShadowStrength, config) &&
+        !Visible(Field::HoverBackground, config), "disabled frame effects hide unused appearance settings");
+    config.hoverFrame = 2;
+    Check(Visible(Field::BorderAppearance, config) && !Visible(Field::BorderOpacity, config),
+        "hover-only border exposes its color and width without claiming a normal border opacity");
+    config = {}; config.titleMode = 1;
+    Check(Visible(Field::RevealTitle, config) && !Visible(Field::OriginalMotion, config) &&
+        CanSelectLeftTitle(config, 400, 180, 64, 64, 1, true) &&
+        !CanSelectLeftTitle(config, 180, 400, 64, 64, 1, true) &&
+        !CanSelectLeftTitle(config, 400, 180, 64, 64, 1, false),
+        "left-title editor follows production space and animation eligibility without a second movement selector");
+    config.content = 2;
+    Check(!CanSelectLeftTitle(config, 400, 180, 64, 64, 1, true), "covers cannot select the original-icon left title effect");
     config = {};
     Check(Background(config, 0x414751, 0x414751) == 0x414751, "missing color data immediately uses the neutral background");
     Check(Background(config, 0xc9ced6, 0) == 0xc9ced6 && Background(config, 0x414751, 0) == 0x414751,

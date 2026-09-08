@@ -21,6 +21,7 @@ struct LargeIconConfig
     int columns = 2, rows = 2;
     double contentScale = .60;
     double radius = 12;
+    double radiusPercent = -1; // -1 preserves the legacy/component CU radius; 100 is half the short edge.
     int content = 0; // 0 original, 1 imported static image, 2 Steam
     int fit = 0; // 0 contain, 1 cover
     double focusX = .5, focusY = .5;
@@ -38,6 +39,7 @@ struct LargeIconConfig
     double shadowStrength = .2;
     int titleMode = 0; // 0 floating, 1 left reveal
     double titleSize = 12;
+    double revealTitleSize = 24;
     bool autoTitleColor = true;
     std::uint32_t titleColor = 0xffffff;
     int hoverContent = 0; // 0 none, 1 left reveal, 2 zoom, 3 lift
@@ -59,14 +61,14 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
 {
 #define LI_FIELD(name) f(#name, c.name)
     LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows);
-    LI_FIELD(contentScale); LI_FIELD(radius); LI_FIELD(content); LI_FIELD(fit);
+    LI_FIELD(contentScale); LI_FIELD(radius); LI_FIELD(radiusPercent); LI_FIELD(content); LI_FIELD(fit);
     LI_FIELD(focusX); LI_FIELD(focusY); LI_FIELD(image); LI_FIELD(cachedCover);
     LI_FIELD(autoColor); LI_FIELD(manualColor); LI_FIELD(colorMix);
     LI_FIELD(opacity); LI_FIELD(hoverOpacity); LI_FIELD(border);
     LI_FIELD(hoverOpacityLinked);
     LI_FIELD(borderColor); LI_FIELD(borderWidth); LI_FIELD(borderOpacity);
     LI_FIELD(shadow); LI_FIELD(shadowStrength); LI_FIELD(titleMode);
-    LI_FIELD(titleSize); LI_FIELD(autoTitleColor); LI_FIELD(titleColor);
+    LI_FIELD(titleSize); LI_FIELD(revealTitleSize); LI_FIELD(autoTitleColor); LI_FIELD(titleColor);
     LI_FIELD(hoverContent); LI_FIELD(hoverFrame); LI_FIELD(press);
     LI_FIELD(launch); LI_FIELD(coverHover); LI_FIELD(amplitude);
     LI_FIELD(delayMs); LI_FIELD(enterMs); LI_FIELD(exitMs);
@@ -91,14 +93,14 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
     };
     return c.version == 1 && c.columns >= 1 && c.columns <= 1024 &&
         c.rows >= 1 && c.rows <= 1024 && range(c.contentScale, .1, 1) &&
-        range(c.radius, 0, 512) && c.content >= 0 && c.content <= 2 &&
+        range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= 2 &&
         c.fit >= 0 && c.fit <= 1 && range(c.focusX, 0, 1) && range(c.focusY, 0, 1) &&
         IsManagedLargeIconImage(c.image) && IsManagedLargeIconImage(c.cachedCover) &&
         c.manualColor <= 0xffffff && c.borderColor <= 0xffffff && c.titleColor <= 0xffffff &&
         range(c.colorMix, 0, 1) && range(c.opacity, 0, 1) && range(c.hoverOpacity, 0, 1) &&
         range(c.borderWidth, 0, 16) && range(c.borderOpacity, 0, 1) &&
         range(c.shadowStrength, 0, 1) && c.titleMode >= 0 && c.titleMode <= 1 &&
-        range(c.titleSize, 8, 72) && c.hoverContent >= 0 && c.hoverContent <= 3 &&
+        range(c.titleSize, 8, 72) && range(c.revealTitleSize, 8, 72) && c.hoverContent >= 0 && c.hoverContent <= 3 &&
         c.hoverFrame >= 0 && c.hoverFrame <= 3 && c.launch >= 0 && c.launch <= 2 &&
         c.coverHover >= 0 && c.coverHover <= 2 && range(c.amplitude, 0, 2) &&
         c.delayMs >= 0 && c.delayMs <= 2000 && c.enterMs >= 0 && c.enterMs <= 2000 &&

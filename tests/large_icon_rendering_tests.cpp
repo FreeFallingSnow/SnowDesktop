@@ -128,15 +128,23 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
 
         view.frame = {40, 75, 440, 255}; config.titleMode = config.hoverContent = 1;
         pixels = canvas.Draw(config, view, true); bounds = RedBounds(pixels);
-        Check(bounds.left == 52 && bounds.top == 133 && bounds.right == 116 && bounds.bottom == 197,
-            "left reveal preserves original pixel dimensions and moves to the frame inset");
+        Check(bounds.left == 88 && bounds.top == 133 && bounds.right == 152 && bounds.bottom == 197,
+            "left reveal preserves original pixel dimensions and centers the original in its left column");
         Check(Visible(pixels, {0, 270, Canvas::width, Canvas::height}) == 0, "a short inner title does not create a duplicate floating label");
         Save(outputDirectory, "04-left-title.png", pixels);
         view.name = L"一个很长的游戏名称，用于检查两行省略后仍然能够查看完整名称以及保持原始图标尺寸和外框几何不变。继续加入额外的标题内容，确保这段名称确实超过两行宽度，覆盖完整名称提示的回归场景。";
         pixels = canvas.Draw(config, view, true);
-        Check(TextBands(pixels, {134, 149, 422, 181}) == 2, "fractional line metrics still render two inner title lines before ellipsis");
+        Check(TextBands(pixels, {212, 133, 428, 198}) == 2, "large inner text keeps two lines before ellipsis");
         Check(Visible(pixels, {0, 270, Canvas::width, Canvas::height}) > 100, "truncated inner titles retain a full floating name");
         Save(outputDirectory, "05-long-title.png", pixels);
+        const auto visibleConfig = config;
+        config.opacity = 0; config.border = false; config.hoverFrame = 0;
+        view.name = L"A"; pixels = canvas.Draw(config, view);
+        Check(Visible(pixels, {212, 133, 290, 198}) == 0 && Visible(pixels, {350, 133, 428, 198}) == 0 &&
+            Visible(pixels, {300, 145, 340, 188}) > 80,
+            "large reveal text is centered on the right without a title backdrop");
+        Save(outputDirectory, "10-left-title-no-backdrop.png", pixels);
+        config = visibleConfig;
         view.animations = false; pixels = canvas.Draw(config, view, true); bounds = RedBounds(pixels);
         Check(bounds.left == 208 && bounds.right == 272, "reduced-motion rendering keeps originals centered");
 
@@ -148,6 +156,10 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check(Visible(pixels, {0, 0, 100, Canvas::height}) == 0 && Visible(pixels, {300, 0, Canvas::width, Canvas::height}) == 0,
             "filled content does not escape the fixed frame");
         Save(outputDirectory, "06-cover.png", pixels);
+        config.radiusPercent = 100; pixels = canvas.Draw(config, view);
+        Check(Pixel(pixels, 110, 80) == 0 && Red(Pixel(pixels, 200, 160)),
+            "100 percent rounding clips cover content to half the short edge");
+        config.radiusPercent = -1;
         view.pressed = true; pixels = canvas.Draw(config, view); bounds = RedBounds(pixels);
         Check(bounds.left == 104 && bounds.top == 64 && bounds.right == 296 && bounds.bottom == 256,
             "production press feedback shrinks an exact-aspect cover rather than recropping it unchanged");

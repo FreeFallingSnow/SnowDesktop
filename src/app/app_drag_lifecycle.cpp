@@ -543,6 +543,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         }
     }
     widgetAction_ = WidgetAction::None;
+    SetCursor(LoadCursorW(nullptr, IDC_ARROW));
     middleButtonWidgetMove_ = false;
     detailColumnResizeActive_ = false;
     detailColumnResizePopup_ = false;

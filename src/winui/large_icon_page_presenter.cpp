@@ -8,6 +8,7 @@
 #include <winrt/Windows.System.h>
 #include "../large_icon_render_rules.h"
 #include "../large_icon_motion.h"
+#include "../large_icon_settings_rules.h"
 #include <chrono>
 
 namespace snowdesktop::winui
@@ -44,6 +45,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     std::wstring previewPath;
     m::Imaging::BitmapImage previewBitmap{nullptr};
     std::vector<std::function<void()>> syncControls;
+    std::vector<std::function<void()>> syncVisibility;
     x::DispatcherTimer timer;
     bool active = false, submitting = false, syncing = false, hovered = false, pressed = false, previewDirty = false;
 
@@ -69,6 +71,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const bool finishesPreview = operation == "commit" || operation == "cancel" || operation == "read";
         const auto oldRevision = snapshot.revision;
         const auto oldError = snapshot.error;
+        if ((operation == "preview" || operation == "commit") && draft.radiusPercent >= 0)
+        {
+            const auto [width, height] = FrameSize();
+            draft.radius = std::clamp(large_icon_render_rules::Radius(draft, width, height, snapshot.unitScale) / std::max(.01, snapshot.unitScale), 0., 512.);
+        }
         LargeIconSettingsRequest request{snapshot.key, snapshot.session, snapshot.revision,
             std::move(operation), EncodeLargeIconConfig(draft), std::move(path)};
         try { snapshot = action(std::move(request)); }
@@ -119,6 +126,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void UpdatePreview()
     {
+        UpdateControlState();
         const double now = Now();
         const bool moving = motion.Advance(now, hovered, active && snapshot.available, snapshot.animations, snapshot.durationScale, draft);
         ScheduleRendering(moving);
@@ -133,7 +141,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         c::Canvas::SetLeft(preview, offset); c::Canvas::SetTop(preview, top);
         previewCanvas.Width(width); previewCanvas.Height(height);
         preview.Background(m::SolidColorBrush(Color(0, 0))); preview.BorderThickness(x::Thickness{0});
-        const double radius = std::min({draft.radius * scale, width / 2, height / 2});
+        const double radius = large_icon_render_rules::Radius(draft, width, height, scale);
         const auto background = large_icon_render_rules::Background(draft, snapshot.neutral, snapshot.accent);
         frameBackground.Width(width); frameBackground.Height(height); frameBackground.CornerRadius(x::CornerRadius{radius});
         frameBackground.Background(m::SolidColorBrush(Color(background, draft.opacity + (draft.hoverFrame == 1 ? (draft.hoverOpacity - draft.opacity) * hover : 0))));
@@ -175,38 +183,43 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         previewImage.Width(content.width * fit); previewImage.Height(content.height * fit); previewImage.Stretch(m::Stretch::Fill);
         c::Canvas::SetLeft(previewImage, content.x * fit); c::Canvas::SetTop(previewImage, content.y * fit);
         const bool left = content.leftReveal;
-        const double lineHeight = draft.titleSize * scale * 1.3;
-        const double innerHeight = std::ceil(draft.titleSize * snapshot.unitScale * 1.3 * 2) * fit;
+        const double innerFontSize = (left ? draft.revealTitleSize : draft.titleSize) * scale;
+        const double lineHeight = innerFontSize * 1.3;
+        const double innerHeight = left ? content.titleHeight * fit : std::ceil(draft.titleSize * snapshot.unitScale * 1.3 * 2) * fit;
         const double titleLeft = left ? content.titleLeft * fit : 6 * scale;
         const double titleWidth = std::max(1., width - titleLeft - 12 * scale);
-        const double titlePadding = (6 + (1 - hover) * 6) * scale;
-        previewTitle.Text(snapshot.name); previewTitle.FontSize(draft.titleSize * scale);
+        const double titlePadding = (left ? (1 - hover) * 6 : 6) * scale;
+        previewTitle.Text(snapshot.name); previewTitle.FontSize(innerFontSize);
+        previewTitle.FontWeight(left ? winrt::Windows::UI::Text::FontWeights::SemiBold() : winrt::Windows::UI::Text::FontWeights::Normal());
+        previewTitle.TextAlignment(left ? x::TextAlignment::Center : x::TextAlignment::Left);
         previewTitle.TextWrapping(x::TextWrapping::Wrap); previewTitle.MaxLines(2);
         previewTitle.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight); previewTitle.LineHeight(lineHeight);
         previewTitle.TextTrimming(x::TextTrimming::CharacterEllipsis);
         previewTitle.VerticalAlignment(x::VerticalAlignment::Center);
-        const auto textColor = draft.autoTitleColor ? 0xffffffu : draft.titleColor;
+        const auto textColor = large_icon_render_rules::TextColor(draft, background, left);
         previewTitle.Foreground(m::SolidColorBrush(Color(textColor)));
         innerTitleBackdrop.Visibility(left || (!raw && draft.coverHover == 2) ? x::Visibility::Visible : x::Visibility::Collapsed);
         innerTitleBackdrop.Opacity(hover); innerTitleBackdrop.Width(titleWidth); innerTitleBackdrop.Height(innerHeight);
-        innerTitleBackdrop.Padding(x::Thickness{titlePadding, 0, 6 * scale, 0}); innerTitleBackdrop.CornerRadius(x::CornerRadius{4 * scale});
-        innerTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), .88)));
+        innerTitleBackdrop.Padding(x::Thickness{titlePadding, 0, left ? 0 : 6 * scale, 0}); innerTitleBackdrop.CornerRadius(x::CornerRadius{4 * scale});
+        innerTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), left ? 0 : .88)));
         c::Canvas::SetLeft(innerTitleBackdrop, titleLeft);
         c::Canvas::SetTop(innerTitleBackdrop, left ? height / 2 - innerHeight / 2 : height - innerHeight - 6 * scale);
         floatingTitle.Text(snapshot.name); floatingTitle.FontSize(draft.titleSize * scale);
         floatingTitle.TextWrapping(x::TextWrapping::Wrap); floatingTitle.MaxLines(0); floatingTitle.TextTrimming(x::TextTrimming::None);
-        floatingTitle.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight); floatingTitle.LineHeight(lineHeight);
+        floatingTitle.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight); floatingTitle.LineHeight(draft.titleSize * scale * 1.3);
         floatingTitle.TextAlignment(x::TextAlignment::Center);
-        floatingTitle.Foreground(m::SolidColorBrush(Color(textColor)));
+        const auto floatingColor = large_icon_render_rules::TextColor(draft, background, false);
+        floatingTitle.Foreground(m::SolidColorBrush(Color(floatingColor)));
         // Measure an untrimmed name to decide whether the two-line inner title
         // needs the same full-name floating hint as the desktop renderer.
-        c::TextBlock measure; measure.Text(snapshot.name); measure.FontSize(draft.titleSize * scale);
+        c::TextBlock measure; measure.Text(snapshot.name); measure.FontSize(innerFontSize);
+        measure.FontWeight(previewTitle.FontWeight());
         measure.TextWrapping(x::TextWrapping::Wrap); measure.LineHeight(lineHeight); measure.LineStackingStrategy(x::LineStackingStrategy::BlockLineHeight);
-        measure.Measure({static_cast<float>(std::max(1., titleWidth - 12 * scale)), 100000.f});
-        const bool fullHint = !left || measure.DesiredSize().Height > lineHeight * 2 + .1;
+        measure.Measure({static_cast<float>(std::max(1., titleWidth - (left ? 0 : 12 * scale))), 100000.f});
+        const bool fullHint = !left || measure.DesiredSize().Height > innerHeight + .1;
         floatingTitleBackdrop.Visibility(fullHint ? x::Visibility::Visible : x::Visibility::Collapsed);
         floatingTitleBackdrop.Opacity(hover);
-        floatingTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(textColor), .96)));
+        floatingTitleBackdrop.Background(m::SolidColorBrush(Color(large_icon_render_rules::TitleBackdrop(floatingColor), .96)));
         const double titleExtent = std::min(330., std::max(160., 260. * snapshot.unitScale) * fit);
         floatingTitleBackdrop.Width(titleExtent); floatingTitleBackdrop.Padding(x::Thickness{6 * scale}); floatingTitleBackdrop.CornerRadius(x::CornerRadius{6 * scale});
         floatingTitleBackdrop.Measure({static_cast<float>(titleExtent), 100000.f});
@@ -238,92 +251,182 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         panel.Children().Append(heading); border.Child(panel);
         editors.Children().Append(border); return panel;
     }
-    void Row(c::StackPanel panel, const char* key, const x::UIElement& control, bool compact = false)
+    using Field = large_icon_settings_rules::Field;
+    std::pair<double, double> FrameSize() const
     {
+        return {std::max(1, draft.columns >= 1 && draft.columns <= static_cast<int>(snapshot.frameWidths.size()) ? snapshot.frameWidths[draft.columns - 1] : snapshot.frameWidth),
+            std::max(1, draft.rows >= 1 && draft.rows <= static_cast<int>(snapshot.frameHeights.size()) ? snapshot.frameHeights[draft.rows - 1] : snapshot.frameHeight)};
+    }
+    bool CanSelectLeftTitle() const
+    {
+        const auto [width, height] = FrameSize();
+        return large_icon_settings_rules::CanSelectLeftTitle(draft, width, height,
+            snapshot.imageWidth, snapshot.imageHeight, snapshot.unitScale, snapshot.animations);
+    }
+    LargeIconConfig Defaults() const
+    {
+        LargeIconConfig defaults; JsonValue value;
+        if (ParseJson(snapshot.defaultConfig, value)) DecodeLargeIconConfig(value, defaults);
+        defaults.columns = std::clamp(defaults.columns, 1, std::max(1, snapshot.maxColumns));
+        defaults.rows = std::clamp(defaults.rows, 1, std::max(1, snapshot.maxRows));
+        defaults.fit = draft.content == 0 ? 0 : 1;
+        return defaults;
+    }
+    template<class T> double NumberValue(T LargeIconConfig::* member) const
+    {
+        if constexpr (std::is_same_v<T, double>)
+            if (member == &LargeIconConfig::radiusPercent)
+            {
+                const auto [width, height] = FrameSize();
+                return std::round(large_icon_render_rules::RadiusPercent(draft, width, height, snapshot.unitScale) * 10) / 10;
+            }
+        return static_cast<double>(draft.*member);
+    }
+    template<class T> void Assign(T LargeIconConfig::* member, T value)
+    {
+        draft.*member = value;
+        if constexpr (std::is_same_v<T, int>)
+        {
+            if (member == &LargeIconConfig::titleMode) draft.hoverContent = value == 1 ? 1 : 0;
+            if (member == &LargeIconConfig::hoverContent) draft.titleMode = value == 1 ? 1 : 0;
+            if (member == &LargeIconConfig::content) draft.fit = value == 0 ? 0 : 1;
+        }
+        if constexpr (std::is_same_v<T, double>)
+        {
+            if (member == &LargeIconConfig::opacity && draft.hoverOpacityLinked) draft.hoverOpacity = std::min(1., value + .15);
+            if (member == &LargeIconConfig::hoverOpacity) draft.hoverOpacityLinked = false;
+        }
+        if constexpr (std::is_same_v<T, bool>)
+            if (member == &LargeIconConfig::hoverOpacityLinked && value) draft.hoverOpacity = std::min(1., draft.opacity + .15);
+    }
+    template<class T> std::function<void(Impl&)> Reset(T LargeIconConfig::* member)
+    {
+        return [member](Impl& self) {
+            const auto defaults = self.Defaults();
+            self.Assign(member, defaults.*member);
+            if constexpr (std::is_same_v<T, double>)
+                if (member == &LargeIconConfig::radiusPercent) self.draft.radius = defaults.radius;
+            self.Send("commit");
+        };
+    }
+    void Track(const x::FrameworkElement& element, Field field)
+    {
+        syncVisibility.push_back([this, element, field] {
+            element.Visibility(large_icon_settings_rules::Visible(field, draft) ? x::Visibility::Visible : x::Visibility::Collapsed);
+        });
+    }
+    void UpdateControlState()
+    {
+        const bool wasSyncing = syncing; syncing = true;
+        for (auto& sync : syncVisibility) sync();
+        syncing = wasSyncing;
+    }
+    void Row(c::StackPanel panel, const char* key, const x::UIElement& control,
+        std::function<void(Impl&)> reset, bool compact = false, Field field = Field::Always, bool animation = false)
+    {
+        c::Grid editor; editor.ColumnSpacing(8);
+        c::ColumnDefinition valueColumn; valueColumn.Width(compact ? x::GridLengthHelper::Auto() : x::GridLengthHelper::FromValueAndType(1., x::GridUnitType::Star));
+        c::ColumnDefinition resetColumn; resetColumn.Width(x::GridLengthHelper::Auto());
+        editor.ColumnDefinitions().Append(valueColumn); editor.ColumnDefinitions().Append(resetColumn);
+        editor.Children().Append(control);
+        c::Button restore;
+        presenter_controls::ConfigureRestoreDefaultButton(restore, L("app.settings.restore_default") + L" · " + L(key));
+        restore.VerticalAlignment(x::VerticalAlignment::Center);
+        c::Grid::SetColumn(restore, 1); editor.Children().Append(restore);
+        std::weak_ptr<Impl> weak = shared_from_this();
+        restore.Click([weak, reset](auto const&, auto const&) { if (auto self = weak.lock()) reset(*self); });
         presenter_controls::SettingRow row;
-        row.Initialize(control, compact ? 0. : presenter_controls::kSettingControlWidth);
-        row.SetText(L(key));
+        row.Initialize(editor, compact ? 0. : presenter_controls::kSettingControlWidth + 40);
+        row.SetText(L(key), std::string_view(key) == "largeIcon.radius" ? L("largeIcon.radiusHelp") : L"" );
         row.SetControlAlignment(compact ? x::HorizontalAlignment::Right : x::HorizontalAlignment::Stretch);
         row.root.MinHeight(44);
+        if (field != Field::Always) row.root.Margin({16, 0, 0, 0});
         x::Automation::AutomationProperties::SetName(control, L(key));
-        panel.Children().Append(row.root);
+        panel.Children().Append(row.root); Track(row.root, field);
+        if (animation) syncVisibility.push_back([this, row] { row.controlHost.IsEnabled(snapshot.animations); row.root.Opacity(snapshot.animations ? 1 : .55); });
+        if (std::string_view(key) == "largeIcon.title") syncVisibility.push_back([this, row] {
+            const bool supported = CanSelectLeftTitle();
+            row.help.Text(supported ? L"" : L("largeIcon.leftUnavailable"));
+            row.help.Visibility(supported ? x::Visibility::Collapsed : x::Visibility::Visible);
+        });
     }
     template<class T> void Number(c::StackPanel panel, const char* key, T LargeIconConfig::* member,
-        double min, double max, double step = 1)
+        double min, double max, double step = 1, Field field = Field::Always, bool animation = false)
     {
         c::NumberBox input; input.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         input.Minimum(min); input.Maximum(std::max(min, max)); input.SmallChange(step);
         input.SpinButtonPlacementMode(c::NumberBoxSpinButtonPlacementMode::Inline);
-        input.Value(static_cast<double>(draft.*member));
-        x::Automation::AutomationProperties::SetName(input, L(key));
+        input.Value(NumberValue(member));
         std::weak_ptr<Impl> weak = shared_from_this();
         input.ValueChanged([weak, member](auto const&, auto const& args) {
             if (auto self = weak.lock(); self && !self->syncing && std::isfinite(args.NewValue()))
-            { self->draft.*member = static_cast<T>(args.NewValue()); self->Send("commit"); }
+            { self->Assign(member, static_cast<T>(args.NewValue())); self->Send("commit"); }
         });
-        syncControls.push_back([this, input, member] { input.Value(static_cast<double>(draft.*member)); });
-        Row(panel, key, input);
+        syncControls.push_back([this, input, member] { input.Value(NumberValue(member)); });
+        Row(panel, key, input, Reset(member), false, field, animation);
     }
-    void Slider(c::StackPanel panel, const char* key, double LargeIconConfig::* member, double min, double max, double step = .01)
+    void Slider(c::StackPanel panel, const char* key, double LargeIconConfig::* member, double min, double max,
+        double step = .01, Field field = Field::Always, bool animation = false)
     {
         c::Slider input; input.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         input.VerticalAlignment(x::VerticalAlignment::Center);
         input.Minimum(min); input.Maximum(max); input.StepFrequency(step); input.Value(draft.*member);
-        x::Automation::AutomationProperties::SetName(input, L(key));
         std::weak_ptr<Impl> weak = shared_from_this();
         input.ValueChanged([weak, member](auto const&, auto const& args) {
             if (auto self = weak.lock(); self && !self->syncing)
-            {
-                self->draft.*member = args.NewValue();
-                if (member == &LargeIconConfig::opacity && self->draft.hoverOpacityLinked)
-                    self->draft.hoverOpacity = std::min(1., args.NewValue() + .15);
-                if (member == &LargeIconConfig::hoverOpacity) self->draft.hoverOpacityLinked = false;
-                self->Send("preview");
-            }
+            { self->Assign(member, args.NewValue()); self->Send("preview"); }
         });
         const auto commit = [weak](auto const&, auto const&) {
             if (auto self = weak.lock(); self && self->active && !self->syncing && self->previewDirty) self->Send("commit");
         };
         input.PointerCaptureLost(commit); input.KeyUp(commit); input.LostFocus(commit);
         syncControls.push_back([this, input, member] { input.Value(draft.*member); });
-        Row(panel, key, input);
+        Row(panel, key, input, Reset(member), false, field, animation);
     }
-    void Toggle(c::StackPanel panel, const char* key, bool LargeIconConfig::* member)
+    void Toggle(c::StackPanel panel, const char* key, bool LargeIconConfig::* member, Field field = Field::Always, bool animation = false)
     {
-        c::ToggleSwitch input; input.IsOn(draft.*member);
+        c::ToggleSwitch input; input.IsOn(draft.*member); input.MinWidth(0);
+        input.HorizontalAlignment(x::HorizontalAlignment::Right);
         std::weak_ptr<Impl> weak = shared_from_this();
         input.Toggled([weak, member](auto const& sender, auto const&) {
-            if (auto self = weak.lock(); self && !self->syncing) {
-                self->draft.*member = sender.template as<c::ToggleSwitch>().IsOn();
-                if (member == &LargeIconConfig::hoverOpacityLinked && self->draft.hoverOpacityLinked)
-                    self->draft.hoverOpacity = std::min(1., self->draft.opacity + .15);
-                self->Send("commit"); }
+            if (auto self = weak.lock(); self && !self->syncing)
+            { self->Assign(member, sender.template as<c::ToggleSwitch>().IsOn()); self->Send("commit"); }
         });
         syncControls.push_back([this, input, member] { input.IsOn(draft.*member); });
-        Row(panel, key, input, true);
+        Row(panel, key, input, Reset(member), true, field, animation);
     }
-    void Choice(c::StackPanel panel, const char* key, int LargeIconConfig::* member, std::initializer_list<const char*> choices)
+    void Choice(c::StackPanel panel, const char* key, int LargeIconConfig::* member, std::initializer_list<const char*> choices,
+        Field field = Field::Always, bool animation = false, std::vector<int> values = {})
     {
         c::ComboBox input; input.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        for (const char* choice : choices) input.Items().Append(winrt::box_value(L(choice)));
-        input.SelectedIndex(draft.*member);
+        if (values.empty()) for (size_t i = 0; i < choices.size(); ++i) values.push_back(static_cast<int>(i));
+        size_t i = 0;
+        for (const char* choice : choices)
+        {
+            c::ComboBoxItem option; option.Content(winrt::box_value(L(choice))); input.Items().Append(option);
+            if (member == &LargeIconConfig::titleMode && values[i] == 1)
+                syncVisibility.push_back([this, option] { option.IsEnabled(CanSelectLeftTitle()); });
+            ++i;
+        }
+        const auto sync = [this, input, member, values] {
+            const auto found = std::find(values.begin(), values.end(), draft.*member);
+            input.SelectedIndex(found == values.end() ? -1 : static_cast<int>(found - values.begin()));
+        };
+        sync();
         std::weak_ptr<Impl> weak = shared_from_this();
-        input.SelectionChanged([weak, member](auto const& sender, auto const&) {
+        input.SelectionChanged([weak, member, values](auto const& sender, auto const&) {
             if (auto self = weak.lock(); self && !self->syncing)
             {
-                const auto selected = sender.template as<c::ComboBox>().SelectedIndex();
-                if (selected < 0) return;
-                self->draft.*member = selected;
-                if (member == &LargeIconConfig::titleMode) self->draft.hoverContent = selected == 1 ? 1 : 0;
-                if (member == &LargeIconConfig::hoverContent) self->draft.titleMode = selected == 1 ? 1 : 0;
-                if (member == &LargeIconConfig::content) self->draft.fit = selected == 0 ? 0 : 1;
-                self->Send("commit");
+                const int selected = sender.template as<c::ComboBox>().SelectedIndex();
+                if (selected < 0 || selected >= static_cast<int>(values.size())) return;
+                if (member == &LargeIconConfig::titleMode && values[selected] == 1 && !self->CanSelectLeftTitle()) return;
+                self->Assign(member, values[selected]); self->Send("commit");
             }
         });
-        syncControls.push_back([this, input, member] { input.SelectedIndex(draft.*member); });
-        Row(panel, key, input);
+        syncControls.push_back(sync);
+        Row(panel, key, input, Reset(member), false, field, animation);
     }
-    void ColorPicker(c::StackPanel panel, const char* key, std::uint32_t LargeIconConfig::* member)
+    void ColorPicker(c::StackPanel panel, const char* key, std::uint32_t LargeIconConfig::* member, Field field = Field::Always)
     {
         c::Button button;
         c::StackPanel buttonContent; buttonContent.Orientation(c::Orientation::Horizontal); buttonContent.Spacing(8);
@@ -343,24 +446,26 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         flyout.Closed([weak](auto const&, auto const&) {
             if (auto self = weak.lock(); self && self->active && !self->syncing && self->previewDirty) self->Send("commit");
         });
-        const auto syncColor = [this, picker, member, swatch, colorValue] {
+        const auto sync = [this, picker, member, swatch, colorValue] {
             picker.Color(Color(draft.*member)); swatch.Background(m::SolidColorBrush(Color(draft.*member)));
             wchar_t value[8]{}; swprintf_s(value, L"#%06X", static_cast<unsigned>(draft.*member)); colorValue.Text(value);
         };
-        syncColor(); syncControls.push_back(syncColor);
-        Row(panel, key, button, true);
+        sync(); syncControls.push_back(sync);
+        Row(panel, key, button, Reset(member), true, field);
     }
-    void Button(c::StackPanel panel, const char* key, std::function<void(Impl&)> callback)
+    c::Button Button(c::StackPanel panel, const char* key, std::function<void(Impl&)> callback, Field field = Field::Always)
     {
-        c::Button button; button.Content(winrt::box_value(L(key)));
+        c::Button button; button.Content(winrt::box_value(L(key))); button.HorizontalAlignment(x::HorizontalAlignment::Right);
         std::weak_ptr<Impl> weak = shared_from_this();
         button.Click([weak, callback](auto const&, auto const&) { if (auto self = weak.lock()) callback(*self); });
-        panel.Children().Append(button);
+        panel.Children().Append(button); Track(button, field); return button;
     }
+
     void Build()
     {
         syncing = true;
-        syncControls.clear(); root.Children().Clear(); editors.Children().Clear();
+        syncControls.clear(); syncVisibility.clear(); root.Children().Clear(); editors.Children().Clear();
+        for (int i = 0; i < 2; ++i) { coverImages[i] = c::Image{}; coverSources[i] = c::TextBlock{}; coverPaths[i].clear(); }
         previewCard.Child(nullptr); previewSummary.Children().Clear();
         root.Spacing(16); editors.Spacing(16);
         root.HorizontalAlignment(x::HorizontalAlignment::Stretch);
@@ -389,22 +494,23 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         root.Children().Append(previewCard); status.TextWrapping(x::TextWrapping::Wrap);
         root.Children().Append(status); editorHost.Content(editors); root.Children().Append(editorHost);
         auto content = Group("largeIcon.contentSize");
-        Number(content, "largeIcon.columns", &LargeIconConfig::columns, 1, snapshot.maxColumns);
-        Number(content, "largeIcon.rows", &LargeIconConfig::rows, 1, snapshot.maxRows);
-        Slider(content, "largeIcon.contentScale", &LargeIconConfig::contentScale, .1, 1);
         if (snapshot.steam) Choice(content, "largeIcon.content", &LargeIconConfig::content, {"largeIcon.original", "largeIcon.image", "largeIcon.steam"});
         else Choice(content, "largeIcon.content", &LargeIconConfig::content, {"largeIcon.original", "largeIcon.image"});
-        Button(content, "largeIcon.import", [](Impl& self) { self.Send("import"); self.ReloadDraft(); self.Build(); });
+        Number(content, "largeIcon.columns", &LargeIconConfig::columns, 1, snapshot.maxColumns);
+        Number(content, "largeIcon.rows", &LargeIconConfig::rows, 1, snapshot.maxRows);
+        Slider(content, "largeIcon.contentScale", &LargeIconConfig::contentScale, .1, 1, .01, Field::Original);
+        Button(content, "largeIcon.import", [](Impl& self) { self.Send("import"); self.ReloadDraft(); self.Build(); }, Field::Imported);
         Button(content, "largeIcon.restoreContent", [](Impl& self) {
             self.draft.content = 0; self.draft.image.clear(); self.draft.cachedCover.clear(); self.draft.fit = 0; self.Send("commit"); self.Build();
-        });
-        Choice(content, "largeIcon.fit", &LargeIconConfig::fit, {"largeIcon.contain", "largeIcon.cover"});
-        Slider(content, "largeIcon.focusX", &LargeIconConfig::focusX, 0, 1);
-        Slider(content, "largeIcon.focusY", &LargeIconConfig::focusY, 0, 1);
+        }, Field::Image);
+        Choice(content, "largeIcon.fit", &LargeIconConfig::fit, {"largeIcon.contain", "largeIcon.cover"}, Field::Image);
+        Slider(content, "largeIcon.focusX", &LargeIconConfig::focusX, 0, 1, .01, Field::Crop);
+        Slider(content, "largeIcon.focusY", &LargeIconConfig::focusY, 0, 1, .01, Field::Crop);
         if (snapshot.steam)
         {
-            Choice(content, "largeIcon.orientation", &LargeIconConfig::steamOrientation, {"largeIcon.auto", "largeIcon.landscape", "largeIcon.portrait"});
+            Choice(content, "largeIcon.orientation", &LargeIconConfig::steamOrientation, {"largeIcon.auto", "largeIcon.landscape", "largeIcon.portrait"}, Field::Steam);
             c::StackPanel covers; covers.Orientation(c::Orientation::Horizontal); covers.Spacing(12);
+            covers.HorizontalAlignment(x::HorizontalAlignment::Right); Track(covers, Field::Steam);
             for (int i = 0; i < 2; ++i)
             {
                 c::StackPanel panel; panel.Spacing(6);
@@ -416,43 +522,46 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 covers.Children().Append(panel);
             }
             content.Children().Append(covers);
-            Toggle(content, "largeIcon.localOnly", &LargeIconConfig::localOnly);
-            Button(content, "largeIcon.refresh", [](Impl& self) { self.Send("refresh"); });
+            Toggle(content, "largeIcon.localOnly", &LargeIconConfig::localOnly, Field::Steam);
+            Button(content, "largeIcon.refresh", [](Impl& self) { self.Send("refresh"); }, Field::Steam);
         }
         auto frame = Group("largeIcon.frame");
-        Slider(frame, "largeIcon.radius", &LargeIconConfig::radius, 0, 512, 1);
+        Number(frame, "largeIcon.radius", &LargeIconConfig::radiusPercent, 0, 100, 1);
         Toggle(frame, "largeIcon.autoColor", &LargeIconConfig::autoColor);
-        ColorPicker(frame, "largeIcon.manualColor", &LargeIconConfig::manualColor);
-        Slider(frame, "largeIcon.colorMix", &LargeIconConfig::colorMix, 0, 1);
+        ColorPicker(frame, "largeIcon.manualColor", &LargeIconConfig::manualColor, Field::ManualBackground);
+        Slider(frame, "largeIcon.colorMix", &LargeIconConfig::colorMix, 0, 1, .01, Field::AutomaticBackground);
         Slider(frame, "largeIcon.opacity", &LargeIconConfig::opacity, 0, 1);
         c::Expander advanced; advanced.Header(winrt::box_value(L("largeIcon.advancedBackground")));
         advanced.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         advanced.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         c::StackPanel advancedBackground; advancedBackground.Spacing(12);
         Toggle(advancedBackground, "largeIcon.hoverOpacityLinked", &LargeIconConfig::hoverOpacityLinked);
-        Slider(advancedBackground, "largeIcon.hoverOpacity", &LargeIconConfig::hoverOpacity, 0, 1);
+        Slider(advancedBackground, "largeIcon.hoverOpacity", &LargeIconConfig::hoverOpacity, 0, 1, .01, Field::ManualHoverOpacity);
         advanced.Content(advancedBackground); frame.Children().Append(advanced);
+        Track(advanced, Field::HoverBackground);
         Toggle(frame, "largeIcon.border", &LargeIconConfig::border);
-        ColorPicker(frame, "largeIcon.borderColor", &LargeIconConfig::borderColor);
-        Slider(frame, "largeIcon.borderWidth", &LargeIconConfig::borderWidth, 0, 16, .5);
-        Slider(frame, "largeIcon.borderOpacity", &LargeIconConfig::borderOpacity, 0, 1);
+        ColorPicker(frame, "largeIcon.borderColor", &LargeIconConfig::borderColor, Field::BorderAppearance);
+        Slider(frame, "largeIcon.borderWidth", &LargeIconConfig::borderWidth, 0, 16, .5, Field::BorderAppearance);
+        Slider(frame, "largeIcon.borderOpacity", &LargeIconConfig::borderOpacity, 0, 1, .01, Field::BorderOpacity);
         Toggle(frame, "largeIcon.shadow", &LargeIconConfig::shadow);
-        Slider(frame, "largeIcon.shadowStrength", &LargeIconConfig::shadowStrength, 0, 1);
+        Slider(frame, "largeIcon.shadowStrength", &LargeIconConfig::shadowStrength, 0, 1, .01, Field::ShadowStrength);
         auto effects = Group("largeIcon.effects");
         Choice(effects, "largeIcon.title", &LargeIconConfig::titleMode, {"largeIcon.floating", "largeIcon.left"});
-        Number(effects, "largeIcon.titleSize", &LargeIconConfig::titleSize, 8, 72);
+        Number(effects, "largeIcon.titleSize", &LargeIconConfig::titleSize, 8, 72, 1, Field::FloatingTitle);
+        Number(effects, "largeIcon.revealTitleSize", &LargeIconConfig::revealTitleSize, 8, 72, 1, Field::RevealTitle);
         Toggle(effects, "largeIcon.autoTitleColor", &LargeIconConfig::autoTitleColor);
-        ColorPicker(effects, "largeIcon.titleColor", &LargeIconConfig::titleColor);
-        Choice(effects, "largeIcon.hoverContent", &LargeIconConfig::hoverContent, {"largeIcon.none", "largeIcon.left", "largeIcon.zoom", "largeIcon.lift"});
+        ColorPicker(effects, "largeIcon.titleColor", &LargeIconConfig::titleColor, Field::ManualTitle);
+        Choice(effects, "largeIcon.hoverContent", &LargeIconConfig::hoverContent, {"largeIcon.none", "largeIcon.zoom", "largeIcon.lift"}, Field::OriginalMotion, true, {0, 2, 3});
         Choice(effects, "largeIcon.hoverFrame", &LargeIconConfig::hoverFrame, {"largeIcon.none", "largeIcon.background", "largeIcon.border", "largeIcon.shadow"});
-        Toggle(effects, "largeIcon.press", &LargeIconConfig::press);
-        Choice(effects, "largeIcon.launch", &LargeIconConfig::launch, {"largeIcon.none", "largeIcon.jump", "largeIcon.pulse"});
-        Choice(effects, "largeIcon.coverHover", &LargeIconConfig::coverHover, {"largeIcon.none", "largeIcon.zoom", "largeIcon.scrim"});
-        Slider(effects, "largeIcon.amplitude", &LargeIconConfig::amplitude, 0, 2);
+        Toggle(effects, "largeIcon.press", &LargeIconConfig::press, Field::Always, true);
+        Choice(effects, "largeIcon.launch", &LargeIconConfig::launch, {"largeIcon.none", "largeIcon.jump", "largeIcon.pulse"}, Field::Always, true);
+        Choice(effects, "largeIcon.coverHover", &LargeIconConfig::coverHover, {"largeIcon.none", "largeIcon.zoom", "largeIcon.scrim"}, Field::CoverMotion, true);
+        Slider(effects, "largeIcon.amplitude", &LargeIconConfig::amplitude, 0, 2, .01, Field::AnimationStrength, true);
         Number(effects, "largeIcon.delayMs", &LargeIconConfig::delayMs, 0, 2000, 10);
-        Number(effects, "largeIcon.enterMs", &LargeIconConfig::enterMs, 0, 2000, 10);
-        Number(effects, "largeIcon.exitMs", &LargeIconConfig::exitMs, 0, 2000, 10);
-        Button(effects, "largeIcon.retry", [](Impl& self) { self.Send("commit"); });
+        Number(effects, "largeIcon.enterMs", &LargeIconConfig::enterMs, 0, 2000, 10, Field::Always, true);
+        Number(effects, "largeIcon.exitMs", &LargeIconConfig::exitMs, 0, 2000, 10, Field::Always, true);
+        const auto retry = Button(effects, "largeIcon.retry", [](Impl& self) { self.Send("commit"); });
+        syncVisibility.push_back([this, retry] { retry.Visibility(snapshot.error == "largeIcon.saveFailed" ? x::Visibility::Visible : x::Visibility::Collapsed); });
         syncing = false;
         UpdatePreview(); editorHost.IsEnabled(snapshot.editable && snapshot.available);
     }

@@ -104,13 +104,16 @@ void TestCodec()
     large.frameWidth = 436; large.frameHeight = 213; large.frameColumns = 4; large.frameRows = 2;
     large.unitScale = 1.5; large.durationScale = 2; large.frameLimit = 30; large.animations = false; large.neutral = 0x123456;
     large.frameWidths = {100, 212, 324, 436}; large.frameHeights = {100, 213};
+    auto defaults = snowdesktop::LargeIconConfig{}; defaults.radius = 27; defaults.titleSize = 15;
+    large.defaultConfig = snowdesktop::EncodeLargeIconConfig(defaults); large.imageWidth = 64; large.imageHeight = 48;
     const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
     Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
         largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
         largeCopy.config == large.config && largeCopy.steam && largeCopy.accent == large.accent &&
         largeCopy.frameWidth == 436 && largeCopy.frameHeight == 213 && largeCopy.frameColumns == 4 && largeCopy.frameRows == 2 &&
         largeCopy.unitScale == 1.5 && largeCopy.durationScale == 2 && largeCopy.frameLimit == 30 && !largeCopy.animations && largeCopy.neutral == large.neutral &&
-        largeCopy.frameWidths == large.frameWidths && largeCopy.frameHeights == large.frameHeights,
+        largeCopy.frameWidths == large.frameWidths && largeCopy.frameHeights == large.frameHeights &&
+        largeCopy.defaultConfig == large.defaultConfig && largeCopy.imageWidth == 64 && largeCopy.imageHeight == 48,
         "large-icon editing guards, Unicode references and thumbnail provenance survive private IPC");
     WidgetSettingsSnapshot widget;
     widget.widgetId = L"music-1";

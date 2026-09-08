@@ -1610,6 +1610,7 @@ private:
     /** @brief 将当前布局信息保存到磁盘文件。 */
     bool SaveLayoutSlots();
     bool CanEditLargeIcons() const;
+    snowdesktop::LargeIconConfig MakeLargeIconDefaults(size_t itemIndex);
     bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);
     void OpenLargeIconSettings(size_t itemIndex);
     RECT GetLargeIconFrameRect(const DesktopItem& item) const;
@@ -2459,6 +2460,7 @@ private:
     RECT GetItemTextRect(RECT bounds, bool expanded) const;
     /** @brief 获取项目所在网格单元相对于 92x116 基准尺寸的布局缩放比例。 */
     float GetItemLayoutScale(RECT bounds) const;
+    bool UpdateWidgetHandleCursor(POINT point);
     /** @brief 从项边界矩形计算选中框区域。 @param bounds 项边界 @param expanded 是否展开 @return 选中框矩形 */
     RECT GetItemSelectionRect(RECT bounds, bool expanded) const;
     /**
