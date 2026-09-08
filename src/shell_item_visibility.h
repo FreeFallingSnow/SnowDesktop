@@ -1,10 +1,22 @@
 #pragma once
 
 #include <string_view>
+#include <string>
 #include <windows.h>
 
 namespace snowdesktop::shell_item_visibility
 {
+
+// After a successful user change, read visibility from the registry again.
+// A cached hide override must not defeat a later Show action or OS changes.
+template <typename Cache, typename Writer>
+bool CommitDesktopIconVisibility(const std::wstring& clsid, bool visible,
+    Cache& overrides, Writer write)
+{
+    if (!write(clsid, visible)) return false;
+    overrides.erase(clsid);
+    return true;
+}
 
 inline std::wstring_view FileNameOf(
     std::wstring_view pathOrName)

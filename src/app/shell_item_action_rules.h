@@ -19,10 +19,13 @@ constexpr RemovalAction ResolveRemovalAction(
     std::size_t selectedCount,
     std::size_t selectedFileCount,
     std::size_t selectedNamespaceCount,
-    bool dockMapping) noexcept
+    bool dockMapping,
+    bool protectedDesktopIcon = false) noexcept
 {
     if (dockMapping)
         return RemovalAction::RemoveDockMapping;
+    if (protectedDesktopIcon)
+        return RemovalAction::Disabled;
     if (selectedCount == 1 && selectedNamespaceCount == 1)
         return RemovalAction::HideDesktopNamespace;
     if (selectedCount > 0 &&

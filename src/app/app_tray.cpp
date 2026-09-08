@@ -273,12 +273,11 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         {
             if (t.cmd == command)
             {
-                DWORD val = 0;
-                bool visible = true;
-                if (TryReadDesktopIconRegistryValueAnyRoot(t.clsid, val))
-                    visible = (val == 0);
-                WriteDesktopIconRegistryValue(t.clsid, !visible);
-                ReloadItems();
+                const std::wstring clsid = ToUpperInvariant(t.clsid);
+                const bool visible = IsVisibleByDesktopIconSettings(clsid, {});
+                if (snowdesktop::shell_item_visibility::CommitDesktopIconVisibility(
+                        clsid, !visible, settingsIconVisibility_, WriteDesktopIconRegistryValue))
+                    ReloadItems();
                 break;
             }
         }
@@ -302,13 +301,10 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
                     !TryReadDesktopIconRegistryValueAnyRoot(
                         registration.clsid, value) ||
                     value == 0;
-                if (WriteDesktopIconRegistryValue(
-                        registration.clsid, !visible))
+                if (snowdesktop::shell_item_visibility::CommitDesktopIconVisibility(
+                        ToUpperInvariant(registration.clsid), !visible,
+                        settingsIconVisibility_, WriteDesktopIconRegistryValue))
                 {
-                    settingsIconVisibility_[
-                        ToUpperInvariant(
-                            registration.clsid)] =
-                        !visible;
                     ReloadItems();
                 }
             }

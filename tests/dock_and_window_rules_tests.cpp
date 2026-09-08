@@ -581,6 +581,26 @@ int main(int argc, char** argv)
         snowdesktop::collection_popup_layout;
     namespace shellVisibility =
         snowdesktop::shell_item_visibility;
+    {
+        const std::wstring clsid = L"{645FF040-5081-101B-9F08-00AA002F954E}";
+        std::unordered_map<std::wstring, bool> overrides{{clsid, false}, {L"other", true}};
+        bool registryVisible = false;
+        const auto write = [&](const std::wstring& key, bool visible) {
+            Check(key == clsid, "visibility changes address the requested system icon");
+            registryVisible = visible;
+            return true;
+        };
+        Check(shellVisibility::CommitDesktopIconVisibility(clsid, true, overrides, write) &&
+            registryVisible && !overrides.contains(clsid) && overrides.at(L"other"),
+            "showing a previously hidden system icon clears the stale hide override only for that icon");
+        Check(shellVisibility::CommitDesktopIconVisibility(clsid, false, overrides, write) &&
+            !registryVisible && !overrides.contains(clsid),
+            "hiding an icon leaves subsequent visibility changes to the registry");
+        overrides[clsid] = false;
+        Check(!shellVisibility::CommitDesktopIconVisibility(clsid, true, overrides,
+                [](const std::wstring&, bool) { return false; }) && !overrides.at(clsid),
+            "a failed visibility write preserves the last known override");
+    }
     namespace popupDrag =
         snowdesktop::popup_drag_rules;
     namespace itemLayout =

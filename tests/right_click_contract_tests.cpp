@@ -275,6 +275,14 @@ void TestShellItemActionContract()
             actions::RemovalAction::HideDesktopNamespace,
         "a single third-party desktop namespace must expose an explicit hide action");
     Check(
+        actions::ResolveRemovalAction(1, 0, 1, false, true) ==
+            actions::RemovalAction::Disabled,
+        "protected system icons must not expose hide or delete actions");
+    Check(
+        actions::ResolveRemovalAction(1, 0, 1, true, true) ==
+            actions::RemovalAction::RemoveDockMapping,
+        "system-icon Dock mappings remain removable without hiding their source");
+    Check(
         actions::ResolveRemovalAction(2, 1, 1, false) ==
             actions::RemovalAction::Disabled,
         "mixed file and namespace selections must not partially delete their file items");

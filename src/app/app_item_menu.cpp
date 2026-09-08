@@ -207,8 +207,9 @@ void DesktopApp::ShowItemContextMenu(
             ShortcutRequestsAdministrator(itemPath);
     const bool canOpen =
         selectedCount == 1 && !administratorShortcut;
+    const bool protectedDesktopIcon = selectedCount == 1 && IsProtectedDesktopIcon(items_[itemIndex]);
     const bool namespaceItem = selectedCount == 1 &&
-        (!items_[itemIndex].desktopIconClsid.empty() || IsProtectedDesktopIcon(items_[itemIndex]));
+        (!items_[itemIndex].desktopIconClsid.empty() || protectedDesktopIcon);
     // Query supported verbs without displaying the native popup. Keep its site,
     // menu and COM object alive until a selected command has been invoked.
     snowdesktop::ShellContextMenuSite namespaceSite;
@@ -242,7 +243,8 @@ void DesktopApp::ShowItemContextMenu(
                 static_cast<size_t>(selectedCount),
                 selectedFileCount,
                 selectedNamespaceCount,
-                dockMapping);
+                dockMapping,
+                protectedDesktopIcon);
     const bool canRemove = removalAction !=
         snowdesktop::shell_item_action_rules::
             RemovalAction::Disabled;
@@ -340,14 +342,15 @@ void DesktopApp::ShowItemContextMenu(
             canFile && !dockMapping ? MF_STRING : MF_STRING | MF_GRAYED,
             kContextCopyCommand, _LW("app.menu.copy"));
     }
-    AppendMenuW(menu,
-        canRemove ? MF_STRING : MF_STRING | MF_GRAYED,
-        kContextDeleteCommand,
-        dockMapping
-            ? _LW("app.dock.remove_mapping")
-            : hidesDesktopNamespace
-            ? _LW("app.menu.hide_desktop_icon")
-            : _LW("app.settings.delete"));
+    if (!protectedDesktopIcon || dockMapping)
+        AppendMenuW(menu,
+            canRemove ? MF_STRING : MF_STRING | MF_GRAYED,
+            kContextDeleteCommand,
+            dockMapping
+                ? _LW("app.dock.remove_mapping")
+                : hidesDesktopNamespace
+                ? _LW("app.menu.hide_desktop_icon")
+                : _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFolderEntry)
@@ -829,10 +832,9 @@ void DesktopApp::ShowItemContextMenu(
                 items_[static_cast<size_t>(itemIndex)].
                     desktopIconClsid);
             if (!clsid.empty() &&
-                WriteDesktopIconRegistryValue(
-                    clsid, false))
+                snowdesktop::shell_item_visibility::CommitDesktopIconVisibility(
+                    clsid, false, settingsIconVisibility_, WriteDesktopIconRegistryValue))
             {
-                settingsIconVisibility_[clsid] = false;
                 ReloadItems();
             }
             break;

@@ -364,10 +364,33 @@ void Expect(bool condition, const char* message)
     }
 }
 
+struct IsolatedMenuDesktop
+{
+    HDESK original = GetThreadDesktop(GetCurrentThreadId());
+    HDESK isolated = nullptr;
+
+    IsolatedMenuDesktop()
+    {
+        const std::wstring name = L"SnowDesktop.MenuTests." + std::to_wstring(GetCurrentProcessId());
+        isolated = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+        Expect(isolated != nullptr, "an isolated desktop is created for menu tests");
+        Expect(SetThreadDesktop(isolated) != FALSE, "menu tests attach to their isolated desktop");
+    }
+
+    ~IsolatedMenuDesktop()
+    {
+        SetThreadDesktop(original);
+        if (isolated) CloseDesktop(isolated);
+    }
+};
+
 } // namespace
 
 int wmain()
 {
+    // Do not switch the user's input desktop. Test windows need real activation
+    // and Z-order, but unrelated applications must not cancel their menu loops.
+    IsolatedMenuDesktop isolatedDesktop;
     using snowdesktop::modern_menu::Appearance;
     using snowdesktop::modern_menu::appearance_rules::ResolveForWindows;
     Expect(ResolveForWindows(
