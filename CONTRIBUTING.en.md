@@ -15,8 +15,7 @@ Help improve features, stability, translations, and documentation through these 
 - [QQ user group: 976422547](https://qm.qq.com/q/HyazkCIRig): Discuss your experience, ask questions, and share testing feedback.
 - [Steam](https://store.steampowered.com/app/5080330/SnowDesktop/) test builds: Try new features and help verify problems; ask in the QQ group about joining.
 
-The development rules below apply to current maintainer work and serve as a reference for when code
-contributions reopen. They do not mean that external code PRs are currently accepted.
+The rules below apply to maintainer development and serve as a reference for when code contributions reopen.
 
 ## Before you start
 
@@ -27,7 +26,7 @@ contributions reopen. They do not mean that external code PRs are currently acce
 
 ## Branches and pull requests
 
-1. Create your working branch from the official repository's active `release/vA.B.C.D` development branch. While external code contributions are paused, use the feedback channels above.
+1. Create your working branch from the official repository's active `release/vA.B.C.D` development branch.
 2. Target that version branch with your PR. `main` is the stable release branch and does not accept ordinary development PRs directly. If there is no suitable version branch, ask the maintainers to determine the target first.
 3. `version.json` is the sole version source. Versions use `A.B.C.0`, with `A` in 1–65535 and `B` and `C` in 0–65535. Do not change the version unless an agreed version update is part of your contribution.
 4. Use the [PR template](./.github/pull_request_template.md), link relevant issues, and record validation commands, results, reasons for omitted checks, and scenarios awaiting validation. Use a draft PR for unfinished work.
@@ -131,15 +130,12 @@ to provide it under the license applicable to its destination:
 | `steam_bridge/` | [MIT](./steam_bridge/LICENSE) |
 | Project material elsewhere | Root [GNU GPL v3.0](./LICENSE), subject to any specific third-party license notice in a file |
 
-You retain copyright in your original contributions. Contributions use the existing license applicable
-to their destination; submitting a contribution does not transfer copyright. SnowDesktop may use these
-contributions commercially and distribute them for a fee, subject to the applicable license terms.
-Third-party material remains subject to its original licenses and notices.
+You retain copyright in your original contributions. SnowDesktop may use them under the applicable
+license terms, including commercial use and paid distribution.
 
 ## Third-party material and provenance
 
 - Submit only material you created or are authorized to provide. If an employer, client, or another rights holder owns relevant rights, first obtain authorization sufficient for the license you are granting.
-- For third-party code, images, fonts, data, or other material, identify the exact upstream location, version or commit, license, and modifications. Preserve copyright and license notices and update [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) when appropriate. Do not present third-party material as your own original contribution.
-- Do not copy GPL core code or TranslucentTB-derived material into `steam_bridge/`. The two programs communicate through documented process boundaries such as command-line arguments, JSON, or named pipes. Shared protocol definitions must be original and explicitly permissively licensed. This architectural rule does not replace license review of the actual combination.
+- For third-party code, images, fonts, data, or other material, comply with its license and identify the exact upstream location, version or commit, license, and modifications. Preserve copyright and license notices and update [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) when appropriate. Do not present third-party material as your own original contribution.
 - Do not commit the Steamworks SDK or its headers, libraries, tools, or redistributable files. Configure an external SDK path when building the Steam-enabled bridge.
-- AI-assisted contributions still require review of provenance, license compatibility, correctness, and sensitive information. Disclose known third-party sources as you would for other contributions.
+- AI-assisted contributions also require review of provenance, license compatibility, correctness, and sensitive information.
