@@ -14,6 +14,23 @@ A Windows desktop organization and personalization tool. SnowDesktop replaces na
 
 [Official website](https://snowdesktop.com/) | [GitHub](https://github.com/FreeFallingSnow/SnowDesktop)
 
+## 📊 Edition Comparison
+
+Both editions provide the full core SnowDesktop experience.
+
+| Feature | Microsoft Store | Steam |
+| --- | --- | --- |
+| Desktop organization | ✓ Included | ✓ Included |
+| Dock and quick navigation | ✓ Included | ✓ Included |
+| Built-in widgets | ✓ Included | ✓ Included |
+| Steam Workshop | — Not included | ✓ Included |
+| Premium features | — Not included | ✓ Included |
+| Updates and fixes | Published with each version update | More timely updates, optional testing channels |
+
+With the Steam edition, you can find and install community widgets through Steam Workshop. The currently supported premium feature is **large app icons**.
+
+See the [official edition comparison](https://snowdesktop.com/compare/) for details.
+
 ## ✨ Feature Highlights
 
 - 🖥️ **Flexible desktop layouts**: Organize desktop items and widgets on a grid with adjustable rows, columns, and icon spacing. Each display can have its own pages and layouts, with support for display hot-plugging and browsing offline pages.

@@ -13,6 +13,23 @@
 
 [官网](https://snowdesktop.com/) | [GitHub](https://github.com/FreeFallingSnow/SnowDesktop)
 
+## 📊 版本对比
+
+两个版本都包含 SnowDesktop 的完整核心功能。
+
+| 功能 | Microsoft Store | Steam |
+| --- | --- | --- |
+| 桌面整理 | ✓ 包含 | ✓ 包含 |
+| Dock 与快捷导航 | ✓ 包含 | ✓ 包含 |
+| 内置组件 | ✓ 包含 | ✓ 包含 |
+| Steam 创意工坊 | — 不包含 | ✓ 包含 |
+| 高级功能 | — 不包含 | ✓ 包含 |
+| 更新与修复 | 随版本号迭代发布 | 更新更及时，可选测试渠道 |
+
+Steam 版支持通过 Steam 创意工坊发现并安装社区组件。当前支持的高级功能：**软件大图标**。
+
+详见[官网版本对比](https://snowdesktop.com/zh-cn/compare/)。
+
 ## ✨ 功能亮点
 
 - 🖥️ **自由桌面布局**：使用可调行列与图标间距的网格整理桌面项目和组件；每台显示器可拥有独立页面和布局，并支持屏幕热插拔及离线页面浏览。
