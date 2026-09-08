@@ -49,6 +49,7 @@ struct SettingsWindowHostOptions
     std::function<GeneralStartupConflict()> startupConflict;
     std::function<GeneralAdvancedFeatureStatus()> advancedFeatureStatus;
     std::function<void()> registerAdvancedFeatures;
+    std::function<bool()> resetAdvancedFeatures;
 
     /** Ensure a persisted component instance is loaded before its declarative
      * settings session is created. The application owns the instance-to-

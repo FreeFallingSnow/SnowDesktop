@@ -624,6 +624,38 @@ bool Service::StartRegistration(std::function<void()> completed,
     return true;
 }
 
+bool Service::ResetRegistration()
+{
+    if (!impl_) return false;
+    {
+        std::lock_guard lock(impl_->mutex);
+        if (impl_->stopping) return false;
+    }
+    // Join before deleting: a check already persisting its result must not
+    // recreate the cache after the user has cleared it.
+    if (impl_->worker.joinable())
+    {
+        impl_->worker.request_stop();
+        impl_->worker.join();
+    }
+    std::error_code error;
+    std::filesystem::remove(impl_->protectedCache, error);
+    std::lock_guard lock(impl_->mutex);
+    ++impl_->snapshot.revision;
+    if (error)
+    {
+        impl_->snapshot.state = State::RegistrationFailed;
+        impl_->snapshot.failure = Failure::StorageError;
+        return false;
+    }
+    impl_->snapshot.state = impl_->snapshot.bridgeAvailable
+        ? State::Unregistered : State::BridgeUnavailable;
+    impl_->snapshot.failure = Failure::None;
+    impl_->snapshot.registered = false;
+    impl_->snapshot.validUntil = 0;
+    return true;
+}
+
 void Service::Stop() noexcept
 {
     if (!impl_) return;

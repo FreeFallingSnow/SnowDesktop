@@ -66,6 +66,7 @@ enum class HomeAboutLink : std::uint8_t
     Lua,
     PinyinData,
     TranslucentTb,
+    OfficialWebsite,
 };
 
 [[nodiscard]] constexpr std::wstring_view HomeAboutLinkUri(
@@ -73,6 +74,8 @@ enum class HomeAboutLink : std::uint8_t
 {
     switch (link)
     {
+    case HomeAboutLink::OfficialWebsite:
+        return L"https://snowdesktop.com/";
     case HomeAboutLink::Bilibili:
         return L"https://space.bilibili.com/32837853";
     case HomeAboutLink::AuthorGitHub:

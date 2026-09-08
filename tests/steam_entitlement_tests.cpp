@@ -199,6 +199,61 @@ int wmain(int argc, wchar_t** argv)
                 !unavailable.StartRegistration({}),
             "a missing Bridge cannot register advanced features");
     }
+    // A debug reset must survive service recreation, cancel renewal, and
+    // preserve the existing lease if its protected record cannot be removed.
+    {
+        std::ofstream(cache, std::ios::binary) << protectedBytes;
+        Service service(fixture, fixture, cache);
+        const Snapshot before = service.Current();
+        HANDLE locked = CreateFileW(cache.c_str(), GENERIC_READ,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        Check(locked != INVALID_HANDLE_VALUE, "the cache is locked against deletion");
+        if (locked != INVALID_HANDLE_VALUE)
+        {
+            Check(!service.ResetRegistration() && service.IsRegistered() &&
+                    service.Current().validUntil == before.validUntil &&
+                    service.Current().failure == Failure::StorageError &&
+                    Read(cache) == protectedBytes,
+                "a failed reset reports a storage error without discarding the saved lease");
+            CloseHandle(locked);
+        }
+        Check(service.ResetRegistration(), "a local unlock record can be cleared");
+        const Snapshot reset = service.Current();
+        Check(!reset.registered && reset.validUntil == 0 &&
+                reset.state == State::Unregistered &&
+                reset.failure == Failure::None &&
+                reset.revision > before.revision &&
+                !std::filesystem::exists(cache),
+            "reset clears both persisted and in-memory entitlement and advances its revision");
+        {
+            Service restored(fixture, fixture, cache);
+            Check(!restored.IsRegistered(),
+                "a new service does not restore a cleared entitlement");
+        }
+        Check(service.ResetRegistration(), "reset is safe with no cache");
+        Check(service.StartRegistration({}),
+            "reset leaves the service available for another ownership check");
+        Check(service.ResetRegistration() && !service.IsRegistered() &&
+                !std::filesystem::exists(cache),
+            "reset cancels a pending check before it can recreate the unlock record");
+        Check(service.StartRegistration({}),
+            "a canceled check does not permanently stop registration");
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::seconds(5);
+        while (service.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Check(service.IsRegistered() && std::filesystem::is_regular_file(cache),
+            "ownership verification can unlock features again after reset");
+    }
+    {
+        Service unavailable(root / L"missing.exe", fixture, cache);
+        Check(unavailable.ResetRegistration() &&
+                unavailable.Current().state == State::BridgeUnavailable &&
+                !unavailable.IsRegistered() && !std::filesystem::exists(cache),
+            "reset can clear an old cache even when the Bridge is unavailable");
+    }
     {
         Service stale(staleFixture, staleFixture, cache);
         Check(stale.Current().state == State::BridgeUnavailable &&

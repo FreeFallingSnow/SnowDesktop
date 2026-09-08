@@ -300,6 +300,9 @@ struct BackendServer::Impl
         channel.Bind<void>("options.registerAdvancedFeatures", [this] {
             if (options.registerAdvancedFeatures) options.registerAdvancedFeatures();
         });
+        channel.Bind<bool>("options.resetAdvancedFeatures", [this] {
+            return options.resetAdvancedFeatures && options.resetAdvancedFeatures();
+        });
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
         });
@@ -429,6 +432,7 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.ensureWidgetSettingsInstance = [&channel](std::wstring_view id) { return channel.Call<bool>("options.ensureWidget", std::wstring(id)); };
     options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
     options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
+    options.resetAdvancedFeatures = [&channel] { return channel.Call<bool>("options.resetAdvancedFeatures"); };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);

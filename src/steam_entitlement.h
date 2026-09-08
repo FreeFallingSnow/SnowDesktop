@@ -112,6 +112,9 @@ public:
     /** Start one asynchronous Bridge check when not already registered/busy. */
     [[nodiscard]] bool StartRegistration(std::function<void()> completed,
         bool revalidateRegistered = false);
+    /** Cancel a pending check and clear the local unlock cache for debugging.
+     * Call on the same owner thread as StartRegistration and Stop. */
+    [[nodiscard]] bool ResetRegistration();
     void Stop() noexcept;
 
 private:

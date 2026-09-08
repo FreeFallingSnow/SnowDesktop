@@ -39,6 +39,9 @@ struct HomeAboutPageActions
         bool enabled)> setAnimationDiagnostics;
     /** Makes the conditional Debug route visible; true permits navigation. */
     std::function<bool(std::uint64_t generation)> unlockDebug;
+    /** The host confirms and clears the local Steam unlock state. */
+    std::function<void(std::uint64_t generation)>
+        requestResetUnlockConfirmation;
     /** The host owns the HWND-scoped ContentDialog and crash-test action. */
     std::function<void(std::uint64_t generation)>
         requestCrashTestConfirmation;

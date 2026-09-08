@@ -578,6 +578,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "app.settings.about_description"},
     {SettingsPage::About, "about.project", "settings.about.project",
         "settings.about.project.description"},
+    {SettingsPage::About, "about.website", "settings.about.officialWebsite",
+        "settings.about.project.description"},
     {SettingsPage::About, "about.community", "app.settings.community",
         "app.settings.join_qq"},
     {SettingsPage::About, "about.thirdparty", "settings.about.thirdparty",
@@ -611,6 +613,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Debug, "debug.animation",
         "app.settings.animation_diagnostics",
         "app.settings.animation_diagnostics_desc"},
+    {SettingsPage::Debug, "debug.resetUnlock", "settings.debug.resetUnlock",
+        "settings.debug.resetUnlock.description"},
     {SettingsPage::Debug, "debug.crash", "app.settings.crash_test",
         "app.settings.crash_test_desc"},
 };
@@ -2278,6 +2282,38 @@ struct SettingsWindowHost::Impl
             state->owner->debugUnlocked = true;
             state->owner->RebuildSearchIndex();
             return state->owner->DebugPageVisible();
+        };
+        homeAbout.requestResetUnlockConfirmation = [weak](
+            std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->DebugPageVisible())
+                return;
+            state->owner->ShowGenerationConfirmation(
+                generation,
+                state->owner->L("settings.debug.resetUnlock"),
+                state->owner->L("settings.debug.resetUnlock.description"),
+                [weak, generation](bool confirmed) {
+                    if (!confirmed) return;
+                    const auto current = weak.lock();
+                    if (!current || !current->alive.load() ||
+                        !current->owner || !current->owner->controller ||
+                        !current->owner->shell ||
+                        !current->owner->controller->IsGenerationCurrent(
+                            generation) ||
+                        !current->owner->DebugPageVisible())
+                        return;
+                    auto& owner = *current->owner;
+                    const bool reset = owner.options.resetAdvancedFeatures &&
+                        owner.options.resetAdvancedFeatures();
+                    owner.shell->RefreshRuntimeState();
+                    (void)owner.shell->ShowInfoForGeneration(generation,
+                        reset ? shell_impl::SettingsShellInfoSeverity::Success
+                              : shell_impl::SettingsShellInfoSeverity::Error,
+                        owner.L("settings.debug.resetUnlock"),
+                        owner.L(reset ? "settings.debug.resetUnlock.success"
+                                      : "settings.debug.resetUnlock.failed"));
+                }, true, state->owner->L("settings.debug.resetUnlock"));
         };
         homeAbout.requestCrashTestConfirmation = [weak](
             std::uint64_t generation) {

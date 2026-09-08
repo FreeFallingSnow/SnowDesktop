@@ -219,9 +219,11 @@ ToGeneralAdvancedFeatureStatus(
     target.bridgeAvailable = source.bridgeAvailable;
     target.registered = source.registered;
     target.validUntil = source.validUntil;
-    target.cardVisible = source.bridgeAvailable || deploymentKind ==
-        snowdesktop::deployment::RuntimeDeploymentKind::Portable;
-    target.offerSteamStore = !source.bridgeAvailable && deploymentKind ==
+    target.cardVisible = deploymentKind !=
+        snowdesktop::deployment::RuntimeDeploymentKind::Packaged &&
+        (source.bridgeAvailable || deploymentKind ==
+            snowdesktop::deployment::RuntimeDeploymentKind::Portable);
+    target.offerSteamStore = deploymentKind ==
         snowdesktop::deployment::RuntimeDeploymentKind::Portable;
     switch (source.state)
     {
@@ -736,6 +738,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.registerAdvancedFeatures = [this]() {
         StartSteamEntitlementRegistration();
+    };
+    settingsHostOptions.resetAdvancedFeatures = [this]() {
+        const bool reset = steamEntitlementService_ &&
+            steamEntitlementService_->ResetRegistration();
+        if (controlHwnd_)
+            PostMessageW(controlHwnd_, kSteamEntitlementChangedMessage, 0, 0);
+        return reset;
     };
     settingsHostOptions.pageLayoutPage.capture = [this]() {
         return CapturePageLayoutSnapshot();

@@ -204,6 +204,7 @@ struct HomeAboutPagePresenter::Impl
     Section debugTitleSection;
     Section demoModeSection;
     Section animationSection;
+    Section resetUnlockSection;
     Section crashSection;
     muxc::TextBlock debugPageDescription{nullptr};
     controls::SettingRow demoModeRow;
@@ -212,6 +213,8 @@ struct HomeAboutPagePresenter::Impl
     muxc::StackPanel animationControls{nullptr};
     muxc::ToggleSwitch animationToggle{nullptr};
     muxc::TextBlock animationStatus{nullptr};
+    controls::SettingRow resetUnlockRow;
+    muxc::Button resetUnlockButton{nullptr};
     muxc::Expander crashExpander{nullptr};
     muxc::StackPanel crashHeader{nullptr};
     muxc::TextBlock crashTitle{nullptr};
@@ -256,6 +259,7 @@ struct HomeAboutPagePresenter::Impl
     winrt::event_token versionClickToken{};
     winrt::event_token demoModeToken{};
     winrt::event_token animationToken{};
+    winrt::event_token resetUnlockToken{};
     winrt::event_token crashToken{};
 
     [[nodiscard]] std::wstring L(
@@ -373,6 +377,9 @@ struct HomeAboutPagePresenter::Impl
             HomeAboutLink::ReleaseRepository, {}, L"GitHub (Release)");
         (void)AddLink(projectSection.content,
             HomeAboutLink::SourceRepository, {}, L"GitHub (Source)");
+        (void)AddLink(projectSection.content,
+            HomeAboutLink::OfficialWebsite,
+            "settings.about.officialWebsite", L"Official website");
 
         InitializeSection(communitySection, cardStyle, aboutRoot);
         (void)AddLink(communitySection.content,
@@ -458,6 +465,14 @@ struct HomeAboutPagePresenter::Impl
         animationControls.Children().Append(animationStatus);
         animationRow.Initialize(animationControls, 420.0);
         animationSection.content.Children().Append(animationRow.root);
+
+        InitializeSection(resetUnlockSection, cardStyle, debugRoot);
+        resetUnlockSection.title.Visibility(mux::Visibility::Collapsed);
+        resetUnlockButton = muxc::Button{};
+        resetUnlockButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        resetUnlockButton.UseSystemFocusVisuals(true);
+        resetUnlockRow.Initialize(resetUnlockButton);
+        resetUnlockSection.content.Children().Append(resetUnlockRow.root);
 
         InitializeSection(crashSection, cardStyle, debugRoot);
         crashSection.title.Visibility(mux::Visibility::Collapsed);
@@ -560,6 +575,11 @@ struct HomeAboutPagePresenter::Impl
                 }
                 actions.setAnimationDiagnostics(
                     generation, animationToggle.IsOn());
+            });
+        resetUnlockToken = resetUnlockButton.Click(
+            [this](const auto&, const auto&) {
+                if (CanInvokeDebug() && actions.requestResetUnlockConfirmation)
+                    actions.requestResetUnlockConfirmation(generation);
             });
         crashToken = crashButton.Click(
             [this](const auto&, const auto&) {
@@ -854,6 +874,13 @@ struct HomeAboutPagePresenter::Impl
             L("app.settings.animation_diagnostics_desc"));
         SetAutomation(animationToggle,
             animationRow.label.Text(), animationRow.help.Text());
+        resetUnlockRow.SetText(
+            L("settings.debug.resetUnlock", L"Clear unlock state"),
+            L("settings.debug.resetUnlock.description"));
+        SetButtonText(resetUnlockButton,
+            "settings.debug.resetUnlock", L"Clear unlock state");
+        muxa::AutomationProperties::SetHelpText(
+            resetUnlockButton, resetUnlockRow.help.Text());
         SetSectionTitle(crashSection,
             "app.settings.crash_test", L"Crash Test");
         crashTitle.Text(L("app.settings.crash_test", L"Crash Test"));
@@ -986,14 +1013,16 @@ struct HomeAboutPagePresenter::Impl
         {
             if (focusId == "about.profile") return links[0].button;
             if (focusId == "about.project") return links[4].button;
-            if (focusId == "about.community") return links[6].button;
-            if (focusId == "about.thirdparty") return links[7].button;
+            if (focusId == "about.website") return links[6].button;
+            if (focusId == "about.community") return links[7].button;
+            if (focusId == "about.thirdparty") return links[8].button;
             return versionButton;
         }
         if (page == SettingsPage::Debug)
         {
             if (focusId == "debug.demo_mode") return demoModeToggle;
             if (focusId == "debug.animation") return animationToggle;
+            if (focusId == "debug.resetUnlock") return resetUnlockButton;
             if (focusId == "debug.crash") return crashExpander;
             return animationToggle;
         }
@@ -1019,6 +1048,7 @@ struct HomeAboutPagePresenter::Impl
             versionButton.Click(versionClickToken);
             demoModeToggle.Toggled(demoModeToken);
             animationToggle.Toggled(animationToken);
+            resetUnlockButton.Click(resetUnlockToken);
             crashButton.Click(crashToken);
             updateCard.progress.IsActive(false);
             backupCard.progress.IsActive(false);
