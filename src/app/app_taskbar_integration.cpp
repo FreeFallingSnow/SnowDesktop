@@ -14,8 +14,8 @@ void DesktopApp::StartDockForegroundMonitor()
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(GetTickCount());
     dockSystemMinimizeStartedTick_.store(0);
-    dockSystemMinimizeActive_.store(false);
     systemShowDesktopDockLayerGuardActive_ = false;
+    systemShowDesktopLastProtectedForegroundTick_ = 0;
     dockForegroundEventHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
         EVENT_SYSTEM_FOREGROUND, nullptr, &DesktopApp::DockForegroundWinEventProc,
         0, 0, WINEVENT_OUTOFCONTEXT);
@@ -66,8 +66,8 @@ void DesktopApp::StopDockForegroundMonitor()
     dockPreviousForegroundWindow_.store(nullptr);
     dockForegroundChangedTick_.store(0);
     dockSystemMinimizeStartedTick_.store(0);
-    dockSystemMinimizeActive_.store(false);
     systemShowDesktopDockLayerGuardActive_ = false;
+    systemShowDesktopLastProtectedForegroundTick_ = 0;
     systemTaskbarWindowStateChangedTick_.store(0);
     dockWindowListChangedTick_.store(0);
     systemTaskbarWindowStateObservedTick_ = 0;
@@ -113,31 +113,64 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
 {
     using GuardAction = snowdesktop::floating_dock_rules::
         SystemShowDesktopLayerGuardAction;
+    using Foreground = snowdesktop::floating_dock_rules::
+        SystemShowDesktopForeground;
+    const ULONGLONG now = GetTickCount64();
+    const ULONGLONG evidenceTick = dockSystemMinimizeStartedTick_.load();
+    // Also called by the periodic guard timer: sample Windows directly so a
+    // missed/delayed WinEvent cannot keep a stale desktop foreground alive.
+    const HWND foreground = GetForegroundWindow();
+    Foreground foregroundKind = Foreground::Unavailable;
+    if (foreground && IsWindow(foreground) &&
+        IsWindowVisible(foreground) && !IsIconic(foreground))
+    {
+        if (IsShellDesktopForegroundWindow(foreground))
+            foregroundKind = Foreground::ShellDesktop;
+        else if (IsDesktopInteractionSurfaceWindow(foreground) ||
+            foreground == floatingDockInputHwnd_ ||
+            foreground == snowdesktop::modern_menu::ActiveRootWindow() ||
+            (shellPopupMenuLayerDepth_ > 0 &&
+                foreground == shellPopupTrackerOwnerHwnd_.load()))
+            foregroundKind = Foreground::DesktopSurface;
+        else
+            foregroundKind = Foreground::Application;
+    }
+    if (foregroundKind == Foreground::ShellDesktop ||
+        foregroundKind == Foreground::DesktopSurface)
+        systemShowDesktopLastProtectedForegroundTick_ = now;
     const GuardAction action =
         snowdesktop::floating_dock_rules::
             ResolveSystemShowDesktopLayerGuardAction(
                 systemShowDesktopDockLayerGuardActive_,
-                dockSystemMinimizeActive_.load(),
-                floatingDockHostActive_,
-                IsShellDesktopForegroundWindow(
-                    dockForegroundWindow_.load()),
-                dockSystemMinimizeStartedTick_.load(),
-                GetTickCount64());
+                generalSettings_.dockEnabled && floatingDockHostActive_,
+                foregroundKind,
+                evidenceTick,
+                now,
+                systemShowDesktopLastProtectedForegroundTick_);
     if (action == GuardAction::None)
         return;
 
     systemShowDesktopDockLayerGuardActive_ =
         action == GuardAction::Start;
+    if (action == GuardAction::Stop)
+    {
+        systemShowDesktopLastProtectedForegroundTick_ = 0;
+        // Returning to the desktop after an application switch must require
+        // new minimize evidence, not reuse the start that owned this guard.
+        ULONGLONG consumedEvidence = evidenceTick;
+        dockSystemMinimizeStartedTick_.compare_exchange_strong(
+            consumedEvidence, 0);
+    }
     wchar_t guardTrace[256]{};
     swprintf_s(guardTrace,
         L"System Show Desktop Dock layer guard %ls foreground=%p "
-        L"minimizeFlag=%d evidenceTick=%llu now=%llu",
+        L"foregroundKind=%d evidenceTick=%llu now=%llu",
         systemShowDesktopDockLayerGuardActive_ ? L"started" : L"completed",
-        static_cast<void*>(dockForegroundWindow_.load()),
-        dockSystemMinimizeActive_.load() ? 1 : 0,
-        dockSystemMinimizeStartedTick_.load(), GetTickCount64());
+        static_cast<void*>(foreground),
+        static_cast<int>(foregroundKind),
+        evidenceTick, now);
     snowdesktop::dock_taskbar_diagnostics::Record(
-        guardTrace, dockForegroundWindow_.load());
+        guardTrace, foreground);
     ApplyFloatingDockLayerPolicy();
     WriteDiagnosticLogEntry(guardTrace);
 }

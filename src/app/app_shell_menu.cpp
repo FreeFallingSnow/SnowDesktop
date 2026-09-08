@@ -599,7 +599,9 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         }
         host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd,
-            insertAfter ? insertAfter : HWND_TOP,
+            // HWND_TOP keeps an already-topmost content window in its band.
+            // If Explorer's desktop anchor is unavailable, explicitly demote.
+            insertAfter ? insertAfter : HWND_NOTOPMOST,
             false);
         if (wasTopmost)
             snowdesktop::dock_taskbar_diagnostics::Record(

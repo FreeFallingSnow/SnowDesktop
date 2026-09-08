@@ -37,6 +37,9 @@ inline constexpr ULONGLONG kPointerFrameIntervalMs = 8;
 // foreground transition with recent system-minimize evidence so an ordinary
 // desktop click cannot promote the Dock by itself.
 inline constexpr ULONGLONG kSystemShowDesktopEvidenceWindowMs = 500;
+// A temporarily unavailable foreground must not turn desktop protection into
+// an unbounded TOPMOST lease. Confirmed desktop/surface samples renew this.
+inline constexpr ULONGLONG kSystemShowDesktopForegroundGraceMs = 500;
 
 inline bool HasAnySummonTrigger(
     bool hotkeyEnabled, bool edgeSwipeEnabled)
@@ -134,7 +137,6 @@ inline bool ShouldSummonForDockSurface(
 inline bool ShouldStartSystemShowDesktopLayerGuard(
     bool persistentDockHostActive,
     bool shellDesktopForeground,
-    bool systemMinimizeActive,
     ULONGLONG lastSystemMinimizeStartTick,
     ULONGLONG currentTick,
     ULONGLONG evidenceWindowMs =
@@ -142,7 +144,6 @@ inline bool ShouldStartSystemShowDesktopLayerGuard(
 {
     return persistentDockHostActive &&
         shellDesktopForeground &&
-        systemMinimizeActive &&
         lastSystemMinimizeStartTick != 0 &&
         currentTick >= lastSystemMinimizeStartTick &&
         currentTick - lastSystemMinimizeStartTick <=
@@ -156,28 +157,44 @@ enum class SystemShowDesktopLayerGuardAction
     Stop,
 };
 
+enum class SystemShowDesktopForeground
+{
+    ShellDesktop,
+    DesktopSurface,
+    Application,
+    Unavailable,
+};
+
 inline SystemShowDesktopLayerGuardAction
 ResolveSystemShowDesktopLayerGuardAction(
     bool layerGuardActive,
-    bool systemMinimizeActive,
     bool persistentDockHostActive,
-    bool shellDesktopForeground,
+    SystemShowDesktopForeground foreground,
     ULONGLONG lastSystemMinimizeStartTick,
     ULONGLONG currentTick,
-    ULONGLONG evidenceWindowMs =
-        kSystemShowDesktopEvidenceWindowMs)
+    ULONGLONG lastProtectedForegroundTick)
 {
     if (layerGuardActive)
-        return systemMinimizeActive
-            ? SystemShowDesktopLayerGuardAction::None
-            : SystemShowDesktopLayerGuardAction::Stop;
+    {
+        // MINIMIZEEND means a window is about to restore, not that its
+        // minimize animation finished. Actual foreground ownership ends the
+        // guard even when no previously minimized window has been restored.
+        if (!persistentDockHostActive ||
+            foreground == SystemShowDesktopForeground::Application)
+            return SystemShowDesktopLayerGuardAction::Stop;
+        if (foreground == SystemShowDesktopForeground::Unavailable &&
+            (lastProtectedForegroundTick == 0 ||
+                currentTick < lastProtectedForegroundTick ||
+                currentTick - lastProtectedForegroundTick >
+                    kSystemShowDesktopForegroundGraceMs))
+            return SystemShowDesktopLayerGuardAction::Stop;
+        return SystemShowDesktopLayerGuardAction::None;
+    }
     return ShouldStartSystemShowDesktopLayerGuard(
         persistentDockHostActive,
-        shellDesktopForeground,
-        systemMinimizeActive,
+        foreground == SystemShowDesktopForeground::ShellDesktop,
         lastSystemMinimizeStartTick,
-        currentTick,
-        evidenceWindowMs)
+        currentTick)
         ? SystemShowDesktopLayerGuardAction::Start
         : SystemShowDesktopLayerGuardAction::None;
 }

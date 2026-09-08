@@ -182,6 +182,18 @@ void CheckPopupWindowPairZOrderTransitions()
             pairMatches(true),
         "popup pair can return to TOPMOST without exposing its backdrop");
 
+    Check(SetWindowPos(separator, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, backdrop, separator, false, origin, size) &&
+            pairMatches(false) &&
+            snowdesktop::popup_window_pair_z_order::IsAbove(separator, content),
+        "ending desktop protection must demote the complete Dock pair below a normal desktop-band anchor");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true, origin, size) &&
+            pairMatches(true),
+        "a later manual summon can promote the Dock pair after desktop protection ends");
+
     const auto isAbove = [](HWND upper, HWND lower) {
         for (HWND current = upper; current;
              current = GetWindow(current, GW_HWNDNEXT))
@@ -3220,28 +3232,70 @@ int main(int argc, char** argv)
               true, true, true, false, true, false),
         "summon-only mode must hide idle Hosts but retain every manually or passively floating Host");
     Check(floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, true, true, 1000, 1400) &&
+              true, true, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              false, true, true, 1000, 1400) &&
+              false, true, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, false, true, 1000, 1400) &&
+              true, false, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, true, false, 1000, 1400) &&
+              true, true, 0, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, true, true, 1000, 1501) &&
+              true, true, 1000, 1501) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
-              true, true, true, 1000, 999),
-        "Show Desktop protection requires an active DockHost, an active system minimize state, desktop foreground, and recent minimize evidence");
+              true, true, 1000, 999),
+        "Show Desktop protection requires an active DockHost, Shell desktop foreground, and recent minimize evidence");
+    using GuardForeground = floatingDock::SystemShowDesktopForeground;
+    using GuardAction = floatingDock::SystemShowDesktopLayerGuardAction;
     Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
-              false, true, true, true, 1000, 1400) ==
-                floatingDock::SystemShowDesktopLayerGuardAction::Start &&
+              false, true, GuardForeground::ShellDesktop, 1000, 1400, 1400) ==
+                GuardAction::Start &&
             floatingDock::ResolveSystemShowDesktopLayerGuardAction(
-              true, true, true, true, 1000, 5000) ==
-                floatingDock::SystemShowDesktopLayerGuardAction::None &&
+              false, true, GuardForeground::DesktopSurface, 1000, 1400, 1400) ==
+                GuardAction::None &&
             floatingDock::ResolveSystemShowDesktopLayerGuardAction(
-              true, false, true, true, 0, 5000) ==
-                floatingDock::SystemShowDesktopLayerGuardAction::Stop,
-        "the Show Desktop TOPMOST guard must persist until the system minimize state ends");
+              false, true, GuardForeground::Application, 1000, 1400, 1000) ==
+                GuardAction::None,
+        "a Dock surface or application activation must not start Show Desktop protection");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Application,
+              164532875, 165075122, 164533000) == GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Application, 1000, 1100, 1050) ==
+                GuardAction::Stop,
+        "a new application must end desktop TOPMOST protection immediately without MINIMIZEEND, including the captured nine-minute stale state");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::ShellDesktop, 1000, 5000, 5000) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::DesktopSurface, 1000, 5000, 5000) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::ShellDesktop, 0, 5000, 5000) ==
+                GuardAction::None,
+        "confirmed desktop and associated surfaces retain protection without treating minimize or restore events as an animation timer");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 5500, 5000) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 5501, 5000) ==
+                GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 5000, 0) ==
+                GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, true, GuardForeground::Unavailable, 1000, 4999, 5000) ==
+                GuardAction::Stop,
+        "unavailable foreground samples allow only a bounded grace period after the last confirmed desktop surface");
+    Check(floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              true, false, GuardForeground::ShellDesktop, 1000, 1400, 1400) ==
+                GuardAction::Stop &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, GuardForeground::ShellDesktop, 0, 1400, 1400) ==
+                GuardAction::None &&
+            floatingDock::ResolveSystemShowDesktopLayerGuardAction(
+              false, true, GuardForeground::ShellDesktop, 1350, 1400, 1400) ==
+                GuardAction::Start,
+        "disabled Dock hosts end protection and a consumed minimize start cannot rearm it without new evidence");
     Check(!floatingDock::ShouldPassivelyRevealDockForDragAtEdge(
               true, false, false) &&
             floatingDock::ShouldPassivelyRevealDockForDragAtEdge(

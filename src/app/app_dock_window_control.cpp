@@ -485,10 +485,11 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
     if (event == EVENT_SYSTEM_MINIMIZESTART ||
         event == EVENT_SYSTEM_MINIMIZEEND)
     {
-        const bool active = event == EVENT_SYSTEM_MINIMIZESTART;
-        dockSystemMinimizeActive_.store(active);
+        // These events announce minimizing/restoring a window, not the
+        // beginning/end of one animation. Keep only recent start evidence;
+        // the layer guard's lifetime follows the actual foreground instead.
         dockSystemMinimizeStartedTick_.store(
-            active ? GetTickCount64() : 0);
+            event == EVENT_SYSTEM_MINIMIZESTART ? GetTickCount64() : 0);
         if (const HWND target =
                 dockForegroundNotificationWindow_.load())
         {
