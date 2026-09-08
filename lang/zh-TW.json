@@ -1453,7 +1453,7 @@
     "largeIcon.refresh": "重新取得封面",
     "largeIcon.frame": "外框與背景",
     "largeIcon.radius": "圓角比例（%）",
-    "largeIcon.radiusHelp": "100% 對應短邊的一半；重設使用目前元件圓角。",
+    "largeIcon.radiusHelp": "100%：半徑為短邊的一半；重設使用目前元件圓角。",
     "largeIcon.leftUnavailable": "目前內容、尺寸或動畫設定不支援左移標題。",
     "largeIcon.revealTitleSize": "框內標題字級",
     "largeIcon.autoColor": "自動背景取色",

@@ -1453,7 +1453,7 @@
     "largeIcon.refresh": "Actualizar portada",
     "largeIcon.frame": "Marco y fondo",
     "largeIcon.radius": "Redondeo de esquinas (%)",
-    "largeIcon.radiusHelp": "El 100 % equivale a la mitad del lado más corto. Al restablecer se usa el radio actual de los widgets.",
+    "largeIcon.radiusHelp": "Al 100 %, el radio equivale a la mitad del lado más corto. Al restablecer se usa el radio actual de los widgets.",
     "largeIcon.leftUnavailable": "El contenido, el tamaño o los ajustes de animación actuales no permiten desplazar el icono a la izquierda.",
     "largeIcon.revealTitleSize": "Tamaño del título interior",
     "largeIcon.autoColor": "Color de fondo automático",

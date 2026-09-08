@@ -1453,7 +1453,7 @@
     "largeIcon.refresh": "Cover aktualisieren",
     "largeIcon.frame": "Rahmen und Hintergrund",
     "largeIcon.radius": "Eckenrundung (%)",
-    "largeIcon.radiusHelp": "100 % entspricht der Hälfte der kürzeren Seite. Zurücksetzen übernimmt den aktuellen Eckenradius der Widgets.",
+    "largeIcon.radiusHelp": "Bei 100 %: Der Radius beträgt die Hälfte der kürzeren Seite. Zurücksetzen übernimmt den aktuellen Eckenradius der Widgets.",
     "largeIcon.leftUnavailable": "Inhalt, Größe oder Animationseinstellungen unterstützen das Verschieben des Symbols nach links derzeit nicht.",
     "largeIcon.revealTitleSize": "Schriftgröße im Rahmen",
     "largeIcon.autoColor": "Automatische Hintergrundfarbe",

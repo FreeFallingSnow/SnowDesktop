@@ -375,8 +375,10 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         PtInRect(&view.frame, lastMousePoint_) && !dragSession_.IsActive();
     if (const auto runtime = largeIconRuntime_.find(item.layoutKey); runtime != largeIconRuntime_.end())
     {
-        view.hover = runtime->second.motion.hover;
-        view.launchWave = runtime->second.motion.LaunchWave(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
+        // The first cached ghost may be captured before the desktop's hover
+        // reset. Always capture its idle pose so inner text never sticks there.
+        view.hover = state == 3 ? 0 : runtime->second.motion.hover;
+        view.launchWave = state == 3 ? 0 : runtime->second.motion.LaunchWave(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
             snowdesktop::animation::RuntimeDurationScale());
         if (const auto& asset = runtime->second.asset; asset && !demo)
         {

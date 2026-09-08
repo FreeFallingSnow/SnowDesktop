@@ -1453,7 +1453,7 @@
     "largeIcon.refresh": "Refresh cover",
     "largeIcon.frame": "Frame and background",
     "largeIcon.radius": "Corner rounding (%)",
-    "largeIcon.radiusHelp": "100% is half the shorter edge. Reset uses the current widget corner radius.",
+    "largeIcon.radiusHelp": "At 100%, the radius is half the shorter edge. Reset uses the current widget corner radius.",
     "largeIcon.leftUnavailable": "The current content, size or animation settings do not support sliding the icon left.",
     "largeIcon.revealTitleSize": "Inner title size",
     "largeIcon.autoColor": "Automatic background color",
