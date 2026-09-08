@@ -19,7 +19,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
         luaWidgetPanelRequest_.modal)
         return;
     if (mouseDown_ || dragSession_.IsActive() ||
-        widgetAction_ != WidgetAction::None)
+        widgetAction_ != WidgetAction::None || largeIconGesture_)
         return;
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -62,7 +62,33 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
             break;
         }
     }
-    if (widgetIndex >= widgets_.size()) return;
+    if (widgetIndex >= widgets_.size())
+    {
+        if (desktopIconsHidden_ || IsPointOccludedByOpenPopup(pt)) return;
+        auto* hit = HitTestIcon(pt);
+        auto* item = hit ? hit->GetDesktopItem() : nullptr;
+        if (!item || !item->largeIcon || hit->GetContainer() != GetDesktopGrid()) return;
+        RestoreInteractionInputFocus();
+        keyboardNavVisualFocus_ = false;
+        if (!hit->IsSelected()) { ClearSelection(); hit->SetSelected(true); }
+        else ClearSelectionOutsideDesktop();
+        mouseDown_ = true;
+        mouseDownPoint_ = lastMousePoint_ = pt;
+        mouseDownHit_ = hit;
+        mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        marqueeActive_ = false;
+        marqueeWidgetIndex_ = static_cast<size_t>(-1);
+        marqueeDockFolderPopup_ = false;
+        pendingCtrlToggleDesktopIndex_ = static_cast<size_t>(-1);
+        pendingCtrlToggleWidgetItem_ = nullptr;
+        // Reuse the existing middle-button ownership and cancellation path;
+        // pointer movement starts the ordinary desktop drag after its threshold.
+        middleButtonWidgetMove_ = true;
+        SetCapture(hwnd_);
+        SyncKeyboardNavFromSelection();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     RestoreInteractionInputFocus();
     SelectWidgetOnly(widgetIndex);
@@ -91,6 +117,16 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 void DesktopApp::OnMiddleButtonUpAt(WPARAM wp, POINT point)
 {
     if (!middleButtonWidgetMove_) return;
+    if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None)
+    {
+        // A middle click selects the large icon without entering any launch,
+        // primary-click or resize path.
+        CancelPointerPressWithoutCaptureRelease();
+        ReleaseCapture();
+        UpdateLargeIconHover();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     middleButtonWidgetMove_ = false;
     OnLeftButtonUpAt(wp, point);
 }
@@ -831,7 +867,7 @@ void DesktopApp::OnMouseMoveAt(
                             resumePoint);
                     const bool primaryButtonDown =
                         nativeResumeRequested &&
-                        (GetAsyncKeyState(VK_LBUTTON) &
+                        (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) &
                             0x8000) != 0;
                     const auto unwindAction =
                         snowdesktop::ole_drag_rules::
@@ -910,7 +946,8 @@ void DesktopApp::OnMouseMoveAt(
                         // between QueryContinueDrag and DoDragDrop returning.
                         // Commit exactly once at the live native point without
                         // reacquiring capture or flashing the custom ghost.
-                        OnLeftButtonUpAt(0, resumePoint);
+                        if (middleButtonWidgetMove_) OnMiddleButtonUpAt(0, resumePoint);
+                        else OnLeftButtonUpAt(0, resumePoint);
                     }
                     PresentPointerInteractionFrame();
                     nativeDragResumed = true;

@@ -352,6 +352,10 @@ void DesktopApp::ShowItemContextMenu(
     }
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    SetMenuItemIcon(menu, kContextLargeIconCreate, L"\uF0B2");
+    SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
+    SetMenuItemIcon(menu, kContextLargeIconRestore,
+        snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextRevealLocationCommand, L"");
     SetMenuItemIcon(menu, kContextCopyPathCommand,
         snowdesktop::menu_fluent_glyphs::kCopy,
@@ -478,8 +482,8 @@ void DesktopApp::ShowItemContextMenu(
             const bool fits = page && item.gridCell.column + span.columns <= page->columns &&
                 item.gridCell.row + span.rows <= page->rows && !AreGridSlotsMarked(occupied, item.gridCell, span);
             if (!fits) BeginLargeIconPlacement(itemIndex, config);
-            else if (SetLargeIconConfig(itemIndex, config)) OpenLargeIconSettings(itemIndex);
-            else MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+            else if (!SetLargeIconConfig(itemIndex, config))
+                MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
         }
         break;
     case kContextLargeIconSettings:

@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../animation_settings.h"
+#include "../widgets/widget_chrome_rules.h"
 
 void DesktopApp::BeginLargeIconPlacement(size_t index, snowdesktop::LargeIconConfig config)
 {
@@ -32,7 +33,7 @@ bool DesktopApp::HandleLargeIconPointerDown(POINT point)
                 const auto oldCell = items_[index].gridCell;
                 items_[index].gridCell = largeIconGesture_->cell;
                 const auto config = largeIconGesture_->config;
-                if (SetLargeIconConfig(index, config)) { CancelLargeIconGesture(); OpenLargeIconSettings(index); }
+                if (SetLargeIconConfig(index, config)) CancelLargeIconGesture();
                 else items_[index].gridCell = oldCell;
             }
             return true;
@@ -128,12 +129,21 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
     {
         if (!item.largeIcon || IsItemInAnyWidget(item) || IsRectEmptyRect(item.bounds)) continue;
         auto rect = GetLargeIconFrameRect(item);
-        if (!item.selected && !PtInRect(&rect, lastMousePoint_)) continue;
+        if (!snowdesktop::widget_chrome_rules::ShowsResizeHandle(false, true, PtInRect(&rect, lastMousePoint_) != FALSE)) continue;
         DesktopWidget geometry;
         geometry.bounds = item.bounds; geometry.gridCell = item.gridCell; geometry.showTitle = false;
         if (const auto* page = FindGridPage(gridPages_, geometry.gridCell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
         rect = GetStandaloneWidgetResizeHandleRect(geometry);
-        DrawD2DRoundedRectangle(context, rect, 3, D2D1::ColorF(0xffffff, .75f), D2D1::ColorF(0x202020, .4f));
+        const float barHeight = CurrentPersonalization().barHeight;
+        const int dot = ScaleWidgetCu(barHeight * .333f, geometry.cellScale);
+        const int cx = rect.left + (rect.right - rect.left) / 2;
+        const int cy = rect.top + (rect.bottom - rect.top) / 2;
+        const RECT dotRect{cx - dot / 2, cy - dot / 2, cx + dot / 2, cy + dot / 2};
+        const auto fill = item.selected ? D2D1::ColorF(.39f, .66f, 1.f, .62f) :
+            (IsLightContentTheme() ? D2D1::ColorF(.06f, .08f, .12f, .34f) : D2D1::ColorF(1.f, 1.f, 1.f, .34f));
+        const auto stroke = IsLightContentTheme() ? D2D1::ColorF(.06f, .08f, .12f, .5f) : D2D1::ColorF(1.f, 1.f, 1.f, .5f);
+        DrawD2DRoundedRectangle(context, dotRect,
+            static_cast<float>(ScaleWidgetCu(4.f * barHeight / 24.f, geometry.cellScale)), fill, stroke);
     }
 }
 

@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../drop_image_data.h"
 #include "../ole_drag_rules.h"
+#include "../drag_input_rules.h"
 #include "../virtual_file_drop.h"
 #include "../widgets/lua_logical_slot.h"
 
@@ -2194,7 +2195,9 @@ HRESULT DesktopApp::HandleOleQueryContinueDrag(
         TryGetNativeDragResumePointFromCursor(desktopPoint);
     return dragDropController_.QueryContinueSelfDrag(
         escapePressed != FALSE,
-        (keyState & MK_LBUTTON) != 0,
+        snowdesktop::drag_input_rules::IsPointerGestureButtonDown(
+            middleButtonWidgetMove_, (keyState & MK_LBUTTON) != 0,
+            (keyState & MK_MBUTTON) != 0),
         pointerOnDesktopSurface);
 }
 

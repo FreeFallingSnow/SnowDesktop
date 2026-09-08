@@ -357,7 +357,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             return;
         }
         if (dragDropController_.IsTransportActive() ||
-            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0)
+            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) == 0)
             return;
 
         POINT recoveredPoint{};

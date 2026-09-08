@@ -202,7 +202,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
         const bool primaryButtonDown =
-            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) != 0;
         POINT point{};
         if (snowdesktop::drag_input_rules::
                 ShouldSampleFloatingWindowPointer(

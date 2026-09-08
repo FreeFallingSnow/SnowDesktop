@@ -31,6 +31,7 @@
 #include "floating_popup_rules.h"
 #include "drag_visual_rules.h"
 #include "ole_drag_rules.h"
+#include "drag_input_rules.h"
 #include "display_topology_refresh.h"
 #include "item_visual_metrics.h"
 #include "collection_titleless_rules.h"
@@ -775,6 +776,17 @@ int main(int argc, char** argv)
             false, false, true, true, false) ==
             oleDrag::QueryContinueDragAction::Drop,
         "self OLE source continuation must wait for a live internal return and drop only after an external release");
+    Check(
+        oleDrag::SelectQueryContinueDragAction(false,
+            snowdesktop::drag_input_rules::IsPointerGestureButtonDown(true, false, true),
+            true, false, false) == oleDrag::QueryContinueDragAction::ContinueOle &&
+        oleDrag::SelectQueryContinueDragAction(false,
+            snowdesktop::drag_input_rules::IsPointerGestureButtonDown(true, true, false),
+            true, false, false) == oleDrag::QueryContinueDragAction::Drop &&
+        oleDrag::SelectQueryContinueDragAction(false,
+            snowdesktop::drag_input_rules::IsPointerGestureButtonDown(true, false, false),
+            true, true, true) == oleDrag::QueryContinueDragAction::ResumeNative,
+        "middle-button large-icon OLE drags must wait for the owning button, ignore an unrelated held primary button, and hand internal returns back to native completion");
 
     Check(
         nativeMenuPresentation::ShouldFlushAfterOwnerMessage(

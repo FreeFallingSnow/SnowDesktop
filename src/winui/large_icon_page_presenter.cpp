@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "large_icon_page_presenter.h"
+#include "settings_presenter_controls.h"
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
@@ -22,10 +23,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LargeIconSettingsAction action;
     LargeIconSettingsSnapshot snapshot;
     LargeIconConfig draft;
-    c::StackPanel root, editors;
+    c::StackPanel root, editors, previewSummary;
     c::ContentControl editorHost;
     c::TextBlock status;
-    c::Border preview, frameBackground, frameStroke, launchStroke;
+    c::Border preview, previewCard, frameBackground, frameStroke, launchStroke;
     std::array<c::Border, 5> shadows;
     LargeIconMotion motion;
     winrt::event_token rendering{};
@@ -229,7 +230,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
 
     c::StackPanel Group(const char* key)
     {
-        c::Border border; border.Style(style);
+        c::Border border; border.Style(style); border.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         c::StackPanel panel; panel.Spacing(12);
         c::TextBlock heading; heading.Text(L(key));
         heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -237,10 +238,20 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         panel.Children().Append(heading); border.Child(panel);
         editors.Children().Append(border); return panel;
     }
+    void Row(c::StackPanel panel, const char* key, const x::UIElement& control, bool compact = false)
+    {
+        presenter_controls::SettingRow row;
+        row.Initialize(control, compact ? 0. : presenter_controls::kSettingControlWidth);
+        row.SetText(L(key));
+        row.SetControlAlignment(compact ? x::HorizontalAlignment::Right : x::HorizontalAlignment::Stretch);
+        row.root.MinHeight(44);
+        x::Automation::AutomationProperties::SetName(control, L(key));
+        panel.Children().Append(row.root);
+    }
     template<class T> void Number(c::StackPanel panel, const char* key, T LargeIconConfig::* member,
         double min, double max, double step = 1)
     {
-        c::NumberBox input; input.Header(winrt::box_value(L(key)));
+        c::NumberBox input; input.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         input.Minimum(min); input.Maximum(std::max(min, max)); input.SmallChange(step);
         input.SpinButtonPlacementMode(c::NumberBoxSpinButtonPlacementMode::Inline);
         input.Value(static_cast<double>(draft.*member));
@@ -251,11 +262,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             { self->draft.*member = static_cast<T>(args.NewValue()); self->Send("commit"); }
         });
         syncControls.push_back([this, input, member] { input.Value(static_cast<double>(draft.*member)); });
-        panel.Children().Append(input);
+        Row(panel, key, input);
     }
     void Slider(c::StackPanel panel, const char* key, double LargeIconConfig::* member, double min, double max, double step = .01)
     {
-        c::Slider input; input.Header(winrt::box_value(L(key)));
+        c::Slider input; input.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        input.VerticalAlignment(x::VerticalAlignment::Center);
         input.Minimum(min); input.Maximum(max); input.StepFrequency(step); input.Value(draft.*member);
         x::Automation::AutomationProperties::SetName(input, L(key));
         std::weak_ptr<Impl> weak = shared_from_this();
@@ -274,11 +286,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         };
         input.PointerCaptureLost(commit); input.KeyUp(commit); input.LostFocus(commit);
         syncControls.push_back([this, input, member] { input.Value(draft.*member); });
-        panel.Children().Append(input);
+        Row(panel, key, input);
     }
     void Toggle(c::StackPanel panel, const char* key, bool LargeIconConfig::* member)
     {
-        c::ToggleSwitch input; input.Header(winrt::box_value(L(key))); input.IsOn(draft.*member);
+        c::ToggleSwitch input; input.IsOn(draft.*member);
         std::weak_ptr<Impl> weak = shared_from_this();
         input.Toggled([weak, member](auto const& sender, auto const&) {
             if (auto self = weak.lock(); self && !self->syncing) {
@@ -288,11 +300,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 self->Send("commit"); }
         });
         syncControls.push_back([this, input, member] { input.IsOn(draft.*member); });
-        panel.Children().Append(input);
+        Row(panel, key, input, true);
     }
     void Choice(c::StackPanel panel, const char* key, int LargeIconConfig::* member, std::initializer_list<const char*> choices)
     {
-        c::ComboBox input; input.Header(winrt::box_value(L(key))); input.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        c::ComboBox input; input.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         for (const char* choice : choices) input.Items().Append(winrt::box_value(L(choice)));
         input.SelectedIndex(draft.*member);
         std::weak_ptr<Impl> weak = shared_from_this();
@@ -309,11 +321,15 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             }
         });
         syncControls.push_back([this, input, member] { input.SelectedIndex(draft.*member); });
-        panel.Children().Append(input);
+        Row(panel, key, input);
     }
     void ColorPicker(c::StackPanel panel, const char* key, std::uint32_t LargeIconConfig::* member)
     {
-        c::Button button; button.Content(winrt::box_value(L(key)));
+        c::Button button;
+        c::StackPanel buttonContent; buttonContent.Orientation(c::Orientation::Horizontal); buttonContent.Spacing(8);
+        c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius(x::CornerRadius{4});
+        c::TextBlock colorValue; colorValue.VerticalAlignment(x::VerticalAlignment::Center);
+        buttonContent.Children().Append(swatch); buttonContent.Children().Append(colorValue); button.Content(buttonContent);
         c::Flyout flyout; c::ColorPicker picker;
         picker.IsAlphaEnabled(false); picker.Color(Color(draft.*member)); flyout.Content(picker); button.Flyout(flyout);
         std::weak_ptr<Impl> weak = shared_from_this();
@@ -327,8 +343,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         flyout.Closed([weak](auto const&, auto const&) {
             if (auto self = weak.lock(); self && self->active && !self->syncing && self->previewDirty) self->Send("commit");
         });
-        syncControls.push_back([this, picker, member] { picker.Color(Color(draft.*member)); });
-        panel.Children().Append(button);
+        const auto syncColor = [this, picker, member, swatch, colorValue] {
+            picker.Color(Color(draft.*member)); swatch.Background(m::SolidColorBrush(Color(draft.*member)));
+            wchar_t value[8]{}; swprintf_s(value, L"#%06X", static_cast<unsigned>(draft.*member)); colorValue.Text(value);
+        };
+        syncColor(); syncControls.push_back(syncColor);
+        Row(panel, key, button, true);
     }
     void Button(c::StackPanel panel, const char* key, std::function<void(Impl&)> callback)
     {
@@ -341,7 +361,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         syncing = true;
         syncControls.clear(); root.Children().Clear(); editors.Children().Clear();
+        previewCard.Child(nullptr); previewSummary.Children().Clear();
         root.Spacing(16); editors.Spacing(16);
+        root.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        editors.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        editorHost.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        editorHost.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         previewStage.Children().Clear(); previewCanvas.Children().Clear();
         innerTitleBackdrop.Child(previewTitle); floatingTitleBackdrop.Child(floatingTitle);
         frameBackground.IsHitTestVisible(false); frameStroke.IsHitTestVisible(false); launchStroke.IsHitTestVisible(false);
@@ -353,10 +378,15 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         previewStage.HorizontalAlignment(x::HorizontalAlignment::Center);
         for (auto shadow : shadows) { shadow.IsHitTestVisible(false); previewStage.Children().Append(shadow); }
         previewStage.Children().Append(preview); previewStage.Children().Append(floatingTitleBackdrop);
-        root.Children().Append(previewStage);
-        root.Children().Append(previewSource);
+        previewCard.Style(style); previewCard.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        previewSummary.Spacing(4);
         c::TextBlock name; name.Text(snapshot.name); name.TextWrapping(x::TextWrapping::Wrap);
-        root.Children().Append(name); status.TextWrapping(x::TextWrapping::Wrap);
+        name.FontSize(18); name.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        name.TextAlignment(x::TextAlignment::Center);
+        previewSource.TextAlignment(x::TextAlignment::Center); previewSource.Opacity(.68); previewSource.FontSize(12);
+        previewSummary.Children().Append(name); previewSummary.Children().Append(previewSource);
+        previewSummary.Children().Append(previewStage); previewCard.Child(previewSummary);
+        root.Children().Append(previewCard); status.TextWrapping(x::TextWrapping::Wrap);
         root.Children().Append(status); editorHost.Content(editors); root.Children().Append(editorHost);
         auto content = Group("largeIcon.contentSize");
         Number(content, "largeIcon.columns", &LargeIconConfig::columns, 1, snapshot.maxColumns);
@@ -397,6 +427,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Slider(frame, "largeIcon.opacity", &LargeIconConfig::opacity, 0, 1);
         c::Expander advanced; advanced.Header(winrt::box_value(L("largeIcon.advancedBackground")));
         advanced.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        advanced.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         c::StackPanel advancedBackground; advancedBackground.Spacing(12);
         Toggle(advancedBackground, "largeIcon.hoverOpacityLinked", &LargeIconConfig::hoverOpacityLinked);
         Slider(advancedBackground, "largeIcon.hoverOpacity", &LargeIconConfig::hoverOpacity, 0, 1);
