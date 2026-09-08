@@ -168,7 +168,14 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         view.name = L"A"; view.backgroundResolved = true; view.background.opacity = 0;
         config.autoTitleColor = false; config.titleColor = 0xffffff;
         pixels = canvas.Draw(config, view); bounds = RedBounds(pixels);
-        Check(bounds.left > 180 && bounds.left < 210 && bounds.top == 133 && bounds.right - bounds.left == 64 && bounds.bottom == 197,
+        double redCoverage = 0;
+        for (int x = 0; x < Canvas::width; ++x)
+        {
+            const unsigned pixel = Pixel(pixels, x, 160);
+            if (((pixel >> 16) & 255) > 0 && ((pixel >> 8) & 255) < ((pixel >> 16) & 255) / 2)
+                redCoverage += (pixel >> 24) / 255.;
+        }
+        Check(bounds.left > 180 && bounds.left < 210 && bounds.top == 133 && std::abs(redCoverage - 64) < .01 && bounds.bottom == 197,
             "short title shifts the original only enough to center the compact icon-text group");
         Check(Visible(pixels, {40, 76, 180, 254}) == 0 && Visible(pixels, {320, 76, 439, 254}) == 0 &&
             Visible(pixels, {270, 140, 310, 190}) > 50,
