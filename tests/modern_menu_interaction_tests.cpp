@@ -323,11 +323,9 @@ LRESULT CALLBACK OwnerWindowProc(
             SendMessageW(menus.root, WM_KEYDOWN, VK_SPACE, 0);
             SendMessageW(menus.root, WM_CHAR, L' ', 0);
             SendMessageW(menus.root, WM_KEYDOWN, VK_BACK, 0);
-            gDrivePhase = 1;
-        }
-        else if (gDriveMode == DriveMode::TextInput && menus.root &&
-            gDrivePhase == 1)
-        {
+            // Text refresh is synchronous. Keep result navigation in this
+            // drive step, just like Simple mode: a later timer can run after
+            // an unrelated foreground transfer has already cancelled the menu.
             SendMessageW(menus.root, WM_KEYDOWN, VK_DOWN, 0);
             SendMessageW(menus.root, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
