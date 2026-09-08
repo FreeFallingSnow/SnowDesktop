@@ -82,7 +82,7 @@ Microsoft Windows App SDK 2.4.0 和 Microsoft.Windows.CppWinRT 3.0.260818.1，
 **项目目前处于高频开发期，暂不接受外部 Pull Request 的代码合并。**
 欢迎通过 [Issues](https://github.com/FreeFallingSnow/SnowDesktop/issues)、
 [QQ 用户群 976422547](https://qm.qq.com/q/HyazkCIRig) 或参与
-[Steam](https://store.steampowered.com/app/5080330/SnowDesktop/) 测试版交流与反馈。
+[Steam 测试版](./CONTRIBUTING.md#加入-steam-测试版)交流与反馈。
 参与方式、开发规范及许可说明详见[中文贡献指南](./CONTRIBUTING.md)或 [English](./CONTRIBUTING.en.md)。
 
 ## 📄 许可证

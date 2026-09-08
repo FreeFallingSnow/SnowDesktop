@@ -85,7 +85,7 @@ normally first. To clear the lock automatically, use
 **The project is under rapid development and is temporarily not accepting external pull requests for code integration.**
 Feedback is welcome through [Issues](https://github.com/FreeFallingSnow/SnowDesktop/issues),
 the [QQ user group 976422547](https://qm.qq.com/q/HyazkCIRig), or by participating in
-[Steam](https://store.steampowered.com/app/5080330/SnowDesktop/) test builds.
+[Steam test builds](./CONTRIBUTING.en.md#join-the-steam-test-branch).
 See the contribution guide in [English](./CONTRIBUTING.en.md) or [中文](./CONTRIBUTING.md)
 for participation options, development rules, and licensing information.
 

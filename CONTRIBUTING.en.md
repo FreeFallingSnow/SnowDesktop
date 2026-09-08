@@ -13,11 +13,25 @@ Help improve features, stability, translations, and documentation through these 
 
 - [GitHub Issues](https://github.com/FreeFallingSnow/SnowDesktop/issues): Report bugs, suggest features, or point out translation and documentation errors.
 - [QQ user group: 976422547](https://qm.qq.com/q/HyazkCIRig): Discuss your experience, ask questions, and share testing feedback.
-- [Steam](https://store.steampowered.com/app/5080330/SnowDesktop/) test builds: Try new features and help verify problems; ask in the QQ group about joining.
+- [Steam](https://store.steampowered.com/app/5080330/SnowDesktop/) test builds: Try new features and help verify problems. Follow the instructions below to join.
 
-The rules below apply to maintainer development and serve as a reference for when code contributions reopen.
+### Join the Steam test branch
+
+| Item | Value |
+| --- | --- |
+| Branch | `internal-dev` |
+| Description | SnowDesktop internal development builds |
+| Access password | `SnowDestopDev0927` |
+
+1. Right-click SnowDesktop in your Steam library, open **Properties**, and select **Game Versions & Betas**.
+2. Enter and verify the access password above, then select the `internal-dev` branch.
+3. Wait for Steam to download the update, then launch the application.
+
+See the [Steam beta branch documentation](https://partner.steamgames.com/doc/store/application/branches) for details.
 
 ## Before you start
+
+The rules below apply to maintainer development and serve as a reference for when code contributions reopen.
 
 - Search existing issues and pull requests to avoid duplicate work. Discuss substantial features, architectural changes, or public API changes with the maintainers in an issue before implementation.
 - For bug reports, include the SnowDesktop version, distribution channel, Windows version, reproduction steps, expected and actual results, and relevant logs or screenshots. Remove personal paths, credentials, and other private information before sharing.
