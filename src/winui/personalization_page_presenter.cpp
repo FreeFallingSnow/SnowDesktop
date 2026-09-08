@@ -904,7 +904,7 @@ struct PersonalizationPagePresenter::Impl
         edgeHighlightWidth.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         edgeHighlightStrength.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         gradientEndAlpha.row.root.Visibility(visible(gradientToggle.IsOn()));
-        blurRadius.row.root.Visibility(visible(glassToggle.IsOn() && !acrylicToggle.IsOn()));
+        blurRadius.row.root.Visibility(visible(glassToggle.IsOn()));
         acrylicRow.root.Visibility(visible(glassToggle.IsOn()));
     }
 
