@@ -71,7 +71,7 @@ int main(int argc, char** argv)
         "up direction reserves a lower text area without resizing the icon");
     config.backgroundStyle = -2; config.titleDirection = 0; config.focusX = 1;
     geometry = ResolveContent(config, 400, 180, 800, 200, 1, true, 1);
-    Check(geometry.leftReveal && geometry.cropped && geometry.width == 400 && geometry.x == -180 &&
+    Check(geometry.leftReveal && geometry.cropped && geometry.width == 400 && std::abs(geometry.x + 180) < .000001 &&
         geometry.sourceX > 0 && geometry.sourceWidth < 800,
         "fill crops the source before movement so overscan cannot refill title space");
     config.effect = 0; config.fit = 0;

@@ -1,5 +1,6 @@
 #include "large_icon_renderer.h"
 #include "panel_gradient_renderer.h"
+#include <d2d1_1.h>
 #include <d2d1helper.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -37,11 +38,17 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     ComPtr<ID2D1Factory> factory; target->GetFactory(&factory);
     ComPtr<ID2D1RoundedRectangleGeometry> clip;
     if (factory) factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(frame, radius, radius), &clip);
-    if (clip) target->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), clip.Get()), nullptr);
+    ComPtr<ID2D1DeviceContext> context;
+    ComPtr<ID2D1Layer> layer;
+    // Automatic layers are supported by device contexts. WIC render targets
+    // need an explicit layer to apply the same rounded mask.
+    if (clip && FAILED(target->QueryInterface(IID_PPV_ARGS(&context))) &&
+        FAILED(target->CreateLayer(nullptr, &layer))) return;
+    if (clip) target->PushLayer(D2D1::LayerParameters(frame, clip.Get()), layer.Get());
     else target->PushAxisAlignedClip(frame, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    const auto size = view.bitmap ? view.bitmap->GetSize() : D2D1_SIZE_F{};
+    const auto sourceSize = view.bitmap ? view.bitmap->GetSize() : D2D1_SIZE_F{};
     const auto geometry = large_icon_render_rules::ResolveContent(c, frame.right - frame.left, frame.bottom - frame.top,
-        size.width, size.height, view.scale, view.original, view.hover);
+        sourceSize.width, sourceSize.height, view.scale, view.original, view.hover);
     const auto image = D2D1::RectF(frame.left + static_cast<float>(geometry.x), frame.top + static_cast<float>(geometry.y),
         frame.left + static_cast<float>(geometry.x + geometry.width), frame.top + static_cast<float>(geometry.y + geometry.height));
     const auto source = D2D1::RectF(static_cast<float>(geometry.sourceX), static_cast<float>(geometry.sourceY),
