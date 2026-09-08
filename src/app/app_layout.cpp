@@ -802,6 +802,17 @@ bool DesktopApp::SaveLayoutSlots()
             WriteDiagnosticLogEntry((L"Large icon upgrade backup failed: " + Utf8ToWide(result.error)).c_str(), DiagnosticLogLevel::Error);
             return false;
         }
+        if (std::any_of(items_.begin(), items_.end(), [](const auto& item) {
+            return item.largeIcon && item.largeIcon->backgroundStyle <= -4;
+        }))
+        {
+            const auto presetBackup = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 3);
+            if (!presetBackup.ok)
+            {
+                WriteDiagnosticLogEntry((L"Large icon preset upgrade backup failed: " + Utf8ToWide(presetBackup.error)).c_str(), DiagnosticLogLevel::Error);
+                return false;
+            }
+        }
     }
     demoCollectionIdentityCache_.clear();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);

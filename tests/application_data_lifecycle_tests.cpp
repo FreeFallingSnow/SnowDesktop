@@ -1895,6 +1895,18 @@ int main()
         "v2 migration creates a separate complete backup even when a v1 upgrade snapshot already exists");
     Write(fullBackupData / L"SnowDesktop.layout.json", originalLayout);
     const auto blockedUpgrade = root / L"large-icon-upgrade-blocked";
+    const auto presetUpgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0", 3);
+    Expect(presetUpgrade.ok && presetUpgrade.backup.root != v2Upgrade.backup.root &&
+        Read(presetUpgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout &&
+        Read(presetUpgrade.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
+        !std::filesystem::exists(presetUpgrade.backup.data / L"SnowDesktop.entitlement.bin"),
+        "new preset values establish their own full rollback backup instead of reusing an older v2 snapshot");
+    Write(fullBackupData / L"SnowDesktop.layout.json", modifiedLayout);
+    const auto keptPreset = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0", 3);
+    Expect(keptPreset.ok && keptPreset.backup.id == presetUpgrade.backup.id &&
+        Read(presetUpgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout,
+        "later preset saves preserve the original rollback snapshot");
+    Write(fullBackupData / L"SnowDesktop.layout.json", originalLayout);
     Write(blockedUpgrade, "a file prevents creation of the backup directory");
     const auto failedUpgrade = snowdesktop::EnsureLargeIconUpgradeBackup(blockedUpgrade, fullBackupData, "1.0.5.0");
     Expect(!failedUpgrade.ok && !failedUpgrade.error.empty() && Read(fullBackupData / L"SnowDesktop.layout.json") == originalLayout,
