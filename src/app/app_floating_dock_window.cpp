@@ -357,7 +357,7 @@ bool DesktopApp::SyncPersistentDockHosts()
     SelectPersistentDockHost(selected);
 
     floatingDockPersonalization_ =
-        CurrentPersonalization();
+        CurrentDockAppearance();
     for (const auto& ownedHost : persistentDockHosts_)
     {
         PersistentDockHost& host = *ownedHost;
@@ -454,7 +454,7 @@ bool DesktopApp::SyncPersistentDockHost(
 void DesktopApp::ApplyPersistentDockHostAppearance()
 {
     floatingDockPersonalization_ =
-        CurrentPersonalization();
+        CurrentDockAppearance();
     for (const auto& ownedHost : persistentDockHosts_)
     {
         if (!ownedHost || !ownedHost->active)
@@ -598,7 +598,7 @@ CalculateFloatingDockStableSourceRect(
     const PersonalizationSettings& appearance =
         IsPersistentDockHostEffectivelyFloating(host)
             ? floatingDockPersonalization_
-            : CurrentPersonalization();
+            : CurrentDockAppearance();
     const float visualEdgeWidth = appearance.widgetEdgeHighlightEnabled
         ? std::max(appearance.widgetBorderWidth,
             appearance.widgetEdgeHighlightWidth)
@@ -623,7 +623,7 @@ std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
         ((!customDesktopVisible_ || desktopIconsHidden_) &&
             !dockSettings_.keepWhenDesktopHidden))
         return result;
-    const auto& appearance = CurrentPersonalization();
+    const auto& appearance = CurrentDockAppearance();
     const float borderWidth = appearance.widgetEdgeHighlightEnabled
         ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)
         : appearance.widgetBorderWidth;
@@ -765,7 +765,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 
     const PersonalizationSettings& dockAppearance = promoted
         ? floatingDockPersonalization_
-        : CurrentPersonalization();
+        : CurrentDockAppearance();
     const float dockBorderWidth = std::clamp(
         dockAppearance.widgetEdgeHighlightEnabled
             ? std::max(dockAppearance.widgetBorderWidth,
@@ -788,7 +788,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         static_cast<int>(std::round(
             promoted
                 ? floatingDockPersonalization_.cornerRadius
-                : CurrentPersonalization().cornerRadius)));
+                : CurrentDockAppearance().cornerRadius)));
     HRGN windowRegion = CreateRoundRectRgn(
         dockLocal.left, dockLocal.top,
         dockLocal.right + 1, dockLocal.bottom + 1,

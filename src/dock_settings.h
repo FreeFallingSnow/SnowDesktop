@@ -100,6 +100,8 @@ struct DockSettings
     bool showOnlyWhenSummoned = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
+    bool followComponentAppearance = true;
+    PersonalizationSettings customAppearance;
     int hoverEffect = 2;
     float hoverScale = 1.28f;
     int launchEffect = 1;

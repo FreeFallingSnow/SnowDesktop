@@ -140,6 +140,18 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     }
     if (ReadIntField(text, "collectionPopupTheme", theme))
         settings.collectionPopupTheme = std::clamp(theme, 0, 3);
+    // Preserve the previous conditional override until the user chooses one
+    // of the independent surface themes. New installations default to follow.
+    settings.quickNavigationAppearance = {};
+    settings.collectionPopupAppearance = {};
+    settings.quickNavigationAppearance.mode = -2;
+    settings.collectionPopupAppearance.mode = -2;
+    JsonValue appearanceDocument;
+    if (!ParseJson(text, appearanceDocument)) return false;
+    if (const auto* value = appearanceDocument.Find("quickNavigationAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.quickNavigationAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("collectionPopupAppearance"))
+        if (!snowdesktop::DecodeSurfaceTheme(*value, settings.collectionPopupAppearance)) return false;
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     ReadIntField(text, "animationMode", settings.animationMode);
     ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
@@ -153,9 +165,14 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
 
 bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
 {
+    const auto quickAppearance = snowdesktop::EncodeSurfaceTheme(settings.quickNavigationAppearance);
+    const auto popupAppearance = snowdesktop::EncodeSurfaceTheme(settings.collectionPopupAppearance);
+    if (quickAppearance.empty() || popupAppearance.empty()) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
+    file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";
+    file << "  \"collectionPopupAppearance\": " << popupAppearance << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";
     file << "  \"popupAnimationEffect\": " << snowdesktop::animation::NormalizePopupEffect(settings.popupAnimationEffect) << ",\n";
     file << "  \"animationSpeed\": " << snowdesktop::animation::NormalizeSpeed(settings.animationSpeed) << ",\n";

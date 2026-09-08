@@ -1572,5 +1572,9 @@
     "largeIcon.backgroundSettings": "Ajustes del fondo",
     "largeIcon.detailedSettings": "Ajustes detallados",
     "appearance.border": "Borde",
-    "appearance.bottomBar": "Degradado de la barra inferior"
+    "appearance.bottomBar": "Degradado de la barra inferior",
+    "appearance.quickPanelCard": "Tema del panel rápido",
+    "appearance.popupCard": "Tema de las ventanas emergentes",
+    "appearance.openTaskbar": "Abrir ajustes de la barra de tareas",
+    "appearance.followGlobalPreset": "Preajuste del tema global (predeterminado)"
 }

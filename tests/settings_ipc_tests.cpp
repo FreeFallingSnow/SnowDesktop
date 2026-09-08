@@ -69,6 +69,13 @@ void TestCodec()
     settings.values.general.animationFrameLimit = 120;
     settings.values.general.animationEnergySaver = false;
     settings.values.general.animationOnBattery = true;
+    settings.values.general.quickNavigationAppearance.mode = 4;
+    settings.values.general.quickNavigationAppearance.customized = true;
+    settings.values.general.quickNavigationAppearance.appearance.panelGradient.enabled = true;
+    settings.values.general.quickNavigationAppearance.appearance.panelGradient.angle = 37;
+    settings.values.general.collectionPopupAppearance.mode = 3;
+    settings.values.dock.followComponentAppearance = false;
+    settings.values.dock.customAppearance.widgetBgR = .2f;
     settings.values.dock.floatingEdgeSwipeBlockFullscreen = true;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
@@ -86,6 +93,9 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&
+        restored.values.general.collectionPopupAppearance == settings.values.general.collectionPopupAppearance,
+        "independent surface modes and custom gradients reach the settings process intact");
     Check(restored.values.general.animationMode == 1 &&
         restored.values.general.popupAnimationEffect == 1 &&
         restored.values.general.animationSpeed == 2 &&

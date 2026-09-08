@@ -468,34 +468,24 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             nullptr);
         windowClipPushed = true;
     }
-    const float windowAlpha = std::clamp(quickNavAppearance_.widgetAlpha, 0.0f, 1.0f);
-    const float borderAlpha =
-        quickNavigationAnimation_.IsAnimating()
-            ? 0.0f
-            : std::clamp(
-                quickNavAppearance_.
-                    widgetBorderAlpha,
-                0.0f, 1.0f);
-    DrawD2DRoundedRectangle(
-        ctx.Get(), overlay,
-        windowCornerRadius,
-        D2D1::ColorF(
-            quickNavAppearance_.widgetBgR,
-            quickNavAppearance_.widgetBgG,
-            quickNavAppearance_.widgetBgB,
-            windowAlpha),
-        D2D1::ColorF(0, 0, 0, 0));
-    if (quickNavAppearance_.glassEnabled &&
-        quickNavAppearance_.acrylicEnabled)
+    const float borderAlpha = quickNavigationAnimation_.IsAnimating()
+        ? 0.0f : std::clamp(quickNavAppearance_.widgetBorderAlpha, 0.0f, 1.0f);
+    auto background = quickNavAppearance_;
+    background.widgetEdgeHighlightEnabled = false;
+    background.acrylicEnabled = false;
+    DrawWidgetPanelBackground(ctx.Get(), overlay, windowCornerRadius,
+        D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
+        D2D1::ColorF(0, 0, 0, 0), false, background.widgetBorderWidth,
+        &background, false, 0, static_cast<float>(QuickNavScale(100)) / 100.0f);
+    if (quickNavAppearance_.glassEnabled && quickNavAppearance_.acrylicEnabled)
     {
         POINT screenOrigin{};
         ClientToScreen(quickNavigationHwnd_, &screenOrigin);
-        DrawAcrylicNoise(ctx.Get(), overlay,
-            static_cast<float>(QuickNavScale(16)) / 2.0f,
+        DrawAcrylicNoise(ctx.Get(), overlay, windowCornerRadius,
             quickNavAppearance_.contentTheme == 1, screenOrigin);
     }
-    constexpr float windowBorderStrokeWidth = 1.0f;
-    constexpr float windowBorderInset =
+    const float windowBorderStrokeWidth = std::clamp(quickNavAppearance_.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    const float windowBorderInset =
         windowBorderStrokeWidth * 0.5f;
     const D2D1_RECT_F windowBorderRect =
         D2D1::RectF(
@@ -517,6 +507,9 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
             quickNavAppearance_.widgetBorderG,
             quickNavAppearance_.widgetBorderB, borderAlpha),
         windowBorderStrokeWidth);
+    (void)DrawWidgetPanelEdgeHighlight(ctx.Get(), overlay, windowCornerRadius,
+        D2D1::ColorF(background.widgetBgR, background.widgetBgG, background.widgetBgB, background.widgetAlpha),
+        &quickNavAppearance_, static_cast<float>(QuickNavScale(100)) / 100.0f);
 
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     std::vector<size_t> collectionIndices = GetQuickNavigationCollectionIndices();

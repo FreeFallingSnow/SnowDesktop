@@ -1,5 +1,6 @@
 #include "dock_settings.h"
 #include "dock_gradient_storage.h"
+#include "surface_theme.h"
 
 #include "data_paths.h"
 #include "deployment_context.h"
@@ -1066,6 +1067,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     JsonValue gradientDocument;
     if (!ParseJson(text, gradientDocument) ||
         !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
+    ReadBoolField(text, "followComponentAppearance", settings.followComponentAppearance);
+    if (const auto* appearance = gradientDocument.Find("customAppearance"))
+        if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
     NormalizeDockSettings(settings);
     return true;
 }
@@ -1074,6 +1078,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
 {
     std::ostringstream gradientFields;
     if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
+    const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
+    if (customAppearance.empty()) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
 
@@ -1148,6 +1154,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     WriteDynamicRule(file, "systemTaskbarShellUi",
         settings.systemTaskbarShellUi);
     file << gradientFields.str();
+    file << "  \"followComponentAppearance\": " << (settings.followComponentAppearance ? "true" : "false") << ",\n";
+    file << "  \"customAppearance\": " << customAppearance << ",\n";
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";
     return true;

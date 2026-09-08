@@ -1448,6 +1448,12 @@ private:
     /** Application-owned appearance mirror, independent of settings UI. */
     const PersonalizationSettings& CurrentPersonalization() const noexcept
     { return personalizationSettings_; }
+    PersonalizationSettings CurrentDockAppearance() const
+    {
+        auto result = dockSettings_.followComponentAppearance ? CurrentPersonalization() : dockSettings_.customAppearance;
+        result.cornerRadius = CurrentPersonalization().cornerRadius;
+        return result;
+    }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();
     /** @brief 判断隐藏桌面时该点是否位于保留元素（组件/Dock）上。 */

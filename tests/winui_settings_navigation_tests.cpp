@@ -312,15 +312,6 @@ void TestGeneralPageSourceContract(const std::filesystem::path& root)
               "RefreshStartupConflict();\n        RefreshAdvancedFeatureStatus();\n        UpdateConditionalHintVisibility();") !=
                 std::string::npos,
         "desktop passthrough and floating-Dock hints follow only their own toggles and refresh after localization");
-    Check(personalization.find(
-              "FourThemeSelectionFromAppearancePreset(") !=
-                std::string::npos &&
-            personalization.find("settings.quickNavTheme = inheritedTheme") !=
-                std::string::npos &&
-            personalization.find(
-              "settings.collectionPopupTheme = inheritedTheme") !=
-                std::string::npos,
-        "switching a built-in appearance to Custom carries its four-theme selection into the legacy quick-navigation surfaces");
     Check(presenter.find("autoStartToggle") != std::string::npos &&
             presenter.find("settings.autoStartEnabled = enabled") ==
                 std::string::npos &&

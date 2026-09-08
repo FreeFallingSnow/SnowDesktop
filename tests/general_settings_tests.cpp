@@ -79,6 +79,12 @@ int main()
     saved.widgetDeveloperToolsEnabled = true;
     saved.quickNavTheme = kFourThemeAcrylicDark;
     saved.collectionPopupTheme = kFourThemeAcrylicLight;
+    saved.quickNavigationAppearance.mode = 4;
+    saved.quickNavigationAppearance.customized = true;
+    saved.quickNavigationAppearance.appearance.backgroundPreset = kAppearancePresetCustom;
+    saved.quickNavigationAppearance.appearance.panelGradient.enabled = true;
+    saved.quickNavigationAppearance.appearance.panelGradient.angle = 213;
+    saved.collectionPopupAppearance.mode = 2;
     saved.pageNavigationKeyboardEnabled = false;
     saved.pageNavigationPreviousModifiers = MOD_CONTROL;
     saved.pageNavigationPreviousVirtualKey = VK_HOME;
@@ -91,6 +97,34 @@ int main()
     GeneralSettings loaded;
     Check(LoadGeneralSettings(path.c_str(), loaded),
         "general settings load succeeds");
+    Check(loaded.quickNavigationAppearance == saved.quickNavigationAppearance &&
+        loaded.collectionPopupAppearance.mode == 2,
+        "independent surface custom appearance and fixed preset survive save and reload");
+    {
+        using namespace snowdesktop;
+        SurfaceTheme theme;
+        auto global = PersonalizationSettings::LightPreset();
+        Check(ResolveSurfaceTheme(theme, global, 0, true).contentTheme == 1,
+            "new surface theme follows the global preset by default");
+        theme.mode = 0;
+        Check(ResolveSurfaceTheme(theme, global, 1, true).contentTheme == 0,
+            "fixed surface preset applies even when the global theme is not custom");
+        theme.mode = -2;
+        Check(ResolveSurfaceTheme(theme, global, 0, false).contentTheme == 1,
+            "legacy surface follows a non-custom global theme");
+        global.backgroundPreset = kAppearancePresetCustom;
+        Check(ResolveSurfaceTheme(theme, global, 0, false).contentTheme == 0,
+            "legacy surface keeps its old override for a custom global theme");
+        theme = saved.quickNavigationAppearance;
+        Check(ResolveSurfaceTheme(theme, global, 0, true) == theme.appearance,
+            "custom surface preserves gradient, opacity, material and foreground independently");
+        JsonValue encoded;
+        Check(ParseJson(EncodeSurfaceTheme(theme), encoded), "custom surface JSON is readable");
+        encoded.object["appearance"].object["opacity"].number = -1;
+        SurfaceTheme before = theme;
+        Check(!DecodeSurfaceTheme(encoded, theme) && theme == before,
+            "invalid custom opacity rejects the complete replacement without changing stored appearance");
+    }
     Check(loaded.animationMode == 1 && loaded.popupAnimationEffect == 1 &&
         loaded.animationSpeed == 2 && loaded.animationFrameLimit == 30 &&
         !loaded.animationEnergySaver && loaded.animationOnBattery,

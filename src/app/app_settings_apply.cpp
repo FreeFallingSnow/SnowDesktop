@@ -857,8 +857,8 @@ public:
 
         if (HasSettingsDomain(domains, SettingsDomain::General))
         {
-            // Preview only animation preferences; other General fields still
-            // need their normal commit side effects and old-value comparisons.
+            // Preview animation and surface appearance only; other General fields
+            // retain their commit side effects and old-value comparisons.
             const auto& general = snapshot.values.general;
             app_.generalSettings_.animationMode = general.animationMode;
             app_.generalSettings_.popupAnimationEffect = general.popupAnimationEffect;
@@ -866,6 +866,10 @@ public:
             app_.generalSettings_.animationFrameLimit = general.animationFrameLimit;
             app_.generalSettings_.animationEnergySaver = general.animationEnergySaver;
             app_.generalSettings_.animationOnBattery = general.animationOnBattery;
+            app_.generalSettings_.quickNavigationAppearance = general.quickNavigationAppearance;
+            app_.generalSettings_.collectionPopupAppearance = general.collectionPopupAppearance;
+            app_.ApplyQuickNavigationAppearance();
+            app_.ApplyCollectionPopupAppearance();
             app_.ApplyAnimationPreferences();
         }
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
@@ -891,6 +895,7 @@ public:
             const int committedTaskbarAlignment =
                 app_.dockSettings_.systemTaskbarAlignment;
             app_.dockSettings_ = snapshot.values.dock;
+            app_.ApplyPersistentDockHostAppearance();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyAnimationPreferences();
             app_.dockSettings_.systemTaskbarAutoHide =
@@ -963,6 +968,7 @@ public:
                     app_.dockSettings_, snapshot.values.dock))
         {
             app_.dockSettings_ = snapshot.values.dock;
+            app_.ApplyPersistentDockHostAppearance();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyFloatingDockHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
@@ -1012,6 +1018,7 @@ public:
         if (HasSettingsDomain(domains, SettingsDomain::Dock))
         {
             app_.dockSettings_ = requestedDockSettings;
+            app_.ApplyPersistentDockHostAppearance();
             app_.ApplyAnimationPreferences();
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
@@ -1821,18 +1828,10 @@ void DesktopApp::LoadGeneralSettingsAndApply()
 void DesktopApp::ApplyQuickNavigationAppearance()
 {
     const PersonalizationSettings globalAppearance = CurrentPersonalization();
-    const int presetId = globalAppearance.backgroundPreset == kAppearancePresetCustom
-        ? AppearancePresetFromFourThemeSelection(
-            generalSettings_.quickNavTheme)
-        : globalAppearance.backgroundPreset;
-    const PersonalizationSettings appearance =
-        MakeQuickNavigationAppearancePreset(presetId);
-
-    const float luminance = appearance.widgetBgR * 0.2126f +
-        appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
-    quickNavLightTheme_ = (presetId == kAppearancePresetLight ||
-        presetId == kAppearancePresetAcrylicLight) ||
-        luminance >= 0.55f;
+    const PersonalizationSettings appearance = snowdesktop::ResolveSurfaceTheme(
+        generalSettings_.quickNavigationAppearance, globalAppearance,
+        generalSettings_.quickNavTheme, true);
+    quickNavLightTheme_ = appearance.contentTheme == 1;
     quickNavGlassTheme_ = appearance.glassEnabled;
     quickNavBlurRadius_ = std::clamp(appearance.glassBlurRadius, 4.0f, 48.0f);
     quickNavAppearance_ = appearance;
@@ -1844,17 +1843,9 @@ void DesktopApp::ApplyCollectionPopupAppearance()
 {
     const PersonalizationSettings globalAppearance = CurrentPersonalization();
 
-    const int selection =
-        globalAppearance.backgroundPreset == kAppearancePresetCustom
-        ? NormalizeFourThemeSelection(
-            generalSettings_.collectionPopupTheme)
-        : FourThemeSelectionFromAppearancePreset(
-            NormalizeAppearancePresetId(
-                globalAppearance.backgroundPreset));
-    const int presetId =
-        AppearancePresetFromFourThemeSelection(selection);
-    collectionPopupAppearance_ =
-        MakeCollectionPopupAppearancePreset(presetId);
+    collectionPopupAppearance_ = snowdesktop::ResolveSurfaceTheme(
+        generalSettings_.collectionPopupAppearance, globalAppearance,
+        generalSettings_.collectionPopupTheme, false);
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =

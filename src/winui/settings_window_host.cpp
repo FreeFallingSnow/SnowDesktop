@@ -2053,6 +2053,13 @@ struct SettingsWindowHost::Impl
                     generation, mode, std::move(edit));
             }
         };
+        personalization.updateDock = [weak](std::uint64_t generation, SettingsUpdateMode mode, PersonalizationPageActions::DockEdit edit) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->EditDock(generation, mode, std::move(edit));
+        };
+        personalization.navigate = [weak](const SettingsRoute& route) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner) state->owner->RequestRoute(route);
+        };
         shell->SetPersonalizationPageActions(std::move(personalization));
 
         DesktopPageActions desktop;

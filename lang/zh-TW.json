@@ -1572,5 +1572,9 @@
     "largeIcon.backgroundSettings": "背景設定",
     "largeIcon.detailedSettings": "詳細設定",
     "appearance.border": "邊框",
-    "appearance.bottomBar": "底欄漸層"
+    "appearance.bottomBar": "底欄漸層",
+    "appearance.quickPanelCard": "快捷面板主題",
+    "appearance.popupCard": "彈出視窗主題",
+    "appearance.openTaskbar": "開啟工作列設定",
+    "appearance.followGlobalPreset": "全域主題對應的預設（預設值）"
 }

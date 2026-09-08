@@ -1572,5 +1572,9 @@
     "largeIcon.backgroundSettings": "Hintergrundeinstellungen",
     "largeIcon.detailedSettings": "Detaillierte Einstellungen",
     "appearance.border": "Rahmen",
-    "appearance.bottomBar": "Farbverlauf der unteren Leiste"
+    "appearance.bottomBar": "Farbverlauf der unteren Leiste",
+    "appearance.quickPanelCard": "Design des Schnellzugriffspanels",
+    "appearance.popupCard": "Popup-Design",
+    "appearance.openTaskbar": "Taskleisteneinstellungen öffnen",
+    "appearance.followGlobalPreset": "Voreinstellung des globalen Designs (Standard)"
 }

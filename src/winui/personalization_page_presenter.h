@@ -18,6 +18,7 @@ struct PersonalizationPageActions
 {
     using Edit = std::function<void(PersonalizationSettings&)>;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
+    using DockEdit = std::function<void(DockSettings&)>;
 
     /**
      * Applies an edit to the controller's latest PersonalizationSettings.
@@ -32,6 +33,8 @@ struct PersonalizationPageActions
         std::uint64_t generation,
         SettingsUpdateMode mode,
         GeneralEdit edit)> updateGeneral;
+    std::function<void(std::uint64_t, SettingsUpdateMode, DockEdit)> updateDock;
+    std::function<void(const SettingsRoute&)> navigate;
 };
 
 /**

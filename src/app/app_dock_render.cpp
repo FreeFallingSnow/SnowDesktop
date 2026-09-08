@@ -6,7 +6,7 @@ bool DesktopApp::DrawDockControlBackground(
     ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle)
 {
     if (!ctx || IsRectEmptyRect(rect)) return false;
-    const PersonalizationSettings appearance = CurrentPersonalization();
+    const PersonalizationSettings appearance = CurrentDockAppearance();
 
     const float luminance = appearance.widgetBgR * 0.2126f +
         appearance.widgetBgG * 0.7152f + appearance.widgetBgB * 0.0722f;
@@ -128,7 +128,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
     const RECT indicatorIconRect = iconRect;
-    const bool lt = IsLightContentTheme();
+    const bool lt = (CurrentDockAppearance().contentTheme == 1);
 
     auto drawDesktopItem = [&](const DesktopItem& item, RECT target,
         const DesktopWidget* demoCollection = nullptr) {
@@ -371,7 +371,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         rect.left + (rect.right - rect.left + iconSize) / 2,
         rect.top + (rect.bottom - rect.top + iconSize) / 2
     };
-    const bool lt = IsLightContentTheme();
+    const bool lt = (CurrentDockAppearance().contentTheme == 1);
     if (generalSettings_.demoModeEnabled &&
         demoIdentityAssetsAvailable_)
     {

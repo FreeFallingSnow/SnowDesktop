@@ -285,3 +285,13 @@
 任务栏的填充设置作用于默认外观、可见窗口、最大化窗口、Shell 界面三种规则，各自保存，使用同一渐变编辑器。切换纯色保留上次渐变参数；停用页面前提交连续预览，更换会话时丢弃旧会话未提交值。
 
 `SnowDesktop.dock.json` 新增四个可选对象：`taskbarPanelGradient`、`systemTaskbarVisibleWindowPanelGradient`、`systemTaskbarMaximizedWindowPanelGradient`、`systemTaskbarShellUiPanelGradient`。缺少字段按渐变关闭读取；无效渐变拒绝写入且不会部分覆盖其他规则。旧版忽略新字段并可能在保存时丢弃，回退前保留新版完整备份。无新增 Lua API、IPC 字段或 capability，不调整组件 apiVersion。
+
+
+### 主题与材质中的独立主题卡片
+
+- 快捷面板主题、弹窗主题：全局主题绑定的预设（新配置默认）、深色、浅色、亚克力深色、亚克力浅色、自定义。固定预设独立生效，不再只在全局自定义时生效。全局自定义时，“绑定预设”依据全局内容主题与材质匹配四种预设。
+- Dock：跟随组件主题（默认）、自定义。背景、文字和浮动 Dock 原生材质统一读取独立外观；圆角继续沿用组件布局设置。
+- 任务栏：超链接跳转原有任务栏设置页，包含默认外观及动态规则，不重复编辑器。
+- 自定义仅展开当前卡片的颜色与填充、材质、边框与高光；切回预设保留自定义值。快捷面板和弹窗保留各自窗口圆角与布局。
+- 通用配置增加 `quickNavigationAppearance`、`collectionPopupAppearance` 对象，含 `mode`、`customized` 和 `appearance`。新建默认 mode=-1 跟随全局；旧文件缺少字段时使用内部 mode=-2 保留旧条件覆盖语义。0..3 为原四个预设，4 为自定义；旧的 `quickNavTheme` 和 `collectionPopupTheme` 保留用于兼容读取。
+- Dock 配置增加 `followComponentAppearance` 与 `customAppearance`。主设置私有 IPC 版本从 5 提高到 6，宿主和设置子进程必须同步更新；任务栏 Hook 仍为既有 v6。无 Lua API、capability 或组件 apiVersion 变更。旧版本会忽略且可能丢弃这些字段，降级前保留新版完整备份。

@@ -11,6 +11,7 @@
 
 #include <string>
 #include "animation_settings.h"
+#include "surface_theme.h"
 
 struct GeneralSettings
 {
@@ -33,6 +34,8 @@ struct GeneralSettings
     // 0=dark, 1=light, 2=dark acrylic, 3=light acrylic.
     // Dark preserves the legacy collection-popup appearance when absent.
     int collectionPopupTheme = 0;
+    snowdesktop::SurfaceTheme quickNavigationAppearance;
+    snowdesktop::SurfaceTheme collectionPopupAppearance;
     bool dockEnabled = false;
     bool widgetDeveloperToolsEnabled = false;
     int animationMode = 0;

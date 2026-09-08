@@ -4,6 +4,7 @@
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "appearance_sections.h"
+#include "panel_appearance_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -145,6 +146,14 @@ struct PersonalizationPagePresenter::Impl
 
     SettingsCard themeCard;
     SettingsCard themeTargetsCard;
+    SettingsCard popupThemeCard, dockThemeCard, taskbarLinkCard;
+    std::shared_ptr<PanelAppearanceEditor> quickAppearanceEditor, popupAppearanceEditor, dockAppearanceEditor;
+    muxc::ComboBox dockAppearanceCombo{nullptr};
+    muxc::HyperlinkButton taskbarLink{nullptr};
+    SettingRow dockAppearanceRow;
+    winrt::event_token dockAppearanceToken{}, taskbarLinkToken{};
+    PersonalizationSettings currentGlobalAppearance;
+    std::uint64_t dockRevision = 0;
     SettingsCard widgetAppearanceCard;
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
@@ -277,22 +286,6 @@ struct PersonalizationPagePresenter::Impl
         presetRow.Initialize(presetCombo);
         themeCard.content.Children().Append(presetRow.root);
 
-        InitializeCard(themeTargetsCard, cardStyle, themeRoot);
-        quickNavigationThemeCombo = muxc::ComboBox{};
-        collectionPopupThemeCombo = muxc::ComboBox{};
-        for (const auto& combo : {
-                 quickNavigationThemeCombo, collectionPopupThemeCombo})
-        {
-            combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-            combo.MaxWidth(520.0);
-        }
-        quickNavigationThemeRow.Initialize(quickNavigationThemeCombo);
-        collectionPopupThemeRow.Initialize(collectionPopupThemeCombo);
-        themeTargetsCard.content.Children().Append(
-            quickNavigationThemeRow.root);
-        themeTargetsCard.content.Children().Append(
-            collectionPopupThemeRow.root);
-
         InitializeCard(widgetAppearanceCard, cardStyle, themeRoot);
         appearanceSections.Initialize(widgetAppearanceCard.content, true, true);
         InitializeColorControl(backgroundColor,
@@ -382,6 +375,54 @@ struct PersonalizationPagePresenter::Impl
         contentThemeCombo.MaxWidth(520.0);
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.material.Children().Append(contentThemeRow.root);
+
+        InitializeCard(themeTargetsCard, cardStyle, themeRoot);
+        quickNavigationThemeCombo = muxc::ComboBox{};
+        collectionPopupThemeCombo = muxc::ComboBox{};
+        for (const auto& combo : {
+                 quickNavigationThemeCombo, collectionPopupThemeCombo})
+        {
+            combo.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            combo.MaxWidth(520.0);
+        }
+        quickNavigationThemeRow.Initialize(quickNavigationThemeCombo);
+        collectionPopupThemeRow.Initialize(collectionPopupThemeCombo);
+        quickNavigationThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        collectionPopupThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        themeTargetsCard.content.Children().Append(
+            quickNavigationThemeRow.root);
+
+
+        quickAppearanceEditor = PanelAppearanceEditor::Create(localize,
+            [this](const auto& value, bool commit) {
+                EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [value](auto& settings) { settings.quickNavigationAppearance.appearance = value; settings.quickNavigationAppearance.customized = true; });
+            });
+        themeTargetsCard.content.Children().Append(quickAppearanceEditor->Content());
+        InitializeCard(popupThemeCard, cardStyle, themeRoot);
+        popupThemeCard.content.Children().Append(collectionPopupThemeRow.root);
+        popupAppearanceEditor = PanelAppearanceEditor::Create(localize,
+            [this](const auto& value, bool commit) {
+                EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [value](auto& settings) { settings.collectionPopupAppearance.appearance = value; settings.collectionPopupAppearance.customized = true; });
+            });
+        popupThemeCard.content.Children().Append(popupAppearanceEditor->Content());
+        InitializeCard(dockThemeCard, cardStyle, themeRoot);
+        dockAppearanceCombo = muxc::ComboBox{};
+        dockAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        dockAppearanceRow.Initialize(dockAppearanceCombo);
+        dockAppearanceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        dockThemeCard.content.Children().Append(dockAppearanceRow.root);
+        dockAppearanceEditor = PanelAppearanceEditor::Create(localize,
+            [this](const auto& value, bool commit) {
+                EmitDockAppearance(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [value](auto& settings) { settings.customAppearance = value; });
+            });
+        dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
+        InitializeCard(taskbarLinkCard, cardStyle, themeRoot);
+        taskbarLink = muxc::HyperlinkButton{};
+        taskbarLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        taskbarLinkCard.content.Children().Append(taskbarLink);
 
         InitializeCard(contextMenuCard, cardStyle, themeRoot);
         contextMenuCombo = muxc::ComboBox{};
@@ -526,19 +567,7 @@ struct PersonalizationPagePresenter::Impl
                     return;
                 const int preset =
                     kPresetIds[static_cast<std::size_t>(index)];
-                const int previousPreset = currentBackgroundPreset;
                 currentBackgroundPreset = preset;
-                if (preset == kAppearancePresetCustom)
-                {
-                    const int inheritedTheme =
-                        FourThemeSelectionFromAppearancePreset(
-                            NormalizeAppearancePresetId(previousPreset));
-                    EmitGeneral(SettingsUpdateMode::PreviewAndCommit,
-                        [inheritedTheme](GeneralSettings& settings) {
-                            settings.quickNavTheme = inheritedTheme;
-                            settings.collectionPopupTheme = inheritedTheme;
-                        });
-                }
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [preset](PersonalizationSettings& settings) {
                         if (preset == kAppearancePresetCustom)
@@ -564,27 +593,19 @@ struct PersonalizationPagePresenter::Impl
                         settings.contextMenuStyle = menu;
                     });
             });
-        quickNavigationThemeToken =
-            quickNavigationThemeCombo.SelectionChanged(
-                [this](const auto&, const auto&) {
-                    const int value = quickNavigationThemeCombo.SelectedIndex();
-                    if (value < 0) return;
-                    EmitGeneral(SettingsUpdateMode::PreviewAndCommit,
-                        [value](GeneralSettings& settings) {
-                            settings.quickNavTheme = std::clamp(value, 0, 3);
-                        });
-                });
-        collectionPopupThemeToken =
-            collectionPopupThemeCombo.SelectionChanged(
-                [this](const auto&, const auto&) {
-                    const int value = collectionPopupThemeCombo.SelectedIndex();
-                    if (value < 0) return;
-                    EmitGeneral(SettingsUpdateMode::PreviewAndCommit,
-                        [value](GeneralSettings& settings) {
-                            settings.collectionPopupTheme =
-                                std::clamp(value, 0, 3);
-                        });
-                });
+        quickNavigationThemeToken = quickNavigationThemeCombo.SelectionChanged(
+            [this](auto const&, auto const&) { SelectSurfaceTheme(true, quickNavigationThemeCombo.SelectedIndex()); });
+        collectionPopupThemeToken = collectionPopupThemeCombo.SelectionChanged(
+            [this](auto const&, auto const&) { SelectSurfaceTheme(false, collectionPopupThemeCombo.SelectedIndex()); });
+        dockAppearanceToken = dockAppearanceCombo.SelectionChanged([this](auto const&, auto const&) {
+            if (!CanEmit()) return;
+            dockAppearanceEditor->Flush();
+            const bool follow = dockAppearanceCombo.SelectedIndex() == 0;
+            EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [follow](auto& settings) { settings.followComponentAppearance = follow; });
+        });
+        taskbarLinkToken = taskbarLink.Click([this](auto const&, auto const&) {
+            if (!closed && active && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Taskbar));
+        });
         gradientToken = gradientToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
@@ -818,10 +839,35 @@ struct PersonalizationPagePresenter::Impl
 
     void PatchGeneral(const GeneralSettings& settings)
     {
-        quickNavigationThemeCombo.SelectedIndex(
-            std::clamp(settings.quickNavTheme, 0, 3));
-        collectionPopupThemeCombo.SelectedIndex(
-            std::clamp(settings.collectionPopupTheme, 0, 3));
+        const auto index = [this](const SurfaceTheme& theme, int legacy) {
+            if (theme.mode != -2) return theme.mode + 1;
+            return currentGlobalAppearance.backgroundPreset == kAppearancePresetCustom ? NormalizeFourThemeSelection(legacy) + 1 : 0;
+        };
+        quickNavigationThemeCombo.SelectedIndex(index(settings.quickNavigationAppearance, settings.quickNavTheme));
+        collectionPopupThemeCombo.SelectedIndex(index(settings.collectionPopupAppearance, settings.collectionPopupTheme));
+        quickAppearanceEditor->Content().Visibility(settings.quickNavigationAppearance.mode == 4 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        popupAppearanceEditor->Content().Visibility(settings.collectionPopupAppearance.mode == 4 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    }
+
+    void SelectSurfaceTheme(bool quick, int index)
+    {
+        if (!CanEmit() || index < 0 || index > 5) return;
+        (quick ? quickAppearanceEditor : popupAppearanceEditor)->Flush();
+        const auto global = currentGlobalAppearance;
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [quick, index, global](auto& settings) {
+            auto& theme = quick ? settings.quickNavigationAppearance : settings.collectionPopupAppearance;
+            if (index == 5 && !theme.customized)
+            {
+                theme.appearance = ResolveSurfaceTheme(theme, global, quick ? settings.quickNavTheme : settings.collectionPopupTheme, quick);
+                theme.customized = true;
+            }
+            theme.mode = index - 1;
+        });
+    }
+
+    template<class Edit> void EmitDockAppearance(SettingsUpdateMode mode, Edit edit)
+    {
+        if (CanEmit() && actions.updateDock) actions.updateDock(generation, mode, std::move(edit));
     }
 
     void UpdateDependentStates()
@@ -830,9 +876,7 @@ struct PersonalizationPagePresenter::Impl
             return;
         const bool custom = presetCombo.SelectedIndex() ==
             static_cast<int>(kPresetIds.size() - 1);
-        themeTargetsCard.root.Visibility(custom
-                ? mux::Visibility::Visible
-                : mux::Visibility::Collapsed);
+        themeTargetsCard.root.Visibility(mux::Visibility::Visible);
         widgetAppearanceCard.root.Visibility(custom
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
@@ -927,8 +971,14 @@ struct PersonalizationPagePresenter::Impl
 
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
-        SetCardText(themeTargetsCard,
-            "settings.personalization.theme", L"Theme and Material");
+        SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
+        SetCardText(popupThemeCard, "appearance.popupCard", L"Popup theme");
+        SetCardText(dockThemeCard, "settings.dock.dock", L"Dock");
+        SetCardText(taskbarLinkCard, "settings.dock.taskbar", L"Taskbar");
+        taskbarLink.Content(winrt::box_value(L("appearance.openTaskbar", L"Open taskbar settings")));
+        dockAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
+        ReplaceComboItems(dockAppearanceCombo, {{"largeIcon.follow", L"Follow component theme"}, {"app.settings.custom", L"Custom"}});
+        quickAppearanceEditor->RefreshLocalizedText(); popupAppearanceEditor->RefreshLocalizedText(); dockAppearanceEditor->RefreshLocalizedText();
         SetCardText(widgetAppearanceCard,
             "app.settings.component_bg", L"Widget Appearance");
         SetCardText(contextMenuCard,
@@ -949,17 +999,16 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             presetCombo, L("app.settings.theme", L"Theme"));
 
-        quickNavigationThemeRow.SetText(
-            L("app.settings.quick_nav_theme", L"Quick Nav Theme"));
-        collectionPopupThemeRow.SetText(L(
-            "app.settings.collection_popup_theme",
-            L"Widget & Dock Popup Theme"));
+        quickNavigationThemeRow.SetText(L("app.settings.theme", L"Theme"));
+        collectionPopupThemeRow.SetText(L("app.settings.theme", L"Theme"));
         const std::initializer_list<std::pair<
             std::string_view, std::wstring_view>> themeChoices = {
+            {"appearance.followGlobalPreset", L"Global theme preset (default)"},
             {"app.settings.dark", L"Dark"},
             {"app.settings.light", L"Light"},
             {"app.settings.dark_acrylic", L"Dark Acrylic"},
             {"app.settings.light_acrylic", L"Light Acrylic"},
+            {"app.settings.custom", L"Custom"},
         };
         ReplaceComboItems(quickNavigationThemeCombo, themeChoices);
         ReplaceComboItems(collectionPopupThemeCombo, themeChoices);
@@ -1051,7 +1100,8 @@ struct PersonalizationPagePresenter::Impl
                 personalizationRevision;
         const bool generalChanged = newGeneration ||
             snapshot.domainRevisions.general != generalRevision;
-        if (!personalizationChanged && !generalChanged)
+        const bool dockChanged = newGeneration || snapshot.domainRevisions.dock != dockRevision;
+        if (!personalizationChanged && !generalChanged && !dockChanged)
         {
             hasSnapshot = true;
             return;
@@ -1068,16 +1118,26 @@ struct PersonalizationPagePresenter::Impl
                 control->dirty = false;
             }
         }
+        currentGlobalAppearance = snapshot.values.personalization;
         if (personalizationChanged)
         {
             Patch(snapshot.values.personalization);
             personalizationRevision =
                 snapshot.domainRevisions.personalization;
         }
-        if (generalChanged)
+        if (generalChanged || personalizationChanged)
         {
+            quickAppearanceEditor->SetValue(snapshot.values.general.quickNavigationAppearance.appearance, newGeneration);
+            popupAppearanceEditor->SetValue(snapshot.values.general.collectionPopupAppearance.appearance, newGeneration);
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
+        }
+        if (dockChanged)
+        {
+            dockAppearanceCombo.SelectedIndex(snapshot.values.dock.followComponentAppearance ? 0 : 1);
+            dockAppearanceEditor->SetValue(snapshot.values.dock.customAppearance, newGeneration);
+            dockAppearanceEditor->Content().Visibility(snapshot.values.dock.followComponentAppearance ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+            dockRevision = snapshot.domainRevisions.dock;
         }
         hasSnapshot = true;
         updatingControls = previousUpdating;
@@ -1094,6 +1154,8 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
             return presetCombo;
+        if (id == "personalization.dockAppearance") return dockAppearanceCombo;
+        if (id == "personalization.taskbar") return taskbarLink;
         if (id == "personalization.backgroundColor")
             return backgroundColor.editor.button;
         if (id == "personalization.borderColor")
@@ -1187,6 +1249,7 @@ struct PersonalizationPagePresenter::Impl
     {
         try
         {
+            quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush();
             if (panelGradientEditor) panelGradientEditor->Flush();
             for (ContinuousControl* control : continuousControls)
                 Commit(*control);
@@ -1205,6 +1268,8 @@ struct PersonalizationPagePresenter::Impl
             CommitContinuousEdits();
         active = false;
         closed = true;
+        quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
+        dockAppearanceCombo.SelectionChanged(dockAppearanceToken); taskbarLink.Click(taskbarLinkToken);
         try
         {
             presetCombo.SelectionChanged(presetToken);

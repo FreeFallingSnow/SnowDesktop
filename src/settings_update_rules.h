@@ -42,6 +42,8 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
         before.quickNavTheme == after.quickNavTheme &&
         before.collectionPopupTheme == after.collectionPopupTheme &&
+        before.quickNavigationAppearance == after.quickNavigationAppearance &&
+        before.collectionPopupAppearance == after.collectionPopupAppearance &&
         before.dockEnabled == after.dockEnabled &&
         before.animationMode == after.animationMode &&
         before.popupAnimationEffect == after.popupAnimationEffect &&

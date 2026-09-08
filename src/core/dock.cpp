@@ -1056,7 +1056,7 @@ RECT DockContainer::CalculateTitleTooltipBounds(
     {
         app_->dwriteFactory_->CreateTextFormat(
             L"Segoe UI", nullptr,
-            app_->IsLightContentTheme()
+            (app_->CurrentDockAppearance().contentTheme == 1)
                 ? DWRITE_FONT_WEIGHT_LIGHT
                 : DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL,
@@ -1188,7 +1188,7 @@ RECT DockContainer::GetHoveredTitleBounds(
     const int position = static_cast<int>(
         app_->dockSettings_.position);
     const bool lightTheme =
-        app_->IsLightContentTheme();
+        (app_->CurrentDockAppearance().contentTheme == 1);
     const bool cachedMeasurement =
         title == hoveredTitleBoundsCacheText_ &&
         position ==
@@ -1879,7 +1879,7 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (app_ && app_->renderingFloatingDock_)
         p = app_->floatingDockPersonalization_;
     else if (app_)
-        p = app_->CurrentPersonalization();
+        p = app_->CurrentDockAppearance();
     const float panelRadius = IsEdgeAttached() ? 0.0f : p.cornerRadius;
     const D2D1_COLOR_F fill = D2D1::ColorF(
         p.widgetBgR, p.widgetBgG, p.widgetBgB, p.widgetAlpha);
@@ -1953,7 +1953,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderEnd = folderBegin + folderCount;
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
-    const bool lt = app_->IsLightContentTheme();
+    const bool lt = (app_->CurrentDockAppearance().contentTheme == 1);
     std::wstring hoveredTitle;
     const RECT magnificationFocus =
         ResolveMagnificationFocusRect(app_->lastMousePoint_);
@@ -2431,7 +2431,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         if (app_->renderingFloatingDock_)
             p = app_->floatingDockPersonalization_;
         else
-            p = app_->CurrentPersonalization();
+            p = app_->CurrentDockAppearance();
         if (p.widgetEdgeHighlightEnabled &&
             p.widgetEdgeHighlightStrength > 0.0005f)
         {

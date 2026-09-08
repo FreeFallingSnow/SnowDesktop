@@ -1572,5 +1572,9 @@
     "largeIcon.backgroundSettings": "Background settings",
     "largeIcon.detailedSettings": "Detailed settings",
     "appearance.border": "Border",
-    "appearance.bottomBar": "Bottom bar gradient"
+    "appearance.bottomBar": "Bottom bar gradient",
+    "appearance.quickPanelCard": "Quick panel theme",
+    "appearance.popupCard": "Popup theme",
+    "appearance.openTaskbar": "Open taskbar settings",
+    "appearance.followGlobalPreset": "Global theme preset (default)"
 }
