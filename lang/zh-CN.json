@@ -1576,5 +1576,8 @@
     "appearance.quickPanelCard": "快捷面板主题",
     "appearance.popupCard": "弹窗主题",
     "appearance.openTaskbar": "打开任务栏设置",
-    "appearance.followGlobalPreset": "全局主题绑定的预设（默认）"
+    "appearance.followGlobalPreset": "全局主题绑定的预设（默认）",
+  "appearance.text": "文字",
+  "largeIcon.followComponentRadius": "跟随组件圆角",
+  "largeIcon.visibility": "显示行为"
 }

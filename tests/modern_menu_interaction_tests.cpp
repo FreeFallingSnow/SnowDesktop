@@ -48,6 +48,7 @@ UINT gNestedMenuCommand = 0;
 bool gWatchdogFired = false;
 HWND gPersistentSubmenuWindow = nullptr;
 bool gPersistentSubmenuStayedOpen = false;
+bool gRepeatSubmenuValue = false;
 bool gRebuiltRootSubmenuClosed = false;
 bool gMessageReorderObserved = false;
 bool gMessageOrderRestored = false;
@@ -258,7 +259,14 @@ LRESULT CALLBACK OwnerWindowProc(
         {
             gPersistentSubmenuStayedOpen =
                 menus.child == gPersistentSubmenuWindow;
-            SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
+            if (gRepeatSubmenuValue)
+            {
+                // Repeated Enter must apply the same value command without
+                // having to reselect it or reopen its submenu.
+                SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
+                SendMessageW(menus.child, WM_KEYDOWN, VK_END, 0);
+            }
+            else SendMessageW(menus.child, WM_KEYDOWN, VK_HOME, 0);
             SendMessageW(menus.child, WM_KEYDOWN, VK_RETURN, 0);
             gInputPosted = true;
             KillTimer(hwnd, kDriveTimer);
@@ -891,6 +899,30 @@ int wmain()
         "submenu page update keeps the existing popup window visible");
     Expect(persistentSubmenuResult.command == 53,
         "updated submenu remains interactive after changing page");
+
+    persistentSubmenuCommandCount = 0;
+    gRepeatSubmenuValue = true;
+    options.onCommand = [&](UINT command, auto& currentItems) {
+        if (command != 51) return false;
+        ++persistentSubmenuCommandCount;
+        auto replacement = currentItems.front().children;
+        replacement.front().checked = !replacement.front().checked;
+        replacement.back().enabled = true;
+        const auto* children = &currentItems.front().children;
+        snowdesktop::modern_menu::UpdateItemStates(currentItems.front().children, replacement);
+        Expect(children == &currentItems.front().children, "value updates preserve submenu tree references");
+        currentItems.front().label = L"Values updated";
+        return true;
+    };
+    gDriveMode = DriveMode::PersistentSubmenu; gDrivePhase = 0; gInputPosted = false;
+    gWatchdogFired = false; gPersistentSubmenuStayedOpen = false;
+    SetTimer(owner, kDriveTimer, 10, nullptr); SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+    const auto valueResult = snowdesktop::modern_menu::Show(persistentSubmenuItems, options);
+    KillTimer(owner, kWatchdogTimer); gRepeatSubmenuValue = false;
+    Expect(!gWatchdogFired && persistentSubmenuCommandCount == 2,
+        "a retained submenu selection accepts repeated value changes");
+    Expect(gPersistentSubmenuStayedOpen && valueResult.command == 52,
+        "value changes preserve the same popup and subsequent closing commands");
 
     const std::vector<Item> rebuiltRootSubmenuItems{
         { 0, L"Widgets", L"W", true, false, false,

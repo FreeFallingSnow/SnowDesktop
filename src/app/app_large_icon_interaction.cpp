@@ -132,7 +132,7 @@ void DesktopApp::DrawLargeIconInteractionOverlay(ID2D1RenderTarget* context)
     if (!CanEditLargeIcons() || dragSession_.IsActive() || HasActiveContextMenuSession()) return;
     for (const auto& item : items_)
     {
-        if (!item.largeIcon || IsItemInAnyWidget(item) || IsRectEmptyRect(item.bounds)) continue;
+        if (!item.largeIcon || !IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_)) continue;
         auto rect = GetLargeIconFrameRect(item);
         if (!snowdesktop::widget_chrome_rules::ShowsResizeHandle(false, true, PtInRect(&rect, lastMousePoint_) != FALSE)) continue;
         DesktopWidget geometry;
@@ -175,8 +175,14 @@ void DesktopApp::UpdateLargeIconHover()
         const auto& config = EffectiveLargeIconConfig(item);
         auto& state = it->second;
         const auto frame = GetLargeIconFrameRect(item);
-        const bool visible = !desktopIconsHidden_ && !IsRectEmptyRect(item.bounds) &&
-            !IsRectEmptyRect(frame) && FindGridPage(gridPages_, item.gridCell.pageId);
+        const bool visible = IsLargeIconVisible(item, lastMousePoint_, desktopIconsHidden_);
+        if (state.visible != visible)
+        {
+            state.visible = visible;
+            if (!visible) { desktopBackdropCompositor_.RemovePanel(state.backdropFrame); state.backdropFrame = {}; }
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         const bool interactive = !dragSession_.IsActive() && !marqueeActive_ && !largeIconGesture_ &&
             widgetAction_ == WidgetAction::None && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(lastMousePoint_);
         const bool hover = PtInRect(&frame, lastMousePoint_) || (keyboardNavVisualFocus_ && item.selected);

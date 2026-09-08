@@ -260,6 +260,10 @@ void DesktopApp::ShowItemContextMenu(
             }
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(backgrounds), _LW("largeIcon.backgroundSettings"));
             AppendMenuW(settings, MF_POPUP | (editable ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(effects), _LW("largeIcon.effectsSection"));
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (config.showOnHoverOnly ? MF_CHECKED : 0), kContextLargeIconHoverOnly, _LW("app.interact.hover_only"));
+            AppendMenuW(settings, MF_STRING | (editable ? 0 : MF_GRAYED) | (config.keepWhenDesktopHidden ? MF_CHECKED : 0), kContextLargeIconKeepWhenHidden, _LW("app.interact.keep_when_hidden"));
+            SetMenuItemIcon(settings, kContextLargeIconHoverOnly, L"\uF06E");
+            SetMenuItemIcon(settings, kContextLargeIconKeepWhenHidden, L"\uF108");
             AppendMenuW(settings, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.detailedSettings"));
             SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(backgrounds), L"\uF53F");
             SetMenuItemIcon(settings, reinterpret_cast<UINT_PTR>(effects), L"\uF0D0");
@@ -442,8 +446,71 @@ void DesktopApp::ShowItemContextMenu(
     SetForegroundWindow(menuOwner);
     const bool placeOutsideDock = dockRenameAnchor.has_value() ||
         dockFrequentItem || dockApplicationItem;
+    namespace presets = snowdesktop::large_icon_preset_rules;
+    const auto applyLargeIconCommand = [&](UINT command) {
+
+        const bool backgroundCommand = command >= kContextLargeIconBackgroundFirst && command < kContextLargeIconBackgroundFirst + presets::backgrounds.size();
+        const bool effectCommand = command >= kContextLargeIconEffectFirst && command < kContextLargeIconEffectFirst + presets::effects.size();
+        const bool visibilityCommand = command == kContextLargeIconHoverOnly || command == kContextLargeIconKeepWhenHidden;
+        if (largeIconMenu && (backgroundCommand || effectCommand || visibilityCommand))
+        {
+            // The menu runs a nested loop: resolve identity and entitlement again at commit time.
+            const auto index = FindItemIndexByKey(largeIconKey);
+            if (index < items_.size() && items_[index].largeIcon)
+            {
+                auto config = *items_[index].largeIcon;
+                const auto runtime = largeIconRuntime_.find(largeIconKey);
+                const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
+                if (visibilityCommand && CanEditLargeIcons())
+                {
+                    if (command == kContextLargeIconHoverOnly) config.showOnHoverOnly = !config.showOnHoverOnly;
+                    else config.keepWhenDesktopHidden = !config.keepWhenDesktopHidden;
+                }
+                const bool changed = visibilityCommand ? CanEditLargeIcons() : backgroundCommand ? presets::ApplyBackground(config,
+                    presets::backgrounds[command - kContextLargeIconBackgroundFirst].value, CanEditLargeIcons(),
+                    asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0) :
+                    presets::ApplyEffect(config, static_cast<int>(command - kContextLargeIconEffectFirst), CanEditLargeIcons());
+                if (changed)
+                {
+                    if (!SetLargeIconConfig(index, config))
+                        MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
+                    else if (backgroundCommand && config.backgroundStyle == kAppearancePresetCustom)
+                        OpenLargeIconSettings(index);
+                }
+            }
+        }
+    };
+    const auto changeLargeIcon = [&](UINT command, auto& currentItems) {
+        const bool background = command >= kContextLargeIconBackgroundFirst && command < kContextLargeIconBackgroundFirst + presets::backgrounds.size();
+        const bool effect = command >= kContextLargeIconEffectFirst && command < kContextLargeIconEffectFirst + presets::effects.size();
+        const bool visibility = command == kContextLargeIconHoverOnly || command == kContextLargeIconKeepWhenHidden;
+        if (!largeIconMenu || (!background && !effect && !visibility)) return false;
+        // Custom opens a separate editor after the menu has relinquished focus.
+        if (background && presets::backgrounds[command - kContextLargeIconBackgroundFirst].value == kAppearancePresetCustom) return false;
+        applyLargeIconCommand(command);
+        const auto index = FindItemIndexByKey(largeIconKey);
+        if (index >= items_.size() || !items_[index].largeIcon) { snowdesktop::modern_menu::DismissActive(); return true; }
+        const auto config = *items_[index].largeIcon;
+        const bool editable = CanEditLargeIcons();
+        snowdesktop::modern_menu::VisitItems(currentItems, [&](auto& item) {
+            if (item.command == kContextLargeIconHoverOnly) { item.checked = config.showOnHoverOnly; item.enabled = editable; }
+            if (item.command == kContextLargeIconKeepWhenHidden) { item.checked = config.keepWhenDesktopHidden; item.enabled = editable; }
+            if (item.command >= kContextLargeIconBackgroundFirst && item.command < kContextLargeIconBackgroundFirst + presets::backgrounds.size())
+            {
+                item.checked = presets::Background(config) == presets::backgrounds[item.command - kContextLargeIconBackgroundFirst].value;
+                item.enabled = editable;
+            }
+            if (item.command >= kContextLargeIconEffectFirst && item.command < kContextLargeIconEffectFirst + presets::effects.size())
+            {
+                const int value = static_cast<int>(item.command - kContextLargeIconEffectFirst);
+                item.checked = presets::Effect(config) == value;
+                item.enabled = editable && (value != 2 || !snowdesktop::IsLargeIconFill(config));
+            }
+        });
+        return true;
+    };
     UINT command = ShowModernMenu(
-        menu, screenPoint, menuOwner, placeOutsideDock);
+        menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon);
     DestroyMenu(menu);
     ClearMenuIcons();
     bool inlineEditorStarted = false;
@@ -487,31 +554,7 @@ void DesktopApp::ShowItemContextMenu(
         RefreshDockFolderPopupGeometry();
     };
 
-    namespace presets = snowdesktop::large_icon_preset_rules;
-    const bool backgroundCommand = command >= kContextLargeIconBackgroundFirst && command < kContextLargeIconBackgroundFirst + presets::backgrounds.size();
-    const bool effectCommand = command >= kContextLargeIconEffectFirst && command < kContextLargeIconEffectFirst + presets::effects.size();
-    if (largeIconMenu && (backgroundCommand || effectCommand))
-    {
-        // The menu runs a nested loop: resolve identity and entitlement again at commit time.
-        const auto index = FindItemIndexByKey(largeIconKey);
-        if (index < items_.size() && items_[index].largeIcon)
-        {
-            auto config = *items_[index].largeIcon;
-            const auto runtime = largeIconRuntime_.find(largeIconKey);
-            const auto asset = runtime != largeIconRuntime_.end() ? runtime->second.asset : nullptr;
-            const bool changed = backgroundCommand ? presets::ApplyBackground(config,
-                presets::backgrounds[command - kContextLargeIconBackgroundFirst].value, CanEditLargeIcons(),
-                asset && asset->hasEdgeColor, asset ? asset->accent : 0, asset ? asset->edgeColor : 0) :
-                presets::ApplyEffect(config, static_cast<int>(command - kContextLargeIconEffectFirst), CanEditLargeIcons());
-            if (changed)
-            {
-                if (!SetLargeIconConfig(index, config))
-                    MessageBoxW(hwnd_, _LW("largeIcon.saveFailed"), _LW("largeIcon.settings"), MB_OK | MB_ICONWARNING);
-                else if (backgroundCommand && config.backgroundStyle == kAppearancePresetCustom)
-                    OpenLargeIconSettings(index);
-            }
-        }
-    }
+    applyLargeIconCommand(command);
     switch (command)
     {
     case kContextLargeIconCreate:

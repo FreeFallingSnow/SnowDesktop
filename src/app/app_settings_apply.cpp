@@ -2033,6 +2033,7 @@ void DesktopApp::ToggleDesktopIconsVisibility()
 
     if (desktopIconsHidden_)
     {
+        for (auto& item : items_) if (!IsRetainedLargeIcon(item)) item.selected = false;
         if (GetOpenPopupWidget() && !IsOpenPopupRetained())
             CloseCollectionPopup();
         if (!luaWidgetPanelRequest_.widgetId.empty())
@@ -2055,11 +2056,14 @@ void DesktopApp::ToggleDesktopIconsVisibility()
 
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);
+    UpdateLargeIconHover();
+    InvalidateDragStaticScene();
     UpdatePersistentDockHostVisibility();
 }
 
 bool DesktopApp::HasRetainedElements() const
 {
+    for (const auto& item : items_) if (IsRetainedLargeIcon(item)) return true;
     if (dockSettings_.keepWhenDesktopHidden)
     {
         for (const auto& container : containers_)
@@ -2115,6 +2119,12 @@ bool DesktopApp::IsRetainedContainer(
 
 bool DesktopApp::IsPointOnRetainedElement(POINT pt) const
 {
+    for (const auto& item : items_)
+    {
+        if (!IsRetainedLargeIcon(item)) continue;
+        const auto frame = GetLargeIconFrameRect(item);
+        if (PtInRect(&frame, pt)) return true;
+    }
     if (IsOpenPopupRetained() &&
         IsPointInsideOpenPopup(pt))
         return true;

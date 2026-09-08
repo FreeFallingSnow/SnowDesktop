@@ -407,23 +407,9 @@ bool ReplaceAddWidgetSubmenu(
 
 } // namespace
 
-void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
+bool DesktopApp::ApplyGridMenuAdjustment(UINT command)
 {
-    PrepareMenuIconsForPoint(screenPoint);
-
-    struct MonitorSizeRange
-    {
-        const wchar_t* label;
-        float representativeInches;
-    };
-    const MonitorSizeRange kMonitorSizeRanges[] = {
-        { _LW("app.menu.monitor_1316"), 15.0f },
-        { _LW("app.menu.monitor_1721"), 19.0f },
-        { _LW("app.menu.monitor_2225"), 24.0f },
-        { _LW("app.menu.monitor_2630"), 27.0f },
-        { _LW("app.menu.monitor_31plus"), 34.0f },
-    };
-
+    constexpr float monitorSizes[] = {15.f, 19.f, 24.f, 27.f, 34.f};
     auto isRecommendedCommand = [](UINT value) {
         return (value >= kContextGridRecommended169First &&
                 value <= kContextGridRecommended169Last) ||
@@ -438,108 +424,94 @@ void DesktopApp::ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand)
         const size_t rangeIndex = static_cast<size_t>(value - first);
         return CalculateRecommendedGridDimensions(
             16, isSixteenTen ? 10 : 9,
-            kMonitorSizeRanges[rangeIndex].representativeInches);
+            monitorSizes[rangeIndex]);
     };
 
-    auto applyAdjustment = [&](UINT command) {
-        if (isRecommendedCommand(command))
-        {
-            const GridSpan recommended = recommendedDimensions(command);
-            SetGridDimensions(recommended.columns, recommended.rows);
-            return true;
-        }
-        switch (command)
-        {
-        case kContextGridAddRow: AdjustGridRows(1); return true;
-        case kContextGridRemoveRow: AdjustGridRows(-1); return true;
-        case kContextGridAddColumn: AdjustGridColumns(1); return true;
-        case kContextGridRemoveColumn: AdjustGridColumns(-1); return true;
-        default: return false;
-        }
-    };
 
-    auto buildItems = [&]() {
-        using snowdesktop::modern_menu::Item;
-        std::vector<Item> items;
-        POINT clientPoint = lastContextMenuScreenPoint_;
-        ScreenToClient(hwnd_, &clientPoint);
-        const GridPage* page = GridPageFromPoint(clientPoint);
-        std::wstring status = _LW("app.menu.grid_current_label");
-        status += L"\t";
-        status += std::to_wstring(page ? page->columns : 0);
-        status += L" × ";
-        status += std::to_wstring(page ? page->rows : 0);
-        items.push_back({ 0, std::move(status), L"", false });
-        items.push_back({ 0, L"", L"", false, false, true });
-        items.push_back({ kContextGridAddRow,
-            _LW("app.menu.add_row"), L"\uF109", true });
-        items.push_back({ kContextGridRemoveRow,
-            _LW("app.menu.remove_row"), L"\uEBD0", true });
-        items.push_back({ kContextGridAddColumn,
-            _LW("app.menu.add_col"), L"\uF109", true });
-        items.push_back({ kContextGridRemoveColumn,
-            _LW("app.menu.remove_col"), L"\uEBD0", true });
-        items.push_back({ 0, L"", L"", false, false, true });
-
-        auto appendRecommendedItem = [&](int aspectHeight,
-            UINT firstCommand, const wchar_t* label) {
-            Item parent;
-            parent.label = label;
-            parent.glyph = L"\uF462";
-            for (size_t i = 0; i < std::size(kMonitorSizeRanges); ++i)
-            {
-                const GridSpan recommended = CalculateRecommendedGridDimensions(
-                    16, aspectHeight, kMonitorSizeRanges[i].representativeInches);
-                std::wstring childLabel = kMonitorSizeRanges[i].label;
-                childLabel += L"\t";
-                childLabel += std::to_wstring(recommended.columns);
-                childLabel += L" × ";
-                childLabel += std::to_wstring(recommended.rows);
-                Item child;
-                child.command = firstCommand + static_cast<UINT>(i);
-                child.label = std::move(childLabel);
-                child.glyph = L"\uF462";
-                child.checked = page &&
-                    page->columns == recommended.columns &&
-                    page->rows == recommended.rows;
-                parent.children.push_back(std::move(child));
-            }
-            items.push_back(std::move(parent));
-        };
-        appendRecommendedItem(9, kContextGridRecommended169First,
-            _LW("app.menu.recommend_169"));
-        appendRecommendedItem(10, kContextGridRecommended1610First,
-            _LW("app.menu.recommend_1610"));
-        items.push_back({ 0, L"", L"", false, false, true });
-        items.push_back({ kContextGridAdjustmentDone,
-            _LW("app.menu.end_adjust"), L"\uF294", true });
-        return items;
-    };
-
-    if (initialCommand != 0)
-        applyAdjustment(initialCommand);
-
-    std::vector<snowdesktop::modern_menu::Item> items = buildItems();
-    snowdesktop::modern_menu::Options options;
-    options.owner = hwnd_;
-    options.anchor = screenPoint;
-    options.dpi = menuIconDpi_;
-    options.lightTheme = menuLightTheme_;
-    options.appearance = static_cast<
-        snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_);
-    ConfigureModernMenuEventPump(options);
-    options.onCommand = [&](UINT command, auto& currentItems) {
-        if (!applyAdjustment(command))
-            return false;
-        currentItems = buildItems();
+    if (isRecommendedCommand(command))
+    {
+        const GridSpan recommended = recommendedDimensions(command);
+        SetGridDimensions(recommended.columns, recommended.rows);
         return true;
+    }
+    switch (command)
+    {
+    case kContextGridAddRow: AdjustGridRows(1); return true;
+    case kContextGridRemoveRow: AdjustGridRows(-1); return true;
+    case kContextGridAddColumn: AdjustGridColumns(1); return true;
+    case kContextGridRemoveColumn: AdjustGridColumns(-1); return true;
+    default: return false;
+    }
+
+}
+
+std::vector<snowdesktop::modern_menu::Item> DesktopApp::BuildGridAdjustmentMenuItems()
+{
+    struct MonitorSizeRange
+    {
+        const wchar_t* label;
+        float representativeInches;
+    };
+    const MonitorSizeRange kMonitorSizeRanges[] = {
+        { _LW("app.menu.monitor_1316"), 15.0f },
+        { _LW("app.menu.monitor_1721"), 19.0f },
+        { _LW("app.menu.monitor_2225"), 24.0f },
+        { _LW("app.menu.monitor_2630"), 27.0f },
+        { _LW("app.menu.monitor_31plus"), 34.0f },
     };
 
-    SetForegroundWindow(hwnd_);
-    snowdesktop::modern_menu::Show(items, options);
-    ClearMenuIcons();
-    RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
+    using snowdesktop::modern_menu::Item;
+    std::vector<Item> items;
+    POINT clientPoint = lastContextMenuScreenPoint_;
+    ScreenToClient(hwnd_, &clientPoint);
+    const GridPage* page = GridPageFromPoint(clientPoint);
+    std::wstring status = _LW("app.menu.grid_current_label");
+    status += L"\t";
+    status += std::to_wstring(page ? page->columns : 0);
+    status += L" × ";
+    status += std::to_wstring(page ? page->rows : 0);
+    items.push_back({ 0, std::move(status), L"", false });
+    items.push_back({ 0, L"", L"", false, false, true });
+    items.push_back({ kContextGridAddRow,
+        _LW("app.menu.add_row"), L"\uF109", page && page->rows < 50 });
+    items.push_back({ kContextGridRemoveRow,
+        _LW("app.menu.remove_row"), L"\uEBD0", page && page->rows > 1 });
+    items.push_back({ kContextGridAddColumn,
+        _LW("app.menu.add_col"), L"\uF109", page && page->columns < 50 });
+    items.push_back({ kContextGridRemoveColumn,
+        _LW("app.menu.remove_col"), L"\uEBD0", page && page->columns > 1 });
+    items.push_back({ 0, L"", L"", false, false, true });
+
+    auto appendRecommendedItem = [&](int aspectHeight,
+        UINT firstCommand, const wchar_t* label) {
+        Item parent;
+        parent.label = label;
+        parent.glyph = L"\uF462";
+        for (size_t i = 0; i < std::size(kMonitorSizeRanges); ++i)
+        {
+            const GridSpan recommended = CalculateRecommendedGridDimensions(
+                16, aspectHeight, kMonitorSizeRanges[i].representativeInches);
+            std::wstring childLabel = kMonitorSizeRanges[i].label;
+            childLabel += L"\t";
+            childLabel += std::to_wstring(recommended.columns);
+            childLabel += L" × ";
+            childLabel += std::to_wstring(recommended.rows);
+            Item child;
+            child.command = firstCommand + static_cast<UINT>(i);
+            child.label = std::move(childLabel);
+            child.glyph = L"\uF462";
+            child.checked = page &&
+                page->columns == recommended.columns &&
+                page->rows == recommended.rows;
+            parent.children.push_back(std::move(child));
+        }
+        items.push_back(std::move(parent));
+    };
+    appendRecommendedItem(9, kContextGridRecommended169First,
+        _LW("app.menu.recommend_169"));
+    appendRecommendedItem(10, kContextGridRecommended1610First,
+        _LW("app.menu.recommend_1610"));
+    return items;
 }
 
 snowdesktop::component_preview::Bitmap
@@ -1503,16 +1475,34 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     ScreenToClient(hwnd_, &clientPoint);
     const GridPage* gridPage = GridPageFromPoint(clientPoint);
 
+    HMENU gridAdjustmentMenu = nullptr, spacingMenu = nullptr, fontSizeMenu = nullptr, listFontSizeMenu = nullptr, fontWeightMenu = nullptr;
     HMENU displaySettingsMenu = CreatePopupMenu();
     if (displaySettingsMenu)
     {
         const std::wstring gridLabel = _LFW("app.menu.grid_adjust",
             std::to_wstring(gridPage ? gridPage->columns : 0),
             std::to_wstring(gridPage ? gridPage->rows : 0));
-        AppendMenuW(displaySettingsMenu, MF_STRING, kContextGridAdjustmentMenu,
-            gridLabel.c_str());
+        gridAdjustmentMenu = CreatePopupMenu();
+        const auto appendGridItems = [&](auto&& self, HMENU target, const auto& items) -> void {
+            for (const auto& item : items)
+            {
+                if (item.separator) { AppendMenuW(target, MF_SEPARATOR, 0, nullptr); continue; }
+                UINT_PTR id = item.command;
+                UINT flags = MF_STRING | (item.enabled ? 0 : MF_GRAYED) | (item.checked ? MF_CHECKED : 0);
+                if (!item.children.empty())
+                {
+                    HMENU child = CreatePopupMenu(); self(self, child, item.children);
+                    id = reinterpret_cast<UINT_PTR>(child); flags |= MF_POPUP;
+                }
+                AppendMenuW(target, flags, id, item.label.c_str());
+                if (!item.glyph.empty()) SetMenuItemIcon(target, id, item.glyph.c_str(), MenuIconFont::FluentRegular);
+            }
+        };
+        appendGridItems(appendGridItems, gridAdjustmentMenu, BuildGridAdjustmentMenuItems());
+        AppendMenuW(displaySettingsMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(gridAdjustmentMenu), gridLabel.c_str());
+        SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(gridAdjustmentMenu), L"\uF00A");
 
-        HMENU spacingMenu = CreatePopupMenu();
+        spacingMenu = CreatePopupMenu();
         if (spacingMenu)
         {
             const int presets[] = { 50, 70, 80, 90, 100, 110, 120, 130, 150, 200 };
@@ -1539,7 +1529,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             SetMenuItemIcon(spacingMenu, kContextSpacingDecrease, L"");
         }
 
-        HMENU fontSizeMenu = CreatePopupMenu();
+        fontSizeMenu = CreatePopupMenu();
         if (fontSizeMenu)
         {
             const int currentFontSize = static_cast<int>(std::round(itemFontSizeCu_));
@@ -1558,7 +1548,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
         }
 
-        HMENU listFontSizeMenu = CreatePopupMenu();
+        listFontSizeMenu = CreatePopupMenu();
         if (listFontSizeMenu)
         {
             const int currentFontSize = static_cast<int>(
@@ -1584,7 +1574,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 reinterpret_cast<UINT_PTR>(listFontSizeMenu), L"");
         }
 
-        HMENU fontWeightMenu = CreatePopupMenu();
+        fontWeightMenu = CreatePopupMenu();
         if (fontWeightMenu)
         {
             auto addWeightItem = [&](UINT id, const wchar_t* label, DWRITE_FONT_WEIGHT weight) {
@@ -1615,7 +1605,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         AppendMenuW(menu, MF_POPUP,
             reinterpret_cast<UINT_PTR>(displaySettingsMenu), _LW("app.menu.display_settings"));
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"");
-        SetMenuItemIcon(displaySettingsMenu, kContextGridAdjustmentMenu, L"");
     }
 
     const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
@@ -1843,7 +1832,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 
-    gridAdjustmentMenuAnchorValid_ = false;
     SetForegroundWindow(hwnd_);
     snowdesktop::component_preview::Window previewWindow;
     bool wallpaperPrefetchStarted = false;
@@ -1956,13 +1944,54 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         if (hover.command != 0)
             previewAnchor = hover;
     };
+    const auto changeDisplaySetting = [&](UINT command, auto& rootItems) {
+        bool handled = ApplyGridMenuAdjustment(command);
+        if (command >= kContextSpacingPresetFirst && command <= kContextSpacingPresetFirst + 200)
+        { SetIconSpacing(static_cast<float>(command - kContextSpacingPresetFirst) / 100.f); handled = true; }
+        else switch (command)
+        {
+        case kContextSpacingIncrease: AdjustIconSpacing(.1f); handled = true; break;
+        case kContextSpacingDecrease: AdjustIconSpacing(-.1f); handled = true; break;
+        case kContextFontSizeSmall: SetItemFontSize(12.f); handled = true; break;
+        case kContextFontSizeMedium: SetItemFontSize(18.f); handled = true; break;
+        case kContextFontSizeLarge: SetItemFontSize(24.f); handled = true; break;
+        case kContextListFontSizeSmall: SetListItemFontSize(12.f); handled = true; break;
+        case kContextListFontSizeMedium: SetListItemFontSize(18.f); handled = true; break;
+        case kContextListFontSizeLarge: SetListItemFontSize(24.f); handled = true; break;
+        case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); handled = true; break;
+        case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); handled = true; break;
+        case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); handled = true; break;
+        default: break;
+        }
+        if (!handled) return changeLuaWidgetPage(command, rootItems);
+        const int spacing = static_cast<int>(std::round(iconSpacingScale_ * 100.f));
+        const int fontSize = static_cast<int>(std::round(itemFontSizeCu_));
+        const int listFontSize = static_cast<int>(std::round(listItemFontSizeCu_));
+        POINT point = lastContextMenuScreenPoint_; ScreenToClient(hwnd_, &point);
+        const auto* currentPage = GridPageFromPoint(point);
+        snowdesktop::modern_menu::VisitItems(rootItems, [&](auto& item) {
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(gridAdjustmentMenu)))
+            {
+                item.label = _LFW("app.menu.grid_adjust", std::to_wstring(currentPage ? currentPage->columns : 0), std::to_wstring(currentPage ? currentPage->rows : 0));
+                snowdesktop::modern_menu::UpdateItemStates(item.children, BuildGridAdjustmentMenuItems());
+            }
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(spacingMenu))) item.label = _LFW("app.menu.layout_spacing_pct", std::to_wstring(spacing));
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontSizeMenu))) item.label = _LFW("app.menu.title_font_size_cu", std::to_wstring(fontSize));
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(listFontSizeMenu))) item.label = _LFW("app.menu.list_font_size_cu", std::to_wstring(listFontSize));
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontWeightMenu))) item.label = _LW(itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD ? "app.menu.font_weight_bold" : itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL ? "app.menu.font_weight_light" : "app.menu.font_weight_medium");
+            if (item.command >= kContextSpacingPresetFirst && item.command <= kContextSpacingPresetFirst + 200) item.checked = static_cast<int>(item.command - kContextSpacingPresetFirst) == spacing;
+            if (item.command >= kContextFontSizeSmall && item.command <= kContextFontSizeLarge) item.checked = fontSize == 12 + 6 * static_cast<int>(item.command - kContextFontSizeSmall);
+            if (item.command >= kContextListFontSizeSmall && item.command <= kContextListFontSizeLarge) item.checked = listFontSize == 12 + 6 * static_cast<int>(item.command - kContextListFontSizeSmall);
+            if (item.command == kContextFontWeightBold) item.checked = itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD;
+            if (item.command == kContextFontWeightMedium) item.checked = itemFontWeight_ == DWRITE_FONT_WEIGHT_SEMI_BOLD;
+            if (item.command == kContextFontWeightFine) item.checked = itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL;
+        });
+        return true;
+    };
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
-        false, false, nullptr, changeLuaWidgetPage,
+        false, false, nullptr, changeDisplaySetting,
         previewWidgetMenuItem, searchLuaWidgets);
     previewWindow.Close();
-
-    POINT adjustmentMenuPoint = gridAdjustmentMenuAnchorValid_
-        ? gridAdjustmentMenuAnchor_ : screenPoint;
 
     if (sortMenu) DestroyMenu(sortMenu);
     if (widgetMenu) DestroyMenu(widgetMenu);
@@ -2015,21 +2044,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextSortByNameDescCommand: SortIconsByName(false); break;
         case kContextSortByTypeCommand: SortIconsByType(true); break;
         case kContextSortByTypeDescCommand: SortIconsByType(false); break;
-        case kContextGridAdjustmentMenu:
-            needsDesktopFocus = false;
-            ShowGridAdjustmentMenu(adjustmentMenuPoint, 0);
-            break;
-        case kContextGridAddRow:
-        case kContextGridRemoveRow:
-        case kContextGridAddColumn:
-        case kContextGridRemoveColumn:
-        {
-            POINT legacyAdjustmentMenuPoint{};
-            GetCursorPos(&legacyAdjustmentMenuPoint);
-            needsDesktopFocus = false;
-            ShowGridAdjustmentMenu(legacyAdjustmentMenuPoint, command);
-            break;
-        }
         case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
         case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
         case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;

@@ -777,7 +777,9 @@ struct WidgetSettingsPresenter::Impl
         contentTheme.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         contentTheme.MaxWidth(520.0);
         contentThemeRow.Initialize(contentTheme);
-        appearanceSections.material.Children().Append(contentThemeRow.root);
+        appearanceSections.text.Children().Append(contentThemeRow.root);
+        contentThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        contentTheme.HorizontalAlignment(mux::HorizontalAlignment::Right);
         root.Children().Append(appearanceCard.root);
 
         InitializeCard(stylePreviewCard);

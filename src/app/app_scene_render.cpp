@@ -44,7 +44,6 @@ void DesktopApp::DrawStaticBackground(
 
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
-    if (!hiddenMode)
     {
         struct ForegroundTitle
         {
@@ -63,6 +62,8 @@ void DesktopApp::DrawStaticBackground(
             if (!icon) continue;
             DesktopItem* di = icon->GetDesktopItem();
             if (!di || IsRectEmptyRect(di->bounds)) continue;
+            if (hiddenMode && !IsRetainedLargeIcon(*di)) continue;
+            if (di->largeIcon && !IsLargeIconVisible(*di, lastMousePoint_, hiddenMode)) continue;
             if (dragSession_.IsActive() && !dragSession_.Items().empty() &&
                 dragSession_.IsMoveAction() && di->selected)
                 continue;
@@ -213,7 +214,7 @@ void DesktopApp::DrawDesktopForeground(
     }
 
     DrawDynamicOverlays(ctx, hiddenMode);
-    if (!hiddenMode) DrawLargeIconInteractionOverlay(ctx);
+    DrawLargeIconInteractionOverlay(ctx);
     if (desktopIconsHidden_ && showHiddenHint_)
         DrawHiddenHintOverlay(ctx);
     if (showWidgetAddedHint_)

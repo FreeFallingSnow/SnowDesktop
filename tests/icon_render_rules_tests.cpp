@@ -7,6 +7,7 @@
 #include "icon_beautify.h"
 #include "large_icon_transform.h"
 #include "large_icon_settings_rules.h"
+#include "large_icon_visibility_rules.h"
 
 #include <iostream>
 
@@ -35,6 +36,34 @@ int main(int argc, char** argv)
     failures += RunLargeIconAssetTests();
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
+    {
+        auto c = config;
+        c.followComponentRadius = true; c.radiusPercent = 75;
+        Check(Radius(ResolveComponentRadius(c, 18), 200, 100, 1) == 18 &&
+            Radius(ResolveComponentRadius(c, 24), 400, 200, 2) == 48,
+            "following radius tracks component changes and DPI without overwriting independent ratio");
+        Check(!snowdesktop::large_icon_settings_rules::Visible(snowdesktop::large_icon_settings_rules::Field::Radius, c),
+            "custom radius editor is disclosed only after disabling follow");
+        c.followComponentRadius = false;
+        Check(Radius(ResolveComponentRadius(c, 18), 200, 100, 1) == 37.5,
+            "independent radius retains its saved short-edge ratio");
+        c.showOnHoverOnly = true;
+        using snowdesktop::large_icon_visibility_rules::Visible;
+        Check(!Visible(c, false, true, false, false, false, false) && Visible(c, false, true, true, false, false, false),
+            "hover-only icons hide while idle and reveal on pointer entry");
+        Check(Visible(c, false, true, false, true, false, false) && Visible(c, false, true, false, false, true, false),
+            "selection and drag reveal hover-only icons just like components");
+        Check(!Visible(c, true, true, true, true, true, true), "desktop hiding takes precedence unless retention is enabled");
+        c.keepWhenDesktopHidden = true;
+        Check(Visible(c, true, true, true, false, false, false) && !Visible(c, true, true, false, false, false, false) &&
+            !Visible(c, true, false, true, true, true, true), "retained hover-only icons still respect hover and desktop ownership");
+        JsonValue encoded; snowdesktop::LargeIconConfig restored;
+        Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), encoded) && snowdesktop::DecodeLargeIconConfig(encoded, restored) && restored == c,
+            "visibility and radius inheritance survive layout codec round trips");
+        encoded.object.erase("followComponentRadius"); encoded.object.erase("showOnHoverOnly"); encoded.object.erase("keepWhenDesktopHidden");
+        Check(snowdesktop::DecodeLargeIconConfig(encoded, restored) && !restored.followComponentRadius && !restored.showOnHoverOnly && !restored.keepWhenDesktopHidden,
+            "old large icons retain their original independent radius and visibility");
+    }
     snowdesktop::LargeIconMotion motion;
     Check(!motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0,
         "no-effect mode never schedules hover animation");

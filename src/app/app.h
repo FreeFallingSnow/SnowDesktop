@@ -1450,9 +1450,7 @@ private:
     { return personalizationSettings_; }
     PersonalizationSettings CurrentDockAppearance() const
     {
-        auto result = dockSettings_.followComponentAppearance ? CurrentPersonalization() : dockSettings_.customAppearance;
-        result.cornerRadius = CurrentPersonalization().cornerRadius;
-        return result;
+        return ResolveDockAppearance(dockSettings_, CurrentPersonalization());
     }
     /** @brief 切换桌面图标可见性（双击空白处隐藏/恢复）。 */
     void ToggleDesktopIconsVisibility();
@@ -1621,6 +1619,8 @@ private:
     bool SetLargeIconConfig(size_t itemIndex, std::optional<snowdesktop::LargeIconConfig> config);
     void OpenLargeIconSettings(size_t itemIndex);
     RECT GetLargeIconFrameRect(const DesktopItem& item) const;
+    bool IsRetainedLargeIcon(const DesktopItem& item) const;
+    bool IsLargeIconVisible(const DesktopItem& item, POINT pointer, bool hidden) const;
     void DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state);
     snowdesktop::LargeIconSettingsSnapshot EditLargeIcon(snowdesktop::LargeIconSettingsRequest request);
     const snowdesktop::LargeIconConfig& EffectiveLargeIconConfig(const DesktopItem& item) const;
@@ -1857,7 +1857,8 @@ private:
     void ShowDockRunningAppContextMenu(
         POINT screenPoint, size_t runningIndex);
     /** @brief 显示可连续调整参数的自绘行列菜单。 */
-    void ShowGridAdjustmentMenu(POINT screenPoint, UINT initialCommand);
+    bool ApplyGridMenuAdjustment(UINT command);
+    std::vector<snowdesktop::modern_menu::Item> BuildGridAdjustmentMenuItems();
     /** @brief 显示指定部件的上下文菜单。 @param screenPoint 屏幕坐标 @param widgetIndex 部件索引 */
     void ShowWidgetContextMenu(POINT screenPoint, size_t widgetIndex,
         std::optional<RECT> dockRenameAnchor = std::nullopt,
@@ -3265,6 +3266,7 @@ private:
         snowdesktop::LargeIconMotion motion;
         std::shared_ptr<snowdesktop::large_icon_renderer::CardResources> cardResources;
         bool pending = false;
+        bool visible = false;
         std::string error;
     };
     std::unordered_map<std::wstring, LargeIconRuntime> largeIconRuntime_;
@@ -3510,8 +3512,6 @@ private:
     bool pageNotifyUseAnimation_ = true;
     bool pageNotifyCompositorDriven_ = false;
     POINT lastContextMenuScreenPoint_{};
-    POINT gridAdjustmentMenuAnchor_{};
-    bool gridAdjustmentMenuAnchorValid_ = false;
     /** @} */
 
     /** @name 控制窗口（托盘图标所有权 + 桌面宿主监听） */

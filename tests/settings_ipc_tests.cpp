@@ -75,6 +75,7 @@ void TestCodec()
     settings.values.general.quickNavigationAppearance.appearance.panelGradient.angle = 37;
     settings.values.general.collectionPopupAppearance.mode = 3;
     settings.values.dock.followComponentAppearance = false;
+    settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
     settings.values.dock.customAppearance.widgetBgR = .2f;
     settings.values.dock.floatingEdgeSwipeBlockFullscreen = true;
     settings.values.dock.hoverEffect = 1;

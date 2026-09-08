@@ -24,6 +24,9 @@ struct LargeIconConfig
     double fillScale = 1; // Independent of the foreground; relative to contain/cover fit.
     double radius = 12;
     double radiusPercent = -1; // -1 preserves the legacy/component CU radius; 100 is half the short edge.
+    bool followComponentRadius = false; // Missing field preserves existing independent radii.
+    bool showOnHoverOnly = false;
+    bool keepWhenDesktopHidden = false;
     int content = 0; // 0 original, 1 imported static image, 2 Steam
     int fit = 1; // Fill layer only: 0 contain, 1 cover. Foreground always contains.
     double focusX = .5, focusY = .5;
@@ -89,6 +92,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
 {
 #define LI_FIELD(name) f(#name, c.name)
     LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows);
+    LI_FIELD(followComponentRadius); LI_FIELD(showOnHoverOnly); LI_FIELD(keepWhenDesktopHidden);
     LI_FIELD(contentScale); LI_FIELD(fillScale); LI_FIELD(radius); LI_FIELD(radiusPercent); LI_FIELD(content); LI_FIELD(fit);
     LI_FIELD(focusX); LI_FIELD(focusY); LI_FIELD(image); LI_FIELD(cachedCover);
     LI_FIELD(autoColor); LI_FIELD(manualColor); LI_FIELD(colorMix);

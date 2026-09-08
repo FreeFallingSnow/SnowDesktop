@@ -7,7 +7,7 @@ enum class Field
 {
     Always, Fill, FillImage, Crop, Steam,
     Custom, Gradient, Solid, Blur, Border, Edge, Foreground, ForegroundImage, ForegroundPosition,
-    Title, ManualTitle, Tilt
+    Title, ManualTitle, Tilt, Radius
 };
 inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
 {
@@ -15,6 +15,7 @@ inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
     const bool fill = IsLargeIconFill(c), custom = c.backgroundStyle == 9;
     switch (field)
     {
+    case Field::Radius: return !c.followComponentRadius;
     case Field::Fill: return fill;
     case Field::FillImage: return fill && c.content == 1;
     case Field::Crop: return fill && c.fit == 1;

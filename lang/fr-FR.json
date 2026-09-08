@@ -1576,5 +1576,8 @@
     "appearance.quickPanelCard": "Thème du panneau rapide",
     "appearance.popupCard": "Thème des fenêtres contextuelles",
     "appearance.openTaskbar": "Ouvrir les paramètres de la barre des tâches",
-    "appearance.followGlobalPreset": "Préréglage du thème global (par défaut)"
+    "appearance.followGlobalPreset": "Préréglage du thème global (par défaut)",
+  "appearance.text": "Texte",
+  "largeIcon.followComponentRadius": "Suivre le rayon des angles des composants",
+  "largeIcon.visibility": "Visibilité"
 }

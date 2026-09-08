@@ -1068,6 +1068,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (!ParseJson(text, gradientDocument) ||
         !snowdesktop::ReadTaskbarGradients(gradientDocument, settings)) return false;
     ReadBoolField(text, "followComponentAppearance", settings.followComponentAppearance);
+    if (ReadDoubleField(text, "dockAppearancePreset", value))
+        settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
         if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
     NormalizeDockSettings(settings);
@@ -1155,6 +1157,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
         settings.systemTaskbarShellUi);
     file << gradientFields.str();
     file << "  \"followComponentAppearance\": " << (settings.followComponentAppearance ? "true" : "false") << ",\n";
+    file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";
     file << "  \"customAppearance\": " << customAppearance << ",\n";
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";

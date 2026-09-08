@@ -1576,5 +1576,8 @@
     "appearance.quickPanelCard": "Design des Schnellzugriffspanels",
     "appearance.popupCard": "Popup-Design",
     "appearance.openTaskbar": "Taskleisteneinstellungen öffnen",
-    "appearance.followGlobalPreset": "Voreinstellung des globalen Designs (Standard)"
+    "appearance.followGlobalPreset": "Voreinstellung des globalen Designs (Standard)",
+  "appearance.text": "Text",
+  "largeIcon.followComponentRadius": "Komponenten-Eckenradius übernehmen",
+  "largeIcon.visibility": "Sichtbarkeit"
 }

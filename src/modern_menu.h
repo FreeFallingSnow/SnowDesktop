@@ -95,6 +95,28 @@ struct EventPump
     std::function<void(const std::wstring&)> traceDiagnostic;
 };
 
+// Update values without replacing child vectors referenced by open popup windows.
+template<class Visitor> void VisitItems(std::vector<Item>& items, const Visitor& visit)
+{
+    for (auto& item : items)
+    {
+        visit(item);
+        VisitItems(item.children, visit);
+    }
+}
+
+inline void UpdateItemStates(std::vector<Item>& items, const std::vector<Item>& values)
+{
+    if (items.size() != values.size()) return;
+    for (size_t i = 0; i < items.size(); ++i)
+    {
+        items[i].label = values[i].label;
+        items[i].enabled = values[i].enabled;
+        items[i].checked = values[i].checked;
+        UpdateItemStates(items[i].children, values[i].children);
+    }
+}
+
 struct Options
 {
     /** 激活和菜单关闭后恢复焦点的窗口。 */

@@ -169,19 +169,24 @@ private:
         const auto solid = [](auto const& value) { return !value.panelGradient.enabled; };
         Color(sections_.colors, "app.settings.bg_color", &PersonalizationSettings::widgetBgR, &PersonalizationSettings::widgetBgG, &PersonalizationSettings::widgetBgB, solid);
         Number(sections_.colors, "app.settings.bg_opacity", &PersonalizationSettings::widgetAlpha, 0, 100, 1, 100, L"%", solid);
-        c::ComboBox material; material.HorizontalAlignment(x::HorizontalAlignment::Right);
-        for (auto key : {"largeIcon.plain", "largeIcon.glass", "largeIcon.acrylic"}) material.Items().Append(winrt::box_value(L(key)));
-        material.SelectionChanged([weak, material](auto const&, auto const&) {
-            if (auto self = weak.lock()) self->Apply([&](auto& value) { value.glassEnabled = material.SelectedIndex() > 0; value.acrylicEnabled = material.SelectedIndex() == 2; }, true);
+        c::ToggleSwitch glass; glass.HorizontalAlignment(x::HorizontalAlignment::Right);
+        glass.Toggled([weak, glass](auto const&, auto const&) {
+            if (auto self = weak.lock()) self->Apply([&](auto& value) { value.glassEnabled = glass.IsOn(); }, true);
         });
-        sync_.push_back([this, material] { material.SelectedIndex(!value_.glassEnabled ? 0 : value_.acrylicEnabled ? 2 : 1); });
-        Row(sections_.material, "largeIcon.material", material, [](auto& value) { value.glassEnabled = false; value.acrylicEnabled = false; });
+        sync_.push_back([this, glass] { glass.IsOn(value_.glassEnabled); });
+        Row(sections_.material, "app.settings.glass_enabled", glass, [](auto& value) { value.glassEnabled = false; });
+        c::ToggleSwitch acrylic; acrylic.HorizontalAlignment(x::HorizontalAlignment::Right);
+        acrylic.Toggled([weak, acrylic](auto const&, auto const&) {
+            if (auto self = weak.lock()) self->Apply([&](auto& value) { value.acrylicEnabled = acrylic.IsOn(); }, true);
+        });
+        sync_.push_back([this, acrylic] { acrylic.IsOn(value_.acrylicEnabled); });
+        Row(sections_.material, "app.settings.acrylic_noise", acrylic, [](auto& value) { value.acrylicEnabled = false; }, [](auto const& value) { return value.glassEnabled; });
         Number(sections_.material, "app.settings.blur_radius", &PersonalizationSettings::glassBlurRadius, 4, 48, 1, 1, L"px", [](auto const& value) { return value.glassEnabled; });
         c::ComboBox theme; theme.HorizontalAlignment(x::HorizontalAlignment::Right);
         theme.Items().Append(winrt::box_value(L("app.settings.light"))); theme.Items().Append(winrt::box_value(L("app.settings.dark")));
         theme.SelectionChanged([weak, theme](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply([&](auto& value) { value.contentTheme = std::clamp(theme.SelectedIndex(), 0, 1); }, true); });
         sync_.push_back([this, theme] { theme.SelectedIndex(value_.contentTheme); });
-        Row(sections_.material, "app.settings.text_color", theme, [](auto& value) { value.contentTheme = 0; });
+        Row(sections_.text, "app.settings.text_color", theme, [](auto& value) { value.contentTheme = 0; });
         Color(sections_.border, "app.settings.border_color", &PersonalizationSettings::widgetBorderR, &PersonalizationSettings::widgetBorderG, &PersonalizationSettings::widgetBorderB);
         Number(sections_.border, "largeIcon.borderOpacity", &PersonalizationSettings::widgetBorderAlpha, 0, 100, 1, 100, L"%");
         Number(sections_.border, "largeIcon.borderWidth", &PersonalizationSettings::widgetBorderWidth, .5, 4, .5, 1, L"px");

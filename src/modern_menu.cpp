@@ -1191,7 +1191,7 @@ private:
         if (options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
-            RefreshAfterCommand(popup);
+            if (!done_) RefreshAfterCommand(popup, command);
             return;
         }
 
@@ -1891,7 +1891,7 @@ private:
         return -1;
     }
 
-    void RefreshAfterCommand(Popup& commandPopup)
+    void RefreshAfterCommand(Popup& commandPopup, UINT command)
     {
         const int detachedDepth = FirstDetachedPopupDepth();
         if (detachedDepth > 0)
@@ -1906,7 +1906,31 @@ private:
             return;
         }
 
-        RefreshPopup(commandPopup);
+        const bool sameAction = std::ranges::any_of(*commandPopup.items,
+            [command](const Item& item) { return item.command == command; });
+        if (!sameAction)
+        {
+            RefreshPopup(commandPopup);
+            return;
+        }
+        // Value changes retain every popup HWND, pointer/keyboard selection and
+        // scroll position. Parent captions may contain the updated value too.
+        for (auto& current : popups_)
+        {
+            auto& popup = *current;
+            CalculateLayout(popup);
+            popup.scrollOffset = std::clamp(popup.scrollOffset, 0, MaxScroll(popup));
+            const auto validSelection = [&](int index) {
+                return index >= 0 && static_cast<size_t>(index) < popup.items->size() && IsSelectable((*popup.items)[index]);
+            };
+            if (!validSelection(popup.hoveredItem)) popup.hoveredItem = -1;
+            if (!validSelection(popup.keyboardItem)) popup.keyboardItem = -1;
+            SetWindowPos(popup.hwnd, nullptr,
+                popup.panelScreenOrigin.x - shadowSize_, popup.panelScreenOrigin.y - shadowSize_,
+                popup.windowWidth, popup.windowHeight, SWP_NOACTIVATE | SWP_NOZORDER);
+            ApplyBlurClipRegion(popup);
+            Render(popup);
+        }
     }
 
     void EnsureVisible(Popup& popup, int index)

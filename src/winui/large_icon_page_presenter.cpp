@@ -347,16 +347,14 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (snapshot.hasEdgeColor) add("largeIcon.useIconBackground", snapshot.edgeColor);
         if (snapshot.accent) add("largeIcon.useIconTheme", snapshot.accent);
     }
-    c::StackPanel Fold(c::StackPanel parent, const char* key, Field field,
-        std::function<std::wstring()> summary = {})
+    c::StackPanel Section(c::StackPanel parent, const char* key, Field field)
     {
-        c::Expander expander; expander.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        expander.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
-        expander.IsExpanded(false); expander.Margin({0,4,0,4});
-        c::TextBlock title; title.Text(L(key)); title.TextWrapping(x::TextWrapping::Wrap); expander.Header(title);
-        if (summary) synchronize.push_back([this, title, key, summary] { title.Text(L(key) + L" · " + summary()); });
-        c::StackPanel body; body.Spacing(4); body.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        expander.Content(body); parent.Children().Append(expander); Track(expander, field); return body;
+        c::StackPanel section; section.Spacing(4);
+        c::TextBlock title; title.Text(L(key)); title.TextWrapping(x::TextWrapping::Wrap);
+        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); title.Margin({0,12,0,4});
+        section.Children().Append(title);
+        c::StackPanel body; body.Spacing(4); section.Children().Append(body);
+        parent.Children().Append(section); Track(section, field); return body;
     }
     void FillKind(c::StackPanel panel)
     {
@@ -389,7 +387,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         else Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Fill, 1);
         Action(bg, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::FillImage, 2);
         Slider(bg, "largeIcon.fillScale", &LargeIconConfig::fillScale, 25, 300, 1, 100, L"%", Field::Fill, 1);
-        auto imageDetails = Fold(bg, "largeIcon.imageDetails", Field::Fill);
+        auto imageDetails = Section(bg, "largeIcon.imageDetails", Field::Fill);
         Choice(imageDetails, "largeIcon.fit", &LargeIconConfig::fit, {{1,"largeIcon.cover"},{0,"largeIcon.contain"}}, Field::Fill);
         Slider(imageDetails, "largeIcon.positionX", &LargeIconConfig::focusX, 0, 100, 1, 100, L"%", Field::Crop, 1);
         Slider(imageDetails, "largeIcon.positionY", &LargeIconConfig::focusY, 0, 100, 1, 100, L"%", Field::Crop, 1);
@@ -422,15 +420,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }, true, [weak](auto panel, auto picker) { if (auto self = weak.lock()) self->ColorShortcuts(panel, picker); }, true);
         gradient->SetValue(draft.gradient); bg.Children().Append(gradient->Content()); Track(gradient->Content(), Field::Gradient);
         Slider(bg, "largeIcon.gradientOpacity", &LargeIconConfig::gradientOpacity, 0, 100, 1, 100, L"%", Field::Gradient);
-        auto material = Fold(bg, "largeIcon.material", Field::Custom, [this] {
-            return L(draft.material == 0 ? "largeIcon.plain" : draft.material == 1 ? "largeIcon.glass" : "largeIcon.acrylic");
-        });
+        auto material = Section(bg, "largeIcon.material", Field::Custom);
         Choice(material, "largeIcon.material", &LargeIconConfig::material,
             {{0,"largeIcon.plain"},{1,"largeIcon.glass"},{2,"largeIcon.acrylic"}}, Field::Custom);
         Slider(material, "app.settings.blur_radius", &LargeIconConfig::blurRadius, 4, 48, 1, 1, L"", Field::Blur, 1);
-        Choice(material, "app.settings.text_color", &LargeIconConfig::componentTheme,
-            {{0,"app.settings.light"},{1,"app.settings.dark"}}, Field::Custom);
-        auto edges = Fold(bg, "largeIcon.borderAndHighlight", Field::Custom);
+        auto edges = Section(bg, "largeIcon.borderAndHighlight", Field::Custom);
         Toggle(edges, "largeIcon.border", &LargeIconConfig::border, Field::Custom, 0);
         ColorPicker(edges, "largeIcon.borderColor", &LargeIconConfig::borderColor, Field::Border, 1);
         Slider(edges, "largeIcon.borderOpacity", &LargeIconConfig::borderOpacity, 0, 100, 1, 100, L"%", Field::Border, 1);
@@ -438,7 +432,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Toggle(edges, "largeIcon.edgeHighlight", &LargeIconConfig::edgeHighlight, Field::Custom, 0);
         Slider(edges, "largeIcon.edgeStrength", &LargeIconConfig::edgeStrength, 0, 100, 1, 100, L"%", Field::Edge, 1);
         Slider(edges, "largeIcon.edgeWidth", &LargeIconConfig::edgeWidth, .5, 4, .5, 1, L"", Field::Edge, 1);
-        Slider(bg, "largeIcon.radius", &LargeIconConfig::radiusPercent, 0, 100, 1, 1, L"%");
+        auto text = Section(bg, "appearance.text", Field::Custom);
+        Choice(text, "app.settings.text_color", &LargeIconConfig::componentTheme,
+            {{0,"app.settings.light"},{1,"app.settings.dark"}}, Field::Custom);
+        Toggle(bg, "largeIcon.followComponentRadius", &LargeIconConfig::followComponentRadius, Field::Always, 0);
+        Slider(bg, "largeIcon.radius", &LargeIconConfig::radiusPercent, 0, 100, 1, 1, L"%", Field::Radius, 1);
         auto icon = Group("largeIcon.foreground", Field::Foreground);
         Choice(icon, "largeIcon.foregroundSource", &LargeIconConfig::foregroundContent, {{0,"largeIcon.original"},{1,"largeIcon.image"}});
         Action(icon, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::ForegroundImage, 1);
@@ -453,6 +451,9 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Slider(effects, "largeIcon.titleWeight", &LargeIconConfig::titleWeight, 100, 900, 100, 1, L"", Field::Title, 1);
         Toggle(effects, "largeIcon.autoTitleColor", &LargeIconConfig::autoTitleColor, Field::Title, 1);
         ColorPicker(effects, "largeIcon.titleColor", &LargeIconConfig::titleColor, Field::ManualTitle, 2);
+        auto visibilitySettings = Group("largeIcon.visibility");
+        Toggle(visibilitySettings, "app.interact.hover_only", &LargeIconConfig::showOnHoverOnly, Field::Always, 0);
+        Toggle(visibilitySettings, "app.interact.keep_when_hidden", &LargeIconConfig::keepWhenDesktopHidden, Field::Always, 0);
         Action(editors, "largeIcon.retry", "largeIcon.retry", [](auto& self) { self.Send("commit"); }, Field::Always, 0);
         const auto retry = editors.Children().GetAt(editors.Children().Size() - 1).as<x::FrameworkElement>();
         visibility.push_back([this, retry] { retry.Visibility(snapshot.error == "largeIcon.saveFailed" ? x::Visibility::Visible : x::Visibility::Collapsed); });

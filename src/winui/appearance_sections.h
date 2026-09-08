@@ -8,10 +8,9 @@ namespace snowdesktop::winui
 struct AppearanceSections
 {
     using Panel = winrt::Microsoft::UI::Xaml::Controls::StackPanel;
-    using Expander = winrt::Microsoft::UI::Xaml::Controls::Expander;
-    Panel colors{nullptr}, material{nullptr}, border{nullptr}, bottomBar{nullptr};
-    Expander materialGroup{nullptr}, borderGroup{nullptr}, bottomBarGroup{nullptr};
-    winrt::Microsoft::UI::Xaml::Controls::TextBlock colorsTitle{nullptr};
+    using Heading = winrt::Microsoft::UI::Xaml::Controls::TextBlock;
+    Panel colors{nullptr}, material{nullptr}, border{nullptr}, bottomBar{nullptr}, text{nullptr};
+    Heading colorsTitle{nullptr}, materialTitle{nullptr}, borderTitle{nullptr}, bottomBarTitle{nullptr}, textTitle{nullptr};
     bool highlights = true;
 
     void PlaceOpacity(const winrt::Microsoft::UI::Xaml::UIElement& row, bool gradient) const
@@ -26,43 +25,37 @@ struct AppearanceSections
         else target.Children().Append(row);
     }
 
-    static Panel Fold(const Panel& parent, Expander& group)
+    static Panel Section(const Panel& parent, Heading& title)
     {
         namespace x = winrt::Microsoft::UI::Xaml;
-        group = Expander{};
-        group.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        group.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
-        group.IsExpanded(false);
+        title = Heading{};
+        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        title.TextWrapping(x::TextWrapping::Wrap);
+        title.Margin({0, 12, 0, 4});
+        parent.Children().Append(title);
         Panel body; body.Spacing(4);
-        group.Content(body);
-        const auto weakBody = winrt::make_weak(body);
-        group.SizeChanged([weakBody](auto const&, x::SizeChangedEventArgs const& args) {
-            if (auto current = weakBody.get())
-                current.Width(std::max(0.0, static_cast<double>(args.NewSize().Width) - 32.0));
-        });
-        parent.Children().Append(group);
+        parent.Children().Append(body);
         return body;
     }
 
-    void Initialize(const Panel& parent, bool withHighlights = true, bool withBottomBar = false)
+    void Initialize(const Panel& parent, bool withHighlights = true, bool withBottomBar = false, bool withText = true)
     {
         highlights = withHighlights;
-        colorsTitle = winrt::Microsoft::UI::Xaml::Controls::TextBlock{};
-        colorsTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        parent.Children().Append(colorsTitle);
-        colors = Panel{}; colors.Spacing(4);
-        parent.Children().Append(colors);
-        material = Fold(parent, materialGroup);
-        border = Fold(parent, borderGroup);
-        if (withBottomBar) bottomBar = Fold(parent, bottomBarGroup);
+        colors = Section(parent, colorsTitle);
+        colorsTitle.Margin({0, 4, 0, 4});
+        material = Section(parent, materialTitle);
+        border = Section(parent, borderTitle);
+        if (withBottomBar) bottomBar = Section(parent, bottomBarTitle);
+        if (withText) text = Section(parent, textTitle);
     }
 
     template<class Localize> void RefreshLocalizedText(Localize localize)
     {
         colorsTitle.Text(localize("largeIcon.colorAndFill"));
-        materialGroup.Header(winrt::box_value(localize("largeIcon.material")));
-        borderGroup.Header(winrt::box_value(localize(highlights ? "largeIcon.borderAndHighlight" : "appearance.border")));
-        if (bottomBarGroup) bottomBarGroup.Header(winrt::box_value(localize("appearance.bottomBar")));
+        materialTitle.Text(localize("largeIcon.material"));
+        borderTitle.Text(localize(highlights ? "largeIcon.borderAndHighlight" : "appearance.border"));
+        if (bottomBarTitle) bottomBarTitle.Text(localize("appearance.bottomBar"));
+        if (textTitle) textTitle.Text(localize("appearance.text"));
     }
 };
 }

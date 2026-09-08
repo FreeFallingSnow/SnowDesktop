@@ -500,6 +500,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             if (!icon) continue;
             DesktopItem* di = icon->GetDesktopItem();
             if (!di || di->name.empty()) continue;
+            if (desktopIconsHidden_ && !IsRetainedLargeIcon(*di)) continue;
             di->selected = true;
         }
         InvalidateRect(hwnd_, nullptr, FALSE);

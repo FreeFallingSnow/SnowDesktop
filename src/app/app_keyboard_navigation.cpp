@@ -98,6 +98,7 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
     {
         const auto& item = items_[i];
         if (item.name.empty()) continue;
+        if (desktopIconsHidden_ && !IsRetainedLargeIcon(item)) continue;
         if (IsRectEmptyRect(item.bounds)) continue;
         if (collectedKeysCache_.contains(ToUpperInvariant(item.layoutKey))) continue;
         if (hasVisiblePages && !visiblePageIds.contains(item.gridCell.pageId)) continue;
@@ -112,6 +113,7 @@ void DesktopApp::NavigateDesktopGrid(WPARAM arrowKey)
     {
         const auto& w = widgets_[i];
         if (IsGroupedWidget(w)) continue;
+        if (desktopIconsHidden_ && !w.keepWhenDesktopHidden) continue;
         if (hasVisiblePages && !visiblePageIds.contains(w.gridCell.pageId)) continue;
         targets.push_back({ true, i,
             w.gridCell.column, w.gridCell.row,

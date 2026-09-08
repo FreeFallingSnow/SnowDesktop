@@ -115,6 +115,31 @@ int main()
         global.backgroundPreset = kAppearancePresetCustom;
         Check(ResolveSurfaceTheme(theme, global, 0, false).contentTheme == 0,
             "legacy surface keeps its old override for a custom global theme");
+        theme.mode = -1;
+        global.panelGradient.enabled = true;
+        global.panelGradient.angle = 123;
+        Check(IsCustomSurfaceTheme(theme, global) && ResolveSurfaceTheme(theme, global, 0, true) == global,
+            "following a custom global theme exposes the actual custom fill and material");
+        theme.customized = true; theme.appearance.widgetAlpha = .23f;
+        Check(ResolveSurfaceTheme(theme, global, 0, false).widgetAlpha == .23f,
+            "editing a following custom popup applies its independent appearance");
+        auto light = PersonalizationSettings::LightPreset();
+        Check(!IsCustomSurfaceTheme(theme, light) && ResolveSurfaceTheme(theme, light, 0, false).contentTheme == 1,
+            "switching global back to a preset resumes inheritance without deleting custom values");
+        DockSettings dock;
+        dock.followComponentAppearance = false;
+        for (int preset : {0, 1, 6, 7, 10, 11})
+        {
+            dock.appearancePreset = preset;
+            auto expected = MakeAppearancePreset(preset); expected.cornerRadius = global.cornerRadius;
+            Check(ResolveDockAppearance(dock, global) == expected, "Dock resolves each global appearance preset independently");
+        }
+        dock.appearancePreset = kAppearancePresetCustom; dock.customAppearance.widgetAlpha = .39f;
+        Check(ResolveDockAppearance(dock, global).widgetAlpha == .39f, "legacy Dock custom appearance remains effective");
+        dock.followComponentAppearance = true;
+        Check(ResolveDockAppearance(dock, global) == global, "Dock follow mode uses the complete component appearance");
+        dock.appearancePreset = 123; NormalizeDockSettings(dock);
+        Check(dock.appearancePreset == kAppearancePresetCustom, "unsupported Dock preset falls back to retained custom settings");
         theme = saved.quickNavigationAppearance;
         Check(ResolveSurfaceTheme(theme, global, 0, true) == theme.appearance,
             "custom surface preserves gradient, opacity, material and foreground independently");

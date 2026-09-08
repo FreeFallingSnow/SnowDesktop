@@ -4,6 +4,7 @@
 #include "../large_icon_render_rules.h"
 #include "../large_icon_renderer.h"
 #include "../large_icon_edit_rules.h"
+#include "../large_icon_visibility_rules.h"
 
 void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesystem::path importPath, int variant)
 {
@@ -172,6 +173,7 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
     snowdesktop::LargeIconConfig config;
     const auto& style = CurrentPersonalization();
     config.radius = style.cornerRadius;
+    config.followComponentRadius = true;
     config.titleSize = itemFontSizeCu_;
     config.material = style.glassEnabled ? (style.acrylicEnabled ? 2 : 1) : 0;
     config.componentTheme = style.contentTheme;
@@ -371,6 +373,26 @@ RECT DesktopApp::GetLargeIconFrameRect(const DesktopItem& item) const
     return GetStandaloneWidgetFrameRect(geometry);
 }
 
+bool DesktopApp::IsRetainedLargeIcon(const DesktopItem& item) const
+{
+    return item.largeIcon && EffectiveLargeIconConfig(item).keepWhenDesktopHidden &&
+        !IsRectEmptyRect(item.bounds) && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item);
+}
+
+bool DesktopApp::IsLargeIconVisible(const DesktopItem& item, POINT pointer, bool hidden) const
+{
+    if (!item.largeIcon) return false;
+    const auto& config = EffectiveLargeIconConfig(item);
+    const auto frame = GetLargeIconFrameRect(item);
+    const bool onDesktop = !IsRectEmptyRect(item.bounds) && !IsRectEmptyRect(frame) &&
+        item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item) && FindGridPage(gridPages_, item.gridCell.pageId);
+    const bool retained = (largeIconGesture_ && largeIconGesture_->key == item.layoutKey) ||
+        (keyboardNavVisualFocus_ && item.selected);
+    return snowdesktop::large_icon_visibility_rules::Visible(config, hidden, onDesktop,
+        PtInRect(&frame, pointer) != FALSE, item.selected,
+        dragSession_.IsActive() || dragDropController_.IsExternalDragActive() || widgetAction_ == WidgetAction::Move, retained);
+}
+
 void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& item, RECT bounds, int state)
 {
     // Match component resizing: only the grid placeholder is painted until
@@ -382,7 +404,8 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         return;
     }
     RequestLargeIconAsset(FindItemIndexByKey(item.layoutKey));
-    const auto& config = EffectiveLargeIconConfig(item);
+    const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
+        EffectiveLargeIconConfig(item), CurrentPersonalization().cornerRadius);
     DesktopWidget geometry; geometry.bounds = bounds; geometry.gridCell = item.gridCell;
     snowdesktop::large_icon_renderer::View view;
     view.frame = GetStandaloneWidgetFrameRect(geometry);

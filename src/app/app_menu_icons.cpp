@@ -756,14 +756,6 @@ UINT DesktopApp::ShowModernMenu(
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
 
-    if (result.command == kContextGridAdjustmentMenu)
-    {
-        gridAdjustmentMenuAnchor_ = {
-            result.itemScreenRect.right,
-            result.itemScreenRect.top,
-        };
-        gridAdjustmentMenuAnchorValid_ = true;
-    }
     return result.command;
 }
 

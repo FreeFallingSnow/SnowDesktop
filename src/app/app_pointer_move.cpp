@@ -64,7 +64,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     }
     if (widgetIndex >= widgets_.size())
     {
-        if (desktopIconsHidden_ || IsPointOccludedByOpenPopup(pt)) return;
+        if (IsPointOccludedByOpenPopup(pt)) return;
         auto* hit = HitTestIcon(pt);
         auto* item = hit ? hit->GetDesktopItem() : nullptr;
         if (!item || !item->largeIcon || hit->GetContainer() != GetDesktopGrid()) return;
@@ -1341,6 +1341,7 @@ void DesktopApp::OnMouseMoveAt(
                 DesktopItem* item = icon->GetDesktopItem();
                 if (!item || item->selected || IsRectEmptyRect(item->bounds))
                     continue;
+                if (desktopIconsHidden_ && !IsRetainedLargeIcon(*item)) continue;
                 if (!item->layoutKey.empty() &&
                     collectedKeysCache_.count(ToUpperInvariant(item->layoutKey)))
                     continue;

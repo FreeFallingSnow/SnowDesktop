@@ -118,7 +118,6 @@ struct TaskbarGradientControl
 struct DynamicRuleControl
 {
     muxc::StackPanel root{nullptr};
-    muxc::Expander expander{nullptr};
     muxc::TextBlock detailTitle{nullptr};
     muxc::TextBlock summary{nullptr};
     muxc::ToggleSwitch enabled{nullptr};
@@ -172,23 +171,6 @@ void InitializeCard(
     card.content.Children().Append(card.title);
     card.root.Child(card.content);
     page.Children().Append(card.root);
-}
-
-void StretchExpanderBody(
-    const muxc::Expander& expander,
-    const mux::FrameworkElement& body)
-{
-    const auto weakBody = winrt::make_weak(body);
-    expander.SizeChanged(
-        [weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
-            if (const auto currentBody = weakBody.get())
-            {
-                // The WinUI Expander template contributes 16 DIP of padding
-                // on each side. Keep rule rows aligned with the card body.
-                currentBody.Width(std::max(0.0,
-                    static_cast<double>(args.NewSize().Width) - 32.0));
-            }
-        });
 }
 
 bool IsEnter(const muxi::KeyRoutedEventArgs& args) noexcept
@@ -831,7 +813,7 @@ struct DockPagePresenter::Impl
         const muxc::StackPanel& parent,
         SystemTaskbarDynamicRule DockSettings::* member = nullptr)
     {
-        control.sections.Initialize(parent, false);
+        control.sections.Initialize(parent, false, false, false);
         control.editor = PanelGradientEditor::Create(
             [this](auto key) { return L(key, L""); },
             [this, &control, member](const PanelGradient& gradient, bool commit) {
@@ -868,13 +850,6 @@ struct DockPagePresenter::Impl
         control.enabledRow.Initialize(control.enabled);
         control.enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
 
-        control.expander = muxc::Expander{};
-        control.expander.HorizontalAlignment(
-            mux::HorizontalAlignment::Stretch);
-        control.expander.HorizontalContentAlignment(
-            mux::HorizontalAlignment::Stretch);
-        control.expander.IsExpanded(false);
-        control.expander.UseSystemFocusVisuals(true);
         muxc::StackPanel header{};
         header.Spacing(3.0);
         control.detailTitle = muxc::TextBlock{};
@@ -884,7 +859,8 @@ struct DockPagePresenter::Impl
         control.summary = NewHint();
         header.Children().Append(control.detailTitle);
         header.Children().Append(control.summary);
-        control.expander.Header(header);
+        header.Margin({0,12,0,0});
+        control.root.Children().Append(header);
 
         control.details = muxc::StackPanel{};
         control.details.Spacing(12.0);
@@ -892,8 +868,7 @@ struct DockPagePresenter::Impl
             mux::HorizontalAlignment::Stretch);
         control.themeRow.Initialize(control.theme);
         control.contentThemeRow.Initialize(control.contentTheme);
-        // Keep the rule switch inside its named scenario.  The scenario is the
-        // parent disclosure and all appearance editors are dependent children.
+        // The always-visible scenario switch discloses its appearance editors.
         control.details.Children().Append(control.enabledRow.root);
         control.appearanceDetails = muxc::StackPanel{};
         control.appearanceDetails.Spacing(12.0);
@@ -936,9 +911,7 @@ struct DockPagePresenter::Impl
         control.gradient.sections.material.Children().Append(control.acrylicRow.root);
         control.appearanceDetails.Children().Append(control.customAppearance);
         control.details.Children().Append(control.appearanceDetails);
-        control.expander.Content(control.details);
-        StretchExpanderBody(control.expander, control.details);
-        control.root.Children().Append(control.expander);
+        control.root.Children().Append(control.details);
         taskbarRulesCard.content.Children().Append(control.root);
     }
 
@@ -2016,8 +1989,8 @@ struct DockPagePresenter::Impl
         const winrt::hstring contextText = control.detailTitle.Text();
         const std::wstring context{
             contextText.c_str(), contextText.size()};
-        muxa::AutomationProperties::SetName(control.expander, context);
-        muxa::AutomationProperties::SetHelpText(control.expander,
+        muxa::AutomationProperties::SetName(control.enabled, context);
+        muxa::AutomationProperties::SetHelpText(control.enabled,
             ContextualText(context, summary));
     }
 
@@ -2438,9 +2411,6 @@ struct DockPagePresenter::Impl
 
     mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
     {
-        if (id.find("taskbar.border") == 0) taskbarGradient.sections.borderGroup.IsExpanded(true);
-        if (id == "taskbar.glass" || id == "taskbar.blurRadius" || id == "taskbar.acrylic")
-            taskbarGradient.sections.materialGroup.IsExpanded(true);
         if (id == "dock.enable") return dockEnabledToggle;
         if (id == "dock.position") return positionCombo;
         if (id == "dock.layout" || id == "dock.edgeAttached")
@@ -2491,13 +2461,13 @@ struct DockPagePresenter::Impl
         if (id == "taskbar.restartExplorer") return restartExplorerButton;
         if (id == "taskbar.dynamic.visibleWindow" ||
             id == "taskbar.visibleWindow")
-            return visibleWindowRule.expander;
+            return visibleWindowRule.enabled;
         if (id == "taskbar.dynamic.maximizedWindow" ||
             id == "taskbar.maximizedWindow")
-            return maximizedWindowRule.expander;
+            return maximizedWindowRule.enabled;
         if (id == "taskbar.dynamic.shellUi" ||
             id == "taskbar.shellUi")
-            return shellUiRule.expander;
+            return shellUiRule.enabled;
         return nullptr;
     }
 

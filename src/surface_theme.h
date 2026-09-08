@@ -20,10 +20,17 @@ inline int GlobalSurfaceThemeSelection(const PersonalizationSettings& global)
     return (global.contentTheme == 1 ? 1 : 0) + (global.glassEnabled ? 2 : 0);
 }
 
+inline bool IsCustomSurfaceTheme(const SurfaceTheme& theme, const PersonalizationSettings& global)
+{
+    return theme.mode == 4 || (theme.mode == -1 && global.backgroundPreset == kAppearancePresetCustom);
+}
+
 inline PersonalizationSettings ResolveSurfaceTheme(const SurfaceTheme& theme,
     const PersonalizationSettings& global, int legacySelection, bool quickNavigation)
 {
     if (theme.mode == 4) return theme.appearance;
+    if (IsCustomSurfaceTheme(theme, global))
+        return theme.customized ? theme.appearance : global;
     const int selection = theme.mode == -2
         ? (global.backgroundPreset == kAppearancePresetCustom ? NormalizeFourThemeSelection(legacySelection) : GlobalSurfaceThemeSelection(global))
         : theme.mode == -1 ? GlobalSurfaceThemeSelection(global) : NormalizeFourThemeSelection(theme.mode);

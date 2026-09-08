@@ -1576,5 +1576,8 @@
     "appearance.quickPanelCard": "快捷面板主題",
     "appearance.popupCard": "彈出視窗主題",
     "appearance.openTaskbar": "開啟工作列設定",
-    "appearance.followGlobalPreset": "全域主題對應的預設（預設值）"
+    "appearance.followGlobalPreset": "全域主題對應的預設（預設值）",
+  "appearance.text": "文字",
+  "largeIcon.followComponentRadius": "跟隨元件圓角",
+  "largeIcon.visibility": "顯示行為"
 }

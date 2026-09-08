@@ -101,6 +101,7 @@ struct DockSettings
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
     bool followComponentAppearance = true;
+    int appearancePreset = kAppearancePresetCustom;
     PersonalizationSettings customAppearance;
     int hoverEffect = 2;
     float hoverScale = 1.28f;
@@ -118,8 +119,24 @@ struct DockSettings
     SystemTaskbarDynamicRule systemTaskbarShellUi;
 };
 
+inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
+{
+    auto value = settings.followComponentAppearance ? global :
+        settings.appearancePreset == kAppearancePresetCustom ? settings.customAppearance : MakeAppearancePreset(settings.appearancePreset);
+    value.cornerRadius = global.cornerRadius;
+    return value;
+}
+
 inline void NormalizeDockSettings(DockSettings& settings) noexcept
 {
+    switch (settings.appearancePreset)
+    {
+    case kAppearancePresetDark: case kAppearancePresetLight:
+    case kAppearancePresetGlassDark: case kAppearancePresetGlassLight:
+    case kAppearancePresetAcrylicDark: case kAppearancePresetAcrylicLight:
+    case kAppearancePresetCustom: break;
+    default: settings.appearancePreset = kAppearancePresetCustom; break;
+    }
     settings.hoverEffect = snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect);
     settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(settings.hoverScale);
     settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);

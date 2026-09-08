@@ -5,6 +5,15 @@
 
 namespace snowdesktop::large_icon_render_rules
 {
+inline LargeIconConfig ResolveComponentRadius(LargeIconConfig config, double componentRadius)
+{
+    if (config.followComponentRadius)
+    {
+        config.radius = componentRadius;
+        config.radiusPercent = -1;
+    }
+    return config;
+}
 inline double Radius(const LargeIconConfig& c, double width, double height, double scale)
 {
     const double maximum = std::max(0., std::min(width, height) / 2);

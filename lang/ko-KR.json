@@ -1576,5 +1576,8 @@
     "appearance.quickPanelCard": "빠른 패널 테마",
     "appearance.popupCard": "팝업 테마",
     "appearance.openTaskbar": "작업 표시줄 설정 열기",
-    "appearance.followGlobalPreset": "전체 테마에 따른 프리셋 (기본값)"
+    "appearance.followGlobalPreset": "전체 테마에 따른 프리셋 (기본값)",
+  "appearance.text": "텍스트",
+  "largeIcon.followComponentRadius": "구성 요소의 모서리 반경 따르기",
+  "largeIcon.visibility": "표시"
 }
