@@ -4,6 +4,7 @@
 #include "data_paths.h"
 #include "l10n.h"
 #include "personalization.h"
+#include "panel_gradient_renderer.h"
 #include "widget_engine.h"
 #include "widget_package.h"
 #include "widget_preview_stage.h"
@@ -381,7 +382,7 @@ ResolvedPreviewStyle ResolvePreviewStyle(WidgetEngine& engine,
                 borderR, borderG, borderB, resolved.theme.borderAlpha,
                 borderWidth, edgeHighlightEnabled, edgeHighlightWidth,
                 edgeHighlightStrength,
-                gradient, glass, acrylic))
+                gradient, glass, acrylic, &resolved.material.panelGradient))
         {
             resolved.theme.bg =
                 (static_cast<int>(std::lround(bgR * 255.0f)) << 16) |
@@ -436,7 +437,8 @@ void DrawHostBackground(ID2D1DeviceContext* context,
             static_cast<float>(bounds.top),
             static_cast<float>(bounds.right),
             static_cast<float>(bounds.bottom)), radius, radius);
-    if (drawMaterial && theme.alpha > 0.0f)
+    if (drawMaterial && !DrawPanelGradient(context, rounded.rect, radius,
+            resolved.material.panelGradient) && theme.alpha > 0.0f)
         context->FillRoundedRectangle(rounded, fill.Get());
     if (drawOverlay && resolved.material.glassEnabled &&
         resolved.material.acrylicEnabled)

@@ -21701,8 +21701,10 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     float& borderWidth, bool& edgeHighlightEnabled,
     float& edgeHighlightWidth, float& edgeHighlightStrength,
     float& gradientEndA,
-    bool& glassEnabled, bool& acrylicEnabled) const
+    bool& glassEnabled, bool& acrylicEnabled,
+    snowdesktop::PanelGradient* panelGradient) const
 {
+    if (panelGradient) *panelGradient = {};
     int idx = FindWidget(widgetId);
     if (idx < 0) return false;
     const auto& w = widgets_[idx];
@@ -21795,6 +21797,12 @@ bool WidgetEngine::ReadCustomColors(const std::wstring& widgetId,
     readStoredFloat("gradientEndA", gradientEndA);
     readStoredBool("glassEnabled", glassEnabled);
     readStoredBool("acrylicEnabled", acrylicEnabled);
+    if (panelGradient)
+    {
+        JsonValue value;
+        if (ParseJson(RuntimeGetStorageValue(widgetId, "__panelGradient"), value))
+            (void)snowdesktop::DecodePanelGradient(value, *panelGradient);
+    }
 
     const std::string storedLegacyBorderStyle =
         RuntimeGetStorageValue(widgetId, "borderStyle");

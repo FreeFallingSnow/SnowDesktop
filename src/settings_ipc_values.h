@@ -132,12 +132,12 @@ SD_IPC_FIELDS(widget_runtime::WidgetHostAppearanceState,
     v.followPersonalization, v.presetId, v.backgroundColor, v.borderColor,
     v.backgroundOpacity, v.borderOpacity, v.borderWidth, v.edgeHighlightEnabled,
     v.edgeHighlightWidth, v.edgeHighlightStrength, v.gradientEndOpacity, v.glassEnabled,
-    v.acrylicEnabled, v.contentTheme);
+    v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(widget_runtime::WidgetHostAppearancePatch,
     v.followPersonalization, v.presetId, v.backgroundColor, v.borderColor,
     v.backgroundOpacity, v.borderOpacity, v.borderWidth, v.edgeHighlightEnabled,
     v.edgeHighlightWidth, v.edgeHighlightStrength, v.gradientEndOpacity, v.glassEnabled,
-    v.acrylicEnabled, v.contentTheme, v.clearContentTheme);
+    v.acrylicEnabled, v.contentTheme, v.clearContentTheme, v.panelGradient);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingOpaqueState,
     v.configured, v.available, v.canChoose, v.canClear,
     v.displayLabel);

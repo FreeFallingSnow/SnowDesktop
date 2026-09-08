@@ -271,12 +271,11 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 luaBorderWidth, luaEdgeHighlightEnabled,
                 luaEdgeHighlightWidth, luaEdgeHighlightStrength,
                 luaGradientEndA,
-                luaGlassEnabled, luaAcrylicEnabled))
+                luaGlassEnabled, luaAcrylicEnabled, &effectSettings.panelGradient))
             {
                 fillColor = D2D1::ColorF(bgR, bgG, bgB, alpha);
                 borderColor = D2D1::ColorF(borderR, borderG, borderB, borderAlpha);
                 gradientEndA = luaGradientEndA;
-                effectSettings = PersonalizationSettings::DarkPreset();
                 effectSettings.widgetBorderWidth = luaBorderWidth;
                 effectSettings.widgetEdgeHighlightEnabled =
                     luaEdgeHighlightEnabled;
@@ -457,6 +456,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
         D2D1_COLOR_F transparentFill = fillColor;
         transparentFill.a = 0.0f;
+        // This pass only adds border/noise above the authored background.
+        // The material gradient was already drawn underneath it.
+        backgroundEffects.panelGradient.enabled = false;
         app_->DrawWidgetPanelBackground(context, frame, panelRadius,
             transparentFill, borderColor, selected, panelStroke,
             &backgroundEffects, false);

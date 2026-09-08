@@ -26,7 +26,18 @@ void Check(bool condition, const char* message)
 
 std::wstring Quote(std::wstring_view value)
 {
-    return L"\"" + std::wstring(value) + L"\"";
+    std::wstring result = L"\"";
+    std::size_t slashes = 0;
+    for (const wchar_t ch : value)
+    {
+        if (ch == L'\\') { ++slashes; continue; }
+        result.append(ch == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+        slashes = 0;
+        result.push_back(ch);
+    }
+    result.append(slashes * 2, L'\\');
+    result.push_back(L'"');
+    return result;
 }
 
 class TemporaryDirectory
@@ -1101,6 +1112,34 @@ int wmain(int argc, wchar_t** argv)
             failedForegroundPixel[1] > 220 &&
             failedForegroundPixel[2] < 32,
         "a failed background callback drops only that layer and preserves host material plus foreground rendering");
+    // Exercise the production storage reader and material renderer together.
+    // The fixture's failed authored background leaves the host material exposed.
+    const auto gradientPreview = [&](const wchar_t* filename, const std::wstring& storage, bool follow = false) {
+        const auto path = temporary.path / filename;
+        const auto [code, result] = Run(snowwidget, {L"preview", backgroundLayerSource.wstring(), path.wstring(),
+            L"--host", host.wstring(), L"--storage", L"backgroundError=1", L"--storage", L"alpha=0",
+            L"--storage", follow ? L"followPersonalization=1" : L"followPersonalization=0",
+            L"--storage", L"__panelGradient=" + storage});
+        Check(code == 0 && result.find("\"ok\":true") != std::string::npos,
+            "host-owned gradient storage can be rendered through the existing preview command");
+        return ReadPng(path);
+    };
+    const std::wstring gradientJson = LR"({"enabled":true,"angle":0,"stops":[{"position":0,"color":16711680,"opacity":1},{"position":1,"color":255,"opacity":1}]})";
+    const auto gradientImage = gradientPreview(L"panel-gradient.png", gradientJson);
+    const auto gradientLeft = PixelAt(gradientImage, 24, 58);
+    const auto gradientRight = PixelAt(gradientImage, 168, 58);
+    Check(gradientLeft[0] > gradientLeft[2] + 100 && gradientRight[2] > gradientRight[0] + 100 &&
+            PixelAt(gradientImage, 96, 58)[1] > 220,
+        "instance gradient paints both endpoints despite zero solid opacity and retains foreground above it");
+    const auto missingGradient = gradientPreview(L"panel-gradient-missing.png", L"");
+    const auto invalidGradient = gradientPreview(L"panel-gradient-invalid.png", L"{broken}");
+    Check(missingGradient.pixels == invalidGradient.pixels,
+        "missing and corrupt optional instance gradients preserve the same legacy appearance");
+    const auto followedGradient = gradientPreview(L"panel-gradient-followed.png", gradientJson, true);
+    const auto followedWithout = gradientPreview(L"panel-gradient-followed-without.png", L"", true);
+    Check(followedGradient.pixels == followedWithout.pixels && followedGradient.pixels != gradientImage.pixels,
+        "following global settings suppresses the stored custom instance gradient");
+
     const auto roundedImageSource =
         CreateRoundedImageFixture(temporary.path);
     const auto roundedImageOutput =

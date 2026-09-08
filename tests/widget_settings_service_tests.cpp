@@ -212,6 +212,8 @@ public:
         if (appearance.contentTheme)
             descriptor.hostAppearance.contentTheme =
                 *appearance.contentTheme;
+        if (appearance.panelGradient)
+            descriptor.hostAppearance.panelGradient = *appearance.panelGradient;
         for (const auto& write : writes)
         {
             ordinary.insert_or_assign(write.key, write.value);
@@ -742,6 +744,53 @@ int main()
 
     WidgetSettingMutationGuard guard =
         WidgetSettingMutationGuard::FromSnapshot(*loaded.snapshot);
+    {
+        FakeBackend gradientBackend = MakeBackend();
+        gradientBackend.descriptor.customStyle = true;
+        gradientBackend.persistedAppearance = gradientBackend.descriptor.hostAppearance;
+        WidgetSettingsService gradientService(gradientBackend);
+        auto gradientLoad = gradientService.Load(L"widget-1");
+        Check(gradientLoad.Succeeded() && gradientLoad.snapshot.has_value(), "gradient instance session loads");
+        const auto currentGuard = [&] {
+            return WidgetSettingMutationGuard::FromSnapshot(*gradientService.Snapshot(L"widget-1"));
+        };
+        WidgetHostAppearancePatch patch;
+        patch.panelGradient = snowdesktop::PanelGradient{};
+        patch.panelGradient->enabled = true;
+        patch.panelGradient->angle = 27;
+        patch.panelGradient->stops.insert(patch.panelGradient->stops.begin() + 1, {.35, 0x44aaee, .4});
+        const auto originalGuard = currentGuard();
+        auto result = gradientService.PreviewHostAppearance(originalGuard, patch);
+        Check(result.Changed() && gradientBackend.persistCalls == 0 &&
+                gradientService.Snapshot(L"widget-1")->hostAppearance.panelGradient == *patch.panelGradient &&
+                !gradientBackend.persistedAppearance.panelGradient.enabled,
+            "gradient preview is visible for its instance without changing persistent appearance");
+        Check(gradientService.CommitPreview(originalGuard).status == WidgetSettingMutationStatus::StaleSnapshot,
+            "an older revision cannot commit the gradient preview");
+        result = gradientService.RevertPreview(currentGuard());
+        Check(result.Changed() && !gradientBackend.descriptor.hostAppearance.panelGradient.enabled && gradientBackend.persistCalls == 0,
+            "cancelling gradient preview restores the prior stops and enabled state without saving");
+        (void)gradientService.PreviewHostAppearance(currentGuard(), patch);
+        result = gradientService.CommitPreview(currentGuard());
+        Check(result.Changed() && gradientBackend.persistedAppearance.panelGradient == *patch.panelGradient && gradientBackend.persistCalls == 1,
+            "committing a gradient persists its complete description in one appearance transaction");
+        const auto saved = gradientBackend.persistedAppearance;
+        const auto calls = gradientBackend.ordinaryCalls;
+        patch.panelGradient->stops[1].position = 1;
+        Check(gradientService.UpdateHostAppearance(currentGuard(), patch).status == WidgetSettingMutationStatus::InvalidValue &&
+                gradientService.PreviewHostAppearance(currentGuard(), patch).status == WidgetSettingMutationStatus::InvalidValue &&
+                gradientBackend.ordinaryCalls == calls && gradientBackend.persistedAppearance == saved,
+            "invalid or unordered gradient stops are rejected before either preview or persistent backend mutation");
+        WidgetHostAppearancePatch follow;
+        follow.followPersonalization = true;
+        (void)gradientService.UpdateHostAppearance(currentGuard(), follow);
+        Check(gradientBackend.persistedAppearance.panelGradient == saved.panelGradient,
+            "following global appearance keeps the independent gradient available for later editing");
+        gradientService.Close(L"widget-1");
+        auto reopened = gradientService.Load(L"widget-1");
+        Check(reopened.snapshot && reopened.snapshot->hostAppearance.panelGradient == saved.panelGradient,
+            "reopening the instance editor restores its saved gradient");
+    }
     WidgetHostAppearancePatch unavailableAppearance;
     unavailableAppearance.backgroundColor = 0x123456;
     Check(service.UpdateHostAppearance(

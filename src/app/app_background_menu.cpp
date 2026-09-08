@@ -637,7 +637,7 @@ DesktopApp::RenderWidgetMenuPreview(
                     borderR, borderG, borderB, borderAlpha,
                     borderWidth, edgeHighlightEnabled,
                     edgeHighlightWidth, edgeHighlightStrength,
-                    gradientEndA, glass, acrylic))
+                    gradientEndA, glass, acrylic, &stageAppearance.panelGradient))
             {
                 stageAppearance.widgetBorderWidth = borderWidth;
                 stageAppearance.widgetEdgeHighlightEnabled =

@@ -61,7 +61,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         view.placeholder({static_cast<LONG>(std::lround(image.left)), static_cast<LONG>(std::lround(image.top)),
             static_cast<LONG>(std::lround(image.right)), static_cast<LONG>(std::lround(image.bottom))}, view.opacity);
 
-    if (fonts && (geometry.leftReveal || geometry.upReveal) && view.hover > 0)
+    if (fonts && !view.name.empty() && (geometry.leftReveal || geometry.upReveal) && view.hover > 0)
     {
         const float size = static_cast<float>(c.revealTitleSize) * view.scale;
         ComPtr<IDWriteTextFormat> format;

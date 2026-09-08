@@ -1228,6 +1228,10 @@ WidgetSettingMutationResult WidgetSettingsService::ApplyPreset(
         // its values. Border defaults are resolved independently below.
         appearance.glassEnabled = false;
         appearance.acrylicEnabled = false;
+        // Existing authored presets describe solid materials, not the new
+        // host-only gradient. Keep its colors for later custom editing.
+        appearance.panelGradient = session.snapshot.hostAppearance.panelGradient;
+        appearance.panelGradient->enabled = false;
     }
     std::string appearanceError;
     for (const auto& [key, value] : preset->hostAppearanceValues)
@@ -1291,6 +1295,9 @@ WidgetSettingMutationResult WidgetSettingsService::UpdateHostAppearance(
     WidgetSettingMutationResult checked =
         GuardSession(state_, guard, session);
     if (!checked.Succeeded()) return checked;
+    if (patch.panelGradient && !ValidatePanelGradient(*patch.panelGradient))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision, "invalidPanelGradient", {} };
     if (patch.Empty())
         return { WidgetSettingMutationStatus::Unchanged,
             session.snapshot.generation, session.snapshot.revision, {}, {} };
@@ -1314,6 +1321,9 @@ WidgetSettingMutationResult WidgetSettingsService::PreviewHostAppearance(
     WidgetSettingMutationResult checked =
         GuardSession(state_, guard, session);
     if (!checked.Succeeded()) return checked;
+    if (patch.panelGradient && !ValidatePanelGradient(*patch.panelGradient))
+        return { WidgetSettingMutationStatus::InvalidValue,
+            session.snapshot.generation, session.snapshot.revision, "invalidPanelGradient", {} };
     if (patch.Empty())
         return { WidgetSettingMutationStatus::Unchanged,
             session.snapshot.generation, session.snapshot.revision, {}, {} };

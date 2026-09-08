@@ -166,6 +166,7 @@ struct WidgetHostAppearanceState
     bool glassEnabled = false;
     bool acrylicEnabled = false;
     int contentTheme = 0;
+    PanelGradient panelGradient;
 
     bool operator==(const WidgetHostAppearanceState&) const = default;
 };
@@ -188,6 +189,7 @@ struct WidgetHostAppearancePatch
     std::optional<bool> acrylicEnabled;
     std::optional<int> contentTheme;
     bool clearContentTheme = false;
+    std::optional<PanelGradient> panelGradient;
 
     [[nodiscard]] bool Empty() const noexcept
     {
@@ -196,7 +198,7 @@ struct WidgetHostAppearancePatch
             !borderWidth && !edgeHighlightEnabled && !edgeHighlightWidth &&
             !edgeHighlightStrength &&
             !gradientEndOpacity && !glassEnabled && !acrylicEnabled &&
-            !contentTheme && !clearContentTheme;
+            !contentTheme && !clearContentTheme && !panelGradient;
     }
 
     bool operator==(const WidgetHostAppearancePatch&) const = default;

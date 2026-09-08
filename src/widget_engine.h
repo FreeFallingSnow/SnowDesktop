@@ -1064,7 +1064,8 @@ public:
         float& borderWidth, bool& edgeHighlightEnabled,
         float& edgeHighlightWidth, float& edgeHighlightStrength,
         float& gradientEndA,
-        bool& glassEnabled, bool& acrylicEnabled) const;
+        bool& glassEnabled, bool& acrylicEnabled,
+        snowdesktop::PanelGradient* panelGradient = nullptr) const;
 
     /**
      * @brief 获取所有小部件运行时的错误条目列表

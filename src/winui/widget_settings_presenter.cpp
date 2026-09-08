@@ -4,6 +4,7 @@
 
 #include "../personalization.h"
 #include "settings_presenter_controls.h"
+#include "panel_gradient_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
@@ -428,6 +429,7 @@ struct WidgetSettingsPresenter::Impl
     std::unique_ptr<presenter_controls::ColorFlyoutEditor>
         backgroundColorEditor;
     AppearanceScalarControl backgroundOpacity;
+    std::shared_ptr<PanelGradientEditor> panelGradientEditor;
     std::unique_ptr<presenter_controls::ColorFlyoutEditor>
         borderColorEditor;
     AppearanceScalarControl borderOpacity;
@@ -704,6 +706,18 @@ struct WidgetSettingsPresenter::Impl
 
         InitializeAppearanceScalar(backgroundOpacity);
         customAppearanceHost.Children().Append(backgroundOpacity.row.root);
+        panelGradientEditor = PanelGradientEditor::Create(
+            [this](std::string_view key) { return L(key, {}); },
+            [this](const PanelGradient& gradient, bool commit) {
+                if (!CanMutate()) return;
+                constexpr std::string_view owner = "__appearance.panelGradient";
+                wr::WidgetHostAppearancePatch patch;
+                patch.panelGradient = gradient;
+                QueueTransientAppearance(owner, std::move(patch));
+                if (commit) (void)CommitTransientOwner(owner);
+                UpdateBackgroundControls(gradient.enabled);
+            });
+        customAppearanceHost.Children().Append(panelGradientEditor->Content());
 
         borderColorEditor =
             std::make_unique<presenter_controls::ColorFlyoutEditor>();
@@ -874,6 +888,8 @@ struct WidgetSettingsPresenter::Impl
                     patch.edgeHighlightStrength =
                         preset.widgetEdgeHighlightStrength;
                     patch.gradientEndOpacity = preset.gradientEndA;
+                    patch.panelGradient = currentHostAppearance.panelGradient;
+                    patch.panelGradient->enabled = false;
                     patch.glassEnabled = preset.glassEnabled;
                     patch.acrylicEnabled = preset.acrylicEnabled;
                     patch.contentTheme = preset.contentTheme;
@@ -1750,6 +1766,7 @@ struct WidgetSettingsPresenter::Impl
         const bool rebuild = newIdentity || SchemaChanged(snapshot);
         if (rebuild)
         {
+            panelGradientEditor->SetValue(snapshot.hostAppearance.panelGradient, true);
             pendingTransientPreviews.clear();
             transientPreviewActive = false;
             transientPreviewOwner.clear();
@@ -1794,9 +1811,21 @@ struct WidgetSettingsPresenter::Impl
         control.synchronizing = false;
     }
 
+    void UpdateBackgroundControls(bool gradientEnabled)
+    {
+        backgroundColorEditor->row.root.Visibility(gradientEnabled
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        backgroundOpacity.row.root.Visibility(gradientEnabled && currentHostAppearance.gradientEndOpacity <= .001f
+            ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        backgroundOpacity.row.SetText(L(gradientEnabled
+            ? "panelGradient.barStartOpacity" : "app.settings.bg_opacity", L"Background opacity"));
+    }
+
     void PatchAppearance(const wr::WidgetSettingsSnapshot& snapshot)
     {
         currentHostAppearance = snapshot.hostAppearance;
+        panelGradientEditor->SetValue(snapshot.hostAppearance.panelGradient);
+        UpdateBackgroundControls(snapshot.hostAppearance.panelGradient.enabled);
         appearanceCard.root.Visibility(snapshot.customStyle
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
@@ -2766,6 +2795,7 @@ struct WidgetSettingsPresenter::Impl
     void RefreshLocalizedText()
     {
         if (closed) return;
+        if (active && panelGradientEditor) panelGradientEditor->Flush();
         const bool oldUpdating = updatingControls;
         updatingControls = true;
         appearanceTitle.Text(L("app.settings.appearance", L"Appearance"));
@@ -2779,6 +2809,8 @@ struct WidgetSettingsPresenter::Impl
             cancelText);
         backgroundOpacity.row.SetText(
             L("app.settings.bg_opacity", L"Background opacity"));
+        panelGradientEditor->RefreshLocalizedText();
+        UpdateBackgroundControls(currentHostAppearance.panelGradient.enabled);
         borderColorEditor->SetText(
             L("app.settings.border_color", L"Border color"), {},
             cancelText);
@@ -2916,7 +2948,7 @@ struct WidgetSettingsPresenter::Impl
             return {wr::WidgetSettingMutationStatus::Disabled,
                 generation, revision, "presenterInactive", {}};
         }
-
+        panelGradientEditor->Flush();
         wr::WidgetSettingMutationResult aggregate = CommitAllTransient();
         if (!aggregate.Succeeded()) return aggregate;
         for (const auto& key : keys)
@@ -3177,6 +3209,7 @@ struct WidgetSettingsPresenter::Impl
             unhookScalar(edgeHighlightWidth);
             unhookScalar(edgeHighlightStrength);
             unhookScalar(gradientEndOpacity);
+            if (panelGradientEditor) panelGradientEditor->Close();
             if (backgroundColorEditor)
             {
                 backgroundColorEditor->changed = {};

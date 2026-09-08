@@ -126,6 +126,11 @@ void TestCodec()
     widget.widgetId = L"music-1";
     widget.generation = 3;
     widget.revision = 9;
+    widget.hostAppearance.panelGradient = settings.values.personalization.panelGradient;
+    WidgetHostAppearancePatch gradientPatch;
+    gradientPatch.panelGradient = widget.hostAppearance.panelGradient;
+    Check(Unpack<WidgetHostAppearancePatch>(Pack(gradientPatch)) == gradientPatch && !gradientPatch.Empty(),
+        "per-widget gradient patches preserve stops and are not mistaken for empty edits");
     WidgetSettingFieldState field;
     field.schema.rawType = "password";
     field.schema.key = "secret";

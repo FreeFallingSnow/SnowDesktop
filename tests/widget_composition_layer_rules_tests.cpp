@@ -282,6 +282,8 @@ int main(int argc, char** argv)
             "SafeRenderBackgroundLayer(", materialPass);
         const std::size_t materialOverlay = luaWidget.find(
             "&backgroundEffects, false", componentBackground);
+        const std::size_t disableOverlayGradient = luaWidget.find(
+            "backgroundEffects.panelGradient.enabled = false", componentBackground);
         const std::size_t widgetForeground = luaWidget.find(
             "SafeRenderWidget(", materialOverlay);
         Check(materialPass != std::string::npos &&
@@ -290,6 +292,8 @@ int main(int argc, char** argv)
                 widgetForeground != std::string::npos &&
                 materialPass < componentBackground &&
                 componentBackground < materialOverlay &&
+                disableOverlayGradient > componentBackground &&
+                disableOverlayGradient < materialOverlay &&
                 materialOverlay < widgetForeground,
             "Lua background layers must render after the material tint and before acrylic, border, and widget foreground content");
         Check(pointer.find(
