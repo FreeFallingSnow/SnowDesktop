@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "圖示填滿",
     "largeIcon.follow": "跟隨元件",
     "largeIcon.smartFill": "智慧辨識並填入圖示背景色",
-    "largeIcon.themeColor": "使用圖示主題色背景",
+    "largeIcon.themeColor": "圖示背景色",
     "largeIcon.themeGradient": "主題色漸層背景",
     "largeIcon.themeFallbackHelp": "辨識出的底色優先生效；關閉智慧辨識後可調整備用背景。",
     "largeIcon.themeUnavailable": "目前素材尚未提供可用的主題色。",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "色標位置",
     "panelGradient.removeStop": "刪除此色標",
     "panelGradient.addStop": "新增色標",
-    "panelGradient.barStartOpacity": "底列起始不透明度"
+    "panelGradient.barStartOpacity": "底列起始不透明度",
+    "largeIcon.backgroundColorHelp": "沿用圖示美化的底色填滿方式，使圖示與背景銜接；與主題色漸層互斥。",
+    "largeIcon.fillScale": "填滿圖片縮放",
+    "panelGradient.reset": "還原漸層預設值"
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include "large_icon_config.h"
 #include <algorithm>
+#include <functional>
 
 namespace snowdesktop::large_icon_render_rules
 {
@@ -29,13 +30,17 @@ struct BackgroundStyle
 inline BackgroundStyle DefaultBackground(const LargeIconConfig& c, unsigned accent, bool hasEdge, unsigned edge)
 {
     BackgroundStyle result;
-    if (c.smartFill && hasEdge) result.color = edge;
-    else if (c.themeColor && accent)
+    if (c.themeGradient && accent)
     {
         result.color = accent; result.opacity = c.themeOpacity;
-        result.gradient.enabled = c.themeGradient;
+        result.gradient.enabled = true;
         result.gradient.angle = c.themeAngle;
         result.gradient.stops = {{0, accent, c.themeOpacity}, {1, Mix(accent, 0xe8ecf4, .4), c.themeOpacity}};
+    }
+    else if (c.themeColor)
+    {
+        if (c.smartFill && hasEdge) result.color = edge;
+        else result.opacity = c.themeOpacity;
     }
     return result;
 }
@@ -55,9 +60,12 @@ struct ContentGeometry
     double titleLeft = 0, titleTop = 0, titleWidth = 0, titleHeight = 0;
     bool leftReveal = false, upReveal = false, cropped = false;
 };
+struct TitleSize { double width = 0, height = 0; bool fits = false; };
+using MeasureTitle = std::function<TitleSize(double, double)>;
 
 inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, double height,
-    double sourceWidth, double sourceHeight, double scale, bool original, double hover)
+    double sourceWidth, double sourceHeight, double scale, bool original, double hover,
+    const MeasureTitle& measure = {})
 {
     ContentGeometry r;
     if (width <= 0 || height <= 0 || scale <= 0) return r;
@@ -68,51 +76,72 @@ inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, do
     r.sourceWidth = sourceWidth; r.sourceHeight = sourceHeight;
     if (fill && c.fit == 1)
     {
-        const double factor = std::max(width / sourceWidth, height / sourceHeight);
-        r.width = width; r.height = height; r.cropped = true;
-        r.sourceWidth = width / factor; r.sourceHeight = height / factor;
+        const double factor = std::max(width / sourceWidth, height / sourceHeight) * c.fillScale;
+        r.width = std::min(width, sourceWidth * factor); r.height = std::min(height, sourceHeight * factor); r.cropped = true;
+        r.x = (width - r.width) / 2; r.y = (height - r.height) / 2;
+        r.sourceWidth = r.width / factor; r.sourceHeight = r.height / factor;
         r.sourceX = (sourceWidth - r.sourceWidth) * c.focusX;
         r.sourceY = (sourceHeight - r.sourceHeight) * c.focusY;
     }
     else
     {
-        const double factor = fill ? std::min(width / sourceWidth, height / sourceHeight) :
+        const double factor = fill ? std::min(width / sourceWidth, height / sourceHeight) * c.fillScale :
             std::min({original ? 1. : 1.e12, edge / sourceWidth, edge / sourceHeight});
         r.width = sourceWidth * factor; r.height = sourceHeight * factor;
         r.x = (width - r.width) * (fill || c.effect == 2 ? .5 : c.iconX);
         r.y = (height - r.height) * (fill || c.effect == 2 ? .5 : c.iconY);
+        if (fill)
+        {
+            // Flatten any overscan before title motion, including zoomed contain.
+            r.sourceWidth = std::min(width, r.width) / factor;
+            r.sourceHeight = std::min(height, r.height) / factor;
+            r.sourceX = (sourceWidth - r.sourceWidth) / 2;
+            r.sourceY = (sourceHeight - r.sourceHeight) / 2;
+            r.width = std::min(width, r.width); r.height = std::min(height, r.height);
+            r.x = (width - r.width) / 2; r.y = (height - r.height) / 2; r.cropped = true;
+        }
     }
     if (c.effect != 2) return r;
     hover = std::clamp(hover, 0., 1.);
-    const double size = c.revealTitleSize * scale, padding = 12 * scale;
-    const double lines = std::ceil(size * 1.3 * 2);
-    if (c.titleDirection == 0)
-    {
-        const double column = fill ? width * .55 : std::max(width * .4, r.width + 2 * padding);
-        r.titleLeft = column + padding; r.titleWidth = width - r.titleLeft - padding;
-        r.titleHeight = std::min(height - 2 * padding, lines);
-        r.titleTop = (height - r.titleHeight) / 2;
-        r.leftReveal = width >= height * 1.2 && r.titleWidth >= std::max(100 * scale, size * 4) && r.titleHeight >= size * 1.3;
-        if (r.leftReveal) r.x += (fill ? -(width - column) : (column - r.width) / 2 - r.x) * hover;
-    }
-    else
-    {
-        const double column = fill ? height * .55 : std::max(height * .4, r.height + 2 * padding);
-        const double available = height - column - 2 * padding;
-        r.titleLeft = padding; r.titleWidth = width - 2 * padding;
-        r.titleHeight = std::min(available, lines);
-        r.titleTop = column + padding + (available - r.titleHeight) / 2;
-        r.upReveal = r.titleWidth >= std::max(100 * scale, size * 4) && available >= size * 1.3;
-        if (r.upReveal) r.y += (fill ? -(height - column) : (column - r.height) / 2 - r.y) * hover;
-    }
-    return r;
+    const double padding = 12 * scale, gap = 12 * scale;
+    const auto candidate = [&](bool left) {
+        auto result = r;
+        const double maxWidth = left ? (fill ? width * .5 - 2 * padding : width - r.width - gap - 2 * padding) : width - 2 * padding;
+        const double maxHeight = left ? height - 2 * padding : (fill ? height * .5 - 2 * padding : height - r.height - gap - 2 * padding);
+        if (!measure || maxWidth <= 0 || maxHeight <= 0 ||
+            (!fill && (left ? r.height > height - 2 * padding : r.width > width - 2 * padding))) return result;
+        const auto text = measure(maxWidth, maxHeight);
+        if (!text.fits || text.width <= 0 || text.height <= 0) return result;
+        result.titleWidth = text.width; result.titleHeight = text.height;
+        if (left)
+        {
+            const double start = fill ? width - padding - text.width - gap - r.width : (width - r.width - gap - text.width) / 2;
+            result.titleLeft = fill ? width - padding - text.width : start + r.width + gap;
+            result.titleTop = (height - text.height) / 2;
+            result.x += (std::min(start, r.x) - r.x) * hover;
+            result.leftReveal = true;
+        }
+        else
+        {
+            const double start = fill ? height - padding - text.height - gap - r.height : (height - r.height - gap - text.height) / 2;
+            result.titleLeft = (width - text.width) / 2;
+            result.titleTop = fill ? height - padding - text.height : start + r.height + gap;
+            result.y += (std::min(start, r.y) - r.y) * hover;
+            result.upReveal = true;
+        }
+        return result;
+    };
+    const bool left = c.autoTitleDirection ? width > height * 1.15 : c.titleDirection == 0;
+    auto chosen = candidate(left);
+    if (c.autoTitleDirection && !chosen.leftReveal && !chosen.upReveal) chosen = candidate(!left);
+    return chosen;
 }
 inline bool CanSelectTitleDirection(const LargeIconConfig& c, int direction, double width, double height,
-    double sourceWidth, double sourceHeight, double scale)
+    double sourceWidth, double sourceHeight, double scale, const MeasureTitle& measure = {})
 {
-    auto candidate = c; candidate.effect = 2; candidate.titleDirection = direction;
+    auto candidate = c; candidate.effect = 2; candidate.autoTitleDirection = direction == 2; candidate.titleDirection = direction == 2 ? 0 : direction;
     const auto r = ResolveContent(candidate, width, height, sourceWidth, sourceHeight, scale,
-        LargeIconActiveContent(c) == 0, 0);
-    return direction == 0 ? r.leftReveal : r.upReveal;
+        LargeIconActiveContent(c) == 0, 0, measure);
+    return direction == 2 ? r.leftReveal || r.upReveal : direction == 0 ? r.leftReveal : r.upReveal;
 }
 }

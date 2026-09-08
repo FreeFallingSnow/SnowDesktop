@@ -3,6 +3,7 @@
 #include "settings_presenter_controls.h"
 #include "panel_gradient_editor.h"
 #include "../large_icon_settings_rules.h"
+#include "../large_icon_title_measure.h"
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.System.h>
 
@@ -31,6 +32,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     std::array<c::TextBlock, 2> coverLabels;
     std::array<std::wstring, 2> coverPaths;
     bool active = false, sending = false, syncing = false, dirty = false;
+    Microsoft::WRL::ComPtr<IDWriteFactory> titleFonts;
 
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
     static winrt::Windows::UI::Color Color(unsigned rgb)
@@ -41,10 +43,13 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (ParseJson(snapshot.defaultConfig, json)) DecodeLargeIconConfig(json, result);
         return result;
     }
-    bool Supported(int direction) const
+    bool Supported(int direction)
     {
+        if (!titleFonts) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+            reinterpret_cast<IUnknown**>(titleFonts.GetAddressOf()));
         return large_icon_render_rules::CanSelectTitleDirection(draft, direction, snapshot.frameWidth, snapshot.frameHeight,
-            snapshot.imageWidth, snapshot.imageHeight, snapshot.unitScale);
+            snapshot.imageWidth, snapshot.imageHeight, snapshot.unitScale,
+            large_icon_render_rules::MeasureTitleText(titleFonts.Get(), draft, snapshot.name, snapshot.unitScale));
     }
     void Reload()
     {
@@ -150,15 +155,17 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             std::wstring help;
             if ((field == Field::ThemeOptions || field == Field::ThemeGradient) && !enabled) help = L(snapshot.hasEdgeColor && draft.smartFill ? "largeIcon.themeFallbackHelp" : "largeIcon.themeUnavailable");
             if (field == Field::ForegroundPosition && !enabled) help = L("largeIcon.positionEffectHelp");
-            if (id == "largeIcon.themeColor") enabled = snapshot.accent != 0;
+            if (id == "largeIcon.themeGradient")
+            { enabled = snapshot.accent != 0; if (!enabled) help = L("largeIcon.themeUnavailable"); }
+            if (id == "largeIcon.themeColor") help = L("largeIcon.backgroundColorHelp");
             if (id == "largeIcon.radius") help = L("largeIcon.radiusHelp");
-            if (id == "largeIcon.direction" && !Supported(draft.titleDirection)) help = L("largeIcon.titleUnavailable");
+            if (id == "largeIcon.direction" && !Supported(draft.autoTitleDirection ? 2 : draft.titleDirection)) help = L("largeIcon.titleUnavailable");
             if (id == "largeIcon.autoTitleColor" && draft.backgroundStyle >= -1) help = L("largeIcon.themeTextHelp");
             if (field == Field::Crop)
             {
-                const double imageRatio = snapshot.imageHeight > 0 ? double(snapshot.imageWidth) / snapshot.imageHeight : 0;
-                const double frameRatio = double(snapshot.frameWidth) / std::max(1, snapshot.frameHeight);
-                enabled = imageRatio > 0 && (id == "largeIcon.positionX" ? imageRatio > frameRatio + .001 : imageRatio < frameRatio - .001);
+                const auto geometry = large_icon_render_rules::ResolveContent(draft, snapshot.frameWidth, snapshot.frameHeight,
+                    snapshot.imageWidth, snapshot.imageHeight, snapshot.unitScale, false, 0);
+                enabled = id == "largeIcon.positionX" ? snapshot.imageWidth > geometry.sourceWidth + .01 : snapshot.imageHeight > geometry.sourceHeight + .01;
                 if (!enabled) help = L("largeIcon.noCropRoom");
             }
             row.SetEnabled(enabled); row.help.Text(help);
@@ -169,6 +176,13 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         return [member](Impl& self) {
             const auto defaults = self.Defaults(); self.draft.*member = defaults.*member;
+            if constexpr (std::is_same_v<T, bool>)
+            {
+                if (member == &LargeIconConfig::themeColor && self.draft.themeColor) self.draft.themeGradient = false;
+                if (member == &LargeIconConfig::themeGradient && self.draft.themeGradient) self.draft.themeColor = false;
+            }
+            if constexpr (std::is_same_v<T, int>)
+                if (member == &LargeIconConfig::titleDirection) self.draft.autoTitleDirection = defaults.autoTitleDirection;
             if constexpr (std::is_same_v<T, double>)
                 if (member == &LargeIconConfig::radiusPercent) self.draft.radius = defaults.radius;
             self.Send("commit");
@@ -225,7 +239,13 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         c::ToggleSwitch input; input.MinWidth(0); input.HorizontalAlignment(x::HorizontalAlignment::Right);
         std::weak_ptr<Impl> weak = shared_from_this();
         input.Toggled([weak, member, input](auto const&, auto const&) {
-            if (auto self = weak.lock(); self && !self->syncing) { self->draft.*member = input.IsOn(); self->Send("commit"); }
+            if (auto self = weak.lock(); self && !self->syncing)
+            {
+                self->draft.*member = input.IsOn();
+                if (member == &LargeIconConfig::themeColor && input.IsOn()) self->draft.themeGradient = false;
+                if (member == &LargeIconConfig::themeGradient && input.IsOn()) self->draft.themeColor = false;
+                self->Send("commit");
+            }
         });
         synchronize.push_back([this, input, member] { input.IsOn(draft.*member); });
         Row(panel, key, input, Reset(member), field, level);
@@ -247,14 +267,18 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             {
                 const int index = input.SelectedIndex(); if (index < 0 || index >= static_cast<int>(values.size())) return;
                 if (member == &LargeIconConfig::titleDirection && !self->Supported(values[index])) return;
-                self->draft.*member = values[index];
-                if (member == &LargeIconConfig::effect && values[index] == 2 && !self->Supported(self->draft.titleDirection))
-                    if (self->Supported(1 - self->draft.titleDirection)) self->draft.titleDirection = 1 - self->draft.titleDirection;
+                if (member == &LargeIconConfig::titleDirection)
+                {
+                    self->draft.autoTitleDirection = values[index] == 2;
+                    if (values[index] != 2) self->draft.titleDirection = values[index];
+                }
+                else self->draft.*member = values[index];
                 self->Send("commit");
             }
         });
         synchronize.push_back([this, input, member, values] {
-            const auto found = std::find(values.begin(), values.end(), draft.*member);
+            const int value = member == &LargeIconConfig::titleDirection && draft.autoTitleDirection ? 2 : draft.*member;
+            const auto found = std::find(values.begin(), values.end(), value);
             input.SelectedIndex(found == values.end() ? -1 : static_cast<int>(found - values.begin()));
         });
         Row(panel, key, input, Reset(member), field, level);
@@ -304,16 +328,17 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             {{-3,"largeIcon.default"},{-2,"largeIcon.fill"},{-1,"largeIcon.follow"},
              {0,"app.settings.dark"},{1,"app.settings.light"},{6,"app.settings.dark_glass"},{7,"app.settings.light_glass"},
              {10,"app.settings.dark_acrylic"},{11,"app.settings.light_acrylic"},{9,"app.settings.custom"}});
-        Toggle(bg, "largeIcon.smartFill", &LargeIconConfig::smartFill, Field::Smart, 1);
         Toggle(bg, "largeIcon.themeColor", &LargeIconConfig::themeColor, Field::Default, 1);
+        Toggle(bg, "largeIcon.smartFill", &LargeIconConfig::smartFill, Field::Smart, 2);
+        Toggle(bg, "largeIcon.themeGradient", &LargeIconConfig::themeGradient, Field::Default, 1);
         Slider(bg, "largeIcon.opacity", &LargeIconConfig::themeOpacity, 0, 100, 1, 100, L"%", Field::ThemeOptions, 2);
-        Toggle(bg, "largeIcon.themeGradient", &LargeIconConfig::themeGradient, Field::ThemeOptions, 2);
-        Slider(bg, "panelGradient.angle", &LargeIconConfig::themeAngle, 0, 360, 1, 1, L"°", Field::ThemeGradient, 3);
+        Slider(bg, "panelGradient.angle", &LargeIconConfig::themeAngle, 0, 360, 1, 1, L"°", Field::ThemeGradient, 2);
         if (snapshot.steam) Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content,
             {{0,"largeIcon.original"},{1,"largeIcon.image"},{2,"largeIcon.steam"}}, Field::Fill, 1);
         else Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Fill, 1);
         Action(bg, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::FillImage, 2);
         Choice(bg, "largeIcon.fit", &LargeIconConfig::fit, {{1,"largeIcon.cover"},{0,"largeIcon.contain"}}, Field::Fill, 1);
+        Slider(bg, "largeIcon.fillScale", &LargeIconConfig::fillScale, 25, 300, 1, 100, L"%", Field::Fill, 1);
         Slider(bg, "largeIcon.positionX", &LargeIconConfig::focusX, 0, 100, 1, 100, L"%", Field::Crop, 2);
         Slider(bg, "largeIcon.positionY", &LargeIconConfig::focusY, 0, 100, 1, 100, L"%", Field::Crop, 2);
         Choice(bg, "largeIcon.orientation", &LargeIconConfig::steamOrientation,
@@ -362,7 +387,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         auto effects = Group("largeIcon.effectsSection");
         Choice(effects, "largeIcon.effect", &LargeIconConfig::effect, {{0,"largeIcon.noEffect"},{1,"largeIcon.tilt"},{2,"largeIcon.dynamicTitle"}});
         Slider(effects, "largeIcon.amplitude", &LargeIconConfig::amplitude, 0, 100, 1, 50, L"%", Field::Tilt, 1);
-        Choice(effects, "largeIcon.direction", &LargeIconConfig::titleDirection, {{0,"largeIcon.left"},{1,"largeIcon.up"}}, Field::Title, 1);
+        Choice(effects, "largeIcon.direction", &LargeIconConfig::titleDirection, {{2,"largeIcon.auto"},{0,"largeIcon.left"},{1,"largeIcon.up"}}, Field::Title, 1);
         Slider(effects, "largeIcon.titleSize", &LargeIconConfig::revealTitleSize, 8, 72, 1, 1, L"", Field::Title, 1);
         Slider(effects, "largeIcon.titleWeight", &LargeIconConfig::titleWeight, 100, 900, 100, 1, L"", Field::Title, 1);
         Toggle(effects, "largeIcon.autoTitleColor", &LargeIconConfig::autoTitleColor, Field::Title, 1);

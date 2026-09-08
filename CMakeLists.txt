@@ -1947,7 +1947,7 @@ if (BUILD_TESTING)
             src/preview_png_writer.cpp
             src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid
         LABELS rules shell ui)
 
     add_test(NAME large_icon_shell_assets

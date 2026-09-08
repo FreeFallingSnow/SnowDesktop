@@ -3,6 +3,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <d2d1helper.h>
+#include <d3d11.h>
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
@@ -24,8 +25,30 @@ struct Canvas
     ComPtr<IWICBitmap> surface;
     ComPtr<ID2D1RenderTarget> target;
     ComPtr<IDWriteFactory> fonts;
-    Canvas()
+    ComPtr<ID2D1DeviceContext> device;
+    ComPtr<ID2D1Bitmap1> gpuSurface, readable;
+    snowdesktop::large_icon_renderer::CardResources card;
+    Canvas(bool useDevice = false)
     {
+        if (useDevice)
+        {
+            ComPtr<ID3D11Device> d3d;
+            Require(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr), "WARP D3D11 device");
+            ComPtr<IDXGIDevice> dxgi; Require(d3d.As(&dxgi), "DXGI device");
+            ComPtr<ID2D1Factory1> factory;
+            Require(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf()), "D2D device factory");
+            ComPtr<ID2D1Device> drawing; Require(factory->CreateDevice(dxgi.Get(), &drawing), "D2D device");
+            Require(drawing->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &device), "D2D context");
+            const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+            Require(device->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0,
+                D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format, 96, 96), &gpuSurface), "GPU surface");
+            Require(device->CreateBitmap(D2D1::SizeU(width, height), nullptr, 0,
+                D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96), &readable), "readback surface");
+            device->SetTarget(gpuSurface.Get()); target = device;
+        }
+        else
+        {
         ComPtr<IWICImagingFactory> images;
         Require(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&images)), "WIC factory");
         Require(images->CreateBitmap(width, height, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &surface), "WIC surface");
@@ -33,6 +56,7 @@ struct Canvas
         Require(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, drawing.GetAddressOf()), "D2D factory");
         Require(drawing->CreateWicBitmapRenderTarget(surface.Get(), D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96), &target), "D2D WIC target");
+        }
         Require(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(fonts.GetAddressOf())), "DWrite factory");
     }
     ComPtr<ID2D1Bitmap> Image(int w, int h, bool transparent = false)
@@ -46,13 +70,23 @@ struct Canvas
             D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96), &image), "image fixture");
         return image;
     }
-    std::vector<unsigned> Draw(const snowdesktop::LargeIconConfig& config, const snowdesktop::large_icon_renderer::View& view)
+    std::vector<unsigned> Draw(const snowdesktop::LargeIconConfig& config, const snowdesktop::large_icon_renderer::View& view,
+        const snowdesktop::large_icon_transform::Card* transform = nullptr)
     {
         target->BeginDraw(); target->Clear(D2D1::ColorF(0, 0.f));
-        snowdesktop::large_icon_renderer::DrawFrame(target.Get(), fonts.Get(), config, view);
+        if (transform)
+            Check(snowdesktop::large_icon_renderer::DrawCard3D(device.Get(), fonts.Get(), config, view, *transform, card), "production 3D draw accepted");
+        else snowdesktop::large_icon_renderer::DrawFrame(target.Get(), fonts.Get(), config, view);
         Require(target->EndDraw(), "production draw");
         std::vector<unsigned> pixels(width * height);
-        Require(surface->CopyPixels(nullptr, width * 4, width * height * 4, reinterpret_cast<BYTE*>(pixels.data())), "read rendered pixels");
+        if (device)
+        {
+            Require(readable->CopyFromBitmap(nullptr, gpuSurface.Get(), nullptr), "3D readback copy");
+            D2D1_MAPPED_RECT mapped{}; Require(readable->Map(D2D1_MAP_OPTIONS_READ, &mapped), "3D readback map");
+            for (int y = 0; y < height; ++y) std::copy_n(reinterpret_cast<unsigned*>(mapped.bits + y * mapped.pitch), width, pixels.data() + y * width);
+            readable->Unmap();
+        }
+        else Require(surface->CopyPixels(nullptr, width * 4, width * height * 4, reinterpret_cast<BYTE*>(pixels.data())), "read rendered pixels");
         return pixels;
     }
 };
@@ -112,7 +146,7 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         auto bounds = RedBounds(pixels);
         Check(bounds.left == 168 && bounds.top == 128 && bounds.right == 232 && bounds.bottom == 192,
             "production renderer centers low-resolution originals without upscaling");
-        Check(Pixel(pixels, 115, 160) == 0xffe8ecf4, "first frame has an opaque default-beautify background before assets load");
+        Check((Pixel(pixels, 115, 160) >> 24) >= 165, "first frame has the default-beautify background before assets load");
         view.hover = 1;
         Check(canvas.Draw(config, view) == pixels, "no-effect hover leaves original and background unchanged");
         Check(Visible(pixels, {0, 265, Canvas::width, Canvas::height}) == 0, "no external title layer is drawn");
@@ -124,7 +158,8 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         pixels = canvas.Draw(config, view);
         Check((Pixel(pixels, 115, 160) >> 24) >= 100 && (Pixel(pixels, 115, 160) >> 24) <= 104,
             "theme fallback uses its independent opacity");
-        config.themeGradient = true; config.themeAngle = 0;
+        Check(Pixel(pixels, 115, 160) == Pixel(pixels, 285, 160), "beautify base uses a uniform background instead of the theme accent");
+        config.themeColor = false; config.themeGradient = true; config.themeAngle = 0;
         pixels = canvas.Draw(config, view);
         Check(Pixel(pixels, 115, 160) != Pixel(pixels, 285, 160), "automatic gradient changes color across the requested direction");
 
@@ -133,21 +168,22 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         view.name = L"A"; view.backgroundResolved = true; view.background.opacity = 0;
         config.autoTitleColor = false; config.titleColor = 0xffffff;
         pixels = canvas.Draw(config, view); bounds = RedBounds(pixels);
-        Check(bounds.left == 88 && bounds.top == 133 && bounds.right == 152 && bounds.bottom == 197,
-            "left reveal preserves original size and centers it in its left column");
-        Check(Visible(pixels, {212, 133, 290, 198}) == 0 && Visible(pixels, {350, 133, 428, 198}) == 0 &&
-            Visible(pixels, {300, 135, 340, 196}) > 50,
-            "large inner title is centered in the right column without a backdrop");
+        Check(bounds.left > 180 && bounds.left < 210 && bounds.top == 133 && bounds.right - bounds.left == 64 && bounds.bottom == 197,
+            "short title shifts the original only enough to center the compact icon-text group");
+        Check(Visible(pixels, {40, 76, 180, 254}) == 0 && Visible(pixels, {320, 76, 439, 254}) == 0 &&
+            Visible(pixels, {270, 140, 310, 190}) > 50,
+            "short inner title stays next to the icon without a fixed empty column or text backdrop");
         Save(outputDirectory, "02-left-title.png", pixels);
         view.animations = false;
         Check(canvas.Draw(config, view) == pixels, "reduced motion uses the same final inner-title pose without an external label");
         view.name = L"A very long title with enough words to occupy several lines without escaping the fixed card frame. More title words follow.";
         pixels = canvas.Draw(config, view);
-        Check(TextBands(pixels, {212, 133, 428, 198}) == 2, "long title renders at most two centered lines");
+        Check(TextBands(pixels, {40, 76, 439, 254}) == 2, "long title renders at most two centered lines");
+        Check(RedBounds(pixels).left < bounds.left - 50, "longer text asks for more travel than a short title");
         Check(Visible(pixels, {0, 260, Canvas::width, Canvas::height}) == 0, "long truncated title never creates a floating label");
         Save(outputDirectory, "03-long-title.png", pixels);
         view.name = L"Snow";
-        const auto titleArea = RECT{212, 133, 428, 198};
+        const auto titleArea = RECT{40, 76, 439, 254};
         config.titleWeight = 100;
         const auto light = canvas.Draw(config, view);
         config.titleWeight = 900;
@@ -163,8 +199,8 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         config.titleDirection = 1; config.titleWeight = 600;
         view.frame = {140, 10, 320, 350}; view.name = L"Title";
         pixels = canvas.Draw(config, view); bounds = RedBounds(pixels);
-        Check(bounds.top == 46 && bounds.bottom == 110, "up reveal moves unchanged original into the upper column");
-        Check(Visible(pixels, {152, 158, 308, 338}) > 50, "up reveal draws its title in the lower region");
+        Check(bounds.top > 115 && bounds.top < 150 && bounds.bottom - bounds.top == 64, "automatic up reveal centers a compact vertical icon-text stack");
+        Check(Visible(pixels, {152, 200, 308, 242}) > 50, "up reveal places title close beneath the image");
         Save(outputDirectory, "04-up-title.png", pixels);
 
         config = {}; config.backgroundStyle = -2; config.radius = 32;
@@ -181,8 +217,9 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check(Pixel(pixels, 110, 80) == 0 && Red(Pixel(pixels, 200, 160)), "100 percent rounding uses half short edge");
         config.radiusPercent = 0; config.effect = 2;
         view.frame = {40, 75, 440, 255}; view.hover = 1;
+        view.name = L"A";
         pixels = canvas.Draw(config, view);
-        Check(Visible(pixels, {275, 80, 435, 250}) == 0 && Red(Pixel(pixels, 120, 160)),
+        Check(RedBounds(pixels).right > 380 && RedBounds(pixels).right < 420 && Visible(pixels, {420, 80, 435, 135}) == 0,
             "an oversized fill source is cropped before left movement, leaving transparent title space");
         Save(outputDirectory, "05-fill-reveal.png", pixels);
         config.effect = 0; config.fit = 0; view.frame = {100, 60, 300, 260};
@@ -190,7 +227,7 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check(Visible(pixels, {105, 65, 295, 120}) == 0 && Red(Pixel(pixels, 200, 160)),
             "contain fill leaves gaps transparent without an automatic base");
         view.bitmap = nullptr; view.selected = true;
-        int placeholders = 0; view.placeholder = [&](RECT, float) { ++placeholders; };
+        int placeholders = 0; view.placeholder = [&](ID2D1RenderTarget*, RECT, float) { ++placeholders; };
         pixels = canvas.Draw(config, view);
         Check(Visible(pixels, {105, 65, 114, 74}) == 0 && Pixel(pixels, 200, 160) == 0 &&
             Visible(pixels, {190, 59, 210, 62}) > 0,
@@ -203,8 +240,40 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         config = {}; view = {}; view.frame = {120, 80, 360, 320}; view.scale = 2;
         auto transparent = canvas.Image(128, 128, true); view.bitmap = transparent.Get();
         pixels = canvas.Draw(config, view);
-        Check(Pixel(pixels, 130, 210) == 0xffe8ecf4, "transparent source pixels retain the default background at 200 percent DPI");
+        Check((Pixel(pixels, 130, 210) >> 24) >= 165, "transparent source pixels retain the default background at 200 percent DPI");
         Save(outputDirectory, "06-transparent-200dpi.png", pixels);
+
+        // Exercise the real device-context effects without a desktop window.
+        Canvas gpu(true);
+        config = {}; config.effect = 1; config.radiusPercent = 0;
+        view = {}; view.frame = {100, 60, 380, 300}; view.opacity = .7f;
+        auto gpuIcon = gpu.Image(64, 64); view.bitmap = gpuIcon.Get();
+        view.drawBackground = [](ID2D1RenderTarget* rt, RECT rect, float, float opacity) {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            Require(rt->CreateSolidColorBrush(D2D1::ColorF(0x204080, opacity), &brush), "3D background brush");
+            rt->FillRectangle(D2D1::RectF(float(rect.left), float(rect.top), float(rect.right), float(rect.bottom)), brush.Get());
+        };
+        const auto flat = gpu.Draw(config, view);
+        const auto transform = snowdesktop::large_icon_transform::Resolve(280, 240, 1, -1, 2);
+        pixels = gpu.Draw(config, view, &transform);
+        Check(pixels != flat, "3D transforms the actual production card");
+        const auto projected = snowdesktop::large_icon_transform::Bounds(view.frame, transform.matrix);
+        Check(Visible(pixels, {projected.left - 2, projected.top - 2, projected.right + 2, projected.bottom + 2}) > 45000,
+            "projected card contains its background and image");
+        Check(Visible(pixels, {0, 0, Canvas::width, projected.top - 2}) == 0,
+            "projected content is not relocated by the effect's output bounds");
+        bool changedEdge = false;
+        for (int x = 110; x < 370; ++x) changedEdge |= (Pixel(pixels, x, 60) >> 24) != (Pixel(flat, x, 60) >> 24);
+        Check(changedEdge, "3D changes the outer background edge, not only the icon");
+        const auto center = Pixel(pixels, 240, 180);
+        Check((center >> 24) > 210 && (center >> 24) < 250, "3D lighting preserves premultiplied compositing alpha");
+        Check(gpu.Draw(config, view) == flat, "3D recording leaves the main render target and ordinary draw state reusable");
+        Save(outputDirectory, "07-whole-card-3d.png", pixels);
+        config.backgroundStyle = -2; auto transparentFill = gpu.Image(128, 128, true); view.bitmap = transparentFill.Get();
+        pixels = gpu.Draw(config, view, &transform);
+        Check(Pixel(pixels, 120, 180) == 0 && (Pixel(pixels, 240, 180) >> 24) > 170,
+            "3D fill preserves transparent source areas and does not add component material");
+        Save(outputDirectory, "08-transparent-fill-3d.png", pixels);
     }
     catch (const std::exception& error) { Check(false, error.what()); }
     if (SUCCEEDED(apartment)) CoUninitialize();

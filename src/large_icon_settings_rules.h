@@ -15,9 +15,9 @@ inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
     switch (field)
     {
     case Field::Default: return automatic;
-    case Field::Smart: return automatic && hasEdge;
-    case Field::ThemeOptions: return automatic && c.themeColor;
-    case Field::ThemeGradient: return automatic && c.themeColor && c.themeGradient;
+    case Field::Smart: return automatic && c.themeColor && hasEdge;
+    case Field::ThemeOptions: return automatic && (c.themeColor || c.themeGradient);
+    case Field::ThemeGradient: return automatic && c.themeGradient;
     case Field::Fill: return fill;
     case Field::FillImage: return fill && c.content == 1;
     case Field::Crop: return fill && c.fit == 1;
@@ -37,7 +37,8 @@ inline bool Visible(Field field, const LargeIconConfig& c, bool hasEdge = false)
 }
 inline bool Enabled(Field field, const LargeIconConfig& c, bool hasEdge, bool hasTheme)
 {
-    if (field == Field::ThemeOptions || field == Field::ThemeGradient) return hasTheme && !(hasEdge && c.smartFill);
+    if (field == Field::ThemeOptions || field == Field::ThemeGradient)
+        return c.themeGradient ? hasTheme : !(hasEdge && c.smartFill && c.themeColor);
     if (field == Field::ForegroundPosition) return c.effect != 2;
     return true;
 }

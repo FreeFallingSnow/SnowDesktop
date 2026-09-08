@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "Symbolfüllung",
     "largeIcon.follow": "Widgets folgen",
     "largeIcon.smartFill": "Symbolhintergrundfarbe erkennen und füllen",
-    "largeIcon.themeColor": "Symbolthemenfarbe verwenden",
+    "largeIcon.themeColor": "Symbolhintergrundfarbe",
     "largeIcon.themeGradient": "Themenfarbverlauf",
     "largeIcon.themeFallbackHelp": "Der erkannte Hintergrund hat Vorrang. Zum Anpassen des Ersatzhintergrunds die Erkennung ausschalten.",
     "largeIcon.themeUnavailable": "Für dieses Bild ist noch keine verwendbare Themenfarbe verfügbar.",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "Position des Farbstopps",
     "panelGradient.removeStop": "Diesen Farbstopp entfernen",
     "panelGradient.addStop": "Farbstopp hinzufügen",
-    "panelGradient.barStartOpacity": "Startdeckkraft der unteren Leiste"
+    "panelGradient.barStartOpacity": "Startdeckkraft der unteren Leiste",
+    "largeIcon.backgroundColorHelp": "Die Hintergrundfüllung der Symbolverschönerung verbindet das Symbol mit seinem Hintergrund. Nicht mit dem Designfarbverlauf kombinierbar.",
+    "largeIcon.fillScale": "Skalierung des Füllbilds",
+    "panelGradient.reset": "Farbverlauf zurücksetzen"
 }

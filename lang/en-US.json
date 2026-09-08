@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "Icon fill",
     "largeIcon.follow": "Follow widgets",
     "largeIcon.smartFill": "Detect and fill the icon background color",
-    "largeIcon.themeColor": "Use the icon theme color",
+    "largeIcon.themeColor": "Icon background color",
     "largeIcon.themeGradient": "Theme color gradient",
     "largeIcon.themeFallbackHelp": "The detected background takes priority. Turn off detection to adjust the fallback.",
     "largeIcon.themeUnavailable": "No usable theme color is available for this image yet.",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "Stop position",
     "panelGradient.removeStop": "Remove this stop",
     "panelGradient.addStop": "Add color stop",
-    "panelGradient.barStartOpacity": "Bottom bar start opacity"
+    "panelGradient.barStartOpacity": "Bottom bar start opacity",
+    "largeIcon.backgroundColorHelp": "Use the icon beautification background fill to blend the icon into its background. Mutually exclusive with the theme-color gradient.",
+    "largeIcon.fillScale": "Fill image scale",
+    "panelGradient.reset": "Reset gradient"
 }

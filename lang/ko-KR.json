@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "아이콘 채우기",
     "largeIcon.follow": "위젯 설정 따르기",
     "largeIcon.smartFill": "아이콘 배경색을 감지하여 채우기",
-    "largeIcon.themeColor": "아이콘 테마 색상을 배경으로 사용",
+    "largeIcon.themeColor": "아이콘 배경색",
     "largeIcon.themeGradient": "테마 색상 그라데이션",
     "largeIcon.themeFallbackHelp": "감지된 배경색이 우선 적용됩니다. 감지를 끄면 대체 배경을 조정할 수 있습니다.",
     "largeIcon.themeUnavailable": "현재 이미지에서 사용할 수 있는 테마 색상이 아직 없습니다.",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "색상 지점의 위치",
     "panelGradient.removeStop": "이 색상 지점 삭제",
     "panelGradient.addStop": "색상 지점 추가",
-    "panelGradient.barStartOpacity": "하단 바 시작 불투명도"
+    "panelGradient.barStartOpacity": "하단 바 시작 불투명도",
+    "largeIcon.backgroundColorHelp": "아이콘 꾸미기와 같은 배경 채우기를 사용해 아이콘과 배경을 자연스럽게 연결합니다. 테마 색상 그라데이션과 함께 사용할 수 없습니다.",
+    "largeIcon.fillScale": "채우기 이미지 배율",
+    "panelGradient.reset": "그라데이션 초기화"
 }

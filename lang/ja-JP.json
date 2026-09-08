@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "アイコンで塗りつぶし",
     "largeIcon.follow": "ウィジェットに合わせる",
     "largeIcon.smartFill": "アイコンの背景色を検出して塗りつぶす",
-    "largeIcon.themeColor": "アイコンのテーマ色を背景に使う",
+    "largeIcon.themeColor": "アイコンの背景色",
     "largeIcon.themeGradient": "テーマ色のグラデーション",
     "largeIcon.themeFallbackHelp": "検出した背景色が優先されます。検出をオフにすると代替背景を調整できます。",
     "largeIcon.themeUnavailable": "この画像には利用可能なテーマ色がまだありません。",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "色点の位置",
     "panelGradient.removeStop": "この色点を削除",
     "panelGradient.addStop": "色点を追加",
-    "panelGradient.barStartOpacity": "下部バーの開始点の不透明度"
+    "panelGradient.barStartOpacity": "下部バーの開始点の不透明度",
+    "largeIcon.backgroundColorHelp": "アイコン装飾と同じ背景の塗りつぶしで、アイコンと背景を一体化します。テーマカラーのグラデーションとは併用できません。",
+    "largeIcon.fillScale": "塗りつぶし画像の拡大率",
+    "panelGradient.reset": "グラデーションを初期値に戻す"
 }

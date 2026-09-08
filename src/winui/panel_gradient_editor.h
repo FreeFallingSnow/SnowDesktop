@@ -100,6 +100,16 @@ private:
         x::Automation::AutomationProperties::SetName(control, L(key));
         root_.Children().Append(row.root);
     }
+    void ActionRow(const char* key, const X& control, int level = 1)
+    {
+        namespace x = winrt::Microsoft::UI::Xaml;
+        presenter_controls::SettingRow row;
+        row.Initialize(control); row.SetText(L(key));
+        row.SetControlAlignment(x::HorizontalAlignment::Right);
+        row.root.MinHeight(44); row.root.Margin({level * 16., 0, 0, 0});
+        x::Automation::AutomationProperties::SetName(control, L(key));
+        root_.Children().Append(row.root);
+    }
     void Numeric(const char* key, Read read, Write write, double min, double max, double step, double defaultValue, const wchar_t* unit = L"%", int level = 1)
     {
         namespace x = winrt::Microsoft::UI::Xaml;
@@ -217,17 +227,20 @@ private:
         {
             Stop(0, true, false); Stop(value_.stops.size() - 1, false, true);
             Numeric("panelGradient.angle", [](auto const& v) { return v.angle; }, [](auto& v, double n) { v.angle = n; }, 0, 360, 1, 90, L"°");
-            c::Button swap; swap.Content(winrt::box_value(L("panelGradient.swap"))); swap.HorizontalAlignment(x::HorizontalAlignment::Right);
+            c::Button swap; swap.Content(winrt::box_value(L"⇄")); swap.HorizontalAlignment(x::HorizontalAlignment::Right);
             swap.Click([weak](auto const&, auto const&) {
                 if (auto self = weak.lock()) self->Apply([](auto& v) {
                     std::swap(v.stops.front().color, v.stops.back().color);
                     std::swap(v.stops.front().opacity, v.stops.back().opacity);
                 }, true);
             });
-            root_.Children().Append(swap);
-            c::Button more; more.Content(winrt::box_value(L("panelGradient.more"))); more.HorizontalAlignment(x::HorizontalAlignment::Right);
-            more.Click([weak](auto const&, auto const&) { if (auto self = weak.lock()) { self->expanded_ = !self->expanded_; self->Build(); } });
-            root_.Children().Append(more);
+            ActionRow("panelGradient.swap", swap);
+            c::ToggleSwitch more; more.MinWidth(0); more.IsOn(expanded_); more.HorizontalAlignment(x::HorizontalAlignment::Right);
+            more.Toggled([weak, more](auto const&, auto const&) {
+                if (auto self = weak.lock(); self && !self->syncing_)
+                { self->expanded_ = more.IsOn(); self->Build(); }
+            });
+            ActionRow("panelGradient.more", more);
             if (expanded_)
             {
                 Numeric("panelGradient.startPosition", [](auto const& v) { return v.start * 100; },
@@ -247,7 +260,12 @@ private:
                         v.stops.insert(v.stops.begin() + gap, {position, 0xc8d0ef, .65});
                     }, true);
                 });
-                root_.Children().Append(add);
+                ActionRow("panelGradient.addStop", add, 2);
+                c::Button reset; reset.Content(winrt::box_value(L("app.settings.restore_default")));
+                reset.Click([weak](auto const&, auto const&) {
+                    if (auto self = weak.lock()) self->Apply([](auto& v) { v = {}; v.enabled = true; }, true);
+                });
+                ActionRow("panelGradient.reset", reset, 2);
             }
         }
         Sync();

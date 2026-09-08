@@ -320,6 +320,7 @@ struct DesktopBackdropCompositor::Impl
     struct PanelVisual
     {
         RECT frame{};
+        RECT regionFrame{};
         std::uintptr_t ownerKey = 0;
         int cornerRadius = 0;
         int blurRadius = 0;
@@ -542,10 +543,10 @@ struct DesktopBackdropCompositor::Impl
             // rectangular bounds so a binary GDI region cannot cut off the
             // partially covered pixels along the rounded edge.
             HRGN frameRegion = CreateRectRgn(
-                panel.frame.left,
-                panel.frame.top,
-                panel.frame.right + 1,
-                panel.frame.bottom + 1);
+                panel.regionFrame.left,
+                panel.regionFrame.top,
+                panel.regionFrame.right + 1,
+                panel.regionFrame.bottom + 1);
             if (!frameRegion)
             {
                 DeleteObject(panelRegion);
@@ -1486,6 +1487,8 @@ bool DesktopBackdropCompositor::AddPanel(
             impl_->ClearGenieTransform();
         }
         existing->frame = frame;
+        existing->regionFrame = frame;
+        existing->visual.TransformMatrix(wfn::float4x4{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
 
         if (existing->blurRadius != blurKey || !existing->visual.Brush())
         {
@@ -1520,6 +1523,30 @@ bool DesktopBackdropCompositor::AddPanel(
             existing->visual.Opacity(1.0f);
         existing->seen = true;
         impl_->PruneUnusedBlurFactories();
+        return true;
+    }
+    catch (const winrt::hresult_error& error)
+    {
+        impl_->SetError(_LW("backdrop.update_panel"), error.code());
+        return false;
+    }
+}
+
+bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
+    const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame)
+{
+    if (!impl_->available || !ownerKey || IsRectEmpty(&projectedFrame)) return false;
+    const auto found = std::find_if(impl_->panels.begin(), impl_->panels.end(),
+        [ownerKey](const auto& panel) { return panel.ownerKey == ownerKey; });
+    if (found == impl_->panels.end()) return false;
+    try
+    {
+        found->visual.TransformMatrix(wfn::float4x4{
+            matrix._11, matrix._12, matrix._13, matrix._14,
+            matrix._21, matrix._22, matrix._23, matrix._24,
+            matrix._31, matrix._32, matrix._33, matrix._34,
+            matrix._41, matrix._42, matrix._43, matrix._44 });
+        found->regionFrame = projectedFrame;
         return true;
     }
     catch (const winrt::hresult_error& error)

@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "Preenchimento com ícone",
     "largeIcon.follow": "Seguir os widgets",
     "largeIcon.smartFill": "Detectar e preencher a cor de fundo do ícone",
-    "largeIcon.themeColor": "Usar a cor predominante do ícone",
+    "largeIcon.themeColor": "Cor de fundo do ícone",
     "largeIcon.themeGradient": "Gradiente da cor predominante",
     "largeIcon.themeFallbackHelp": "O fundo detectado tem prioridade. Desative a detecção para ajustar o fundo alternativo.",
     "largeIcon.themeUnavailable": "Ainda não há uma cor predominante disponível para esta imagem.",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "Posição do ponto",
     "panelGradient.removeStop": "Remover este ponto",
     "panelGradient.addStop": "Adicionar ponto de cor",
-    "panelGradient.barStartOpacity": "Opacidade inicial da barra inferior"
+    "panelGradient.barStartOpacity": "Opacidade inicial da barra inferior",
+    "largeIcon.backgroundColorHelp": "Usa o preenchimento de fundo do embelezamento de ícones para integrar o ícone ao fundo. Não pode ser combinado com o gradiente de cores do tema.",
+    "largeIcon.fillScale": "Escala da imagem de preenchimento",
+    "panelGradient.reset": "Restaurar gradiente"
 }

@@ -182,6 +182,12 @@ void DesktopApp::UpdateLargeIconHover()
         const bool hover = PtInRect(&frame, lastMousePoint_) || (keyboardNavVisualFocus_ && item.selected);
         moving = state.motion.Advance(now, hover, visible && interactive, snowdesktop::animation::RuntimeAnimationsEnabled(),
             snowdesktop::animation::RuntimeDurationScale(), config) || moving;
+        const float width = static_cast<float>(std::max<LONG>(1, frame.right - frame.left));
+        const float height = static_cast<float>(std::max<LONG>(1, frame.bottom - frame.top));
+        moving = state.motion.AdvanceTilt(now, 2 * (lastMousePoint_.x - frame.left) / width - 1,
+            2 * (lastMousePoint_.y - frame.top) / height - 1, PtInRect(&frame, lastMousePoint_) != FALSE,
+            visible && interactive, snowdesktop::animation::RuntimeAnimationsEnabled(),
+            snowdesktop::animation::RuntimeDurationScale(), config) || moving;
         ++it;
     }
     if (!moving && largeIconAnimationToken_)

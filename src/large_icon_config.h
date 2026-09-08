@@ -21,6 +21,7 @@ struct LargeIconConfig
     int version = 2;
     int columns = 2, rows = 2;
     double contentScale = .60;
+    double fillScale = 1; // Independent of the foreground; relative to contain/cover fit.
     double radius = 12;
     double radiusPercent = -1; // -1 preserves the legacy/component CU radius; 100 is half the short edge.
     int content = 0; // 0 original, 1 imported static image, 2 Steam
@@ -56,6 +57,8 @@ struct LargeIconConfig
     // v2: background selector is flat; nonnegative values are component preset
     // IDs (including 9/custom). Foreground and fill sources are independent.
     int backgroundStyle = -3; // -3 default, -2 image fill, -1 follow components
+    // themeColor is the legacy storage name for the beautify-style background,
+    // not an accent color. It is mutually exclusive with themeGradient.
     bool smartFill = true, themeColor = true, themeGradient = false;
     double themeOpacity = .65, themeAngle = 90;
     int foregroundContent = 0; // 0 original, 1 imported
@@ -68,6 +71,7 @@ struct LargeIconConfig
     PanelGradient gradient;
     int effect = 0; // none, 3D, dynamic title
     int titleDirection = 0; // left, up
+    bool autoTitleDirection = true;
     int titleWeight = 600;
 
     friend bool operator==(const LargeIconConfig&, const LargeIconConfig&) = default;
@@ -79,7 +83,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
 {
 #define LI_FIELD(name) f(#name, c.name)
     LI_FIELD(version); LI_FIELD(columns); LI_FIELD(rows);
-    LI_FIELD(contentScale); LI_FIELD(radius); LI_FIELD(radiusPercent); LI_FIELD(content); LI_FIELD(fit);
+    LI_FIELD(contentScale); LI_FIELD(fillScale); LI_FIELD(radius); LI_FIELD(radiusPercent); LI_FIELD(content); LI_FIELD(fit);
     LI_FIELD(focusX); LI_FIELD(focusY); LI_FIELD(image); LI_FIELD(cachedCover);
     LI_FIELD(autoColor); LI_FIELD(manualColor); LI_FIELD(colorMix);
     LI_FIELD(opacity); LI_FIELD(hoverOpacity); LI_FIELD(border);
@@ -95,7 +99,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(themeOpacity); LI_FIELD(themeAngle); LI_FIELD(foregroundContent); LI_FIELD(foregroundImage);
     LI_FIELD(iconX); LI_FIELD(iconY); LI_FIELD(material); LI_FIELD(componentTheme); LI_FIELD(blurRadius);
     LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(gradient);
-    LI_FIELD(effect); LI_FIELD(titleDirection); LI_FIELD(titleWeight);
+    LI_FIELD(effect); LI_FIELD(titleDirection); LI_FIELD(autoTitleDirection); LI_FIELD(titleWeight);
 #undef LI_FIELD
 }
 
@@ -118,7 +122,7 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.backgroundStyle == 0 || c.backgroundStyle == 1 || c.backgroundStyle == 6 || c.backgroundStyle == 7 ||
         c.backgroundStyle == 9 || c.backgroundStyle == 10 || c.backgroundStyle == 11;
     return (c.version == 1 || c.version == 2) && c.columns >= 1 && c.columns <= 1024 &&
-        c.rows >= 1 && c.rows <= 1024 && range(c.contentScale, .1, 1) &&
+        c.rows >= 1 && c.rows <= 1024 && range(c.contentScale, .1, 1) && range(c.fillScale, .25, 3) &&
         range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= 2 &&
         c.fit >= 0 && c.fit <= 1 && range(c.focusX, 0, 1) && range(c.focusY, 0, 1) &&
         IsManagedLargeIconImage(c.image) && IsManagedLargeIconImage(c.cachedCover) &&
@@ -131,7 +135,7 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.coverHover >= 0 && c.coverHover <= 2 && range(c.amplitude, 0, 2) &&
         c.delayMs >= 0 && c.delayMs <= 2000 && c.enterMs >= 0 && c.enterMs <= 2000 &&
         c.exitMs >= 0 && c.exitMs <= 2000 && c.steamOrientation >= 0 && c.steamOrientation <= 2 &&
-        style && range(c.themeOpacity, 0, 1) && range(c.themeAngle, 0, 360) &&
+        style && !(c.themeColor && c.themeGradient) && range(c.themeOpacity, 0, 1) && range(c.themeAngle, 0, 360) &&
         c.foregroundContent >= 0 && c.foregroundContent <= 1 && IsManagedLargeIconImage(c.foregroundImage) &&
         range(c.iconX, 0, 1) && range(c.iconY, 0, 1) && c.material >= 0 && c.material <= 2 &&
         c.componentTheme >= 0 && c.componentTheme <= 1 && range(c.blurRadius, 4, 48) &&
@@ -180,6 +184,10 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
             field = static_cast<T>(v->number);
         }
     });
+    // Earlier v2 layouts nested the gradient switch beneath themeColor.
+    // Preserve their gradient while normalizing the now-exclusive modes.
+    if (c.themeGradient) c.themeColor = false;
+    if (!value.Find("autoTitleDirection")) c.autoTitleDirection = false;
     if (!valid || !ValidateLargeIconConfig(c)) return false;
     if (c.version == 1)
     {

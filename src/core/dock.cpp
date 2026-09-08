@@ -1891,6 +1891,9 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     {
         PersonalizationSettings fillSettings = p;
         fillSettings.widgetEdgeHighlightEnabled = false;
+        // Full-panel gradients belong to component appearance; Dock retains
+        // its existing solid tint and native material behavior.
+        fillSettings.panelGradient.enabled = false;
         app_->DrawWidgetPanelBackground(context, bounds, panelRadius, fill,
             D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), false, borderWidth,
             &fillSettings, true, reinterpret_cast<std::uintptr_t>(this));

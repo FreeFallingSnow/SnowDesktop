@@ -454,6 +454,7 @@ int main()
         large.foregroundContent = 1; large.foregroundImage = "imported-foreground.png";
         large.iconX = .2; large.iconY = .75;
         large.effect = 2; large.titleDirection = 1; large.titleWeight = 800;
+        large.fillScale = 1.75; large.autoTitleDirection = true;
         large.autoTitleColor = false; large.titleColor = 0xabcdef;
         large.gradient.enabled = true; large.gradient.angle = 137;
         large.gradient.stops.insert(large.gradient.stops.begin() + 1, {.4, 0x00ff77, .25});
@@ -469,7 +470,8 @@ int main()
                  R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",
                  R"({"version":1,"revealTitleSize":73})", R"({"version":2,"titleWeight":650})",
                  R"({"version":2,"foregroundImage":"../outside.png"})", R"({"version":2,"backgroundStyle":12})",
-                 R"({"version":2,"iconX":1.1})", R"({"version":2,"gradient":{"start":0.5,"end":0.5}})"})
+                 R"({"version":2,"iconX":1.1})", R"({"version":2,"fillScale":3.1})",
+                 R"({"version":2,"fillScale":0})", R"({"version":2,"gradient":{"start":0.5,"end":0.5}})"})
         {
             JsonValue value;
             snowdesktop::LargeIconConfig candidate;
@@ -477,6 +479,10 @@ int main()
                 "large icon codec rejects unsupported versions, unsafe asset references and invalid numeric boundaries");
         }
         JsonValue legacyValue; snowdesktop::LargeIconConfig legacy;
+        Expect(ParseJson(R"({"version":2,"titleDirection":1,"themeColor":true,"themeGradient":true})", legacyValue) &&
+            snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.fillScale == 1 && !legacy.autoTitleDirection &&
+            legacy.titleDirection == 1 && legacy.themeGradient && !legacy.themeColor,
+            "earlier v2 preserves explicit title direction and gradient while adopting exclusive background modes");
         Expect(ParseJson(R"({"version":1,"radius":27,"titleSize":14})", legacyValue) &&
             snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.radius == 27 && legacy.radiusPercent == -1 &&
             legacy.titleSize == 14 && legacy.revealTitleSize == 24 && legacy.version == 2 && legacy.backgroundStyle == -3,

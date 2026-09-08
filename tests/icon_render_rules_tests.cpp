@@ -1,6 +1,7 @@
 #include "icon_render_rules.h"
 #include "large_icon_render_rules.h"
 #include "large_icon_motion.h"
+#include "large_icon_transform.h"
 #include "large_icon_settings_rules.h"
 
 #include <iostream>
@@ -35,48 +36,73 @@ int main(int argc, char** argv)
         "no-effect mode never schedules hover animation");
     config.effect = 2;
     Check(motion.Advance(1000, true, true, true, 1, config) && motion.hover == 0, "title honors initial delay");
-    motion.Advance(1119, true, true, true, 1, config);
+    motion.Advance(1071, true, true, true, 1, config);
     Check(motion.hover == 0, "title never appears before its delay");
-    motion.Advance(1220, true, true, true, 1, config);
+    motion.Advance(1132, true, true, true, 1, config);
     Check(std::abs(motion.hover - .5f) < .0001, "title reaches transition midpoint");
-    motion.Advance(1220, false, true, true, 1, config);
+    motion.Advance(1132, false, true, true, 1, config);
     Check(std::abs(motion.hover - .5f) < .0001, "rapid exit preserves current pose");
-    motion.Advance(1300, false, true, true, 1, config);
+    motion.Advance(1180, false, true, true, 1, config);
     Check(std::abs(motion.hover - .25f) < .0001, "exit uses independent duration");
-    motion.Advance(1300, true, true, true, 1, config);
+    motion.Advance(1180, true, true, true, 1, config);
     Check(!motion.Advance(1500, true, true, true, 1, config) && motion.hover == 1, "settled title stops animation frames");
     Check(!motion.Advance(1501, true, false, true, 1, config) && motion.hover == 0, "hidden or blocked items immediately reset");
     Check(!motion.Advance(1502, true, true, false, 1, config) && motion.hover == 1, "reduced motion shows inner title instantly");
     config.effect = 1;
     Check(!motion.Advance(1503, true, true, false, 1, config) && motion.hover == 0, "reduced motion disables 3D");
+    Check(motion.AdvanceTilt(1600, 1, -1, true, true, true, 1, config), "pointer change starts a finite tilt");
+    motion.AdvanceTilt(1700, -1, 1, true, true, true, 1, config);
+    Check(std::abs(motion.tiltX - .5f) < .0001 && std::abs(motion.tiltY + .5f) < .0001,
+        "pointer reversal samples the current transition before retargeting");
+    Check(!motion.AdvanceTilt(1900, -1, 1, true, true, true, 1, config) && motion.tiltX == -1,
+        "settled pointer tilt does not request idle frames");
+    Check(!motion.AdvanceTilt(1901, -1, 1, true, false, true, 1, config) && motion.tiltX == 0,
+        "hidden or blocked cards discard pointer motion");
+    const auto tilt = snowdesktop::large_icon_transform::Resolve(400, 180, 1, -.8f, 1);
+    const auto center = snowdesktop::large_icon_transform::Project(tilt.matrix, 200, 90);
+    Check(tilt.active && std::abs(center.x - 200) < .001 && std::abs(center.y - 90) < .001,
+        "shared backdrop/content transform preserves the card center");
+    Check(!snowdesktop::large_icon_transform::Resolve(400, 180, 1, 1, 0).active, "zero-strength 3D skips effect rendering");
     config = {};
-    auto geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    const MeasureTitle measured = [](double w, double h) { return TitleSize{96, 32, w >= 96 && h >= 32}; };
+    auto geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
     Check(geometry.width == 32 && geometry.x == 184 && geometry.y == 74, "small original stays centered without upscaling");
     config.iconX = 0; config.iconY = 1;
-    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
     Check(geometry.x == 0 && geometry.y == 148, "foreground positions use the available travel on each axis");
     config.effect = 2;
-    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
     Check(geometry.x == 184 && geometry.y == 74, "dynamic title overrides saved foreground position at rest");
-    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 1);
-    Check(geometry.leftReveal && geometry.x == 64 && geometry.width == 32 && geometry.titleLeft == 172 && geometry.titleWidth == 216,
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 1, measured);
+    Check(geometry.leftReveal && geometry.x == 130 && geometry.width == 32 && geometry.titleLeft == 174 && geometry.titleWidth == 96,
         "left reveal keeps original size and centers text in the remaining right column");
-    Check(!CanSelectTitleDirection(config, 0, 180, 400, 64, 64, 1) && CanSelectTitleDirection(config, 1, 180, 400, 64, 64, 1),
+    Check(!CanSelectTitleDirection(config, 0, 180, 400, 64, 64, 1, measured) && CanSelectTitleDirection(config, 1, 180, 400, 64, 64, 1, measured),
         "portrait frame disables left direction independently from up direction");
-    Check(!CanSelectTitleDirection(config, 0, 60, 60, 64, 64, 1) && !CanSelectTitleDirection(config, 1, 60, 60, 64, 64, 1),
+    Check(!CanSelectTitleDirection(config, 0, 60, 60, 64, 64, 1, measured) && !CanSelectTitleDirection(config, 1, 60, 60, 64, 64, 1, measured),
         "insufficient frames cannot enable either direction by shrinking content");
     config.titleDirection = 1;
-    geometry = ResolveContent(config, 180, 400, 64, 64, 1, true, 1);
-    Check(geometry.upReveal && geometry.y == 48 && geometry.width == 64 && geometry.titleTop > 160,
+    geometry = ResolveContent(config, 180, 400, 64, 64, 1, true, 1, measured);
+    Check(geometry.upReveal && geometry.y == 146 && geometry.width == 64 && geometry.titleTop == 222,
         "up direction reserves a lower text area without resizing the icon");
     config.backgroundStyle = -2; config.titleDirection = 0; config.focusX = 1;
-    geometry = ResolveContent(config, 400, 180, 800, 200, 1, true, 1);
-    Check(geometry.leftReveal && geometry.cropped && geometry.width == 400 && std::abs(geometry.x + 180) < .000001 &&
+    geometry = ResolveContent(config, 400, 180, 800, 200, 1, true, 1, measured);
+    Check(geometry.leftReveal && geometry.cropped && geometry.width == 400 && std::abs(geometry.x + 120) < .000001 &&
         geometry.sourceX > 0 && geometry.sourceWidth < 800,
         "fill crops the source before movement so overscan cannot refill title space");
     config.effect = 0; config.fit = 0;
-    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
     Check(geometry.width == 180 && geometry.x == 110, "fill original is enlarged independently of foreground limits");
+    config.fillScale = .5;
+    geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0);
+    Check(geometry.width == 90 && geometry.x == 155 && geometry.y == 45, "fill scale can shrink the image independently of foreground scale");
+    config.fit = 1; config.fillScale = 2;
+    geometry = ResolveContent(config, 400, 180, 800, 200, 1, false, 0);
+    Check(geometry.width == 400 && geometry.sourceWidth < 400 && geometry.sourceHeight < 200,
+        "zooming cover creates crop room on both axes without growing the frame");
+    config.effect = 2;
+    const auto leftZoom = ResolveContent(config, 400, 180, 800, 200, 1, false, 1, measured);
+    Check(leftZoom.leftReveal && leftZoom.x < 0 && leftZoom.sourceWidth == geometry.sourceWidth,
+        "fill zoom is cropped before dynamic title translation");
     config = {};
     Check(Radius(config, 200, 100, 2) == 24 && RadiusPercent(config, 200, 100, 2) == 48, "legacy radius preserves CU geometry");
     config.radiusPercent = 100;
@@ -99,10 +125,14 @@ int main(int argc, char** argv)
         !Enabled(Field::ForegroundPosition, config, false, true), "custom gradient suppresses duplicate solid parameters and dynamic title owns position");
     config = {};
     auto background = DefaultBackground(config, 0, false, 0);
-    Check(background.color == 0xe8ecf4 && background.opacity == 1, "first frame and failed extraction have the opaque default-beautify base");
+    Check(background.color == 0xe8ecf4 && background.opacity == .65, "first frame and failed extraction have the opaque default-beautify base");
     background = DefaultBackground(config, 0x008800, true, 0x0112ff);
     Check(background.color == 0x0112ff && background.opacity == 1 && !background.gradient.enabled, "reliable contour is preserved exactly and filled opaquely");
-    config.smartFill = false; config.themeGradient = true; config.themeOpacity = .4; config.themeAngle = 45;
+    config.smartFill = false;
+    background = DefaultBackground(config, 0x008800, true, 0x0112ff);
+    Check(background.color == 0xe8ecf4 && background.opacity == .65 && !background.gradient.enabled,
+        "plain icon background falls back to the beautify base, never an accent fill");
+    config.smartFill = false; config.themeColor = false; config.themeGradient = true; config.themeOpacity = .4; config.themeAngle = 45;
     background = DefaultBackground(config, 0x008800, true, 0x0112ff);
     Check(background.color == 0x008800 && background.opacity == .4 && background.gradient.enabled && background.gradient.angle == 45,
         "theme fallback supports opacity and automatic gradient direction without manual colors");

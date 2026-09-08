@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "图标填充",
     "largeIcon.follow": "跟随组件",
     "largeIcon.smartFill": "智能识别填充图标背景色",
-    "largeIcon.themeColor": "使用图标主题色背景",
+    "largeIcon.themeColor": "图标背景色",
     "largeIcon.themeGradient": "主题色渐变背景",
     "largeIcon.themeFallbackHelp": "识别出的底色优先生效；关闭智能识别后可调整回退背景。",
     "largeIcon.themeUnavailable": "当前素材尚未提供可用的主题色。",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "色点位置",
     "panelGradient.removeStop": "删除此色点",
     "panelGradient.addStop": "添加色点",
-    "panelGradient.barStartOpacity": "底栏起始不透明度"
+    "panelGradient.barStartOpacity": "底栏起始不透明度",
+    "largeIcon.backgroundColorHelp": "沿用图标美化的底色填充方式，使图标与背景衔接；与主题色渐变互斥。",
+    "largeIcon.fillScale": "填充图片缩放",
+    "panelGradient.reset": "恢复渐变默认值"
 }

@@ -416,9 +416,9 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
             view.hasEdgeColor = asset->hasEdgeColor; view.edgeColor = asset->edgeColor;
         }
     }
-    view.placeholder = [&](RECT rect, float opacity) {
-        if (demo) DrawDemoIdentityIcon(context, item.layoutKey, rect, opacity);
-        else DrawPlaceholderIcon(context, item.sysIconIndex, rect, opacity, false);
+    view.placeholder = [&](ID2D1RenderTarget* drawing, RECT rect, float opacity) {
+        if (demo) DrawDemoIdentityIcon(drawing, item.layoutKey, rect, opacity);
+        else DrawPlaceholderIcon(drawing, item.sysIconIndex, rect, opacity, false);
     };
     auto appearance = CurrentPersonalization();
     if (config.backgroundStyle >= 0 && config.backgroundStyle != kAppearancePresetCustom)
@@ -467,7 +467,8 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         else runtime.backdropFrame = view.frame;
     }
     ComPtr<ID2D1DeviceContext> device;
-    if (!fill && SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&device))))
+    context->QueryInterface(IID_PPV_ARGS(&device));
+    if (!fill && device)
         view.drawBackground = [this, appearance, state, scale = view.scale, owner = &runtime](ID2D1RenderTarget* target, RECT rect, float radius, float opacity) mutable {
             ComPtr<ID2D1DeviceContext> drawing;
             if (FAILED(target->QueryInterface(IID_PPV_ARGS(&drawing)))) return;
@@ -480,5 +481,20 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
                 false, style.widgetBorderWidth * scale, &style, state != 3,
                 reinterpret_cast<std::uintptr_t>(owner), scale);
         };
+    const auto transform = snowdesktop::large_icon_transform::Resolve(
+        static_cast<float>(view.frame.right - view.frame.left), static_cast<float>(view.frame.bottom - view.frame.top),
+        runtime.motion.tiltX * view.hover, runtime.motion.tiltY * view.hover, static_cast<float>(config.amplitude));
+    if (config.effect == 1 && view.animations && state != 3 && transform.active && device)
+    {
+        if (!runtime.cardResources) runtime.cardResources = std::make_shared<snowdesktop::large_icon_renderer::CardResources>();
+        if (snowdesktop::large_icon_renderer::DrawCard3D(device.Get(), dwriteFactory_.Get(), config, view, transform, *runtime.cardResources))
+        {
+            if (!fill && appearance.glassEnabled)
+                desktopBackdropCompositor_.SetPanelTransform(reinterpret_cast<std::uintptr_t>(&runtime), transform.matrix,
+                    snowdesktop::large_icon_transform::Bounds(view.frame, transform.matrix));
+            return;
+        }
+    }
+    else runtime.cardResources.reset();
     snowdesktop::large_icon_renderer::DrawFrame(context, dwriteFactory_.Get(), config, view);
 }

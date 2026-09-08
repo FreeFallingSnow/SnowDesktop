@@ -1507,7 +1507,7 @@
     "largeIcon.fill": "Remplissage par l’icône",
     "largeIcon.follow": "Suivre les widgets",
     "largeIcon.smartFill": "Détecter et remplir la couleur de fond de l’icône",
-    "largeIcon.themeColor": "Utiliser la couleur dominante de l’icône",
+    "largeIcon.themeColor": "Couleur de fond de l’icône",
     "largeIcon.themeGradient": "Dégradé de couleur dominante",
     "largeIcon.themeFallbackHelp": "Le fond détecté est prioritaire. Désactivez la détection pour régler le fond de remplacement.",
     "largeIcon.themeUnavailable": "Aucune couleur dominante utilisable n’est encore disponible pour cette image.",
@@ -1551,5 +1551,8 @@
     "panelGradient.stopPosition": "Position du point",
     "panelGradient.removeStop": "Supprimer ce point",
     "panelGradient.addStop": "Ajouter un point de couleur",
-    "panelGradient.barStartOpacity": "Opacité initiale de la barre inférieure"
+    "panelGradient.barStartOpacity": "Opacité initiale de la barre inférieure",
+    "largeIcon.backgroundColorHelp": "Utilise le remplissage d’arrière-plan de l’embellissement des icônes pour fondre l’icône dans son fond. Incompatible avec le dégradé des couleurs du thème.",
+    "largeIcon.fillScale": "Échelle de l’image de remplissage",
+    "panelGradient.reset": "Réinitialiser le dégradé"
 }

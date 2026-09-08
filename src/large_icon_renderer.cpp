@@ -1,6 +1,8 @@
 #include "large_icon_renderer.h"
 #include "panel_gradient_renderer.h"
+#include "large_icon_title_measure.h"
 #include <d2d1_1.h>
+#include <d2d1effects.h>
 #include <d2d1helper.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -48,7 +50,8 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     else target->PushAxisAlignedClip(frame, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     const auto sourceSize = view.bitmap ? view.bitmap->GetSize() : D2D1_SIZE_F{};
     const auto geometry = large_icon_render_rules::ResolveContent(c, frame.right - frame.left, frame.bottom - frame.top,
-        sourceSize.width, sourceSize.height, view.scale, view.original, view.hover);
+        sourceSize.width, sourceSize.height, view.scale, view.original, view.hover,
+        c.effect == 2 ? large_icon_render_rules::MeasureTitleText(fonts, c, view.name, view.scale) : large_icon_render_rules::MeasureTitle{});
     const auto image = D2D1::RectF(frame.left + static_cast<float>(geometry.x), frame.top + static_cast<float>(geometry.y),
         frame.left + static_cast<float>(geometry.x + geometry.width), frame.top + static_cast<float>(geometry.y + geometry.height));
     const auto source = D2D1::RectF(static_cast<float>(geometry.sourceX), static_cast<float>(geometry.sourceY),
@@ -58,7 +61,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
     if (view.bitmap) target->DrawBitmap(view.bitmap, image, view.opacity,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, geometry.cropped ? &source : nullptr);
     else if (view.placeholder && !fill)
-        view.placeholder({static_cast<LONG>(std::lround(image.left)), static_cast<LONG>(std::lround(image.top)),
+        view.placeholder(target, {static_cast<LONG>(std::lround(image.left)), static_cast<LONG>(std::lround(image.top)),
             static_cast<LONG>(std::lround(image.right)), static_cast<LONG>(std::lround(image.bottom))}, view.opacity);
 
     if (fonts && !view.name.empty() && (geometry.leftReveal || geometry.upReveal) && view.hover > 0)
@@ -73,7 +76,7 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         target->CreateSolidColorBrush(D2D1::ColorF(textColor, view.hover * view.opacity), &brush);
         if (format && brush)
         {
-            format->SetWordWrapping(DWRITE_WORD_WRAPPING_CHARACTER);
+            format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
             format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, size * 1.3f, size);
             format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -97,5 +100,41 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         if (SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0x75baff, .95f), &brush)))
             target->DrawRoundedRectangle(D2D1::RoundedRect(frame, radius, radius), brush.Get(), view.scale);
     }
+}
+
+bool DrawCard3D(ID2D1DeviceContext* target, IDWriteFactory* fonts, const LargeIconConfig& config,
+    const View& view, const large_icon_transform::Card& transform, CardResources& resources)
+{
+    if (!target || !transform.active) return false;
+    ComPtr<ID2D1Device> device; target->GetDevice(&device);
+    if (device.Get() != resources.device.Get())
+    { resources.recorder.Reset(); resources.device = device; }
+    if (!device || (!resources.recorder && FAILED(device->CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &resources.recorder)))) return false;
+    auto* recorder = resources.recorder.Get();
+    ComPtr<ID2D1CommandList> commands;
+    ComPtr<ID2D1Effect> lighting, perspective;
+    if (FAILED(recorder->CreateCommandList(&commands)) ||
+        FAILED(recorder->CreateEffect(CLSID_D2D1ColorMatrix, &lighting)) ||
+        FAILED(recorder->CreateEffect(CLSID_D2D13DTransform, &perspective))) return false;
+    float dpiX, dpiY; target->GetDpi(&dpiX, &dpiY);
+    recorder->SetDpi(dpiX, dpiY); recorder->SetUnitMode(target->GetUnitMode());
+    recorder->SetAntialiasMode(target->GetAntialiasMode());
+    recorder->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    recorder->SetTransform(D2D1::Matrix3x2F::Translation(-static_cast<float>(view.frame.left), -static_cast<float>(view.frame.top)));
+    recorder->SetTarget(commands.Get()); recorder->BeginDraw();
+    DrawFrame(recorder, fonts, config, view);
+    const HRESULT recorded = recorder->EndDraw();
+    recorder->SetTarget(nullptr);
+    if (FAILED(recorded) || FAILED(commands->Close())) { resources.recorder.Reset(); return false; }
+    lighting->SetInput(0, commands.Get());
+    const float light = transform.light;
+    const D2D1_MATRIX_5X4_F colors = D2D1::Matrix5x4F(light, 0, 0, 0, 0, light, 0, 0, 0, 0, light, 0, 0, 0, 0, 1, 0, 0, 0, 0);
+    if (FAILED(lighting->SetValue(D2D1_COLORMATRIX_PROP_COLOR_MATRIX, colors)) ||
+        FAILED(lighting->SetValue(D2D1_COLORMATRIX_PROP_CLAMP_OUTPUT, TRUE))) return false;
+    perspective->SetInputEffect(0, lighting.Get());
+    if (FAILED(perspective->SetValue(D2D1_3DTRANSFORM_PROP_TRANSFORM_MATRIX, transform.matrix))) return false;
+    target->DrawImage(perspective.Get(), D2D1::Point2F(static_cast<float>(view.frame.left), static_cast<float>(view.frame.top)));
+    return true;
 }
 }

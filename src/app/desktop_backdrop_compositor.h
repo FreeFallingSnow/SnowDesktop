@@ -5,6 +5,7 @@
 #pragma once
 
 #include <windows.h>
+#include <d2d1_1.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -98,6 +99,9 @@ public:
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
         std::uintptr_t ownerKey = 0);
+    /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
+    bool SetPanelTransform(std::uintptr_t ownerKey,
+        const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);
     /** @brief 立即移除指定矩形对应的玻璃面板并同步辅助窗口区域。 */
     bool RemovePanel(const RECT& frame);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
