@@ -38,10 +38,14 @@ struct LargeIconMotion
     }
 
     bool Advance(double now, bool hovered, bool visible, bool enabled,
-        double durationScale, const LargeIconConfig& config)
+        double durationScale, const LargeIconConfig& config, bool menuTitle = false)
     {
         if (!visible || config.effect == 0 || (config.effect == 2 && IsLargeIconFill(config)) || (config.effect == 1 && !enabled))
         { hover = from = target = 0; transitionStart = now; return false; }
+        // Explicit context-menu invocation reveals the name immediately and
+        // holds a settled pose. Closing resumes the ordinary hover transition.
+        if (menuTitle && config.effect == 2)
+        { hover = from = target = 1; transitionStart = now; return false; }
         const float next = hovered ? 1.f : 0.f;
         if (!enabled)
         { hover = from = target = next; transitionStart = now; return false; }

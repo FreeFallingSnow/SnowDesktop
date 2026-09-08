@@ -3,6 +3,26 @@
 #include "../widgets/widget_chrome_rules.h"
 #include "../large_icon_render_rules.h"
 
+DesktopApp::LargeIconMenuScope::LargeIconMenuScope(DesktopApp& app, std::wstring key)
+    : app_(app), previousKey_(std::move(app.largeIconMenuKey_))
+{
+    app_.largeIconMenuKey_ = std::move(key);
+    app_.UpdateLargeIconHover();
+    if (app_.hwnd_) InvalidateRect(app_.hwnd_, nullptr, FALSE);
+}
+
+DesktopApp::LargeIconMenuScope::~LargeIconMenuScope()
+{
+    app_.largeIconMenuKey_ = std::move(previousKey_);
+    // Menu windows consume pointer movement. Resume from the actual pointer,
+    // not the last desktop point captured before the menu opened.
+    POINT point{};
+    if (app_.hwnd_ && GetCursorPos(&point) && ScreenToClient(app_.hwnd_, &point))
+        app_.lastMousePoint_ = point;
+    app_.UpdateLargeIconHover();
+    if (app_.hwnd_) InvalidateRect(app_.hwnd_, nullptr, FALSE);
+}
+
 void DesktopApp::BeginLargeIconPlacement(size_t index, snowdesktop::LargeIconConfig config)
 {
     if (!CanEditLargeIcons() || index >= items_.size()) return;
@@ -183,16 +203,21 @@ void DesktopApp::UpdateLargeIconHover()
             InvalidateDragStaticScene();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        const bool menuOpen = !largeIconMenuKey_.empty() || HasActiveContextMenuSession();
+        const bool menuTitle = !largeIconMenuKey_.empty() && largeIconMenuKey_ == item.layoutKey &&
+            config.effect == 2 && !snowdesktop::IsLargeIconFill(config);
         const bool interactive = !dragSession_.IsActive() && !marqueeActive_ && !largeIconGesture_ &&
-            widgetAction_ == WidgetAction::None && !HasActiveContextMenuSession() && !IsPointOccludedByOpenPopup(lastMousePoint_);
-        const bool hover = PtInRect(&frame, lastMousePoint_) || (keyboardNavVisualFocus_ && item.selected);
-        moving = state.motion.Advance(now, hover, visible && interactive, snowdesktop::animation::RuntimeAnimationsEnabled(),
-            snowdesktop::animation::RuntimeDurationScale(), config) || moving;
+            widgetAction_ == WidgetAction::None;
+        const bool pointerInteractive = !menuOpen && !IsPointOccludedByOpenPopup(lastMousePoint_);
+        const bool hover = menuTitle || PtInRect(&frame, lastMousePoint_) || (keyboardNavVisualFocus_ && item.selected);
+        moving = state.motion.Advance(now, hover, visible && interactive && (pointerInteractive || menuTitle),
+            snowdesktop::animation::RuntimeAnimationsEnabled(),
+            snowdesktop::animation::RuntimeDurationScale(), config, menuTitle) || moving;
         const float width = static_cast<float>(std::max<LONG>(1, frame.right - frame.left));
         const float height = static_cast<float>(std::max<LONG>(1, frame.bottom - frame.top));
         moving = state.motion.AdvanceTilt(now, 2 * (lastMousePoint_.x - frame.left) / width - 1,
             2 * (lastMousePoint_.y - frame.top) / height - 1, PtInRect(&frame, lastMousePoint_) != FALSE,
-            visible && interactive, snowdesktop::animation::RuntimeAnimationsEnabled(),
+            visible && interactive && pointerInteractive, snowdesktop::animation::RuntimeAnimationsEnabled(),
             snowdesktop::animation::RuntimeDurationScale(), config) || moving;
         ++it;
     }

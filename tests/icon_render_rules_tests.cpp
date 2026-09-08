@@ -88,6 +88,27 @@ int main(int argc, char** argv)
     Check(!motion.Advance(1500, true, true, true, 1, config) && motion.hover == 1, "settled title stops animation frames");
     Check(!motion.Advance(1501, true, false, true, 1, config) && motion.hover == 0, "hidden or blocked items immediately reset");
     Check(!motion.Advance(1502, true, true, false, 1, config) && motion.hover == 1, "reduced motion shows inner title instantly");
+    {
+        snowdesktop::LargeIconMotion menuMotion;
+        Check(!menuMotion.Advance(100, false, true, true, 1, config, true) && menuMotion.hover == 1,
+            "right-click reveals the dynamic title without waiting for pointer hover or its delay");
+        Check(!menuMotion.Advance(1000, false, true, true, 1, config, true) && menuMotion.hover == 1,
+            "moving into the menu holds the title without scheduling animation frames");
+        Check(menuMotion.Advance(1001, false, true, true, 1, config) && menuMotion.hover == 1,
+            "closing the menu outside the icon starts a continuous exit from the expanded pose");
+        Check(!menuMotion.Advance(1200, false, true, true, 1, config) && menuMotion.hover == 0,
+            "the title settles closed after dismissing a menu away from its icon");
+        Check(!menuMotion.Advance(1300, false, true, false, 1, config, true) && menuMotion.hover == 1,
+            "menu titles remain readable with reduced motion");
+        Check(!menuMotion.Advance(1400, true, false, true, 1, config, true) && menuMotion.hover == 0,
+            "menu invocation cannot reveal a hidden or interaction-blocked item");
+        auto fill = config; fill.backgroundStyle = -2;
+        Check(!menuMotion.Advance(1500, true, true, true, 1, fill, true) && menuMotion.hover == 0,
+            "image fill never reveals a title even while its menu is open");
+        auto none = config; none.effect = 0;
+        Check(!menuMotion.Advance(1600, true, true, true, 1, none, true) && menuMotion.hover == 0,
+            "switching to no effect immediately removes a menu-held title");
+    }
     config.effect = 1;
     Check(!motion.Advance(1503, true, true, false, 1, config) && motion.hover == 0, "reduced motion disables 3D");
     Check(motion.AdvanceTilt(1600, 1, -1, true, true, true, 1, config), "pointer change starts a finite tilt");

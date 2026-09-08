@@ -541,6 +541,7 @@ void DesktopApp::ShowItemContextMenu(
         // Custom opens a separate editor after the menu has relinquished focus.
         if (background && presets::backgrounds[command - kContextLargeIconBackgroundFirst].value == kAppearancePresetCustom) return false;
         applyLargeIconCommand(command);
+        UpdateLargeIconHover();
         const auto index = FindItemIndexByKey(largeIconKey);
         if (index >= items_.size() || !items_[index].largeIcon) { snowdesktop::modern_menu::DismissActive(); return true; }
         const auto config = *items_[index].largeIcon;
@@ -562,8 +563,13 @@ void DesktopApp::ShowItemContextMenu(
         });
         return true;
     };
-    UINT command = ShowModernMenu(
-        menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon);
+    UINT command = 0;
+    {
+        LargeIconMenuScope titleScope(*this,
+            largeIconMenu && items_[itemIndex].largeIcon ? largeIconKey : std::wstring{});
+        command = ShowModernMenu(
+            menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon);
+    }
     DestroyMenu(menu);
     ClearMenuIcons();
     bool inlineEditorStarted = false;
@@ -965,9 +971,16 @@ void DesktopApp::ShowShellContextMenu(
         SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
-    UINT cmd = TrackShellPopupMenuWithDesktopPump(
-        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        screenPoint, menuOwner);
+    UINT cmd = 0;
+    {
+        const bool desktopLargeIcon = itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size() &&
+            items_[itemIndex].largeIcon && !keepQuickNavigationOpen && !dockRenameAnchor && !dockMappingEntryIndex &&
+            !IsItemInAnyWidget(items_[itemIndex]) && items_[itemIndex].gridCell.pageId != kDockPageId;
+        LargeIconMenuScope titleScope(*this, desktopLargeIcon ? items_[itemIndex].layoutKey : std::wstring{});
+        cmd = TrackShellPopupMenuWithDesktopPump(
+            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            screenPoint, menuOwner);
+    }
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(true);
 

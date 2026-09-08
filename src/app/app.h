@@ -3270,6 +3270,18 @@ private:
         std::string error;
     };
     std::unordered_map<std::wstring, LargeIconRuntime> largeIconRuntime_;
+    std::wstring largeIconMenuKey_;
+    class LargeIconMenuScope
+    {
+    public:
+        LargeIconMenuScope(DesktopApp& app, std::wstring key);
+        ~LargeIconMenuScope();
+        LargeIconMenuScope(const LargeIconMenuScope&) = delete;
+        LargeIconMenuScope& operator=(const LargeIconMenuScope&) = delete;
+    private:
+        DesktopApp& app_;
+        std::wstring previousKey_;
+    };
     std::uint64_t largeIconAssetSerial_ = 0;
     snowdesktop::UiScheduleToken largeIconAnimationToken_ = 0;
     struct LargeIconGesture
