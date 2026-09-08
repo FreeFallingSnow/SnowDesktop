@@ -81,6 +81,10 @@ void TestCodec()
     settings.values.dock.systemTaskbarShellUi.appearance.widgetEdgeHighlightWidth = 3.5f;
     settings.values.desktop.iconBeautify.filterTintR = 0.123f;
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
+    settings.values.personalization.panelGradient.enabled = true;
+    settings.values.personalization.panelGradient.angle = 213;
+    settings.values.personalization.panelGradient.stops.insert(
+        settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
     Check(restored.values.general.animationMode == 1 &&
         restored.values.general.popupAnimationEffect == 1 &&
@@ -95,6 +99,8 @@ void TestCodec()
         restored.values.category.rules.front().customLabel == L"文档" &&
         std::string(restored.values.general.language) == "zh",
         "controller IPC preserves replacement marker, draft fields and language array");
+    Check(restored.values.personalization.panelGradient == settings.values.personalization.panelGradient,
+        "full-panel gradient stops, opacities and angle reach the settings process without flattening");
 
     using namespace snowdesktop::widget_runtime;
     snowdesktop::LargeIconSettingsSnapshot large;

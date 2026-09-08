@@ -4,11 +4,12 @@
 namespace snowdesktop
 {
 inline backup::OperationResult EnsureLargeIconUpgradeBackup(const std::filesystem::path& state,
-    const std::filesystem::path& data, const std::string& version)
+    const std::filesystem::path& data, const std::string& version, int configVersion = 1)
 {
     try
     {
-        backup::FullDataBackupManager manager(state / L"LargeIconUpgradeBackup", data, version, "large-icon-upgrade");
+        const auto directory = configVersion >= 2 ? L"LargeIconV2UpgradeBackup" : L"LargeIconUpgradeBackup";
+        backup::FullDataBackupManager manager(state / directory, data, version, "large-icon-upgrade");
         const auto existing = manager.List();
         if (!existing.empty()) return {true, false, existing.front(), {}};
         return manager.Create();

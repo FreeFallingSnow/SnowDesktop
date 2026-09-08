@@ -16,13 +16,15 @@ namespace snowdesktop::settings_ipc
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
 
+SD_IPC_FIELDS(PanelGradientStop, v.position, v.color, v.opacity);
+SD_IPC_FIELDS(PanelGradient, v.enabled, v.angle, v.start, v.end, v.stops);
 SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBgR, v.widgetBgG, v.widgetBgB, v.widgetBorderR,
     v.widgetBorderG, v.widgetBorderB, v.widgetAlpha, v.widgetBorderAlpha,
     v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength,
     v.gradientEndA, v.barHeight, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
     v.showCategoryTabCounts, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
-    v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme);
+    v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
 SD_IPC_FIELDS(DockSettings,

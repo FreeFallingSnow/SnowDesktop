@@ -1,6 +1,7 @@
 #pragma once
 
 #include "json_value.h"
+#include "panel_gradient.h"
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,7 @@ namespace snowdesktop
 // belong here. Span remains the user's intent when a monitor temporarily shrinks.
 struct LargeIconConfig
 {
-    int version = 1;
+    int version = 2;
     int columns = 2, rows = 2;
     double contentScale = .60;
     double radius = 12;
@@ -52,6 +53,23 @@ struct LargeIconConfig
     int steamOrientation = 0; // 0 automatic, 1 landscape, 2 portrait
     bool localOnly = false;
 
+    // v2: background selector is flat; nonnegative values are component preset
+    // IDs (including 9/custom). Foreground and fill sources are independent.
+    int backgroundStyle = -3; // -3 default, -2 image fill, -1 follow components
+    bool smartFill = true, themeColor = true, themeGradient = false;
+    double themeOpacity = .65, themeAngle = 90;
+    int foregroundContent = 0; // 0 original, 1 imported
+    std::string foregroundImage;
+    double iconX = .5, iconY = .5;
+    int material = 0, componentTheme = 0; // plain/glass/acrylic; light/dark text
+    double blurRadius = 24;
+    bool edgeHighlight = false;
+    double edgeWidth = 1, edgeStrength = .3;
+    PanelGradient gradient;
+    int effect = 0; // none, 3D, dynamic title
+    int titleDirection = 0; // left, up
+    int titleWeight = 600;
+
     friend bool operator==(const LargeIconConfig&, const LargeIconConfig&) = default;
 };
 
@@ -73,6 +91,11 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(launch); LI_FIELD(coverHover); LI_FIELD(amplitude);
     LI_FIELD(delayMs); LI_FIELD(enterMs); LI_FIELD(exitMs);
     LI_FIELD(steamOrientation); LI_FIELD(localOnly);
+    LI_FIELD(backgroundStyle); LI_FIELD(smartFill); LI_FIELD(themeColor); LI_FIELD(themeGradient);
+    LI_FIELD(themeOpacity); LI_FIELD(themeAngle); LI_FIELD(foregroundContent); LI_FIELD(foregroundImage);
+    LI_FIELD(iconX); LI_FIELD(iconY); LI_FIELD(material); LI_FIELD(componentTheme); LI_FIELD(blurRadius);
+    LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(gradient);
+    LI_FIELD(effect); LI_FIELD(titleDirection); LI_FIELD(titleWeight);
 #undef LI_FIELD
 }
 
@@ -91,7 +114,10 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
     auto range = [](double value, double min, double max) {
         return std::isfinite(value) && value >= min && value <= max;
     };
-    return c.version == 1 && c.columns >= 1 && c.columns <= 1024 &&
+    const bool style = c.backgroundStyle == -3 || c.backgroundStyle == -2 || c.backgroundStyle == -1 ||
+        c.backgroundStyle == 0 || c.backgroundStyle == 1 || c.backgroundStyle == 6 || c.backgroundStyle == 7 ||
+        c.backgroundStyle == 9 || c.backgroundStyle == 10 || c.backgroundStyle == 11;
+    return (c.version == 1 || c.version == 2) && c.columns >= 1 && c.columns <= 1024 &&
         c.rows >= 1 && c.rows <= 1024 && range(c.contentScale, .1, 1) &&
         range(c.radius, 0, 512) && (c.radiusPercent == -1 || range(c.radiusPercent, 0, 100)) && c.content >= 0 && c.content <= 2 &&
         c.fit >= 0 && c.fit <= 1 && range(c.focusX, 0, 1) && range(c.focusY, 0, 1) &&
@@ -104,8 +130,21 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.hoverFrame >= 0 && c.hoverFrame <= 3 && c.launch >= 0 && c.launch <= 2 &&
         c.coverHover >= 0 && c.coverHover <= 2 && range(c.amplitude, 0, 2) &&
         c.delayMs >= 0 && c.delayMs <= 2000 && c.enterMs >= 0 && c.enterMs <= 2000 &&
-        c.exitMs >= 0 && c.exitMs <= 2000 && c.steamOrientation >= 0 && c.steamOrientation <= 2;
+        c.exitMs >= 0 && c.exitMs <= 2000 && c.steamOrientation >= 0 && c.steamOrientation <= 2 &&
+        style && range(c.themeOpacity, 0, 1) && range(c.themeAngle, 0, 360) &&
+        c.foregroundContent >= 0 && c.foregroundContent <= 1 && IsManagedLargeIconImage(c.foregroundImage) &&
+        range(c.iconX, 0, 1) && range(c.iconY, 0, 1) && c.material >= 0 && c.material <= 2 &&
+        c.componentTheme >= 0 && c.componentTheme <= 1 && range(c.blurRadius, 4, 48) &&
+        range(c.edgeWidth, .5, 4) && range(c.edgeStrength, 0, 1) && ValidatePanelGradient(c.gradient) &&
+        c.effect >= 0 && c.effect <= 2 && c.titleDirection >= 0 && c.titleDirection <= 1 &&
+        c.titleWeight >= 100 && c.titleWeight <= 900 && c.titleWeight % 100 == 0;
 }
+
+inline bool IsLargeIconFill(const LargeIconConfig& config) { return config.backgroundStyle == -2; }
+inline int LargeIconActiveContent(const LargeIconConfig& config)
+{ return IsLargeIconFill(config) ? config.content : config.foregroundContent; }
+inline const std::string& LargeIconActiveImage(const LargeIconConfig& config)
+{ return IsLargeIconFill(config) ? config.image : config.foregroundImage; }
 
 inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& result)
 {
@@ -116,7 +155,11 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
         const auto* v = value.Find(name);
         if (!v) return;
         using T = std::remove_cvref_t<decltype(field)>;
-        if constexpr (std::is_same_v<T, std::string>)
+        if constexpr (std::is_same_v<T, PanelGradient>)
+        {
+            if (!DecodePanelGradient(*v, field)) valid = false;
+        }
+        else if constexpr (std::is_same_v<T, std::string>)
         {
             if (!v->IsString()) valid = false;
             else field = v->string;
@@ -137,6 +180,16 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
         }
     });
     if (!valid || !ValidateLargeIconConfig(c)) return false;
+    if (c.version == 1)
+    {
+        c.version = 2;
+        c.backgroundStyle = c.content != 0 ? -2 : c.autoColor ? -3 : 9;
+        c.themeOpacity = c.opacity;
+        c.effect = c.titleMode == 1 ? 2 : 0;
+        c.titleDirection = 0;
+        // Explicit v1 images were full-frame content. The image reference stays
+        // in the fill source; no copy is mistaken for a foreground replacement.
+    }
     result = std::move(c);
     return true;
 }
@@ -154,7 +207,8 @@ inline std::string EncodeLargeIconConfig(const LargeIconConfig& c)
         first = false;
         out << '"' << name << "\":";
         using T = std::remove_cvref_t<decltype(field)>;
-        if constexpr (std::is_same_v<T, std::string>) out << '"' << field << '"';
+        if constexpr (std::is_same_v<T, PanelGradient>) out << EncodePanelGradient(field);
+        else if constexpr (std::is_same_v<T, std::string>) out << '"' << field << '"';
         else if constexpr (std::is_same_v<T, bool>) out << (field ? "true" : "false");
         else out << field;
     });

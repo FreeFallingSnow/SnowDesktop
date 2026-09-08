@@ -219,6 +219,11 @@ int main()
     savedAppearance.widgetEdgeHighlightWidth = 2.5f;
     savedAppearance.widgetEdgeHighlightStrength = 0.42f;
     savedAppearance.luaWidgetContentRowHeight = 34.0f;
+    savedAppearance.panelGradient.enabled = true;
+    savedAppearance.panelGradient.angle = 45;
+    savedAppearance.panelGradient.start = .1;
+    savedAppearance.panelGradient.end = .9;
+    savedAppearance.panelGradient.stops.insert(savedAppearance.panelGradient.stops.begin() + 1, {.4, 0x102030, .2});
     Check(SavePersonalization(
             personalizationPath.c_str(), savedAppearance),
         "personalization save succeeds");
@@ -231,8 +236,24 @@ int main()
             std::abs(loadedAppearance.widgetEdgeHighlightStrength -
                 0.42f) < 0.0001f &&
             loadedAppearance.luaWidgetContentRowHeight == 34.0f &&
-            !loadedAppearance.glassEnabled,
+            !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
+            loadedAppearance.gradientEndA == savedAppearance.gradientEndA,
         "appearance and Lua widget row height round trip independently");
+    auto invalidAppearance = savedAppearance;
+    invalidAppearance.panelGradient.stops[1].position = 1;
+    Check(!SavePersonalization(personalizationPath.c_str(), invalidAppearance) &&
+        LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+        loadedAppearance.panelGradient == savedAppearance.panelGradient,
+        "invalid gradient stops are rejected before truncating the last valid appearance file");
+    snowdesktop::PanelGradient direction;
+    direction.angle = 0; direction.start = .25; direction.end = .75;
+    const auto horizontal = snowdesktop::ResolvePanelGradientLine(direction, 200, 100);
+    direction.angle = 90;
+    const auto vertical = snowdesktop::ResolvePanelGradientLine(direction, 200, 100);
+    Check(std::abs(horizontal.x1 - 50) < .0001 && std::abs(horizontal.x2 - 150) < .0001 &&
+        std::abs(horizontal.y1 - 50) < .0001 && std::abs(vertical.x1 - 100) < .0001 &&
+        std::abs(vertical.y1 - 25) < .0001 && std::abs(vertical.y2 - 75) < .0001,
+        "gradient direction and percentage range use the full panel axes after resizing");
 
     {
         std::ofstream legacyGlass(
@@ -243,6 +264,7 @@ int main()
                        "}\n";
     }
     PersonalizationSettings migratedGlass;
+    migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
@@ -250,7 +272,7 @@ int main()
             migratedGlass.widgetEdgeHighlightStrength ==
                 kDefaultEdgeHighlightStrength &&
             migratedGlass.widgetBorderWidth == 1.0f &&
-            migratedGlass.widgetBorderAlpha == 0.0f,
+            migratedGlass.widgetBorderAlpha == 0.0f && !migratedGlass.panelGradient.enabled,
         "legacy glass appearance migrates to an independent edge highlight");
     {
         std::ofstream legacyOpaque(

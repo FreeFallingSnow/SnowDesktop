@@ -796,7 +796,7 @@ bool DesktopApp::SaveLayoutSlots()
         const std::filesystem::path data = GetDataDirectoryPath();
         auto state = std::filesystem::path(snowdesktop::deployment::GetPackageLocalStatePath());
         if (state.empty()) state = data.parent_path();
-        const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION);
+        const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 2);
         if (!result.ok)
         {
             WriteDiagnosticLogEntry((L"Large icon upgrade backup failed: " + Utf8ToWide(result.error)).c_str(), DiagnosticLogLevel::Error);

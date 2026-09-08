@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../widget_preview_stage.h"
+#include "../panel_gradient_renderer.h"
 
 // Reusable Direct2D drawing primitives.
 
@@ -120,7 +121,7 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
         }
     }
 
-    if (fill.a > 0.0f)
+    if (!snowdesktop::DrawPanelGradient(ctx, ToD2DRect(frame), radius, p.panelGradient) && fill.a > 0.0f)
     {
         if (auto* fillBrush = getBrush(fill))
             ctx->FillRoundedRectangle(rr, fillBrush);

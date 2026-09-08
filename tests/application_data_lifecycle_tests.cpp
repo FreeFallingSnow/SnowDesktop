@@ -450,17 +450,26 @@ int main()
         large.localOnly = true;
         large.titleMode = 1;
         large.radiusPercent = 100; large.revealTitleSize = 30;
+        large.backgroundStyle = 9;
+        large.foregroundContent = 1; large.foregroundImage = "imported-foreground.png";
+        large.iconX = .2; large.iconY = .75;
+        large.effect = 2; large.titleDirection = 1; large.titleWeight = 800;
+        large.autoTitleColor = false; large.titleColor = 0xabcdef;
+        large.gradient.enabled = true; large.gradient.angle = 137;
+        large.gradient.stops.insert(large.gradient.stops.begin() + 1, {.4, 0x00ff77, .25});
         const std::string encoded = snowdesktop::EncodeLargeIconConfig(large);
         snowdesktop::layout_storage::Document roundTrip;
         const std::string document = "{\"layoutSchemaVersion\":1,\"items\":[{\"key\":\"game\",\"page\":\"p\",\"x\":0,\"y\":0,\"w\":2,\"h\":2,\"largeIcon\":" + encoded + "}]}";
         Expect(snowdesktop::layout_storage::ParseDocument(document, roundTrip, &layoutError) &&
             roundTrip.items[0].largeIcon == large && roundTrip.items[0].width == 2,
             "large icon settings preserve desired span independently of adapted layout and without entitlement data");
-        for (const auto invalid : {R"({"version":2})", R"({"version":1,"columns":0})",
+        for (const auto invalid : {R"({"version":3})", R"({"version":1,"columns":0})",
                  R"({"version":1,"radius":-1})", R"({"version":1,"image":"../secret.png"})",
                  R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})",
                  R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",
-                 R"({"version":1,"revealTitleSize":73})"})
+                 R"({"version":1,"revealTitleSize":73})", R"({"version":2,"titleWeight":650})",
+                 R"({"version":2,"foregroundImage":"../outside.png"})", R"({"version":2,"backgroundStyle":12})",
+                 R"({"version":2,"iconX":1.1})", R"({"version":2,"gradient":{"start":0.5,"end":0.5}})"})
         {
             JsonValue value;
             snowdesktop::LargeIconConfig candidate;
@@ -470,8 +479,20 @@ int main()
         JsonValue legacyValue; snowdesktop::LargeIconConfig legacy;
         Expect(ParseJson(R"({"version":1,"radius":27,"titleSize":14})", legacyValue) &&
             snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.radius == 27 && legacy.radiusPercent == -1 &&
-            legacy.titleSize == 14 && legacy.revealTitleSize == 24,
-            "old large-icon layouts keep their pixel radius and floating font when optional relative and reveal fields are absent");
+            legacy.titleSize == 14 && legacy.revealTitleSize == 24 && legacy.version == 2 && legacy.backgroundStyle == -3,
+            "v1 layouts migrate to the default background while retaining their independent radius and stored title sizes");
+        Expect(ParseJson(R"({"version":1,"content":1,"image":"imported-old.png","titleMode":1,"opacity":0.4})", legacyValue) &&
+            snowdesktop::DecodeLargeIconConfig(legacyValue, legacy) && legacy.backgroundStyle == -2 &&
+            legacy.image == "imported-old.png" && legacy.foregroundImage.empty() && legacy.effect == 2 &&
+            legacy.titleDirection == 0 && legacy.themeOpacity == .4,
+            "legacy full-frame images migrate to fill without overwriting the independent foreground source");
+        Expect(snowdesktop::LargeIconActiveImage(large) == "imported-foreground.png" &&
+            snowdesktop::LargeIconActiveContent(large) == 1,
+            "component backgrounds use the independently retained foreground image");
+        large.backgroundStyle = -2; large.content = 2;
+        Expect(snowdesktop::LargeIconActiveImage(large) == "imported-123.png" &&
+            snowdesktop::LargeIconActiveContent(large) == 2 && large.foregroundImage == "imported-foreground.png",
+            "switching to fill preserves inactive foreground settings and selects the fill source");
         Expect(snowdesktop::layout_storage::ParseDocument(
             R"({"items":[{"key":"ordinary","w":3,"h":2}]})", roundTrip, &layoutError) &&
             !roundTrip.items[0].largeIcon,
@@ -1846,6 +1867,11 @@ int main()
     Expect(keptUpgrade.ok && keptUpgrade.backup.id == upgrade.backup.id &&
         Read(upgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout,
         "subsequent large-icon saves never replace the pre-upgrade snapshot with a newer layout");
+    const auto v2Upgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0", 2);
+    Expect(v2Upgrade.ok && v2Upgrade.backup.root != upgrade.backup.root &&
+        Read(v2Upgrade.backup.data / L"SnowDesktop.layout.json") == modifiedLayout &&
+        Read(upgrade.backup.data / L"SnowDesktop.layout.json") == originalLayout,
+        "v2 migration creates a separate complete backup even when a v1 upgrade snapshot already exists");
     Write(fullBackupData / L"SnowDesktop.layout.json", originalLayout);
     const auto blockedUpgrade = root / L"large-icon-upgrade-blocked";
     Write(blockedUpgrade, "a file prevents creation of the backup directory");

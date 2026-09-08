@@ -9,6 +9,7 @@
 
 #include <d2d1_1.h>
 #include <string>
+#include "panel_gradient.h"
 
 constexpr int kAppearancePresetDark = 0;
 constexpr int kAppearancePresetLight = 1;
@@ -136,6 +137,9 @@ struct PersonalizationSettings
      *          形成从上到下的渐变透明效果，取值范围 [0.0f, 1.0f]。
      */
     float gradientEndA = 0.65f;
+
+    // Optional whole-panel gradient; does not change legacy bottom-bar alpha.
+    snowdesktop::PanelGradient panelGradient;
 
     /** @brief 独立的组件底栏高度，不属于主题预设。 */
     float barHeight = 24.0f;

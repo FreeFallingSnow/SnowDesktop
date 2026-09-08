@@ -366,6 +366,11 @@ bool LoadPersonalization(
         edgeHighlightStrengthLoaded = true;
     }
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
+    s.panelGradient = {};
+    JsonValue gradientDocument;
+    if (ParseJson(text, gradientDocument))
+        if (const auto* gradient = gradientDocument.Find("panelGradient"))
+            if (!snowdesktop::DecodePanelGradient(*gradient, s.panelGradient)) return false;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
     if (ReadDoubleField(text, "categorizedTabHeight", v))
     {
@@ -485,6 +490,7 @@ bool LoadPersonalization(
  */
 bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
 {
+    if (!snowdesktop::ValidatePanelGradient(s.panelGradient)) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     file << "{\n";
@@ -516,6 +522,7 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
                 : kDefaultEdgeHighlightStrength)
          << ",\n";
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
+    file << "  \"panelGradient\": " << snowdesktop::EncodePanelGradient(s.panelGradient) << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";
     file << "  \"categorizedTabHeight\": "
          << std::clamp(
