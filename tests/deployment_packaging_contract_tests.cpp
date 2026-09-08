@@ -181,11 +181,9 @@ void TestPackagers(const std::string& module,
         "release payloads isolate third-party runtime files in one private assembly directory");
     Check(release.find("SnowDesktopWorkshopManager.exe") ==
             std::string::npos &&
-            release.find("SnowDesktopSteamBridge.exe") !=
+            release.find("SnowDesktopSteamBridge.exe") ==
                 std::string::npos &&
-            release.find("steam_api64.dll") != std::string::npos &&
-            release.find("$includeOwnershipBridge") !=
-                std::string::npos &&
+            release.find("steam_api64.dll") == std::string::npos &&
             release.find("widgets\\snowdesktop-lua-widget\\bin\\snowwidget.exe") !=
                 std::string::npos &&
             steam.find("SnowDesktopWorkshopManager.exe") !=
@@ -196,15 +194,11 @@ void TestPackagers(const std::string& module,
                 std::string::npos &&
             steam.find("$payloadSkillPublisher") !=
                 std::string::npos,
-        "SDK-enabled portable builds retain ownership verification while only the Steam payload includes the Workshop manager and complete publishing CLI");
-    Check(release.find("$AllowOwnershipBridge -and") != std::string::npos &&
-            release.find("Copy-Payload -Destination $portableStage -AllowOwnershipBridge") !=
-                std::string::npos &&
-            release.find("Copy-Payload -Destination $msixStage -AllowOwnershipBridge") ==
-                std::string::npos &&
-            release.find("MSIX payload must not contain Steam bridge files") !=
+        "only the Steam payload includes the Steam bridge, Steam API, Workshop manager, and complete publishing CLI");
+    Check(release.find("AllowOwnershipBridge") == std::string::npos &&
+            release.find("Portable and MSIX payloads must not contain Steam bridge files") !=
                 std::string::npos,
-        "MSIX cannot opt into the portable Steam bridge and rejects leaked Steam files");
+        "portable and MSIX packaging reject leaked Steam files without a bridge opt-in");
     Check(release.find("SnowDesktopLauncher.exe") == std::string::npos &&
             release.find("SnowDesktop.runtime-context.json") ==
                 std::string::npos &&
@@ -240,9 +234,9 @@ void TestPackagers(const std::string& module,
     Check(module.find("AdditionalRuntimeDlls") != std::string::npos &&
             module.find("AdditionalExecutables") != std::string::npos &&
             module.find("existingPrivateManifest") != std::string::npos &&
-            release.find("AdditionalRuntimeDlls") !=
+            release.find("AdditionalRuntimeDlls") ==
                 std::string::npos &&
-            release.find("AdditionalExecutables") !=
+            release.find("AdditionalExecutables") ==
                 std::string::npos &&
             steam.find("-AdditionalRuntimeDlls @(") !=
                 std::string::npos &&
