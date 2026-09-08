@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "Eliminar esta parada",
     "panelGradient.addStop": "Añadir parada de color",
     "panelGradient.barStartOpacity": "Opacidad inicial de la barra inferior",
-    "largeIcon.backgroundColorHelp": "Usa el relleno de fondo del embellecimiento de iconos para integrar el icono con su fondo. No se puede combinar con el degradado de colores del tema.",
+    "largeIcon.backgroundColorHelp": "Usa el color base del embellecimiento de iconos para integrar el icono con su fondo.",
     "largeIcon.fillScale": "Escala de la imagen de relleno",
-    "panelGradient.reset": "Restablecer degradado"
+    "panelGradient.reset": "Restablecer degradado",
+    "largeIcon.defaultBackground": "Tipo de relleno",
+    "largeIcon.gradientBackground": "Fondo degradado",
+    "largeIcon.solidBackground": "Fondo de color sólido",
+    "largeIcon.resetThemeGradient": "Restaurar degradado del icono"
 }

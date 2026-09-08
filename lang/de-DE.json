@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "Diesen Farbstopp entfernen",
     "panelGradient.addStop": "Farbstopp hinzufügen",
     "panelGradient.barStartOpacity": "Startdeckkraft der unteren Leiste",
-    "largeIcon.backgroundColorHelp": "Die Hintergrundfüllung der Symbolverschönerung verbindet das Symbol mit seinem Hintergrund. Nicht mit dem Designfarbverlauf kombinierbar.",
+    "largeIcon.backgroundColorHelp": "Die Grundfarbe der Symbolverschönerung lässt Symbol und Hintergrund ineinander übergehen.",
     "largeIcon.fillScale": "Skalierung des Füllbilds",
-    "panelGradient.reset": "Farbverlauf zurücksetzen"
+    "panelGradient.reset": "Farbverlauf zurücksetzen",
+    "largeIcon.defaultBackground": "Füllart",
+    "largeIcon.gradientBackground": "Farbverlauf",
+    "largeIcon.solidBackground": "Einfarbiger Hintergrund",
+    "largeIcon.resetThemeGradient": "Symbolfarbverlauf wiederherstellen"
 }

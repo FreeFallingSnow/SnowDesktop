@@ -1941,6 +1941,7 @@ if (BUILD_TESTING)
             tests/icon_render_rules_tests.cpp
             tests/large_icon_assets_tests.cpp
             tests/large_icon_rendering_tests.cpp
+            src/shortcut_icon_resource.cpp
             src/large_icon_renderer.cpp
             src/large_icon_assets.cpp
             src/icon_beautify.cpp

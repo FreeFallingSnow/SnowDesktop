@@ -1,6 +1,8 @@
 #include "icon_render_rules.h"
 #include "large_icon_render_rules.h"
 #include "large_icon_motion.h"
+#include "icon_bitmap_pixels.h"
+#include "icon_beautify.h"
 #include "large_icon_transform.h"
 #include "large_icon_settings_rules.h"
 
@@ -51,9 +53,15 @@ int main(int argc, char** argv)
     config.effect = 1;
     Check(!motion.Advance(1503, true, true, false, 1, config) && motion.hover == 0, "reduced motion disables 3D");
     Check(motion.AdvanceTilt(1600, 1, -1, true, true, true, 1, config), "pointer change starts a finite tilt");
-    motion.AdvanceTilt(1700, -1, 1, true, true, true, 1, config);
-    Check(std::abs(motion.tiltX - .5f) < .0001 && std::abs(motion.tiltY + .5f) < .0001,
-        "pointer reversal samples the current transition before retargeting");
+    motion.AdvanceTilt(1632.5, -1, 1, true, true, true, 1, config);
+    Check(std::abs(motion.tiltX - .875f) < .0001 && std::abs(motion.tiltY + .875f) < .0001,
+        "tilt reaches most of its target within 33ms and preserves pose on reversal");
+    snowdesktop::LargeIconMotion following;
+    following.Advance(2000, true, true, true, 1, config);
+    Check(following.hover == 1, "3D does not multiply pointer tracking by a delayed hover fade");
+    following.AdvanceTilt(2000, 1, 0, true, true, true, 1, config);
+    for (int i = 1; i <= 6; ++i) following.AdvanceTilt(2000 + i * 8, 1 - i * .02f, 0, true, true, true, 1, config);
+    Check(following.tiltX > .75f, "continuous high-rate pointer events do not restart a slow ease-in");
     Check(!motion.AdvanceTilt(1900, -1, 1, true, true, true, 1, config) && motion.tiltX == -1,
         "settled pointer tilt does not request idle frames");
     Check(!motion.AdvanceTilt(1901, -1, 1, true, false, true, 1, config) && motion.tiltX == 0,
@@ -76,8 +84,15 @@ int main(int argc, char** argv)
     geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 1, measured);
     Check(geometry.leftReveal && geometry.x == 130 && geometry.width == 32 && geometry.titleLeft == 174 && geometry.titleWidth == 96,
         "left reveal keeps original size and centers text in the remaining right column");
-    Check(!CanSelectTitleDirection(config, 0, 180, 400, 64, 64, 1, measured) && CanSelectTitleDirection(config, 1, 180, 400, 64, 64, 1, measured),
-        "portrait frame disables left direction independently from up direction");
+    Check(CanSelectTitleDirection(config, 0, 180, 400, 64, 64, 1, measured) && CanSelectTitleDirection(config, 1, 180, 400, 64, 64, 1, measured),
+        "compact spacing permits a title when the actual icon and text fit");
+    auto largeImage = config; largeImage.contentScale = 1;
+    auto fullHeight = ResolveContent(largeImage, 400, 180, 256, 256, 1, true, 1, measured);
+    Check(fullHeight.leftReveal && fullHeight.height == 180 && fullHeight.titleWidth == 96,
+        "a full-height foreground still reveals text to its right without shrinking the icon");
+    auto fullWidth = ResolveContent(largeImage, 180, 400, 256, 256, 1, true, 1, measured);
+    Check(fullWidth.upReveal && fullWidth.width == 180,
+        "a full-width foreground still permits the lower title");
     Check(!CanSelectTitleDirection(config, 0, 60, 60, 64, 64, 1, measured) && !CanSelectTitleDirection(config, 1, 60, 60, 64, 64, 1, measured),
         "insufficient frames cannot enable either direction by shrinking content");
     config.titleDirection = 1;
@@ -86,9 +101,10 @@ int main(int argc, char** argv)
         "up direction reserves a lower text area without resizing the icon");
     config.backgroundStyle = -2; config.titleDirection = 0; config.focusX = 1;
     geometry = ResolveContent(config, 400, 180, 800, 200, 1, true, 1, measured);
-    Check(geometry.leftReveal && geometry.cropped && geometry.width == 400 && std::abs(geometry.x + 120) < .000001 &&
-        geometry.sourceX > 0 && geometry.sourceWidth < 800,
-        "fill crops the source before movement so overscan cannot refill title space");
+    Check(!geometry.leftReveal && !geometry.upReveal && geometry.cropped && geometry.width == 400 && geometry.x == 0,
+        "saved dynamic-title settings never translate image-fill content");
+    Check(!motion.Advance(2000, true, true, true, 1, config) && motion.hover == 0,
+        "image fill schedules no dynamic-title animation");
     config.effect = 0; config.fit = 0;
     geometry = ResolveContent(config, 400, 180, 32, 32, 1, true, 0, measured);
     Check(geometry.width == 180 && geometry.x == 110, "fill original is enlarged independently of foreground limits");
@@ -101,8 +117,8 @@ int main(int argc, char** argv)
         "zooming cover creates crop room on both axes without growing the frame");
     config.effect = 2;
     const auto leftZoom = ResolveContent(config, 400, 180, 800, 200, 1, false, 1, measured);
-    Check(leftZoom.leftReveal && leftZoom.x < 0 && leftZoom.sourceWidth == geometry.sourceWidth,
-        "fill zoom is cropped before dynamic title translation");
+    Check(!leftZoom.leftReveal && !leftZoom.upReveal && leftZoom.x == 0 && leftZoom.sourceWidth == geometry.sourceWidth,
+        "zoomed image fill retains its crop with dynamic title disabled");
     config = {};
     Check(Radius(config, 200, 100, 2) == 24 && RadiusPercent(config, 200, 100, 2) == 48, "legacy radius preserves CU geometry");
     config.radiusPercent = 100;
@@ -132,10 +148,43 @@ int main(int argc, char** argv)
     background = DefaultBackground(config, 0x008800, true, 0x0112ff);
     Check(background.color == 0xe8ecf4 && background.opacity == .65 && !background.gradient.enabled,
         "plain icon background falls back to the beautify base, never an accent fill");
-    config.smartFill = false; config.themeColor = false; config.themeGradient = true; config.themeOpacity = .4; config.themeAngle = 45;
+    config.smartFill = false; config.defaultBackground = 1; config.themeOpacity = .4; config.themeAngle = 45;
     background = DefaultBackground(config, 0x008800, true, 0x0112ff);
     Check(background.color == 0x008800 && background.opacity == .4 && background.gradient.enabled && background.gradient.angle == 45,
         "theme fallback supports opacity and automatic gradient direction without manual colors");
+    Check(Visible(Field::ThemeGradient, config) && Visible(Field::EditableBackground, config) && Enabled(Field::ThemeGradient, config, false, false),
+        "default gradient keeps the complete editor available without image samples");
+    config.defaultGradient.enabled = true; config.defaultGradient.angle = 213;
+    config.defaultGradient.stops = {{0, 0x112233, .2}, {.3, 0x998877, .4}, {1, 0xabcdef, .8}};
+    background = DefaultBackground(config, 0, false, 0);
+    Check(background.gradient == config.defaultGradient, "manual default gradient retains every stop, opacity and direction without theme samples");
+    config.defaultBackground = 2; config.defaultSolidColor = 0x1133ff; config.defaultSolidOpacity = .37;
+    background = DefaultBackground(config, 0xff0000, true, 0x008800);
+    Check(background.color == 0x1133ff && background.opacity == .37 && !background.gradient.enabled &&
+        Visible(Field::DefaultSolid, config) && Visible(Field::EditableBackground, config),
+        "default solid exposes color and opacity and ignores automatic contour/gradient choices");
+    config.backgroundStyle = -2; config.effect = 2;
+    Check(!Visible(Field::Title, config) && !Visible(Field::ManualTitle, config), "image fill hides unsupported title controls");
+    std::vector<std::uint32_t> straight{0x8000c864, 0xff00c864, 0x0000ffff};
+    snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(straight);
+    Check(straight[0] == 0x80006432 && straight[1] == 0xff00c864 && straight[2] == 0,
+        "straight Shell alpha is premultiplied before PNG encoding instead of producing cyan fringes");
+    const auto normalized = straight;
+    snowdesktop::icon_bitmap_pixels::NormalizeShellPixels(straight);
+    Check(straight == normalized, "already-premultiplied icon samples are not darkened again");
+    std::vector<unsigned> rounded(96 * 96);
+    for (int y = 0; y < 96; ++y) for (int x = 0; x < 96; ++x)
+    {
+        const double dx = std::max({20. - x, 0., x - 75.}), dy = std::max({20. - y, 0., y - 75.});
+        const auto a = static_cast<unsigned>(255 * std::clamp(16.5 - std::sqrt(dx * dx + dy * dy), 0., 1.));
+        rounded[y * 96 + x] = a << 24 | ((32 * a / 255) << 16) | ((200 * a / 255) << 8) | (112 * a / 255);
+    }
+    for (int y = 32; y < 64; ++y) for (int x = 32; x < 64; ++x) rounded[y * 96 + x] = 0xffffffff;
+    const auto contour = snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96);
+    Check(contour && contour->r == 32 && contour->g == 200 && contour->b == 112,
+        "visible rounded contour survives transparent image margins and an opaque contrasting logo");
+    for (int y = 36; y < 60; ++y) for (int x = 36; x < 60; ++x) rounded[y * 96 + x] = 0;
+    Check(!snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96), "a hollow icon silhouette is not mistaken for a solid background plate");
     config.backgroundStyle = 7;
     Check(TextColor(config, 0x111111, 0x161616) == 0x161616, "component title color uses theme foreground even when luminance disagrees");
     config.autoTitleColor = false; config.titleColor = 0x123456;

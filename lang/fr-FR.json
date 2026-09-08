@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "Supprimer ce point",
     "panelGradient.addStop": "Ajouter un point de couleur",
     "panelGradient.barStartOpacity": "Opacité initiale de la barre inférieure",
-    "largeIcon.backgroundColorHelp": "Utilise le remplissage d’arrière-plan de l’embellissement des icônes pour fondre l’icône dans son fond. Incompatible avec le dégradé des couleurs du thème.",
+    "largeIcon.backgroundColorHelp": "Utilise la couleur de base de l’embellissement des icônes pour fondre l’icône dans son arrière-plan.",
     "largeIcon.fillScale": "Échelle de l’image de remplissage",
-    "panelGradient.reset": "Réinitialiser le dégradé"
+    "panelGradient.reset": "Réinitialiser le dégradé",
+    "largeIcon.defaultBackground": "Type de remplissage",
+    "largeIcon.gradientBackground": "Arrière-plan dégradé",
+    "largeIcon.solidBackground": "Arrière-plan uni",
+    "largeIcon.resetThemeGradient": "Rétablir le dégradé de l’icône"
 }

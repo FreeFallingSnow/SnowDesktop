@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "刪除此色標",
     "panelGradient.addStop": "新增色標",
     "panelGradient.barStartOpacity": "底列起始不透明度",
-    "largeIcon.backgroundColorHelp": "沿用圖示美化的底色填滿方式，使圖示與背景銜接；與主題色漸層互斥。",
+    "largeIcon.backgroundColorHelp": "沿用圖示美化的底色填滿方式，讓圖示與背景銜接為整體。",
     "largeIcon.fillScale": "填滿圖片縮放",
-    "panelGradient.reset": "還原漸層預設值"
+    "panelGradient.reset": "還原漸層預設值",
+    "largeIcon.defaultBackground": "填滿方式",
+    "largeIcon.gradientBackground": "漸層背景",
+    "largeIcon.solidBackground": "純色背景",
+    "largeIcon.resetThemeGradient": "還原圖示主題色漸層"
 }

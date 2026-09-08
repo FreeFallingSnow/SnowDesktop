@@ -17,9 +17,10 @@ class PanelGradientEditor : public std::enable_shared_from_this<PanelGradientEdi
 public:
     using Localize = std::function<std::wstring(std::string_view)>;
     using Change = std::function<void(const PanelGradient&, bool)>;
-    static std::shared_ptr<PanelGradientEditor> Create(Localize localize, Change change)
+    static std::shared_ptr<PanelGradientEditor> Create(Localize localize, Change change, bool required = false)
     {
         auto result = std::make_shared<PanelGradientEditor>();
+        result->required_ = required;
         result->localize_ = std::move(localize); result->change_ = std::move(change);
         std::weak_ptr<PanelGradientEditor> weak = result;
         result->preview_.Initialize([weak](const PanelGradient& value) {
@@ -62,7 +63,7 @@ private:
     Localize localize_;
     Change change_;
     std::vector<std::function<void()>> sync_;
-    bool syncing_ = false, dirty_ = false, expanded_ = false;
+    bool syncing_ = false, dirty_ = false, expanded_ = false, required_ = false;
     std::wstring L(std::string_view key) const { return localize_ ? localize_(key) : std::wstring{}; }
     void Sync()
     {
@@ -220,7 +221,7 @@ private:
             if (auto self = weak.lock()) self->Apply([&](auto& v) { v.enabled = enabled.IsOn(); }, true);
         });
         sync_.push_back([this, enabled] { enabled.IsOn(value_.enabled); });
-        Row("panelGradient.enabled", enabled, [weak] {
+        if (!required_) Row("panelGradient.enabled", enabled, [weak] {
             if (auto self = weak.lock()) self->Apply([](auto& v) { v.enabled = false; }, true);
         }, 0);
         if (value_.enabled)

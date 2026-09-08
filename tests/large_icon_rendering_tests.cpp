@@ -159,7 +159,7 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         Check((Pixel(pixels, 115, 160) >> 24) >= 100 && (Pixel(pixels, 115, 160) >> 24) <= 104,
             "theme fallback uses its independent opacity");
         Check(Pixel(pixels, 115, 160) == Pixel(pixels, 285, 160), "beautify base uses a uniform background instead of the theme accent");
-        config.themeColor = false; config.themeGradient = true; config.themeAngle = 0;
+        config.defaultBackground = 1; config.themeAngle = 0;
         pixels = canvas.Draw(config, view);
         Check(Pixel(pixels, 115, 160) != Pixel(pixels, 285, 160), "automatic gradient changes color across the requested direction");
 
@@ -226,9 +226,10 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
         view.frame = {40, 75, 440, 255}; view.hover = 1;
         view.name = L"A";
         pixels = canvas.Draw(config, view);
-        Check(RedBounds(pixels).right > 380 && RedBounds(pixels).right < 420 && Visible(pixels, {420, 80, 435, 135}) == 0,
-            "an oversized fill source is cropped before left movement, leaving transparent title space");
-        Save(outputDirectory, "05-fill-reveal.png", pixels);
+        config.effect = 0;
+        Check(canvas.Draw(config, view) == pixels && RedBounds(pixels).right == 440,
+            "image fill ignores a retained dynamic-title setting and draws no text");
+        Save(outputDirectory, "05-fill-no-title.png", pixels);
         config.effect = 0; config.fit = 0; view.frame = {100, 60, 300, 260};
         pixels = canvas.Draw(config, view);
         Check(Visible(pixels, {105, 65, 295, 120}) == 0 && Red(Pixel(pixels, 200, 160)),

@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "Remover este ponto",
     "panelGradient.addStop": "Adicionar ponto de cor",
     "panelGradient.barStartOpacity": "Opacidade inicial da barra inferior",
-    "largeIcon.backgroundColorHelp": "Usa o preenchimento de fundo do embelezamento de ícones para integrar o ícone ao fundo. Não pode ser combinado com o gradiente de cores do tema.",
+    "largeIcon.backgroundColorHelp": "Usa a cor base do embelezamento de ícones para integrar o ícone ao fundo.",
     "largeIcon.fillScale": "Escala da imagem de preenchimento",
-    "panelGradient.reset": "Restaurar gradiente"
+    "panelGradient.reset": "Restaurar gradiente",
+    "largeIcon.defaultBackground": "Tipo de preenchimento",
+    "largeIcon.gradientBackground": "Fundo em degradê",
+    "largeIcon.solidBackground": "Fundo de cor sólida",
+    "largeIcon.resetThemeGradient": "Restaurar degradê do ícone"
 }

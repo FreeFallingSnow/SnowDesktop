@@ -228,6 +228,16 @@ int RunLargeIconAssetTests()
         auto multiFrame = queue.Wait(1);
         Check(!multiFrame.empty() && multiFrame[0].asset && multiFrame[0].asset->width == 128 && multiFrame[0].asset->height == 128,
             "multi-frame ICO import chooses the largest valid frame instead of enlarging its first tiny frame");
+        const auto shortcut = root / L"steam-game.url";
+        atomic_file::WriteAll(shortcut, "[InternetShortcut]\r\nURL=steam://rungameid/949230\r\nIconIndex=0\r\nIconFile=multi-frame.ico\r\n");
+        LargeIconAssetRequest steamIcon;
+        steamIcon.itemKey = L"steam-foreground"; steamIcon.parsingName = shortcut.wstring(); steamIcon.pixels = 256; steamIcon.generation = 1;
+        const auto beforeIcon = requests.load();
+        queue.assets.Request(steamIcon);
+        auto foreground = queue.Wait(1);
+        Check(!foreground.empty() && foreground[0].asset && foreground[0].asset->width == 128 &&
+            foreground[0].asset->source == "original" && foreground[0].asset->edgeColor == 0x00ff00 && requests == beforeIcon,
+            "Steam foreground reads the largest declared URL icon locally instead of the generic Shell document");
         for (unsigned alpha : {0u, 16u})
         {
             const auto transparentPath = root / (L"transparent-" + std::to_wstring(alpha) + L".png");

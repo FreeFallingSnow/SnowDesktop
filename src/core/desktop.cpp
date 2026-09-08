@@ -696,6 +696,38 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         hasItemDrag ? app_->dragSession_.SourceList() : DragSourceList{},
         this, slot, region, mods, dragPoint);
     app_->DrawDesktopDropPreviewList(ctx, preview);
+    if (hasItemDrag && preview.Empty() && !preview.fileBacked &&
+        app_->dragSession_.SourceList().origin == this)
+    {
+        const auto& entries = app_->dragSession_.SourceList().entries;
+        const bool hasLarge = std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
+            return !entry.fromDock && entry.desktopIndex < app_->items_.size() &&
+                app_->items_[entry.desktopIndex].largeIcon.has_value();
+        });
+        if (hasLarge)
+        {
+            // Use the rejected group anchor and offsets, just as commit does.
+            // Clip only the paint at page edges; never shrink the requested span.
+            const auto anchor = app_->ResolveDesktopRequestCell(app_->dragSession_.SourceList(), dragPoint);
+            if (const auto* page = FindGridPage(app_->gridPages_, anchor.pageId))
+            {
+                int left = INT_MAX, top = INT_MAX;
+                for (const auto& entry : entries)
+                { left = std::min(left, entry.originalCell.column); top = std::min(top, entry.originalCell.row); }
+                ctx->PushAxisAlignedClip(app_->ToD2DRect(page->bounds), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                for (const auto& entry : entries)
+                {
+                    GridCell cell{anchor.pageId, anchor.column + entry.originalCell.column - left,
+                        anchor.row + entry.originalCell.row - top};
+                    DesktopWidget geometry; geometry.gridCell = cell;
+                    geometry.bounds = GetGridRect(app_->gridPages_, cell, entry.originalSpan);
+                    app_->DrawD2DRoundedRectangle(ctx, app_->GetStandaloneWidgetFrameRect(geometry), 8.f,
+                        D2D1::ColorF(1.f, .30f, .30f, .18f), D2D1::ColorF(1.f, .25f, .25f, .85f), 2.f);
+                }
+                ctx->PopAxisAlignedClip();
+            }
+        }
+    }
     if (hasItemDrag &&
         (app_->dragSession_.SourceList().
                 hasCollectionGroupEntries ||

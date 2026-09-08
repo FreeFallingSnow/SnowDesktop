@@ -26,7 +26,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     c::TextBlock status, name;
     x::DispatcherTimer timer;
     presenter_controls::CoalescedPreviewTimer<LargeIconConfig> previews;
-    std::shared_ptr<PanelGradientEditor> gradient;
+    std::shared_ptr<PanelGradientEditor> gradient, defaultGradient;
     std::vector<std::function<void()>> synchronize, visibility;
     std::array<c::Image, 2> coverImages;
     std::array<c::TextBlock, 2> coverLabels;
@@ -51,11 +51,14 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             snapshot.imageWidth, snapshot.imageHeight, snapshot.unitScale,
             large_icon_render_rules::MeasureTitleText(titleFonts.Get(), draft, snapshot.name, snapshot.unitScale));
     }
+    PanelGradient DefaultGradient() const
+    { return large_icon_render_rules::DefaultBackground(draft, snapshot.accent, false, 0).gradient; }
     void Reload()
     {
         JsonValue json;
         if (ParseJson(snapshot.config, json)) DecodeLargeIconConfig(json, draft);
         if (gradient) gradient->SetValue(draft.gradient, true);
+        if (defaultGradient) defaultGradient->SetValue(DefaultGradient(), true);
     }
     void Sync()
     {
@@ -67,6 +70,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (auto& fn : synchronize) fn();
         for (auto& fn : visibility) fn();
         if (gradient) gradient->SetValue(draft.gradient);
+        if (defaultGradient && draft.defaultBackground == 1) defaultGradient->SetValue(DefaultGradient());
         for (int i = 0; i < 2; ++i)
         {
             const auto& path = i == 0 ? snapshot.landscapePath : snapshot.portraitPath;
@@ -155,12 +159,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             std::wstring help;
             if ((field == Field::ThemeOptions || field == Field::ThemeGradient) && !enabled) help = L(snapshot.hasEdgeColor && draft.smartFill ? "largeIcon.themeFallbackHelp" : "largeIcon.themeUnavailable");
             if (field == Field::ForegroundPosition && !enabled) help = L("largeIcon.positionEffectHelp");
-            if (id == "largeIcon.themeGradient")
-            { enabled = snapshot.accent != 0; if (!enabled) help = L("largeIcon.themeUnavailable"); }
-            if (id == "largeIcon.themeColor") help = L("largeIcon.backgroundColorHelp");
+
+            if (id == "largeIcon.defaultBackground" && draft.defaultBackground == 0) help = L("largeIcon.backgroundColorHelp");
             if (id == "largeIcon.radius") help = L("largeIcon.radiusHelp");
             if (id == "largeIcon.direction" && !Supported(draft.autoTitleDirection ? 2 : draft.titleDirection)) help = L("largeIcon.titleUnavailable");
-            if (id == "largeIcon.autoTitleColor" && draft.backgroundStyle >= -1) help = L("largeIcon.themeTextHelp");
+            if (id == "largeIcon.autoTitleColor" && (draft.backgroundStyle >= -1 || (draft.backgroundStyle == -3 && draft.defaultBackground != 0))) help = L("largeIcon.themeTextHelp");
             if (field == Field::Crop)
             {
                 const auto geometry = large_icon_render_rules::ResolveContent(draft, snapshot.frameWidth, snapshot.frameHeight,
@@ -260,6 +263,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             c::ComboBoxItem item; item.Content(winrt::box_value(L(text))); input.Items().Append(item); values.push_back(value);
             if (member == &LargeIconConfig::titleDirection)
                 visibility.push_back([this, item, value] { item.IsEnabled(Supported(value)); });
+            if (member == &LargeIconConfig::effect && value == 2)
+                visibility.push_back([this, item] { item.IsEnabled(!IsLargeIconFill(draft)); });
         }
         std::weak_ptr<Impl> weak = shared_from_this();
         input.SelectionChanged([weak, member, input, values](auto const&, auto const&) {
@@ -267,6 +272,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             {
                 const int index = input.SelectedIndex(); if (index < 0 || index >= static_cast<int>(values.size())) return;
                 if (member == &LargeIconConfig::titleDirection && !self->Supported(values[index])) return;
+                if (member == &LargeIconConfig::effect && values[index] == 2 && IsLargeIconFill(self->draft)) return;
                 if (member == &LargeIconConfig::titleDirection)
                 {
                     self->draft.autoTitleDirection = values[index] == 2;
@@ -277,7 +283,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             }
         });
         synchronize.push_back([this, input, member, values] {
-            const int value = member == &LargeIconConfig::titleDirection && draft.autoTitleDirection ? 2 : draft.*member;
+            const int value = member == &LargeIconConfig::titleDirection && draft.autoTitleDirection ? 2 :
+                member == &LargeIconConfig::effect && IsLargeIconFill(draft) && draft.effect == 2 ? 0 : draft.*member;
             const auto found = std::find(values.begin(), values.end(), value);
             input.SelectedIndex(found == values.end() ? -1 : static_cast<int>(found - values.begin()));
         });
@@ -328,11 +335,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             {{-3,"largeIcon.default"},{-2,"largeIcon.fill"},{-1,"largeIcon.follow"},
              {0,"app.settings.dark"},{1,"app.settings.light"},{6,"app.settings.dark_glass"},{7,"app.settings.light_glass"},
              {10,"app.settings.dark_acrylic"},{11,"app.settings.light_acrylic"},{9,"app.settings.custom"}});
-        Toggle(bg, "largeIcon.themeColor", &LargeIconConfig::themeColor, Field::Default, 1);
+        Choice(bg, "largeIcon.defaultBackground", &LargeIconConfig::defaultBackground,
+            {{0,"largeIcon.themeColor"},{1,"largeIcon.gradientBackground"},{2,"largeIcon.solidBackground"}}, Field::Default, 1);
         Toggle(bg, "largeIcon.smartFill", &LargeIconConfig::smartFill, Field::Smart, 2);
-        Toggle(bg, "largeIcon.themeGradient", &LargeIconConfig::themeGradient, Field::Default, 1);
         Slider(bg, "largeIcon.opacity", &LargeIconConfig::themeOpacity, 0, 100, 1, 100, L"%", Field::ThemeOptions, 2);
-        Slider(bg, "panelGradient.angle", &LargeIconConfig::themeAngle, 0, 360, 1, 1, L"°", Field::ThemeGradient, 2);
+        ColorPicker(bg, "largeIcon.manualColor", &LargeIconConfig::defaultSolidColor, Field::DefaultSolid, 2);
+        Slider(bg, "largeIcon.opacity", &LargeIconConfig::defaultSolidOpacity, 0, 100, 1, 100, L"%", Field::DefaultSolid, 2);
         if (snapshot.steam) Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content,
             {{0,"largeIcon.original"},{1,"largeIcon.image"},{2,"largeIcon.steam"}}, Field::Fill, 1);
         else Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Fill, 1);
@@ -359,7 +367,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Toggle(bg, "largeIcon.localOnly", &LargeIconConfig::localOnly, Field::Steam, 2);
         Action(bg, "largeIcon.refresh", "largeIcon.refresh", [](auto& self) { self.Send("refresh"); }, Field::Steam, 2);
         Choice(bg, "largeIcon.material", &LargeIconConfig::material,
-            {{0,"largeIcon.plain"},{1,"largeIcon.glass"},{2,"largeIcon.acrylic"}}, Field::Custom, 1);
+            {{0,"largeIcon.plain"},{1,"largeIcon.glass"},{2,"largeIcon.acrylic"}}, Field::EditableBackground, 1);
         ColorPicker(bg, "largeIcon.manualColor", &LargeIconConfig::manualColor, Field::Solid, 1);
         Slider(bg, "largeIcon.opacity", &LargeIconConfig::opacity, 0, 100, 1, 100, L"%", Field::Solid, 1);
         Slider(bg, "app.settings.blur_radius", &LargeIconConfig::blurRadius, 4, 48, 1, 1, L"", Field::Blur, 2);
@@ -368,15 +376,24 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (auto self = weak.lock(); self && !self->syncing) { self->draft.gradient = value; if (commit) self->Send("commit"); else self->Preview(); }
         });
         gradient->SetValue(draft.gradient); gradient->Content().Margin({16,0,0,0}); bg.Children().Append(gradient->Content()); Track(gradient->Content(), Field::Custom);
-        Toggle(bg, "largeIcon.border", &LargeIconConfig::border, Field::Custom, 1);
+        defaultGradient = PanelGradientEditor::Create(localize, [weak](const auto& value, bool commit) {
+            if (auto self = weak.lock(); self && !self->syncing)
+            { self->draft.defaultGradient = value; if (commit) self->Send("commit"); else self->Preview(); }
+        }, true);
+        defaultGradient->SetValue(DefaultGradient()); defaultGradient->Content().Margin({16,0,0,0});
+        bg.Children().Append(defaultGradient->Content()); Track(defaultGradient->Content(), Field::ThemeGradient);
+        Action(bg, "largeIcon.resetThemeGradient", "app.settings.restore_default", [](auto& self) {
+            self.draft.defaultGradient = {}; self.Send("commit");
+        }, Field::ThemeGradient, 2);
+        Toggle(bg, "largeIcon.border", &LargeIconConfig::border, Field::EditableBackground, 1);
         ColorPicker(bg, "largeIcon.borderColor", &LargeIconConfig::borderColor, Field::Border, 2);
         Slider(bg, "largeIcon.borderOpacity", &LargeIconConfig::borderOpacity, 0, 100, 1, 100, L"%", Field::Border, 2);
         Slider(bg, "largeIcon.borderWidth", &LargeIconConfig::borderWidth, .5, 4, .5, 1, L"", Field::Border, 2);
-        Toggle(bg, "largeIcon.edgeHighlight", &LargeIconConfig::edgeHighlight, Field::Custom, 1);
+        Toggle(bg, "largeIcon.edgeHighlight", &LargeIconConfig::edgeHighlight, Field::EditableBackground, 1);
         Slider(bg, "largeIcon.edgeStrength", &LargeIconConfig::edgeStrength, 0, 100, 1, 100, L"%", Field::Edge, 2);
         Slider(bg, "largeIcon.edgeWidth", &LargeIconConfig::edgeWidth, .5, 4, .5, 1, L"", Field::Edge, 2);
         Choice(bg, "app.settings.text_color", &LargeIconConfig::componentTheme,
-            {{0,"app.settings.light"},{1,"app.settings.dark"}}, Field::Custom, 1);
+            {{0,"app.settings.light"},{1,"app.settings.dark"}}, Field::EditableBackground, 1);
         Slider(bg, "largeIcon.radius", &LargeIconConfig::radiusPercent, 0, 100, 1, 1, L"%");
         auto icon = Group("largeIcon.foreground", Field::Foreground);
         Choice(icon, "largeIcon.foregroundSource", &LargeIconConfig::foregroundContent, {{0,"largeIcon.original"},{1,"largeIcon.image"}});
@@ -424,8 +441,8 @@ void LargeIconPagePresenter::Activate(std::wstring key)
 void LargeIconPagePresenter::Deactivate()
 {
     impl_->timer.Stop();
-    if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); if (impl_->dirty) impl_->Send("commit"); impl_->Send("cancel"); }
+    if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); if (impl_->defaultGradient) impl_->defaultGradient->Flush(); if (impl_->dirty) impl_->Send("commit"); impl_->Send("cancel"); }
     impl_->active = false;
 }
-void LargeIconPagePresenter::RefreshLocalizedText() { if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); impl_->Build(); } }
+void LargeIconPagePresenter::RefreshLocalizedText() { if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); if (impl_->defaultGradient) impl_->defaultGradient->Flush(); impl_->Build(); } }
 }

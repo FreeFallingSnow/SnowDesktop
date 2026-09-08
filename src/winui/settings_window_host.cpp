@@ -2014,7 +2014,21 @@ struct SettingsWindowHost::Impl
                 std::move(primaryButtonText));
         };
         shell->SetPageLayoutPageActions(std::move(pageLayout));
-        shell->SetLargeIconSettingsAction(options.largeIconSettings);
+        shell->SetLargeIconSettingsAction([weak](LargeIconSettingsRequest request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->options.largeIconSettings)
+                return LargeIconSettingsSnapshot{};
+            if (request.action == "import" && request.path.empty())
+            {
+                auto selected = ShowOpenPathDialog(state->owner->window,
+                    state->owner->L("largeIcon.image"),
+                    {{state->owner->L("largeIcon.image"), L"*.png;*.jpg;*.jpeg;*.bmp;*.ico"}}, false);
+                if (selected) request.path = selected->wstring();
+                else request.action = "status";
+            }
+            if (!state->alive.load() || !state->owner) return LargeIconSettingsSnapshot{};
+            return state->owner->options.largeIconSettings(std::move(request));
+        });
 
         PersonalizationPageActions personalization;
         personalization.update = [weak](

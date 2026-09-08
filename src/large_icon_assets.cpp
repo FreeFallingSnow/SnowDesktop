@@ -1,4 +1,6 @@
 #include "large_icon_assets.h"
+#include "icon_bitmap_pixels.h"
+#include "shortcut_icon_resource.h"
 #include "large_icon_config.h"
 #include "large_icon_steam.h"
 #include "http_runtime.h"
@@ -208,7 +210,9 @@ std::shared_ptr<LargeIconAsset> Decode(const std::filesystem::path& path, int ta
     asset->reference = std::move(reference); asset->source = std::move(source);
     asset->previewReference = preview;
     asset->accent = Accent(pixels);
-    if (const auto edge = icon_beautify::DetectEdgeFill(pixels, width, height))
+    auto edge = icon_beautify::DetectPlateFill(pixels, width, height);
+    if (!edge) edge = icon_beautify::DetectEdgeFill(pixels, width, height);
+    if (edge)
     {
         asset->hasEdgeColor = true;
         asset->edgeColor = (edge->r << 16) | (edge->g << 8) | edge->b;
@@ -218,10 +222,45 @@ std::shared_ptr<LargeIconAsset> Decode(const std::filesystem::path& path, int ta
 
 std::shared_ptr<LargeIconAsset> RawIcon(const LargeIconAssetRequest& request, const std::filesystem::path& output, const std::string& reference)
 {
+    const int target = std::clamp(request.pixels, 64, 256);
+    auto extension = std::filesystem::path(request.parsingName).extension().wstring();
+    std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+    if (extension == L".url")
+        if (const auto resource = shortcut_icon_resource::ReadInternetShortcutIconResource(request.parsingName))
+        {
+            // Steam's URL icon is an ICO in steam/games. The URL Shell image
+            // factory can return a generic white document instead of this art.
+            if (resource->index == 0)
+                if (auto asset = Decode(resource->path, target, output, reference, "original")) return asset;
+            HICON icon = nullptr;
+            if (SUCCEEDED(SHDefExtractIconW(resource->path.c_str(), resource->index, 0, &icon, nullptr, target)) && icon)
+            {
+                ComPtr<IWICImagingFactory> imaging;
+                ComPtr<IWICBitmap> bitmap;
+                ComPtr<IWICFormatConverter> converter;
+                UINT width = 0, height = 0;
+                if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&imaging))) &&
+                    SUCCEEDED(imaging->CreateBitmapFromHICON(icon, &bitmap)) && SUCCEEDED(bitmap->GetSize(&width, &height)) &&
+                    width && height && std::uint64_t(width) * height <= maxPixels &&
+                    SUCCEEDED(imaging->CreateFormatConverter(&converter)) &&
+                    SUCCEEDED(converter->Initialize(bitmap.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+                        nullptr, 0, WICBitmapPaletteTypeCustom)))
+                {
+                    std::vector<std::uint32_t> pixels(static_cast<size_t>(width) * height);
+                    std::string error;
+                    if (SUCCEEDED(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size() * 4),
+                            reinterpret_cast<BYTE*>(pixels.data()))) && preview_png::Save(output, width, height, pixels, error))
+                    {
+                        DestroyIcon(icon);
+                        return Decode(output, target, {}, reference, "original");
+                    }
+                }
+                DestroyIcon(icon);
+            }
+        }
     ComPtr<IShellItemImageFactory> factory;
     if (FAILED(SHCreateItemFromParsingName(request.parsingName.c_str(), nullptr, IID_PPV_ARGS(&factory)))) return {};
     HBITMAP bitmap = nullptr;
-    const int target = std::clamp(request.pixels, 64, 256);
     if (FAILED(factory->GetImage({target, target}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &bitmap)) || !bitmap) return {};
     BITMAP object{}; GetObjectW(bitmap, sizeof(object), &object);
     const int width = object.bmWidth, height = std::abs(object.bmHeight);
@@ -235,8 +274,7 @@ std::shared_ptr<LargeIconAsset> RawIcon(const LargeIconAssetRequest& request, co
     if (dc) ReleaseDC(nullptr, dc);
     DeleteObject(bitmap);
     if (!read) return {};
-    if (std::none_of(pixels.begin(), pixels.end(), [](auto p) { return (p >> 24) != 0; }))
-        for (auto& p : pixels) p |= 0xff000000;
+    icon_bitmap_pixels::NormalizeShellPixels(pixels);
     std::string error;
     if (!preview_png::Save(output, width, height, pixels, error)) return {};
     return Decode(output, target, {}, reference, "original");
@@ -380,7 +418,7 @@ struct LargeIconAssets::Impl
         // model here; disk access belongs to the workers. The icon index also
         // changes when a Shell association changes without touching the file.
         return "raw-" + Hash(r.parsingName + L":" + std::to_wstring(r.sourceStamp) + L":" +
-            std::to_wstring(r.sourceIconIndex)) + "-" + std::to_string(r.pixels) + ".png";
+            std::to_wstring(r.sourceIconIndex) + L":pbgra2") + "-" + std::to_string(r.pixels) + ".png";
     }
     std::shared_ptr<LargeIconAsset> Load(const LargeIconAssetRequest& r, std::stop_token stop, std::string& error)
     {

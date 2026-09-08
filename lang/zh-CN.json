@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "删除此色点",
     "panelGradient.addStop": "添加色点",
     "panelGradient.barStartOpacity": "底栏起始不透明度",
-    "largeIcon.backgroundColorHelp": "沿用图标美化的底色填充方式，使图标与背景衔接；与主题色渐变互斥。",
+    "largeIcon.backgroundColorHelp": "沿用图标美化的底色填充方式，使图标与背景衔接为整体。",
     "largeIcon.fillScale": "填充图片缩放",
-    "panelGradient.reset": "恢复渐变默认值"
+    "panelGradient.reset": "恢复渐变默认值",
+    "largeIcon.defaultBackground": "填充方式",
+    "largeIcon.gradientBackground": "渐变背景",
+    "largeIcon.solidBackground": "纯色背景",
+    "largeIcon.resetThemeGradient": "恢复图标主题色渐变"
 }

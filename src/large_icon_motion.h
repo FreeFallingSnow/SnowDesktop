@@ -20,7 +20,7 @@ struct LargeIconMotion
         if (!visible || !enabled || config.effect != 1 || config.amplitude <= 0)
         { tiltX = tiltY = tiltFromX = tiltFromY = tiltTargetX = tiltTargetY = 0; tiltStart = now; return false; }
         const double elapsed = tiltDuration > 0 ? std::clamp((now - tiltStart) / tiltDuration, 0., 1.) : 1;
-        const float t = static_cast<float>(elapsed * elapsed * (3 - 2 * elapsed));
+        const float t = static_cast<float>(1 - (1 - elapsed) * (1 - elapsed) * (1 - elapsed));
         tiltX = tiltFromX + (tiltTargetX - tiltFromX) * t;
         tiltY = tiltFromY + (tiltTargetY - tiltFromY) * t;
         x = hovered && std::isfinite(x) ? std::clamp(x, -1.f, 1.f) : 0;
@@ -29,7 +29,9 @@ struct LargeIconMotion
         {
             tiltFromX = tiltX; tiltFromY = tiltY; tiltTargetX = x; tiltTargetY = y;
             tiltStart = now;
-            tiltDuration = (hovered ? config.enterMs : config.exitMs) * std::max(0., durationScale);
+            // Short ease-out tracking has nonzero initial velocity. Continuous
+            // pointer retargets must not restart a slow, zero-slope ease-in.
+            tiltDuration = (hovered ? std::min(config.enterMs, 65) : std::min(config.exitMs, 100)) * std::max(0., durationScale);
             if (tiltDuration <= 0) { tiltX = x; tiltY = y; }
         }
         return tiltX != tiltTargetX || tiltY != tiltTargetY;
@@ -38,12 +40,14 @@ struct LargeIconMotion
     bool Advance(double now, bool hovered, bool visible, bool enabled,
         double durationScale, const LargeIconConfig& config)
     {
-        if (!visible || config.effect == 0 || (config.effect == 1 && !enabled))
+        if (!visible || config.effect == 0 || (config.effect == 2 && IsLargeIconFill(config)) || (config.effect == 1 && !enabled))
         { hover = from = target = 0; transitionStart = now; return false; }
         const float next = hovered ? 1.f : 0.f;
         if (!enabled)
         { hover = from = target = next; transitionStart = now; return false; }
-        const double speed = config.effect == 2 ? .6 : 1.;
+        if (config.effect == 1)
+        { hover = from = target = next; transitionStart = now; return false; }
+        const double speed = .6;
         // Sample at this event's time before reversing; pointer events need
         // not coincide with the last animation frame.
         const double oldDuration = (target ? config.enterMs : config.exitMs) * std::max(0., durationScale) * speed;

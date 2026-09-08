@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "이 색상 지점 삭제",
     "panelGradient.addStop": "색상 지점 추가",
     "panelGradient.barStartOpacity": "하단 바 시작 불투명도",
-    "largeIcon.backgroundColorHelp": "아이콘 꾸미기와 같은 배경 채우기를 사용해 아이콘과 배경을 자연스럽게 연결합니다. 테마 색상 그라데이션과 함께 사용할 수 없습니다.",
+    "largeIcon.backgroundColorHelp": "아이콘 꾸미기의 기본 배경색을 사용하여 아이콘과 배경이 자연스럽게 어우러지게 합니다.",
     "largeIcon.fillScale": "채우기 이미지 배율",
-    "panelGradient.reset": "그라데이션 초기화"
+    "panelGradient.reset": "그라데이션 초기화",
+    "largeIcon.defaultBackground": "채우기 방식",
+    "largeIcon.gradientBackground": "그라데이션 배경",
+    "largeIcon.solidBackground": "단색 배경",
+    "largeIcon.resetThemeGradient": "아이콘 테마색 그라데이션 복원"
 }

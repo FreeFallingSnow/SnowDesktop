@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "Remove this stop",
     "panelGradient.addStop": "Add color stop",
     "panelGradient.barStartOpacity": "Bottom bar start opacity",
-    "largeIcon.backgroundColorHelp": "Use the icon beautification background fill to blend the icon into its background. Mutually exclusive with the theme-color gradient.",
+    "largeIcon.backgroundColorHelp": "Use the icon beautification base color so the icon blends into its background.",
     "largeIcon.fillScale": "Fill image scale",
-    "panelGradient.reset": "Reset gradient"
+    "panelGradient.reset": "Reset gradient",
+    "largeIcon.defaultBackground": "Fill style",
+    "largeIcon.gradientBackground": "Gradient background",
+    "largeIcon.solidBackground": "Solid background",
+    "largeIcon.resetThemeGradient": "Restore icon theme gradient"
 }

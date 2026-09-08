@@ -17,7 +17,9 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
     request.reference = snowdesktop::LargeIconActiveImage(config); request.lastGood = config.cachedCover;
     request.fillLayer = snowdesktop::IsLargeIconFill(config);
     request.refresh = refresh; request.localOnly = config.localOnly; request.importPath = std::move(importPath);
-    if (request.content == 1 && request.reference.empty() && request.importPath.empty()) request.content = 0;
+    // The display signature must stay identical while an initial import is
+    // pending. Otherwise a paint requests the original and cancels the import.
+    if (request.content == 1 && request.reference.empty()) request.content = 0;
     request.language = snowdesktop::large_icon_steam::Language(Locale::Instance().GetEffectiveLanguage());
     const auto frame = GetLargeIconFrameRect(item);
     const int width = std::max<LONG>(1, frame.right - frame.left), height = std::max<LONG>(1, frame.bottom - frame.top);
@@ -296,25 +298,12 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
     }
     else if (request.action == "import")
     {
-        std::filesystem::path path = request.path;
-        if (path.empty())
+        if (request.path.empty()) result.error = "largeIcon.invalid";
+        else
         {
-            ComPtr<IFileOpenDialog> picker;
-            if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&picker))))
-            {
-                COMDLG_FILTERSPEC filter{_LW("largeIcon.image"), L"*.png;*.jpg;*.jpeg;*.bmp;*.ico"};
-                picker->SetFileTypes(1, &filter);
-                picker->SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_NOCHANGEDIR);
-                if (SUCCEEDED(picker->Show(settingsWindow_ ? settingsWindow_->Window() : hwnd_)))
-                {
-                    ComPtr<IShellItem> selected; PWSTR selectedPath = nullptr;
-                    if (SUCCEEDED(picker->GetResult(&selected)) && SUCCEEDED(selected->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath)))
-                    { path = selectedPath; CoTaskMemFree(selectedPath); }
-                }
-            }
+            RequestLargeIconAsset(index, true, request.path);
+            result.succeeded = true;
         }
-        if (!path.empty()) RequestLargeIconAsset(index, true, std::move(path));
-        result.succeeded = true;
     }
     else if (request.action == "commit" || request.action == "preview")
     {
@@ -423,7 +412,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
     auto appearance = CurrentPersonalization();
     if (config.backgroundStyle >= 0 && config.backgroundStyle != kAppearancePresetCustom)
         appearance = MakeAppearancePreset(config.backgroundStyle);
-    else if (config.backgroundStyle == kAppearancePresetCustom)
+    else if (config.backgroundStyle == kAppearancePresetCustom || (config.backgroundStyle == -3 && config.defaultBackground != 0))
     {
         appearance.widgetBgR = ((config.manualColor >> 16) & 255) / 255.f;
         appearance.widgetBgG = ((config.manualColor >> 8) & 255) / 255.f;
@@ -442,15 +431,18 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         appearance.widgetEdgeHighlightStrength = static_cast<float>(config.edgeStrength);
         appearance.panelGradient = config.gradient;
     }
-    else if (config.backgroundStyle == -3)
+    if (config.backgroundStyle == -3)
     {
         const auto automatic = snowdesktop::large_icon_render_rules::DefaultBackground(config, view.accent, view.hasEdgeColor, view.edgeColor);
         appearance.widgetBgR = ((automatic.color >> 16) & 255) / 255.f;
         appearance.widgetBgG = ((automatic.color >> 8) & 255) / 255.f;
         appearance.widgetBgB = (automatic.color & 255) / 255.f;
         appearance.widgetAlpha = static_cast<float>(automatic.opacity);
-        appearance.glassEnabled = appearance.acrylicEnabled = appearance.widgetEdgeHighlightEnabled = false;
-        appearance.widgetBorderAlpha = 0;
+        if (config.defaultBackground == 0)
+        {
+            appearance.glassEnabled = appearance.acrylicEnabled = appearance.widgetEdgeHighlightEnabled = false;
+            appearance.widgetBorderAlpha = 0;
+        }
         appearance.panelGradient = automatic.gradient;
     }
     const auto colorByte = [](float v) { return static_cast<unsigned>(std::clamp(v, 0.f, 1.f) * 255 + .5f); };
@@ -483,7 +475,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         };
     const auto transform = snowdesktop::large_icon_transform::Resolve(
         static_cast<float>(view.frame.right - view.frame.left), static_cast<float>(view.frame.bottom - view.frame.top),
-        runtime.motion.tiltX * view.hover, runtime.motion.tiltY * view.hover, static_cast<float>(config.amplitude));
+        runtime.motion.tiltX, runtime.motion.tiltY, static_cast<float>(config.amplitude));
     if (config.effect == 1 && view.animations && state != 3 && transform.active && device)
     {
         if (!runtime.cardResources) runtime.cardResources = std::make_shared<snowdesktop::large_icon_renderer::CardResources>();

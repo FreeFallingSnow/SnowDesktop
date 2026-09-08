@@ -61,6 +61,11 @@ struct LargeIconConfig
     // not an accent color. It is mutually exclusive with themeGradient.
     bool smartFill = true, themeColor = true, themeGradient = false;
     double themeOpacity = .65, themeAngle = 90;
+    int defaultBackground = 0; // icon plate, editable gradient, editable solid
+    std::uint32_t defaultSolidColor = 0xe8ecf4;
+    double defaultSolidOpacity = .65;
+    // disabled means derive colors from the icon until the first manual edit.
+    PanelGradient defaultGradient;
     int foregroundContent = 0; // 0 original, 1 imported
     std::string foregroundImage;
     double iconX = .5, iconY = .5;
@@ -96,6 +101,7 @@ template<class C, class F> void VisitLargeIconFields(C& c, F&& f)
     LI_FIELD(delayMs); LI_FIELD(enterMs); LI_FIELD(exitMs);
     LI_FIELD(steamOrientation); LI_FIELD(localOnly);
     LI_FIELD(backgroundStyle); LI_FIELD(smartFill); LI_FIELD(themeColor); LI_FIELD(themeGradient);
+    LI_FIELD(defaultBackground); LI_FIELD(defaultSolidColor); LI_FIELD(defaultSolidOpacity); LI_FIELD(defaultGradient);
     LI_FIELD(themeOpacity); LI_FIELD(themeAngle); LI_FIELD(foregroundContent); LI_FIELD(foregroundImage);
     LI_FIELD(iconX); LI_FIELD(iconY); LI_FIELD(material); LI_FIELD(componentTheme); LI_FIELD(blurRadius);
     LI_FIELD(edgeHighlight); LI_FIELD(edgeWidth); LI_FIELD(edgeStrength); LI_FIELD(gradient);
@@ -135,6 +141,8 @@ inline bool ValidateLargeIconConfig(const LargeIconConfig& c)
         c.coverHover >= 0 && c.coverHover <= 2 && range(c.amplitude, 0, 2) &&
         c.delayMs >= 0 && c.delayMs <= 2000 && c.enterMs >= 0 && c.enterMs <= 2000 &&
         c.exitMs >= 0 && c.exitMs <= 2000 && c.steamOrientation >= 0 && c.steamOrientation <= 2 &&
+        c.defaultBackground >= 0 && c.defaultBackground <= 2 && c.defaultSolidColor <= 0xffffff &&
+        range(c.defaultSolidOpacity, 0, 1) && ValidatePanelGradient(c.defaultGradient) &&
         style && !(c.themeColor && c.themeGradient) && range(c.themeOpacity, 0, 1) && range(c.themeAngle, 0, 360) &&
         c.foregroundContent >= 0 && c.foregroundContent <= 1 && IsManagedLargeIconImage(c.foregroundImage) &&
         range(c.iconX, 0, 1) && range(c.iconY, 0, 1) && c.material >= 0 && c.material <= 2 &&
@@ -186,7 +194,13 @@ inline bool DecodeLargeIconConfig(const JsonValue& value, LargeIconConfig& resul
     });
     // Earlier v2 layouts nested the gradient switch beneath themeColor.
     // Preserve their gradient while normalizing the now-exclusive modes.
-    if (c.themeGradient) c.themeColor = false;
+    if (!value.Find("defaultBackground"))
+    {
+        c.defaultBackground = c.themeGradient ? 1 : 0;
+        if (!c.themeGradient && !c.themeColor) { c.smartFill = false; c.themeOpacity = 1; }
+    }
+    c.themeGradient = c.defaultBackground == 1;
+    c.themeColor = c.defaultBackground == 0;
     if (!value.Find("autoTitleDirection")) c.autoTitleDirection = false;
     if (!valid || !ValidateLargeIconConfig(c)) return false;
     if (c.version == 1)

@@ -1552,7 +1552,11 @@
     "panelGradient.removeStop": "この色点を削除",
     "panelGradient.addStop": "色点を追加",
     "panelGradient.barStartOpacity": "下部バーの開始点の不透明度",
-    "largeIcon.backgroundColorHelp": "アイコン装飾と同じ背景の塗りつぶしで、アイコンと背景を一体化します。テーマカラーのグラデーションとは併用できません。",
+    "largeIcon.backgroundColorHelp": "アイコン美化のベース色を使い、アイコンと背景を一体化します。",
     "largeIcon.fillScale": "塗りつぶし画像の拡大率",
-    "panelGradient.reset": "グラデーションを初期値に戻す"
+    "panelGradient.reset": "グラデーションを初期値に戻す",
+    "largeIcon.defaultBackground": "塗りつぶし方法",
+    "largeIcon.gradientBackground": "グラデーション背景",
+    "largeIcon.solidBackground": "単色背景",
+    "largeIcon.resetThemeGradient": "アイコンのテーマ色グラデーションに戻す"
 }

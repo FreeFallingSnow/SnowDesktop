@@ -58,8 +58,13 @@ void DrawFrame(ID2D1RenderTarget* target, IDWriteFactory* fonts, const LargeIcon
         static_cast<float>(geometry.sourceX + geometry.sourceWidth), static_cast<float>(geometry.sourceY + geometry.sourceHeight));
     // Crop before translating the fill layer: source overscan must not refill
     // the transparent area revealed for an inner title.
-    if (view.bitmap) target->DrawBitmap(view.bitmap, image, view.opacity,
-        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, geometry.cropped ? &source : nullptr);
+    if (view.bitmap)
+    {
+        if (context) context->DrawBitmap(view.bitmap, &image, view.opacity,
+            D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, geometry.cropped ? &source : nullptr, nullptr);
+        else target->DrawBitmap(view.bitmap, image, view.opacity,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, geometry.cropped ? &source : nullptr);
+    }
     else if (view.placeholder && !fill)
         view.placeholder(target, {static_cast<LONG>(std::lround(image.left)), static_cast<LONG>(std::lround(image.top)),
             static_cast<LONG>(std::lround(image.right)), static_cast<LONG>(std::lround(image.bottom))}, view.opacity);

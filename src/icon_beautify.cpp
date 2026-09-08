@@ -857,6 +857,393 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     return output;
 }
 
+    static EdgeColor StraightPlateColor(std::uint32_t pixel)
+    {
+        const int a = PixelA(pixel);
+        if (a <= 0)
+            return EdgeColor{ 0, 0, 0 };
+
+        return EdgeColor{
+            std::clamp((((static_cast<int>(pixel >> 16) & 0xff) * 255) + a / 2) / a, 0, 255),
+            std::clamp((((static_cast<int>(pixel >> 8) & 0xff) * 255) + a / 2) / a, 0, 255),
+            std::clamp((((static_cast<int>(pixel) & 0xff) * 255) + a / 2) / a, 0, 255)
+        };
+    }
+
+    static int PlateColorDistanceSq(const EdgeColor& lhs, const EdgeColor& rhs)
+    {
+        const int dr = lhs.r - rhs.r;
+        const int dg = lhs.g - rhs.g;
+        const int db = lhs.b - rhs.b;
+        return dr * dr + dg * dg + db * db;
+    }
+
+    std::optional<EdgeColor> DetectPlateFill(const std::vector<std::uint32_t>& pixels,
+        int width, int height)
+    {
+        if (width <= 2 || height <= 2 || pixels.size() != static_cast<size_t>(width) * height)
+            return std::nullopt;
+
+        constexpr int kEdgeAlpha = 16;
+        constexpr int kReliableAlpha = 160;
+        constexpr int kMaxInnerProbe = 4;
+        constexpr int kColorBucketSize = 24;
+        constexpr int kEdgeColorToleranceSq = 30 * 30 * 3;
+        constexpr float kMinimumFillRatio = 0.992f;
+        constexpr float kStrongEdgeDominantRatio = 0.86f;
+        constexpr int kStrongEdgeSectorCount = 7;
+        constexpr float kGradientEdgeDominantRatio = 0.55f;
+        constexpr int kGradientEdgeSectorCount = 6;
+        constexpr float kShapePlateExtentRatio = 0.80f;
+        constexpr float kShapePlateStabilityRatio = 0.78f;
+        constexpr float kShapePlateMaxAspectRatio = 1.12f;
+        constexpr float kRoundedPlateMinCapRatio = 0.64f;
+        constexpr float kShapePlateMaxCapRatio = 1.18f;
+        constexpr float kGradientPlateMinCapRatio = 0.76f;
+        constexpr float kGradientPlateMaxCapDelta = 0.12f;
+        constexpr float kCirclePlateMaxAspectRatio = 1.08f;
+        constexpr float kCirclePlateMaxCapRatio = 0.72f;
+        constexpr float kCirclePlateMaxCapDelta = 0.14f;
+        constexpr int kSectorCount = 8;
+        constexpr float kPi = 3.14159265358979323846f;
+
+        std::vector<int> left(static_cast<size_t>(height), -1);
+        std::vector<int> right(static_cast<size_t>(height), -1);
+        std::vector<int> top(static_cast<size_t>(width), -1);
+        std::vector<int> bottom(static_cast<size_t>(width), -1);
+
+        auto isVisible = [&](int x, int y) {
+            return PixelA(pixels[static_cast<size_t>(y) * width + x]) > kEdgeAlpha;
+        };
+
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
+            {
+                if (isVisible(x, y))
+                {
+                    left[static_cast<size_t>(y)] = x;
+                    break;
+                }
+            }
+            for (int x = width - 1; x >= 0; --x)
+            {
+                if (isVisible(x, y))
+                {
+                    right[static_cast<size_t>(y)] = x;
+                    break;
+                }
+            }
+        }
+
+        for (int x = 0; x < width; ++x)
+        {
+            for (int y = 0; y < height; ++y)
+            {
+                if (isVisible(x, y))
+                {
+                    top[static_cast<size_t>(x)] = y;
+                    break;
+                }
+            }
+            for (int y = height - 1; y >= 0; --y)
+            {
+                if (isVisible(x, y))
+                {
+                    bottom[static_cast<size_t>(x)] = y;
+                    break;
+                }
+            }
+        }
+
+        int boundsLeft = width;
+        int boundsRight = -1;
+        int boundsTop = height;
+        int boundsBottom = -1;
+        for (int y = 0; y < height; ++y)
+        {
+            if (left[static_cast<size_t>(y)] < 0)
+                continue;
+            boundsLeft = std::min(boundsLeft, left[static_cast<size_t>(y)]);
+            boundsRight = std::max(boundsRight, right[static_cast<size_t>(y)]);
+            boundsTop = std::min(boundsTop, y);
+            boundsBottom = std::max(boundsBottom, y);
+        }
+
+        if (boundsRight < boundsLeft || boundsBottom < boundsTop)
+            return std::nullopt;
+
+        const int extentW = boundsRight - boundsLeft + 1;
+        const int extentH = boundsBottom - boundsTop + 1;
+        const float extentRatio = std::min(
+            static_cast<float>(extentW) / static_cast<float>(width),
+            static_cast<float>(extentH) / static_cast<float>(height));
+
+        int filledPixels = 0;
+        int expectedPixels = 0;
+        for (int y = boundsTop; y <= boundsBottom; ++y)
+        {
+            const int rowLeft = left[static_cast<size_t>(y)];
+            const int rowRight = right[static_cast<size_t>(y)];
+            if (rowLeft < 0 || rowRight < rowLeft)
+                return std::nullopt;
+
+            for (int x = rowLeft; x <= rowRight; ++x)
+            {
+                ++expectedPixels;
+                if (!isVisible(x, y))
+                    return std::nullopt;
+                ++filledPixels;
+            }
+        }
+        const float fillRatio = expectedPixels > 0
+            ? static_cast<float>(filledPixels) / static_cast<float>(expectedPixels)
+            : 0.0f;
+        if (fillRatio < kMinimumFillRatio)
+            return std::nullopt;
+
+        auto stableEdgeColor = [&](int x, int y, int dx, int dy) {
+            int bestX = x;
+            int bestY = y;
+            int bestAlpha = PixelA(pixels[static_cast<size_t>(y) * width + x]);
+
+            for (int step = 1; step <= kMaxInnerProbe; ++step)
+            {
+                const int nx = x + dx * step;
+                const int ny = y + dy * step;
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+                    break;
+
+                const int alpha = PixelA(pixels[static_cast<size_t>(ny) * width + nx]);
+                if (alpha <= kEdgeAlpha)
+                    break;
+                if (alpha > bestAlpha)
+                {
+                    bestAlpha = alpha;
+                    bestX = nx;
+                    bestY = ny;
+                }
+                if (alpha >= kReliableAlpha)
+                    break;
+            }
+
+            return StraightPlateColor(pixels[static_cast<size_t>(bestY) * width + bestX]);
+        };
+
+        struct IconEdgeSample
+        {
+            EdgeColor color;
+            int x = 0;
+            int y = 0;
+        };
+
+        struct IconColorBucket
+        {
+            long long sumR = 0;
+            long long sumG = 0;
+            long long sumB = 0;
+            int count = 0;
+        };
+
+        std::vector<IconEdgeSample> edgeSamples;
+        edgeSamples.reserve(static_cast<size_t>((width + height) * 2));
+        std::unordered_map<int, IconColorBucket> buckets;
+
+        auto addSample = [&](EdgeColor sample, int x, int y) {
+            edgeSamples.push_back(IconEdgeSample{ sample, x, y });
+
+            const int key =
+                (std::clamp(sample.r / kColorBucketSize, 0, 255) << 16) |
+                (std::clamp(sample.g / kColorBucketSize, 0, 255) << 8) |
+                std::clamp(sample.b / kColorBucketSize, 0, 255);
+            IconColorBucket& bucket = buckets[key];
+            bucket.sumR += sample.r;
+            bucket.sumG += sample.g;
+            bucket.sumB += sample.b;
+            ++bucket.count;
+        };
+
+        for (int y = boundsTop; y <= boundsBottom; ++y)
+        {
+            const int rowLeft = left[static_cast<size_t>(y)];
+            const int rowRight = right[static_cast<size_t>(y)];
+            addSample(stableEdgeColor(rowLeft, y, 1, 0), rowLeft, y);
+            if (rowRight != rowLeft)
+                addSample(stableEdgeColor(rowRight, y, -1, 0), rowRight, y);
+        }
+
+        for (int x = boundsLeft; x <= boundsRight; ++x)
+        {
+            const int colTop = top[static_cast<size_t>(x)];
+            const int colBottom = bottom[static_cast<size_t>(x)];
+            if (colTop < 0 || colBottom < colTop)
+                return std::nullopt;
+
+            addSample(stableEdgeColor(x, colTop, 0, 1), x, colTop);
+            if (colBottom != colTop)
+                addSample(stableEdgeColor(x, colBottom, 0, -1), x, colBottom);
+        }
+
+        if (edgeSamples.empty())
+            return std::nullopt;
+
+        const IconColorBucket* dominantBucket = nullptr;
+        for (const auto& [_, bucket] : buckets)
+        {
+            if (!dominantBucket || bucket.count > dominantBucket->count)
+                dominantBucket = &bucket;
+        }
+        if (!dominantBucket || dominantBucket->count <= 0)
+            return std::nullopt;
+
+        const EdgeColor dominant{
+            std::clamp(static_cast<int>(
+                (dominantBucket->sumR + dominantBucket->count / 2) / dominantBucket->count), 0, 255),
+            std::clamp(static_cast<int>(
+                (dominantBucket->sumG + dominantBucket->count / 2) / dominantBucket->count), 0, 255),
+            std::clamp(static_cast<int>(
+                (dominantBucket->sumB + dominantBucket->count / 2) / dominantBucket->count), 0, 255)
+        };
+
+        const float centerX = (static_cast<float>(boundsLeft + boundsRight) + 1.0f) * 0.5f;
+        const float centerY = (static_cast<float>(boundsTop + boundsBottom) + 1.0f) * 0.5f;
+        auto sectorForPoint = [&](int x, int y) {
+            float angle = std::atan2(
+                (static_cast<float>(y) + 0.5f) - centerY,
+                (static_cast<float>(x) + 0.5f) - centerX);
+            if (angle < 0.0f)
+                angle += kPi * 2.0f;
+            return std::clamp(
+                static_cast<int>(std::floor(angle / (kPi * 2.0f) * static_cast<float>(kSectorCount))),
+                0,
+                kSectorCount - 1);
+        };
+
+        unsigned dominantSectors = 0;
+        int closeCount = 0;
+        for (const IconEdgeSample& sample : edgeSamples)
+        {
+            if (PlateColorDistanceSq(sample.color, dominant) <= kEdgeColorToleranceSq)
+            {
+                ++closeCount;
+                dominantSectors |= 1u << sectorForPoint(sample.x, sample.y);
+            }
+        }
+
+        const int sampleCount = static_cast<int>(edgeSamples.size());
+        const float edgeDominantRatio = sampleCount > 0
+            ? static_cast<float>(closeCount) / static_cast<float>(sampleCount)
+            : 0.0f;
+
+        int sectorCount = 0;
+        for (int i = 0; i < kSectorCount; ++i)
+        {
+            if ((dominantSectors & (1u << i)) != 0)
+                ++sectorCount;
+        }
+
+        std::vector<int> rowWidths;
+        rowWidths.reserve(static_cast<size_t>(extentH));
+        for (int y = boundsTop; y <= boundsBottom; ++y)
+        {
+            if (left[static_cast<size_t>(y)] >= 0 && right[static_cast<size_t>(y)] >= left[static_cast<size_t>(y)])
+                rowWidths.push_back(right[static_cast<size_t>(y)] - left[static_cast<size_t>(y)] + 1);
+        }
+
+        std::vector<int> columnHeights;
+        columnHeights.reserve(static_cast<size_t>(extentW));
+        for (int x = boundsLeft; x <= boundsRight; ++x)
+        {
+            if (top[static_cast<size_t>(x)] >= 0 && bottom[static_cast<size_t>(x)] >= top[static_cast<size_t>(x)])
+                columnHeights.push_back(bottom[static_cast<size_t>(x)] - top[static_cast<size_t>(x)] + 1);
+        }
+
+        auto centeredStability = [](const std::vector<int>& values) {
+            if (values.empty())
+                return 0.0f;
+
+            const size_t start = values.size() >= 4 ? values.size() / 4 : 0;
+            const size_t end = values.size() >= 4 ? (values.size() * 3) / 4 : values.size();
+            int minValue = values[start];
+            int maxValue = values[start];
+            for (size_t i = start + 1; i < end; ++i)
+            {
+                minValue = std::min(minValue, values[i]);
+                maxValue = std::max(maxValue, values[i]);
+            }
+
+            return maxValue > 0
+                ? static_cast<float>(minValue) / static_cast<float>(maxValue)
+                : 0.0f;
+        };
+
+        auto averageSpan = [](const std::vector<int>& values, size_t start, size_t end) {
+            if (values.empty() || start >= end)
+                return 0.0f;
+
+            long long sum = 0;
+            for (size_t i = start; i < end; ++i)
+                sum += values[i];
+            return static_cast<float>(sum) / static_cast<float>(end - start);
+        };
+
+        const size_t capRows = std::max<size_t>(1, rowWidths.size() / 8);
+        const size_t midStart = rowWidths.size() >= 4 ? rowWidths.size() / 4 : 0;
+        const size_t midEnd = rowWidths.size() >= 4 ? (rowWidths.size() * 3) / 4 : rowWidths.size();
+        const float midWidthAverage = averageSpan(rowWidths, midStart, midEnd);
+        const float topCapRatio = midWidthAverage > 0.0f
+            ? averageSpan(rowWidths, 0, std::min(capRows, rowWidths.size())) / midWidthAverage
+            : 0.0f;
+        const float bottomCapRatio = midWidthAverage > 0.0f
+            ? averageSpan(rowWidths, rowWidths.size() - std::min(capRows, rowWidths.size()), rowWidths.size()) /
+                midWidthAverage
+            : 0.0f;
+
+        const float aspectRatio = std::max(
+            static_cast<float>(extentW) / static_cast<float>(extentH),
+            static_cast<float>(extentH) / static_cast<float>(extentW));
+        const float rowStability = centeredStability(rowWidths);
+        const float columnStability = centeredStability(columnHeights);
+
+        const bool roundedRectPlate =
+            extentRatio >= kShapePlateExtentRatio &&
+            aspectRatio <= kShapePlateMaxAspectRatio &&
+            rowStability >= kShapePlateStabilityRatio &&
+            columnStability >= kShapePlateStabilityRatio &&
+            topCapRatio >= kRoundedPlateMinCapRatio &&
+            bottomCapRatio >= kRoundedPlateMinCapRatio &&
+            topCapRatio <= kShapePlateMaxCapRatio &&
+            bottomCapRatio <= kShapePlateMaxCapRatio;
+
+        const bool circlePlate =
+            extentRatio >= kShapePlateExtentRatio &&
+            aspectRatio <= kCirclePlateMaxAspectRatio &&
+            rowStability >= kShapePlateStabilityRatio &&
+            columnStability >= kShapePlateStabilityRatio &&
+            topCapRatio <= kCirclePlateMaxCapRatio &&
+            bottomCapRatio <= kCirclePlateMaxCapRatio &&
+            std::abs(topCapRatio - bottomCapRatio) <= kCirclePlateMaxCapDelta;
+
+        const bool strongEdgeColor =
+            edgeDominantRatio >= kStrongEdgeDominantRatio &&
+            sectorCount >= kStrongEdgeSectorCount;
+        const bool gradientPlateEdgeColor =
+            roundedRectPlate &&
+            topCapRatio >= kGradientPlateMinCapRatio &&
+            bottomCapRatio >= kGradientPlateMinCapRatio &&
+            std::abs(topCapRatio - bottomCapRatio) <= kGradientPlateMaxCapDelta &&
+            edgeDominantRatio >= kGradientEdgeDominantRatio &&
+            sectorCount >= kGradientEdgeSectorCount;
+
+        if ((!roundedRectPlate && !circlePlate) ||
+            (!strongEdgeColor && !gradientPlateEdgeColor))
+        {
+            return std::nullopt;
+        }
+
+        return dominant;
+    }
+
 std::optional<EdgeColor> DetectEdgeFill(
     const std::vector<std::uint32_t>& pixels, int width, int height)
 {

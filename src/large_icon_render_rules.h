@@ -30,18 +30,25 @@ struct BackgroundStyle
 inline BackgroundStyle DefaultBackground(const LargeIconConfig& c, unsigned accent, bool hasEdge, unsigned edge)
 {
     BackgroundStyle result;
-    if (c.themeGradient && accent)
+    if (c.defaultBackground == 1)
     {
-        result.color = accent; result.opacity = c.themeOpacity;
+        result.gradient = c.defaultGradient;
+        if (!result.gradient.enabled)
+        {
+            const auto color = accent ? accent : result.color;
+            result.gradient.angle = c.themeAngle;
+            result.gradient.stops = {{0, color, c.themeOpacity}, {1, Mix(color, 0xe8ecf4, .4), c.themeOpacity}};
+        }
         result.gradient.enabled = true;
-        result.gradient.angle = c.themeAngle;
-        result.gradient.stops = {{0, accent, c.themeOpacity}, {1, Mix(accent, 0xe8ecf4, .4), c.themeOpacity}};
+        result.color = result.gradient.stops.front().color;
+        result.opacity = result.gradient.stops.front().opacity;
     }
-    else if (c.themeColor)
+    else if (c.defaultBackground == 2)
     {
-        if (c.smartFill && hasEdge) result.color = edge;
-        else result.opacity = c.themeOpacity;
+        result.color = c.defaultSolidColor; result.opacity = c.defaultSolidOpacity;
     }
+    else if (c.smartFill && hasEdge) result.color = edge;
+    else result.opacity = c.themeOpacity;
     return result;
 }
 inline unsigned ReadableText(unsigned background)
@@ -51,7 +58,7 @@ inline unsigned ReadableText(unsigned background)
 }
 inline unsigned TextColor(const LargeIconConfig& c, unsigned background, unsigned componentForeground)
 {
-    return !c.autoTitleColor ? c.titleColor : c.backgroundStyle >= -1 ? componentForeground : ReadableText(background);
+    return !c.autoTitleColor ? c.titleColor : (c.backgroundStyle >= -1 || (c.backgroundStyle == -3 && c.defaultBackground != 0)) ? componentForeground : ReadableText(background);
 }
 struct ContentGeometry
 {
@@ -101,15 +108,15 @@ inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, do
             r.x = (width - r.width) / 2; r.y = (height - r.height) / 2; r.cropped = true;
         }
     }
-    if (c.effect != 2) return r;
+    if (c.effect != 2 || fill) return r;
     hover = std::clamp(hover, 0., 1.);
-    const double padding = 12 * scale, gap = 12 * scale;
-    const auto candidate = [&](bool left) {
+    const double preferredPadding = 12 * scale, preferredGap = 12 * scale;
+    const auto candidate = [&](bool left, double padding, double gap) {
         auto result = r;
         const double maxWidth = left ? (fill ? width * .5 - 2 * padding : width - r.width - gap - 2 * padding) : width - 2 * padding;
         const double maxHeight = left ? height - 2 * padding : (fill ? height * .5 - 2 * padding : height - r.height - gap - 2 * padding);
         if (!measure || maxWidth <= 0 || maxHeight <= 0 ||
-            (!fill && (left ? r.height > height - 2 * padding : r.width > width - 2 * padding))) return result;
+            (!fill && (left ? r.height > height + .01 : r.width > width + .01))) return result;
         const auto text = measure(maxWidth, maxHeight);
         if (!text.fits || text.width <= 0 || text.height <= 0) return result;
         result.titleWidth = text.width; result.titleHeight = text.height;
@@ -132,8 +139,14 @@ inline ContentGeometry ResolveContent(const LargeIconConfig& c, double width, do
         return result;
     };
     const bool left = c.autoTitleDirection ? width > height * 1.15 : c.titleDirection == 0;
-    auto chosen = candidate(left);
-    if (c.autoTitleDirection && !chosen.leftReveal && !chosen.upReveal) chosen = candidate(!left);
+    auto choose = [&](bool direction) {
+        auto result = candidate(direction, preferredPadding, preferredGap);
+        if (!result.leftReveal && !result.upReveal)
+            result = candidate(direction, 2 * scale, 4 * scale);
+        return result;
+    };
+    auto chosen = choose(left);
+    if (c.autoTitleDirection && !chosen.leftReveal && !chosen.upReveal) chosen = choose(!left);
     return chosen;
 }
 inline bool CanSelectTitleDirection(const LargeIconConfig& c, int direction, double width, double height,
