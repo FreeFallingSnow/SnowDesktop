@@ -605,6 +605,37 @@ function Publish-SourceRepository {
     Write-Host "源码仓库发布完成。" -ForegroundColor Green
 }
 
+function New-GitHubReleasePublication {
+    param([Parameter(Mandatory = $true)]$Context)
+
+    $portableName = "SnowDesktop-portable-x64-$($Context.Version).zip"
+    $portable = Join-Path $Context.VersionDirectory $portableName
+    $stream = [System.IO.File]::OpenRead($portable)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = [System.BitConverter]::ToString(
+            $algorithm.ComputeHash($stream)).Replace("-", "")
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+
+    $publicDirectory = Join-Path $Context.VersionDirectory "github-release"
+    New-Item -ItemType Directory -Path $publicDirectory -Force | Out-Null
+    $checksums = Join-Path $publicDirectory "SHA256SUMS.txt"
+    [System.IO.File]::WriteAllText(
+        $checksums,
+        "$hash  $portableName`n",
+        [System.Text.UTF8Encoding]::new($false))
+
+    return [pscustomobject]@{
+        Title = $Context.Version
+        Notes = Join-Path $Context.VersionDirectory "release-notes.md"
+        Assets = @($portable, $checksums)
+    }
+}
+
 function Publish-GitHubRelease {
     $context = Get-ReleaseContext
     Assert-ExplicitVersionConfirmation `
@@ -623,17 +654,9 @@ function Publish-GitHubRelease {
         throw "Tag $($context.Tag) is not published on source origin."
     }
 
-    $notes = Join-Path $context.VersionDirectory "release-notes.md"
-    $portable = Join-Path $context.VersionDirectory `
-        "SnowDesktop-portable-x64-$($context.Version).zip"
-    $checksums = Join-Path $context.VersionDirectory "SHA256SUMS.txt"
-    $assets = @($portable, $checksums)
-    $packageInfo = Get-Content `
-        -LiteralPath (Join-Path $context.VersionDirectory "package-info.json") `
-        -Encoding UTF8 -Raw | ConvertFrom-Json
-    if ($packageInfo.msix.signed) {
-        $assets += Join-Path $context.VersionDirectory $packageInfo.msix.path
-    }
+    $publication = New-GitHubReleasePublication -Context $context
+    $notes = $publication.Notes
+    $assets = $publication.Assets
 
     $logsDirectory = Get-LogsDirectory -Context $context
     $logPath = Join-Path $logsDirectory `
@@ -649,7 +672,7 @@ function Publish-GitHubRelease {
 
         & $gh.Source release create $context.Tag @assets `
             --repo $githubRepository `
-            --title "SnowDesktop $($context.Tag)" `
+            --title $publication.Title `
             --notes-file $notes 2>&1 |
             Tee-Object -FilePath $logPath
         if ($LASTEXITCODE -ne 0) {
@@ -685,7 +708,7 @@ function Publish-GitHubRelease {
         $releaseBody = @{
             tag_name = $context.Tag
             target_commitish = "main"
-            name = "SnowDesktop $($context.Tag)"
+            name = $publication.Title
             body = Get-Content -LiteralPath $notes -Encoding UTF8 -Raw
             draft = $false
             prerelease = $false

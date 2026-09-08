@@ -145,6 +145,10 @@
 - 每个版本的发行包、校验文件、发布说明、状态和日志必须统一保存到 `artifacts\vA.B.C.D\`，不得继续将不同版本的文件平铺到 `artifacts\` 根目录。
 - TUI/CLI 可以提供远程发布动作，但必须与本地压缩合并分开；只有在用户测试本地 `main` 后，通过交互式版本确认或 CLI 的 `-Yes -ConfirmVersion A.B.C.D` 才能推送远程 `main` 和标签。
 - `scripts/squash_release_to_main.bat` 仍只允许执行本地 Git 操作；统一发布界面不得通过环境变量或参数改变这一限制。
+- GitHub Release 标题仅使用 `version.json` 的原始版本号，例如 `1.0.6.0`，不得添加产品名、`v` 前缀或更新摘要；Git 标签仍使用 `vA.B.C.D`，版本 Commit 仍遵守双语规范。
+- GitHub Release 默认只公开上传便携版 ZIP 和对应的 `SHA256SUMS.txt`。未签名 MSIX、本地自签名测试 MSIX、`.msixupload` 和 `.appxsym` 不得作为默认公开附件；本地签名成功或 `package-info.json` 的 `signed` 标记不代表获准公开分发。
+- 公开校验清单只列本次实际上传的发行文件，单独生成到版本目录的 `github-release/` 下，保留版本根目录包含全部构建产物的校验清单。发布后核对线上标题、附件集合和哈希。
+- 用户告知已手动修正线上 Release 后，只读核对现状，不得自动覆盖其修改或重新上传已移除的附件。
 
 ## 高级功能入口规范
 

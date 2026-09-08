@@ -357,6 +357,17 @@ void TestReleaseManagerShellReload(const std::string& manager,
         "release documentation describes shell reload for package and prepare");
 }
 
+void TestGitHubReleasePublication(const std::filesystem::path& root)
+{
+    // Exercise the production publication plan so local Store packages and
+    // their checksums cannot leak into the public GitHub attachment set.
+    const std::wstring command =
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" +
+        (root / "tests/release_publication_tests.ps1").wstring() + L"\"";
+    Check(_wsystem(command.c_str()) == 0,
+        "GitHub publication uses a version-only title and portable-only assets");
+}
+
 void TestSteamPipeAutomation(const std::string& steamPipe,
     const std::string& steamPipeConfiguration,
     const std::string& manager,
@@ -610,6 +621,7 @@ int main(int argc, char** argv)
         TestReleaseManagerShellReload(
             ReadText(root / "scripts/release_manager.ps1"),
             ReadText(root / "packaging/README.md"));
+        TestGitHubReleasePublication(root);
         TestSteamPipeAutomation(
             ReadText(root / "scripts/steam_pipe.ps1"),
             ReadText(root / "packaging/steam-pipe.json"),
