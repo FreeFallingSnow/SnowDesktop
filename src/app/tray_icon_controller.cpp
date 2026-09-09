@@ -8,6 +8,7 @@
 #include <appmodel.h>
 #include <propsys.h>
 #include <propkey.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 
 #include <filesystem>
@@ -55,6 +56,20 @@ void RegisterPortableNotificationApplication()
         std::error_code error;
         if (std::filesystem::is_regular_file(asset, error))
             iconPath = asset.wstring();
+
+        PWSTR programs = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Programs, 0, nullptr, &programs)))
+        {
+            const auto shortcut = std::filesystem::path(programs) / L"SnowDesktop.lnk";
+            const HRESULT registered = snowdesktop::tray_notification::EnsureApplicationShortcut(
+                shortcut.wstring(), executable);
+            if (registered == S_OK)
+            {
+                SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, shortcut.c_str(), nullptr);
+                SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+            }
+            CoTaskMemFree(programs);
+        }
     }
     snowdesktop::tray_notification::RegisterApplication(applications,
         snowdesktop::tray_notification::PortableApplicationId, iconPath);
@@ -123,6 +138,72 @@ bool snowdesktop::tray_notification::RegisterApplication(HKEY applicationsRoot,
     return nameResult == ERROR_SUCCESS && iconResult == ERROR_SUCCESS;
 }
 
+HRESULT snowdesktop::tray_notification::EnsureApplicationShortcut(
+    const std::wstring& shortcutPath, const std::wstring& executablePath)
+{
+    if (shortcutPath.empty() || executablePath.empty())
+        return E_INVALIDARG;
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    HRESULT result = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&link));
+    if (FAILED(result)) return result;
+    Microsoft::WRL::ComPtr<IPersistFile> file;
+    if (FAILED(result = link.As(&file))) return result;
+    Microsoft::WRL::ComPtr<IPropertyStore> properties;
+    if (FAILED(result = link.As(&properties))) return result;
+
+    const DWORD attributes = GetFileAttributesW(shortcutPath.c_str());
+    const bool existing = attributes != INVALID_FILE_ATTRIBUTES;
+    if (existing)
+    {
+        if (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY))
+            return E_ACCESSDENIED;
+        if (FAILED(result = file->Load(shortcutPath.c_str(), STGM_READ))) return result;
+        wchar_t target[32768]{};
+        if (FAILED(result = link->GetPath(target, static_cast<int>(std::size(target)),
+                nullptr, SLGP_RAWPATH))) return result;
+        if (CompareStringOrdinal(target, -1, executablePath.c_str(), -1, TRUE) != CSTR_EQUAL)
+            return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+        PROPVARIANT identity{};
+        result = properties->GetValue(PKEY_AppUserModel_ID, &identity);
+        const bool hasIdentity = SUCCEEDED(result) && identity.vt == VT_LPWSTR &&
+            identity.pwszVal && identity.pwszVal[0];
+        const bool matches = hasIdentity && wcscmp(identity.pwszVal, PortableApplicationId) == 0;
+        PropVariantClear(&identity);
+        if (FAILED(result)) return result;
+        if (matches) return S_FALSE;
+        if (hasIdentity) return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+        // Preserve the existing target, arguments, working directory and icon.
+    }
+    else
+    {
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND) return HRESULT_FROM_WIN32(error);
+        if (FAILED(result = link->SetPath(executablePath.c_str())) ||
+            FAILED(result = link->SetWorkingDirectory(
+                std::filesystem::path(executablePath).parent_path().c_str())) ||
+            FAILED(result = link->SetIconLocation(executablePath.c_str(), 0)))
+            return result;
+    }
+    PROPVARIANT identity{};
+    identity.vt = VT_LPWSTR;
+    identity.pwszVal = const_cast<wchar_t*>(PortableApplicationId);
+    if (FAILED(result = properties->SetValue(PKEY_AppUserModel_ID, identity)) ||
+        FAILED(result = properties->Commit())) return result;
+
+    GUID unique{};
+    if (FAILED(result = CoCreateGuid(&unique))) return result;
+    wchar_t suffix[40]{};
+    StringFromGUID2(unique, suffix, static_cast<int>(std::size(suffix)));
+    const std::wstring temporary = shortcutPath + suffix + L".tmp";
+    result = file->Save(temporary.c_str(), FALSE);
+    if (SUCCEEDED(result) && !MoveFileExW(temporary.c_str(), shortcutPath.c_str(),
+            MOVEFILE_WRITE_THROUGH | (existing ? MOVEFILE_REPLACE_EXISTING : 0)))
+        result = HRESULT_FROM_WIN32(GetLastError());
+    DeleteFileW(temporary.c_str());
+    return result;
+}
+
 HWND snowdesktop::tray_notification::CreateOwnerWindow(HWND callbackWindow)
 {
     if (!callbackWindow || !IsWindow(callbackWindow))
@@ -152,8 +233,6 @@ TrayIconController::~TrayIconController()
     Remove();
     if (icon_)
         DestroyIcon(icon_);
-    if (notificationIcon_)
-        DestroyIcon(notificationIcon_);
 }
 
 bool TrayIconController::Add(HWND owner, bool force)
@@ -229,24 +308,13 @@ bool TrayIconController::ShowBalloon(
     if (!owner || !IsWindow(owner) || !Add(owner))
         return false;
 
-    // The notification image is separate from the small tray icon and must
-    // stay alive while Shell can display it, including queued notifications.
-    if (!notificationIcon_)
-    {
-        notificationIcon_ = static_cast<HICON>(LoadImageW(
-            GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
-            GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0));
-    }
-
     NOTIFYICONDATAW data{};
     data.cbSize = sizeof(data);
     data.hWnd = owner_;
     data.uID = kTrayIconId;
     data.uFlags = NIF_INFO;
-    data.hBalloonIcon = notificationIcon_ ? notificationIcon_ : icon_;
-    data.dwInfoFlags = data.hBalloonIcon ? NIIF_USER : NIIF_INFO;
-    if (notificationIcon_)
-        data.dwInfoFlags |= NIIF_LARGE_ICON;
+    // Branding belongs to Windows' attribution header, not the content image.
+    data.dwInfoFlags = NIIF_NONE;
     wcsncpy_s(data.szInfoTitle, title.c_str(), _TRUNCATE);
     wcsncpy_s(data.szInfo, message.c_str(), _TRUNCATE);
     data.uTimeout = 10000;

@@ -16,6 +16,13 @@ std::wstring ApplicationId();
 bool RegisterApplication(HKEY applicationsRoot, const std::wstring& applicationId,
     const std::wstring& iconPath);
 
+// Bind the application's Start menu entry to its notification identity so
+// Windows can resolve the attribution name and icon. Existing entries for a
+// different executable or explicit identity are left untouched.
+// S_OK means changed; S_FALSE means already registered.
+HRESULT EnsureApplicationShortcut(const std::wstring& shortcutPath,
+    const std::wstring& executablePath);
+
 // Give Shell an explicit notification identity before adding the tray icon.
 // A caption alone still allows NotifyIconGeneratedAumid identifiers to leak
 // into Windows notification menus. Keep message routing on the legacy window.

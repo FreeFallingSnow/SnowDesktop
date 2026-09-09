@@ -22,12 +22,14 @@
 #include <propsys.h>
 #include <propkey.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -1821,6 +1823,75 @@ void TestTrayNotificationRegistrationPreservesPreferences()
     RegDeleteKeyW(HKEY_CURRENT_USER, path.c_str());
 }
 
+void TestTrayNotificationShortcutPreservesUserEntry()
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    GUID unique{};
+    CoCreateGuid(&unique);
+    wchar_t suffix[40]{};
+    StringFromGUID2(unique, suffix, static_cast<int>(std::size(suffix)));
+    const auto directory = std::filesystem::temp_directory_path() /
+        (std::wstring(L"SnowDesktop-notification-") + suffix);
+    std::filesystem::create_directory(directory);
+    const auto shortcut = directory / L"SnowDesktop.lnk";
+    wchar_t executable[32768]{};
+    GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    const HRESULT created = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&link));
+    Check(SUCCEEDED(created), "create a user shortcut fixture for notification registration");
+    if (link)
+    {
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        link.As(&file);
+        link->SetPath(executable);
+        link->SetArguments(L"--settings \"用户参数\"");
+        link->SetIconLocation(executable, 2);
+        Check(SUCCEEDED(file->Save(shortcut.c_str(), TRUE)), "save the original shortcut fixture");
+        using namespace snowdesktop::tray_notification;
+        Check(EnsureApplicationShortcut(shortcut.wstring(), executable) == S_OK,
+            "bind an existing matching shortcut to the notification identity");
+        file->Load(shortcut.c_str(), STGM_READ);
+        wchar_t arguments[256]{};
+        wchar_t icon[32768]{};
+        int iconIndex = 0;
+        link->GetArguments(arguments, static_cast<int>(std::size(arguments)));
+        link->GetIconLocation(icon, static_cast<int>(std::size(icon)), &iconIndex);
+        Check(std::wstring(arguments) == L"--settings \"用户参数\"" &&
+                std::wstring(icon) == executable && iconIndex == 2,
+            "notification registration preserves user arguments and custom shortcut icons");
+        Microsoft::WRL::ComPtr<IPropertyStore> properties;
+        link.As(&properties);
+        PROPVARIANT identity{};
+        properties->GetValue(PKEY_AppUserModel_ID, &identity);
+        Check(identity.vt == VT_LPWSTR && identity.pwszVal &&
+                std::wstring(identity.pwszVal) == PortableApplicationId,
+            "the Start menu shortcut exposes the same identity used to send notifications");
+        PropVariantClear(&identity);
+        Check(EnsureApplicationShortcut(shortcut.wstring(), executable) == S_FALSE,
+            "an unchanged notification identity does not rewrite the shortcut");
+        Check(FAILED(EnsureApplicationShortcut(shortcut.wstring(), L"C:\\other.exe")),
+            "a notification registration cannot replace another executable's shortcut");
+        identity.vt = VT_LPWSTR;
+        identity.pwszVal = const_cast<wchar_t*>(L"User.Custom.Identity");
+        properties->SetValue(PKEY_AppUserModel_ID, identity);
+        properties->Commit();
+        file->Save(shortcut.c_str(), TRUE);
+        Check(FAILED(EnsureApplicationShortcut(shortcut.wstring(), executable)),
+            "a notification registration cannot replace a user's explicit application identity");
+        DeleteFileW(shortcut.c_str());
+        Check(EnsureApplicationShortcut(shortcut.wstring(), executable) == S_OK,
+            "a missing application entry is created with the software icon and identity");
+        file->Load(shortcut.c_str(), STGM_READ);
+        link->GetIconLocation(icon, static_cast<int>(std::size(icon)), &iconIndex);
+        Check(std::wstring(icon) == executable && iconIndex == 0,
+            "new notification registrations resolve the actual executable's application icon");
+    }
+    DeleteFileW(shortcut.c_str());
+    RemoveDirectoryW(directory.c_str());
+    if (SUCCEEDED(initialized)) CoUninitialize();
+}
+
 // Opt-in equivalent evidence: use the production tray controller without
 // creating or automating SnowDesktop's desktop host. Never run this in CTest.
 int RunTrayNotificationIdentityProbe()
@@ -2236,6 +2307,21 @@ void TestPopupDwellControllerHandlesCandidateChanges()
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::string(argv[1]) == "--register-notification-shortcut")
+    {
+        const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        const HRESULT registered = snowdesktop::tray_notification::EnsureApplicationShortcut(
+            std::filesystem::u8path(argv[2]).wstring(), std::filesystem::u8path(argv[3]).wstring());
+        if (registered == S_OK)
+        {
+            SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW,
+                std::filesystem::u8path(argv[2]).c_str(), nullptr);
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+        }
+        std::cout << "Notification shortcut registration result: " << registered << '\n';
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return SUCCEEDED(registered) ? 0 : 1;
+    }
     if (argc == 2 && std::string(argv[1]) == "--notification-identity-probe")
         return RunTrayNotificationIdentityProbe();
     TestSlotCacheAndIdentity();
@@ -2260,6 +2346,7 @@ int main(int argc, char** argv)
     TestTrayCallbackClassification();
     TestTrayNotificationSourceAndRouting();
     TestTrayNotificationRegistrationPreservesPreferences();
+    TestTrayNotificationShortcutPreservesUserEntry();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
