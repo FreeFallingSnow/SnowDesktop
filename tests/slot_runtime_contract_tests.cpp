@@ -1851,7 +1851,13 @@ void TestTrayNotificationShortcutPreservesUserEntry()
         using namespace snowdesktop::tray_notification;
         Check(EnsureApplicationShortcut(shortcut.wstring(), executable) == S_OK,
             "bind an existing matching shortcut to the notification identity");
-        file->Load(shortcut.c_str(), STGM_READ);
+        // Reload through a new ShellLink: an existing instance can retain its
+        // previous property store after another object replaces the file.
+        file.Reset();
+        link.Reset();
+        CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link));
+        link.As(&file);
+        file->Load(shortcut.c_str(), STGM_READWRITE);
         wchar_t arguments[256]{};
         wchar_t icon[32768]{};
         int iconIndex = 0;
@@ -1874,9 +1880,9 @@ void TestTrayNotificationShortcutPreservesUserEntry()
             "a notification registration cannot replace another executable's shortcut");
         identity.vt = VT_LPWSTR;
         identity.pwszVal = const_cast<wchar_t*>(L"User.Custom.Identity");
-        properties->SetValue(PKEY_AppUserModel_ID, identity);
-        properties->Commit();
-        file->Save(shortcut.c_str(), TRUE);
+        Check(SUCCEEDED(properties->SetValue(PKEY_AppUserModel_ID, identity)) &&
+                SUCCEEDED(properties->Commit()) && SUCCEEDED(file->Save(shortcut.c_str(), TRUE)),
+            "persist an explicit user-defined identity in the test fixture");
         Check(FAILED(EnsureApplicationShortcut(shortcut.wstring(), executable)),
             "a notification registration cannot replace a user's explicit application identity");
         DeleteFileW(shortcut.c_str());
