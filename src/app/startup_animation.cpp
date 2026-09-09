@@ -346,7 +346,7 @@ std::unique_ptr<CancelButton> CreateCancelButton(HINSTANCE instance, HWND owner,
     HWND control = CreateWindowExW(0, L"BUTTON", label.c_str(),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
         0, 0, width, height, button->host,
-        reinterpret_cast<HMENU>(kCancelButtonId), instance, nullptr);
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCancelButtonId)), instance, nullptr);
     if (!control) throw RenderFailure{ E_FAIL };
     if (button->font)
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(button->font), TRUE);
