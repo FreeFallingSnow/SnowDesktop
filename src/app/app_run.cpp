@@ -376,6 +376,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         // earlier default-false snapshot.
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
 
+        // Layout-owned Dock values override the legacy Dock settings file.
+        (void)settingsController_->SynchronizeDock(dockSettings_);
+
         snowdesktop::DesktopDisplaySettings desktopSettings;
         desktopSettings.dockEnabled = generalSettings_.dockEnabled;
         desktopSettings.iconSpacingScale = iconSpacingScale_;

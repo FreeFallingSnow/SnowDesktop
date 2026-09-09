@@ -1,6 +1,7 @@
 #pragma once
 
 #include "large_icon_config.h"
+#include "dock_layout_settings.h"
 
 #include <filesystem>
 #include <optional>
@@ -108,6 +109,8 @@ struct Document
     std::optional<std::string> firstPageMonitor;
     std::optional<std::string> lastPageMonitor;
     std::optional<bool> dockEnabled;
+    // Absent in older layouts: retain the current Dock preferences on restore.
+    std::optional<DockLayoutSettings> dockLayout;
     // cu-native font sizes. The fields without the Cu suffix are legacy point
     // values that are converted once when older layouts are loaded.
     std::optional<float> itemFontSizeCu;
@@ -185,7 +188,8 @@ LoadResult LoadDocument(const std::filesystem::path& layoutPath,
     Document& document);
 bool SaveDocument(const std::filesystem::path& layoutPath,
     std::string_view contents, std::string* error = nullptr);
-// Clear placement records while preserving appearance and other settings.
+std::string SerializeDockLayout(const DockLayoutSettings& settings);
+// Clear placement records and reset Dock layout while preserving appearance.
 bool BuildClearedDocument(std::string_view contents, std::string& cleared,
     std::string* error = nullptr);
 // Caller must first create a user-visible layout backup. Commit both the

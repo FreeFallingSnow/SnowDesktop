@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock_settings_rules.h"
+#include "dock_layout_settings.h"
 #include "personalization.h"
 #include "animation_settings.h"
 
@@ -9,29 +10,6 @@
 #include <algorithm>
 #include <string>
 #include <vector>
-
-constexpr float kDockMinimumScale = 0.50f;
-constexpr float kDockMaximumScale = 1.00f;
-
-inline float ClampDockScale(float scale)
-{
-    return std::clamp(scale, kDockMinimumScale, kDockMaximumScale);
-}
-
-enum class DockPosition
-{
-    Bottom = 0,
-    Top = 1,
-    Left = 2,
-    Right = 3
-};
-
-enum class DockMonitorScope
-{
-    First = 0,
-    Last = 1,
-    All = 2
-};
 
 enum class SystemTaskbarBackdropRuntimeState
 {
@@ -75,12 +53,10 @@ struct SystemTaskbarTargetAppearance
         PersonalizationSettings::DarkPreset();
 };
 
-struct DockSettings
+struct DockSettings : DockLayoutSettings
 {
     bool operator==(const DockSettings&) const = default;
 
-    DockPosition position = DockPosition::Bottom;
-    bool edgeAttached = false;
     // Legacy field name retained in the persisted format. This now controls
     // only the hotkey trigger; edge-swipe invocation is independently enabled.
     bool floatingShortcutMode = true;
@@ -88,18 +64,10 @@ struct DockSettings
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
     bool floatingEdgeSwipeBlockFullscreen = false;
-    DockMonitorScope monitorScope = DockMonitorScope::First;
-    bool showWindowsButton = true;
     // Legacy persisted fields kept for layout compatibility. Running
     // applications and hover previews are now unconditional Dock features.
     bool showRunningApps = true;
     bool showWindowPreviews = true;
-    bool showFrequentItems = false;
-    bool keepWhenDesktopHidden = false;
-    bool allowDesktopContentOverlap = false;
-    bool showOnlyWhenSummoned = false;
-    int frequentItemCount = 3;
-    float thicknessScale = 1.0f;
     bool followComponentAppearance = true;
     int appearancePreset = kAppearancePresetCustom;
     PersonalizationSettings customAppearance;

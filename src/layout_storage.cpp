@@ -62,6 +62,41 @@ void WriteJsonValue(std::ostream& out, const JsonValue& value)
     }
 }
 
+JsonValue BooleanValue(bool value)
+{
+    JsonValue encoded;
+    encoded.type = JsonValue::Type::Boolean;
+    encoded.boolean = value;
+    return encoded;
+}
+
+JsonValue NumberValue(double value)
+{
+    JsonValue encoded;
+    encoded.type = JsonValue::Type::Number;
+    encoded.number = value;
+    return encoded;
+}
+
+JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
+{
+    JsonValue encoded;
+    encoded.type = JsonValue::Type::Object;
+    encoded.object = {
+        {"position", NumberValue(static_cast<int>(settings.position))},
+        {"edgeAttached", BooleanValue(settings.edgeAttached)},
+        {"monitorScope", NumberValue(static_cast<int>(settings.monitorScope))},
+        {"showWindowsButton", BooleanValue(settings.showWindowsButton)},
+        {"showFrequentItems", BooleanValue(settings.showFrequentItems)},
+        {"keepWhenDesktopHidden", BooleanValue(settings.keepWhenDesktopHidden)},
+        {"allowDesktopContentOverlap", BooleanValue(settings.allowDesktopContentOverlap)},
+        {"showOnlyWhenSummoned", BooleanValue(settings.showOnlyWhenSummoned)},
+        {"frequentItemCount", NumberValue(settings.frequentItemCount)},
+        {"thicknessScale", NumberValue(settings.thicknessScale)},
+    };
+    return encoded;
+}
+
 bool Fail(std::string* error, std::string_view path,
     std::string_view expectation)
 {
@@ -522,6 +557,43 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
     return true;
 }
 
+bool DecodeDockLayout(const JsonValue& root, Document& document,
+    std::string* error)
+{
+    const auto* value = root.Find("dockLayout");
+    if (!value) return true;
+    if (!value->IsObject())
+        return Fail(error, "dockLayout", "must be an object");
+    DockLayoutSettings decoded;
+    int position = static_cast<int>(decoded.position);
+    int monitorScope = static_cast<int>(decoded.monitorScope);
+    std::optional<float> thickness;
+    if (!ReadInteger(*value, "position", "dockLayout.position", position, error) ||
+        !ReadInteger(*value, "monitorScope", "dockLayout.monitorScope", monitorScope, error) ||
+        !ReadInteger(*value, "frequentItemCount", "dockLayout.frequentItemCount", decoded.frequentItemCount, error) ||
+        !ReadOptionalFloat(*value, "thicknessScale", "dockLayout.thicknessScale", thickness, error) ||
+        !ReadBoolean(*value, "edgeAttached", "dockLayout.edgeAttached", decoded.edgeAttached, error) ||
+        !ReadBoolean(*value, "showWindowsButton", "dockLayout.showWindowsButton", decoded.showWindowsButton, error) ||
+        !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||
+        !ReadBoolean(*value, "keepWhenDesktopHidden", "dockLayout.keepWhenDesktopHidden", decoded.keepWhenDesktopHidden, error) ||
+        !ReadBoolean(*value, "allowDesktopContentOverlap", "dockLayout.allowDesktopContentOverlap", decoded.allowDesktopContentOverlap, error) ||
+        !ReadBoolean(*value, "showOnlyWhenSummoned", "dockLayout.showOnlyWhenSummoned", decoded.showOnlyWhenSummoned, error))
+        return false;
+    if (position < 0 || position > 3)
+        return Fail(error, "dockLayout.position", "must be between 0 and 3");
+    if (monitorScope < 0 || monitorScope > 2)
+        return Fail(error, "dockLayout.monitorScope", "must be between 0 and 2");
+    if (decoded.frequentItemCount < 1 || decoded.frequentItemCount > 8)
+        return Fail(error, "dockLayout.frequentItemCount", "must be between 1 and 8");
+    decoded.thicknessScale = thickness.value_or(decoded.thicknessScale);
+    if (decoded.thicknessScale < kDockMinimumScale || decoded.thicknessScale > kDockMaximumScale)
+        return Fail(error, "dockLayout.thicknessScale", "is outside the supported range");
+    decoded.position = static_cast<DockPosition>(position);
+    decoded.monitorScope = static_cast<DockMonitorScope>(monitorScope);
+    document.dockLayout = decoded;
+    return true;
+}
+
 bool DecodeDocument(const JsonValue& root, Document& document,
     std::string* error)
 {
@@ -554,6 +626,7 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.lastPageMonitor, error) ||
         !ReadOptionalRootBoolean(root, "dockEnabled",
             decoded.dockEnabled, error) ||
+        !DecodeDockLayout(root, decoded, error) ||
         !ReadOptionalFloat(root, "itemFontSizeCu", "itemFontSizeCu",
             decoded.itemFontSizeCu, error) ||
         !ReadOptionalFloat(root, "listItemFontSizeCu", "listItemFontSizeCu",
@@ -769,6 +842,15 @@ bool SaveDocument(const std::filesystem::path& layoutPath,
         error);
 }
 
+std::string SerializeDockLayout(const DockLayoutSettings& settings)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(std::numeric_limits<float>::max_digits10);
+    WriteJsonValue(output, EncodeDockLayout(settings));
+    return output.str();
+}
+
 bool BuildClearedDocument(std::string_view contents, std::string& cleared,
     std::string* error)
 {
@@ -780,6 +862,8 @@ bool BuildClearedDocument(std::string_view contents, std::string& cleared,
     for (const char* key : {"pages", "items", "widgets", "dockEntries", "navTabOrder",
              "firstPageMonitor", "lastPageMonitor"})
         root.object.erase(key);
+    root.object["dockEnabled"] = BooleanValue(kDefaultDockEnabled);
+    root.object["dockLayout"] = EncodeDockLayout(DockLayoutSettings{});
     std::ostringstream output;
     output.imbue(std::locale::classic());
     output << std::setprecision(std::numeric_limits<double>::max_digits10);

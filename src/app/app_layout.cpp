@@ -118,6 +118,8 @@ void DesktopApp::LoadLayoutSlots()
 
     if (document.dockEnabled)
         generalSettings_.dockEnabled = *document.dockEnabled;
+    if (document.dockLayout)
+        static_cast<DockLayoutSettings&>(dockSettings_) = *document.dockLayout;
 
     const std::optional<float> savedItemFontSizeCu =
         snowdesktop::font_cu_rules::ResolveStoredSize(
@@ -865,6 +867,7 @@ bool DesktopApp::SaveLayoutSlots()
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
+         << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)

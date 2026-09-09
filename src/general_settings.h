@@ -11,6 +11,7 @@
 
 #include <string>
 #include "animation_settings.h"
+#include "dock_layout_settings.h"
 #include "surface_theme.h"
 
 struct GeneralSettings
@@ -36,7 +37,7 @@ struct GeneralSettings
     int collectionPopupTheme = 0;
     snowdesktop::SurfaceTheme quickNavigationAppearance;
     snowdesktop::SurfaceTheme collectionPopupAppearance;
-    bool dockEnabled = false;
+    bool dockEnabled = kDefaultDockEnabled;
     bool widgetDeveloperToolsEnabled = false;
     int animationMode = 0;
     int popupAnimationEffect = 2;

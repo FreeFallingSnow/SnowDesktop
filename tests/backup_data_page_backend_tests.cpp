@@ -339,6 +339,8 @@ void TestApplicationOwnedLayoutCommit(const std::string& application,
         "SynchronizeGeneral", reload);
     const auto synchronizeDesktop = application.find(
         "SynchronizeDesktop", synchronizeGeneral);
+    const auto synchronizeDock = application.find("SynchronizeDock", reload);
+    const auto transactionEnd = application.find("class DesktopApp::SettingsHostActionsAdapter", transaction);
     Check(transaction != std::string::npos &&
             flush != std::string::npos &&
             replace != std::string::npos &&
@@ -349,6 +351,8 @@ void TestApplicationOwnedLayoutCommit(const std::string& application,
             reload < synchronizeGeneral &&
             synchronizeGeneral < synchronizeDesktop,
         "DesktopApp flushes, replaces, reloads and synchronizes in order");
+    Check(synchronizeDock != std::string::npos && synchronizeDock < transactionEnd,
+        "layout restore publishes Dock values so later settings edits cannot revive the old layout");
     Check(application.find("previousLayout", transaction) !=
                 std::string::npos &&
             application.find("layoutRolledBack", transaction) !=

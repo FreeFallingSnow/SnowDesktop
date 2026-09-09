@@ -726,6 +726,7 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         lastPageMonitorId_.clear();
     }
     ReloadItems(true);
+    ApplyFloatingDockHotkey();
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;
     desktop.iconSpacingScale = iconSpacingScale_;
@@ -739,7 +740,9 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         settingsController_->SynchronizeGeneral(generalSettings_);
     const bool desktopSynchronized =
         settingsController_->SynchronizeDesktop(std::move(desktop));
-    if (!generalSynchronized || !desktopSynchronized)
+    const bool dockSynchronized =
+        settingsController_->SynchronizeDock(dockSettings_);
+    if (!generalSynchronized || !desktopSynchronized || !dockSynchronized)
     {
         WriteDiagnosticLogEntry(
             L"Layout restored but settings mirror synchronization failed",

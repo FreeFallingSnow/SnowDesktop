@@ -222,6 +222,65 @@ PackagePaths TestPaths(const std::filesystem::path& root)
     return paths;
 }
 
+void TestDockLayoutBackup(const std::filesystem::path& root)
+{
+    namespace layout = snowdesktop::layout_storage;
+    const auto primary = root / L"dock-layout" / L"SnowDesktop.layout.json";
+    const auto backup = root / L"dock-layout" / L"backups" / L"saved.json";
+    for (int position = 0; position < 4; ++position)
+    {
+        for (bool attached : {false, true})
+        {
+            DockLayoutSettings saved;
+            saved.position = static_cast<DockPosition>(position);
+            saved.edgeAttached = attached;
+            saved.monitorScope = DockMonitorScope::All;
+            saved.showWindowsButton = false;
+            saved.showFrequentItems = true;
+            saved.keepWhenDesktopHidden = true;
+            saved.allowDesktopContentOverlap = true;
+            saved.showOnlyWhenSummoned = true;
+            saved.frequentItemCount = 7;
+            saved.thicknessScale = 0.73f;
+            const std::string contents = std::string("{\"dockEnabled\":") +
+                (attached ? "true" : "false") + ",\"dockLayout\":" +
+                layout::SerializeDockLayout(saved) + "}";
+            Expect(layout::SaveDocument(primary, contents),
+                "layout persistence includes Dock geometry, visibility and content");
+            Write(backup, Read(primary));
+            Expect(layout::SaveDocument(primary, "{}") &&
+                    layout::SaveDocument(primary, Read(backup)),
+                "ordinary layout backup restores the recorded Dock settings");
+            layout::Document restored;
+            Expect(layout::LoadDocument(primary, restored).status == layout::LoadStatus::LoadedPrimary &&
+                    restored.dockEnabled == attached && restored.dockLayout &&
+                    *restored.dockLayout == saved,
+                "all four Dock edges and both forms survive a layout backup round trip");
+
+            Expect(contents.find("customAppearance") == std::string::npos &&
+                    contents.find("floatingHotkey") == std::string::npos &&
+                    contents.find("systemTaskbar") == std::string::npos,
+                "layout backups exclude independent Dock and system preferences");
+        }
+    }
+    layout::Document legacy;
+    Expect(layout::ParseDocument("{\"dockEnabled\":true}", legacy) &&
+            legacy.dockEnabled == true && !legacy.dockLayout,
+        "old layout backups preserve their switch without inventing Dock geometry");
+    for (const char* malformed : {
+             R"({"dockLayout":false})",
+             R"({"dockLayout":{"position":4}})",
+             R"({"dockLayout":{"position":1.5}})",
+             R"({"dockLayout":{"monitorScope":-1}})",
+             R"({"dockLayout":{"edgeAttached":1}})",
+             R"({"dockLayout":{"frequentItemCount":0}})",
+             R"({"dockLayout":{"thicknessScale":0.1}})"})
+    {
+        Expect(!layout::ValidateDocument(malformed),
+            "invalid Dock layout values are rejected before replacing live data");
+    }
+}
+
 void TestLayoutReset(const std::filesystem::path& root)
 {
     namespace layout = snowdesktop::layout_storage;
@@ -232,6 +291,8 @@ void TestLayoutReset(const std::filesystem::path& root)
     const std::string original = R"({
         "layoutSchemaVersion":1,"itemFontSizeCu":0.27,"iconSpacing":1.3,
         "dockEnabled":true,"firstPageMonitor":"old","lastPageMonitor":"old",
+        "dockLayout":{"position":2,"edgeAttached":true,"monitorScope":2,
+            "showOnlyWhenSummoned":true,"thicknessScale":0.7},
         "pages":[{"id":"old","columns":41,"rows":17}],
         "items":[{"key":"file","page":"old","x":1,"y":0}],
         "widgets":[{"id":"clock","type":"lua","page":"old","x":0,"y":0}],
@@ -271,8 +332,9 @@ void TestLayoutReset(const std::filesystem::path& root)
             fresh.dockEntries.empty() && fresh.navTabOrder.empty() &&
             !fresh.firstPageMonitor && !fresh.lastPageMonitor &&
             fresh.itemFontSizeCu == 0.27f && fresh.iconSpacing == 1.3f &&
-            fresh.dockEnabled.value_or(false) && Read(storage) == "{}\n",
-        "reset clears placement and component storage while retaining appearance settings");
+            fresh.dockEnabled == kDefaultDockEnabled && fresh.dockLayout &&
+            *fresh.dockLayout == DockLayoutSettings{} && Read(storage) == "{}\n",
+        "reset clears placement and storage and restores default Dock layout while retaining appearance");
     JsonValue encoded;
     Expect(ParseJson(Read(primary), encoded) && encoded.Find("metadata") &&
             encoded.Find("metadata")->Find("label") &&
@@ -288,7 +350,9 @@ void TestLayoutReset(const std::filesystem::path& root)
 
     Write(primary, "{invalid");
     Expect(layout::LoadDocument(primary, fresh).status == layout::LoadStatus::RecoveredBackup &&
-            fresh.pages.empty() && fresh.widgets.empty(),
+            fresh.pages.empty() && fresh.widgets.empty() &&
+            fresh.dockEnabled == kDefaultDockEnabled && fresh.dockLayout &&
+            *fresh.dockLayout == DockLayoutSettings{},
         "automatic last-good recovery cannot resurrect the pre-reset layout");
 
     Write(primary, original);
@@ -335,6 +399,7 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestDockLayoutBackup(root);
     TestLayoutReset(root);
     Write(hashInput, "abc");
     Expect(WidgetPackageManager::Sha256File(hashInput) ==
