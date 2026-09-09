@@ -2,6 +2,7 @@
 #include "../diagnostic_log.h"
 #include "../resource.h"
 
+#include <commctrl.h>
 #include <d2d1_1.h>
 #include <d3d11.h>
 #include <dcomp.h>
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -37,6 +39,57 @@ struct WindowOwner
     ~WindowOwner() { if (value && IsWindow(value)) DestroyWindow(value); }
 };
 
+LRESULT DrawCancelButton(const NMCUSTOMDRAW& draw) noexcept
+{
+    // Customize the native control's paint only: Windows still supplies its
+    // hover/pressed state, capture, click notification, and accessibility.
+    if (draw.dwDrawStage != CDDS_PREPAINT) return CDRF_DODEFAULT;
+    HIGHCONTRASTW contrast{ sizeof(contrast) };
+    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+        (contrast.dwFlags & HCF_HIGHCONTRASTON)) return CDRF_DODEFAULT;
+
+    const bool pressed = (draw.uItemState & CDIS_SELECTED) != 0;
+    const bool hovered = (draw.uItemState & CDIS_HOT) != 0;
+    const bool focused = (draw.uItemState & CDIS_FOCUS) != 0;
+    const float scale = GetDpiForWindow(draw.hdr.hwndFrom) / 96.0f;
+    const COLORREF fill = pressed ? RGB(32, 32, 32) :
+        hovered ? RGB(54, 54, 54) : RGB(39, 39, 39);
+    const COLORREF edge = focused ? RGB(190, 190, 190) :
+        hovered ? RGB(108, 108, 108) : RGB(76, 76, 76);
+    const int saved = SaveDC(draw.hdc);
+    if (!saved) return CDRF_DODEFAULT;
+    HBRUSH background = CreateSolidBrush(fill);
+    HPEN border = CreatePen(PS_SOLID, std::max(1, static_cast<int>(std::lround(scale))), edge);
+    if (!background || !border)
+    {
+        if (background) DeleteObject(background);
+        if (border) DeleteObject(border);
+        RestoreDC(draw.hdc, saved);
+        return CDRF_DODEFAULT;
+    }
+    FillRect(draw.hdc, &draw.rc, background);
+    SelectObject(draw.hdc, background);
+    SelectObject(draw.hdc, border);
+    const int diameter = static_cast<int>(std::lround(16 * scale));
+    RoundRect(draw.hdc, draw.rc.left, draw.rc.top,
+        draw.rc.right, draw.rc.bottom, diameter, diameter);
+    const auto font = reinterpret_cast<HFONT>(
+        SendMessageW(draw.hdr.hwndFrom, WM_GETFONT, 0, 0));
+    if (font) SelectObject(draw.hdc, font);
+    SetBkMode(draw.hdc, TRANSPARENT);
+    SetTextColor(draw.hdc, (draw.uItemState & CDIS_DISABLED) ?
+        RGB(140, 140, 140) : RGB(232, 232, 232));
+    wchar_t label[256]{};
+    GetWindowTextW(draw.hdr.hwndFrom, label, static_cast<int>(std::size(label)));
+    RECT textBounds = draw.rc;
+    DrawTextW(draw.hdc, label, -1, &textBounds,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    RestoreDC(draw.hdc, saved);
+    DeleteObject(border);
+    DeleteObject(background);
+    return CDRF_SKIPDEFAULT;
+}
+
 LRESULT CALLBACK ActionWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
     if (message == WM_NCCREATE)
@@ -45,6 +98,13 @@ LRESULT CALLBACK ActionWindowProc(HWND window, UINT message, WPARAM wp, LPARAM l
             reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
     }
     if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (message == WM_NOTIFY && lp)
+    {
+        const auto* draw = reinterpret_cast<const NMCUSTOMDRAW*>(lp);
+        if (draw->hdr.code == NM_CUSTOMDRAW &&
+            draw->hdr.hwndFrom == GetDlgItem(window, kCancelButtonId))
+            return DrawCancelButton(*draw);
+    }
     if (message == WM_COMMAND && LOWORD(wp) == kCancelButtonId &&
         HIWORD(wp) == BN_CLICKED &&
         reinterpret_cast<HWND>(lp) == GetDlgItem(window, kCancelButtonId))
@@ -159,7 +219,7 @@ public:
         // bitmap allocation, readback, or per-frame CPU rasterization.
         auto wash = Surface(1, 1, 1.0f, [&](ID2D1DeviceContext* context) {
             context->Clear(highContrast ? SystemColor(COLOR_WINDOW) :
-                D2D1::ColorF(0x15253b, 0.68f));
+                D2D1::ColorF(0x151515, 0.72f));
         });
         auto washVisual = AddVisual(wash.Get(), 0, 0);
         ComPtr<IDCompositionScaleTransform> stretch;
@@ -201,7 +261,7 @@ public:
         Require(statusText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER));
 
         const auto foreground = highContrast ? SystemColor(COLOR_WINDOWTEXT) :
-            D2D1::ColorF(0.93f, 0.97f, 1);
+            D2D1::ColorF(0xf0f0f0);
         for (const auto& layout : layouts)
         {
             const float scale = layout.scale;
@@ -332,8 +392,8 @@ std::unique_ptr<CancelButton> CreateCancelButton(HINSTANCE instance, HWND owner,
         ReleaseDC(nullptr, dc);
     }
     const int width = static_cast<int>(std::ceil(std::clamp(
-        textSize.cx + 40 * scale, 184 * scale, 288 * scale)));
-    const int height = static_cast<int>(std::ceil(38 * scale));
+        textSize.cx + 32 * scale, 132 * scale, 288 * scale)));
+    const int height = static_cast<int>(std::ceil(36 * scale));
     const int x = desktop.left + static_cast<int>(std::lround(
         layout.left + 160 * scale - width / 2.0f));
     const int y = desktop.top + static_cast<int>(std::lround(layout.top + 282 * scale));
@@ -350,6 +410,12 @@ std::unique_ptr<CancelButton> CreateCancelButton(HINSTANCE instance, HWND owner,
     if (!control) throw RenderFailure{ E_FAIL };
     if (button->font)
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(button->font), TRUE);
+    // Clip the small input popup too, so its square corners do not cover the
+    // desktop around the rounded button. Native hit testing/capture and the
+    // accessible BUTTON role remain supplied by the system control.
+    const int diameter = static_cast<int>(std::lround(16 * scale));
+    HRGN rounded = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+    if (rounded && !SetWindowRgn(button->host, rounded, FALSE)) DeleteObject(rounded);
     const BOOL noWindowTransition = TRUE;
     (void)DwmSetWindowAttribute(button->host, DWMWA_TRANSITIONS_FORCEDISABLED,
         &noWindowTransition, sizeof(noWindowTransition));
