@@ -70,6 +70,8 @@ int main(int argc, char** argv)
         root / "src" / "app" / "desktop_backdrop_compositor.cpp");
     const std::string dockWindow = ReadFile(
         root / "src" / "app" / "app_floating_dock_window.cpp");
+    const std::string startupAnimation = ReadFile(
+        root / "src" / "app" / "startup_animation.cpp");
     const std::string settingsApply = ReadFile(
         root / "src" / "app" / "app_settings_apply.cpp");
     const std::string dockSettings = ReadFile(
@@ -178,7 +180,7 @@ int main(int argc, char** argv)
             paintBody.find("CreateOrResizeCompositionSurface()"),
         "bootstrap COM reentrancy cannot paint an incomplete desktop model");
     const std::string runBody = WithoutWhitespace(appRun);
-    const auto prepareFrame = runBody.find("if(!OnPaint()||!WaitForCompositionPresentation(");
+    const auto prepareFrame = runBody.find("if(!OnPaint()||!FlushPendingCompositionCommit())");
     const auto abortStartup = runBody.find("return__LINE__;", prepareFrame);
     const auto releaseDesktop = runBody.find("desktopStartupPresentationPending_=false;");
     const auto showDesktop = runBody.find(
@@ -188,6 +190,34 @@ int main(int argc, char** argv)
             prepareFrame < abortStartup && abortStartup < releaseDesktop &&
             releaseDesktop < showDesktop,
         "failed first-frame rendering or submission returns before desktop handoff");
+    const auto attachHost = runBody.find("AttachWindowToDesktopHost(parent);");
+    Check(prepareFrame < attachHost && attachHost < releaseDesktop &&
+            attachHost == runBody.rfind("AttachWindowToDesktopHost(parent);") &&
+            runBody.find("WaitForCompositionPresentation(") == std::string::npos &&
+            WithoutWhitespace(recovery).find(
+                "if(exitRequested_||desktopStartupPresentationPending_)return;") != std::string::npos &&
+            WithoutWhitespace(watcher).find(
+                "if(exitRequested_||desktopStartupPresentationPending_)return;") != std::string::npos,
+        "slow bootstrap and reentrant host-watch callbacks cannot attach the main input queue to Explorer");
+    const std::string animationBody = WithoutWhitespace(startupAnimation);
+    Check(!startupAnimation.empty() &&
+            startupAnimation.find("SetParent(") == std::string::npos &&
+            startupAnimation.find("AttachThreadInput(") == std::string::npos &&
+            startupAnimation.find("SetForegroundWindow(") == std::string::npos &&
+            startupAnimation.find("WS_EX_TOPMOST") == std::string::npos &&
+            animationBody.find("WS_EX_TRANSPARENT|WS_EX_LAYERED") != std::string::npos &&
+            animationBody.find("thread_=std::thread(") != std::string::npos &&
+            animationBody.find("MsgWaitForMultipleObjectsEx(") != std::string::npos &&
+            animationBody.find("DCompositionCreateDevice2(") != std::string::npos,
+        "the startup animation has an independent graphics/UI thread and cannot capture Explorer input or cover foreground apps");
+    const auto finishBody = WithoutWhitespace(FunctionBody(startupAnimation,
+        "void StartupAnimation::Finish() noexcept", "__end_of_file__"));
+    Check(finishBody.find("SetEvent(finishEvent_)") != std::string::npos &&
+            finishBody.find("WaitFor") == std::string::npos &&
+            finishBody.find("join(") == std::string::npos &&
+            runBody.find("startupAnimation.Finish();") > showDesktop &&
+            animationBody.find("if(thread_.joinable())thread_.join();") != std::string::npos,
+        "successful handoff requests a nonblocking fade and every exit joins the presentation worker before closing its events");
     Check(runBody.find("desktopBackdropCompositor_.Initialize(hwnd_,false)") !=
                 std::string::npos &&
             WithoutWhitespace(backdrop).find(

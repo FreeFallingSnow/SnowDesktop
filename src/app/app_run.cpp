@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
+#include "startup_animation.h"
 #include "../data_paths.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
@@ -354,8 +355,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             desktopWindows_.listView, desktopWindows_.host);
         WriteDiagnosticLogEntry(buf);
     }
+    snowdesktop::StartupAnimation startupAnimation;
     if (customDesktopVisible_)
     {
+        (void)startupAnimation.Start(instance_, desktopWindows_.host,
+            snowdesktop::animation::RuntimeAnimationsEnabled(),
+            snowdesktop::animation::RuntimeDurationScale());
         WriteDiagnosticLogEntry(
             L"Explorer icon layer retained during startup");
     }
@@ -484,7 +489,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);
     if (!hwnd_) { WriteDiagnosticLogEntry(L"CreateWindow FAILED"); return __LINE__; }
-    AttachWindowToDesktopHost(parent);
+    // Keep the main UI window unparented while initialization can block.
+    // Cross-process child windows couple the main and Explorer input queues,
+    // even when the child is hidden. The startup layer has its own UI thread.
     dockWindowPreview_ = std::make_unique<DockWindowPreview>();
     if (!dockWindowPreview_->Initialize(
             instance_,
@@ -559,22 +566,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (FAILED(CreateOrResizeCompositionSurface()))
         { WriteDiagnosticLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
     WriteDiagnosticLogEntry(L"Composition target ready");
-    if (customDesktopVisible_)
-    {
-        if (desktopBackdropCompositor_.Initialize(hwnd_, false))
-        {
-            nativeGlassPanelReadyLogged_ = false;
-            WriteDiagnosticLogEntry(
-                L"Native desktop CompositionBackdropBrush initialized");
-        }
-        else
-        {
-            std::wstring message =
-                L"Native desktop CompositionBackdropBrush unavailable: ";
-            message += desktopBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
-        }
-    }
 
     LoadCategorySettingsAndApply();
     GetDemoIdentityIconDirectory();
@@ -1483,8 +1474,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         {
             OnIconLoaded(iconMessage.wParam, iconMessage.lParam);
         }
-        if (!OnPaint() ||
-            !WaitForCompositionPresentation(L"Startup desktop"))
+        if (!OnPaint() || !FlushPendingCompositionCommit())
         {
             WriteDiagnosticLogEntry(
                 L"Startup first frame FAILED; native desktop retained",
@@ -1492,6 +1482,27 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             return __LINE__;
         }
         logStartupStage(L"first frame ready");
+    }
+    // Resolve the current host again after slow Shell/widget initialization.
+    // Attach only once the full initial model and its first frame are ready.
+    desktopWindows_ = FindDesktopWindows();
+    parent = desktopWindows_.host ? desktopWindows_.host : GetDesktopWindow();
+    AttachWindowToDesktopHost(parent);
+    if (customDesktopVisible_)
+    {
+        if (desktopBackdropCompositor_.Initialize(hwnd_, false))
+        {
+            nativeGlassPanelReadyLogged_ = false;
+            WriteDiagnosticLogEntry(
+                L"Native desktop CompositionBackdropBrush initialized");
+        }
+        else
+        {
+            const std::wstring message =
+                L"Native desktop CompositionBackdropBrush unavailable: " +
+                desktopBackdropCompositor_.LastError();
+            WriteDiagnosticLogEntry(message.c_str());
+        }
     }
     desktopStartupPresentationPending_ = false;
     AddTrayIcon();
@@ -1504,6 +1515,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         UpdateWindow(hwnd_);
         FlushPendingCompositionCommit();
     }
+    startupAnimation.Finish();
     logStartupStage(L"desktop handoff complete");
     TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_

@@ -860,7 +860,9 @@ bool DesktopApp::CreateDesktopOverlayWindow()
  */
 void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
 {
-    if (exitRequested_)
+    // Bootstrap owns initial attachment; Shell COM calls can dispatch this
+    // callback while the main thread is intentionally detached from Explorer.
+    if (exitRequested_ || desktopStartupPresentationPending_)
         return;
 
     // TaskbarCreated can be dispatched re-entrantly by a shell COM call made
@@ -939,7 +941,7 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
  */
 void DesktopApp::WatchDesktopHost()
 {
-    if (exitRequested_)
+    if (exitRequested_ || desktopStartupPresentationPending_)
         return;
 
     // Low-cost fallback for display-driver paths that do not broadcast the

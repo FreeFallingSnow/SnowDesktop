@@ -257,6 +257,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/tray_icon_controller.cpp
     src/app/widget_notification_presenter.cpp
     src/app/desktop_backdrop_compositor.cpp
+    src/app/startup_animation.cpp
     src/app/wallpaper_engine_capture.cpp
     src/atomic_file.cpp
     src/dock_window_preview.cpp

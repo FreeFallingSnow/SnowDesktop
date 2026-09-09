@@ -397,7 +397,7 @@ void DesktopApp::PollDisplayTopology()
  */
 void DesktopApp::RefreshDisplayTopologyIfChanged()
 {
-    if (exitRequested_)
+    if (exitRequested_ || desktopStartupPresentationPending_)
         return;
 
     const std::wstring currentSignature = CaptureDisplayTopologySignature();
