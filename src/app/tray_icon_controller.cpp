@@ -158,7 +158,7 @@ HRESULT snowdesktop::tray_notification::EnsureApplicationShortcut(
     {
         if (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY))
             return E_ACCESSDENIED;
-        if (FAILED(result = file->Load(shortcutPath.c_str(), STGM_READ))) return result;
+        if (FAILED(result = file->Load(shortcutPath.c_str(), STGM_READWRITE))) return result;
         wchar_t target[32768]{};
         if (FAILED(result = link->GetPath(target, static_cast<int>(std::size(target)),
                 nullptr, SLGP_RAWPATH))) return result;
