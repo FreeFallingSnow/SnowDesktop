@@ -1,4 +1,8 @@
 {
+    "settings.debug.initialization": "Initialisation temporaire",
+    "settings.debug.initialization.description": "Utilise une disposition et un stockage des composants distincts pour initialiser la grille et les positions des icônes à partir de Windows. La désactivation ou le redémarrage de l’application rétablit la disposition d’origine, y compris le Dock, et le stockage des composants.",
+    "settings.debug.initialization.failed": "Impossible de basculer l’initialisation temporaire. Réessayez plus tard.",
+    "settings.debug.initialization.backupBlocked": "Désactivez l’initialisation temporaire avant de sauvegarder, restaurer ou migrer des données.",
     "app.launcher.failed": "SnowDesktop n’a pas pu démarrer. Vérifiez l’intégrité des fichiers de l’application dans Steam, puis réessayez. Si le problème persiste, transmettez les détails ci-dessous à l’assistance. Ne supprimez pas le dossier data.",
   "app.settings.title": "Paramètres de SnowDesktop",
   "app.settings.general": "Général",

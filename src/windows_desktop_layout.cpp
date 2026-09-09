@@ -68,6 +68,8 @@ Snapshot ReadView(std::chrono::steady_clock::time_point deadline)
         return result;
     }
     ComPtr<IFolderView2> view2;
+    result.spacingDpi = GetDpiForWindow(window);
+    if (!result.spacingDpi) result.spacingDpi = 96;
     if (SUCCEEDED(view.As(&view2)))
     {
         FOLDERVIEWMODE mode{};

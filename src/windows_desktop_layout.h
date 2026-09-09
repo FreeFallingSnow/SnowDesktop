@@ -17,6 +17,7 @@ struct Snapshot
 {
     HRESULT status = E_FAIL;
     POINT spacing{};
+    UINT spacingDpi = 96;
     int iconSize = 0;
     std::vector<ItemPosition> items;
 

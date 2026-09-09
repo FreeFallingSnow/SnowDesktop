@@ -290,6 +290,44 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
     }
 }
 
+void TestInitializationExperiment(const std::filesystem::path& root)
+{
+    namespace layout = snowdesktop::layout_storage;
+    const auto data = root / L"initialization-original";
+    std::filesystem::create_directory(data);
+    const auto original = data / L"SnowDesktop.layout.json";
+    const auto storage = data / L"SnowDesktop.storage.json";
+    const auto recovery = layout::BackupPath(original);
+    const std::string originalText = R"({"pages":[{"id":"primary","columns":22,"rows":10}],"dockEnabled":true,"dockLayout":{"position":2},"widgets":[{"id":"clock","type":"lua","page":"primary","x":0,"y":0}]})";
+    Write(original, originalText);
+    Write(recovery, originalText);
+    Write(storage, R"({"clock":"original data"})");
+    const auto originalStorage = Read(storage);
+    const auto experiment = root / L"initialization-experiment";
+    std::string error;
+    Expect(layout::PrepareInitializationExperiment(original, experiment, &error),
+        "temporary initialization creates a separate layout and storage pair");
+    layout::Document fresh;
+    const auto experimentalLayout = experiment / L"SnowDesktop.layout.json";
+    Expect(layout::LoadDocument(experimentalLayout, fresh).status == layout::LoadStatus::LoadedPrimary &&
+            layout::NeedsGridInitialization(fresh) && fresh.dockEnabled == false &&
+            Read(experiment / L"SnowDesktop.storage.json") == "{}\n",
+        "experimental data follows the actual first-launch initialization path");
+    Write(experimentalLayout, R"({"pages":[{"id":"experiment","columns":20,"rows":8}]})");
+    Write(experiment / L"SnowDesktop.storage.json", R"({"clock":"experiment data"})");
+    Expect(!layout::PrepareInitializationExperiment(original, data, &error) &&
+            !layout::PrepareInitializationExperiment(original, experiment, &error),
+        "an experiment can never overwrite the original or another existing data directory");
+    Expect(Read(original) == originalText && Read(recovery) == originalText &&
+            Read(storage) == originalStorage,
+        "experimental edits preserve the original layout, recovery and component storage byte-for-byte");
+    layout::Document restored;
+    Expect(layout::LoadDocument(original, restored).status == layout::LoadStatus::LoadedPrimary &&
+            restored.dockEnabled == true && restored.widgets.size() == 1 &&
+            !layout::NeedsGridInitialization(restored),
+        "returning to the original files restores Dock and components without reinitializing");
+}
+
 void TestLayoutReset(const std::filesystem::path& root)
 {
     namespace layout = snowdesktop::layout_storage;
@@ -411,6 +449,7 @@ int main()
     const auto hashInput = root / L"sha256-input.bin";
     TestDockLayoutBackup(root);
     TestLayoutReset(root);
+    TestInitializationExperiment(root);
     Write(hashInput, "abc");
     Expect(WidgetPackageManager::Sha256File(hashInput) ==
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",

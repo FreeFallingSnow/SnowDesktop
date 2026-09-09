@@ -11,6 +11,15 @@ namespace snowdesktop::windows_desktop_layout
 {
 inline constexpr int kMaximumGridAxis = 50;
 
+inline int MonitorSpacing(int spacing, unsigned sourceDpi, unsigned targetDpi) noexcept
+{
+    if (spacing <= 0) return 0;
+    if (!sourceDpi || !targetDpi) return spacing;
+    return static_cast<int>(std::clamp<std::int64_t>(
+        (static_cast<std::int64_t>(spacing) * targetDpi + sourceDpi / 2) / sourceDpi,
+        1, std::numeric_limits<int>::max()));
+}
+
 inline int AxisCount(int extent, int spacing) noexcept
 {
     if (extent <= 0 || spacing <= 0) return 0;

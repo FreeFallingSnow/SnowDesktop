@@ -612,6 +612,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.developer.tools.description"},
     {SettingsPage::Debug, "debug.demo_mode", "app.settings.demo_mode",
         "app.settings.demo_mode_hint"},
+    {SettingsPage::Debug, "debug.initialization", "settings.debug.initialization",
+        "settings.debug.initialization.description"},
     {SettingsPage::Debug, "debug.animation",
         "app.settings.animation_diagnostics",
         "app.settings.animation_diagnostics_desc"},
@@ -2275,6 +2277,18 @@ struct SettingsWindowHost::Impl
             const SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
+        };
+        homeAbout.setTemporaryInitialization = [weak](std::uint64_t generation, bool enabled) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller || !state->owner->DebugPageVisible() ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::SetTemporaryGridInitialization;
+            request.boolValue = enabled;
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+            if (state->owner->shell) state->owner->shell->RefreshRuntimeState();
         };
         homeAbout.unlockDebug = [weak](std::uint64_t generation) {
             const auto state = weak.lock();

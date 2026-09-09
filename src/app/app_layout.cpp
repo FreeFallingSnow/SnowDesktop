@@ -15,7 +15,16 @@
  */
 std::wstring DesktopApp::GetLayoutPath() const
 {
+    if (!initializationExperimentDirectory_.empty())
+        return (initializationExperimentDirectory_ / L"SnowDesktop.layout.json").wstring();
     return GetDataFilePath(L"SnowDesktop.layout.json");
+}
+
+std::wstring DesktopApp::GetActiveWidgetStoragePath() const
+{
+    if (!initializationExperimentDirectory_.empty())
+        return (initializationExperimentDirectory_ / L"SnowDesktop.storage.json").wstring();
+    return GetDataFilePath(L"SnowDesktop.storage.json");
 }
 
 /**

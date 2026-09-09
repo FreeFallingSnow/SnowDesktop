@@ -25141,6 +25141,12 @@ void WidgetEngine::ReloadStorage()
     LoadStorageFile();
 }
 
+void WidgetEngine::SetInitializationExperimentStoragePath(const std::wstring& path)
+{
+    g_storagePath = path;
+    LoadStorageFile();
+}
+
 void WidgetEngine::RuntimeBeginInlineTextEdit(const LuaInlineTextEditRequest& request)
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return;

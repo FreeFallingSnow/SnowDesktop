@@ -35,6 +35,7 @@ struct HomeAboutStatusPatch
     std::optional<std::wstring> backupDetail;
     /** Session-only scheduler state used by the conditional Debug page. */
     std::optional<bool> animationDiagnosticsEnabled;
+    std::optional<bool> temporaryInitializationEnabled;
     std::optional<std::wstring> animationDiagnosticsStatus;
 };
 

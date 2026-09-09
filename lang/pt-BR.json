@@ -1,4 +1,8 @@
 {
+    "settings.debug.initialization": "Inicialização temporária",
+    "settings.debug.initialization.description": "Usa um layout experimental e um armazenamento de componentes separados para inicializar a grade e as posições dos ícones a partir do Windows. Ao desativar a opção ou reiniciar o aplicativo, o layout original, incluindo o Dock, e o armazenamento de componentes são restaurados.",
+    "settings.debug.initialization.failed": "Não foi possível alternar a inicialização temporária. Tente novamente mais tarde.",
+    "settings.debug.initialization.backupBlocked": "Desative a inicialização temporária antes de fazer backup, restaurar ou migrar dados.",
     "app.launcher.failed": "Não foi possível iniciar o SnowDesktop. Verifique a integridade dos arquivos do aplicativo no Steam e tente novamente. Se o problema persistir, envie os detalhes abaixo ao suporte. Não exclua a pasta data.",
   "app.settings.title": "Configurações do SnowDesktop",
   "app.settings.general": "Geral",

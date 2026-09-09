@@ -1,4 +1,8 @@
 {
+    "settings.debug.initialization": "一時的な初期化",
+    "settings.debug.initialization.description": "実験用のレイアウトとコンポーネントストレージを別に用意し、Windows のグリッドとアイコン位置から初期化します。オフにするかアプリを再起動すると、Dock を含む元のレイアウトとコンポーネントストレージに戻ります。",
+    "settings.debug.initialization.failed": "一時的な初期化を切り替えられませんでした。しばらくしてから再試行してください。",
+    "settings.debug.initialization.backupBlocked": "バックアップ、復元、データ移行を行う前に、一時的な初期化をオフにしてください。",
     "app.launcher.failed": "SnowDesktop を起動できませんでした。Steam でアプリのファイルの整合性を確認してから、もう一度お試しください。問題が解決しない場合は、以下の詳細を開発者にお送りください。data フォルダーは削除しないでください。",
   "app.settings.title": "SnowDesktop の設定",
   "app.settings.general": "一般",

@@ -35,6 +35,13 @@ constexpr wchar_t kStorageFileName[] = L"SnowDesktop.storage.json";
 constexpr wchar_t kStorageBackupSuffix[] = L".storage.json";
 std::timed_mutex gBackupStorageMutex;
 std::atomic_bool gExternalReplacementQueued{false};
+std::atomic_uint gBackupDataTasks{0};
+
+struct BackupTaskLifetime
+{
+    BackupTaskLifetime() { ++gBackupDataTasks; }
+    ~BackupTaskLifetime() { --gBackupDataTasks; }
+};
 
 struct BackendPaths
 {
@@ -61,6 +68,7 @@ enum class WorkKind : std::uint8_t
 
 struct WorkContext
 {
+    std::shared_ptr<BackupTaskLifetime> lifetime;
     WorkKind kind = WorkKind::Refresh;
     std::uint64_t generation = 0;
     std::uint64_t activationId = 0;
@@ -1159,6 +1167,11 @@ bool QueuesExternalReplacement(BackupDataCommand command) noexcept
 
 } // namespace
 
+bool HasPendingBackupDataWork() noexcept
+{
+    return gBackupDataTasks.load() != 0 || gExternalReplacementQueued.load();
+}
+
 struct BackupDataPageBackend::State final
     : std::enable_shared_from_this<BackupDataPageBackend::State>
 {
@@ -1438,6 +1451,8 @@ struct BackupDataPageBackend::State final
         }
 
         context.generation = snapshot.generation;
+        if (context.kind == WorkKind::Action)
+            context.lifetime = std::make_shared<BackupTaskLifetime>();
         context.activationId = activationId;
         context.requestId = nextRequestId++;
         context.paths = paths;
@@ -1692,6 +1707,15 @@ struct BackupDataPageBackend::State final
         // worker reads the live data tree. In particular, a complete backup
         // must include the final coalesced setting values and a layout restore
         // must not race an already-pending desktop-layout commit.
+        const SettingsActionResult permitted = options.allowDataOperations
+            ? options.allowDataOperations() : SettingsActionResult::Success();
+        if (!permitted.Succeeded())
+        {
+            SetNotice(BackupDataNoticeSeverity::Error,
+                OperationTitle(request.command), permitted.message);
+            Publish();
+            return;
+        }
         const SettingsActionResult flush = controller->FlushAll();
         if (!flush.Succeeded())
         {

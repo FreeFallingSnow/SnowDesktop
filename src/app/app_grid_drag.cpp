@@ -26,12 +26,18 @@ void DesktopApp::InitializeGridFromWindows()
     std::unordered_map<std::wstring, POINT> positions;
     for (const auto& item : snapshot.items)
         positions.emplace(ToUpperInvariant(item.parsingName), item.screenPosition);
+    std::vector<POINT> spacingByPage;
+    spacingByPage.reserve(gridPages_.size());
     for (auto& page : gridPages_)
     {
+        const POINT spacing{
+            native::MonitorSpacing(snapshot.spacing.x, snapshot.spacingDpi, page.dpiX),
+            native::MonitorSpacing(snapshot.spacing.y, snapshot.spacingDpi, page.dpiY)};
+        spacingByPage.push_back(spacing);
         page.columns = native::AxisCount(
-            page.workArea.right - page.workArea.left, snapshot.spacing.x);
+            page.workArea.right - page.workArea.left, spacing.x);
         page.rows = native::AxisCount(
-            page.workArea.bottom - page.workArea.top, snapshot.spacing.y);
+            page.workArea.bottom - page.workArea.top, spacing.y);
         page.columns = std::max(1, page.columns);
         page.rows = std::max(1, page.rows);
     }
@@ -56,9 +62,10 @@ void DesktopApp::InitializeGridFromWindows()
         {
             auto& page = gridPages_[pageIndex];
             if (!PtInRect(&page.bounds, point)) continue;
+            const POINT spacing = spacingByPage[pageIndex];
             const native::Cell cell{
-                native::AxisIndex(point.x, page.workArea.left, snapshot.spacing.x),
-                native::AxisIndex(point.y, page.workArea.top, snapshot.spacing.y)};
+                native::AxisIndex(point.x, page.workArea.left, spacing.x),
+                native::AxisIndex(point.y, page.workArea.top, spacing.y)};
             // Explorer may use a partially visible last row/column. Preserve
             // those cells instead of folding their items onto the previous one.
             page.columns = std::max(page.columns, cell.column + 1);

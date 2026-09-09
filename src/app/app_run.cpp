@@ -697,6 +697,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         patch.packaged = snowdesktop::deployment::IsPackaged();
         patch.animationDiagnosticsEnabled =
             uiAnimationScheduler_.DiagnosticsEnabled();
+        patch.temporaryInitializationEnabled = !initializationExperimentDirectory_.empty();
         patch.animationDiagnosticsStatus =
             BuildAnimationDiagnosticsStatus();
         return patch;
@@ -797,7 +798,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         return generalSettings_.widgetDeveloperToolsEnabled;
     };
-    settingsHostOptions.debugVisible = []() { return false; };
+    settingsHostOptions.debugVisible = [this]() {
+        return !initializationExperimentDirectory_.empty();
+    };
     settingsHostOptions.ensureWidgetSettingsInstance = [this](
         std::wstring_view instanceId) {
         if (!widgetEngine_ || instanceId.empty())
@@ -815,6 +818,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.backupDataPage.commitLayoutRestore = [this](
         snowdesktop::winui::LayoutRestorePayload payload) {
         return CommitLayoutRestore(std::move(payload));
+    };
+    settingsHostOptions.backupDataPage.allowDataOperations = [this]() {
+        return initializationExperimentDirectory_.empty()
+            ? snowdesktop::SettingsActionResult::Success()
+            : snowdesktop::SettingsActionResult::Failure(
+                  _LW("settings.debug.initialization.backupBlocked"));
     };
 
     settingsHostOptions.widgetsPage.locale = []() {

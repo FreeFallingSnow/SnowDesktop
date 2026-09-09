@@ -1,4 +1,8 @@
 {
+    "settings.debug.initialization": "Temporäre Initialisierung",
+    "settings.debug.initialization.description": "Ein separates Testlayout und ein eigener Komponentenspeicher übernehmen das Raster und die Symbolpositionen von Windows. Beim Ausschalten oder Neustart der App werden das ursprüngliche Layout einschließlich Dock und der Komponentenspeicher wiederhergestellt.",
+    "settings.debug.initialization.failed": "Die temporäre Initialisierung konnte nicht umgeschaltet werden. Versuchen Sie es später erneut.",
+    "settings.debug.initialization.backupBlocked": "Schalten Sie die temporäre Initialisierung aus, bevor Sie Daten sichern, wiederherstellen oder migrieren.",
     "app.launcher.failed": "SnowDesktop konnte nicht gestartet werden. Überprüfen Sie die App-Dateien in Steam und versuchen Sie es erneut. Wenn das Problem weiterhin besteht, senden Sie die folgenden Details an den Support. Löschen Sie den Ordner data nicht.",
   "app.settings.title": "SnowDesktop-Einstellungen",
   "app.settings.general": "Allgemein",

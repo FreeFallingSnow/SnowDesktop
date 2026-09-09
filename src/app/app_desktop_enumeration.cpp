@@ -225,6 +225,7 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
         {
             item.gridCell = {};
             item.gridSpan = {1, 1};
+            item.largeIcon.reset();
             item.slot = -1;
             const auto known = layoutRecords_.find(item.layoutKey);
             if (known != layoutRecords_.end() && known->second.hasGrid)

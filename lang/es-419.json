@@ -1,4 +1,8 @@
 {
+    "settings.debug.initialization": "Inicialización temporal",
+    "settings.debug.initialization.description": "Usa una distribución experimental y un almacenamiento de componentes independientes para inicializar la cuadrícula y las posiciones de los íconos desde Windows. Al desactivar esta opción o reiniciar la aplicación, se restauran la distribución original, incluido el Dock, y el almacenamiento de componentes.",
+    "settings.debug.initialization.failed": "No se pudo cambiar la inicialización temporal. Inténtalo de nuevo más tarde.",
+    "settings.debug.initialization.backupBlocked": "Desactiva la inicialización temporal antes de respaldar, restaurar o migrar datos.",
     "app.launcher.failed": "No se pudo iniciar SnowDesktop. Verifica la integridad de los archivos de la aplicación en Steam y vuelve a intentarlo. Si el problema persiste, envía los detalles siguientes al soporte técnico. No elimines la carpeta data.",
   "app.settings.title": "Configuración de SnowDesktop",
   "app.settings.general": "General",

@@ -1427,6 +1427,8 @@ public:
         const std::wstring& widgetId) const;
 
     void ReloadStorage();
+    // Host-only session switch. Retire all loaded instances before calling.
+    void SetInitializationExperimentStoragePath(const std::wstring& path);
 
     /**
      * @brief 获取小部件的持久化存储值

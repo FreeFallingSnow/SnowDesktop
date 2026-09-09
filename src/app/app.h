@@ -1368,6 +1368,9 @@ private:
     /** Commit a validated layout backup on the application STA. */
     snowdesktop::SettingsActionResult CommitLayoutRestore(
         snowdesktop::winui::LayoutRestorePayload payload);
+    snowdesktop::SettingsActionResult ReloadLayoutAndSynchronizeSettings();
+    snowdesktop::SettingsActionResult SetTemporaryGridInitialization(bool enabled);
+    std::wstring GetActiveWidgetStoragePath() const;
     [[nodiscard]] snowdesktop::AutoStartQueryResult QueryAutoStartState()
         const noexcept;
     [[nodiscard]] bool QueryAutoStartEnabled() const noexcept;
@@ -3472,6 +3475,7 @@ private:
     std::unordered_map<std::wstring, int> savedPageRows_;
     std::vector<std::wstring> savedPageIds_;
     bool initializeGridFromWindows_ = false;
+    std::filesystem::path initializationExperimentDirectory_;
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     bool iconSpacingPreviewActive_ = false;

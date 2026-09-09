@@ -1219,6 +1219,21 @@ int main(int argc, char** argv)
     namespace localLayout = snowdesktop::widget_item_layout;
 
     namespace nativeGrid = snowdesktop::windows_desktop_layout;
+    const int secondaryPitchX = nativeGrid::MonitorSpacing(115, 144, 120);
+    const int secondaryPitchY = nativeGrid::MonitorSpacing(156, 144, 120);
+    Check(secondaryPitchX == 96 && secondaryPitchY == 130 &&
+            nativeGrid::AxisCount(1920, secondaryPitchX) == 20 &&
+            nativeGrid::AxisCount(1080, secondaryPitchY) == 8 &&
+            nativeGrid::MonitorSpacing(115, 144, 144) == 115,
+        "150-percent primary spacing converts to the observed 125-percent secondary grid without changing primary");
+    Check(nativeGrid::AxisIndex(3154, 2560, secondaryPitchX) == 6 &&
+            nativeGrid::AxisIndex(3250, 2560, secondaryPitchX) == 7 &&
+            nativeGrid::AxisIndex(642, 510, secondaryPitchY) == 1 &&
+            nativeGrid::AxisIndex(772, 510, secondaryPitchY) == 2,
+        "actual secondary Windows positions keep adjacent cells after per-monitor spacing conversion");
+    Check(nativeGrid::MonitorSpacing(115, 0, 120) == 115 &&
+            nativeGrid::MonitorSpacing(0, 144, 120) == 0,
+        "missing DPI or spacing cannot divide by zero or invent a native pitch");
     Check(nativeGrid::AxisCount(2560, 115) == 22 &&
             nativeGrid::AxisCount(1600, 156) == 10 &&
             nativeGrid::AxisCount(1920, 115) == 16,

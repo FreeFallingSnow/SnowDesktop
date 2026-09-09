@@ -199,4 +199,8 @@ bool SaveClearedDocument(const std::filesystem::path& layoutPath,
     std::string_view cleared, std::string* error = nullptr);
 bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
     const std::filesystem::path& storagePath, std::string* error = nullptr);
+// Prepare a fresh layout/storage pair in a new, exclusive experiment directory.
+// The original layout, recovery file and component storage are never replaced.
+bool PrepareInitializationExperiment(const std::filesystem::path& originalLayout,
+    const std::filesystem::path& experimentDirectory, std::string* error = nullptr);
 }

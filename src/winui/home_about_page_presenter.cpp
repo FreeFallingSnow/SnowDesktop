@@ -181,12 +181,15 @@ struct HomeAboutPagePresenter::Impl
 
     Section debugTitleSection;
     Section demoModeSection;
+    Section initializationSection;
     Section animationSection;
     Section resetUnlockSection;
     Section crashSection;
     muxc::TextBlock debugPageDescription{nullptr};
     controls::SettingRow demoModeRow;
     muxc::ToggleSwitch demoModeToggle{nullptr};
+    controls::SettingRow initializationRow;
+    muxc::ToggleSwitch initializationToggle{nullptr};
     controls::SettingRow animationRow;
     muxc::StackPanel animationControls{nullptr};
     muxc::ToggleSwitch animationToggle{nullptr};
@@ -212,6 +215,7 @@ struct HomeAboutPagePresenter::Impl
     bool updatingControls = false;
     bool demoModeEnabled = false;
     bool animationDiagnosticsEnabled = false;
+    bool temporaryInitializationEnabled = false;
     bool debugUnlocked = false;
     unsigned versionClickCount = 0;
 
@@ -233,6 +237,7 @@ struct HomeAboutPagePresenter::Impl
     winrt::event_token checkUpdateToken{};
     winrt::event_token versionClickToken{};
     winrt::event_token demoModeToken{};
+    winrt::event_token initializationToken{};
     winrt::event_token animationToken{};
     winrt::event_token resetUnlockToken{};
     winrt::event_token crashToken{};
@@ -411,6 +416,14 @@ struct HomeAboutPagePresenter::Impl
         demoModeRow.Initialize(demoModeToggle, 180.0);
         demoModeSection.content.Children().Append(demoModeRow.root);
 
+        InitializeSection(initializationSection, cardStyle, debugRoot);
+        initializationSection.title.Visibility(mux::Visibility::Collapsed);
+        initializationToggle = muxc::ToggleSwitch{};
+        initializationToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        initializationToggle.UseSystemFocusVisuals(true);
+        initializationRow.Initialize(initializationToggle, 180.0);
+        initializationSection.content.Children().Append(initializationRow.root);
+
         InitializeSection(animationSection, cardStyle, debugRoot);
         animationSection.title.Visibility(mux::Visibility::Collapsed);
         animationControls = muxc::StackPanel{};
@@ -523,6 +536,13 @@ struct HomeAboutPagePresenter::Impl
                     [enabled](GeneralSettings& settings) {
                         settings.demoModeEnabled = enabled;
                     });
+            });
+        initializationToken = initializationToggle.Toggled(
+            [this](const auto&, const auto&) {
+                if (updatingControls || !CanInvokeDebug() || !actions.setTemporaryInitialization)
+                    return;
+                actions.setTemporaryInitialization(generation, initializationToggle.IsOn());
+                RenderStatus();
             });
         animationToken = animationToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -682,6 +702,7 @@ struct HomeAboutPagePresenter::Impl
         updatingControls = true;
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
+        initializationToggle.IsOn(temporaryInitializationEnabled);
         updatingControls = false;
         animationStatus.Text(animationDiagnosticsStatus);
         animationStatus.Visibility(
@@ -771,6 +792,13 @@ struct HomeAboutPagePresenter::Impl
             L("app.settings.demo_mode_hint"));
         SetAutomation(demoModeToggle,
             demoModeRow.label.Text(), demoModeRow.help.Text());
+        SetSectionTitle(initializationSection,
+            "settings.debug.initialization", L"Temporary initialization");
+        initializationRow.SetText(
+            L("settings.debug.initialization", L"Temporary initialization"),
+            L("settings.debug.initialization.description"));
+        SetAutomation(initializationToggle,
+            initializationRow.label.Text(), initializationRow.help.Text());
         SetSectionTitle(animationSection,
             "app.settings.animation_diagnostics",
             L"Animation diagnostics (this session)");
@@ -812,6 +840,7 @@ struct HomeAboutPagePresenter::Impl
         backupCount = 0;
         backupDetail.clear();
         animationDiagnosticsEnabled = false;
+        temporaryInitializationEnabled = false;
         animationDiagnosticsStatus.clear();
     }
 
@@ -873,6 +902,8 @@ struct HomeAboutPagePresenter::Impl
         if (patch.animationDiagnosticsEnabled)
             animationDiagnosticsEnabled =
                 *patch.animationDiagnosticsEnabled;
+        if (patch.temporaryInitializationEnabled)
+            temporaryInitializationEnabled = *patch.temporaryInitializationEnabled;
         if (patch.animationDiagnosticsStatus)
             animationDiagnosticsStatus =
                 *patch.animationDiagnosticsStatus;
@@ -905,6 +936,7 @@ struct HomeAboutPagePresenter::Impl
         if (page == SettingsPage::Debug)
         {
             if (focusId == "debug.demo_mode") return demoModeToggle;
+            if (focusId == "debug.initialization") return initializationToggle;
             if (focusId == "debug.animation") return animationToggle;
             if (focusId == "debug.resetUnlock") return resetUnlockButton;
             if (focusId == "debug.crash") return crashExpander;
@@ -931,6 +963,7 @@ struct HomeAboutPagePresenter::Impl
             checkUpdateButton.Click(checkUpdateToken);
             versionButton.Click(versionClickToken);
             demoModeToggle.Toggled(demoModeToken);
+            initializationToggle.Toggled(initializationToken);
             animationToggle.Toggled(animationToken);
             resetUnlockButton.Click(resetUnlockToken);
             crashButton.Click(crashToken);

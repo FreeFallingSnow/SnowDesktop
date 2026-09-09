@@ -914,6 +914,19 @@ bool SaveClearedDocument(const std::filesystem::path& layoutPath,
     return false;
 }
 
+bool PrepareInitializationExperiment(const std::filesystem::path& originalLayout,
+    const std::filesystem::path& experimentDirectory, std::string* error)
+{
+    std::string original, cleared;
+    if (!atomic_file::ReadAll(originalLayout, original, error) ||
+        !BuildClearedDocument(original, cleared, error)) return false;
+    std::error_code ec;
+    if (!std::filesystem::create_directory(experimentDirectory, ec))
+        return Fail(error, "initialization experiment", "directory must be new: " + ec.message());
+    return SaveClearedDocument(experimentDirectory / L"SnowDesktop.layout.json", cleared, error) &&
+        atomic_file::WriteAll(experimentDirectory / L"SnowDesktop.storage.json", "{}\n", {}, error);
+}
+
 bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
     const std::filesystem::path& storagePath, std::string* error)
 {

@@ -200,6 +200,12 @@ void TestPresenterContract(const std::filesystem::path& repository)
                 "if (focusId == \"debug.animation\") return animationToggle;") !=
                 std::string::npos,
         "Debug search results focus the animation diagnostics toggle");
+    const auto ipcValues = ReadText(repository / "src/winui/settings_ipc_values.h");
+    const auto generalStore = ReadText(repository / "src/general_settings.cpp");
+    Check(ipcValues.find("v.temporaryInitializationEnabled") != std::string::npos &&
+            source.find("patch.temporaryInitializationEnabled") != std::string::npos &&
+            generalStore.find("temporaryInitialization") == std::string::npos,
+        "the isolated settings process receives the real experiment state without persisting the switch");
     Check(application.find(
                 "app.settings.animation_diagnostics_status") !=
                 std::string::npos &&

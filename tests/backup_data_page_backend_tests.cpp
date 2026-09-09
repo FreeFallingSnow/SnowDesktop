@@ -374,6 +374,24 @@ void TestApplicationOwnedLayoutCommit(const std::string& application,
 
 void TestBackendContract(const std::filesystem::path& repository)
 {
+    const auto application = ReadText(repository / "src/app/app_settings_apply.cpp");
+    const auto experimentStart = application.find("DesktopApp::SetTemporaryGridInitialization");
+    const auto experimentEnd = application.find("class DesktopApp::SettingsHostActionsAdapter", experimentStart);
+    const auto experiment = application.substr(experimentStart, experimentEnd - experimentStart);
+    const auto unload = experiment.find("widgetEngine_->UnloadWidget");
+    const auto switchStore = experiment.find("SetInitializationExperimentStoragePath");
+    const auto reload = experiment.find("ReloadLayoutAndSynchronizeSettings");
+    Check(unload != std::string::npos && switchStore != std::string::npos && reload != std::string::npos &&
+            unload < switchStore && switchStore < reload &&
+            experiment.find("ClearLayoutAndStorage") == std::string::npos &&
+            experiment.find("remove_all") == std::string::npos,
+        "experiment switching retires writers before changing stores and never clears the original data tree");
+    const auto enumeration = ReadText(repository / "src/app/app_desktop_enumeration.cpp");
+    const auto explicitRefresh = enumeration.find("if (!snapshot || found == previousByKey.end())");
+    const auto resetLargeIcon = enumeration.find("item.largeIcon.reset()", explicitRefresh);
+    const auto applySavedRecord = enumeration.find("layoutRecords_.find", explicitRefresh);
+    Check(resetLargeIcon != std::string::npos && resetLargeIcon < applySavedRecord,
+        "restoring another layout cannot inherit large-icon placement from the preceding runtime");
     const std::string nativeReader = ReadText(repository / "src/windows_desktop_layout.cpp");
     const std::string desktopReload = ReadText(repository / "src/app/app_desktop_reload.cpp");
     Check(!nativeReader.empty() && !desktopReload.empty(),
@@ -392,8 +410,6 @@ void TestBackendContract(const std::filesystem::path& repository)
         repository / "src/winui/backup_data_page_backend.h");
     const std::string source = ReadText(
         repository / "src/winui/backup_data_page_backend.cpp");
-    const std::string application = ReadText(
-        repository / "src/app/app_settings_apply.cpp");
     const std::string compositionRoot = ReadText(
         repository / "src/app/app_run.cpp");
     Check(!header.empty() && !source.empty() && !application.empty() &&
