@@ -411,6 +411,11 @@ void WinUiRuntime::ResizeToClient() noexcept
         return;
     }
 
+    // Keep the last usable XAML bounds while minimized so NavigationView's
+    // automatic layout does not collapse and animate open again on restore.
+    if (IsIconic(impl_->parentWindow))
+        return;
+
     RECT client{};
     if (!GetClientRect(impl_->parentWindow, &client))
         return;
@@ -419,6 +424,9 @@ void WinUiRuntime::ResizeToClient() noexcept
         std::max<LONG>(0, client.right - client.left));
     const auto height = static_cast<std::int32_t>(
         std::max<LONG>(0, client.bottom - client.top));
+    if (width == 0 || height == 0)
+        return;
+
     try
     {
         impl_->xamlSource.SiteBridge().MoveAndResize(
