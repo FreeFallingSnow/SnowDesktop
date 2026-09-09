@@ -5,9 +5,62 @@
 #include "../resource.h"
 
 #include <shellapi.h>
+#include <appmodel.h>
+#include <propsys.h>
+#include <propkey.h>
+#include <wrl/client.h>
+
+#include <filesystem>
 
 namespace
 {
+HRESULT SetNotificationIdentity(HWND window, const wchar_t* applicationId)
+{
+    Microsoft::WRL::ComPtr<IPropertyStore> properties;
+    const HRESULT result = SHGetPropertyStoreForWindow(window,
+        IID_PPV_ARGS(&properties));
+    if (FAILED(result))
+        return result;
+    PROPVARIANT value{};
+    if (applicationId)
+    {
+        value.vt = VT_LPWSTR;
+        value.pwszVal = const_cast<wchar_t*>(applicationId);
+    }
+    // SetValue copies the string; VT_EMPTY releases the window property.
+    return properties->SetValue(PKEY_AppUserModel_ID, value);
+}
+
+void RegisterPortableNotificationApplication()
+{
+    if (snowdesktop::tray_notification::ApplicationId() !=
+        snowdesktop::tray_notification::PortableApplicationId)
+        return; // MSIX display metadata belongs to the package manifest.
+
+    HKEY applications = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Classes\\AppUserModelId", 0, nullptr, 0,
+            KEY_CREATE_SUB_KEY, nullptr, &applications, nullptr) != ERROR_SUCCESS)
+        return;
+
+    std::wstring executable(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
+        static_cast<DWORD>(executable.size()));
+    std::wstring iconPath;
+    if (length > 0 && length < executable.size())
+    {
+        executable.resize(length);
+        const auto asset = std::filesystem::path(executable).parent_path() /
+            L"Assets" / L"App" / L"SnowDesktop.png";
+        std::error_code error;
+        if (std::filesystem::is_regular_file(asset, error))
+            iconPath = asset.wstring();
+    }
+    snowdesktop::tray_notification::RegisterApplication(applications,
+        snowdesktop::tray_notification::PortableApplicationId, iconPath);
+    RegCloseKey(applications);
+}
+
 LRESULT CALLBACK TrayNotificationWindowProc(
     HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -25,10 +78,49 @@ LRESULT CALLBACK TrayNotificationWindowProc(
             PostMessageW(callbackWindow, message, wParam, lParam);
         return 0;
     }
+    if (message == WM_DESTROY)
+        SetNotificationIdentity(window, nullptr);
     if (message == WM_NCDESTROY)
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
     return DefWindowProcW(window, message, wParam, lParam);
 }
+}
+
+std::wstring snowdesktop::tray_notification::ApplicationId()
+{
+    UINT32 length = 0;
+    const LONG result = GetCurrentApplicationUserModelId(&length, nullptr);
+    if (result == APPMODEL_ERROR_NO_APPLICATION || result == APPMODEL_ERROR_NO_PACKAGE)
+        return PortableApplicationId;
+    if (result != ERROR_INSUFFICIENT_BUFFER || length == 0)
+        return {};
+    std::wstring identity(length, L'\0');
+    if (GetCurrentApplicationUserModelId(&length, identity.data()) != ERROR_SUCCESS)
+        return {};
+    identity.resize(length - 1);
+    return identity;
+}
+
+bool snowdesktop::tray_notification::RegisterApplication(HKEY applicationsRoot,
+    const std::wstring& applicationId, const std::wstring& iconPath)
+{
+    if (!applicationsRoot || applicationId.empty() ||
+        applicationId.find_first_of(L"\\/") != std::wstring::npos)
+        return false;
+    HKEY application = nullptr;
+    if (RegCreateKeyExW(applicationsRoot, applicationId.c_str(), 0, nullptr, 0,
+            KEY_SET_VALUE, nullptr, &application, nullptr) != ERROR_SUCCESS)
+        return false;
+    constexpr wchar_t displayName[] = L"SnowDesktop";
+    const LONG nameResult = RegSetValueExW(application, L"DisplayName", 0,
+        REG_EXPAND_SZ, reinterpret_cast<const BYTE*>(displayName), sizeof(displayName));
+    LONG iconResult = ERROR_SUCCESS;
+    if (!iconPath.empty())
+        iconResult = RegSetValueExW(application, L"IconUri", 0, REG_EXPAND_SZ,
+            reinterpret_cast<const BYTE*>(iconPath.c_str()),
+            static_cast<DWORD>((iconPath.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(application);
+    return nameResult == ERROR_SUCCESS && iconResult == ERROR_SUCCESS;
 }
 
 HWND snowdesktop::tray_notification::CreateOwnerWindow(HWND callbackWindow)
@@ -41,11 +133,18 @@ HWND snowdesktop::tray_notification::CreateOwnerWindow(HWND callbackWindow)
     type.lpszClassName = L"SnowDesktopTrayNotificationWindow";
     if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         return nullptr;
-    // Do not make the internal control window this window's owner: Shell may
-    // use the root owner's caption when choosing the visible source name.
-    return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+    const HWND window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         type.lpszClassName, L"SnowDesktop", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, type.hInstance, callbackWindow);
+    if (!window)
+        return nullptr;
+    const auto identity = ApplicationId();
+    if (identity.empty() || FAILED(SetNotificationIdentity(window, identity.c_str())))
+    {
+        DestroyWindow(window);
+        return nullptr;
+    }
+    return window;
 }
 
 TrayIconController::~TrayIconController()
@@ -79,6 +178,8 @@ bool TrayIconController::Add(HWND owner, bool force)
     owner_ = snowdesktop::tray_notification::CreateOwnerWindow(owner);
     if (!owner_)
         return false;
+
+    RegisterPortableNotificationApplication();
 
     NOTIFYICONDATAW data{};
     data.cbSize = sizeof(data);

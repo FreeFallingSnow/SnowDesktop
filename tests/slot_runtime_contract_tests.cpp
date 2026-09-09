@@ -19,6 +19,11 @@
 #include "drag_input_rules.h"
 #include "ole_drag_rules.h"
 
+#include <propsys.h>
+#include <propkey.h>
+#include <shellapi.h>
+#include <wrl/client.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -1713,10 +1718,15 @@ void TestTrayCallbackClassification()
 
 void TestTrayNotificationSourceAndRouting()
 {
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const HWND callback = CreateWindowExW(0, L"STATIC", L"SnowDesktopControl",
         WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     Check(callback != nullptr, "create an isolated callback window for tray notification checks");
-    if (!callback) return;
+    if (!callback)
+    {
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return;
+    }
     const HWND notification = snowdesktop::tray_notification::CreateOwnerWindow(callback);
     Check(notification != nullptr, "create a dedicated notification source window");
     if (notification)
@@ -1729,6 +1739,19 @@ void TestTrayNotificationSourceAndRouting()
         GetWindowTextW(callback, caption, static_cast<int>(std::size(caption)));
         Check(std::wstring(caption) == L"SnowDesktopControl",
             "notification branding preserves the control caption used by older versions and tools");
+        Microsoft::WRL::ComPtr<IPropertyStore> properties;
+        Check(SUCCEEDED(SHGetPropertyStoreForWindow(notification, IID_PPV_ARGS(&properties))),
+            "read the actual Shell property store of the notification window");
+        if (properties)
+        {
+            PROPVARIANT identity{};
+            Check(SUCCEEDED(properties->GetValue(PKEY_AppUserModel_ID, &identity)) &&
+                identity.vt == VT_LPWSTR && identity.pwszVal &&
+                std::wstring(identity.pwszVal) == snowdesktop::tray_notification::ApplicationId() &&
+                std::wstring(identity.pwszVal) == L"SnowDesktop",
+                "portable notifications carry a stable software identity before Shell adds the tray icon");
+            PropVariantClear(&identity);
+        }
         for (const UINT action : {WM_CONTEXTMENU, WM_LBUTTONDBLCLK})
         {
             const WPARAM coordinates = MAKEWPARAM(123, 456);
@@ -1746,6 +1769,83 @@ void TestTrayNotificationSourceAndRouting()
     DestroyWindow(callback);
     Check(!snowdesktop::tray_notification::CreateOwnerWindow(nullptr),
         "notification owners require a live callback window");
+    if (SUCCEEDED(initialized)) CoUninitialize();
+}
+
+void TestTrayNotificationRegistrationPreservesPreferences()
+{
+    GUID unique{};
+    Check(SUCCEEDED(CoCreateGuid(&unique)), "create an isolated notification registration key");
+    wchar_t suffix[40]{};
+    StringFromGUID2(unique, suffix, static_cast<int>(std::size(suffix)));
+    const std::wstring path = std::wstring(L"Software\\SnowDesktopTests\\TrayNotification-") + suffix;
+    HKEY root = nullptr;
+    Check(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0,
+        KEY_ALL_ACCESS, nullptr, &root, nullptr) == ERROR_SUCCESS,
+        "open a test-only registry root without touching notification settings");
+    if (!root) return;
+    using namespace snowdesktop::tray_notification;
+    const std::wstring icon = L"C:\\Snow Desktop\\软件\\SnowDesktop.png";
+    Check(RegisterApplication(root, PortableApplicationId, icon),
+        "register the software name and Unicode icon path for portable notifications");
+    HKEY entry = nullptr;
+    Check(RegOpenKeyExW(root, PortableApplicationId, 0, KEY_ALL_ACCESS, &entry) == ERROR_SUCCESS,
+        "registration creates the stable application identity");
+    if (entry)
+    {
+        const DWORD disabled = 0;
+        RegSetValueExW(entry, L"Enabled", 0, REG_DWORD,
+            reinterpret_cast<const BYTE*>(&disabled), sizeof(disabled));
+        Check(RegisterApplication(root, PortableApplicationId, {}),
+            "registration can refresh metadata when an icon asset is unavailable");
+        wchar_t value[256]{};
+        DWORD bytes = sizeof(value);
+        Check(RegGetValueW(entry, nullptr, L"DisplayName", RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+                nullptr, value, &bytes) == ERROR_SUCCESS && std::wstring(value) == L"SnowDesktop",
+            "Windows display metadata uses the software name");
+        bytes = sizeof(value);
+        Check(RegGetValueW(entry, nullptr, L"IconUri", RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+                nullptr, value, &bytes) == ERROR_SUCCESS && std::wstring(value) == icon,
+            "metadata refresh retains the existing icon when no replacement asset exists");
+        DWORD enabled = 1;
+        bytes = sizeof(enabled);
+        Check(RegGetValueW(entry, nullptr, L"Enabled", RRF_RT_REG_DWORD,
+                nullptr, &enabled, &bytes) == ERROR_SUCCESS && enabled == 0,
+            "notification branding does not overwrite existing preference values");
+        RegCloseKey(entry);
+    }
+    Check(!RegisterApplication(root, L"bad\\identity", icon),
+        "registration cannot escape the application identity key");
+    RegDeleteTreeW(root, nullptr);
+    RegCloseKey(root);
+    RegDeleteKeyW(HKEY_CURRENT_USER, path.c_str());
+}
+
+// Opt-in equivalent evidence: use the production tray controller without
+// creating or automating SnowDesktop's desktop host. Never run this in CTest.
+int RunTrayNotificationIdentityProbe()
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HWND callback = CreateWindowExW(0, L"STATIC", L"SnowDesktopControl",
+        WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    bool shown = false;
+    {
+        TrayIconController tray;
+        shown = tray.ShowBalloon(callback, "identity-probe",
+            L"SnowDesktop 通知身份验证", L"此提醒用于检查 Windows 通知来源名称。");
+        const ULONGLONG end = GetTickCount64() + 3000;
+        while (shown && GetTickCount64() < end)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                DispatchMessageW(&message);
+            Sleep(20);
+        }
+    }
+    if (callback) DestroyWindow(callback);
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    std::cout << "Production tray notification submitted: " << shown << '\n';
+    return shown ? 0 : 1;
 }
 
 void TestSelectionControllerCoversEveryRegisteredRange()
@@ -2134,8 +2234,10 @@ void TestPopupDwellControllerHandlesCandidateChanges()
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--notification-identity-probe")
+        return RunTrayNotificationIdentityProbe();
     TestSlotCacheAndIdentity();
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();
@@ -2157,6 +2259,7 @@ int main()
     TestOleAdapterOwnsComBoundary();
     TestTrayCallbackClassification();
     TestTrayNotificationSourceAndRouting();
+    TestTrayNotificationRegistrationPreservesPreferences();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
