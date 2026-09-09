@@ -43,6 +43,7 @@ public:
 
 private:
     HICON icon_ = nullptr;
+    HICON notificationIcon_ = nullptr;
     HWND owner_ = nullptr;
     bool added_ = false;
     std::string activeNotificationId_;

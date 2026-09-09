@@ -1624,6 +1624,7 @@ if (BUILD_TESTING)
         slot_runtime_contract
         SOURCES
             tests/slot_runtime_contract_tests.cpp
+            src/app_icon.rc
             src/app/drag_drop_controller.cpp
             src/app/ole_drag_drop_adapter.cpp
             src/app/tray_icon_controller.cpp

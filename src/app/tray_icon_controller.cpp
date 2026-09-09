@@ -152,6 +152,8 @@ TrayIconController::~TrayIconController()
     Remove();
     if (icon_)
         DestroyIcon(icon_);
+    if (notificationIcon_)
+        DestroyIcon(notificationIcon_);
 }
 
 bool TrayIconController::Add(HWND owner, bool force)
@@ -227,12 +229,24 @@ bool TrayIconController::ShowBalloon(
     if (!owner || !IsWindow(owner) || !Add(owner))
         return false;
 
+    // The notification image is separate from the small tray icon and must
+    // stay alive while Shell can display it, including queued notifications.
+    if (!notificationIcon_)
+    {
+        notificationIcon_ = static_cast<HICON>(LoadImageW(
+            GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), 0));
+    }
+
     NOTIFYICONDATAW data{};
     data.cbSize = sizeof(data);
     data.hWnd = owner_;
     data.uID = kTrayIconId;
     data.uFlags = NIF_INFO;
-    data.dwInfoFlags = NIIF_INFO;
+    data.hBalloonIcon = notificationIcon_ ? notificationIcon_ : icon_;
+    data.dwInfoFlags = data.hBalloonIcon ? NIIF_USER : NIIF_INFO;
+    if (notificationIcon_)
+        data.dwInfoFlags |= NIIF_LARGE_ICON;
     wcsncpy_s(data.szInfoTitle, title.c_str(), _TRUNCATE);
     wcsncpy_s(data.szInfo, message.c_str(), _TRUNCATE);
     data.uTimeout = 10000;
