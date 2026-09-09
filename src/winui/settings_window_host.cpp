@@ -2943,6 +2943,11 @@ struct SettingsWindowHost::Impl
                 L"Create settings window", GetLastError()));
             return false;
         }
+        // Apply before the first show and keep it for taskbar/system restores,
+        // which do not necessarily pass through SettingsWindowHost::Open.
+        const BOOL disableTransitions = TRUE;
+        (void)DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED,
+            &disableTransitions, sizeof(disableTransitions));
         ApplySettingsWindowChrome(window, darkTheme);
         return true;
     }
