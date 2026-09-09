@@ -775,10 +775,11 @@ DesktopBackdropCompositor::~DesktopBackdropCompositor()
     Reset();
 }
 
-bool DesktopBackdropCompositor::Initialize(HWND contentWindow)
+bool DesktopBackdropCompositor::Initialize(
+    HWND contentWindow, bool initiallyVisible)
 {
     return InitializeInternal(
-        contentWindow, false, false, true);
+        contentWindow, false, false, initiallyVisible);
 }
 
 bool DesktopBackdropCompositor::InitializePopup(
@@ -919,10 +920,8 @@ bool DesktopBackdropCompositor::InitializeInternal(
     const DWORD extendedStyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
         WS_EX_TRANSPARENT |
         (impl_->popupTopmost ? WS_EX_TOPMOST : 0);
-    const DWORD windowStyle = popupMode
-        ? (WS_POPUP |
-            (initiallyVisible ? WS_VISIBLE : 0))
-        : (WS_CHILD | WS_VISIBLE);
+    const DWORD windowStyle = (popupMode ? WS_POPUP : WS_CHILD) |
+        (initiallyVisible ? WS_VISIBLE : 0);
     impl_->backdropWindow = CreateWindowExW(
         extendedStyle,
         kBackdropWindowClassName, L"SnowDesktopBackdrop",

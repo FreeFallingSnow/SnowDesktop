@@ -284,6 +284,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
 
+    const ULONGLONG startupStarted = GetTickCount64();
+    const auto logStartupStage = [startupStarted](const wchar_t* stage) {
+        const std::wstring message = std::wstring(L"Startup stage: ") +
+            stage + L" elapsed_ms=" +
+            std::to_wstring(GetTickCount64() - startupStarted);
+        WriteDiagnosticLogEntry(message.c_str());
+    };
+
     MigrateLegacyDataPaths();
     WriteDiagnosticLogEntry(L"Run start");
 
@@ -333,7 +341,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // before the overlay is created; periodic discovery remains read-only.
     EnsureDesktopWorkerWindow();
 
-    // Find and optionally hide Explorer icon layer.
+    // Discover Explorer now, but retain its icons until our first complete
+    // composition frame has been prepared. Bootstrap can take several seconds.
     desktopWindows_ = FindDesktopWindows();
     if (desktopWindows_.host && IsWindow(desktopWindows_.host))
         GetWindowThreadProcessId(desktopWindows_.host,
@@ -347,11 +356,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     if (customDesktopVisible_)
     {
-        HideExplorerIcons();
-        if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
-            WriteDiagnosticLogEntry(L"Explorer icon layer hidden");
-        else
-            WriteDiagnosticLogEntry(L"Explorer icon layer not found or already hidden");
+        WriteDiagnosticLogEntry(
+            L"Explorer icon layer retained during startup");
     }
     else
     {
@@ -367,6 +373,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     LoadDockSettingsAndApply();
     LoadDockUsageStats();
     LoadLayoutSlots();
+    logStartupStage(L"layout loaded");
     if (settingsController_)
     {
         // dockEnabled is persisted in the layout document rather than the
@@ -554,7 +561,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     WriteDiagnosticLogEntry(L"Composition target ready");
     if (customDesktopVisible_)
     {
-        if (desktopBackdropCompositor_.Initialize(hwnd_))
+        if (desktopBackdropCompositor_.Initialize(hwnd_, false))
         {
             nativeGlassPanelReadyLogged_ = false;
             WriteDiagnosticLogEntry(
@@ -572,6 +579,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     LoadCategorySettingsAndApply();
     GetDemoIdentityIconDirectory();
     StartDemoIconLoader();
+    logStartupStage(L"graphics ready");
 
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
@@ -581,6 +589,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     WriteDiagnosticLogEntry(L"LoadDesktopItems ok");
     WriteDiagnosticLogEntry(L"Layout done");
     WriteDiagnosticLogEntry(L"RebuildContainersAndItems ok");
+    logStartupStage(L"desktop items ready");
 
     // App icon
     if (HICON appIcon = LoadAppIcon())
@@ -1461,8 +1470,31 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // are configured. Activation requests received during startup remain
     // pending until this point, including when native initialization is retried.
     startupInitializationComplete_ = true;
+    logStartupStage(L"services ready");
+    if (customDesktopVisible_)
+    {
+        // Consume only already-completed icon work, without pumping unrelated
+        // commands or waiting for slow Shell providers. Bound the batch even if
+        // phase-two results arrive while phase-one completions are applied.
+        MSG iconMessage{};
+        for (unsigned count = 0; count < 256 &&
+            PeekMessageW(&iconMessage, hwnd_, kIconLoadedMessage,
+                kIconLoadedMessage, PM_REMOVE); ++count)
+        {
+            OnIconLoaded(iconMessage.wParam, iconMessage.lParam);
+        }
+        if (!OnPaint() ||
+            !WaitForCompositionPresentation(L"Startup desktop"))
+        {
+            WriteDiagnosticLogEntry(
+                L"Startup first frame FAILED; native desktop retained",
+                DiagnosticLogLevel::Error);
+            return __LINE__;
+        }
+        logStartupStage(L"first frame ready");
+    }
+    desktopStartupPresentationPending_ = false;
     AddTrayIcon();
-    TryShowPendingSettingsWindow();
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)
     {
@@ -1472,6 +1504,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         UpdateWindow(hwnd_);
         FlushPendingCompositionCommit();
     }
+    logStartupStage(L"desktop handoff complete");
+    TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_
         ? L"Window shown, entering loop"
         : L"Native desktop active, entering loop");

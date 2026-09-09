@@ -470,6 +470,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
     const bool shouldShow =
+        !desktopStartupPresentationPending_ &&
         ShouldShowPersistentDockHost(host);
     if (!shouldShow)
     {

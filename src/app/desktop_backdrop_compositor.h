@@ -31,7 +31,7 @@ public:
     DesktopBackdropCompositor& operator=(const DesktopBackdropCompositor&) = delete;
 
     /** @brief 为指定 SnowDesktop 内容窗口创建原生 backdrop 合成窗口。 */
-    bool Initialize(HWND contentWindow);
+    bool Initialize(HWND contentWindow, bool initiallyVisible = true);
     /**
      * @brief 为指定顶层弹出窗口创建原生 backdrop 合成窗口。
      * @param topmost 辅助窗口是否加入 TOPMOST 带；必须与内容窗口策略一致。

@@ -871,7 +871,7 @@ private:
     /** @brief 在 DComp 渲染失败后重置 surface 并安排一次恢复重绘。 */
     void RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr);
     /** @brief WM_PAINT 响应，触发完整帧渲染。 */
-    void OnPaint(const RECT* updateRect = nullptr);
+    bool OnPaint(const RECT* updateRect = nullptr);
     /** @brief 渲染一帧画面到指定的 D2D 上下文。 @param ctx D2D 设备上下文 */
     void RenderFrame(
         ID2D1DeviceContext* ctx,
@@ -3693,6 +3693,7 @@ private:
     DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
     bool startupInitializationComplete_ = false;
+    bool desktopStartupPresentationPending_ = true;
     snowdesktop::settings_window_open_rules::RequestState
         settingsWindowOpenRequest_;
     bool customDesktopVisible_ = true;

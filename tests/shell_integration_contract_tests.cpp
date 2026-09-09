@@ -62,6 +62,14 @@ int main(int argc, char** argv)
     const std::string utils = ReadFile(root / "src" / "utils.cpp");
     const std::string lifecycle = ReadFile(
         root / "src" / "app" / "app_lifecycle.cpp");
+    const std::string appRun = ReadFile(
+        root / "src" / "app" / "app_run.cpp");
+    const std::string paint = ReadFile(
+        root / "src" / "app" / "app_paint.cpp");
+    const std::string backdrop = ReadFile(
+        root / "src" / "app" / "desktop_backdrop_compositor.cpp");
+    const std::string dockWindow = ReadFile(
+        root / "src" / "app" / "app_floating_dock_window.cpp");
     const std::string settingsApply = ReadFile(
         root / "src" / "app" / "app_settings_apply.cpp");
     const std::string dockSettings = ReadFile(
@@ -144,6 +152,51 @@ int main(int argc, char** argv)
     const std::string_view watcher = FunctionBody(lifecycle,
         "void DesktopApp::WatchDesktopHost()",
         "void DesktopApp::InvalidateAllWidgetSlots()");
+
+    // This is a Shell ownership boundary: a failed/unfinished bootstrap must
+    // not hide Explorer or expose partially initialized desktop/Dock surfaces.
+    const std::string hideIcons = WithoutWhitespace(FunctionBody(lifecycle,
+        "void DesktopApp::HideExplorerIcons()",
+        "void DesktopApp::RestoreExplorerIcons()"));
+    Check(hideIcons.find("if(desktopStartupPresentationPending_)return;") <
+            hideIcons.find("ShowWindow(desktopWindows_.listView,SW_HIDE)") &&
+            appRun.find("HideExplorerIcons();") == std::string::npos,
+        "startup and reentrant host-watch callbacks retain the native icon layer");
+    const std::string attachDesktop = WithoutWhitespace(FunctionBody(lifecycle,
+        "void DesktopApp::AttachWindowToDesktopHost(HWND host)",
+        "bool DesktopApp::CreateDesktopInputWindow(HWND host)"));
+    Check(attachDesktop.find(
+              "constboolshowDesktop=!desktopStartupPresentationPending_&&customDesktopVisible_;") !=
+                std::string::npos &&
+            attachDesktop.find("showDesktop?WS_VISIBLE:0") != std::string::npos &&
+            attachDesktop.find("showDesktop?SWP_SHOWWINDOW:SWP_HIDEWINDOW") !=
+                std::string::npos &&
+            attachDesktop.find("ShowWindow(") == std::string::npos,
+        "host attachment cannot reveal an unfinished or disabled desktop");
+    const std::string paintBody = WithoutWhitespace(paint);
+    Check(paintBody.find("if(!startupInitializationComplete_)returnfalse;") <
+            paintBody.find("CreateOrResizeCompositionSurface()"),
+        "bootstrap COM reentrancy cannot paint an incomplete desktop model");
+    const std::string runBody = WithoutWhitespace(appRun);
+    const auto prepareFrame = runBody.find("if(!OnPaint()||!WaitForCompositionPresentation(");
+    const auto abortStartup = runBody.find("return__LINE__;", prepareFrame);
+    const auto releaseDesktop = runBody.find("desktopStartupPresentationPending_=false;");
+    const auto showDesktop = runBody.find(
+        "SetSoftwareDesktopEnabled(customDesktopVisible_,false);");
+    Check(prepareFrame != std::string::npos && abortStartup != std::string::npos &&
+            releaseDesktop != std::string::npos && showDesktop != std::string::npos &&
+            prepareFrame < abortStartup && abortStartup < releaseDesktop &&
+            releaseDesktop < showDesktop,
+        "failed first-frame rendering or submission returns before desktop handoff");
+    Check(runBody.find("desktopBackdropCompositor_.Initialize(hwnd_,false)") !=
+                std::string::npos &&
+            WithoutWhitespace(backdrop).find(
+                "constDWORDwindowStyle=(popupMode?WS_POPUP:WS_CHILD)|(initiallyVisible?WS_VISIBLE:0);") !=
+                std::string::npos &&
+            WithoutWhitespace(dockWindow).find(
+                "constboolshouldShow=!desktopStartupPresentationPending_&&ShouldShowPersistentDockHost(host);") !=
+                std::string::npos,
+        "backdrop and persistent Dock windows stay hidden through startup preparation");
     Check(recovery.find("SyncSystemTaskbarSettingsFromWindows();") !=
             std::string_view::npos &&
             recovery.find("RequestSystemTaskbar") == std::string_view::npos,
