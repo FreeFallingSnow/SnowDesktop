@@ -4,6 +4,7 @@
 #include "preview_png_writer.h"
 #include "atomic_file.h"
 #include <objbase.h>
+#include <shlobj.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -238,6 +239,25 @@ int RunLargeIconAssetTests()
         Check(!foreground.empty() && foreground[0].asset && foreground[0].asset->width == 128 &&
             foreground[0].asset->source == "original" && foreground[0].asset->edgeColor == 0x00ff00 && requests == beforeIcon,
             "Steam foreground reads the largest declared URL icon locally instead of the generic Shell document");
+        atomic_file::WriteAll(shortcut, "[InternetShortcut]\r\nURL=https://www.bilibili.com/\r\nIconFile=multi-frame.ico\r\n");
+        steamIcon.refresh = true; ++steamIcon.generation;
+        queue.assets.Request(steamIcon);
+        auto website = queue.Wait(1);
+        Check(!website.empty() && website[0].asset && website[0].asset->width == 128 && website[0].asset->edgeColor == 0x00ff00,
+            "website large icons load a downloaded ICO through the same explicit-icon path");
+        Microsoft::WRL::ComPtr<IShellLinkW> browserLink;
+        Microsoft::WRL::ComPtr<IPersistFile> browserFile;
+        const auto browserShortcut = root / L"browser.lnk";
+        Check(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&browserLink))) &&
+            SUCCEEDED(browserLink->SetPath(L"C:\\Browser\\chrome.exe")) && SUCCEEDED(browserLink->SetArguments(L"https://www.bilibili.com/")) &&
+            SUCCEEDED(browserLink->SetIconLocation(icoPath.c_str(), 0)) && SUCCEEDED(browserLink.As(&browserFile)) &&
+            SUCCEEDED(browserFile->Save(browserShortcut.c_str(), TRUE)), "create an explicit-icon browser shortcut");
+        browserFile.Reset(); browserLink.Reset();
+        steamIcon.parsingName = browserShortcut.wstring(); ++steamIcon.generation;
+        queue.assets.Request(steamIcon);
+        auto browserAsset = queue.Wait(1);
+        Check(!browserAsset.empty() && browserAsset[0].asset && browserAsset[0].asset->width == 128 && browserAsset[0].asset->edgeColor == 0x00ff00,
+            "browser .lnk large icons use their declared ICO instead of the Shell's generic document");
         for (unsigned alpha : {0u, 16u})
         {
             const auto transparentPath = root / (L"transparent-" + std::to_wstring(alpha) + L".png");
@@ -520,4 +540,55 @@ int RunLargeIconShellAssetTests()
         fs::remove_all(root);
     if (SUCCEEDED(initialized)) CoUninitialize();
     return failures;
+}
+
+// Opt-in, read-only source evidence; never starts or operates the desktop host.
+int RunLargeIconSourceProbe(const char* shortcutPath, const char* outputDirectory)
+{
+    namespace fs = std::filesystem;
+    using namespace snowdesktop;
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const auto root = fs::absolute(outputDirectory);
+    fs::create_directories(root);
+    const auto source = fs::absolute(shortcutPath);
+    bool succeeded = false;
+    {
+        Queue queue(root / L"managed");
+        LargeIconAssetRequest request;
+        request.itemKey = L"source-probe"; request.parsingName = source.wstring();
+        request.generation = 1; request.pixels = 256; request.refresh = true;
+        queue.assets.Request(request);
+        auto result = queue.Wait(1);
+        if (!result.empty() && result[0].asset)
+        {
+            const auto& asset = result[0].asset;
+            fs::copy_file(root / L"managed" / fs::path(asset->previewReference), root / L"large-icon.png", fs::copy_options::overwrite_existing);
+            std::cout << "Source loaded: " << asset->source << ", " << asset->width << "x" << asset->height << '\n';
+            succeeded = true;
+        }
+        // Capture the old ImageFactory fallback for a direct comparison.
+        Microsoft::WRL::ComPtr<IShellItemImageFactory> shell;
+        HBITMAP bitmap = nullptr;
+        if (SUCCEEDED(SHCreateItemFromParsingName(source.c_str(), nullptr, IID_PPV_ARGS(&shell))) &&
+            SUCCEEDED(shell->GetImage({256, 256}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &bitmap)) && bitmap)
+        {
+            Microsoft::WRL::ComPtr<IWICImagingFactory> imaging;
+            Microsoft::WRL::ComPtr<IWICBitmap> image;
+            Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+            UINT w = 0, h = 0;
+            if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&imaging))) &&
+                SUCCEEDED(imaging->CreateBitmapFromHBITMAP(bitmap, nullptr, WICBitmapUseAlpha, &image)) &&
+                SUCCEEDED(image->GetSize(&w, &h)) && SUCCEEDED(imaging->CreateFormatConverter(&converter)) &&
+                SUCCEEDED(converter->Initialize(image.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)))
+            {
+                std::vector<std::uint32_t> pixels(static_cast<size_t>(w) * h);
+                std::string error;
+                if (SUCCEEDED(converter->CopyPixels(nullptr, w * 4, static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data()))))
+                    preview_png::Save(root / L"shell-fallback.png", w, h, pixels, error);
+            }
+            DeleteObject(bitmap);
+        }
+    }
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    return succeeded ? 0 : 1;
 }

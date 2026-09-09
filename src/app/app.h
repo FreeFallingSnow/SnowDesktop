@@ -31,6 +31,7 @@
 #include "settings_controller.h"
 #include "large_icon_settings.h"
 #include "large_icon_assets.h"
+#include "website_icon.h"
 #include "large_icon_motion.h"
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "navigation_settings.h"
@@ -2425,6 +2426,10 @@ private:
     void OnUrlDropDownloadCompleted(LPARAM lParam);
     /** @brief 停止 URL 下载线程并清理尚未处理的完成消息。 */
     void StopUrlDropDownloadWorker();
+    void AppendWebsiteIconMenu(HMENU menu, const std::wstring& path);
+    void FetchWebsiteIcon(const std::wstring& path);
+    void OnWebsiteIconReady();
+    void StopWebsiteIconWorker();
     /**
      * @brief 缓存待处理的放置信息（用于外壳刷新后恢复）。
      * @param sourceList 拖拽源列表
@@ -3546,6 +3551,15 @@ private:
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
     snowdesktop::ShellFileOperationWorker shellRefreshWorker_;
     snowdesktop::UrlDropDownloadWorker urlDropDownloadWorker_;
+    struct WebsiteIconCompletion
+    {
+        snowdesktop::website_icon::Shortcut shortcut;
+        std::filesystem::path icon;
+    };
+    std::jthread websiteIconWorker_;
+    std::wstring websiteIconPendingPath_;
+    std::mutex websiteIconMutex_;
+    std::optional<WebsiteIconCompletion> websiteIconCompletion_;
     HWND inputHwnd_ = nullptr;
     HWND floatingDockInputHwnd_ = nullptr;
     HWND quickNavigationHwnd_ = nullptr;

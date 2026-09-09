@@ -169,6 +169,8 @@ set(SNOWDESKTOP_SOURCES
     src/drop_text_rules.h
     src/app/app_drop_data_extraction.cpp
     src/app/app_url_drop_download.cpp
+    src/app/app_website_icon.cpp
+    src/website_icon.cpp
     src/app/app_drop_execution.cpp
     src/app/app_drop_preview.cpp
     src/app/app_drop_render.cpp
@@ -1925,8 +1927,14 @@ if (BUILD_TESTING)
         shortcut_application_rules
         SOURCES
             tests/shortcut_application_rules_tests.cpp
+            tests/website_icon_tests.cpp
             src/shortcut_icon_resource.cpp
+            src/website_icon.cpp
+            src/http_runtime.cpp
+            src/atomic_file.cpp
+            src/preview_png_writer.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs winhttp ws2_32
         LABELS rules shell)
 
     snowdesktop_add_test(

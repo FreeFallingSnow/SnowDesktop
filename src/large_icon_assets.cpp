@@ -225,11 +225,12 @@ std::shared_ptr<LargeIconAsset> RawIcon(const LargeIconAssetRequest& request, co
     const int target = std::clamp(request.pixels, 64, 256);
     auto extension = std::filesystem::path(request.parsingName).extension().wstring();
     std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
-    if (extension == L".url")
-        if (const auto resource = shortcut_icon_resource::ReadInternetShortcutIconResource(request.parsingName))
+    if (extension == L".url" || extension == L".lnk")
+        for (const auto& location : shortcut_icon_resource::ReadShortcutIconResources(request.parsingName))
         {
-            // Steam's URL icon is an ICO in steam/games. The URL Shell image
-            // factory can return a generic white document instead of this art.
+            const auto* resource = &location;
+            // Shortcut ImageFactory may return a generic white document even
+            // when a declared icon or the associated browser is available.
             if (resource->index == 0)
                 if (auto asset = Decode(resource->path, target, output, reference, "original")) return asset;
             HICON icon = nullptr;
@@ -418,7 +419,7 @@ struct LargeIconAssets::Impl
         // model here; disk access belongs to the workers. The icon index also
         // changes when a Shell association changes without touching the file.
         return "raw-" + Hash(r.parsingName + L":" + std::to_wstring(r.sourceStamp) + L":" +
-            std::to_wstring(r.sourceIconIndex) + L":pbgra2") + "-" + std::to_string(r.pixels) + ".png";
+            std::to_wstring(r.sourceIconIndex) + L":shortcut3") + "-" + std::to_string(r.pixels) + ".png";
     }
     std::shared_ptr<LargeIconAsset> Load(const LargeIconAssetRequest& r, std::stop_token stop, std::string& error)
     {

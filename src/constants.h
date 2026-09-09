@@ -166,6 +166,7 @@ constexpr UINT kContextWidgetToggleCollectionMode = 41039;
 constexpr UINT kContextCopyPathCommand = 41052;
 constexpr UINT kContextRunAsAdministratorCommand = 41053;
 constexpr UINT kContextPropertiesCommand = 41054;
+constexpr UINT kContextFetchWebsiteIconCommand = 41062;
 constexpr UINT kContextWidgetDetailName = 41055;
 constexpr UINT kContextWidgetSortBySize = 41056;
 constexpr UINT kContextWidgetSortBySizeDesc = 41057;
@@ -243,6 +244,7 @@ constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
 constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
 constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
 constexpr UINT kUrlDropDownloadCompletedMessage = WM_APP + 18;
+constexpr UINT kWebsiteIconReadyMessage = WM_APP + 20;
 constexpr UINT kSteamEntitlementChangedMessage = WM_APP + 19;
 constexpr UINT_PTR kShellChangeTimerId = 2;
 // Briefly coalesce external notifications/retry after an active interaction.

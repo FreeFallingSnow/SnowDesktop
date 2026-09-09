@@ -343,6 +343,8 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu,
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand, _LW("app.menu.properties"));
+    if (selectedCount == 1 && canFile)
+        AppendWebsiteIconMenu(menu, itemPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (!namespaceItem)
     {
@@ -714,6 +716,9 @@ void DesktopApp::ShowItemContextMenu(
     case kContextPropertiesCommand:
         if (canShowProperties)
             ShowPathProperties(itemPath);
+        break;
+    case kContextFetchWebsiteIconCommand:
+        if (selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
         break;
     case kContextWidgetToggleListMode:
         if (dockFolderEntry)

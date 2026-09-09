@@ -30,6 +30,7 @@ DesktopApp::~DesktopApp()
     shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
+    StopWebsiteIconWorker();
     StopSteamWorkshopWatcher();
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
@@ -1016,6 +1017,7 @@ void DesktopApp::RequestExit()
     shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
+    StopWebsiteIconWorker();
     quickNavigationEverythingSearch_.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();

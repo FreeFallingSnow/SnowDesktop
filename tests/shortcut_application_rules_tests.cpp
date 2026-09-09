@@ -3,6 +3,7 @@
 #include "large_icon_steam.h"
 
 #include <windows.h>
+#include <objbase.h>
 
 #include <filesystem>
 #include <iostream>
@@ -89,8 +90,15 @@ void CheckInternetShortcutIconResource()
 }
 } // namespace
 
-int main()
+int RunWebsiteIconTests();
+int RunWebsiteIconProbe(const wchar_t* shortcutPath, const wchar_t* outputDirectory);
+
+int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 4 && std::wstring_view(argv[1]) == L"--website-probe") return RunWebsiteIconProbe(argv[2], argv[3]);
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    failures += RunWebsiteIconTests();
+    if (SUCCEEDED(initialized)) CoUninitialize();
     namespace steam = snowdesktop::large_icon_steam;
     Check(steam::AppId(L"steam://rungameid/570") == 570u && steam::AppId(L"STEAM://RUN/730//") == 730u,
         "large icon Steam covers recognize both launch URL forms");

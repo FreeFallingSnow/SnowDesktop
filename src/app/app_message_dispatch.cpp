@@ -1129,6 +1129,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
         return 0;
+    case kWebsiteIconReadyMessage:
+        OnWebsiteIconReady();
+        return 0;
     case kUrlDropDownloadCompletedMessage:
         OnUrlDropDownloadCompleted(lp);
         return 0;

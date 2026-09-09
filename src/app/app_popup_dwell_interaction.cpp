@@ -694,6 +694,7 @@ ShowDockFolderPopupContextMenu(
                 : MF_STRING | MF_GRAYED,
             kContextPropertiesCommand,
             _LW("app.menu.properties"));
+        if (singleSelection) AppendWebsiteIconMenu(menu, selectedPaths.front());
         AppendMenuW(
             menu, MF_SEPARATOR,
             0, nullptr);
@@ -973,6 +974,9 @@ ShowDockFolderPopupContextMenu(
     case kContextPropertiesCommand:
         if (selectedPaths.size() == 1)
             ShowPathProperties(selectedPaths.front());
+        break;
+    case kContextFetchWebsiteIconCommand:
+        if (singleSelection) FetchWebsiteIcon(selectedPaths.front());
         break;
     case kContextRenameCommand:
         if (singleSelection)
