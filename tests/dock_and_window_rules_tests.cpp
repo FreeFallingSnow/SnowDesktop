@@ -3563,6 +3563,67 @@ int main(int argc, char** argv)
             !rules::ShouldPreferTaskbarDocumentProxyCohort(0) &&
             !rules::ShouldPreferTaskbarDocumentProxyCohort(2),
         "ambiguous or absent proxy cohorts must fall back to ordinary task windows");
+    {
+        // Simulate two independent windows of one app and an owned dialog.
+        // No discovery timer runs between these foreground transitions.
+        const HWND first = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
+        const HWND second = reinterpret_cast<HWND>(static_cast<UINT_PTR>(2));
+        const HWND dialog = reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
+        const HWND other = reinterpret_cast<HWND>(static_cast<UINT_PTR>(4));
+        struct TrackedState
+        {
+            HWND window;
+            bool minimized;
+            bool foreground;
+            std::vector<HWND> trackedWindows;
+        };
+        TrackedState app{first, false, true, {first, second}};
+        TrackedState otherApp{other, false, false, {other}};
+        bool secondMinimized = false;
+        bool secondAvailable = true;
+        const auto isMinimized = [&](HWND window) {
+            return window == second && secondMinimized;
+        };
+        const auto matches = [&](HWND window, HWND foreground) {
+            if (!window || (window == second &&
+                    (!secondAvailable || secondMinimized)))
+                return false;
+            return window == foreground ||
+                (window == second && foreground == dialog);
+        };
+        const auto refresh = [&](TrackedState& state, HWND foreground) {
+            return rules::RefreshTrackedDockForegroundState(
+                state, foreground, matches, isMinimized);
+        };
+        Check(refresh(app, second) && app.window == second &&
+                app.foreground && !app.minimized,
+            "foreground events must immediately retarget a cached sibling window before the next discovery tick");
+        Check(!refresh(app, second),
+            "unchanged foreground events must not request another Dock repaint");
+        Check(!refresh(app, dialog) && app.window == second && app.foreground,
+            "an owned dialog must retain its task window's foreground indicator and click target");
+        Check(refresh(app, other) && !app.foreground &&
+                app.window == second && refresh(otherApp, other) &&
+                otherApp.foreground,
+            "switching apps must transfer the active indicator without replacing the previous click target");
+        secondMinimized = true;
+        Check(refresh(app, other) && app.minimized && !app.foreground,
+            "minimize events must update inactive Dock items before periodic discovery");
+        secondMinimized = false;
+        Check(refresh(app, second) && app.foreground && !app.minimized,
+            "restoring a tracked window must immediately restore its foreground state");
+        secondAvailable = false;
+        Check(refresh(app, dialog) && !app.foreground,
+            "closed, hidden or pending-close windows must not regain foreground through a cached owner group");
+        Check(refresh(app, first) && app.window == first && app.foreground,
+            "an available sibling must remain activatable after the previous window disappears");
+        Check(refresh(app, nullptr) && !app.foreground && app.window == first,
+            "leaving applications must clear the indicator while retaining the running target");
+        Check(rules::ShouldDeferDockForegroundFeedback(true, true) &&
+                !rules::ShouldDeferDockForegroundFeedback(true, false) &&
+                !rules::ShouldDeferDockForegroundFeedback(false, true),
+            "desktop press activation must preserve the displayed click action while ordinary application switches remain immediate");
+    }
     Check(rules::ResolveDockClickAction(false, false, false) ==
             rules::DockClickAction::Launch,
         "a closed application must keep the existing launch gesture");
@@ -5321,6 +5382,36 @@ int main(int argc, char** argv)
         const std::string dockWindowTrackingSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_dock_window_tracking.cpp");
+        const std::string dockTaskbarIntegrationSource = ReadFile(
+            std::filesystem::path(argv[1]) / "src" / "app" /
+                "app_taskbar_integration.cpp");
+        const auto foregroundRefreshBegin = dockWindowTrackingSource.find(
+            "void DesktopApp::RefreshDockForegroundState()");
+        const auto foregroundRefreshEnd = dockWindowTrackingSource.find(
+            "void DesktopApp::RefreshDockRunningWindows(", foregroundRefreshBegin);
+        const std::string foregroundRefreshSource =
+            foregroundRefreshBegin != std::string::npos &&
+                foregroundRefreshEnd != std::string::npos
+            ? dockWindowTrackingSource.substr(foregroundRefreshBegin,
+                foregroundRefreshEnd - foregroundRefreshBegin) : std::string{};
+        const auto foregroundHandlerBegin = dockTaskbarIntegrationSource.find(
+            "void DesktopApp::HandleDockForegroundInteractionChanged()");
+        const auto foregroundHandlerEnd = dockTaskbarIntegrationSource.find(
+            "void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()",
+            foregroundHandlerBegin);
+        const std::string foregroundHandlerSource =
+            foregroundHandlerBegin != std::string::npos &&
+                foregroundHandlerEnd != std::string::npos
+            ? dockTaskbarIntegrationSource.substr(foregroundHandlerBegin,
+                foregroundHandlerEnd - foregroundHandlerBegin) : std::string{};
+        Check(!foregroundRefreshSource.empty() &&
+                foregroundRefreshSource.find("EnumWindows(") == std::string::npos &&
+                foregroundRefreshSource.find("QueryDock") == std::string::npos &&
+                foregroundRefreshSource.find("RefreshDockRunningWindows(") == std::string::npos &&
+                foregroundRefreshSource.find("InvalidateDockContainers(") == std::string::npos &&
+                ContainsIgnoringWhitespace(foregroundHandlerSource,
+                    "RefreshDockForegroundState();"),
+            "foreground notifications must refresh Dock feedback without waiting for discovery, querying process identities or rebuilding drag-bound slots");
         const std::string sceneSource = ReadFile(
             std::filesystem::path(argv[1]) / "src" / "app" /
                 "app_scene_render.cpp");

@@ -107,6 +107,7 @@ void DesktopApp::HandleDockForegroundInteractionChanged()
 {
     ReconcileDesktopHoverState();
     UpdateSystemShowDesktopDockLayerGuard();
+    RefreshDockForegroundState();
 }
 
 void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()

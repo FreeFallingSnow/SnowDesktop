@@ -40,6 +40,56 @@ struct DockRunningIndicatorColor
 };
 
 /**
+ * @brief Refresh an existing Dock item's indicator without rebuilding its slots.
+ *
+ * Discovery has already matched every tracked window to the item identity.
+ * Keep the representative unless another tracked window owns foreground;
+ * matching only the representative would miss switches between sibling windows.
+ * Platform callbacks validate live windows and their root-owner activation group.
+ */
+template <typename State, typename MatchesForeground, typename IsMinimized>
+bool RefreshTrackedDockForegroundState(
+    State& state, HWND foreground,
+    MatchesForeground&& matchesForeground,
+    IsMinimized&& isMinimized)
+{
+    HWND activeWindow = nullptr;
+    if (foreground)
+    {
+        if (matchesForeground(state.window, foreground))
+            activeWindow = state.window;
+        else
+        {
+            for (HWND window : state.trackedWindows)
+            {
+                if (matchesForeground(window, foreground))
+                {
+                    activeWindow = window;
+                    break;
+                }
+            }
+        }
+    }
+    const HWND window = activeWindow ? activeWindow : state.window;
+    const bool minimized = isMinimized(window);
+    const bool active = activeWindow != nullptr;
+    const bool changed = state.window != window ||
+        state.minimized != minimized || state.foreground != active;
+    state.window = window;
+    state.minimized = minimized;
+    state.foreground = active;
+    return changed;
+}
+
+// Shell activation can precede the Dock's button-down message. Preserve the
+// displayed click action until that press has captured its action and target.
+constexpr bool ShouldDeferDockForegroundFeedback(
+    bool desktopInteractionForeground, bool primaryButtonDown) noexcept
+{
+    return desktopInteractionForeground && primaryButtonDown;
+}
+
+/**
  * @brief 根据文字明暗和窗口状态选择运行指示器颜色。
  *
  * 浅色文字通常位于深色或毛玻璃背景上，灰白指示器容易与文字和高光

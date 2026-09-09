@@ -296,6 +296,8 @@ struct DockWindowInfo
     bool minimized = false;
     bool running = false;
     bool foreground = false;
+    // All identity-matched task windows, including non-representative siblings.
+    std::vector<HWND> trackedWindows;
 };
 
 struct DockRunningAppInfo
@@ -313,6 +315,7 @@ struct DockRunningAppInfo
     bool minimized = false;
     bool foreground = false;
     bool selected = false;
+    std::vector<HWND> trackedWindows;
 };
 
 struct IconLoadResult {
@@ -1282,6 +1285,7 @@ private:
     void ToggleWindowsStartMenu();
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
+    void RefreshDockForegroundState();
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
     void PruneDockPendingCloseWindows();

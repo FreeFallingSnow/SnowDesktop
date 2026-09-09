@@ -359,6 +359,48 @@ DockWindowVisualState DesktopApp::GetDockWindowVisualState(size_t itemIndex) con
     return DockWindowVisualState::Running;
 }
 
+void DesktopApp::RefreshDockForegroundState()
+{
+    if (!generalSettings_.dockEnabled)
+        return;
+    const HWND foreground = ResolveDockSemanticForegroundWindow();
+    const int primaryButton = GetSystemMetrics(SM_SWAPBUTTON)
+        ? VK_RBUTTON : VK_LBUTTON;
+    if (snowdesktop::dock_window_rules::ShouldDeferDockForegroundFeedback(
+            IsDesktopInteractionSurfaceWindow(foreground),
+            (GetAsyncKeyState(primaryButton) & 0x8000) != 0))
+        return;
+
+    PruneDockPendingCloseWindows();
+    const auto matchesForeground = [this](HWND window, HWND active) {
+        return window && IsWindow(window) && IsWindowVisible(window) &&
+            !IsIconic(window) &&
+            !dockPendingCloseWindows_.contains(GetAncestor(window, GA_ROOT)) &&
+            DockWindowsShareActivationGroup(window, active);
+    };
+    const auto isMinimized = [](HWND window) {
+        return window && IsWindow(window) && IsIconic(window) != FALSE;
+    };
+    bool changed = false;
+    for (auto& [key, state] : dockRunningWindows_)
+    {
+        (void)key;
+        changed |= snowdesktop::dock_window_rules::
+            RefreshTrackedDockForegroundState(
+                state, foreground, matchesForeground, isMinimized);
+    }
+    for (DockRunningAppInfo& app : dockUnpinnedRunningApps_)
+    {
+        changed |= snowdesktop::dock_window_rules::
+            RefreshTrackedDockForegroundState(
+                app, foreground, matchesForeground, isMinimized);
+    }
+    // This path only mutates window state: retained drag wrappers, item order,
+    // identities and bitmaps remain owned by the periodic discovery model.
+    if (changed)
+        InvalidateDockRects();
+}
+
 void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
@@ -380,6 +422,7 @@ void DesktopApp::RefreshDockRunningWindows(
         DockAppIdentity identity;
         DockWindowInfo best;
         int score = -1;
+        std::vector<HWND> trackedWindows;
     };
     struct RunningWindowCandidate
     {
@@ -393,6 +436,7 @@ void DesktopApp::RefreshDockRunningWindows(
         bool minimized = false;
         bool foreground = false;
         int score = -1;
+        std::vector<HWND> trackedWindows;
     };
 
     std::unordered_set<size_t> itemIndices;
@@ -518,7 +562,10 @@ void DesktopApp::RefreshDockRunningWindows(
                             pathIt->second,
                             appUserModelId,
                             ancestorIt->second);
-                if (!identityMatches || score <= target.score)
+                if (!identityMatches)
+                    continue;
+                target.trackedWindows.push_back(window);
+                if (score <= target.score)
                     continue;
                 target.best = { window, IsIconic(window) != FALSE, true,
                     DockWindowsShareActivationGroup(window, context->actualForeground) };
@@ -560,12 +607,14 @@ void DesktopApp::RefreshDockRunningWindows(
                     pathIt->second, appUserModelId,
                     ancestorIt->second,
                     window, IsIconic(window) != FALSE,
-                    DockWindowsShareActivationGroup(window, context->actualForeground), score });
+                    DockWindowsShareActivationGroup(window, context->actualForeground), score,
+                    { window } });
             }
             else
             {
                 RunningWindowCandidate& candidate =
                     (*context->runningCandidates)[candidateIt->second];
+                candidate.trackedWindows.push_back(window);
                 if (score > candidate.score)
                 {
                     candidate.title = std::move(title);
@@ -583,10 +632,13 @@ void DesktopApp::RefreshDockRunningWindows(
     }
 
     std::unordered_map<std::wstring, DockWindowInfo> updated;
-    for (const DockWindowTarget& target : targets)
+    for (DockWindowTarget& target : targets)
     {
         if (target.best.window)
-            updated[target.key] = target.best;
+        {
+            target.best.trackedWindows = std::move(target.trackedWindows);
+            updated[target.key] = std::move(target.best);
+        }
         else if (target.identity.kind == DockAppIdentityKind::Steam &&
             IsDockSteamAppRunning(target.identity.steamAppId))
             updated[target.key] = { nullptr, false, true, false };
@@ -650,6 +702,7 @@ void DesktopApp::RefreshDockRunningWindows(
         info.window = candidate.window;
         info.minimized = candidate.minimized;
         info.foreground = candidate.foreground;
+        info.trackedWindows = std::move(candidate.trackedWindows);
         for (size_t i = 0; i < dockUnpinnedRunningApps_.size(); ++i)
         {
             DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
