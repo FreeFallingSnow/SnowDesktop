@@ -7,6 +7,22 @@
 namespace snowdesktop::grid_spacing_rules
 {
 
+// Initial density follows each monitor's effective DPI. Saved/manual counts
+// are applied separately and must not be recalculated when DPI changes.
+inline int InitialAxisCount(
+    int extentPixels, unsigned int dpi, int marginDip,
+    int cellDip, int minimumCount)
+{
+    const std::int64_t effectiveDpi = dpi == 0 ? 96 : dpi;
+    const std::int64_t usable = std::max<std::int64_t>(
+        1, static_cast<std::int64_t>(std::max(1, extentPixels)) * 96 -
+            static_cast<std::int64_t>(std::max(0, marginDip)) * 2 *
+                effectiveDpi);
+    return static_cast<int>(std::clamp<std::int64_t>(
+        usable / (std::max(1, cellDip) * effectiveDpi),
+        std::clamp(minimumCount, 1, 50), 50));
+}
+
 struct AxisGeometry
 {
     int extent = 1;

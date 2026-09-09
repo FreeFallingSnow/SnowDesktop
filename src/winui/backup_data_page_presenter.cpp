@@ -292,6 +292,10 @@ struct BackupDataPagePresenter::Impl
     controls::SettingRow migrationActionRow;
     muxc::Button migrateButton{nullptr};
 
+    SettingsCard clearDataCard;
+    controls::SettingRow clearDataActionRow;
+    muxc::Button clearDataButton{nullptr};
+
     std::vector<LayoutBackupEntry> layoutEntries;
     std::vector<FullDataBackupEntry> fullEntries;
     std::vector<LayoutRow> layoutRows;
@@ -312,6 +316,7 @@ struct BackupDataPagePresenter::Impl
     winrt::event_token importFullBackupToken{};
     winrt::event_token openFullBackupDirectoryToken{};
     winrt::event_token migrateToken{};
+    winrt::event_token clearDataToken{};
     winrt::event_token cancelToken{};
 
     [[nodiscard]] std::wstring L(
@@ -420,6 +425,13 @@ struct BackupDataPagePresenter::Impl
         migrationActionRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
         migrationCard.content.Children().Append(migrationActionRow.root);
+
+        InitializeCard(clearDataCard, cardStyle, root);
+        clearDataCard.description.Visibility(mux::Visibility::Collapsed);
+        clearDataButton = NewButton();
+        clearDataActionRow.Initialize(clearDataButton);
+        clearDataActionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        clearDataCard.content.Children().Append(clearDataActionRow.root);
     }
 
     void HookEvents()
@@ -505,6 +517,18 @@ struct BackupDataPagePresenter::Impl
                 }
                 actions.cancel(
                     generation, revision, operation.requestId);
+            });
+        clearDataToken = clearDataButton.Click(
+            [this](const auto&, const auto&) {
+                if (!CanInteract())
+                    return;
+                BackupDataActionRequest action;
+                action.command = BackupDataCommand::ClearLayoutAndWidgetData;
+                action.completionPolicy = BackupDataCompletionPolicy::
+                    ClearDirtyThenRestartApplication;
+                ConfirmThenInvoke(
+                    BackupDataConfirmationKind::ClearLayoutAndWidgetData,
+                    std::move(action));
             });
     }
 
@@ -884,12 +908,19 @@ struct BackupDataPagePresenter::Impl
             std::wstring(migrationCard.description.Text().c_str()));
         SetButtonText(migrateButton,
             L("app.settings.migrate_all_data", L"Move in complete data…"));
+        clearDataCard.title.Text(L("settings.backup.clearData", L"Clear data"));
+        clearDataCard.description.Text(L("settings.backup.clearData.description",
+            L"Back up and clear the desktop layout and widget data, then restart to initialize the grid. Keep component packages, general settings and backups."));
+        clearDataActionRow.SetText({},
+            std::wstring(clearDataCard.description.Text().c_str()));
+        SetButtonText(clearDataButton, L("settings.backup.clearData", L"Clear data"));
         SetButtonText(cancelButton,
             L("app.settings.cancel", L"Cancel"));
 
         SetCardAutomation(layoutCard);
         SetCardAutomation(fullBackupCard);
         SetCardAutomation(migrationCard);
+        SetCardAutomation(clearDataCard);
         SetCommandAutomation(createLayoutButton,
             L("app.settings.save_backup", L"Save backup"),
             layoutCard.description.Text());
@@ -911,6 +942,9 @@ struct BackupDataPagePresenter::Impl
         SetButtonAutomation(migrateButton,
             L("app.settings.migrate_all_data", L"Move in complete data…"),
             migrationCard.description.Text());
+        SetButtonAutomation(clearDataButton,
+            L("settings.backup.clearData", L"Clear data"),
+            clearDataCard.description.Text());
         SetButtonAutomation(cancelButton,
             L("app.settings.cancel", L"Cancel"), progressMessage.Text());
         muxa::AutomationProperties::SetName(layoutName,
@@ -1002,6 +1036,7 @@ struct BackupDataPagePresenter::Impl
         importFullBackupButton.IsEnabled(mutationsEnabled);
         fullBackupList.IsEnabled(mutationsEnabled);
         migrateButton.IsEnabled(mutationsEnabled);
+        clearDataButton.IsEnabled(mutationsEnabled);
         openDataDirectoryButton.IsEnabled(
             active && hasSnapshot && !replacementPending);
         openFullBackupDirectoryButton.IsEnabled(
@@ -1081,6 +1116,8 @@ struct BackupDataPagePresenter::Impl
             return openDataDirectoryButton;
         if (id == "backup.migration")
             return migrateButton;
+        if (id == "backup.clearData")
+            return clearDataButton;
         return nullptr;
     }
 
@@ -1151,6 +1188,7 @@ struct BackupDataPagePresenter::Impl
             openFullBackupDirectoryButton.Click(
                 openFullBackupDirectoryToken);
             migrateButton.Click(migrateToken);
+            clearDataButton.Click(clearDataToken);
             cancelButton.Click(cancelToken);
             progressRing.IsActive(false);
         }

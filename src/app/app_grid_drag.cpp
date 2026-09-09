@@ -75,19 +75,14 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
  */
 void DesktopApp::ConfigureGridPage(GridPage& page) const
 {
-    const int marginX = kGridMarginX;
-    const int marginY = kGridMarginY;
-    // The work area is already in physical pixels. Default rows and columns are
-    // derived from the physical screen area only, so changing Windows DPI does
-    // not change the page grid.
-    const int cw = kCellWidth;
-    const int ch = kMinCellHeight;
+    // Work areas are physical pixels; the initial cell and margins are DIPs.
+    // Existing page dimensions still take precedence in ApplyPageMapping().
     const int w  = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int h  = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int uw = std::max(1, w - marginX * 2);
-    const int uh = std::max(1, h - marginY * 2);
-    page.columns   = std::max(4, uw / cw);
-    page.rows      = std::max(3, uh / ch);
+    page.columns = snowdesktop::grid_spacing_rules::InitialAxisCount(
+        w, page.dpiX, kGridMarginX, kCellWidth, 4);
+    page.rows = snowdesktop::grid_spacing_rules::InitialAxisCount(
+        h, page.dpiY, kGridMarginY, kMinCellHeight, 3);
 }
 
 /**

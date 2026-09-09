@@ -1217,6 +1217,26 @@ int main(int argc, char** argv)
     namespace layoutSpacing = snowdesktop::layout_spacing_rules;
     namespace localLayout = snowdesktop::widget_item_layout;
 
+    // A high-DPI first launch must not quadruple the desktop's item density.
+    const int initialColumns = gridSpacing::InitialAxisCount(
+        1920, 96, kGridMarginX, kCellWidth, 4);
+    const int initialRows = gridSpacing::InitialAxisCount(
+        1032, 96, kGridMarginY, kMinCellHeight, 3);
+    Check(initialColumns == 20 && initialRows == 8 &&
+            gridSpacing::InitialAxisCount(3840, 192, kGridMarginX, kCellWidth, 4) == initialColumns &&
+            gridSpacing::InitialAxisCount(2064, 192, kGridMarginY, kMinCellHeight, 3) == initialRows &&
+            gridSpacing::InitialAxisCount(2880, 144, kGridMarginX, kCellWidth, 4) == initialColumns &&
+            gridSpacing::InitialAxisCount(1548, 144, kGridMarginY, kMinCellHeight, 3) == initialRows,
+        "equal logical work areas at 100, 150 and 200 percent initialize equal row/column counts");
+    Check(gridSpacing::InitialAxisCount(2400, 120, kGridMarginX, kCellWidth, 4) == initialColumns &&
+            gridSpacing::InitialAxisCount(2560, 144, kGridMarginX, kCellWidth, 4) == 18 &&
+            gridSpacing::InitialAxisCount(2560, 96, kGridMarginX, kCellWidth, 4) == 27,
+        "fractional scaling and mixed-DPI monitors initialize independently");
+    Check(gridSpacing::InitialAxisCount(1920, 0, kGridMarginX, kCellWidth, 4) == initialColumns &&
+            gridSpacing::InitialAxisCount(0, 192, kGridMarginY, kMinCellHeight, 3) == 3 &&
+            gridSpacing::InitialAxisCount(16384, 96, kGridMarginX, kCellWidth, 4) == 50,
+        "missing DPI falls back to 96 and initial dimensions respect editable grid limits");
+
     Check(layoutSpacing::ResolveDeferredChangeAction(
             false, false) ==
             layoutSpacing::DeferredChangeAction::None &&

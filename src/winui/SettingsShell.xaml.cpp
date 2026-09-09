@@ -2413,7 +2413,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(backupDataPage_->Content());
             for (const std::string_view focusId : {
                      "backup.layout", "backup.full", "backup.directory",
-                     "backup.migration"})
+                     "backup.migration", "backup.clearData"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     backupDataPage_->FocusTarget(focusId));

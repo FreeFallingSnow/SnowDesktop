@@ -572,6 +572,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::BackupAndData, "backup.migration",
         "app.settings.migrate_all_data",
         "settings.backup.full.description"},
+    {SettingsPage::BackupAndData, "backup.clearData",
+        "settings.backup.clearData", "settings.backup.clearData.description"},
     {SettingsPage::About, "about.version", "settings.about.version",
         "settings.about.version.description"},
     {SettingsPage::About, "about.profile", "app.settings.personal_homepages",
@@ -1416,6 +1418,8 @@ struct SettingsWindowHost::Impl
             return L("app.settings.delete_full_backup_confirm");
         case BackupDataConfirmationKind::MigrateData:
             return L("app.settings.migrate_data_confirm");
+        case BackupDataConfirmationKind::ClearLayoutAndWidgetData:
+            return L("settings.backup.clearData.confirm");
         }
         return {};
     }
@@ -1430,6 +1434,8 @@ struct SettingsWindowHost::Impl
             return L("app.settings.layout_backups");
         case BackupDataConfirmationKind::MigrateData:
             return L("app.settings.data_migration");
+        case BackupDataConfirmationKind::ClearLayoutAndWidgetData:
+            return L("settings.backup.clearData");
         default:
             return L("app.settings.full_data_backups");
         }
@@ -1713,7 +1719,10 @@ struct SettingsWindowHost::Impl
             state->owner->ShowGenerationConfirmation(snapshot->generation,
                 state->owner->BackupConfirmationTitle(request.kind),
                 state->owner->BackupConfirmationMessage(request.kind),
-                std::move(completed));
+                std::move(completed), true,
+                request.kind == BackupDataConfirmationKind::ClearLayoutAndWidgetData
+                    ? state->owner->L("settings.backup.clearData.action")
+                    : std::wstring{});
         };
         configured.pickPath = [weak](HWND owner,
                                   BackupDataPickerRequest request,

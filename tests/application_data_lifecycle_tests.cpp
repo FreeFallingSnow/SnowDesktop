@@ -220,6 +220,102 @@ PackagePaths TestPaths(const std::filesystem::path& root)
     paths.registry = root / L"data" / L"widgets" / L"packages.json";
     return paths;
 }
+
+void TestBackupAndReset(const std::filesystem::path& root)
+{
+    using snowdesktop::backup::FullDataBackupManager;
+    const auto state = root / L"reset";
+    const auto data = state / L"data";
+    const auto marker = state / L"TempState" / L"PortableMigration" / L"pending.txt";
+    const std::string layout = "{\"pages\":[{\"id\":\"old\",\"columns\":41,\"rows\":17}]}\n";
+    const std::string storage = "{\"widget.counter\":\"27\"}\n";
+    Write(data / L"SnowDesktop.layout.json", layout);
+    Write(data / L"SnowDesktop.layout.json.last-good", layout);
+    Write(data / L"SnowDesktop.storage.json", storage);
+    Write(data / L"SnowDesktop.storage.json.invalid-old", storage);
+    Write(data / L"SnowDesktop.calendar.json", "calendar events");
+    Write(data / L"SnowDesktop.widget-notifications.json", "pending notifications");
+    Write(data / L"SnowDesktop.widget-file-handles.json", "file handles");
+    Write(data / L"widgets" / L"storage" / L"instance.json", storage);
+    const std::vector<std::filesystem::path> retained = {
+        L"SnowDesktop.general.json", L"SnowDesktop.dock.json",
+        L"SnowDesktop.navigation.json", L"SnowDesktop.categories.json",
+        L"SnowDesktop.personalization.json", L"SnowDesktop.entitlement.bin",
+        L"widgets/packages.json", L"widgets/installed/demo/main.lua",
+        L"widgets/dev/demo/main.lua", L"widgets/dev-disabled/demo/main.lua",
+        L"backups/user.layout.json", L"large-icons/user.png", L"DropContent/user.txt"};
+    for (const auto& relative : retained)
+        Write(data / relative, "retained user data");
+    Write(state / L"PrivateState" / L"SnowDesktop.widget-secrets.bin", "private credentials");
+    Write(root / L"actual-desktop-file.txt", "actual user file");
+    FullDataBackupManager manager(state, data, "1.0.6.0", "portable");
+
+    // Backup publication is not the destructive gate. Cancelling that later
+    // gate leaves both live data and the already-completed safety backup.
+    int gateCalls = 0;
+    const auto cancelled = manager.CreateAndQueueReset({{}, [&] {
+        ++gateCalls;
+        return false;
+    }});
+    Expect(!cancelled.ok && cancelled.cancelled && gateCalls == 1 &&
+            !std::filesystem::exists(marker) &&
+            Read(data / L"SnowDesktop.layout.json") == layout &&
+            Read(data / L"SnowDesktop.storage.json") == storage &&
+            Read(cancelled.backup.data / L"SnowDesktop.storage.json") == storage,
+        "cancelled reset keeps the live layout, widget storage and its safety backup");
+
+    const auto queued = manager.CreateAndQueueReset();
+    Expect(queued.ok && std::filesystem::is_regular_file(marker) &&
+            Read(data / L"SnowDesktop.layout.json") == layout &&
+            Read(queued.backup.data / L"SnowDesktop.layout.json.last-good") == layout &&
+            Read(queued.backup.data / L"widgets/storage/instance.json") == storage,
+        "reset creates a complete restorable backup and leaves live data untouched until restart");
+    const auto pendingToken = Read(marker);
+    const auto duplicate = manager.CreateAndQueueReset();
+    Expect(!duplicate.ok && Read(marker) == pendingToken,
+        "a repeated reset cannot replace an already-published startup transaction");
+    const auto applied = snowdesktop::migration::ApplyPending(state);
+    snowdesktop::layout_storage::Document fresh;
+    const auto loaded = snowdesktop::layout_storage::LoadDocument(
+        data / L"SnowDesktop.layout.json", fresh);
+    Expect(applied.ok && applied.applied &&
+            loaded.status == snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            fresh.pages.empty() && fresh.items.empty() && fresh.widgets.empty() &&
+            !std::filesystem::exists(data / L"SnowDesktop.layout.json.last-good") &&
+            Read(data / L"SnowDesktop.storage.json") == "{}\n" &&
+            !std::filesystem::exists(data / L"SnowDesktop.storage.json.invalid-old") &&
+            !std::filesystem::exists(data / L"widgets/storage"),
+        "restart resets instances, storage and saved dimensions without recovering the old layout");
+    Expect(Read(data / L"SnowDesktop.calendar.json") == "{\"schemaVersion\":1,\"events\":[]}\n" &&
+            Read(data / L"SnowDesktop.widget-notifications.json") == "{\"schemaVersion\":1,\"entries\":[]}\n" &&
+            Read(data / L"SnowDesktop.widget-file-handles.json") == "{\"schemaVersion\":1,\"entries\":[]}\n",
+        "reset retires calendar events, pending notifications and widget file access records");
+    for (const auto& relative : retained)
+        Expect(Read(data / relative) == "retained user data",
+            "reset retains packages, settings, existing backups and unrelated user resources");
+    Expect(Read(state / L"PrivateState/SnowDesktop.widget-secrets.bin") == "private credentials" &&
+            Read(root / L"actual-desktop-file.txt") == "actual user file",
+        "reset leaves private credentials and actual desktop files untouched");
+    const auto restore = manager.QueueRestore(queued.backup);
+    const auto restored = snowdesktop::migration::ApplyPending(state);
+    Expect(restore.ok && restored.ok && restored.applied &&
+            Read(data / L"SnowDesktop.layout.json") == layout &&
+            Read(data / L"widgets/storage/instance.json") == storage &&
+            Read(data / L"SnowDesktop.calendar.json") == "calendar events",
+        "the pre-reset backup restores the original layout and component data");
+
+    const auto blockedState = root / L"reset-backup-failure";
+    Write(blockedState / L"data/SnowDesktop.layout.json", layout);
+    Write(blockedState / L"FullBackups", "blocks backup directory creation");
+    FullDataBackupManager blocked(blockedState, blockedState / L"data", "1.0.6.0", "portable");
+    const auto failed = blocked.CreateAndQueueReset();
+    Expect(!failed.ok && Read(blockedState / L"data/SnowDesktop.layout.json") == layout &&
+            !std::filesystem::exists(blockedState / L"TempState/PortableMigration/pending.txt"),
+        "failed backup never queues a reset or changes active data");
+    FullDataBackupManager wrongRoot(root / L"wrong-root", data, "1.0.6.0", "portable");
+    Expect(!wrongRoot.CreateAndQueueReset().ok,
+        "reset rejects a state root that cannot activate the requested data directory");
+}
 }
 
 int main()
@@ -245,6 +341,7 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestBackupAndReset(root);
     Write(hashInput, "abc");
     Expect(WidgetPackageManager::Sha256File(hashInput) ==
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
