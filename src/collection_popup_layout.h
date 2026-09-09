@@ -64,6 +64,15 @@ inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
     return result;
 }
 
+// Rendering and inline title editing must share the visible popup anchor.
+inline RECT ResolveTitleRect(const RECT& popup, float scale)
+{
+    const auto header = ResolveHeaderVerticalBounds(scale);
+    const int inset = ScaleDimension(22, scale);
+    return { popup.left + inset, popup.top + header.titleTop,
+        popup.right - inset, popup.top + header.titleBottom };
+}
+
 /**
  * @brief Resolve popup geometry from the visual metrics of its owning page.
  *

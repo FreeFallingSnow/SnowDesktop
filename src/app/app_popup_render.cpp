@@ -113,13 +113,8 @@ void DesktopApp::DrawCollectionPopup(
     const auto headerBounds =
         snowdesktop::collection_popup_layout::
             ResolveHeaderVerticalBounds(popupMetrics.scale);
-    RECT titleRect = MakeRect(
-        popupRect_.left + snowdesktop::collection_popup_layout::
-            ScaleDimension(22, popupMetrics.scale),
-        popupRect_.top + headerBounds.titleTop,
-        popupRect_.right - snowdesktop::collection_popup_layout::
-            ScaleDimension(22, popupMetrics.scale),
-        popupRect_.top + headerBounds.titleBottom);
+    RECT titleRect = snowdesktop::collection_popup_layout::
+        ResolveTitleRect(popupRect_, popupMetrics.scale);
     if (dockFolderPopupOpen_)
         titleRect.right =
             GetDockFolderPopupSortButtonRect(

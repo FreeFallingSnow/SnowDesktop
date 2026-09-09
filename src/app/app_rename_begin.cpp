@@ -67,7 +67,20 @@ void DesktopApp::BeginRenameSelected(
         RECT handle = frame;
         bool foundContainer = false;
         bool groupedTabRename = false;
-        if (IsGroupedCollection(
+        const bool popupTitleRename = !dockFolderPopupOpen_ &&
+            popupWidgetIndex_ == selectedWidgetIndex &&
+            IsCollectionPopupInteractive();
+        if (popupTitleRename)
+        {
+            // Dock collections have no visible desktop frame. Anchor their
+            // editor to the same title rectangle that the popup renders.
+            frame = GetCollectionPopupRect(widgets_[selectedWidgetIndex]);
+            handle = snowdesktop::collection_popup_layout::ResolveTitleRect(
+                frame, GetCollectionPopupLayoutMetrics(
+                    widgets_[selectedWidgetIndex]).scale);
+            foundContainer = true;
+        }
+        else if (IsGroupedCollection(
                 widgets_[selectedWidgetIndex]))
         {
             const size_t groupIndex =
@@ -152,7 +165,7 @@ void DesktopApp::BeginRenameSelected(
             : std::max(
                 40, static_cast<int>(
                     handle.bottom - handle.top) * 2);
-        RECT rect = groupedTabRename
+        RECT rect = popupTitleRename ? handle : groupedTabRename
             ? MakeRect(
                 frame.left + 2, frame.top,
                 frame.right - 2, frame.top + editHeight)
@@ -164,7 +177,8 @@ void DesktopApp::BeginRenameSelected(
         RECT screenRect = rect;
         MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
-        const DWORD editStyle = snowdesktop::rename_edit_layout::EditStyle();
+        const DWORD editStyle = snowdesktop::rename_edit_layout::EditStyle(
+            popupTitleRename);
         renameEdit_ = CreateWindowExW(
             WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             L"EDIT",

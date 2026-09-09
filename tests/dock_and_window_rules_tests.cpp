@@ -1137,6 +1137,20 @@ int main(int argc, char** argv)
             headerBounds.sortLabelOffsetY ==
                 popupLayout::ScaleDimension(2, scale),
             "folder popup sort labels must retain their downward optical offset");
+        // A Dock collection can have empty desktop bounds. Its title editor
+        // must track the visible popup even on a monitor with negative coordinates.
+        const RECT popup{ -1200, -600, -640, 40 };
+        const RECT title = popupLayout::ResolveTitleRect(popup, scale);
+        Check(title.left > popup.left && title.right < popup.right &&
+                title.top > popup.top && title.bottom < popup.bottom &&
+                title.left < title.right && title.top < title.bottom,
+            "collection title editing must stay in the visible popup at every scale");
+        const RECT movedPopup{ 300, 200, 860, 840 };
+        const RECT movedTitle = popupLayout::ResolveTitleRect(movedPopup, scale);
+        RECT expectedTitle = title;
+        OffsetRect(&expectedTitle, 1500, 800);
+        Check(EqualRect(&movedTitle, &expectedTitle),
+            "collection title rendering and editing must follow the popup across monitors");
     }
     Check(
         popupLayout::AllowsMarqueeStart(
