@@ -1,8 +1,102 @@
 #include "app.h"
 #include "../desktop_drop_search.h"
 #include "../widgets/collection_group_rules.h"
+#include "../windows_desktop_layout.h"
+#include "../windows_desktop_layout_rules.h"
 
 // Grid geometry, drag-group planning and cross-monitor migration.
+
+void DesktopApp::InitializeGridFromWindows()
+{
+    if (!initializeGridFromWindows_) return;
+    initializeGridFromWindows_ = false;
+    if (gridPages_.empty() || !layoutRecords_.empty() ||
+        !widgets_.empty() || !dockEntries_.empty()) return;
+
+    namespace native = snowdesktop::windows_desktop_layout;
+    const auto snapshot = native::Capture();
+    if (!snapshot.Available())
+    {
+        const std::wstring message = L"Windows desktop grid capture unavailable; using DPI defaults. HRESULT=" +
+            std::to_wstring(static_cast<unsigned long>(snapshot.status));
+        WriteDiagnosticLogEntry(message.c_str());
+        return;
+    }
+
+    std::unordered_map<std::wstring, POINT> positions;
+    for (const auto& item : snapshot.items)
+        positions.emplace(ToUpperInvariant(item.parsingName), item.screenPosition);
+    for (auto& page : gridPages_)
+    {
+        page.columns = native::AxisCount(
+            page.workArea.right - page.workArea.left, snapshot.spacing.x);
+        page.rows = native::AxisCount(
+            page.workArea.bottom - page.workArea.top, snapshot.spacing.y);
+        page.columns = std::max(1, page.columns);
+        page.rows = std::max(1, page.rows);
+    }
+
+    struct Placement
+    {
+        size_t itemIndex;
+        size_t pageIndex;
+        native::Cell requested;
+    };
+    std::vector<Placement> placements;
+    for (size_t index = 0; index < items_.size(); ++index)
+    {
+        const auto& item = items_[index];
+        if (item.name.empty()) continue;
+        const auto found = positions.find(ToUpperInvariant(item.parsingName));
+        if (found == positions.end()) continue;
+        // GridPage bounds and work areas are relative to the virtual desktop,
+        // while the Shell capture uses physical screen coordinates.
+        const POINT point{found->second.x - virtualLeft_, found->second.y - virtualTop_};
+        for (size_t pageIndex = 0; pageIndex < gridPages_.size(); ++pageIndex)
+        {
+            auto& page = gridPages_[pageIndex];
+            if (!PtInRect(&page.bounds, point)) continue;
+            const native::Cell cell{
+                native::AxisIndex(point.x, page.workArea.left, snapshot.spacing.x),
+                native::AxisIndex(point.y, page.workArea.top, snapshot.spacing.y)};
+            // Explorer may use a partially visible last row/column. Preserve
+            // those cells instead of folding their items onto the previous one.
+            page.columns = std::max(page.columns, cell.column + 1);
+            page.rows = std::max(page.rows, cell.row + 1);
+            placements.push_back({index, pageIndex, cell});
+            break;
+        }
+    }
+
+    std::vector<std::vector<bool>> occupied;
+    occupied.reserve(gridPages_.size());
+    for (auto& page : gridPages_)
+    {
+        savedPageColumns_[page.id] = page.columns;
+        savedPageRows_[page.id] = page.rows;
+        ApplyIconSpacingToPage(page);
+        occupied.emplace_back(static_cast<size_t>(page.columns * page.rows), false);
+    }
+    size_t imported = 0;
+    for (const auto& placement : placements)
+    {
+        const auto& page = gridPages_[placement.pageIndex];
+        const auto cell = native::ClaimNearestCell(placement.requested,
+            page.columns, page.rows, occupied[placement.pageIndex]);
+        if (!cell) continue; // Existing overflow placement handles a full page.
+        auto& item = items_[placement.itemIndex];
+        item.gridCell = {page.id, cell->column, cell->row};
+        item.gridSpan = {1, 1};
+        ++imported;
+    }
+    RefreshIconBitmapResolution();
+    const std::wstring message = L"Initialized grid from Windows: spacing=" +
+        std::to_wstring(snapshot.spacing.x) + L"x" + std::to_wstring(snapshot.spacing.y) +
+        L", icon=" + std::to_wstring(snapshot.iconSize) +
+        L", captured=" + std::to_wstring(snapshot.items.size()) +
+        L", imported=" + std::to_wstring(imported);
+    WriteDiagnosticLogEntry(message.c_str());
+}
 
 void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
 {

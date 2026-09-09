@@ -37,6 +37,7 @@
 #include "collection_titleless_rules.h"
 #include "layout_spacing_rules.h"
 #include "grid_spacing_rules.h"
+#include "windows_desktop_layout_rules.h"
 #include "widget_item_layout.h"
 #include "app/grid_geometry.h"
 
@@ -1216,6 +1217,35 @@ int main(int argc, char** argv)
     namespace gridSpacing = snowdesktop::grid_spacing_rules;
     namespace layoutSpacing = snowdesktop::layout_spacing_rules;
     namespace localLayout = snowdesktop::widget_item_layout;
+
+    namespace nativeGrid = snowdesktop::windows_desktop_layout;
+    Check(nativeGrid::AxisCount(2560, 115) == 22 &&
+            nativeGrid::AxisCount(1600, 156) == 10 &&
+            nativeGrid::AxisCount(1920, 115) == 16,
+        "initial grids use Explorer spacing and each monitor work area");
+    Check(nativeGrid::AxisCount(3840, 230) == nativeGrid::AxisCount(1920, 115) &&
+            nativeGrid::AxisCount(3200, 312) == nativeGrid::AxisCount(1600, 156),
+        "physical native spacing scales with resolution without multiplying grid density");
+    Check(nativeGrid::AxisCount(1920, 0) == 0 &&
+            nativeGrid::AxisCount(0, 115) == 0 &&
+            nativeGrid::AxisCount(20, 115) == 1 &&
+            nativeGrid::AxisCount(16384, 1) == 50,
+        "invalid spacing can fall back and imported counts respect editable limits");
+    Check(nativeGrid::AxisIndex(1409, 0, 156) == 9 &&
+            nativeGrid::AxisIndex(-1805, -1920, 115) == 1 &&
+            nativeGrid::AxisIndex(827, 510, 156) == 2 &&
+            nativeGrid::AxisIndex(-10, 0, 115) == 0,
+        "native coordinates preserve row/column identity across negative and staggered monitors");
+    std::vector<bool> nativeOccupied(6, false);
+    Check(nativeGrid::ClaimNearestCell({1, 1}, 3, 2, nativeOccupied) == nativeGrid::Cell{1, 1} &&
+            nativeGrid::ClaimNearestCell({1, 1}, 3, 2, nativeOccupied) == nativeGrid::Cell{0, 1},
+        "colliding free-positioned icons use the nearest vacant cell without replacing each other");
+    for (int i = 0; i < 4; ++i)
+        Check(nativeGrid::ClaimNearestCell({1, 1}, 3, 2, nativeOccupied).has_value(),
+            "every remaining imported icon receives a distinct vacant cell");
+    Check(!nativeGrid::ClaimNearestCell({1, 1}, 3, 2, nativeOccupied) &&
+            !nativeGrid::ClaimNearestCell({0, 0}, 2, 2, nativeOccupied),
+        "a full or invalid native grid delegates to ordinary overflow placement");
 
     // A high-DPI first launch must not quadruple the desktop's item density.
     const int initialColumns = gridSpacing::InitialAxisCount(

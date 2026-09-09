@@ -374,6 +374,20 @@ void TestApplicationOwnedLayoutCommit(const std::string& application,
 
 void TestBackendContract(const std::filesystem::path& repository)
 {
+    const std::string nativeReader = ReadText(repository / "src/windows_desktop_layout.cpp");
+    const std::string desktopReload = ReadText(repository / "src/app/app_desktop_reload.cpp");
+    Check(!nativeReader.empty() && !desktopReload.empty(),
+        "Windows desktop initialization sources are readable");
+    for (const char* mutation : {"->SelectAndPositionItems(", "->SetCurrentFolderFlags(",
+             "->SetViewModeAndIconSize(", "LVM_SETITEMPOSITION"})
+        Check(nativeReader.find(mutation) == std::string::npos,
+            "importing Windows desktop layout never changes native positions or view settings");
+    const auto enumerate = desktopReload.find("LoadDesktopItems(snapshot)");
+    const auto initialize = desktopReload.find("InitializeGridFromWindows()", enumerate);
+    const auto persist = desktopReload.find("SaveLayoutSlots()", initialize);
+    Check(enumerate != std::string::npos && initialize != std::string::npos &&
+            persist != std::string::npos && enumerate < initialize && initialize < persist,
+        "native positions are applied after item enumeration and saved by the common reload transaction");
     const std::string header = ReadText(
         repository / "src/winui/backup_data_page_backend.h");
     const std::string source = ReadText(

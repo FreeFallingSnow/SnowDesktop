@@ -36,6 +36,7 @@ void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
  */
 void DesktopApp::LoadLayoutSlots()
 {
+    initializeGridFromWindows_ = false;
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     snowdesktop::layout_storage::Document document;
     const auto loadResult = snowdesktop::layout_storage::LoadDocument(
@@ -43,6 +44,7 @@ void DesktopApp::LoadLayoutSlots()
     if (loadResult.status ==
         snowdesktop::layout_storage::LoadStatus::Missing)
     {
+        initializeGridFromWindows_ = true;
         return;
     }
     if (loadResult.status ==
@@ -93,6 +95,9 @@ void DesktopApp::LoadLayoutSlots()
         preservedFolderEntries.clear();
     };
 
+    // A clear-layout document intentionally has no page or placement records.
+    // Existing layouts (including last-good recovery) remain authoritative.
+    initializeGridFromWindows_ = snowdesktop::layout_storage::NeedsGridInitialization(document);
     layoutRecords_.clear();
     widgets_.clear();
     dockEntries_.clear();

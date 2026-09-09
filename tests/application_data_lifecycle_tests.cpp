@@ -264,6 +264,15 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
         }
     }
     layout::Document legacy;
+    for (const char* savedLayout : {
+             R"({"pages":[{"id":"empty-page","columns":22,"rows":10}]})",
+             R"({"items":[{"key":"file","page":"old","x":1,"y":0}]})",
+             R"({"widgets":[{"id":"clock","type":"lua","page":"old","x":0,"y":0}]})",
+             R"({"dockEntries":[{"type":"item","ref":"file"}]})"})
+    {
+        Expect(layout::ParseDocument(savedLayout, legacy) && !layout::NeedsGridInitialization(legacy),
+            "saved layouts, including empty pages and legacy placements, never resync from Windows");
+    }
     Expect(layout::ParseDocument("{\"dockEnabled\":true}", legacy) &&
             legacy.dockEnabled == true && !legacy.dockLayout,
         "old layout backups preserve their switch without inventing Dock geometry");
@@ -333,7 +342,8 @@ void TestLayoutReset(const std::filesystem::path& root)
             !fresh.firstPageMonitor && !fresh.lastPageMonitor &&
             fresh.itemFontSizeCu == 0.27f && fresh.iconSpacing == 1.3f &&
             fresh.dockEnabled == kDefaultDockEnabled && fresh.dockLayout &&
-            *fresh.dockLayout == DockLayoutSettings{} && Read(storage) == "{}\n",
+            *fresh.dockLayout == DockLayoutSettings{} && Read(storage) == "{}\n" &&
+            layout::NeedsGridInitialization(fresh),
         "reset clears placement and storage and restores default Dock layout while retaining appearance");
     JsonValue encoded;
     Expect(ParseJson(Read(primary), encoded) && encoded.Find("metadata") &&

@@ -842,6 +842,12 @@ bool SaveDocument(const std::filesystem::path& layoutPath,
         error);
 }
 
+bool NeedsGridInitialization(const Document& document) noexcept
+{
+    return document.pages.empty() && document.items.empty() &&
+        document.widgets.empty() && document.dockEntries.empty();
+}
+
 std::string SerializeDockLayout(const DockLayoutSettings& settings)
 {
     std::ostringstream output;

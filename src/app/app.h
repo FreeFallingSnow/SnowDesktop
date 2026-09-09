@@ -1033,6 +1033,8 @@ private:
     void UpdateLayoutWorkArea(bool preserveActiveDimensions = true);
     /** @brief 用当前设置（行列数）配置指定网格页面。 @param page 网格页面引用 */
     void ConfigureGridPage(GridPage& page) const;
+    /** @brief Seed a fresh layout from Explorer's spacing and icon positions. */
+    void InitializeGridFromWindows();
     /** @brief 将用户保存的网格尺寸应用到各页面上。 */
     void ApplySavedGridDimensions();
     /** @brief 根据图标间距比例重新计算页面单元格与间距。 @param page 网格页面引用 */
@@ -3469,6 +3471,7 @@ private:
     std::unordered_map<std::wstring, int> savedPageColumns_;
     std::unordered_map<std::wstring, int> savedPageRows_;
     std::vector<std::wstring> savedPageIds_;
+    bool initializeGridFromWindows_ = false;
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     bool iconSpacingPreviewActive_ = false;

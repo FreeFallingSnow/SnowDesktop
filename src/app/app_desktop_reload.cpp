@@ -742,6 +742,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         }
     }
     LoadDesktopItems(snapshot);
+    InitializeGridFromWindows();
     // LoadLayoutSlots may normalize Dock entries before the freshly
     // enumerated desktop items are available. Discard those provisional
     // resolutions so paths and shortcut targets are classified from the new

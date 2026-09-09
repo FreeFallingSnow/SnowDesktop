@@ -184,6 +184,7 @@ std::filesystem::path BackupPath(const std::filesystem::path& layoutPath);
 bool ParseDocument(std::string_view contents, Document& document,
     std::string* error = nullptr);
 bool ValidateDocument(std::string_view contents, std::string* error = nullptr);
+bool NeedsGridInitialization(const Document& document) noexcept;
 LoadResult LoadDocument(const std::filesystem::path& layoutPath,
     Document& document);
 bool SaveDocument(const std::filesystem::path& layoutPath,

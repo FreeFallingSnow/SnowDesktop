@@ -200,6 +200,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_menu_icons.cpp
     src/app/app_message_dispatch.cpp
     src/shell_context_menu_site.cpp
+    src/windows_desktop_layout.cpp
     src/shell_launch_worker.cpp
     src/shell_launch_process.cpp
     src/shell_file_operation_worker.cpp
