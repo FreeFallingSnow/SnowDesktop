@@ -86,11 +86,27 @@ int RunWebsiteIconTests()
         Check(count == 5, "keep 16, 32, 48, 64 and 128 pixel frames without enlarging the source");
         Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
         Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
-        decoder->GetFrame(count - 1, &frame);
+        // ICO decoders may reorder directory entries. Validate the intended
+        // dimensions instead of assuming the last frame is the largest.
+        for (UINT i = 0; i < count; ++i)
+        {
+            Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> candidate;
+            UINT w = 0, h = 0;
+            if (SUCCEEDED(decoder->GetFrame(i, &candidate)) &&
+                SUCCEEDED(candidate->GetSize(&w, &h)) && w == 128 && h == 128)
+            { frame = candidate; break; }
+        }
+        Check(frame != nullptr, "the ICO contains the largest unscaled source frame");
         imaging->CreateFormatConverter(&converter);
-        converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom);
+        const HRESULT converted = frame ? converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom) : E_FAIL;
         std::vector<std::uint32_t> pixels(128 * 128);
-        Check(SUCCEEDED(converter->CopyPixels(nullptr, 128 * 4, static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data()))) &&
+        const bool copied = SUCCEEDED(converted) && SUCCEEDED(converter->CopyPixels(nullptr, 128 * 4,
+            static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data())));
+        if (!copied || pixels[0] != 0 || pixels[64 * 128 + 64] != 0xff44aa22)
+            std::cerr << "ICO sample pixels: copied=" << copied << ", corner=0x" << std::hex << pixels[0]
+                << ", center=0x" << pixels[64 * 128 + 64] << std::dec << '\n';
+        Check(copied &&
             pixels[0] == 0 && pixels[64 * 128 + 64] == 0xff44aa22, "preserve color and transparent padding without distorting a rectangular logo");
     }
     decoder.Reset();
