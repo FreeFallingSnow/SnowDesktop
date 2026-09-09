@@ -169,10 +169,14 @@ HRESULT snowdesktop::tray_notification::EnsureApplicationShortcut(
         const bool hasIdentity = SUCCEEDED(result) && identity.vt == VT_LPWSTR &&
             identity.pwszVal && identity.pwszVal[0];
         const bool matches = hasIdentity && wcscmp(identity.pwszVal, PortableApplicationId) == 0;
+        // Shell exposes the executable path as the default identity even when
+        // the user has not assigned an explicit AppUserModelID to the shortcut.
+        const bool defaultIdentity = hasIdentity && CompareStringOrdinal(
+            identity.pwszVal, -1, executablePath.c_str(), -1, TRUE) == CSTR_EQUAL;
         PropVariantClear(&identity);
         if (FAILED(result)) return result;
         if (matches) return S_FALSE;
-        if (hasIdentity) return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
+        if (hasIdentity && !defaultIdentity) return HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS);
         // Preserve the existing target, arguments, working directory and icon.
     }
     else

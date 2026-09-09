@@ -1889,6 +1889,7 @@ void TestTrayNotificationShortcutPreservesUserEntry()
     }
     DeleteFileW(shortcut.c_str());
     RemoveDirectoryW(directory.c_str());
+    link.Reset();
     if (SUCCEEDED(initialized)) CoUninitialize();
 }
 
@@ -2305,24 +2306,24 @@ void TestPopupDwellControllerHandlesCandidateChanges()
 }
 }
 
-int main(int argc, char** argv)
+int wmain(int argc, wchar_t** argv)
 {
-    if (argc == 4 && std::string(argv[1]) == "--register-notification-shortcut")
+    if (argc == 4 && std::wstring(argv[1]) == L"--register-notification-shortcut")
     {
         const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         const HRESULT registered = snowdesktop::tray_notification::EnsureApplicationShortcut(
-            std::filesystem::u8path(argv[2]).wstring(), std::filesystem::u8path(argv[3]).wstring());
+            argv[2], argv[3]);
         if (registered == S_OK)
         {
             SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW,
-                std::filesystem::u8path(argv[2]).c_str(), nullptr);
+                argv[2], nullptr);
             SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
         }
         std::cout << "Notification shortcut registration result: " << registered << '\n';
         if (SUCCEEDED(initialized)) CoUninitialize();
         return SUCCEEDED(registered) ? 0 : 1;
     }
-    if (argc == 2 && std::string(argv[1]) == "--notification-identity-probe")
+    if (argc == 2 && std::wstring(argv[1]) == L"--notification-identity-probe")
         return RunTrayNotificationIdentityProbe();
     TestSlotCacheAndIdentity();
     TestHitRegionsUseContainerOrientation();
