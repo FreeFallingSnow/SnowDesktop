@@ -16,6 +16,13 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 
+struct ChildPidlDeleter
+{
+    // Keep the SDK's pointer qualifiers when owning an enumerated PIDL.
+    using pointer = PITEMID_CHILD;
+    void operator()(pointer value) const noexcept { ILFree(value); }
+};
+
 struct CaptureState
 {
     std::mutex mutex;
@@ -76,8 +83,7 @@ Snapshot ReadView(std::chrono::steady_clock::time_point deadline)
     {
         PITEMID_CHILD child = nullptr;
         if (enumeration->Next(1, &child, nullptr) != S_OK) break;
-        const auto freePidl = [](ITEMIDLIST* value) { CoTaskMemFree(value); };
-        std::unique_ptr<ITEMIDLIST, decltype(freePidl)> owner(child, freePidl);
+        std::unique_ptr<ITEMIDLIST, ChildPidlDeleter> owner(child);
         POINT point{};
         if (FAILED(view->GetItemPosition(child, &point)) ||
             !ClientToScreen(window, &point)) continue;
