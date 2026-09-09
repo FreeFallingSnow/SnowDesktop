@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "Starting…",
+    "app.startup.cancel": "Cancel startup",
     "settings.debug.initialization": "Temporary initialization",
     "settings.debug.initialization.description": "Use a separate experimental layout and component storage to initialize the grid and icon positions from Windows. Turning this off or restarting the app restores your original layout, including Dock, and component storage.",
     "settings.debug.initialization.failed": "Could not switch temporary initialization. Try again later.",

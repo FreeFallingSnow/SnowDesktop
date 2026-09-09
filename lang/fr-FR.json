@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "Démarrage en cours…",
+    "app.startup.cancel": "Annuler le démarrage",
     "settings.debug.initialization": "Initialisation temporaire",
     "settings.debug.initialization.description": "Utilise une disposition et un stockage des composants distincts pour initialiser la grille et les positions des icônes à partir de Windows. La désactivation ou le redémarrage de l’application rétablit la disposition d’origine, y compris le Dock, et le stockage des composants.",
     "settings.debug.initialization.failed": "Impossible de basculer l’initialisation temporaire. Réessayez plus tard.",

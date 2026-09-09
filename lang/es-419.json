@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "Iniciando…",
+    "app.startup.cancel": "Cancelar inicio",
     "settings.debug.initialization": "Inicialización temporal",
     "settings.debug.initialization.description": "Usa una distribución experimental y un almacenamiento de componentes independientes para inicializar la cuadrícula y las posiciones de los íconos desde Windows. Al desactivar esta opción o reiniciar la aplicación, se restauran la distribución original, incluido el Dock, y el almacenamiento de componentes.",
     "settings.debug.initialization.failed": "No se pudo cambiar la inicialización temporal. Inténtalo de nuevo más tarde.",

@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "启动中",
+    "app.startup.cancel": "终止启动",
     "settings.debug.initialization": "临时初始化",
     "settings.debug.initialization.description": "使用独立的实验布局和组件存储，按 Windows 桌面重新初始化网格与图标位置。关闭后或重启应用将恢复原布局（含 Dock）和组件存储。",
     "settings.debug.initialization.failed": "无法切换临时初始化，请稍后重试。",

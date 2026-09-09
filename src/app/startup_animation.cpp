@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 namespace snowdesktop
@@ -21,6 +22,8 @@ namespace
 {
 using Microsoft::WRL::ComPtr;
 constexpr wchar_t kWindowClass[] = L"SnowDesktopStartupAnimation";
+constexpr wchar_t kActionWindowClass[] = L"SnowDesktopStartupAction";
+constexpr int kCancelButtonId = 1;
 
 struct RenderFailure { HRESULT result; };
 void Require(HRESULT result)
@@ -32,6 +35,37 @@ struct WindowOwner
 {
     HWND value = nullptr;
     ~WindowOwner() { if (value && IsWindow(value)) DestroyWindow(value); }
+};
+
+LRESULT CALLBACK ActionWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    if (message == WM_NCCREATE)
+    {
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+            reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+    }
+    if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (message == WM_COMMAND && LOWORD(wp) == kCancelButtonId &&
+        HIWORD(wp) == BN_CLICKED &&
+        reinterpret_cast<HWND>(lp) == GetDlgItem(window, kCancelButtonId))
+    {
+        auto* cancellation = reinterpret_cast<StartupCancellation*>(
+            GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (cancellation) (void)cancellation->TerminateStartup();
+        return 0;
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+struct CancelButton
+{
+    HWND host = nullptr;
+    HFONT font = nullptr;
+    ~CancelButton()
+    {
+        if (host && IsWindow(host)) DestroyWindow(host);
+        if (font) DeleteObject(font);
+    }
 };
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
@@ -64,6 +98,20 @@ struct Monitor
     float scale = 1.0f;
 };
 
+struct Layout
+{
+    float left = 0;
+    float top = 0;
+    float scale = 1;
+};
+
+D2D1_COLOR_F SystemColor(int index)
+{
+    const COLORREF color = GetSysColor(index);
+    return D2D1::ColorF(GetRValue(color) / 255.0f,
+        GetGValue(color) / 255.0f, GetBValue(color) / 255.0f);
+}
+
 BOOL CALLBACK CollectMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
 {
     auto& monitors = *reinterpret_cast<std::vector<Monitor>*>(parameter);
@@ -79,7 +127,8 @@ class Scene
 {
 public:
     void Initialize(HWND window, HINSTANCE instance, RECT desktop,
-        bool animate, double durationScale)
+        const std::vector<Layout>& layouts, const std::wstring& startingText,
+        bool animate, double durationScale, bool highContrast)
     {
         ComPtr<ID3D11Device> d3d;
         HRESULT result = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE,
@@ -108,8 +157,9 @@ public:
 
         // A stretched one-pixel wash covers every monitor without a full-screen
         // bitmap allocation, readback, or per-frame CPU rasterization.
-        auto wash = Surface(1, 1, 1.0f, [](ID2D1DeviceContext* context) {
-            context->Clear(D2D1::ColorF(0x15253b, 0.68f));
+        auto wash = Surface(1, 1, 1.0f, [&](ID2D1DeviceContext* context) {
+            context->Clear(highContrast ? SystemColor(COLOR_WINDOW) :
+                D2D1::ColorF(0x15253b, 0.68f));
         });
         auto washVisual = AddVisual(wash.Get(), 0, 0);
         ComPtr<IDCompositionScaleTransform> stretch;
@@ -143,58 +193,66 @@ public:
             DWRITE_FONT_STRETCH_NORMAL, 24, L"", &text));
         Require(text->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER));
         Require(text->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER));
+        ComPtr<IDWriteTextFormat> statusText;
+        Require(write->CreateTextFormat(L"Segoe UI", nullptr,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 14, L"", &statusText));
+        Require(statusText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER));
+        Require(statusText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER));
 
-        std::vector<Monitor> monitors;
-        EnumDisplayMonitors(nullptr, nullptr, CollectMonitor,
-            reinterpret_cast<LPARAM>(&monitors));
-        if (monitors.empty()) monitors.push_back({ desktop, 1.0f });
-        for (const auto& monitor : monitors)
+        const auto foreground = highContrast ? SystemColor(COLOR_WINDOWTEXT) :
+            D2D1::ColorF(0.93f, 0.97f, 1);
+        for (const auto& layout : layouts)
         {
-            const float scale = monitor.scale;
-            const float left = static_cast<float>(
-                (monitor.bounds.left + monitor.bounds.right) / 2 - desktop.left) - 128 * scale;
-            const float top = static_cast<float>(
-                (monitor.bounds.top + monitor.bounds.bottom) / 2 - desktop.top) - 128 * scale;
-            auto emblem = Surface(256, 256, scale, [&](ID2D1DeviceContext* context) {
+            const float scale = layout.scale;
+            const float left = layout.left;
+            const float top = layout.top;
+            auto emblem = Surface(320, 270, scale, [&](ID2D1DeviceContext* context) {
                 ComPtr<ID2D1SolidColorBrush> brush;
-                Require(context->CreateSolidColorBrush(D2D1::ColorF(0.87f, 0.94f, 1, 0.09f), &brush));
-                context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(128, 104), 62, 62), brush.Get());
+                Require(context->CreateSolidColorBrush(foreground, &brush));
                 ComPtr<ID2D1Bitmap> bitmap;
                 Require(context->CreateBitmapFromWicBitmap(iconPixels.Get(), nullptr, &bitmap));
-                context->DrawBitmap(bitmap.Get(), D2D1::RectF(84, 60, 172, 148));
-                brush->SetColor(D2D1::ColorF(0.93f, 0.97f, 1));
+                context->DrawBitmap(bitmap.Get(), D2D1::RectF(112, 28, 208, 124));
                 context->DrawText(L"SnowDesktop", 11, text.Get(),
-                    D2D1::RectF(0, 190, 256, 232), brush.Get());
+                    D2D1::RectF(0, 144, 320, 184), brush.Get());
+                context->DrawText(startingText.c_str(),
+                    static_cast<UINT32>(startingText.size()), statusText.Get(),
+                    D2D1::RectF(0, 232, 320, 260), brush.Get());
             });
             AddVisual(emblem.Get(), left, top);
 
-            auto ring = Surface(168, 168, scale, [](ID2D1DeviceContext* context) {
-                ComPtr<ID2D1SolidColorBrush> brush;
-                Require(context->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1), &brush));
-                for (int dot = 0; dot < 12; ++dot)
-                {
-                    const float angle = dot * 6.2831853f / 12;
-                    brush->SetColor(D2D1::ColorF(0.74f, 0.88f, 1, 0.12f + dot * 0.07f));
-                    const float radius = 2.0f + dot * 0.1f;
-                    context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(
-                        84 + std::sin(angle) * 76, 84 - std::cos(angle) * 76),
-                        radius, radius), brush.Get());
-                }
-            });
-            auto ringVisual = AddVisual(ring.Get(), left + 44 * scale, top + 20 * scale);
-            if (animate)
+            // Five small dots below the title. Independent opacity curves run
+            // on the compositor; busy Shell initialization cannot stall them.
+            for (int dot = 0; dot < 5; ++dot)
             {
-                ComPtr<IDCompositionAnimation> rotation;
-                Require(device_->CreateAnimation(&rotation));
-                const double period = 1.8 * durationScale;
-                Require(rotation->AddCubic(0, 0, static_cast<float>(360 / period), 0, 0));
-                Require(rotation->AddRepeat(period, period));
-                ComPtr<IDCompositionRotateTransform> transform;
-                Require(device_->CreateRotateTransform(&transform));
-                Require(transform->SetCenterX(84 * scale));
-                Require(transform->SetCenterY(84 * scale));
-                Require(transform->SetAngle(rotation.Get()));
-                Require(ringVisual->SetTransform(transform.Get()));
+                auto pixels = Surface(8, 8, scale, [&](ID2D1DeviceContext* context) {
+                    ComPtr<ID2D1SolidColorBrush> brush;
+                    Require(context->CreateSolidColorBrush(foreground, &brush));
+                    context->FillEllipse(D2D1::Ellipse(
+                        D2D1::Point2F(4, 4), 3, 3), brush.Get());
+                });
+                auto visual = AddVisual(pixels.Get(),
+                    left + (124 + 16 * dot) * scale, top + 204 * scale);
+                if (animate)
+                {
+                    const double period = 1.4 * durationScale;
+                    const double delay = dot * 0.12 * durationScale;
+                    const double rise = 0.18 * durationScale;
+                    const double fall = 0.36 * durationScale;
+                    ComPtr<IDCompositionAnimation> pulse;
+                    Require(device_->CreateAnimation(&pulse));
+                    if (delay > 0) Require(pulse->AddCubic(0, 0.25f, 0, 0, 0));
+                    Require(pulse->AddCubic(delay, 0.25f,
+                        static_cast<float>(0.75 / rise), 0, 0));
+                    Require(pulse->AddCubic(delay + rise, 1,
+                        static_cast<float>(-0.75 / fall), 0, 0));
+                    Require(pulse->AddCubic(delay + rise + fall, 0.25f, 0, 0, 0));
+                    Require(pulse->AddRepeat(period, period));
+                    ComPtr<IDCompositionEffectGroup> effect;
+                    Require(device_->CreateEffectGroup(&effect));
+                    Require(effect->SetOpacity(pulse.Get()));
+                    Require(visual->SetEffect(effect.Get()));
+                }
             }
         }
         if (animate) Fade(0, 1, 0.16 * durationScale);
@@ -243,7 +301,9 @@ private:
         Require(visual->SetContent(surface));
         Require(visual->SetOffsetX(x));
         Require(visual->SetOffsetY(y));
-        Require(root_->AddVisual(visual.Get(), TRUE, nullptr));
+        // FALSE with no reference places the new visual ABOVE all siblings.
+        // The wash is added first and must stay behind the logo/text/dots.
+        Require(root_->AddVisual(visual.Get(), FALSE, nullptr));
         return visual;
     }
 
@@ -253,16 +313,63 @@ private:
     ComPtr<IDCompositionEffectGroup> opacity_;
 };
 
+std::unique_ptr<CancelButton> CreateCancelButton(HINSTANCE instance, HWND owner,
+    RECT desktop, const Layout& layout, const std::wstring& label,
+    StartupCancellation& cancellation)
+{
+    auto button = std::make_unique<CancelButton>();
+    const float scale = layout.scale;
+    button->font = CreateFontW(-static_cast<int>(std::lround(14 * scale)),
+        0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH, L"Segoe UI");
+    SIZE textSize{};
+    if (HDC dc = GetDC(nullptr))
+    {
+        const auto previous = button->font ? SelectObject(dc, button->font) : nullptr;
+        GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &textSize);
+        if (previous) SelectObject(dc, previous);
+        ReleaseDC(nullptr, dc);
+    }
+    const int width = static_cast<int>(std::ceil(std::clamp(
+        textSize.cx + 40 * scale, 184 * scale, 288 * scale)));
+    const int height = static_cast<int>(std::ceil(38 * scale));
+    const int x = desktop.left + static_cast<int>(std::lround(
+        layout.left + 160 * scale - width / 2.0f));
+    const int y = desktop.top + static_cast<int>(std::lround(layout.top + 282 * scale));
+    // The full-screen wash stays click-through. Only this small owned popup
+    // receives input, on the same independent UI thread as its native button.
+    button->host = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        kActionWindowClass, L"SnowDesktop", WS_POPUP,
+        x, y, width, height, owner, nullptr, instance, &cancellation);
+    if (!button->host) throw RenderFailure{ E_FAIL };
+    HWND control = CreateWindowExW(0, L"BUTTON", label.c_str(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        0, 0, width, height, button->host,
+        reinterpret_cast<HMENU>(kCancelButtonId), instance, nullptr);
+    if (!control) throw RenderFailure{ E_FAIL };
+    if (button->font)
+        SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(button->font), TRUE);
+    const BOOL noWindowTransition = TRUE;
+    (void)DwmSetWindowAttribute(button->host, DWMWA_TRANSITIONS_FORCEDISABLED,
+        &noWindowTransition, sizeof(noWindowTransition));
+    return button;
+}
+
 void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
-    double durationScale, HANDLE stop, HANDLE finish)
+    double durationScale, const std::wstring& startingText,
+    const std::wstring& cancelText, StartupCancellation& cancellation,
+    HANDLE stop, HANDLE finish, HANDLE handoff)
 {
     // No parent/owner or AttachThreadInput: this remains independent of both
     // Explorer and the application's potentially busy initialization thread.
     const HWND desktopRoot = GetAncestor(desktopHost, GA_ROOT);
     if (!desktopRoot || !IsWindow(desktopRoot)) return;
     HIGHCONTRASTW contrast{ sizeof(contrast) };
-    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
-        (contrast.dwFlags & HCF_HIGHCONTRASTON)) return;
+    const bool highContrast =
+        SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+        (contrast.dwFlags & HCF_HIGHCONTRASTON);
+    animate = animate && !highContrast;
     const RECT desktop{ GetSystemMetrics(SM_XVIRTUALSCREEN),
         GetSystemMetrics(SM_YVIRTUALSCREEN),
         GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
@@ -273,6 +380,13 @@ void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
     windowClass.lpszClassName = kWindowClass;
     if (!RegisterClassExW(&windowClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
         return;
+    WNDCLASSEXW actionClass{ sizeof(actionClass) };
+    actionClass.hInstance = instance;
+    actionClass.lpfnWndProc = ActionWindowProc;
+    actionClass.lpszClassName = kActionWindowClass;
+    actionClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    if (!RegisterClassExW(&actionClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        return;
     WindowOwner window{ CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
         WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOREDIRECTIONBITMAP,
         kWindowClass, L"SnowDesktop", WS_POPUP,
@@ -282,21 +396,52 @@ void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
     const BOOL noWindowTransition = TRUE;
     (void)DwmSetWindowAttribute(window.value, DWMWA_TRANSITIONS_FORCEDISABLED,
         &noWindowTransition, sizeof(noWindowTransition));
+    std::vector<Monitor> monitors;
+    EnumDisplayMonitors(nullptr, nullptr, CollectMonitor,
+        reinterpret_cast<LPARAM>(&monitors));
+    if (monitors.empty()) monitors.push_back({ desktop, 1.0f });
+    std::vector<Layout> layouts;
+    for (const auto& monitor : monitors)
+    {
+        layouts.push_back({ static_cast<float>(
+            (monitor.bounds.left + monitor.bounds.right) / 2 - desktop.left) - 160 * monitor.scale,
+            static_cast<float>(
+            (monitor.bounds.top + monitor.bounds.bottom) / 2 - desktop.top) - 170 * monitor.scale,
+            monitor.scale });
+    }
     Scene scene;
-    scene.Initialize(window.value, instance, desktop, animate, durationScale);
+    scene.Initialize(window.value, instance, desktop, layouts, startingText,
+        animate, durationScale, highContrast);
     if (WaitForSingleObject(stop, 0) == WAIT_OBJECT_0 ||
         WaitForSingleObject(finish, 0) == WAIT_OBJECT_0) return;
+    std::vector<std::unique_ptr<CancelButton>> buttons;
+    if (cancellation.IsStarting())
+    {
+        for (const auto& layout : layouts)
+            buttons.push_back(CreateCancelButton(instance, window.value,
+                desktop, layout, cancelText, cancellation));
+    }
 
     // Place just above the desktop root, below ordinary applications/taskbar.
     // A top-level presentation avoids cross-process child input-queue coupling.
     HWND insertAfter = GetWindow(desktopRoot, GW_HWNDPREV);
-    if (insertAfter == window.value) insertAfter = GetWindow(window.value, GW_HWNDPREV);
+    while (insertAfter && (insertAfter == window.value ||
+        GetWindow(insertAfter, GW_OWNER) == window.value))
+        insertAfter = GetWindow(insertAfter, GW_HWNDPREV);
     if (!IsWindow(desktopRoot)) return;
+    if (WaitForSingleObject(stop, 0) == WAIT_OBJECT_0 ||
+        WaitForSingleObject(finish, 0) == WAIT_OBJECT_0) return;
     SetWindowPos(window.value, insertAfter ? insertAfter : HWND_TOP,
         0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (cancellation.IsStarting())
+    {
+        for (const auto& button : buttons)
+            SetWindowPos(button->host, insertAfter ? insertAfter : HWND_TOP,
+                0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
     WriteDiagnosticLogEntry(L"Startup animation shown on independent UI thread");
 
-    HANDLE events[]{ stop, finish };
+    HANDLE events[]{ stop, finish, handoff };
     ULONGLONG fadeEnd = 0;
     bool fading = false;
     while (IsWindow(window.value) && IsWindow(desktopRoot))
@@ -304,9 +449,11 @@ void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
         const auto now = GetTickCount64();
         if (fading && now >= fadeEnd) break;
         const DWORD timeout = fading ? static_cast<DWORD>(fadeEnd - now) : 1000;
-        const DWORD ready = MsgWaitForMultipleObjectsEx(fading ? 1 : 2,
+        const DWORD ready = MsgWaitForMultipleObjectsEx(fading ? 1 : 3,
             events, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (ready == WAIT_FAILED || ready == WAIT_OBJECT_0) break;
+        if (!cancellation.IsStarting()) buttons.clear();
+        if (!fading && ready == WAIT_OBJECT_0 + 2) ResetEvent(handoff);
         if (!fading && ready == WAIT_OBJECT_0 + 1)
         {
             if (!animate) break;
@@ -331,26 +478,33 @@ void RunAnimation(HINSTANCE instance, HWND desktopHost, bool animate,
 
 StartupAnimation::~StartupAnimation()
 {
+    (void)cancellation_.BeginDesktopHandoff();
     if (stopEvent_) SetEvent(stopEvent_);
     if (thread_.joinable()) thread_.join();
     if (finishEvent_) CloseHandle(finishEvent_);
+    if (handoffEvent_) CloseHandle(handoffEvent_);
     if (stopEvent_) CloseHandle(stopEvent_);
 }
 
 bool StartupAnimation::Start(HINSTANCE instance, HWND desktopHost,
-    bool animate, double durationScale)
+    bool animate, double durationScale,
+    std::wstring startingText, std::wstring cancelText)
 {
-    if (thread_.joinable() || stopEvent_ || finishEvent_) return false;
+    if (thread_.joinable() || stopEvent_ || finishEvent_ || handoffEvent_) return false;
     stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     finishEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!stopEvent_ || !finishEvent_) return false;
+    handoffEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!stopEvent_ || !finishEvent_ || !handoffEvent_) return false;
     durationScale = std::isfinite(durationScale) ? std::clamp(durationScale, 0.5, 2.0) : 1.0;
     try
     {
         thread_ = std::thread([=, this] {
             const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
             if (FAILED(apartment)) return;
-            try { RunAnimation(instance, desktopHost, animate, durationScale, stopEvent_, finishEvent_); }
+            // Locale owns mutable caches on the main thread. Only frozen,
+            // translated strings cross into the presentation worker.
+            try { RunAnimation(instance, desktopHost, animate, durationScale,
+                startingText, cancelText, cancellation_, stopEvent_, finishEvent_, handoffEvent_); }
             catch (...)
             {
                 WriteDiagnosticLogEntry(L"Startup animation unavailable; continuing without overlay",
@@ -363,8 +517,16 @@ bool StartupAnimation::Start(HINSTANCE instance, HWND desktopHost,
     return true;
 }
 
+bool StartupAnimation::BeginDesktopHandoff() noexcept
+{
+    if (!cancellation_.BeginDesktopHandoff()) return false;
+    if (handoffEvent_) SetEvent(handoffEvent_);
+    return true;
+}
+
 void StartupAnimation::Finish() noexcept
 {
+    (void)BeginDesktopHandoff();
     if (finishEvent_) SetEvent(finishEvent_);
 }
 }

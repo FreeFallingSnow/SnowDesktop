@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "啟動中",
+    "app.startup.cancel": "終止啟動",
     "settings.debug.initialization": "暫時初始化",
     "settings.debug.initialization.description": "使用獨立的實驗版面配置與元件儲存資料，依 Windows 桌面重新初始化網格與圖示位置。關閉後或重新啟動應用程式，將還原原版面配置（含 Dock）與元件儲存資料。",
     "settings.debug.initialization.failed": "無法切換暫時初始化，請稍後再試。",

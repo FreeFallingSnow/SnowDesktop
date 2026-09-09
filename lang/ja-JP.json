@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "起動中…",
+    "app.startup.cancel": "起動を中止",
     "settings.debug.initialization": "一時的な初期化",
     "settings.debug.initialization.description": "実験用のレイアウトとコンポーネントストレージを別に用意し、Windows のグリッドとアイコン位置から初期化します。オフにするかアプリを再起動すると、Dock を含む元のレイアウトとコンポーネントストレージに戻ります。",
     "settings.debug.initialization.failed": "一時的な初期化を切り替えられませんでした。しばらくしてから再試行してください。",

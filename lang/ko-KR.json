@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "시작 중…",
+    "app.startup.cancel": "시작 중단",
     "settings.debug.initialization": "임시 초기화",
     "settings.debug.initialization.description": "별도의 실험용 레이아웃과 구성 요소 저장소를 사용하여 Windows의 그리드와 아이콘 위치로 초기화합니다. 이 기능을 끄거나 앱을 다시 시작하면 Dock을 포함한 원래 레이아웃과 구성 요소 저장소가 복원됩니다.",
     "settings.debug.initialization.failed": "임시 초기화를 전환하지 못했습니다. 나중에 다시 시도하세요.",

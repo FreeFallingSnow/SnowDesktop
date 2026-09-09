@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "Iniciando…",
+    "app.startup.cancel": "Cancelar inicialização",
     "settings.debug.initialization": "Inicialização temporária",
     "settings.debug.initialization.description": "Usa um layout experimental e um armazenamento de componentes separados para inicializar a grade e as posições dos ícones a partir do Windows. Ao desativar a opção ou reiniciar o aplicativo, o layout original, incluindo o Dock, e o armazenamento de componentes são restaurados.",
     "settings.debug.initialization.failed": "Não foi possível alternar a inicialização temporária. Tente novamente mais tarde.",

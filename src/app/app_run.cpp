@@ -360,7 +360,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     {
         (void)startupAnimation.Start(instance_, desktopWindows_.host,
             snowdesktop::animation::RuntimeAnimationsEnabled(),
-            snowdesktop::animation::RuntimeDurationScale());
+            snowdesktop::animation::RuntimeDurationScale(),
+            Locale::Instance().TrW("app.startup.starting"),
+            Locale::Instance().TrW("app.startup.cancel"));
         WriteDiagnosticLogEntry(
             L"Explorer icon layer retained during startup");
     }
@@ -1483,6 +1485,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         logStartupStage(L"first frame ready");
     }
+    // Retire cancellation before any Explorer ownership change. If a click
+    // wins this race, the animation thread terminates the process and this
+    // thread cannot hide native icons or attach an input queue to Explorer.
+    if (!startupAnimation.BeginDesktopHandoff())
+        return ERROR_CANCELLED;
     // Resolve the current host again after slow Shell/widget initialization.
     // Attach only once the full initial model and its first frame are ready.
     desktopWindows_ = FindDesktopWindows();

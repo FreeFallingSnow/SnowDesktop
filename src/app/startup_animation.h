@@ -1,6 +1,8 @@
 #pragma once
 
 #include <windows.h>
+#include "startup_cancellation.h"
+#include <string>
 #include <thread>
 
 namespace snowdesktop
@@ -16,12 +18,16 @@ public:
     StartupAnimation& operator=(const StartupAnimation&) = delete;
 
     bool Start(HINSTANCE instance, HWND desktopHost,
-        bool animate, double durationScale);
+        bool animate, double durationScale,
+        std::wstring startingText, std::wstring cancelText);
+    bool BeginDesktopHandoff() noexcept;
     void Finish() noexcept;
 
 private:
     HANDLE stopEvent_ = nullptr;
     HANDLE finishEvent_ = nullptr;
+    HANDLE handoffEvent_ = nullptr;
+    StartupCancellation cancellation_;
     std::thread thread_;
 };
 }

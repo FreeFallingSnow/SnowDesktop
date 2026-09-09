@@ -1,4 +1,6 @@
 {
+    "app.startup.starting": "Wird gestartet…",
+    "app.startup.cancel": "Start abbrechen",
     "settings.debug.initialization": "Temporäre Initialisierung",
     "settings.debug.initialization.description": "Ein separates Testlayout und ein eigener Komponentenspeicher übernehmen das Raster und die Symbolpositionen von Windows. Beim Ausschalten oder Neustart der App werden das ursprüngliche Layout einschließlich Dock und der Komponentenspeicher wiederhergestellt.",
     "settings.debug.initialization.failed": "Die temporäre Initialisierung konnte nicht umgeschaltet werden. Versuchen Sie es später erneut.",

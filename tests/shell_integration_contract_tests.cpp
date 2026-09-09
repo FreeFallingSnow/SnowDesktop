@@ -191,6 +191,11 @@ int main(int argc, char** argv)
             releaseDesktop < showDesktop,
         "failed first-frame rendering or submission returns before desktop handoff");
     const auto attachHost = runBody.find("AttachWindowToDesktopHost(parent);");
+    const auto handoffGate = runBody.find(
+        "if(!startupAnimation.BeginDesktopHandoff())returnERROR_CANCELLED;");
+    Check(prepareFrame < handoffGate && handoffGate < attachHost &&
+            handoffGate < releaseDesktop,
+        "a canceled startup cannot attach to Explorer or hide native icons after the button wins");
     Check(prepareFrame < attachHost && attachHost < releaseDesktop &&
             attachHost == runBody.rfind("AttachWindowToDesktopHost(parent);") &&
             runBody.find("WaitForCompositionPresentation(") == std::string::npos &&
@@ -200,6 +205,15 @@ int main(int argc, char** argv)
                 "if(exitRequested_||desktopStartupPresentationPending_)return;") != std::string::npos,
         "slow bootstrap and reentrant host-watch callbacks cannot attach the main input queue to Explorer");
     const std::string animationBody = WithoutWhitespace(startupAnimation);
+    Check(animationBody.find("root_->AddVisual(visual.Get(),FALSE,nullptr)") !=
+            std::string::npos &&
+            animationBody.find("root_->AddVisual(visual.Get(),TRUE,nullptr)") == std::string::npos,
+        "the startup wash stays below later logo/text visuals instead of covering them");
+    Check(animationBody.find("cancellation->TerminateStartup()") != std::string::npos &&
+            animationBody.find("if(!cancellation.IsStarting())buttons.clear();") != std::string::npos &&
+            animationBody.find("WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON") != std::string::npos &&
+            animationBody.find("Locale::Instance()") == std::string::npos,
+        "startup cancellation uses an accessible native button that retires on handoff, with no cross-thread Locale cache access");
     Check(!startupAnimation.empty() &&
             startupAnimation.find("SetParent(") == std::string::npos &&
             startupAnimation.find("AttachThreadInput(") == std::string::npos &&
