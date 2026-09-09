@@ -185,4 +185,13 @@ LoadResult LoadDocument(const std::filesystem::path& layoutPath,
     Document& document);
 bool SaveDocument(const std::filesystem::path& layoutPath,
     std::string_view contents, std::string* error = nullptr);
+// Clear placement records while preserving appearance and other settings.
+bool BuildClearedDocument(std::string_view contents, std::string& cleared,
+    std::string* error = nullptr);
+// Caller must first create a user-visible layout backup. Commit both the
+// primary and recovery document so automatic recovery cannot revive old items.
+bool SaveClearedDocument(const std::filesystem::path& layoutPath,
+    std::string_view cleared, std::string* error = nullptr);
+bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
+    const std::filesystem::path& storagePath, std::string* error = nullptr);
 }

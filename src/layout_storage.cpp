@@ -4,12 +4,64 @@
 #include "json_value.h"
 
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <locale>
+#include <sstream>
 
 namespace snowdesktop::layout_storage
 {
 namespace
 {
+void WriteJsonString(std::ostream& out, std::string_view value)
+{
+    constexpr char hex[] = "0123456789abcdef";
+    out << '"';
+    for (unsigned char ch : value)
+    {
+        if (ch == '"' || ch == '\\')
+            out << '\\' << static_cast<char>(ch);
+        else if (ch < 0x20)
+            out << "\\u00" << hex[ch >> 4] << hex[ch & 15];
+        else
+            out << static_cast<char>(ch);
+    }
+    out << '"';
+}
+
+void WriteJsonValue(std::ostream& out, const JsonValue& value)
+{
+    switch (value.type)
+    {
+    case JsonValue::Type::Null: out << "null"; break;
+    case JsonValue::Type::Boolean: out << (value.boolean ? "true" : "false"); break;
+    case JsonValue::Type::Number: out << value.number; break;
+    case JsonValue::Type::String: WriteJsonString(out, value.string); break;
+    case JsonValue::Type::Array:
+        out << '[';
+        for (size_t i = 0; i < value.array.size(); ++i)
+        {
+            if (i) out << ',';
+            WriteJsonValue(out, value.array[i]);
+        }
+        out << ']';
+        break;
+    case JsonValue::Type::Object:
+        out << '{';
+        bool first = true;
+        for (const auto& [key, child] : value.object)
+        {
+            if (!first) out << ',';
+            first = false;
+            WriteJsonString(out, key);
+            out << ':';
+            WriteJsonValue(out, child);
+        }
+        out << '}';
+        break;
+    }
+}
+
 bool Fail(std::string* error, std::string_view path,
     std::string_view expectation)
 {
@@ -715,5 +767,89 @@ bool SaveDocument(const std::filesystem::path& layoutPath,
         hasValidPrevious ? BackupPath(layoutPath) :
             std::filesystem::path{},
         error);
+}
+
+bool BuildClearedDocument(std::string_view contents, std::string& cleared,
+    std::string* error)
+{
+    cleared.clear();
+    JsonValue root;
+    Document document;
+    if (!ParseJson(contents, root, error) || !DecodeDocument(root, document, error))
+        return false;
+    for (const char* key : {"pages", "items", "widgets", "dockEntries", "navTabOrder",
+             "firstPageMonitor", "lastPageMonitor"})
+        root.object.erase(key);
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(std::numeric_limits<double>::max_digits10);
+    WriteJsonValue(output, root);
+    output << '\n';
+    cleared = output.str();
+    return ValidateDocument(cleared, error);
+}
+
+bool SaveClearedDocument(const std::filesystem::path& layoutPath,
+    std::string_view cleared, std::string* error)
+{
+    Document document;
+    if (!ParseDocument(cleared, document, error) ||
+        !document.pages.empty() || !document.items.empty() ||
+        !document.widgets.empty() || !document.dockEntries.empty() ||
+        !document.navTabOrder.empty())
+        return Fail(error, "cleared layout", "must not contain placement records");
+
+    const auto recovery = BackupPath(layoutPath);
+    std::error_code existsError;
+    const bool hadRecovery = std::filesystem::exists(recovery, existsError);
+    std::string previousRecovery;
+    if (existsError || (hadRecovery &&
+            !atomic_file::ReadAll(recovery, previousRecovery, error)))
+        return false;
+
+    // Publish the fresh fallback first, then atomically replace the primary.
+    // An interrupted commit still has either the old valid primary or the
+    // new valid primary; a completed reset never recovers the old layout.
+    if (!atomic_file::WriteAll(recovery, cleared, {}, error))
+        return false;
+    if (atomic_file::WriteAll(layoutPath, cleared, {}, error))
+        return true;
+
+    std::string rollbackError;
+    const bool restored = hadRecovery
+        ? atomic_file::WriteAll(recovery, previousRecovery, {}, &rollbackError)
+        : (std::filesystem::remove(recovery, existsError), !existsError);
+    if (!restored && error)
+        *error += "; recovery rollback failed: " + rollbackError + existsError.message();
+    return false;
+}
+
+bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
+    const std::filesystem::path& storagePath, std::string* error)
+{
+    std::string previous, cleared, previousRecovery;
+    const auto recovery = BackupPath(layoutPath);
+    std::error_code filesystemError;
+    const bool hadRecovery = std::filesystem::exists(recovery, filesystemError);
+    if (filesystemError || !atomic_file::ReadAll(layoutPath, previous, error) ||
+        !BuildClearedDocument(previous, cleared, error) ||
+        (hadRecovery && !atomic_file::ReadAll(recovery, previousRecovery, error)))
+        return false;
+    if (!SaveClearedDocument(layoutPath, cleared, error))
+        return false;
+    if (atomic_file::WriteAll(storagePath, "{}\n", {}, error))
+        return true;
+
+    // A failed atomic storage write leaves its old contents in place. Restore
+    // both layout documents before the application reloads or reports failure.
+    std::string rollbackError;
+    const bool primaryRestored =
+        atomic_file::WriteAll(layoutPath, previous, {}, &rollbackError);
+    const bool recoveryRestored = hadRecovery
+        ? atomic_file::WriteAll(recovery, previousRecovery, {}, &rollbackError)
+        : (std::filesystem::remove(recovery, filesystemError), !filesystemError);
+    if ((!primaryRestored || !recoveryRestored) && error)
+        *error += "; layout rollback failed: " + rollbackError + filesystemError.message();
+    return false;
 }
 }

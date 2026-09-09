@@ -609,7 +609,7 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     using snowdesktop::SettingsActionResult;
 
     if (!settingsController_ || exitRequested_ || reloading_ ||
-        shellFileOperationInFlight_ > 0 || dragSession_.HasContext() ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive())
     {
         return SettingsActionResult::Failure(
@@ -644,7 +644,7 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     }
 
     std::optional<std::string> previousStorage;
-    const bool storageExisted =
+    const bool storageExisted = !payload.clearLayout && payload.storageDocument &&
         GetFileAttributesW(storagePath.c_str()) != INVALID_FILE_ATTRIBUTES;
     if (storageExisted)
     {
@@ -658,15 +658,37 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         previousStorage = std::move(contents);
     }
 
-    std::string commitError;
-    if (!snowdesktop::layout_storage::SaveDocument(
-            layoutPath, payload.layoutDocument, &commitError))
+    if (payload.clearLayout && widgetEngine_)
     {
+        // Emptying the layout model alone does not stop loaded Lua instances.
+        // Retire callbacks/timers before clearing storage, including final
+        // writes from onHidden/dispose, so old runtimes cannot repopulate it.
+        std::vector<std::wstring> instances;
+        for (const auto& widget : widgetEngine_->GetWidgets())
+            if (!widget.preview)
+                instances.push_back(widget.widgetId);
+        for (const auto& id : instances)
+            widgetEngine_->UnloadWidget(id);
+    }
+
+    std::string commitError;
+    const bool saved = payload.clearLayout
+        ? snowdesktop::layout_storage::ClearLayoutAndStorage(
+              layoutPath, storagePath, &commitError)
+        : snowdesktop::layout_storage::SaveDocument(
+              layoutPath, payload.layoutDocument, &commitError);
+    if (!saved)
+    {
+        if (payload.clearLayout && widgetEngine_)
+        {
+            widgetEngine_->ReloadStorage();
+            RebuildContainersAndItems();
+        }
         return SettingsActionResult::Failure(
             _LW("settings.backup.restoreLayout.commitFailed"));
     }
 
-    if (payload.storageDocument &&
+    if (!payload.clearLayout && payload.storageDocument &&
         !snowdesktop::atomic_file::WriteAll(
             storagePath, *payload.storageDocument, {}, &commitError))
     {
@@ -698,6 +720,11 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     // ReloadItems reads both restored documents and writes only the newly
     // reconstructed model. Synchronizing the mirrors prevents a later close
     // from persisting the pre-restore desktop values.
+    if (payload.clearLayout)
+    {
+        firstPageMonitorId_.clear();
+        lastPageMonitorId_.clear();
+    }
     ReloadItems(true);
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;

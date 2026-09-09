@@ -20,6 +20,7 @@ struct LayoutRestorePayload
 {
     std::string layoutDocument;
     std::optional<std::string> storageDocument;
+    bool clearLayout = false;
 };
 
 /**

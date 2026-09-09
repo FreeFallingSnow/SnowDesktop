@@ -1418,7 +1418,7 @@ struct SettingsWindowHost::Impl
             return L("app.settings.delete_full_backup_confirm");
         case BackupDataConfirmationKind::MigrateData:
             return L("app.settings.migrate_data_confirm");
-        case BackupDataConfirmationKind::ClearLayoutAndWidgetData:
+        case BackupDataConfirmationKind::ClearLayout:
             return L("settings.backup.clearData.confirm");
         }
         return {};
@@ -1434,7 +1434,7 @@ struct SettingsWindowHost::Impl
             return L("app.settings.layout_backups");
         case BackupDataConfirmationKind::MigrateData:
             return L("app.settings.data_migration");
-        case BackupDataConfirmationKind::ClearLayoutAndWidgetData:
+        case BackupDataConfirmationKind::ClearLayout:
             return L("settings.backup.clearData");
         default:
             return L("app.settings.full_data_backups");
@@ -1720,7 +1720,7 @@ struct SettingsWindowHost::Impl
                 state->owner->BackupConfirmationTitle(request.kind),
                 state->owner->BackupConfirmationMessage(request.kind),
                 std::move(completed), true,
-                request.kind == BackupDataConfirmationKind::ClearLayoutAndWidgetData
+                request.kind == BackupDataConfirmationKind::ClearLayout
                     ? state->owner->L("settings.backup.clearData.action")
                     : std::wstring{});
         };

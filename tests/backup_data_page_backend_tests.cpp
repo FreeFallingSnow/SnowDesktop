@@ -361,6 +361,11 @@ void TestApplicationOwnedLayoutCommit(const std::string& application,
             compositionRoot.find("CommitLayoutRestore(std::move(payload))") !=
                 std::string::npos,
         "composition root injects the application-owned layout transaction");
+    const auto unload = application.find("widgetEngine_->UnloadWidget(id)", transaction);
+    const auto clearPair = application.find("layout_storage::ClearLayoutAndStorage", transaction);
+    Check(unload != std::string::npos && clearPair != std::string::npos &&
+            unload < clearPair && clearPair < reload,
+        "layout reset retires old callbacks before clearing storage and rebuilding the model");
 }
 
 void TestBackendContract(const std::filesystem::path& repository)

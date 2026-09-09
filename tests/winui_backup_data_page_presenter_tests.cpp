@@ -86,7 +86,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
              "BackupDataConfirmationKind::RestoreFullBackup",
              "BackupDataConfirmationKind::DeleteFullBackup",
              "BackupDataConfirmationKind::MigrateData",
-             "BackupDataConfirmationKind::ClearLayoutAndWidgetData"})
+             "BackupDataConfirmationKind::ClearLayout"})
     {
         Check(source.find(danger) != std::string::npos,
             "dangerous action is assigned a host ContentDialog purpose");

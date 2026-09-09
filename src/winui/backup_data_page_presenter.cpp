@@ -523,11 +523,11 @@ struct BackupDataPagePresenter::Impl
                 if (!CanInteract())
                     return;
                 BackupDataActionRequest action;
-                action.command = BackupDataCommand::ClearLayoutAndWidgetData;
+                action.command = BackupDataCommand::ClearLayout;
                 action.completionPolicy = BackupDataCompletionPolicy::
-                    ClearDirtyThenRestartApplication;
+                    ReloadDesktopLayout;
                 ConfirmThenInvoke(
-                    BackupDataConfirmationKind::ClearLayoutAndWidgetData,
+                    BackupDataConfirmationKind::ClearLayout,
                     std::move(action));
             });
     }
@@ -908,12 +908,12 @@ struct BackupDataPagePresenter::Impl
             std::wstring(migrationCard.description.Text().c_str()));
         SetButtonText(migrateButton,
             L("app.settings.migrate_all_data", L"Move in complete data…"));
-        clearDataCard.title.Text(L("settings.backup.clearData", L"Clear data"));
+        clearDataCard.title.Text(L("settings.backup.clearData", L"Clear layout"));
         clearDataCard.description.Text(L("settings.backup.clearData.description",
-            L"Back up and clear the desktop layout and widget data, then restart to initialize the grid. Keep component packages, general settings and backups."));
+            L"Create a layout backup, clear the desktop layout and widget storage, then reinitialize the grid. Keep component packages and general settings."));
         clearDataActionRow.SetText({},
             std::wstring(clearDataCard.description.Text().c_str()));
-        SetButtonText(clearDataButton, L("settings.backup.clearData", L"Clear data"));
+        SetButtonText(clearDataButton, L("settings.backup.clearData", L"Clear layout"));
         SetButtonText(cancelButton,
             L("app.settings.cancel", L"Cancel"));
 
@@ -943,7 +943,7 @@ struct BackupDataPagePresenter::Impl
             L("app.settings.migrate_all_data", L"Move in complete data…"),
             migrationCard.description.Text());
         SetButtonAutomation(clearDataButton,
-            L("settings.backup.clearData", L"Clear data"),
+            L("settings.backup.clearData", L"Clear layout"),
             clearDataCard.description.Text());
         SetButtonAutomation(cancelButton,
             L("app.settings.cancel", L"Cancel"), progressMessage.Text());

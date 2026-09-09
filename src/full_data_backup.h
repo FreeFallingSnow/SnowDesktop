@@ -58,12 +58,6 @@ public:
     std::vector<BackupInfo> List() const;
     OperationResult Create(
         const CancellationContext& cancellation = {});
-    /** Back up, then stage a fresh layout and widget storage for next startup.
-     * Installed/development packages, settings, backups and private credentials
-     * are retained. The active data tree is never edited by this operation.
-     */
-    OperationResult CreateAndQueueReset(
-        const CancellationContext& cancellation = {});
     OperationResult Export(const BackupInfo& backup,
         const std::filesystem::path& archive,
         const CancellationContext& cancellation = {}) const;

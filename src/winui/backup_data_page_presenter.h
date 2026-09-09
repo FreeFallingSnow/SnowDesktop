@@ -54,7 +54,7 @@ enum class BackupDataOperation : std::uint8_t
     RestoreFullBackup,
     DeleteFullBackup,
     MigrateData,
-    ClearLayoutAndWidgetData,
+    ClearLayout,
 };
 
 enum class BackupDataNoticeSeverity : std::uint8_t
@@ -119,7 +119,7 @@ enum class BackupDataCommand : std::uint8_t
     OpenDataDirectory,
     OpenFullBackupDirectory,
     OpenFullBackupItem,
-    ClearLayoutAndWidgetData,
+    ClearLayout,
 };
 
 /** Host-owned ContentDialog purpose. No dangerous action bypasses this gate. */
@@ -131,7 +131,7 @@ enum class BackupDataConfirmationKind : std::uint8_t
     RestoreFullBackup,
     DeleteFullBackup,
     MigrateData,
-    ClearLayoutAndWidgetData,
+    ClearLayout,
 };
 
 /** Host-owned picker purpose; the host must bind the picker to the settings HWND. */

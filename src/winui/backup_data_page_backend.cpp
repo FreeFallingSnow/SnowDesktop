@@ -618,6 +618,25 @@ WorkResult CreateLayoutBackup(
     return result;
 }
 
+WorkResult ClearLayout(const WorkContext& context, std::stop_token stop)
+{
+    // Layout backups include their component-storage companion.
+    WorkResult result = CreateLayoutBackup(context, MakeLayoutTimestampName(),
+        stop, false);
+    if (!result.ok)
+        return result;
+    if (stop.stop_requested() || !TryBeginNonInterruptible(context))
+    {
+        result.ok = false;
+        result.cancelled = true;
+        return result;
+    }
+    // The application STA clears disk and memory together; no directory
+    // replacement or restart transaction is queued.
+    result.layoutRestore = LayoutRestorePayload{"{}", std::string("{}\n"), true};
+    return result;
+}
+
 WorkResult RestoreLayoutBackup(
     const WorkContext& context,
     std::stop_token stop)
@@ -809,6 +828,8 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
         return CreateLayoutBackup(
             context, context.request.displayName, stop);
     }
+    if (context.request.command == BackupDataCommand::ClearLayout)
+        return ClearLayout(context, stop);
     if (context.request.command == BackupDataCommand::RestoreLayoutBackup)
         return RestoreLayoutBackup(context, stop);
     if (context.request.command == BackupDataCommand::DeleteLayoutBackup)
@@ -830,18 +851,6 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
             return result;
         }
         storageResult = manager.Create(cancellation);
-        break;
-    case BackupDataCommand::ClearLayoutAndWidgetData:
-        // Isolated Steam development profiles deliberately do not consume
-        // startup migration markers. Do not queue an unappliable reset there.
-        if (snowdesktop::deployment::GetRuntimeDeploymentContext().kind ==
-            snowdesktop::deployment::RuntimeDeploymentKind::SteamLocalDevelopment)
-        {
-            result.error = "data reset is unavailable in an isolated Steam development profile";
-            return result;
-        }
-        storageResult = manager.CreateAndQueueReset(cancellation);
-        result.replacementQueued = storageResult.ok;
         break;
     case BackupDataCommand::ImportAndRestoreFullBackup:
         if (context.request.selectedPath.empty())
@@ -1098,8 +1107,8 @@ BackupDataOperation ToOperation(BackupDataCommand command) noexcept
         return BackupDataOperation::DeleteFullBackup;
     case BackupDataCommand::MigrateData:
         return BackupDataOperation::MigrateData;
-    case BackupDataCommand::ClearLayoutAndWidgetData:
-        return BackupDataOperation::ClearLayoutAndWidgetData;
+    case BackupDataCommand::ClearLayout:
+        return BackupDataOperation::ClearLayout;
     default:
         return BackupDataOperation::None;
     }
@@ -1116,13 +1125,13 @@ BackupDataCompletionPolicy RequiredCompletionPolicy(
     case BackupDataCommand::DeleteFullBackup:
         return BackupDataCompletionPolicy::RefreshBackupLists;
     case BackupDataCommand::RestoreLayoutBackup:
+    case BackupDataCommand::ClearLayout:
         return BackupDataCompletionPolicy::ReloadDesktopLayout;
     case BackupDataCommand::ExportFullBackup:
         return BackupDataCompletionPolicy::ShowResultOnly;
     case BackupDataCommand::ImportAndRestoreFullBackup:
     case BackupDataCommand::RestoreFullBackup:
     case BackupDataCommand::MigrateData:
-    case BackupDataCommand::ClearLayoutAndWidgetData:
         return BackupDataCompletionPolicy::ClearDirtyThenRestartApplication;
     default:
         return BackupDataCompletionPolicy::None;
@@ -1145,8 +1154,7 @@ bool QueuesExternalReplacement(BackupDataCommand command) noexcept
 {
     return command == BackupDataCommand::ImportAndRestoreFullBackup ||
         command == BackupDataCommand::RestoreFullBackup ||
-        command == BackupDataCommand::MigrateData ||
-        command == BackupDataCommand::ClearLayoutAndWidgetData;
+        command == BackupDataCommand::MigrateData;
 }
 
 } // namespace
@@ -1247,8 +1255,8 @@ struct BackupDataPageBackend::State final
             return L("app.settings.layout_backups", L"Layout backups");
         case BackupDataCommand::MigrateData:
             return L("app.settings.data_migration", L"Data migration");
-        case BackupDataCommand::ClearLayoutAndWidgetData:
-            return L("settings.backup.clearData", L"Clear data");
+        case BackupDataCommand::ClearLayout:
+            return L("settings.backup.clearData", L"Clear layout");
         default:
             return L("app.settings.full_data_backups",
                 L"Complete data backups");
@@ -1285,9 +1293,9 @@ struct BackupDataPageBackend::State final
                 L"Deleting complete backup…");
         case BackupDataCommand::MigrateData:
             return L("settings.backup.progress.migrate", L"Staging data…");
-        case BackupDataCommand::ClearLayoutAndWidgetData:
+        case BackupDataCommand::ClearLayout:
             return L("settings.backup.clearData.progress",
-                L"Creating a backup and preparing to clear layout and widget data…");
+                L"Backing up the layout and widget storage, and reinitializing the grid…");
         default:
             return L("settings.backup.progress.refresh",
                 L"Refreshing backups…");
@@ -1325,9 +1333,9 @@ struct BackupDataPageBackend::State final
         case BackupDataCommand::MigrateData:
             return L("app.settings.migrate_data_success",
                 L"The data will be moved in after restart.");
-        case BackupDataCommand::ClearLayoutAndWidgetData:
+        case BackupDataCommand::ClearLayout:
             return L("settings.backup.clearData.success",
-                L"Backup created. SnowDesktop will restart and initialize the desktop grid.");
+                L"The layout and widget storage have been backed up and cleared. The grid has been reinitialized.");
         default:
             return L("settings.backup.success.generic",
                 L"The backup operation completed.");
@@ -1356,9 +1364,9 @@ struct BackupDataPageBackend::State final
         case BackupDataCommand::MigrateData:
             return L("app.settings.migrate_data_failed",
                 L"Data migration failed.");
-        case BackupDataCommand::ClearLayoutAndWidgetData:
+        case BackupDataCommand::ClearLayout:
             return L("settings.backup.clearData.failed",
-                L"Could not prepare the data reset. The current layout and widget data have been kept.");
+                L"Could not clear the layout.");
         default:
             return L("settings.backup.error.layoutOperation",
                 L"The layout backup operation failed.");
