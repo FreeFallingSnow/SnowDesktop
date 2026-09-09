@@ -1,9 +1,52 @@
 #include "tray_icon_controller.h"
+#include "tray_notification_window.h"
 
 #include "../constants.h"
 #include "../resource.h"
 
 #include <shellapi.h>
+
+namespace
+{
+LRESULT CALLBACK TrayNotificationWindowProc(
+    HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_NCCREATE)
+    {
+        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+        SetWindowLongPtrW(window, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+    }
+    if (message == kTrayCallbackMessage)
+    {
+        const HWND callbackWindow = reinterpret_cast<HWND>(
+            GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (callbackWindow && IsWindow(callbackWindow))
+            PostMessageW(callbackWindow, message, wParam, lParam);
+        return 0;
+    }
+    if (message == WM_NCDESTROY)
+        SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+}
+
+HWND snowdesktop::tray_notification::CreateOwnerWindow(HWND callbackWindow)
+{
+    if (!callbackWindow || !IsWindow(callbackWindow))
+        return nullptr;
+    WNDCLASSW type{};
+    type.lpfnWndProc = TrayNotificationWindowProc;
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpszClassName = L"SnowDesktopTrayNotificationWindow";
+    if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        return nullptr;
+    // Do not make the internal control window this window's owner: Shell may
+    // use the root owner's caption when choosing the visible source name.
+    return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        type.lpszClassName, L"SnowDesktop", WS_POPUP,
+        0, 0, 1, 1, nullptr, nullptr, type.hInstance, callbackWindow);
+}
 
 TrayIconController::~TrayIconController()
 {
@@ -33,33 +76,42 @@ bool TrayIconController::Add(HWND owner, bool force)
             0));
     }
 
+    owner_ = snowdesktop::tray_notification::CreateOwnerWindow(owner);
+    if (!owner_)
+        return false;
+
     NOTIFYICONDATAW data{};
     data.cbSize = sizeof(data);
-    data.hWnd = owner;
+    data.hWnd = owner_;
     data.uID = kTrayIconId;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = kTrayCallbackMessage;
     data.hIcon = icon_;
     wcscpy_s(data.szTip, L"SnowDesktop");
     if (!Shell_NotifyIconW(NIM_ADD, &data))
+    {
+        Remove();
         return false;
+    }
 
     added_ = true;
-    owner_ = owner;
     data.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &data);
     return true;
 }
 
-void TrayIconController::Remove(HWND fallbackOwner)
+void TrayIconController::Remove(HWND)
 {
-    if (!added_)
-        return;
-    NOTIFYICONDATAW data{};
-    data.cbSize = sizeof(data);
-    data.hWnd = owner_ ? owner_ : fallbackOwner;
-    data.uID = kTrayIconId;
-    Shell_NotifyIconW(NIM_DELETE, &data);
+    if (added_)
+    {
+        NOTIFYICONDATAW data{};
+        data.cbSize = sizeof(data);
+        data.hWnd = owner_;
+        data.uID = kTrayIconId;
+        Shell_NotifyIconW(NIM_DELETE, &data);
+    }
+    if (owner_)
+        DestroyWindow(owner_);
     added_ = false;
     owner_ = nullptr;
     activeNotificationId_.clear();

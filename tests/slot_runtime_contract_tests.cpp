@@ -14,6 +14,8 @@
 #include "app/shell_refresh_snapshot.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
+#include "app/tray_notification_window.h"
+#include "constants.h"
 #include "drag_input_rules.h"
 #include "ole_drag_rules.h"
 
@@ -1709,6 +1711,43 @@ void TestTrayCallbackClassification()
         "unhandled tray notifications must not leak into application behavior");
 }
 
+void TestTrayNotificationSourceAndRouting()
+{
+    const HWND callback = CreateWindowExW(0, L"STATIC", L"SnowDesktopControl",
+        WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(callback != nullptr, "create an isolated callback window for tray notification checks");
+    if (!callback) return;
+    const HWND notification = snowdesktop::tray_notification::CreateOwnerWindow(callback);
+    Check(notification != nullptr, "create a dedicated notification source window");
+    if (notification)
+    {
+        wchar_t caption[128]{};
+        GetWindowTextW(notification, caption, static_cast<int>(std::size(caption)));
+        Check(std::wstring(caption) == L"SnowDesktop" && !IsWindowVisible(notification) &&
+            GetAncestor(notification, GA_ROOTOWNER) == notification,
+            "system notifications use the software name without inheriting an internal root-owner caption");
+        GetWindowTextW(callback, caption, static_cast<int>(std::size(caption)));
+        Check(std::wstring(caption) == L"SnowDesktopControl",
+            "notification branding preserves the control caption used by older versions and tools");
+        for (const UINT action : {WM_CONTEXTMENU, WM_LBUTTONDBLCLK})
+        {
+            const WPARAM coordinates = MAKEWPARAM(123, 456);
+            const LPARAM event = MAKELPARAM(action, kTrayIconId);
+            SendMessageW(notification, kTrayCallbackMessage, coordinates, event);
+            MSG routed{};
+            Check(PeekMessageW(&routed, callback, kTrayCallbackMessage,
+                    kTrayCallbackMessage, PM_REMOVE) &&
+                routed.wParam == coordinates && routed.lParam == event,
+                "tray callback forwarding preserves action, icon ID and screen coordinates");
+        }
+        DestroyWindow(notification);
+        Check(IsWindow(callback), "destroying the notification source keeps the application control window alive");
+    }
+    DestroyWindow(callback);
+    Check(!snowdesktop::tray_notification::CreateOwnerWindow(nullptr),
+        "notification owners require a live callback window");
+}
+
 void TestSelectionControllerCoversEveryRegisteredRange()
 {
     SelectionController controller;
@@ -2117,6 +2156,7 @@ int main()
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestTrayCallbackClassification();
+    TestTrayNotificationSourceAndRouting();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
