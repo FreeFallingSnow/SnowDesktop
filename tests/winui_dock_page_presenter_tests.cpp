@@ -84,14 +84,9 @@ void TestPresenterContract(const std::filesystem::path& repository)
         Check(source.find(field) != std::string::npos,
             "the requested Dock/taskbar field has a real binding");
     }
-    Check(settingsHeader.find(
-              "bool allowDesktopContentOverlap = false;") !=
-                std::string::npos &&
-            settingsHeader.find("bool showOnlyWhenSummoned = false;") !=
-                std::string::npos &&
-            settingsHeader.find("bool autoHide = false;") ==
-                std::string::npos &&
-            settingsSource.find(
+    // Field placement and defaults are covered by layout persistence tests.
+    // This boundary only guards compatibility of the legacy Dock JSON keys.
+    Check(settingsSource.find(
               "ReadBoolField(text, \"allowDesktopContentOverlap\"") !=
                 std::string::npos &&
             settingsSource.find(
@@ -109,7 +104,7 @@ void TestPresenterContract(const std::filesystem::path& repository)
             settingsSource.find(
               "file << \"  \\\"autoHide\\\": \"") ==
                 std::string::npos,
-        "summon-only Dock display uses the new model and JSON key while accepting the legacy read key only");
+        "summon-only Dock persistence accepts the legacy JSON key only for reading");
     Check(settingsHeader.find(
               "NormalizeSummonOnlyDependencies(") == std::string::npos &&
             settingsSource.find(
