@@ -920,6 +920,15 @@ HRESULT DesktopApp::HandleOleDrop(
         *effect = DROPEFFECT_COPY;
     }
 
+    if (const auto destination = CaptureExternalSlotDestination(clientPoint, keyState))
+    {
+        *effect = DropExternalSlotContent(dataObject, *destination, *effect,
+            sourceUsesAsyncMode, dropPaths);
+        EndDragSession();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return S_OK;
+    }
+
     if (dragSession_.TargetRegion() == HitRegion::Handoff && dataObject)
     {
         // ── Handoff on item (desktop OR widget member) ──
@@ -2010,6 +2019,7 @@ HRESULT DesktopApp::HandleOleDrop(
     }
 
     if (dropPaths.empty() && dataObject && canCopyDrop &&
+        !sourceUsesAsyncMode &&
         (!bareDesktopTarget || bareDesktopUrl.empty()) &&
         (!bareDesktopTarget || delayedFileDescriptors.size() <= 1))
     {

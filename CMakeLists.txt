@@ -173,6 +173,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_website_icon.cpp
     src/website_icon.cpp
     src/app/app_drop_execution.cpp
+    src/app/app_external_slot_drop.cpp
     src/app/app_drop_preview.cpp
     src/app/app_drop_render.cpp
     src/app/app_floating_dock_interaction.cpp

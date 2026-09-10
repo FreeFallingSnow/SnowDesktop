@@ -13,6 +13,7 @@ using Paths = std::vector<std::wstring>;
 struct Content
 {
     Paths paths;
+    Paths pendingUrls;
     bool owned = false;
 };
 

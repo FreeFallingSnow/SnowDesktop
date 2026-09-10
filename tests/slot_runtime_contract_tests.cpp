@@ -1262,6 +1262,72 @@ void TestExternalDropContentRegressions()
     if (SUCCEEDED(initialized)) CoUninitialize();
 }
 
+void TestExternalContentSelectionMatrix()
+{
+    namespace content = snowdesktop::external_drop_content;
+    struct Scenario {
+        const char* name;
+        content::Paths files, image, inlineData, virtualFiles, urls, downloaded, shortcut, text;
+        content::Paths expected;
+        bool allowContent = true;
+        int expectedDownloads = 0;
+    };
+    const std::vector<Scenario> scenarios{
+        {"local files win", {L"local"}, {L"image"}, {}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"local"}},
+        {"embedded image wins", {}, {L"image"}, {L"inline"}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"image"}},
+        {"inline content wins", {}, {}, {L"inline"}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"inline"}},
+        {"all virtual files retained", {}, {}, {}, {L"first", L"second"},
+            {L"https://page"}, {L"download"}, {L"shortcut"}, {}, {L"first", L"second"}},
+        {"download before shortcut", {}, {}, {}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"download"}, true, 1},
+        {"download failure fallback", {}, {}, {}, {}, {L"https://image"},
+            {}, {L"shortcut"}, {}, {L"shortcut"}, true, 1},
+        {"plain text fallback", {}, {}, {}, {}, {}, {}, {}, {L"text"}, {L"text"}},
+        {"no copy permission", {}, {L"image"}, {L"inline"}, {L"virtual"},
+            {L"https://image"}, {L"download"}, {L"shortcut"}, {L"text"}, {}, false},
+        {"empty source rejected", {}, {}, {}, {}, {}, {}, {}, {}, {}},
+    };
+    for (const auto& scenario : scenarios)
+    {
+        for (const bool asynchronous : {false, true})
+        {
+            int downloads = 0;
+            int fileReads = 0;
+            content::Readers readers;
+            readers.files = [&] { ++fileReads; return scenario.files; };
+            readers.image = [&] { return scenario.image; };
+            readers.dataUrl = [&] { return scenario.inlineData; };
+            readers.virtualFiles = [&] { return scenario.virtualFiles; };
+            readers.urls = [&] { return scenario.urls; };
+            readers.download = [&](const content::Paths& urls) {
+                ++downloads;
+                Check(urls == scenario.urls, "download receives the complete candidate list");
+                return scenario.downloaded;
+            };
+            readers.shortcut = [&] { return scenario.shortcut; };
+            readers.text = [&] { return scenario.text; };
+            const auto result = content::Read(asynchronous, scenario.allowContent, readers);
+            Check(result.paths == scenario.expected &&
+                    downloads == scenario.expectedDownloads && fileReads == 1,
+                std::string(scenario.name) + ": preserve content priority and execute one selected path");
+            if (!result.paths.empty())
+                Check(result.owned == scenario.files.empty(),
+                    "borrowed source files and materialized content need different cleanup ownership");
+        }
+    }
+    int shortcuts = 0;
+    content::Readers deferred;
+    deferred.urls = [] { return content::Paths{L"https://image"}; };
+    deferred.shortcut = [&] { ++shortcuts; return content::Paths{L"shortcut"}; };
+    const auto pending = content::Read(false, true, deferred);
+    Check(pending.paths.empty() && pending.pendingUrls == content::Paths{L"https://image"} &&
+            shortcuts == 0,
+        "a UI-thread read must defer URL IO instead of prematurely creating a shortcut");
+}
+
 void TestRuntimeSourceTargetMatrix()
 {
     namespace expected = slot_drop_expectations;
@@ -2648,6 +2714,7 @@ int wmain(int argc, wchar_t** argv)
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();
+    TestExternalContentSelectionMatrix();
     TestExternalResolutionAndSessionMatrix();
     TestDragDropControllerOwnsTransportTransitions();
     TestModelReloadDeferralCoversRetainedDragLifecycle();

@@ -3858,6 +3858,25 @@ private:
     HRESULT HandleOleDragLeave() override;
     HRESULT HandleOleDrop(IDataObject* dataObject,
         DWORD keyState, POINTL point, DWORD* effect) override;
+    struct ExternalSlotDestination
+    {
+        DropPreviewList preview;
+        std::wstring widgetId;
+        DesktopWidgetType widgetType{};
+        std::wstring folderPath;
+        std::wstring luaWidgetId;
+        std::string luaSlotId;
+        size_t insertIndex = 0;
+        bool dockFolderPopup = false;
+    };
+    std::optional<ExternalSlotDestination> CaptureExternalSlotDestination(
+        POINT point, DWORD keyState);
+    DWORD DropExternalSlotContent(IDataObject* dataObject,
+        const ExternalSlotDestination& destination, DWORD allowedEffects,
+        bool asynchronousSource, const std::vector<std::wstring>& knownPaths);
+    bool CommitExternalSlotPaths(const ExternalSlotDestination& destination,
+        const std::vector<std::wstring>& paths, bool owned,
+        FileOperationCompletion completion, bool synchronously);
     HRESULT HandleOleQueryContinueDrag(
         BOOL escapePressed, DWORD keyState) override;
     HRESULT HandleOleGiveFeedback(DWORD effect) override;

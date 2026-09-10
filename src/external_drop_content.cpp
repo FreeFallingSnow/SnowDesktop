@@ -17,20 +17,24 @@ Paths ReadFilePaths(IDataObject* source)
         const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
         for (UINT index = 0; index < count; ++index)
         {
-            wchar_t path[MAX_PATH]{};
-            if (DragQueryFileW(drop, index, path, MAX_PATH) > 0)
-                paths.emplace_back(path);
+            const UINT length = DragQueryFileW(drop, index, nullptr, 0);
+            if (length == 0 || length > 32767) continue;
+            std::wstring path(length + 1, L'\0');
+            if (DragQueryFileW(drop, index, path.data(), length + 1) == length)
+            {
+                path.resize(length);
+                paths.push_back(std::move(path));
+            }
         }
     }
     ReleaseStgMedium(&medium);
     return paths;
 }
 
-Content Read(bool asynchronousSource, bool allowContent, const Readers& readers)
+Content Read(bool /*asynchronousSource*/, bool allowContent, const Readers& readers)
 {
-    // Preserve the current host behavior while exposing its execution boundary
-    // to regression tests. Async component ingress currently has no read path.
-    if (asynchronousSource) return {};
+    // Async sources reach this function on the worker after StartOperation.
+    // Capability affects scheduling/lifetime, never whether files are read.
     Content result;
     if (readers.files) result.paths = readers.files();
     if (!result.paths.empty() || !allowContent) return result;
@@ -39,6 +43,19 @@ Content Read(bool asynchronousSource, bool allowContent, const Readers& readers)
     if (!result.paths.empty()) return result;
     if (readers.dataUrl) result.paths = readers.dataUrl();
     if (!result.paths.empty()) return result;
+    if (readers.virtualFiles) result.paths = readers.virtualFiles();
+    if (!result.paths.empty()) return result;
+    const Paths urls = readers.urls ? readers.urls() : Paths{};
+    if (!urls.empty())
+    {
+        if (!readers.download)
+        {
+            result.pendingUrls = urls;
+            return result;
+        }
+        result.paths = readers.download(urls);
+        if (!result.paths.empty()) return result;
+    }
     if (readers.shortcut) result.paths = readers.shortcut();
     if (!result.paths.empty()) return result;
     if (readers.text) result.paths = readers.text();
