@@ -216,6 +216,25 @@ BOOL WINAPI UninstallHookFixture(HHOOK hook)
     return DestroyWindow(reinterpret_cast<HWND>(hook));
 }
 
+HANDLE hookWaitEntered = nullptr;
+unsigned hookInputWaitCalls = 0;
+
+DWORD WINAPI WaitForInputDuringHookStop(
+    DWORD count, const HANDLE* handles, BOOL waitAll, DWORD timeout, DWORD wakeMask)
+{
+    Expect(count == 1 && !waitAll && timeout == INFINITE && wakeMask == QS_ALLINPUT,
+        "hook pump waits for its stop event and input");
+    // Model the dump's input wake winning over an already-signaled stop event.
+    // Bound the broken implementation to two calls so this regression fails
+    // deterministically instead of hanging the test process in Stop()/join().
+    if (++hookInputWaitCalls > 1)
+        return WAIT_FAILED;
+    SetEvent(hookWaitEntered);
+    Expect(WaitForSingleObject(handles[0], 5000) == WAIT_OBJECT_0,
+        "caller signals shutdown while the hook pump waits for input");
+    return WAIT_OBJECT_0 + count;
+}
+
 void TestMouseHookRemainsResponsiveWhileCallerWaits()
 {
     const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -257,6 +276,27 @@ void TestMouseHookRemainsResponsiveWhileCallerWaits()
         "hook installation failure leaves no running monitor");
     hook.Stop();
     hookInstallShouldFail = false;
+    hookWaitEntered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Expect(hookWaitEntered != nullptr, "hook shutdown fixture event is available");
+    snowdesktop::LowLevelMouseHook stoppingHook({
+        &InstallHookFixture, &UninstallHookFixture, &WaitForInputDuringHookStop});
+    for (int run = 0; run != 2; ++run)
+    {
+        hookInputWaitCalls = 0;
+        hookUninstallThread = 0;
+        ResetEvent(hookWaitEntered);
+        Expect(stoppingHook.Start(instance, nullptr), "shutdown fixture can start and restart");
+        Expect(WaitForSingleObject(hookWaitEntered, 5000) == WAIT_OBJECT_0,
+            "hook pump enters input wait before shutdown");
+        stoppingHook.Stop();
+        Expect(hookInputWaitCalls == 1,
+            "a signaled stop exits the whole pump even when input wake wins");
+        Expect(!stoppingHook && hookUninstallThread == hookInstallThread &&
+                !IsWindow(hookFixtureWindow),
+            "input wake during shutdown still uninstalls on the hook thread");
+    }
+    CloseHandle(hookWaitEntered);
+    hookWaitEntered = nullptr;
     CloseHandle(answered);
     UnregisterClassW(hookFixtureClass, instance);
 }
