@@ -807,7 +807,7 @@ void DesktopApp::ApplyCollectionPopupBackdropAnimationFrame()
 void DesktopApp::UpdateCollectionPopupBackdrop()
 {
     const DesktopWidget* popup = GetOpenPopupWidget();
-    if (!collectionPopupGlassTheme_ || (popup && popup->fanPopup))
+    if (!collectionPopupGlassTheme_ || (popup && UsesCollectionPopupFan(*popup)))
     {
         collectionPopupBackdropCompositor_.Reset();
         return;

@@ -616,6 +616,11 @@ void DesktopApp::ShowItemContextMenu(
             dockFolderPopupSourceId_ != sourceId)
             return;
 
+        if (command == kContextPopupDefault || command == kContextPopupFan)
+        {
+            popupFanShowAll_ = false;
+            popupFanActionFocused_ = false;
+        }
         if (dockFolderPopupWidget_.fanPopup != dockFolderEntry->fanPopup)
         {
             ResetCollectionPopupAnimationCache();

@@ -996,6 +996,8 @@ void DesktopApp::ShowWidgetContextMenu(
             if ((!dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) ||
                 (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id))
             {
+                popupFanShowAll_ = false;
+                popupFanActionFocused_ = false;
                 ResetCollectionPopupAnimationCache();
                 popupAnimation_.ShowImmediately();
                 popupAnimation_.Configure(

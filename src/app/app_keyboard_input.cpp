@@ -156,6 +156,71 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
 
+    // A fan has a finite, spatially ordered set of items and one "Show all" action.
+    // Keep keyboard focus inside that visible set instead of selecting hidden files.
+    if (auto* popup = GetOpenPopupWidget(); !ctrl && !alt &&
+        IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup))
+    {
+        const int count = static_cast<int>(GetCollectionPopupFanVisibleCount(popupRect_));
+        int current = popupFanActionFocused_ ? count : -1;
+        for (int i = 0; current < 0 && i < count; ++i)
+        {
+            if (dockFolderPopupOpen_)
+            {
+                if (popup->folderEntries[i].selected) current = i;
+            }
+            else
+            {
+                const auto item = FindItemIndexByKey(popup->itemKeys[i]);
+                if (item < items_.size() && items_[item].selected) current = i;
+            }
+        }
+        if (key == VK_RETURN && current >= 0)
+        {
+            if (current == count)
+                ShowAllCollectionPopupItems();
+            else if (dockFolderPopupOpen_)
+            {
+                const auto path = popup->folderEntries[current].fullPath;
+                if (LaunchPathWithShortcutPolicy(hwnd_, path)) CloseCollectionPopup();
+            }
+            else
+            {
+                const auto item = FindItemIndexByKey(popup->itemKeys[current]);
+                if (item < items_.size() && LaunchDesktopItem(item)) CloseCollectionPopup();
+            }
+            return true;
+        }
+        if (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT ||
+            key == VK_HOME || key == VK_END || key == VK_TAB)
+        {
+            int next = current;
+            const bool forward = key == VK_RIGHT || (key == VK_TAB && !shift) ||
+                (key == VK_DOWN && CollectionPopupFanRootAbove()) ||
+                (key == VK_UP && !CollectionPopupFanRootAbove());
+            if (key == VK_HOME) next = 0;
+            else if (key == VK_END) next = count;
+            else if (current < 0) next = 0;
+            else if (key == VK_TAB) next = (current + (forward ? 1 : count)) % (count + 1);
+            else next = std::clamp(current + (forward ? 1 : -1), 0, count);
+            ClearSelection();
+            if (dockFolderPopupOpen_)
+                for (auto& entry : popup->folderEntries) entry.selected = false;
+            popupFanActionFocused_ = next == count;
+            if (next < count)
+            {
+                if (dockFolderPopupOpen_) popup->folderEntries[next].selected = true;
+                else
+                {
+                    const auto item = FindItemIndexByKey(popup->itemKeys[next]);
+                    if (item < items_.size()) items_[item].selected = true;
+                }
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+    }
+
     if (widgetEngine_ && !quickNavigationOpen_ &&
         !luaWidgetPanelRequest_.widgetId.empty() &&
         widgetEngine_->HandleHostViewKey(

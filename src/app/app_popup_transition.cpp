@@ -253,6 +253,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     ClearDockFolderPopupEntries();
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
+    popupFanShowAll_ = false;
+    popupFanActionFocused_ = false;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
     popupAnchoredToDock_ = false;
     collectionPopupDockHost_ = nullptr;

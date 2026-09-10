@@ -187,6 +187,11 @@ void DesktopApp::OpenDockFolderPopupAt(
     dockFolderPopupMappingWidgetId_.clear();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     popupScrollOffset_ = 0;
+    if (!reverseClosingAnimation)
+    {
+        popupFanShowAll_ = false;
+        popupFanActionFocused_ = false;
+    }
     popupHasAnchor_ = true;
     popupAnchoredToDock_ = false;
     collectionPopupDockHost_ = nullptr;
@@ -382,7 +387,7 @@ void DesktopApp::StartCollectionPopupAnimation(
     popupAnimation_.Configure(
         snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
         snowdesktop::animation::RuntimeDurationScale() *
-            (widget && widget->fanPopup ? 2.4 : 1.0));
+            (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0));
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
     if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
@@ -485,6 +490,8 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     ClearDockFolderPopupEntries();
     marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
+    popupFanShowAll_ = false;
+    popupFanActionFocused_ = false;
     popupHasAnchor_ = false;
     popupAnchoredToDock_ = false;
     collectionPopupDockHost_ = nullptr;

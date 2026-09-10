@@ -6,6 +6,8 @@ void DesktopApp::BeginRenameSelected(
     std::optional<RECT> dockRenameAnchor)
 {
     if (renameEdit_ != nullptr) return;
+    if (const auto* popup = GetOpenPopupWidget(); popup && UsesCollectionPopupFan(*popup))
+        ShowAllCollectionPopupItems();
     renameCommitPending_ = false;
 
     if (IsCollectionPopupInteractive() &&
@@ -280,7 +282,7 @@ void DesktopApp::BeginRenameSelected(
         !dockFolderPopupOpen_ &&
         popupWidgetIndex_ < widgets_.size() &&
         IsCollectionPopupInteractive() &&
-        (widgets_[popupWidgetIndex_].listMode || widgets_[popupWidgetIndex_].fanPopup);
+        UsesCollectionPopupList(widgets_[popupWidgetIndex_]);
     RECT textRect = popupListRename
         ? GetCollectionPopupItemTextRect(
             itemBounds)

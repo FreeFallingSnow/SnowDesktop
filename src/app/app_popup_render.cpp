@@ -13,7 +13,7 @@ void DesktopApp::DrawCollectionPopup(
     if (!ctx || !openWidget) return;
 
     const DesktopWidget& widget = *openWidget;
-    const bool fan = widget.fanPopup;
+    const bool fan = UsesCollectionPopupFan(widget);
     const auto popupMetrics =
         GetCollectionPopupLayoutMetrics(widget);
     const QuickNavTheme& popupTheme = collectionPopupLightTheme_
@@ -85,120 +85,119 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     const auto& popupKeys = widget.itemKeys;
-    PersonalizationSettings popupBackgroundAppearance =
-        collectionPopupAppearance_;
-    popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
-    RECT backgroundRect = popupRect_;
-    if (fan)
-        backgroundRect.bottom = backgroundRect.top + popupMetrics.headerHeight -
-            snowdesktop::collection_popup_layout::ScaleDimension(6, popupMetrics.scale);
-    DrawWidgetPanelBackground(
-        ctx, backgroundRect, 18.0f * popupMetrics.scale,
-        D2D1::ColorF(
-            collectionPopupAppearance_.widgetBgR,
-            collectionPopupAppearance_.widgetBgG,
-            collectionPopupAppearance_.widgetBgB,
-            std::clamp(
-                fan ? std::max(0.92f, collectionPopupAppearance_.widgetAlpha)
-                    : collectionPopupAppearance_.widgetAlpha,
-                0.0f, 1.0f)),
-        D2D1::ColorF(
-            collectionPopupAppearance_.widgetBorderR,
-            collectionPopupAppearance_.widgetBorderG,
-            collectionPopupAppearance_.widgetBorderB,
-            std::clamp(
-                collectionPopupAppearance_.widgetBorderAlpha,
-                0.0f, 1.0f)),
-        false,
-        std::clamp(collectionPopupAppearance_.widgetBorderWidth,
-            kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
-            popupMetrics.scale,
-        &popupBackgroundAppearance, false, 0, popupMetrics.scale);
-
-    const auto headerBounds =
-        snowdesktop::collection_popup_layout::
-            ResolveHeaderVerticalBounds(popupMetrics.scale);
-    RECT titleRect = snowdesktop::collection_popup_layout::
-        ResolveTitleRect(popupRect_, popupMetrics.scale);
-    if (dockFolderPopupOpen_)
-        titleRect.right =
-            GetDockFolderPopupSortButtonRect(
-                popupRect_).left -
-            snowdesktop::collection_popup_layout::
-                ScaleDimension(10, popupMetrics.scale);
-    std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
-        ? GetDemoCollectionCategoryTitle(widget)
-        : (widget.title.empty()
-            ? _LW("app.overlay.collection_default") : widget.title);
-    DrawD2DTextEllipsis(
-        ctx, title, titleRect,
-        itemTextFormat_.Get(),
-        popupTextColor(1.0f),
-        DWRITE_TEXT_ALIGNMENT_LEADING,
-        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-    if (dockFolderPopupOpen_)
+    if (!fan)
     {
-        const RECT sortRect =
-            GetDockFolderPopupSortButtonRect(
-                popupRect_);
-        const bool hovered =
-            popupAnimation_.IsInteractive() &&
-            PtInRect(
-                &sortRect,
-                lastMousePoint_) != FALSE;
-        DrawD2DRoundedRectangle(
-            ctx, sortRect, 8.0f * popupMetrics.scale,
-            hovered
-                ? popupTextColor(
-                    collectionPopupLightTheme_ ? 0.10f : 0.16f)
-                : popupTextColor(
-                    collectionPopupLightTheme_ ? 0.05f : 0.08f),
-            popupTextColor(
-                hovered
-                    ? (collectionPopupLightTheme_ ? 0.24f : 0.34f)
-                    : (collectionPopupLightTheme_ ? 0.12f : 0.20f)),
-            1.0f);
+        PersonalizationSettings popupBackgroundAppearance =
+            collectionPopupAppearance_;
+        popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
+        DrawWidgetPanelBackground(
+            ctx, popupRect_, 18.0f * popupMetrics.scale,
+            D2D1::ColorF(
+                collectionPopupAppearance_.widgetBgR,
+                collectionPopupAppearance_.widgetBgG,
+                collectionPopupAppearance_.widgetBgB,
+                std::clamp(
+                    collectionPopupAppearance_.widgetAlpha,
+                    0.0f, 1.0f)),
+            D2D1::ColorF(
+                collectionPopupAppearance_.widgetBorderR,
+                collectionPopupAppearance_.widgetBorderG,
+                collectionPopupAppearance_.widgetBorderB,
+                std::clamp(
+                    collectionPopupAppearance_.widgetBorderAlpha,
+                    0.0f, 1.0f)),
+            false,
+            std::clamp(collectionPopupAppearance_.widgetBorderWidth,
+                kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth) *
+                popupMetrics.scale,
+            &popupBackgroundAppearance, false, 0, popupMetrics.scale);
 
-        std::wstring sortLabel =
-            _LW("app.menu.sort_by");
-        switch (
-            snowdesktop::folder_sort_rules::
-                NormalizeMode(
-                    widget.folderSortMode))
-        {
-        case snowdesktop::folder_sort_rules::kName:
-            sortLabel =
-                _LW("app.menu.sort_name");
-            break;
-        case snowdesktop::folder_sort_rules::kType:
-            sortLabel =
-                _LW("app.menu.sort_type");
-            break;
-        case snowdesktop::folder_sort_rules::kModified:
-            sortLabel =
-                _LW("app.interact.sort_date");
-            break;
-        default:
-            break;
-        }
-        if (widget.folderSortMode !=
-            snowdesktop::folder_sort_rules::kManual)
-        {
-            sortLabel +=
-                widget.folderSortAscending
-                    ? L" ↑" : L" ↓";
-        }
-        RECT sortTextRect = sortRect;
-        OffsetRect(
-            &sortTextRect, 0,
-            headerBounds.sortLabelOffsetY);
+        const auto headerBounds =
+            snowdesktop::collection_popup_layout::
+                ResolveHeaderVerticalBounds(popupMetrics.scale);
+        RECT titleRect = snowdesktop::collection_popup_layout::
+            ResolveTitleRect(popupRect_, popupMetrics.scale);
+        if (dockFolderPopupOpen_)
+            titleRect.right =
+                GetDockFolderPopupSortButtonRect(
+                    popupRect_).left -
+                snowdesktop::collection_popup_layout::
+                    ScaleDimension(10, popupMetrics.scale);
+        std::wstring title = ShouldUseDemoCollectionIdentity(&widget)
+            ? GetDemoCollectionCategoryTitle(widget)
+            : (widget.title.empty()
+                ? _LW("app.overlay.collection_default") : widget.title);
         DrawD2DTextEllipsis(
-            ctx, sortLabel, sortTextRect,
+            ctx, title, titleRect,
             itemTextFormat_.Get(),
-            popupTextColor(0.88f),
-            DWRITE_TEXT_ALIGNMENT_CENTER,
+            popupTextColor(1.0f),
+            DWRITE_TEXT_ALIGNMENT_LEADING,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        if (dockFolderPopupOpen_)
+        {
+            const RECT sortRect =
+                GetDockFolderPopupSortButtonRect(
+                    popupRect_);
+            const bool hovered =
+                popupAnimation_.IsInteractive() &&
+                PtInRect(
+                    &sortRect,
+                    lastMousePoint_) != FALSE;
+            DrawD2DRoundedRectangle(
+                ctx, sortRect, 8.0f * popupMetrics.scale,
+                hovered
+                    ? popupTextColor(
+                        collectionPopupLightTheme_ ? 0.10f : 0.16f)
+                    : popupTextColor(
+                        collectionPopupLightTheme_ ? 0.05f : 0.08f),
+                popupTextColor(
+                    hovered
+                        ? (collectionPopupLightTheme_ ? 0.24f : 0.34f)
+                        : (collectionPopupLightTheme_ ? 0.12f : 0.20f)),
+                1.0f);
+
+            std::wstring sortLabel =
+                _LW("app.menu.sort_by");
+            switch (
+                snowdesktop::folder_sort_rules::
+                    NormalizeMode(
+                        widget.folderSortMode))
+            {
+            case snowdesktop::folder_sort_rules::kName:
+                sortLabel =
+                    _LW("app.menu.sort_name");
+                break;
+            case snowdesktop::folder_sort_rules::kType:
+                sortLabel =
+                    _LW("app.menu.sort_type");
+                break;
+            case snowdesktop::folder_sort_rules::kModified:
+                sortLabel =
+                    _LW("app.interact.sort_date");
+                break;
+            default:
+                break;
+            }
+            if (widget.folderSortMode !=
+                snowdesktop::folder_sort_rules::kManual)
+            {
+                sortLabel +=
+                    widget.folderSortAscending
+                        ? L" ↑" : L" ↓";
+            }
+            RECT sortTextRect = sortRect;
+            OffsetRect(
+                &sortTextRect, 0,
+                headerBounds.sortLabelOffsetY);
+            DrawD2DTextEllipsis(
+                ctx, sortLabel, sortTextRect,
+                itemTextFormat_.Get(),
+                popupTextColor(0.88f),
+                DWRITE_TEXT_ALIGNMENT_CENTER,
+                DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
@@ -206,7 +205,7 @@ void DesktopApp::DrawCollectionPopup(
     popupListStyle.type = widget.type;
     popupListStyle.bounds = popupRect_;
     popupListStyle.cellScale = popupMetrics.scale;
-    popupListStyle.listMode = widget.listMode;
+    popupListStyle.listMode = UsesCollectionPopupList(widget);
     popupListStyle.showDetails = widget.showDetails;
     popupListStyle.detailShowModified =
         widget.detailShowModified;
@@ -227,81 +226,76 @@ void DesktopApp::DrawCollectionPopup(
     Collection popupListRenderer(
         &popupListStyle, this);
     popupListRenderer.SetHostedFrame(&popupRect_);
-    if (widget.listMode && !fan)
+    if (UsesCollectionPopupList(widget) && !fan)
     {
         popupListRenderer.DrawDetailsHeader(
             ctx, content, collectionPopupLightTheme_);
     }
     ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     const size_t popupItemCount = GetPopupItemCount(widget);
-    const auto drawFanItem = [&](const RECT& row, const auto& item,
-        const DesktopItem* desktopItem) {
+    const size_t endItem = fan ? GetCollectionPopupFanVisibleCount(popupRect_) : popupItemCount;
+    const auto drawFanSlot = [&](size_t index, bool selected, bool cut, const auto& drawIcon) {
         namespace layout = snowdesktop::collection_popup_layout;
+        const auto pose = GetCollectionPopupFanItem(popupRect_, index);
         const bool hovered = popupAnimation_.IsInteractive() &&
-            PtInRect(&row, lastMousePoint_);
+            layout::FanItemContains(pose, lastMousePoint_);
         float progress = 1.0f;
-        D2D1_MATRIX_3X2_F transform{};
-        ctx->GetTransform(&transform);
         if (applyAnimation && animation.progress < 1.0f &&
             snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::Fade)
-        {
-            const POINT origin{
-                popupHasAnchor_ ? std::clamp(popupAnchorPoint_.x, content.left, content.right)
-                    : content.left,
-                popupHasAnchor_ ? std::clamp(popupAnchorPoint_.y, content.top, content.bottom)
-                    : content.top};
-            const float distance = std::abs((row.top + row.bottom) * 0.5f - origin.y) /
-                std::max(1L, content.bottom - content.top);
-            progress = layout::FanRevealProgress(animation.progress, distance);
-            const float scale = 0.5f + 0.5f * progress;
-            const float centerX = (row.left + row.right) * 0.5f;
-            const float centerY = (row.top + row.bottom) * 0.5f;
-            ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale,
-                    D2D1::Point2F(centerX, centerY)) *
-                D2D1::Matrix3x2F::Translation((origin.x - centerX) * (1.0f - progress),
-                    (origin.y - centerY) * (1.0f - progress)) * transform);
-        }
-        PopupOpacityScope rowOpacity(ctx, true, progress * (item.isCut ? 0.5f : 1.0f));
-        RECT pill = row;
-        const int inset = layout::ScaleDimension(3, popupMetrics.scale);
-        pill.top += inset;
-        pill.bottom -= inset;
-        const auto fill = item.selected
-            ? D2D1::ColorF(0.20f, 0.48f, 0.85f, 0.95f)
-            : D2D1::ColorF(collectionPopupAppearance_.widgetBgR,
-                collectionPopupAppearance_.widgetBgG, collectionPopupAppearance_.widgetBgB, 0.94f);
-        DrawD2DRoundedRectangle(ctx, pill, 12.0f * popupMetrics.scale, fill,
-            popupTextColor(hovered || item.selected ? 0.55f : 0.18f),
-            (hovered || item.selected ? 1.5f : 1.0f) * popupMetrics.scale);
-        const RECT iconRect = GetCollectionPopupItemIconRect(row);
-        const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
-        if (demo)
-        {
-            DrawDemoCollectionIdentityIcon(ctx, widget,
-                desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
-                iconRect, 1.0f);
-        }
-        else if (auto* icon = GetOrCreateD2DBitmap(item.iconBitmap,
-            ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
-            DrawIconBitmap(ctx, icon, iconRect);
-        else
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, iconRect, 1.0f);
-        if (!demo && ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut))
-            DrawShortcutArrowOverlay(ctx, iconRect, 1.0f);
-        const std::wstring text = demo ? GetDemoCollectionIdentityTitle(widget,
-            desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey) : item.name;
-        DrawD2DTextEllipsis(ctx, text, GetCollectionPopupItemTextRect(row),
-            itemTextFormat_.Get(), item.selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
+            progress = layout::FanRevealProgress(animation.progress,
+                static_cast<float>(index) / std::max<size_t>(1, endItem));
+        const D2D1_POINT_2F center = D2D1::Point2F(pose.center.x, pose.center.y);
+        const float originX = popupHasAnchor_ ? static_cast<float>(popupAnchorPoint_.x) : center.x;
+        const float originY = popupHasAnchor_ ? static_cast<float>(popupAnchorPoint_.y) :
+            static_cast<float>(CollectionPopupFanRootAbove() ? popupRect_.top : popupRect_.bottom);
+        const float scale = 0.25f + 0.75f * progress;
+        D2D1_MATRIX_3X2_F transform{};
+        ctx->GetTransform(&transform);
+        ctx->SetTransform(D2D1::Matrix3x2F::Rotation(pose.angle * progress, center) *
+            D2D1::Matrix3x2F::Scale(scale, scale, center) *
+            D2D1::Matrix3x2F::Translation((originX - center.x) * (1.0f - progress),
+                (originY - center.y) * (1.0f - progress)) * transform);
+        PopupOpacityScope slotOpacity(ctx, true, progress * (cut ? 0.5f : 1.0f));
+
+        // Only the filename has a small backing. The arc and its gaps stay transparent.
+        RECT shadow = pose.label;
+        OffsetRect(&shadow, 0, layout::ScaleDimension(2, popupMetrics.scale));
+        DrawD2DRoundedRectangle(ctx, shadow, 5.0f * popupMetrics.scale,
+            D2D1::ColorF(0, 0, 0, 0.16f), D2D1::ColorF(0, 0, 0, 0), 0);
+        const auto labelFill = selected ? D2D1::ColorF(0.16f, 0.43f, 0.82f, 0.95f) :
+            (collectionPopupLightTheme_ ? D2D1::ColorF(0.96f, 0.96f, 0.96f, hovered ? 0.96f : 0.86f) :
+                D2D1::ColorF(0.12f, 0.12f, 0.14f, hovered ? 0.88f : 0.72f));
+        DrawD2DRoundedRectangle(ctx, pose.label, 5.0f * popupMetrics.scale,
+            labelFill, D2D1::ColorF(0, 0, 0, 0), 0);
+        if (hovered || selected)
+            DrawD2DRoundedRectangle(ctx, pose.icon, 7.0f * popupMetrics.scale,
+                D2D1::ColorF(1, 1, 1, selected ? 0.18f : 0.10f),
+                D2D1::ColorF(1, 1, 1, 0.35f), popupMetrics.scale);
+        drawIcon(pose.icon);
+        RECT textRect = pose.label;
+        InflateRect(&textRect, -layout::ScaleDimension(8, popupMetrics.scale), 0);
+        DrawD2DTextEllipsis(ctx, GetCollectionPopupFanLabel(index), textRect,
+            itemTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         ctx->SetTransform(transform);
     };
-    const size_t firstItem = fan ? std::min(popupItemCount,
-        static_cast<size_t>(popupScrollOffset_ /
-            snowdesktop::collection_popup_layout::FanRowHeight(popupMetrics))) : 0;
-    const size_t endItem = fan ? std::min(popupItemCount, firstItem + 2 +
-        static_cast<size_t>(std::max(1L, content.bottom - content.top) /
-            snowdesktop::collection_popup_layout::FanRowHeight(popupMetrics))) : popupItemCount;
-    for (size_t i = firstItem; i < endItem; ++i)
+    const auto drawFanItem = [&](size_t index, const auto& item, const DesktopItem* desktopItem) {
+        drawFanSlot(index, item.selected, item.isCut, [&](const RECT& iconRect) {
+            const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
+            if (demo)
+                DrawDemoCollectionIdentityIcon(ctx, widget,
+                    desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
+                    iconRect, 1.0f);
+            else if (auto* icon = GetOrCreateD2DBitmap(item.iconBitmap,
+                ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
+                DrawIconBitmap(ctx, icon, iconRect);
+            else
+                DrawPlaceholderIcon(ctx, item.sysIconIndex, iconRect, 1.0f);
+            if (!demo && ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut))
+                DrawShortcutArrowOverlay(ctx, iconRect, 1.0f);
+        });
+    };
+    for (size_t i = 0; i < endItem; ++i)
     {
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
@@ -311,10 +305,10 @@ void DesktopApp::DrawCollectionPopup(
             FolderEntry& entry = dockFolderPopupWidget_.folderEntries[i];
             if (fan)
             {
-                drawFanItem(itemRect, entry, nullptr);
+                drawFanItem(i, entry, nullptr);
                 continue;
             }
-            if (widget.listMode)
+            if (UsesCollectionPopupList(widget))
             {
                 popupListRenderer.DrawListItem(
                     ctx, itemRect,
@@ -354,10 +348,10 @@ void DesktopApp::DrawCollectionPopup(
             if (fan)
             {
                 const auto& item = items_[itemIndex];
-                drawFanItem(itemRect, item, &item);
+                drawFanItem(i, item, &item);
                 continue;
             }
-            if (widget.listMode)
+            if (UsesCollectionPopupList(widget))
             {
                 DesktopItem& item = items_[itemIndex];
                 const bool useDemoIdentity =
@@ -408,7 +402,7 @@ void DesktopApp::DrawCollectionPopup(
     }
     for (size_t i = 0; i < popupItemCount; ++i)
     {
-        if (widget.listMode || fan) break;
+        if (UsesCollectionPopupList(widget) || fan) break;
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top ||
             itemRect.top >= content.bottom)
@@ -439,6 +433,30 @@ void DesktopApp::DrawCollectionPopup(
                     ? &widget : nullptr);
         }
     }
+    if (fan)
+    {
+        drawFanSlot(endItem, popupFanActionFocused_, false, [&](const RECT& iconRect) {
+            const float x = (iconRect.left + iconRect.right) * 0.5f;
+            const float y = (iconRect.top + iconRect.bottom) * 0.5f;
+            const float radius = (iconRect.right - iconRect.left) * 0.38f;
+            ComPtr<ID2D1SolidColorBrush> brush;
+            if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.15f, 0.17f, 0.65f), &brush)))
+            {
+                const auto circle = D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius);
+                ctx->FillEllipse(circle, brush.Get());
+                brush->SetColor(D2D1::ColorF(1, 1, 1, 0.95f));
+                ctx->DrawEllipse(circle, brush.Get(), 2.0f * popupMetrics.scale);
+                const float arm = radius * 0.38f;
+                const float stroke = 2.4f * popupMetrics.scale;
+                ctx->DrawLine(D2D1::Point2F(x - arm, y + arm),
+                    D2D1::Point2F(x + arm, y - arm), brush.Get(), stroke);
+                ctx->DrawLine(D2D1::Point2F(x - arm, y - arm),
+                    D2D1::Point2F(x + arm, y - arm), brush.Get(), stroke);
+                ctx->DrawLine(D2D1::Point2F(x + arm, y - arm),
+                    D2D1::Point2F(x + arm, y + arm), brush.Get(), stroke);
+            }
+        });
+    }
     ctx->PopAxisAlignedClip();
 
     if (widget.type == DesktopWidgetType::FolderMapping &&
@@ -462,7 +480,7 @@ void DesktopApp::DrawCollectionPopup(
         popupAnimation_.IsInteractive() &&
         PtInRect(&popupRect_, lastMousePoint_);
     popupHovered = popupHovered || popupScrollbarDragging_;
-    DrawScrollbarAt(
+    if (!fan) DrawScrollbarAt(
         ctx, content, contentHeight, visibleHeight,
         popupScrollOffset_, popupHovered,
         collectionPopupLightTheme_);

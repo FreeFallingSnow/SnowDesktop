@@ -436,7 +436,7 @@ void DesktopApp::DrawDynamicOverlays(
                 popupTargetRect = popup;
                 const RECT content =
                     GetCollectionPopupContentRect(popup);
-                clipViewport = (openPopupWidget->listMode || openPopupWidget->fanPopup)
+                clipViewport = (UsesCollectionPopupList(*openPopupWidget) || UsesCollectionPopupFan(*openPopupWidget))
                     ? snowdesktop::popup_drag_rules::
                         ExpandInsertionClipVertically(
                             content, popup,
@@ -502,11 +502,16 @@ void DesktopApp::DrawDynamicOverlays(
                 (targetRegion == HitRegion::SortBefore ||
                  targetRegion == HitRegion::SortAfter))
             {
-                if (openPopupWidget->fanPopup)
+                if (UsesCollectionPopupFan(*openPopupWidget))
+                {
+                    const auto visualRegion = CollectionPopupFanRootAbove() ? targetRegion :
+                        (targetRegion == HitRegion::SortAfter ? HitRegion::SortBefore : HitRegion::SortAfter);
                     targetSlot->DrawDropIndicatorWithStyle(
-                        ctx, targetRegion, BarStyle::HBar, 0.0f);
+                        ctx, visualRegion, BarStyle::HBar, 0.0f);
+                }
                 else
-                    targetSlot->DrawDropIndicator(ctx, targetRegion,
+                    targetSlot->DrawDropIndicatorWithStyle(ctx, targetRegion,
+                        UsesCollectionPopupList(*openPopupWidget) ? BarStyle::HBar : BarStyle::VBar,
                         static_cast<float>(kCollectionPopupGapX) * 0.5f);
             }
             else

@@ -194,56 +194,117 @@ inline int RequiredListRowCount(std::size_t itemCount)
         static_cast<int>(itemCount));
 }
 
-// Fan rows share a single vertical scroll coordinate with hit testing,
-// keyboard navigation and drag insertion. Curvature depends on the visible
-// position, so scrolling moves items along the arc instead of off its side.
+// A finite fan reserves its last slot for "Show all". Painting and hit testing
+// share the same icon, label and rotation rather than scrolling list rows.
 inline int FanRowHeight(const Metrics& metrics)
 {
-    return std::max(ScaleDimension(64, metrics.scale),
-        metrics.minimumListHeight + ScaleDimension(12, metrics.scale));
+    return std::max(ScaleDimension(72, metrics.scale),
+        metrics.minimumListHeight + ScaleDimension(24, metrics.scale));
 }
 
-inline int FanContentHeight(const Metrics& metrics, std::size_t count)
+inline int FanFrameHeight(const Metrics& metrics, std::size_t slots)
 {
     const auto pitch = static_cast<std::size_t>(FanRowHeight(metrics));
-    return static_cast<int>(std::min(count,
+    return ScaleDimension(128, metrics.scale) + static_cast<int>(std::min(
+        slots > 0 ? slots - 1 : 0,
         static_cast<std::size_t>(std::numeric_limits<int>::max() / 4) / pitch) * pitch);
 }
 
-inline RECT FanItemRect(const Metrics& metrics, const RECT& content,
-    std::size_t index, int scrollOffset, bool rootAbove, bool bendLeft)
+inline std::size_t FanSlotCapacity(const Metrics& metrics, int height)
 {
-    const int pitch = FanRowHeight(metrics);
-    const int width = std::max(1L, content.right - content.left);
-    const int height = std::max(1L, content.bottom - content.top);
-    const int bend = std::min(ScaleDimension(64, metrics.scale), width / 4);
-    const int top = content.top + FanContentHeight(metrics, index) - scrollOffset;
-    double t = std::clamp((top - content.top + pitch * 0.5) / height, 0.0, 1.0);
-    if (!rootAbove) t = 1.0 - t;
-    int shift = static_cast<int>(std::lround(bend * t * t));
-    if (bendLeft) shift = bend - shift;
-    const int gutter = std::min(ScaleDimension(10, metrics.scale), width / 8);
-    return { content.left + shift, top,
-        content.left + shift + std::max(1, width - bend - gutter), top + pitch };
+    return height < FanFrameHeight(metrics, 1) ? 0 :
+        1 + static_cast<std::size_t>((height - FanFrameHeight(metrics, 1)) / FanRowHeight(metrics));
 }
 
-inline RECT FanIconRect(const Metrics& metrics, const RECT& row)
+inline std::size_t FanVisibleItemCount(const Metrics& metrics, int height, std::size_t count)
 {
-    const int inset = ScaleDimension(5, metrics.scale);
-    const int size = std::max(1, std::min({ScaleDimension(48, metrics.scale),
-        static_cast<int>(row.bottom - row.top) - inset * 2,
-        static_cast<int>(row.right - row.left) / 3}));
-    const int top = row.top + (row.bottom - row.top - size) / 2;
-    return {row.left + inset, top, row.left + inset + size, top + size};
+    const auto slots = FanSlotCapacity(metrics, height);
+    return std::min(count, slots > 0 ? slots - 1 : 0);
 }
 
-inline RECT FanTextRect(const Metrics& metrics, const RECT& row)
+struct FanPoint { float x = 0; float y = 0; };
+struct FanItem
 {
-    RECT text = row;
-    text.left = FanIconRect(metrics, row).right + ScaleDimension(10, metrics.scale);
-    text.right = std::max(text.left + 1,
-        row.right - ScaleDimension(8, metrics.scale));
-    return text;
+    RECT icon{};
+    RECT label{};
+    FanPoint center{};
+    float angle = 0;
+};
+
+inline FanPoint RotateFanPoint(FanPoint point, FanPoint center, float angle)
+{
+    const double radians = angle * 3.14159265358979323846 / 180.0;
+    const double c = std::cos(radians), s = std::sin(radians);
+    const double x = point.x - center.x, y = point.y - center.y;
+    return {static_cast<float>(center.x + x * c - y * s),
+        static_cast<float>(center.y + x * s + y * c)};
+}
+
+inline RECT FanRotatedBounds(const RECT& rect, const FanItem& item)
+{
+    float left = std::numeric_limits<float>::max(), top = left;
+    float right = -left, bottom = -left;
+    for (const auto x : {rect.left, rect.right})
+    for (const auto y : {rect.top, rect.bottom})
+    {
+        const auto point = RotateFanPoint(
+            {static_cast<float>(x), static_cast<float>(y)}, item.center, item.angle);
+        left = std::min(left, point.x); right = std::max(right, point.x);
+        top = std::min(top, point.y); bottom = std::max(bottom, point.y);
+    }
+    return {static_cast<LONG>(std::floor(left)), static_cast<LONG>(std::floor(top)),
+        static_cast<LONG>(std::ceil(right)), static_cast<LONG>(std::ceil(bottom))};
+}
+
+inline RECT FanItemBounds(const FanItem& item)
+{
+    const auto icon = FanRotatedBounds(item.icon, item);
+    const auto label = FanRotatedBounds(item.label, item);
+    return {std::min(icon.left, label.left), std::min(icon.top, label.top),
+        std::max(icon.right, label.right), std::max(icon.bottom, label.bottom)};
+}
+
+inline bool FanItemContains(const FanItem& item, POINT point)
+{
+    const auto local = RotateFanPoint(
+        {static_cast<float>(point.x), static_cast<float>(point.y)}, item.center, -item.angle);
+    const auto inside = [&](const RECT& rect) {
+        return local.x >= rect.left && local.x < rect.right &&
+            local.y >= rect.top && local.y < rect.bottom;
+    };
+    return inside(item.icon) || inside(item.label);
+}
+
+inline int FanRootX(const Metrics& metrics, int width, bool mirrored)
+{
+    const int inset = ScaleDimension(110, metrics.scale);
+    return mirrored ? inset : width - inset;
+}
+
+inline FanItem ResolveFanItem(const Metrics& metrics, const RECT& popup,
+    std::size_t index, bool rootAbove, bool mirrored)
+{
+    const float t = std::min(1.0f, static_cast<float>(index) / 7.0f);
+    const int bend = static_cast<int>(std::round(ScaleDimension(64, metrics.scale) * t * t));
+    const int halfIcon = ScaleDimension(28, metrics.scale);
+    const int x = popup.left + FanRootX(metrics, popup.right - popup.left, mirrored) +
+        (mirrored ? -bend : bend);
+    const int fromRoot = ScaleDimension(46, metrics.scale) +
+        static_cast<int>(index) * FanRowHeight(metrics);
+    const int y = rootAbove ? popup.top + fromRoot : popup.bottom - fromRoot;
+    FanItem result;
+    result.center = {static_cast<float>(x), static_cast<float>(y)};
+    result.angle = 14.0f * t * (mirrored ? -1.0f : 1.0f) * (rootAbove ? -1.0f : 1.0f);
+    result.icon = {x - halfIcon, y - halfIcon, x + halfIcon, y + halfIcon};
+    const int gap = ScaleDimension(10, metrics.scale);
+    const int width = ScaleDimension(230, metrics.scale);
+    const int halfLabel = ScaleDimension(16, metrics.scale);
+    result.label = mirrored
+        ? RECT{result.icon.right + gap, y - halfLabel,
+            result.icon.right + gap + width, y + halfLabel}
+        : RECT{result.icon.left - gap - width, y - halfLabel,
+            result.icon.left - gap, y + halfLabel};
+    return result;
 }
 
 inline float FanRevealProgress(float progress, float distanceFromRoot)

@@ -1189,7 +1189,7 @@ void DesktopApp::OnMouseMoveAt(
                         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
                         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom)
                             continue;
-                        if (PtInRect(&itemRect, point))
+                        if (HitTestCollectionPopupItem(popupRect_, i, point))
                             return {
                                 popupWidget, popupWidget, 1, i, false,
                                 nullptr, popupRect_,
@@ -1197,6 +1197,11 @@ void DesktopApp::OnMouseMoveAt(
                                     PointerVisualLayer::Foreground };
                     }
                 }
+                if (UsesCollectionPopupFan(*popupWidget) &&
+                    snowdesktop::collection_popup_layout::FanItemContains(
+                        GetCollectionPopupFanItem(popupRect_, GetCollectionPopupFanVisibleCount(popupRect_)), point))
+                    return {popupWidget, popupWidget, 3, 0, true, nullptr, popupRect_,
+                        snowdesktop::widget_composition_layer_rules::PointerVisualLayer::Foreground};
                 return {
                     popupWidget, popupWidget, 2, 0, true,
                     nullptr, popupRect_,

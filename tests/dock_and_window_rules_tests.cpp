@@ -593,37 +593,56 @@ int main(int argc, char** argv)
     namespace popupLayout =
         snowdesktop::collection_popup_layout;
     {
-        // Protect reachability, geometry/hit-test agreement and bounded work
-        // when a fan contains far more entries than fit on screen.
+        // A finite fan must retain its overflow action and fully visible rotated
+        // click targets, even with large folders, edge mirroring and scaled pages.
         for (const float scale : {0.75f, 1.0f, 1.5f, 2.0f})
         {
             const auto metrics = popupLayout::ResolveMetrics(92, 116, 92, 116, scale);
-            const int pitch = popupLayout::FanRowHeight(metrics);
-            const RECT viewport{100, 100,
-                100 + popupLayout::ScaleDimension(320, scale), 100 + pitch * 6};
-            const int lastScroll = popupLayout::FanContentHeight(metrics, 100) - pitch * 6;
-            for (bool rootAbove : {false, true})
-            for (bool bendLeft : {false, true})
+            for (const size_t slots : {size_t{2}, size_t{5}, size_t{8}})
             {
-                const RECT first = popupLayout::FanItemRect(metrics, viewport, 0, 0, rootAbove, bendLeft);
-                const RECT sameSlot = popupLayout::FanItemRect(metrics, viewport, 40, pitch * 40, rootAbove, bendLeft);
-                Check(EqualRect(&first, &sameSlot),
-                    "scrolling must bring later fan entries into identical visible hit-test slots");
-                const RECT last = popupLayout::FanItemRect(metrics, viewport, 99, lastScroll, rootAbove, bendLeft);
-                Check(last.bottom == viewport.bottom && last.top >= viewport.top &&
-                    last.left >= viewport.left && last.right <= viewport.right,
-                    "the final fan item remains fully reachable inside the viewport at every scale and direction");
-                const RECT moving = popupLayout::FanItemRect(metrics, viewport, 2, pitch / 2, rootAbove, bendLeft);
-                const RECT icon = popupLayout::FanIconRect(metrics, moving);
-                const RECT text = popupLayout::FanTextRect(metrics, moving);
-                Check(icon.left >= moving.left && icon.bottom <= moving.bottom &&
-                    text.left > icon.right && text.right <= moving.right && text.right > text.left,
-                    "fan icon and rename text bounds must remain disjoint and within the clickable row");
-                const POINT center{(moving.left + moving.right) / 2, (moving.top + moving.bottom) / 2};
-                Check(PtInRect(&moving, center), "the rendered fan row center must be clickable after fractional scrolling");
+                const int height = popupLayout::FanFrameHeight(metrics, slots);
+                Check(popupLayout::FanVisibleItemCount(metrics, height, 100000) == slots - 1,
+                    "large folders must reserve one visible slot for Show all instead of hiding that action");
+                Check(popupLayout::FanVisibleItemCount(metrics, height, 1) == 1 &&
+                    popupLayout::FanVisibleItemCount(metrics, height, 0) == 0 &&
+                    popupLayout::FanVisibleItemCount(metrics, 1, 10) == 0,
+                    "short folders and insufficient space must not create phantom file items");
+                const RECT viewport{-150, 100,
+                    -150 + popupLayout::ScaleDimension(400, scale), 100 + height};
+                for (const bool rootAbove : {false, true})
+                for (const bool mirrored : {false, true})
+                {
+                    float previousY = rootAbove ? static_cast<float>(viewport.top) :
+                        static_cast<float>(viewport.bottom);
+                    for (size_t i = 0; i < slots; ++i)
+                    {
+                        const auto pose = popupLayout::ResolveFanItem(metrics, viewport, i, rootAbove, mirrored);
+                        const auto bounds = popupLayout::FanItemBounds(pose);
+                        Check(bounds.left >= viewport.left && bounds.right <= viewport.right &&
+                            bounds.top >= viewport.top && bounds.bottom <= viewport.bottom,
+                            "every rotated icon and long label, including Show all, must fit inside the host");
+                        Check(rootAbove ? pose.center.y > previousY : pose.center.y < previousY,
+                            "fan ordering must advance away from its source on both vertical edges");
+                        previousY = pose.center.y;
+                        const auto labelCenter = popupLayout::RotateFanPoint(
+                            {(pose.label.left + pose.label.right) * 0.5f,
+                                (pose.label.top + pose.label.bottom) * 0.5f}, pose.center, pose.angle);
+                        const POINT iconPoint{static_cast<LONG>(pose.center.x), static_cast<LONG>(pose.center.y)};
+                        const POINT labelPoint{static_cast<LONG>(std::round(labelCenter.x)),
+                            static_cast<LONG>(std::round(labelCenter.y))};
+                        Check(popupLayout::FanItemContains(pose, iconPoint) &&
+                            popupLayout::FanItemContains(pose, labelPoint),
+                            "painted icon and rotated filename must both activate the same file");
+                        const auto gap = popupLayout::RotateFanPoint(
+                            {mirrored ? (pose.icon.right + pose.label.left) * 0.5f :
+                                (pose.label.right + pose.icon.left) * 0.5f, pose.center.y}, pose.center, pose.angle);
+                        Check(!popupLayout::FanItemContains(pose,
+                            {static_cast<LONG>(std::round(gap.x)), static_cast<LONG>(std::round(gap.y))}) &&
+                            !popupLayout::FanItemContains(pose, {bounds.left - 2, bounds.top - 2}),
+                            "transparent gaps and outside points must not activate a fan item");
+                    }
+                }
             }
-            Check(popupLayout::FanContentHeight(metrics, 0) == 0,
-                "empty fan popups must not manufacture scrollable entries");
         }
         for (float distance : {0.0f, 0.5f, 1.0f})
         {
@@ -637,7 +656,7 @@ int main(int argc, char** argv)
             }
             Check(popupLayout::FanRevealProgress(0, distance) == 0 &&
                 popupLayout::FanRevealProgress(1, distance) == 1,
-                "all staggered fan rows must disappear and finish at the timeline endpoints");
+                "all staggered fan items must disappear and finish at the timeline endpoints");
         }
     }
     namespace shellVisibility =

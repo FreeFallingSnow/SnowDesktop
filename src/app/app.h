@@ -2876,6 +2876,16 @@ private:
     DesktopWidget* GetOpenPopupWidget();
     const DesktopWidget* GetOpenPopupWidget() const;
     size_t GetPopupItemCount(const DesktopWidget& widget) const;
+    bool UsesCollectionPopupFan(const DesktopWidget& widget) const;
+    bool UsesCollectionPopupList(const DesktopWidget& widget) const;
+    bool CollectionPopupFanRootAbove() const;
+    RECT GetCollectionPopupFanWorkArea(const DesktopWidget& widget) const;
+    size_t GetCollectionPopupFanVisibleCount(const RECT& popup) const;
+    std::wstring GetCollectionPopupFanLabel(size_t index) const;
+    snowdesktop::collection_popup_layout::FanItem GetCollectionPopupFanItem(
+        const RECT& popup, size_t index) const;
+    bool HitTestCollectionPopupItem(const RECT& popup, size_t index, POINT point) const;
+    void ShowAllCollectionPopupItems();
     std::vector<Item*>
         GetDockFolderPopupSelectedItems();
     /** @brief 判断放置目标是否会改变当前打开的 Dock 文件夹弹窗。 */
@@ -4015,6 +4025,9 @@ private:
     bool popupAnimationCompositorDriven_ = false;
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
+    // Per-open presentation only; never persisted over the object's preference.
+    bool popupFanShowAll_ = false;
+    bool popupFanActionFocused_ = false;
     bool popupHasAnchor_ = false;
     bool popupAnchoredToDock_ = false;
     // A shared popup keeps its own DockHost association; pointer selection
