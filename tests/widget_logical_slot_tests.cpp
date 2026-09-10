@@ -282,12 +282,37 @@ void TestBoundedUndoRedoHistory()
             model.Find("primaryApp")->items.size() == 1,
         "redo must restore the forward slot model and metadata");
 
+    Check(history.Undo(model, change, error) && history.CanRedo(),
+        "a new branch fixture must start with a pending redo transaction");
     previous = model;
-    Check(model.Clear("primaryApp", change, error),
+    Check(model.Bind("primaryApp",
+            Item("app.reference", "Notes", "app:notes"), change, error),
         "a new branch mutation must succeed");
     history.Record(std::move(previous), change);
-    Check(!history.CanRedo(),
+    Check(!history.CanRedo() && !history.Redo(model, change, error) &&
+            model.Find("primaryApp")->items.front().reference == "app:notes",
         "recording a new slot transaction must discard the redo branch");
+
+    LogicalSlotHistory bounded;
+    for (std::size_t index = 0; index < LogicalSlotHistory::MaximumEntries + 2; ++index)
+    {
+        previous = model;
+        Check(model.Bind("primaryApp", Item("app.reference", "History",
+                "app:history-" + std::to_string(index)), change, error),
+            "each bounded-history fixture must replace the binding");
+        bounded.Record(std::move(previous), change);
+    }
+    for (std::size_t remaining = LogicalSlotHistory::MaximumEntries;
+         remaining > 0; --remaining)
+    {
+        Check(bounded.Undo(model, change, error) &&
+                model.Find("primaryApp")->items.front().reference ==
+                    "app:history-" + std::to_string(remaining),
+            "bounded undo must restore each retained model in reverse order");
+    }
+    Check(!bounded.CanUndo() && !bounded.Undo(model, change, error) &&
+            model.Find("primaryApp")->items.front().reference == "app:history-1",
+        "the oldest overflowed history entries must be unavailable");
 }
 }
 

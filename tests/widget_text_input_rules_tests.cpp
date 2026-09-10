@@ -1,6 +1,7 @@
 #include "widget_text_input_rules.h"
 
 #include <dwrite.h>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -226,19 +227,31 @@ void TestWrappedLineVerticalCaretMovement()
         return;
 
     const std::size_t initialCursor = 1;
+    float initialX = 0.0f, initialY = 0.0f;
+    DWRITE_HIT_TEST_METRICS initialHit{};
+    Check(SUCCEEDED(layout->HitTestTextPosition(
+            static_cast<UINT32>(initialCursor), FALSE,
+            &initialX, &initialY, &initialHit)),
+        "the initial caret must have a measurable visual position");
     const auto down = ResolveHostInputVerticalCaretPosition(
         layout.Get(), text, initialCursor,
         HostInputVerticalDirection::Down);
-    Check(down && *down > initialCursor,
-        "Down must move the caret to a later auto-wrapped visual line");
+    Check(down.has_value(), "Down must resolve a visual caret position");
     if (!down)
         return;
+    float downX = 0.0f, downY = 0.0f;
+    DWRITE_HIT_TEST_METRICS downHit{};
+    Check(SUCCEEDED(layout->HitTestTextPosition(
+            static_cast<UINT32>(*down), FALSE, &downX, &downY, &downHit)) &&
+            std::abs(downY - (initialY + initialHit.height)) < 0.1f &&
+            std::abs(downX - initialX) < 0.1f,
+        "Down must retain the horizontal caret position on the adjacent visual line");
 
     const auto up = ResolveHostInputVerticalCaretPosition(
         layout.Get(), text, *down,
         HostInputVerticalDirection::Up);
-    Check(up && *up < *down,
-        "Up must move the caret to an earlier auto-wrapped visual line");
+    Check(up && *up == initialCursor,
+        "Up must return to the original visual position in equal-width wrapped text");
 
     const auto firstLineUp = ResolveHostInputVerticalCaretPosition(
         layout.Get(), text, 0,
