@@ -6,7 +6,7 @@
 
 ## 清单与评估方法
 
-重新读取配置后的 `ctest --test-dir .build -C Release --show-only=json-v1`，并与 `CMakeLists.txt` 中的 `snowdesktop_add_test`、脚本和附加参数登记对照：117 个条目，113 个 C++ 测试可执行文件，2 个脚本条目，另有 2 个条目通过不同参数复用图标测试程序。不是 117 个独立业务场景。
+起始时重新读取配置后的 `ctest --test-dir .build -C Release --show-only=json-v1`，并与 CMake、脚本和附加参数登记对照：117 个条目，113 个 C++ 测试可执行文件，2 个脚本条目，另有 2 个条目通过不同参数复用图标测试程序。第六批后仍保留同样的 117 个测试名和标签，C++ 程序减至 107 个，七个页面条目复用一个程序。条目数不代表独立业务场景数。表内结论记录初评风险；源码链接跟随已实施的合并更新，验证状态见实施记录。
 
 每个条目先核对源文件及入口，再阅读用例断言、夹具/替身和相关生产边界；对发现的薄弱断言做定向对照。静态评估不等于用例执行通过，未做的变异、环境或实机验证要保留边界。仅有自动扫描信号的条目不计为已评估。大型条目按入口、用例组、代表性断言和高风险夹具检查；本表是逐条目的风险评估，不是逐行或每个断言均已完成变异验证的认证。
 
@@ -94,6 +94,10 @@
 
 组件预览测试会移动系统鼠标，仅成功路径恢复；应使用隔离桌面或确保失败也恢复。作者预览 CLI 的同步管道读取位于 120 秒子进程等待之前，挂起的子进程可使测试到不了超时检查。部分更新/包/工坊安全用例在无法创建链接时跳过，却仍汇总成功；需明确已执行与跳过的场景。这些判断来自控制流审查，未运行挂起或权限故障注入。
 
+### TA-20：首次定向构建依赖尚不存在的可执行文件
+
+第六批实际复现：新公共测试程序尚未构建，CTest JSON 省略 `command`，`test_manager.ps1` 在严格模式下读取该字段直接报错，尚未进入构建。这是测试基础设施问题。改为由 CMake 为测试声明必需的可执行文件，脚本在 `command` 缺失时从 CTest 的 `REQUIRED_FILES` 推导目标；名称与标签继续由 CMake 提供，没有手写另一份目标清单。未知或无法解析的目标仍明确报错。
+
 ## 逐项记录
 
 “待评估”表示尚未给出代码审查结论；“评估中”表示已发现部分问题但条目内其他用例尚待阅读；“已评估”是静态价值与边界评估完成，不表示已做完整变异或实机验收。建议运行范围只用于本条目及其依赖发生变化时的定向选择，不能替代完整影响分析。
@@ -152,15 +156,15 @@
 | 46. `settings_search_index` | [settings_search_index_tests.cpp](../tests/settings_search_index_tests.cpp) | 已评估 / 保留 | 真实索引/路由，固定中文/Unicode多词、排序、限制和换语言重建；隐藏、卸载及条件页不泄漏有负向断言；目录为输入，真实设置入口映射需另验 | 搜索/导航/可见性定向 | 0.01 |
 | 47. `winui_settings_navigation` | [winui_settings_navigation_tests.cpp](../tests/winui_settings_navigation_tests.cpp) | 已评估 / 改写 | 真实导航状态机覆盖历史、代际、隐藏页及详情父页，应保留；后 800 余行仅源码/XAML 搜索并重复共享控件/宿主测试，巨型合取难定位。删除无契约的排列/尺寸扫描，页面路由与交互改实际连接断言 | 导航状态定向；页面连接和共享控件分别验证 | 0.02 |
 | 48. `hotkey_recorder_rules` | [hotkey_recorder_rules_tests.cpp](../tests/hotkey_recorder_rules_tests.cpp) | 已评估 / 保留 | 真实录制状态机，独立按键/IME输入、代际与请求失效、冲突/取消/提交预期；可用性结果注入，不证明实际全局热键注册或 WinUI 焦点事件接入 | 快捷键状态机定向 | 0.01 |
-| 49. `winui_personalization_page_presenter` | [winui_personalization_page_presenter_tests.cpp](../tests/winui_personalization_page_presenter_tests.cpp) | 已评估 / 改写 | 全部为源码搜索，字段出现即称真实绑定，事件名/常量即称预览合并与取消；含换行依赖及共享控件重复（TA-01/11），应改真实控件/回调行为 | 外观页面绑定与共享控件；静态约束合并 | 0.01 |
-| 50. `winui_desktop_page_presenter` | [winui_desktop_page_presenter_tests.cpp](../tests/winui_desktop_page_presenter_tests.cpp) | 已评估 / 改写 | 全部为源码搜索，量化表达式/提交事件/对齐顺序未被执行；共享控件重复且部分 find 顺序无 npos 检查。保留旧配置兼容风险，改真实绑定/存储验证（TA-11） | 桌面设置绑定/控件与持久化联动 | 0.01 |
-| 51. `winui_dock_page_presenter` | [winui_dock_page_presenter_tests.cpp](../tests/winui_dock_page_presenter_tests.cpp) | 已评估 / 改写 | 只扫描源码字段、事件和多行绑定文本，不能证明 Dock 提交、初始化抑制或迁移执行；共享控件检查重复（TA-11）。保留设置更新/旧配置风险，改真实绑定与持久结果断言 | Dock 设置行为定向；共享控件统一验证 | 0.02 |
-| 52. `winui_home_about_page_presenter` | [winui_home_about_page_presenter_tests.cpp](../tests/winui_home_about_page_presenter_tests.cpp) | 已评估 / 改写 | 全部为源码搜索，状态代际、商店动作、五次点击、焦点和本地化均未执行；禁止直接网络/Shell 的架构边界可保留，路由/链接改实际模型对照 | 首页/关于状态与动作；架构约束合并 | 0.01 |
+| 49. `winui_personalization_page_presenter` | [winui_presenter_boundary_tests.cpp](../tests/winui_presenter_boundary_tests.cpp) | 已评估 / 改写 | 全部为源码搜索，字段出现即称真实绑定，事件名/常量即称预览合并与取消；含换行依赖及共享控件重复（TA-01/11），应改真实控件/回调行为 | 外观页面绑定与共享控件；静态约束合并 | 0.01 |
+| 50. `winui_desktop_page_presenter` | [winui_presenter_boundary_tests.cpp](../tests/winui_presenter_boundary_tests.cpp) | 已评估 / 改写 | 全部为源码搜索，量化表达式/提交事件/对齐顺序未被执行；共享控件重复且部分 find 顺序无 npos 检查。保留旧配置兼容风险，改真实绑定/存储验证（TA-11） | 桌面设置绑定/控件与持久化联动 | 0.01 |
+| 51. `winui_dock_page_presenter` | [winui_presenter_boundary_tests.cpp](../tests/winui_presenter_boundary_tests.cpp) | 已评估 / 改写 | 只扫描源码字段、事件和多行绑定文本，不能证明 Dock 提交、初始化抑制或迁移执行；共享控件检查重复（TA-11）。保留设置更新/旧配置风险，改真实绑定与持久结果断言 | Dock 设置行为定向；共享控件统一验证 | 0.02 |
+| 52. `winui_home_about_page_presenter` | [winui_presenter_boundary_tests.cpp](../tests/winui_presenter_boundary_tests.cpp) | 已评估 / 改写 | 全部为源码搜索，状态代际、商店动作、五次点击、焦点和本地化均未执行；禁止直接网络/Shell 的架构边界可保留，路由/链接改实际模型对照 | 首页/关于状态与动作；架构约束合并 | 0.01 |
 | 53. `settings_update_rules` | [settings_update_rules_tests.cpp](../tests/settings_update_rules_tests.cpp) | 已评估 / 增强 | 真实变更分类与 Dock 关联偏好恢复，固定正反样本；AcrylicDarkPreset 是空替身，不能验证外观默认值；Dock 快捷键分类缺正例，宜补单字段变化表 | 设置更新分类/Dock 规则定向 | 0.01 |
 | 54. `auto_start_rules` | [auto_start_rules_tests.cpp](../tests/auto_start_rules_tests.cpp) | 已评估 / 保留 | 真实启动状态/归属/迁移决策与固定标记字节，未知状态不误启用；不写注册表或系统任务，不能证明开机实效或不同系统版本兼容 | 自启动规则定向；系统操作另验 | 0.01 |
-| 55. `winui_widget_settings_presenter` | [winui_widget_settings_presenter_tests.cpp](../tests/winui_widget_settings_presenter_tests.cpp) | 已评估 / 改写 | 只扫描源码，类型与控件分别存在不能证明映射正确；密码清理、回滚、代际拒绝和异步搜索只有标记。共享控件与布局检查重复，应改真实服务/页面连接断言并保留安全边界 | 组件设置映射/秘密通道/迟到结果联动 | 0.02 |
-| 56. `winui_widgets_page_presenter` | [winui_widgets_page_presenter_tests.cpp](../tests/winui_widgets_page_presenter_tests.cpp) | 已评估 / 改写 | 全为源码搜索；命令/权限/代际字段存在不能证明动作被正确门禁，布局、展开和差量刷新大量绑定实现文本。保留已知崩溃边界及禁止直接 I/O 等约束，补真实来源切换、确认和迟到结果行为 | 组件管理页面绑定；共享架构合并 | 0.02 |
-| 57. `winui_backup_data_page_presenter` | [winui_backup_data_page_presenter_tests.cpp](../tests/winui_backup_data_page_presenter_tests.cpp) | 已评估 / 改写 | 只扫描确认、取消、代际和重启标记，未执行危险操作门禁或迟到回调；布局常量与排版断言收益低。保留禁止 presenter 直接文件操作等负向边界，补可观察行为 | 备份确认/取消/恢复定向；架构守卫合并 | 0.01 |
+| 55. `winui_widget_settings_presenter` | [winui_presenter_boundary_tests.cpp](../tests/winui_presenter_boundary_tests.cpp) | 已评估 / 改写 | 只扫描源码，类型与控件分别存在不能证明映射正确；密码清理、回滚、代际拒绝和异步搜索只有标记。共享控件与布局检查重复，应改真实服务/页面连接断言并保留安全边界 | 组件设置映射/秘密通道/迟到结果联动 | 0.02 |
+| 56. `winui_widgets_page_presenter` | [winui_presenter_boundary_tests.cpp](../tests/winui_presenter_boundary_tests.cpp) | 已评估 / 改写 | 全为源码搜索；命令/权限/代际字段存在不能证明动作被正确门禁，布局、展开和差量刷新大量绑定实现文本。保留已知崩溃边界及禁止直接 I/O 等约束，补真实来源切换、确认和迟到结果行为 | 组件管理页面绑定；共享架构合并 | 0.02 |
+| 57. `winui_backup_data_page_presenter` | [winui_presenter_boundary_tests.cpp](../tests/winui_presenter_boundary_tests.cpp) | 已评估 / 改写 | 只扫描确认、取消、代际和重启标记，未执行危险操作门禁或迟到回调；布局常量与排版断言收益低。保留禁止 presenter 直接文件操作等负向边界，补可观察行为 | 备份确认/取消/恢复定向；架构守卫合并 | 0.01 |
 | 58. `winui_backup_data_page_backend` | [backup_data_page_backend_tests.cpp](../tests/backup_data_page_backend_tests.cpp) | 已评估 / 改写 | 真实 BackupOperationControl 取消/提交互斥及 64 次竞争应保留；其余存储适配、恢复原子性、代际与重启仅搜索源码。20 ms 未就绪检查缺 worker 到达屏障，需增强确定性；不能据此证明备份恢复成功 | 取消状态机定向；真实恢复连接另验 | 0.04 |
 | 59. `winui_widgets_page_backend` | [widgets_page_backend_tests.cpp](../tests/widgets_page_backend_tests.cpp) | 已评估 / 改写 | 真实操作账本覆盖并发项独立释放与身份拒绝，应保留；其余安装文件锁、权限扩展、来源同步和卸载结论来自源码搜索，甚至依赖说明注释。需实际包文件/迟到结果/失败恢复验证 | 包身份与权限/卸载/异步联动 | 0.02 |
 | 60. `winui_settings_window_host` | [winui_settings_window_host_tests.cpp](../tests/winui_settings_window_host_tests.cpp) | 已评估 / 改写 | 1350 行纯源码/XAML 搜索，没有创建设置窗口；包含注释、精确尺寸/排版和 catch 数量断言，不能证明激活、标题栏、关闭资源或工作集下降。保留宿主架构负向约束，路由表改实际数据验证，生命周期和显示需对应行为证据 | 设置窗口生命周期/消息/路由；视觉实测 | 0.02 |
@@ -280,3 +284,11 @@
 复核并修正 TA-18 中关于 ZIP 的初步解释：当前解包器先读取本地条目，缺中央目录并非已经证实的提前失败原因。将夹具改名为 `MakeStoredZipEntryFragment`，明确它不是完整包；组件路径越界、大小写冲突和备份路径越界均检查具体错误码/诊断，避免随后“缺清单”的错误掩盖路径校验失效。原有完整导出包的成功基线保留。
 
 执行 `scripts/test.bat name application_data_lifecycle`：目标编译及 1/1 通过，执行 3.82 秒。此项改动只加强测试判定，没有修改 ZIP 解析或扩大支持格式。没有运行全量或宿主标准构建。
+
+### 第六批：合并页面源码检查并修正首次构建
+
+七个纯源码页面测试（个性化、桌面、Dock、主页/关于、组件设置、组件列表、备份）共用 `SnowDesktopWinUiPresenterBoundaryTests`，按参数检查对应页面。删除反复搜索共享控件、尺寸、注释、字段和正向调用的程序副本，保留直接 I/O、线程、权限、明文秘密、确认/选择器和宿主依赖等负向边界。原 CTest 名称、标签及 60 秒上限保留。实际控件提交、取消回滚、页面焦点和迟到回调仍需要真实行为测试，不再由这些扫描宣称已覆盖；含真实状态机的导航/backend 等其他条目没有并入。
+
+同时修正 TA-20：CMake 为原生测试及复用入口生成 `REQUIRED_FILES`；其语义是执行前检查必要文件存在，不能代替构建，参见 [CMake 官方文档](https://cmake.org/cmake/help/latest/prop_test/REQUIRED_FILES.html)。脚本只在 CTest 尚无命令时使用该元数据推导目标。
+
+验证：新程序从不存在到 `scripts/test.bat name "^winui_(personalization_page|desktop_page|dock_page|home_about_page|widget_settings|widgets_page|backup_data_page)_presenter$"` 实际构建成功，7/7 通过，执行 0.16 秒。重新查询清单确认 117 个名称及各自标签与基线完全一致，C++ 程序由 113 减为 107，所有原生条目的必需文件与命令吻合；零匹配筛选退出 1。未宣称冷构建耗时的比例收益。由于改动涉及 CMake 与选择器，稳定收尾前必须完成全量测试，目前尚未运行。

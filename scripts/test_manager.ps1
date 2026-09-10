@@ -41,10 +41,22 @@ function Get-TestSelection {
         ConvertFrom-Json
     $tests = @($manifest.tests)
     $targets = foreach ($test in $tests) {
-        if (-not $test.command -or $test.command.Count -eq 0) {
-            continue
+        $commandProperty = $test.PSObject.Properties["command"]
+        if ($null -ne $commandProperty -and $commandProperty.Value.Count -gt 0) {
+            $executable = [IO.Path]::GetFileName([string]$commandProperty.Value[0])
         }
-        $executable = [IO.Path]::GetFileName([string]$test.command[0])
+        else {
+            # CTest omits command when the executable has not been built yet.
+            # CMake still publishes its generated path in REQUIRED_FILES.
+            $requiredExecutables = @($test.properties |
+                Where-Object name -eq "REQUIRED_FILES" |
+                ForEach-Object { $_.value } |
+                Where-Object { [IO.Path]::GetFileName([string]$_) -match "^SnowDesktop.+Tests\.exe$" })
+            if ($requiredExecutables.Count -ne 1) {
+                throw "Cannot resolve the build target for test '$($test.name)' from CTest metadata."
+            }
+            $executable = [IO.Path]::GetFileName([string]$requiredExecutables[0])
+        }
         if ($executable -match "^SnowDesktop.+Tests\.exe$") {
             [IO.Path]::GetFileNameWithoutExtension($executable)
         }

@@ -1003,7 +1003,9 @@ if (BUILD_TESTING)
             COMMAND ${TEST_TARGET}
                 ${SNOW_TEST_COMMAND_ARGUMENTS})
         set_tests_properties(
-            ${TEST_NAME} PROPERTIES TIMEOUT 60)
+            ${TEST_NAME} PROPERTIES
+            TIMEOUT 60
+            REQUIRED_FILES "$<TARGET_FILE:${TEST_TARGET}>")
         if (SNOW_TEST_LABELS)
             set_tests_properties(
                 ${TEST_NAME} PROPERTIES
@@ -1524,32 +1526,32 @@ if (BUILD_TESTING)
         LABELS contract hotkey input settings ui winui)
 
     snowdesktop_add_test(
-        SnowDesktopWinUiPersonalizationPagePresenterTests
+        SnowDesktopWinUiPresenterBoundaryTests
         winui_personalization_page_presenter
-        SOURCES tests/winui_personalization_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        SOURCES tests/winui_presenter_boundary_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}" personalization
         LABELS contract personalization settings ui winui)
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiDesktopPagePresenterTests
-        winui_desktop_page_presenter
-        SOURCES tests/winui_desktop_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract desktop personalization settings ui winui)
+    add_test(NAME winui_desktop_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" desktop)
+    set_tests_properties(winui_desktop_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;desktop;personalization;settings;ui;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiDockPagePresenterTests
-        winui_dock_page_presenter
-        SOURCES tests/winui_dock_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract dock settings taskbar ui winui)
+    add_test(NAME winui_dock_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" dock)
+    set_tests_properties(winui_dock_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;dock;settings;taskbar;ui;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiHomeAboutPagePresenterTests
-        winui_home_about_page_presenter
-        SOURCES tests/winui_home_about_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS about backup contract settings ui update winui)
+    add_test(NAME winui_home_about_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" home_about)
+    set_tests_properties(winui_home_about_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "about;backup;contract;settings;ui;update;winui")
 
     snowdesktop_add_test(
         SnowDesktopSettingsUpdateRulesTests
@@ -1565,26 +1567,26 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LABELS contract rules settings startup)
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiWidgetSettingsPresenterTests
-        winui_widget_settings_presenter
-        SOURCES tests/winui_widget_settings_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract lua security settings storage ui widget winui)
+    add_test(NAME winui_widget_settings_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" widget_settings)
+    set_tests_properties(winui_widget_settings_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;lua;security;settings;storage;ui;widget;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiWidgetsPagePresenterTests
-        winui_widgets_page_presenter
-        SOURCES tests/winui_widgets_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract package permission settings steam ui widget winui)
+    add_test(NAME winui_widgets_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" widgets)
+    set_tests_properties(winui_widgets_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;package;permission;settings;steam;ui;widget;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiBackupDataPagePresenterTests
-        winui_backup_data_page_presenter
-        SOURCES tests/winui_backup_data_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS backup contract data migration recovery settings ui winui)
+    add_test(NAME winui_backup_data_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" backup_data)
+    set_tests_properties(winui_backup_data_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "backup;contract;data;migration;recovery;settings;ui;winui")
 
     snowdesktop_add_test(
         SnowDesktopWinUiBackupDataPageBackendTests
@@ -1968,11 +1970,13 @@ if (BUILD_TESTING)
     add_test(NAME large_icon_shell_assets
         COMMAND SnowDesktopIconRenderRulesTests --large-icon-shell)
     set_tests_properties(large_icon_shell_assets PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
         TIMEOUT 60 LABELS "integration;shell;icon;resource")
 
     add_test(NAME large_icon_rendering
         COMMAND SnowDesktopIconRenderRulesTests --large-icon-rendering)
     set_tests_properties(large_icon_rendering PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
         TIMEOUT 60 LABELS "integration;icon;ui;rendering")
 
     snowdesktop_add_test(
