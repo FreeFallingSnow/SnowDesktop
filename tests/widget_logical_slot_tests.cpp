@@ -290,7 +290,7 @@ void TestBoundedUndoRedoHistory()
         "a new branch mutation must succeed");
     history.Record(std::move(previous), change);
     Check(!history.CanRedo() && !history.Redo(model, change, error) &&
-            model.Find("primaryApp")->items.front().reference == "app:notes",
+            model.Find("primaryApp")->items.front().target == "app:notes",
         "recording a new slot transaction must discard the redo branch");
 
     LogicalSlotHistory bounded;
@@ -306,12 +306,12 @@ void TestBoundedUndoRedoHistory()
          remaining > 0; --remaining)
     {
         Check(bounded.Undo(model, change, error) &&
-                model.Find("primaryApp")->items.front().reference ==
+                model.Find("primaryApp")->items.front().target ==
                     "app:history-" + std::to_string(remaining),
             "bounded undo must restore each retained model in reverse order");
     }
     Check(!bounded.CanUndo() && !bounded.Undo(model, change, error) &&
-            model.Find("primaryApp")->items.front().reference == "app:history-1",
+            model.Find("primaryApp")->items.front().target == "app:history-1",
         "the oldest overflowed history entries must be unavailable");
 }
 }

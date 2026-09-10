@@ -230,3 +230,19 @@
 - 已重新查询 CTest 清单并对照 CMake 登记；没有运行全量测试或宿主构建。
 - TA-02 完成 24 字节反例的字面谓词检查与 Pillow 解码；TA-01 引用此前已保存的隔离实验，并复核当前断言。
 - 尚未证明自动选择可靠，也未建立可复用的完整风险映射；当前评估表不能直接启用自动跳过测试。
+
+## 修正实施记录
+
+### 第一批：断言有效性与夹具隔离
+
+`8147ba74` 修改七个现有测试入口，没有新增 CTest 条目或生产改动：
+
+- TA-08：音频和剪贴板任务累积 Drain 的返回值，并先消费第一批，再提交后续任务，确定性覆盖分批到达。
+- TA-02：图片落盘后由 WIC 解码到 RGBA，检查容器、尺寸、颜色和透明度；覆盖 DIBV5、DIB、Bitmap 及半透明像素。
+- TA-12：使用 DirectWrite 的视觉坐标检查 Down 到相邻行并保持横向位置，Up 返回原位置。
+- TA-13/TA-07：作者测试、作者 lint 和图片测试复用独占创建的临时目录；失败经异常展开清理，不删除预先存在的目录。
+- TA-14：在有 redo 的状态创建新分支；超出历史容量后逐次检查保留模型和淘汰边界。
+
+实际执行 `scripts/test.bat name "^(drop_image_data|widget_audio_output_task_executor|widget_clipboard_task_executor|widget_logical_slot|widget_text_input_rules|widget_author_test_runner|widget_author_lint)$"`，七个目标编译通过，初次 6/7 通过。新历史断言误用了不透明 `reference` 字段，改成夹具设置的 `target` 后执行 `scripts/test.bat name widget_logical_slot`，1/1 通过；其他六项代码与已通过版本一致。该失败属于本轮测试编写错误，不记为生产缺陷。
+
+没有运行标准宿主构建；尚未进行本批的变异、并发夹具实验或最终全量测试。保留这些验证状态，不将七个定向入口的结果推广为拖放实机问题解决。其他 TA 项和表内优化建议仍待实施；本节不表示全部优化完成。
