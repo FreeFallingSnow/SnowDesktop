@@ -9,7 +9,7 @@ $parseErrors = $null
 $manager = [System.Management.Automation.Language.Parser]::ParseFile(
     $managerPath, [ref]$parseTokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw "test manager must parse" }
-foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Assert-HostRuntimeAvailable")) {
+foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport")) {
     $definition = $manager.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -34,7 +34,7 @@ function ctest {
     $script:fixture
 }
 function Invoke-Checked {
-    param([string]$FilePath, [string[]]$Arguments = @())
+    param([string]$FilePath, [string[]]$Arguments = @(), [string[]]$ExpectedTests = @())
     $script:invocations += [pscustomobject]@{ FilePath = $FilePath; Arguments = $Arguments }
 }
 function Check([bool]$Condition, [string]$Message) {
@@ -103,4 +103,13 @@ Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests"
 Check ($script:invocations.Count -eq 2 -and $script:invocations[0].FilePath -eq "cmake" -and
     $script:invocations[1].FilePath -eq "ctest") "full aggregate must not arrange its runtime twice"
 
-Write-Output "Test selection regressions passed (cold build, aliases, scripts, filters, metadata and runtime preflight)."
+Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" status="run" /></testsuite>') -ExpectedTests @("a")
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite />') } "no executed test cases"
+foreach ($state in @('<skipped />', '<failure />', '<error />')) {
+    Expect-Failure { Assert-CompleteTestReport -Report ([xml]("<testsuite><testcase name='a'>$state</testcase></testsuite>")) } "not fully verified"
+}
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" status="notrun" /></testsuite>') } "not fully verified"
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="b" /></testsuite>') -ExpectedTests @("a") } "does not match"
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" /><testcase name="a" /></testsuite>') -ExpectedTests @("a") } "does not match"
+
+Write-Output "Test selection regressions passed (cold build, aliases, scripts, filters, metadata, runtime preflight and complete reports)."

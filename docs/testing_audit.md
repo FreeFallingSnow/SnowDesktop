@@ -340,3 +340,13 @@ TA-21：全量和预览 CLI 选择在编译前检查目标 Release 的宿主/工
 将真实独立窗口的 Dock、依赖 Windows 时区数据库的时间、依赖实际 Shell 桌面目录的参数用例补充 `integration` 条件标签，业务标签与测试名保留。这不会把 core 自动等同于 fast；尚未拆分每个混合程序。
 
 执行 `scripts/test.bat name "^(test_selection|application_data_lifecycle|steam_runtime_update|steam_workshop_manager)$"`：三个原生目标编译及 4/4 通过，执行 13.32 秒。未运行完整测试。跳过状态采用 [CTest SKIP_RETURN_CODE](https://cmake.org/cmake/help/latest/prop_test/SKIP_RETURN_CODE.html)；结构化结果将使用 [CTest JUnit 输出](https://cmake.org/cmake/help/latest/manual/ctest.1.html#cmdoption-ctest-output-junit)。
+
+### 第十二批：拒绝不完整报告并清理内置源码契约
+
+统一运行器为每次 CTest 生成独立 JUnit 文件，核对实际名称/数量与选择清单一致，任何失败、跳过、未运行、空结果均不能通过完成门。core 也复用动态选择。配置、编译、CTest、输出整理各自打印命令耗时；这是计时信息，不是已测量的提速比例。
+
+`test_selection` 补充空报告、失败/跳过/错误、未运行、错名、重复条目反例，定向 1/1 通过。另运行真实 CTest 跳过探针：CTest 显示 `100% tests passed` 且退出 0，实际有一个 Skipped；当前报告门明确拒绝它。第一次探针因 cmd 引号语法失败，改用独立 PowerShell 退出 77 后才计入该证据，没有将夹具错误当作跳过复现。
+
+`builtin_widget_source_contract` 保留内置包名单、公共目录与分发文档的一致性和渲染/资源/API v1 负向边界。清单版本、slug 和 entry 改为解析 JSON 字段，目录比较检查精确集合；文档目录检查不再锁死项目计数，初始化项提取可跨行。删除 Lua 事件调用顺序、主题/绘制关键词、音频订阅存在性等不能证明执行的断言，不再宣称实际运行组件或 VM。作者测试、视图/资源缓存、API 注册等真实模块用例继续保留；组件事件接线仍须组件行为或实机证据。
+
+内置契约首次编译因测试代码把 ParseJson 的指针参数误写成引用失败；修正后 `scripts/test.bat name builtin_widget_source_contract` 编译及 1/1 通过，未将首次失败归为生产问题。纯源码设置宿主条目移出 integration；它仍保留静态架构标签。完整回归在本轮稳定检查点执行。

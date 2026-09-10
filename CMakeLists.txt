@@ -1607,7 +1607,7 @@ if (BUILD_TESTING)
         winui_settings_window_host
         SOURCES tests/winui_settings_window_host_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract integration lifecycle navigation settings ui winui)
+        LABELS contract lifecycle navigation settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopSettingsNoImguiContractTests

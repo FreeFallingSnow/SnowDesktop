@@ -15,12 +15,46 @@ function Invoke-Checked {
     param(
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
-        [string[]]$Arguments = @()
+        [string[]]$Arguments = @(),
+        [string[]]$ExpectedTests = @()
     )
 
+    $reportPath = $null
+    if ($FilePath -eq "ctest") {
+        $reportRoot = Join-Path $repositoryRoot ".build\Testing"
+        [void][IO.Directory]::CreateDirectory($reportRoot)
+        $reportPath = Join-Path $reportRoot ("test-run-" + [Guid]::NewGuid().ToString("N") + ".xml")
+        $Arguments += @("--output-junit", $reportPath)
+    }
+    $elapsed = [Diagnostics.Stopwatch]::StartNew()
     & $FilePath @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "$FilePath exited with code $LASTEXITCODE."
+    $commandExit = $LASTEXITCODE
+    $elapsed.Stop()
+    Write-Host ("{0}: {1:N2}s, exit {2}" -f $FilePath, $elapsed.Elapsed.TotalSeconds, $commandExit)
+    if ($reportPath) { Write-Host "CTest report: $reportPath" }
+    if ($commandExit -ne 0) {
+        throw "$FilePath exited with code $commandExit."
+    }
+    if ($reportPath) {
+        Assert-CompleteTestReport -Report ([xml](Get-Content -LiteralPath $reportPath -Raw)) -ExpectedTests $ExpectedTests
+    }
+}
+
+function Assert-CompleteTestReport {
+    param([xml]$Report, [string[]]$ExpectedTests = @())
+    $cases = @($Report.SelectNodes("//testcase"))
+    if ($cases.Count -eq 0) { throw "CTest report contains no executed test cases." }
+    $incomplete = @($Report.SelectNodes("//testcase[skipped or failure or error or @status='notrun' or @status='disabled']"))
+    if ($incomplete.Count -gt 0) {
+        throw ("CTest run is not fully verified (failed, skipped or not run): " +
+            (($incomplete | ForEach-Object { $_.GetAttribute("name") }) -join ", "))
+    }
+    if ($ExpectedTests.Count -gt 0) {
+        $actual = @($cases | ForEach-Object { $_.GetAttribute("name") })
+        if ($actual.Count -ne $ExpectedTests.Count -or
+            @(Compare-Object ($ExpectedTests | Sort-Object) ($actual | Sort-Object)).Count -gt 0) {
+            throw "CTest report does not match the selected test inventory."
+        }
     }
 }
 
@@ -110,7 +144,7 @@ function Invoke-FilteredTests {
     Write-Host ""
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
     Invoke-Checked -FilePath "ctest" -Arguments (
-        @("--preset", "tests") + $CTestFilterArguments)
+        @("--preset", "tests") + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
 }
 
 function Get-HostRuntimeLocks {
@@ -177,14 +211,7 @@ switch ($Mode) {
         Test-IsolatedOutput
     }
     "core" {
-        Write-Host ""
-        Write-Host "=== Building core test targets ==="
-        Invoke-Checked -FilePath "cmake" -Arguments @(
-            "--build", "--preset", "core-tests")
-        Write-Host ""
-        Write-Host "=== Running core CTest suite ==="
-        Invoke-Checked -FilePath "ctest" -Arguments @(
-            "--preset", "core-tests")
+        Invoke-FilteredTests -CTestFilterArguments @("-L", "^core$") -BuildPreset "core-tests"
     }
     "fast" {
         Invoke-FilteredTests -CTestFilterArguments @(
