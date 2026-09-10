@@ -88,7 +88,7 @@
 
 ### TA-18：格式签名和非法 ZIP 的判定存在盲区
 
-本地化检查将 printf 参数放入 multiset，未编号的 `%s %d` 与 `%d %s` 会得到相同签名；必须保持这类参数的顺序，同时允许明确编号的占位符重排。数据生命周期的 `MakeUnsafeArchive` 仅写 local header，没有完整 ZIP 目录；路径越界负例可能因结构已坏而提前失败。应先证明基线 ZIP 合法，再只改变目标危险字段，并检查拒绝原因。
+本地化检查将 printf 参数放入 multiset，未编号的 `%s %d` 与 `%d %s` 会得到相同签名；必须保持这类参数的顺序，同时允许明确编号的占位符重排。数据生命周期的初评怀疑 local-header 片段可能因缺少 ZIP 目录而提前失败。实施时复核发现 `WidgetPackageManager::ExtractArchive` 按本地条目读取并先检查路径，不能把该怀疑写成已证实的提前失败。实际缺口是：若路径检查被移除，片段仍可因缺少组件/备份清单而被后续验证拒绝，泛化的 `!Ok` 仍通过。应明确片段用途并断言具体路径诊断；现有真实导出包的合法基线继续保留。
 
 ### TA-19：环境副作用、跳过与进程超时需要可观察
 
@@ -104,7 +104,7 @@
 
 | # / CTest | 测试源码入口 | 状态 / 建议 | 证据与边界 | 建议触发范围 | 历史秒 |
 | --- | --- | --- | --- | --- | ---: |
-| 1. `application_data_lifecycle` | [application_data_lifecycle_tests.cpp](../tests/application_data_lifecycle_tests.cpp) | 已评估 / 增强 | 真实布局/组件安装/备份恢复与独立文件内容、锁定失败回滚有价值；非法 ZIP 夹具只有 local header，可能因结构损坏而非路径越界被拒绝，需合法基线与单一坏因。多缺陷输入应拆开；软链接跳过和失败清理需明确 | 数据/包/备份联动；按子场景选择 | 2.94 |
+| 1. `application_data_lifecycle` | [application_data_lifecycle_tests.cpp](../tests/application_data_lifecycle_tests.cpp) | 已评估 / 增强 | 真实布局/组件安装/备份恢复与独立文件内容、锁定失败回滚有价值；ZIP 本地条目片段的泛化 !Ok 会接受后续缺失清单错误，需限定路径诊断（TA-18 复核）。多缺陷输入应拆开；软链接跳过和失败清理需明确 | 数据/包/备份联动；按子场景选择 | 2.94 |
 | 2. `single_instance` | [single_instance_tests.cpp](../tests/single_instance_tests.cpp) | 已评估 / 增强 | 真实部署目录及 Steam 运行时替换判定；独立侧车/路径输入，失败统计及清理有效。名称不代表真实多进程互斥或移交；含文件和系统目录依赖，需明确边界 | 部署/实例规则定向；真实多进程另验 | 0.08 |
 | 3. `http_security` | [http_security_tests.cpp](../tests/http_security_tests.cpp) | 已评估 / 保留 | 真实 URL/IP/来源与候选重试策略，固定正反样本区分公共 HTTPS 和允许本地拖入；不执行 DNS、重定向或请求，不能证明传输全过程安全 | HTTP 公共策略，相关调用方需联动 | 0.02 |
 | 4. `lua_runtime` | [lua_runtime_tests.cpp](../tests/lua_runtime_tests.cpp) | 已评估 / 增强 | 真实 ProtectedCall 覆盖嵌套限额、跨 VM 重入、错误清理与堆栈恢复；加载事务用例手工固定 loading.state，未调用宿主加载器，需明确保护范围 | Lua 执行与重入定向 | 0.01 |
@@ -274,3 +274,9 @@
 - `widget_settings_service` 的全字段 Reset 明确检查后端事务数只增加 1。
 
 初次筛选误用了不存在的 `large_icon_assets` 名称，命令实际仅选择前三个非图标条目，3/3 通过；核对清单后补跑 `scripts/test.bat name large_icon_shell_assets`，目标编译及 1/1 通过。四个改动入口均有定向通过证据，不能把某个正则整体匹配成功当成每个预期分支均已匹配。图标测试执行 1.02 秒，其他三项合计测试执行 0.11 秒；没有据此宣称相对提速。全量仍待稳定收尾时运行。
+
+### 第五批：路径负例必须因路径被拒绝
+
+复核并修正 TA-18 中关于 ZIP 的初步解释：当前解包器先读取本地条目，缺中央目录并非已经证实的提前失败原因。将夹具改名为 `MakeStoredZipEntryFragment`，明确它不是完整包；组件路径越界、大小写冲突和备份路径越界均检查具体错误码/诊断，避免随后“缺清单”的错误掩盖路径校验失效。原有完整导出包的成功基线保留。
+
+执行 `scripts/test.bat name application_data_lifecycle`：目标编译及 1/1 通过，执行 3.82 秒。此项改动只加强测试判定，没有修改 ZIP 解析或扩大支持格式。没有运行全量或宿主标准构建。

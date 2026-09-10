@@ -83,7 +83,9 @@ void Write32(std::ofstream& output, std::uint32_t value)
     Write16(output, static_cast<std::uint16_t>(value >> 16));
 }
 
-void MakeUnsafeArchive(const std::filesystem::path& path,
+// A local-entry fragment, not a complete ZIP/package. Negative checks must
+// require the path diagnostic so a later missing manifest cannot satisfy them.
+void MakeStoredZipEntryFragment(const std::filesystem::path& path,
     const std::vector<std::string>& names)
 {
     std::filesystem::create_directories(path.parent_path());
@@ -1789,13 +1791,25 @@ int main()
         "archive CRC corruption is rejected");
     const auto traversalArchive =
         root / L"exports" / L"traversal.snowwidget";
-    MakeUnsafeArchive(traversalArchive, { "../escape.lua" });
-    Expect(!manager.ValidateArchive(traversalArchive).Ok(),
+    MakeStoredZipEntryFragment(traversalArchive, { "../escape.lua" });
+    const auto traversalReport = manager.ValidateArchive(traversalArchive);
+    Expect(!traversalReport.Ok() &&
+            std::any_of(traversalReport.issues.begin(), traversalReport.issues.end(),
+                [](const auto& issue) {
+                    return issue.code == "archive.content" &&
+                        issue.message == "archive contains an unsafe or duplicate path: ../escape.lua";
+                }),
         "ZIP path traversal is rejected before extraction");
     const auto collisionArchive =
         root / L"exports" / L"case-collision.snowwidget";
-    MakeUnsafeArchive(collisionArchive, { "Assets/icon.png", "assets/icon.png" });
-    Expect(!manager.ValidateArchive(collisionArchive).Ok(),
+    MakeStoredZipEntryFragment(collisionArchive, { "Assets/icon.png", "assets/icon.png" });
+    const auto collisionReport = manager.ValidateArchive(collisionArchive);
+    Expect(!collisionReport.Ok() &&
+            std::any_of(collisionReport.issues.begin(), collisionReport.issues.end(),
+                [](const auto& issue) {
+                    return issue.code == "archive.content" &&
+                        issue.message == "archive contains an unsafe or duplicate path: assets/icon.png";
+                }),
         "case-insensitive ZIP path collisions are rejected");
 
     WidgetPackageManager importedManager(TestPaths(root / L"imported"));
@@ -2419,10 +2433,11 @@ int main()
 
     const auto unsafeBackup =
         root / L"exports" / L"unsafe.snowbackup";
-    MakeUnsafeArchive(unsafeBackup, { "../escape.txt" });
+    MakeStoredZipEntryFragment(unsafeBackup, { "../escape.txt" });
     const auto unsafeImport =
         importBackupManager.ImportAndQueue(unsafeBackup);
     Expect(!unsafeImport.ok &&
+            unsafeImport.error == "backup archive contains an unsafe path" &&
         !std::filesystem::exists(
             importedBackupState / L"escape.txt"),
         "backup archive path traversal is rejected");
