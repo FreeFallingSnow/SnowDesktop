@@ -903,6 +903,7 @@ int main()
         "per-field appSearch reset restores its value and clears the separate query in one transaction");
 
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    const auto transactionsBeforeReset = backend.transactions.size();
     WidgetSettingMutationResult reset = service.Reset(guard);
     bool resetHasOpaque = false;
     bool resetTypedRange = false;
@@ -921,6 +922,7 @@ int main()
                 write.searchQuery->empty());
     }
     Check(reset.status == WidgetSettingMutationStatus::Applied &&
+            backend.transactions.size() == transactionsBeforeReset + 1 &&
             !resetHasOpaque && resetTypedRange && resetTypedMulti &&
             resetSearchQuery,
         "reset is one ordinary transaction, clears appSearch searchKey, and never resets opaque channels as strings");

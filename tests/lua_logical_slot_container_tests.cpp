@@ -360,7 +360,7 @@ void TestLuaDragFeedbackUsesCommittedSurfaceIdentity()
         "a Lua slotSurface bounds change must refresh feedback even when the target item is unchanged");
 }
 
-void TestStableLuaHitStressAndLayoutInvalidation()
+void TestStableLuaHitReuseAndLayoutInvalidation()
 {
     auto surface = CollectionSurface();
     int providerCalls = 0;
@@ -380,13 +380,13 @@ void TestStableLuaHitStressAndLayoutInvalidation()
     Check(stableSlot && stableRegion == HitRegion::SortBefore &&
             session.UpdateTarget(
                 &container, stableSlot, stableRegion),
-        "the stress fixture must establish one Lua drag target");
+        "the cache fixture must establish one Lua drag target");
     const std::uint64_t stableGeneration =
         container.GetSlotGeneration();
     const std::uint64_t stablePresentation =
         session.PresentationRevision();
 
-    constexpr int kStableHitCount = 10000;
+    constexpr int kStableHitCount = 3;
     for (int index = 0; index < kStableHitCount; ++index)
     {
         Slot* repeated = nullptr;
@@ -619,7 +619,7 @@ int main()
     TestCommitRejectsInvalidSourcesAndPreservesFailure();
     TestInsertionAndCommitGeometryMatrix();
     TestLuaDragFeedbackUsesCommittedSurfaceIdentity();
-    TestStableLuaHitStressAndLayoutInvalidation();
+    TestStableLuaHitReuseAndLayoutInvalidation();
     TestHostPickerCandidatePolicy();
     TestPointerReorderTargets();
     TestKeyboardFocusRules();

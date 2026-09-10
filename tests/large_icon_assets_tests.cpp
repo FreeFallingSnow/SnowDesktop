@@ -343,11 +343,8 @@ int RunLargeIconAssetTests()
                 "a downloaded cover remains available after changing to local-only policy");
         }
 
-        const auto giant = root / L"too-many-pixels.png";
-        pixels.assign(4001 * 4000, 0xff22aa77);
-        Check(preview_png::Save(giant, 4001, 4000, pixels, error), "create compressed source exceeding decoded pixel limit");
-        pixels.clear(); pixels.shrink_to_fit();
-        request.itemKey = L"pixel-limit"; request.generation = 11; request.importPath = giant;
+    // Reuse the validated oversized fixture for the refresh request as well.
+    request.itemKey = L"pixel-limit"; request.generation = 11; request.importPath = tooManyPixels;
         queue.assets.Request(request);
         auto giantResult = queue.Wait(1);
         Check(!giantResult.empty() && !giantResult[0].asset, "sources over sixteen million pixels are rejected before pixel conversion");

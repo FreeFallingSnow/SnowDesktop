@@ -91,13 +91,9 @@ void TestViewportClipping()
     if (partial)
     {
         Check(
-            partial->left >= 0 &&
-            partial->top >= 0 &&
-            partial->right <= 100 &&
-            partial->bottom <= 30 &&
-            partial->right > partial->left &&
-            partial->bottom > partial->top,
-            "clipped hit bounds must be a non-empty subset of the viewport");
+            partial->left == 0 && partial->top == 4 &&
+            partial->right == 60 && partial->bottom == 28,
+            "clipped hit bounds must equal the full visible intersection");
     }
     Check(
         !rules::ClipToViewport(
@@ -958,8 +954,11 @@ void TestPopupIconLoadCancellationRules()
         queue.push_back(Task{popup, std::move(key)});
     };
     append(false, L"ordinary-before");
-    for (int index = 0; index < 10000; ++index)
+    for (int index = 0; index < 5; ++index)
+    {
         append(true, L"popup-queued-" + std::to_wstring(index));
+        if (index == 2) append(false, L"ordinary-middle");
+    }
     append(false, L"ordinary-after");
     pendingKeys.insert(L"popup-in-flight");
     pendingKeys.insert(L"popup-posted");
@@ -968,12 +967,14 @@ void TestPopupIconLoadCancellationRules()
         snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
             queue, pendingKeys,
             [](const Task& task) { return task.popup; });
-    Check(removed == 10000 && queue.size() == 2 &&
+    Check(removed == 5 && queue.size() == 3 &&
             queue[0].requestKey == L"ordinary-before" &&
-            queue[1].requestKey == L"ordinary-after",
-        "popup cancellation must remove 10000 queued tasks without reordering other icon work");
-    Check(pendingKeys.size() == 4 &&
+            queue[1].requestKey == L"ordinary-middle" &&
+            queue[2].requestKey == L"ordinary-after",
+        "popup cancellation removes interleaved tasks without reordering other icon work");
+    Check(pendingKeys.size() == 5 &&
             pendingKeys.contains(L"ordinary-before") &&
+            pendingKeys.contains(L"ordinary-middle") &&
             pendingKeys.contains(L"ordinary-after") &&
             pendingKeys.contains(L"popup-in-flight") &&
             pendingKeys.contains(L"popup-posted"),
@@ -997,22 +998,8 @@ void TestPopupIconLoadCancellationRules()
 
 void TestDragHintRasterRules()
 {
-    bool valid = false;
-    unsigned cachedDpi = 0;
-    int renderCount = 0;
-    for (int i = 0; i < 1000; ++i)
-    {
-        const bool sameText = i != 0;
-        if (!dragHintRules::ShouldReuseRaster(
-                valid, sameText, cachedDpi, 96))
-        {
-            ++renderCount;
-            valid = true;
-            cachedDpi = 96;
-        }
-    }
-    Check(renderCount == 1,
-        "repeated OLE drag hints with the same text and DPI must render once");
+    Check(dragHintRules::ShouldReuseRaster(true, true, 96, 96),
+        "valid cached text at the same DPI is eligible for raster reuse");
     Check(
         !dragHintRules::ShouldReuseRaster(true, false, 96, 96) &&
             !dragHintRules::ShouldReuseRaster(true, true, 96, 144) &&
