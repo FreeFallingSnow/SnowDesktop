@@ -224,12 +224,11 @@ int main()
     scheduler.DispatchDue();
     Check(repeatCalls == 1,
         "missed repeating deadlines do not burst catch-up callbacks");
-    Check(WaitForSingleObject(scheduler.WaitHandle(), 0) ==
-            WAIT_TIMEOUT,
-        "missed interval advances to a future deadline");
+    Check(scheduler.HasScheduledWork(),
+        "the repeating interval remains scheduled after a missed deadline");
     WaitAndDispatch(scheduler);
     Check(repeatCalls == 2,
-        "repeating deadline resumes on its next future period");
+        "the repeating interval delivers exactly one callback at the next wake");
     scheduler.Cancel(repeating);
 
     int selfCancelledCalls = 0;

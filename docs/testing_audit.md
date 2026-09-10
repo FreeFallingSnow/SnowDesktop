@@ -292,3 +292,13 @@
 同时修正 TA-20：CMake 为原生测试及复用入口生成 `REQUIRED_FILES`；其语义是执行前检查必要文件存在，不能代替构建，参见 [CMake 官方文档](https://cmake.org/cmake/help/latest/prop_test/REQUIRED_FILES.html)。脚本只在 CTest 尚无命令时使用该元数据推导目标。
 
 验证：新程序从不存在到 `scripts/test.bat name "^winui_(personalization_page|desktop_page|dock_page|home_about_page|widget_settings|widgets_page|backup_data_page)_presenter$"` 实际构建成功，7/7 通过，执行 0.16 秒。重新查询清单确认 117 个名称及各自标签与基线完全一致，C++ 程序由 113 减为 107，所有原生条目的必需文件与命令吻合；零匹配筛选退出 1。未宣称冷构建耗时的比例收益。由于改动涉及 CMake 与选择器，稳定收尾前必须完成全量测试，目前尚未运行。
+
+### 第七批：选择器回归与环境断言
+
+新增唯一脚本条目 `test_selection`（`core;contract;build`，30 秒上限），当前清单为 **118 项，其中原始 117 项均保留名称**。该项已评估：执行从 PowerShell AST 取得的实际 `Get-TestSelection`/`Invoke-FilteredTests` 函数，仅替换 CTest 查询与子进程执行边界，检查首次构建、别名共享目标、脚本条目、筛选参数、零匹配和缺失/歧义元数据。它保护已经复现的 TA-20，不是为增加数量补充空测试；不能证明所有真实 CMake 图均正确。
+
+将同一脚本放到隔离副本、加载修正前的选择器，因缺少 `command` 字段退出 1；当前选择器执行通过。真实无可执行文件的首次构建另已在第六批完成，两类证据互补。
+
+`ui_animation_scheduler` 移除易受 5 ms 调度延迟影响的“立刻未触发”断言，保留一次派发只调用一次、继续调度和下次唤醒的结果，不再宣称已证明精确截止时间。`component_preview` 在恢复鼠标位置后才执行可能退出的结果断言，并检查保存/移动/恢复调用成功；这仅修正断言失败时的恢复顺序，没有消除该用例的系统鼠标依赖或覆盖消息处理挂起。
+
+执行 `scripts/test.bat name "^(test_selection|component_preview|ui_animation_scheduler)$"`：两个原生目标编译成功，3/3 通过。原始清单中的 27 个入口已调整，另新增一个选择器回归脚本；尚未声称全部建议均实施。后续重点仍为大型混合源码契约、子进程超时、迟到结果观察和环境跳过，最终全量尚待完成。

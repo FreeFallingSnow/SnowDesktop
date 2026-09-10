@@ -2231,6 +2231,11 @@ if (BUILD_TESTING)
     add_custom_target(
         SnowDesktopCoreTests
         DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
+    add_test(NAME test_selection
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selection_tests.ps1")
+    set_tests_properties(test_selection PROPERTIES
+        TIMEOUT 30 LABELS "core;contract;build")
     add_custom_target(
         SnowDesktopFastTests
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})

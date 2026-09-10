@@ -535,13 +535,18 @@ int wmain()
             false, {}, itemBounds),
         "hovering a sibling schedules its preview");
     POINT savedCursor{};
-    GetCursorPos(&savedCursor);
-    SetCursorPos(0, 0);
+    Expect(GetCursorPos(&savedCursor) != FALSE,
+        "the preview fixture can save the cursor position");
+    Expect(SetCursorPos(0, 0) != FALSE,
+        "the preview fixture can move outside the pending preview");
     SendMessageW(window.Handle(), WM_TIMER, 2, 0);
-    Expect(IsWindowVisible(window.Handle()) != FALSE,
-        "a stale close timer keeps the old frame while a sibling is pending");
+    const bool oldFrameRetained = IsWindowVisible(window.Handle()) != FALSE;
     SendMessageW(window.Handle(), WM_TIMER, 1, 0);
-    SetCursorPos(savedCursor.x, savedCursor.y);
+    // Restore before any assertion can terminate the test process.
+    const bool cursorRestored = SetCursorPos(savedCursor.x, savedCursor.y) != FALSE;
+    Expect(cursorRestored, "the preview fixture restores the saved cursor position");
+    Expect(oldFrameRetained,
+        "a stale close timer keeps the old frame while a sibling is pending");
     Expect(replacementRendered && IsWindowVisible(window.Handle()) != FALSE,
         "the sibling preview atomically replaces the old frame");
 
