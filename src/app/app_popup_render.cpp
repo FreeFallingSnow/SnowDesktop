@@ -2,6 +2,7 @@
 #include "popup_opacity_scope.h"
 #include "quick_navigation_theme.h"
 #include "../item_render_layer_rules.h"
+#include <d2d1effects.h>
 
 // Collection-popup rendering.
 
@@ -233,29 +234,47 @@ void DesktopApp::DrawCollectionPopup(
     }
     ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     const size_t popupItemCount = GetPopupItemCount(widget);
-    const size_t endItem = fan ? GetCollectionPopupFanVisibleCount(popupRect_) : popupItemCount;
+    const size_t fanCapacity = GetCollectionPopupFanVisibleCount(popupRect_);
+    const double fanOffset = fan ? GetCollectionPopupFanScrollOffset(popupRect_) : 0;
+    const auto fanRange = snowdesktop::collection_popup_layout::FanVisibleRange(
+        fanOffset, fanCapacity, popupItemCount);
+    const size_t firstItem = fan ? fanRange.first : 0;
+    const size_t endItem = fan ? fanRange.end : popupItemCount;
+    ComPtr<ID2D1DeviceContext> iconRecorder;
+    ComPtr<ID2D1Effect> iconShadow;
+    if (fan && d2dDevice_ && SUCCEEDED(d2dDevice_->CreateDeviceContext(
+            D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &iconRecorder)) &&
+        SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Shadow, &iconShadow)))
+    {
+        iconRecorder->SetDpi(96, 96);
+        iconShadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, 2.5f * popupMetrics.scale);
+        iconShadow->SetValue(D2D1_SHADOW_PROP_COLOR, D2D1_VECTOR_4F{0, 0, 0, 0.65f});
+        iconShadow->SetValue(D2D1_SHADOW_PROP_OPTIMIZATION, D2D1_SHADOW_OPTIMIZATION_BALANCED);
+    }
     const auto drawFanSlot = [&](size_t index, bool selected, bool cut, const auto& drawIcon) {
         namespace layout = snowdesktop::collection_popup_layout;
         const auto pose = GetCollectionPopupFanItem(popupRect_, index);
+        const double slot = index == popupItemCount ? static_cast<double>(fanCapacity) :
+            static_cast<double>(index) - fanOffset;
+        const float visibility = index == popupItemCount ? 1.0f : layout::FanItemOpacity(slot, fanCapacity);
+        if (visibility <= 0.001f) return;
         const bool hovered = popupAnimation_.IsInteractive() &&
             layout::FanItemContains(pose, lastMousePoint_);
         float progress = 1.0f;
         if (applyAnimation && animation.progress < 1.0f &&
             snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::Fade)
             progress = layout::FanRevealProgress(animation.progress,
-                static_cast<float>(index) / std::max<size_t>(1, endItem));
+                static_cast<float>(slot / static_cast<double>(std::max<size_t>(1, fanCapacity))));
         const D2D1_POINT_2F center = D2D1::Point2F(pose.center.x, pose.center.y);
         const float originX = popupHasAnchor_ ? static_cast<float>(popupAnchorPoint_.x) : center.x;
         const float originY = popupHasAnchor_ ? static_cast<float>(popupAnchorPoint_.y) :
             static_cast<float>(CollectionPopupFanRootAbove() ? popupRect_.top : popupRect_.bottom);
-        const float scale = 0.25f + 0.75f * progress;
+        const auto unfolding = layout::FanUnfoldCenter({originX, originY}, pose.center, progress);
         D2D1_MATRIX_3X2_F transform{};
         ctx->GetTransform(&transform);
         ctx->SetTransform(D2D1::Matrix3x2F::Rotation(pose.angle * progress, center) *
-            D2D1::Matrix3x2F::Scale(scale, scale, center) *
-            D2D1::Matrix3x2F::Translation((originX - center.x) * (1.0f - progress),
-                (originY - center.y) * (1.0f - progress)) * transform);
-        PopupOpacityScope slotOpacity(ctx, true, progress * (cut ? 0.5f : 1.0f));
+            D2D1::Matrix3x2F::Translation(unfolding.x - center.x, unfolding.y - center.y) * transform);
+        PopupOpacityScope slotOpacity(ctx, true, progress * visibility * (cut ? 0.5f : 1.0f));
 
         // Only the filename has a small backing. The arc and its gaps stay transparent.
         RECT shadow = pose.label;
@@ -271,7 +290,47 @@ void DesktopApp::DrawCollectionPopup(
             DrawD2DRoundedRectangle(ctx, pose.icon, 7.0f * popupMetrics.scale,
                 D2D1::ColorF(1, 1, 1, selected ? 0.18f : 0.10f),
                 D2D1::ColorF(1, 1, 1, 0.35f), popupMetrics.scale);
-        drawIcon(pose.icon);
+        bool iconDrawn = false;
+        if (iconRecorder && iconShadow)
+        {
+            // Record the real silhouette, including placeholder/demo icons and
+            // shortcut badges. Shadow and icon then share the same fan transform.
+            ComPtr<ID2D1CommandList> commands;
+            if (SUCCEEDED(iconRecorder->CreateCommandList(&commands)))
+            {
+                iconRecorder->SetTarget(commands.Get());
+                iconRecorder->SetTransform(D2D1::Matrix3x2F::Identity());
+                iconRecorder->BeginDraw();
+                drawIcon(iconRecorder.Get(), RECT{0, 0,
+                    pose.icon.right - pose.icon.left, pose.icon.bottom - pose.icon.top});
+                const HRESULT recorded = iconRecorder->EndDraw();
+                iconRecorder->SetTarget(nullptr);
+                if (SUCCEEDED(recorded) && SUCCEEDED(commands->Close()))
+                {
+                    iconShadow->SetInput(0, commands.Get());
+                    ComPtr<ID2D1Image> shadowImage;
+                    iconShadow->GetOutput(&shadowImage);
+                    D2D1_RECT_F shadowBounds{};
+                    // DrawImage maps the image's bounding-box corner to its
+                    // offset. Preserve the negative blur extent around origin.
+                    if (SUCCEEDED(ctx->GetImageLocalBounds(shadowImage.Get(), &shadowBounds)))
+                    {
+                        const auto shadowOffset = D2D1::Point2F(
+                            pose.icon.left + shadowBounds.left,
+                            pose.icon.top + shadowBounds.top + 3.0f * popupMetrics.scale);
+                        ctx->DrawImage(shadowImage.Get(), &shadowOffset, &shadowBounds);
+                    }
+                    const auto iconBounds = D2D1::RectF(0, 0,
+                        static_cast<float>(pose.icon.right - pose.icon.left),
+                        static_cast<float>(pose.icon.bottom - pose.icon.top));
+                    const auto iconOffset = D2D1::Point2F(
+                        static_cast<float>(pose.icon.left), static_cast<float>(pose.icon.top));
+                    ctx->DrawImage(commands.Get(), &iconOffset, &iconBounds);
+                    iconDrawn = true;
+                }
+            }
+        }
+        if (!iconDrawn) drawIcon(ctx, pose.icon);
         RECT textRect = pose.label;
         InflateRect(&textRect, -layout::ScaleDimension(8, popupMetrics.scale), 0);
         DrawD2DTextEllipsis(ctx, GetCollectionPopupFanLabel(index), textRect,
@@ -280,22 +339,22 @@ void DesktopApp::DrawCollectionPopup(
         ctx->SetTransform(transform);
     };
     const auto drawFanItem = [&](size_t index, const auto& item, const DesktopItem* desktopItem) {
-        drawFanSlot(index, item.selected, item.isCut, [&](const RECT& iconRect) {
+        drawFanSlot(index, item.selected, item.isCut, [&](ID2D1DeviceContext* iconContext, const RECT& iconRect) {
             const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
             if (demo)
-                DrawDemoCollectionIdentityIcon(ctx, widget,
+                DrawDemoCollectionIdentityIcon(iconContext, widget,
                     desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
                     iconRect, 1.0f);
             else if (auto* icon = GetOrCreateD2DBitmap(item.iconBitmap,
                 ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
-                DrawIconBitmap(ctx, icon, iconRect);
+                DrawIconBitmap(iconContext, icon, iconRect);
             else
-                DrawPlaceholderIcon(ctx, item.sysIconIndex, iconRect, 1.0f);
+                DrawPlaceholderIcon(iconContext, item.sysIconIndex, iconRect, 1.0f);
             if (!demo && ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut))
-                DrawShortcutArrowOverlay(ctx, iconRect, 1.0f);
+                DrawShortcutArrowOverlay(iconContext, iconRect, 1.0f);
         });
     };
-    for (size_t i = 0; i < endItem; ++i)
+    for (size_t i = firstItem; i < endItem; ++i)
     {
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
@@ -435,24 +494,24 @@ void DesktopApp::DrawCollectionPopup(
     }
     if (fan)
     {
-        drawFanSlot(endItem, popupFanActionFocused_, false, [&](const RECT& iconRect) {
+        drawFanSlot(popupItemCount, popupFanActionFocused_, false, [&](ID2D1DeviceContext* iconContext, const RECT& iconRect) {
             const float x = (iconRect.left + iconRect.right) * 0.5f;
             const float y = (iconRect.top + iconRect.bottom) * 0.5f;
             const float radius = (iconRect.right - iconRect.left) * 0.38f;
             ComPtr<ID2D1SolidColorBrush> brush;
-            if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.15f, 0.17f, 0.65f), &brush)))
+            if (SUCCEEDED(iconContext->CreateSolidColorBrush(D2D1::ColorF(0.15f, 0.15f, 0.17f, 0.65f), &brush)))
             {
                 const auto circle = D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius);
-                ctx->FillEllipse(circle, brush.Get());
+                iconContext->FillEllipse(circle, brush.Get());
                 brush->SetColor(D2D1::ColorF(1, 1, 1, 0.95f));
-                ctx->DrawEllipse(circle, brush.Get(), 2.0f * popupMetrics.scale);
+                iconContext->DrawEllipse(circle, brush.Get(), 2.0f * popupMetrics.scale);
                 const float arm = radius * 0.38f;
                 const float stroke = 2.4f * popupMetrics.scale;
-                ctx->DrawLine(D2D1::Point2F(x - arm, y + arm),
+                iconContext->DrawLine(D2D1::Point2F(x - arm, y + arm),
                     D2D1::Point2F(x + arm, y - arm), brush.Get(), stroke);
-                ctx->DrawLine(D2D1::Point2F(x - arm, y - arm),
+                iconContext->DrawLine(D2D1::Point2F(x - arm, y - arm),
                     D2D1::Point2F(x + arm, y - arm), brush.Get(), stroke);
-                ctx->DrawLine(D2D1::Point2F(x + arm, y - arm),
+                iconContext->DrawLine(D2D1::Point2F(x + arm, y - arm),
                     D2D1::Point2F(x + arm, y + arm), brush.Get(), stroke);
             }
         });

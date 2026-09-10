@@ -350,18 +350,10 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.scrollContainerMode
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
-    const auto appendPopupLayoutMenu = [&]() {
-        if (HMENU expansion = CreatePopupMenu())
-        {
-            AppendMenuW(expansion, MF_STRING, kContextPopupDefault,
-                _LW("app.interact.popup_default"));
-            AppendMenuW(expansion, MF_STRING, kContextPopupFan,
-                _LW("app.interact.popup_fan"));
-            CheckMenuRadioItem(expansion, kContextPopupDefault, kContextPopupFan,
-                widget.fanPopup ? kContextPopupFan : kContextPopupDefault, MF_BYCOMMAND);
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(expansion),
-                _LW("app.interact.popup_layout"));
-        }
+    const auto appendFanToggle = [&]() {
+        const auto label = statusLabel(_LW("app.interact.popup_fan"),
+            widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"));
+        AppendMenuW(menu, MF_STRING, kContextPopupFan, label.c_str());
     };
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     std::vector<LuaWidgetMenuItem> luaMenuActions;
@@ -374,7 +366,7 @@ void DesktopApp::ShowWidgetContextMenu(
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
-        appendPopupLayoutMenu();
+        appendFanToggle();
         if (generalSettings_.demoModeEnabled &&
             demoIdentityAssetsAvailable_)
         {
@@ -524,7 +516,7 @@ void DesktopApp::ShowWidgetContextMenu(
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
         if (widget.gridCell.pageId == kDockPageId)
-            appendPopupLayoutMenu();
+            appendFanToggle();
         AppendMenuW(menu,
             HasPasteableFileClipboardData()
                 ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -758,6 +750,7 @@ void DesktopApp::ShowWidgetContextMenu(
             _LW("app.interact.delete_widget"));
     }
 
+    setFluentIcon(menu, kContextPopupFan, snowdesktop::menu_fluent_glyphs::kFanExpansion);
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
     setFluentIcon(menu, kContextWidgetManualCollect,
         snowdesktop::menu_fluent_glyphs::kCollectItems);
@@ -987,15 +980,15 @@ void DesktopApp::ShowWidgetContextMenu(
             shellLaunchWorker_.Enqueue(
                 hwnd_, effectiveSource.sourceFolderPath);
         break;
-    case kContextPopupDefault:
     case kContextPopupFan:
         if (widgets_[widgetIndex].type == DesktopWidgetType::Collection ||
             widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
         {
-            widgets_[widgetIndex].fanPopup = command == kContextPopupFan;
+            widgets_[widgetIndex].fanPopup = !widgets_[widgetIndex].fanPopup;
             if ((!dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) ||
                 (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id))
             {
+                ResetCollectionPopupFanScroll();
                 popupFanShowAll_ = false;
                 popupFanActionFocused_ = false;
                 ResetCollectionPopupAnimationCache();

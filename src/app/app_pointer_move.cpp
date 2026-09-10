@@ -544,9 +544,18 @@ void DesktopApp::OnMouseMoveAt(
             }
             std::vector<RECT> visualItemBounds;
             visualItemBounds.reserve(sourceItems.size());
+            const RECT fanPressedIcon = GetCollectionPopupFanDragBounds(mouseDownHit_);
+            dragFanIconsOnly_ = !IsRectEmptyRect(fanPressedIcon);
             for (Item* item : sourceItems)
-                visualItemBounds.push_back(
-                    item ? item->GetBounds() : RECT{});
+            {
+                RECT bounds = dragFanIconsOnly_ ? GetCollectionPopupFanDragBounds(item) :
+                    (item ? item->GetBounds() : RECT{});
+                // Previously selected offscreen members still belong to the
+                // payload; compact them at the grabbed icon instead of using
+                // an unrelated desktop cell as a visual fallback.
+                if (dragFanIconsOnly_ && IsRectEmptyRect(bounds)) bounds = fanPressedIcon;
+                visualItemBounds.push_back(bounds);
+            }
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
@@ -565,7 +574,15 @@ void DesktopApp::OnMouseMoveAt(
                 listSource && listSource->SingleColumn() &&
                 (dynamic_cast<DesktopIcon*>(mouseDownHit_) ||
                  dynamic_cast<FolderEntryIcon*>(mouseDownHit_));
-            if (listIconDrag)
+            if (dragFanIconsOnly_)
+            {
+                // The fan label and its rotated AABB are not an icon grid cell.
+                // Keep the icon-sized snapshot and desktop landing at the pointer.
+                dragSession_.AnchorToPointer({
+                    (fanPressedIcon.left + fanPressedIcon.right) / 2,
+                    (fanPressedIcon.top + fanPressedIcon.bottom) / 2});
+            }
+            else if (listIconDrag)
             {
                 const RECT pressedBounds =
                     mouseDownHit_->GetBounds();
@@ -1199,7 +1216,7 @@ void DesktopApp::OnMouseMoveAt(
                 }
                 if (UsesCollectionPopupFan(*popupWidget) &&
                     snowdesktop::collection_popup_layout::FanItemContains(
-                        GetCollectionPopupFanItem(popupRect_, GetCollectionPopupFanVisibleCount(popupRect_)), point))
+                        GetCollectionPopupFanItem(popupRect_, GetPopupItemCount(*popupWidget)), point))
                     return {popupWidget, popupWidget, 3, 0, true, nullptr, popupRect_,
                         snowdesktop::widget_composition_layer_rules::PointerVisualLayer::Foreground};
                 return {

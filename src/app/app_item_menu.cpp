@@ -373,17 +373,10 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFolderEntry)
     {
-        if (HMENU expansion = CreatePopupMenu())
-        {
-            AppendMenuW(expansion, MF_STRING, kContextPopupDefault,
-                _LW("app.interact.popup_default"));
-            AppendMenuW(expansion, MF_STRING, kContextPopupFan,
-                _LW("app.interact.popup_fan"));
-            CheckMenuRadioItem(expansion, kContextPopupDefault, kContextPopupFan,
-                dockFolderEntry->fanPopup ? kContextPopupFan : kContextPopupDefault, MF_BYCOMMAND);
-            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(expansion),
-                _LW("app.interact.popup_layout"));
-        }
+        std::wstring fanLabel = _LW("app.interact.popup_fan");
+        fanLabel += L"\t";
+        fanLabel += dockFolderEntry->fanPopup ? _LW("app.interact.on") : _LW("app.interact.off");
+        AppendMenuW(menu, MF_STRING, kContextPopupFan, fanLabel.c_str());
         const auto statusLabel = [](
             const wchar_t* title,
             const wchar_t* status) {
@@ -492,6 +485,8 @@ void DesktopApp::ShowItemContextMenu(
     SetMenuItemQuickAction(menu, kContextCutCommand);
     SetMenuItemQuickAction(menu, kContextCopyCommand);
     SetMenuItemQuickAction(menu, kContextDeleteCommand);
+    SetMenuItemIcon(menu, kContextPopupFan,
+        snowdesktop::menu_fluent_glyphs::kFanExpansion, MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions,
         MenuIconFont::FluentRegular);
@@ -616,8 +611,9 @@ void DesktopApp::ShowItemContextMenu(
             dockFolderPopupSourceId_ != sourceId)
             return;
 
-        if (command == kContextPopupDefault || command == kContextPopupFan)
+        if (command == kContextPopupFan)
         {
+            ResetCollectionPopupFanScroll();
             popupFanShowAll_ = false;
             popupFanActionFocused_ = false;
         }
@@ -745,11 +741,10 @@ void DesktopApp::ShowItemContextMenu(
     case kContextFetchWebsiteIconCommand:
         if (selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
         break;
-    case kContextPopupDefault:
     case kContextPopupFan:
         if (dockFolderEntry)
         {
-            dockFolderEntry->fanPopup = command == kContextPopupFan;
+            dockFolderEntry->fanPopup = !dockFolderEntry->fanPopup;
             applyDockFolderDisplayChange();
         }
         break;

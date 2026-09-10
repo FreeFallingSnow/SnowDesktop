@@ -156,12 +156,12 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
 
-    // A fan has a finite, spatially ordered set of items and one "Show all" action.
-    // Keep keyboard focus inside that visible set instead of selecting hidden files.
+    // Keyboard selection follows the whole fan's order and scrolls its window
+    // as needed; the final action still opens the complete grid.
     if (auto* popup = GetOpenPopupWidget(); !ctrl && !alt &&
         IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup))
     {
-        const int count = static_cast<int>(GetCollectionPopupFanVisibleCount(popupRect_));
+        const int count = static_cast<int>(GetPopupItemCount(*popup));
         int current = popupFanActionFocused_ ? count : -1;
         for (int i = 0; current < 0 && i < count; ++i)
         {
@@ -200,7 +200,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 (key == VK_UP && !CollectionPopupFanRootAbove());
             if (key == VK_HOME) next = 0;
             else if (key == VK_END) next = count;
-            else if (current < 0) next = 0;
+            else if (current < 0) next = static_cast<int>(std::ceil(GetCollectionPopupFanScrollOffset(popupRect_)));
             else if (key == VK_TAB) next = (current + (forward ? 1 : count)) % (count + 1);
             else next = std::clamp(current + (forward ? 1 : -1), 0, count);
             ClearSelection();
@@ -209,6 +209,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             popupFanActionFocused_ = next == count;
             if (next < count)
             {
+                EnsureCollectionPopupFanItemVisible(static_cast<size_t>(next));
                 if (dockFolderPopupOpen_) popup->folderEntries[next].selected = true;
                 else
                 {

@@ -477,7 +477,18 @@ void DesktopApp::DrawDynamicOverlays(
         {
             RECT bounds = targetSlot->GetBounds();
             float radius = 6.f;
-            if (dynamic_cast<DesktopGrid*>(targetContainer))
+            D2D1_MATRIX_3X2_F handoffTransform{};
+            ctx->GetTransform(&handoffTransform);
+            if (popupTarget && UsesCollectionPopupFan(*openPopupWidget))
+            {
+                const auto pose = GetCollectionPopupFanItem(popupTargetRect, targetSlot->GetIndex());
+                const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+                bounds = snowdesktop::collection_popup_layout::FanHandoffBounds(pose, metrics);
+                radius *= metrics.scale;
+                ctx->SetTransform(D2D1::Matrix3x2F::Rotation(pose.angle,
+                    D2D1::Point2F(pose.center.x, pose.center.y)) * handoffTransform);
+            }
+            else if (dynamic_cast<DesktopGrid*>(targetContainer))
             {
                 // The pointer may be in a covered cell whose Slot is empty.
                 // Resolve the same actual item used by Shell handoff hit testing.
@@ -495,6 +506,7 @@ void DesktopApp::DrawDynamicOverlays(
             DrawD2DRoundedRectangle(ctx, bounds, radius,
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
+            ctx->SetTransform(handoffTransform);
         }
         else
         {
@@ -504,10 +516,14 @@ void DesktopApp::DrawDynamicOverlays(
             {
                 if (UsesCollectionPopupFan(*openPopupWidget))
                 {
-                    const auto visualRegion = CollectionPopupFanRootAbove() ? targetRegion :
-                        (targetRegion == HitRegion::SortAfter ? HitRegion::SortBefore : HitRegion::SortAfter);
-                    targetSlot->DrawDropIndicatorWithStyle(
-                        ctx, visualRegion, BarStyle::HBar, 0.0f);
+                    const auto pose = GetCollectionPopupFanItem(popupTargetRect, targetSlot->GetIndex());
+                    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+                    const auto line = snowdesktop::collection_popup_layout::FanInsertionLine(
+                        pose, metrics, CollectionPopupFanRootAbove(), targetRegion == HitRegion::SortAfter);
+                    ComPtr<ID2D1SolidColorBrush> brush;
+                    if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.92f), &brush)))
+                        ctx->DrawLine(D2D1::Point2F(line.start.x, line.start.y),
+                            D2D1::Point2F(line.end.x, line.end.y), brush.Get(), 3.0f * metrics.scale);
                 }
                 else
                     targetSlot->DrawDropIndicatorWithStyle(ctx, targetRegion,

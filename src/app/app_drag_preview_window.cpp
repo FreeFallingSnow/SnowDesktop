@@ -200,7 +200,34 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         const RECT destination = dragPreviewItemBounds_[previewIndex];
         auto* icon = dynamic_cast<DesktopIcon*>(item);
         const auto* data = icon ? icon->GetDesktopItem() : nullptr;
-        if (data && data->largeIcon)
+        if (dragFanIconsOnly_)
+        {
+            if (icon)
+            {
+                const auto* source = dynamic_cast<const WidgetContainer*>(item->GetContainer());
+                icon->Draw(context.Get(), destination, 3, false, false, false,
+                    source ? source->GetWidgetData() : nullptr, false, true,
+                    static_cast<int>(destination.right - destination.left));
+            }
+            else
+            {
+                // FolderEntryIcon normally lays out a grid cell. Map only its
+                // icon into the retained square; do not reuse the fan row AABB.
+                const RECT natural = GetItemIconRect(destination);
+                D2D1_MATRIX_3X2_F previous{};
+                context->GetTransform(&previous);
+                context->SetTransform(D2D1::Matrix3x2F::Translation(
+                    -static_cast<float>(natural.left), -static_cast<float>(natural.top)) *
+                    D2D1::Matrix3x2F::Scale(
+                        static_cast<float>(destination.right - destination.left) / std::max(1L, natural.right - natural.left),
+                        static_cast<float>(destination.bottom - destination.top) / std::max(1L, natural.bottom - natural.top)) *
+                    D2D1::Matrix3x2F::Translation(
+                        static_cast<float>(destination.left), static_cast<float>(destination.top)) * previous);
+                item->Draw(context.Get(), destination, 3);
+                context->SetTransform(previous);
+            }
+        }
+        else if (data && data->largeIcon)
         {
             const RECT source = dragSession_.ResolveDraggedBounds(itemIndex, item->GetBounds(), dragSession_.CurrentPoint());
             DesktopWidget geometry; geometry.bounds = source; geometry.gridCell = data->gridCell;
@@ -297,7 +324,7 @@ void DesktopApp::SyncDragPreviewWindow()
     const auto compactLargeIcon = [&](std::size_t index, RECT bounds) {
         auto* icon = dynamic_cast<DesktopIcon*>(dragItems[index]);
         const auto* data = icon ? icon->GetDesktopItem() : nullptr;
-        if (!data || !data->largeIcon) return bounds;
+        if (dragFanIconsOnly_ || !data || !data->largeIcon) return bounds;
         DesktopWidget geometry; geometry.gridCell = data->gridCell; geometry.bounds = bounds;
         const RECT sourceFrame = GetStandaloneWidgetFrameRect(geometry);
         geometry.bounds = GetGridRect(gridPages_, data->gridCell, {1, 1});

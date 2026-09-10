@@ -161,6 +161,34 @@ void DesktopApp::EnsureUiAnimationFrame()
                 });
     }
 
+    const auto* fanScrollWidget = GetOpenPopupWidget();
+    if (fanScrollWidget && UsesCollectionPopupFan(*fanScrollWidget) &&
+        !popupFanScrollFrameToken_ && popupFanScroll_.position != popupFanScroll_.target &&
+        !popupAnimation_.IsClosing() && !popupAnimation_.IsHidden())
+    {
+        popupFanScrollFrameToken_ = uiAnimationScheduler_.StartAnimation(
+            snowdesktop::UiAnimationSurface::Popup, [this](double now) {
+                const auto* widget = GetOpenPopupWidget();
+                if (!widget || !UsesCollectionPopupFan(*widget) || popupAnimation_.IsClosing())
+                {
+                    popupFanScrollFrameToken_ = 0;
+                    return false;
+                }
+                popupFanScroll_.Clamp(snowdesktop::collection_popup_layout::FanMaximumScroll(
+                    GetPopupItemCount(*widget), GetCollectionPopupFanVisibleCount(popupRect_)));
+                const bool keep = popupFanScroll_.Advance(
+                    snowdesktop::animation::RuntimeAnimationsEnabled() ? now :
+                        popupFanScroll_.started + popupFanScroll_.duration);
+                if (marqueeActive_ && (marqueeDockFolderPopup_ ||
+                    marqueeWidgetIndex_ == popupWidgetIndex_))
+                    UpdateMarqueeSelection(lastMousePoint_);
+                if (dragSession_.IsActive()) ResolveCurrentDragTargetAt(lastMousePoint_);
+                InvalidateCollectionPopupAnimation(true);
+                if (!keep) popupFanScrollFrameToken_ = 0;
+                return keep;
+            });
+    }
+
     if (!luaPanelAnimationFrameToken_ &&
         luaWidgetPanelAnimation_.IsAnimating() &&
         !luaWidgetPanelAnimationCompositorDriven_)
@@ -406,6 +434,7 @@ void DesktopApp::CancelUiAnimationFrame()
 {
     snowdesktop::UiScheduleToken* const tracks[] = {
         &popupAnimationFrameToken_,
+        &popupFanScrollFrameToken_,
         &luaPanelAnimationFrameToken_,
         &quickNavigationAnimationFrameToken_,
         &dockBounceAnimationFrameToken_,

@@ -616,7 +616,7 @@ int main(int argc, char** argv)
                         static_cast<float>(viewport.bottom);
                     for (size_t i = 0; i < slots; ++i)
                     {
-                        const auto pose = popupLayout::ResolveFanItem(metrics, viewport, i, rootAbove, mirrored);
+                        const auto pose = popupLayout::ResolveFanItem(metrics, viewport, static_cast<double>(i), rootAbove, mirrored);
                         const auto bounds = popupLayout::FanItemBounds(pose);
                         Check(bounds.left >= viewport.left && bounds.right <= viewport.right &&
                             bounds.top >= viewport.top && bounds.bottom <= viewport.bottom,
@@ -643,6 +643,97 @@ int main(int argc, char** argv)
                     }
                 }
             }
+        }
+        {
+            popupLayout::FanScrollState scroll;
+            const double maximum = popupLayout::FanMaximumScroll(100, 7);
+            scroll.MoveTo(1.0, maximum, 1000, 130);
+            Check(scroll.Advance(1065) && scroll.position > 0 && scroll.position < 1,
+                "wheel movement must pass through fractional arc positions rather than jumping rows");
+            const double beforeRetarget = scroll.position;
+            scroll.MoveTo(scroll.target + 0.125, maximum, 1065, 130);
+            Check(std::abs(scroll.position - beforeRetarget) < 0.000001 && scroll.target == 1.125,
+                "high-resolution wheel input must accumulate without jumping the current pose");
+            Check(!scroll.Advance(1195) && scroll.position == 1.125,
+                "fan scrolling must settle and release its animation frame track");
+            scroll.MoveTo(10000, maximum, 1200, 0);
+            const auto lastPage = popupLayout::FanVisibleRange(scroll.position, 7, 100);
+            Check(scroll.position == 93 && lastPage.first == 93 && lastPage.end == 100,
+                "scrolling to the end must expose the last actual file without inventing entries");
+            scroll.MoveTo(-1000, maximum, 1300, 0);
+            Check(scroll.position == 0 && popupLayout::FanMaximumScroll(3, 7) == 0,
+                "wheel overscroll and short folders must remain bounded");
+            scroll.MoveTo(90, maximum, 1400, 130);
+            scroll.Advance(1430);
+            scroll.Clamp(2);
+            scroll.Advance(1530);
+            Check(scroll.position == 2 && scroll.target == 2,
+                "removing files during motion must constrain both the current and pending scroll offset");
+            Check(popupLayout::FanItemOpacity(-0.25, 7) == 0 &&
+                popupLayout::FanItemOpacity(6.25, 7) == 0 &&
+                popupLayout::FanItemOpacity(0, 7) == 1 && popupLayout::FanItemOpacity(6, 7) == 1,
+                "entering and leaving icons must fade at the ends while settled end items remain readable");
+            for (double offset : {0.0, 0.125, 40.5, 92.875, 93.0})
+            {
+                const auto range = popupLayout::FanVisibleRange(offset, 7, 100);
+                Check(range.end <= 100 && range.end - range.first <= 8,
+                    "fan drawing must stay bounded to the visible arc even in a large folder");
+                for (size_t item = 0; item < 100; ++item)
+                    if (popupLayout::FanItemOpacity(static_cast<double>(item) - offset, 7) > 0)
+                        Check(item >= range.first && item < range.end,
+                            "the drawing range must include every nontransparent entering or leaving item");
+            }
+        }
+        for (float scale : {0.75f, 1.0f, 1.5f, 2.0f})
+        for (bool rootAbove : {false, true})
+        for (bool mirrored : {false, true})
+        {
+            const auto metrics = popupLayout::ResolveMetrics(92, 116, 92, 116, scale);
+            const RECT popup{0, 0, popupLayout::ScaleDimension(400, scale),
+                popupLayout::FanFrameHeight(metrics, 8)};
+            const auto pose = popupLayout::ResolveFanItem(metrics, popup, 4.5, rootAbove, mirrored);
+            const auto next = popupLayout::ResolveFanItem(metrics, popup, 5.0, rootAbove, mirrored);
+            Check(pose.center.x != next.center.x && pose.center.y != next.center.y && pose.angle != next.angle,
+                "fractional scrolling must change lateral position and angle along the fan, not just shift a list vertically");
+            const POINT center{static_cast<LONG>(pose.center.x), static_cast<LONG>(pose.center.y)};
+            Check(popupLayout::FanItemContains(pose, center),
+                "the visible icon must keep its hit target while between integral scroll positions");
+            const RECT handoff = popupLayout::FanHandoffBounds(pose, metrics);
+            const RECT handoffAabb = popupLayout::FanRotatedBounds(handoff, pose);
+            Check(popupLayout::FanRectContains(pose, handoff, center) &&
+                !popupLayout::FanRectContains(pose, handoff, {handoffAabb.left, handoffAabb.top}),
+                "green handoff feedback must use the rotated icon region, not the empty corners of its AABB");
+            const auto edgeInside = popupLayout::RotateFanPoint(
+                {static_cast<float>(handoff.left + 2), pose.center.y}, pose.center, pose.angle);
+            const auto edgeOutside = popupLayout::RotateFanPoint(
+                {static_cast<float>(handoff.left - 2), pose.center.y}, pose.center, pose.angle);
+            const auto toPoint = [](popupLayout::FanPoint point) {
+                return POINT{static_cast<LONG>(std::lround(point.x)), static_cast<LONG>(std::lround(point.y))};
+            };
+            Check(popupLayout::FanRectContains(pose, handoff, toPoint(edgeInside)) &&
+                !popupLayout::FanRectContains(pose, handoff, toPoint(edgeOutside)),
+                "handoff activation must follow the painted tilted border on both fan sides and all DPIs");
+            for (bool after : {false, true})
+            {
+                const auto line = popupLayout::FanInsertionLine(pose, metrics, rootAbove, after);
+                const float dx = line.end.x - line.start.x, dy = line.end.y - line.start.y;
+                Check(std::abs(dy) > scale && std::abs(dy / dx - std::tan(pose.angle * 3.14159265 / 180.0)) < 0.0001,
+                    "the insertion indicator must tilt with its target rather than remain horizontal");
+                const POINT mid{static_cast<LONG>(std::round((line.start.x + line.end.x) * 0.5f)),
+                    static_cast<LONG>(std::round((line.start.y + line.end.y) * 0.5f))};
+                Check(popupLayout::FanInsertionDistanceSquared(line, mid) <= 1 &&
+                    popupLayout::FanIsAfterInsertion(pose, mid, rootAbove) == after,
+                    "the drawn insertion line and its logical before/after target must agree in every direction");
+            }
+            const popupLayout::FanPoint origin{200, rootAbove ? 0.0f : 700.0f};
+            const auto initial = popupLayout::FanUnfoldCenter(origin, pose.center, 0);
+            const auto final = popupLayout::FanUnfoldCenter(origin, pose.center, 1);
+            const auto middle = popupLayout::FanUnfoldCenter(origin, pose.center, 0.5f);
+            Check(initial.x == origin.x && initial.y == origin.y &&
+                std::abs(final.x - pose.center.x) < 0.001f && std::abs(final.y - pose.center.y) < 0.001f,
+                "opening and reversed closing must reach the source and exact final fan positions");
+            Check(std::abs(middle.x - (origin.x + pose.center.x) * 0.5f) > 0.01f,
+                "fan opening must bend outward from the stack instead of using a straight zoom trajectory");
         }
         for (float distance : {0.0f, 0.5f, 1.0f})
         {

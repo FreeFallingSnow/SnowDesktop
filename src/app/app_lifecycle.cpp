@@ -16,6 +16,7 @@ DesktopApp::~DesktopApp()
     dockWindowActivationObservationToken_ = 0;
     dockWindowActivationObservations_.clear();
     popupAnimationFrameToken_ = 0;
+    popupFanScrollFrameToken_ = 0;
     luaPanelAnimationFrameToken_ = 0;
     quickNavigationAnimationFrameToken_ = 0;
     dockBounceAnimationFrameToken_ = 0;

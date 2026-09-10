@@ -253,6 +253,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     ClearDockFolderPopupEntries();
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
+    ResetCollectionPopupFanScroll();
     popupFanShowAll_ = false;
     popupFanActionFocused_ = false;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
@@ -876,5 +877,6 @@ void DesktopApp::SortDockFolderPopupContents(
     }
 
     popupScrollOffset_ = 0;
+    ResetCollectionPopupFanScroll();
     RefreshDockFolderPopupGeometry();
 }

@@ -189,6 +189,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     popupScrollOffset_ = 0;
     if (!reverseClosingAnimation)
     {
+        ResetCollectionPopupFanScroll();
         popupFanShowAll_ = false;
         popupFanActionFocused_ = false;
     }
@@ -490,6 +491,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     ClearDockFolderPopupEntries();
     marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
+    ResetCollectionPopupFanScroll();
     popupFanShowAll_ = false;
     popupFanActionFocused_ = false;
     popupHasAnchor_ = false;

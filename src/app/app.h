@@ -2886,6 +2886,11 @@ private:
         const RECT& popup, size_t index) const;
     bool HitTestCollectionPopupItem(const RECT& popup, size_t index, POINT point) const;
     void ShowAllCollectionPopupItems();
+    double GetCollectionPopupFanScrollOffset(const RECT& popup) const;
+    bool IsCollectionPopupFanItemVisible(const RECT& popup, size_t index) const;
+    void ScrollCollectionPopupFan(double amount);
+    void EnsureCollectionPopupFanItemVisible(size_t index);
+    void ResetCollectionPopupFanScroll();
     std::vector<Item*>
         GetDockFolderPopupSelectedItems();
     /** @brief 判断放置目标是否会改变当前打开的 Dock 文件夹弹窗。 */
@@ -3008,6 +3013,8 @@ private:
     /** @brief 获取集合弹出面板中指定项的矩形。 @param popup 面板矩形 @param linearIndex 项索引 @return 项矩形 */
     RECT GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const;
     RECT GetCollectionPopupItemIconRect(const RECT& itemRect) const;
+    RECT GetCollectionPopupFanDragBounds(const Item* item) const;
+    bool HitTestCollectionPopupHandoff(const RECT& popup, size_t index, POINT point) const;
     RECT GetCollectionPopupItemTextRect(const RECT& itemRect) const;
     /** @brief 处理鼠标滚轮消息。 @param wp WPARAM @param lp LPARAM */
     void OnMouseWheel(WPARAM wp, LPARAM lp);
@@ -3770,6 +3777,7 @@ private:
     /** @name 拖拽状态 */
     /** @{ */
     DragSession dragSession_;
+    bool dragFanIconsOnly_ = false;
     DragDropController dragDropController_{dragSession_};
     DragRenderCache dragRenderCache_;
     mutable snowdesktop::desktop_drop_cache::
@@ -4028,6 +4036,8 @@ private:
     // Per-open presentation only; never persisted over the object's preference.
     bool popupFanShowAll_ = false;
     bool popupFanActionFocused_ = false;
+    snowdesktop::collection_popup_layout::FanScrollState popupFanScroll_;
+    snowdesktop::UiScheduleToken popupFanScrollFrameToken_ = 0;
     bool popupHasAnchor_ = false;
     bool popupAnchoredToDock_ = false;
     // A shared popup keeps its own DockHost association; pointer selection

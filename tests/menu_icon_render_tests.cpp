@@ -1,4 +1,5 @@
 #include "menu_icon_render.h"
+#include "menu_fluent_glyphs.h"
 #include "resource.h"
 
 #include <algorithm>
@@ -592,7 +593,8 @@ int wmain(int argc, wchar_t** argv)
         moreOptionsIconBounds) == 0,
         "disabled more-options row does not retain a blue accent");
 
-    const std::array<const wchar_t*, 10> alignedMenuGlyphs{
+    const std::array<const wchar_t*, 11> alignedMenuGlyphs{
+        snowdesktop::menu_fluent_glyphs::kFanExpansion,
         L"\uF33A", L"\uF32B", L"\uF10C", L"\U000F0A39",
         L"\uF3DD", L"\uF34C", L"\uF6A9", L"\uF21D",
         L"\uF15B", L"\uF181",

@@ -194,8 +194,8 @@ inline int RequiredListRowCount(std::size_t itemCount)
         static_cast<int>(itemCount));
 }
 
-// A finite fan reserves its last slot for "Show all". Painting and hit testing
-// share the same icon, label and rotation rather than scrolling list rows.
+// A compact fan reserves its last slot for "Show all". File indices move along
+// a fixed curve; painting and hit testing share its fractional slot positions.
 inline int FanRowHeight(const Metrics& metrics)
 {
     return std::max(ScaleDimension(72, metrics.scale),
@@ -264,15 +264,53 @@ inline RECT FanItemBounds(const FanItem& item)
         std::max(icon.right, label.right), std::max(icon.bottom, label.bottom)};
 }
 
-inline bool FanItemContains(const FanItem& item, POINT point)
+inline bool FanRectContains(const FanItem& item, const RECT& rect, POINT point)
 {
     const auto local = RotateFanPoint(
         {static_cast<float>(point.x), static_cast<float>(point.y)}, item.center, -item.angle);
-    const auto inside = [&](const RECT& rect) {
-        return local.x >= rect.left && local.x < rect.right &&
-            local.y >= rect.top && local.y < rect.bottom;
-    };
-    return inside(item.icon) || inside(item.label);
+    return local.x >= rect.left && local.x < rect.right &&
+        local.y >= rect.top && local.y < rect.bottom;
+}
+
+inline bool FanItemContains(const FanItem& item, POINT point)
+{
+    return FanRectContains(item, item.icon, point) || FanRectContains(item, item.label, point);
+}
+
+inline RECT FanHandoffBounds(const FanItem& item, const Metrics& metrics)
+{
+    const int pad = ScaleDimension(4, metrics.scale);
+    return {item.icon.left - pad, item.icon.top - pad,
+        item.icon.right + pad, item.icon.bottom + pad};
+}
+
+struct FanLine { FanPoint start, end; };
+inline FanLine FanInsertionLine(const FanItem& item, const Metrics& metrics,
+    bool rootAbove, bool after)
+{
+    const float y = item.center.y + FanRowHeight(metrics) * 0.5f *
+        (rootAbove ? 1.0f : -1.0f) * (after ? 1.0f : -1.0f);
+    return {RotateFanPoint({static_cast<float>(std::min(item.icon.left, item.label.left)), y},
+                item.center, item.angle),
+        RotateFanPoint({static_cast<float>(std::max(item.icon.right, item.label.right)), y},
+                item.center, item.angle)};
+}
+
+inline bool FanIsAfterInsertion(const FanItem& item, POINT point, bool rootAbove)
+{
+    const auto local = RotateFanPoint({static_cast<float>(point.x), static_cast<float>(point.y)},
+        item.center, -item.angle);
+    return rootAbove ? local.y >= item.center.y : local.y < item.center.y;
+}
+
+inline long long FanInsertionDistanceSquared(const FanLine& line, POINT point)
+{
+    const double dx = line.end.x - line.start.x, dy = line.end.y - line.start.y;
+    const double length = dx * dx + dy * dy;
+    const double t = length > 0 ? std::clamp(
+        ((point.x - line.start.x) * dx + (point.y - line.start.y) * dy) / length, 0.0, 1.0) : 0;
+    const double x = point.x - (line.start.x + t * dx), y = point.y - (line.start.y + t * dy);
+    return static_cast<long long>(std::llround(x * x + y * y));
 }
 
 inline int FanRootX(const Metrics& metrics, int width, bool mirrored)
@@ -282,15 +320,15 @@ inline int FanRootX(const Metrics& metrics, int width, bool mirrored)
 }
 
 inline FanItem ResolveFanItem(const Metrics& metrics, const RECT& popup,
-    std::size_t index, bool rootAbove, bool mirrored)
+    double position, bool rootAbove, bool mirrored)
 {
-    const float t = std::min(1.0f, static_cast<float>(index) / 7.0f);
+    const float t = std::clamp(static_cast<float>(position) / 7.0f, 0.0f, 1.0f);
     const int bend = static_cast<int>(std::round(ScaleDimension(64, metrics.scale) * t * t));
     const int halfIcon = ScaleDimension(28, metrics.scale);
     const int x = popup.left + FanRootX(metrics, popup.right - popup.left, mirrored) +
         (mirrored ? -bend : bend);
     const int fromRoot = ScaleDimension(46, metrics.scale) +
-        static_cast<int>(index) * FanRowHeight(metrics);
+        static_cast<int>(std::round(position * FanRowHeight(metrics)));
     const int y = rootAbove ? popup.top + fromRoot : popup.bottom - fromRoot;
     FanItem result;
     result.center = {static_cast<float>(x), static_cast<float>(y)};
@@ -306,6 +344,70 @@ inline FanItem ResolveFanItem(const Metrics& metrics, const RECT& popup,
             result.icon.left - gap, y + halfLabel};
     return result;
 }
+
+inline double FanMaximumScroll(std::size_t count, std::size_t visible)
+{
+    return static_cast<double>(count > visible ? count - visible : 0);
+}
+
+inline float FanItemOpacity(double position, std::size_t visible)
+{
+    if (!visible) return 0;
+    // Fade inside the small end margins instead of clipping a fully opaque icon.
+    constexpr double edge = 0.25;
+    return static_cast<float>(std::clamp(std::min((position + edge) / edge,
+        (static_cast<double>(visible) - 1.0 + edge - position) / edge), 0.0, 1.0));
+}
+
+struct FanRange { std::size_t first = 0, end = 0; };
+inline FanRange FanVisibleRange(double offset, std::size_t visible, std::size_t count)
+{
+    offset = std::clamp(offset, 0.0, FanMaximumScroll(count, visible));
+    return {static_cast<std::size_t>(std::floor(offset)),
+        std::min(count, static_cast<std::size_t>(std::ceil(offset)) + visible)};
+}
+
+inline FanPoint FanUnfoldCenter(FanPoint origin, FanPoint destination, float progress)
+{
+    const float t = std::clamp(progress, 0.0f, 1.0f);
+    // Rise out of the stack before bending sideways. Icon size stays constant.
+    return {origin.x + (destination.x - origin.x) * t * t,
+        origin.y + (destination.y - origin.y) * t};
+}
+
+struct FanScrollState
+{
+    double position = 0, target = 0, from = 0;
+    double started = 0, duration = 0;
+
+    bool Advance(double now)
+    {
+        const double t = duration > 0 ? std::clamp((now - started) / duration, 0.0, 1.0) : 1.0;
+        const double rest = 1.0 - t;
+        position = from + (target - from) * (1.0 - rest * rest * rest);
+        if (t >= 1.0) position = target;
+        return t < 1.0 && from != target;
+    }
+    void Clamp(double maximum)
+    {
+        maximum = std::max(0.0, maximum);
+        position = std::clamp(position, 0.0, maximum);
+        from = std::clamp(from, 0.0, maximum);
+        target = std::clamp(target, 0.0, maximum);
+    }
+    void MoveTo(double value, double maximum, double now, double milliseconds)
+    {
+        Advance(now);
+        Clamp(maximum);
+        value = std::clamp(value, 0.0, std::max(0.0, maximum));
+        if (value == target && milliseconds > 0) return;
+        from = position;
+        target = value;
+        started = now;
+        duration = milliseconds;
+        if (duration <= 0) position = from = target;
+    }
+};
 
 inline float FanRevealProgress(float progress, float distanceFromRoot)
 {
