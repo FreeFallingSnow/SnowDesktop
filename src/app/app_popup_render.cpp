@@ -234,8 +234,7 @@ void DesktopApp::DrawCollectionPopup(
     }
     ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     const size_t popupItemCount = GetPopupItemCount(widget);
-    const auto drawFanItem = [&](const RECT& row, HBITMAP bitmap,
-        int systemIcon, const std::wstring& name, bool selected, bool thumbnail,
+    const auto drawFanItem = [&](const RECT& row, const auto& item,
         const DesktopItem* desktopItem) {
         namespace layout = snowdesktop::collection_popup_layout;
         const bool hovered = popupAnimation_.IsInteractive() &&
@@ -246,11 +245,11 @@ void DesktopApp::DrawCollectionPopup(
         if (applyAnimation && animation.progress < 1.0f &&
             snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::Fade)
         {
-            const bool rootAbove = popupAnchoredToDock_ &&
-                popupDockPosition_ == DockPosition::Top;
             const POINT origin{
-                std::clamp(popupAnchorPoint_.x, content.left, content.right),
-                rootAbove ? content.top : content.bottom};
+                popupHasAnchor_ ? std::clamp(popupAnchorPoint_.x, content.left, content.right)
+                    : content.left,
+                popupHasAnchor_ ? std::clamp(popupAnchorPoint_.y, content.top, content.bottom)
+                    : content.top};
             const float distance = std::abs((row.top + row.bottom) * 0.5f - origin.y) /
                 std::max(1L, content.bottom - content.top);
             progress = layout::FanRevealProgress(animation.progress, distance);
@@ -262,18 +261,18 @@ void DesktopApp::DrawCollectionPopup(
                 D2D1::Matrix3x2F::Translation((origin.x - centerX) * (1.0f - progress),
                     (origin.y - centerY) * (1.0f - progress)) * transform);
         }
-        PopupOpacityScope rowOpacity(ctx, true, progress);
+        PopupOpacityScope rowOpacity(ctx, true, progress * (item.isCut ? 0.5f : 1.0f));
         RECT pill = row;
         const int inset = layout::ScaleDimension(3, popupMetrics.scale);
         pill.top += inset;
         pill.bottom -= inset;
-        const auto fill = selected
+        const auto fill = item.selected
             ? D2D1::ColorF(0.20f, 0.48f, 0.85f, 0.95f)
             : D2D1::ColorF(collectionPopupAppearance_.widgetBgR,
                 collectionPopupAppearance_.widgetBgG, collectionPopupAppearance_.widgetBgB, 0.94f);
         DrawD2DRoundedRectangle(ctx, pill, 12.0f * popupMetrics.scale, fill,
-            popupTextColor(hovered || selected ? 0.55f : 0.18f),
-            (hovered || selected ? 1.5f : 1.0f) * popupMetrics.scale);
+            popupTextColor(hovered || item.selected ? 0.55f : 0.18f),
+            (hovered || item.selected ? 1.5f : 1.0f) * popupMetrics.scale);
         const RECT iconRect = GetCollectionPopupItemIconRect(row);
         const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
         if (demo)
@@ -282,17 +281,17 @@ void DesktopApp::DrawCollectionPopup(
                 desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
                 iconRect, 1.0f);
         }
-        else if (auto* icon = GetOrCreateD2DBitmap(bitmap, ShouldBeautifyIconBitmap(thumbnail)))
+        else if (auto* icon = GetOrCreateD2DBitmap(item.iconBitmap,
+            ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
             DrawIconBitmap(ctx, icon, iconRect);
         else
-            DrawPlaceholderIcon(ctx, systemIcon, iconRect, 1.0f);
-        if (desktopItem && !demo && ShouldDrawShortcutArrow(
-                desktopItem->isShortcut, desktopItem->isApplicationShortcut))
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, iconRect, 1.0f);
+        if (!demo && ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut))
             DrawShortcutArrowOverlay(ctx, iconRect, 1.0f);
         const std::wstring text = demo ? GetDemoCollectionIdentityTitle(widget,
-            desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey) : name;
+            desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey) : item.name;
         DrawD2DTextEllipsis(ctx, text, GetCollectionPopupItemTextRect(row),
-            itemTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
+            itemTextFormat_.Get(), item.selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         ctx->SetTransform(transform);
     };
@@ -312,8 +311,7 @@ void DesktopApp::DrawCollectionPopup(
             FolderEntry& entry = dockFolderPopupWidget_.folderEntries[i];
             if (fan)
             {
-                drawFanItem(itemRect, entry.iconBitmap, entry.sysIconIndex,
-                    entry.name, entry.selected, entry.iconIsMediaThumbnail, nullptr);
+                drawFanItem(itemRect, entry, nullptr);
                 continue;
             }
             if (widget.listMode)
@@ -356,8 +354,7 @@ void DesktopApp::DrawCollectionPopup(
             if (fan)
             {
                 const auto& item = items_[itemIndex];
-                drawFanItem(itemRect, item.iconBitmap, item.sysIconIndex,
-                    item.name, item.selected, item.iconIsMediaThumbnail, &item);
+                drawFanItem(itemRect, item, &item);
                 continue;
             }
             if (widget.listMode)

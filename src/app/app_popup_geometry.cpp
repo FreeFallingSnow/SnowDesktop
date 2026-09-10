@@ -189,6 +189,15 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             left = popupAnchorPoint_.x + metrics.anchorGap;
             top = popupAnchorPoint_.y + metrics.anchorGap;
         }
+        if (widget.fanPopup && popupAnchoredToDock_ &&
+            (popupDockPosition_ == DockPosition::Top ||
+             popupDockPosition_ == DockPosition::Bottom))
+        {
+            // Align the root icon with its Dock entry before clamping to the
+            // work area. The labels extend away from that icon, not around it.
+            left = popupAnchorPoint_.x - metrics.paddingX -
+                snowdesktop::collection_popup_layout::ScaleDimension(29, metrics.scale);
+        }
         left = std::clamp(
             left,
             static_cast<int>(work.left + metrics.edgeMargin),
@@ -434,7 +443,7 @@ RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearInde
     if (const DesktopWidget* widget = GetOpenPopupWidget(); widget && widget->fanPopup)
         return snowdesktop::collection_popup_layout::FanItemRect(
             metrics, content, linearIndex, popupScrollOffset_,
-            popupAnchoredToDock_ && popupDockPosition_ == DockPosition::Top,
+            !popupAnchoredToDock_ || popupDockPosition_ == DockPosition::Top,
             popupAnchoredToDock_ && popupDockPosition_ == DockPosition::Right);
     if (const DesktopWidget* widget = GetOpenPopupWidget();
         widget && widget->listMode)

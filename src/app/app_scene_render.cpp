@@ -502,8 +502,12 @@ void DesktopApp::DrawDynamicOverlays(
                 (targetRegion == HitRegion::SortBefore ||
                  targetRegion == HitRegion::SortAfter))
             {
-                targetSlot->DrawDropIndicator(ctx, targetRegion,
-                    static_cast<float>(kCollectionPopupGapX) * 0.5f);
+                if (openPopupWidget->fanPopup)
+                    targetSlot->DrawDropIndicatorWithStyle(
+                        ctx, targetRegion, BarStyle::HBar, 0.0f);
+                else
+                    targetSlot->DrawDropIndicator(ctx, targetRegion,
+                        static_cast<float>(kCollectionPopupGapX) * 0.5f);
             }
             else
             {

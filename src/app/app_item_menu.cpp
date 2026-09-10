@@ -373,7 +373,6 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFolderEntry)
     {
-
         if (HMENU expansion = CreatePopupMenu())
         {
             AppendMenuW(expansion, MF_STRING, kContextPopupDefault,
@@ -617,6 +616,14 @@ void DesktopApp::ShowItemContextMenu(
             dockFolderPopupSourceId_ != sourceId)
             return;
 
+        if (dockFolderPopupWidget_.fanPopup != dockFolderEntry->fanPopup)
+        {
+            ResetCollectionPopupAnimationCache();
+            popupAnimation_.ShowImmediately();
+            popupAnimation_.Configure(
+                snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+                snowdesktop::animation::RuntimeDurationScale() * (dockFolderEntry->fanPopup ? 2.4 : 1.0));
+        }
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
         dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;

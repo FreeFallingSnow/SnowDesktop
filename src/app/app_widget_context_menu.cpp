@@ -350,11 +350,7 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.scrollContainerMode
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
-    if (widget.type == DesktopWidgetType::Collection ||
-        (widget.type == DesktopWidgetType::FolderMapping &&
-            widget.gridCell.pageId == kDockPageId))
-    {
-
+    const auto appendPopupLayoutMenu = [&]() {
         if (HMENU expansion = CreatePopupMenu())
         {
             AppendMenuW(expansion, MF_STRING, kContextPopupDefault,
@@ -366,7 +362,7 @@ void DesktopApp::ShowWidgetContextMenu(
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(expansion),
                 _LW("app.interact.popup_layout"));
         }
-    }
+    };
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     std::vector<LuaWidgetMenuItem> luaMenuActions;
     auto luaMenuScope = snowdesktop::right_click_contract::
@@ -378,6 +374,7 @@ void DesktopApp::ShowWidgetContextMenu(
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
+        appendPopupLayoutMenu();
         if (generalSettings_.demoModeEnabled &&
             demoIdentityAssetsAvailable_)
         {
@@ -526,6 +523,8 @@ void DesktopApp::ShowWidgetContextMenu(
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
+        if (widget.gridCell.pageId == kDockPageId)
+            appendPopupLayoutMenu();
         AppendMenuW(menu,
             HasPasteableFileClipboardData()
                 ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -994,6 +993,16 @@ void DesktopApp::ShowWidgetContextMenu(
             widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
         {
             widgets_[widgetIndex].fanPopup = command == kContextPopupFan;
+            if ((!dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) ||
+                (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id))
+            {
+                ResetCollectionPopupAnimationCache();
+                popupAnimation_.ShowImmediately();
+                popupAnimation_.Configure(
+                    snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+                    snowdesktop::animation::RuntimeDurationScale() *
+                        (widgets_[widgetIndex].fanPopup ? 2.4 : 1.0));
+            }
             SaveLayoutSlots();
             refreshOpenPopupDisplay();
             InvalidateRect(hwnd_, nullptr, FALSE);
