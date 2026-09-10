@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../drag_visual_rules.h"
+#include "popup_window_pair_z_order.h"
 
 // Compact top-level DComp surface used only for the custom drag ghost. The
 // desktop, floating Dock and popup surfaces keep rendering drop guidance, but
@@ -54,18 +55,28 @@ void DesktopApp::HideDragPreviewWindow()
 
 void DesktopApp::ApplyDragPreviewLayerPolicy()
 {
-    if (!dragPreviewHwnd_ ||
-        !IsWindow(dragPreviewHwnd_) ||
-        !IsWindowVisible(dragPreviewHwnd_))
-        return;
+    namespace zOrder = snowdesktop::popup_window_pair_z_order;
+    const HWND visiblePreview = dragPreviewHwnd_ && IsWindowVisible(dragPreviewHwnd_)
+        ? dragPreviewHwnd_ : nullptr;
     const HWND visibleHint = hintHwnd_ && IsWindowVisible(hintHwnd_) ? hintHwnd_ : nullptr;
+    const HWND visiblePopup = floatingPopupHwnd_ && IsWindowVisible(floatingPopupHwnd_)
+        ? floatingPopupHwnd_ : nullptr;
+    if (!visiblePreview && !visibleHint) return;
+    const bool previewOrdered = !visiblePreview ||
+        (zOrder::IsTopmost(visiblePreview) &&
+            (!visiblePopup || zOrder::IsAbove(visiblePreview, visiblePopup)));
+    const bool hintOrdered = !visibleHint ||
+        (zOrder::IsTopmost(visibleHint) &&
+            (!visiblePreview || zOrder::IsAbove(visibleHint, visiblePreview)) &&
+            (!visiblePopup || zOrder::IsAbove(visibleHint, visiblePopup)));
+    if (previewOrdered && hintOrdered) return;
     const auto policy = snowdesktop::drag_visual_rules::ResolvePreviewWindowZOrderPolicy(true, visibleHint);
     constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
     // Raise the pair together above a newly opened Dock popup. A fixed order
     // keeps the DComp ghost from alternating over the layered hint on refresh.
-    HDWP batch = BeginDeferWindowPos(visibleHint ? 2 : 1);
+    HDWP batch = BeginDeferWindowPos((visibleHint ? 1 : 0) + (visiblePreview ? 1 : 0));
     if (batch && visibleHint) batch = DeferWindowPos(batch, visibleHint, HWND_TOPMOST, 0, 0, 0, 0, flags);
-    if (batch) batch = DeferWindowPos(batch, dragPreviewHwnd_, policy.insertAfter, 0, 0, 0, 0, flags);
+    if (batch && visiblePreview) batch = DeferWindowPos(batch, visiblePreview, policy.insertAfter, 0, 0, 0, 0, flags);
     if (batch) EndDeferWindowPos(batch);
 }
 

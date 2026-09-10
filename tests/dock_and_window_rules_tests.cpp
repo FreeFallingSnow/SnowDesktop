@@ -259,6 +259,26 @@ void CheckPopupWindowPairZOrderTransitions()
             isAbove(menu, content),
         "a protected owned menu also prevents a content-only popup refresh from overtaking the menu");
 
+    // The fan has no glass backdrop and the drag HUD is not its owned menu.
+    // Every refresh must preserve hint > ghost > fan throughout the frame,
+    // instead of raising the fan and repairing the HUD in a later operation.
+    SetWindowLongPtrW(menu, GWLP_HWNDPARENT, 0);
+    Check(snowdesktop::popup_window_pair_z_order::MaintainContentBand(content, true) &&
+            SetWindowPos(separator, HWND_TOPMOST, 0, 0, 0, 0, zOrderOnlyFlags) &&
+            SetWindowPos(menu, HWND_TOPMOST, 0, 0, 0, 0, zOrderOnlyFlags),
+        "unowned drag ghost and hint probes can be placed above the transparent fan");
+    for (int frame = 0; frame < 32; ++frame)
+    {
+        Check(snowdesktop::popup_window_pair_z_order::MaintainContentBand(content, true) &&
+                isAbove(menu, separator) && isAbove(separator, content),
+            "repeated transparent fan refreshes must never overtake the drag ghost or hint");
+    }
+    Check(snowdesktop::popup_window_pair_z_order::MaintainContentBand(content, false) &&
+            !snowdesktop::popup_window_pair_z_order::IsTopmost(content) &&
+            snowdesktop::popup_window_pair_z_order::MaintainContentBand(content, true) &&
+            snowdesktop::popup_window_pair_z_order::IsTopmost(content),
+        "stable transparent fan refreshes must still honor explicit band transitions");
+
     DestroyWindow(separator);
     DestroyWindow(menu);
     DestroyWindow(backdrop);

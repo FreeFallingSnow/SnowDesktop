@@ -188,4 +188,16 @@ inline bool Apply(
         IsPaired(contentWindow, backdropWindow);
 }
 
+// A transparent popup has no backdrop to establish pair adjacency. Refreshing
+// its band must be idempotent too, so it does not overtake drag HUD windows.
+inline bool MaintainContentBand(HWND contentWindow, bool topmost,
+    HWND preserveAboveWindow = nullptr)
+{
+    if (!contentWindow || !IsWindow(contentWindow)) return false;
+    if (IsTopmost(contentWindow) == topmost) return true;
+    return Apply(contentWindow, nullptr,
+        topmost ? HWND_TOPMOST : HWND_NOTOPMOST, topmost,
+        POINT{}, SIZE{}, preserveAboveWindow);
+}
+
 } // namespace snowdesktop::popup_window_pair_z_order

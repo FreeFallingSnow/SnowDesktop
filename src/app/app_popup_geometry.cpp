@@ -232,6 +232,19 @@ void DesktopApp::ShowAllCollectionPopupItems()
 {
     const auto* widget = GetOpenPopupWidget();
     if (!widget || !UsesCollectionPopupFan(*widget)) return;
+    // This is a change of the same popup, not an outside click. Retire queued
+    // hook notifications against the old fan before its hit region shrinks.
+    AdvanceFloatingPopupContentGeneration();
+    if (handlingFloatingPopupInput_)
+    {
+        // The Dock's timer also samples physical presses. Consume this handled
+        // press before publishing the grid, including the since-last-read bit.
+        const SHORT state = GetAsyncKeyState(VK_LBUTTON);
+        constexpr UINT leftButtonBit = 1u << 0;
+        floatingDockPointerButtonsDown_ =
+            (floatingDockPointerButtonsDown_ & ~leftButtonBit) |
+            ((state & 0x8000) ? leftButtonBit : 0);
+    }
     ResetCollectionPopupAnimationCache();
     ResetCollectionPopupFanScroll();
     popupFanShowAll_ = true;

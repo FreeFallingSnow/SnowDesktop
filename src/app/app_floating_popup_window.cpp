@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../drag_input_rules.h"
+#include "popup_window_pair_z_order.h"
 
 #include <array>
 #include <bit>
@@ -749,11 +750,12 @@ void DesktopApp::ApplyFloatingPopupLayerPolicy()
     {
         preserveAboveWindow = nullptr;
     }
-    collectionPopupBackdropCompositor_.
-        SetPopupWindowPairZOrder(
-            floatingPopupHwnd_,
-            shouldBeTopmost
-                ? HWND_TOPMOST : HWND_NOTOPMOST,
+    if (!collectionPopupBackdropCompositor_.IsAvailable())
+        snowdesktop::popup_window_pair_z_order::MaintainContentBand(
+            floatingPopupHwnd_, shouldBeTopmost, preserveAboveWindow);
+    else
+        collectionPopupBackdropCompositor_.SetPopupWindowPairZOrder(
+            floatingPopupHwnd_, shouldBeTopmost ? HWND_TOPMOST : HWND_NOTOPMOST,
             shouldBeTopmost, preserveAboveWindow);
     ApplyDragPreviewLayerPolicy();
     TraceMenuHostZOrderTransition(
@@ -980,7 +982,9 @@ void DesktopApp::UpdateFloatingPopupWindowBounds(
                 1, nextBounds.right - nextBounds.left),
             std::max<LONG>(
                 1, nextBounds.bottom - nextBounds.top),
-            SWP_NOACTIVATE |
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+                (wasVisible && snowdesktop::popup_window_pair_z_order::IsTopmost(
+                    floatingPopupHwnd_) == topmost ? SWP_NOZORDER : 0) |
                 (wasVisible ? SWP_SHOWWINDOW : 0));
         TraceMenuHostZOrderTransition(
             positioned
