@@ -6,6 +6,53 @@
 
 ## 当前清单
 
-评估刚开始，待核对当前源码后逐项填入。既有 DND-01/02 的实机验收状态和 DND-03 的异步落点风险见[拖放矩阵](drag_drop_validation_matrix.md)，后续核对时沿用原编号，避免重复立项。
+核对基线：`5dc6bc26`（生产代码最近相关变更为 `0b1fe404`，鼠标钩子另有 `02246762`）。下列条目尚未关闭。
 
-每项应包含：编号与状态、生产位置、触发条件、影响、现有证据及其边界、关联测试、建议处理和关闭条件。
+| 编号 | 问题 | 状态 | 优先级 |
+| --- | --- | --- | --- |
+| DND-01 | Explorer 外部文件释放到组件后的实际执行验收 | 已有代码尝试，待实机验证 | 高 |
+| DND-02 | Edge 网络图片进入目标组件时的图片保存验收 | 已有代码尝试，待实机验证 | 高 |
+| DND-03 | 多次异步操作在刷新前覆盖或清除其他请求的落点 | 代码推导风险，待受控时序复现 | 高 |
+| DND-04 | 批次部分成功时，宿主缺少逐项完成信息，临时引用存在失效风险 | 代码推导风险；工作器部分成功行为已有测试证据 | 高 |
+
+## DND-01：外部文件进入组件的执行验收
+
+- 生产位置：[外部组件入口](../src/app/app_external_slot_drop.cpp)的 `DropExternalSlotContent` / `CommitExternalSlotPaths`，以及 [OLE 会话](../src/app/app_ole_drop_session.cpp)。
+- 触发条件：资源管理器拖入各组件，有复制/移动提示，释放后应实际提交；用户原始反馈为空白桌面成功、组件无操作。
+- 影响：核心文件操作未完成，不能用接收规则或光标提示代表结果。
+- 证据：当前代码已有异步内容读取、稳定目标捕获与提交路径；[原矩阵](drag_drop_validation_matrix.md)记录 helper 回归先失败后通过。但现有 `slot_runtime_contract` 的 DND-01 只调用 `external_drop_content::Read` / `ReadFilePaths`，没有驱动完整宿主提交。
+- 关联测试：`slot_runtime_contract`、`virtual_file_drop`、`shell_file_operation_worker`；分别覆盖不同边界，不能合并宣称原场景已通过。
+- 关闭条件：指定当前构建，从 Explorer 向受影响的实际组件拖入文件、目录与多选，核对执行次数、文件及归属，刷新后仍正确；自动化补入真实宿主调度到提交边界的失败回归。
+
+## DND-02：网络图片保存与目标归属
+
+- 生产位置：[外部组件入口](../src/app/app_external_slot_drop.cpp)的 `DownloadSlotUrls`、[内容选择](../src/external_drop_content.cpp)、[下载工作器](../src/url_drop_download_worker.cpp)。
+- 触发条件：Edge 拖入用户提供的花瓣无扩展名 WebP 图片，目标应获得图片文件，普通网页或失败回退另按链接语义处理。
+- 影响：可能得到链接而非可用图片，或内容虽下载却未进入目标组件。
+- 证据：真实下载探针已得到可解码的 658×444 WebP；当前内容选择回归使用下载回调写入占位字节，只证明分支选择。探针没有覆盖 Edge 原始 IDataObject 或组件最终落点。
+- 关联测试：`url_drop_resource`、`slot_runtime_contract`、`drop_image_data`。图片提取测试的“可解码”断言本身还需增强，见测试审计；这不等于已经发现生产编码器输出损坏。
+- 关闭条件：原始 URL 与实际 Edge 输入进入指定构建的目标组件，独立解码输出、核对归属和刷新结果，并覆盖网络失败、普通网页回退及清理。
+
+## DND-03：异步落点由共享状态覆盖或清除
+
+- 生产位置：[app_drop_execution.cpp](../src/app/app_drop_execution.cpp)的 `ExecuteFileBackedDropPlan`，成功回调写入单个 `pendingLandingCache_`；链接失败或排队失败分支也会清空它。[完成回调](../src/app/app_shell_file_operation.cpp)的 `OnShellFileOperationCompleted` 在仍有其他进行中任务时照常调用本次 callback；[ReloadItems](../src/app/app_desktop_reload.cpp)在文件任务、拖动或重命名期间延后模型刷新。
+- 触发条件：A 完成并发布落点，模型尚未消费；B 随后完成并替换落点，或某个失败/新请求清空共享缓存。可发生于连续拖入不同集合、映射目录或桌面落点。
+- 影响：文件已经落盘，但 A 的逻辑归属、排序或位置恢复信息丢失；失败任务也可能干扰其他成功任务。
+- 证据：当前源码存在上述明确赋值、清空及延后顺序。此为跨函数时序推导，尚未以真实宿主受控完成序列或用户原场景复现；不能写成已确认文件丢失。
+- 关联测试：`desktop_drop_cache` 测的是搜索位置缓存 `BestCellEntry`，并非此落点缓存；`shell_file_operation_worker` 不调用宿主模型刷新。现有绿灯不覆盖这一风险。
+- 建议处理：按请求保存待消费落点，完成与刷新按请求合并/消费，失败只能撤销本请求状态。
+- 关闭条件：驱动真实回调和模型刷新，覆盖 A/B 两种完成顺序、B 失败、拖动延迟刷新和不同目标；每次结果保留正确归属及顺序。
+
+## DND-04：批次部分成功与临时引用清理
+
+- 生产位置：[ShellFileOperationWorker::Execute](../src/shell_file_operation_worker.cpp)执行各项后仅返回 `attempted && allSucceeded`，不会回滚已经成功的快捷方式；[MaterializeFilesToDesktop / ExecuteFileBackedDropPlan](../src/app/app_drop_execution.cpp)按批次布尔结果决定是否加入 Dock、恢复落点；[外部组件完成回调](../src/app/app_external_slot_drop.cpp)仅在整批成功且需要引用时将 `owned` 置为 false，否则析构清理所有拥有的临时源文件。
+- 触发条件：外部虚拟文件等产生多个拥有的临时文件，拖到 Dock 创建快捷方式；部分创建成功，后续项因重名竞争、权限或其他 I/O 错误失败。普通移动批次部分成功也需要独立核对逻辑归属。
+- 影响：已成功的快捷方式可能遗留，却指向随后被清理的临时文件；部分成功项缺少准确的归属/清理结果。不得扩大表述为所有复制失败都会删除用户源文件。
+- 证据：`shell_file_operation_worker_tests.cpp` 的 `partialShortcutRequest` 用一个可写目标和一个不存在的父目录制造部分失败；断言同时要求整批报告失败、成功的 `.lnk` 仍存在。此次评估只复核测试与生产代码，未重新执行宿主部分失败链，也未声称已实测失效链接。
+- 关联测试：`shell_file_operation_worker` 已承认部分成功事实；`slot_runtime_contract` 只检查内容选择，尚未覆盖每个成功引用的生命周期。
+- 建议处理：完成结果携带逐项状态和实际路径，或对可回滚的生成项做明确回滚；保留已被成功引用的临时内容，仅清理未被引用项。批次失败不能代替逐项所有权判断。
+- 关闭条件：用隔离临时目录使真实批次发生部分失败，贯通宿主引用提交和清理；所有遗留链接均可用，未提交内容得到清理，用户来源保持正确状态。
+
+## 关闭与更新记录
+
+暂无已验证关闭项。更详细的原始复现与历史构建结果见[拖放验收矩阵](drag_drop_validation_matrix.md)。
