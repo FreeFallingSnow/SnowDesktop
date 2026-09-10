@@ -593,9 +593,10 @@ void DesktopApp::DrawDynamicOverlays(
     const bool popupMarquee = marqueeDockFolderPopup_ ||
         (marqueeWidgetIndex_ < widgets_.size() &&
          marqueeWidgetIndex_ == popupWidgetIndex_);
-    const bool marqueeBelongsToCurrentSurface = popupMarquee
-        ? popupBelongsToCurrentSurface
-        : !renderingFloatingPopup_;
+    const bool marqueeBelongsToCurrentSurface =
+        snowdesktop::widget_composition_layer_rules::MarqueeBelongsToSurface(
+            popupMarquee, popupBelongsToCurrentSurface,
+            renderingFloatingDock_, renderingFloatingPopup_);
     if (marqueeActive_ && marqueeBelongsToCurrentSurface)
     {
         if (!marqueeDockFolderPopup_ &&

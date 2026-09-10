@@ -77,6 +77,20 @@ constexpr bool BelongsToCompositionRoot(
     return visualHost == rootHost;
 }
 
+constexpr bool MarqueeBelongsToSurface(
+    bool popupMarquee,
+    bool popupBelongsToSurface,
+    bool renderingFloatingDock,
+    bool renderingFloatingPopup)
+{
+    // Repainting a desktop marquee on a Dock surface double-blends its fill
+    // and exposes the transparent magnification reserve inside the Dock HRGN.
+    // Popup marquees continue to follow their popup's actual host.
+    return popupMarquee
+        ? popupBelongsToSurface
+        : !renderingFloatingDock && !renderingFloatingPopup;
+}
+
 constexpr int ZOrder(DesktopLayer layer)
 {
     return static_cast<int>(layer);

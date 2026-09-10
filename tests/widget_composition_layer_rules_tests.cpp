@@ -102,6 +102,37 @@ int main(int argc, char** argv)
                 CompositionHost::FloatingPopup),
         "composition roots must reject visuals owned by another host");
 
+    // A desktop selection crossing the Dock must retain one translucent fill,
+    // including when unrelated popup ownership state remains set.
+    for (const bool popupOwnsSurface : {false, true})
+    {
+        Check(rules::MarqueeBelongsToSurface(
+                false, popupOwnsSurface, false, false),
+            "desktop and inline-widget marquees must remain on the desktop foreground");
+        Check(!rules::MarqueeBelongsToSurface(
+                false, popupOwnsSurface, true, false),
+            "a Dock repaint must not duplicate desktop selection inside its magnification reserve");
+        Check(!rules::MarqueeBelongsToSurface(
+                false, popupOwnsSurface, false, true),
+            "an independent popup repaint must not duplicate desktop selection");
+    }
+    // Keep collection/folder selection on exactly one owner, including the
+    // legacy Dock-hosted popup fallback as well as desktop and popup hosts.
+    for (int popupOwner = 0; popupOwner < 3; ++popupOwner)
+    {
+        int marqueeCopies = 0;
+        for (int surface = 0; surface < 3; ++surface)
+        {
+            const bool drawsMarquee = rules::MarqueeBelongsToSurface(
+                true, surface == popupOwner, surface == 1, surface == 2);
+            Check(drawsMarquee == (surface == popupOwner),
+                "collection and folder marquees must follow their popup when its host changes");
+            marqueeCopies += drawsMarquee ? 1 : 0;
+        }
+        Check(marqueeCopies == 1,
+            "a popup marquee must render exactly once across desktop, Dock and popup surfaces");
+    }
+
     Check(rules::ShouldPresentWidgetSurface(true, false),
         "a visible widget must present its child surface");
     Check(!rules::ShouldPresentWidgetSurface(false, false),
