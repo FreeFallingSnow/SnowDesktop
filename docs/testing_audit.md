@@ -246,3 +246,14 @@
 实际执行 `scripts/test.bat name "^(drop_image_data|widget_audio_output_task_executor|widget_clipboard_task_executor|widget_logical_slot|widget_text_input_rules|widget_author_test_runner|widget_author_lint)$"`，七个目标编译通过，初次 6/7 通过。新历史断言误用了不透明 `reference` 字段，改成夹具设置的 `target` 后执行 `scripts/test.bat name widget_logical_slot`，1/1 通过；其他六项代码与已通过版本一致。该失败属于本轮测试编写错误，不记为生产缺陷。
 
 没有运行标准宿主构建；尚未进行本批的变异、并发夹具实验或最终全量测试。保留这些验证状态，不将七个定向入口的结果推广为拖放实机问题解决。其他 TA 项和表内优化建议仍待实施；本节不表示全部优化完成。
+
+后续证据：在 `.codex-probes/` 的独立副本中移除 `LogicalSlotHistory::Record` 的 `redo_.clear()`，旧历史测试退出 0，新测试退出 1（新分支断言）；将待检查的 PNG 截断到 24 字节，新图片测试退出 1（完整容器解码）。探针首次构建因缺少 `NOMINMAX` 定义失败，补齐后才计入上述执行结果，未改工作区生产实现。作者测试执行 8 个并发进程，8/8 退出 0，运行前后对比未发现新增临时目录残留。没有执行一般性随机变异或全部失败路径清理实验。
+
+### 第二批：文件内容与独立预期
+
+- TA-04：真实 Shell 复制、移动及多父目录 IDropTarget 交接核对完整文件内容，并检查源文件保留。部分成功的宿主逐项处理仍是 DND-04 的待验证边界。
+- TA-06：跨页重绑定夹具按明确的 Collection/FolderMapping 场景决定输入与预期，不再用被测分类函数同时决定两者。
+- TA-17：光标检查限定输入框内部，并对比隐藏光标后内部无蓝色、边框仍存在；菜单值更新改为检查元素存储地址和数量。
+- TA-18（格式部分）：未编号 printf 占位符按顺序比较，明确编号的 `{0}` 组件占位符保留可重排语义；加入交换参数、动态宽度、重复消费和转义百分号反例。ZIP 夹具部分尚未改写。
+
+执行 `scripts/test.bat name "^(localization_contract|menu_icon_render|modern_menu_interaction|slot_runtime_contract|shell_file_operation_worker)$"`：五个目标编译成功，5/5 通过，测试执行 3.75 秒（不含配置和编译）。未运行宿主标准构建或全量测试；本批目标中的独立菜单窗口与文件交接也不代表 SnowDesktop 桌面宿主实机验收。

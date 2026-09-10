@@ -174,7 +174,7 @@ void ReplaceAll(
 
 struct FormatSignature
 {
-    std::multiset<std::string> printfTokens;
+    std::vector<std::string> printfTokens;
     std::multiset<std::string> indexedTokens;
 
     bool operator==(
@@ -249,13 +249,31 @@ FormatSignature ExtractFormatSignature(
             conversions.find(value[end]) !=
                 std::string_view::npos)
         {
-            signature.printfTokens.insert(
+            signature.printfTokens.push_back(
                 value.substr(
                     index, end - index + 1));
             index = end;
         }
     }
     return signature;
+}
+
+void CheckFormatSignatureRules()
+{
+    Check(ExtractFormatSignature("%s: %d") !=
+            ExtractFormatSignature("%d: %s"),
+        "unnumbered printf arguments must preserve their calling order");
+    Check(ExtractFormatSignature("%*s: %d") !=
+            ExtractFormatSignature("%d: %*s"),
+        "dynamic-width printf arguments must retain their position");
+    Check(ExtractFormatSignature("%s %s") != ExtractFormatSignature("%s"),
+        "repeated argument consumption must not disappear");
+    Check(ExtractFormatSignature("{0}: {1}") ==
+            ExtractFormatSignature("{1}: {0}") &&
+            ExtractFormatSignature("{0} {0}") != ExtractFormatSignature("{0}"),
+        "indexed widget placeholders may reorder while retaining multiplicity");
+    Check(ExtractFormatSignature("%s 100%%") == ExtractFormatSignature("%s"),
+        "an escaped percent sign must not consume another argument");
 }
 
 bool ParseJsonFile(
@@ -1337,6 +1355,7 @@ int wmain(int argc, wchar_t* argv[])
         return 2;
     }
     const bool strictUnused = argc == 3;
+    CheckFormatSignatureRules();
 
     const fs::path projectRoot = argv[1];
     const fs::path languageDirectory =

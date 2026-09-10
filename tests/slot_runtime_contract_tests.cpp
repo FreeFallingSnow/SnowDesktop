@@ -1001,9 +1001,8 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
             ContractItem reboundItem(pageTurn.reboundBounds);
             const bool needsRecordedMemberRestore =
                 pageTurn.sourcePageHidden &&
-                snowdesktop::drag_source_rebind::
-                    CanRestoreRecordedWidgetMembers(
-                        session.SourceList());
+                (descriptor.kind == contract::SlotSurfaceKind::Collection ||
+                    descriptor.kind == contract::SlotSurfaceKind::FolderMapping);
             std::vector<Item*> runtimeItems;
             if (!needsRecordedMemberRestore)
                 runtimeItems.push_back(&reboundItem);

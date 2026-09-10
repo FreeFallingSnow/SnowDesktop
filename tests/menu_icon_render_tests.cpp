@@ -509,9 +509,6 @@ int wmain(int argc, wchar_t** argv)
         dc, font, fluentFont, searchInput, activeSearch,
         normalBounds, light, metrics96),
         "active component search input renders");
-    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
-        normalBounds) > 0,
-        "active component search input uses an accent border and caret");
 
     std::fill_n(pixels, kWidth * kHeight, 0u);
     const snowdesktop::menu_icon::TextInputView emptySearch{
@@ -521,9 +518,28 @@ int wmain(int argc, wchar_t** argv)
         dc, font, fluentFont, searchInput, emptySearch,
         normalBounds, light, metrics96),
         "focused empty component search input renders");
+    // The middle of the field excludes its rounded accent border. With an
+    // empty value and a gray placeholder, the caret is the only blue content.
+    const RECT fieldInterior{
+        normalBounds.left + metrics96.outerInset + metrics96.selectionRadius,
+        normalBounds.top + metrics96.rowHeight / 3,
+        normalBounds.right - metrics96.outerInset - metrics96.selectionRadius,
+        normalBounds.bottom - metrics96.rowHeight / 3,
+    };
     Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
-        normalBounds) > 0,
-        "focused empty search input keeps a visible caret");
+            fieldInterior) > 0,
+        "focused empty search input paints its caret inside the field");
+    auto hiddenCaretSearch = emptySearch;
+    hiddenCaretSearch.caretVisible = false;
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    Expect(snowdesktop::menu_icon::DrawTextInput(
+            dc, font, fluentFont, searchInput, hiddenCaretSearch,
+            normalBounds, light, metrics96),
+        "the same focused search field renders with the caret hidden");
+    Expect(CountBlueAccentPixelsInRect(pixels, kWidth, kHeight,
+            fieldInterior) == 0 &&
+            CountBlueAccentPixelsInRect(pixels, kWidth, kHeight, normalBounds) > 0,
+        "hiding the caret removes interior accent pixels while retaining the border");
 
     const std::array accentedQuickIcons{
         snowdesktop::MenuQuickIcon::NewItem,

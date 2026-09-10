@@ -11,6 +11,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <stdexcept>
 
@@ -214,6 +215,14 @@ BOOL WINAPI UninstallHookFixture(HHOOK hook)
 {
     hookUninstallThread = GetCurrentThreadId();
     return DestroyWindow(reinterpret_cast<HWND>(hook));
+}
+
+std::string ReadContents(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    Expect(stream.is_open(), "the resulting file must be readable");
+    return { std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>() };
 }
 
 HANDLE hookWaitEntered = nullptr;
@@ -717,21 +726,37 @@ int wmain()
 
     Expect(std::filesystem::exists(source),
         "copy preserves the original source");
+    Expect(ReadContents(source) == "SnowDesktop async Shell worker",
+        "copy preserves the complete original source bytes");
     Expect(!std::filesystem::exists(
             firstDirectory / source.filename()),
         "move removes the intermediate copy");
     Expect(std::filesystem::exists(
             secondDirectory / source.filename()),
         "move creates the final destination");
+    Expect(ReadContents(secondDirectory / source.filename()) ==
+            "SnowDesktop async Shell worker",
+        "copy then move preserves the complete payload at the final destination");
     Expect(std::filesystem::exists(
             handoffDirectory / handoffSource.filename()),
         "IDropTarget handoff creates the copied file");
+    Expect(ReadContents(handoffDirectory / handoffSource.filename()) ==
+            "SnowDesktop async IDropTarget worker" &&
+            ReadContents(handoffSource) == "SnowDesktop async IDropTarget worker",
+        "IDropTarget copy preserves both destination and original payload bytes");
     Expect(std::filesystem::exists(
             multiHandoffDirectory / source.filename()) &&
         std::filesystem::exists(
             multiHandoffDirectory /
                 alternateHandoffSource.filename()),
         "multi-parent IDropTarget handoff copies every source");
+    Expect(ReadContents(multiHandoffDirectory / source.filename()) ==
+            "SnowDesktop async Shell worker" &&
+            ReadContents(multiHandoffDirectory / alternateHandoffSource.filename()) ==
+                "SnowDesktop multi-parent IDropTarget worker" &&
+            ReadContents(alternateHandoffSource) ==
+                "SnowDesktop multi-parent IDropTarget worker",
+        "multi-parent handoff keeps each source's own complete contents");
     Expect(!std::filesystem::exists(
             rejectedHandoffDirectory /
                 rejectedHandoffSource.filename()),

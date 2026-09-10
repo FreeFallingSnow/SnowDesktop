@@ -929,9 +929,12 @@ int wmain()
         auto replacement = currentItems.front().children;
         replacement.front().checked = !replacement.front().checked;
         replacement.back().enabled = true;
-        const auto* children = &currentItems.front().children;
+        const auto* children = currentItems.front().children.data();
+        const auto childCount = currentItems.front().children.size();
         snowdesktop::modern_menu::UpdateItemStates(currentItems.front().children, replacement);
-        Expect(children == &currentItems.front().children, "value updates preserve submenu tree references");
+        Expect(children == currentItems.front().children.data() &&
+                childCount == currentItems.front().children.size(),
+            "value updates preserve submenu element storage and count");
         currentItems.front().label = L"Values updated";
         return true;
     };
