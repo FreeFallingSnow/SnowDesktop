@@ -20,6 +20,7 @@ std::atomic<int> requests = 0;
 std::mutex networkMutex;
 std::condition_variable_any networkChanged;
 bool networkBlocked = false;
+bool holdCancelledResponses = false;
 int activeRequests = 0, peakRequests = 0;
 std::unordered_map<std::wstring, std::pair<int, std::string>> responses;
 std::vector<std::wstring> requestUrls;
@@ -54,11 +55,19 @@ struct Queue
     std::mutex mutex;
     std::condition_variable changed;
     bool ready = false;
+    std::size_t notifications = 0;
     snowdesktop::LargeIconAssets assets;
     explicit Queue(const std::filesystem::path& directory, snowdesktop::LargeIconAssetLimits limits = {}) : assets(directory, [this] {
-        std::lock_guard lock(mutex); ready = true; changed.notify_one();
+        std::lock_guard lock(mutex); ready = true; ++notifications; changed.notify_one();
     }, directory.parent_path() / L"steam", limits) {}
     ~Queue() { assets.Stop(); }
+    void WaitForNotifications(std::size_t count)
+    {
+        std::unique_lock lock(mutex);
+        Check(changed.wait_for(lock, std::chrono::seconds(10),
+                [&] { return notifications >= count; }),
+            "controlled requests reach their completion notification before negative assertions");
+    }
     std::vector<snowdesktop::LargeIconAssetResult> Wait(size_t count)
     {
         std::vector<snowdesktop::LargeIconAssetResult> results;
@@ -90,17 +99,22 @@ Result StreamHttpGet(const Options& options, std::stop_token token, const HeadCa
 {
     ++requests;
     std::pair<int, std::string> response{404, {}};
+    bool ignoreCancellation = false;
     {
         std::unique_lock lock(networkMutex);
         requestUrls.push_back(options.url);
         peakRequests = std::max(peakRequests, ++activeRequests);
         networkChanged.notify_all();
-        networkChanged.wait(lock, token, [] { return !networkBlocked; });
+        ignoreCancellation = holdCancelledResponses;
+        if (ignoreCancellation)
+            networkChanged.wait(lock, [] { return !networkBlocked; });
+        else
+            networkChanged.wait(lock, token, [] { return !networkBlocked; });
         --activeRequests;
         if (const auto found = responses.find(options.url); found != responses.end()) response = found->second;
     }
     Result result; result.head.status = response.first; result.head.finalUrl = options.url;
-    result.cancelled = token.stop_requested(); result.responseAccepted = head(result.head);
+    result.cancelled = !ignoreCancellation && token.stop_requested(); result.responseAccepted = head(result.head);
     if (!result.cancelled && result.responseAccepted)
     {
         if (response.second.size() > options.maximumResponseBytes) result.error = "response too large";
@@ -399,31 +413,50 @@ int RunLargeIconAssetTests()
                 "coalesced failures preserve each listener's own last-good image and retry state");
         Check(requests == beforeFallback + 1, "per-instance fallback does not duplicate the shared metadata request");
 
-        // A cache hit completes synchronously; cancelling before drain must
-        // suppress that already-queued completion as well as pending work.
-        LargeIconAssetRequest cancelled;
-        cancelled.itemKey = L"cancelled-cache-hit"; cancelled.content = 1; cancelled.pixels = 256;
-        cancelled.reference = "fallback-a.png"; cancelled.generation = 503;
-        queue.assets.Request(cancelled);
-        queue.assets.Cancel(cancelled.itemKey);
-        Check(queue.assets.TakeCompleted().empty(), "cancelled queued cache results cannot reach the host");
-
-        { std::lock_guard lock(networkMutex); networkBlocked = true; }
-        LargeIconAssetRequest stale;
-        stale.itemKey = L"superseded"; stale.content = 2; stale.appId = 99999; stale.generation = 201;
-        queue.assets.Request(stale);
+    }
+    // An isolated queue makes every completion notification attributable. The
+    // controlled transport ignores cancellation until explicitly released.
+    {
+        Queue late(root / L"late-completions");
+        LargeIconAssetRequest image;
+        image.itemKey = L"prime"; image.importPath = input; image.pixels = 64; image.generation = 1;
+        late.assets.Request(image);
+        auto prime = late.Wait(1);
+        late.WaitForNotifications(1);
+        Check(!prime.empty() && prime[0].asset, "late-result fixture has a usable cached image");
+        if (!prime.empty() && prime[0].asset)
         {
-            std::unique_lock lock(networkMutex);
-            Check(networkChanged.wait_for(lock, std::chrono::seconds(10), [] { return activeRequests == 1; }),
-                "old cover work starts before the source is changed");
+            image.importPath.clear(); image.content = 1; image.reference = prime[0].asset->reference;
+            image.itemKey = L"cancelled-cache-hit"; image.generation = 2;
+            late.assets.Request(image);
+            {
+                std::lock_guard lock(late.mutex);
+                Check(late.notifications == 2, "cache-hit completion is already queued before cancellation");
+            }
+            late.assets.Cancel(image.itemKey);
+            Check(late.assets.TakeCompleted().empty(), "cancelling an already-queued cache hit suppresses delivery");
+
+            { std::lock_guard lock(networkMutex); networkBlocked = true; holdCancelledResponses = true; }
+            LargeIconAssetRequest stale;
+            stale.itemKey = L"superseded"; stale.content = 2; stale.appId = 99999; stale.generation = 201;
+            late.assets.Request(stale);
+            {
+                std::unique_lock lock(networkMutex);
+                Check(networkChanged.wait_for(lock, std::chrono::seconds(10), [] { return activeRequests == 1; }),
+                    "old download is blocked before the source is replaced");
+            }
+            image.itemKey = stale.itemKey; image.generation = 202;
+            late.assets.Request(image);
+            auto latest = late.Wait(1);
+            Check(!latest.empty() && latest[0].request.generation == 202 && latest[0].asset,
+                "new image completes while the superseded download is held");
+            { std::lock_guard lock(networkMutex); networkBlocked = false; }
+            networkChanged.notify_all();
+            late.WaitForNotifications(4); // prime, cached cancel, new image, old download
+            Check(late.assets.TakeCompleted().empty(),
+                "a superseded download cannot publish after its terminal notification while the queue is live");
+            { std::lock_guard lock(networkMutex); holdCancelledResponses = false; }
         }
-        stale.content = 1; stale.reference = result[0].asset ? result[0].asset->reference : "missing.png"; stale.generation = 202;
-        queue.assets.Request(stale);
-        auto latest = queue.Wait(1);
-        Check(!latest.empty() && latest[0].request.generation == 202 && latest[0].asset,
-            "a superseded cover callback cannot replace the newer user image request");
-        { std::lock_guard lock(networkMutex); networkBlocked = false; }
-        networkChanged.notify_all();
     }
 
     const auto square = root / L"square.png";

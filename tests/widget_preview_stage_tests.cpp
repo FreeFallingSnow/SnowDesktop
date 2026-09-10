@@ -85,15 +85,18 @@ int main()
     const Wallpaper selectedCrop = GenerateWallpaper(
         selectedSource, 80, 60, { 240, 180, 47, 33 });
     Check(selectedCrop.pixels.front() ==
-            selectedFull.pixels[33u * 240u + 47u] &&
+            (0xff000000u | 47u | (33u << 8) | (80u << 16)) &&
             selectedCrop.pixels.back() ==
-            selectedFull.pixels[92u * 240u + 126u],
+            (0xff000000u | 126u | (92u << 8) | (218u << 16)),
         "an explicit wallpaper preserves the shared card crop");
-    Check(WallpaperFingerprint(selectedSource) ==
-            WallpaperFingerprint(selectedSource) &&
-            WallpaperFingerprint(selectedSource) !=
-                WallpaperFingerprint(dark),
-        "wallpaper fingerprints are stable and source-sensitive");
+    const Wallpaper fingerprintSource{ 2, 2,
+        { 0xff112233u, 0xff445566u, 0xff778899u, 0xffaabbccu } };
+    auto changedPixel = fingerprintSource;
+    changedPixel.pixels[1] ^= 1;
+    const auto samePixels = fingerprintSource;
+    Check(WallpaperFingerprint(fingerprintSource) == WallpaperFingerprint(samePixels) &&
+            WallpaperFingerprint(fingerprintSource) != WallpaperFingerprint(changedPixel),
+        "equal images share a fingerprint; a changed sampled pixel with equal dimensions invalidates it");
     Wallpaper white{ 1, 1, { 0xffffffffu } };
     Wallpaper black{ 1, 1, { 0xff000000u } };
     Check(WallpaperIsLight(white) && !WallpaperIsLight(black),
@@ -173,7 +176,16 @@ int main()
             [](std::uint32_t pixel) {
                 return pixel == placementBackground;
             }),
-        "fill placement covers the monitor while preserving aspect ratio");
+        "fill placement covers the monitor");
+    const Wallpaper columns{ 4, 2, {
+        0xffff0000u, 0xff00ff00u, 0xff0000ffu, 0xffffffffu,
+        0xffff0000u, 0xff00ff00u, 0xff0000ffu, 0xffffffffu } };
+    const auto centerColumns = RenderWallpaperRegion(columns,
+        { 0, 0, 2, 2 }, { 0, 0, 2, 2 }, WallpaperPosition::Fill,
+        placementBackground);
+    Check(centerColumns.pixels == std::vector<std::uint32_t>{
+            0xff00ff00u, 0xff0000ffu, 0xff00ff00u, 0xff0000ffu },
+        "fill keeps native scale and crops the central columns of a twice-as-wide source");
 
     const RECT spanCanvas{ -4, 0, 8, 6 };
     const Wallpaper spanFull = RenderWallpaperRegion(selectedSource,

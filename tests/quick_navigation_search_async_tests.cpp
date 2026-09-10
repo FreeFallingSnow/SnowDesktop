@@ -28,6 +28,7 @@ void TestBlockedSearchDoesNotBlockSubmissionAndCoalesces()
     std::condition_variable condition;
     bool firstEntered = false;
     bool releaseFirst = false;
+    bool providerTimedOut = false;
     std::vector<std::wstring> queries;
 
     snowdesktop::QuickNavigationEverythingSearchAsync search(
@@ -39,9 +40,8 @@ void TestBlockedSearchDoesNotBlockSubmissionAndCoalesces()
                 {
                     firstEntered = true;
                     condition.notify_all();
-                    condition.wait(lock, [&]() {
-                        return releaseFirst;
-                    });
+                    providerTimedOut = !condition.wait_for(lock, 2s,
+                        [&]() { return releaseFirst; });
                 }
             }
 
@@ -54,16 +54,10 @@ void TestBlockedSearchDoesNotBlockSubmissionAndCoalesces()
             return response;
         });
 
-    const auto submitStarted =
-        std::chrono::steady_clock::now();
     Check(search.Submit(
               nullptr, 0,
               {1, L"first", 200}),
         "the first asynchronous search must be accepted");
-    const auto submitElapsed =
-        std::chrono::steady_clock::now() - submitStarted;
-    Check(submitElapsed < 100ms,
-        "submission must not wait for a blocked search provider");
 
     {
         std::unique_lock lock(mutex);
@@ -82,6 +76,8 @@ void TestBlockedSearchDoesNotBlockSubmissionAndCoalesces()
         "requests typed during a blocked query must remain accepted");
     {
         std::scoped_lock lock(mutex);
+        Check(!providerTimedOut,
+            "all submissions return before the controlled provider is released; its deadline prevents a hung test");
         releaseFirst = true;
     }
     condition.notify_all();
@@ -126,15 +122,15 @@ void TestStopDoesNotJoinBlockedProvider()
     bool entered = false;
     bool released = false;
     bool providerReturned = false;
+    bool providerTimedOut = false;
 
     snowdesktop::QuickNavigationEverythingSearchAsync search(
         [&](const std::wstring&, DWORD) {
             std::unique_lock lock(mutex);
             entered = true;
             condition.notify_all();
-            condition.wait(lock, [&]() {
-                return released;
-            });
+            providerTimedOut = !condition.wait_for(lock, 2s,
+                [&]() { return released; });
             providerReturned = true;
             condition.notify_all();
             return snowdesktop::
@@ -152,16 +148,12 @@ void TestStopDoesNotJoinBlockedProvider()
             "the shutdown test provider must start");
     }
 
-    const auto stopStarted =
-        std::chrono::steady_clock::now();
     search.Stop();
-    const auto stopElapsed =
-        std::chrono::steady_clock::now() - stopStarted;
-    Check(stopElapsed < 100ms,
-        "shutdown must not join an unbounded IPC request");
 
     {
         std::scoped_lock lock(mutex);
+        Check(!providerReturned && !providerTimedOut,
+            "Stop returns while the provider is still blocked, before its release or deadline");
         released = true;
     }
     condition.notify_all();
