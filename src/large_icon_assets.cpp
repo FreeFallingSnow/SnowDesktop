@@ -1,5 +1,7 @@
 #include "large_icon_assets.h"
 #include "icon_bitmap_pixels.h"
+#include "icon_render_rules.h"
+#include "shortcut_application_rules.h"
 #include "shortcut_icon_resource.h"
 #include "large_icon_config.h"
 #include "large_icon_steam.h"
@@ -262,7 +264,22 @@ std::shared_ptr<LargeIconAsset> RawIcon(const LargeIconAssetRequest& request, co
     ComPtr<IShellItemImageFactory> factory;
     if (FAILED(SHCreateItemFromParsingName(request.parsingName.c_str(), nullptr, IID_PPV_ARGS(&factory)))) return {};
     HBITMAP bitmap = nullptr;
-    if (FAILED(factory->GetImage({target, target}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &bitmap)) || !bitmap) return {};
+    ComPtr<IShellItem> item;
+    SFGAOF attributes = 0;
+    const bool shellFolder = SUCCEEDED(factory.As(&item)) &&
+        SUCCEEDED(item->GetAttributes(SFGAO_FOLDER, &attributes)) && (attributes & SFGAO_FOLDER) != 0;
+    if (icon_render_rules::ShouldRequestShellThumbnail(true,
+            shortcut_application_rules::ShouldUseShellIconOnly(request.parsingName), shellFolder))
+    {
+        // Match ordinary desktop icons: prefer content previews, then fall back
+        // to the file icon when no thumbnail provider can supply an image.
+        if (FAILED(factory->GetImage({target, target}, SIIGBF_THUMBNAILONLY, &bitmap)))
+        {
+            if (bitmap) DeleteObject(bitmap);
+            bitmap = nullptr;
+        }
+    }
+    if (!bitmap && (FAILED(factory->GetImage({target, target}, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &bitmap)) || !bitmap)) return {};
     BITMAP object{}; GetObjectW(bitmap, sizeof(object), &object);
     const int width = object.bmWidth, height = std::abs(object.bmHeight);
     if (width <= 0 || height <= 0 || std::uint64_t(width) * height > maxPixels) { DeleteObject(bitmap); return {}; }
@@ -419,7 +436,7 @@ struct LargeIconAssets::Impl
         // model here; disk access belongs to the workers. The icon index also
         // changes when a Shell association changes without touching the file.
         return "raw-" + Hash(r.parsingName + L":" + std::to_wstring(r.sourceStamp) + L":" +
-            std::to_wstring(r.sourceIconIndex) + L":shortcut3") + "-" + std::to_string(r.pixels) + ".png";
+            std::to_wstring(r.sourceIconIndex) + L":thumbnail4") + "-" + std::to_string(r.pixels) + ".png";
     }
     std::shared_ptr<LargeIconAsset> Load(const LargeIconAssetRequest& r, std::stop_token stop, std::string& error)
     {

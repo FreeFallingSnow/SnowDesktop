@@ -491,6 +491,41 @@ int RunLargeIconShellAssetTests()
     {
         Queue queue(root / L"managed");
         const auto shellFile = root / L"shell-original.txt";
+        // Exercise the production async loader and real Shell provider. Merely
+        // obtaining a bitmap also passes for the associated application's icon.
+        for (const auto& extension : {L".png", L".jpg"})
+        {
+            const auto image = root / (std::wstring(L"thumbnail") + extension);
+            Check(EncodeFixture(image, std::wstring_view(extension) == L".png" ?
+                GUID_ContainerFormatPng : GUID_ContainerFormatJpeg, 160, 80), "encode thumbnail source fixture");
+            for (const int size : {64, 256})
+            {
+                LargeIconAssetRequest preview;
+                preview.itemKey = image.wstring(); preview.parsingName = image.wstring();
+                preview.pixels = size; preview.generation = size;
+                const auto checkPreview = [](const auto& results) {
+                    Check(results.size() == 1 && results[0].asset && results[0].error.empty(),
+                        "image thumbnail completes through the production asset loader");
+                    if (results.empty() || !results[0].asset) return;
+                    const auto& asset = *results[0].asset;
+                    Check(asset.width == 2 * asset.height,
+                        "original image uses the landscape thumbnail instead of a square application icon");
+                    HDC dc = CreateCompatibleDC(nullptr);
+                    HGDIOBJ previous = dc ? SelectObject(dc, asset.bitmap) : nullptr;
+                    const COLORREF color = dc ? GetPixel(dc, asset.width / 2, asset.height / 2) : CLR_INVALID;
+                    if (previous) SelectObject(dc, previous);
+                    if (dc) DeleteDC(dc);
+                    Check(color != CLR_INVALID && std::abs(int(GetRValue(color)) - 34) <= 3 &&
+                        std::abs(int(GetGValue(color)) - 170) <= 3 && std::abs(int(GetBValue(color)) - 119) <= 3,
+                        "thumbnail pixels preserve the source image content");
+                };
+                queue.assets.Request(preview);
+                checkPreview(queue.Wait(1));
+                Queue reopened(root / L"managed");
+                reopened.assets.Request(preview);
+                checkPreview(reopened.Wait(1));
+            }
+        }
         atomic_file::WriteAll(shellFile, "Shell icon source");
         LargeIconAssetRequest raw;
         raw.itemKey = L"raw-source-identity"; raw.parsingName = shellFile.wstring(); raw.generation = 401;
