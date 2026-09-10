@@ -471,6 +471,9 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
+    if (popupOccludesPoint)
+        popupFanActionFocused_ = false;
+
     if (dockFolderPopupOpen_ &&
         popupOccludesPoint)
     {

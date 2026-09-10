@@ -543,6 +543,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     break;
     case 'A':
         if (!ctrl) break;
+        if (IsCollectionPopupInteractive())
+            ShowAllCollectionPopupItems();
         handled = true;
         restoreFloatingDockLayer = true;
     {

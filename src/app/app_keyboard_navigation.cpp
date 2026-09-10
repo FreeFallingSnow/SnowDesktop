@@ -937,9 +937,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
         popupWidgetIndex_ < widgets_.size())
     {
-        int popupCols = GetCollectionPopupColumnCount(popupRect_);
-        if (popupCols > 0 && !isListMode)
-            columns = popupCols;
+        isListMode = UsesCollectionPopupList(widget);
+        columns = GetCollectionPopupColumnCount(popupRect_);
     }
 
     // FileCategories：获取当前可见项目键列表（受搜索/分类标签页过滤）
