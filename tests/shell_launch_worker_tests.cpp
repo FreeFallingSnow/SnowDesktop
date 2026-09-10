@@ -1,5 +1,6 @@
 #include "shell_launch_worker.h"
 #include "shell_launch_process.h"
+#include "shell_open_command.h"
 
 #include <array>
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <exdisp.h>
 #include <shellapi.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
@@ -26,6 +28,161 @@ void Check(bool condition, const char* message)
         return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+// Models the shell extension boundary that previously loaded an unrelated
+// handler during a double-click. The failure is deterministic, not a timeout.
+class DefaultOpenMenu final : public IContextMenu
+{
+public:
+    bool rejectQuery = false;
+    bool rejectInvoke = false;
+    bool namedOpen = true;
+    int invokes = 0;
+    bool selectedCommand = false;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void** value) override
+    { *value = nullptr; return E_NOINTERFACE; }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    HRESULT STDMETHODCALLTYPE QueryContextMenu(HMENU menu, UINT index,
+        UINT first, UINT, UINT flags) override
+    {
+        if (rejectQuery || !(flags & CMF_DEFAULTONLY)) return E_FAIL;
+        InsertMenuW(menu, index, MF_BYPOSITION | MF_STRING, first + 2, L"Default");
+        SetMenuDefaultItem(menu, first + 2, FALSE);
+        return MAKE_HRESULT(SEVERITY_SUCCESS, 0, 3);
+    }
+    HRESULT STDMETHODCALLTYPE GetCommandString(UINT_PTR command, UINT flags,
+        UINT*, LPSTR name, UINT count) override
+    {
+        if (namedOpen && command == 2 && flags == GCS_VERBW)
+            return wcscpy_s(reinterpret_cast<wchar_t*>(name), count, L"open") == 0 ? S_OK : E_FAIL;
+        return E_NOTIMPL;
+    }
+    HRESULT STDMETHODCALLTYPE InvokeCommand(LPCMINVOKECOMMANDINFO info) override
+    {
+        ++invokes;
+        selectedCommand = IS_INTRESOURCE(info->lpVerb) &&
+            LOWORD(reinterpret_cast<ULONG_PTR>(info->lpVerb)) == 2 &&
+            (info->fMask & CMIC_MASK_NOASYNC) != 0 && info->nShow == SW_SHOWNORMAL;
+        return rejectInvoke ? E_FAIL : S_OK;
+    }
+};
+
+void TestDefaultOpenDoesNotPrepareUnrelatedMenus()
+{
+    DefaultOpenMenu menu;
+    Check(snowdesktop::shell_open_command::Invoke(&menu, nullptr, SW_SHOWNORMAL) &&
+        menu.invokes == 1 && menu.selectedCommand,
+        "default Open must activate once without requesting unrelated extension menus");
+    menu.namedOpen = false;
+    Check(snowdesktop::shell_open_command::Invoke(&menu, nullptr, SW_SHOWNORMAL) &&
+        menu.invokes == 2 && menu.selectedCommand,
+        "a Shell default command without a canonical name must remain usable");
+    menu.rejectQuery = true;
+    Check(!snowdesktop::shell_open_command::Invoke(&menu, nullptr, SW_SHOWNORMAL) && menu.invokes == 2,
+        "failed menu preparation must not invoke an unprepared command");
+    menu.rejectQuery = false;
+    menu.rejectInvoke = true;
+    Check(!snowdesktop::shell_open_command::Invoke(&menu, nullptr, SW_SHOWNORMAL) && menu.invokes == 3,
+        "a failed Shell command must be reported without another invocation");
+}
+
+bool SameFolder(const std::wstring& first, const std::wstring& second)
+{
+    const auto identity = [](const std::wstring& path, BY_HANDLE_FILE_INFORMATION& info) {
+        const HANDLE file = CreateFileW(path.c_str(), 0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        const bool ok = GetFileInformationByHandle(file, &info) != FALSE;
+        CloseHandle(file);
+        return ok;
+    };
+    BY_HANDLE_FILE_INFORMATION a{}, b{};
+    return identity(first, a) && identity(second, b) &&
+        a.dwVolumeSerialNumber == b.dwVolumeSerialNumber &&
+        a.nFileIndexHigh == b.nFileIndexHigh && a.nFileIndexLow == b.nFileIndexLow;
+}
+
+void TestIsolatedFolderActivation()
+{
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    Check(SUCCEEDED(com), "folder activation must initialize COM");
+    if (FAILED(com)) return;
+    {
+        Microsoft::WRL::ComPtr<IShellWindows> windows;
+        Check(SUCCEEDED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
+            IID_PPV_ARGS(&windows))), "folder activation must observe real Explorer navigation");
+        // Separate fresh targets prevent an already-open directory from passing.
+        // The three paths correspond to desktop/Dock, path-only callers and
+        // ordinary folders. Only Explorer windows for these fixtures are closed.
+        for (int kind = 0; windows && kind < 3; ++kind)
+        {
+            GUID id{}; wchar_t idText[64]{}, temp[MAX_PATH]{};
+            const bool pathsReady = SUCCEEDED(CoCreateGuid(&id)) &&
+                StringFromGUID2(id, idText, 64) > 0 &&
+                GetTempPathW(MAX_PATH, temp) > 0 && temp[0];
+            Check(pathsReady, "folder activation must obtain isolated fixture paths");
+            if (!pathsReady) continue;
+            const std::wstring folder = std::wstring(temp) + L"SnowDesktop folder 文件夹-" + idText;
+            const std::wstring shortcut = folder + L".lnk";
+            bool ready = CreateDirectoryW(folder.c_str(), nullptr) != FALSE;
+            Microsoft::WRL::ComPtr<IShellLinkW> link;
+            Microsoft::WRL::ComPtr<IPersistFile> persist;
+            ready = ready && SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&link))) && SUCCEEDED(link->SetPath(folder.c_str())) &&
+                SUCCEEDED(link.As(&persist)) && SUCCEEDED(persist->Save(shortcut.c_str(), TRUE));
+            Check(ready, "folder shortcut fixture must be created");
+            snowdesktop::shell_launch_process::Request request;
+            request.path = kind == 2 ? folder : shortcut;
+            request.action = snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy;
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            if (kind == 0)
+            {
+                ready = ready && SUCCEEDED(SHParseDisplayName(shortcut.c_str(), nullptr, &pidl, 0, nullptr)) && pidl;
+                if (pidl)
+                {
+                    const auto bytes = reinterpret_cast<const unsigned char*>(pidl);
+                    request.absolutePidl.assign(bytes, bytes + ILGetSize(pidl));
+                }
+            }
+            const auto started = ready ? snowdesktop::shell_launch_process::Start(request, 10000) :
+                snowdesktop::shell_launch_process::StartedProcess{};
+            Check(static_cast<bool>(started), "folder activation must dispatch the real helper");
+            bool observed = false;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (started && !observed && std::chrono::steady_clock::now() < deadline)
+            {
+                long count = 0; windows->get_Count(&count);
+                for (long i = 0; i < count; ++i)
+                {
+                    VARIANT index{}; index.vt = VT_I4; index.lVal = i;
+                    Microsoft::WRL::ComPtr<IDispatch> dispatch;
+                    Microsoft::WRL::ComPtr<IWebBrowser2> browser;
+                    if (FAILED(windows->Item(index, &dispatch)) || !dispatch || FAILED(dispatch.As(&browser))) continue;
+                    BSTR url = nullptr; browser->get_LocationURL(&url);
+                    wchar_t path[32768]{}; DWORD size = 32768;
+                    if (url && SUCCEEDED(PathCreateFromUrlW(url, path, &size, 0)) && SameFolder(folder, path))
+                    { observed = true; browser->Quit(); }
+                    SysFreeString(url);
+                }
+                if (!observed)
+                {
+                    MSG message{};
+                    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                    { TranslateMessage(&message); DispatchMessageW(&message); }
+                    MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+                }
+            }
+            Check(observed, kind == 0 ? "PIDL folder shortcut must actually navigate Explorer" :
+                kind == 1 ? "path-only folder shortcut must actually navigate Explorer" :
+                "ordinary folder must actually navigate Explorer");
+            CoTaskMemFree(pidl); persist.Reset(); link.Reset();
+            DeleteFileW(shortcut.c_str()); RemoveDirectoryW(folder.c_str());
+        }
+    }
+    CoUninitialize();
 }
 
 struct BlockingExecutorState
@@ -662,6 +819,11 @@ int wmain(int argc, wchar_t** argv)
 {
     if (const auto result = snowdesktop::shell_launch_process::TryRunCommand(ExecuteHelperFixture))
         return *result;
+    if (argc == 2 && wcscmp(argv[1], L"--default-open-contract") == 0)
+    {
+        TestDefaultOpenDoesNotPrepareUnrelatedMenus();
+        return failures ? 1 : 0;
+    }
     if (argc == 3 && wcscmp(argv[1], L"--shell-open-survivor") == 0)
     {
         const std::wstring name(argv[2]);
@@ -696,6 +858,8 @@ int wmain(int argc, wchar_t** argv)
     TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
     TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped();
     TestIsolatedOpenLaunchesShortcut();
+    TestDefaultOpenDoesNotPrepareUnrelatedMenus();
+    TestIsolatedFolderActivation();
     if (failures != 0)
     {
         std::cerr << failures

@@ -1,6 +1,9 @@
 #include "shell_launch_worker.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_launch_process.h"
+#include "shell_open_command.h"
+
+#include <optional>
 
 #include <objbase.h>
 #include <shellapi.h>
@@ -68,13 +71,13 @@ bool SafeInvokeContextMenu(
     }
 }
 
-bool InvokeShellItemOpen(
+std::optional<bool> InvokeShellItemOpen(
     HWND owner,
     PCIDLIST_ABSOLUTE absolutePidl,
     int showCommand)
 {
     if (!absolutePidl)
-        return false;
+        return std::nullopt;
 
     ComPtr<IShellFolder> parentFolder;
     PCUITEMID_CHILD child = nullptr;
@@ -84,7 +87,7 @@ bool InvokeShellItemOpen(
             &child)) ||
         !parentFolder || !child)
     {
-        return false;
+        return std::nullopt;
     }
 
     const HWND validOwner = owner && IsWindow(owner) ? owner : nullptr;
@@ -99,9 +102,68 @@ bool InvokeShellItemOpen(
                 contextMenu.GetAddressOf()))) ||
         !contextMenu)
     {
-        return false;
+        return std::nullopt;
     }
 
+    // A supported handler owns the attempt, including failure. Falling back
+    // after a rejected invocation could load a full menu or execute twice.
+    return shell_open_command::Invoke(contextMenu.Get(), validOwner, showCommand);
+}
+
+bool ExecuteShellOpen(
+    HWND owner,
+    const std::wstring& path,
+    PCIDLIST_ABSOLUTE absolutePidl,
+    int showCommand,
+    ULONG launchMask)
+{
+    if (path.empty())
+        return false;
+
+    // Paths from mapped folders, widget actions and navigation do not always
+    // carry a PIDL. Resolve them here in the helper so they receive the same
+    // restricted Open query as desktop and Dock items. In particular, neither
+    // a directory nor a .lnk should implicitly prepare a full context menu.
+    PIDLIST_ABSOLUTE parsedPidl = nullptr;
+    if (!absolutePidl)
+    {
+        SHParseDisplayName(path.c_str(), nullptr, &parsedPidl, 0, nullptr);
+        absolutePidl = parsedPidl;
+    }
+    const auto opened = InvokeShellItemOpen(owner, absolutePidl, showCommand);
+    if (opened.has_value())
+    {
+        CoTaskMemFree(parsedPidl);
+        return *opened;
+    }
+
+    // Protocols or Shell objects without IContextMenu still use their
+    // registered Open handler. No fallback follows a supported failed command.
+    SHELLEXECUTEINFOW executeInfo{};
+    executeInfo.cbSize = sizeof(executeInfo);
+    executeInfo.fMask = launchMask;
+    executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
+    executeInfo.lpVerb = L"open";
+    executeInfo.lpFile = path.c_str();
+    if (absolutePidl)
+    {
+        executeInfo.fMask |= SEE_MASK_IDLIST;
+        executeInfo.lpIDList = const_cast<PIDLIST_ABSOLUTE>(absolutePidl);
+    }
+    executeInfo.nShow = showCommand;
+    const bool executed = ShellExecuteExW(&executeInfo) != FALSE;
+    CoTaskMemFree(parsedPidl);
+    return executed;
+}
+
+} // namespace
+
+bool shell_open_command::Invoke(IContextMenu* contextMenu, HWND owner, int showCommand)
+{
+    if (!contextMenu)
+        return false;
+    // CMF_NORMAL initializes unrelated extensions (including ones that can
+    // deadlock in DllMain). Default activation must request only its verbs.
     HMENU menu = CreatePopupMenu();
     if (!menu)
         return false;
@@ -113,7 +175,13 @@ bool InvokeShellItemOpen(
         0,
         firstCommand,
         lastCommand,
-        CMF_NORMAL);
+        CMF_DEFAULTONLY | CMF_OPTIMIZEFORINVOKE);
+
+    if (FAILED(queryResult))
+    {
+        DestroyMenu(menu);
+        return false;
+    }
 
     UINT_PTR openOffset = static_cast<UINT_PTR>(-1);
     if (SUCCEEDED(queryResult))
@@ -138,7 +206,7 @@ bool InvokeShellItemOpen(
         if (openOffset == static_cast<UINT_PTR>(-1))
         {
             const UINT defaultCommand = GetMenuDefaultItem(
-                menu, FALSE, GMDI_USEDISABLED);
+                menu, FALSE, 0);
             if (defaultCommand >= firstCommand &&
                 defaultCommand <= lastCommand)
             {
@@ -152,7 +220,7 @@ bool InvokeShellItemOpen(
     // This STA belongs to a short-lived helper. Finish Shell/DDE handoff
     // before it exits; the desktop does not wait for this call.
     invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_FLAG_LOG_USAGE | CMIC_MASK_NOASYNC;
-    invoke.hwnd = validOwner;
+    invoke.hwnd = owner && IsWindow(owner) ? owner : nullptr;
     if (openOffset != static_cast<UINT_PTR>(-1))
     {
         invoke.lpVerb = MAKEINTRESOURCEA(openOffset);
@@ -171,72 +239,11 @@ bool InvokeShellItemOpen(
     invoke.nShow = showCommand;
 
     const bool opened = SafeInvokeContextMenu(
-        contextMenu.Get(),
+        contextMenu,
         reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
     DestroyMenu(menu);
     return opened;
 }
-
-bool ExecuteShellOpen(
-    HWND owner,
-    const std::wstring& path,
-    PCIDLIST_ABSOLUTE absolutePidl,
-    int showCommand,
-    ULONG launchMask)
-{
-    if (path.empty())
-        return false;
-
-    // Opening an ordinary folder does not require collecting third-party
-    // context-menu entries just to find the Open verb. Attribute lookup also
-    // stays in the helper, since network/removable paths can block here.
-    const DWORD attributes = GetFileAttributesW(path.c_str());
-    const bool fileSystemDirectory = attributes != INVALID_FILE_ATTRIBUTES &&
-        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-    if (!fileSystemDirectory && absolutePidl &&
-        InvokeShellItemOpen(owner, absolutePidl, showCommand))
-    {
-        return true;
-    }
-
-    if (path.size() >= 6 &&
-        _wcsnicmp(path.c_str(), L"shell:", 6) == 0)
-    {
-        PIDLIST_ABSOLUTE rawPidl = nullptr;
-        const HRESULT parseResult = SHParseDisplayName(
-            path.c_str(), nullptr, &rawPidl, 0, nullptr);
-        if (SUCCEEDED(parseResult) && rawPidl)
-        {
-            SHELLEXECUTEINFOW namespaceExecuteInfo{};
-            namespaceExecuteInfo.cbSize = sizeof(namespaceExecuteInfo);
-            namespaceExecuteInfo.fMask = launchMask | SEE_MASK_IDLIST;
-            namespaceExecuteInfo.hwnd =
-                owner && IsWindow(owner) ? owner : nullptr;
-            namespaceExecuteInfo.lpIDList = rawPidl;
-            namespaceExecuteInfo.nShow = showCommand;
-            const bool opened =
-                ShellExecuteExW(&namespaceExecuteInfo) != FALSE;
-            CoTaskMemFree(rawPidl);
-            if (opened)
-                return true;
-        }
-        else if (rawPidl)
-        {
-            CoTaskMemFree(rawPidl);
-        }
-    }
-
-    SHELLEXECUTEINFOW executeInfo{};
-    executeInfo.cbSize = sizeof(executeInfo);
-    executeInfo.fMask = launchMask;
-    executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
-    executeInfo.lpVerb = L"open";
-    executeInfo.lpFile = path.c_str();
-    executeInfo.nShow = showCommand;
-    return ShellExecuteExW(&executeInfo) != FALSE;
-}
-
-} // namespace
 
 namespace
 {
