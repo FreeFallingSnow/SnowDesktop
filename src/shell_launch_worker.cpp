@@ -117,7 +117,7 @@ bool ExecuteShellOpen(
     int showCommand,
     ULONG launchMask)
 {
-    if (path.empty())
+    if (path.empty() && !absolutePidl)
         return false;
 
     // Paths from mapped folders, widget actions and navigation do not always
@@ -144,7 +144,7 @@ bool ExecuteShellOpen(
     executeInfo.fMask = launchMask;
     executeInfo.hwnd = owner && IsWindow(owner) ? owner : nullptr;
     executeInfo.lpVerb = L"open";
-    executeInfo.lpFile = path.c_str();
+    executeInfo.lpFile = path.empty() ? nullptr : path.c_str();
     if (absolutePidl)
     {
         executeInfo.fMask |= SEE_MASK_IDLIST;
@@ -420,7 +420,7 @@ bool ShellLaunchWorker::ExecuteRunAsAdministrator(
 bool shell_launch_process::ExecuteRequest(const Request& request)
 {
     const auto& path = request.path;
-    if (path.empty())
+    if (path.empty() && request.absolutePidl.empty())
         return false;
     const HWND validOwner = request.owner && IsWindow(request.owner)
         ? request.owner : nullptr;

@@ -115,9 +115,9 @@ void TestIsolatedFolderActivation()
         Check(SUCCEEDED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
             IID_PPV_ARGS(&windows))), "folder activation must observe real Explorer navigation");
         // Separate fresh targets prevent an already-open directory from passing.
-        // The three paths correspond to desktop/Dock, path-only callers and
-        // ordinary folders. Only Explorer windows for these fixtures are closed.
-        for (int kind = 0; windows && kind < 3; ++kind)
+        // Cover desktop/Dock, path-only callers, ordinary folders and Shell
+        // objects with no parsing name. Only this test's windows are closed.
+        for (int kind = 0; windows && kind < 4; ++kind)
         {
             GUID id{}; wchar_t idText[64]{}, temp[MAX_PATH]{};
             const bool pathsReady = SUCCEEDED(CoCreateGuid(&id)) &&
@@ -138,7 +138,7 @@ void TestIsolatedFolderActivation()
             request.path = kind == 2 ? folder : shortcut;
             request.action = snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy;
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (kind == 0)
+            if (kind == 0 || kind == 3)
             {
                 ready = ready && SUCCEEDED(SHParseDisplayName(shortcut.c_str(), nullptr, &pidl, 0, nullptr)) && pidl;
                 if (pidl)
@@ -147,6 +147,7 @@ void TestIsolatedFolderActivation()
                     request.absolutePidl.assign(bytes, bytes + ILGetSize(pidl));
                 }
             }
+            if (kind == 3) request.path.clear();
             const auto started = ready ? snowdesktop::shell_launch_process::Start(request, 10000) :
                 snowdesktop::shell_launch_process::StartedProcess{};
             Check(static_cast<bool>(started), "folder activation must dispatch the real helper");
@@ -177,7 +178,8 @@ void TestIsolatedFolderActivation()
             }
             Check(observed, kind == 0 ? "PIDL folder shortcut must actually navigate Explorer" :
                 kind == 1 ? "path-only folder shortcut must actually navigate Explorer" :
-                "ordinary folder must actually navigate Explorer");
+                kind == 2 ? "ordinary folder must actually navigate Explorer" :
+                "PIDL-only Shell item must actually navigate Explorer");
             CoTaskMemFree(pidl); persist.Reset(); link.Reset();
             DeleteFileW(shortcut.c_str()); RemoveDirectoryW(folder.c_str());
         }
@@ -639,6 +641,12 @@ void TestIsolatedOpenLaunchesShortcut()
         Check(
             WaitForSingleObject(launchedEvent, 10000) == WAIT_OBJECT_0,
             "the shortcut must launch through the isolated interactive Open request");
+
+        ResetEvent(launchedEvent);
+        Check(snowdesktop::ShellLaunchWorker::ExecuteInteractive(nullptr, linkPath, nullptr),
+            "path-only application shortcuts must reach the isolated Open request");
+        Check(WaitForSingleObject(launchedEvent, 10000) == WAIT_OBJECT_0,
+            "path-only application shortcut must preserve its target and arguments");
     }
 
     if (absolutePidl)
@@ -676,6 +684,14 @@ void TestRequestPayloadPreservesPathsAndRejectsInvalidPidls()
             decoded->owner == request.owner &&
             decoded->showCommand == request.showCommand && decoded->action == request.action,
         "the helper transport must preserve Unicode, shell metacharacters and complete PIDL bytes");
+    auto pidlOnly = request;
+    pidlOnly.path.clear();
+    const auto pidlOnlyDecoded = process::Decode(process::Encode(pidlOnly));
+    Check(pidlOnlyDecoded && pidlOnlyDecoded->path.empty() &&
+        pidlOnlyDecoded->absolutePidl == request.absolutePidl,
+        "Shell objects without a parsing name must retain their complete PIDL");
+    pidlOnly.absolutePidl.clear();
+    Check(process::Encode(pidlOnly).empty(), "requests with neither a path nor a PIDL must be rejected");
     for (std::size_t size = 0; size < encoded.size(); ++size)
     {
         if (process::Decode(std::span(encoded.data(), size)))

@@ -2,6 +2,7 @@
 
 #include "settings_window_host.h"
 #include "../performance_trace.h"
+#include "../shell_launch_worker.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -1682,6 +1683,16 @@ struct SettingsWindowHost::Impl
             return;
         const std::weak_ptr<CallbackState> weak = callbacks;
         auto configured = options.backupDataPage;
+        if (!configured.openPath)
+        {
+            configured.openPath = [this](HWND owner, const std::filesystem::path& path) {
+                // This same-executable helper is also available in the
+                // independent settings process. Success means dispatched.
+                return snowdesktop::ShellLaunchWorker::ExecuteInteractive(owner, path.wstring(), nullptr)
+                    ? SettingsActionResult::Success()
+                    : SettingsActionResult::Failure(L("settings.backup.error.openLocation"));
+            };
+        }
         configured.ownerWindow = [weak]() -> HWND {
             const auto state = weak.lock();
             return state && state->alive.load() && state->owner

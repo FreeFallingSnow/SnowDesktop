@@ -1183,9 +1183,8 @@ public:
         case Action::OpenDataDirectory:
         {
             const std::wstring path = GetDataDirectoryPath();
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
-                    app_.controlHwnd_, L"open", path.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                    app_.controlHwnd_, path, nullptr))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.backup.error.openLocation"));
@@ -1243,9 +1242,8 @@ public:
                     : L"https://github.com/FreeFallingSnow/"
                       L"SnowDesktop/blob/main/THIRD_PARTY_NOTICES.md";
             }
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
-                    app_.controlHwnd_, L"open", target.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                    app_.controlHwnd_, target.wstring(), nullptr))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.about.link.openFailed"));

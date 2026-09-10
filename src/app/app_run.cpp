@@ -870,9 +870,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.widgetsPage.openDevelopmentFolder = [this]() {
         const auto paths = WidgetEngine::GetWidgetPackagePaths();
-        if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
-                paths.development.c_str(), nullptr, nullptr,
-                SW_SHOWNORMAL)) <= 32)
+        if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                controlHwnd_, paths.development.wstring(), nullptr))
         {
             return snowdesktop::winui::WidgetsPageHostOperationResult::
                 Failure(_LW(
@@ -897,8 +896,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         if (!projectRoot.empty())
         {
-            (void)ShellExecuteW(controlHwnd_, L"open",
-                projectRoot.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            (void)snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                controlHwnd_, projectRoot.wstring(), nullptr);
         }
         if (settingsWindow_)
         {
