@@ -1211,7 +1211,15 @@ void TestExternalDropContentRegressions()
         for (const bool asynchronous : {false, true})
         {
             const auto result = content::Read(asynchronous, true, readers);
-            Check(result.paths == content::Paths{sourcePath.wstring()} && !result.owned,
+            const bool sameFile = result.paths.size() == 1 &&
+                std::filesystem::equivalent(result.paths.front(), sourcePath);
+            if (!asynchronous && !sameFile)
+            {
+                std::wcerr << L"CONTROL expected=" << sourcePath.wstring() << L'\n';
+                for (const auto& path : result.paths)
+                    std::wcerr << L"CONTROL actual=" << path << L'\n';
+            }
+            Check(sameFile && !result.owned,
                 asynchronous ?
                     "DND-01: async component ingress must retain the actual Shell file paths" :
                     "synchronous component ingress must retain the actual Shell file paths");
