@@ -330,3 +330,13 @@
 `widget_preview_stage` 增加保持相同尺寸、仅改一个采样像素的指纹检查；选定背景裁剪使用独立坐标颜色；Fill 用 4×2 的固定色列填入 2×2 画布，精确检查中央两列，区分保比例裁切与拉伸。指纹是采样哈希，未宣称任意大图单像素变化都必然被检测。
 
 执行 `scripts/test.bat name "^(large_icon_shell_assets|widget_preview_stage|quick_navigation_search_async)$"`：三个目标编译，3/3 通过（执行 1.20 秒）。没有修改生产队列/渲染/搜索实现；未执行本批变异或完整测试。
+
+### 第十一批：占用预检与环境未验证状态
+
+TA-21：全量和预览 CLI 选择在编译前检查目标 Release 的宿主/工具进程及 Explorer 运行库占用，失败时不编译、不整理输出；普通定向测试不受宿主运行影响。全量入口复用动态选择，并避免重复运行 CMake 聚合目标已有的输出整理。回归脚本以受控占用信息验证操作顺序；先前真实占用失败另有日志。本批没有再次启动真实宿主制造占用。
+
+数据生命周期、Steam 运行库、Workshop 项目路径的链接安全夹具若无法创建，先记录具体场景和系统错误，已有断言失败优先返回失败；否则以 77 表示入口未完整验证，CTest 标为跳过。它们不会静默记为通过。CTest 原生允许含跳过的运行返回 0，因此还需在统一入口核对结构化报告，下一批落实。三项在当前环境均完整执行，没有跳过。
+
+将真实独立窗口的 Dock、依赖 Windows 时区数据库的时间、依赖实际 Shell 桌面目录的参数用例补充 `integration` 条件标签，业务标签与测试名保留。这不会把 core 自动等同于 fast；尚未拆分每个混合程序。
+
+执行 `scripts/test.bat name "^(test_selection|application_data_lifecycle|steam_runtime_update|steam_workshop_manager)$"`：三个原生目标编译及 4/4 通过，执行 13.32 秒。未运行完整测试。跳过状态采用 [CTest SKIP_RETURN_CODE](https://cmake.org/cmake/help/latest/prop_test/SKIP_RETURN_CODE.html)；结构化结果将使用 [CTest JUnit 输出](https://cmake.org/cmake/help/latest/manual/ctest.1.html#cmdoption-ctest-output-junit)。

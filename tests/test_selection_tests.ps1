@@ -9,7 +9,7 @@ $parseErrors = $null
 $manager = [System.Management.Automation.Language.Parser]::ParseFile(
     $managerPath, [ref]$parseTokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw "test manager must parse" }
-foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests")) {
+foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Assert-HostRuntimeAvailable")) {
     $definition = $manager.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -22,6 +22,12 @@ foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests")) {
 $script:fixture = ""
 $script:queryArguments = @()
 $script:invocations = @()
+$script:runtimeLocks = @()
+$script:runtimeInspections = 0
+function Get-HostRuntimeLocks {
+    ++$script:runtimeInspections
+    $script:runtimeLocks
+}
 function ctest {
     $script:queryArguments = @($args)
     $global:LASTEXITCODE = 0
@@ -80,4 +86,21 @@ Set-Inventory @(@{ name = "ambiguous-metadata"; properties = @(
     @{ name = "REQUIRED_FILES"; value = @($testBinary, "C:/isolated-tests/SnowDesktopOtherTests.exe") }) })
 Expect-Failure { Get-TestSelection } "Cannot resolve the build target"
 
-Write-Output "Test selection regressions passed (cold build, aliases, scripts, filters and invalid metadata)."
+$preview = @{ name = "preview"; command = @("C:/tests/SnowDesktopWidgetAuthorPreviewCliTests.exe"); properties = @() }
+$script:runtimeLocks = @("owned fixture process")
+Set-Inventory @($preview)
+Expect-Failure { Invoke-FilteredTests -CTestFilterArguments @("-R", "preview") } "Host runtime is in use"
+Check ($script:invocations.Count -eq 0) "occupied runtime must fail before compilation or output arrangement"
+Set-Inventory @($built)
+Expect-Failure { Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests" } "Host runtime is in use"
+Check ($script:invocations.Count -eq 0) "full aggregate must preflight before it builds and arranges"
+$inspections = $script:runtimeInspections
+Invoke-FilteredTests -CTestFilterArguments @("-R", "built")
+Check ($script:runtimeInspections -eq $inspections -and $script:invocations.Count -eq 2) "ordinary targeted tests must remain usable with the host running"
+$script:runtimeLocks = @()
+Set-Inventory @($preview)
+Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests"
+Check ($script:invocations.Count -eq 2 -and $script:invocations[0].FilePath -eq "cmake" -and
+    $script:invocations[1].FilePath -eq "ctest") "full aggregate must not arrange its runtime twice"
+
+Write-Output "Test selection regressions passed (cold build, aliases, scripts, filters, metadata and runtime preflight)."

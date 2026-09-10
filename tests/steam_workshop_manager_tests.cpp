@@ -35,6 +35,7 @@ using namespace snowdesktop::widget;
 namespace
 {
 int failures = 0;
+int skippedScenarios = 0;
 
 void Check(bool condition, const char* message)
 {
@@ -581,6 +582,12 @@ void TestProjectStore()
             SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE))
         Check(!loaded.AddDirectory(linked, invalid, error),
             "project store rejects project paths containing a reparse point");
+    else
+    {
+        ++skippedScenarios;
+        std::cout << "SKIP: project reparse-point fixture could not be created (Windows error "
+                  << GetLastError() << ")\n";
+    }
     const auto second = temporary.path / L"second";
     std::filesystem::create_directory(second);
     std::ofstream(second / L"widget.json") << "{}";
@@ -1109,6 +1116,11 @@ int wmain(int argc, wchar_t** argv)
         TestManagerFontCoverage(argv[2]);
     }
     else Check(false, "test requires snowwidget.exe and repository root arguments");
+    if (failures == 0 && skippedScenarios)
+    {
+        std::cout << skippedScenarios << " safety scenario(s) could not run; this entry is not fully verified\n";
+        return 77;
+    }
     if (failures == 0)
         std::cout << "Steam Workshop manager tests passed\n";
     return failures == 0 ? 0 : 1;

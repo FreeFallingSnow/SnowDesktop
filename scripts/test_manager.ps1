@@ -79,6 +79,11 @@ function Invoke-FilteredTests {
         throw "The requested filter did not match any configured tests."
     }
 
+    $needsHostRuntime = $selection.Targets -contains "SnowDesktopWidgetAuthorPreviewCliTests"
+    if ($needsHostRuntime -or $BuildPreset -eq "tests") {
+        Assert-HostRuntimeAvailable
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($BuildPreset)) {
         Write-Host "=== Building the aggregate target for $($selection.Tests.Count) selected test(s) ==="
         Invoke-Checked -FilePath "cmake" -Arguments @(
@@ -92,7 +97,8 @@ function Invoke-FilteredTests {
         Invoke-Checked -FilePath "cmake" -Arguments $buildArguments
     }
 
-    if ($selection.Targets -contains "SnowDesktopWidgetAuthorPreviewCliTests") {
+    # The full aggregate already arranges its output in CMake.
+    if ($needsHostRuntime -and $BuildPreset -ne "tests") {
         Invoke-Checked -FilePath "powershell.exe" -Arguments @(
             "-NoProfile", "-ExecutionPolicy", "Bypass",
             "-File", (Join-Path $PSScriptRoot "arrange_build_output.ps1"),
@@ -105,6 +111,41 @@ function Invoke-FilteredTests {
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
     Invoke-Checked -FilePath "ctest" -Arguments (
         @("--preset", "tests") + $CTestFilterArguments)
+}
+
+function Get-HostRuntimeLocks {
+    $releaseRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot ".build\Release"))
+    $runtimePrefix = (Join-Path $releaseRoot "SnowDesktop.Runtime") + [IO.Path]::DirectorySeparatorChar
+    foreach ($process in @(Get-Process -Name SnowDesktop, snowwidget,
+            SnowDesktopWorkshopManager, SnowDesktopSteamBridge, SnowDesktopLauncher,
+            SnowDesktopWallpaperInjector32 -ErrorAction SilentlyContinue)) {
+        $path = $process.Path
+        if ([string]::IsNullOrEmpty($path) -or
+            $path.StartsWith($releaseRoot + [IO.Path]::DirectorySeparatorChar,
+                [StringComparison]::OrdinalIgnoreCase)) {
+            "$($process.ProcessName) (PID $($process.Id))"
+        }
+    }
+    foreach ($process in @(Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
+        try {
+            foreach ($module in $process.Modules) {
+                if ($module.FileName.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                    $module.FileName.Equals((Join-Path $releaseRoot "SnowDesktopTaskbarHook.dll"),
+                        [StringComparison]::OrdinalIgnoreCase)) {
+                    "Explorer (PID $($process.Id)): $($module.FileName)"
+                }
+            }
+        }
+        catch { throw "Cannot inspect Explorer runtime ownership before building: $_" }
+    }
+}
+
+function Assert-HostRuntimeAvailable {
+    $locks = @(Get-HostRuntimeLocks)
+    if ($locks.Count -gt 0) {
+        throw ("Host runtime is in use; no build or output arrangement was started. Close the owning application first; " +
+            "if a Shell reload is intended, use scripts/build.bat --reload-shell. Owners: " + ($locks -join "; "))
+    }
 }
 
 function Test-IsolatedOutput {
@@ -130,13 +171,7 @@ Invoke-Checked -FilePath "cmake" -Arguments @("--preset", "tests")
 
 switch ($Mode) {
     "full" {
-        Write-Host ""
-        Write-Host "=== Building all test targets ==="
-        Invoke-Checked -FilePath "cmake" -Arguments @(
-            "--build", "--preset", "tests")
-        Write-Host ""
-        Write-Host "=== Running full CTest suite ==="
-        Invoke-Checked -FilePath "ctest" -Arguments @("--preset", "tests")
+        Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests"
         Write-Host ""
         Write-Host "=== Verifying isolated test output ==="
         Test-IsolatedOutput

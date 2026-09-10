@@ -1106,7 +1106,7 @@ if (BUILD_TESTING)
             tests/widget_time_tests.cpp
             src/widget_time.cpp
         INCLUDE_DIRECTORIES src
-        LABELS contract l10n lua time widget)
+        LABELS integration contract l10n lua time widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetRuntimeDiagnosticsTests
@@ -2051,7 +2051,7 @@ if (BUILD_TESTING)
         SOURCES tests/shell_context_menu_invoke_tests.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32
-        LABELS contract shell)
+        LABELS integration contract shell)
 
     snowdesktop_add_test(
         SnowDesktopShellIntegrationContractTests
@@ -2093,7 +2093,7 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS core rules window)
+        LABELS integration core rules window)
 
     snowdesktop_add_test(
         SnowDesktopDesktopDropCacheTests
@@ -2236,6 +2236,11 @@ if (BUILD_TESTING)
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selection_tests.ps1")
     set_tests_properties(test_selection PROPERTIES
         TIMEOUT 30 LABELS "core;contract;build")
+    # Partial environment coverage must not be presented as a passing entry.
+    # Failures take precedence over this distinct unavailable-environment code.
+    set_tests_properties(application_data_lifecycle steam_runtime_update steam_workshop_manager
+        PROPERTIES SKIP_RETURN_CODE 77)
+
     add_custom_target(
         SnowDesktopFastTests
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})

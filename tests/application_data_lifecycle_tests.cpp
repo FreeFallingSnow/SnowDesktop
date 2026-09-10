@@ -24,6 +24,7 @@ namespace
 using namespace snowdesktop::widget;
 
 int failures = 0;
+int skippedScenarios = 0;
 
 void Expect(bool condition, const char* message)
 {
@@ -1758,6 +1759,7 @@ int main()
     }
     else
     {
+        ++skippedScenarios;
         std::cout << "SKIPPED: archive file reparse-point validation ("
                   << ec.message() << ")\n";
     }
@@ -1779,6 +1781,7 @@ int main()
     }
     else
     {
+        ++skippedScenarios;
         std::cout << "SKIPPED: archive parent reparse-point validation ("
                   << ec.message() << ")\n";
     }
@@ -2465,5 +2468,11 @@ int main()
     if (failures)
         std::cerr << failures
             << " application data lifecycle test(s) failed\n";
-    return failures == 0 ? 0 : 1;
+    if (failures) return 1;
+    if (skippedScenarios)
+    {
+        std::cout << skippedScenarios << " safety scenario(s) could not run; this entry is not fully verified\n";
+        return 77;
+    }
+    return 0;
 }
