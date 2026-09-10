@@ -33,7 +33,9 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
 
     const bool fade = generalSettings_.popupAnimationEffect == motion::Fade;
     const double durationScale = motion::RuntimeDurationScale();
-    popupAnimation_.Configure(fade, durationScale);
+    const DesktopWidget* popupWidget = GetOpenPopupWidget();
+    popupAnimation_.Configure(fade, durationScale *
+        (popupWidget && popupWidget->fanPopup ? 2.4 : 1.0));
     luaWidgetPanelAnimation_.Configure(fade, durationScale);
 
     // Finish the old timeline when its duration/effect changes.

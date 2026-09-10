@@ -479,6 +479,7 @@ struct DesktopWidget
     bool selected = false;
     bool autoCollect = false;
     bool listMode = false;
+    bool fanPopup = false; // Per-object popup layout; preserves the inline view.
     bool showDetails = false;
     bool detailShowModified = false;
     bool detailShowType = false;
@@ -549,6 +550,7 @@ struct DockEntry
     // options on the Dock entry so they can use the same list/detail view as
     // widget-backed folder popups.
     bool listMode = false;
+    bool fanPopup = false;
     bool detailShowModified = false;
     bool detailShowType = false;
     bool detailShowSize = false;

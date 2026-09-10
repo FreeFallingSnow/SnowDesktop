@@ -353,6 +353,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.gridSpan.rows = std::max(1, saved.height);
         widget.autoCollect = saved.autoCollect;
         widget.listMode = saved.listMode;
+        widget.fanPopup = saved.fanPopup;
         if (hasTrustedDetailColumns)
         {
             widget.detailShowModified = saved.detailShowModified;
@@ -648,6 +649,7 @@ void DesktopApp::LoadLayoutSlots()
         for (const auto& key : saved.folderItems)
             entry.folderItemKeys.push_back(Utf8ToWide(key));
         entry.listMode = saved.listMode;
+        entry.fanPopup = saved.fanPopup;
         entry.detailShowModified = saved.detailShowModified;
         entry.detailShowType = saved.detailShowType;
         entry.detailShowSize = saved.detailShowSize;
@@ -996,6 +998,7 @@ bool DesktopApp::SaveLayoutSlots()
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"fanPopup\": " << (w.fanPopup ? "true" : "false")
              << ", \"showDetails\": "
              << (snowdesktop::list_detail_rules::HasMetadataColumns(
                     w.detailShowModified,
@@ -1074,6 +1077,7 @@ bool DesktopApp::SaveLayoutSlots()
                     ? "true" : "false")
              << ", \"listMode\": "
              << (entry.listMode ? "true" : "false")
+             << ", \"fanPopup\": " << (entry.fanPopup ? "true" : "false")
              << ", \"detailShowModified\": "
              << (entry.detailShowModified ? "true" : "false")
              << ", \"detailShowType\": "

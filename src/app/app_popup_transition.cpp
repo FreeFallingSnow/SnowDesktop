@@ -620,6 +620,7 @@ void DesktopApp::RefreshDockFolderPopup(
                 source.itemKeys;
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.fanPopup = source.fanPopup;
             dockFolderPopupWidget_.showDetails =
                 source.showDetails;
             dockFolderPopupWidget_.detailShowModified =
@@ -741,6 +742,7 @@ CommitDockFolderPopupStateToSource()
                 dockFolderPopupWidget_.itemKeys;
             source.listMode =
                 dockFolderPopupWidget_.listMode;
+            source.fanPopup = dockFolderPopupWidget_.fanPopup;
             source.showDetails =
                 dockFolderPopupWidget_.showDetails;
             source.detailShowModified =
@@ -791,6 +793,7 @@ CommitDockFolderPopupStateToSource()
             dockFolderPopupWidget_.itemKeys;
         entry.listMode =
             dockFolderPopupWidget_.listMode;
+        entry.fanPopup = dockFolderPopupWidget_.fanPopup;
         entry.detailShowModified =
             dockFolderPopupWidget_.detailShowModified;
         entry.detailShowType =

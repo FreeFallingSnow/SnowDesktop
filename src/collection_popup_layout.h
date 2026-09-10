@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 namespace snowdesktop::collection_popup_layout
 {
@@ -191,6 +192,66 @@ inline int RequiredListRowCount(std::size_t itemCount)
     return std::max(
         kMinimumListRows,
         static_cast<int>(itemCount));
+}
+
+// Fan rows share a single vertical scroll coordinate with hit testing,
+// keyboard navigation and drag insertion. Curvature depends on the visible
+// position, so scrolling moves items along the arc instead of off its side.
+inline int FanRowHeight(const Metrics& metrics)
+{
+    return std::max(ScaleDimension(64, metrics.scale),
+        metrics.minimumListHeight + ScaleDimension(12, metrics.scale));
+}
+
+inline int FanContentHeight(const Metrics& metrics, std::size_t count)
+{
+    const auto pitch = static_cast<std::size_t>(FanRowHeight(metrics));
+    return static_cast<int>(std::min(count,
+        static_cast<std::size_t>(std::numeric_limits<int>::max() / 4) / pitch) * pitch);
+}
+
+inline RECT FanItemRect(const Metrics& metrics, const RECT& content,
+    std::size_t index, int scrollOffset, bool rootAbove, bool bendLeft)
+{
+    const int pitch = FanRowHeight(metrics);
+    const int width = std::max(1L, content.right - content.left);
+    const int height = std::max(1L, content.bottom - content.top);
+    const int bend = std::min(ScaleDimension(64, metrics.scale), width / 4);
+    const int top = content.top + FanContentHeight(metrics, index) - scrollOffset;
+    double t = std::clamp((top - content.top + pitch * 0.5) / height, 0.0, 1.0);
+    if (!rootAbove) t = 1.0 - t;
+    int shift = static_cast<int>(std::lround(bend * t * t));
+    if (bendLeft) shift = bend - shift;
+    const int gutter = std::min(ScaleDimension(10, metrics.scale), width / 8);
+    return { content.left + shift, top,
+        content.left + shift + std::max(1, width - bend - gutter), top + pitch };
+}
+
+inline RECT FanIconRect(const Metrics& metrics, const RECT& row)
+{
+    const int inset = ScaleDimension(5, metrics.scale);
+    const int size = std::max(1, std::min({ScaleDimension(48, metrics.scale),
+        static_cast<int>(row.bottom - row.top) - inset * 2,
+        static_cast<int>(row.right - row.left) / 3}));
+    const int top = row.top + (row.bottom - row.top - size) / 2;
+    return {row.left + inset, top, row.left + inset + size, top + size};
+}
+
+inline RECT FanTextRect(const Metrics& metrics, const RECT& row)
+{
+    RECT text = row;
+    text.left = FanIconRect(metrics, row).right + ScaleDimension(10, metrics.scale);
+    text.right = std::max(text.left + 1,
+        row.right - ScaleDimension(8, metrics.scale));
+    return text;
+}
+
+inline float FanRevealProgress(float progress, float distanceFromRoot)
+{
+    // Using the same pose for both directions preserves continuity on reversal.
+    const float delay = 0.22f * std::clamp(distanceFromRoot, 0.0f, 1.0f);
+    const float t = std::clamp((progress - delay) / (1.0f - delay), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
 }
 
 /**

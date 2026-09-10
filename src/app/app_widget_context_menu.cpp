@@ -350,6 +350,23 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.scrollContainerMode
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
+    if (widget.type == DesktopWidgetType::Collection ||
+        (widget.type == DesktopWidgetType::FolderMapping &&
+            widget.gridCell.pageId == kDockPageId))
+    {
+
+        if (HMENU expansion = CreatePopupMenu())
+        {
+            AppendMenuW(expansion, MF_STRING, kContextPopupDefault,
+                _LW("app.interact.popup_default"));
+            AppendMenuW(expansion, MF_STRING, kContextPopupFan,
+                _LW("app.interact.popup_fan"));
+            CheckMenuRadioItem(expansion, kContextPopupDefault, kContextPopupFan,
+                widget.fanPopup ? kContextPopupFan : kContextPopupDefault, MF_BYCOMMAND);
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(expansion),
+                _LW("app.interact.popup_layout"));
+        }
+    }
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     std::vector<LuaWidgetMenuItem> luaMenuActions;
     auto luaMenuScope = snowdesktop::right_click_contract::
@@ -919,6 +936,7 @@ void DesktopApp::ShowWidgetContextMenu(
         {
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.fanPopup = source.fanPopup;
             dockFolderPopupWidget_.showDetails =
                 source.showDetails;
             dockFolderPopupWidget_.detailShowModified =
@@ -969,6 +987,17 @@ void DesktopApp::ShowWidgetContextMenu(
             !effectiveSource.sourceFolderPath.empty())
             shellLaunchWorker_.Enqueue(
                 hwnd_, effectiveSource.sourceFolderPath);
+        break;
+    case kContextPopupDefault:
+    case kContextPopupFan:
+        if (widgets_[widgetIndex].type == DesktopWidgetType::Collection ||
+            widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
+        {
+            widgets_[widgetIndex].fanPopup = command == kContextPopupFan;
+            SaveLayoutSlots();
+            refreshOpenPopupDisplay();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         break;
     case kContextWidgetToggleListMode:
         widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;

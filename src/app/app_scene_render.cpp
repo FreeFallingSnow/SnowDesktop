@@ -436,7 +436,7 @@ void DesktopApp::DrawDynamicOverlays(
                 popupTargetRect = popup;
                 const RECT content =
                     GetCollectionPopupContentRect(popup);
-                clipViewport = openPopupWidget->listMode
+                clipViewport = (openPopupWidget->listMode || openPopupWidget->fanPopup)
                     ? snowdesktop::popup_drag_rules::
                         ExpandInsertionClipVertically(
                             content, popup,

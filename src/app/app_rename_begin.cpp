@@ -280,7 +280,7 @@ void DesktopApp::BeginRenameSelected(
         !dockFolderPopupOpen_ &&
         popupWidgetIndex_ < widgets_.size() &&
         IsCollectionPopupInteractive() &&
-        widgets_[popupWidgetIndex_].listMode;
+        (widgets_[popupWidgetIndex_].listMode || widgets_[popupWidgetIndex_].fanPopup);
     RECT textRect = popupListRename
         ? GetCollectionPopupItemTextRect(
             itemBounds)

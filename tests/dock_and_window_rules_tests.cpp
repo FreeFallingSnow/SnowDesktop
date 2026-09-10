@@ -592,6 +592,54 @@ int main(int argc, char** argv)
         snowdesktop::folder_sort_rules;
     namespace popupLayout =
         snowdesktop::collection_popup_layout;
+    {
+        // Protect reachability, geometry/hit-test agreement and bounded work
+        // when a fan contains far more entries than fit on screen.
+        for (const float scale : {0.75f, 1.0f, 1.5f, 2.0f})
+        {
+            const auto metrics = popupLayout::ResolveMetrics(92, 116, 92, 116, scale);
+            const int pitch = popupLayout::FanRowHeight(metrics);
+            const RECT viewport{100, 100,
+                100 + popupLayout::ScaleDimension(320, scale), 100 + pitch * 6};
+            const int lastScroll = popupLayout::FanContentHeight(metrics, 100) - pitch * 6;
+            for (bool rootAbove : {false, true})
+            for (bool bendLeft : {false, true})
+            {
+                const RECT first = popupLayout::FanItemRect(metrics, viewport, 0, 0, rootAbove, bendLeft);
+                const RECT sameSlot = popupLayout::FanItemRect(metrics, viewport, 40, pitch * 40, rootAbove, bendLeft);
+                Check(EqualRect(&first, &sameSlot),
+                    "scrolling must bring later fan entries into identical visible hit-test slots");
+                const RECT last = popupLayout::FanItemRect(metrics, viewport, 99, lastScroll, rootAbove, bendLeft);
+                Check(last.bottom == viewport.bottom && last.top >= viewport.top &&
+                    last.left >= viewport.left && last.right <= viewport.right,
+                    "the final fan item remains fully reachable inside the viewport at every scale and direction");
+                const RECT moving = popupLayout::FanItemRect(metrics, viewport, 2, pitch / 2, rootAbove, bendLeft);
+                const RECT icon = popupLayout::FanIconRect(metrics, moving);
+                const RECT text = popupLayout::FanTextRect(metrics, moving);
+                Check(icon.left >= moving.left && icon.bottom <= moving.bottom &&
+                    text.left > icon.right && text.right <= moving.right && text.right > text.left,
+                    "fan icon and rename text bounds must remain disjoint and within the clickable row");
+                const POINT center{(moving.left + moving.right) / 2, (moving.top + moving.bottom) / 2};
+                Check(PtInRect(&moving, center), "the rendered fan row center must be clickable after fractional scrolling");
+            }
+            Check(popupLayout::FanContentHeight(metrics, 0) == 0,
+                "empty fan popups must not manufacture scrollable entries");
+        }
+        for (float distance : {0.0f, 0.5f, 1.0f})
+        {
+            float previous = 0.0f;
+            for (int frame = 0; frame <= 100; ++frame)
+            {
+                const float progress = popupLayout::FanRevealProgress(frame / 100.0f, distance);
+                Check(progress >= previous && progress >= 0.0f && progress <= 1.0f,
+                    "fan opening and reversed closing must use a continuous bounded pose");
+                previous = progress;
+            }
+            Check(popupLayout::FanRevealProgress(0, distance) == 0 &&
+                popupLayout::FanRevealProgress(1, distance) == 1,
+                "all staggered fan rows must disappear and finish at the timeline endpoints");
+        }
+    }
     namespace shellVisibility =
         snowdesktop::shell_item_visibility;
     {

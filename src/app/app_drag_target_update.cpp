@@ -351,7 +351,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        dockFolderPopupWidget_.listMode)
+                        (dockFolderPopupWidget_.listMode || dockFolderPopupWidget_.fanPopup))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
             return true;
@@ -387,14 +387,14 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 const auto popupMetrics =
                     GetOpenCollectionPopupLayoutMetrics();
                 const long gutter =
-                    dockFolderPopupWidget_.listMode
+                    (dockFolderPopupWidget_.listMode || dockFolderPopupWidget_.fanPopup)
                     ? popupMetrics.gapY / 2
                     : popupMetrics.gapX / 2;
                 const long long distance =
                     snowdesktop::popup_drag_rules::
                         InsertionEdgeDistanceSquared(
                             itemRect, clipped, client,
-                            dockFolderPopupWidget_.listMode,
+                            (dockFolderPopupWidget_.listMode || dockFolderPopupWidget_.fanPopup),
                             after, gutter);
                 if (distance >=
                     bestDistanceSquared)
@@ -515,7 +515,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             region = snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        widgets_[popupWidgetIndex_].listMode)
+                        (widgets_[popupWidgetIndex_].listMode || widgets_[popupWidgetIndex_].fanPopup))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
         }
@@ -559,7 +559,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             const auto popupMetrics =
                 GetOpenCollectionPopupLayoutMetrics();
             const bool listMode =
-                widgets_[popupWidgetIndex_].listMode;
+                (widgets_[popupWidgetIndex_].listMode || widgets_[popupWidgetIndex_].fanPopup);
             const long gutter = listMode
                 ? popupMetrics.gapY / 2
                 : popupMetrics.gapX / 2;

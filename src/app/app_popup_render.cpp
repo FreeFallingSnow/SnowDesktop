@@ -13,6 +13,7 @@ void DesktopApp::DrawCollectionPopup(
     if (!ctx || !openWidget) return;
 
     const DesktopWidget& widget = *openWidget;
+    const bool fan = widget.fanPopup;
     const auto popupMetrics =
         GetCollectionPopupLayoutMetrics(widget);
     const QuickNavTheme& popupTheme = collectionPopupLightTheme_
@@ -36,7 +37,7 @@ void DesktopApp::DrawCollectionPopup(
 
     D2D1_MATRIX_3X2_F previousTransform{};
     const bool animationApplied =
-        applyAnimation &&
+        applyAnimation && !fan &&
         animation.progress < 1.0f;
     if (animationApplied)
     {
@@ -83,19 +84,23 @@ void DesktopApp::DrawCollectionPopup(
         }
     }
 
-    std::vector<std::wstring> popupKeys =
-        GetPopupItemKeys(widget);
+    const auto& popupKeys = widget.itemKeys;
     PersonalizationSettings popupBackgroundAppearance =
         collectionPopupAppearance_;
     popupBackgroundAppearance.widgetEdgeHighlightEnabled = false;
+    RECT backgroundRect = popupRect_;
+    if (fan)
+        backgroundRect.bottom = backgroundRect.top + popupMetrics.headerHeight -
+            snowdesktop::collection_popup_layout::ScaleDimension(6, popupMetrics.scale);
     DrawWidgetPanelBackground(
-        ctx, popupRect_, 18.0f * popupMetrics.scale,
+        ctx, backgroundRect, 18.0f * popupMetrics.scale,
         D2D1::ColorF(
             collectionPopupAppearance_.widgetBgR,
             collectionPopupAppearance_.widgetBgG,
             collectionPopupAppearance_.widgetBgB,
             std::clamp(
-                collectionPopupAppearance_.widgetAlpha,
+                fan ? std::max(0.92f, collectionPopupAppearance_.widgetAlpha)
+                    : collectionPopupAppearance_.widgetAlpha,
                 0.0f, 1.0f)),
         D2D1::ColorF(
             collectionPopupAppearance_.widgetBorderR,
@@ -222,14 +227,82 @@ void DesktopApp::DrawCollectionPopup(
     Collection popupListRenderer(
         &popupListStyle, this);
     popupListRenderer.SetHostedFrame(&popupRect_);
-    if (widget.listMode)
+    if (widget.listMode && !fan)
     {
         popupListRenderer.DrawDetailsHeader(
             ctx, content, collectionPopupLightTheme_);
     }
     ctx->PushAxisAlignedClip(ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     const size_t popupItemCount = GetPopupItemCount(widget);
-    for (size_t i = 0; i < popupItemCount; ++i)
+    const auto drawFanItem = [&](const RECT& row, HBITMAP bitmap,
+        int systemIcon, const std::wstring& name, bool selected, bool thumbnail,
+        const DesktopItem* desktopItem) {
+        namespace layout = snowdesktop::collection_popup_layout;
+        const bool hovered = popupAnimation_.IsInteractive() &&
+            PtInRect(&row, lastMousePoint_);
+        float progress = 1.0f;
+        D2D1_MATRIX_3X2_F transform{};
+        ctx->GetTransform(&transform);
+        if (applyAnimation && animation.progress < 1.0f &&
+            snowdesktop::animation::RuntimePopupEffect() != snowdesktop::animation::Fade)
+        {
+            const bool rootAbove = popupAnchoredToDock_ &&
+                popupDockPosition_ == DockPosition::Top;
+            const POINT origin{
+                std::clamp(popupAnchorPoint_.x, content.left, content.right),
+                rootAbove ? content.top : content.bottom};
+            const float distance = std::abs((row.top + row.bottom) * 0.5f - origin.y) /
+                std::max(1L, content.bottom - content.top);
+            progress = layout::FanRevealProgress(animation.progress, distance);
+            const float scale = 0.5f + 0.5f * progress;
+            const float centerX = (row.left + row.right) * 0.5f;
+            const float centerY = (row.top + row.bottom) * 0.5f;
+            ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale,
+                    D2D1::Point2F(centerX, centerY)) *
+                D2D1::Matrix3x2F::Translation((origin.x - centerX) * (1.0f - progress),
+                    (origin.y - centerY) * (1.0f - progress)) * transform);
+        }
+        PopupOpacityScope rowOpacity(ctx, true, progress);
+        RECT pill = row;
+        const int inset = layout::ScaleDimension(3, popupMetrics.scale);
+        pill.top += inset;
+        pill.bottom -= inset;
+        const auto fill = selected
+            ? D2D1::ColorF(0.20f, 0.48f, 0.85f, 0.95f)
+            : D2D1::ColorF(collectionPopupAppearance_.widgetBgR,
+                collectionPopupAppearance_.widgetBgG, collectionPopupAppearance_.widgetBgB, 0.94f);
+        DrawD2DRoundedRectangle(ctx, pill, 12.0f * popupMetrics.scale, fill,
+            popupTextColor(hovered || selected ? 0.55f : 0.18f),
+            (hovered || selected ? 1.5f : 1.0f) * popupMetrics.scale);
+        const RECT iconRect = GetCollectionPopupItemIconRect(row);
+        const bool demo = desktopItem && ShouldUseDemoCollectionIdentity(&widget);
+        if (demo)
+        {
+            DrawDemoCollectionIdentityIcon(ctx, widget,
+                desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
+                iconRect, 1.0f);
+        }
+        else if (auto* icon = GetOrCreateD2DBitmap(bitmap, ShouldBeautifyIconBitmap(thumbnail)))
+            DrawIconBitmap(ctx, icon, iconRect);
+        else
+            DrawPlaceholderIcon(ctx, systemIcon, iconRect, 1.0f);
+        if (desktopItem && !demo && ShouldDrawShortcutArrow(
+                desktopItem->isShortcut, desktopItem->isApplicationShortcut))
+            DrawShortcutArrowOverlay(ctx, iconRect, 1.0f);
+        const std::wstring text = demo ? GetDemoCollectionIdentityTitle(widget,
+            desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey) : name;
+        DrawD2DTextEllipsis(ctx, text, GetCollectionPopupItemTextRect(row),
+            itemTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
+            DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        ctx->SetTransform(transform);
+    };
+    const size_t firstItem = fan ? std::min(popupItemCount,
+        static_cast<size_t>(popupScrollOffset_ /
+            snowdesktop::collection_popup_layout::FanRowHeight(popupMetrics))) : 0;
+    const size_t endItem = fan ? std::min(popupItemCount, firstItem + 2 +
+        static_cast<size_t>(std::max(1L, content.bottom - content.top) /
+            snowdesktop::collection_popup_layout::FanRowHeight(popupMetrics))) : popupItemCount;
+    for (size_t i = firstItem; i < endItem; ++i)
     {
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top || itemRect.top >= content.bottom) continue;
@@ -237,6 +310,12 @@ void DesktopApp::DrawCollectionPopup(
         if (widget.type == DesktopWidgetType::FolderMapping)
         {
             FolderEntry& entry = dockFolderPopupWidget_.folderEntries[i];
+            if (fan)
+            {
+                drawFanItem(itemRect, entry.iconBitmap, entry.sysIconIndex,
+                    entry.name, entry.selected, entry.iconIsMediaThumbnail, nullptr);
+                continue;
+            }
             if (widget.listMode)
             {
                 popupListRenderer.DrawListItem(
@@ -274,6 +353,13 @@ void DesktopApp::DrawCollectionPopup(
         {
             size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
             if (itemIndex == static_cast<size_t>(-1)) continue;
+            if (fan)
+            {
+                const auto& item = items_[itemIndex];
+                drawFanItem(itemRect, item.iconBitmap, item.sysIconIndex,
+                    item.name, item.selected, item.iconIsMediaThumbnail, &item);
+                continue;
+            }
             if (widget.listMode)
             {
                 DesktopItem& item = items_[itemIndex];
@@ -325,7 +411,7 @@ void DesktopApp::DrawCollectionPopup(
     }
     for (size_t i = 0; i < popupItemCount; ++i)
     {
-        if (widget.listMode) break;
+        if (widget.listMode || fan) break;
         RECT itemRect = GetCollectionPopupItemRect(popupRect_, i);
         if (itemRect.bottom <= content.top ||
             itemRect.top >= content.bottom)
@@ -384,7 +470,7 @@ void DesktopApp::DrawCollectionPopup(
         popupScrollOffset_, popupHovered,
         collectionPopupLightTheme_);
 
-    (void)DrawWidgetPanelEdgeHighlight(
+    if (!fan) (void)DrawWidgetPanelEdgeHighlight(
         ctx, popupRect_, 18.0f * popupMetrics.scale,
         D2D1::ColorF(
             collectionPopupAppearance_.widgetBgR,

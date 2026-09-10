@@ -213,6 +213,7 @@ void DesktopApp::OpenDockFolderPopupAt(
         entry.folderItemKeys;
     dockFolderPopupWidget_.listMode =
         entry.listMode;
+    dockFolderPopupWidget_.fanPopup = entry.fanPopup;
     dockFolderPopupWidget_.detailShowModified =
         entry.detailShowModified;
     dockFolderPopupWidget_.detailShowType =
@@ -261,6 +262,7 @@ void DesktopApp::OpenDockFolderPopupAt(
                     itemKeys;
             dockFolderPopupWidget_.listMode =
                 widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.fanPopup = widgets_[widgetIndex].fanPopup;
             dockFolderPopupWidget_.showDetails =
                 widgets_[widgetIndex].showDetails;
             dockFolderPopupWidget_.detailShowModified =
@@ -376,6 +378,11 @@ void DesktopApp::OpenDockFolderPopupAt(
 void DesktopApp::StartCollectionPopupAnimation(
     bool reverseClosingAnimation)
 {
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    popupAnimation_.Configure(
+        snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+        snowdesktop::animation::RuntimeDurationScale() *
+            (widget && widget->fanPopup ? 2.4 : 1.0));
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
     if (!(snowdesktop::animation::RuntimePopupEffect() != 0))

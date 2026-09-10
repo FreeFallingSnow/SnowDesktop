@@ -373,6 +373,18 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFolderEntry)
     {
+
+        if (HMENU expansion = CreatePopupMenu())
+        {
+            AppendMenuW(expansion, MF_STRING, kContextPopupDefault,
+                _LW("app.interact.popup_default"));
+            AppendMenuW(expansion, MF_STRING, kContextPopupFan,
+                _LW("app.interact.popup_fan"));
+            CheckMenuRadioItem(expansion, kContextPopupDefault, kContextPopupFan,
+                dockFolderEntry->fanPopup ? kContextPopupFan : kContextPopupDefault, MF_BYCOMMAND);
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(expansion),
+                _LW("app.interact.popup_layout"));
+        }
         const auto statusLabel = [](
             const wchar_t* title,
             const wchar_t* status) {
@@ -607,6 +619,7 @@ void DesktopApp::ShowItemContextMenu(
 
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
+        dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;
         dockFolderPopupWidget_.detailShowModified =
             dockFolderEntry->detailShowModified;
         dockFolderPopupWidget_.detailShowType =
@@ -719,6 +732,14 @@ void DesktopApp::ShowItemContextMenu(
         break;
     case kContextFetchWebsiteIconCommand:
         if (selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
+        break;
+    case kContextPopupDefault:
+    case kContextPopupFan:
+        if (dockFolderEntry)
+        {
+            dockFolderEntry->fanPopup = command == kContextPopupFan;
+            applyDockFolderDisplayChange();
+        }
         break;
     case kContextWidgetToggleListMode:
         if (dockFolderEntry)

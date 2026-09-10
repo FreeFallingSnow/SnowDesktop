@@ -56,6 +56,7 @@ struct WidgetRecord
     bool folderSortAscending = true;
     bool autoCollect = false;
     bool listMode = false;
+    bool fanPopup = false;
     bool showDetails = false;
     bool detailShowModified = false;
     bool detailShowType = false;
@@ -92,6 +93,7 @@ struct DockRecord
     bool folderSortAscending = true;
     std::vector<std::string> folderItems;
     bool listMode = false;
+    bool fanPopup = false;
     bool detailShowModified = false;
     bool detailShowType = false;
     bool detailShowSize = false;

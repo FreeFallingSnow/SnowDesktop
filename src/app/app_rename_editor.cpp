@@ -215,7 +215,7 @@ BeginRenameDockFolderPopupEntry(
             &screenRect), 2);
 
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
-        dockFolderPopupWidget_.listMode);
+        dockFolderPopupWidget_.listMode || dockFolderPopupWidget_.fanPopup);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE |
             WS_EX_TOOLWINDOW |

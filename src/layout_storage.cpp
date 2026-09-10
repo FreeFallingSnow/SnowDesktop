@@ -429,6 +429,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 record.autoCollect, error) ||
             !ReadBoolean(object, "listMode", path + ".listMode",
                 record.listMode, error) ||
+            !ReadBoolean(object, "fanPopup", path + ".fanPopup",
+                record.fanPopup, error) ||
             !ReadBoolean(object, "showDetails", path + ".showDetails",
                 record.showDetails, error) ||
             !ReadBoolean(object, "detailShowModified",
@@ -531,6 +533,8 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 path + ".folderItems", record.folderItems, error) ||
             !ReadBoolean(object, "listMode",
                 path + ".listMode", record.listMode, error) ||
+            !ReadBoolean(object, "fanPopup", path + ".fanPopup",
+                record.fanPopup, error) ||
             !ReadBoolean(object, "detailShowModified",
                 path + ".detailShowModified",
                 record.detailShowModified, error) ||

@@ -824,6 +824,28 @@ int main()
             loadedDetailsLayout.widgets[0].largeFolderTitleless,
         "list font and detail view fields round-trip through layout storage");
     snowdesktop::layout_storage::Document dockPopupLayout;
+    {
+        snowdesktop::layout_storage::Document fanLayout;
+        const std::string fanDocument = R"({"widgets":[
+            {"id":"fan","type":"collection","page":"p","x":0,"y":0,"fanPopup":true,"listMode":true},
+            {"id":"normal","type":"collection","page":"p","x":1,"y":0}],
+            "dockEntries":[{"type":"item","ref":"folder-a","fanPopup":true},
+                {"type":"item","ref":"folder-b"}]})";
+        Expect(snowdesktop::layout_storage::ParseDocument(fanDocument, fanLayout, &layoutError) &&
+            fanLayout.widgets[0].fanPopup && fanLayout.widgets[0].listMode &&
+            !fanLayout.widgets[1].fanPopup && fanLayout.dockEntries[0].fanPopup &&
+            !fanLayout.dockEntries[1].fanPopup,
+            "fan preferences belong to individual objects, preserve list settings and default off for older layouts");
+        const auto fanPath = root / "fan-layout.json";
+        Expect(snowdesktop::layout_storage::SaveDocument(fanPath, fanDocument, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(fanPath, fanLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            fanLayout.widgets[0].fanPopup && fanLayout.dockEntries[0].fanPopup,
+            "fan preferences survive saving and reloading without changing other objects");
+        Expect(!snowdesktop::layout_storage::ValidateDocument(
+            R"({"dockEntries":[{"type":"item","ref":"folder-a","fanPopup":"true"}]})", &layoutError),
+            "invalid fan flags must be rejected instead of silently changing popup behavior");
+    }
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"folder-a\","
             "\"listMode\":true,\"detailShowModified\":true,"
