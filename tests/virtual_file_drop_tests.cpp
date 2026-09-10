@@ -21,7 +21,7 @@ namespace
 {
 int failures = 0;
 
-void Check(bool condition, const char* message)
+void Check(bool condition, const std::string& message)
 {
     if (condition)
         return;
@@ -100,6 +100,7 @@ public:
     std::vector<std::byte> contents;
     bool exposeAsyncCapability = false;
     bool asyncMode = false;
+    HRESULT asyncModeResult = S_OK;
     bool offerFileDrop = false;
     int wideRequests = 0;
     int ansiRequests = 0;
@@ -322,7 +323,7 @@ public:
         if (!enabled)
             return E_POINTER;
         *enabled = asyncMode ? TRUE : FALSE;
-        return S_OK;
+        return asyncModeResult;
     }
 
     HRESULT STDMETHODCALLTYPE StartOperation(
@@ -755,60 +756,40 @@ void TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound()
         "the actual HGLOBAL size remains bounded when FD_FILESIZE is absent");
 }
 
-void TestAsyncFileDropProbeDoesNotMaterializeData()
+void TestAsyncSourceCapabilityMatrix()
 {
-    MockDataObject dataObject;
-    dataObject.offerFileDrop = true;
-    dataObject.exposeAsyncCapability = true;
-    dataObject.asyncMode = true;
-
-    Check(snowdesktop::virtual_file_drop::
-            OffersAsyncFileDrop(&dataObject),
-        "delayed CF_HDROP with enabled async capability is recognized");
-    Check(dataObject.queryGetDataCalls == 1 &&
-            dataObject.getAsyncModeCalls == 1 &&
-            dataObject.getDataCalls == 0 &&
-            dataObject.startOperationCalls == 0,
-        "the delayed-file probe queries capability without reading or starting materialization");
-}
-
-void TestAsyncModeProbeDoesNotRequireFileDrop()
-{
-    MockDataObject dataObject;
-    dataObject.exposeAsyncCapability = true;
-    dataObject.asyncMode = true;
-
-    Check(snowdesktop::virtual_file_drop::UsesAsyncMode(&dataObject),
-        "an async FileContents-only source is recognized without CF_HDROP");
-    Check(dataObject.getAsyncModeCalls == 1 &&
-            dataObject.queryGetDataCalls == 0 &&
-            dataObject.getDataCalls == 0 &&
-            dataObject.startOperationCalls == 0,
-        "the generic async probe does not request or start source data");
-}
-
-void TestAsyncFileDropRequiresBothSignals()
-{
-    MockDataObject noFileDrop;
-    noFileDrop.exposeAsyncCapability = true;
-    noFileDrop.asyncMode = true;
-    Check(!snowdesktop::virtual_file_drop::
-            OffersAsyncFileDrop(&noFileDrop) &&
-            noFileDrop.getAsyncModeCalls == 0,
-        "async capability alone does not advertise a delayed file drop");
-
-    MockDataObject noCapability;
-    noCapability.offerFileDrop = true;
-    Check(!snowdesktop::virtual_file_drop::
-            OffersAsyncFileDrop(&noCapability),
-        "CF_HDROP alone does not advertise async materialization");
-
-    MockDataObject synchronousMode;
-    synchronousMode.offerFileDrop = true;
-    synchronousMode.exposeAsyncCapability = true;
-    Check(!snowdesktop::virtual_file_drop::
-            OffersAsyncFileDrop(&synchronousMode),
-        "a disabled async mode is not treated as delayed CF_HDROP");
+    using snowdesktop::virtual_file_drop::OffersAsyncFileDrop;
+    using snowdesktop::virtual_file_drop::UsesAsyncMode;
+    Check(!UsesAsyncMode(nullptr) && !OffersAsyncFileDrop(nullptr),
+        "a missing OLE data object must not advertise delayed materialization");
+    for (const bool fileDrop : {false, true})
+    {
+        for (const bool capability : {false, true})
+        {
+            for (const bool enabled : {false, true})
+            {
+                for (const HRESULT result : {S_OK, S_FALSE, E_FAIL})
+                {
+                    MockDataObject source;
+                    source.offerFileDrop = fileDrop;
+                    source.exposeAsyncCapability = capability;
+                    source.asyncMode = enabled;
+                    source.asyncModeResult = result;
+                    const bool async = capability && enabled && result == S_OK;
+                    const std::string context = "CF_HDROP=" + std::to_string(fileDrop) +
+                        " capability=" + std::to_string(capability) +
+                        " enabled=" + std::to_string(enabled) +
+                        " HRESULT=" + std::to_string(result);
+                    Check(UsesAsyncMode(&source) == async,
+                        context + ": generic async detection must not depend on CF_HDROP");
+                    Check(OffersAsyncFileDrop(&source) == (fileDrop && async),
+                        context + ": delayed file detection needs both format and enabled capability");
+                    Check(source.getDataCalls == 0 && source.startOperationCalls == 0,
+                        context + ": hover probes must never render delayed data or begin file IO");
+                }
+            }
+        }
+    }
 }
 } // namespace
 
@@ -824,9 +805,7 @@ int main()
     TestSanitizedNameExposesTheEffectiveSecuritySuffix();
     TestAdvertisedOversizeIsRejectedBeforeReadingContents();
     TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound();
-    TestAsyncFileDropProbeDoesNotMaterializeData();
-    TestAsyncModeProbeDoesNotRequireFileDrop();
-    TestAsyncFileDropRequiresBothSignals();
+    TestAsyncSourceCapabilityMatrix();
 
     if (failures != 0)
     {

@@ -5,6 +5,7 @@
 #include "core/item.h"
 #include "core/owned_transient_drag_target.h"
 #include "core/slot.h"
+#include "slot_drop_expectations.h"
 #include "app/drag_drop_controller.h"
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
@@ -113,6 +114,12 @@ public:
     HitRegion HitTestDrag(
         POINT point, Slot*& outSlot) override
     {
+        const RECT bounds = GetBounds();
+        if (blockHit && PtInRect(&bounds, point))
+        {
+            outSlot = nullptr;
+            return HitRegion::Blocked;
+        }
         for (const auto& slot : GetSlots())
         {
             const HitRegion region =
@@ -127,6 +134,20 @@ public:
         return HitRegion::None;
     }
 
+    bool AcceptsDragPayload(
+        snowdesktop::slot_contract::DragPayloadKind payload,
+        std::size_t count) const override
+    {
+        observedPayload = payload;
+        observedCount = count;
+        return acceptPayload;
+    }
+
+    bool acceptPayload = true;
+    bool blockHit = false;
+    mutable std::size_t observedCount = 0;
+    mutable snowdesktop::slot_contract::DragPayloadKind observedPayload =
+        snowdesktop::slot_contract::DragPayloadKind::Count;
     int buildCount = 0;
     int dropCount = 0;
     std::vector<Item*> lastItems;
@@ -202,8 +223,9 @@ public:
         lastDataObject = dataObject;
         lastKeyState = keyState;
         lastPoint = point;
-        if (effect) *effect = DROPEFFECT_COPY;
-        return S_OK;
+        incomingDropEffect = effect ? *effect : DROPEFFECT_NONE;
+        if (effect) *effect = dropEffect;
+        return dropResult;
     }
 
     HRESULT HandleOleQueryContinueDrag(
@@ -231,6 +253,9 @@ public:
     DWORD lastKeyState = 0;
     DWORD lastEffect = 0;
     POINTL lastPoint{};
+    DWORD incomingDropEffect = DROPEFFECT_NONE;
+    DWORD dropEffect = DROPEFFECT_COPY;
+    HRESULT dropResult = S_OK;
 };
 
 Item* NonOwningItemToken()
@@ -778,30 +803,37 @@ void TestEveryRegisteredSurfaceOriginLifecycle()
 
 void TestDropActionModifiers()
 {
-    DragSession session;
-    session.Begin(nullptr, {}, {}, POINT{}, POINT{});
-    Check(session.Action() == DropAction::Move,
-        "an internal drag must begin as a move");
-
-    Check(session.UpdateActionFromMods(
-            MK_CONTROL) &&
-            session.Action() == DropAction::Copy,
-        "Ctrl must select copy");
-    Check(session.UpdateActionFromMods(
-            MK_ALT | MK_CONTROL) &&
-            session.Action() == DropAction::Link,
-        "Alt must take precedence and select link");
-    Check(session.UpdateActionFromMods(
-            MK_SHIFT) &&
-            session.Action() == DropAction::Move,
-        "Shift must select move");
-    Check(session.UpdateActionFromMods(
-            0, DropAction::Copy) &&
-            session.Action() == DropAction::Copy,
-        "external ingress can provide copy as its default action");
-    Check(!session.UpdateActionFromMods(
-            0, DropAction::Copy),
-        "reapplying the same action must not invalidate state");
+    struct Case { int mods; DropAction internal; DropAction external; };
+    const std::array cases{
+        Case{0, DropAction::Move, DropAction::Copy},
+        Case{MK_CONTROL, DropAction::Copy, DropAction::Copy},
+        Case{MK_SHIFT, DropAction::Move, DropAction::Move},
+        Case{MK_ALT, DropAction::Link, DropAction::Link},
+        Case{MK_CONTROL | MK_SHIFT, DropAction::Copy, DropAction::Copy},
+        Case{MK_CONTROL | MK_ALT, DropAction::Link, DropAction::Link},
+        Case{MK_SHIFT | MK_ALT, DropAction::Link, DropAction::Link},
+        Case{MK_CONTROL | MK_SHIFT | MK_ALT, DropAction::Link, DropAction::Link},
+    };
+    for (const bool external : {false, true})
+    {
+        DragSession session;
+        session.Begin(nullptr, {}, {}, POINT{}, POINT{});
+        for (const auto& entry : cases)
+        {
+            const DropAction wanted = external ? entry.external : entry.internal;
+            const DropAction fallback = external ? DropAction::Copy : DropAction::Move;
+            const DropAction previous = session.Action();
+            Check(session.UpdateActionFromMods(entry.mods, fallback) == (previous != wanted) &&
+                    session.Action() == wanted,
+                "every modifier combination must report both operation and state change");
+            Check(!session.UpdateActionFromMods(entry.mods | MK_LBUTTON, fallback) &&
+                    session.Action() == wanted,
+                "button state alone must not change the chosen operation");
+        }
+        session.UpdateActionFromMods(0, external ? DropAction::Copy : DropAction::Move);
+        Check(session.Action() == (external ? DropAction::Copy : DropAction::Move),
+            "releasing all modifiers must restore the source-specific default");
+    }
 }
 
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
@@ -1140,6 +1172,137 @@ void TestDragTargetResolutionUsesContractAndZOrder()
     Check(!DragTargetResolver::AcceptsInternal(
             *upperPointer, mixed),
         "ambiguous mixed payload families must not bypass centralized classification");
+}
+
+void TestRuntimeSourceTargetMatrix()
+{
+    namespace expected = slot_drop_expectations;
+    // Whole-widget movement has a separate native application path. These
+    // entries exercise the real DragSourceList classifier and target resolver.
+    for (std::size_t from = 0; from < expected::surfaces.size(); ++from)
+    {
+        ContractContainer origin(BarStyle::VBar, expected::surfaces[from]);
+        for (const std::size_t payload : {0u, 1u, 2u, 7u, 8u})
+        {
+            for (const std::size_t count : {1u, 3u})
+            {
+                DragSourceList source;
+                source.BindRuntimeOrigin(&origin);
+                source.entries.resize(count);
+                source.hasDesktopIcons = payload == 0;
+                source.hasFolderEntries = payload == 1;
+                source.hasExternalFiles = payload == 2;
+                source.hasCollectionGroupEntries = payload == 7;
+                source.hasFileGroupEntries = payload == 8;
+                Check(source.SlotPayloadKind() == expected::payloads[payload],
+                    "runtime payload family must retain its exact classification");
+                for (std::size_t to = 0; to < expected::surfaces.size(); ++to)
+                {
+                    std::vector<std::unique_ptr<Container>> containers;
+                    auto target = std::make_unique<ContractContainer>(
+                        BarStyle::VBar, expected::surfaces[to]);
+                    auto* targetPointer = target.get();
+                    containers.push_back(std::move(target));
+                    const auto relation = from == 9 ? expected::Relation::ExternalIngress :
+                        to == 9 ? expected::Relation::ExternalEgress :
+                        from == to ? expected::Relation::SameSurface :
+                        expected::Relation::CrossSurface;
+                    const bool accepted = expected::ExpectedRoute(from, payload, to,
+                        relation) != expected::Route::Reject;
+                    const std::string context = "runtime source=" + std::to_string(from) +
+                        " target=" + std::to_string(to) + " payload=" +
+                        std::to_string(payload) + " count=" + std::to_string(count);
+                    const auto resolved = DragTargetResolver::ResolveInternal(
+                        containers, POINT{50, 50}, source);
+                    Check((resolved.container == targetPointer) == accepted,
+                        context + ": runtime resolution must follow expected routes");
+                    if (accepted)
+                    {
+                        Check(targetPointer->observedCount == count &&
+                                targetPointer->observedPayload == expected::payloads[payload],
+                            context + ": target policy must receive actual payload and count");
+                        targetPointer->acceptPayload = false;
+                        Check(!DragTargetResolver::ResolveInternal(
+                                containers, POINT{50, 50}, source).container,
+                            context + ": runtime policy veto must prevent targeting");
+                    }
+                    if (from == to)
+                        Check(DragTargetResolver::AcceptsInternal(origin, source) ==
+                                (expected::ExpectedRoute(from, payload, to,
+                                    expected::Relation::SameInstance) != expected::Route::Reject),
+                            context + ": same-instance classification must retain origin identity");
+                }
+            }
+        }
+    }
+}
+
+void TestExternalResolutionAndSessionMatrix()
+{
+    namespace expected = slot_drop_expectations;
+    DragSession session;
+    DragDropController controller(session);
+    for (std::size_t to = 0; to < expected::surfaces.size(); ++to)
+    {
+        for (const int count : {0, 1, 3, 256})
+        {
+            for (const bool shortcut : {false, true})
+            {
+                for (const bool foldersOnly : {false, true})
+                {
+                    std::vector<std::unique_ptr<Container>> containers;
+                    auto desktop = std::make_unique<ContractContainer>(
+                        BarStyle::VBar, expected::Surface::Desktop);
+                    auto* desktopPointer = desktop.get();
+                    containers.push_back(std::move(desktop));
+                    auto target = std::make_unique<ContractContainer>(
+                        BarStyle::VBar, expected::surfaces[to]);
+                    auto* targetPointer = target.get();
+                    containers.push_back(std::move(target));
+                    const bool accepts = to < 8;
+                    controller.BeginExternalDrag({count, shortcut, foldersOnly});
+                    controller.ContinueExternalDrag();
+                    const auto summary = controller.ExternalSummary();
+                    Check(summary.fileCount == count && summary.hasShortcut == shortcut &&
+                            summary.foldersOnly == foldersOnly,
+                        "drag-over must preserve count, shortcut and directory metadata");
+                    auto resolved = controller.ResolveExternalTarget(containers, {50, 50});
+                    Check(resolved.container == (accepts ? targetPointer : desktopPointer),
+                        "external ingress must select the top accepting surface");
+                    if (accepts)
+                    {
+                        Check(targetPointer->observedCount ==
+                                static_cast<std::size_t>(std::max(1, count)),
+                            "unknown external count uses one; known multi-selection is preserved");
+                        targetPointer->blockHit = true;
+                        resolved = controller.ResolveExternalTarget(containers, {50, 50});
+                        Check(resolved.container == targetPointer &&
+                                resolved.region == HitRegion::Blocked && !resolved.slot,
+                            "blocked regions must stop hit testing instead of dropping through");
+                        targetPointer->blockHit = false;
+                        resolved = controller.ResolveExternalTarget(containers, {50, 50},
+                            [targetPointer](const Container& candidate) {
+                                return &candidate != targetPointer;
+                            });
+                        Check(resolved.container == desktopPointer,
+                            "an explicit application filter must exclude the upper target");
+                        targetPointer->acceptPayload = false;
+                        Check(controller.ResolveExternalTarget(containers, {50, 50}).container ==
+                                desktopPointer,
+                            "target policy veto must be honored for external payloads");
+                    }
+                    Check(!controller.ResolveExternalTarget(containers, {-1, -1}).container,
+                        "leaving all target bounds must clear the resolved destination");
+                    controller.EndExternalDrag();
+                    Check(!controller.IsTransportActive() &&
+                            controller.ExternalSummary().fileCount == 0 &&
+                            !controller.ExternalSummary().hasShortcut &&
+                            !controller.ExternalSummary().foldersOnly,
+                        "ending ingress must clear all metadata before the next source");
+                }
+            }
+        }
+    }
 }
 
 void TestDragDropControllerOwnsTransportTransitions()
@@ -1696,6 +1859,57 @@ void TestOleAdapterOwnsComBoundary()
 
     target->Release();
     source->Release();
+    adapter->Release();
+}
+
+void TestOleDropCompletionBoundaryMatrix()
+{
+    // Exercise IDropTarget::Drop itself, including negative results. The handler
+    // is a fixture: this does not validate DesktopApp's file-operation dispatch.
+    struct Completion { HRESULT result; DWORD effect; };
+    const std::array outcomes{
+        Completion{S_OK, DROPEFFECT_COPY}, Completion{S_OK, DROPEFFECT_MOVE},
+        Completion{S_OK, DROPEFFECT_LINK}, Completion{S_OK, DROPEFFECT_NONE},
+        Completion{S_FALSE, DROPEFFECT_NONE}, Completion{E_ABORT, DROPEFFECT_NONE},
+        Completion{E_FAIL, DROPEFFECT_NONE},
+    };
+    for (const auto& outcome : outcomes)
+    {
+        for (const DWORD allowed : {DWORD{DROPEFFECT_NONE}, DWORD{DROPEFFECT_COPY},
+            DWORD{DROPEFFECT_MOVE}, DWORD{DROPEFFECT_LINK},
+            DWORD{DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK}})
+        {
+            FakeOleDragDropHandler handler;
+            handler.dropResult = outcome.result;
+            handler.dropEffect = outcome.effect;
+            auto* adapter = new OleDragDropAdapter(&handler);
+            auto* dataObject = reinterpret_cast<IDataObject*>(
+                static_cast<std::uintptr_t>(1));
+            DWORD effect = allowed;
+            adapter->DragEnter(dataObject, MK_LBUTTON, {-2560, -240}, &effect);
+            effect = allowed;
+            const auto result = adapter->Drop(dataObject, MK_CONTROL | MK_SHIFT,
+                {-2501, 432}, &effect);
+            Check(result == outcome.result && effect == outcome.effect &&
+                    handler.dropCount == 1 && handler.incomingDropEffect == allowed &&
+                    handler.lastDataObject == dataObject &&
+                    handler.lastKeyState == (MK_CONTROL | MK_SHIFT) &&
+                    handler.lastPoint.x == -2501 && handler.lastPoint.y == 432,
+                "Drop must forward allowed effects, release coordinates and final outcome exactly once");
+            adapter->Detach();
+            Check(adapter->Drop(dataObject, 0, {}, &effect) == E_UNEXPECTED &&
+                    adapter->DragLeave() == E_UNEXPECTED && handler.dropCount == 1,
+                "late callbacks after detach must never reach the destroyed application");
+            adapter->Release();
+        }
+    }
+    FakeOleDragDropHandler handler;
+    auto* adapter = new OleDragDropAdapter(&handler);
+    DWORD effect = DROPEFFECT_COPY;
+    adapter->DragEnter(nullptr, 0, {}, &effect);
+    adapter->DragLeave();
+    Check(handler.dropCount == 0,
+        "leaving a target must not commit a drop");
     adapter->Release();
 }
 
@@ -2344,12 +2558,15 @@ int wmain(int argc, wchar_t** argv)
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDragTargetResolutionUsesContractAndZOrder();
+    TestRuntimeSourceTargetMatrix();
+    TestExternalResolutionAndSessionMatrix();
     TestDragDropControllerOwnsTransportTransitions();
     TestModelReloadDeferralCoversRetainedDragLifecycle();
     TestOwnedTransientDragTargetBoundsMemberWrappers();
     TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
+    TestOleDropCompletionBoundaryMatrix();
     TestTrayCallbackClassification();
     TestTrayNotificationSourceAndRouting();
     TestTrayNotificationRegistrationPreservesPreferences();

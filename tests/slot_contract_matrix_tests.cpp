@@ -1,4 +1,5 @@
 #include "core/slot_contract.h"
+#include "slot_drop_expectations.h"
 
 #include <array>
 #include <cmath>
@@ -30,137 +31,46 @@ std::string PairName(
 
 void TestEveryDirectedPairAndPayload()
 {
-    using Surface = contract::SlotSurfaceKind;
-    using Payload = contract::DragPayloadKind;
-    using Route = contract::DropRoute;
-
-    constexpr std::size_t surfaceCount =
-        contract::ToIndex(Surface::Count);
-    constexpr std::size_t payloadCount =
-        contract::ToIndex(Payload::Count);
-    std::array<std::array<bool, surfaceCount>,
-        surfaceCount> nativeRouteCovered{};
-
-    for (std::size_t sourceIndex = 0;
-        sourceIndex < surfaceCount;
-        ++sourceIndex)
+    namespace expected = slot_drop_expectations;
+    std::size_t cases = 0;
+    for (std::size_t source = 0; source < expected::surfaces.size(); ++source)
     {
-        const auto source =
-            static_cast<Surface>(sourceIndex);
-        for (std::size_t targetIndex = 0;
-            targetIndex < surfaceCount;
-            ++targetIndex)
+        for (std::size_t payload = 0; payload < expected::payloads.size(); ++payload)
         {
-            const auto target =
-                static_cast<Surface>(targetIndex);
-            const bool sameSurface =
-                source == target &&
-                source != Surface::External;
-            const std::array relations{
-                contract::ClassifyRelation(
-                    source, target, sameSurface),
-                contract::ClassifyRelation(
-                    source, target, false),
-            };
-            const size_t relationCount =
-                relations[0] == relations[1]
-                ? 1
-                : relations.size();
-
-            for (std::size_t payloadIndex = 0;
-                payloadIndex < payloadCount;
-                ++payloadIndex)
+            Check(contract::SurfaceEmits(expected::surfaces[source],
+                    expected::payloads[payload]) == expected::emits[source][payload],
+                "source payload policy: " + std::to_string(source) + "/" +
+                    std::to_string(payload));
+            for (std::size_t target = 0; target < expected::surfaces.size(); ++target)
             {
-                const auto payload =
-                    static_cast<Payload>(payloadIndex);
-                for (size_t relationIndex = 0;
-                    relationIndex < relationCount;
-                    ++relationIndex)
+                for (const auto relation : expected::relations)
                 {
-                    const auto relation =
-                        relations[relationIndex];
-                    const Route route =
-                        contract::EvaluateSlotDrop(
-                            source, payload,
-                            target, relation);
-
-                    if (contract::SurfaceEmits(
-                            source, payload) &&
-                        route != Route::Reject)
-                        nativeRouteCovered
-                            [sourceIndex][targetIndex] = true;
-
-                    if (!contract::SurfaceEmits(
-                            source, payload))
-                    {
-                        Check(route == Route::Reject,
-                            PairName(source, target) +
-                            ": a surface must not emit an unregistered payload");
-                    }
-                    if (target == Surface::Guide)
-                    {
-                        Check(route == Route::Reject,
-                            PairName(source, target) +
-                            ": the guide must never accept a drop");
-                    }
-                    if (route != Route::Reject)
-                    {
-                        Check(
-                            contract::SurfaceSupportsRoute(
-                                target, route),
-                            PairName(source, target) +
-                            ": every accepted route must provide all preview/commit/insertion phases");
-                        Check(
-                            contract::SurfaceSupports(
-                                target,
-                                contract::InteractionCapability::Commit),
-                            PairName(source, target) +
-                            ": every accepted target must implement commit");
-                        if (contract::RouteRequiresInsertionIndicator(route))
-                        {
-                            Check(
-                                contract::SurfaceSupports(
-                                    target,
-                                    contract::InteractionCapability::InsertionIndicator),
-                                PairName(source, target) +
-                                ": sortable routes must implement an insertion indicator");
-                        }
-                        if (relation == contract::DragRelation::CrossSurface ||
-                            relation == contract::DragRelation::ExternalIngress ||
-                            relation == contract::DragRelation::ExternalEgress)
-                        {
-                            Check(
-                                contract::SurfaceSupports(
-                                    source,
-                                    contract::InteractionCapability::CrossDisplayCoordinates) &&
-                                contract::SurfaceSupports(
-                                    target,
-                                    contract::InteractionCapability::CrossDisplayCoordinates),
-                                PairName(source, target) +
-                                ": cross-surface routes must own coordinate conversion");
-                        }
-                    }
+                    const auto wanted = expected::ExpectedRoute(
+                        source, payload, target, relation);
+                    const auto actual = contract::EvaluateSlotDrop(
+                        expected::surfaces[source], expected::payloads[payload],
+                        expected::surfaces[target], relation);
+                    const std::string context =
+                        PairName(expected::surfaces[source], expected::surfaces[target]) +
+                        " payload=" + std::to_string(payload) +
+                        " relation=" + std::to_string(static_cast<int>(relation));
+                    Check(actual == wanted, context +
+                        " expected route=" + std::to_string(static_cast<int>(wanted)) +
+                        " actual=" + std::to_string(static_cast<int>(actual)));
+                    Check(contract::AcceptsSlotDrop(expected::surfaces[source],
+                            expected::payloads[payload], expected::surfaces[target],
+                            relation) == (wanted != contract::DropRoute::Reject),
+                        context + ": acceptance must agree with the expected operation");
+                    if (wanted != contract::DropRoute::Reject)
+                        Check(contract::SurfaceSupportsRoute(
+                                expected::surfaces[target], wanted),
+                            context + ": the expected operation needs all target phases");
+                    ++cases;
                 }
             }
         }
     }
-
-    for (const auto& source :
-         contract::kSurfaceDescriptors)
-    {
-        if (!source.buildsSlots) continue;
-        for (const auto& target :
-             contract::kSurfaceDescriptors)
-        {
-            if (!target.buildsSlots) continue;
-            Check(
-                nativeRouteCovered
-                    [contract::ToIndex(source.kind)]
-                    [contract::ToIndex(target.kind)],
-                PairName(source.kind, target.kind) +
-                ": every registered slot pair must declare at least one accepted native-payload route");
-        }
-    }
+    std::cout << cases << " explicit route expectations checked\n";
 }
 
 void TestSurfaceGeometryMatrix()

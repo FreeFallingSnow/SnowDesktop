@@ -9,10 +9,11 @@
 #include <array>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 namespace
 {
-void Check(bool condition, const char* message)
+void Check(bool condition, const std::string& message)
 {
     if (condition) return;
     std::cerr << "FAIL: " << message << '\n';
@@ -138,6 +139,159 @@ void TestCapacityAndBindingPolicy()
     const auto bindingHit = bindingContainer.ItemAtPoint({ 50, 50 });
     Check(bindingHit && !bindingHit->canRemove,
         "a binding with allowClear=false must disable host removal");
+}
+
+void TestIngressPolicyMatrix()
+{
+    using Payload = snowdesktop::slot_contract::DragPayloadKind;
+    using Kind = snowdesktop::widget_runtime::LogicalSlotKind;
+    struct State {
+        const char* name;
+        Kind kind;
+        std::size_t count;
+        std::size_t capacity;
+        const char* replacement;
+        bool present;
+        bool available;
+    };
+    const std::array states{
+        State{"missing", Kind::Collection, 0, 3, "replace", false, false},
+        State{"empty collection", Kind::Collection, 0, 3, "replace", true, true},
+        State{"last free slot", Kind::Collection, 2, 3, "replace", true, true},
+        State{"full collection", Kind::Collection, 3, 3, "replace", true, false},
+        State{"zero capacity", Kind::Collection, 0, 0, "replace", true, false},
+        State{"empty reject binding", Kind::Binding, 0, 1, "reject", true, true},
+        State{"occupied reject binding", Kind::Binding, 1, 1, "reject", true, false},
+        State{"occupied replace binding", Kind::Binding, 1, 1, "replace", true, true},
+    };
+    struct Declaration {
+        std::vector<std::string> accepts;
+        bool desktop;
+        bool file;
+    };
+    const std::array declarations{
+        Declaration{{}, false, false},
+        Declaration{{"desktop.item"}, true, false},
+        Declaration{{"app.reference"}, true, false},
+        Declaration{{"filesystem.reference"}, true, true},
+        Declaration{{"desktop.item", "app.reference", "filesystem.reference"}, true, true},
+    };
+    std::size_t cases = 0;
+    for (const auto& state : states)
+    {
+        for (std::size_t declaration = 0; declaration < declarations.size(); ++declaration)
+        {
+            auto surface = CollectionSurface();
+            surface.kind = state.kind;
+            surface.itemCount = state.count;
+            surface.capacity = state.capacity;
+            surface.replacePolicy = state.replacement;
+            surface.accepts = declarations[declaration].accepts;
+            LuaLogicalSlotContainer container(L"widget-1", "favorites",
+                [&]() -> std::optional<LogicalSlotHostSurface> {
+                    return state.present ? std::optional(surface) : std::nullopt;
+                }, {});
+            for (std::size_t payload = 0;
+                payload <= static_cast<std::size_t>(Payload::Count); ++payload)
+            {
+                for (const std::size_t count : {0u, 1u, 2u, 256u})
+                {
+                    const auto kind = static_cast<Payload>(payload);
+                    const bool declared = kind == Payload::DesktopItem ?
+                        declarations[declaration].desktop :
+                        (kind == Payload::ExternalFile || kind == Payload::FolderEntry) &&
+                            declarations[declaration].file;
+                    Check(container.AcceptsDragPayload(kind, count) ==
+                            (state.available && declared && count == 1),
+                        std::string(state.name) + " declaration=" +
+                            std::to_string(declaration) + " payload=" +
+                            std::to_string(payload) + " count=" + std::to_string(count));
+                    ++cases;
+                }
+            }
+        }
+    }
+    std::cout << cases << " Lua ingress policy cases checked\n";
+}
+
+void TestCommitRejectsInvalidSourcesAndPreservesFailure()
+{
+    auto surface = CollectionSurface();
+    int calls = 0;
+    bool outcome = false;
+    LuaLogicalSlotContainer container(L"widget-1", "favorites",
+        [&]() { return std::optional(surface); },
+        [&](const std::vector<Item*>&, std::size_t) {
+            ++calls;
+            return outcome;
+        });
+    TestItem first;
+    TestItem second;
+    Check(!container.CommitItems({}, nullptr, HitRegion::Empty) &&
+            !container.CommitItems({nullptr}, nullptr, HitRegion::Empty) &&
+            !container.CommitItems({&first, &second}, nullptr, HitRegion::Empty) &&
+            calls == 0,
+        "empty, null and multiple sources must not reach the host committer");
+    Check(!container.CommitItems({&first}, nullptr, HitRegion::Empty) && calls == 1,
+        "a host binding failure must remain a failed drop");
+    outcome = true;
+    Check(container.CommitItems({&first}, nullptr, HitRegion::Empty) && calls == 2,
+        "a successful binding must be committed exactly once");
+    LuaLogicalSlotContainer disconnected(L"widget-1", "favorites",
+        [&]() { return std::optional(surface); }, {});
+    Check(!disconnected.CommitItems({&first}, nullptr, HitRegion::Empty),
+        "an unavailable host committer must reject the drop");
+}
+
+void TestInsertionAndCommitGeometryMatrix()
+{
+    for (const bool horizontal : {false, true})
+    {
+        auto surface = CollectionSurface();
+        if (horizontal)
+            surface.items = {{"first", {110, 110, 150, 290}},
+                {"second", {160, 110, 200, 290}}};
+        std::size_t committedIndex = 99;
+        int calls = 0;
+        LuaLogicalSlotContainer container(L"widget-1", "favorites",
+            [&]() { return std::optional(surface); },
+            [&](const std::vector<Item*>&, std::size_t index) {
+                ++calls;
+                committedIndex = index;
+                return true;
+            });
+        TestItem item;
+        struct Boundary { LONG position; HitRegion region; std::size_t index; };
+        const std::array boundaries{
+            Boundary{110, HitRegion::SortBefore, 0},
+            Boundary{129, HitRegion::SortBefore, 0},
+            Boundary{130, HitRegion::SortAfter, 1},
+            Boundary{149, HitRegion::SortAfter, 1},
+            Boundary{160, HitRegion::SortBefore, 1},
+            Boundary{180, HitRegion::SortAfter, 2},
+            Boundary{260, HitRegion::Empty, 2},
+        };
+        for (const auto& boundary : boundaries)
+        {
+            Slot* slot = nullptr;
+            const POINT point = horizontal ? POINT{boundary.position, 120} :
+                POINT{120, boundary.position};
+            const auto region = container.HitTestDrag(point, slot);
+            Check(region == boundary.region && slot,
+                "row and column hit tests must preserve leading, midpoint and trailing boundaries");
+            const int before = calls;
+            Check(container.CommitItems({&item}, slot, region) &&
+                    committedIndex == boundary.index && calls == before + 1,
+                "the committed insertion index must match the hit boundary");
+        }
+        for (const POINT point : {POINT{99, 150}, POINT{300, 150},
+            POINT{150, 99}, POINT{150, 300}})
+        {
+            Slot* slot = nullptr;
+            Check(container.HitTestDrag(point, slot) == HitRegion::None && !slot,
+                "all four outside edges must reject a logical-slot hit");
+        }
+    }
 }
 
 void TestLuaDragFeedbackUsesCommittedSurfaceIdentity()
@@ -461,6 +615,9 @@ int main()
 {
     TestCollectionHitAndCommitBoundary();
     TestCapacityAndBindingPolicy();
+    TestIngressPolicyMatrix();
+    TestCommitRejectsInvalidSourcesAndPreservesFailure();
+    TestInsertionAndCommitGeometryMatrix();
     TestLuaDragFeedbackUsesCommittedSurfaceIdentity();
     TestStableLuaHitStressAndLayoutInvalidation();
     TestHostPickerCandidatePolicy();
