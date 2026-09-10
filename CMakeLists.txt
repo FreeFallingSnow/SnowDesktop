@@ -168,6 +168,7 @@ set(SNOWDESKTOP_SOURCES
     src/drop_text_rules.cpp
     src/drop_text_rules.h
     src/app/app_drop_data_extraction.cpp
+    src/external_drop_content.cpp
     src/app/app_url_drop_download.cpp
     src/app/app_website_icon.cpp
     src/website_icon.cpp
@@ -1624,6 +1625,7 @@ if (BUILD_TESTING)
         slot_runtime_contract
         SOURCES
             tests/slot_runtime_contract_tests.cpp
+            src/external_drop_content.cpp
             src/app_icon.rc
             src/app/drag_drop_controller.cpp
             src/app/ole_drag_drop_adapter.cpp

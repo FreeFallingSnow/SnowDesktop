@@ -6,6 +6,7 @@
 #include "core/owned_transient_drag_target.h"
 #include "core/slot.h"
 #include "slot_drop_expectations.h"
+#include "external_drop_content.h"
 #include "app/drag_drop_controller.h"
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
@@ -31,6 +32,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -1172,6 +1174,84 @@ void TestDragTargetResolutionUsesContractAndZOrder()
     Check(!DragTargetResolver::AcceptsInternal(
             *upperPointer, mixed),
         "ambiguous mixed payload families must not bypass centralized classification");
+}
+
+void TestExternalDropContentRegressions()
+{
+    namespace content = snowdesktop::external_drop_content;
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    GUID id{};
+    CoCreateGuid(&id);
+    wchar_t suffix[40]{};
+    StringFromGUID2(id, suffix, static_cast<int>(std::size(suffix)));
+    const auto root = std::filesystem::temp_directory_path() /
+        (std::wstring(L"SnowDesktop-drop-regression-") + suffix);
+    std::filesystem::create_directory(root);
+    const auto sourcePath = root / L"source.txt";
+    { std::ofstream file(sourcePath, std::ios::binary); file << "source content"; }
+    PIDLIST_ABSOLUTE absolute = nullptr;
+    Microsoft::WRL::ComPtr<IDataObject> data;
+    Check(SUCCEEDED(SHParseDisplayName(sourcePath.c_str(), nullptr,
+            &absolute, 0, nullptr)) && absolute,
+        "parse real file for the Explorer-compatible data object");
+    if (absolute)
+    {
+        PIDLIST_ABSOLUTE parent = ILCloneFull(absolute);
+        ILRemoveLastID(parent);
+        PCUITEMID_CHILD child = ILFindLastID(absolute);
+        Check(SUCCEEDED(SHCreateDataObject(parent, 1, &child, nullptr,
+                IID_PPV_ARGS(&data))), "create the actual Shell file data object");
+        CoTaskMemFree(parent);
+        CoTaskMemFree(absolute);
+    }
+    if (data)
+    {
+        content::Readers readers;
+        readers.files = [&] { return content::ReadFilePaths(data.Get()); };
+        for (const bool asynchronous : {false, true})
+        {
+            const auto result = content::Read(asynchronous, true, readers);
+            Check(result.paths == content::Paths{sourcePath.wstring()} && !result.owned,
+                asynchronous ?
+                    "DND-01: async component ingress must retain the actual Shell file paths" :
+                    "synchronous component ingress must retain the actual Shell file paths");
+        }
+    }
+    data.Reset();
+
+    const std::wstring huabanUrl =
+        L"https://gd-hbimg.huaban.com/"
+        L"08aaeb96f1f7360a2016ab5da1d6dd2d8f9933b62f9137-uqfbvd_fw658webp";
+    const auto image = root / L"resource.webp";
+    const auto shortcut = root / L"resource.url";
+    int downloads = 0;
+    int shortcuts = 0;
+    content::Readers readers;
+    readers.urls = [&] { return content::Paths{huabanUrl}; };
+    // Only the remote service is substituted. Read's selection/fallback code
+    // is production code used by the host, not FakeOleDragDropHandler.
+    readers.download = [&](const content::Paths& urls) {
+        Check(urls == content::Paths{huabanUrl}, "preserve the original image URL");
+        ++downloads;
+        std::ofstream file(image, std::ios::binary);
+        file << "RIFF-test-WEBP";
+        return content::Paths{image.wstring()};
+    };
+    readers.shortcut = [&] {
+        ++shortcuts;
+        std::ofstream file(shortcut, std::ios::binary);
+        file << "[InternetShortcut]";
+        return content::Paths{shortcut.wstring()};
+    };
+    const auto resource = content::Read(false, true, readers);
+    Check(downloads == 1 && shortcuts == 0 && resource.owned &&
+            resource.paths == content::Paths{image.wstring()} &&
+            std::filesystem::exists(image),
+        "DND-02: component image URLs must execute the download path before shortcut fallback");
+    // Only the uniquely created test directory is removed.
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    if (SUCCEEDED(initialized)) CoUninitialize();
 }
 
 void TestRuntimeSourceTargetMatrix()
@@ -2559,6 +2639,7 @@ int wmain(int argc, wchar_t** argv)
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
+    TestExternalDropContentRegressions();
     TestExternalResolutionAndSessionMatrix();
     TestDragDropControllerOwnsTransportTransitions();
     TestModelReloadDeferralCoversRetainedDragLifecycle();

@@ -3,6 +3,7 @@
 #include "../ole_drag_rules.h"
 #include "../drag_input_rules.h"
 #include "../virtual_file_drop.h"
+#include "../external_drop_content.h"
 #include "../widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
@@ -2009,17 +2010,20 @@ HRESULT DesktopApp::HandleOleDrop(
     }
 
     if (dropPaths.empty() && dataObject && canCopyDrop &&
-        !sourceUsesAsyncMode &&
         (!bareDesktopTarget || bareDesktopUrl.empty()) &&
         (!bareDesktopTarget || delayedFileDescriptors.size() <= 1))
     {
         dropPaths = localFileUrlPaths;
         if (dropPaths.empty())
         {
-            (void)adoptStagedDropPaths(
-                TryGetNonFileDropPaths(
-                    dataObject,
-                    dropReferenceSnapshot));
+            snowdesktop::external_drop_content::Readers readers;
+            readers.image = [&] { return TryExtractImageFromDataObject(dataObject); };
+            readers.dataUrl = [&] { return TryExtractDataUrlFromDataObject(dropReferenceSnapshot); };
+            readers.shortcut = [&] { return TryExtractUrlFromDataObject(dropReferenceSnapshot); };
+            readers.text = [&] { return TryExtractTextFromDataObject(dropReferenceSnapshot); };
+            auto content = snowdesktop::external_drop_content::Read(
+                sourceUsesAsyncMode, true, readers);
+            (void)adoptStagedDropPaths(std::move(content.paths));
         }
         if (!dropPaths.empty())
         {
