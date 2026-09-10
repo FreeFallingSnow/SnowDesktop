@@ -37,18 +37,20 @@ struct MarshaledSlotSource
     }
 };
 
-content::Paths DownloadSlotUrls(const content::Paths& urls)
+content::Paths DownloadSlotUrls(const content::Paths& urls, std::stop_token stop)
 {
     for (const auto& url : urls)
     {
+        if (stop.stop_requested()) throw std::runtime_error("drop cancelled");
         snowdesktop::UrlDropDownloadRequest request;
         request.url = url;
         request.destinationDirectory = GetDataSubdirectoryPath(L"DropContent");
-        const auto result = snowdesktop::UrlDropDownloadWorker::Execute(request, {});
+        const auto result = snowdesktop::UrlDropDownloadWorker::Execute(request, stop);
         if (result.outcome == snowdesktop::UrlDropDownloadOutcome::Downloaded)
             return {result.localPath};
         if (!result.CanRetryAlternateUrl()) break;
     }
+    if (stop.stop_requested()) throw std::runtime_error("drop cancelled");
     return {};
 }
 }
@@ -108,7 +110,7 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
 }
 
 bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destination,
-    const std::vector<std::wstring>& paths, bool owned,
+    const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
     FileOperationCompletion completion, bool synchronously)
 {
     if (exitRequested_ || paths.empty()) return false;
@@ -199,7 +201,8 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         entry.displayName = FileNameFromPath(path);
         sources.entries.push_back(std::move(entry));
     }
-    if (owned) preview.action = DropAction::Copy;
+    if ((owned || copyOnly) && !preview.pinMaterializedItemsToDock)
+        preview.action = DropAction::Copy;
     preview.fileBacked = true;
     return ExecuteDropPipeline(sources, preview, std::move(completion), synchronously);
 }
@@ -217,24 +220,35 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     if ((effect & allowedEffects) == 0) return DROPEFFECT_NONE;
 
     auto value = NewSlotContent();
-    auto read = [allowContent](IDataObject* source, bool download,
+    const auto stop = externalSlotReadStopSource_.get_token();
+    const auto downloadUrls = [stop](const content::Paths& urls) {
+        return DownloadSlotUrls(urls, stop);
+    };
+    auto read = [allowContent, downloadUrls](IDataObject* source, bool download,
         const content::Paths& files) {
-        const auto snapshot = files.empty() ? ReadDropReferenceSnapshot(source) : DropReferenceSnapshot{};
+        const auto resolvedFiles = files.empty() ? GetDropPaths(source) : files;
+        const auto snapshot = resolvedFiles.empty()
+            ? ReadDropReferenceSnapshot(source) : DropReferenceSnapshot{};
         const auto urls = ExtractDropUrls(snapshot);
+        auto descriptors = resolvedFiles.empty()
+            ? snowdesktop::virtual_file_drop::ReadDescriptors(source)
+            : std::vector<snowdesktop::virtual_file_drop::VirtualFileDescriptor>{};
+        if (descriptors.size() == 1 && !urls.empty())
+        {
+            const auto extension = std::filesystem::path(
+                descriptors.front().suggestedFileName).extension().wstring();
+            if (_wcsicmp(extension.c_str(), L".url") == 0 ||
+                _wcsicmp(extension.c_str(), L".website") == 0 ||
+                _wcsicmp(extension.c_str(), L".lnk") == 0)
+                descriptors.clear();
+        }
         content::Readers readers;
-        readers.files = [&] { return files.empty() ? GetDropPaths(source) : files; };
+        readers.files = [&] { return resolvedFiles; };
+        readers.localFileUrls = [&] { return TryExtractLocalFileUrlFromDataObject(snapshot); };
         readers.image = [&] { return TryExtractImageFromDataObject(source); };
         readers.dataUrl = [&] { return TryExtractDataUrlFromDataObject(snapshot); };
         readers.virtualFiles = [&]() -> content::Paths {
-            const auto descriptors = snowdesktop::virtual_file_drop::ReadDescriptors(source);
             if (descriptors.empty()) return {};
-            if (!urls.empty() && std::all_of(descriptors.begin(), descriptors.end(),
-                [](const auto& descriptor) {
-                    const auto extension = std::filesystem::path(descriptor.suggestedFileName).extension().wstring();
-                    return _wcsicmp(extension.c_str(), L".url") == 0 ||
-                        _wcsicmp(extension.c_str(), L".website") == 0 ||
-                        _wcsicmp(extension.c_str(), L".lnk") == 0;
-                })) return {};
             bool complete = false;
             auto paths = TryMaterializeVirtualFilesFromDataObject(source, descriptors, &complete);
             if (!complete)
@@ -244,8 +258,9 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
             }
             return paths;
         };
+        readers.virtualFileCount = descriptors.size();
         readers.urls = [&] { return urls; };
-        if (download) readers.download = DownloadSlotUrls;
+        if (download) readers.download = downloadUrls;
         readers.shortcut = [&] { return TryExtractUrlFromDataObject(snapshot); };
         readers.text = [&] { return TryExtractTextFromDataObject(snapshot); };
         return content::Read(false, allowContent, readers);
@@ -266,15 +281,18 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         try { *value = read(dataObject, false, knownPaths); }
         catch (...) { return DROPEFFECT_NONE; }
     }
-    auto finished = [value, keepReference = !destination.luaWidgetId.empty(),
+    auto finished = [value, keepReference = !destination.luaWidgetId.empty() ||
+            destination.preview.pinMaterializedItemsToDock,
         oleCompletion](bool succeeded) {
         if (succeeded && keepReference) value->owned = false;
+        if (!succeeded)
+            WriteDiagnosticLogEntry(L"External component drop failed during content reading or destination commit");
         if (oleCompletion) oleCompletion(succeeded);
     };
     if (!asynchronousSource && value->pendingUrls.empty())
     {
         const bool committed = CommitExternalSlotPaths(destination, value->paths,
-            value->owned, finished, true);
+            value->owned, value->copyOnly, finished, true);
         if (!committed) finished(false);
         return committed ? (effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect) : DROPEFFECT_NONE;
     }
@@ -284,14 +302,15 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
         false, [this, destination, value, finished](bool succeeded) {
             if (!succeeded || !CommitExternalSlotPaths(destination, value->paths,
-                    value->owned, finished, false))
+                    value->owned, value->copyOnly, finished, false))
                 finished(false);
         }, false};
     if (!completion) return DROPEFFECT_NONE;
-    const bool queued = shellFileOperationWorker_.Enqueue(
-        snowdesktop::ShellReadRequest{[asynchronousSource, marshaled, value, read] {
+    const bool queued = externalSlotReadWorker_.Enqueue(
+        snowdesktop::ShellReadRequest{[asynchronousSource, marshaled, value, read, downloadUrls, stop] {
             try
             {
+                if (stop.stop_requested()) return false;
                 if (asynchronousSource)
                 {
                     auto source = marshaled->Take();
@@ -303,7 +322,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
                     const auto urls = value->pendingUrls;
                     content::Readers readers;
                     readers.urls = [urls] { return urls; };
-                    readers.download = DownloadSlotUrls;
+                    readers.download = downloadUrls;
                     readers.shortcut = [urls]() -> content::Paths {
                         const auto path = urls.empty() ? std::wstring{} : CreateUrlShortcut(urls.front());
                         return path.empty() ? content::Paths{} : content::Paths{path};

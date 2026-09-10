@@ -405,6 +405,8 @@ void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
 
 void DesktopApp::StopShellFileOperationWorker()
 {
+    externalSlotReadStopSource_.request_stop();
+    externalSlotReadWorker_.Stop();
     shellRefreshWorker_.Stop();
     shellFileOperationWorker_.Stop();
     readyShellRefresh_.reset();

@@ -920,8 +920,10 @@ HRESULT DesktopApp::HandleOleDrop(
         *effect = DROPEFFECT_COPY;
     }
 
-    if (const auto destination = CaptureExternalSlotDestination(clientPoint, keyState))
+    if (auto destination = CaptureExternalSlotDestination(clientPoint, keyState))
     {
+        if (forceCopyDrop && !destination->preview.pinMaterializedItemsToDock)
+            destination->preview.action = DropAction::Copy;
         *effect = DropExternalSlotContent(dataObject, *destination, *effect,
             sourceUsesAsyncMode, dropPaths);
         EndDragSession();

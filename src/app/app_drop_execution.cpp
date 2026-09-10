@@ -501,10 +501,8 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
     std::wstring desktopPath = TrimTrailingPathSeparators(desktopPathRaw);
 
     auto sameParentAsDesktop = [&](const std::wstring& path) -> bool {
-        wchar_t parent[MAX_PATH]{};
-        wcscpy_s(parent, path.c_str());
-        if (!PathRemoveFileSpecW(parent)) return false;
-        return PathsEqualInsensitive(parent, desktopPath);
+        return PathsEqualInsensitive(
+            std::filesystem::path(path).parent_path().wstring(), desktopPath);
     };
 
     std::unordered_set<std::wstring> reservedDestinations;

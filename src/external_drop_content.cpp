@@ -38,7 +38,20 @@ Content Read(bool /*asynchronousSource*/, bool allowContent, const Readers& read
     Content result;
     if (readers.files) result.paths = readers.files();
     if (!result.paths.empty() || !allowContent) return result;
+    if (readers.localFileUrls) result.paths = readers.localFileUrls();
+    if (!result.paths.empty())
+    {
+        result.copyOnly = true;
+        return result;
+    }
     result.owned = true;
+    // A preview bitmap or URL must not replace a declared file batch. An
+    // incomplete batch fails as a whole instead of silently dropping entries.
+    if (readers.virtualFileCount != 0)
+    {
+        if (readers.virtualFiles) result.paths = readers.virtualFiles();
+        return result;
+    }
     if (readers.image) result.paths = readers.image();
     if (!result.paths.empty()) return result;
     if (readers.dataUrl) result.paths = readers.dataUrl();

@@ -1281,6 +1281,9 @@ void TestExternalContentSelectionMatrix()
             {L"download"}, {L"shortcut"}, {}, {L"inline"}},
         {"all virtual files retained", {}, {}, {}, {L"first", L"second"},
             {L"https://page"}, {L"download"}, {L"shortcut"}, {}, {L"first", L"second"}},
+        {"virtual batch wins over preview image", {}, {L"preview"}, {L"inline"},
+            {L"first", L"second"}, {L"https://page"}, {L"download"},
+            {L"shortcut"}, {}, {L"first", L"second"}},
         {"download before shortcut", {}, {}, {}, {}, {L"https://image"},
             {L"download"}, {L"shortcut"}, {}, {L"download"}, true, 1},
         {"download failure fallback", {}, {}, {}, {}, {L"https://image"},
@@ -1301,6 +1304,7 @@ void TestExternalContentSelectionMatrix()
             readers.image = [&] { return scenario.image; };
             readers.dataUrl = [&] { return scenario.inlineData; };
             readers.virtualFiles = [&] { return scenario.virtualFiles; };
+            readers.virtualFileCount = scenario.virtualFiles.size();
             readers.urls = [&] { return scenario.urls; };
             readers.download = [&](const content::Paths& urls) {
                 ++downloads;
@@ -1326,6 +1330,21 @@ void TestExternalContentSelectionMatrix()
     Check(pending.paths.empty() && pending.pendingUrls == content::Paths{L"https://image"} &&
             shortcuts == 0,
         "a UI-thread read must defer URL IO instead of prematurely creating a shortcut");
+    content::Readers incomplete;
+    incomplete.virtualFileCount = 2;
+    incomplete.virtualFiles = [] { return content::Paths{}; };
+    incomplete.image = [] { return content::Paths{L"thumbnail"}; };
+    incomplete.shortcut = [] { return content::Paths{L"shortcut"}; };
+    Check(content::Read(true, true, incomplete).paths.empty(),
+        "an incomplete virtual file batch must fail instead of importing only a thumbnail or link");
+    content::Readers localUrl;
+    localUrl.localFileUrls = [] { return content::Paths{L"existing-source"}; };
+    localUrl.image = [] { return content::Paths{L"preview"}; };
+    const auto local = content::Read(true, true, localUrl);
+    Check(local.paths == content::Paths{L"existing-source"} && !local.owned && local.copyOnly,
+        "file URLs must copy the existing file without taking cleanup ownership of its source");
+    Check(content::Read(true, false, localUrl).paths.empty(),
+        "file URL content must not bypass COPY permission");
 }
 
 void TestRuntimeSourceTargetMatrix()

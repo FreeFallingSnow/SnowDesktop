@@ -15,6 +15,7 @@ struct Content
     Paths paths;
     Paths pendingUrls;
     bool owned = false;
+    bool copyOnly = false;
 };
 
 // Decoder/IO boundaries; selection and fallback live in Read, which is also
@@ -22,9 +23,11 @@ struct Content
 struct Readers
 {
     std::function<Paths()> files;
+    std::function<Paths()> localFileUrls;
     std::function<Paths()> image;
     std::function<Paths()> dataUrl;
     std::function<Paths()> virtualFiles;
+    size_t virtualFileCount = 0;
     std::function<Paths()> urls;
     std::function<Paths(const Paths&)> download;
     std::function<Paths()> shortcut;

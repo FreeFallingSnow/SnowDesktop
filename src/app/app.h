@@ -3567,6 +3567,8 @@ private:
         &snowdesktop::ShellLaunchWorker::ExecuteRunAsAdministrator };
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
     snowdesktop::ShellFileOperationWorker shellRefreshWorker_;
+    snowdesktop::ShellFileOperationWorker externalSlotReadWorker_;
+    std::stop_source externalSlotReadStopSource_;
     snowdesktop::UrlDropDownloadWorker urlDropDownloadWorker_;
     struct WebsiteIconCompletion
     {
@@ -3875,7 +3877,7 @@ private:
         const ExternalSlotDestination& destination, DWORD allowedEffects,
         bool asynchronousSource, const std::vector<std::wstring>& knownPaths);
     bool CommitExternalSlotPaths(const ExternalSlotDestination& destination,
-        const std::vector<std::wstring>& paths, bool owned,
+        const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
         FileOperationCompletion completion, bool synchronously);
     HRESULT HandleOleQueryContinueDrag(
         BOOL escapePressed, DWORD keyState) override;
