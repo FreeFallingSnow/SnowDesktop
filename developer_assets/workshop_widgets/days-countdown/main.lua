@@ -101,7 +101,7 @@ local function desktop(context,m)
                 children={heading,countRow,footer}
             else children={heading,number,footer} end
             -- Balance the visible glyph, whose baseline sits below the text line center.
-            local opticalOffset=number.fontSize*0.10
+            local opticalOffset=number.fontSize*(delta==0 and 0.10 or 0.22)
             heading.height=math.max(0,sideHeight-opticalOffset)
             footer.height=sideHeight+opticalOffset
         end
