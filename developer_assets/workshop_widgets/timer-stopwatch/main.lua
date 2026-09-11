@@ -92,24 +92,22 @@ end
 local function panel(_,m)
     local c=copy()
     local r=ui.metrics().layoutRowHeight
+    local children
     if m.picker then
-        return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.5,children={
-            m.picker:view({rowHeight=r}),
-            view.button({key="custom.start",label=c.start,width="fill",height=r,flexShrink=0,fontSize=r*0.46,bold=true,
-                enabled=not m.picker:validation() and not m.countdown.running,
-                padding={horizontal=r*0.3,vertical=0},textAlign="center",action={id="custom.start"},
-                style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
-                hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})}})
+        children={m.picker:view({rowHeight=r})}
+    else
+        children={
+            view.text({key="hint",text=m.error and c.invalid or c.hint,width="fill",height=r*1.5,flexShrink=0,
+                fontSize=r*0.46,textWrap="wrap",verticalAlign="start",style={foreground="textPrimary"}}),
+            view.textInput({key="duration",value=m.draft,width="fill",height=r,flexShrink=0,fontSize=r*0.46,
+                padding={horizontal=r*0.3,vertical=0},events={change={id="duration"},submit={id="custom.start"}},accessibility={label=c.hint}})}
     end
-    return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.5,children={
-        view.text({key="hint",text=m.error and c.invalid or c.hint,width="fill",height=r*1.5,flexShrink=0,
-            fontSize=r*0.46,textWrap="wrap",verticalAlign="start",style={foreground="textPrimary"}}),
-        view.textInput({key="duration",value=m.draft,width="fill",height=r,flexShrink=0,fontSize=r*0.46,
-            padding={horizontal=r*0.3,vertical=0},events={change={id="duration"},submit={id="custom.start"}},accessibility={label=c.hint}}),
-        view.button({key="custom.start",label=c.start,width="fill",height=r,flexShrink=0,fontSize=r*0.46,bold=true,
-            padding={horizontal=r*0.3,vertical=0},textAlign="center",action={id="custom.start"},
-            style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
-            hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})}})
+    children[#children+1]=view.button({key="custom.start",label=c.start,width="fill",height=r,flexShrink=0,fontSize=r*0.46,bold=true,
+        enabled=not m.countdown.running and (not m.picker or not m.picker:validation()),
+        padding={horizontal=r*0.3,vertical=0},textAlign="center",action={id="custom.start"},
+        style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
+        hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})
+    return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.5,children=children})
 end
 local function startCountdown(m,duration)
     m.countdown.value=duration
