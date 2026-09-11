@@ -59,7 +59,7 @@ local function desktop(_,m)
                 view.text({key="unit."..n,text=c.unit,width="fill",height=tileH*0.24,fontSize=math.min(tileH*0.16,tileW*0.24),flexShrink=0,
                     textAlign="center",verticalAlign="center",style={foreground="textPrimary"}})}})
     end
-    local children={view.row({key="header",width="fill",height=header,alignItems="center",children={
+    local children={view.row({key="header",width="fill",height=header,flexShrink=0,alignItems="center",children={
         icon("settings",0xF013,c.settings,header,false,true),
         view.text({key="title",text=cd and c.countdown or c.stopwatch,width="fill",height=header,fontSize=side*0.10,
             bold=true,textAlign="center",verticalAlign="center",style={foreground="textPrimary"}}),
@@ -76,16 +76,19 @@ local function desktop(_,m)
             children={icon("toggle",0xF04B,c.start,size,true)}})
     else
         local valueHeight=side*0.30
-        children[#children+1]=view.spacer({key="time.top",width="fill",height=h/2-topPad-header-gap*2-valueHeight/2,flexShrink=0})
+        -- Explicit spacers keep the header and time fixed without flex compression.
+        local actionGap=gap
+        gap=0
+        children[#children+1]=view.spacer({key="time.top",width="fill",height=h/2-topPad-header-valueHeight/2,flexShrink=0})
         children[#children+1]=view.text({key="value",text=t.done and c.done or logic.format(logic.value(t,time.monotonic(),cd),cd),
             width="fill",height=valueHeight,flexShrink=0,fontSize=math.min(side*0.19,width/5.1),textAlign="center",verticalAlign="center",
             overflowText="clip",style={foreground="textPrimary"}})
         local actions={}
         local size=side*0.25
-        children[#children+1]=view.spacer({key="time.bottom",width="fill",height="fill"})
+        children[#children+1]=view.spacer({key="time.bottom",width="fill",height=h/2-valueHeight/2-pad-size,flexShrink=0})
         if not t.done then actions[#actions+1]=icon("toggle",t.running and 0xF04C or 0xF04B,t.running and c.pause or c.resume,size,true) end
         actions[#actions+1]=icon("reset",0xF0E2,c.reset,size,false)
-        children[#children+1]=view.row({key="actions",width="fill",height=size,flexShrink=0,gap=gap,justifyContent="center",alignItems="center",children=actions})
+        children[#children+1]=view.row({key="actions",width="fill",height=size,flexShrink=0,gap=actionGap,justifyContent="center",alignItems="center",children=actions})
     end
     return view.column({key="timer",width="fill",height="fill",padding={left=pad,right=pad,top=topPad,bottom=pad},gap=gap,children=children})
 end
