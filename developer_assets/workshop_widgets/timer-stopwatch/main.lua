@@ -19,12 +19,6 @@ local function setup()
     m.draft=storage.get("duration") or "5:00"
     return m
 end
-local function button(id,label,r,selected)
-    return view.button({key=id,label=label,width="fill",height=r,fontSize=r*0.43,textAlign="center",
-        bold=selected==true,action={id=id},accessibility={label=label},
-        style={foreground="textPrimary",cornerRadius=r*0.2,borderColor=selected and "textPrimary" or "border",borderWidth=selected and r*0.055 or 0},
-        hoverStyle={opacity=0.8},pressedStyle={opacity=0.6}})
-end
 -- Canvas-like controls follow the proportions of the phone reference.
 local function desktop(_,m)
     local c=copy()
@@ -75,15 +69,16 @@ local function desktop(_,m)
         children[#children+1]=view.column({key="start.area",width="fill",height=tileH*2+gap,justifyContent="center",alignItems="center",
             children={icon("toggle",0xF04B,c.start,size,true)}})
     else
-        local valueHeight=side*0.30
-        local valueFont=math.min(side*0.19,width/5.1)
+        local valueHeight=side*0.36
+        local valueText=t.done and c.done or logic.format(logic.value(t,time.monotonic(),cd),cd)
+        local valueFont=math.min(side*0.25,width/math.max(3.2,utf8.len(valueText)*0.65))
         -- Balance the time between the header and actions, not the whole card.
-        local size=side*0.25
+        local size=side*0.19
         local timeSpace=(h-topPad-header-pad-size-valueHeight)/2
         local actionGap=gap
         gap=0
         children[#children+1]=view.spacer({key="time.top",width="fill",height=timeSpace,flexShrink=0})
-        children[#children+1]=view.text({key="value",text=t.done and c.done or logic.format(logic.value(t,time.monotonic(),cd),cd),
+        children[#children+1]=view.text({key="value",text=valueText,
             width="fill",height=valueHeight,flexShrink=0,fontSize=valueFont,padding={bottom=valueFont*0.10},textAlign="center",verticalAlign="center",
             overflowText="clip",style={foreground="textPrimary"}})
         local actions={}
@@ -97,11 +92,15 @@ end
 local function panel(_,m)
     local c=copy()
     local r=ui.metrics().layoutRowHeight
-    return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.4,children={
-        view.text({key="hint",text=c.hint,width="fill",height=r*2,fontSize=r*0.46,textWrap="wrap",style={foreground="textPrimary"}}),
-        view.textInput({key="duration",value=m.draft,width="fill",height=r,fontSize=r*0.43,padding={horizontal=r*0.25,vertical=0},events={change={id="duration"},submit={id="custom.start"}},accessibility={label=c.hint}}),
-        view.text({key="error",text=m.error and c.invalid or "",width="fill",height=r*2,fontSize=r*0.43,textWrap="wrap",style={foreground="textPrimary"}}),
-        button("custom.start",c.start,r)}})
+    return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.5,children={
+        view.text({key="hint",text=m.error and c.invalid or c.hint,width="fill",height=r*1.5,flexShrink=0,
+            fontSize=r*0.46,textWrap="wrap",verticalAlign="start",style={foreground="textPrimary"}}),
+        view.textInput({key="duration",value=m.draft,width="fill",height=r,flexShrink=0,fontSize=r*0.46,
+            padding={horizontal=r*0.3,vertical=0},events={change={id="duration"},submit={id="custom.start"}},accessibility={label=c.hint}}),
+        view.button({key="custom.start",label=c.start,width="fill",height=r,flexShrink=0,fontSize=r*0.46,bold=true,
+            padding={horizontal=r*0.3,vertical=0},textAlign="center",action={id="custom.start"},
+            style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
+            hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})}})
 end
 local function startCountdown(m,duration)
     m.countdown.value=duration
@@ -122,7 +121,7 @@ local function event(_,m,e)
         if id=="mode.countdown" or id=="mode.stopwatch" then m.mode=id:sub(6);storage.set("mode",m.mode)
         elseif id=="settings" then widget.openSettings()
         elseif id=="custom" then
-            m.error=false;widget.openPanel({title=copy().custom,width=420,height=260})
+            m.error=false;widget.openPanel({title=copy().custom,width=420,height=220})
         elseif id=="duration" then m.draft=e.text or m.draft;m.error=false
         elseif id=="custom.start" then
             local duration=logic.parse(m.draft)
