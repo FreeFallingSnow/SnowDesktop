@@ -6,14 +6,14 @@
 
 ## 当前清单
 
-初评基线：`5dc6bc26`（生产代码最近相关变更为 `0b1fe404`，鼠标钩子另有 `02246762`）。2026-09-11 用户确认 DND-01、DND-02 已修复，现已关闭；DND-03、DND-04 继续开放。
+初评基线：`5dc6bc26`（生产代码最近相关变更为 `0b1fe404`，鼠标钩子另有 `02246762`）。2026-09-11 用户确认 DND-01、DND-02 已修复，现已关闭；DND-03、DND-04 已完成生产代码调整和定向回归，待桌面实机验收。
 
 | 编号 | 问题 | 状态 | 优先级 |
 | --- | --- | --- | --- |
 | DND-01 | Explorer 外部文件释放到组件后的实际执行验收 | 已验证关闭：2026-09-11 用户确认原问题已修复 | — |
 | DND-02 | Edge 网络图片进入目标组件时的图片保存验收 | 已验证关闭：2026-09-11 用户确认原问题已修复 | — |
-| DND-03 | 多次异步操作在刷新前覆盖或清除其他请求的落点 | 代码推导风险，待受控时序复现 | 高 |
-| DND-04 | 批次部分成功时，宿主缺少逐项完成信息，临时引用存在失效风险 | 代码推导风险；工作器部分成功行为已有测试证据 | 高 |
+| DND-03 | 多次异步操作在刷新前覆盖或清除其他请求的落点 | 已调整；独立落点与模型提交回归通过，待实机 | 高 |
+| DND-04 | 批次部分成功时，宿主缺少逐项完成信息，临时引用存在失效风险 | 已调整；真实部分失败与引用清理回归通过，待实机 | 高 |
 
 ## DND-01：外部文件进入组件的执行验收
 
@@ -37,6 +37,8 @@
 
 ## DND-03：异步落点由共享状态覆盖或清除
 
+以下为初评时的生产行为；后续调整和验证见本节末尾。
+
 - 生产位置：[app_drop_execution.cpp](../src/app/app_drop_execution.cpp)的 `ExecuteFileBackedDropPlan`，成功回调写入单个 `pendingLandingCache_`；链接失败或排队失败分支也会清空它。[完成回调](../src/app/app_shell_file_operation.cpp)的 `OnShellFileOperationCompleted` 在仍有其他进行中任务时照常调用本次 callback；[ReloadItems](../src/app/app_desktop_reload.cpp)在文件任务、拖动或重命名期间延后模型刷新。
 - 触发条件：A 完成并发布落点，模型尚未消费；B 随后完成并替换落点，或某个失败/新请求清空共享缓存。可发生于连续拖入不同集合、映射目录或桌面落点。
 - 影响：文件已经落盘，但 A 的逻辑归属、排序或位置恢复信息丢失；失败任务也可能干扰其他成功任务。
@@ -44,8 +46,14 @@
 - 关联测试：`desktop_drop_cache` 测的是搜索位置缓存 `BestCellEntry`，并非此落点缓存；`shell_file_operation_worker` 不调用宿主模型刷新。现有绿灯不覆盖这一风险。
 - 建议处理：按请求保存待消费落点，完成与刷新按请求合并/消费，失败只能撤销本请求状态。
 - 关闭条件：驱动真实回调和模型刷新，覆盖 A/B 两种完成顺序、B 失败、拖动延迟刷新和不同目标；每次结果保留正确归属及顺序。
+- 2026-09-11 调整：`f91bb2c8`、`8300848d` 将共享缓存改为按请求保存的队列。完成回调只发布本请求实际产物；失败不清除其他请求，长时间拖动延后刷新不会因原 10 秒期限丢弃落点。桌面/集合以实际完整输出路径匹配，文件夹映射只提取本请求的输出路径，按源顺序提交集合成员并清除临时自动归属。
+- 新证据：`slot_runtime_contract` 直接执行生产 `pending_drop::Complete` 和 `CommitKeyedLanding`，覆盖 A/B 两种完成顺序、第三项失败、同名输出、倒序枚举、目标消失和部分成功插入边界；独立预期核对两个集合的完整成员顺序及提交次数。隔离副本恢复覆盖或失败清空均触发断言失败。
+- 尚未覆盖：该测试没有实例化整个 `DesktopApp` 或驱动其窗口消息；实际拖动延迟、桌面网格/Dock、映射目录的 UI 刷新仍待实机验收，不按这些模块测试关闭整项。
+
 
 ## DND-04：批次部分成功与临时引用清理
+
+以下为初评时的生产行为；后续调整和验证见本节末尾。
 
 - 生产位置：[ShellFileOperationWorker::Execute](../src/shell_file_operation_worker.cpp)执行各项后仅返回 `attempted && allSucceeded`，不会回滚已经成功的快捷方式；[MaterializeFilesToDesktop / ExecuteFileBackedDropPlan](../src/app/app_drop_execution.cpp)按批次布尔结果决定是否加入 Dock、恢复落点；[外部组件完成回调](../src/app/app_external_slot_drop.cpp)仅在整批成功且需要引用时将 `owned` 置为 false，否则析构清理所有拥有的临时源文件。
 - 触发条件：外部虚拟文件等产生多个拥有的临时文件，拖到 Dock 创建快捷方式；部分创建成功，后续项因重名竞争、权限或其他 I/O 错误失败。普通移动批次部分成功也需要独立核对逻辑归属。
@@ -54,6 +62,11 @@
 - 关联测试：`shell_file_operation_worker` 已承认部分成功事实；`slot_runtime_contract` 只检查内容选择，尚未覆盖每个成功引用的生命周期。
 - 建议处理：完成结果携带逐项状态和实际路径，或对可回滚的生成项做明确回滚；保留已被成功引用的临时内容，仅清理未被引用项。批次失败不能代替逐项所有权判断。
 - 关闭条件：用隔离临时目录使真实批次发生部分失败，贯通宿主引用提交和清理；所有遗留链接均可用，未提交内容得到清理，用户来源保持正确状态。
+- 2026-09-11 调整：工作器通过内部 `ShellFileOperationResult` 返回逐项实际产物。生成快捷方式记录其源引用；精确复制快捷方式不保留临时输入 `.lnk`。宿主对部分成功项继续提交落点或加入 Dock，外部内容析构使用实际成功引用保留源，仅清理未被引用的自有内容。接口仅在宿主内部使用，没有修改组件 API、清单或 capability。
+- 新证据：`shell_file_operation_worker` 在隔离临时目录里运行真实 STA 工作器，制造“第一条快捷方式成功、第二条父目录不存在”的部分失败，再调用宿主同用的 `external_drop_content::Cleanup`。实际重新加载 `.lnk` 并读取其目标字节，核对未引用临时文件删除、借用的用户来源保留；另覆盖同名复制/移动、源保留/移除、目录与子文件、精确 `.lnk` 复制。隔离副本恢复整批清理后检查失败。
+- 新回归曾实际发现一次实现遗漏：成功移动返回 `COPYENGINE_S_DONT_PROCESS_CHILDREN`，首轮只接受 `S_OK` 导致产物未登记。已按成功 HRESULT 且具有实际输出记录处理，同一输入重新通过；递归通知只接受原请求的顶层对象。
+- 尚未覆盖：真实文件工作器到清理边界已验证，但未驱动整个 `DesktopApp` 的消息到 Dock 的可见提交；Dock 实机验收仍待确认。
+
 
 ## 关闭与更新记录
 
@@ -63,3 +76,13 @@
 2026-09-11 测试整改收尾时：候选 `98c92a9c` 的完整测试为 118/118、无跳过；本轮 Agent 未修改生产源码。当时尚未收到原场景实机反馈，四项保持开放；该历史记录不覆盖下面的新验收结论。
 
 2026-09-11 后续验收：用户明确表示“前两个已经修复没问题了”，关闭 DND-01、DND-02。关联生产尝试为 `d530baf09ff873b0e514a4bbdc35f3118398b7c3` 与后续边界调整 `0b1fe4044096a28073634dcfb2013c2f0ea186c0`。反馈未单独提供运行二进制的哈希或各矩阵组合明细，不推定用户实测覆盖全部组合，也不将测试整改候选哈希冒充用户实测构建。此次只更新验证记录，不修改代码或重复构建/全量；DND-03、DND-04 不在此次确认范围内。
+
+
+2026-09-11 后续修正候选：`8300848df0cff8be2dd3fdd684d5aba73859e4ae`，前置尝试 `f91bb2c8`。标准 `scripts/build.bat` 退出 0，已生成 `.build/Release/SnowDesktop.exe`；SHA256 为 `1828D720259410B7C686B2CCCA71D316E62BBEEC5F71FEB342FCB9341CF720FC`。首次标准构建使用 `--reload-shell`，后续增量构建未重启 Shell。构建的 WinUI `GetCurrentTime` C4002 警告与历史 `20260910-drop-build-refinement.log` 一致。
+
+本次定向命令 `scripts/test.bat name "^(shell_file_operation_worker|slot_runtime_contract|slot_contract_matrix|desktop_drop_cache|dock_drop_rules|folder_sort_rules)$"` 实际匹配四项：`shell_file_operation_worker`、`slot_runtime_contract`、`slot_contract_matrix`、`desktop_drop_cache`；4/4 通过、无跳过，CTest 执行 1.67 秒。后两个正则名称没有独立 CTest 条目，未将它们计为测试。报告为 `.build/Testing/test-run-967f3d940a744f98829e6745eb7fbbb6.xml`。完整检查点另记录于下文。隔离负向对照四个程序中，未变异基线退出 0；覆盖队列、失败清空队列、提前清理已引用源三种变异分别退出 1。没有修改或回滚用户工作区中的生产代码来制造失败。
+
+
+本次完整检查点：上述候选在干净生产代码输入上执行 `scripts/test.bat full`，退出 0，118/118 通过、0 失败、0 跳过；JUnit 的 118 个条目已另行核对。配置 1.01 秒，聚合增量构建/准备 19.45 秒，CTest 执行 97.69 秒（进程 97.77 秒）。报告 `.build/Testing/test-run-8503406e6fb6478b86070bce8b8d2265.xml`，SHA256 `D85700F03E371D68F7ECB8C5C318F2F03ADEE7F030523969009EFA52289CAF1E`；日志 `.codex-probes/drop-full.log`。未重复运行其他候选的全量，不把首轮失败或链接阶段阻断计为通过；最终文档更新不改变已测的生产/测试输入。Windows Release、CMake/CTest 4.3.1、MSBuild 18.5.4、SDK 10.0.26100.0；本轮完整日志未出现编译警告。
+
+逐项实际路径来自 Windows 的 [IFileOperationProgressSink::PostCopyItem](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postcopyitem) / `PostMoveItem` 完成通知，使用系统给出的实际输出对象，不能把排队成功或预选文件名当作文件已产生。
