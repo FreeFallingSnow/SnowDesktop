@@ -1303,6 +1303,7 @@ function animation.cancelFrame(id) end
 ---@field whenHidden? SnowDataHiddenPolicy
 
 ---@class SnowCalendarEventsSubscribeOptions: SnowDataSubscribeOptions
+---@field eventId? string Stable event ID, 1-128 bytes without NUL; requires data.calendar.events.byId, mutually exclusive with fromDate/toDate.
 ---@field fromDate? string YYYY-MM-DD; must be paired with toDate.
 ---@field toDate? string YYYY-MM-DD; range is limited to 366 days.
 
@@ -1535,7 +1536,7 @@ function animation.cancelFrame(id) end
 
 ---@class SnowCalendarEventsDataValue
 ---@field events SnowCalendarEventDataValue[] At most 512 entries.
----@field fromDate string Inclusive range start.
+---@field fromDate string Inclusive range start; empty for an eventId query.
 ---@field toDate string Inclusive range end.
 ---@field revision integer
 ---@field truncated boolean
@@ -2449,3 +2450,33 @@ function state.clear() end
 
 ---@type string
 widgetId = ''
+
+---@class SnowDatePickerOptions
+---@field key string Stable instance-local key, 1-80 bytes; create outside view callbacks.
+---@field mode? 'single'|'range' Defaults to single.
+---@field todayDate string Current local ISO YYYY-MM-DD date.
+---@field value? string|SnowDateRange Initial value; invalid date text remains an uncommitted draft.
+---@field minDate? string Inclusive ISO date; defaults to 0001-01-01.
+---@field maxDate? string Inclusive ISO date; defaults to 9999-12-31.
+---@field disabledDates? string[] At most 366 unavailable ISO dates. Ranges may not cross them.
+---@field firstDayOfWeek? integer 1=Sunday through 7=Saturday; defaults to Sunday.
+---@field allowClear? boolean Defaults to true; false makes an empty draft invalid.
+---@field needConfirm? boolean Defaults to true; false commits valid input and complete selections immediately.
+---@field disabled? boolean Disables all user actions.
+---@class SnowDateRange
+---@field startDate string
+---@field endDate string
+---@class SnowDatePickerResult
+---@field handled boolean
+---@field changed boolean True only for a valid committed selection.
+---@field value? string|SnowDateRange Detached committed value when changed=true.
+---@class SnowDatePicker
+---@field view fun(self: SnowDatePicker, options?: {rowHeight?: number}): SnowViewNode
+---@field handle fun(self: SnowDatePicker, event: SnowWidgetEvent): SnowDatePickerResult? Forward action events; nil means unrelated.
+---@field value fun(self: SnowDatePicker): string|SnowDateRange Last committed value.
+---@field draftValue fun(self: SnowDatePicker): string|SnowDateRange Current input including invalid drafts.
+---@field validation fun(self: SnowDatePicker): string? Localized draft error; nil when valid.
+---@field setValue fun(self: SnowDatePicker, value: string|SnowDateRange): boolean, string? Invalid values are rejected without changing state.
+---@param options SnowDatePickerOptions
+---@return SnowDatePicker
+function ui.datePicker(options) end

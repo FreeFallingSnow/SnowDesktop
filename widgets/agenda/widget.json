@@ -5,7 +5,7 @@
   "apiVersion": 2,
   "dataVersion": 1,
   "entry": "main.lua",
-  "minHostVersion": "1.0.5.0",
+  "minHostVersion": "1.0.6.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Schedule",
@@ -64,7 +64,8 @@
       "lua_widget.agenda.reminder_30": "提前 30 分钟",
       "lua_widget.agenda.reminder_60": "提前 1 小时",
       "lua_widget.agenda.reminder_1440": "提前 1 天",
-      "lua_widget.common.font_scale": "字体缩放"
+      "lua_widget.common.font_scale": "字体缩放",
+      "lua_widget.agenda.choose_date": "选择日期"
     },
     "en-US": {
       "lua_widget.agenda.name": "Schedule",
@@ -116,7 +117,8 @@
       "lua_widget.agenda.reminder_30": "30 Minutes Before",
       "lua_widget.agenda.reminder_60": "1 Hour Before",
       "lua_widget.agenda.reminder_1440": "1 Day Before",
-      "lua_widget.common.font_scale": "Font Scale"
+      "lua_widget.common.font_scale": "Font Scale",
+      "lua_widget.agenda.choose_date": "Choose date"
     },
     "zh-TW": {
       "lua_widget.agenda.name": "行程",
@@ -168,7 +170,8 @@
       "lua_widget.agenda.reminder_30": "提早 30 分鐘",
       "lua_widget.agenda.reminder_60": "提前 1 小時",
       "lua_widget.agenda.reminder_1440": "提前 1 天",
-      "lua_widget.common.font_scale": "字型縮放"
+      "lua_widget.common.font_scale": "字型縮放",
+      "lua_widget.agenda.choose_date": "選擇日期"
     },
     "ja-JP": {
       "lua_widget.agenda.name": "スケジュール",
@@ -220,7 +223,8 @@
       "lua_widget.agenda.reminder_30": "30 分前",
       "lua_widget.agenda.reminder_60": "1 時間前",
       "lua_widget.agenda.reminder_1440": "1 日前",
-      "lua_widget.common.font_scale": "フォント倍率"
+      "lua_widget.common.font_scale": "フォント倍率",
+      "lua_widget.agenda.choose_date": "日付を選択"
     },
     "ko-KR": {
       "lua_widget.agenda.name": "일정",
@@ -272,7 +276,8 @@
       "lua_widget.agenda.reminder_30": "30분 전",
       "lua_widget.agenda.reminder_60": "1시간 전",
       "lua_widget.agenda.reminder_1440": "1일 전",
-      "lua_widget.common.font_scale": "글꼴 배율"
+      "lua_widget.common.font_scale": "글꼴 배율",
+      "lua_widget.agenda.choose_date": "날짜 선택"
     },
     "de-DE": {
       "lua_widget.agenda.name": "Termine",
@@ -324,7 +329,8 @@
       "lua_widget.agenda.reminder_30": "30 Minuten vorher",
       "lua_widget.agenda.reminder_60": "1 Stunde vorher",
       "lua_widget.agenda.reminder_1440": "1 Tag vorher",
-      "lua_widget.common.font_scale": "Schrift-Skalierung"
+      "lua_widget.common.font_scale": "Schrift-Skalierung",
+      "lua_widget.agenda.choose_date": "Datum auswählen"
     },
     "fr-FR": {
       "lua_widget.agenda.name": "Agenda",
@@ -376,7 +382,8 @@
       "lua_widget.agenda.reminder_30": "30 minutes avant",
       "lua_widget.agenda.reminder_60": "1 heure avant",
       "lua_widget.agenda.reminder_1440": "1 jour avant",
-      "lua_widget.common.font_scale": "Échelle de police"
+      "lua_widget.common.font_scale": "Échelle de police",
+      "lua_widget.agenda.choose_date": "Choisir une date"
     },
     "es-ES": {
       "lua_widget.agenda.name": "Agenda",
@@ -428,7 +435,8 @@
       "lua_widget.agenda.reminder_30": "30 minutos antes",
       "lua_widget.agenda.reminder_60": "1 hora antes",
       "lua_widget.agenda.reminder_1440": "1 día antes",
-      "lua_widget.common.font_scale": "Escala de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente",
+      "lua_widget.agenda.choose_date": "Elegir fecha"
     },
     "es-419": {
       "lua_widget.agenda.name": "Horario",
@@ -480,25 +488,26 @@
       "lua_widget.agenda.reminder_30": "30 minutos antes de",
       "lua_widget.agenda.reminder_60": "1 hora antes de",
       "lua_widget.agenda.reminder_1440": "1 día antes de",
-      "lua_widget.common.font_scale": "Escala de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente",
+      "lua_widget.agenda.choose_date": "Elegir fecha"
     },
     "pt-BR": {
-    "lua_widget.agenda.name": "Agenda",
+      "lua_widget.agenda.name": "Agenda",
       "lua_widget.agenda.description": "Uma programação local vinculada ao calendário mensal, incluindo notas e lembretes.",
       "lua_widget.agenda.today": "Hoje",
       "lua_widget.agenda.previous_day": "Dia anterior",
       "lua_widget.agenda.next_day": "Dia seguinte",
-    "lua_widget.agenda.add": "Novo evento",
-    "lua_widget.agenda.edit": "Editar evento",
-    "lua_widget.agenda.delete": "Excluir evento",
+      "lua_widget.agenda.add": "Novo evento",
+      "lua_widget.agenda.edit": "Editar evento",
+      "lua_widget.agenda.delete": "Excluir evento",
       "lua_widget.agenda.empty": "Nenhum evento",
       "lua_widget.agenda.empty_hint": "Use o botão de adição para criar um",
       "lua_widget.agenda.empty_hint_compact": "Clique com o botão direito para criar",
-    "lua_widget.agenda.all_day": "Dia inteiro",
+      "lua_widget.agenda.all_day": "Dia inteiro",
       "lua_widget.agenda.title": "Título",
       "lua_widget.agenda.title_placeholder": "Título do evento",
       "lua_widget.agenda.date": "Data",
-    "lua_widget.agenda.start": "Início",
+      "lua_widget.agenda.start": "Início",
       "lua_widget.agenda.end": "Fim",
       "lua_widget.agenda.reminder": "Lembrete",
       "lua_widget.agenda.notes": "Notas",
@@ -511,10 +520,10 @@
       "lua_widget.agenda.weekday_sun": "Dom",
       "lua_widget.agenda.weekday_mon": "Seg",
       "lua_widget.agenda.weekday_tue": "Ter",
-    "lua_widget.agenda.weekday_wed": "Qua",
+      "lua_widget.agenda.weekday_wed": "Qua",
       "lua_widget.agenda.weekday_thu": "Qui",
       "lua_widget.agenda.weekday_fri": "Sex",
-    "lua_widget.agenda.weekday_sat": "Sáb",
+      "lua_widget.agenda.weekday_sat": "Sáb",
       "lua_widget.agenda.invalid_title": "Insira um título",
       "lua_widget.agenda.invalid_date": "Data inválida",
       "lua_widget.agenda.invalid_time": "Hora ou intervalo de tempo inválido",
@@ -527,12 +536,13 @@
       "lua_widget.agenda.range_30": "30 dias",
       "lua_widget.agenda.reminder_none": "Nenhum lembrete",
       "lua_widget.agenda.reminder_now": "Na hora de início",
-    "lua_widget.agenda.reminder_5": "5 minutos antes",
-    "lua_widget.agenda.reminder_15": "15 minutos antes",
-    "lua_widget.agenda.reminder_30": "30 minutos antes",
-    "lua_widget.agenda.reminder_60": "1 hora antes",
-    "lua_widget.agenda.reminder_1440": "1 dia antes",
-      "lua_widget.common.font_scale": "Escala da fonte"
+      "lua_widget.agenda.reminder_5": "5 minutos antes",
+      "lua_widget.agenda.reminder_15": "15 minutos antes",
+      "lua_widget.agenda.reminder_30": "30 minutos antes",
+      "lua_widget.agenda.reminder_60": "1 hora antes",
+      "lua_widget.agenda.reminder_1440": "1 dia antes",
+      "lua_widget.common.font_scale": "Escala da fonte",
+      "lua_widget.agenda.choose_date": "Escolher data"
     }
   },
   "defaultSize": {
@@ -553,8 +563,6 @@
   "requiredFeatures": [
     "calendar.dateMath",
     "calendar.selection",
-    "control.textArea",
-    "control.textInput",
     "data.calendar.events",
     "data.calendar.selectedDate",
     "data.subscribe",
@@ -573,7 +581,14 @@
     "task.start",
     "time.basic",
     "ui.semanticMetrics.rowUnit",
-    "widget.panel"
+    "widget.panel",
+    "ui.datePicker",
+    "view.surface.panel",
+    "view.tree.core",
+    "view.inputControls",
+    "view.theme.tokens",
+    "view.keyboardNavigation.basic",
+    "view.actionControls"
   ],
   "optionalFeatures": []
 }

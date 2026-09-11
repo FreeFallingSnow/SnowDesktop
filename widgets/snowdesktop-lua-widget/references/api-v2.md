@@ -1823,6 +1823,11 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 闭区间、最长 366 天）；未传时使用当前选中日期前后各 62 天。value 返回实际
 `fromDate/toDate`、最多 512 个本地事件、`revision` 和 `truncated`，事件包含
 `id/revision/title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`。
+声明 `data.calendar.events.byId` 后可传入 `eventId`（1–128 字节、无 NUL 的稳定 ID），
+与 `fromDate/toDate` 互斥。该模式不限制日期范围，改名和跨年改期后仍跟踪同一日程；
+返回相同事件结构、最多一项，`fromDate/toDate` 为空字符串，`truncated=false`。
+成功读取但 ID 不存在时返回空 events；权限不足或 provider 不可用仍返回错误状态，不能解释为删除。
+此能力需要支持它的宿主；仅比较版本号不能识别同版本的早期构建。
 selectedDate value 返回 `date/revision`。创建、修改和删除日程仍不由这些只读 topic
 执行；`calendar.selectDate(date)` 只改变 SnowDesktop 内部共享选中日期，不修改事件，
 因此不要求 `calendar.write`。纯 `calendar.dateInfo/addDays` 也不读取用户数据、不要求
@@ -2802,3 +2807,31 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 均已通过 `task.start` / `data.subscribe` 的窄能力开放，并继续受清单权限、可信手势、额度、
 取消和预览无副作用策略约束。尚未出现在 `system.capabilities()`、feature 目录和 LuaLS 中的
 能力仍视为未开放；不要根据权限词汇自行推测函数名。
+
+
+### `ui.datePicker` 日期与范围选择
+
+新增 capability `ui.datePicker`，API v2。参考 Ant Design DatePicker / RangePicker 的
+单日期、范围、输入校验、清空与确认交互（https://ant.design/components/date-picker/），
+实现使用宿主现有声明式控件，不引入浏览器或前端运行时。
+
+在 setup 或打开面板的 event 中创建 `ui.datePicker(options)`，不要在 view 中重建。
+`key` 为 1–80 字节的实例内唯一标识；`todayDate` 为当前本地 ISO 日期。
+`mode` 为 `single`（默认）或 `range`；value 分别为 ISO 字符串或
+`{startDate,endDate}`。`minDate/maxDate` 为包含端点的日期边界，
+`disabledDates` 最多 366 项；范围不能跨越禁用日期。`firstDayOfWeek` 为 1（周日）至 7。
+只支持公历日粒度，不隐式创建日程或改变宿主日程选中日期。
+
+- `picker:view({rowHeight=ui.metrics().layoutRowHeight})` 返回可用于 panel 或桌面的声明式树。
+- `picker:handle(event)` 处理本选择器 action，返回 `{handled,changed,value}`；无关事件返回 nil。
+  `changed=true` 才表示提交成功，组件自行持久化 value。需按正常事件流程 invalidate。
+- `picker:draftValue()` 保留无效手输文本；`picker:validation()` 返回本地化错误或 nil。
+- `picker:value()` 返回上次有效提交的独立副本；`picker:setValue(value)` 拒绝无效值，保留原状态。
+- `needConfirm` 默认 true，确认前不改变已提交值；false 时有效输入和完整选区即时提交。
+- `allowClear` 默认 true，清空值为 `""` 或两个空端点；false 时空值不能提交。
+- 范围反向点选自动排序；手输反向区间保留输入并提示错误。选择完整范围后再次点选开始新范围。
+- `disabled=true` 禁止交互；可直接输入年份并选择月份，或逐月翻页；“今天”定位今天所在月份。
+- 宿主提供全部语言文案、输入焦点与键盘导航；尚未提交的草稿只在当前选择器对象中保留。
+
+新增组件需声明 `ui.datePicker`，并在对应宿主发布后再公开分发；缺少 capability 的同版本
+早期构建也不能视为兼容。已有 `view.monthCalendar` 与其事件结构不变。

@@ -116,6 +116,7 @@ SNOW_WIDGET_PUBLIC_FUNCTION("resource", "image", lua_ResourceImage, 2, nullptr, 
 SNOW_WIDGET_PUBLIC_FUNCTION("resource", "font", lua_ResourceFont, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("resource", "status", lua_ResourceStatus, 2, nullptr, 0)
 
+SNOW_WIDGET_PUBLIC_FUNCTION("ui", "datePicker", lua_UiDatePicker, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("ui", "menu", lua_UiMenu, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("ui", "metrics", lua_UiMetrics, 2, nullptr, 0)
 

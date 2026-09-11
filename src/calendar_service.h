@@ -76,6 +76,7 @@ public:
     std::vector<CalendarEvent> Events(
         const std::string& fromDate,
         const std::string& toDate) const;
+    std::optional<CalendarEvent> EventById(const std::string& id) const;
     MutationResult Create(CalendarEvent event);
     MutationResult Update(
         const std::string& id,

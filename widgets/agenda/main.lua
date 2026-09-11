@@ -212,7 +212,7 @@ local function clearDraft(model)
     storage.transaction(clearDraftTransaction)
     model.editorError = nil
     model.pendingPanelTask = nil
-    model.datePickerOpen = false
+    model.datePicker = nil
 end
 
 local function openEditor(model)
@@ -277,7 +277,7 @@ local function startEdit(model, item)
 end
 
 local function saveDraft(model)
-    if model.pendingPanelTask then return end
+    if model.pendingPanelTask or not widget.hasPermission("calendar.write") then return end
     local title = trim(storage.get(DRAFT_TITLE) or "")
     if title == "" then model.editorError = "invalidTitle" return end
     local date = trim(storage.get(DRAFT_DATE) or "")
@@ -567,298 +567,56 @@ local function render(context, model)
     draw.popClip()
 end
 
-local function panelLabel(text, x, y, width, font, color)
-    draw.text(x, y, text, font, color, width, true, true)
-end
-
-local function panelButton(model, id, label, x, y, width, height,
-    colors, primary, enabled)
-    local key = "agenda.panel." .. id
-    local hovered = enabled ~= false and interaction.isHovered(key)
-    local pressed = enabled ~= false and interaction.isPressed(key)
-    local alpha = enabled == false and 0.22 or
-        (primary and (pressed and 0.76 or (hovered and 0.96 or 0.88)) or
-            (pressed and 0.16 or (hovered and 0.12 or 0.08)))
-    draw.rect(x, y, width, height,
-        primary and colors.accent or colors.card, layout.cu(8), alpha)
-    draw.strokeRect(x, y, width, height, colors.accent,
-        layout.cu(8), layout.cu(1), enabled == false and 0.18 or 0.38)
-    centeredText(label, x, y, width, height, layout.fontCu(14),
-        primary and colors.inverse or colors.text, true,
-        enabled == false and 0.38 or 1.0)
-    interaction.region({
-        key = key,
-        shape = {
-            type = "roundedRect", x = x, y = y,
-            width = width, height = height, radius = layout.cu(8),
-        },
-        cursor = enabled == false and "default" or "hand",
-        enabled = enabled ~= false,
-        events = {
-            click = { id = "agenda.panel", value = id },
-        },
-        accessibility = { role = "button", label = label },
-    })
-end
-
-local function openDatePicker(model)
-    if model.datePickerOpen then
-        model.datePickerOpen = false
-        interaction.setScrollOffset("agenda.panel.scroll", 0)
-        return
-    end
-    local info = calendar.dateInfo(storage.get(DRAFT_DATE) or "") or
-        calendar.dateInfo(todayDate())
-    model.pickerYear = info.year
-    model.pickerMonth = info.month
-    model.datePickerOpen = true
-    interaction.setScrollOffset("agenda.panel.scroll", 0)
-end
-
-local function shiftPickerMonth(model, offset)
-    local month = model.pickerMonth + offset
-    local year = model.pickerYear
-    if month < 1 then month = 12 year = year - 1 end
-    if month > 12 then month = 1 year = year + 1 end
-    model.pickerYear = year
-    model.pickerMonth = month
-end
-
-local function renderDatePicker(model, pad, top, fieldWidth, colors)
-    local headerHeight = layout.cu(32)
-    local arrowWidth = layout.cu(34)
-    panelButton(model, "picker.previous", "‹", pad, top,
-        arrowWidth, headerHeight, colors, false, true)
-    panelButton(model, "picker.next", "›",
-        pad + arrowWidth + layout.cu(5), top,
-        arrowWidth, headerHeight, colors, false, true)
-    local todayWidth = layout.cu(58)
-    panelButton(model, "picker.today", l10n.tr("lua_widget.agenda.today"),
-        pad + fieldWidth - todayWidth, top,
-        todayWidth, headerHeight, colors, false, true)
-    local titleX = pad + arrowWidth * 2 + layout.cu(14)
-    local titleRight = pad + fieldWidth - todayWidth - layout.cu(8)
-    centeredText(l10n.tr("lua_widget.agenda.month_format",
-        tostring(model.pickerYear), tostring(model.pickerMonth)),
-        titleX, top, math.max(1, titleRight - titleX), headerHeight,
-        layout.fontCu(14), colors.text, true)
-
-    local weekdayKeys = {
-        "lua_widget.agenda.weekday_mon",
-        "lua_widget.agenda.weekday_tue",
-        "lua_widget.agenda.weekday_wed",
-        "lua_widget.agenda.weekday_thu",
-        "lua_widget.agenda.weekday_fri",
-        "lua_widget.agenda.weekday_sat",
-        "lua_widget.agenda.weekday_sun",
-    }
-    local weekdaysY = top + headerHeight + layout.cu(8)
-    local cellWidth = fieldWidth / 7
-    local cellHeight = layout.cu(31)
-    for index, key in ipairs(weekdayKeys) do
-        centeredText(l10n.tr(key), pad + (index - 1) * cellWidth,
-            weekdaysY, cellWidth, layout.cu(22), layout.fontCu(11),
-            colors.muted, true, 0.72)
-    end
-    local first = string.format("%04d-%02d-01",
-        model.pickerYear, model.pickerMonth)
-    local firstInfo = calendar.dateInfo(first)
-    local gridStart = calendar.addDays(first, -((firstInfo.weekday + 5) % 7))
-    local selected = storage.get(DRAFT_DATE) or ""
-    local gridY = weekdaysY + layout.cu(23)
-    for zero = 0, 41 do
-        local date = calendar.addDays(gridStart, zero)
-        local info = calendar.dateInfo(date)
-        local column = zero % 7
-        local row = math.floor(zero / 7)
-        local x = pad + column * cellWidth
-        local y = gridY + row * cellHeight
-        local currentMonth = info.year == model.pickerYear and
-            info.month == model.pickerMonth
-        if date == selected then
-            draw.circle(x + cellWidth / 2, y + cellHeight / 2,
-                math.min(cellWidth, cellHeight) * 0.39,
-                colors.accent, 0.88)
-        end
-        centeredText(tostring(info.day), x, y, cellWidth, cellHeight,
-            layout.fontCu(12), date == selected and colors.inverse or
-                colors.text, date == selected,
-            currentMonth and 1.0 or 0.34)
-        local id = "picker.date:" .. date
-        interaction.region({
-            key = "agenda.panel." .. id,
-            shape = {
-                type = "rect", x = x, y = y,
-                width = cellWidth, height = cellHeight,
-            },
-            cursor = "hand",
-            events = {
-                click = { id = "agenda.panel", value = id },
-            },
-            accessibility = { role = "button", label = date },
-        })
-    end
-end
-
 local function panel(context, model)
-    local width = layout.width()
-    local height = layout.height()
-    local pad = layout.cu(20)
-    local colors = palette(context)
-    local labelFont = layout.fontCu(12)
-    local inputFont = layout.fontCu(14)
-    local fieldWidth = width - pad * 2
-    local inputHeight = layout.cu(38)
-    local allDay = storage.get(DRAFT_ALL_DAY) == "1"
-    local desiredHeight = model.datePickerOpen and layout.cu(500) or
-        (allDay and layout.cu(430) or layout.cu(510))
-    local contentHeight = math.max(height, desiredHeight)
-    local scroll = interaction.scroll({
-        key = "agenda.panel.scroll",
-        shape = { type = "rect", x = 0, y = 0,
-            width = width, height = height },
-        contentHeight = math.ceil(contentHeight),
-    })
-    local originY = -scroll.offset
-    draw.pushClip(0, 0, width, height)
-
-    panelLabel(l10n.tr("lua_widget.agenda.title"), pad,
-        layout.cu(16) + originY,
-        fieldWidth, labelFont, colors.muted)
-    control.textInput({
-        key = "agenda-title", storageKey = DRAFT_TITLE,
-        shape = { type = "rect", x = pad,
-            y = layout.cu(38) + originY,
-            width = fieldWidth, height = inputHeight },
-        placeholder = l10n.tr("lua_widget.agenda.title_placeholder"),
-        fontSize = inputFont, textColor = colors.text,
-        placeholderColor = colors.muted, backgroundColor = colors.card,
-        borderColor = colors.muted, focusedBorderColor = colors.accent,
-        backgroundAlpha = 0.055, focusedBackgroundAlpha = 0.09,
-        borderAlpha = 0.24, focusedBorderAlpha = 0.78,
-        radius = layout.cu(7), padding = layout.cu(9),
-        borderThickness = layout.cu(1), selectAll = false,
-        liveUpdate = true, maxBytes = 512,
-    })
-
-    local dateY = layout.cu(88) + originY
-    panelLabel(l10n.tr("lua_widget.agenda.date"), pad, dateY,
-        fieldWidth * 0.58, labelFont, colors.muted)
-    local dateInputWidth = fieldWidth * 0.43
-    local pickerGap = layout.cu(7)
-    local pickerWidth = fieldWidth * 0.14
-    control.textInput({
-        key = "agenda-date", storageKey = DRAFT_DATE,
-        shape = { type = "rect", x = pad, y = dateY + layout.cu(22),
-            width = dateInputWidth, height = inputHeight },
-        placeholder = "YYYY-MM-DD", fontSize = inputFont,
-        textColor = colors.text, placeholderColor = colors.muted,
-        backgroundColor = colors.card, borderColor = colors.muted,
-        focusedBorderColor = colors.accent, backgroundAlpha = 0.055,
-        focusedBackgroundAlpha = 0.09, borderAlpha = 0.24,
-        focusedBorderAlpha = 0.78, radius = layout.cu(7),
-        padding = layout.cu(9), borderThickness = layout.cu(1),
-        selectAll = true, liveUpdate = true, maxBytes = 10,
-    })
-    panelButton(model, "openDatePicker", "…",
-        pad + dateInputWidth + pickerGap, dateY + layout.cu(22),
-        pickerWidth, inputHeight, colors, false, true)
-    local allDayX = pad + dateInputWidth + pickerGap + pickerWidth + pickerGap
-    panelButton(model, "toggleAllDay", l10n.tr("lua_widget.agenda.all_day"),
-        allDayX, dateY + layout.cu(22),
-        pad + fieldWidth - allDayX, inputHeight, colors,
-        storage.get(DRAFT_ALL_DAY) == "1", true)
-
-    if model.datePickerOpen then
-        renderDatePicker(model, pad, layout.cu(166) + originY,
-            fieldWidth, colors)
-        panelButton(model, "cancel", l10n.tr("lua_widget.agenda.cancel"),
-            pad, contentHeight - layout.cu(57) + originY,
-            fieldWidth, layout.cu(38),
-            colors, false, true)
-        draw.popClip()
-        return
+    local row=ui.metrics().layoutRowHeight
+    local busy=model.pendingPanelTask~=nil
+    local function button(id,label,enabled)
+        return view.button({key="agenda."..id,text=label,width="fill",height=row,fontSize=row*0.46,
+            enabled=enabled~=false,action={id="agenda.panel",value=id},accessibility={label=label}})
     end
-
-    local timeY = layout.cu(162) + originY
-    if not allDay then
-        local half = (fieldWidth - layout.cu(10)) / 2
-        panelLabel(l10n.tr("lua_widget.agenda.start"), pad, timeY,
-            half, labelFont, colors.muted)
-        panelLabel(l10n.tr("lua_widget.agenda.end"),
-            pad + half + layout.cu(10), timeY,
-            half, labelFont, colors.muted)
-        control.textInput({
-            key = "agenda-start", storageKey = DRAFT_START,
-            shape = { type = "rect", x = pad, y = timeY + layout.cu(22),
-                width = half, height = inputHeight },
-            placeholder = "09:00", fontSize = inputFont,
-            textColor = colors.text, placeholderColor = colors.muted,
-            backgroundColor = colors.card, borderColor = colors.muted,
-            focusedBorderColor = colors.accent, backgroundAlpha = 0.055,
-            focusedBackgroundAlpha = 0.09, borderAlpha = 0.24,
-            focusedBorderAlpha = 0.78, radius = layout.cu(7),
-            padding = layout.cu(9), borderThickness = layout.cu(1),
-            selectAll = true, liveUpdate = true, maxBytes = 5,
-        })
-        control.textInput({
-            key = "agenda-end", storageKey = DRAFT_END,
-            shape = { type = "rect", x = pad + half + layout.cu(10),
-                y = timeY + layout.cu(22), width = half,
-                height = inputHeight },
-            placeholder = "10:00", fontSize = inputFont,
-            textColor = colors.text, placeholderColor = colors.muted,
-            backgroundColor = colors.card, borderColor = colors.muted,
-            focusedBorderColor = colors.accent, backgroundAlpha = 0.055,
-            focusedBackgroundAlpha = 0.09, borderAlpha = 0.24,
-            focusedBorderAlpha = 0.78, radius = layout.cu(7),
-            padding = layout.cu(9), borderThickness = layout.cu(1),
-            selectAll = true, liveUpdate = true, maxBytes = 5,
-        })
+    local children={}
+    if model.datePicker then
+        children={model.datePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
+    else
+        local title=storage.get(DRAFT_TITLE) or ""
+        local date=storage.get(DRAFT_DATE) or ""
+        local start=storage.get(DRAFT_START) or ""
+        local finish=storage.get(DRAFT_END) or ""
+        local allDay=storage.get(DRAFT_ALL_DAY)=="1"
+        local titleError=trim(title)=="" and l10n.tr("lua_widget.agenda.invalid_title") or nil
+        local dateError=not calendar.dateInfo(date) and l10n.tr("lua_widget.agenda.invalid_date") or nil
+        local startMinutes,endMinutes=parseTime(start),parseTime(finish)
+        local timeError=not allDay and (not startMinutes or not endMinutes or endMinutes<startMinutes)
+            and l10n.tr("lua_widget.agenda.invalid_time") or nil
+        local function field(key,value,label,err,multi)
+            children[#children+1]=view.text({key=key..".label",text=label,height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
+            local options={key=key,value=value,height=multi and row*3 or row,fontSize=row*0.46,
+                maxBytes=key==DRAFT_TITLE and 512 or (multi and 8192 or 10),enabled=not busy,
+                validationState=err and "error" or "none",validationMessage=err or "",
+                action={id="agenda.field",value=key},accessibility={label=label}}
+            children[#children+1]=multi and view.textArea(options) or view.textInput(options)
+            if err then children[#children+1]=view.text({key=key..".error",text=err,height=row,fontSize=row*0.42,style={foreground="textSecondary"}}) end
+        end
+        field(DRAFT_TITLE,title,l10n.tr("lua_widget.agenda.title"),titleError)
+        field(DRAFT_DATE,date,l10n.tr("lua_widget.agenda.date"),dateError)
+        children[#children+1]=button("openDatePicker",l10n.tr("lua_widget.agenda.choose_date"),not busy)
+        children[#children+1]=view.checkbox({key="agenda.allDay",label=l10n.tr("lua_widget.agenda.all_day"),checked=allDay,
+            height=row,fontSize=row*0.46,enabled=not busy,action={id="agenda.panel",value="toggleAllDay"}})
+        if not allDay then
+            field(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"),not startMinutes and timeError or nil)
+            field(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"),timeError)
+        end
+        children[#children+1]=button("cycleReminder",l10n.tr("lua_widget.agenda.reminder")..": "..
+            reminderLabel(storage.get(DRAFT_REMINDER)),not busy)
+        field(DRAFT_NOTES,storage.get(DRAFT_NOTES) or "",l10n.tr("lua_widget.agenda.notes"),nil,true)
+        local err=editorErrorText(model.editorError)
+        if err then children[#children+1]=view.text({key="agenda.save.error",text=err,height=row*2,fontSize=row*0.43,textWrap="wrap"}) end
+        children[#children+1]=view.row({key="agenda.actions",height=row,gap=row*0.3,children={
+            button("cancel",l10n.tr("lua_widget.agenda.cancel"),not busy),
+            button("save",l10n.tr("lua_widget.agenda.save"),not busy and not titleError and not dateError and not timeError and widget.hasPermission("calendar.write"))}})
     end
-
-    local reminderY = (allDay and layout.cu(162) or layout.cu(236)) +
-        originY
-    panelLabel(l10n.tr("lua_widget.agenda.reminder"), pad, reminderY,
-        fieldWidth, labelFont, colors.muted)
-    panelButton(model, "cycleReminder",
-        reminderLabel(storage.get(DRAFT_REMINDER)), pad,
-        reminderY + layout.cu(22), fieldWidth, inputHeight,
-        colors, false, true)
-
-    local notesY = reminderY + layout.cu(72)
-    panelLabel(l10n.tr("lua_widget.agenda.notes"), pad, notesY,
-        fieldWidth, labelFont, colors.muted)
-    control.textArea({
-        key = "agenda-notes", storageKey = DRAFT_NOTES,
-        shape = { type = "rect", x = pad, y = notesY + layout.cu(22),
-            width = fieldWidth, height = layout.cu(86) },
-        placeholder = l10n.tr("lua_widget.agenda.notes_placeholder"),
-        placeholderWhenWhitespace = true, fontSize = inputFont,
-        textColor = colors.text, placeholderColor = colors.muted,
-        backgroundColor = colors.card, borderColor = colors.muted,
-        focusedBorderColor = colors.accent, backgroundAlpha = 0.055,
-        focusedBackgroundAlpha = 0.09, borderAlpha = 0.24,
-        focusedBorderAlpha = 0.78, radius = layout.cu(7),
-        padding = layout.cu(9), borderThickness = layout.cu(1),
-        selectAll = false, liveUpdate = true, maxBytes = 8192,
-    })
-
-    local errorText = editorErrorText(model.editorError)
-    if errorText then
-        draw.text(pad, contentHeight - layout.cu(91) + originY,
-            errorText, labelFont,
-            colors.danger, fieldWidth, false, true)
-    end
-    local buttonY = contentHeight - layout.cu(57) + originY
-    local actionWidth = (fieldWidth - layout.cu(10)) / 2
-    panelButton(model, "cancel", l10n.tr("lua_widget.agenda.cancel"),
-        pad, buttonY, actionWidth, layout.cu(38), colors, false, true)
-    panelButton(model, "save", l10n.tr("lua_widget.agenda.save"),
-        pad + actionWidth + layout.cu(10), buttonY,
-        actionWidth, layout.cu(38), colors, true,
-        model.pendingPanelTask == nil)
-    draw.popClip()
+    return view.scroll({key="agenda.panel.scroll",width="fill",height="fill",children={
+        view.column({key="agenda.form",width="fill",height="auto",padding=row*0.65,gap=row*0.25,children=children})}})
 end
 
 local function setup()
@@ -866,7 +624,7 @@ local function setup()
     local model = {
         selectedDate = todayDate(), eventsById = {},
         pendingPanelTask = nil, pendingDeleteTask = nil,
-        editorError = nil, datePickerOpen = false, panelOpen = false,
+        editorError = nil, datePicker = nil, panelOpen = false,
     }
     model.selectedSubscription = data.subscribe("calendar.selectedDate", {
         whenHidden = "pause", maxAgeMs = 86400000,
@@ -896,21 +654,11 @@ local function handlePanelAction(model, id)
             storage.get(DRAFT_ALL_DAY) == "1" and "0" or "1")
         widget.invalidate()
     elseif id == "openDatePicker" then
-        openDatePicker(model)
+        model.datePicker=ui.datePicker({key="agenda.date",value=storage.get(DRAFT_DATE) or "",
+            todayDate=todayDate(),allowClear=false})
         widget.invalidate()
-    elseif id == "picker.previous" then
-        shiftPickerMonth(model, -1)
-        widget.invalidate()
-    elseif id == "picker.next" then
-        shiftPickerMonth(model, 1)
-        widget.invalidate()
-    elseif id == "picker.today" then
-        storage.set(DRAFT_DATE, todayDate())
-        model.datePickerOpen = false
-        widget.invalidate()
-    elseif string.sub(id, 1, 12) == "picker.date:" then
-        storage.set(DRAFT_DATE, string.sub(id, 13))
-        model.datePickerOpen = false
+    elseif id == "picker.back" then
+        model.datePicker=nil
         widget.invalidate()
     elseif id == "cycleReminder" then
         local current = tonumber(storage.get(DRAFT_REMINDER)) or 15
@@ -927,6 +675,23 @@ local function handlePanelAction(model, id)
 end
 
 local function event(_context, model, value)
+    if model.datePicker then
+        local result=model.datePicker:handle(value)
+        if result then
+            if result.changed then storage.set(DRAFT_DATE,result.value);model.datePicker=nil end
+            widget.invalidate()
+            return
+        end
+    end
+    if value.kind=="action" and value.id=="agenda.field" and value.surface=="panel" then
+        local allowed={ [DRAFT_TITLE]=true,[DRAFT_DATE]=true,[DRAFT_START]=true,[DRAFT_END]=true,[DRAFT_NOTES]=true }
+        if not model.pendingPanelTask and allowed[value.value] and type(value.text)=="string" then
+            storage.set(value.value,value.text)
+            model.editorError=nil
+            widget.invalidate()
+        end
+        return
+    end
     if value.kind == "environment" then
         widget.setTitle(l10n.tr("lua_widget.agenda.name"))
         return

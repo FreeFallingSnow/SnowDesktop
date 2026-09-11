@@ -1,4 +1,5 @@
 #include "widget_view_lua.h"
+#include "widget_date_picker_lua.h"
 #include "widget_view_tree.h"
 #include "widget_resource_lua.h"
 
@@ -4814,8 +4815,59 @@ void TestLuaFieldPresenceAfterMutation()
     lua_close(state);
 }
 
+
+void TestDatePickerController()
+{
+    lua_State* state=luaL_newstate();
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_loadbuffer(state,kWidgetDatePickerLua,sizeof(kWidgetDatePickerLua)-1,
+        "@host/ui.datePicker")==LUA_OK,"date picker source loads");
+    lua_setglobal(state,"makePicker");
+    const char* source=R"LUA(
+        local labels={date="Date",startDate="Start",endDate="End",year="Year",month="Month",
+            previous="Previous",next="Next",today="Today",clear="Clear",confirm="Confirm",
+            invalid="Invalid date",order="Reversed range",weekday1="Sun",weekday2="Mon",weekday3="Tue",
+            weekday4="Wed",weekday5="Thu",weekday6="Fri",weekday7="Sat"}
+        local p=makePicker({key="dates",mode="range",todayDate="2026-09-11",minDate="2024-01-01",
+            maxDate="2030-12-31",disabledDates={"2026-09-15"}},labels)
+        local function send(id,text) return p:handle({kind="action",id="dates:"..id,text=text}) end
+        send("day:2026-09-12");send("day:2026-09-10")
+        assert(p:draftValue().startDate=="2026-09-10" and p:draftValue().endDate=="2026-09-12")
+        assert(p:value().startDate=="")
+        assert(send("confirm").changed and p:value().endDate=="2026-09-12")
+        send("end","2026-09-16")
+        assert(p:validation() and not send("confirm").changed)
+        assert(p:value().endDate=="2026-09-12")
+        send("start","2025-02-29");assert(p:validation())
+        send("start","2024-02-29");send("end","2024-03-01");assert(not p:validation())
+        send("end","2024-02-28");assert(p:validation()==labels.order)
+        send("clear");assert(send("confirm").changed and p:value().startDate=="")
+        send("day:2023-12-31");assert(p:draftValue().startDate=="")
+        send("day:2026-09-15");assert(p:draftValue().startDate=="")
+        local q=makePicker({key="single",todayDate="2026-09-11",value="2026-09-11",allowClear=false},labels)
+        assert(not q:setValue("1900-02-29"));assert(q:value()=="2026-09-11")
+        assert(q:setValue("2000-02-29"));assert(q:handle({kind="action",id="other:confirm"})==nil)
+        q:handle({kind="action",id="single:start",text="2026-02-30"})
+        assert(q:validation() and not q:handle({kind="action",id="single:confirm"}).changed)
+        q:setValue("2026-09-11")
+        return q:view({rowHeight=32})
+    )LUA";
+    if(luaL_dostring(state,source)!=LUA_OK) {
+        std::cerr<<lua_tostring(state,-1)<<'\n';
+        Check(false,"date picker rejects invalid drafts and commits valid selections only");
+    }
+    ViewNode root;std::string error;
+    const bool parsed=ParseLuaViewTree(state,-1,root,error);
+    if(!parsed)std::cerr<<error<<'\n';
+    Check(parsed,"date picker returns a real supported declarative tree");
+    Check(ValidateAndLayoutViewTree(root,520.0f,640.0f,error),"date picker tree validates");
+    lua_close(state);
+}
+
 int main()
 {
+    TestDatePickerController();
     TestLayoutAndRegions();
     TestValidationFailures();
     TestLuaParsing();

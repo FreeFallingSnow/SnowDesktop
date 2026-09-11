@@ -11,6 +11,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_date_picker_lua.h"
 #include "animation_settings.h"
 #include "performance_trace.h"
 #include "widget_logical_slot_manifest.h"
@@ -3929,6 +3930,56 @@ static int lua_InteractionSetScrollOffset(lua_State* state)
     return 1;
 }
 
+static int lua_UiDatePicker(lua_State* state)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    if (luaL_loadbuffer(state, kWidgetDatePickerLua,
+            sizeof(kWidgetDatePickerLua) - 1, "@host/ui.datePicker") != LUA_OK)
+        return lua_error(state);
+    lua_pushvalue(state, 1);
+    lua_newtable(state);
+    lua_pushstring(state, _L("app.widget.date_picker.date"));
+    lua_setfield(state, -2, "date");
+    lua_pushstring(state, _L("app.widget.date_picker.startDate"));
+    lua_setfield(state, -2, "startDate");
+    lua_pushstring(state, _L("app.widget.date_picker.endDate"));
+    lua_setfield(state, -2, "endDate");
+    lua_pushstring(state, _L("app.widget.date_picker.year"));
+    lua_setfield(state, -2, "year");
+    lua_pushstring(state, _L("app.widget.date_picker.month"));
+    lua_setfield(state, -2, "month");
+    lua_pushstring(state, _L("app.widget.date_picker.previous"));
+    lua_setfield(state, -2, "previous");
+    lua_pushstring(state, _L("app.widget.date_picker.next"));
+    lua_setfield(state, -2, "next");
+    lua_pushstring(state, _L("app.widget.date_picker.today"));
+    lua_setfield(state, -2, "today");
+    lua_pushstring(state, _L("app.widget.date_picker.clear"));
+    lua_setfield(state, -2, "clear");
+    lua_pushstring(state, _L("app.widget.date_picker.confirm"));
+    lua_setfield(state, -2, "confirm");
+    lua_pushstring(state, _L("app.widget.date_picker.invalid"));
+    lua_setfield(state, -2, "invalid");
+    lua_pushstring(state, _L("app.widget.date_picker.order"));
+    lua_setfield(state, -2, "order");
+    lua_pushstring(state, _L("app.widget.date_picker.weekday1"));
+    lua_setfield(state, -2, "weekday1");
+    lua_pushstring(state, _L("app.widget.date_picker.weekday2"));
+    lua_setfield(state, -2, "weekday2");
+    lua_pushstring(state, _L("app.widget.date_picker.weekday3"));
+    lua_setfield(state, -2, "weekday3");
+    lua_pushstring(state, _L("app.widget.date_picker.weekday4"));
+    lua_setfield(state, -2, "weekday4");
+    lua_pushstring(state, _L("app.widget.date_picker.weekday5"));
+    lua_setfield(state, -2, "weekday5");
+    lua_pushstring(state, _L("app.widget.date_picker.weekday6"));
+    lua_setfield(state, -2, "weekday6");
+    lua_pushstring(state, _L("app.widget.date_picker.weekday7"));
+    lua_setfield(state, -2, "weekday7");
+    lua_call(state, 2, 1);
+    return 1;
+}
+
 static int lua_UiMenu(lua_State* state)
 {
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -5150,6 +5201,7 @@ static int lua_DataSubscribe(lua_State* state)
         audioAnalysis;
     std::string rangeStart;
     std::string rangeEnd;
+    std::string eventId;
     std::string scopeHandle;
     auto hiddenPolicy = topicValue == "filesystem.watch" ||
             audioAnalysisTopic
@@ -5170,7 +5222,7 @@ static int lua_DataSubscribe(lua_State* state)
             const bool common = key == "maxAgeMs" ||
                 key == "whenHidden";
             const bool calendar = topicValue == "calendar.events" &&
-                (key == "fromDate" || key == "toDate");
+                (key == "fromDate" || key == "toDate" || key == "eventId");
             const bool filesystem = topicValue == "filesystem.watch" &&
                 key == "handle";
             const bool audio = audioAnalysisTopic &&
@@ -5233,6 +5285,26 @@ static int lua_DataSubscribe(lua_State* state)
         };
         readDateOption("fromDate", rangeStart);
         readDateOption("toDate", rangeEnd);
+        lua_getfield(state, 2, "eventId");
+        if (!lua_isnil(state, -1))
+        {
+            if (lua_type(state, -1) != LUA_TSTRING)
+                return luaL_error(state, "data.subscribe: eventId must be a string");
+            size_t length = 0;
+            const char* raw = lua_tolstring(state, -1, &length);
+            eventId.assign(raw, length);
+            if (length == 0 || length > 128 || eventId.find('\0') != std::string::npos)
+                return luaL_error(state, "data.subscribe: eventId must contain 1 to 128 bytes without NUL");
+            lua_getfield(state, 2, "fromDate");
+            const bool hasStart = !lua_isnil(state, -1);
+            lua_pop(state, 1);
+            lua_getfield(state, 2, "toDate");
+            const bool hasEnd = !lua_isnil(state, -1);
+            lua_pop(state, 1);
+            if (hasStart || hasEnd)
+                return luaL_error(state, "data.subscribe: eventId and date range are mutually exclusive");
+        }
+        lua_pop(state, 1);
 
         lua_getfield(state, 2, "handle");
         if (!lua_isnil(state, -1))
@@ -5409,7 +5481,7 @@ static int lua_DataSubscribe(lua_State* state)
         BoundWidgetId(state), topicValue,
         std::chrono::milliseconds(maxAgeMs), hiddenPolicy,
         std::move(rangeStart), std::move(rangeEnd),
-        std::move(scopeHandle), audioAnalysis);
+        std::move(scopeHandle), audioAnalysis, std::move(eventId));
     if (!result)
         return luaL_error(state, "data.subscribe: %s", result.error.c_str());
 
@@ -22081,7 +22153,7 @@ WidgetEngine::RuntimeSubscribeData(
     std::string rangeStart, std::string rangeEnd,
     std::string scopeHandle,
     snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
-        audioAnalysis)
+        audioAnalysis, std::string eventId)
 {
     using snowdesktop::widget_runtime::DataSubscriptionOptions;
     if (!dataBroker_)
@@ -22140,6 +22212,7 @@ WidgetEngine::RuntimeSubscribeData(
     options.preview = widget.preview;
     options.rangeStart = std::move(rangeStart);
     options.rangeEnd = std::move(rangeEnd);
+    options.eventId = std::move(eventId);
     options.audioWaveform = audioAnalysis.waveform;
     options.audioSpectrum = audioAnalysis.spectrum;
     options.audioRms = audioAnalysis.rms;
@@ -22501,11 +22574,19 @@ WidgetEngine::RuntimeGetDataSnapshot(
             };
             for (const auto& event : samples)
             {
-                if (event.date >= result.calendarRangeStart &&
-                    event.date <= result.calendarRangeEnd)
+                if ((!binding->options.eventId.empty() &&
+                        event.id == binding->options.eventId) ||
+                    (binding->options.eventId.empty() &&
+                        event.date >= result.calendarRangeStart &&
+                        event.date <= result.calendarRangeEnd))
                 {
                     result.calendarEvents.push_back(event);
                 }
+            }
+            if (!binding->options.eventId.empty())
+            {
+                result.calendarRangeStart.clear();
+                result.calendarRangeEnd.clear();
             }
             result.calendarRevision = 1;
         }
@@ -22850,36 +22931,52 @@ WidgetEngine::RuntimeGetDataSnapshot(
     {
         result.calendarRangeStart = binding->options.rangeStart;
         result.calendarRangeEnd = binding->options.rangeEnd;
-        if (result.calendarRangeStart.empty())
+        if (!binding->options.eventId.empty())
         {
-            const std::string selected = RuntimeCalendarSelectedDate();
-            const auto start = snowdesktop::calendar::CalendarService::
-                AddDays(selected, -62);
-            const auto end = snowdesktop::calendar::CalendarService::
-                AddDays(selected, 62);
-            if (start && end)
+            if (!calendarService_)
+                result.error = "providerUnavailable";
+            else
             {
-                result.calendarRangeStart = *start;
-                result.calendarRangeEnd = *end;
+                const auto event = calendarService_->EventById(binding->options.eventId);
+                if (event) result.calendarEvents.push_back(*event);
+                result.calendarRevision = calendarEventsRevision_;
+                result.available = true;
+                setFreshness(timestampNow);
             }
-        }
-        if (result.calendarRangeStart.empty() ||
-            result.calendarRangeEnd.empty())
-        {
-            result.error = "calendarRangeUnavailable";
         }
         else
         {
-            result.calendarEvents = RuntimeCalendarEvents(
-                result.calendarRangeStart, result.calendarRangeEnd);
-            constexpr std::size_t MaximumEvents = 512;
-            result.calendarTruncated =
-                result.calendarEvents.size() > MaximumEvents;
-            if (result.calendarTruncated)
-                result.calendarEvents.resize(MaximumEvents);
-            result.calendarRevision = calendarEventsRevision_;
-            result.available = true;
-            setFreshness(timestampNow);
+            if (result.calendarRangeStart.empty())
+            {
+                const std::string selected = RuntimeCalendarSelectedDate();
+                const auto start = snowdesktop::calendar::CalendarService::
+                    AddDays(selected, -62);
+                const auto end = snowdesktop::calendar::CalendarService::
+                    AddDays(selected, 62);
+                if (start && end)
+                {
+                    result.calendarRangeStart = *start;
+                    result.calendarRangeEnd = *end;
+                }
+            }
+            if (result.calendarRangeStart.empty() ||
+                result.calendarRangeEnd.empty())
+            {
+                result.error = "calendarRangeUnavailable";
+            }
+            else
+            {
+                result.calendarEvents = RuntimeCalendarEvents(
+                    result.calendarRangeStart, result.calendarRangeEnd);
+                constexpr std::size_t MaximumEvents = 512;
+                result.calendarTruncated =
+                    result.calendarEvents.size() > MaximumEvents;
+                if (result.calendarTruncated)
+                    result.calendarEvents.resize(MaximumEvents);
+                result.calendarRevision = calendarEventsRevision_;
+                result.available = true;
+                setFreshness(timestampNow);
+            }
         }
     }
     else if (result.topic == "calendar.selectedDate")

@@ -345,8 +345,27 @@ void TestPerSubscriptionDelivery()
 }
 }
 
+void TestCalendarIdSubscription()
+{
+    WidgetDataBroker broker;std::string error;
+    Check(broker.RegisterProvider({"calendar.events","calendar.read",100ms,1000ms,0ms,false,true},error),"register calendar");
+    const auto now=WidgetDataBroker::Clock::now();
+    DataSubscriptionOptions options;options.eventId="event-1";options.permissionGranted=true;
+    const auto result=broker.Subscribe("countdown","calendar.events",options,now);
+    Check(static_cast<bool>(result),"ID subscription accepts a stable event ID");
+    const auto snapshots=broker.SubscriptionSnapshots("calendar.events");
+    Check(snapshots.size()==1 && snapshots[0].options.eventId=="event-1","ID reaches provider snapshot unchanged");
+    options.rangeStart="2026-01-01";options.rangeEnd="2026-01-31";
+    Check(!broker.Subscribe("countdown","calendar.events",options,now),"range and ID cannot be combined");
+    options.rangeStart.clear();options.rangeEnd.clear();options.eventId=std::string(129,'x');
+    Check(!broker.Subscribe("countdown","calendar.events",options,now),"oversized ID rejected");
+    Check(broker.SetPermission("countdown","calendar.read",false,now)==1,"ID subscription participates in permission revocation");
+    Check(!broker.ConsumeUpdateDue(result.id,now+1s),"revoked ID subscription cannot deliver data");
+}
+
 int main()
 {
+    TestCalendarIdSubscription();
     TestSnapshotFreshnessConfirmation();
     TestRegistrationAndSharedSampling();
     TestVisibilityAndIdleGrace();
