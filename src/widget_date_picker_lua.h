@@ -164,7 +164,7 @@ function self:view(options)
     end
     local children={view.row({key=key.."inputs",height=r,gap=r*0.25,children=fields}),
         view.row({key=key.."nav",height=r,gap=r*0.25,children=nav}),
-        view.grid({key=key.."grid",columns=7,height=r*7,gap=0,children=cells})}
+        view.grid({key=key.."grid",columns=7,height=r*7+r*0.12*6,gap=r*0.12,children=cells})}
     local err=self:validation()
     if err then children[#children+1]=text("error",err) end
     local footer={button("today",labels.today)}

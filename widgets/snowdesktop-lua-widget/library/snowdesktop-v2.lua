@@ -2480,3 +2480,27 @@ widgetId = ''
 ---@param options SnowDatePickerOptions
 ---@return SnowDatePicker
 function ui.datePicker(options) end
+
+---@class SnowTimeRange
+---@field startTime string HH:MM
+---@field endTime string HH:MM
+---@class SnowTimePickerOptions
+---@field key string
+---@field mode? 'single'|'range'
+---@field value? string|SnowTimeRange
+---@field minTime? string
+---@field maxTime? string
+---@field minuteStep? integer
+---@field allowClear? boolean
+---@field needConfirm? boolean
+---@field disabled? boolean
+---@class SnowTimePicker
+---@field view fun(self:SnowTimePicker, options?:{rowHeight?:number}):table
+---@field handle fun(self:SnowTimePicker, event:table):table|nil
+---@field value fun(self:SnowTimePicker):string|SnowTimeRange
+---@field draftValue fun(self:SnowTimePicker):string|SnowTimeRange
+---@field validation fun(self:SnowTimePicker):string|nil
+---@field setValue fun(self:SnowTimePicker, value:string|SnowTimeRange):boolean,string|nil
+---@param options SnowTimePickerOptions
+---@return SnowTimePicker
+function ui.timePicker(options) end

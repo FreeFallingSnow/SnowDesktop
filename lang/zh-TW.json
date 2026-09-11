@@ -1615,5 +1615,12 @@
     "app.widget.date_picker.weekday4": "三",
     "app.widget.date_picker.weekday5": "四",
     "app.widget.date_picker.weekday6": "五",
-    "app.widget.date_picker.weekday7": "六"
+    "app.widget.date_picker.weekday7": "六",
+    "app.widget.time_picker.time": "時間",
+    "app.widget.time_picker.startTime": "開始時間",
+    "app.widget.time_picker.endTime": "結束時間",
+    "app.widget.time_picker.hour": "小時",
+    "app.widget.time_picker.minute": "分鐘",
+    "app.widget.time_picker.invalid": "請輸入有效時間（HH:MM）",
+    "app.widget.time_picker.order": "結束時間不能早於開始時間"
 }

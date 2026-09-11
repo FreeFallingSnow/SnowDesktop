@@ -73,8 +73,8 @@ local function desktop(context,m)
                 number.width="auto";number.minWidth=number.fontSize*#value*0.72;number.flexShrink=0
                 local countRow=view.row({key="event.count",height=unit*0.38,gap=unit*0.025,
                     justifyContent="center",alignItems="end",children={number,suffix}})
-                children={title,state,countRow,date}
-            else children={title,number,date} end
+                children={title,date,state,countRow}
+            else children={title,date,number} end
         end
     end
     if status~="ready" then

@@ -1447,6 +1447,10 @@ struct WidgetsPagePresenter::Impl
         button.VerticalAlignment(mux::VerticalAlignment::Center);
         button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
         button.UseSystemFocusVisuals(true);
+        // Leave rasterization room for the trailing border of right-aligned
+        // compact buttons inside a ContentControl/Expander clip.
+        button.UseLayoutRounding(true);
+        button.Margin({0.0, 0.0, 2.0, 0.0});
         SetAutomation(button, text, help);
         return button;
     }

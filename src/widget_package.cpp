@@ -2085,6 +2085,7 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
     registry_.clear();
     permissionDecisions_.clear();
     developmentOverrides_.clear();
+    knownDevelopmentIds_.clear();
     steamSubscriptionsByAccount_.clear();
     std::error_code ec;
     if (!std::filesystem::exists(paths_.registry, ec)) return true;
@@ -2191,6 +2192,26 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
                 WidgetPackageValidator::IsUuid(value.string))
                 developmentOverrides_.insert(value.string);
     }
+    if (const JsonValue* known = root.Find("knownDevelopmentIds"); known && known->IsArray())
+    {
+        for (const auto& value : known->array)
+            if (value.IsString() && WidgetPackageValidator::IsUuid(value.string))
+                knownDevelopmentIds_.insert(value.string);
+    }
+    else
+    {
+        // Older registries did not distinguish untouched candidates from a
+        // deliberate opt-out. Preserve every existing candidate's selection.
+        std::error_code scanError;
+        for (std::filesystem::directory_iterator it(paths_.development, scanError), end;
+            !scanError && it != end; it.increment(scanError))
+        {
+            if (!it->is_directory(scanError) || HasReparsePoint(it->path())) continue;
+            PackageManifest manifest;
+            if (validator_.ValidateDirectory(it->path(), &manifest).Ok())
+                knownDevelopmentIds_.insert(manifest.id);
+        }
+    }
     if (const JsonValue* history = root.Find(
             "steamSubscriptionsByAccount");
         history && history->IsObject())
@@ -2255,6 +2276,14 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
         out << "\n    \"" << JsonEscape(developmentOverrides[i]) << '"';
     }
     if (!developmentOverrides.empty()) out << '\n';
+    out << "  ],\n  \"knownDevelopmentIds\": [";
+    std::vector<std::string> knownIds(knownDevelopmentIds_.begin(), knownDevelopmentIds_.end());
+    std::sort(knownIds.begin(), knownIds.end());
+    for (std::size_t i = 0; i < knownIds.size(); ++i)
+    {
+        if (i) out << ',';
+        out << '"' << JsonEscape(knownIds[i]) << '"';
+    }
     out << "  ],\n  \"permissionDecisions\": [";
     std::vector<const PermissionDecisionRecord*> decisions;
     decisions.reserve(permissionDecisions_.size());
@@ -2361,6 +2390,8 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
 
 bool WidgetPackageManager::Refresh(std::string& error)
 {
+    const auto previousKnown = knownDevelopmentIds_;
+    const auto previousOverrides = developmentOverrides_;
     packages_.clear();
     invalidPackages_.clear();
     enum class ExplicitDecisionResult
@@ -2480,6 +2511,8 @@ bool WidgetPackageManager::Refresh(std::string& error)
                     ec.clear();
                     continue;
                 }
+                if (development && knownDevelopmentIds_.insert(manifest.id).second)
+                    developmentOverrides_.insert(manifest.id);
                 InstalledPackage package;
                 package.manifest = std::move(manifest);
                 package.root = it->path();
@@ -2499,6 +2532,13 @@ bool WidgetPackageManager::Refresh(std::string& error)
                 package.active = builtin ||
                     developmentOverrides_.contains(package.manifest.id);
                 package.selected = package.active;
+                if (development && package.permissionState == PermissionDecisionState::LegacyImplicit &&
+                    !PermissionsRequiringConsent(DeclaredPermissions(package.manifest)).empty())
+                {
+                    package.permissionState = PermissionDecisionState::Pending;
+                    package.grantedPermissions.clear();
+                    package.grantedNetworkDomains.clear();
+                }
                 packages_.push_back(std::move(package));
                 continue;
             }
@@ -2581,8 +2621,14 @@ bool WidgetPackageManager::Refresh(std::string& error)
     scanRoot(paths_.installed, false, false);
     scanRoot(paths_.development, false, true);
 
-    // Development packages are inert candidates until the user explicitly
-    // activates an override for the shared package UUID.
+    if (knownDevelopmentIds_ != previousKnown && !SaveRegistry(error))
+    {
+        knownDevelopmentIds_ = previousKnown;
+        developmentOverrides_ = previousOverrides;
+        packages_.clear();
+        return false;
+    }
+    // Newly discovered projects become the active source; persisted opt-outs remain off.
     std::set<std::string> developmentIds;
     for (const auto& package : packages_)
         if (package.development && package.active)

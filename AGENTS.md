@@ -339,9 +339,10 @@
   构建，再运行
   `scripts/widget-dev.bat developer_assets/workshop_widgets/<slug> -Configuration <Configuration> -Once`，
   将组件镜像到该构建的 `data/widgets/dev/<slug>/`。新候选、来源从错误的内置组件切换为开发组件，
-  或宿主尚未重新发现该目录时，应追加 `-RestartHost`。同步成功只表示组件进入“开发中”候选；开发
-  包默认不激活，仍须在设置的组件开发入口明确启用“开发版本”，才能将它作为当前来源添加到桌面
-  或验证现有实例。未完成这一步时不得声称已进入运行时验证。
+  或宿主尚未重新发现该目录时，应追加 `-RestartHost`。同步成功后，新发现且验证通过的开发组件 UUID 默认激活为开发来源；
+  已保存的停用决定与旧注册表中的现存候选选择保持不变，具体迁移规则见
+  `docs/widget_development_defaults.md`。必须核对当前来源和权限状态后再交付实机验证；
+  仅同步或默认激活不等于桌面交互已验证。
 - CMake 的组件构建步骤使用覆盖式 `copy_directory`，不会删除输出目录中已经失去源码对应项的旧
   子目录，因此重新编译本身不能清掉误放过的内置组件。若 `widgets/<slug>/` 已不存在，但
   `.build/<Configuration>/widgets/<slug>/` 仍存在，应先核对二者的绝对路径和清单 UUID，只移走或删除

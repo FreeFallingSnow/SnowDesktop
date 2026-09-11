@@ -1245,7 +1245,9 @@ void TestPublicApiContract()
             serializedLibraries->array.size() == 20,
         "offline public API contract must expose versions and complete libraries");
 
-    Check(qualifiedNames.contains("ui.datePicker") &&
+    Check(qualifiedNames.contains("ui.timePicker") &&
+            snowdesktop::widget_api::SupportsFeature("ui.timePicker") &&
+            qualifiedNames.contains("ui.datePicker") &&
             snowdesktop::widget_api::SupportsFeature("ui.datePicker") &&
             snowdesktop::widget_api::SupportsFeature("data.calendar.events.byId"),
         "date picker and stable event subscriptions must be discoverable");

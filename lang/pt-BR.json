@@ -1615,5 +1615,12 @@
     "app.widget.date_picker.weekday4": "Qua",
     "app.widget.date_picker.weekday5": "Qui",
     "app.widget.date_picker.weekday6": "Sex",
-    "app.widget.date_picker.weekday7": "Sáb"
+    "app.widget.date_picker.weekday7": "Sáb",
+    "app.widget.time_picker.time": "Horário",
+    "app.widget.time_picker.startTime": "Horário inicial",
+    "app.widget.time_picker.endTime": "Horário final",
+    "app.widget.time_picker.hour": "Horas",
+    "app.widget.time_picker.minute": "Minutos",
+    "app.widget.time_picker.invalid": "Insira um horário válido (HH:MM)",
+    "app.widget.time_picker.order": "O horário final não pode ser anterior ao inicial"
 }

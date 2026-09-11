@@ -213,6 +213,7 @@ local function clearDraft(model)
     model.editorError = nil
     model.pendingPanelTask = nil
     model.datePicker = nil
+    model.timePicker = nil
 end
 
 local function openEditor(model)
@@ -576,7 +577,9 @@ local function panel(context, model)
             enabled=enabled~=false,action={id="agenda.panel",value=id},accessibility={label=label}})
     end
     local children={}
-    if model.datePicker then
+    if model.timePicker then
+        children={model.timePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
+    elseif model.datePicker then
         children={model.datePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
     else
         local title=storage.get(DRAFT_TITLE) or ""
@@ -604,6 +607,7 @@ local function panel(context, model)
         children[#children+1]=view.checkbox({key="agenda.allDay",label=l10n.tr("lua_widget.agenda.all_day"),checked=allDay,
             height=row,fontSize=row*0.46,style={foreground="textPrimary"},enabled=not busy,action={id="agenda.panel",value="toggleAllDay"}})
         if not allDay then
+            children[#children+1]=button("openTimePicker",l10n.tr("lua_widget.agenda.choose_time"),not busy)
             field(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"),not startMinutes and timeError or nil)
             field(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"),timeError)
         end
@@ -658,7 +662,12 @@ local function handlePanelAction(model, id)
         model.datePicker=ui.datePicker({key="agenda.date",value=storage.get(DRAFT_DATE) or "",
             todayDate=todayDate(),allowClear=false})
         widget.invalidate()
+    elseif id == "openTimePicker" then
+        model.timePicker=ui.timePicker({key="agenda.time",mode="range",allowClear=false,
+            value={startTime=storage.get(DRAFT_START) or "",endTime=storage.get(DRAFT_END) or ""}})
+        widget.invalidate()
     elseif id == "picker.back" then
+        model.timePicker=nil
         model.datePicker=nil
         widget.invalidate()
     elseif id == "cycleReminder" then
@@ -676,6 +685,16 @@ local function handlePanelAction(model, id)
 end
 
 local function event(_context, model, value)
+    if model.timePicker then
+        local result=model.timePicker:handle(value)
+        if result then
+            if result.changed then
+                storage.transaction(function(tx) tx:set(DRAFT_START,result.value.startTime);tx:set(DRAFT_END,result.value.endTime) end)
+                model.timePicker=nil
+            end
+            widget.invalidate();return
+        end
+    end
     if model.datePicker then
         local result=model.datePicker:handle(value)
         if result then

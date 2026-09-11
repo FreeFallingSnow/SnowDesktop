@@ -1615,5 +1615,12 @@
     "app.widget.date_picker.weekday4": "Mer",
     "app.widget.date_picker.weekday5": "Jeu",
     "app.widget.date_picker.weekday6": "Ven",
-    "app.widget.date_picker.weekday7": "Sam"
+    "app.widget.date_picker.weekday7": "Sam",
+    "app.widget.time_picker.time": "Heure",
+    "app.widget.time_picker.startTime": "Heure de début",
+    "app.widget.time_picker.endTime": "Heure de fin",
+    "app.widget.time_picker.hour": "Heures",
+    "app.widget.time_picker.minute": "Minutes",
+    "app.widget.time_picker.invalid": "Saisissez une heure valide (HH:MM)",
+    "app.widget.time_picker.order": "La fin ne doit pas précéder le début"
 }

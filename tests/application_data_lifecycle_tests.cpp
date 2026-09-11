@@ -1436,6 +1436,16 @@ int main()
             nestedResolved->root, nestedInstalled.root),
         "nested entry resolves back to the package root");
 
+    const auto legacyDevPaths = TestPaths(root / L"legacy-development-selection");
+    std::filesystem::create_directories(legacyDevPaths.builtin);
+    std::filesystem::copy(sourcePackage, legacyDevPaths.builtin / L"sample", std::filesystem::copy_options::recursive, ec);
+    std::filesystem::create_directories(legacyDevPaths.development);
+    std::filesystem::copy(sourcePackage, legacyDevPaths.development / L"sample", std::filesystem::copy_options::recursive, ec);
+    Write(legacyDevPaths.registry, R"({"schemaVersion":1,"packages":[],"developmentOverrides":[]})");
+    WidgetPackageManager legacyDevelopment(legacyDevPaths);
+    Expect(legacyDevelopment.Initialize(error) && legacyDevelopment.Resolve(manifest.id)->builtin,
+        "legacy inactive development candidates are not silently activated on upgrade");
+
     const auto managerPaths = TestPaths(root / L"manager");
     std::filesystem::create_directories(managerPaths.builtin);
     std::filesystem::copy(sourcePackage, managerPaths.builtin / L"package-test",
@@ -1446,10 +1456,14 @@ int main()
         std::filesystem::copy_options::recursive, ec);
     WidgetPackageManager manager(managerPaths);
     Expect(manager.Initialize(error), "package manager initializes");
-    Expect(manager.Resolve(manifest.id)->builtin &&
-            manager.Resolve(manifest.id)->permissionState ==
-                PermissionDecisionState::LegacyImplicit,
-        "a discovered development package is inactive by default");
+    Expect(manager.Resolve(manifest.id)->development &&
+            manager.Resolve(manifest.id)->permissionState == PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "new development source defaults active without granting sensitive permissions");
+    Expect(manager.SetDevelopmentOverride(manifest.id, false, error), "development source can opt out");
+    WidgetPackageManager optedOut(managerPaths);
+    Expect(optedOut.Initialize(error) && optedOut.Resolve(manifest.id)->builtin,
+        "explicit development opt-out survives a restart and rediscovery");
     Expect(manager.SetPermissionDecision(manifest.id,
             PermissionDecisionState::Granted, manifest.permissions,
             manifest.networkDomains, error) &&
@@ -1854,10 +1868,11 @@ int main()
             return package.development && package.manifest.id == manifest.id;
         });
     Expect(copiedDevelopment != developmentPackages.end() &&
-            !copiedDevelopment->active &&
+            copiedDevelopment->active &&
             developmentCopyManager.Resolve(manifest.id) &&
-            !developmentCopyManager.Resolve(manifest.id)->development,
-        "creating a development project keeps the installed version active");
+            developmentCopyManager.Resolve(manifest.id)->development &&
+            developmentCopyManager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "creating a development project selects its source without granting permissions");
     std::filesystem::path duplicateDevelopmentProject;
     error.clear();
     Expect(!developmentCopyManager.CreateDevelopmentProject(

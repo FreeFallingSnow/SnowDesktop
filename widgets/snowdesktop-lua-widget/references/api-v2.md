@@ -2835,3 +2835,11 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 
 新增组件需声明 `ui.datePicker`，并在对应宿主发布后再公开分发；缺少 capability 的同版本
 早期构建也不能视为兼容。已有 `view.monthCalendar` 与其事件结构不变。
+
+### `ui.timePicker` 时间与时间范围
+
+API/schema v2，最低宿主 1.0.6.0，要求 `ui.timePicker` capability。同版本早期构建缺少该 capability 时不可加载；依赖此 API 的社区组件须晚于支持它的宿主发布。
+
+`ui.timePicker(options)` 返回 `view({rowHeight?})`、`handle(event)`、`value()`、`draftValue()`、`validation()` 和 `setValue(value)`。在 setup 或打开面板时创建，在 panel 中返回其 view，在 event 中转发事件。`handle` 返回 nil 表示不属于它；`changed=true` 时读取返回的 `value`。只有校验通过并确认的输入才改变已提交值；取消面板可丢弃整个控制器。
+
+选项：`key`（必需，1–80 字节）、`mode`（single 默认或 range）、`value`（HH:MM，或 `{startTime,endTime}`）、`minTime/maxTime`（默认 00:00/23:59）、`minuteStep`（默认 1，1–30 的整数且整除 60）、`allowClear`（默认 true）、`needConfirm`（默认 true）、`disabled`。使用 24 小时本地墙上时间；不携带日期、时区或夏令时语义，不自动将逆序解释为跨午夜。范围两端包含边界，结束不得早于开始；小时/分钟下拉与手输共用校验。`setValue` 失败保留原值并返回 false/error。清空范围返回两个空字符串。

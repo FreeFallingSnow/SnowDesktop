@@ -1615,5 +1615,12 @@
     "app.widget.date_picker.weekday4": "Wed",
     "app.widget.date_picker.weekday5": "Thu",
     "app.widget.date_picker.weekday6": "Fri",
-    "app.widget.date_picker.weekday7": "Sat"
+    "app.widget.date_picker.weekday7": "Sat",
+    "app.widget.time_picker.time": "Time",
+    "app.widget.time_picker.startTime": "Start time",
+    "app.widget.time_picker.endTime": "End time",
+    "app.widget.time_picker.hour": "Hour",
+    "app.widget.time_picker.minute": "Minute",
+    "app.widget.time_picker.invalid": "Enter a valid time (HH:MM)",
+    "app.widget.time_picker.order": "End time must not precede start time"
 }

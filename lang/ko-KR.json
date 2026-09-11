@@ -1615,5 +1615,12 @@
     "app.widget.date_picker.weekday4": "수",
     "app.widget.date_picker.weekday5": "목",
     "app.widget.date_picker.weekday6": "금",
-    "app.widget.date_picker.weekday7": "토"
+    "app.widget.date_picker.weekday7": "토",
+    "app.widget.time_picker.time": "시간",
+    "app.widget.time_picker.startTime": "시작 시간",
+    "app.widget.time_picker.endTime": "종료 시간",
+    "app.widget.time_picker.hour": "시",
+    "app.widget.time_picker.minute": "분",
+    "app.widget.time_picker.invalid": "유효한 시간을 입력하세요(HH:MM)",
+    "app.widget.time_picker.order": "종료 시간은 시작 시간보다 빠를 수 없습니다"
 }

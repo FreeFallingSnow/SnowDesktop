@@ -12,6 +12,7 @@
 
 #include "widget_engine.h"
 #include "widget_date_picker_lua.h"
+#include "widget_time_picker_lua.h"
 #include "animation_settings.h"
 #include "performance_trace.h"
 #include "widget_logical_slot_manifest.h"
@@ -3927,6 +3928,25 @@ static int lua_InteractionSetScrollOffset(lua_State* state)
             requested, 0, 1'000'000)));
     lua_pushinteger(state, d2d->engine->RuntimeGetScrollOffset(
         BoundWidgetId(state), key));
+    return 1;
+}
+
+static int lua_UiTimePicker(lua_State* state)
+{
+    luaL_checktype(state, 1, LUA_TTABLE);
+    if (luaL_loadbuffer(state, kWidgetTimePickerLua, sizeof(kWidgetTimePickerLua)-1, "@host/ui.timePicker") != LUA_OK) return lua_error(state);
+    lua_pushvalue(state,1);
+    lua_newtable(state);
+    lua_pushstring(state, _L("app.widget.time_picker.time")); lua_setfield(state,-2,"time");
+    lua_pushstring(state, _L("app.widget.time_picker.startTime")); lua_setfield(state,-2,"startTime");
+    lua_pushstring(state, _L("app.widget.time_picker.endTime")); lua_setfield(state,-2,"endTime");
+    lua_pushstring(state, _L("app.widget.time_picker.hour")); lua_setfield(state,-2,"hour");
+    lua_pushstring(state, _L("app.widget.time_picker.minute")); lua_setfield(state,-2,"minute");
+    lua_pushstring(state, _L("app.widget.time_picker.invalid")); lua_setfield(state,-2,"invalid");
+    lua_pushstring(state, _L("app.widget.time_picker.order")); lua_setfield(state,-2,"order");
+    lua_pushstring(state, _L("app.widget.date_picker.clear")); lua_setfield(state,-2,"clear");
+    lua_pushstring(state, _L("app.widget.date_picker.confirm")); lua_setfield(state,-2,"confirm");
+    lua_call(state,2,1);
     return 1;
 }
 

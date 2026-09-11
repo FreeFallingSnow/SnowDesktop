@@ -1,5 +1,6 @@
 #include "widget_view_lua.h"
 #include "widget_date_picker_lua.h"
+#include "widget_time_picker_lua.h"
 #include "widget_view_tree.h"
 #include "widget_resource_lua.h"
 
@@ -4865,8 +4866,39 @@ void TestDatePickerController()
     lua_close(state);
 }
 
+void TestTimePickerController()
+{
+    lua_State* state=luaL_newstate();luaL_openlibs(state);RegisterViewLibrary(state);
+    Check(luaL_loadbuffer(state,kWidgetTimePickerLua,sizeof(kWidgetTimePickerLua)-1,"@host/ui.timePicker")==LUA_OK,"time picker loads");
+    lua_setglobal(state,"makeTimePicker");
+    const char* script=R"LUA(
+      local labels={time="Time",startTime="Start",endTime="End",hour="Hour",minute="Minute",invalid="Invalid",order="Order",clear="Clear",confirm="Confirm"}
+      local p=makeTimePicker({key="time",mode="range",value={startTime="09:00",endTime="10:00"},allowClear=false},labels)
+      local function send(id,text,selection) return p:handle({kind="action",id="time:"..id,text=text,selection=selection}) end
+      send("startTime","24:00");assert(p:validation() and not send("confirm").changed)
+      assert(p:value().startTime=="09:00")
+      send("startTime","09:30");send("endTime","09:29");assert(p:validation()=="Order")
+      send("endTime:h",nil,"23");send("endTime:m",nil,"59")
+      assert(send("confirm").value.endTime=="23:59")
+      send("startTime","00:00");assert(send("confirm").value.startTime=="00:00")
+      assert(not p:setValue({startTime="12:60",endTime="23:59"}))
+      local q=makeTimePicker({key="step",minuteStep=15,minTime="09:00",maxTime="18:00",value="09:00"},labels)
+      assert(not q:setValue("09:01"));assert(not q:setValue("18:15"));assert(q:setValue("12:45"))
+      local v=q:value();q:handle({kind="action",id="other:clear"});assert(q:value()==v)
+      local locked=makeTimePicker({key="locked",value="10:00",disabled=true},labels)
+      assert(not locked:handle({kind="action",id="locked:clear"}).changed and locked:draftValue()=="10:00")
+      return p:view({rowHeight=32})
+    )LUA";
+    if(luaL_dostring(state,script)!=LUA_OK){std::cerr<<lua_tostring(state,-1)<<'\n';Check(false,"time validation and confirmed selection");}
+    ViewNode root;std::string error;
+    Check(ParseLuaViewTree(state,-1,root,error),"time picker uses supported controls");
+    Check(ValidateAndLayoutViewTree(root,520,640,error),"time picker layout validates");
+    lua_close(state);
+}
+
 int main()
 {
+    TestTimePickerController();
     TestDatePickerController();
     TestLayoutAndRegions();
     TestValidationFailures();

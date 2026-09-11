@@ -1615,5 +1615,12 @@
     "app.widget.date_picker.weekday4": "水",
     "app.widget.date_picker.weekday5": "木",
     "app.widget.date_picker.weekday6": "金",
-    "app.widget.date_picker.weekday7": "土"
+    "app.widget.date_picker.weekday7": "土",
+    "app.widget.time_picker.time": "時刻",
+    "app.widget.time_picker.startTime": "開始時刻",
+    "app.widget.time_picker.endTime": "終了時刻",
+    "app.widget.time_picker.hour": "時",
+    "app.widget.time_picker.minute": "分",
+    "app.widget.time_picker.invalid": "有効な時刻を入力してください（HH:MM）",
+    "app.widget.time_picker.order": "終了時刻は開始時刻以降にしてください"
 }

@@ -431,6 +431,7 @@ private:
     std::unordered_map<std::string, PermissionDecisionRecord>
         permissionDecisions_;
     std::unordered_set<std::string> developmentOverrides_;
+    std::unordered_set<std::string> knownDevelopmentIds_;
     std::unordered_map<std::string, std::unordered_set<std::string>>
         steamSubscriptionsByAccount_;
 };
