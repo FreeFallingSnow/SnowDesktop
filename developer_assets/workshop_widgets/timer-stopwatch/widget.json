@@ -20,7 +20,7 @@
       "timer.start": "시작",
       "timer.invalid": "1초부터 99시간 59분 59초까지 입력하세요",
       "timer.pause": "일시정지",
-      "timer.custom": "직접 입력",
+      "timer.custom": "직접 설정",
       "timer.hint": "분 또는 분:초 입력 (예: 5, 1:30)",
       "timer.reset": "초기화",
       "timer.stopwatch": "스톱워치",
@@ -32,7 +32,9 @@
       "timer.ten": "10분",
       "timer.fifteen": "15분",
       "timer.twentyfive": "25분",
-      "timer.thirty": "30분"
+      "timer.thirty": "30분",
+      "timer.unit": "분",
+      "timer.settings": "설정"
     },
     "en-US": {
       "timer.resume": "Resume",
@@ -52,7 +54,9 @@
       "timer.ten": "10 min",
       "timer.fifteen": "15 min",
       "timer.twentyfive": "25 min",
-      "timer.thirty": "30 min"
+      "timer.thirty": "30 min",
+      "timer.unit": "MIN",
+      "timer.settings": "Settings"
     },
     "fr-FR": {
       "timer.resume": "Reprendre",
@@ -60,7 +64,7 @@
       "timer.start": "Démarrer",
       "timer.invalid": "Saisir de 1 seconde à 99 heures 59 minutes 59 secondes",
       "timer.pause": "Pause",
-      "timer.custom": "Saisir",
+      "timer.custom": "Au choix",
       "timer.hint": "Saisir des minutes ou mm:ss, par ex. 5 ou 1:30",
       "timer.reset": "Réinitialiser",
       "timer.stopwatch": "Chronomètre",
@@ -72,7 +76,9 @@
       "timer.ten": "10 min",
       "timer.fifteen": "15 min",
       "timer.twentyfive": "25 min",
-      "timer.thirty": "30 min"
+      "timer.thirty": "30 min",
+      "timer.unit": "MIN",
+      "timer.settings": "Paramètres"
     },
     "pt-BR": {
       "timer.resume": "Retomar",
@@ -80,7 +86,7 @@
       "timer.start": "Iniciar",
       "timer.invalid": "Digite de 1 segundo a 99 horas 59 minutos 59 segundos",
       "timer.pause": "Pausar",
-      "timer.custom": "Digitar",
+      "timer.custom": "Personalizar",
       "timer.hint": "Digite minutos ou mm:ss, por exemplo 5 ou 1:30",
       "timer.reset": "Reiniciar",
       "timer.stopwatch": "Cronômetro",
@@ -92,7 +98,9 @@
       "timer.ten": "10 min",
       "timer.fifteen": "15 min",
       "timer.twentyfive": "25 min",
-      "timer.thirty": "30 min"
+      "timer.thirty": "30 min",
+      "timer.unit": "MIN",
+      "timer.settings": "Configurações"
     },
     "de-DE": {
       "timer.resume": "Weiter",
@@ -100,7 +108,7 @@
       "timer.start": "Start",
       "timer.invalid": "1 Sekunde bis 99 Stunden 59 Minuten 59 Sekunden eingeben",
       "timer.pause": "Pause",
-      "timer.custom": "Eingabe",
+      "timer.custom": "Eigene Zeit",
       "timer.hint": "Minuten oder mm:ss eingeben, z. B. 5 oder 1:30",
       "timer.reset": "Zurücksetzen",
       "timer.stopwatch": "Stoppuhr",
@@ -112,7 +120,9 @@
       "timer.ten": "10 Min.",
       "timer.fifteen": "15 Min.",
       "timer.twentyfive": "25 Min.",
-      "timer.thirty": "30 Min."
+      "timer.thirty": "30 Min.",
+      "timer.unit": "MIN",
+      "timer.settings": "Einstellungen"
     },
     "zh-CN": {
       "timer.resume": "继续",
@@ -120,7 +130,7 @@
       "timer.start": "开始计时",
       "timer.invalid": "请输入 1 秒至 99 小时 59 分 59 秒",
       "timer.pause": "暂停",
-      "timer.custom": "输入",
+      "timer.custom": "自定义",
       "timer.hint": "输入分钟或 分:秒，例如 5 或 1:30",
       "timer.reset": "重置",
       "timer.stopwatch": "秒表",
@@ -132,7 +142,9 @@
       "timer.ten": "10 分",
       "timer.fifteen": "15 分",
       "timer.twentyfive": "25 分",
-      "timer.thirty": "30 分"
+      "timer.thirty": "30 分",
+      "timer.unit": "分钟",
+      "timer.settings": "设置"
     },
     "zh-TW": {
       "timer.resume": "繼續",
@@ -140,7 +152,7 @@
       "timer.start": "開始計時",
       "timer.invalid": "請輸入 1 秒至 99 小時 59 分 59 秒",
       "timer.pause": "暫停",
-      "timer.custom": "輸入",
+      "timer.custom": "自訂",
       "timer.hint": "輸入分鐘或 分:秒，例如 5 或 1:30",
       "timer.reset": "重設",
       "timer.stopwatch": "碼錶",
@@ -152,7 +164,9 @@
       "timer.ten": "10 分",
       "timer.fifteen": "15 分",
       "timer.twentyfive": "25 分",
-      "timer.thirty": "30 分"
+      "timer.thirty": "30 分",
+      "timer.unit": "分鐘",
+      "timer.settings": "設定"
     },
     "es-419": {
       "timer.resume": "Continuar",
@@ -160,7 +174,7 @@
       "timer.start": "Iniciar",
       "timer.invalid": "Ingresa de 1 segundo a 99 horas 59 minutos 59 segundos",
       "timer.pause": "Pausa",
-      "timer.custom": "Ingresar",
+      "timer.custom": "Personalizar",
       "timer.hint": "Ingresa minutos o mm:ss, por ejemplo 5 o 1:30",
       "timer.reset": "Reiniciar",
       "timer.stopwatch": "Cronómetro",
@@ -172,7 +186,9 @@
       "timer.ten": "10 min",
       "timer.fifteen": "15 min",
       "timer.twentyfive": "25 min",
-      "timer.thirty": "30 min"
+      "timer.thirty": "30 min",
+      "timer.unit": "MIN",
+      "timer.settings": "Configuración"
     },
     "es-ES": {
       "timer.resume": "Continuar",
@@ -180,7 +196,7 @@
       "timer.start": "Iniciar",
       "timer.invalid": "Introduce de 1 segundo a 99 horas 59 minutos 59 segundos",
       "timer.pause": "Pausa",
-      "timer.custom": "Introducir",
+      "timer.custom": "Personalizar",
       "timer.hint": "Introduce minutos o mm:ss, p. ej. 5 o 1:30",
       "timer.reset": "Reiniciar",
       "timer.stopwatch": "Cronómetro",
@@ -192,7 +208,9 @@
       "timer.ten": "10 min",
       "timer.fifteen": "15 min",
       "timer.twentyfive": "25 min",
-      "timer.thirty": "30 min"
+      "timer.thirty": "30 min",
+      "timer.unit": "MIN",
+      "timer.settings": "Ajustes"
     },
     "ja-JP": {
       "timer.resume": "再開",
@@ -200,7 +218,7 @@
       "timer.start": "開始",
       "timer.invalid": "1秒から99時間59分59秒まで入力してください",
       "timer.pause": "一時停止",
-      "timer.custom": "時間入力",
+      "timer.custom": "カスタム",
       "timer.hint": "分または 分:秒 を入力（例：5、1:30）",
       "timer.reset": "リセット",
       "timer.stopwatch": "ストップウォッチ",
@@ -212,22 +230,24 @@
       "timer.ten": "10分",
       "timer.fifteen": "15分",
       "timer.twentyfive": "25分",
-      "timer.thirty": "30分"
+      "timer.thirty": "30分",
+      "timer.unit": "分",
+      "timer.settings": "設定"
     }
   },
   "defaultSize": {
-    "rows": 2,
-    "columns": 3
+    "columns": 2,
+    "rows": 2
   },
   "previewData": {
     "variants": [
       {
-        "title": "3 × 2",
-        "id": "card",
         "size": {
-          "rows": 2,
-          "columns": 3
-        }
+          "columns": 2,
+          "rows": 2
+        },
+        "title": "2 × 2",
+        "id": "square"
       }
     ]
   },
@@ -244,7 +264,8 @@
     "schedule.basic",
     "schedule.visibility",
     "widget.panel",
-    "ui.semanticMetrics.rowUnit"
+    "ui.semanticMetrics.rowUnit",
+    "layout.relativeUnits"
   ],
   "optionalFeatures": [
     "task.start",
@@ -257,8 +278,8 @@
     "notification.post"
   ],
   "minSize": {
-    "rows": 2,
-    "columns": 3
+    "columns": 2,
+    "rows": 2
   },
   "preview": "workshop-preview.png"
 }
