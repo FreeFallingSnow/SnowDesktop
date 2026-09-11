@@ -75,7 +75,7 @@ local function desktop(context,m)
             number.bold=true;number.textAlign="center";number.overflowText="clip"
             local state=text("event.status",delta>0 and c.remaining or c.elapsed,unit*0.20,true)
             state.textAlign="end"
-            local date=text("event.date",item.date,unit*0.10,true);date.fontSize=unit*0.07;date.textAlign="center"
+            local date=text("event.date",item.date,unit*0.14,true);date.fontSize=title.fontSize;date.textAlign="center"
             local sideHeight=math.max(0,(h-pad*2-unit*0.38)/2)
             local heading=view.column({key="event.heading",height=sideHeight,gap=unit*0.015,
                 justifyContent="center",children={title}})
