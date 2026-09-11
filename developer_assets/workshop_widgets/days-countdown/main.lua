@@ -11,6 +11,7 @@ local function copyText()
         invalid_title=l10n.tr("countdown.invalid_title"),invalid_date=l10n.tr("countdown.invalid_date"),
         saving=l10n.tr("countdown.saving"),today=l10n.tr("countdown.today"),remaining=l10n.tr("countdown.remaining"),
         elapsed=l10n.tr("countdown.elapsed"),days=l10n.tr("countdown.days"),back=l10n.tr("countdown.back"),
+        page_previous=l10n.tr("countdown.page_previous"),page_next=l10n.tr("countdown.page_next"),
     }
 end
 local function today()
@@ -22,10 +23,12 @@ local function text(key,s,r,secondary)
         verticalAlign="center",overflowText="ellipsis",style={foreground=secondary and "textSecondary" or "textPrimary"}})
 end
 local function button(key,s,r,enabled)
-    return view.button({key=key,label=s,height=r,width="fill",fontSize=r*0.46,
+    return view.button({key=key,label=s,height=r,width="fill",fontSize=r*0.46,textAlign="center",
+        style={foreground="textPrimary",cornerRadius=r*0.12},
         action={id=key},enabled=enabled~=false,accessibility={label=s}})
 end
 local function browse(m,date)
+    m.page=1
     if m.browse then m.browse:unsubscribe() end
     m.first,m.last=logic.monthRange(date)
     m.browse=data.subscribe("calendar.events",{fromDate=m.first,toDate=m.last,whenHidden="pause",maxAgeMs=86400000})
@@ -113,15 +116,24 @@ local function panel(context,m)
         if not widget.hasPermission("calendar.read") then children[#children+1]=text("permission",c.permission,r,true)
         elseif not s or not s.available or not s.value then children[#children+1]=text("unavailable",c.unavailable,r,true)
         else
-            local count=0
+            local matches={}
             for _,item in ipairs(s.value.events or {}) do
                 if m.filter=="" or item.title:lower():find(m.filter:lower(),1,true) then
-                    count=count+1
-                    if count<=40 then children[#children+1]=button("bind:"..item.id,item.date.."  "..item.title,r) end
+                    matches[#matches+1]=item
                 end
             end
-            if count==0 then children[#children+1]=text("no.events",c.no_events,r,true) end
-            if s.value.truncated or count>40 then children[#children+1]=text("truncated",c.truncated,r,true) end
+            local pages=math.max(1,math.ceil(#matches/40))
+            m.page=math.max(1,math.min(m.page or 1,pages))
+            for i=(m.page-1)*40+1,math.min(m.page*40,#matches) do
+                local item=matches[i]
+                children[#children+1]=button("bind:"..item.id,item.date.."  "..item.title,r)
+            end
+            if #matches==0 then children[#children+1]=text("no.events",c.no_events,r,true) end
+            if pages>1 then children[#children+1]=view.row({key="pages",height=r,gap=r*0.25,children={
+                button("page.previous",c.page_previous,r,m.page>1),
+                text("page.number",tostring(m.page).." / "..tostring(pages),r,true),
+                button("page.next",c.page_next,r,m.page<pages)}}) end
+            if s.value.truncated then children[#children+1]=text("truncated",c.truncated,r,true) end
         end
         children[#children+1]=button("manage",c.back,r)
     else
@@ -162,7 +174,9 @@ local function event(context,m,e)
         elseif id=="unlink" then m.link:bind("")
         elseif id=="title" then m.title=e.text or m.title
         elseif id=="date" then m.date=e.text or m.date
-        elseif id=="filter" then m.filter=e.text or m.filter
+        elseif id=="filter" then m.filter=e.text or m.filter;m.page=1
+        elseif id=="page.previous" then m.page=math.max(1,(m.page or 1)-1)
+        elseif id=="page.next" then m.page=(m.page or 1)+1
         elseif id=="picker.back" then m.picker=nil
         elseif id=="pick.create" or id=="pick.month" then
             m.pickerTarget=id=="pick.month" and "month" or "create"

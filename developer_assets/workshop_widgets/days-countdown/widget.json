@@ -42,7 +42,9 @@
       "countdown.invalid_date": "日期格式无效",
       "countdown.save_failed": "保存失败",
       "countdown.previous": "上个月",
-      "countdown.next": "下个月"
+      "countdown.next": "下个月",
+      "countdown.page_previous": "上一页",
+      "countdown.page_next": "下一页"
     },
     "zh-TW": {
       "countdown.name": "倒數日",
@@ -72,7 +74,9 @@
       "countdown.invalid_date": "日期格式無效",
       "countdown.save_failed": "儲存失敗",
       "countdown.previous": "上個月",
-      "countdown.next": "下個月"
+      "countdown.next": "下個月",
+      "countdown.page_previous": "上一頁",
+      "countdown.page_next": "下一頁"
     },
     "en-US": {
       "countdown.name": "Days Countdown",
@@ -102,7 +106,9 @@
       "countdown.invalid_date": "Invalid date",
       "countdown.save_failed": "Could Not Save",
       "countdown.previous": "Previous",
-      "countdown.next": "Next"
+      "countdown.next": "Next",
+      "countdown.page_previous": "Previous page",
+      "countdown.page_next": "Next page"
     },
     "ja-JP": {
       "countdown.name": "カウントダウン",
@@ -132,7 +138,9 @@
       "countdown.invalid_date": "無効な日付です",
       "countdown.save_failed": "保存できませんでした",
       "countdown.previous": "前月",
-      "countdown.next": "翌月"
+      "countdown.next": "翌月",
+      "countdown.page_previous": "前のページ",
+      "countdown.page_next": "次のページ"
     },
     "ko-KR": {
       "countdown.name": "디데이",
@@ -162,7 +170,9 @@
       "countdown.invalid_date": "잘못된 날짜",
       "countdown.save_failed": "저장할 수 없습니다.",
       "countdown.previous": "이전 달",
-      "countdown.next": "다음 달"
+      "countdown.next": "다음 달",
+      "countdown.page_previous": "이전 페이지",
+      "countdown.page_next": "다음 페이지"
     },
     "de-DE": {
       "countdown.name": "Tage zählen",
@@ -192,7 +202,9 @@
       "countdown.invalid_date": "Ungültiges Datum",
       "countdown.save_failed": "Speichern nicht möglich",
       "countdown.previous": "Zurück",
-      "countdown.next": "Weiter"
+      "countdown.next": "Weiter",
+      "countdown.page_previous": "Vorherige Seite",
+      "countdown.page_next": "Nächste Seite"
     },
     "fr-FR": {
       "countdown.name": "Compte à rebours",
@@ -222,7 +234,9 @@
       "countdown.invalid_date": "Date invalide",
       "countdown.save_failed": "Impossible d'enregistrer",
       "countdown.previous": "Précédent",
-      "countdown.next": "Suivant"
+      "countdown.next": "Suivant",
+      "countdown.page_previous": "Page précédente",
+      "countdown.page_next": "Page suivante"
     },
     "es-ES": {
       "countdown.name": "Cuenta atrás",
@@ -252,7 +266,9 @@
       "countdown.invalid_date": "Fecha no válida",
       "countdown.save_failed": "No se pudo guardar",
       "countdown.previous": "Anterior",
-      "countdown.next": "Siguiente"
+      "countdown.next": "Siguiente",
+      "countdown.page_previous": "Página anterior",
+      "countdown.page_next": "Página siguiente"
     },
     "es-419": {
       "countdown.name": "Cuenta regresiva",
@@ -282,7 +298,9 @@
       "countdown.invalid_date": "Fecha no válida",
       "countdown.save_failed": "No se pudo guardar",
       "countdown.previous": "Anterior",
-      "countdown.next": "Siguiente"
+      "countdown.next": "Siguiente",
+      "countdown.page_previous": "Página anterior",
+      "countdown.page_next": "Página siguiente"
     },
     "pt-BR": {
       "countdown.name": "Contagem de dias",
@@ -312,7 +330,9 @@
       "countdown.invalid_date": "Data inválida",
       "countdown.save_failed": "Não foi possível salvar",
       "countdown.previous": "Anterior",
-      "countdown.next": "Próximo"
+      "countdown.next": "Próximo",
+      "countdown.page_previous": "Página anterior",
+      "countdown.page_next": "Próxima página"
     }
   },
   "defaultSize": {
@@ -372,5 +392,6 @@
   ],
   "optionalPermissions": [
     "calendar.write"
-  ]
+  ],
+  "preview": "workshop-preview.png"
 }

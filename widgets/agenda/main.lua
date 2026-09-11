@@ -571,7 +571,8 @@ local function panel(context, model)
     local row=ui.metrics().layoutRowHeight
     local busy=model.pendingPanelTask~=nil
     local function button(id,label,enabled)
-        return view.button({key="agenda."..id,label=label,width="fill",height=row,fontSize=row*0.46,
+        return view.button({key="agenda."..id,label=label,width="fill",height=row,fontSize=row*0.46,textAlign="center",
+            style={foreground="textPrimary",cornerRadius=row*0.12},
             enabled=enabled~=false,action={id="agenda.panel",value=id},accessibility={label=label}})
     end
     local children={}
@@ -601,7 +602,7 @@ local function panel(context, model)
         field(DRAFT_DATE,date,l10n.tr("lua_widget.agenda.date"),dateError)
         children[#children+1]=button("openDatePicker",l10n.tr("lua_widget.agenda.choose_date"),not busy)
         children[#children+1]=view.checkbox({key="agenda.allDay",label=l10n.tr("lua_widget.agenda.all_day"),checked=allDay,
-            height=row,fontSize=row*0.46,enabled=not busy,action={id="agenda.panel",value="toggleAllDay"}})
+            height=row,fontSize=row*0.46,style={foreground="textPrimary"},enabled=not busy,action={id="agenda.panel",value="toggleAllDay"}})
         if not allDay then
             field(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"),not startMinutes and timeError or nil)
             field(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"),timeError)
