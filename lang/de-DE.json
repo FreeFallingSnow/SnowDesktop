@@ -1628,5 +1628,7 @@
     "app.widget.time_picker.hour": "Stunde",
     "app.widget.time_picker.minute": "Minute",
     "app.widget.time_picker.invalid": "Gültige Uhrzeit eingeben (HH:MM)",
-    "app.widget.time_picker.order": "Die Endzeit darf nicht vor der Startzeit liegen"
+    "app.widget.time_picker.order": "Die Endzeit darf nicht vor der Startzeit liegen",
+    "app.widget.duration_picker.second": "Sekunde",
+    "app.widget.duration_picker.invalid": "Geben Sie eine gültige Dauer im zulässigen Bereich ein"
 }

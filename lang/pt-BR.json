@@ -1628,5 +1628,7 @@
     "app.widget.time_picker.hour": "Horas",
     "app.widget.time_picker.minute": "Minutos",
     "app.widget.time_picker.invalid": "Insira um horário válido (HH:MM)",
-    "app.widget.time_picker.order": "O horário final não pode ser anterior ao inicial"
+    "app.widget.time_picker.order": "O horário final não pode ser anterior ao inicial",
+    "app.widget.duration_picker.second": "Segundo",
+    "app.widget.duration_picker.invalid": "Digite uma duração válida dentro do intervalo permitido"
 }

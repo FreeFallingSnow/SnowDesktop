@@ -1246,6 +1246,8 @@ void TestPublicApiContract()
         "offline public API contract must expose versions and complete libraries");
 
     Check(qualifiedNames.contains("ui.timePicker") &&
+            qualifiedNames.contains("ui.durationPicker") &&
+            snowdesktop::widget_api::SupportsFeature("ui.durationPicker") &&
             snowdesktop::widget_api::SupportsFeature("ui.timePicker") &&
             qualifiedNames.contains("ui.datePicker") &&
             snowdesktop::widget_api::SupportsFeature("ui.datePicker") &&

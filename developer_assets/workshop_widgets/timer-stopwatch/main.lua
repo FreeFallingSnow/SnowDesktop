@@ -92,6 +92,15 @@ end
 local function panel(_,m)
     local c=copy()
     local r=ui.metrics().layoutRowHeight
+    if m.picker then
+        return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.5,children={
+            m.picker:view({rowHeight=r}),
+            view.button({key="custom.start",label=c.start,width="fill",height=r,flexShrink=0,fontSize=r*0.46,bold=true,
+                enabled=not m.picker:validation() and not m.countdown.running,
+                padding={horizontal=r*0.3,vertical=0},textAlign="center",action={id="custom.start"},
+                style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
+                hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})}})
+    end
     return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.5,children={
         view.text({key="hint",text=m.error and c.invalid or c.hint,width="fill",height=r*1.5,flexShrink=0,
             fontSize=r*0.46,textWrap="wrap",verticalAlign="start",style={foreground="textPrimary"}}),
@@ -118,14 +127,30 @@ local function event(_,m,e)
     end
     if e.kind=="action" then
         local id=e.id
+        if m.picker then
+            local result=m.picker:handle(e)
+            if result then
+                if id=="timer.duration:confirm" and result.value then id="custom.start"
+                else widget.invalidate();return end
+            end
+        end
         if id=="mode.countdown" or id=="mode.stopwatch" then m.mode=id:sub(6);storage.set("mode",m.mode)
         elseif id=="settings" then widget.openSettings()
         elseif id=="custom" then
-            m.error=false;widget.openPanel({title=copy().custom,width=420,height=220})
+            m.error=false;m.picker=nil
+            if widget.hasFeature("ui.durationPicker") then
+                m.picker=ui.durationPicker({key="timer.duration",value=(logic.parse(m.draft) or 300000)/1000,
+                    minSeconds=1,maxSeconds=359999,needConfirm=false})
+            end
+            widget.openPanel({title=copy().custom,width=420,height=220})
         elseif id=="duration" then m.draft=e.text or m.draft;m.error=false
         elseif id=="custom.start" then
-            local duration=logic.parse(m.draft)
+            local duration
+            if m.picker then
+                if not m.picker:validation() then duration=m.picker:draftValue()*1000 end
+            else duration=logic.parse(m.draft) end
             if duration and not m.countdown.running then
+                m.draft=string.format("%d:%02d",math.floor(duration/60000),math.floor(duration/1000)%60)
                 storage.set("duration",m.draft);startCountdown(m,duration);widget.closePanel()
             else m.error=true end
         elseif id=="preset.1" or id=="preset.2" or id=="preset.3" or id=="preset.5" then

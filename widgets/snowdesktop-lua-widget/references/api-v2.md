@@ -2851,3 +2851,51 @@ API/schema v2，最低宿主 1.0.6.0，要求 `ui.timePicker` capability。同�
 `ui.timePicker(options)` 返回 `view({rowHeight?})`、`handle(event)`、`value()`、`draftValue()`、`validation()` 和 `setValue(value)`。在 setup 或打开面板时创建，在 panel 中返回其 view，在 event 中转发事件。`handle` 返回 nil 表示不属于它；`changed=true` 时读取返回的 `value`。只有校验通过并确认的输入才改变已提交值；取消面板可丢弃整个控制器。
 
 选项：`key`（必需，1–80 字节）、`mode`（single 默认或 range）、`value`（HH:MM，或 `{startTime,endTime}`）、`minTime/maxTime`（默认 00:00/23:59）、`minuteStep`（默认 1，1–30 的整数且整除 60）、`allowClear`（默认 true）、`needConfirm`（默认 true）、`disabled`。使用 24 小时本地墙上时间；不携带日期、时区或夏令时语义，不自动将逆序解释为跨午夜。范围两端包含边界，结束不得早于开始；小时/分钟下拉与手输共用校验。`setValue` 失败保留原值并返回 false/error。清空范围返回两个空字符串。
+
+### `ui.durationPicker` 时长选择器
+
+API v2 新增 capability `ui.durationPicker`，与 `ui.timePicker` 的一天内时刻语义独立。
+使用宿主本地化的小时、分钟、秒三个数值输入框，复用已有输入、焦点、步进和无障碍路径。
+需要 `view.inputControls`、`view.theme.tokens`。不改变既有接口或 API/schema 版本。
+
+`ui.durationPicker({key, value?, minSeconds?, maxSeconds?, needConfirm?, disabled?, readOnly?})`
+在 setup 或打开面板的事件中创建，不能在 view 回调内反复重建。`key` 长度 1–80 字节，
+不同控制器应使用互不冲突的 key；内部事件使用 `key:hours/minutes/seconds/confirm`。
+`value` 和边界都以**整数总秒数**表示，边界包含端点，默认 `0..359999`（99:59:59）。
+初值默认等于最小值；非法参数或初值抛出错误。分钟和秒字段范围为 0–59，小时为 0–99，
+不会把 60 秒静默转换或把超范围值静默截断。
+
+返回控制器：
+
+- `view({rowHeight?})`：返回可用于 panel、dialog 或 desktop 的宿主声明式树；默认行高来自
+  `ui.metrics().layoutRowHeight`，自定义行高须为 `(0,512]` 内的有限值。
+- `handle(event)`：转发事件，非本控制器事件返回 nil；已处理事件返回
+  `{handled=true, changed=false|true, value?}`。仅有效提交返回总秒数 `value`，即使值未变化。
+- `value()`：最后提交的总秒数。默认显示确认按钮，确认或输入框 Enter 提交。
+  `needConfirm=false` 隐藏内部确认按钮，每次有效编辑立即提交。
+- `draftValue()`：草稿总秒数；字段无效时返回 nil，字段有效但总值越界时仍可能返回越界值，
+  所以消费草稿前必须检查 `validation()`。
+- `validation()`：有效时返回 nil，否则返回宿主本地化错误；错误输入不会提交先前的值。
+- `setValue(seconds)`：更新草稿和已提交值；非法值返回 `false,error` 且保留原状态。
+
+`disabled` 和 `readOnly` 阻止用户编辑与提交；`setValue` 仍允许调用方程序化更新。
+取消面板时可丢弃整个控制器，下次打开从持久值创建。不要把 `value()` 的旧有效值当作当前
+无效草稿的确认结果。带自定义“开始”按钮的面板可以使用 `needConfirm=false`，点击开始时
+检查 `validation()`，再读取 `draftValue()`。
+
+```lua
+-- panel-open event
+model.duration = ui.durationPicker({key="duration", value=300,
+    minSeconds=1, maxSeconds=359999, needConfirm=false})
+-- panel callback: include model.duration:view() in the children
+-- event callback: forward model.duration:handle(event), then invalidate
+-- start action
+if not model.duration:validation() then
+    local milliseconds = model.duration:draftValue() * 1000
+end
+```
+
+兼容与发布：此接口进入 1.0.6.0 开发版本；同版本早期构建不一定提供它，不能仅检查版本号。
+必须声明并探测 capability。官方计时器将其声明为 optional，并在缺少时回退到原有分钟／分:秒
+文本输入。因此组件在旧宿主和同版本早期构建仍可运行。若其他组件将它声明为 required，
+则必须等支持该接口的宿主发布后再发布组件；缺少 capability 时宿主应拒绝加载。

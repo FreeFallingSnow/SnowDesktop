@@ -1,6 +1,7 @@
 #include "widget_view_lua.h"
 #include "widget_date_picker_lua.h"
 #include "widget_time_picker_lua.h"
+#include "widget_duration_picker_lua.h"
 #include "widget_view_tree.h"
 #include "widget_surface_theme.h"
 #include "widget_button_fill.h"
@@ -4902,6 +4903,59 @@ void TestTimePickerController()
     lua_close(state);
 }
 
+void TestDurationPickerController()
+{
+    // Exercise the shipped controller and parse its real control tree. Only
+    // OS input delivery and translated labels are substituted here.
+    lua_State* state=luaL_newstate();luaL_openlibs(state);RegisterViewLibrary(state);
+    Check(luaL_loadbuffer(state,kWidgetDurationPickerLua,sizeof(kWidgetDurationPickerLua)-1,
+        "@host/ui.durationPicker")==LUA_OK,"duration picker loads");
+    lua_setglobal(state,"makeDurationPicker");
+    const char* script=R"LUA(
+        local labels={hours="Hours",minutes="Minutes",seconds="Seconds",invalid="Invalid",confirm="Confirm"}
+        local p=makeDurationPicker({key="duration",value=300,minSeconds=1},labels)
+        local function send(id,n,valid)
+            return p:handle({kind="action",id="duration:"..id,controlValue=n,numberValid=valid})
+        end
+        assert(p:value()==300 and p:draftValue()==300)
+        send("hours",1,true);send("minutes",2,true);send("seconds",3,true)
+        assert(p:draftValue()==3723 and p:value()==300)
+        assert(send("confirm").changed and p:value()==3723)
+        -- Empty, fractional and out-of-range edits must never submit the old value.
+        for _,v in ipairs({-1,60,1.5,math.huge}) do
+            send("seconds",v,true)
+            assert(p:validation() and p:draftValue()==nil)
+            assert(not send("confirm").changed and p:value()==3723)
+        end
+        send("seconds",0,false);assert(p:validation() and not send("confirm").changed)
+        send("seconds",59,true);assert(not p:validation() and send("confirm").value==3779)
+        assert(not p:setValue(360000) and p:value()==3779)
+        assert(p:setValue(359999) and p:draftValue()==359999)
+        assert(not p:setValue(0) and p:value()==359999)
+        assert(p:handle({kind="action",id="other:confirm"})==nil)
+        assert(p:handle({kind="action",id="duration:unrelated"})==nil)
+        local limited=makeDurationPicker({key="limited",minSeconds=30,maxSeconds=90,value=60,needConfirm=false},labels)
+        assert(not limited:handle({kind="action",id="limited:minutes",numberValid=true,controlValue=2}).changed)
+        assert(limited:value()==60 and limited:validation())
+        assert(limited:handle({kind="action",id="limited:minutes",numberValid=true,controlValue=0}).changed==false)
+        assert(limited:handle({kind="action",id="limited:seconds",numberValid=true,controlValue=45}).value==45)
+        for _,flag in ipairs({"disabled","readOnly"}) do
+            local o={key="locked",value=60};o[flag]=true
+            local locked=makeDurationPicker(o,labels)
+            assert(not locked:handle({kind="action",id="locked:minutes",numberValid=true,controlValue=2}).changed)
+            assert(locked:draftValue()==60 and locked:value()==60)
+        end
+        assert(not pcall(makeDurationPicker,{key="bad",minSeconds=90,maxSeconds=30},labels))
+        assert(not pcall(makeDurationPicker,{key="bad",value=1.5},labels))
+        return p:view({rowHeight=32})
+    )LUA";
+    if(luaL_dostring(state,script)!=LUA_OK){std::cerr<<lua_tostring(state,-1)<<'\n';Check(false,"duration drafts, bounds and commits");}
+    ViewNode root;std::string error;
+    Check(ParseLuaViewTree(state,-1,root,error),"duration picker uses supported controls");
+    Check(ValidateAndLayoutViewTree(root,360,220,error),"duration picker layout validates");
+    lua_close(state);
+}
+
 void TestSurfaceThemeRouting()
 {
     LuaWidgetTheme desktop, popup;
@@ -4970,6 +5024,7 @@ int main()
     TestSurfaceThemeRouting();
     TestScrollPageRestoration();
     TestTimePickerController();
+    TestDurationPickerController();
     TestDatePickerController();
     TestLayoutAndRegions();
     TestValidationFailures();

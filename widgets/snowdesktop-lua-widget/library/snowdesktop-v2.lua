@@ -2482,6 +2482,31 @@ widgetId = ''
 ---@return SnowDatePicker
 function ui.datePicker(options) end
 
+---@class SnowDurationPickerOptions
+---@field key string Stable instance key, 1-80 bytes; create once in setup or panel-open event.
+---@field value? integer Initial total seconds; defaults to minSeconds and must be in range.
+---@field minSeconds? integer Inclusive minimum, 0..359999; defaults to 0.
+---@field maxSeconds? integer Inclusive maximum, minSeconds..359999; defaults to 359999 (99:59:59).
+---@field needConfirm? boolean Defaults to true; false commits each valid edit.
+---@field disabled? boolean Disables editing and user commits.
+---@field readOnly? boolean Keeps inputs focusable but prevents editing and user commits.
+---@class SnowDurationPickerResult
+---@field handled boolean True for owned actions; unrelated actions return nil.
+---@field changed boolean True only when a valid commit changes total seconds.
+---@field value? integer Valid committed total seconds; also returned on unchanged confirmation.
+---@class SnowDurationPicker
+---@field view fun(self: SnowDurationPicker, options?: {rowHeight?: number}): SnowViewNode Host-localized hour/minute/second inputs; rowHeight defaults to ui.metrics().layoutRowHeight.
+---@field handle fun(self: SnowDurationPicker, event: SnowWidgetEvent): SnowDurationPickerResult? Forward action events.
+---@field value fun(self: SnowDurationPicker): integer Last valid committed total seconds.
+---@field draftValue fun(self: SnowDurationPicker): integer? Draft total seconds; nil while an individual field is invalid. May be outside total bounds: check validation before use.
+---@field validation fun(self: SnowDurationPicker): string? Localized error; nil if draft is valid.
+---@field setValue fun(self: SnowDurationPicker, value: integer): boolean, string? Replace draft and committed seconds; invalid values leave both unchanged.
+---Requires ui.durationPicker and existing view.inputControls/view.theme.tokens capabilities.
+---Additive API v2; probe capability on older hosts, including early 1.0.6.0 builds.
+---@param options SnowDurationPickerOptions
+---@return SnowDurationPicker
+function ui.durationPicker(options) end
+
 ---@class SnowTimeRange
 ---@field startTime string HH:MM
 ---@field endTime string HH:MM

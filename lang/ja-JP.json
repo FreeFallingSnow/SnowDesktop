@@ -1628,5 +1628,7 @@
     "app.widget.time_picker.hour": "時",
     "app.widget.time_picker.minute": "分",
     "app.widget.time_picker.invalid": "有効な時刻を入力してください（HH:MM）",
-    "app.widget.time_picker.order": "終了時刻は開始時刻以降にしてください"
+    "app.widget.time_picker.order": "終了時刻は開始時刻以降にしてください",
+    "app.widget.duration_picker.second": "秒",
+    "app.widget.duration_picker.invalid": "許容範囲内の有効な時間を入力してください"
 }
