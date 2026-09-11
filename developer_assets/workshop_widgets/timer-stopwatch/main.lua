@@ -76,12 +76,13 @@ local function desktop(_,m)
             children={icon("toggle",0xF04B,c.start,size,true)}})
     else
         local valueHeight=side*0.30
+        local valueFont=math.min(side*0.19,width/5.1)
         -- Explicit spacers keep the header and time fixed without flex compression.
         local actionGap=gap
         gap=0
         children[#children+1]=view.spacer({key="time.top",width="fill",height=h/2-topPad-header-valueHeight/2,flexShrink=0})
         children[#children+1]=view.text({key="value",text=t.done and c.done or logic.format(logic.value(t,time.monotonic(),cd),cd),
-            width="fill",height=valueHeight,flexShrink=0,fontSize=math.min(side*0.19,width/5.1),textAlign="center",verticalAlign="center",
+            width="fill",height=valueHeight,flexShrink=0,fontSize=valueFont,padding={bottom=valueFont*0.16},textAlign="center",verticalAlign="center",
             overflowText="clip",style={foreground="textPrimary"}})
         local actions={}
         local size=side*0.25
