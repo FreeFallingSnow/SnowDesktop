@@ -67,12 +67,15 @@ local function desktop(context,m)
             local date=text("event.date",item.date,unit*0.10,true);date.fontSize=unit*0.07;date.textAlign="center"
             if delta~=0 then
                 local suffix=text("event.unit",c.days,unit*0.20,true)
-                suffix.width="auto";suffix.fontSize=unit*0.08
-                suffix.minWidth=unit*0.08*#c.days*0.65
-                number.fontSize=math.min(unit*0.34,(w-pad*2-suffix.minWidth)/(#value+1))
+                suffix.fontSize=unit*0.08
+                local unitCharacters=#(c.days:gsub("[\128-\191]",""))
+                suffix.minWidth=unit*0.08*math.max(1.1,unitCharacters*0.65)
+                suffix.width=suffix.minWidth;suffix.flexShrink=0
+                number.fontSize=math.min(unit*0.34,(w-pad*2-suffix.minWidth*2-unit*0.05)/(#value+1))
                 number.width="auto";number.minWidth=number.fontSize*#value*0.72;number.flexShrink=0
                 local countRow=view.row({key="event.count",height=unit*0.38,gap=unit*0.025,
-                    justifyContent="center",alignItems="end",children={number,suffix}})
+                    justifyContent="center",alignItems="end",children={
+                        view.spacer({key="event.balance",width=suffix.minWidth,flexShrink=0}),number,suffix}})
                 children={title,date,state,countRow}
             else children={title,date,number} end
         end
