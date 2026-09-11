@@ -931,6 +931,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_SYSKEYDOWN:
     {
+        if (wp == VK_RETURN && OnKeyDown(wp,
+                (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0))
+            return 0;
         using snowdesktop::desktop_keyboard_rules::AltF4Action;
         const AltF4Action altF4Action =
             snowdesktop::desktop_keyboard_rules::ResolveAltF4Action(

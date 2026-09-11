@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../page_navigation_rules.h"
+#include "../desktop_keyboard_rules.h"
 
 // Top-level keyboard command dispatch.
 
@@ -137,6 +138,9 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return true;
                 }
+                // Unhandled edit shortcuts must not affect desktop files.
+                if (key != VK_RETURN && key != VK_UP && key != VK_DOWN)
+                    return false;
                 break;
             }
         }
@@ -317,12 +321,49 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     }
 
     bool handled = false;
+    if (widgetEngine_ && widgetEngine_->HasFocusedHostInput()) return false;
+    if (dragSession_.IsActive() && key != VK_ESCAPE) return false;
+    const bool win = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 ||
+        (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+    const bool insertPaste = key == VK_INSERT && shift && !ctrl && !alt && !win;
+    key = snowdesktop::desktop_keyboard_rules::NormalizeFileCommandKey(
+        static_cast<UINT>(key), ctrl, shift, alt, win);
+    if (insertPaste) { ctrl = true; shift = false; }
+    // Alt/Win combinations belong to the system or focused component.
+    if (win || (alt && key != VK_RETURN)) return false;
     switch (key)
     {
+    case 'N':
+        if (!ctrl || !shift) break;
+        handled = true;
+        restoreFloatingDockLayer = true;
+        if (!repeated)
+        {
+            std::wstring directory;
+            if (dockFolderPopupOpen_ && dockFolderPopupAvailable_)
+                directory = dockFolderPopupWidget_.sourceFolderPath;
+            else
+            {
+                const size_t target = FindFolderMappingShortcutTarget();
+                if (target < widgets_.size()) directory = widgets_[target].sourceFolderPath;
+                else
+                {
+                    wchar_t desktopPath[MAX_PATH]{};
+                    if (SHGetSpecialFolderPathW(nullptr, desktopPath,
+                            CSIDL_DESKTOPDIRECTORY, FALSE)) directory = desktopPath;
+                }
+            }
+            if (!directory.empty())
+            {
+                POINT point = lastMousePoint_;
+                ClientToScreen(hwnd_, &point);
+                ShowNewMenuAndInvoke(point, directory, true);
+                RequestShellRefresh();
+            }
+        }
+        break;
     case VK_F2:
-    case 'R':
-        if (key == 'R' && !ctrl) break;
-        if (key == VK_F2 || ctrl)
+        if (!ctrl && !shift)
         {
             BeginRenameSelected();
             handled = true;
@@ -335,6 +376,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         break;
     case VK_DELETE:
     {
+        if (repeated) return true;
         handled = true;
         restoreFloatingDockLayer = true;
         if (DockContainer* dock = GetDockContainer())
@@ -393,6 +435,20 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (!ctrl) break;
         handled = true;
         restoreFloatingDockLayer = true;
+        if (shift)
+        {
+            auto paths = GetSelectedFolderEntryPaths();
+            if (paths.empty())
+                for (const auto& item : items_)
+                {
+                    if (!item.selected || !item.desktopIconClsid.empty()) continue;
+                    wchar_t path[MAX_PATH]{};
+                    if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
+                        paths.emplace_back(path);
+                }
+            if (!paths.empty()) CopyPathsToClipboard(paths);
+            break;
+        }
         if (CopyCutSelectedFolderEntries(false))
             break;
         InvokeSelectedShellVerb("copy");
@@ -577,6 +633,14 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_RETURN:
         handled = true;
         restoreFloatingDockLayer = true;
+        if (alt)
+        {
+            if (ctrl || shift || repeated) break;
+            const auto paths = GetSelectedFolderEntryPaths();
+            if (paths.size() == 1) ShowPathProperties(paths.front());
+            else if (paths.empty()) InvokeSelectedShellVerb("properties");
+            break;
+        }
         if (keyboardNavInsideWidget_)
         {
             if (keyboardNavSearchBox_ &&

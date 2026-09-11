@@ -1905,7 +1905,8 @@ private:
         std::optional<size_t> dockMappingEntryIndex =
             std::nullopt);
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
-    void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir);
+    void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
+        bool folderOnly = false);
     /** @brief 显示桌面背景的专用上下文菜单（含新建、显示设置等）。 @param screenPoint 屏幕坐标 */
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
     /** @brief 为指定路径显示外壳扩展上下文菜单。 @param folderPath 文件夹路径 @param screenPoint 屏幕坐标 */

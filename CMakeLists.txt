@@ -2050,7 +2050,7 @@ if (BUILD_TESTING)
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32
+        LINK_LIBRARIES ole32 shell32 uuid
         LABELS integration contract shell)
 
     snowdesktop_add_test(

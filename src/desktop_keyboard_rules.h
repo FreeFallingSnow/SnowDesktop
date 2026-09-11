@@ -2,6 +2,19 @@
 
 namespace snowdesktop::desktop_keyboard_rules
 {
+// Normalize only exact file-command aliases; AltGr and Win chords must not
+// accidentally run clipboard or deletion commands.
+constexpr unsigned int NormalizeFileCommandKey(
+    unsigned int key, bool control, bool shift, bool alt, bool win)
+{
+    if (alt || win) return key;
+    if (control && !shift && key == 'D') return 0x2E; // VK_DELETE
+    if (control && !shift && key == 'R') return 0x74; // VK_F5
+    if (control && !shift && key == 0x2D) return 'C'; // VK_INSERT
+    if (!control && shift && key == 0x2D) return 'V';
+    return key;
+}
+
 constexpr bool IsForegroundFocusReady(
     bool foregroundFocusKnown,
     bool foregroundFocusMatchesTarget,

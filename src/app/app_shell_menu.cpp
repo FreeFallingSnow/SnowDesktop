@@ -329,7 +329,8 @@ BOOL DesktopApp::InvokeShellMenuCommand(
     return result;
 }
 
-void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir)
+void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
+    bool folderOnly)
 {
     ComPtr<IContextMenu> ctxMenu;
     if (FAILED(CoCreateInstance(CLSID_NewMenu, nullptr, CLSCTX_INPROC_SERVER,
@@ -360,6 +361,17 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     const HWND menuOwner = ShellDialogOwnerHwnd();
     SetForegroundWindow(menuOwner);
     UINT cmd = 0;
+    if (folderOnly)
+    {
+        // Resolve the canonical Shell verb, never a localized label or a
+        // position that a third-party New-menu extension can reorder.
+        if (newMenuContextMenu_)
+            newMenuContextMenu_->HandleMenuMsg(WM_INITMENUPOPUP,
+                reinterpret_cast<WPARAM>(newSub), 0);
+        cmd = snowdesktop::FindNewFolderCommand(ctxMenu.Get(), newSub);
+        if (!cmd) MessageBeep(MB_ICONWARNING);
+    }
+    else
     {
         ShellPopupMenuLayerGuard shellMenuLayer(*this);
         cmd = TrackShellPopupMenuWithDesktopPump(
