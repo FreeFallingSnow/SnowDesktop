@@ -2503,6 +2503,7 @@ function ui.datePicker(options) end
 ---@field setValue fun(self: SnowDurationPicker, value: integer): boolean, string? Replace draft and committed seconds; invalid values leave both unchanged.
 ---Requires ui.durationPicker and existing view.inputControls/view.theme.tokens/view.pointer.events capabilities.
 ---Each field has decrement/increment buttons and wheel stepping (120 delta per step, partial deltas accumulated).
+---Three vertical rows: unit label, input, then spaced decrement/increment buttons. Allow 3.9 row units for fields plus footer/error content.
 ---Steps clamp within each field without carrying; read-only/disabled states reject all user stepping.
 ---Additive API v2; probe capability on older hosts, including early 1.0.6.0 builds.
 ---@param options SnowDurationPickerOptions

@@ -81,25 +81,24 @@ function self:view(options)
     local fields={}
     for _,id in ipairs({"hours","minutes","seconds"}) do
         local function stepper(direction,caption)
-            return view.button({key=key..id.."."..direction,label=caption,width=r*0.8,height=r,flexShrink=0,
+            return view.button({key=key..id.."."..direction,label=caption,width=r,height=r,flexShrink=0,
                 padding=0,fontSize=r*0.6,textAlign="center",enabled=not disabled and not readOnly,
                 action={id=key..id.."."..direction},
                 accessibility={label=(direction=="up" and labels.increase or labels.decrease).." "..labels[id]},
                 style={foreground="textPrimary",cornerRadius=r*0.15},hoverStyle={opacity=0.75},pressedStyle={opacity=0.55}})
         end
-        fields[#fields+1]=view.column({key=key..id..".field",width="fill",height=r*1.9,flexShrink=0,gap=r*0.15,children={
-            view.text({key=key..id..".label",text=labels[id],width="fill",height=r*0.75,fontSize=r*0.43,
-                textAlign="center",verticalAlign="center",style={foreground="textSecondary"}}),
-            view.row({key=key..id..".controls",width="fill",height=r,flexShrink=0,gap=r*0.05,children={
-            stepper("down","−"),
+        fields[#fields+1]=view.row({key=key..id..".field",width="fill",height=r,flexShrink=0,gap=r*0.5,alignItems="center",children={
+            view.text({key=key..id..".label",text=labels[id],width=r*2.4,height=r,flexShrink=0,fontSize=r*0.46,
+                textAlign="start",verticalAlign="center",style={foreground="textSecondary"}}),
             view.numberInput({key=key..id,value=values[id],min=0,max=id=="hours" and 99 or 59,step=1,
                 width="fill",height=r,fontSize=r*0.6,textAlign="center",padding={horizontal=r*0.2,vertical=0},
                 style={foreground="textPrimary"},enabled=not disabled,readOnly=readOnly,
                 validationState=bad[id] and "error" or "none",validationMessage=bad[id] and labels.invalid or "",
                 events={change={id=key..id},submit={id=key.."confirm"},wheel={id=key..id..".wheel"}},accessibility={label=labels[id]}}),
-            stepper("up","+")}})}})
+            view.row({key=key..id..".steppers",width=r*2.2,height=r,flexShrink=0,gap=r*0.2,
+                children={stepper("down","−"),stepper("up","+")}})}})
     end
-    local children={view.row({key=key.."fields",width="fill",height=r*1.9,flexShrink=0,gap=r*0.4,children=fields})}
+    local children={view.column({key=key.."fields",width="fill",height=r*3.9,flexShrink=0,gap=r*0.45,children=fields})}
     local err=self:validation()
     if err then children[#children+1]=view.text({key=key.."error",text=err,width="fill",height=r*1.5,
         fontSize=r*0.43,textWrap="wrap",style={foreground="textPrimary"}}) end

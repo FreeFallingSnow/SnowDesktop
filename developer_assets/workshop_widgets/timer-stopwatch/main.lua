@@ -140,7 +140,7 @@ local function event(_,m,e)
                 m.picker=ui.durationPicker({key="timer.duration",value=(logic.parse(m.draft) or 300000)/1000,
                     minSeconds=1,maxSeconds=359999,needConfirm=false})
             end
-            widget.openPanel({title=copy().custom,width=420,height=220})
+            widget.openPanel({title=copy().custom,width=420,height=m.picker and 300 or 220})
         elseif id=="duration" then m.draft=e.text or m.draft;m.error=false
         elseif id=="custom.start" then
             local duration

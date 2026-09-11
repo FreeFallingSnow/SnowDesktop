@@ -2855,7 +2855,7 @@ API/schema v2，最低宿主 1.0.6.0，要求 `ui.timePicker` capability。同�
 ### `ui.durationPicker` 时长选择器
 
 API v2 新增 capability `ui.durationPicker`，与 `ui.timePicker` 的一天内时刻语义独立。
-使用宿主本地化的小时、分钟、秒三个数值输入框，复用已有输入、焦点、步进和无障碍路径。
+使用宿主本地化的小时、分钟、秒三行纵向输入，每行依次为单位标签、数值框、留有间距的减号／加号步进器。复用已有输入、焦点、步进和无障碍路径。三个字段总高为 3.9 行，容器还须预留错误和确认按钮空间。
 需要 `view.inputControls`、`view.theme.tokens`、`view.pointer.events`。不改变既有接口或 API/schema 版本。
 
 `ui.durationPicker({key, value?, minSeconds?, maxSeconds?, needConfirm?, disabled?, readOnly?})`
