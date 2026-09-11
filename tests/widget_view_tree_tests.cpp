@@ -4930,6 +4930,7 @@ void TestScrollPageRestoration()
     std::unordered_map<std::string, float> offsets{{"editor", 180.0f}};
     const auto renderPage = [&](const char* key, float contentHeight) {
         ViewNode root; root.type = ViewNodeType::Scroll; root.key = key;
+        root.orientation = ViewOrientation::Vertical;
         ViewNode content; content.type = ViewNodeType::Column; content.key = "body";
         content.height = {ViewLengthKind::Fixed, contentHeight};
         root.children.push_back(content);
