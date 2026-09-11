@@ -19,9 +19,16 @@ public:
     std::shared_ptr<ShellFileOperationResult> result;
     bool completed = false;
 
-    HRESULT Record(HRESULT status, IShellItem* created)
+    HRESULT Record(HRESULT status, IShellItem* original, IShellItem* created)
     {
-        if (status != S_OK || !created || completed) return S_OK;
+        // Move success can be COPYENGINE_S_DONT_PROCESS_CHILDREN, not S_OK.
+        if (FAILED(status) || !original || !created || completed) return S_OK;
+        PWSTR originalPath = nullptr;
+        const HRESULT originalStatus = original->GetDisplayName(SIGDN_FILESYSPATH, &originalPath);
+        const bool requestedItem = SUCCEEDED(originalStatus) && originalPath &&
+            _wcsicmp(originalPath, source.c_str()) == 0;
+        CoTaskMemFree(originalPath);
+        if (!requestedItem) return S_OK;
         PWSTR path = nullptr;
         if (SUCCEEDED(created->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
         {
@@ -36,9 +43,9 @@ public:
     IFACEMETHODIMP PreRenameItem(DWORD, IShellItem*, LPCWSTR) override { return S_OK; }
     IFACEMETHODIMP PostRenameItem(DWORD, IShellItem*, LPCWSTR, HRESULT, IShellItem*) override { return S_OK; }
     IFACEMETHODIMP PreMoveItem(DWORD, IShellItem*, IShellItem*, LPCWSTR) override { return S_OK; }
-    IFACEMETHODIMP PostMoveItem(DWORD, IShellItem*, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override { return Record(hr, item); }
+    IFACEMETHODIMP PostMoveItem(DWORD, IShellItem* original, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override { return Record(hr, original, item); }
     IFACEMETHODIMP PreCopyItem(DWORD, IShellItem*, IShellItem*, LPCWSTR) override { return S_OK; }
-    IFACEMETHODIMP PostCopyItem(DWORD, IShellItem*, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override { return Record(hr, item); }
+    IFACEMETHODIMP PostCopyItem(DWORD, IShellItem* original, IShellItem*, LPCWSTR, HRESULT hr, IShellItem* item) override { return Record(hr, original, item); }
     IFACEMETHODIMP PreDeleteItem(DWORD, IShellItem*) override { return S_OK; }
     IFACEMETHODIMP PostDeleteItem(DWORD, IShellItem*, HRESULT, IShellItem*) override { return S_OK; }
     IFACEMETHODIMP PreNewItem(DWORD, IShellItem*, LPCWSTR) override { return S_OK; }

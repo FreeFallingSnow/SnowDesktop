@@ -282,12 +282,7 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
                     // Auto-collect may already have appended this new key.
                     // Remove every provisional owner, then restore the exact
                     // preview boundary in the requested target.
-                    RemoveDesktopKeysFromWidgets({key});
-                    std::vector<std::wstring> insertedKey{key};
-                    snowdesktop::pending_drop_rules::InsertAt(
-                        widgetData->itemKeys,
-                        landing.insertIndex,
-                        std::move(insertedKey));
+                    if (!snowdesktop::pending_drop::CommitKeyedLanding(widgets_, item, landing, key)) break;
                     RefreshCollectedKeysCache();
                     if (widget) widget->InvalidateSlots();
                 }

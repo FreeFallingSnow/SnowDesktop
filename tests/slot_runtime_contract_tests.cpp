@@ -2737,10 +2737,38 @@ void TestIndependentDropCompletions()
             !pending_drop::MatchesExactPath(L"C:\\desktop\\same (2).txt", first.entries[0].createdPath) &&
             pending_drop::MatchesExactPath(L"C:\\desktop\\same (2).txt", second.entries[0].createdPath),
             "collision-renamed outputs cannot match another request's landing");
+        std::vector<DesktopWidget> widgets(3);
+        widgets[0].id = L"collection-a"; widgets[0].itemKeys = {L"K0", L"K1", L"K2"};
+        widgets[1].id = L"collection-b"; widgets[1].itemKeys = {L"R0"};
+        widgets[2].id = L"auto-collector"; widgets[2].itemKeys = {L"NEW-A", L"NEW-B"};
+        // Reverse enumeration order relative to A/B; the exact output path
+        // determines ownership, not basename, callback order or item order.
+        std::vector<DesktopItem> items(2);
+        items[0].layoutKey = L"NEW-B"; items[0].parsingName = b.outputs[0].destination;
+        items[1].layoutKey = L"NEW-A"; items[1].parsingName = a.outputs[0].destination;
+        size_t commits = 0;
+        for (const auto& completed : queue)
+            for (const auto& landing : completed.entries)
+                for (auto& item : items)
+                    if (pending_drop::MatchesExactPath(item.parsingName, landing.createdPath) &&
+                        pending_drop::CommitKeyedLanding(widgets, item, landing, item.layoutKey)) ++commits;
+        Check(commits == 2 && widgets[0].itemKeys == std::vector<std::wstring>{L"K0", L"K1", L"NEW-A", L"K2"} &&
+            widgets[1].itemKeys == std::vector<std::wstring>{L"NEW-B", L"R0"} && widgets[2].itemKeys.empty(),
+            "refresh commits both outputs once, restores exact insertion positions and removes provisional owners");
+        PendingLandingEntry removedTarget = first.entries[0]; removedTarget.widgetId = L"deleted";
+        Check(!pending_drop::CommitKeyedLanding(widgets, items[1], removedTarget, items[1].layoutKey) && widgets[0].itemKeys[2] == L"NEW-A",
+            "a removed asynchronous target cannot consume an unrelated collection's items");
         queue.erase(queue.begin());
         Check(queue.size() == 1 && queue[0].existingDesktopKeys.contains(L"EXISTING"),
             "consuming one request does not consume another request's snapshot");
     }
+    auto partial = make(L"missing", L"collection-a", 2);
+    auto retained = partial.entries.front(); retained.sourcePath = L"retained"; retained.insertIndex = 3;
+    partial.entries.push_back(retained);
+    pending_drop::Queue partialQueue;
+    pending_drop::Complete(partialQueue, partial, {{{L"retained", L"actual", false}}});
+    Check(partialQueue.size() == 1 && partialQueue[0].entries.size() == 1 && partialQueue[0].entries[0].insertIndex == 2,
+        "partial success starts at the requested insertion boundary without a gap for the failed item");
     pending_drop::Queue folders;
     PendingLandingCache first;
     PendingFolderPlacement folder;

@@ -119,6 +119,14 @@ void TestTrackedDropResults()
     check(aOut != bOut && read(aOut) == "A" && read(bOut) == "B" &&
         std::filesystem::exists(a) && !std::filesystem::exists(b),
         "real copy/move collision outputs preserve contents and correct source ownership");
+    const auto directory = root / L"directory";
+    std::filesystem::create_directory(directory);
+    { std::ofstream(directory / L"child.txt") << "child payload"; }
+    const auto directoryOut = run(FO_COPY, directory, false);
+    check(std::filesystem::is_directory(directoryOut) &&
+        read(std::filesystem::path(directoryOut) / L"child.txt") == "child payload" &&
+        std::filesystem::exists(directory / L"child.txt"),
+        "recursive copy records the top-level directory, preserves contents and retains its source");
     // Copied .lnk files do not borrow their input file's lifetime.
     ShellFileOperationRequest exact; exact.result = std::make_shared<ShellFileOperationResult>();
     const auto copied = root / L"copied.lnk";
