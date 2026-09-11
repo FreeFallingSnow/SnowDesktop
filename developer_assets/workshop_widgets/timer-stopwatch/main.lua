@@ -77,16 +77,17 @@ local function desktop(_,m)
     else
         local valueHeight=side*0.30
         local valueFont=math.min(side*0.19,width/5.1)
-        -- Explicit spacers keep the header and time fixed without flex compression.
+        -- Balance the time between the header and actions, not the whole card.
+        local size=side*0.25
+        local timeSpace=(h-topPad-header-pad-size-valueHeight)/2
         local actionGap=gap
         gap=0
-        children[#children+1]=view.spacer({key="time.top",width="fill",height=h/2-topPad-header-valueHeight/2,flexShrink=0})
+        children[#children+1]=view.spacer({key="time.top",width="fill",height=timeSpace,flexShrink=0})
         children[#children+1]=view.text({key="value",text=t.done and c.done or logic.format(logic.value(t,time.monotonic(),cd),cd),
-            width="fill",height=valueHeight,flexShrink=0,fontSize=valueFont,padding={bottom=valueFont*0.16},textAlign="center",verticalAlign="center",
+            width="fill",height=valueHeight,flexShrink=0,fontSize=valueFont,padding={bottom=valueFont*0.10},textAlign="center",verticalAlign="center",
             overflowText="clip",style={foreground="textPrimary"}})
         local actions={}
-        local size=side*0.25
-        children[#children+1]=view.spacer({key="time.bottom",width="fill",height=h/2-valueHeight/2-pad-size,flexShrink=0})
+        children[#children+1]=view.spacer({key="time.bottom",width="fill",height=timeSpace,flexShrink=0})
         if not t.done then actions[#actions+1]=icon("toggle",t.running and 0xF04C or 0xF04B,t.running and c.pause or c.resume,size,true) end
         actions[#actions+1]=icon("reset",0xF0E2,c.reset,size,false)
         children[#children+1]=view.row({key="actions",width="fill",height=size,flexShrink=0,gap=actionGap,justifyContent="center",alignItems="center",children=actions})
