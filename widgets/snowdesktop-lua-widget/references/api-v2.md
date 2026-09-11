@@ -341,6 +341,10 @@ scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先�
 为 `view.shadow`。图片在探测 `view.image.tint` 后可声明 `tint=0xRRGGBB`，宿主替换 RGB、
 保留源 alpha，并继续遵循 fit、alignment、interpolation 和节点 opacity。
 
+未指定背景的 `view.button` / `view.iconButton` 使用当前主题前景的半透明填充，
+并提供悬停、按下反馈及内侧细边框；浅色表面使用深色填充，深色表面使用浅色填充。
+显式背景和状态样式优先，`borderWidth=0` 可关闭默认边框。此默认外观调整保持 API/schema v2。
+
 探测 `view.theme.tokens` 后，所有声明式 RGB 颜色槽都可用下列字符串代替
 `0xRRGGBB`：
 

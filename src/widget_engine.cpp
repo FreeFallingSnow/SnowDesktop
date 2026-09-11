@@ -11,6 +11,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_button_fill.h"
 #include "widget_date_picker_lua.h"
 #include "widget_time_picker_lua.h"
 #include "animation_settings.h"
@@ -17783,14 +17784,20 @@ static void DrawWidgetViewNode(D2DState* state,
     const bool implicitSurfaceBackground = !style.background &&
         (buttonNode || badgeNode);
     std::optional<std::uint32_t> background = style.background;
-    if (!background && (buttonNode || badgeNode))
+    float backgroundAlpha = implicitSurfaceBackground ? 0.12f : 1.0f;
+    if (buttonNode)
+    {
+        const auto fill = snowdesktop::widget_runtime::ResolveWidgetButtonFill(
+            background, palette.textPrimary, node.enabled, hovered, pressed);
+        background = fill.color;
+        backgroundAlpha = fill.alpha;
+    }
+    else if (!background && badgeNode)
         background = 0xFFFFFF;
     if (background && !specialGeometry)
     {
-        const float defaultButtonAlpha =
-            implicitSurfaceBackground ? 0.12f : 1.0f;
         ID2D1SolidColorBrush* brush = GetCachedBrush(state,
-            static_cast<int>(*background), opacity * defaultButtonAlpha);
+            static_cast<int>(*background), opacity * backgroundAlpha);
         if (brush)
         {
             if (radius > 0.0f)
@@ -17798,6 +17805,19 @@ static void DrawWidgetViewNode(D2DState* state,
                     D2D1::RoundedRect(rect, radius, radius), brush);
             else
                 state->ctx->FillRectangle(rect, brush);
+        }
+    }
+    if (buttonNode && implicitSurfaceBackground && !style.borderWidth &&
+        !style.borderColor)
+    {
+        if (auto* brush = GetCachedBrush(state,
+                static_cast<int>(palette.textPrimary), opacity * 0.20f))
+        {
+            const auto inset = D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
+                rect.right - 0.5f, rect.bottom - 0.5f);
+            state->ctx->DrawRoundedRectangle(D2D1::RoundedRect(inset,
+                std::max(0.0f, radius - 0.5f),
+                std::max(0.0f, radius - 0.5f)), brush, 1.0f);
         }
     }
     const float borderWidth = std::max(0.0f,

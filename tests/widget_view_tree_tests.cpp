@@ -3,6 +3,7 @@
 #include "widget_time_picker_lua.h"
 #include "widget_view_tree.h"
 #include "widget_surface_theme.h"
+#include "widget_button_fill.h"
 #include "widget_resource_lua.h"
 
 #include <cmath>
@@ -4951,6 +4952,21 @@ void TestScrollPageRestoration()
 
 int main()
 {
+    const auto lightButton = ResolveWidgetButtonFill({}, 0x161616, true, false, false);
+    Check(lightButton.color == 0x161616 &&
+            (255.0f * (1.0f - lightButton.alpha) + 22.0f * lightButton.alpha) < 230.0f,
+        "default buttons must visibly darken a white popup instead of adding white");
+    const auto darkButton = ResolveWidgetButtonFill({}, 0xFFFFFF, true, false, false);
+    Check(darkButton.color == 0xFFFFFF && Near(darkButton.alpha, 0.12f),
+        "dark popup buttons retain their light translucent fill");
+    Check(ResolveWidgetButtonFill({}, 0x161616, true, true, false).alpha > lightButton.alpha &&
+            ResolveWidgetButtonFill({}, 0x161616, true, true, true).alpha >
+                ResolveWidgetButtonFill({}, 0x161616, true, true, false).alpha &&
+            Near(ResolveWidgetButtonFill({}, 0x161616, false, true, true).alpha, lightButton.alpha),
+        "hover and press distinguish enabled buttons without highlighting disabled buttons");
+    const auto customButton = ResolveWidgetButtonFill(0x175CD3, 0x161616, true, true, true);
+    Check(customButton.color == 0x175CD3 && Near(customButton.alpha, 1.0f),
+        "explicit component background colors retain their authored appearance");
     TestSurfaceThemeRouting();
     TestScrollPageRestoration();
     TestTimePickerController();
