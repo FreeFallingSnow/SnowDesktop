@@ -1,4 +1,5 @@
 #include "shell_file_operation_worker.h"
+#include "shell_file_operation_progress.h"
 
 #include <objbase.h>
 #include <shellapi.h>
@@ -797,11 +798,18 @@ bool ShellFileOperationWorker::Execute(
 {
     bool attempted = false;
     bool allSucceeded = true;
+    if (request.result) request.result->outputs.clear();
     for (const auto& step : request.steps)
     {
         if (step.function == 0 || step.sources.empty())
             continue;
         attempted = true;
+
+        if (request.result && (step.function == FO_COPY || step.function == FO_MOVE))
+        {
+            if (!ExecuteTrackedDropStep(step, request.result)) allSucceeded = false;
+            continue;
+        }
 
         const std::wstring sources = BuildPathList(step.sources);
         const std::wstring destination =
@@ -828,6 +836,8 @@ bool ShellFileOperationWorker::Execute(
         if (!CopyFileW(
                 copy.source.c_str(), copy.destination.c_str(), TRUE))
             allSucceeded = false;
+        else if (request.result)
+            request.result->outputs.push_back({copy.source, copy.destination, false});
     }
     for (const auto& shortcut : request.shortcuts)
     {
@@ -885,6 +895,8 @@ bool ShellFileOperationWorker::Execute(
                 DeleteFileW(shortcut.destination.c_str());
             allSucceeded = false;
         }
+        else if (request.result)
+            request.result->outputs.push_back({shortcut.source, shortcut.destination, true});
     }
     return attempted && allSucceeded;
 }

@@ -536,6 +536,8 @@ struct PendingFolderPlacement
     size_t insertIndex = 0;
     std::unordered_set<std::wstring> existingPaths;
     std::vector<std::wstring> sourceNames;
+    // Tracked operations use actual outputs, including collision renames.
+    std::vector<std::wstring> createdPaths;
 };
 
 /**

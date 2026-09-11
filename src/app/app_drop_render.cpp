@@ -1,29 +1,33 @@
 #include "app.h"
 #include "../pending_drop_rules.h"
+#include "pending_drop_completion.h"
 
 // Desktop drop-preview rendering, caching and deferred placement.
 
+bool DesktopApp::ApplyPendingFolderPlacements(DesktopWidget& targetWidget,
+    const std::wstring& widgetId, const std::wstring& popupSourceId)
+{
+    bool changed = false;
+    for (auto& cache : pendingLandingCaches_)
+        changed = ApplyPendingFolderPlacements(cache, targetWidget, widgetId, popupSourceId) || changed;
+    std::erase_if(pendingLandingCaches_, [](const auto& cache) { return !cache.active; });
+    return changed;
+}
+
 bool DesktopApp::ApplyPendingFolderPlacements(
-    DesktopWidget& targetWidget,
+    PendingLandingCache& cache, DesktopWidget& targetWidget,
     const std::wstring& widgetId,
     const std::wstring& popupSourceId)
 {
-    if (!pendingLandingCache_.active ||
-        pendingLandingCache_.folderPlacements.empty())
+    if (!cache.active ||
+        cache.folderPlacements.empty())
         return false;
-    if (pendingLandingCache_.tick != 0 &&
-        GetTickCount() - pendingLandingCache_.tick > 10000)
-    {
-        pendingLandingCache_.Clear();
-        return false;
-    }
-
     bool changed = false;
     std::vector<PendingFolderPlacement> remaining;
     remaining.reserve(
-        pendingLandingCache_.folderPlacements.size());
+        cache.folderPlacements.size());
     for (auto& placement :
-        pendingLandingCache_.folderPlacements)
+        cache.folderPlacements)
     {
         const bool widgetMatches =
             !widgetId.empty() &&
@@ -48,23 +52,28 @@ bool DesktopApp::ApplyPendingFolderPlacements(
             snowdesktop::pending_drop_rules::ExtractMatching(
                 targetWidget.folderEntries,
                 [&](const FolderEntry& entry) {
-                    return !placement.existingPaths.contains(
-                        ToUpperInvariant(entry.fullPath));
+                    if (placement.existingPaths.contains(ToUpperInvariant(entry.fullPath))) return false;
+                    if (!placement.createdPaths.empty())
+                        return std::any_of(placement.createdPaths.begin(), placement.createdPaths.end(),
+                            [&](const auto& path) { return snowdesktop::pending_drop::MatchesExactPath(entry.fullPath, path); });
+                    return placement.sourceNames.empty() ||
+                        std::any_of(placement.sourceNames.begin(), placement.sourceNames.end(),
+                            [&](const auto& name) { return MatchPendingName(entry.name, name); });
                 });
 
-        if (!placement.sourceNames.empty() &&
+        if ((!placement.createdPaths.empty() || !placement.sourceNames.empty()) &&
             inserted.size() > 1)
         {
             std::vector<FolderEntry> ordered;
             ordered.reserve(inserted.size());
             for (const auto& sourceName :
-                placement.sourceNames)
+                (placement.createdPaths.empty() ? placement.sourceNames : placement.createdPaths))
             {
                 auto match = std::find_if(
                     inserted.begin(), inserted.end(),
                     [&](const FolderEntry& entry) {
-                        return MatchPendingName(
-                            entry.name, sourceName);
+                        return placement.createdPaths.empty() ? MatchPendingName(entry.name, sourceName) :
+                            snowdesktop::pending_drop::MatchesExactPath(entry.fullPath, sourceName);
                     });
                 if (match == inserted.end())
                     continue;
@@ -97,11 +106,11 @@ bool DesktopApp::ApplyPendingFolderPlacements(
         // retaining this snapshot could capture an unrelated later file.
     }
 
-    pendingLandingCache_.folderPlacements =
+    cache.folderPlacements =
         std::move(remaining);
-    pendingLandingCache_.active =
-        !pendingLandingCache_.entries.empty() ||
-        !pendingLandingCache_.folderPlacements.empty();
+    cache.active =
+        !cache.entries.empty() ||
+        !cache.folderPlacements.empty();
     return changed;
 }
 
@@ -179,13 +188,23 @@ const DropPreviewList& DesktopApp::GetCachedDesktopDropPreview(
  */
 void DesktopApp::ApplyPendingPlacement()
 {
-    if (!pendingLandingCache_.active) return;
-    if (GetTickCount() - pendingLandingCache_.tick > 10000)
+    bool changed = false;
+    std::unordered_set<std::wstring> claimed;
+    for (auto& cache : pendingLandingCaches_)
+        changed = ApplyPendingPlacement(cache, claimed) || changed;
+    std::erase_if(pendingLandingCaches_, [](const auto& cache) { return !cache.active; });
+    if (changed)
     {
-        pendingLandingCache_.Clear();
-        return;
+        LayoutItems();
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, TRUE);
     }
+}
 
+bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
+    std::unordered_set<std::wstring>& claimed)
+{
+    if (!cache.active) return false;
     std::unordered_set<std::wstring> usedSlots;
     for (const auto& w : widgets_)
         if (!IsGroupedWidget(w))
@@ -193,7 +212,7 @@ void DesktopApp::ApplyPendingPlacement()
     for (const auto& item : items_)
     {
         std::wstring key = ToUpperInvariant(item.layoutKey);
-        if (!key.empty() && !pendingLandingCache_.existingDesktopKeys.contains(key))
+        if (!key.empty() && !claimed.contains(key) && !cache.existingDesktopKeys.contains(key))
             continue;
         if (!item.name.empty() && !IsItemInAnyWidget(item))
             MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
@@ -223,42 +242,26 @@ void DesktopApp::ApplyPendingPlacement()
         return nullptr;
     };
 
-    std::vector<bool> entryUsed(pendingLandingCache_.entries.size(), false);
     bool changed = false;
     for (auto& widget : widgets_)
     {
         if (widget.type != DesktopWidgetType::FolderMapping)
             continue;
         changed = ApplyPendingFolderPlacements(
-            widget, widget.id) || changed;
+            cache, widget, widget.id, {}) || changed;
     }
-    for (size_t itemIndex = 0; itemIndex < items_.size(); ++itemIndex)
+    for (size_t e = 0; e < cache.entries.size(); ++e)
     {
-        auto& item = items_[itemIndex];
-        std::wstring key = ToUpperInvariant(item.layoutKey);
-        if (key.empty() || pendingLandingCache_.existingDesktopKeys.contains(key))
-            continue;
-
-        for (size_t e = 0; e < pendingLandingCache_.entries.size(); ++e)
+        const auto& landing = cache.entries[e];
+        for (size_t itemIndex = 0; itemIndex < items_.size(); ++itemIndex)
         {
-            if (entryUsed[e]) continue;
-            const auto& landing = pendingLandingCache_.entries[e];
-            bool matchesLanding = false;
-            if (!landing.createdPath.empty())
-            {
-                matchesLanding =
-                    PathsEqualInsensitive(item.parsingName, landing.createdPath) ||
-                    PathsEqualInsensitive(FileNameFromPath(item.parsingName),
-                        FileNameFromPath(landing.createdPath)) ||
-                    PathsEqualInsensitive(item.name, FileNameFromPath(landing.createdPath));
-            }
-            if (!matchesLanding)
-            {
-                matchesLanding =
-                    MatchPendingName(item.name, landing.sourceName) ||
-                    (!item.parsingName.empty() &&
-                     MatchPendingName(FileNameFromPath(item.parsingName), landing.sourceName));
-            }
+            auto& item = items_[itemIndex];
+            const std::wstring key = ToUpperInvariant(item.layoutKey);
+            if (key.empty() || claimed.contains(key) || cache.existingDesktopKeys.contains(key)) continue;
+            const bool matchesLanding = !landing.createdPath.empty()
+                ? snowdesktop::pending_drop::MatchesExactPath(item.parsingName, landing.createdPath)
+                : MatchPendingName(item.name, landing.sourceName) ||
+                    (!item.parsingName.empty() && MatchPendingName(FileNameFromPath(item.parsingName), landing.sourceName));
             if (!matchesLanding) continue;
 
             if (landing.kind == DropLandingKind::WidgetIndex && !landing.widgetId.empty())
@@ -328,30 +331,15 @@ void DesktopApp::ApplyPendingPlacement()
                 MarkGridArea(usedSlots, cell, span);
             }
 
-            entryUsed[e] = true;
+            claimed.insert(key);
             changed = true;
             break;
         }
     }
 
-    std::vector<PendingLandingEntry> remaining;
-    for (size_t i = 0; i < pendingLandingCache_.entries.size(); ++i)
-        if (!entryUsed[i])
-            remaining.push_back(pendingLandingCache_.entries[i]);
-
-    pendingLandingCache_.entries = std::move(remaining);
-    pendingLandingCache_.active =
-        !pendingLandingCache_.entries.empty() ||
-        !pendingLandingCache_.folderPlacements.empty();
-    if (!pendingLandingCache_.active)
-        pendingLandingCache_.existingDesktopKeys.clear();
-
-    if (changed)
-    {
-        LayoutItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-    }
+    cache.entries.clear();
+    cache.active = !cache.folderPlacements.empty();
+    return changed;
 }
 
 // ── 网格全局函数 ──────────────────────────────────────────

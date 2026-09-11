@@ -2314,7 +2314,8 @@ private:
     bool ExecuteDropPipeline(const DragSourceList& sourceList,
         const DropPreviewList& preview,
         FileOperationCompletion completion = {},
-        bool executeSynchronously = false);
+        bool executeSynchronously = false,
+        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {});
     /**
      * @brief 执行内部拖拽放置计划。
      * @param sourceList 拖拽源列表
@@ -2331,7 +2332,8 @@ private:
     bool ExecuteFileBackedDropPlan(const DragSourceList& sourceList,
         const DropPreviewList& preview,
         FileOperationCompletion completion = {},
-        bool executeSynchronously = false);
+        bool executeSynchronously = false,
+        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {});
     /**
      * @brief 将文件实际写入桌面（从源列表物化）。
      * @param sourceList 拖拽源列表
@@ -2344,7 +2346,8 @@ private:
         bool duplicateDesktopCopyNames,
         std::unordered_map<size_t, std::wstring>* createdPathsBySource,
         FileOperationCompletion completion,
-        bool executeSynchronously = false);
+        bool executeSynchronously = false,
+        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {});
     /**
      * @brief 将文件写入指定的目标文件夹。
      * @param sourceList 拖拽源列表
@@ -2354,7 +2357,8 @@ private:
      */
     bool MaterializeFilesToFolder(const DragSourceList& sourceList, const std::wstring& folder,
         DropAction action, FileOperationCompletion completion,
-        bool executeSynchronously = false);
+        bool executeSynchronously = false,
+        std::shared_ptr<snowdesktop::ShellFileOperationResult> result = {});
     /**
      * @brief 目标文件夹是否为某个源文件夹自身或其子目录（含 .lnk 解析）。
      *
@@ -2437,6 +2441,9 @@ private:
      * @param existingKeys 现有的桌面键快照
      * @param createdPathsBySource 可选，已创建路径的映射
      */
+    PendingLandingCache BuildPendingLandingCache(const DragSourceList& sourceList,
+        const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
+        const std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
     void StorePendingLandingCache(const DragSourceList& sourceList, const DropPreviewList& preview,
         const std::unordered_set<std::wstring>& existingKeys,
         const std::unordered_map<size_t, std::wstring>* createdPathsBySource = nullptr);
@@ -3878,14 +3885,15 @@ private:
         bool asynchronousSource, const std::vector<std::wstring>& knownPaths);
     bool CommitExternalSlotPaths(const ExternalSlotDestination& destination,
         const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
-        FileOperationCompletion completion, bool synchronously);
+        FileOperationCompletion completion, bool synchronously,
+        std::shared_ptr<snowdesktop::ShellFileOperationResult> result);
     HRESULT HandleOleQueryContinueDrag(
         BOOL escapePressed, DWORD keyState) override;
     HRESULT HandleOleGiveFeedback(DWORD effect) override;
 
     /** @name 待处理放置缓存（源列表 -> 预览在外壳刷新后仍存活） */
     /** @{ */
-    PendingLandingCache pendingLandingCache_;
+    std::vector<PendingLandingCache> pendingLandingCaches_;
     /** @} */
 
     /** @brief 将屏幕坐标转换为客户端坐标。 @param screen 屏幕坐标 @return 客户端坐标 */
@@ -4035,6 +4043,11 @@ private:
     static bool MatchPendingName(const std::wstring& itemName, const std::wstring& srcFileName);
     /** @brief 应用待处理的放置操作（外壳刷新后执行）。 */
     void ApplyPendingPlacement();
+    bool ApplyPendingPlacement(PendingLandingCache& cache,
+        std::unordered_set<std::wstring>& claimed);
+    bool ApplyPendingFolderPlacements(PendingLandingCache& cache,
+        DesktopWidget& targetWidget, const std::wstring& widgetId,
+        const std::wstring& popupSourceId);
     bool ApplyPendingFolderPlacements(
         DesktopWidget& targetWidget,
         const std::wstring& widgetId,

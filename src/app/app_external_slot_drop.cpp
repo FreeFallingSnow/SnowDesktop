@@ -1,5 +1,5 @@
 #include "app.h"
-#include "../external_drop_content.h"
+#include "../external_drop_resources.h"
 #include "../widgets/lua_logical_slot.h"
 
 #include <stdexcept>
@@ -8,12 +8,11 @@ namespace
 {
 namespace content = snowdesktop::external_drop_content;
 
-std::shared_ptr<content::Content> NewSlotContent()
+std::shared_ptr<content::Content> NewSlotContent(
+    const std::shared_ptr<snowdesktop::ShellFileOperationResult>& result)
 {
-    return {new content::Content, [](content::Content* value) {
-        if (value->owned)
-            for (const auto& path : value->paths)
-                DeleteFileW(path.c_str());
+    return {new content::Content, [result](content::Content* value) {
+        content::Cleanup(*value, *result);
         delete value;
     }};
 }
@@ -111,7 +110,8 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
 
 bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destination,
     const std::vector<std::wstring>& paths, bool owned, bool copyOnly,
-    FileOperationCompletion completion, bool synchronously)
+    FileOperationCompletion completion, bool synchronously,
+    std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     if (exitRequested_ || paths.empty()) return false;
     if (!destination.luaWidgetId.empty())
@@ -204,7 +204,7 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
     if ((owned || copyOnly) && !preview.pinMaterializedItemsToDock)
         preview.action = DropAction::Copy;
     preview.fileBacked = true;
-    return ExecuteDropPipeline(sources, preview, std::move(completion), synchronously);
+    return ExecuteDropPipeline(sources, preview, std::move(completion), synchronously, std::move(result));
 }
 
 DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
@@ -219,7 +219,8 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         effect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(allowedEffects);
     if ((effect & allowedEffects) == 0) return DROPEFFECT_NONE;
 
-    auto value = NewSlotContent();
+    auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
+    auto value = NewSlotContent(result);
     const auto stop = externalSlotReadStopSource_.get_token();
     const auto downloadUrls = [stop](const content::Paths& urls) {
         return DownloadSlotUrls(urls, stop);
@@ -281,8 +282,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         try { *value = read(dataObject, false, knownPaths); }
         catch (...) { return DROPEFFECT_NONE; }
     }
-    auto finished = [value, keepReference = !destination.luaWidgetId.empty() ||
-            destination.preview.pinMaterializedItemsToDock,
+    auto finished = [value, keepReference = !destination.luaWidgetId.empty(),
         oleCompletion](bool succeeded) {
         if (succeeded && keepReference) value->owned = false;
         if (!succeeded)
@@ -292,7 +292,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     if (!asynchronousSource && value->pendingUrls.empty())
     {
         const bool committed = CommitExternalSlotPaths(destination, value->paths,
-            value->owned, value->copyOnly, finished, true);
+            value->owned, value->copyOnly, finished, true, result);
         if (!committed) finished(false);
         return committed ? (effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect) : DROPEFFECT_NONE;
     }
@@ -300,9 +300,9 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
     if (!window || !IsWindow(window)) return DROPEFFECT_NONE;
     auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
-        false, [this, destination, value, finished](bool succeeded) {
+        false, [this, destination, value, finished, result](bool succeeded) {
             if (!succeeded || !CommitExternalSlotPaths(destination, value->paths,
-                    value->owned, value->copyOnly, finished, false))
+                    value->owned, value->copyOnly, finished, false, result))
                 finished(false);
         }, false};
     if (!completion) return DROPEFFECT_NONE;

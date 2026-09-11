@@ -8,6 +8,7 @@
 #include "slot_drop_expectations.h"
 #include "external_drop_content.h"
 #include "app/drag_drop_controller.h"
+#include "app/pending_drop_completion.h"
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
 #include "app/rename_controller.h"
@@ -2698,6 +2699,64 @@ void TestPopupDwellControllerHandlesCandidateChanges()
 }
 }
 
+// DND-03: drive the production completion publisher in both completion orders;
+// delayed refresh must retain each request's independent snapshot and target.
+void TestIndependentDropCompletions()
+{
+    using namespace snowdesktop;
+    auto make = [](const wchar_t* source, const wchar_t* widget, size_t index) {
+        PendingLandingCache cache;
+        cache.existingDesktopKeys.insert(L"EXISTING");
+        PendingLandingEntry entry;
+        entry.sourcePath = source;
+        entry.sourceName = L"same.txt";
+        entry.widgetId = widget;
+        entry.kind = DropLandingKind::WidgetIndex;
+        entry.insertIndex = index;
+        cache.entries.push_back(entry);
+        return cache;
+    };
+    for (bool reverse : {false, true})
+    {
+        pending_drop::Queue queue;
+        const ShellFileOperationResult a{{{L"C:\\a\\same.txt", L"C:\\desktop\\same.txt", false}}};
+        const ShellFileOperationResult b{{{L"C:\\b\\same.txt", L"C:\\desktop\\same (2).txt", false}}};
+        auto completeA = [&] { pending_drop::Complete(queue, make(L"C:\\a\\same.txt", L"collection-a", 2), a); };
+        auto completeB = [&] { pending_drop::Complete(queue, make(L"C:\\b\\same.txt", L"collection-b", 0), b); };
+        if (reverse) { completeB(); completeA(); } else { completeA(); completeB(); }
+        pending_drop::Complete(queue, make(L"missing", L"failed", 1), {});
+        Check(queue.size() == 2, "a failed third drop cannot clear either completed request");
+        if (queue.size() != 2) continue;
+        const auto& first = queue[reverse ? 1 : 0];
+        const auto& second = queue[reverse ? 0 : 1];
+        Check(first.entries.size() == 1 && second.entries.size() == 1 &&
+            first.entries[0].widgetId == L"collection-a" && first.entries[0].insertIndex == 2 &&
+            second.entries[0].widgetId == L"collection-b" && second.entries[0].insertIndex == 0,
+            "independent completions preserve target ownership and insertion boundaries");
+        Check(pending_drop::MatchesExactPath(L"C:\\desktop\\same.txt", first.entries[0].createdPath) &&
+            !pending_drop::MatchesExactPath(L"C:\\desktop\\same (2).txt", first.entries[0].createdPath) &&
+            pending_drop::MatchesExactPath(L"C:\\desktop\\same (2).txt", second.entries[0].createdPath),
+            "collision-renamed outputs cannot match another request's landing");
+        queue.erase(queue.begin());
+        Check(queue.size() == 1 && queue[0].existingDesktopKeys.contains(L"EXISTING"),
+            "consuming one request does not consume another request's snapshot");
+    }
+    pending_drop::Queue folders;
+    PendingLandingCache first;
+    PendingFolderPlacement folder;
+    folder.widgetId = L"folder-a";
+    folder.insertIndex = 3;
+    first.folderPlacements.push_back(folder);
+    pending_drop::Complete(folders, first, {{{L"source-a", L"folder-a/new.txt", false}}});
+    folder.widgetId = L"folder-b";
+    first.folderPlacements = {folder};
+    pending_drop::Complete(folders, first, {{{L"source-b", L"folder-b/new.txt", false}}});
+    Check(folders.size() == 2 && folders[0].folderPlacements[0].createdPaths ==
+        std::vector<std::wstring>{L"folder-a/new.txt"} &&
+        folders[1].folderPlacements[0].createdPaths == std::vector<std::wstring>{L"folder-b/new.txt"},
+        "folder reconciliation receives only its own request's actual paths");
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     if (argc == 4 && std::wstring(argv[1]) == L"--register-notification-shortcut")
@@ -2717,6 +2776,7 @@ int wmain(int argc, wchar_t** argv)
     }
     if (argc == 2 && std::wstring(argv[1]) == L"--notification-identity-probe")
         return RunTrayNotificationIdentityProbe();
+    TestIndependentDropCompletions();
     TestSlotCacheAndIdentity();
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();
