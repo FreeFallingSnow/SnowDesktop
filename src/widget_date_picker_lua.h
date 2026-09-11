@@ -90,9 +90,10 @@ function self:handle(e)
         if type(e.text)=="string" and #e.text<=10 then self[id=="start" and "startDate" or "endDate"]=e.text end
     elseif id=="year" then
         if e.numberValid and e.controlValue and e.controlValue%1==0 then self.year=e.controlValue end
+    elseif id=="month.open" then self.monthOpen=e.expanded==true
     elseif id=="month" then
         local m=tonumber(e.selection)
-        if m and m>=1 and m<=12 then self.month=m end
+        if m and m>=1 and m<=12 then self.month=m;self.monthOpen=false end
     elseif id=="previous" or id=="next" then
         local n=(self.year-1)*12+self.month-1+(id=="next" and 1 or -1)
         if n>=0 and n<9999*12 then self.year=math.floor(n/12)+1; self.month=n%12+1 end
@@ -121,7 +122,7 @@ function self:view(options)
     local function text(id,s) return view.text({key=key..id,text=s,height=r,fontSize=font,
         verticalAlign="center",style={foreground="textSecondary"}}) end
     local function button(id,s,enabled,selected)
-        return view.button({key=key..id,text=s,width="fill",height=r,fontSize=font,
+        return view.button({key=key..id,label=s,width="fill",height=r,fontSize=font,
             enabled=not o.disabled and enabled~=false,action={id=key..id},
             style={foreground=selected and 0xFFFFFF or "textPrimary",
                 background=selected and 0x175CD3 or nil},accessibility={label=s}})
@@ -142,7 +143,8 @@ function self:view(options)
             width="fill",height=r,fontSize=font,enabled=not o.disabled,action={id=key.."year"},
             accessibility={label=labels.year}}),
         view.select({key=key.."month",selectedValue=tostring(self.month),options=months,width="fill",height=r,
-            fontSize=font,enabled=not o.disabled,action={id=key.."month"},accessibility={label=labels.month}}),
+            fontSize=font,enabled=not o.disabled,expanded=self.monthOpen==true,
+            events={change={id=key.."month"},click={id=key.."month.open"}},accessibility={label=labels.month}}),
         button("next",labels.next,self.year<9999 or self.month<12)}
     local cells={}
     for i=0,6 do cells[#cells+1]=text("weekday"..i,labels["weekday"..((firstDay-1+i)%7+1)]) end

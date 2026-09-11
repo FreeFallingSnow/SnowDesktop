@@ -571,7 +571,7 @@ local function panel(context, model)
     local row=ui.metrics().layoutRowHeight
     local busy=model.pendingPanelTask~=nil
     local function button(id,label,enabled)
-        return view.button({key="agenda."..id,text=label,width="fill",height=row,fontSize=row*0.46,
+        return view.button({key="agenda."..id,label=label,width="fill",height=row,fontSize=row*0.46,
             enabled=enabled~=false,action={id="agenda.panel",value=id},accessibility={label=label}})
     end
     local children={}

@@ -22,7 +22,7 @@ local function text(key,s,r,secondary)
         verticalAlign="center",overflowText="ellipsis",style={foreground=secondary and "textSecondary" or "textPrimary"}})
 end
 local function button(key,s,r,enabled)
-    return view.button({key=key,text=s,height=r,width="fill",fontSize=r*0.46,
+    return view.button({key=key,label=s,height=r,width="fill",fontSize=r*0.46,
         action={id=key},enabled=enabled~=false,accessibility={label=s}})
 end
 local function browse(m,date)

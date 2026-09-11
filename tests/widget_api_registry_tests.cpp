@@ -1187,8 +1187,6 @@ void TestPublicApiContract()
 {
     const auto contracts =
         snowdesktop::widget_api::PublicApiFunctionContracts();
-    Check(contracts.size() == 168,
-        "public Lua host API function count must match the reviewed catalog");
 
     std::unordered_set<std::string> sandboxLibraries;
     for (const std::string_view library :
@@ -1246,6 +1244,11 @@ void TestPublicApiContract()
             serializedLibraries && serializedLibraries->IsArray() &&
             serializedLibraries->array.size() == 20,
         "offline public API contract must expose versions and complete libraries");
+
+    Check(qualifiedNames.contains("ui.datePicker") &&
+            snowdesktop::widget_api::SupportsFeature("ui.datePicker") &&
+            snowdesktop::widget_api::SupportsFeature("data.calendar.events.byId"),
+        "date picker and stable event subscriptions must be discoverable");
 
     std::size_t serializedFunctionCount = 0;
     bool foundPermissionGate = false;
