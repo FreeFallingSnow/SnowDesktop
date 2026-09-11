@@ -3945,6 +3945,8 @@ static int lua_UiDurationPicker(lua_State* state)
     lua_pushstring(state, _L("app.widget.time_picker.minute")); lua_setfield(state, -2, "minutes");
     lua_pushstring(state, _L("app.widget.duration_picker.second")); lua_setfield(state, -2, "seconds");
     lua_pushstring(state, _L("app.widget.duration_picker.invalid")); lua_setfield(state, -2, "invalid");
+    lua_pushstring(state, _L("app.widget.duration_picker.increase")); lua_setfield(state, -2, "increase");
+    lua_pushstring(state, _L("app.widget.duration_picker.decrease")); lua_setfield(state, -2, "decrease");
     lua_pushstring(state, _L("app.widget.date_picker.confirm")); lua_setfield(state, -2, "confirm");
     lua_call(state, 2, 1);
     return 1;

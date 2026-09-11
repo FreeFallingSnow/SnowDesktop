@@ -1630,5 +1630,7 @@
     "app.widget.time_picker.invalid": "유효한 시간을 입력하세요(HH:MM)",
     "app.widget.time_picker.order": "종료 시간은 시작 시간보다 빠를 수 없습니다",
     "app.widget.duration_picker.second": "초",
-    "app.widget.duration_picker.invalid": "허용 범위 내에서 올바른 시간을 입력하세요"
+    "app.widget.duration_picker.invalid": "허용 범위 내에서 올바른 시간을 입력하세요",
+    "app.widget.duration_picker.increase": "늘리기",
+    "app.widget.duration_picker.decrease": "줄이기"
 }

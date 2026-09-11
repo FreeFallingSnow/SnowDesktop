@@ -2856,14 +2856,14 @@ API/schema v2，最低宿主 1.0.6.0，要求 `ui.timePicker` capability。同�
 
 API v2 新增 capability `ui.durationPicker`，与 `ui.timePicker` 的一天内时刻语义独立。
 使用宿主本地化的小时、分钟、秒三个数值输入框，复用已有输入、焦点、步进和无障碍路径。
-需要 `view.inputControls`、`view.theme.tokens`。不改变既有接口或 API/schema 版本。
+需要 `view.inputControls`、`view.theme.tokens`、`view.pointer.events`。不改变既有接口或 API/schema 版本。
 
 `ui.durationPicker({key, value?, minSeconds?, maxSeconds?, needConfirm?, disabled?, readOnly?})`
 在 setup 或打开面板的事件中创建，不能在 view 回调内反复重建。`key` 长度 1–80 字节，
 不同控制器应使用互不冲突的 key；内部事件使用 `key:hours/minutes/seconds/confirm`。
 `value` 和边界都以**整数总秒数**表示，边界包含端点，默认 `0..359999`（99:59:59）。
 初值默认等于最小值；非法参数或初值抛出错误。分钟和秒字段范围为 0–59，小时为 0–99，
-不会把 60 秒静默转换或把超范围值静默截断。
+直接输入不会把 60 秒静默转换或把超范围值静默截断。每列提供减号／加号按钮；悬停数值框滚轮每 120 delta 调整一单位，不足一格按字段累积。步进仅在本字段范围内停止，不跨字段进位；`setValue` 清空滚轮余量。禁用和只读状态同样禁止按钮与滚轮修改。
 
 返回控制器：
 

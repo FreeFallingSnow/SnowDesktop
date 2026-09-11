@@ -2501,7 +2501,9 @@ function ui.datePicker(options) end
 ---@field draftValue fun(self: SnowDurationPicker): integer? Draft total seconds; nil while an individual field is invalid. May be outside total bounds: check validation before use.
 ---@field validation fun(self: SnowDurationPicker): string? Localized error; nil if draft is valid.
 ---@field setValue fun(self: SnowDurationPicker, value: integer): boolean, string? Replace draft and committed seconds; invalid values leave both unchanged.
----Requires ui.durationPicker and existing view.inputControls/view.theme.tokens capabilities.
+---Requires ui.durationPicker and existing view.inputControls/view.theme.tokens/view.pointer.events capabilities.
+---Each field has decrement/increment buttons and wheel stepping (120 delta per step, partial deltas accumulated).
+---Steps clamp within each field without carrying; read-only/disabled states reject all user stepping.
 ---Additive API v2; probe capability on older hosts, including early 1.0.6.0 builds.
 ---@param options SnowDurationPickerOptions
 ---@return SnowDurationPicker

@@ -1630,5 +1630,7 @@
     "app.widget.time_picker.invalid": "请输入有效时间（HH:MM）",
     "app.widget.time_picker.order": "结束时间不能早于开始时间",
     "app.widget.duration_picker.second": "秒",
-    "app.widget.duration_picker.invalid": "请输入允许范围内的有效时长"
+    "app.widget.duration_picker.invalid": "请输入允许范围内的有效时长",
+    "app.widget.duration_picker.increase": "增加",
+    "app.widget.duration_picker.decrease": "减少"
 }

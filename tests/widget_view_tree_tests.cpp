@@ -4912,7 +4912,7 @@ void TestDurationPickerController()
         "@host/ui.durationPicker")==LUA_OK,"duration picker loads");
     lua_setglobal(state,"makeDurationPicker");
     const char* script=R"LUA(
-        local labels={hours="Hours",minutes="Minutes",seconds="Seconds",invalid="Invalid",confirm="Confirm"}
+        local labels={hours="Hours",minutes="Minutes",seconds="Seconds",invalid="Invalid",confirm="Confirm",increase="Increase",decrease="Decrease"}
         local p=makeDurationPicker({key="duration",value=300,minSeconds=1},labels)
         local function send(id,n,valid)
             return p:handle({kind="action",id="duration:"..id,controlValue=n,numberValid=valid})
@@ -4932,6 +4932,16 @@ void TestDurationPickerController()
         assert(not p:setValue(360000) and p:value()==3779)
         assert(p:setValue(359999) and p:draftValue()==359999)
         assert(not p:setValue(0) and p:value()==359999)
+        send("seconds.up");assert(p:draftValue()==359999)
+        send("seconds.down");assert(p:draftValue()==359998 and p:value()==359999)
+        assert(send("confirm").value==359998)
+        assert(p:setValue(300))
+        local function wheel(delta) return p:handle({kind="action",id="duration:seconds.wheel",delta=delta}) end
+        for i=1,3 do wheel(30);assert(p:draftValue()==300) end
+        wheel(30);assert(p:draftValue()==301)
+        wheel(-240);assert(p:draftValue()==300) -- bounded at zero, no carry into minutes
+        wheel(math.huge);assert(p:draftValue()==300)
+        wheel(60);assert(p:setValue(300));wheel(60);assert(p:draftValue()==300)
         assert(p:handle({kind="action",id="other:confirm"})==nil)
         assert(p:handle({kind="action",id="duration:unrelated"})==nil)
         local limited=makeDurationPicker({key="limited",minSeconds=30,maxSeconds=90,value=60,needConfirm=false},labels)
@@ -4943,6 +4953,8 @@ void TestDurationPickerController()
             local o={key="locked",value=60};o[flag]=true
             local locked=makeDurationPicker(o,labels)
             assert(not locked:handle({kind="action",id="locked:minutes",numberValid=true,controlValue=2}).changed)
+            locked:handle({kind="action",id="locked:minutes.up"})
+            locked:handle({kind="action",id="locked:seconds.wheel",delta=120})
             assert(locked:draftValue()==60 and locked:value()==60)
         end
         assert(not pcall(makeDurationPicker,{key="bad",minSeconds=90,maxSeconds=30},labels))

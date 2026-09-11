@@ -269,6 +269,7 @@
   ],
   "optionalFeatures": [
     "ui.durationPicker",
+    "view.pointer.events",
     "task.start",
     "task.notification.show"
   ],

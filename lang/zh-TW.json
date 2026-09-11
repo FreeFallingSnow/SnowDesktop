@@ -1630,5 +1630,7 @@
     "app.widget.time_picker.invalid": "請輸入有效時間（HH:MM）",
     "app.widget.time_picker.order": "結束時間不能早於開始時間",
     "app.widget.duration_picker.second": "秒",
-    "app.widget.duration_picker.invalid": "請輸入允許範圍內的有效時長"
+    "app.widget.duration_picker.invalid": "請輸入允許範圍內的有效時長",
+    "app.widget.duration_picker.increase": "增加",
+    "app.widget.duration_picker.decrease": "減少"
 }

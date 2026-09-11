@@ -107,7 +107,7 @@ local function panel(_,m)
         padding={horizontal=r*0.3,vertical=0},textAlign="center",action={id="custom.start"},
         style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
         hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})
-    return view.column({key="duration.panel",width="fill",height="fill",padding=r*0.6,gap=r*0.5,children=children})
+    return view.column({key="duration.panel",width="fill",height="fill",justifyContent="center",padding=r*0.6,gap=r*0.5,children=children})
 end
 local function startCountdown(m,duration)
     m.countdown.value=duration
@@ -136,7 +136,7 @@ local function event(_,m,e)
         elseif id=="settings" then widget.openSettings()
         elseif id=="custom" then
             m.error=false;m.picker=nil
-            if widget.hasFeature("ui.durationPicker") then
+            if widget.hasFeature("ui.durationPicker") and widget.hasFeature("view.pointer.events") then
                 m.picker=ui.durationPicker({key="timer.duration",value=(logic.parse(m.draft) or 300000)/1000,
                     minSeconds=1,maxSeconds=359999,needConfirm=false})
             end
