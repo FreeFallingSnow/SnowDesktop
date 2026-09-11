@@ -3,7 +3,7 @@ local function copy()
     return { name=l10n.tr("timer.name"), countdown=l10n.tr("timer.countdown"), stopwatch=l10n.tr("timer.stopwatch"),
         custom=l10n.tr("timer.custom"), start=l10n.tr("timer.start"), pause=l10n.tr("timer.pause"), resume=l10n.tr("timer.resume"),
         reset=l10n.tr("timer.reset"), done=l10n.tr("timer.done"), hint=l10n.tr("timer.hint"), invalid=l10n.tr("timer.invalid"),
-        one=l10n.tr("timer.one"), five=l10n.tr("timer.five"), ten=l10n.tr("timer.ten") }
+        one=l10n.tr("timer.one"), five=l10n.tr("timer.five"), ten=l10n.tr("timer.ten"), fifteen=l10n.tr("timer.fifteen"), twentyfive=l10n.tr("timer.twentyfive"), thirty=l10n.tr("timer.thirty") }
 end
 local function refresh(m)
     schedule.cancel("visual")
@@ -30,20 +30,27 @@ local function desktop(_,m)
     local r=ui.metrics().layoutRowHeight
     local t=m[m.mode]
     local cd=m.mode=="countdown"
-    local actions={}
+    local switch=button(cd and "mode.stopwatch" or "mode.countdown",cd and c.stopwatch or c.countdown,r)
+    switch.width=r*4.2
+    local children={view.row({key="header",width="fill",height=r,gap=r*0.3,children={
+        view.text({key="title",text=cd and c.countdown or c.stopwatch,width="fill",height=r,fontSize=r*0.6,
+            bold=true,verticalAlign="center",style={foreground="textPrimary"}}),switch}})}
     if cd and t.value==0 and not t.running and not t.done then
-        actions={button("preset.1",c.one,r),button("preset.5",c.five,r),button("preset.10",c.ten,r),button("custom",c.custom,r)}
+        children[#children+1]=view.row({key="presets.short",width="fill",height=r,gap=r*0.3,
+            children={button("preset.1",c.one,r),button("preset.5",c.five,r),button("preset.10",c.ten,r)}})
+        children[#children+1]=view.row({key="presets.long",width="fill",height=r,gap=r*0.3,
+            children={button("preset.15",c.fifteen,r),button("preset.25",c.twentyfive,r),button("preset.30",c.thirty,r)}})
+        children[#children+1]=button("custom",c.custom,r)
     else
         local label=t.done and c.done or logic.format(logic.value(t,time.monotonic(),cd),cd)
-        local value=view.text({key="value",text=label,width="auto",minWidth=r*3.9,flexShrink=0,height=r,fontSize=r*0.66,
-            bold=true,verticalAlign="center",overflowText="clip",style={foreground="textPrimary"}})
-        actions[#actions+1]=value
+        children[#children+1]=view.text({key="value",text=label,width="fill",height=r*2,flexShrink=0,fontSize=r*1.05,
+            bold=true,textAlign="center",verticalAlign="center",overflowText="clip",style={foreground="textPrimary"}})
+        local actions={}
         if not t.done then actions[#actions+1]=button("toggle",t.running and c.pause or (t.value>0 and c.resume or c.start),r) end
         if t.running or t.value>0 or t.done then actions[#actions+1]=button("reset",c.reset,r) end
+        children[#children+1]=view.row({key="actions",width="fill",height=r,gap=r*0.3,children=actions})
     end
-    return view.column({key="timer",width="fill",height="fill",padding=r*0.3,gap=r*0.22,justifyContent="center",children={
-        view.row({key="modes",width="fill",height=r,gap=r*0.2,children={button("mode.countdown",c.countdown,r,cd),button("mode.stopwatch",c.stopwatch,r,not cd)}}),
-        view.row({key="actions",width="fill",height=r,gap=r*0.2,children=actions})}})
+    return view.column({key="timer",width="fill",height="fill",padding=r*0.5,gap=r*0.4,justifyContent="center",children=children})
 end
 local function panel(_,m)
     local c=copy()
@@ -79,7 +86,7 @@ local function event(_,m,e)
             if duration and not m.countdown.running then
                 storage.set("duration",m.draft);startCountdown(m,duration);widget.closePanel()
             else m.error=true end
-        elseif id=="preset.1" or id=="preset.5" or id=="preset.10" then
+        elseif id=="preset.1" or id=="preset.5" or id=="preset.10" or id=="preset.15" or id=="preset.25" or id=="preset.30" then
             if not m.countdown.running then startCountdown(m,tonumber(id:sub(8))*60000) end
         elseif id=="toggle" then
             local t=m[m.mode]
@@ -94,3 +101,4 @@ return widget.define({name=l10n.tr("timer.name"),useCustomStyle=true,followPerso
     bg=0x18202A,border=0xFFFFFF,alpha=0.42,borderAlpha=0.18,gradientEndA=0.28,
     setup=setup,view=desktop,panel=panel,event=event,
     dispose=function() schedule.cancel("visual");schedule.cancel("deadline") end})
+

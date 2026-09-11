@@ -29,7 +29,10 @@
       "timer.name": "타이머와 스톱워치",
       "timer.description": "프리셋, 시간 직접 입력, 스톱워치를 제공합니다.",
       "timer.countdown": "타이머",
-      "timer.ten": "10분"
+      "timer.ten": "10분",
+      "timer.fifteen": "15분",
+      "timer.twentyfive": "25분",
+      "timer.thirty": "30분"
     },
     "en-US": {
       "timer.resume": "Resume",
@@ -46,7 +49,10 @@
       "timer.name": "Timer & Stopwatch",
       "timer.description": "Countdown presets, custom durations and a stopwatch.",
       "timer.countdown": "Countdown",
-      "timer.ten": "10 min"
+      "timer.ten": "10 min",
+      "timer.fifteen": "15 min",
+      "timer.twentyfive": "25 min",
+      "timer.thirty": "30 min"
     },
     "fr-FR": {
       "timer.resume": "Reprendre",
@@ -63,7 +69,10 @@
       "timer.name": "Minuteur et chronomètre",
       "timer.description": "Durées prédéfinies, durée personnalisée et chronomètre.",
       "timer.countdown": "Minuteur",
-      "timer.ten": "10 min"
+      "timer.ten": "10 min",
+      "timer.fifteen": "15 min",
+      "timer.twentyfive": "25 min",
+      "timer.thirty": "30 min"
     },
     "pt-BR": {
       "timer.resume": "Retomar",
@@ -80,7 +89,10 @@
       "timer.name": "Temporizador e cronômetro",
       "timer.description": "Durações predefinidas, personalizadas e cronômetro.",
       "timer.countdown": "Contagem regressiva",
-      "timer.ten": "10 min"
+      "timer.ten": "10 min",
+      "timer.fifteen": "15 min",
+      "timer.twentyfive": "25 min",
+      "timer.thirty": "30 min"
     },
     "de-DE": {
       "timer.resume": "Weiter",
@@ -97,7 +109,10 @@
       "timer.name": "Timer und Stoppuhr",
       "timer.description": "Timer mit Vorgaben, eigener Dauer und Stoppuhr.",
       "timer.countdown": "Countdown",
-      "timer.ten": "10 Min."
+      "timer.ten": "10 Min.",
+      "timer.fifteen": "15 Min.",
+      "timer.twentyfive": "25 Min.",
+      "timer.thirty": "30 Min."
     },
     "zh-CN": {
       "timer.resume": "继续",
@@ -114,7 +129,10 @@
       "timer.name": "计时器",
       "timer.description": "倒计时预设、自定义时长与秒表。",
       "timer.countdown": "倒计时",
-      "timer.ten": "10 分"
+      "timer.ten": "10 分",
+      "timer.fifteen": "15 分",
+      "timer.twentyfive": "25 分",
+      "timer.thirty": "30 分"
     },
     "zh-TW": {
       "timer.resume": "繼續",
@@ -131,7 +149,10 @@
       "timer.name": "計時器",
       "timer.description": "倒數計時預設、自訂時長與碼錶。",
       "timer.countdown": "倒數計時",
-      "timer.ten": "10 分"
+      "timer.ten": "10 分",
+      "timer.fifteen": "15 分",
+      "timer.twentyfive": "25 分",
+      "timer.thirty": "30 分"
     },
     "es-419": {
       "timer.resume": "Continuar",
@@ -148,7 +169,10 @@
       "timer.name": "Temporizador y cronómetro",
       "timer.description": "Duraciones predefinidas, personalizadas y cronómetro.",
       "timer.countdown": "Cuenta regresiva",
-      "timer.ten": "10 min"
+      "timer.ten": "10 min",
+      "timer.fifteen": "15 min",
+      "timer.twentyfive": "25 min",
+      "timer.thirty": "30 min"
     },
     "es-ES": {
       "timer.resume": "Continuar",
@@ -165,7 +189,10 @@
       "timer.name": "Temporizador y cronómetro",
       "timer.description": "Duraciones predefinidas, personalizadas y cronómetro.",
       "timer.countdown": "Cuenta atrás",
-      "timer.ten": "10 min"
+      "timer.ten": "10 min",
+      "timer.fifteen": "15 min",
+      "timer.twentyfive": "25 min",
+      "timer.thirty": "30 min"
     },
     "ja-JP": {
       "timer.resume": "再開",
@@ -182,22 +209,25 @@
       "timer.name": "タイマーとストップウォッチ",
       "timer.description": "プリセットや時間入力で使えるタイマーとストップウォッチ。",
       "timer.countdown": "タイマー",
-      "timer.ten": "10分"
+      "timer.ten": "10分",
+      "timer.fifteen": "15分",
+      "timer.twentyfive": "25分",
+      "timer.thirty": "30分"
     }
   },
   "defaultSize": {
-    "rows": 1,
+    "rows": 2,
     "columns": 3
   },
   "previewData": {
     "variants": [
       {
-        "id": "wide",
+        "title": "3 × 2",
+        "id": "card",
         "size": {
-          "rows": 1,
+          "rows": 2,
           "columns": 3
-        },
-        "title": "3 × 1"
+        }
       }
     ]
   },
@@ -227,7 +257,7 @@
     "notification.post"
   ],
   "minSize": {
-    "rows": 1,
+    "rows": 2,
     "columns": 3
   },
   "preview": "workshop-preview.png"
