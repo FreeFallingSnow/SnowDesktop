@@ -94,7 +94,9 @@ local function panel(_,m)
     local r=ui.metrics().layoutRowHeight
     local children
     if m.picker then
-        children={m.picker:view({rowHeight=r})}
+        local picker=m.picker:view({rowHeight=r})
+        picker.flexShrink=0
+        children={picker}
     else
         children={
             view.text({key="hint",text=m.error and c.invalid or c.hint,width="fill",height=r*1.5,flexShrink=0,
@@ -107,7 +109,9 @@ local function panel(_,m)
         padding={horizontal=r*0.3,vertical=0},textAlign="center",action={id="custom.start"},
         style={background=0x438BF5,foreground=0xFFFFFF,cornerRadius=r*0.22},
         hoverStyle={opacity=0.85},pressedStyle={opacity=0.65}})
-    return view.column({key="duration.panel",width="fill",height="fill",justifyContent="center",padding=r*0.6,gap=r*0.5,children=children})
+    local content=view.column({key="duration.panel",width="fill",height="auto",minHeight=layout.contentHeight(),
+        flexShrink=0,justifyContent="center",padding=r*0.6,gap=r*0.5,children=children})
+    return view.scroll({key="duration.viewport",width="fill",height="fill",children={content}})
 end
 local function startCountdown(m,duration)
     m.countdown.value=duration
@@ -140,7 +144,7 @@ local function event(_,m,e)
                 m.picker=ui.durationPicker({key="timer.duration",value=(logic.parse(m.draft) or 300000)/1000,
                     minSeconds=1,maxSeconds=359999,needConfirm=false})
             end
-            widget.openPanel({title=copy().custom,width=420,height=m.picker and 300 or 220})
+            widget.openPanel({title=copy().custom,width=420,height=m.picker and 360 or 220})
         elseif id=="duration" then m.draft=e.text or m.draft;m.error=false
         elseif id=="custom.start" then
             local duration

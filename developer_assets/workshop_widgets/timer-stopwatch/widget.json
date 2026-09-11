@@ -252,6 +252,7 @@
     ]
   },
   "requiredFeatures": [
+    "view.scroll",
     "view.tree.core",
     "view.inputControls",
     "view.theme.tokens",
