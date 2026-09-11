@@ -29,10 +29,13 @@ local function button(key,s,r,enabled)
         action={id=key},enabled=enabled~=false,accessibility={label=s}})
 end
 local function browse(m,date)
-    m.listRevision=(m.listRevision or 0)+1
-    m.page=1
+    local first,last=logic.monthRange(date)
+    if first~=m.first then
+        m.listRevision=(m.listRevision or 0)+1
+        m.page=1
+    end
     if m.browse then m.browse:unsubscribe() end
-    m.first,m.last=logic.monthRange(date)
+    m.first,m.last=first,last
     m.browse=data.subscribe("calendar.events",{fromDate=m.first,toDate=m.last,whenHidden="pause",maxAgeMs=86400000})
 end
 local function leavePage(m)
@@ -70,25 +73,31 @@ local function desktop(context,m)
             local number=text("event.days",value,unit*0.38,false)
             number.fontSize=delta==0 and unit*0.16 or math.min(unit*0.34,(w-pad*2)/math.max(1,#value)*1.3)
             number.bold=true;number.textAlign="center";number.overflowText="clip"
-            local state=text("event.status",delta==0 and "" or (delta>0 and c.remaining or c.elapsed),unit*0.09,true)
-            state.fontSize=unit*0.07;state.textAlign="center"
+            local state=text("event.status",delta>0 and c.remaining or c.elapsed,unit*0.20,true)
+            state.textAlign="end"
             local date=text("event.date",item.date,unit*0.10,true);date.fontSize=unit*0.07;date.textAlign="center"
             local sideHeight=math.max(0,(h-pad*2-unit*0.38)/2)
             local heading=view.column({key="event.heading",height=sideHeight,gap=unit*0.015,
-                justifyContent="center",children=delta==0 and {title} or {title,state}})
+                justifyContent="center",children={title}})
             local footer=view.column({key="event.footer",height=sideHeight,
                 justifyContent="center",children={date}})
             if delta~=0 then
                 local suffix=text("event.unit",c.days,unit*0.20,true)
-                suffix.fontSize=unit*0.08
-                local unitCharacters=#(c.days:gsub("[\128-\191]",""))
-                suffix.minWidth=unit*0.08*math.max(1.1,unitCharacters*0.65)
-                suffix.width=suffix.minWidth;suffix.flexShrink=0
-                number.fontSize=math.min(unit*0.34,(w-pad*2-suffix.minWidth*2-unit*0.05)/(#value+1))
+                local function labelUnits(s)
+                    local characters=#(s:gsub("[\128-\191]",""))
+                    local _,ascii=s:gsub("[\1-\127]","")
+                    return math.max(1.1,ascii*0.65+(characters-ascii)*1.1)
+                end
+                local labelWidth=math.max(labelUnits(state.text),labelUnits(c.days))
+                local labelSize=math.min(unit*0.08,(w-pad*2)*0.30/labelWidth)
+                local sideWidth=labelSize*labelWidth
+                state.fontSize=labelSize;state.width=sideWidth;state.flexShrink=0
+                suffix.fontSize=labelSize;suffix.width=sideWidth;suffix.flexShrink=0
+                number.fontSize=math.min(unit*0.34,(w-pad*2-sideWidth*2-unit*0.05)/(#value*0.72))
                 number.width="auto";number.minWidth=number.fontSize*#value*0.72;number.flexShrink=0
                 local countRow=view.row({key="event.count",height=unit*0.38,gap=unit*0.025,
                     justifyContent="center",alignItems="end",children={
-                        view.spacer({key="event.balance",width=suffix.minWidth,flexShrink=0}),number,suffix}})
+                        state,number,suffix}})
                 children={heading,countRow,footer}
             else children={heading,number,footer} end
             -- Balance the visible glyph, whose baseline sits below the text line center.
@@ -179,8 +188,11 @@ local function panel(context,m)
             local control=table.remove(children,1);control.flexShrink=0;frame[#frame+1]=control
         end
     end
-    frame[#frame+1]=view.scroll({key="countdown.scroll."..page..":"..tostring(m.listRevision or 0),width="fill",height="fill",children={
-        view.column({key="countdown.body."..page,width="fill",height="auto",gap=r*0.3,children=children})}})
+    -- Each page owns its offset; only replacing search results resets the list.
+    local scrollKey="countdown.scroll."..page
+    if page=="choose" then scrollKey=scrollKey..":"..tostring(m.listRevision or 0) end
+    frame[#frame+1]=view.scroll({key=scrollKey,width="fill",height="fill",children={
+        view.column({key="countdown.body."..page,width="fill",height="auto",padding=r*0.10,gap=r*0.3,children=children})}})
     return view.column({key="countdown.panel",width="fill",height="fill",padding=r*0.65,gap=r*0.3,children=frame})
 end
 local function event(context,m,e)

@@ -29541,7 +29541,30 @@ void WidgetEngine::CloseWidgetPanelSurface(
 LuaWidgetTheme WidgetEngine::RuntimeGetWidgetTheme(const std::wstring& widgetId) const
 {
     int idx = FindWidget(widgetId);
-    return idx >= 0 ? widgets_[idx].theme : LuaWidgetTheme{};
+    const auto desktop = idx >= 0 ? widgets_[idx].theme : LuaWidgetTheme{};
+    const auto surface = d2dState_ && d2dState_->currentWidgetId == widgetId
+        ? CurrentWidgetSurface(d2dState_) : std::string_view("desktop");
+    return snowdesktop::widget_runtime::ResolveSurfaceTheme(
+        desktop, panelTheme_ ? &*panelTheme_ : nullptr, surface);
+}
+
+void WidgetEngine::SetPanelTheme(const PersonalizationSettings& appearance)
+{
+    const auto rgb = [](float r, float g, float b) {
+        const auto byte = [](float v) {
+            return static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+        };
+        return (byte(r) << 16) | (byte(g) << 8) | byte(b);
+    };
+    LuaWidgetTheme theme;
+    theme.bg = rgb(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB);
+    theme.border = rgb(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB);
+    theme.alpha = appearance.widgetAlpha;
+    theme.borderAlpha = appearance.widgetBorderAlpha;
+    theme.gradientEndA = appearance.gradientEndA;
+    theme.cornerRadius = 18.0f;
+    theme.contentTheme = appearance.contentTheme;
+    panelTheme_ = theme;
 }
 
 void WidgetEngine::SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme)

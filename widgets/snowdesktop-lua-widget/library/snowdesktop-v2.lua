@@ -1200,6 +1200,7 @@ function widget.context() end
 ---@return SnowWidgetInfo
 function widget.info() end
 
+---Current surface palette: host popup theme in panel/dialog/popover, widget theme on desktop.
 ---@return SnowWidgetTheme
 function widget.theme() end
 

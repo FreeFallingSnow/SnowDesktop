@@ -1834,8 +1834,11 @@ void DesktopApp::ApplyCollectionPopupAppearance()
         collectionPopupAppearance_.glassBlurRadius,
         4.0f, 48.0f);
 
+    if (widgetEngine_)
+        widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
+    ResetLuaWidgetPanelAnimationCache();
     UpdateCollectionPopupBackdrop();
-    if (GetOpenPopupWidget())
+    if (GetOpenPopupWidget() || !luaWidgetPanelRequest_.widgetId.empty())
         InvalidateFloatingPopupWindow(true);
 }
 

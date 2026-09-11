@@ -334,15 +334,11 @@ void DesktopApp::DrawLuaWidgetPanel(
         }
     }
 
-    const bool darkText =
-        widgetEngine_->RuntimeGetWidgetTheme(
-            luaWidgetPanelRequest_.widgetId)
-            .contentTheme == 1;
-    const D2D1_COLOR_F background = darkText
-        ? D2D1::ColorF(
-            0.96f, 0.97f, 0.98f, 0.98f)
-        : D2D1::ColorF(
-            0.08f, 0.10f, 0.13f, 0.98f);
+    const bool darkText = collectionPopupLightTheme_;
+    const D2D1_COLOR_F background = D2D1::ColorF(
+        collectionPopupAppearance_.widgetBgR,
+        collectionPopupAppearance_.widgetBgG,
+        collectionPopupAppearance_.widgetBgB, 0.98f);
     const D2D1_COLOR_F foreground = darkText
         ? D2D1::ColorF(
             0.04f, 0.05f, 0.07f, 1.0f)

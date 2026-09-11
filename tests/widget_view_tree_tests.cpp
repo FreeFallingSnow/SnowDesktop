@@ -2,6 +2,7 @@
 #include "widget_date_picker_lua.h"
 #include "widget_time_picker_lua.h"
 #include "widget_view_tree.h"
+#include "widget_surface_theme.h"
 #include "widget_resource_lua.h"
 
 #include <cmath>
@@ -9,6 +10,7 @@
 #include <iostream>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 extern "C" {
@@ -4899,8 +4901,57 @@ void TestTimePickerController()
     lua_close(state);
 }
 
+void TestSurfaceThemeRouting()
+{
+    LuaWidgetTheme desktop, popup;
+    desktop.contentTheme = 0; desktop.bg = 0x102030;
+    popup.contentTheme = 1; popup.bg = 0xFAF0E0;
+    popup.border = 0x223344; popup.alpha = 0.8f;
+    for (const auto surface : {"panel", "dialog", "popover"})
+    {
+        const auto result = ResolveSurfaceTheme(desktop, &popup, surface);
+        Check(result.contentTheme == 1 && result.bg == 0xFAF0E0 &&
+                result.border == 0x223344 && Near(result.alpha, 0.8f),
+            "auxiliary surfaces must use the complete popup palette despite an opposite desktop foreground");
+        Check(ResolveSurfaceTheme(desktop, nullptr, surface).bg == 0x102030,
+            "standalone previews without a host popup theme retain their own palette");
+    }
+    Check(ResolveSurfaceTheme(desktop, &popup, "desktop").contentTheme == 0 &&
+            desktop.bg == 0x102030,
+        "popup rendering must not overwrite the desktop palette");
+    popup.contentTheme = 0; desktop.contentTheme = 1;
+    Check(ResolveSurfaceTheme(desktop, &popup, "panel").contentTheme == 0,
+        "switching the host popup back to dark updates an already open panel");
+}
+
+void TestScrollPageRestoration()
+{
+    // A short picker must not clamp its parent editor's saved scroll position.
+    std::unordered_map<std::string, float> offsets{{"editor", 180.0f}};
+    const auto renderPage = [&](const char* key, float contentHeight) {
+        ViewNode root; root.type = ViewNodeType::Scroll; root.key = key;
+        ViewNode content; content.type = ViewNodeType::Column; content.key = "body";
+        content.height = {ViewLengthKind::Fixed, contentHeight};
+        root.children.push_back(content);
+        std::string error; std::vector<ViewScrollViewport> viewports;
+        Check(ValidateAndLayoutViewTree(root, 200, 100, error), "page layout validates");
+        Check(ApplyViewScrollOffsets(root, [&](std::string_view id, float) {
+            const auto it = offsets.find(std::string(id));
+            return it == offsets.end() ? 0.0f : it->second;
+        }, viewports, error) && viewports.size() == 1, "page scroll state resolves");
+        offsets[viewports[0].key] = viewports[0].offset;
+        return viewports[0].offset;
+    };
+    Check(Near(renderPage("editor", 500), 180), "editor starts at saved position");
+    Check(Near(renderPage("picker", 50), 0), "short child has its own zero offset");
+    Check(Near(renderPage("editor", 500), 180), "return restores the editor offset");
+    Check(Near(renderPage("results:2", 500), 0), "new query results start at the top");
+}
+
 int main()
 {
+    TestSurfaceThemeRouting();
+    TestScrollPageRestoration();
     TestTimePickerController();
     TestDatePickerController();
     TestLayoutAndRegions();

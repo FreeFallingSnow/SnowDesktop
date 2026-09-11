@@ -631,7 +631,9 @@ local function panel(context, model)
             button("cancel",l10n.tr("lua_widget.agenda.cancel"),not busy),
             button("save",l10n.tr("lua_widget.agenda.save"),not busy and not titleError and not dateError and not timeError and widget.hasPermission("calendar.write"))}})
     end
-    return view.scroll({key="agenda.panel.scroll",width="fill",height="fill",children={
+    local page=model.reminderPicker and "reminder" or model.timePicker and "time"
+        or model.datePicker and "date" or "editor"
+    return view.scroll({key="agenda.panel.scroll."..page,width="fill",height="fill",children={
         view.column({key="agenda.form",width="fill",height="auto",padding=row*0.65,gap=row*0.25,children=children})}})
 end
 

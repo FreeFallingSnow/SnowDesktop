@@ -239,6 +239,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `bg`、alpha、壁纸和 normal/glass/acrylic 材质相互独立。`widget.context().theme.mode`
   的等价映射为 `"dark"` 使用浅色前景、`"light"` 使用深色前景。组件不得根据背景
   RGB 亮度或材质名称反推前景主题。
+  在 `panel`、`dialog`、`popover` 回调内，主题快照、`ui.theme()` 和声明式颜色令牌
+  使用宿主设置的“弹窗主题”；桌面回调继续使用组件卡片主题。弹窗打开时及设置变化时
+  宿主会更新该主题。不要缓存桌面主题并用于弹窗。此行为纠正保持 API/schema v2，
+  早期宿主仍可能让弹窗继承卡片前景主题。
 - `widget.hasPermission(name)`：查询当前实例已授予权限。
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
 - `widget.invalidate()` 请求刷新当前 surface。同一宿主事件/计时器回调内的重复请求
