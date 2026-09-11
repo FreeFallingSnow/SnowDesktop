@@ -120,9 +120,10 @@ function self:view(options)
     local r=options and options.rowHeight or ui.metrics().layoutRowHeight
     local font=r*0.46
     local function text(id,s) return view.text({key=key..id,text=s,height=r,fontSize=font,
+        textAlign=id=="error" and "start" or "center",
         verticalAlign="center",style={foreground="textSecondary"}}) end
     local function button(id,s,enabled,selected)
-        return view.button({key=key..id,label=s,width="fill",height=r,fontSize=font,
+        return view.button({key=key..id,label=s,width="fill",height=r,fontSize=font,textAlign="center",
             enabled=not o.disabled and enabled~=false,action={id=key..id},
             style={foreground=selected and 0xFFFFFF or "textPrimary",
                 background=selected and 0x175CD3 or nil,cornerRadius=r*0.12},accessibility={label=s}})
@@ -140,10 +141,10 @@ function self:view(options)
     for m=1,12 do months[m]={key=tostring(m),value=tostring(m),label=tostring(m)} end
     local nav={button("previous",labels.previous,self.year>1 or self.month>1),
         view.numberInput({key=key.."year",value=self.year,min=1,max=9999,step=1,
-            width="fill",height=r,fontSize=font,style={foreground="textPrimary"},enabled=not o.disabled,action={id=key.."year"},
+            width="fill",height=r,fontSize=font,textAlign="center",style={foreground="textPrimary"},enabled=not o.disabled,action={id=key.."year"},
             accessibility={label=labels.year}}),
         view.select({key=key.."month",selectedValue=tostring(self.month),options=months,width="fill",height=r,
-            fontSize=font,style={foreground="textPrimary"},enabled=not o.disabled,expanded=self.monthOpen==true,
+            fontSize=font,textAlign="center",style={foreground="textPrimary"},enabled=not o.disabled,expanded=self.monthOpen==true,
             events={change={id=key.."month"},click={id=key.."month.open"}},accessibility={label=labels.month}}),
         button("next",labels.next,self.year<9999 or self.month<12)}
     local cells={}
