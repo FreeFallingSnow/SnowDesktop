@@ -44,9 +44,10 @@ function self:handle(e)
  local result={handled=true,changed=false}
  if o.disabled then return result end
  local id=e.id:sub(#key+1)
- if id=="clear" and o.allowClear~=false then self.startTime="";self.endTime=""
+ local edited=false
+ if id=="clear" and o.allowClear~=false then self.startTime="";self.endTime="";edited=true
  elseif id=="startTime" or (range and id=="endTime") then
-  if type(e.text)=="string" and #e.text<=5 then self[id]=e.text end
+  if type(e.text)=="string" and #e.text<=5 then self[id]=e.text;edited=true end
  else
   local field,part=id:match("^(%a+):([hm])$")
   if field=="startTime" or (range and field=="endTime") then
@@ -56,11 +57,11 @@ function self:handle(e)
     local old=parse(self[field]) or 0
     local h,m=math.floor(old/60),old%60
     if part=="h" then h=n else m=n end
-    self[field]=string.format("%02d:%02d",h,m);self.opened[id]=false
+    self[field]=string.format("%02d:%02d",h,m);self.opened[id]=false;edited=true
    end
   end
  end
- if (id=="confirm" or o.needConfirm==false) and not self:validation() then
+ if (id=="confirm" or (edited and o.needConfirm==false)) and not self:validation() then
   committed=output();result.changed=true;result.value=copy(committed)
  end
  return result
@@ -73,7 +74,7 @@ function self:view(options)
   style={foreground="textPrimary",cornerRadius=r*.12}}) end
  local function field(name,label)
   children[#children+1]=view.text({key=key..name..".label",text=label,height=r,fontSize=r*.46,style={foreground="textSecondary"}})
-  local invalid=not allowed(self[name])
+  local invalid=(self[name]~="" or o.allowClear==false) and not allowed(self[name])
   children[#children+1]=view.textInput({key=key..name,value=self[name],height=r,fontSize=r*.46,maxBytes=5,
    enabled=not o.disabled,action={id=key..name},style={foreground="textPrimary"},
    validationState=invalid and "error" or "none",validationMessage=invalid and labels.invalid or "",accessibility={label=label}})

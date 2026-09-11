@@ -4887,6 +4887,9 @@ void TestTimePickerController()
       local v=q:value();q:handle({kind="action",id="other:clear"});assert(q:value()==v)
       local locked=makeTimePicker({key="locked",value="10:00",disabled=true},labels)
       assert(not locked:handle({kind="action",id="locked:clear"}).changed and locked:draftValue()=="10:00")
+      local immediate=makeTimePicker({key="immediate",value="09:00",needConfirm=false},labels)
+      assert(not immediate:handle({kind="action",id="immediate:startTime:h",expanded=true}).changed)
+      assert(immediate:handle({kind="action",id="immediate:startTime:m",selection="30"}).value=="09:30")
       return p:view({rowHeight=32})
     )LUA";
     if(luaL_dostring(state,script)!=LUA_OK){std::cerr<<lua_tostring(state,-1)<<'\n';Check(false,"time validation and confirmed selection");}

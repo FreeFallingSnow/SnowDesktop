@@ -71,15 +71,16 @@ void StretchExpanderBody(
 {
     const auto weakBody = winrt::make_weak(body);
     expander.SizeChanged(
-        [weakBody](const auto&, const mux::SizeChangedEventArgs& args) {
+        [weakBody](const auto& sender, const mux::SizeChangedEventArgs& args) {
             if (const auto currentBody = weakBody.get())
             {
                 // The WinUI Expander template contributes 16 DIP of padding
                 // on each side. Pinning the body to the remaining width keeps
                 // action rows aligned with the full card instead of letting a
                 // desired-width StackPanel appear centered.
+                const auto border = sender.template as<muxc::Expander>().BorderThickness();
                 currentBody.Width(std::max(0.0,
-                    static_cast<double>(args.NewSize().Width) - 32.0));
+                    static_cast<double>(args.NewSize().Width) - 32.0 - border.Left - border.Right));
             }
         });
 }
@@ -1447,10 +1448,8 @@ struct WidgetsPagePresenter::Impl
         button.VerticalAlignment(mux::VerticalAlignment::Center);
         button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
         button.UseSystemFocusVisuals(true);
-        // Leave rasterization room for the trailing border of right-aligned
-        // compact buttons inside a ContentControl/Expander clip.
+        // Keep compact button borders aligned with device pixels at mixed DPI.
         button.UseLayoutRounding(true);
-        button.Margin({0.0, 0.0, 2.0, 0.0});
         SetAutomation(button, text, help);
         return button;
     }
