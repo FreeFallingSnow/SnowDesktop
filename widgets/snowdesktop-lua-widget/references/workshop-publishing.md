@@ -42,8 +42,8 @@ bin\SnowDesktopSteamBridge.exe workshop component-publish `
   --confirm-create
 ```
 
-Use `--confirm-update` when the action starts with `update-`. Creation is always
-private. Publishing emits JSON Lines progress and one final result. Preserve the
+Use `--confirm-update` when the action starts with `update-`. Creation is
+public by default; pass `--visibility private` to create a private item. Publishing emits JSON Lines progress and one final result. Preserve the
 returned PublishedFileId even if a later localization update fails. Do not pass
 `--open-page` unless the user asked to open Steam.
 

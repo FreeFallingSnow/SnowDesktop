@@ -769,13 +769,6 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             "Steam rejected the Workshop description");
         return std::nullopt;
     }
-    if (creating && !ugc->SetItemVisibility(update,
-            k_ERemoteStoragePublishedFileVisibilityPrivate))
-    {
-        SetError(error, kSteamOperationFailed, "visibility_rejected",
-            "Steam rejected private Workshop visibility");
-        return std::nullopt;
-    }
     if (request.metadata && !ugc->SetItemMetadata(update,
             request.metadata->c_str()))
     {
@@ -783,9 +776,10 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             "Steam rejected the Workshop metadata");
         return std::nullopt;
     }
-    if (!creating && request.visibility && !ugc->SetItemVisibility(update,
+    const auto visibility = ResolveWorkshopVisibility(creating, request.visibility);
+    if (visibility && !ugc->SetItemVisibility(update,
             static_cast<ERemoteStoragePublishedFileVisibility>(
-                *request.visibility)))
+                *visibility)))
     {
         SetError(error, kSteamOperationFailed, "visibility_rejected",
             "Steam rejected the Workshop visibility");
