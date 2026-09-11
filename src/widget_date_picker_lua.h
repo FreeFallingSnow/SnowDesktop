@@ -125,12 +125,12 @@ function self:view(options)
         return view.button({key=key..id,label=s,width="fill",height=r,fontSize=font,
             enabled=not o.disabled and enabled~=false,action={id=key..id},
             style={foreground=selected and 0xFFFFFF or "textPrimary",
-                background=selected and 0x175CD3 or nil},accessibility={label=s}})
+                background=selected and 0x175CD3 or nil,cornerRadius=r*0.12},accessibility={label=s}})
     end
     local function input(id,value,label)
         local bad=value~="" and not allowed(value)
         return view.textInput({key=key..id,value=value,placeholder=label,width="fill",height=r,
-            fontSize=font,maxBytes=10,enabled=not o.disabled,action={id=key..id},
+            fontSize=font,maxBytes=10,style={foreground="textPrimary"},enabled=not o.disabled,action={id=key..id},
             validationState=bad and "error" or "none",validationMessage=bad and labels.invalid or "",
             accessibility={label=label}})
     end
@@ -140,10 +140,10 @@ function self:view(options)
     for m=1,12 do months[m]={key=tostring(m),value=tostring(m),label=tostring(m)} end
     local nav={button("previous",labels.previous,self.year>1 or self.month>1),
         view.numberInput({key=key.."year",value=self.year,min=1,max=9999,step=1,
-            width="fill",height=r,fontSize=font,enabled=not o.disabled,action={id=key.."year"},
+            width="fill",height=r,fontSize=font,style={foreground="textPrimary"},enabled=not o.disabled,action={id=key.."year"},
             accessibility={label=labels.year}}),
         view.select({key=key.."month",selectedValue=tostring(self.month),options=months,width="fill",height=r,
-            fontSize=font,enabled=not o.disabled,expanded=self.monthOpen==true,
+            fontSize=font,style={foreground="textPrimary"},enabled=not o.disabled,expanded=self.monthOpen==true,
             events={change={id=key.."month"},click={id=key.."month.open"}},accessibility={label=labels.month}}),
         button("next",labels.next,self.year<9999 or self.month<12)}
     local cells={}

@@ -590,7 +590,7 @@ local function panel(context, model)
             and l10n.tr("lua_widget.agenda.invalid_time") or nil
         local function field(key,value,label,err,multi)
             children[#children+1]=view.text({key=key..".label",text=label,height=row,fontSize=row*0.43,style={foreground="textSecondary"}})
-            local options={key=key,value=value,height=multi and row*3 or row,fontSize=row*0.46,
+            local options={key=key,value=value,style={foreground="textPrimary"},height=multi and row*3 or row,fontSize=row*0.46,
                 maxBytes=key==DRAFT_TITLE and 512 or (multi and 8192 or 10),enabled=not busy,
                 validationState=err and "error" or "none",validationMessage=err or "",
                 action={id="agenda.field",value=key},accessibility={label=label}}

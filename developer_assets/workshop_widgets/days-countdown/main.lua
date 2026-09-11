@@ -59,10 +59,19 @@ local function desktop(context,m)
             local number=text("event.days",value,unit*0.38,false)
             number.fontSize=delta==0 and unit*0.16 or math.min(unit*0.34,(w-pad*2)/math.max(1,#value)*1.3)
             number.bold=true;number.textAlign="center";number.overflowText="clip"
-            local state=text("event.status",delta==0 and "" or ((delta>0 and c.remaining or c.elapsed).." · "..c.days),unit*0.09,true)
+            local state=text("event.status",delta==0 and "" or (delta>0 and c.remaining or c.elapsed),unit*0.09,true)
             state.fontSize=unit*0.07;state.textAlign="center"
             local date=text("event.date",item.date,unit*0.10,true);date.fontSize=unit*0.07;date.textAlign="center"
-            children={title,number,state,date}
+            if delta~=0 then
+                local suffix=text("event.unit",c.days,unit*0.20,true)
+                suffix.width="auto";suffix.fontSize=unit*0.08
+                suffix.minWidth=unit*0.08*#c.days*0.65
+                number.fontSize=math.min(unit*0.34,(w-pad*2-suffix.minWidth)/(#value+1))
+                number.width="auto";number.minWidth=number.fontSize*#value*0.72;number.flexShrink=0
+                local countRow=view.row({key="event.count",height=unit*0.38,gap=unit*0.025,
+                    justifyContent="center",alignItems="end",children={number,suffix}})
+                children={title,state,countRow,date}
+            else children={title,number,date} end
         end
     end
     if status~="ready" then
@@ -81,11 +90,11 @@ local function panel(context,m)
     elseif m.mode=="create" then
         local valid=m.title:match("%S")~=nil and #m.title<=512;local dateValid=logic.parts(m.date)~=nil
         children={text("label.title",c.title,r),view.textInput({key="input.title",value=m.title,
-            height=r,fontSize=r*0.46,maxBytes=512,action={id="title"},validationState=valid and "none" or "error",
+            height=r,fontSize=r*0.46,style={foreground="textPrimary"},maxBytes=512,action={id="title"},validationState=valid and "none" or "error",
             validationMessage=valid and "" or c.invalid_title,enabled=not m.link.pending,accessibility={label=c.title}})}
         if not valid then children[#children+1]=text("error.title",c.invalid_title,r,true) end
         children[#children+1]=text("label.date",c.date,r)
-        children[#children+1]=view.textInput({key="input.date",value=m.date,height=r,fontSize=r*0.46,maxBytes=10,
+        children[#children+1]=view.textInput({key="input.date",value=m.date,height=r,fontSize=r*0.46,style={foreground="textPrimary"},maxBytes=10,
             action={id="date"},validationState=dateValid and "none" or "error",validationMessage=dateValid and "" or c.invalid_date,
             enabled=not m.link.pending,accessibility={label=c.date}})
         if not dateValid then children[#children+1]=text("error.date",c.invalid_date,r,true) end
@@ -98,7 +107,7 @@ local function panel(context,m)
     elseif m.mode=="choose" then
         children={view.row({key="month.nav",height=r,gap=r*0.25,children={button("previous",c.previous,r),
             button("pick.month",(m.first or today()):sub(1,7),r),button("next",c.next,r)}}),
-            view.searchBox({key="filter",value=m.filter,height=r,fontSize=r*0.46,maxBytes=512,
+            view.searchBox({key="filter",value=m.filter,height=r,fontSize=r*0.46,style={foreground="textPrimary"},maxBytes=512,
                 placeholder=c.filter,action={id="filter"},accessibility={label=c.filter}})}
         local s=m.browse and m.browse:value()
         if not widget.hasPermission("calendar.read") then children[#children+1]=text("permission",c.permission,r,true)
