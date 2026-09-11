@@ -73,16 +73,16 @@ local function desktop(context,m)
             local number=text("event.days",value,unit*0.38,false)
             number.fontSize=delta==0 and unit*0.16 or math.min(unit*0.34,(w-pad*2)/math.max(1,#value)*1.3)
             number.bold=true;number.textAlign="center";number.overflowText="clip"
-            local state=text("event.status",delta>0 and c.remaining or c.elapsed,unit*0.20,true)
+            local state=text("event.status",delta>0 and c.remaining or c.elapsed,unit*0.20,false)
             state.textAlign="end"
-            local date=text("event.date",item.date,unit*0.14,true);date.fontSize=title.fontSize;date.textAlign="center"
+            local date=text("event.date",item.date,unit*0.14,false);date.fontSize=title.fontSize;date.textAlign="center"
             local sideHeight=math.max(0,(h-pad*2-unit*0.38)/2)
             local heading=view.column({key="event.heading",height=sideHeight,gap=unit*0.015,
                 justifyContent="center",children={title}})
             local footer=view.column({key="event.footer",height=sideHeight,
                 justifyContent="center",children={date}})
             if delta~=0 then
-                local suffix=text("event.unit",c.days,unit*0.20,true)
+                local suffix=text("event.unit",c.days,unit*0.20,false)
                 local function labelUnits(s)
                     local characters=#(s:gsub("[\128-\191]",""))
                     local _,ascii=s:gsub("[\1-\127]","")

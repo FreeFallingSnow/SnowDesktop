@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Days Countdown",
   "nameKey": "countdown.name",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Count days to or since a linked calendar event.",
   "descriptionKey": "countdown.description",
   "locales": {
