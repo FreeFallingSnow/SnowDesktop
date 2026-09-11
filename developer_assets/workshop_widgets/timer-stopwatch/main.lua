@@ -31,19 +31,21 @@ local function desktop(_,m)
     local w,h=layout.contentWidth(),layout.contentHeight()
     local side=math.min(w,h)
     local pad=side*0.075
+    local topPad=side*0.04
     local gap=side*0.05
     local width=w-pad*2
     local header=side*0.16
-    local tileH=(h-pad*2-header-gap*2)/2
+    local tileH=(h-topPad-pad-header-gap*2)/2
     local tileW=(width-gap*2)/3
     local dark=widget.theme().contentTheme==1
     local surface=dark and 0xDEE3EC or 0x242B3F
     local accent=0x438BF5
     local cd=m.mode=="countdown"
     local t=m[m.mode]
-    local function icon(id,glyph,label,size,primary)
+    local function icon(id,glyph,label,size,primary,headerIcon)
         return (primary and view.iconButton or view.icon)({key=id,glyph=utf8.char(glyph),iconFont="fa",width=size,height=size,
-            fontSize=size*0.43,events={click={id=id}},accessibility={label=label},
+            fontSize=size*0.43,flexShrink=0,textAlign="center",verticalAlign="center",
+            padding={left=glyph==0xF04B and size*0.10 or 0,top=headerIcon and size*0.08 or 0},events={click={id=id}},accessibility={label=label},
             style={background=primary and accent or nil,
                 foreground=primary and 0xFFFFFF or "textPrimary",cornerRadius=size/2},
             hoverStyle={opacity=0.82},pressedStyle={opacity=0.65}})
@@ -58,10 +60,10 @@ local function desktop(_,m)
                     textAlign="center",verticalAlign="center",style={foreground="textPrimary"}})}})
     end
     local children={view.row({key="header",width="fill",height=header,alignItems="center",children={
-        icon("settings",0xF013,c.settings,header,false),
+        icon("settings",0xF013,c.settings,header,false,true),
         view.text({key="title",text=cd and c.countdown or c.stopwatch,width="fill",height=header,fontSize=side*0.10,
             bold=true,textAlign="center",verticalAlign="center",style={foreground="textPrimary"}}),
-        icon(cd and "mode.stopwatch" or "mode.countdown",0xF0EC,cd and c.stopwatch or c.countdown,header,false)}})}
+        icon(cd and "mode.stopwatch" or "mode.countdown",0xF0EC,cd and c.stopwatch or c.countdown,header,false,true)}})}
     if cd and t.value==0 and not t.running and not t.done then
         children[#children+1]=view.row({key="presets.top",width="fill",height=tileH,gap=gap,children={preset(1),preset(2),preset(3)}})
         children[#children+1]=view.row({key="presets.bottom",width="fill",height=tileH,gap=gap,children={preset(5),
@@ -74,7 +76,7 @@ local function desktop(_,m)
             children={icon("toggle",0xF04B,c.start,size,true)}})
     else
         local valueHeight=side*0.30
-        children[#children+1]=view.spacer({key="time.top",width="fill",height=h/2-pad-header-gap*2-valueHeight/2,flexShrink=0})
+        children[#children+1]=view.spacer({key="time.top",width="fill",height=h/2-topPad-header-gap*2-valueHeight/2,flexShrink=0})
         children[#children+1]=view.text({key="value",text=t.done and c.done or logic.format(logic.value(t,time.monotonic(),cd),cd),
             width="fill",height=valueHeight,flexShrink=0,fontSize=math.min(side*0.19,width/5.1),textAlign="center",verticalAlign="center",
             overflowText="clip",style={foreground="textPrimary"}})
@@ -85,7 +87,7 @@ local function desktop(_,m)
         actions[#actions+1]=icon("reset",0xF0E2,c.reset,size,false)
         children[#children+1]=view.row({key="actions",width="fill",height=size,flexShrink=0,gap=gap,justifyContent="center",alignItems="center",children=actions})
     end
-    return view.column({key="timer",width="fill",height="fill",padding=pad,gap=gap,children=children})
+    return view.column({key="timer",width="fill",height="fill",padding={left=pad,right=pad,top=topPad,bottom=pad},gap=gap,children=children})
 end
 local function panel(_,m)
     local c=copy()
