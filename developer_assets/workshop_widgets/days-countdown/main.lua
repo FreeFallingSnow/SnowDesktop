@@ -1,4 +1,5 @@
 local logic=module.require("modules/countdown.lua")
+local navigation=module.require("modules/navigation.lua")
 local function copyText()
     return {
         name=l10n.tr("countdown.name"),empty=l10n.tr("countdown.empty"),deleted=l10n.tr("countdown.deleted"),
@@ -28,18 +29,25 @@ local function button(key,s,r,enabled)
         action={id=key},enabled=enabled~=false,accessibility={label=s}})
 end
 local function browse(m,date)
+    m.listRevision=(m.listRevision or 0)+1
     m.page=1
     if m.browse then m.browse:unsubscribe() end
     m.first,m.last=logic.monthRange(date)
     m.browse=data.subscribe("calendar.events",{fromDate=m.first,toDate=m.last,whenHidden="pause",maxAgeMs=86400000})
 end
-local function open(m,mode)
-    m.mode=mode or "manage";m.error=nil
-    if m.mode=="choose" then browse(m,m.first or today()) end
-    widget.openPanel({title=copyText().manage,width=520,height=640})
+local function leavePage(m)
+    m.picker=nil
+    if m.browse then m.browse:unsubscribe();m.browse=nil end
 end
 local function setup()
     local m={mode="manage",title="",date=today(),filter="",today=today(),alive=true}
+    m.navigation=navigation.new({
+        changePage=function(page)
+            leavePage(m);m.mode=page;m.error=nil
+            if page=="choose" then browse(m,m.first or today()) end
+        end,
+        openPanel=function() widget.openPanel({title=copyText().manage,width=520,height=640}) end,
+        leavePage=function() leavePage(m) end})
     m.link=logic.new({getId=function() return storage.get("eventId") end,
         setId=function(id) if id=="" then storage.remove("eventId") else storage.set("eventId",id) end end,
         canRead=function() return widget.hasPermission("calendar.read") end,
@@ -65,6 +73,11 @@ local function desktop(context,m)
             local state=text("event.status",delta==0 and "" or (delta>0 and c.remaining or c.elapsed),unit*0.09,true)
             state.fontSize=unit*0.07;state.textAlign="center"
             local date=text("event.date",item.date,unit*0.10,true);date.fontSize=unit*0.07;date.textAlign="center"
+            local sideHeight=math.max(0,(h-pad*2-unit*0.38)/2)
+            local heading=view.column({key="event.heading",height=sideHeight,gap=unit*0.015,
+                justifyContent="center",children=delta==0 and {title} or {title,state}})
+            local footer=view.column({key="event.footer",height=sideHeight,
+                justifyContent="center",children={date}})
             if delta~=0 then
                 local suffix=text("event.unit",c.days,unit*0.20,true)
                 suffix.fontSize=unit*0.08
@@ -76,8 +89,12 @@ local function desktop(context,m)
                 local countRow=view.row({key="event.count",height=unit*0.38,gap=unit*0.025,
                     justifyContent="center",alignItems="end",children={
                         view.spacer({key="event.balance",width=suffix.minWidth,flexShrink=0}),number,suffix}})
-                children={title,date,state,countRow}
-            else children={title,date,number} end
+                children={heading,countRow,footer}
+            else children={heading,number,footer} end
+            -- Balance the visible glyph, whose baseline sits below the text line center.
+            local opticalOffset=number.fontSize*0.10
+            heading.height=math.max(0,sideHeight-opticalOffset)
+            footer.height=sideHeight+opticalOffset
         end
     end
     if status~="ready" then
@@ -86,13 +103,13 @@ local function desktop(context,m)
         children={hint,button("choose",c.choose,unit*0.18,widget.hasPermission("calendar.read")),
             button("create",c.create,unit*0.18,widget.hasPermission("calendar.write"))}
     end
-    return view.column({key="countdown.card",width="fill",height="fill",padding=pad,gap=unit*0.015,
+    return view.column({key="countdown.card",width="fill",height="fill",padding=pad,gap=status=="ready" and 0 or unit*0.015,
         justifyContent="center",children=children,events=status=="ready" and {click={id="manage"}} or nil,
         accessibility={role="group",label=c.manage}})
 end
 local function panel(context,m)
     local c=copyText();local r=ui.metrics().layoutRowHeight;local children={}
-    if m.picker then children={m.picker:view({rowHeight=r}),button("picker.back",c.back,r)}
+    if m.picker then children={m.picker:view({rowHeight=r})}
     elseif m.mode=="create" then
         local valid=m.title:match("%S")~=nil and #m.title<=512;local dateValid=logic.parts(m.date)~=nil
         children={text("label.title",c.title,r),view.textInput({key="input.title",value=m.title,
@@ -109,7 +126,6 @@ local function panel(context,m)
         if m.error then children[#children+1]=text("save.error",c[m.error] or c.save_failed,r,true) end
         children[#children+1]=button("save",m.link.pending and c.saving or c.create,r,
             valid and dateValid and not m.link.pending and widget.hasPermission("calendar.write"))
-        children[#children+1]=button("manage",c.back,r,not m.link.pending)
     elseif m.mode=="choose" then
         children={view.row({key="month.nav",height=r,gap=r*0.25,children={button("previous",c.previous,r),
             button("pick.month",(m.first or today()):sub(1,7),r),button("next",c.next,r)}}),
@@ -138,16 +154,34 @@ local function panel(context,m)
                 button("page.next",c.page_next,r,m.page<pages)}}) end
             if s.value.truncated then children[#children+1]=text("truncated",c.truncated,r,true) end
         end
-        children[#children+1]=button("manage",c.back,r)
     else
         local status,item=m.link:current()
-        children={text("linked.title",item and item.title or c[status],r),text("linked.date",item and item.date or "",r,true),
-            button("choose",c.choose,r,widget.hasPermission("calendar.read")),button("create",c.create,r,widget.hasPermission("calendar.write")),
-            button("unlink",c.unlink,r,m.link.id~="")}
+        local summary=text("linked.title",item and item.title or c[status],r)
+        summary.textWrap="wrap";summary.maxLines=2;summary.height=r*1.5
+        children={summary}
+        if item then children[#children+1]=text("linked.date",item.date,r,true) end
+        children[#children+1]=button("choose",c.choose,r,widget.hasPermission("calendar.read"))
+        children[#children+1]=button("create",c.create,r,widget.hasPermission("calendar.write"))
+        if m.link.id~="" then children[#children+1]=button("unlink",c.unlink,r) end
         if not widget.hasPermission("calendar.write") then children[#children+1]=text("write.error",c.write_permission,r,true) end
     end
-    return view.scroll({key="countdown.panel.scroll",width="fill",height="fill",children={
-        view.column({key="countdown.panel",width="fill",height="auto",padding=r*0.65,gap=r*0.3,children=children})}})
+    local page=m.picker and "picker" or m.mode
+    local frame={}
+    if page~="manage" then
+        local back=button("panel.back",c.back,r,not m.link.pending);back.width=r*2
+        local heading=text("panel.heading",page=="picker" and c.pick or c[page],r)
+        heading.textWrap="wrap"
+        frame[#frame+1]=view.row({key="panel.navigation",width="fill",height=r,flexShrink=0,gap=r*0.3,
+            children={back,heading}})
+    end
+    if page=="choose" then
+        for _=1,2 do
+            local control=table.remove(children,1);control.flexShrink=0;frame[#frame+1]=control
+        end
+    end
+    frame[#frame+1]=view.scroll({key="countdown.scroll."..page..":"..tostring(m.listRevision or 0),width="fill",height="fill",children={
+        view.column({key="countdown.body."..page,width="fill",height="auto",gap=r*0.3,children=children})}})
+    return view.column({key="countdown.panel",width="fill",height="fill",padding=r*0.65,gap=r*0.3,children=frame})
 end
 local function event(context,m,e)
     if not m.alive then return end
@@ -163,24 +197,27 @@ local function event(context,m,e)
     end
     if e.kind=="task.complete" then
         local ok,err=m.link:complete(e)
-        if ok then m.mode="manage";m.error=nil elseif err then m.error=err end
+        if ok then
+            if m.navigation.isOpen then m.navigation:show("manage") else m.mode="manage" end
+            m.title="";m.error=nil
+        elseif err then m.error=err end
     elseif e.kind=="schedule" or e.kind=="environment" or e.kind=="visibility" then
         m.today=today()
         if e.kind=="visibility" and e.visible then m.link:refresh() end
     elseif e.kind=="panel" and e.action=="closed" then
-        m.picker=nil
-        if m.browse then m.browse:unsubscribe();m.browse=nil end
+        m.navigation:closed()
     elseif e.kind=="action" then
         local id=e.id
         if m.link.pending then return end
-        if id=="manage" or id=="choose" or id=="create" then open(m,id)
+        if id=="manage" or id=="choose" or id=="create" then m.navigation:show(id)
+        elseif id=="panel.back" then
+            if m.picker then m.picker=nil else m.navigation:show("manage") end
         elseif id=="unlink" then m.link:bind("")
         elseif id=="title" then m.title=e.text or m.title
         elseif id=="date" then m.date=e.text or m.date
-        elseif id=="filter" then m.filter=e.text or m.filter;m.page=1
-        elseif id=="page.previous" then m.page=math.max(1,(m.page or 1)-1)
-        elseif id=="page.next" then m.page=(m.page or 1)+1
-        elseif id=="picker.back" then m.picker=nil
+        elseif id=="filter" then m.filter=e.text or m.filter;m.page=1;m.listRevision=(m.listRevision or 0)+1
+        elseif id=="page.previous" then m.page=math.max(1,(m.page or 1)-1);m.listRevision=(m.listRevision or 0)+1
+        elseif id=="page.next" then m.page=(m.page or 1)+1;m.listRevision=(m.listRevision or 0)+1
         elseif id=="pick.create" or id=="pick.month" then
             m.pickerTarget=id=="pick.month" and "month" or "create"
             m.picker=ui.datePicker({key="countdown.date",value=m.pickerTarget=="month" and m.first or m.date,todayDate=today(),allowClear=false})
@@ -192,7 +229,7 @@ local function event(context,m,e)
             local target=id:sub(6);local s=m.browse and m.browse:value()
             if s and s.available and s.value then
                 for _,item in ipairs(s.value.events or {}) do
-                    if item.id==target then m.link:bind(target);m.mode="manage";break end
+                    if item.id==target then m.link:bind(target);m.navigation:show("manage");break end
                 end
             end
         end
@@ -200,7 +237,7 @@ local function event(context,m,e)
     widget.invalidate()
 end
 local function dispose(context,m)
-    m.alive=false;m.link:dispose();if m.browse then m.browse:unsubscribe() end;schedule.cancel("countdown.day")
+    m.alive=false;m.navigation:dispose();m.link:dispose();schedule.cancel("countdown.day")
 end
 return widget.define({name=l10n.tr("countdown.name"),useCustomStyle=true,followPersonalizationDefault=true,
     bg=0x18202A,border=0xFFFFFF,alpha=0.42,borderAlpha=0.18,gradientEndA=0.28,

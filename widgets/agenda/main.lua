@@ -214,6 +214,7 @@ local function clearDraft(model)
     model.pendingPanelTask = nil
     model.datePicker = nil
     model.timePicker = nil
+    model.reminderPicker = nil
 end
 
 local function openEditor(model)
@@ -577,7 +578,17 @@ local function panel(context, model)
             enabled=enabled~=false,action={id="agenda.panel",value=id},accessibility={label=label}})
     end
     local children={}
-    if model.timePicker then
+    if model.reminderPicker then
+        children={view.text({key="agenda.reminder.heading",text=l10n.tr("lua_widget.agenda.reminder"),
+            height=row,fontSize=row*0.46,style={foreground="textPrimary"}})}
+        local selected=tonumber(storage.get(DRAFT_REMINDER)) or 15
+        for _,minutes in ipairs(reminderValues) do
+            local option=button("reminder:"..tostring(minutes),reminderLabel(minutes),not busy)
+            if minutes==selected then option.style={foreground=0xFFFFFF,background=0x175CD3,cornerRadius=row*0.12} end
+            children[#children+1]=option
+        end
+        children[#children+1]=button("picker.back",l10n.tr("lua_widget.agenda.cancel"),not busy)
+    elseif model.timePicker then
         children={model.timePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
     elseif model.datePicker then
         children={model.datePicker:view({rowHeight=row}),button("picker.back",l10n.tr("lua_widget.agenda.cancel"))}
@@ -611,7 +622,7 @@ local function panel(context, model)
             field(DRAFT_START,start,l10n.tr("lua_widget.agenda.start"),not startMinutes and timeError or nil)
             field(DRAFT_END,finish,l10n.tr("lua_widget.agenda.end"),timeError)
         end
-        children[#children+1]=button("cycleReminder",l10n.tr("lua_widget.agenda.reminder")..": "..
+        children[#children+1]=button("openReminderPicker",l10n.tr("lua_widget.agenda.reminder")..": "..
             reminderLabel(storage.get(DRAFT_REMINDER)),not busy)
         field(DRAFT_NOTES,storage.get(DRAFT_NOTES) or "",l10n.tr("lua_widget.agenda.notes"),nil,true)
         local err=editorErrorText(model.editorError)
@@ -667,20 +678,21 @@ local function handlePanelAction(model, id)
             value={startTime=storage.get(DRAFT_START) or "",endTime=storage.get(DRAFT_END) or ""}})
         widget.invalidate()
     elseif id == "picker.back" then
+        model.reminderPicker=nil
         model.timePicker=nil
         model.datePicker=nil
         widget.invalidate()
-    elseif id == "cycleReminder" then
-        local current = tonumber(storage.get(DRAFT_REMINDER)) or 15
-        local nextValue = reminderValues[1]
-        for index, value in ipairs(reminderValues) do
-            if value == current then
-                nextValue = reminderValues[index % #reminderValues + 1]
-                break
+    elseif id == "openReminderPicker" and not model.pendingPanelTask then
+        model.reminderPicker=true
+        widget.invalidate()
+    elseif model.reminderPicker and not model.pendingPanelTask and id:sub(1,9)=="reminder:" then
+        local selected=tonumber(id:sub(10))
+        for _,minutes in ipairs(reminderValues) do
+            if selected==minutes then
+                storage.set(DRAFT_REMINDER,tostring(minutes));model.reminderPicker=nil
+                widget.invalidate();break
             end
         end
-        storage.set(DRAFT_REMINDER, tostring(nextValue))
-        widget.invalidate()
     end
 end
 
