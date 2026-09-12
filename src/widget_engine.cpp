@@ -12150,6 +12150,7 @@ void WidgetEngine::InitializeWidgetTaskBroker()
             snowdesktop::widget_runtime::WidgetClipboardTaskExecutor>();
         filesystemTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetFilesystemTaskExecutor>();
+        filesystemTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
         appTaskExecutor_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAppTaskExecutor>();
         desktopTaskExecutor_ = std::make_unique<
@@ -12302,6 +12303,25 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
 {
     using snowdesktop::widget_runtime::TaskBrokerActionType;
     if (!taskBroker_) return;
+    // File pickers can run a nested Windows message loop. Keep wake messages
+    // from reentering the broker while its dispatch/completion data is in use.
+    if (applyingTaskBrokerActions_)
+    {
+        taskWakePending_ = true;
+        return;
+    }
+    applyingTaskBrokerActions_ = true;
+    struct DispatchScope
+    {
+        bool& active;
+        bool& pending;
+        TaskWakeCallback& wake;
+        ~DispatchScope()
+        {
+            active = false;
+            if (std::exchange(pending, false) && wake) wake();
+        }
+    } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
     if (mediaTaskExecutor_)
     {
         for (auto& completion : mediaTaskExecutor_->DrainCompletions())
@@ -20864,6 +20884,18 @@ void WidgetEngine::OnAudioAnalysisWake()
     DrainAudioAnalysisChanges();
 }
 
+void WidgetEngine::SetTaskWakeCallback(TaskWakeCallback callback)
+{
+    taskWakeCallback_ = std::move(callback);
+    if (filesystemTaskExecutor_)
+        filesystemTaskExecutor_->SetCompletionCallback(taskWakeCallback_);
+}
+
+void WidgetEngine::OnTaskWake()
+{
+    ApplyWidgetTaskBrokerActions();
+}
+
 void WidgetEngine::TickRuntime()
 {
     const auto healthNow = snowdesktop::widget_runtime::
@@ -25714,6 +25746,7 @@ WidgetEngine::RuntimeStartTask(
     {
         snowdesktop::performance::Value("task.start", name, widgetId, 1, result.id);
         widget.taskIds.insert(result.id);
+        if (!widget.preview && taskWakeCallback_) taskWakeCallback_();
     }
     return result;
 }
@@ -25765,6 +25798,7 @@ bool WidgetEngine::RuntimeCancelTask(
         filesystemPickerCompletions_.erase(taskId);
     if (canceled)
         filesystemTaskCompletions_.erase(taskId);
+    if (canceled && !widget.preview && taskWakeCallback_) taskWakeCallback_();
     return canceled;
 }
 

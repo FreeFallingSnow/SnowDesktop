@@ -499,6 +499,13 @@ bool WidgetFilesystemTaskExecutor::Cancel(std::uint64_t id)
     return true;
 }
 
+void WidgetFilesystemTaskExecutor::SetCompletionCallback(
+    CompletionCallback callback)
+{
+    std::scoped_lock lock(mutex_);
+    completionCallback_ = std::move(callback);
+}
+
 void WidgetFilesystemTaskExecutor::ForgetInstance(
     std::string_view instanceId)
 {
@@ -583,6 +590,7 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
     while (!stopToken.stop_requested())
     {
         QueuedRequest request;
+        bool canceledBeforeRun = false;
         {
             std::unique_lock lock(mutex_);
             condition_.wait(lock, [&] {
@@ -591,27 +599,20 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
             if (stopToken.stop_requested()) break;
             request = std::move(requests_.front());
             requests_.pop_front();
-            if (canceled_.contains(request.id))
-            {
-                active_.erase(request.id);
-                canceled_.erase(request.id);
-                completions_.push_back({ request.id,
-                    request.request.action, false, {}, {}, {}, 0,
-                    false, "canceled" });
-                continue;
-            }
+            canceledBeforeRun = canceled_.contains(request.id);
         }
 
         WidgetFilesystemTaskRunResult result;
         try
         {
-            result = runner_(request.request);
+            if (!canceledBeforeRun) result = runner_(request.request);
         }
         catch (...)
         {
             result = { false, {}, {}, {}, 0, false,
                 "filesystemTaskFailed" };
         }
+        CompletionCallback notify;
         {
             std::scoped_lock lock(mutex_);
             if (canceled_.erase(request.id) > 0)
@@ -627,7 +628,11 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
             completion.image = std::move(result.image);
             completion.resourceToken = std::move(result.resourceToken);
             completions_.push_back(std::move(completion));
+            if (!stopping_) notify = completionCallback_;
         }
+        // Never call host code under the executor lock. The posted UI message
+        // may immediately drain results or start the latest queued photo.
+        if (notify) { try { notify(); } catch (...) {} }
     }
 }
 }

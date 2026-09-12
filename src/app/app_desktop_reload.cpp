@@ -554,6 +554,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (widgetEngine_)
             widgetEngine_->OnAudioAnalysisWake();
         return 0;
+    case kWidgetTaskWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnTaskWake();
+        return 0;
     case kActivateExistingInstanceMessage:
         ShowSettingsWindow();
         return 0;

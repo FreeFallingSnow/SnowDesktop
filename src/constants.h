@@ -242,6 +242,7 @@ constexpr UINT kLargeIconAssetsReadyMessage = WM_APP + 97;
 constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
 constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
+constexpr UINT kWidgetTaskWakeMessage = WM_APP + 21;
 constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
 constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
 constexpr UINT kUrlDropDownloadCompletedMessage = WM_APP + 18;

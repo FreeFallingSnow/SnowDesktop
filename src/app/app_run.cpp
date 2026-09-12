@@ -1384,6 +1384,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             });
         const HWND widgetAudioWakeWindow =
             controlHwnd_ ? controlHwnd_ : hwnd_;
+        widgetEngine_->SetTaskWakeCallback(
+            [widgetAudioWakeWindow]() {
+                if (widgetAudioWakeWindow)
+                    (void)PostMessageW(widgetAudioWakeWindow,
+                        kWidgetTaskWakeMessage, 0, 0);
+            });
         widgetEngine_->SetAudioAnalysisWakeCallback(
             [widgetAudioWakeWindow]() {
                 if (widgetAudioWakeWindow)

@@ -97,6 +97,7 @@ public:
     using Runner = std::function<WidgetFilesystemTaskRunResult(
         const WidgetFilesystemTaskRequest& request)>;
     using NowProvider = std::function<Clock::time_point()>;
+    using CompletionCallback = std::function<void()>;
 
     static constexpr std::size_t MaximumTextBytes = 1024 * 1024;
     static constexpr std::size_t MaximumListLimit = 100;
@@ -117,6 +118,8 @@ public:
     WidgetFilesystemTaskStartResult Start(std::uint64_t id,
         std::string instanceId, WidgetFilesystemTaskRequest request);
     bool Cancel(std::uint64_t id);
+    // Notification only: the host posts to its UI thread before draining.
+    void SetCompletionCallback(CompletionCallback callback);
     void ForgetInstance(std::string_view instanceId);
     std::vector<WidgetFilesystemTaskCompletion> DrainCompletions();
     std::size_t ActiveCount() const;
@@ -147,6 +150,7 @@ private:
     std::unordered_set<std::uint64_t> canceled_;
     std::unordered_map<std::string, Clock::time_point> lastWrites_;
     std::vector<WidgetFilesystemTaskCompletion> completions_;
+    CompletionCallback completionCallback_;
     std::jthread worker_;
     bool stopping_ = false;
 };

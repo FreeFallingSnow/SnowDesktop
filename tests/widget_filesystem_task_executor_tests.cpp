@@ -6,6 +6,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -62,6 +63,57 @@ int main()
             statResult.metadata.size == 5 &&
             !statResult.metadata.revision.empty(),
         "stat returns bounded file metadata and revision");
+
+    // A completed image/file task must wake the UI instead of waiting for the
+    // host's one-second maintenance timer. Draining in the callback also checks
+    // that publication and notification happen outside the worker's lock.
+    {
+        std::promise<WidgetFilesystemTaskCompletion> result;
+        auto future = result.get_future();
+        WidgetFilesystemTaskExecutor notified;
+        notified.SetCompletionCallback([&] {
+            auto ready = notified.DrainCompletions();
+            if (!ready.empty()) result.set_value(std::move(ready.front()));
+        });
+        Expect(static_cast<bool>(notified.Start(901, "wake-test", stat)),
+            "notified filesystem task starts");
+        Expect(future.wait_for(std::chrono::seconds(3)) == std::future_status::ready,
+            "completion notification must deliver without polling");
+        const auto completed = future.get();
+        Expect(completed.id == 901 && completed.ok && completed.metadata.size == 5,
+            "the notification exposes the completed production file read");
+    }
+
+    {
+        std::promise<void> entered, release;
+        auto running = entered.get_future();
+        auto resume = release.get_future();
+        std::promise<WidgetFilesystemTaskCompletion> canceled;
+        auto future = canceled.get_future();
+        WidgetFilesystemTaskExecutor queued([&](const auto&) {
+            entered.set_value();
+            resume.wait();
+            WidgetFilesystemTaskRunResult result; result.ok = true; return result;
+        });
+        queued.SetCompletionCallback([&] {
+            for (auto& ready : queued.DrainCompletions())
+                if (ready.id == 903) canceled.set_value(std::move(ready));
+        });
+        Expect(static_cast<bool>(queued.Start(902, "wake-test", stat)),
+            "controlled filesystem task starts");
+        const bool started = running.wait_for(std::chrono::seconds(3)) == std::future_status::ready;
+        if (!started) release.set_value();
+        Expect(started, "controlled filesystem task reaches its runner");
+        const bool queuedOk = static_cast<bool>(queued.Start(903, "wake-test", stat));
+        const bool canceledOk = queued.Cancel(903);
+        release.set_value();
+        Expect(queuedOk && canceledOk, "queued navigation can be canceled");
+        Expect(future.wait_for(std::chrono::seconds(3)) == std::future_status::ready,
+            "cancellation before execution must also wake the host");
+        const auto completed = future.get();
+        Expect(!completed.ok && completed.error == "canceled",
+            "the queued cancellation wake carries a canceled result");
+    }
 
     WidgetFilesystemTaskRequest read;
     read.action = "filesystem.read";
