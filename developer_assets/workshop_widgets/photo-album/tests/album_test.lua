@@ -92,7 +92,7 @@ return {
         f.allowed=true;f.a:tick(5,false,false);assert(f.calls[2].name=="filesystem.image")
         f.a:dispose();f:complete(2,{image="late"});assert(not f.a.image and f.canceled[2])
     end,
-    ["rapid changes wait for canceled host tasks to release concurrency slots"]=function()
+    ["rapid navigation resumes on cancellation completion without waiting for a timer"]=function()
         local f=fixture({file});local start=f.a.ports.start;local busy=false
         f.a.ports.start=function(name,args)
             if busy and name=="filesystem.image" then return nil,"task concurrency limit exceeded" end
@@ -101,8 +101,9 @@ return {
         f.a:refresh();busy=true;f.a:show(1)
         assert(f.a.loading<0 and not f.a.error and f.canceled[1])
         f.a:tick(3,false,false);assert(#f.calls==1)
-        busy=false;f:complete(1,{image="old"});f.a:tick(3,false,false)
-        assert(#f.calls==2 and f.a.loading==2 and not f.a.image)
+        busy=false;f:complete(1,nil,"canceled")
+        assert(#f.calls==2 and f.a.loading==2 and not f.a.image,
+            "cancellation completion must immediately start the latest queued photo")
         f:complete(2,{image="new"});assert(f.a.image=="new")
     end,
 }

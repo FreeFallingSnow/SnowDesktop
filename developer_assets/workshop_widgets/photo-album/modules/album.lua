@@ -177,7 +177,12 @@ function M.new(ports, sources)
 
     function a:complete(e)
         if not self.alive then return end
-        local p=self.pending[e.taskId]; if not p then return end
+        local p=self.pending[e.taskId]
+        if not p then
+            -- Canceled loads no longer have a pending entry. Their completion
+            -- releases the host slot needed by the latest navigation request.
+            self:retryDeferred(); return
+        end
         self.pending[e.taskId]=nil
         if p.kind=="release" then
             self.releasing=nil

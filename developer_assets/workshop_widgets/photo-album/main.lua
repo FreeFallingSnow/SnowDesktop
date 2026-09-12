@@ -186,4 +186,6 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         {key="fill",label=l10n.tr("album.fill"),type="bool",default=true},
     }},
     setup=setup,view=desktop,panel=panel,event=event,
-    dispose=function(context,m) m.album:dispose(); schedule.cancel("album.tick") end})
+    -- The host retires this VM's timers. A named cancel here can target the
+    -- replacement VM, which is already set up when hotReload disposes us.
+    dispose=function(context,m) m.album:dispose() end})
