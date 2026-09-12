@@ -89,7 +89,7 @@ function self:handle(e)
     if id=="start" or id=="end" then
         if type(e.text)=="string" and #e.text<=10 then self[id=="start" and "startDate" or "endDate"]=e.text end
     elseif id=="year" then
-        if e.numberValid and e.controlValue and e.controlValue%1==0 then self.year=e.controlValue end
+        if e.numberValid and e.controlValue and e.controlValue%1==0 then self.year=math.floor(e.controlValue) end
     elseif id=="month.open" then self.monthOpen=e.expanded==true
     elseif id=="month" then
         local m=tonumber(e.selection)

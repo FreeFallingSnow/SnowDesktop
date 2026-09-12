@@ -4856,6 +4856,9 @@ void TestDatePickerController()
         q:handle({kind="action",id="single:start",text="2026-02-30"})
         assert(q:validation() and not q:handle({kind="action",id="single:confirm"}).changed)
         q:setValue("2026-09-11")
+        q:handle({kind="action",id="single:year",numberValid=true,controlValue=2027.0})
+        local yearNode=q:view({rowHeight=32}).children[2].children[2]
+        assert(math.type(yearNode.value)=="integer" and tostring(yearNode.value)=="2027")
         return q:view({rowHeight=32})
     )LUA";
     if(luaL_dostring(state,source)!=LUA_OK) {
