@@ -73,6 +73,19 @@ return {
         assert(ok and f.a.error=="saveFailed" and #f.a.sources==1 and not next(f.a.releases),
             "a thrown storage failure must preserve the previous album and its grants")
     end,
+    ["removing an already revoked source completes without repeated cleanup errors"]=function()
+        local f=fixture({file});local start=f.a.ports.start
+        f.a.ports.start=function(name,args)
+            if name=="filesystem.release" then return nil,"invalidReference" end
+            return start(name,args)
+        end
+        f.a:remove(1);f.a:flushReleases()
+        assert(#f.a.sources==0 and not next(f.a.releases) and not f.a.error,
+            "an already absent grant must finish cleanup without retrying or showing an error")
+        f.a:add({folder})
+        assert(#f.a.sources==1 and not f.a.error and f.calls[1].name=="filesystem.list",
+            "the user must be able to add another source after removing a revoked one")
+    end,
     ["permission loss clears image and late results cannot revive disposed albums"]=function()
         local f=fixture({file});f.a:refresh();f:complete(1,{image="private"})
         f.allowed=false;f.a:tick(5,false,false);assert(not f.a.image and f.a.error=="permission")

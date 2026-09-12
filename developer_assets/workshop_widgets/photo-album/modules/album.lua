@@ -27,7 +27,12 @@ function M.new(ports, sources)
             (err=="task concurrency limit exceeded" or err=="per-instance task limit exceeded") then
             self.deferredId=self.deferredId-1; id=self.deferredId
             context.args=args
-        elseif not id then self.error=err or "unavailable"; return nil end
+        elseif not id then
+            if kind=="release" and err=="invalidReference" then
+                self.releases[args.handle]=nil
+            else self.error=err or "unavailable" end
+            return nil
+        end
         self.pending[id]=context
         return id
     end
