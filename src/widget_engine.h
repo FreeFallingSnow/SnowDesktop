@@ -330,6 +330,7 @@ struct LuaWidgetFilePickerRequest
         snowdesktop::widget_runtime::WidgetFilesystemHandleAccess::Read;
     std::vector<std::wstring> extensions;
     std::wstring suggestedName;
+    bool multiple = false;
 };
 
 struct LuaWidgetFilePickerResult
@@ -342,6 +343,7 @@ struct LuaWidgetFilePickerResult
     {
         return !path.empty() && !canceled && error.empty();
     }
+    std::vector<std::filesystem::path> paths;
 };
 
 enum class LuaWidgetPreviewDataState
@@ -1856,7 +1858,7 @@ private:
         snowdesktop::widget_runtime::WidgetClipboardTaskCompletion>
         clipboardTaskCompletions_;
     std::unordered_map<std::uint64_t,
-        snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>
+        std::vector<snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>>
         filesystemPickerCompletions_;
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion>

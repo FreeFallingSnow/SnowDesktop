@@ -43,6 +43,8 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
         options |= FOS_OVERWRITEPROMPT;
     else
         options |= FOS_PICKFOLDERS;
+    if (request.multiple && request.kind != LuaWidgetFilePickerKind::SaveFile)
+        options |= FOS_ALLOWMULTISELECT;
     if (FAILED(dialog->SetOptions(options)))
     {
         result.error = "pickerFailed";
@@ -57,6 +59,16 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
         patterns.reserve(request.extensions.size());
         for (const auto& extension : request.extensions)
             patterns.push_back(L"*." + extension);
+        if (request.multiple)
+        {
+            std::wstring combined;
+            for (const auto& pattern : patterns)
+            {
+                if (!combined.empty()) combined += L';';
+                combined += pattern;
+            }
+            patterns.insert(patterns.begin(), std::move(combined));
+        }
         filters.reserve(patterns.size());
         for (const auto& pattern : patterns)
             filters.push_back({ pattern.c_str(), pattern.c_str() });
@@ -95,6 +107,35 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
         return result;
     }
 
+    if (request.multiple)
+    {
+        ComPtr<IFileOpenDialog> open;
+        ComPtr<IShellItemArray> items;
+        DWORD count = 0;
+        if (FAILED(dialog.As(&open)) || FAILED(open->GetResults(&items)) ||
+            FAILED(items->GetCount(&count)) || count == 0 || count > 128)
+        {
+            result.error = count > 128 ? "tooManySelections" : "invalidSelection";
+            return result;
+        }
+        for (DWORD index = 0; index < count; ++index)
+        {
+            ComPtr<IShellItem> selectedItem;
+            PWSTR selectedPath = nullptr;
+            if (FAILED(items->GetItemAt(index, &selectedItem)) ||
+                FAILED(selectedItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath)) ||
+                !selectedPath)
+            {
+                if (selectedPath) CoTaskMemFree(selectedPath);
+                result.error = "invalidSelection";
+                return result;
+            }
+            result.paths.emplace_back(selectedPath);
+            CoTaskMemFree(selectedPath);
+        }
+        result.path = result.paths.front();
+        return result;
+    }
     ComPtr<IShellItem> item;
     if (FAILED(dialog->GetResult(&item)) || !item)
     {

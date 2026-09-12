@@ -2055,6 +2055,40 @@ UTF-8 读取返回 `text`，NUL 或非法编码返回 `invalidEncoding`。探测
 传 `data`；Lua 字符串中的 NUL 和非 UTF-8 字节会被原样保留。两种模式的调用方上限与宿主
 硬上限都不超过 1 MiB，整文件读写不会因此开放路径或扩展句柄范围。
 
+新增的 `task.filesystem.picker.multiple` 支持对 `pickOpen`、`pickFolder` 传入
+`multiple=true`，每次最多选择 128 项。结果增加 `items` 数组，原来的
+`handle/kind/access/name` 仍表示第一项；`pickSave` 不接受 `multiple`。
+取消不会改变已有选择；一次授权失败时回收本次新创建的句柄，保留既有句柄。
+
+新增的 `task.filesystem.list.names` 支持 `filesystem.list` 的 `grantHandles=false`。
+此模式只返回子项元数据，不创建永久子句柄，`items[*].handle` 缺省；其他分页、排序、
+目录边界保持原样。适用于大量图片目录；组件只需保存文件夹句柄及子项名称。
+
+新增任务 `filesystem.image`（feature `task.filesystem.image`，权限
+`filesystem.userSelected.read`）在工作线程解码所选文件：
+
+```lua
+task.start("filesystem.image", { handle = selectedFile, maxDimension = 2048 })
+task.start("filesystem.image", { handle = selectedFolder, name = "photo.jpg" })
+```
+
+`name` 仅允许一个直接子文件名；传入时句柄必须为文件夹，省略时必须为文件。
+拒绝路径穿越、分隔符、NTFS 备用数据流及 reparse point。解码过程中固定目录和文件句柄，
+防止路径替换。结果含 `image/width/height` 及文件元数据；其中 `handle` 仍是传入的授权
+句柄，文件夹子图片再次加载须继续提供 `name`。`image` 是当前实例的临时资源句柄，可用于
+`draw.image`、`draw.imageFit`、`view.image`，不得写入 storage。
+最长边默认及最大 2048，可指定 1–2048，保持比例且不放大小图。文件上限 64 MiB、源图最多
+32768×32768 且总像素不超过 64 Mi；WIC 支持的格式按首帧解码，并应用 EXIF 方向。
+GIF/TIFF 不播放动画；WebP 等格式取决于系统解码器。损坏或不支持的文件返回
+`imageDecodeFailed`，超尺寸返回 `imageDimensionsInvalid`，打开失败为 `imageOpenFailed`。
+任务受取消、实例销毁、权限撤回和来源句柄约束；禁止跨实例使用图片资源。
+共享运行时图片的 CPU 像素缓存上限 64 MiB，GPU 位图随资源一起淘汰，原有实例/全局数量
+限制继续有效。资源被淘汰后 `resource.status(image).state` 为 `error`，组件应重新加载。
+
+以上能力属于 API v2 的增量扩展，不提高 `apiVersion`。依赖它们的组件必须声明相应
+`requiredFeatures`，不能只判断 `minHostVersion=1.0.6.0`：同版本早期构建也可能缺少能力。
+官方相册组件应在具备以上 feature 的宿主发布后发布；旧宿主不执行不兼容组件。
+
 `write` 是 1 MiB 内的原子整文件替换，同一实例最短间隔 100 ms；传入
 `expectedRevision` 时，文件不存在或 revision 已变化均返回 `conflict`。成功返回新的
 `{ accepted,size,modifiedMs,revision }`。其他稳定错误包括 `invalidReference`、

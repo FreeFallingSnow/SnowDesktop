@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 211> kHostFeatures = {
+constexpr std::array<std::string_view, 214> kHostFeatures = {
     "animation.frame",
     "calendar.dateMath",
     "calendar.selection",
@@ -144,6 +144,9 @@ constexpr std::array<std::string_view, 211> kHostFeatures = {
     "task.filesystem.picker",
     "task.filesystem.access",
     "task.filesystem.binary",
+    "task.filesystem.image",
+    "task.filesystem.list.names",
+    "task.filesystem.picker.multiple",
     "task.start",
     "task.system.openSettings",
     "task.shell.openUri",
@@ -383,7 +386,7 @@ kSystemDataTopicContracts = {{
         "SnowFilesystemWatchSubscribeOptions",
         "SnowFilesystemWatchDataValue" },
 }};
-constexpr std::array<SystemTaskContract, 41> kSystemTaskContracts = {{
+constexpr std::array<SystemTaskContract, 42> kSystemTaskContracts = {{
     { "network.request", "task.network.request", "network.internet",
         false, 2, "SnowNetworkRequestArguments", "SnowNetworkTaskValue" },
     { "notification.show", "task.notification.show", "notification.post",
@@ -418,6 +421,9 @@ constexpr std::array<SystemTaskContract, 41> kSystemTaskContracts = {{
     { "filesystem.stat", "task.filesystem.access",
         "filesystem.userSelected.read", false, 4,
         "SnowFilesystemHandleArguments", "SnowFilesystemMetadata" },
+    { "filesystem.image", "task.filesystem.image",
+        "filesystem.userSelected.read", false, 1,
+        "SnowFilesystemImageArguments", "SnowFilesystemImageTaskValue" },
     { "filesystem.list", "task.filesystem.access",
         "filesystem.userSelected.read", false, 2,
         "SnowFilesystemListArguments", "SnowFilesystemListTaskValue" },

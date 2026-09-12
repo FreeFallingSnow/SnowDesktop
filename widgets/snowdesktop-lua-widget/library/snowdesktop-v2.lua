@@ -732,9 +732,9 @@
 ---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
----@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field notificationId? string Host-issued notification ID for notification.delivered.
 ---@field actionId? string Declared action ID for notification.action.
@@ -1674,18 +1674,22 @@ function data.subscribe(topic, options) end
 
 ---@class SnowFilesystemPickOpenArguments
 ---@field extensions? string[] Up to 16 safe extension names without wildcards, for example {'png', 'jpg'}.
+---@field multiple? boolean Requires task.filesystem.picker.multiple. Defaults to false; at most 128 selections per dialog.
 
 ---@class SnowFilesystemPickSaveArguments: SnowFilesystemPickOpenArguments
 ---@field suggestedName? string File name only; absolute and relative paths are rejected.
+---@field multiple? nil Not accepted by pickSave.
 
 ---@class SnowFilesystemPickFolderArguments
 ---@field access? 'read'|'write'|'readWrite' Defaults to read and requires each corresponding declared permission.
+---@field multiple? boolean Requires task.filesystem.picker.multiple. Defaults to false; at most 128 selected folders.
 
 ---@class SnowFilesystemPickerTaskValue
 ---@field handle string Persistent opaque handle scoped to this widget instance and package; never a filesystem path.
 ---@field kind 'file'|'folder'
 ---@field access 'read'|'write'|'readWrite'
 ---@field name string Display-only selected item name.
+---@field items? SnowFilesystemPickerTaskValue[] Present with task.filesystem.picker.multiple; selected entries without nested items. Legacy fields describe the first selection.
 
 ---@class SnowFilesystemHandleArguments
 ---@field handle string Opaque handle returned by a filesystem picker or list task.
@@ -1693,6 +1697,16 @@ function data.subscribe(topic, options) end
 ---@class SnowFilesystemListArguments: SnowFilesystemHandleArguments
 ---@field offset? integer Entry offset from 0 through 10000; defaults to 0.
 ---@field limit? integer Entry count from 1 through 100; defaults to 50.
+---@field grantHandles? boolean Defaults to true. False requires task.filesystem.list.names and omits child handles without consuming persistent handle quota.
+
+---@class SnowFilesystemImageArguments: SnowFilesystemHandleArguments
+---@field name? string Direct child filename for a folder handle; omit for a file handle. No separators, traversal, alternate streams, or reparse points.
+---@field maxDimension? integer Longest output edge, 1 through 2048; default 2048. The aspect ratio is preserved without upscaling.
+
+---@class SnowFilesystemImageTaskValue: SnowFilesystemMetadata
+---@field image SnowImageResource Temporary instance-scoped handle for draw.image, draw.imageFit or view.image. Do not persist; reload if resource.status reports eviction.
+---@field width integer Decoded width after EXIF orientation and scaling.
+---@field height integer Decoded height after EXIF orientation and scaling.
 
 ---@class SnowFilesystemReadArguments: SnowFilesystemHandleArguments
 ---@field encoding? 'utf8'|'binary' Defaults to utf8; binary returns an exact byte string in data.
@@ -1711,7 +1725,7 @@ function data.subscribe(topic, options) end
 ---@alias SnowFilesystemWriteArguments SnowFilesystemTextWriteArguments|SnowFilesystemBinaryWriteArguments
 
 ---@class SnowFilesystemMetadata
----@field handle string Opaque instance-and-package-scoped handle.
+---@field handle? string Opaque instance-and-package-scoped handle; omitted for list with grantHandles=false.
 ---@field kind 'file'|'folder'
 ---@field name string Display-only item name; never a path.
 ---@field size? integer File byte count; absent for folders.
@@ -1878,6 +1892,7 @@ task = {}
 ---@overload fun(name: 'filesystem.pickFolder', arguments?: SnowFilesystemPickFolderArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.stat', arguments: SnowFilesystemHandleArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.list', arguments: SnowFilesystemListArguments): taskId: integer?, error: string?
+---@overload fun(name: 'filesystem.image', arguments: SnowFilesystemImageArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.read', arguments: SnowFilesystemReadArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.write', arguments: SnowFilesystemWriteArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.release', arguments: SnowFilesystemHandleArguments): taskId: integer?, error: string?
@@ -1898,7 +1913,7 @@ task = {}
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error

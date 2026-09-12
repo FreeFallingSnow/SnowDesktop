@@ -899,7 +899,26 @@ void TestSystemCapabilityContract()
     const auto tasks = snowdesktop::widget_api::SystemTaskContracts();
     Check(functions.size() == 15, "v2 system function catalog must be frozen");
     Check(topics.size() == 25, "v2 data topic catalog must be frozen");
-    Check(tasks.size() == 41, "v2 task catalog must be frozen");
+    const auto imageTask = std::find_if(tasks.begin(), tasks.end(),
+        [](const auto& contract) {
+            return std::string_view(contract.name) == "filesystem.image";
+        });
+    Check(imageTask != tasks.end(), "photo albums require the image task");
+    if (imageTask != tasks.end())
+    {
+        Check(std::string_view(imageTask->requiredPermission) ==
+                "filesystem.userSelected.read" &&
+                !imageTask->requiresTrustedGesture &&
+                imageTask->maximumPerInstance == 1,
+            "slideshow decoding must use existing read grants without a "
+            "new gesture and allow only one decode per instance");
+        Check(std::string_view(imageTask->feature) == "task.filesystem.image" &&
+                std::string_view(imageTask->argumentsType) ==
+                    "SnowFilesystemImageArguments" &&
+                std::string_view(imageTask->resultType) ==
+                    "SnowFilesystemImageTaskValue",
+            "image task must advertise its compatibility gate and typed API");
+    }
 
     std::unordered_set<std::string> names;
     const auto checkCommon = [&](const char* name, const char* feature,

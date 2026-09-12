@@ -1229,6 +1229,7 @@ if (BUILD_TESTING)
             src/widget_filesystem_task_executor.cpp
             src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 windowscodecs
         LABELS contract filesystem security task lua widget)
 
     snowdesktop_add_test(

@@ -3,9 +3,12 @@
 #include "atomic_file.h"
 
 #include <windows.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
@@ -148,6 +151,142 @@ WidgetFilesystemTaskRunResult RunStat(
     WidgetFilesystemTaskRunResult result;
     result.ok = true;
     result.metadata = std::move(metadata);
+    return result;
+}
+
+WidgetFilesystemTaskRunResult RunImage(
+    const WidgetFilesystemTaskRequest& request)
+{
+    using Microsoft::WRL::ComPtr;
+    const auto fail = [](std::string error) {
+        WidgetFilesystemTaskRunResult result;
+        result.error = std::move(error);
+        return result;
+    };
+    const auto path = request.name.empty() ? request.path :
+        request.path / std::filesystem::u8path(request.name);
+    std::string error;
+    if (!CheckPathWithoutReparsePoints(path, false, error))
+        return fail(error);
+
+    // Pin every ancestor without FILE_SHARE_DELETE. A directory cannot be
+    // replaced with a junction between authorization and WIC decoding.
+    struct PinnedPath
+    {
+        std::vector<HANDLE> handles;
+        ~PinnedPath() { for (HANDLE handle : handles) CloseHandle(handle); }
+    } pinned;
+    auto current = path.root_path();
+    for (const auto& part : path.relative_path())
+    {
+        current /= part;
+        const bool leaf = current == path;
+        HANDLE handle = CreateFileW(current.c_str(),
+            leaf ? GENERIC_READ : FILE_READ_ATTRIBUTES,
+            leaf ? FILE_SHARE_READ : FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+            return fail(GetLastError() == ERROR_ACCESS_DENIED ?
+                "accessDenied" : "imageOpenFailed");
+        pinned.handles.push_back(handle);
+        BY_HANDLE_FILE_INFORMATION info{};
+        if (!GetFileInformationByHandle(handle, &info))
+            return fail("imageOpenFailed");
+        if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+            return fail("reparsePointDenied");
+        if (leaf && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            return fail("notFile");
+        if (leaf && ((static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) |
+                info.nFileSizeLow) > 64 * 1024 * 1024)
+            return fail("fileTooLarge");
+    }
+    if (pinned.handles.empty()) return fail("notFile");
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(initialized)) return fail("imageDecodeFailed");
+    struct ComScope { ~ComScope() { CoUninitialize(); } } com;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromFileHandle(
+            reinterpret_cast<ULONG_PTR>(pinned.handles.back()), nullptr,
+            WICDecodeMetadataCacheOnDemand, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)))
+        return fail("imageDecodeFailed");
+    UINT width = 0, height = 0;
+    if (FAILED(frame->GetSize(&width, &height)) || !width || !height ||
+        width > 32768 || height > 32768 ||
+        static_cast<std::uint64_t>(width) * height > 64 * 1024 * 1024)
+        return fail("imageDimensionsInvalid");
+
+    // EXIF orientation is applied to the first frame, including mirrored photos.
+    USHORT orientation = 1;
+    ComPtr<IWICMetadataQueryReader> metadata;
+    if (SUCCEEDED(frame->GetMetadataQueryReader(&metadata)))
+    {
+        for (const wchar_t* query : { L"/app1/ifd/{ushort=274}",
+                L"/ifd/{ushort=274}" })
+        {
+            PROPVARIANT value{};
+            const HRESULT read = metadata->GetMetadataByName(query, &value);
+            if (SUCCEEDED(read) && value.vt == VT_UI2) orientation = value.uiVal;
+            PropVariantClear(&value);
+            if (SUCCEEDED(read)) break;
+        }
+    }
+    constexpr WICBitmapTransformOptions transforms[] = {
+        WICBitmapTransformRotate0, WICBitmapTransformRotate0,
+        WICBitmapTransformFlipHorizontal, WICBitmapTransformRotate180,
+        WICBitmapTransformFlipVertical,
+        static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate90 |
+            WICBitmapTransformFlipHorizontal),
+        WICBitmapTransformRotate90,
+        static_cast<WICBitmapTransformOptions>(WICBitmapTransformRotate270 |
+            WICBitmapTransformFlipHorizontal),
+        WICBitmapTransformRotate270 };
+    ComPtr<IWICBitmapSource> source;
+    if (FAILED(frame.As(&source))) return fail("imageDecodeFailed");
+    if (orientation >= 2 && orientation <= 8)
+    {
+        ComPtr<IWICBitmapFlipRotator> rotated;
+        if (FAILED(factory->CreateBitmapFlipRotator(&rotated)) ||
+            FAILED(rotated->Initialize(source.Get(), transforms[orientation])) ||
+            FAILED(rotated.As(&source)) || FAILED(source->GetSize(&width, &height)))
+            return fail("imageDecodeFailed");
+    }
+    const double scale = std::min(1.0,
+        static_cast<double>(request.maxDimension) / std::max(width, height));
+    const UINT outputWidth = std::max<UINT>(1, static_cast<UINT>(std::lround(width * scale)));
+    const UINT outputHeight = std::max<UINT>(1, static_cast<UINT>(std::lround(height * scale)));
+    if (outputWidth != width || outputHeight != height)
+    {
+        ComPtr<IWICBitmapScaler> scaler;
+        if (FAILED(factory->CreateBitmapScaler(&scaler)) ||
+            FAILED(scaler->Initialize(source.Get(), outputWidth, outputHeight,
+                WICBitmapInterpolationModeFant)) || FAILED(scaler.As(&source)))
+            return fail("imageDecodeFailed");
+    }
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeMedianCut)))
+        return fail("imageDecodeFailed");
+    auto pixels = std::make_shared<WidgetRuntimeImagePixels>();
+    pixels->width = outputWidth;
+    pixels->height = outputHeight;
+    pixels->stride = outputWidth * 4;
+    pixels->bgraPremultiplied.resize(static_cast<std::size_t>(pixels->stride) * outputHeight);
+    if (FAILED(converter->CopyPixels(nullptr, pixels->stride,
+            static_cast<UINT>(pixels->bgraPremultiplied.size()),
+            pixels->bgraPremultiplied.data()))) return fail("imageDecodeFailed");
+    WidgetFilesystemTaskRunResult result;
+    if (!ReadMetadata(path, result.metadata, error)) return fail(error);
+    result.resourceToken = MakeWidgetRuntimeImageToken("filesystem", *pixels);
+    result.image = std::move(pixels);
+    result.ok = !result.resourceToken.empty();
+    if (!result.ok) result.error = "imageDecodeFailed";
     return result;
 }
 
@@ -383,7 +522,16 @@ bool WidgetFilesystemTaskExecutor::SupportsAction(
     std::string_view action) noexcept
 {
     return action == "filesystem.stat" || action == "filesystem.list" ||
-        action == "filesystem.read" || action == "filesystem.write";
+        action == "filesystem.read" || action == "filesystem.write" ||
+        action == "filesystem.image";
+}
+
+bool WidgetFilesystemTaskExecutor::IsDirectChildName(std::string_view name) noexcept
+{
+    return !name.empty() && name.size() <= 1024 && IsValidUtf8(name) &&
+        name != "." && name != ".." && name.back() != '.' && name.back() != ' ' &&
+        name.find_first_of("/\\:<>\"|?*") == std::string_view::npos &&
+        std::none_of(name.begin(), name.end(), [](unsigned char c) { return c < 32; });
 }
 
 bool WidgetFilesystemTaskExecutor::ValidateRequest(
@@ -395,6 +543,9 @@ bool WidgetFilesystemTaskExecutor::ValidateRequest(
         return false;
     if (request.action == "filesystem.stat")
         return request.text.empty() && request.expectedRevision.empty();
+    if (request.action == "filesystem.image")
+        return (request.name.empty() || IsDirectChildName(request.name)) &&
+            request.maxDimension >= 1 && request.maxDimension <= 2048;
     if (request.action == "filesystem.list")
         return request.text.empty() && request.expectedRevision.empty() &&
             request.limit >= 1 && request.limit <= MaximumListLimit &&
@@ -419,6 +570,7 @@ WidgetFilesystemTaskExecutor::RunSystemAction(
     if (request.action == "filesystem.stat") result = RunStat(request);
     else if (request.action == "filesystem.list") result = RunList(request);
     else if (request.action == "filesystem.read") result = RunRead(request);
+    else if (request.action == "filesystem.image") result = RunImage(request);
     else result = RunWrite(request);
     if (result.ok) result.metadata.handle = request.handle;
     return result;
@@ -470,6 +622,9 @@ void WidgetFilesystemTaskExecutor::WorkerMain(
                 std::move(result.text), result.nextOffset,
                 result.hasMore, std::move(result.error) };
             completion.encoding = std::move(result.encoding);
+            completion.grantHandles = request.request.grantHandles;
+            completion.image = std::move(result.image);
+            completion.resourceToken = std::move(result.resourceToken);
             completions_.push_back(std::move(completion));
         }
     }

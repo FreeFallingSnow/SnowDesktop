@@ -1,6 +1,7 @@
 #pragma once
 
 #include "widget_filesystem_handle_store.h"
+#include "widget_runtime_image.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -41,6 +43,9 @@ struct WidgetFilesystemTaskRequest
     std::string encoding = "utf8";
     std::string text;
     std::string expectedRevision;
+    bool grantHandles = true;
+    std::string name;
+    std::size_t maxDimension = 2048;
 };
 
 struct WidgetFilesystemTaskRunResult
@@ -53,6 +58,8 @@ struct WidgetFilesystemTaskRunResult
     bool hasMore = false;
     std::string error;
     std::string encoding = "utf8";
+    std::shared_ptr<const WidgetRuntimeImagePixels> image;
+    std::string resourceToken;
 };
 
 struct WidgetFilesystemTaskCompletion
@@ -67,6 +74,9 @@ struct WidgetFilesystemTaskCompletion
     bool hasMore = false;
     std::string error;
     std::string encoding = "utf8";
+    bool grantHandles = true;
+    std::shared_ptr<const WidgetRuntimeImagePixels> image;
+    std::string resourceToken;
 };
 
 struct WidgetFilesystemTaskStartResult
@@ -114,6 +124,7 @@ public:
     static bool SupportsAction(std::string_view action) noexcept;
     static bool ValidateRequest(
         const WidgetFilesystemTaskRequest& request) noexcept;
+    static bool IsDirectChildName(std::string_view name) noexcept;
 
 private:
     struct QueuedRequest
