@@ -11,7 +11,8 @@
 - 按来源顺序播放，文件夹内按文件名排序，仅当前层；通过“刷新”重新扫描。
 - 支持单张静态照片、手动上一张/下一张、暂停、3–300 秒间隔和随机播放。手动前后翻页保持当前播放状态，双击累计两张，手动方向不受随机播放影响。
 - 右键“从相册移除此照片”移除打开菜单时的照片，保留原文件；绑定模式用排除记录避免刷新后重现。
-- “照片”列表可选择某一张并暂停；关闭“裁切填充相框”可完整显示图片。
+- “照片”列表可选择某一张并暂停；右键或轮播设置中的“裁切填充相框”共用同一开关，关闭后完整显示图片。
+- 翻页、播放/暂停、计数和管理按钮悬停时叠在图片底部，移开后隐藏；显隐不改变图片尺寸或轮播进度，单张照片保留计数与管理按钮。
 - 最多 128 个来源、10000 张照片；每个目录最多 10000 个条目。超限或读取失败会提示。
 - 支持 JPG/JPEG、PNG、BMP、GIF、TIFF；WebP 依赖 Windows 解码器。只播放静态首帧。
 - 来源存储为实例专属的授权句柄。只请求读取权限，不修改、复制或删除原图。
@@ -49,7 +50,10 @@ Right-click removes the photo shown when the
 menu opened from the album only; bound sources remember exclusions. Manual next/previous preserves
 autoplay and double-clicks accumulate two directional steps. Reorder or remove sources,
 browse the expanded photo list, pause on one photo, choose a 3–300 second interval, shuffle,
-or switch between cover and contain. Folders include direct children only; refresh rescans them.
+or switch between cover and contain from the context menu or the same setting in slideshow settings.
+Navigation, playback, count and management controls overlay the bottom of the photo only while
+hovered; showing or hiding them preserves image geometry and playback progress. Single-photo
+albums retain the count and management controls. Folders include direct children only; refresh rescans them.
 Limits: 128 sources and 10000 photos, with at most 10000 entries per folder. Animated files use
 their first frame; WebP depends on Windows codecs. Originals are never modified. Saved sources
 are opaque instance-scoped read grants. New instances start empty.

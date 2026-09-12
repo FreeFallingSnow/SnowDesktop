@@ -118,12 +118,30 @@ local function desktop(context,m)
         controls[#controls+1]=button("manage",c.manage,row,true,"more_horizontal")
     end
     local children={content}
-    if #controls>0 then
-        children[#children+1]=view.row({key="controls",width="fill",height=row,flexShrink=0,gap=gap,children=controls})
+    local hovered=interaction.isHovered("album")
+    for _,control in ipairs(controls) do
+        hovered=interaction.isHovered(control.key) or hovered
+        control.events=control.events or {}
+        control.events.pointerEnter={id="album.hover"}
+        control.events.pointerLeave={id="album.hover"}
     end
-    local events={contextMenu={id="album.menu",scope="component"}}
+    if #controls>0 and hovered then
+        -- Keep the photograph's layout fixed when the controls appear. The
+        -- backdrop follows the resolved foreground theme, independent of the photo.
+        local backdrop=context.theme.mode=="light" and 0xF5F7FA or 0x18202A
+        children[#children+1]=view.column({key="overlay",width="fill",height="fill",padding=gap,
+            justifyContent="end",children={
+                view.stack({key="controls.surface",width="fill",height=row+gap*2,children={
+                    view.box({key="controls.backdrop",width="fill",height="fill",
+                        style={background=backdrop,opacity=0.92,cornerRadius=row*0.24}}),
+                    view.row({key="controls",width="fill",height="fill",padding=gap,gap=gap,children=controls}),
+                }}),
+            }})
+    end
+    local events={contextMenu={id="album.menu",scope="component"},
+        pointerEnter={id="album.hover"},pointerLeave={id="album.hover"}}
     if not a:isClearing() then events.fileDrop={id="import",value=a.dropRevision} end
-    return view.column({key="album",width="fill",height="fill",padding=unit*0.03,gap=gap,children=children,events=events})
+    return view.stack({key="album",width="fill",height="fill",padding=unit*0.03,children=children,events=events})
 end
 
 local function panel(context,m)
@@ -224,6 +242,8 @@ local function event(context,m,e)
         elseif id=="previous" then a:step(-1,false)
         elseif id=="next" then a:step(1,false)
         elseif id=="toggle" then storage.set("paused",not enabled("paused",false)); a.elapsed=0
+        elseif id=="fill" then storage.set("fill",not enabled("fill",true))
+        elseif id=="album.hover" then widget.invalidate();return
         elseif id=="settings" then widget.openSettings()
         elseif id=="sources" or id=="photos" then m.tab=id; m.page=1
         elseif id=="page.previous" then m.page=math.max(1,m.page-1)
@@ -254,7 +274,8 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         if request.id~="album.menu" then return nil end
         local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
         m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
-        return ui.menu({{id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
+        return ui.menu({{id="fill",label=l10n.tr("album.fill"),checked=enabled("fill",true)},
+            {id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
             {id="clear",label=copy().clearAll,enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
             {id="manage",label=copy().manage}})
     end,
