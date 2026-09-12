@@ -115,6 +115,7 @@ local function panel(context,m)
     local page=math.max(1,math.min(m.page,math.max(1,math.ceil(total/pageSize))))
     if m.tab=="sources" then
         local hint=text("folder.hint",c.folderHint,row*1.5,true)
+        hint.fontSize=row*0.34
         hint.textWrap="wrap"; hint.maxLines=2; items[#items+1]=hint
         for i=(page-1)*pageSize+1,math.min(page*pageSize,#a.sources) do
             local source=a.sources[i]

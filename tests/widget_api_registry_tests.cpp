@@ -1146,9 +1146,11 @@ void TestMachineReadableSystemContract()
             apiVersion->number == 2.0,
         "offline system contract must expose schema and API versions");
     Check(functions && functions->IsArray() &&
-            functions->array.size() == 15 &&
-            topics && topics->IsArray() && topics->array.size() == 25 &&
-            tasks && tasks->IsArray() && tasks->array.size() == 41,
+            functions->array.size() == snowdesktop::widget_api::SystemFunctionContracts().size() &&
+            topics && topics->IsArray() &&
+            topics->array.size() == snowdesktop::widget_api::SystemDataTopicContracts().size() &&
+            tasks && tasks->IsArray() &&
+            tasks->array.size() == snowdesktop::widget_api::SystemTaskContracts().size(),
         "offline system contract must expose every runtime catalog entry");
 
     const auto findNamed = [](const JsonValue& array,
