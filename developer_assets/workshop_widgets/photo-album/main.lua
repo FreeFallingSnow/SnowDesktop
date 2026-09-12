@@ -13,7 +13,7 @@ local function pagingProbe(m, kind, e)
     if kind=="view" and m.probeView==signature then return end
     if kind=="view" then m.probeView=signature end
     m.probe=m.probe or {};m.probe[#m.probe+1]=item
-    if #m.probe>40 then table.remove(m.probe,1) end
+    if #m.probe>16 then table.remove(m.probe,1) end
     pcall(storage.set,"_albumPagingProbe",m.probe)
 end
 
