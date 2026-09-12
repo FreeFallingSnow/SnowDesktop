@@ -11,6 +11,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_filesystem_drop.h"
 #include "widget_button_fill.h"
 #include "widget_date_picker_lua.h"
 #include "widget_time_picker_lua.h"
@@ -3706,7 +3707,7 @@ static int lua_InteractionRegion(lua_State* state)
         const int events = lua_absindex(state, -1);
         for (const char* eventName : { "pointerEnter", "pointerLeave",
             "pointerDown", "pointerUp", "pointerMove", "click",
-            "doubleClick", "wheel", "contextMenu", "keyDown", "keyUp" })
+            "doubleClick", "fileDrop", "wheel", "contextMenu", "keyDown", "keyUp" })
         {
             lua_getfield(state, events, eventName);
             if (lua_isnil(state, -1))
@@ -21403,6 +21404,64 @@ void WidgetEngine::InvokeSelected(const std::wstring& widgetId)
 void WidgetEngine::InvokeClick(const std::wstring& widgetId, int x, int y)
 {
     InvokeMouseEvent(widgetId, "onClick", x, y, 1, 0);
+}
+
+bool WidgetEngine::HasFileDropTarget(const std::wstring& widgetId, int x, int y) const
+{
+    const int index = FindWidget(widgetId);
+    if (index < 0) return false;
+    const auto& widget = widgets_[index];
+    return widget.state && !widget.preview && filesystemHandleStore_ &&
+        snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
+            widget.permissions, kFilesystemReadPermission) &&
+        widget.interactionRegions.FileDropActionAt(
+            static_cast<float>(x), static_cast<float>(y));
+}
+
+bool WidgetEngine::InvokeFileDrop(const std::wstring& widgetId, int x, int y,
+    const std::vector<std::wstring>& paths)
+{
+    using namespace snowdesktop::widget_runtime;
+    if (paths.empty() || paths.size() > 128 || !HasFileDropTarget(widgetId, x, y))
+        return false;
+    auto& widget = widgets_[FindWidget(widgetId)];
+    std::string targetKey;
+    const InteractionAction action = *widget.interactionRegions.FileDropActionAt(
+        static_cast<float>(x), static_cast<float>(y), &targetKey);
+    const WidgetFilesystemHandleOwner owner{WideToUtf8(widgetId), widget.packageId};
+    WidgetFilesystemDropGrant batch(*filesystemHandleStore_, owner);
+    if (!batch.Acquire(paths)) return false;
+    const auto& items = batch.items;
+    WidgetTrustedGestureScope gestureScope(trustedGestureState_, true);
+    const bool delivered = InvokeLifecycleEvent(widget, "action",
+        [&](lua_State* state) {
+            lua_pushlstring(state, action.id.data(), action.id.size());
+            lua_setfield(state, -2, "id");
+            PushInteractionValue(state, action.value); lua_setfield(state, -2, "value");
+            lua_pushliteral(state, "fileDrop"); lua_setfield(state, -2, "action");
+            lua_pushliteral(state, "host.drop"); lua_setfield(state, -2, "source");
+            lua_pushliteral(state, "desktop"); lua_setfield(state, -2, "surface");
+            lua_pushlstring(state, targetKey.data(), targetKey.size());
+            lua_setfield(state, -2, "targetKey");
+            lua_pushboolean(state, 1); lua_setfield(state, -2, "trustedGesture");
+            lua_createtable(state, static_cast<int>(items.size()), 0);
+            int itemIndex = 1;
+            for (const auto& item : items)
+            {
+                lua_createtable(state, 0, 4);
+                lua_pushlstring(state, item.handle.data(), item.handle.size());
+                lua_setfield(state, -2, "handle");
+                const auto name = WideToUtf8(item.path.filename().wstring());
+                lua_pushlstring(state, name.data(), name.size()); lua_setfield(state, -2, "name");
+                const auto kind = WidgetFilesystemHandleStore::KindName(item.kind);
+                lua_pushlstring(state, kind.data(), kind.size()); lua_setfield(state, -2, "kind");
+                lua_pushliteral(state, "read"); lua_setfield(state, -2, "access");
+                lua_rawseti(state, -2, itemIndex++);
+            }
+            lua_setfield(state, -2, "items");
+        });
+    if (delivered) batch.Commit();
+    return delivered;
 }
 
 void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,

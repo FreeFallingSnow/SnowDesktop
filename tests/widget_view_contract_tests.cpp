@@ -580,7 +580,7 @@ void TestRepresentativeApplicability()
 void TestEventContract()
 {
     const auto events = ViewEventContracts();
-    Check(events.size() == 17,
+    Check(events.size() == 18 && IsKnownViewEvent("fileDrop"),
         "the event matrix must enumerate the complete public event vocabulary");
     std::set<std::string> names;
     for (const auto& event : events)

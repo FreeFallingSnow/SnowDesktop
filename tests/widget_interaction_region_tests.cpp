@@ -51,6 +51,25 @@ void TestFocusCueModality()
         "non-pointer focus sources must retain a visible focus cue");
 }
 
+void TestFileDropTargets()
+{
+    WidgetInteractionRegions regions;
+    std::string error, target;
+    auto album = Rect("album", 0, 0, 100, 100);
+    album.events["fileDrop"].id = "import";
+    auto button = Rect("next", 60, 60, 20, 20);
+    button.events["click"].id = "next";
+    regions.BeginFrame();
+    Check(regions.Submit(album, error) && regions.Submit(button, error), "drop zone and child controls stage");
+    regions.CommitFrame();
+    Check(regions.FileDropActionAt(65, 65, &target) && target == "album",
+        "a non-drop child must not hide the enclosing file import zone");
+    Check(!regions.FileDropActionAt(101, 65), "file drop cannot escape its target bounds");
+    album.enabled = false;
+    regions.BeginFrame(); Check(regions.Submit(album, error), "disabled zone stages"); regions.CommitFrame();
+    Check(!regions.FileDropActionAt(20, 20), "disabled import zones reject drops");
+}
+
 void TestFrameTransactionAndStableState()
 {
     WidgetInteractionRegions regions;
@@ -656,6 +675,7 @@ void TestKeyboardFocusableOrderAndFiltering()
 int main()
 {
     TestFocusCueModality();
+    TestFileDropTargets();
     TestFrameTransactionAndStableState();
     TestPointerPairingAndActions();
     TestComponentMenuRegistrationIsSurfaceScoped();

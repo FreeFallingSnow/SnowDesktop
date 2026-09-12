@@ -1264,6 +1264,12 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         goto cleanup;
     }
 
+    if (HitTestLuaFileDropTarget(upPoint) < widgets_.size())
+    {
+        (void)DeliverLuaFileDrop(upPoint, dragSession_.SourceList().FilePaths());
+        goto cleanup;
+    }
+
     ResolveCurrentDragTargetAt(upPoint);
 
     if (!GetDockDragOutRemovalHint(upPoint).empty())

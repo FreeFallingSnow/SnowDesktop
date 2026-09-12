@@ -3861,6 +3861,9 @@ private:
     OleDragDropAdapter* EnsureOleDragDropAdapter();
     void CancelPendingExternalOleDragLeave();
     void FinalizePendingExternalOleDragLeave();
+    size_t HitTestLuaFileDropTarget(POINT point) const;
+    bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
+    bool externalLuaFileDropAvailable_ = false;
     HRESULT HandleOleDragEnter(IDataObject* dataObject,
         DWORD keyState, POINTL point, DWORD* effect) override;
     HRESULT HandleOleDragOver(

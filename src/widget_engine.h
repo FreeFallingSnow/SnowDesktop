@@ -1011,6 +1011,9 @@ public:
      */
     void InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
         int button = 0, int delta = 0);
+    bool HasFileDropTarget(const std::wstring& widgetId, int x, int y) const;
+    bool InvokeFileDrop(const std::wstring& widgetId, int x, int y,
+        const std::vector<std::wstring>& paths);
     bool HasInteractionPointerCapture(const std::wstring& widgetId,
         std::string_view surface = "desktop") const;
     void CancelInteractionPointerPress(std::string_view surface = {});

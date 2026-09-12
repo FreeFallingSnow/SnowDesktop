@@ -535,6 +535,7 @@ constexpr auto kEventContracts = std::to_array<ViewEventContract>({
     { "pointerUp", ViewEventPayloadKind::Pointer },
     { "click", ViewEventPayloadKind::Action },
     { "doubleClick", ViewEventPayloadKind::Action },
+    { "fileDrop", ViewEventPayloadKind::Action },
     { "wheel", ViewEventPayloadKind::Wheel },
     { "contextMenu", ViewEventPayloadKind::Action },
     { "keyDown", ViewEventPayloadKind::Key },

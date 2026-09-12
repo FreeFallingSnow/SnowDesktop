@@ -63,6 +63,7 @@ constexpr std::array<std::string_view, 214> kHostFeatures = {
     "interaction.contextMenu",
     "interaction.contextMenu.resourceImage",
     "interaction.contextMenu.submenu",
+    "interaction.fileDrop",
     "interaction.keyboard",
     "interaction.pointerActions",
     "interaction.pointerCapture",

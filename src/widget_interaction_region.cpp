@@ -99,7 +99,7 @@ bool IsSupportedEvent(std::string_view eventName) noexcept
     return eventName == "pointerEnter" || eventName == "pointerLeave" ||
         eventName == "pointerDown" || eventName == "pointerUp" ||
         eventName == "pointerMove" || eventName == "click" ||
-        eventName == "doubleClick" || eventName == "wheel" ||
+        eventName == "doubleClick" || eventName == "fileDrop" || eventName == "wheel" ||
         eventName == "contextMenu" || eventName == "keyDown" ||
         eventName == "keyUp" || eventName == "change" ||
         eventName == "scrollEnd";
@@ -764,6 +764,22 @@ const InteractionAction* WidgetInteractionRegions::ActionAt(
     if (targetKey) *targetKey = region->key;
     const auto action = region->events.find(eventName);
     return action == region->events.end() ? nullptr : &action->second;
+}
+
+const InteractionAction* WidgetInteractionRegions::FileDropActionAt(
+    float x, float y, std::string* targetKey) const noexcept
+{
+    // An enclosing drop zone remains reachable over non-drop child controls.
+    for (auto region = active_.rbegin(); region != active_.rend(); ++region)
+    {
+        if (!region->enabled || !ContainsPoint(*region, x, y)) continue;
+        const auto action = region->events.find("fileDrop");
+        if (action == region->events.end()) continue;
+        if (targetKey) *targetKey = region->key;
+        return &action->second;
+    }
+    if (targetKey) targetKey->clear();
+    return nullptr;
 }
 
 const InteractionAction* WidgetInteractionRegions::ContextMenuActionAt(

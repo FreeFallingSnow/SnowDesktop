@@ -14,6 +14,8 @@ local function copy()
         settings=l10n.tr("album.settings"), limit=l10n.tr("album.limit"),
         scanFailed=l10n.tr("album.scan_failed"), saveFailed=l10n.tr("album.save_failed"),
         folderHint=l10n.tr("album.folder_hint"), sample=l10n.tr("album.sample"),
+        importMode=l10n.tr("album.import_mode"), bindMode=l10n.tr("album.bind_mode"),
+        removePhoto=l10n.tr("album.remove_photo"), busy=l10n.tr("album.busy"),
     }
 end
 
@@ -30,6 +32,7 @@ local function button(key, label, row, active, icon)
         fontSize=row*0.43,textAlign="center",enabled=active~=false,
         style={foreground="textPrimary",cornerRadius=row*0.20},
         action={id=key},accessibility={label=label},tooltip=label}
+    if key=="previous" or key=="next" then options.events={doubleClick={id=key}} end
     if icon then options.label=nil;options.glyph=utf8.char(glyphs[icon]);options.iconFont="fa";return view.iconButton(options) end
     return view.button(options)
 end
@@ -41,14 +44,14 @@ local function text(key, value, row, secondary)
 end
 
 local function setup(context)
-    if storage.get("_albumPagingProbe")~=nil then storage.set("_albumPagingProbe",nil) end
+    if storage.get("_albumPagingProbe")~=nil then storage.remove("_albumPagingProbe") end
     local a=album.new({
         start=function(name,args) return task.start(name,args) end,
         cancel=function(id) task.cancel(id) end,
         allowed=function() return widget.hasPermission("filesystem.userSelected.read") end,
-        save=function(sources) return storage.set("sources",sources) end,
+        save=function(sources) return storage.set("sources",album.encodeSources(sources)) end,
         random=function(maximum) return math.random(1,maximum) end,
-    },storage.get("sources"))
+    },album.decodeSources(storage.get("sources")))
     local m={album=a,tab="sources",page=1,preview=context.preview==true}
     if m.preview and not enabled("previewEmpty",false) then
         a.photos={{name=copy().sample},{name=copy().sample},{name=copy().sample}}
@@ -93,22 +96,26 @@ local function desktop(context,m)
     if #controls>0 then
         children[#children+1]=view.row({key="controls",width="fill",height=row,flexShrink=0,gap=gap,children=controls})
     end
-    return view.column({key="album",width="fill",height="fill",padding=unit*0.03,gap=gap,children=children})
+    return view.column({key="album",width="fill",height="fill",padding=unit*0.03,gap=gap,children=children,
+        events={fileDrop={id="import"},contextMenu={id="album.menu",scope="component"}}})
 end
 
 local function panel(context,m)
     local a,c=m.album,copy(); local row=ui.metrics().layoutRowHeight
     local canRead=widget.hasPermission("filesystem.userSelected.read")
     local header={
+        view.row({key="mode",width="fill",height=row,gap=row*0.25,children={
+            button("mode.import",c.importMode,row,enabled("bindFolders",false)),
+            button("mode.bind",c.bindMode,row,not enabled("bindFolders",false))}}),
         view.row({key="add",width="fill",height=row,gap=row*0.25,children={
-            button("addImages",c.addImages,row,canRead and not a.picking),
-            button("addFolders",c.addFolders,row,canRead and not a.picking)}}),
+            button("addImages",c.addImages,row,canRead and not a.picking and not a.importing),
+            button("addFolders",c.addFolders,row,canRead and not a.picking and not a.importing)}}),
         view.row({key="tabs",width="fill",height=row,gap=row*0.25,children={
             button("sources",c.sources,row,m.tab~="sources"),button("photos",c.photos,row,m.tab~="photos"),
             button("refresh",c.refresh,row,canRead and not a.scanning)}}),
     }
     local status=not canRead and c.permission or (a.error and (c[a.error] or c.error)) or
-        (a.scanning and c.loading) or (a.warning and (c[a.warning] or c.error))
+        ((a.scanning or a.importing) and c.loading) or (a.warning and (c[a.warning] or c.error))
     if status then header[#header+1]=text("status",status,row,true) end
     local items={}
     local total=m.tab=="sources" and #a.sources or #a.photos
@@ -155,11 +162,19 @@ local function event(context,m,e)
     elseif e.kind=="action" then
         local id=e.id or ""
         if id=="manage" then widget.openPanel({title=copy().manage,width=560,height=600})
-        elseif id=="addImages" then a:pick(false)
-        elseif id=="addFolders" then a:pick(true)
+        elseif id=="addImages" then a:pick(false,false)
+        elseif id=="addFolders" then a:pick(true,enabled("bindFolders",false))
+        elseif id=="import" and e.action=="fileDrop" then a:ingest(e.items,enabled("bindFolders",false))
+        elseif id=="mode.import" then storage.set("bindFolders",false)
+        elseif id=="mode.bind" then storage.set("bindFolders",true)
+        elseif id=="removePhoto" and m.menuPhoto then
+            for index,photo in ipairs(a.photos) do
+                if photo.handle==m.menuPhoto.handle and photo.child==m.menuPhoto.child then a:removePhoto(index);break end
+            end
+            m.menuPhoto=nil
         elseif id=="refresh" then a.warning=nil; a:refresh()
-        elseif id=="previous" then storage.set("paused",true); a:step(-1,false)
-        elseif id=="next" then storage.set("paused",true); a:step(1,enabled("shuffle",false))
+        elseif id=="previous" then a:step(-1,false)
+        elseif id=="next" then a:step(1,false)
         elseif id=="toggle" then storage.set("paused",not enabled("paused",false)); a.elapsed=0
         elseif id=="settings" then widget.openSettings()
         elseif id=="sources" or id=="photos" then m.tab=id; m.page=1
@@ -187,6 +202,12 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         {key="fill",label=l10n.tr("album.fill"),type="bool",default=true},
     }},
     setup=setup,view=desktop,panel=panel,event=event,
+    menu=function(context,m,request)
+        local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
+        m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
+        return {{id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
+            {id="manage",label=copy().manage}}
+    end,
     -- The host retires this VM's timers. A named cancel here can target the
     -- replacement VM, which is already set up when hotReload disposes us.
     dispose=function(context,m) m.album:dispose() end})

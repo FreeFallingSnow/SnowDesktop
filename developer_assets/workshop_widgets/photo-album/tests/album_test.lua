@@ -13,6 +13,48 @@ end
 local file={handle="file",name="one.jpg",kind="file"}
 local folder={handle="folder",name="Pictures",kind="folder"}
 return {
+    ["folder import retains individual images and releases the directory"]=function()
+        local f=fixture({});f.a:ingest({folder},false)
+        assert(f.calls[1].name=="filesystem.list" and f.calls[1].args.grantHandles~=false)
+        f:complete(1,{items={file,{handle="txt",name="note.txt",kind="file"}},hasMore=false,nextOffset=2})
+        for _=1,3 do if f.a.releasing then f:complete(f.a.releasing,{}) end end
+        assert(not f.a.importing and #f.a.sources==1 and f.saved[1].handle=="file")
+        assert(f.a.sources[1].kind=="file" and not f.a.photos[1].child and not next(f.a.releases))
+        for _,source in ipairs(f.saved) do assert(source.handle~="folder") end
+        local restored=fixture(album.decodeSources(album.encodeSources(f.saved)));restored.a:refresh()
+        assert(restored.calls[1].name=="filesystem.image" and restored.calls[1].args.handle=="file")
+    end,
+    ["binding mode keeps folders and removed photos stay excluded after refresh"]=function()
+        local f=fixture({});f.a:ingest({folder},true)
+        assert(f.calls[1].args.grantHandles==false and f.a.sources[1].kind=="folder")
+        f:complete(1,{items={{name="one.jpg",kind="file"},{name="two.jpg",kind="file"}},hasMore=false})
+        f:complete(2,{image="one"});f.a:removePhoto(1)
+        assert(f.saved[1].excluded["one.jpg"] and not f.a.releases.folder)
+        f:complete(3,{items={{name="one.jpg",kind="file"},{name="two.jpg",kind="file"}},hasMore=false})
+        assert(#f.a.photos==1 and f.a.photos[1].name=="two.jpg")
+        local restored=album.decodeSources(album.encodeSources(f.saved))
+        assert(restored[1].excluded["one.jpg"])
+    end,
+    ["import failure preserves existing photos and releases unsaved grants"]=function()
+        local f=fixture({file});f.saveOk=false
+        f.a:ingest({{handle="two",kind="file",name="two.jpg"}},false)
+        assert(#f.a.sources==1 and f.a.sources[1].handle=="file" and f.a.releases.two and not f.a.releases.file)
+        assert(f.a.error=="saveFailed")
+    end,
+    ["two rapid directional steps advance twice and autoplay remains available"]=function()
+        local sources={};for i=1,5 do sources[i]={handle=tostring(i),name=i..".jpg",kind="file"} end
+        local f=fixture(sources);f.a:refresh();f:complete(1,{image="first"})
+        f.a:step(1,false);local canceled=f.a.loading;f.a:step(1,false)
+        assert(f.a.index==3 and f.canceled[canceled]);f:complete(f.a.loading,{image="third"})
+        f.a:tick(1,false,false);assert(f.a.index==4)
+        f.a:step(-1,false);f.a:step(-1,false);assert(f.a.index==2)
+    end,
+    ["compact source persistence round trips Unicode names and existing saves"]=function()
+        local sources={};for i=1,128 do sources[i]={handle="h:"..i,name="猫:"..i..".png",kind="file"} end
+        local encoded=album.encodeSources(sources);assert(#encoded==128 and type(encoded[1])=="string")
+        local decoded=album.decodeSources(encoded);assert(#decoded==128 and decoded[128].name=="猫:128.png")
+        assert(album.decodeSources({folder})[1].kind=="folder")
+    end,
     ["single photo stays static and preserves source across restart"]=function()
         local f=fixture({file});f.a:refresh();assert(f.calls[1].name=="filesystem.image")
         f:complete(1,{image="pixels"});for _=1,20 do f.a:tick(3,false,false) end

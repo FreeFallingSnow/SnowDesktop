@@ -3,6 +3,42 @@ local extensions = {jpg=true, jpeg=true, png=true, bmp=true, gif=true, tif=true,
 M.extensions = {"jpg", "jpeg", "png", "bmp", "gif", "tif", "tiff", "webp"}
 M.maximumSources, M.maximumPhotos = 128, 10000
 
+local function field(value) return tostring(#value)..":"..value end
+function M.encodeSources(sources)
+    -- One string per source stays within the host's 256-node storage limit.
+    local result={}
+    for _,s in ipairs(sources) do
+        local names={};for name in pairs(s.excluded or {}) do names[#names+1]=name end;table.sort(names)
+        local value=(s.kind=="folder" and "d" or "f")..field(s.handle)..field(s.name)
+        for _,name in ipairs(names) do value=value..field(name) end
+        result[#result+1]=value
+    end
+    return result
+end
+function M.decodeSources(values)
+    local result={}
+    for _,value in ipairs(type(values)=="table" and values or {}) do
+        if type(value)=="table" then result[#result+1]=value
+        elseif type(value)=="string" and (value:sub(1,1)=="d" or value:sub(1,1)=="f") then
+            local position=2
+            local function read()
+                local first,last,length=value:find("(%d+):",position)
+                if first~=position then return nil end
+                length=tonumber(length);position=last+1
+                if length>#value-position+1 then return nil end
+                local part=value:sub(position,position+length-1);position=position+length;return part
+            end
+            local handle,name=read(),read()
+            if handle and name then
+                local s={handle=handle,name=name,kind=value:sub(1,1)=="d" and "folder" or "file",excluded={}}
+                while position<=#value do local name=read();if not name then break end;s.excluded[name]=true end
+                result[#result+1]=s
+            end
+        end
+    end
+    return result
+end
+
 function M.isImage(name)
     return type(name) == "string" and extensions[name:lower():match("%.([^.]+)$")] == true
 end
@@ -16,7 +52,7 @@ function M.new(ports, sources)
             type(source.name)=="string" and (source.kind=="file" or source.kind=="folder") and
             not seen[source.handle] and #a.sources<M.maximumSources then
             seen[source.handle]=true
-            a.sources[#a.sources+1]={handle=source.handle,name=source.name,kind=source.kind}
+            a.sources[#a.sources+1]={handle=source.handle,name=source.name,kind=source.kind,excluded=source.excluded}
         end
     end
 
@@ -56,7 +92,7 @@ function M.new(ports, sources)
     function a:cancelWork()
         self.generation=self.generation+1
         for id, p in pairs(self.pending) do
-            if p.kind=="image" or p.kind=="list" then
+            if p.kind=="image" or (p.kind=="list" and not p.importing) then
                 if id>0 then self.ports.cancel(id) end
                 self.pending[id]=nil
             end
@@ -75,6 +111,7 @@ function M.new(ports, sources)
             self.releasing=self:start("release",{handle=handle},{handle=handle})
             return
         end
+        if self.importWaiting then self:importNext() end
     end
 
     function a:save(sources)
@@ -104,6 +141,56 @@ function M.new(ports, sources)
         self:refresh()
     end
 
+    function a:ingest(items, bindFolders)
+        if bindFolders then self:add(items); return end
+        if self.importing then
+            for _,item in ipairs(items or {}) do self:release(item.handle) end
+            self.warning="busy";return
+        end
+        self.importing={queue=items or {},index=1,photos={},seen={}}
+        self:importNext()
+    end
+
+    function a:importNext()
+        local batch=self.importing;if not batch then return end
+        self.importWaiting=nil
+        if self.releasing or next(self.releases) then
+            self.importWaiting=true;self:flushReleases();return
+        end
+        while batch.index<=#batch.queue do
+            local item=batch.queue[batch.index]
+            if item.kind=="folder" then
+                if self:start("list",{handle=item.handle,offset=batch.offset or 0,limit=16},
+                    {importing=true,source=item,offset=batch.offset or 0}) then return end
+                self.warning="scanFailed";self:release(item.handle)
+            elseif M.isImage(item.name) then
+                if not batch.seen[item.handle] and #batch.photos<M.maximumSources then
+                    batch.seen[item.handle]=true;batch.photos[#batch.photos+1]=item
+                elseif not batch.seen[item.handle] then self:release(item.handle);self.warning="limit" end
+            else self:release(item.handle) end
+            batch.index=batch.index+1;batch.offset=nil
+        end
+        self.importing=nil;self.importWaiting=nil
+        self:add(batch.photos)
+    end
+
+    function a:removePhoto(index)
+        local photo=self.photos[index];if not photo then return end
+        local sources={}
+        for _,source in ipairs(self.sources) do
+            if source.handle~=photo.handle then sources[#sources+1]=source
+            elseif photo.child then
+                local updated={handle=source.handle,name=source.name,kind=source.kind,excluded={}}
+                for name in pairs(source.excluded or {}) do updated.excluded[name]=true end
+                updated.excluded[photo.child]=true;sources[#sources+1]=updated
+            end
+        end
+        if self:save(sources) then
+            self:refresh(index)
+            if not photo.child then self:release(photo.handle) end
+        end
+    end
+
     function a:remove(index)
         local removed=self.sources[index]; if not removed then return end
         local sources={}
@@ -120,6 +207,7 @@ function M.new(ports, sources)
     end
 
     function a:append(source, name)
+        if source.excluded and source.excluded[name or source.name] then return true end
         if #self.photos>=M.maximumPhotos then self.warning="limit"; return false end
         self.photos[#self.photos+1]={handle=source.handle,name=name or source.name,
             child=source.kind=="folder" and name or nil}
@@ -138,12 +226,13 @@ function M.new(ports, sources)
             end
         end
         self.scanning=false
-        if #self.photos>0 then self:show(1) end
+        if #self.photos>0 then self:show(math.min(self.resumeIndex or 1,#self.photos)) end
     end
 
-    function a:refresh()
+    function a:refresh(resumeIndex)
         self:cancelWork()
-        self.photos={}; self.index=0; self.image=nil; self.loadedName=nil
+        self.photos={}; self.index=0; self.image=nil; self.loadedName=nil;self.loadedIndex=nil
+        self.resumeIndex=resumeIndex
         self.error=nil; self.failures=0; self.elapsed=0; self.sourceIndex=1
         if not self.ports.allowed() then self.error="permission"; return end
         self.scanning=true; self:scanNext()
@@ -169,10 +258,10 @@ function M.new(ports, sources)
         self:show(nextIndex)
     end
 
-    function a:pick(folder)
-        if self.picking or not self.ports.allowed() then return end
+    function a:pick(folder, bindFolders)
+        if self.picking or self.importing or not self.ports.allowed() then return end
         self.picking=self:start(folder and "pickFolder" or "pickOpen", folder and
-            {access="read",multiple=true} or {extensions=M.extensions,multiple=true})
+            {access="read",multiple=true} or {extensions=M.extensions,multiple=true},{bindFolders=bindFolders})
     end
 
     function a:complete(e)
@@ -187,12 +276,29 @@ function M.new(ports, sources)
         if p.kind=="release" then
             self.releasing=nil
             if e.ok or e.error=="invalidReference" then self.releases[p.handle]=nil end
+            if self.importWaiting and (e.ok or e.error=="invalidReference") then self:flushReleases() end
             return
         elseif p.kind=="pickOpen" or p.kind=="pickFolder" then
             self.picking=nil
-            if e.ok then self:add(e.value.items or {e.value})
+            if e.ok then self:ingest(e.value.items or {e.value},p.bindFolders)
             elseif e.error~="userCanceled" and e.error~="canceled" then self.error=e.error end
             return
+        end
+        if p.importing then
+            local batch=self.importing;if not batch then return end
+            if e.ok then
+                for _,item in ipairs(e.value.items or {}) do
+                    if item.kind=="file" and M.isImage(item.name) and #batch.photos<M.maximumSources then
+                        if not batch.seen[item.handle] then batch.seen[item.handle]=true;batch.photos[#batch.photos+1]=item end
+                    else self:release(item.handle) end
+                end
+                if e.value.hasMore and #batch.photos<M.maximumSources and e.value.nextOffset>p.offset then
+                    batch.offset=e.value.nextOffset;self:importNext();return
+                end
+                if e.value.hasMore then self.warning="limit" end
+            else self.warning="scanFailed" end
+            self:release(p.source.handle)
+            batch.index=batch.index+1;batch.offset=nil;self:importNext();return
         end
         if p.generation~=self.generation then return end
         if p.kind=="list" then
