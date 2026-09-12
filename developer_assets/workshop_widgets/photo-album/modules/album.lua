@@ -144,8 +144,18 @@ function M.new(ports, sources)
     function a:ingest(items, bindFolders)
         if bindFolders then self:add(items); return end
         if self.importing then
-            for _,item in ipairs(items or {}) do self:release(item.handle) end
-            self.warning="busy";return
+            local retained={}
+            for _,item in ipairs(self.importing.queue) do retained[item.handle]=true end
+            for handle in pairs(self.importing.seen) do retained[handle]=true end
+            for _,item in ipairs(items or {}) do
+                if not retained[item.handle] then
+                    retained[item.handle]=true
+                    if #self.importing.queue<M.maximumSources then
+                        self.importing.queue[#self.importing.queue+1]=item
+                    else self:release(item.handle);self.warning="limit" end
+                end
+            end
+            return
         end
         self.importing={queue=items or {},index=1,photos={},seen={}}
         self:importNext()

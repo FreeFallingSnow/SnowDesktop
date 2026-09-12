@@ -13,6 +13,14 @@ end
 local file={handle="file",name="one.jpg",kind="file"}
 local folder={handle="folder",name="Pictures",kind="folder"}
 return {
+    ["a second drop during folder import queues new photos without revoking shared grants"]=function()
+        local f=fixture({});f.a:ingest({folder},false)
+        f.a:ingest({folder,file},false)
+        assert(#f.a.importing.queue==2 and not f.a.releases.folder and not f.a.releases.file)
+        f:complete(1,{items={file},hasMore=false})
+        for _=1,3 do if f.a.releasing then f:complete(f.a.releasing,{}) end end
+        assert(not f.a.importing and #f.saved==1 and f.saved[1].handle=="file" and not next(f.a.releases))
+    end,
     ["folder import retains individual images and releases the directory"]=function()
         local f=fixture({});f.a:ingest({folder},false)
         assert(f.calls[1].name=="filesystem.list" and f.calls[1].args.grantHandles~=false)

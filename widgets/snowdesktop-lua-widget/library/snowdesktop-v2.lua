@@ -258,6 +258,7 @@
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction Declarative nodes require view.pointer.events; host scrolling still proceeds.
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-node key press observation; requires view.keyboard.events and cannot cancel host behavior.
@@ -302,6 +303,7 @@
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-span key press observation; requires view.keyboard.events and cannot cancel host behavior.
@@ -541,6 +543,7 @@
 ---@field pointerMove? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-region key press observation; requires interaction.keyboard and cannot cancel host behavior.
@@ -672,6 +675,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent Lifecycle event. Raw pointer events are emitted only for immediate render surfaces; declarative views use explicit node pointer actions and host-owned visual state.
+---@field items? SnowFilesystemPickerTaskValue[] fileDrop selections: opaque read handles, basenames and kinds; no absolute paths.
 ---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string

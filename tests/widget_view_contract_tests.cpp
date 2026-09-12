@@ -690,7 +690,7 @@ void TestMachineReadableContract()
     Check(nodes && nodes->IsArray() && nodes->array.size() == 44 &&
             properties && properties->IsArray() &&
             properties->array.size() == 146 &&
-            events && events->IsArray() && events->array.size() == 17,
+            events && events->IsArray() && events->array.size() == ViewEventContracts().size(),
         "the JSON contract must expose the complete public catalogs");
 
     const auto findNamed = [](const JsonValue& array,

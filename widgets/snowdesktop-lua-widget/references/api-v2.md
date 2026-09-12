@@ -2933,3 +2933,33 @@ end
 必须声明并探测 capability。官方计时器将其声明为 optional，并在缺少时回退到原有分钟／分:秒
 文本输入。因此组件在旧宿主和同版本早期构建仍可运行。若其他组件将它声明为 required，
 则必须等支持该接口的宿主发布后再发布组件；缺少 capability 时宿主应拒绝加载。
+
+
+## Desktop file and folder drops
+
+Probe and require `interaction.fileDrop` before binding `events.fileDrop = { id = "import" }`
+on a desktop view node. The component must already have `filesystem.userSelected.read`.
+The enabled, clipped node becomes a file-drop zone; non-drop child controls do not hide it.
+The current implementation supports standalone desktop components, local files/folders from
+Explorer via synchronous CF_HDROP, and native desktop file-item drags. It does not accept
+virtual files, delayed/asynchronous IDataObject payloads, URLs, or panel/dialog/popover drops.
+
+The event has `kind = "action"`, `action = "fileDrop"`, the binding `id`/`value`, `targetKey`,
+`surface = "desktop"`, `source = "host.drop"`, `trustedGesture = true`, and `items`.
+Each item contains an opaque `handle`, basename `name`, `kind = "file" | "folder"`, and
+`access = "read"`. Paths are never sent to Lua. At most 128 top-level selections are accepted;
+existing handle-store quotas still apply. Duplicates reuse references. Permission and target
+validity are checked again at delivery. Failed grant batches or failed Lua delivery revoke
+only newly created grants. A successful callback owns the delivered handles and must release
+ones it does not retain through `filesystem.release`.
+
+Drops report COPY semantics and preserve the original files, folders and desktop placement.
+This transfers read references, not file ownership or bytes. Folder expansion is a component
+choice: use `filesystem.list` with child grants for a fixed snapshot, release unused child
+grants and the directory grant after saving; keep a directory grant with names-only listing
+for an explicitly chosen binding mode. Do not claim real drag acceptance based only on the
+cursor, hit-test, grant helper or automated component tests.
+
+Existing components without this binding keep their behavior. API version remains 2; a
+version number alone does not establish support in early 1.0.6.0 builds. Release the host
+capability before dependent community widgets; unsupported hosts reject required features.

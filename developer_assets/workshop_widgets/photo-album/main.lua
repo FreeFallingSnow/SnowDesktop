@@ -203,10 +203,11 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
     }},
     setup=setup,view=desktop,panel=panel,event=event,
     menu=function(context,m,request)
+        if request.id~="album.menu" then return nil end
         local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
         m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
-        return {{id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
-            {id="manage",label=copy().manage}}
+        return ui.menu({{id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
+            {id="manage",label=copy().manage}})
     end,
     -- The host retires this VM's timers. A named cancel here can target the
     -- replacement VM, which is already set up when hotReload disposes us.

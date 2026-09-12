@@ -2,9 +2,12 @@
 
 独立社区组件，UUID `104e773c-f2a7-4b19-a784-02a20311342b`，不随宿主作为内置组件分发。
 
-- 从“管理相册”多选图片或文件夹，可重复添加、移除和调整来源顺序。
+- 直接拖入图片或文件夹，也可从“管理相册”多选；可移除和调整来源顺序。
+- 默认“导入图片”模式：文件夹一次性展开为独立图片条目，不保留目录来源。
+- “绑定文件夹”是单独模式，保留目录来源供刷新；已有目录来源继续保留。
 - 按来源顺序播放，文件夹内按文件名排序，仅当前层；通过“刷新”重新扫描。
-- 支持单张静态照片、手动上一张/下一张、暂停、3–300 秒间隔和随机播放。
+- 支持单张静态照片、手动上一张/下一张、暂停、3–300 秒间隔和随机播放。手动前后翻页保持当前播放状态，双击累计两张，手动方向不受随机播放影响。
+- 右键“从相册移除此照片”移除打开菜单时的照片，保留原文件；绑定模式用排除记录避免刷新后重现。
 - “照片”列表可选择某一张并暂停；关闭“裁切填充相框”可完整显示图片。
 - 最多 128 个来源、10000 张照片；每个目录最多 10000 个条目。超限或读取失败会提示。
 - 支持 JPG/JPEG、PNG、BMP、GIF、TIFF；WebP 依赖 Windows 解码器。只播放静态首帧。
@@ -15,7 +18,7 @@
 ## 宿主兼容与发布顺序
 
 最低版本为 `1.0.6.0`，并且必须支持：
-`task.filesystem.image`、`task.filesystem.list.names`、`task.filesystem.picker.multiple`。
+`task.filesystem.image`、`task.filesystem.list.names`、`task.filesystem.picker.multiple`、`interaction.fileDrop`。
 同版本早期构建不满足条件时应显示不兼容，不尝试用路径或其他权限绕过。
 这些能力尚待随宿主发布；先发布并验证新宿主，再发布本组件。当前任务不发布到 Workshop。
 
@@ -31,14 +34,18 @@ scripts\widget-dev.bat developer_assets\workshop_widgets\photo-album -Configurat
 
 ## English
 
-A standalone community photo slideshow. Add multiple files or folders, reorder or remove sources,
+A standalone community photo slideshow. Drop local photos or folders, or use the picker.
+Import mode flattens folders into individual image references without retaining directory sources.
+A separate binding mode retains folders for refresh. Right-click removes the photo shown when the
+menu opened from the album only; bound sources remember exclusions. Manual next/previous preserves
+autoplay and double-clicks accumulate two directional steps. Reorder or remove sources,
 browse the expanded photo list, pause on one photo, choose a 3–300 second interval, shuffle,
 or switch between cover and contain. Folders include direct children only; refresh rescans them.
 Limits: 128 sources and 10000 photos, with at most 10000 entries per folder. Animated files use
 their first frame; WebP depends on Windows codecs. Originals are never modified. Saved sources
 are opaque instance-scoped read grants. New instances start empty.
 
-Publish only after a host with all three required filesystem features is released. Version
+Publish only after a host with the required filesystem and file-drop features is released. Version
 `1.0.6.0` alone does not establish compatibility with earlier builds. Desktop interaction,
 picker behavior, permission UX and multi-instance runtime checks still require user acceptance.
 
@@ -57,3 +64,7 @@ Generated using the built-in imagegen tool. Prompt:
 
 封面背景固定使用仓库的 `community-preview-background.png`，由真实组件预览命令生成。
 The catalog background uses the repository's standard community artwork and the host renderer.
+
+本轮桌面拖入、双击和右键交互仍待用户实机验证。导入模式最多 128 张独立图片；绑定模式仍可展开最多 10000 张。
+
+Desktop drops, double-clicks and context removal await user acceptance. Import mode supports up to 128 individual photos; binding mode can expand up to 10000. Virtual files and delayed OLE payloads are not accepted.
