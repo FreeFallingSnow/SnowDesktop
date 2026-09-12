@@ -164,7 +164,8 @@ WidgetFilesystemTaskRunResult RunImage(
         return result;
     };
     const auto path = request.name.empty() ? request.path :
-        request.path / std::filesystem::u8path(request.name);
+        request.path / std::filesystem::path(std::u8string_view(
+            reinterpret_cast<const char8_t*>(request.name.data()), request.name.size()));
     std::string error;
     if (!CheckPathWithoutReparsePoints(path, false, error))
         return fail(error);
