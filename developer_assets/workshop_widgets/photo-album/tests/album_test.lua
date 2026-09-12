@@ -13,6 +13,16 @@ end
 local file={handle="file",name="one.jpg",kind="file"}
 local folder={handle="folder",name="Pictures",kind="folder"}
 return {
+    ["clearing a legacy bound album preserves its mode across restart"]=function()
+        local f=fixture({folder},true);local savedMode=false
+        f.a.ports.saveMode=function(bind) savedMode=bind end
+        assert(f.a:clear() and savedMode)
+        local restored=fixture(f.saved,savedMode)
+        assert(restored.a:canChangeMode() and restored.a.bindFolders)
+        local failed=fixture({folder},true)
+        failed.a.ports.saveMode=function() error("mode write failed") end
+        assert(not failed.a:clear() and #failed.a.sources==1 and #failed.saved==0 and failed.a.error=="saveFailed")
+    end,
     ["adding photos keeps the displayed image position and autoplay progress"]=function()
         local second={handle="two",name="two.jpg",kind="file"}
         local f=fixture({file,second});f.a:refresh();f:complete(1,{image="first"})

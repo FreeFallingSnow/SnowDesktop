@@ -150,7 +150,12 @@ function M.new(ports, sources, bindFolders)
 
     function a:save(sources)
         -- storage.set succeeds without returning a value and raises on failure.
-        local ok=pcall(self.ports.save,sources)
+        local ok=pcall(function()
+            -- Also persist a mode inferred from legacy sources before the
+            -- last source disappears. A failed mode write leaves sources intact.
+            if self.ports.saveMode then self.ports.saveMode(self.bindFolders) end
+            self.ports.save(sources)
+        end)
         if not ok then self.error="saveFailed"; return false end
         self.sources=sources; return true
     end
