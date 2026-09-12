@@ -131,7 +131,7 @@ local function panel(context,m)
     local canRead=widget.hasPermission("filesystem.userSelected.read")
     if m.confirmClear then
         local hint=text("clear.hint",c.clearConfirm,row*3,true)
-        hint.textWrap="wrap";hint.maxLines=4
+        hint.fontSize=row*0.43;hint.textWrap="wrap";hint.maxLines=4
         local children={text("clear.title",c.clearAll,row),hint}
         if a.error then children[#children+1]=text("clear.error",c[a.error] or c.error,row,true) end
         children[#children+1]=view.row({key="clear.actions",width="fill",height=row,gap=row*0.25,
@@ -144,6 +144,7 @@ local function panel(context,m)
     else
         header[#header+1]=text("mode.current",a.bindFolders and c.bindMode or c.importMode,row)
         local hint=text("mode.locked",c.modeLocked,row*1.4,true);hint.textWrap="wrap";hint.maxLines=2
+        hint.fontSize=row*0.34
         header[#header+1]=hint
     end
     local add={}
