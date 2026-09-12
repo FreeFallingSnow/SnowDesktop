@@ -5,7 +5,7 @@ local function fixture(sources)
         local id=#f.calls+1;f.calls[id]={name=name,args=args};return id end,
         cancel=function(id) f.canceled[id]=true end,
         allowed=function() return f.allowed end,
-        save=function(value) if not f.saveOk then return false end; f.saved=value;return true end,
+        save=function(value) if not f.saveOk then error("storage.set: failed to persist storage") end; f.saved=value end,
         random=function(maximum) return maximum end},sources)
     function f:complete(id,value,err) self.a:complete({taskId=id,ok=not err,value=value,error=err}) end
     return f
@@ -58,6 +58,20 @@ return {
         local f=fixture({file});f.a:pick(true);f.a:pick(true);assert(#f.calls==1 and f.calls[1].args.multiple)
         f:complete(1,nil,"userCanceled");assert(#f.a.sources==1 and not f.a.error)
         f.a:add({file,folder,folder});assert(#f.a.sources==2)
+    end,
+    ["host storage saves return no value and throw on persistence failure"]=function()
+        local f=fixture({})
+        -- Mirrors lua_StorageSet: success returns zero values; failure raises.
+        f.a.ports.save=function(value) f.saved=value end
+        f.a:add({file})
+        assert(not f.a.error and #f.a.sources==1 and f.saved[1].handle=="file",
+            "a successful void storage write must update the album without an error")
+        assert(not next(f.a.releases) and f.calls[1].name=="filesystem.image",
+            "a successfully saved selection must retain its grant and start decoding")
+        f.a.ports.save=function() error("storage.set: failed to persist storage") end
+        local ok=pcall(function() f.a:remove(1) end)
+        assert(ok and f.a.error=="saveFailed" and #f.a.sources==1 and not next(f.a.releases),
+            "a thrown storage failure must preserve the previous album and its grants")
     end,
     ["permission loss clears image and late results cannot revive disposed albums"]=function()
         local f=fixture({file});f.a:refresh();f:complete(1,{image="private"})

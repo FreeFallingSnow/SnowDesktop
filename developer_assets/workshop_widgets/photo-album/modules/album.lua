@@ -73,7 +73,9 @@ function M.new(ports, sources)
     end
 
     function a:save(sources)
-        if not self.ports.save(sources) then self.error="saveFailed"; return false end
+        -- storage.set succeeds without returning a value and raises on failure.
+        local ok=pcall(self.ports.save,sources)
+        if not ok then self.error="saveFailed"; return false end
         self.sources=sources; return true
     end
 
