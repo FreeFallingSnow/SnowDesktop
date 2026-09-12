@@ -1,6 +1,22 @@
 local album = module.require("modules/album.lua")
 local sample = resource.image("sample")
 
+-- Temporary bounded diagnostic for the reported manual-navigation failure.
+local function pagingProbe(m, kind, e)
+    if m.preview then return end
+    local a=m.album
+    local item={kind=kind,id=e and e.id or "",action=e and e.action or "",
+        index=a.index,loaded=a.loadedIndex or 0,loading=a.loading or 0,
+        error=a.error or "",image=tostring(a.image),task=e and e.taskId or 0,
+        ok=e and e.ok==true or false,taskError=e and e.error or ""}
+    local signature=kind..":"..item.index..":"..item.loaded..":"..item.loading..":"..item.image
+    if kind=="view" and m.probeView==signature then return end
+    if kind=="view" then m.probeView=signature end
+    m.probe=m.probe or {};m.probe[#m.probe+1]=item
+    if #m.probe>40 then table.remove(m.probe,1) end
+    pcall(storage.set,"_albumPagingProbe",m.probe)
+end
+
 local function copy()
     return {
         name=l10n.tr("album.name"), empty=l10n.tr("album.empty"),
@@ -59,6 +75,7 @@ local function setup(context)
 end
 
 local function desktop(context,m)
+    pagingProbe(m,"view")
     local a,c=m.album,copy()
     local w,h=layout.contentWidth(),layout.contentHeight()
     local unit=math.min(w,h); local gap=unit*0.025; local row=unit*0.14
@@ -144,6 +161,7 @@ local function panel(context,m)
 end
 
 local function event(context,m,e)
+    if e.kind=="action" or e.kind=="task.complete" then pagingProbe(m,"before",e) end
     local a=m.album
     if e.kind=="task.complete" then a:complete(e)
     elseif e.kind=="schedule" and not m.preview then
@@ -176,6 +194,7 @@ local function event(context,m,e)
     local pageSize=m.tab=="sources" and 20 or 30
     m.page=math.max(1,math.min(m.page,math.max(1,math.ceil(total/pageSize))))
     widget.invalidate()
+    if e.kind=="action" or e.kind=="task.complete" then pagingProbe(m,"after",e) end
 end
 
 return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPersonalizationDefault=true,
