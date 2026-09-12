@@ -19,7 +19,9 @@ local function copy()
         importHint=l10n.tr("album.import_hint"),bindHint=l10n.tr("album.bind_hint"),
         modeLocked=l10n.tr("album.mode_locked"),foldersOnly=l10n.tr("album.folders_only"),
         clearAll=l10n.tr("album.clear_all"),clearConfirm=l10n.tr("album.clear_confirm"),
-        cancel=l10n.tr("album.cancel"),
+        cancel=l10n.tr("album.cancel"),bindEmpty=l10n.tr("album.bind_empty"),
+        bindFolder=l10n.tr("album.bind_folder"),replaceFolder=l10n.tr("album.replace_folder"),
+        singleFolder=l10n.tr("album.single_folder"),
     }
 end
 
@@ -31,7 +33,7 @@ end
 
 local function button(key, label, row, active, icon)
     local glyphs={chevron_left=0xF053,chevron_right=0xF054,play=0xF04B,pause=0xF04C,
-        more_horizontal=0xF141,chevron_up=0xF077,chevron_down=0xF078,dismiss=0xF00D}
+        more_horizontal=0xF141,chevron_up=0xF077,chevron_down=0xF078,dismiss=0xF00D,refresh=0xF021}
     local options={key=key,label=label,width="fill",height=row,
         fontSize=row*0.43,textAlign="center",enabled=active~=false,
         style={foreground="textPrimary",cornerRadius=row*0.20},
@@ -92,7 +94,9 @@ local function desktop(context,m)
             (a.warning and (c[a.warning] or c.error)) or
             ((a.scanning or a.loading or a.importing or a.picking or a:isClearing()) and c.loading or
                 (a.bindFolders and c.bindHint or c.importHint))
-        local heading=text("empty.title",c.name,row); heading.textAlign="center"; heading.bold=true
+        local heading=text("empty.title",a.bindFolders and c.bindEmpty or c.empty,row)
+        heading.textAlign="center";heading.bold=true;heading.fontSize=row*0.38
+        heading.textWrap="wrap";heading.maxLines=2
         local hint=text("empty.hint",message,row*1.5,true)
         hint.fontSize=row*0.34; hint.textAlign="center"; hint.textWrap="wrap"; hint.maxLines=3
         local children={heading,hint}
@@ -160,44 +164,70 @@ local function panel(context,m)
     if a:canChangeMode() then
         header[#header+1]=view.row({key="mode",width="fill",height=row,gap=row*0.25,children=modeButtons(a,c,row)})
     else
-        header[#header+1]=text("mode.current",a.bindFolders and c.bindMode or c.importMode,row)
-        local hint=text("mode.locked",c.modeLocked,row*1.4,true);hint.textWrap="wrap";hint.maxLines=2
-        hint.fontSize=row*0.34
-        header[#header+1]=hint
+        local current=text("mode.current",a.bindFolders and c.bindMode or c.importMode,row)
+        current.bold=true;current.tooltip=c.modeLocked
+        header[#header+1]=current
     end
     local add={}
     local canAdd=canRead and not a.picking and not a.importing and not a:isClearing()
     if not a.bindFolders then add[#add+1]=button("addImages",c.addImages,row,canAdd) end
-    add[#add+1]=button("addFolders",c.addFolders,row,canAdd)
+    local folderLabel=a.bindFolders and (#a.sources>0 and c.replaceFolder or c.bindFolder) or c.addFolders
+    add[#add+1]=button("addFolders",folderLabel,row,canAdd)
+    if #a.sources>0 then
+        local refresh=button("refresh",c.refresh,row,canRead and not a.scanning and not a.importing,"refresh")
+        refresh.width=row;add[#add+1]=refresh
+    end
     header[#header+1]=view.row({key="add",width="fill",height=row,gap=row*0.25,children=add})
-    header[#header+1]=view.row({key="tabs",width="fill",height=row,gap=row*0.25,children={
-            button("sources",c.sources,row,m.tab~="sources"),button("photos",c.photos,row,m.tab~="photos"),
-            button("refresh",c.refresh,row,canRead and not a.scanning)}})
+    if a.bindFolders and #a.sources>0 then
+        local name=a.sources[1].name
+        if #a.sources>1 then name=name.." +"..tostring(#a.sources-1) end
+        local folder=text("folder.current",name,row,true);folder.tooltip=name
+        local controls={folder}
+        if #a.sources==1 then
+            local remove=button("remove:1",c.remove,row,true,"dismiss");remove.width=row
+            controls[#controls+1]=remove
+        end
+        header[#header+1]=view.row({key="folder",width="fill",height=row,gap=row*0.25,children=controls})
+    end
     local status=not canRead and c.permission or (a.error and (c[a.error] or c.error)) or
         ((a.scanning or a.importing) and c.loading) or (a.warning and (c[a.warning] or c.error))
     if status then header[#header+1]=text("status",status,row,true) end
     local items={}
-    local total=m.tab=="sources" and #a.sources or #a.photos
-    local pageSize=m.tab=="sources" and 20 or 30
+    local showSources=not a.bindFolders
+    local total=showSources and #a.sources or #a.photos
+    local pageSize=showSources and 20 or 30
     local page=math.max(1,math.min(m.page,math.max(1,math.ceil(total/pageSize))))
-    if m.tab=="sources" then
-        local hint=text("folder.hint",a.bindFolders and c.bindHint or c.importHint,row*1.5,true)
-        hint.fontSize=row*0.34
-        hint.textWrap="wrap"; hint.maxLines=2; items[#items+1]=hint
+    if showSources then
+        if #a.sources==0 then
+            local hint=text("folder.hint",a.bindFolders and c.bindHint or c.importHint,row*2,true)
+            hint.fontSize=row*0.34
+            hint.textWrap="wrap"; hint.maxLines=3; items[#items+1]=hint
+        end
         for i=(page-1)*pageSize+1,math.min(page*pageSize,#a.sources) do
             local source=a.sources[i]
             local up=button("up:"..i,c.up,row,i>1,"chevron_up"); up.width=row
             local down=button("down:"..i,c.down,row,i<#a.sources,"chevron_down"); down.width=row
             local remove=button("remove:"..i,c.remove,row,true,"dismiss"); remove.width=row
-            items[#items+1]=view.row({key="source:"..source.handle,width="fill",height=row,gap=row*0.2,
-                children={text("name:"..i,source.name,row),up,down,remove}})
+            local name=text("name:"..i,source.name,row)
+            if not a.bindFolders then
+                name=button("select:"..i,source.name,row,not a.scanning and not m.preview)
+                name.textAlign="start"
+            end
+            local actions=a.bindFolders and {name,remove} or {name,up,down,remove}
+            items[#items+1]=view.row({key="source:"..source.handle,width="fill",height=row,gap=row*0.2,children=actions})
         end
-        if #a.sources==0 then items[#items+1]=text("no.sources",c.empty,row,true) end
     else
         for i=(page-1)*30+1,math.min(page*30,#a.photos) do
-            items[#items+1]=button("photo:"..i,tostring(i).."  "..a.photos[i].name,row,not a.scanning)
+            local select=button("photo:"..i,tostring(i).."  "..a.photos[i].name,row,not a.scanning and not m.preview)
+            select.textAlign="start"
+            local remove=button("removephoto:"..i,c.removePhoto,row,not a.scanning and not m.preview,"dismiss")
+            remove.width=row
+            items[#items+1]=view.row({key="photo.row:"..i,width="fill",height=row,gap=row*0.2,children={select,remove}})
         end
-        if #a.photos==0 then items[#items+1]=text("no.photos",c.empty,row,true) end
+        if #a.photos==0 then
+            local hint=text("no.photos",c.bindHint,row*2,true);hint.fontSize=row*0.34
+            hint.textWrap="wrap";hint.maxLines=3;items[#items+1]=hint
+        end
     end
     if total>pageSize then
         header[#header+1]=view.row({key="paging",width="fill",height=row,gap=row*0.25,children={
@@ -245,7 +275,6 @@ local function event(context,m,e)
         elseif id=="fill" then storage.set("fill",not enabled("fill",true))
         elseif id=="album.hover" then widget.invalidate();return
         elseif id=="settings" then widget.openSettings()
-        elseif id=="sources" or id=="photos" then m.tab=id; m.page=1
         elseif id=="page.previous" then m.page=math.max(1,m.page-1)
         elseif id=="page.next" then m.page=m.page+1
         else
@@ -253,9 +282,18 @@ local function event(context,m,e)
             if action=="remove" then a:remove(index)
             elseif action=="up" then a:move(index,-1)
             elseif action=="down" then a:move(index,1)
+            elseif action=="select" and not m.preview then
+                local source=a.sources[index]
+                for photoIndex,photo in ipairs(a.photos) do
+                    if source and photo.handle==source.handle then
+                        a:show(photoIndex);storage.set("paused",true);break
+                    end
+                end
+            elseif action=="removephoto" and not m.preview then a:removePhoto(index)
             elseif action=="photo" then a:show(index); storage.set("paused",true) end
         end
     end
+    m.tab=a.bindFolders and "photos" or "sources"
     local total=m.tab=="sources" and #a.sources or #a.photos
     local pageSize=m.tab=="sources" and 20 or 30
     m.page=math.max(1,math.min(m.page,math.max(1,math.ceil(total/pageSize))))

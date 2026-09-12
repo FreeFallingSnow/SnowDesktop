@@ -56,6 +56,7 @@ function M.new(ports, sources, bindFolders)
             a.sources[#a.sources+1]={handle=source.handle,name=source.name,kind=source.kind,excluded=source.excluded}
         end
     end
+    if a.bindFolders and #a.sources>1 then a.warning="singleFolder" end
 
     function a:canChangeMode()
         return #self.sources==0 and not self.importing and not self.picking and not self.scanning
@@ -190,12 +191,27 @@ function M.new(ports, sources, bindFolders)
         if bindFolders~=nil and bindFolders~=self.bindFolders then self:discard(items);return end
         self.warning=nil
         if self.bindFolders then
-            local folders={}
+            local folders,seen={},{}
             for _,item in ipairs(items or {}) do
-                if item.kind=="folder" then folders[#folders+1]=item
+                if item.kind=="folder" then
+                    if not seen[item.handle] then folders[#folders+1]=item;seen[item.handle]=true end
                 else self:release(item.handle);self.warning="foldersOnly" end
             end
-            if #folders>0 then self:add(folders) end
+            if #folders>1 then self:discard(folders);self.warning="singleFolder";return end
+            if #folders==0 then return end
+            local selected=folders[1]
+            for _,source in ipairs(self.sources) do
+                if source.handle==selected.handle then
+                    if #self.sources==1 then return end
+                    selected=source;break
+                end
+            end
+            local previous=self.sources
+            if not self:save({selected}) then self:discard(folders);return end
+            self.releases[selected.handle]=nil
+            self.dropRevision=self.dropRevision+1
+            self:refresh(1)
+            self:discard(previous)
             return
         end
         if self.importing then
@@ -371,7 +387,8 @@ function M.new(ports, sources, bindFolders)
         if self.picking or self.importing or self:isClearing() or not self.ports.allowed() then return end
         if self.bindFolders and not folder then self.warning="foldersOnly";return end
         self.picking=self:start(folder and "pickFolder" or "pickOpen", folder and
-            {access="read",multiple=true} or {extensions=M.extensions,multiple=true},{bindFolders=self.bindFolders})
+            {access="read",multiple=not self.bindFolders} or {extensions=M.extensions,multiple=true},
+            {bindFolders=self.bindFolders,dropRevision=self.dropRevision})
     end
 
     function a:complete(e)
@@ -394,7 +411,10 @@ function M.new(ports, sources, bindFolders)
             return
         elseif p.kind=="pickOpen" or p.kind=="pickFolder" then
             self.picking=nil
-            if e.ok then self:ingest(e.value.items or {e.value},p.bindFolders)
+            if e.ok then
+                local items=e.value.items or {e.value}
+                if p.bindFolders and p.dropRevision~=self.dropRevision then self:discard(items)
+                else self:ingest(items,p.bindFolders) end
             elseif e.error~="userCanceled" and e.error~="canceled" then self.error=e.error end
             return
         end

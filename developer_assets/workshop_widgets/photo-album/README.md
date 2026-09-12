@@ -5,7 +5,7 @@
 - 从资源管理器直接拖入图片或文件夹，支持同步和异步文件传输；也可从“管理相册”多选。
 - 空相册可选择“导入图片”或“绑定文件夹”；添加来源或开始导入后锁定模式，清空全部照片后可重新选择。
 - 默认“导入图片”模式：文件夹一次性展开为独立图片条目，不保留目录来源。
-- “绑定文件夹”模式只接收文件夹，隐藏单图选择入口并拒绝拖入的单图；已有混合来源保留，清空后按所选模式添加。
+- “绑定文件夹”模式只绑定一个文件夹，拒绝单图和一次拖入多个文件夹；“更换文件夹”或拖入一个新文件夹替换原绑定，取消选择保留原绑定。历史多来源配置先保留，再次绑定时收敛为一个文件夹。
 - 追加图片和扫描新文件夹时保留当前画面、照片位置和播放进度；扫描完成后一次性更新列表，避免先清空画面再重新加载。
 - 右键和管理面板提供“清空全部照片”，确认后取消尚未完成的选图/导入，清空来源及排除记录并回收读取授权；原文件保留。
 - 按来源顺序播放，文件夹内按文件名排序，仅当前层；通过“刷新”重新扫描。
@@ -13,6 +13,7 @@
 - 右键“从相册移除此照片”移除打开菜单时的照片，保留原文件；绑定模式用排除记录避免刷新后重现。
 - “照片”列表可选择某一张并暂停；右键或轮播设置中的“裁切填充相框”共用同一开关，关闭后完整显示图片。
 - 翻页、播放/暂停、计数和管理按钮悬停时叠在图片底部，移开后隐藏；显隐不改变图片尺寸或轮播进度，单张照片保留计数与管理按钮。
+- 空相框按模式提示从资源管理器拖入图片/文件夹。管理弹窗在导入模式使用单一照片列表，点击名称显示并暂停，可在同一行排序或移除；绑定模式顶部显示文件夹，下方直接列出可选择、移除的照片。
 - 最多 128 个来源、10000 张照片；每个目录最多 10000 个条目。超限或读取失败会提示。
 - 支持 JPG/JPEG、PNG、BMP、GIF、TIFF；WebP 依赖 Windows 解码器。只播放静态首帧。
 - 来源存储为实例专属的授权句柄。只请求读取权限，不修改、复制或删除原图。
@@ -41,9 +42,10 @@ scripts\widget-dev.bat developer_assets\workshop_widgets\photo-album -Configurat
 A standalone community photo slideshow. Drop local photos or folders from Explorer, including
 asynchronous file transfers, or use the picker.
 Import mode flattens folders into individual image references without retaining directory sources.
-A separate binding mode accepts folders only and retains them for refresh. Choose a mode while the
-album is empty; sources or in-progress imports lock it until the album is cleared. Existing mixed
-sources are preserved. Appending keeps the current image, position and playback progress while
+A separate binding mode accepts exactly one folder and retains it for refresh. Change folder or drop
+one new folder to replace the binding; cancellation preserves the old binding. Multiple-folder drops
+are rejected. Legacy multiple sources remain until the user binds one folder again. Choose a mode while the
+album is empty; sources or in-progress imports lock it until the album is cleared. Appending keeps the current image, position and playback progress while
 new folders are scanned. The context menu and management panel offer Clear all photos with a
 confirmation; it cancels pending selection/import work and releases grants without deleting originals.
 Right-click removes the photo shown when the
@@ -54,6 +56,9 @@ or switch between cover and contain from the context menu or the same setting in
 Navigation, playback, count and management controls overlay the bottom of the photo only while
 hovered; showing or hiding them preserves image geometry and playback progress. Single-photo
 albums retain the count and management controls. Folders include direct children only; refresh rescans them.
+Empty frames explain what to drag from File Explorer in the selected mode. Import management uses
+one photo list: select a name to display and pause it, or reorder/remove it in the same row. Folder
+binding shows its folder at the top and selectable/removable photos directly below it.
 Limits: 128 sources and 10000 photos, with at most 10000 entries per folder. Animated files use
 their first frame; WebP depends on Windows codecs. Originals are never modified. Saved sources
 are opaque instance-scoped read grants. New instances start empty.

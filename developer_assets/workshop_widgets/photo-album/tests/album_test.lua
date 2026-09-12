@@ -13,6 +13,31 @@ end
 local file={handle="file",name="one.jpg",kind="file"}
 local folder={handle="folder",name="Pictures",kind="folder"}
 return {
+    ["binding picker selects one folder and cancellation keeps the existing binding"]=function()
+        local f=fixture({folder},true);f.a:pick(true)
+        assert(f.calls[1].args.multiple==false,"binding must use the single-folder picker")
+        f:complete(1,nil,"userCanceled")
+        assert(#f.a.sources==1 and f.a.sources[1].handle=="folder" and not next(f.a.releases))
+    end,
+    ["binding rejects multiple distinct folders without altering the saved album"]=function()
+        local f=fixture({folder},true)
+        f.a:ingest({folder,{handle="two",name="Two",kind="folder"}})
+        assert(#f.a.sources==1 and #f.calls==0 and f.a.sources[1].handle=="folder")
+        assert(f.a.warning=="singleFolder" and f.a.releases.two and not f.a.releases.folder)
+    end,
+    ["replacing a binding commits one folder before releasing old grants and rejects a stale picker"]=function()
+        local f=fixture({folder},true);local other={handle="two",name="Two",kind="folder"}
+        f.a:refresh();f:complete(1,{items={{kind="file",name="old.jpg"}},hasMore=false});f:complete(2,{image="old"})
+        f.saveOk=false;f.a:ingest({other})
+        assert(f.a.sources[1].handle=="folder" and f.a.image=="old" and not f.a.releases.folder)
+        f.a.releases={};f.saveOk=true;f.a:pick(true);local picker=f.a.picking
+        f.a:ingest({other})
+        assert(#f.saved==1 and f.saved[1].handle=="two" and f.a.releases.folder and not f.a.releases.two)
+        assert(f.calls[#f.calls].name=="filesystem.list" and f.calls[#f.calls].args.handle=="two")
+        f:complete(picker,{handle="late",kind="folder",name="Late"})
+        assert(#f.a.sources==1 and f.a.sources[1].handle=="two" and f.a.releases.late,
+            "a picker opened before a replacement must not overwrite the newer binding")
+    end,
     ["clearing a legacy bound album preserves its mode across restart"]=function()
         local f=fixture({folder},true);local savedMode=false
         f.a.ports.saveMode=function(bind) savedMode=bind end
@@ -73,7 +98,7 @@ return {
         local revision=f.a.dropRevision
         f.a:pick(true);assert(not f.a:setMode(false) and f.a.bindFolders)
         f:complete(1,{items={folder}})
-        assert(#f.a.sources==1 and not f.a:setMode(false) and f.a.dropRevision==revision)
+        assert(#f.a.sources==1 and not f.a:setMode(false) and f.a.dropRevision>revision)
         assert(f.a:clear() and f.a:canChangeMode() and f.a:setMode(false))
         assert(not f.a.bindFolders and f.a.dropRevision>revision)
         f.a.ports.saveMode=function() error("save failed") end
@@ -106,21 +131,18 @@ return {
         f.a:flushReleases();f:complete(f.a.releasing,{})
         f.a:pick(true);assert(f.calls[3].name=="filesystem.pickFolder")
     end,
-    ["binding another folder keeps current pixels and list until scanning finishes"]=function()
+    ["refreshing a bound folder keeps current pixels and list until scanning finishes"]=function()
         local f=fixture({folder},true);f.a:refresh()
         f:complete(1,{items={{kind="file",name="one.jpg"}},hasMore=false});f:complete(2,{image="current"})
         f.a:tick(5,false,false)
-        f.a:ingest({{handle="other",kind="folder",name="Other"}},true)
+        f.a:refresh()
         assert(f.a.scanning and f.a.image=="current" and #f.a.photos==1)
         f:complete(3,{items={{kind="file",name="before.jpg"},{kind="file",name="one.jpg"}},hasMore=false})
-        assert(f.a.scanning and f.a.image=="current" and #f.a.photos==1)
-        f:complete(4,{items={{kind="file",name="last.jpg"}},hasMore=false})
-        assert(not f.a.scanning and f.a.image=="current" and f.a.loadedIndex==2 and f.a.index==2 and #f.a.photos==3)
-        assert(#f.calls==4)
+        assert(not f.a.scanning and f.a.image=="current" and f.a.loadedIndex==2 and f.a.index==2 and #f.a.photos==2)
+        assert(#f.calls==3)
         f.a:refresh(nil,true)
-        f:complete(5,{items={{kind="file",name="one.jpg"}},hasMore=false})
-        f:complete(6,{items={},hasMore=false})
-        assert(f.calls[7].name=="filesystem.image" and f.a.image=="current",
+        f:complete(4,{items={{kind="file",name="one.jpg"}},hasMore=false})
+        assert(f.calls[5].name=="filesystem.image" and f.a.image=="current",
             "an explicit refresh reloads changed pixels while keeping the old image visible")
     end,
     ["import failure preserves existing photos and releases unsaved grants"]=function()
