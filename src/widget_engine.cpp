@@ -21418,17 +21418,43 @@ bool WidgetEngine::HasFileDropTarget(const std::wstring& widgetId, int x, int y)
             static_cast<float>(x), static_cast<float>(y));
 }
 
+std::optional<WidgetEngine::FileDropTarget> WidgetEngine::CaptureFileDropTarget(
+    const std::wstring& widgetId, int x, int y) const
+{
+    if (!HasFileDropTarget(widgetId, x, y)) return std::nullopt;
+    const auto& widget = widgets_[FindWidget(widgetId)];
+    FileDropTarget target;
+    target.widgetId = widgetId;
+    target.packageId = widget.packageId;
+    target.runtimeToken = widget.runtimeToken;
+    target.action = *widget.interactionRegions.FileDropActionAt(
+        static_cast<float>(x), static_cast<float>(y), &target.targetKey);
+    return target;
+}
+
 bool WidgetEngine::InvokeFileDrop(const std::wstring& widgetId, int x, int y,
     const std::vector<std::wstring>& paths)
 {
+    const auto target = CaptureFileDropTarget(widgetId, x, y);
+    return target && InvokeFileDrop(*target, paths);
+}
+
+bool WidgetEngine::InvokeFileDrop(const FileDropTarget& target,
+    const std::vector<std::wstring>& paths)
+{
     using namespace snowdesktop::widget_runtime;
-    if (paths.empty() || paths.size() > 128 || !HasFileDropTarget(widgetId, x, y))
+    const int index = FindWidget(target.widgetId);
+    if (paths.empty() || paths.size() > 128 || index < 0 || !filesystemHandleStore_)
         return false;
-    auto& widget = widgets_[FindWidget(widgetId)];
-    std::string targetKey;
-    const InteractionAction action = *widget.interactionRegions.FileDropActionAt(
-        static_cast<float>(x), static_cast<float>(y), &targetKey);
-    const WidgetFilesystemHandleOwner owner{WideToUtf8(widgetId), widget.packageId};
+    auto& widget = widgets_[index];
+    if (!widget.state || widget.preview || widget.packageId != target.packageId ||
+        !snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
+            widget.permissions, kFilesystemReadPermission) ||
+        !IsWidgetFileDropTargetCurrent(widget.interactionRegions, target.targetKey,
+            target.action, target.runtimeToken, widget.runtimeToken)) return false;
+    const auto& action = target.action;
+    const auto& targetKey = target.targetKey;
+    const WidgetFilesystemHandleOwner owner{WideToUtf8(target.widgetId), widget.packageId};
     WidgetFilesystemDropGrant batch(*filesystemHandleStore_, owner);
     if (!batch.Acquire(paths)) return false;
     const auto& items = batch.items;

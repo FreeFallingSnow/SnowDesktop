@@ -35,5 +35,14 @@ struct Readers
 };
 
 Paths ReadFilePaths(IDataObject* source);
+struct FileSource
+{
+    bool asynchronous = false;
+    bool available = false;
+    Paths paths;
+};
+// Delayed CF_HDROP is advertised at hover time without rendering its data.
+// ReadFilePaths runs later on the source's marshaled apartment after Drop.
+FileSource ProbeFileSource(IDataObject* source);
 Content Read(bool asynchronousSource, bool allowContent, const Readers& readers);
 }

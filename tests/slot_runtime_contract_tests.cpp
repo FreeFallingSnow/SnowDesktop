@@ -26,6 +26,7 @@
 #include <propkey.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shldisp.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -1206,6 +1207,21 @@ void TestExternalDropContentRegressions()
     }
     if (data)
     {
+        Microsoft::WRL::ComPtr<IDataObjectAsyncCapability> capability;
+        const bool supportsAsync = SUCCEEDED(data.As(&capability)) && capability;
+        Check(supportsAsync, "real Shell file source exposes the Explorer async capability");
+        if (supportsAsync)
+        {
+            Check(SUCCEEDED(capability->SetAsyncMode(TRUE)), "enable delayed Explorer file delivery");
+            const auto delayed = content::ProbeFileSource(data.Get());
+            Check(delayed.asynchronous && delayed.available && delayed.paths.empty(),
+                "album ingress must advertise delayed Explorer files without reading paths on hover");
+            Check(SUCCEEDED(capability->SetAsyncMode(FALSE)), "restore synchronous file delivery");
+            const auto immediate = content::ProbeFileSource(data.Get());
+            Check(!immediate.asynchronous && immediate.available && immediate.paths.size() == 1 &&
+                    std::filesystem::equivalent(immediate.paths.front(), sourcePath),
+                "album ingress preserves the real synchronous source path");
+        }
         content::Readers readers;
         readers.files = [&] { return content::ReadFilePaths(data.Get()); };
         for (const bool asynchronous : {false, true})

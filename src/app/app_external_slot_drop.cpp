@@ -114,6 +114,16 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     if (exitRequested_ || paths.empty()) return false;
+    if (destination.fileDropTarget)
+    {
+        const auto& target = *destination.fileDropTarget;
+        const auto index = FindWidgetIndexById(target.widgetId);
+        if (!widgetEngine_ || index >= widgets_.size() ||
+            widgets_[index].type != DesktopWidgetType::LuaScript) return false;
+        const bool committed = widgetEngine_->InvokeFileDrop(target, paths);
+        if (committed && completion) completion(true);
+        return committed;
+    }
     if (!destination.luaWidgetId.empty())
     {
         for (const auto& candidate : containers_)
@@ -225,9 +235,10 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     const auto downloadUrls = [stop](const content::Paths& urls) {
         return DownloadSlotUrls(urls, stop);
     };
-    auto read = [allowContent, downloadUrls](IDataObject* source, bool download,
+    auto read = [allowContent, downloadUrls, filesOnly = destination.fileDropTarget.has_value()](IDataObject* source, bool download,
         const content::Paths& files) {
         const auto resolvedFiles = files.empty() ? GetDropPaths(source) : files;
+        if (filesOnly) return content::Content{resolvedFiles, {}, false, true};
         const auto snapshot = resolvedFiles.empty()
             ? ReadDropReferenceSnapshot(source) : DropReferenceSnapshot{};
         const auto urls = ExtractDropUrls(snapshot);

@@ -388,6 +388,7 @@
     "settings.changeEvent",
     "schedule.basic",
     "interaction.fileDrop",
+    "interaction.fileDrop.async",
     "interaction.contextMenu"
   ],
   "optionalFeatures": [],

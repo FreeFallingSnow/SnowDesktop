@@ -2941,15 +2941,20 @@ Probe and require `interaction.fileDrop` before binding `events.fileDrop = { id 
 on a desktop view node. The component must already have `filesystem.userSelected.read`.
 The enabled, clipped node becomes a file-drop zone; non-drop child controls do not hide it.
 The current implementation supports standalone desktop components, local files/folders from
-Explorer via synchronous CF_HDROP, and native desktop file-item drags. It does not accept
-virtual files, delayed/asynchronous IDataObject payloads, URLs, or panel/dialog/popover drops.
+Explorer via synchronous CF_HDROP, and native desktop file-item drags. Require the additional
+`interaction.fileDrop.async` feature for Explorer sources with enabled IDataObjectAsyncCapability.
+The host probes their CF_HDROP format without rendering data during hover, captures the original
+widget/runtime/action on Drop, then reads the marshaled source on the existing STA read queue.
+It does not accept virtual-file-only payloads, URLs, or panel/dialog/popover drops.
 
 The event has `kind = "action"`, `action = "fileDrop"`, the binding `id`/`value`, `targetKey`,
 `surface = "desktop"`, `source = "host.drop"`, `trustedGesture = true`, and `items`.
 Each item contains an opaque `handle`, basename `name`, `kind = "file" | "folder"`, and
 `access = "read"`. Paths are never sent to Lua. At most 128 top-level selections are accepted;
 existing handle-store quotas still apply. Duplicates reuse references. Permission and target
-validity are checked again at delivery. Failed grant batches or failed Lua delivery revoke
+validity are checked again at delivery. Delayed delivery follows the original stable target;
+unrelated redraws or movement do not redirect it. Removal, runtime replacement, a disabled target,
+or changed action ID/value rejects the pending delivery. Failed grant batches or failed Lua delivery revoke
 only newly created grants. A successful callback owns the delivered handles and must release
 ones it does not retain through `filesystem.release`.
 

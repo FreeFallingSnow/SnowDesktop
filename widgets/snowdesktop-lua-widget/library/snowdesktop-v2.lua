@@ -258,7 +258,7 @@
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
----@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read. Receives action=fileDrop with items containing opaque read handles.
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read; require interaction.fileDrop.async for delayed Explorer files. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction Declarative nodes require view.pointer.events; host scrolling still proceeds.
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-node key press observation; requires view.keyboard.events and cannot cancel host behavior.
@@ -303,7 +303,7 @@
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
----@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read. Receives action=fileDrop with items containing opaque read handles.
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read; require interaction.fileDrop.async for delayed Explorer files. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-span key press observation; requires view.keyboard.events and cannot cancel host behavior.
@@ -543,7 +543,7 @@
 ---@field pointerMove? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
----@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read. Receives action=fileDrop with items containing opaque read handles.
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read; require interaction.fileDrop.async for delayed Explorer files. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-region key press observation; requires interaction.keyboard and cannot cancel host behavior.

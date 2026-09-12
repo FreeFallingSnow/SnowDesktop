@@ -226,12 +226,10 @@ HRESULT DesktopApp::HandleOleDragEnter(
     ExternalDragSummary externalSummary;
     if (dataObject)
     {
-        const bool delayedFileDrop = snowdesktop::virtual_file_drop::
-            UsesAsyncMode(dataObject);
-        const std::vector<std::wstring> paths = delayedFileDrop
-            ? std::vector<std::wstring>{}
-            : GetDropPaths(dataObject);
-        externalLuaFileDropAvailable_ = !paths.empty() && paths.size() <= 128;
+        const auto fileSource = snowdesktop::external_drop_content::ProbeFileSource(dataObject);
+        const bool delayedFileDrop = fileSource.asynchronous;
+        const auto& paths = fileSource.paths;
+        externalLuaFileDropAvailable_ = fileSource.available;
         const auto virtualFiles = delayedFileDrop
             ? std::vector<snowdesktop::virtual_file_drop::
                 VirtualFileDescriptor>{}
@@ -555,18 +553,36 @@ HRESULT DesktopApp::HandleOleDrop(
     if (HitTestLuaFileDropTarget(clientPoint) < widgets_.size())
     {
         const bool self = dragDropController_.IsSelfDragActive();
-        const auto paths = self ? dragSession_.SourceList().FilePaths()
-            : dataObject && !snowdesktop::virtual_file_drop::UsesAsyncMode(dataObject)
-                ? GetDropPaths(dataObject) : std::vector<std::wstring>{};
-        const bool accepted = (*effect & DROPEFFECT_COPY) &&
-            DeliverLuaFileDrop(clientPoint, paths);
+        DWORD acceptedEffect = DROPEFFECT_NONE;
+        if (*effect & DROPEFFECT_COPY)
+        {
+            if (self)
+                acceptedEffect = DeliverLuaFileDrop(clientPoint,
+                    dragSession_.SourceList().FilePaths()) ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+            else
+            {
+                const auto fileSource = snowdesktop::external_drop_content::ProbeFileSource(dataObject);
+                const auto index = HitTestLuaFileDropTarget(clientPoint);
+                if (fileSource.available && index < widgets_.size())
+                {
+                    const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
+                    ExternalSlotDestination destination;
+                    destination.preview.action = DropAction::Copy;
+                    destination.fileDropTarget = widgetEngine_->CaptureFileDropTarget(
+                        widgets_[index].id, clientPoint.x - frame.left, clientPoint.y - frame.top);
+                    if (destination.fileDropTarget)
+                        acceptedEffect = DropExternalSlotContent(dataObject, destination,
+                            *effect, fileSource.asynchronous, fileSource.paths);
+                }
+            }
+        }
         if (self) dragDropController_.MarkSelfDragReturned();
         else dragDropController_.EndExternalDrag();
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         ReleaseCapturePreservingPointerState();
         EndDragSession();
-        *effect = accepted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        *effect = acceptedEffect;
         return S_OK;
     }
     ResolveCurrentDragTargetAt(clientPoint);

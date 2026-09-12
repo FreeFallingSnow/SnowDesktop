@@ -65,9 +65,30 @@ void TestFileDropTargets()
     Check(regions.FileDropActionAt(65, 65, &target) && target == "album",
         "a non-drop child must not hide the enclosing file import zone");
     Check(!regions.FileDropActionAt(101, 65), "file drop cannot escape its target bounds");
+    const auto captured = album.events.at("fileDrop");
+    using snowdesktop::widget_runtime::IsWidgetFileDropTargetCurrent;
+    // Delayed reads keep their original target across unrelated carousel frames.
+    button.shape.x = 40;
+    album.shape.x = 200;
+    regions.BeginFrame();
+    Check(regions.Submit(album, error) && regions.Submit(button, error), "moved album stages");
+    regions.CommitFrame();
+    Check(IsWidgetFileDropTargetCurrent(regions, "album", captured, 7, 7),
+        "an in-flight drop follows its original stable target when the frame moves");
+    Check(!IsWidgetFileDropTargetCurrent(regions, "album", captured, 7, 8) &&
+            !IsWidgetFileDropTargetCurrent(regions, "missing", captured, 7, 7),
+        "runtime replacement and target removal reject delayed file delivery");
+    album.events["fileDrop"].value.type = snowdesktop::widget_runtime::InteractionValue::Type::Boolean;
+    album.events["fileDrop"].value.boolean = true;
+    regions.BeginFrame(); Check(regions.Submit(album, error), "changed action stages"); regions.CommitFrame();
+    Check(!IsWidgetFileDropTargetCurrent(regions, "album", captured, 7, 7),
+        "a changed import action cannot inherit a pending drop's old arguments");
+    album.events["fileDrop"] = captured;
     album.enabled = false;
     regions.BeginFrame(); Check(regions.Submit(album, error), "disabled zone stages"); regions.CommitFrame();
-    Check(!regions.FileDropActionAt(20, 20), "disabled import zones reject drops");
+    Check(!regions.FileDropActionAt(220, 20), "disabled import zones reject drops");
+    Check(!IsWidgetFileDropTargetCurrent(regions, "album", captured, 7, 7),
+        "disabling the captured zone rejects its pending delivery");
 }
 
 void TestFrameTransactionAndStableState()

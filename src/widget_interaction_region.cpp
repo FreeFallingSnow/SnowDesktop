@@ -937,6 +937,17 @@ bool IsWidgetMenuSelectionCurrent(
         !targetKey.empty() && regions.Find(targetKey) != nullptr;
 }
 
+bool IsWidgetFileDropTargetCurrent(const WidgetInteractionRegions& regions,
+    std::string_view targetKey, const InteractionAction& capturedAction,
+    std::uint64_t capturedRuntimeToken, std::uint64_t currentRuntimeToken) noexcept
+{
+    if (capturedRuntimeToken == 0 || capturedRuntimeToken != currentRuntimeToken)
+        return false;
+    const auto* region = regions.Find(targetKey);
+    const auto* action = regions.FindAction(targetKey, "fileDrop");
+    return region && region->enabled && action && *action == capturedAction;
+}
+
 void WidgetInteractionRegions::Reset() noexcept
 {
     active_.clear();

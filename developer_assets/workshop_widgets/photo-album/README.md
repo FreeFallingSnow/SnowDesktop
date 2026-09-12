@@ -2,7 +2,7 @@
 
 独立社区组件，UUID `104e773c-f2a7-4b19-a784-02a20311342b`，不随宿主作为内置组件分发。
 
-- 直接拖入图片或文件夹，也可从“管理相册”多选；可移除和调整来源顺序。
+- 从资源管理器直接拖入图片或文件夹，支持同步和异步文件传输；也可从“管理相册”多选。
 - 默认“导入图片”模式：文件夹一次性展开为独立图片条目，不保留目录来源。
 - “绑定文件夹”是单独模式，保留目录来源供刷新；已有目录来源继续保留。
 - 按来源顺序播放，文件夹内按文件名排序，仅当前层；通过“刷新”重新扫描。
@@ -18,7 +18,7 @@
 ## 宿主兼容与发布顺序
 
 最低版本为 `1.0.6.0`，并且必须支持：
-`task.filesystem.image`、`task.filesystem.list.names`、`task.filesystem.picker.multiple`、`interaction.fileDrop`。
+`task.filesystem.image`、`task.filesystem.list.names`、`task.filesystem.picker.multiple`、`interaction.fileDrop`、`interaction.fileDrop.async`。
 同版本早期构建不满足条件时应显示不兼容，不尝试用路径或其他权限绕过。
 这些能力尚待随宿主发布；先发布并验证新宿主，再发布本组件。当前任务不发布到 Workshop。
 
@@ -34,7 +34,8 @@ scripts\widget-dev.bat developer_assets\workshop_widgets\photo-album -Configurat
 
 ## English
 
-A standalone community photo slideshow. Drop local photos or folders, or use the picker.
+A standalone community photo slideshow. Drop local photos or folders from Explorer, including
+asynchronous file transfers, or use the picker.
 Import mode flattens folders into individual image references without retaining directory sources.
 A separate binding mode retains folders for refresh. Right-click removes the photo shown when the
 menu opened from the album only; bound sources remember exclusions. Manual next/previous preserves
@@ -67,4 +68,4 @@ The catalog background uses the repository's standard community artwork and the 
 
 本轮桌面拖入、双击和右键交互仍待用户实机验证。导入模式最多 128 张独立图片；绑定模式仍可展开最多 10000 张。
 
-Desktop drops, double-clicks and context removal await user acceptance. Import mode supports up to 128 individual photos; binding mode can expand up to 10000. Virtual files and delayed OLE payloads are not accepted.
+Desktop drops, double-clicks and context removal await user acceptance. Import mode supports up to 128 individual photos; binding mode can expand up to 10000. Virtual-file-only and browser URL payloads are not accepted.

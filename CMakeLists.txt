@@ -2005,6 +2005,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/virtual_file_drop_tests.cpp
             src/virtual_file_drop.cpp
+            src/external_drop_content.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 user32
         LABELS contract interaction shell)

@@ -1012,7 +1012,19 @@ public:
     void InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
         int button = 0, int delta = 0);
     bool HasFileDropTarget(const std::wstring& widgetId, int x, int y) const;
+    struct FileDropTarget
+    {
+        std::wstring widgetId;
+        std::string packageId;
+        std::string targetKey;
+        std::uint64_t runtimeToken = 0;
+        snowdesktop::widget_runtime::InteractionAction action;
+    };
+    std::optional<FileDropTarget> CaptureFileDropTarget(
+        const std::wstring& widgetId, int x, int y) const;
     bool InvokeFileDrop(const std::wstring& widgetId, int x, int y,
+        const std::vector<std::wstring>& paths);
+    bool InvokeFileDrop(const FileDropTarget& target,
         const std::vector<std::wstring>& paths);
     bool HasInteractionPointerCapture(const std::wstring& widgetId,
         std::string_view surface = "desktop") const;

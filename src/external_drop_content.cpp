@@ -1,9 +1,34 @@
 #include "external_drop_content.h"
 
 #include <shellapi.h>
+#include <shldisp.h>
 
 namespace snowdesktop::external_drop_content
 {
+FileSource ProbeFileSource(IDataObject* source)
+{
+    FileSource result;
+    if (!source) return result;
+    IDataObjectAsyncCapability* capability = nullptr;
+    if (SUCCEEDED(source->QueryInterface(IID_PPV_ARGS(&capability))) && capability)
+    {
+        BOOL enabled = FALSE;
+        result.asynchronous = capability->GetAsyncMode(&enabled) == S_OK && enabled;
+        capability->Release();
+    }
+    if (result.asynchronous)
+    {
+        FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        result.available = source->QueryGetData(&format) == S_OK;
+    }
+    else
+    {
+        result.paths = ReadFilePaths(source);
+        result.available = !result.paths.empty() && result.paths.size() <= 128;
+    }
+    return result;
+}
+
 Paths ReadFilePaths(IDataObject* source)
 {
     if (!source) return {};

@@ -3881,6 +3881,7 @@ private:
         std::string luaSlotId;
         size_t insertIndex = 0;
         bool dockFolderPopup = false;
+        std::optional<WidgetEngine::FileDropTarget> fileDropTarget;
     };
     std::optional<ExternalSlotDestination> CaptureExternalSlotDestination(
         POINT point, DWORD keyState);

@@ -1,4 +1,5 @@
 #include "virtual_file_drop.h"
+#include "external_drop_content.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -791,6 +792,23 @@ void TestAsyncSourceCapabilityMatrix()
         }
     }
 }
+
+void TestAlbumAsyncAdmissionDoesNotRenderData()
+{
+    MockDataObject source;
+    source.exposeAsyncCapability = true;
+    source.asyncMode = true;
+    source.offerFileDrop = true;
+    const auto offered = snowdesktop::external_drop_content::ProbeFileSource(&source);
+    Check(offered.available && offered.asynchronous && offered.paths.empty(),
+        "album ingress must accept an advertised asynchronous file batch");
+    Check(source.getDataCalls == 0 && source.startOperationCalls == 0,
+        "hover admission cannot render or start delayed OLE content");
+    source.offerFileDrop = false;
+    const auto unsupported = snowdesktop::external_drop_content::ProbeFileSource(&source);
+    Check(!unsupported.available && source.getDataCalls == 0 && source.startOperationCalls == 0,
+        "async virtual-only sources remain rejected without materializing content");
+}
 } // namespace
 
 int main()
@@ -806,6 +824,7 @@ int main()
     TestAdvertisedOversizeIsRejectedBeforeReadingContents();
     TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound();
     TestAsyncSourceCapabilityMatrix();
+    TestAlbumAsyncAdmissionDoesNotRenderData();
 
     if (failures != 0)
     {

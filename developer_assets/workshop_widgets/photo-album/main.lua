@@ -97,7 +97,7 @@ local function desktop(context,m)
         children[#children+1]=view.row({key="controls",width="fill",height=row,flexShrink=0,gap=gap,children=controls})
     end
     return view.column({key="album",width="fill",height="fill",padding=unit*0.03,gap=gap,children=children,
-        events={fileDrop={id="import"},contextMenu={id="album.menu",scope="component"}}})
+        events={fileDrop={id="import",value=enabled("bindFolders",false)},contextMenu={id="album.menu",scope="component"}}})
 end
 
 local function panel(context,m)
@@ -164,7 +164,7 @@ local function event(context,m,e)
         if id=="manage" then widget.openPanel({title=copy().manage,width=560,height=600})
         elseif id=="addImages" then a:pick(false,false)
         elseif id=="addFolders" then a:pick(true,enabled("bindFolders",false))
-        elseif id=="import" and e.action=="fileDrop" then a:ingest(e.items,enabled("bindFolders",false))
+        elseif id=="import" and e.action=="fileDrop" then a:ingest(e.items,e.value==true)
         elseif id=="mode.import" then storage.set("bindFolders",false)
         elseif id=="mode.bind" then storage.set("bindFolders",true)
         elseif id=="removePhoto" and m.menuPhoto then
