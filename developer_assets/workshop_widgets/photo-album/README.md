@@ -3,8 +3,11 @@
 独立社区组件，UUID `104e773c-f2a7-4b19-a784-02a20311342b`，不随宿主作为内置组件分发。
 
 - 从资源管理器直接拖入图片或文件夹，支持同步和异步文件传输；也可从“管理相册”多选。
+- 空相册可选择“导入图片”或“绑定文件夹”；添加来源或开始导入后锁定模式，清空全部照片后可重新选择。
 - 默认“导入图片”模式：文件夹一次性展开为独立图片条目，不保留目录来源。
-- “绑定文件夹”是单独模式，保留目录来源供刷新；已有目录来源继续保留。
+- “绑定文件夹”模式只接收文件夹，隐藏单图选择入口并拒绝拖入的单图；已有混合来源保留，清空后按所选模式添加。
+- 追加图片和扫描新文件夹时保留当前画面、照片位置和播放进度；扫描完成后一次性更新列表，避免先清空画面再重新加载。
+- 右键和管理面板提供“清空全部照片”，确认后取消尚未完成的选图/导入，清空来源及排除记录并回收读取授权；原文件保留。
 - 按来源顺序播放，文件夹内按文件名排序，仅当前层；通过“刷新”重新扫描。
 - 支持单张静态照片、手动上一张/下一张、暂停、3–300 秒间隔和随机播放。手动前后翻页保持当前播放状态，双击累计两张，手动方向不受随机播放影响。
 - 右键“从相册移除此照片”移除打开菜单时的照片，保留原文件；绑定模式用排除记录避免刷新后重现。
@@ -37,7 +40,12 @@ scripts\widget-dev.bat developer_assets\workshop_widgets\photo-album -Configurat
 A standalone community photo slideshow. Drop local photos or folders from Explorer, including
 asynchronous file transfers, or use the picker.
 Import mode flattens folders into individual image references without retaining directory sources.
-A separate binding mode retains folders for refresh. Right-click removes the photo shown when the
+A separate binding mode accepts folders only and retains them for refresh. Choose a mode while the
+album is empty; sources or in-progress imports lock it until the album is cleared. Existing mixed
+sources are preserved. Appending keeps the current image, position and playback progress while
+new folders are scanned. The context menu and management panel offer Clear all photos with a
+confirmation; it cancels pending selection/import work and releases grants without deleting originals.
+Right-click removes the photo shown when the
 menu opened from the album only; bound sources remember exclusions. Manual next/previous preserves
 autoplay and double-clicks accumulate two directional steps. Reorder or remove sources,
 browse the expanded photo list, pause on one photo, choose a 3–300 second interval, shuffle,
@@ -66,6 +74,6 @@ Generated using the built-in imagegen tool. Prompt:
 封面背景固定使用仓库的 `community-preview-background.png`，由真实组件预览命令生成。
 The catalog background uses the repository's standard community artwork and the host renderer.
 
-本轮桌面拖入、双击和右键交互仍待用户实机验证。导入模式最多 128 张独立图片；绑定模式仍可展开最多 10000 张。
+本轮空相册模式选择、拖入画面连续性、清空与右键交互仍待用户实机验证。导入模式最多 128 张独立图片；绑定模式仍可展开最多 10000 张。
 
 Desktop drops, double-clicks and context removal await user acceptance. Import mode supports up to 128 individual photos; binding mode can expand up to 10000. Virtual-file-only and browser URL payloads are not accepted.

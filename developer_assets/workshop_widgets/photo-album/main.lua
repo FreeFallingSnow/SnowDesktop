@@ -13,9 +13,13 @@ local function copy()
         sources=l10n.tr("album.sources"), photos=l10n.tr("album.photos"),
         settings=l10n.tr("album.settings"), limit=l10n.tr("album.limit"),
         scanFailed=l10n.tr("album.scan_failed"), saveFailed=l10n.tr("album.save_failed"),
-        folderHint=l10n.tr("album.folder_hint"), sample=l10n.tr("album.sample"),
+        sample=l10n.tr("album.sample"),
         importMode=l10n.tr("album.import_mode"), bindMode=l10n.tr("album.bind_mode"),
         removePhoto=l10n.tr("album.remove_photo"), busy=l10n.tr("album.busy"),
+        importHint=l10n.tr("album.import_hint"),bindHint=l10n.tr("album.bind_hint"),
+        modeLocked=l10n.tr("album.mode_locked"),foldersOnly=l10n.tr("album.folders_only"),
+        clearAll=l10n.tr("album.clear_all"),clearConfirm=l10n.tr("album.clear_confirm"),
+        cancel=l10n.tr("album.cancel"),
     }
 end
 
@@ -45,13 +49,20 @@ end
 
 local function setup(context)
     if storage.get("_albumPagingProbe")~=nil then storage.remove("_albumPagingProbe") end
+    local sources=album.decodeSources(storage.get("sources"))
+    local bindFolders=enabled("bindFolders",false)
+    if #sources>0 then
+        bindFolders=false
+        for _,source in ipairs(sources) do if source.kind=="folder" then bindFolders=true;break end end
+    end
     local a=album.new({
         start=function(name,args) return task.start(name,args) end,
         cancel=function(id) task.cancel(id) end,
         allowed=function() return widget.hasPermission("filesystem.userSelected.read") end,
         save=function(sources) return storage.set("sources",album.encodeSources(sources)) end,
+        saveMode=function(bind) storage.set("bindFolders",bind) end,
         random=function(maximum) return math.random(1,maximum) end,
-    },album.decodeSources(storage.get("sources")))
+    },sources,bindFolders)
     local m={album=a,tab="sources",page=1,preview=context.preview==true}
     if m.preview and not enabled("previewEmpty",false) then
         a.photos={{name=copy().sample},{name=copy().sample},{name=copy().sample}}
@@ -60,6 +71,12 @@ local function setup(context)
     else a:refresh() end
     schedule.every("album.tick",1000,{whenHidden="pause"})
     return m
+end
+
+local function modeButtons(a,c,row)
+    local import=button("mode.import",(a.bindFolders and "" or "✓ ")..c.importMode,row,a.bindFolders)
+    local bind=button("mode.bind",(a.bindFolders and "✓ " or "")..c.bindMode,row,not a.bindFolders)
+    return {import,bind}
 end
 
 local function desktop(context,m)
@@ -72,12 +89,19 @@ local function desktop(context,m)
             alt=a.loadedName or c.name,style={cornerRadius=unit*0.025}})
     else
         local message=a.error and (c[a.error] or c.error) or
-            ((a.scanning or a.loading) and c.loading or c.empty)
+            (a.warning and (c[a.warning] or c.error)) or
+            ((a.scanning or a.loading or a.importing or a.picking or a:isClearing()) and c.loading or
+                (a.bindFolders and c.bindHint or c.importHint))
         local heading=text("empty.title",c.name,row); heading.textAlign="center"; heading.bold=true
         local hint=text("empty.hint",message,row*1.5,true)
         hint.fontSize=row*0.34; hint.textAlign="center"; hint.textWrap="wrap"; hint.maxLines=3
+        local children={heading,hint}
+        if a:canChangeMode() then
+            for _,control in ipairs(modeButtons(a,c,row)) do children[#children+1]=control end
+        end
+        children[#children+1]=button("manage",c.manage,row,true)
         content=view.column({key="empty",width="fill",height="fill",justifyContent="center",gap=gap,
-            children={heading,hint,button("manage",c.manage,row,true)}})
+            children=children})
     end
     local controls={}
     if #a.photos>1 then
@@ -88,6 +112,7 @@ local function desktop(context,m)
     end
     if a.image then
         local count=text("count",tostring(a.loadedIndex or a.index).." / "..tostring(#a.photos),row,true)
+        if a.warning then count.text=c[a.warning] or c.error;count.tooltip=count.text end
         count.textAlign="center"; count.fontSize=row*0.34
         controls[#controls+1]=count
         controls[#controls+1]=button("manage",c.manage,row,true,"more_horizontal")
@@ -96,24 +121,39 @@ local function desktop(context,m)
     if #controls>0 then
         children[#children+1]=view.row({key="controls",width="fill",height=row,flexShrink=0,gap=gap,children=controls})
     end
-    return view.column({key="album",width="fill",height="fill",padding=unit*0.03,gap=gap,children=children,
-        events={fileDrop={id="import",value=enabled("bindFolders",false)},contextMenu={id="album.menu",scope="component"}}})
+    local events={contextMenu={id="album.menu",scope="component"}}
+    if not a:isClearing() then events.fileDrop={id="import",value=a.dropRevision} end
+    return view.column({key="album",width="fill",height="fill",padding=unit*0.03,gap=gap,children=children,events=events})
 end
 
 local function panel(context,m)
     local a,c=m.album,copy(); local row=ui.metrics().layoutRowHeight
     local canRead=widget.hasPermission("filesystem.userSelected.read")
-    local header={
-        view.row({key="mode",width="fill",height=row,gap=row*0.25,children={
-            button("mode.import",c.importMode,row,enabled("bindFolders",false)),
-            button("mode.bind",c.bindMode,row,not enabled("bindFolders",false))}}),
-        view.row({key="add",width="fill",height=row,gap=row*0.25,children={
-            button("addImages",c.addImages,row,canRead and not a.picking and not a.importing),
-            button("addFolders",c.addFolders,row,canRead and not a.picking and not a.importing)}}),
-        view.row({key="tabs",width="fill",height=row,gap=row*0.25,children={
+    if m.confirmClear then
+        local hint=text("clear.hint",c.clearConfirm,row*3,true)
+        hint.textWrap="wrap";hint.maxLines=4
+        local children={text("clear.title",c.clearAll,row),hint}
+        if a.error then children[#children+1]=text("clear.error",c[a.error] or c.error,row,true) end
+        children[#children+1]=view.row({key="clear.actions",width="fill",height=row,gap=row*0.25,
+            children={button("clear.cancel",c.cancel,row),button("clear.confirm",c.clearAll,row,not m.preview)}})
+        return view.column({key="clear",width="fill",height="fill",padding=row*0.6,gap=row*0.4,children=children})
+    end
+    local header={}
+    if a:canChangeMode() then
+        header[#header+1]=view.row({key="mode",width="fill",height=row,gap=row*0.25,children=modeButtons(a,c,row)})
+    else
+        header[#header+1]=text("mode.current",a.bindFolders and c.bindMode or c.importMode,row)
+        local hint=text("mode.locked",c.modeLocked,row*1.4,true);hint.textWrap="wrap";hint.maxLines=2
+        header[#header+1]=hint
+    end
+    local add={}
+    local canAdd=canRead and not a.picking and not a.importing and not a:isClearing()
+    if not a.bindFolders then add[#add+1]=button("addImages",c.addImages,row,canAdd) end
+    add[#add+1]=button("addFolders",c.addFolders,row,canAdd)
+    header[#header+1]=view.row({key="add",width="fill",height=row,gap=row*0.25,children=add})
+    header[#header+1]=view.row({key="tabs",width="fill",height=row,gap=row*0.25,children={
             button("sources",c.sources,row,m.tab~="sources"),button("photos",c.photos,row,m.tab~="photos"),
-            button("refresh",c.refresh,row,canRead and not a.scanning)}}),
-    }
+            button("refresh",c.refresh,row,canRead and not a.scanning)}})
     local status=not canRead and c.permission or (a.error and (c[a.error] or c.error)) or
         ((a.scanning or a.importing) and c.loading) or (a.warning and (c[a.warning] or c.error))
     if status then header[#header+1]=text("status",status,row,true) end
@@ -122,7 +162,7 @@ local function panel(context,m)
     local pageSize=m.tab=="sources" and 20 or 30
     local page=math.max(1,math.min(m.page,math.max(1,math.ceil(total/pageSize))))
     if m.tab=="sources" then
-        local hint=text("folder.hint",c.folderHint,row*1.5,true)
+        local hint=text("folder.hint",a.bindFolders and c.bindHint or c.importHint,row*1.5,true)
         hint.fontSize=row*0.34
         hint.textWrap="wrap"; hint.maxLines=2; items[#items+1]=hint
         for i=(page-1)*pageSize+1,math.min(page*pageSize,#a.sources) do
@@ -147,7 +187,9 @@ local function panel(context,m)
     end
     header[#header+1]=view.scroll({key="list."..m.tab..":"..m.page,width="fill",height="fill",children={
         view.column({key="items",width="fill",height="auto",gap=row*0.25,children=items})}})
-    header[#header+1]=button("settings",c.settings,row,true)
+    local footer={button("settings",c.settings,row,true)}
+    if #a.sources>0 or a.importing or a.picking then footer[#footer+1]=button("clear",c.clearAll,row,not m.preview) end
+    header[#header+1]=view.row({key="footer",width="fill",height=row,gap=row*0.25,children=footer})
     return view.column({key="album.panel",width="fill",height="fill",padding=row*0.6,gap=row*0.4,children=header})
 end
 
@@ -161,18 +203,23 @@ local function event(context,m,e)
     elseif e.kind=="settings.changed" then a.elapsed=0
     elseif e.kind=="action" then
         local id=e.id or ""
-        if id=="manage" then widget.openPanel({title=copy().manage,width=560,height=600})
-        elseif id=="addImages" then a:pick(false,false)
-        elseif id=="addFolders" then a:pick(true,enabled("bindFolders",false))
-        elseif id=="import" and e.action=="fileDrop" then a:ingest(e.items,e.value==true)
-        elseif id=="mode.import" then storage.set("bindFolders",false)
-        elseif id=="mode.bind" then storage.set("bindFolders",true)
+        if id=="manage" then m.confirmClear=false;widget.openPanel({title=copy().manage,width=560,height=600})
+        elseif id=="addImages" then a:pick(false)
+        elseif id=="addFolders" then a:pick(true)
+        elseif id=="import" and e.action=="fileDrop" then
+            if e.value==a.dropRevision then a:ingest(e.items) else a:discard(e.items) end
+        elseif id=="mode.import" then a:setMode(false)
+        elseif id=="mode.bind" then a:setMode(true)
+        elseif id=="clear" then m.confirmClear=true;widget.openPanel({title=copy().manage,width=560,height=600})
+        elseif id=="clear.cancel" then m.confirmClear=false
+        elseif id=="clear.confirm" and m.confirmClear and not m.preview then
+            if a:clear() then m.confirmClear=false;m.menuPhoto=nil;m.tab="sources";m.page=1 end
         elseif id=="removePhoto" and m.menuPhoto then
             for index,photo in ipairs(a.photos) do
                 if photo.handle==m.menuPhoto.handle and photo.child==m.menuPhoto.child then a:removePhoto(index);break end
             end
             m.menuPhoto=nil
-        elseif id=="refresh" then a.warning=nil; a:refresh()
+        elseif id=="refresh" then a.warning=nil; a:refresh(nil,true)
         elseif id=="previous" then a:step(-1,false)
         elseif id=="next" then a:step(1,false)
         elseif id=="toggle" then storage.set("paused",not enabled("paused",false)); a.elapsed=0
@@ -207,6 +254,7 @@ return widget.define({name=l10n.tr("album.name"),useCustomStyle=true,followPerso
         local a=m.album;local photo=a.photos[a.loadedIndex or a.index]
         m.menuPhoto=photo and {handle=photo.handle,child=photo.child} or nil
         return ui.menu({{id="removePhoto",label=copy().removePhoto,enabled=photo~=nil and not m.preview},
+            {id="clear",label=copy().clearAll,enabled=not m.preview and (#a.sources>0 or a.importing~=nil or a.picking~=nil)},
             {id="manage",label=copy().manage}})
     end,
     -- The host retires this VM's timers. A named cancel here can target the

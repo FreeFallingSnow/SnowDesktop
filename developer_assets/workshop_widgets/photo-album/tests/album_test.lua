@@ -1,18 +1,33 @@
 local album=module.require("modules/album.lua")
-local function fixture(sources)
+local function fixture(sources, bindFolders)
     local f={calls={},canceled={},saved={},allowed=true,saveOk=true}
     f.a=album.new({start=function(name,args)
         local id=#f.calls+1;f.calls[id]={name=name,args=args};return id end,
         cancel=function(id) f.canceled[id]=true end,
         allowed=function() return f.allowed end,
         save=function(value) if not f.saveOk then error("storage.set: failed to persist storage") end; f.saved=value end,
-        random=function(maximum) return maximum end},sources)
+        random=function(maximum) return maximum end},sources,bindFolders)
     function f:complete(id,value,err) self.a:complete({taskId=id,ok=not err,value=value,error=err}) end
     return f
 end
 local file={handle="file",name="one.jpg",kind="file"}
 local folder={handle="folder",name="Pictures",kind="folder"}
 return {
+    ["adding photos keeps the displayed image position and autoplay progress"]=function()
+        local second={handle="two",name="two.jpg",kind="file"}
+        local f=fixture({file,second});f.a:refresh();f:complete(1,{image="first"})
+        f.a:show(2);f:complete(2,{image="second"});f.a:tick(5,false,false)
+        f.a:ingest({{handle="three",name="three.jpg",kind="file"}},false)
+        assert(f.a.image=="second" and f.a.loadedIndex==2 and f.a.index==2,
+            "appending must never blank the displayed photo or jump to the first image")
+        assert(f.a.elapsed==1 and #f.calls==2 and #f.a.photos==3,
+            "appending retains playback progress without decoding the same image again")
+    end,
+    ["binding mode rejects individual images without saving or starting a decode"]=function()
+        local f=fixture({},true);f.a:ingest({file},true)
+        assert(#f.a.sources==0 and #f.calls==0 and f.a.releases.file,
+            "binding mode must discard a dropped image grant without admitting it to the album")
+    end,
     ["a second drop during folder import queues new photos without revoking shared grants"]=function()
         local f=fixture({});f.a:ingest({folder},false)
         f.a:ingest({folder,file},false)
@@ -33,7 +48,7 @@ return {
         assert(restored.calls[1].name=="filesystem.image" and restored.calls[1].args.handle=="file")
     end,
     ["binding mode keeps folders and removed photos stay excluded after refresh"]=function()
-        local f=fixture({});f.a:ingest({folder},true)
+        local f=fixture({},true);f.a:ingest({folder},true)
         assert(f.calls[1].args.grantHandles==false and f.a.sources[1].kind=="folder")
         f:complete(1,{items={{name="one.jpg",kind="file"},{name="two.jpg",kind="file"}},hasMore=false})
         f:complete(2,{image="one"});f.a:removePhoto(1)
@@ -42,6 +57,61 @@ return {
         assert(#f.a.photos==1 and f.a.photos[1].name=="two.jpg")
         local restored=album.decodeSources(album.encodeSources(f.saved))
         assert(restored[1].excluded["one.jpg"])
+    end,
+    ["modes can change only in an empty idle album and save failures preserve the mode"]=function()
+        local f=fixture({});assert(f.a:canChangeMode() and f.a:setMode(true))
+        local revision=f.a.dropRevision
+        f.a:pick(true);assert(not f.a:setMode(false) and f.a.bindFolders)
+        f:complete(1,{items={folder}})
+        assert(#f.a.sources==1 and not f.a:setMode(false) and f.a.dropRevision==revision)
+        assert(f.a:clear() and f.a:canChangeMode() and f.a:setMode(false))
+        assert(not f.a.bindFolders and f.a.dropRevision>revision)
+        f.a.ports.saveMode=function() error("save failed") end
+        assert(not f.a:setMode(true) and not f.a.bindFolders and f.a.error=="saveFailed")
+    end,
+    ["clearing cancels an import and releases late grants without restoring photos"]=function()
+        local f=fixture({file});f.a:refresh();f:complete(1,{image="current"})
+        f.a:ingest({folder},false);local pending=f.a.pending[2]
+        assert(pending and pending.importing)
+        local revision=f.a.dropRevision
+        assert(f.a:clear() and f.canceled[2] and f.a.dropRevision>revision)
+        assert(#f.saved==0 and #f.a.photos==0 and not f.a.image and f.a:isClearing())
+        f:complete(2,{items={{handle="late",name="late.jpg",kind="file"}},hasMore=false})
+        assert(#f.saved==0 and not f.a.importing and f.a.releases.late and f.a.releases.folder and f.a.releases.file)
+        for _=1,5 do f.a:flushReleases();if f.a.releasing then f:complete(f.a.releasing,{}) end end
+        assert(not f.a:isClearing() and not next(f.a.releases) and not next(f.a.pending))
+    end,
+    ["clear failure leaves saved sources current pixels and active imports unchanged"]=function()
+        local f=fixture({file});f.a:refresh();f:complete(1,{image="current"})
+        f.a:ingest({folder},false);local revision=f.a.dropRevision
+        f.saveOk=false;assert(not f.a:clear())
+        assert(#f.a.sources==1 and f.a.image=="current" and f.a.importing and not f.canceled[2])
+        assert(f.a.dropRevision==revision and not f.a:isClearing() and not next(f.a.releases))
+    end,
+    ["clearing a pending picker discards its result before another mode accepts input"]=function()
+        local f=fixture({});f.a:pick(false);assert(f.a:clear() and f.a:setMode(true))
+        f.a:pick(true);assert(#f.calls==1)
+        f:complete(1,{items={file}})
+        assert(not f.a.picking and #f.a.sources==0 and f.a.releases.file)
+        f.a:flushReleases();f:complete(f.a.releasing,{})
+        f.a:pick(true);assert(f.calls[3].name=="filesystem.pickFolder")
+    end,
+    ["binding another folder keeps current pixels and list until scanning finishes"]=function()
+        local f=fixture({folder},true);f.a:refresh()
+        f:complete(1,{items={{kind="file",name="one.jpg"}},hasMore=false});f:complete(2,{image="current"})
+        f.a:tick(5,false,false)
+        f.a:ingest({{handle="other",kind="folder",name="Other"}},true)
+        assert(f.a.scanning and f.a.image=="current" and #f.a.photos==1)
+        f:complete(3,{items={{kind="file",name="before.jpg"},{kind="file",name="one.jpg"}},hasMore=false})
+        assert(f.a.scanning and f.a.image=="current" and #f.a.photos==1)
+        f:complete(4,{items={{kind="file",name="last.jpg"}},hasMore=false})
+        assert(not f.a.scanning and f.a.image=="current" and f.a.loadedIndex==2 and f.a.index==2 and #f.a.photos==3)
+        assert(#f.calls==4)
+        f.a:refresh(nil,true)
+        f:complete(5,{items={{kind="file",name="one.jpg"}},hasMore=false})
+        f:complete(6,{items={},hasMore=false})
+        assert(f.calls[7].name=="filesystem.image" and f.a.image=="current",
+            "an explicit refresh reloads changed pixels while keeping the old image visible")
     end,
     ["import failure preserves existing photos and releases unsaved grants"]=function()
         local f=fixture({file});f.saveOk=false

@@ -38,7 +38,6 @@
       "album.limit": "已达上限：128 个来源、10000 张照片",
       "album.scan_failed": "部分文件夹无法读取，已保留其他照片",
       "album.save_failed": "未能保存，请重试",
-      "album.folder_hint": "导入模式展开文件夹；绑定模式保留目录供刷新。仅读取当前层。",
       "album.sample": "示例萌宠",
       "album.interval": "轮播间隔（秒）",
       "album.shuffle": "随机播放",
@@ -46,7 +45,14 @@
       "album.import_mode": "导入图片",
       "album.bind_mode": "绑定文件夹",
       "album.remove_photo": "从相册移除此照片",
-      "album.busy": "正在导入，请稍候"
+      "album.busy": "正在导入，请稍候",
+      "album.import_hint": "拖入图片或文件夹；文件夹仅导入当前层的图片。",
+      "album.bind_hint": "仅添加文件夹，刷新时更新当前层的照片。",
+      "album.mode_locked": "清空全部照片后可切换模式。",
+      "album.folders_only": "绑定模式仅接受文件夹",
+      "album.clear_all": "清空全部照片",
+      "album.clear_confirm": "清空相册列表和文件夹绑定，保留原文件。清空后可切换模式。",
+      "album.cancel": "取消"
     },
     "zh-TW": {
       "album.name": "相簿輪播",
@@ -72,7 +78,6 @@
       "album.limit": "已達上限：128 個來源、10000 張照片",
       "album.scan_failed": "部分資料夾無法讀取，已保留其他照片",
       "album.save_failed": "無法儲存，請重試",
-      "album.folder_hint": "匯入模式展開資料夾；綁定模式保留目錄供重新整理。僅讀取目前這一層。",
       "album.sample": "範例萌寵",
       "album.interval": "輪播間隔（秒）",
       "album.shuffle": "隨機播放",
@@ -80,7 +85,14 @@
       "album.import_mode": "匯入圖片",
       "album.bind_mode": "綁定資料夾",
       "album.remove_photo": "從相簿移除此照片",
-      "album.busy": "正在匯入，請稍候"
+      "album.busy": "正在匯入，請稍候",
+      "album.import_hint": "拖入圖片或資料夾；僅匯入資料夾目前這一層的圖片。",
+      "album.bind_hint": "僅新增資料夾，重新整理時更新目前這一層的照片。",
+      "album.mode_locked": "清空全部照片後可切換模式。",
+      "album.folders_only": "綁定模式僅接受資料夾",
+      "album.clear_all": "清空全部照片",
+      "album.clear_confirm": "清空相簿清單和資料夾綁定，保留原始檔案。清空後可切換模式。",
+      "album.cancel": "取消"
     },
     "en-US": {
       "album.name": "Photo Album",
@@ -106,7 +118,6 @@
       "album.limit": "Limit reached: 128 sources, 10000 photos",
       "album.scan_failed": "Some folders could not be read; other photos remain",
       "album.save_failed": "Could not save; try again",
-      "album.folder_hint": "Import expands folders once; binding keeps folders for refresh. Direct children only.",
       "album.sample": "Sample kitten",
       "album.interval": "Slide interval (seconds)",
       "album.shuffle": "Shuffle",
@@ -114,7 +125,14 @@
       "album.import_mode": "Import photos",
       "album.bind_mode": "Bind folders",
       "album.remove_photo": "Remove this photo from album",
-      "album.busy": "Import in progress; please wait"
+      "album.busy": "Import in progress; please wait",
+      "album.import_hint": "Drop images or folders; only images directly inside each folder are imported.",
+      "album.bind_hint": "Add folders only. Refresh updates photos directly inside them.",
+      "album.mode_locked": "Clear all photos to switch modes.",
+      "album.folders_only": "Binding mode accepts folders only",
+      "album.clear_all": "Clear all photos",
+      "album.clear_confirm": "Clear the album list and folder bindings. Original files stay intact. You can then switch modes.",
+      "album.cancel": "Cancel"
     },
     "ja-JP": {
       "album.name": "フォトアルバム",
@@ -140,7 +158,6 @@
       "album.limit": "上限に達しました：読み込み元128件、写真10000枚",
       "album.scan_failed": "一部のフォルダーを読み込めません。他の写真は残っています",
       "album.save_failed": "保存できませんでした。再試行してください",
-      "album.folder_hint": "取り込みでは画像一覧を保存し、連携では更新用にフォルダーを保持します。直下の画像のみ。",
       "album.sample": "子猫のサンプル",
       "album.interval": "切り替え間隔（秒）",
       "album.shuffle": "シャッフル",
@@ -148,7 +165,14 @@
       "album.import_mode": "写真を取り込む",
       "album.bind_mode": "フォルダーを連携",
       "album.remove_photo": "この写真をアルバムから除外",
-      "album.busy": "取り込み中です。お待ちください"
+      "album.busy": "取り込み中です。お待ちください",
+      "album.import_hint": "画像やフォルダーをドロップ。フォルダー直下の画像のみ取り込みます。",
+      "album.bind_hint": "フォルダーのみ追加できます。更新すると直下の写真を再読み込みします。",
+      "album.mode_locked": "すべての写真を除外するとモードを切り替えられます。",
+      "album.folders_only": "連携モードではフォルダーのみ追加できます",
+      "album.clear_all": "すべての写真を除外",
+      "album.clear_confirm": "アルバムの一覧とフォルダー連携を解除します。元のファイルは残ります。その後、モードを切り替えられます。",
+      "album.cancel": "キャンセル"
     },
     "ko-KR": {
       "album.name": "사진 앨범",
@@ -174,7 +198,6 @@
       "album.limit": "한도에 도달했습니다: 원본 128개, 사진 10000장",
       "album.scan_failed": "일부 폴더를 읽지 못했습니다. 다른 사진은 유지됩니다",
       "album.save_failed": "저장하지 못했습니다. 다시 시도하세요",
-      "album.folder_hint": "가져오기는 폴더를 한 번 펼치고, 연결은 새로 고침을 위해 폴더를 유지합니다. 바로 아래 항목만 포함합니다.",
       "album.sample": "아기 고양이 예시",
       "album.interval": "전환 간격(초)",
       "album.shuffle": "무작위 재생",
@@ -182,7 +205,14 @@
       "album.import_mode": "사진 가져오기",
       "album.bind_mode": "폴더 연결",
       "album.remove_photo": "앨범에서 이 사진 제거",
-      "album.busy": "가져오는 중입니다. 잠시 기다려 주세요"
+      "album.busy": "가져오는 중입니다. 잠시 기다려 주세요",
+      "album.import_hint": "이미지나 폴더를 끌어 놓으세요. 폴더 바로 아래의 이미지만 가져옵니다.",
+      "album.bind_hint": "폴더만 추가할 수 있습니다. 새로 고침하면 바로 아래의 사진을 갱신합니다.",
+      "album.mode_locked": "모든 사진을 비운 후 모드를 바꿀 수 있습니다.",
+      "album.folders_only": "연결 모드는 폴더만 허용합니다",
+      "album.clear_all": "모든 사진 비우기",
+      "album.clear_confirm": "앨범 목록과 폴더 연결을 비웁니다. 원본 파일은 유지되며, 이후 모드를 바꿀 수 있습니다.",
+      "album.cancel": "취소"
     },
     "de-DE": {
       "album.name": "Fotoalbum",
@@ -208,7 +238,6 @@
       "album.limit": "Limit erreicht: 128 Quellen, 10000 Fotos",
       "album.scan_failed": "Einige Ordner sind nicht lesbar. Andere Fotos bleiben erhalten",
       "album.save_failed": "Speichern fehlgeschlagen. Erneut versuchen",
-      "album.folder_hint": "Import liest Ordner einmal ein; Verknüpfung behält sie zum Aktualisieren. Nur direkte Inhalte.",
       "album.sample": "Beispielkätzchen",
       "album.interval": "Bildintervall (Sekunden)",
       "album.shuffle": "Zufallswiedergabe",
@@ -216,7 +245,14 @@
       "album.import_mode": "Fotos importieren",
       "album.bind_mode": "Ordner verknüpfen",
       "album.remove_photo": "Dieses Foto aus dem Album entfernen",
-      "album.busy": "Import läuft; bitte warten"
+      "album.busy": "Import läuft; bitte warten",
+      "album.import_hint": "Bilder oder Ordner hierher ziehen. Nur Bilder direkt im Ordner werden importiert.",
+      "album.bind_hint": "Nur Ordner hinzufügen. Aktualisieren lädt deren direkte Bildinhalte neu.",
+      "album.mode_locked": "Zum Moduswechsel alle Fotos aus dem Album entfernen.",
+      "album.folders_only": "Verknüpfungsmodus akzeptiert nur Ordner",
+      "album.clear_all": "Alle Fotos entfernen",
+      "album.clear_confirm": "Die Albumliste und Ordnerverknüpfungen werden geleert. Originaldateien bleiben erhalten. Danach kann der Modus gewechselt werden.",
+      "album.cancel": "Abbrechen"
     },
     "fr-FR": {
       "album.name": "Album photo",
@@ -242,7 +278,6 @@
       "album.limit": "Limite atteinte : 128 sources, 10000 photos",
       "album.scan_failed": "Certains dossiers sont illisibles. Les autres photos sont conservées",
       "album.save_failed": "Échec de l’enregistrement. Réessayez",
-      "album.folder_hint": "L’importation lit les dossiers une fois ; la liaison les conserve pour actualiser. Contenu direct uniquement.",
       "album.sample": "Exemple de chaton",
       "album.interval": "Intervalle (secondes)",
       "album.shuffle": "Lecture aléatoire",
@@ -250,7 +285,14 @@
       "album.import_mode": "Importer des photos",
       "album.bind_mode": "Lier des dossiers",
       "album.remove_photo": "Retirer cette photo de l’album",
-      "album.busy": "Importation en cours, veuillez patienter"
+      "album.busy": "Importation en cours, veuillez patienter",
+      "album.import_hint": "Déposez des images ou des dossiers. Seules les images directement dans chaque dossier sont importées.",
+      "album.bind_hint": "Ajoutez uniquement des dossiers. Actualiser recharge leurs photos directes.",
+      "album.mode_locked": "Videz l’album pour changer de mode.",
+      "album.folders_only": "Ce mode accepte uniquement les dossiers",
+      "album.clear_all": "Vider l’album",
+      "album.clear_confirm": "Vider la liste de photos et les dossiers liés. Les fichiers originaux sont conservés. Vous pourrez ensuite changer de mode.",
+      "album.cancel": "Annuler"
     },
     "es-ES": {
       "album.name": "Álbum de fotos",
@@ -276,7 +318,6 @@
       "album.limit": "Límite alcanzado: 128 fuentes, 10000 fotos",
       "album.scan_failed": "No se han podido leer algunas carpetas. Las demás fotos se conservan",
       "album.save_failed": "No se ha podido guardar. Inténtalo de nuevo",
-      "album.folder_hint": "Importar lee las carpetas una vez; vincular las conserva para actualizar. Solo contenido directo.",
       "album.sample": "Gatito de ejemplo",
       "album.interval": "Intervalo (segundos)",
       "album.shuffle": "Reproducción aleatoria",
@@ -284,7 +325,14 @@
       "album.import_mode": "Importar fotos",
       "album.bind_mode": "Vincular carpetas",
       "album.remove_photo": "Quitar esta foto del álbum",
-      "album.busy": "Importación en curso; espera"
+      "album.busy": "Importación en curso; espera",
+      "album.import_hint": "Arrastra imágenes o carpetas. Solo se importan las imágenes directamente dentro de cada carpeta.",
+      "album.bind_hint": "Añade solo carpetas. Actualizar vuelve a cargar sus fotos directas.",
+      "album.mode_locked": "Quita todas las fotos para cambiar de modo.",
+      "album.folders_only": "Este modo solo acepta carpetas",
+      "album.clear_all": "Quitar todas las fotos",
+      "album.clear_confirm": "Vaciar la lista de fotos y desvincular las carpetas. Los archivos originales se conservan. Después podrás cambiar de modo.",
+      "album.cancel": "Cancelar"
     },
     "es-419": {
       "album.name": "Álbum de fotos",
@@ -310,7 +358,6 @@
       "album.limit": "Límite alcanzado: 128 fuentes, 10000 fotos",
       "album.scan_failed": "No se pudieron leer algunas carpetas. Las demás fotos se conservan",
       "album.save_failed": "No se pudo guardar. Inténtalo de nuevo",
-      "album.folder_hint": "Importar lee las carpetas una vez; vincular las conserva para actualizar. Solo se incluye el contenido directo.",
       "album.sample": "Gatito de ejemplo",
       "album.interval": "Intervalo (segundos)",
       "album.shuffle": "Reproducción aleatoria",
@@ -318,7 +365,14 @@
       "album.import_mode": "Importar fotos",
       "album.bind_mode": "Vincular carpetas",
       "album.remove_photo": "Quitar esta foto del álbum",
-      "album.busy": "Importación en curso; espera"
+      "album.busy": "Importación en curso; espera",
+      "album.import_hint": "Arrastra imágenes o carpetas. Solo se importan las imágenes directamente dentro de cada carpeta.",
+      "album.bind_hint": "Agrega solo carpetas. Actualizar vuelve a cargar sus fotos directas.",
+      "album.mode_locked": "Quita todas las fotos para cambiar de modo.",
+      "album.folders_only": "Este modo solo acepta carpetas",
+      "album.clear_all": "Quitar todas las fotos",
+      "album.clear_confirm": "Vaciar la lista de fotos y desvincular las carpetas. Los archivos originales se conservan. Después podrás cambiar de modo.",
+      "album.cancel": "Cancelar"
     },
     "pt-BR": {
       "album.name": "Álbum de fotos",
@@ -344,7 +398,6 @@
       "album.limit": "Limite atingido: 128 fontes, 10000 fotos",
       "album.scan_failed": "Não foi possível ler algumas pastas. As outras fotos foram mantidas",
       "album.save_failed": "Não foi possível salvar. Tente novamente",
-      "album.folder_hint": "Importar lê as pastas uma vez; vincular mantém as pastas para atualizar. Apenas conteúdo direto.",
       "album.sample": "Gatinho de exemplo",
       "album.interval": "Intervalo (segundos)",
       "album.shuffle": "Reprodução aleatória",
@@ -352,7 +405,14 @@
       "album.import_mode": "Importar fotos",
       "album.bind_mode": "Vincular pastas",
       "album.remove_photo": "Remover esta foto do álbum",
-      "album.busy": "Importação em andamento; aguarde"
+      "album.busy": "Importação em andamento; aguarde",
+      "album.import_hint": "Arraste imagens ou pastas. Somente imagens diretamente dentro de cada pasta são importadas.",
+      "album.bind_hint": "Adicione apenas pastas. Atualizar recarrega as fotos diretamente dentro delas.",
+      "album.mode_locked": "Remova todas as fotos para trocar de modo.",
+      "album.folders_only": "Este modo aceita apenas pastas",
+      "album.clear_all": "Remover todas as fotos",
+      "album.clear_confirm": "Esvaziar a lista de fotos e desvincular as pastas. Os arquivos originais serão mantidos. Depois será possível trocar de modo.",
+      "album.cancel": "Cancelar"
     }
   },
   "defaultSize": {
