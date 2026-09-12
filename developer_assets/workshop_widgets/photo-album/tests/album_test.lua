@@ -58,9 +58,9 @@ return {
         f.a:step(-1,false);f.a:step(-1,false);assert(f.a.index==2)
     end,
     ["compact source persistence round trips Unicode names and existing saves"]=function()
-        local sources={};for i=1,128 do sources[i]={handle="h:"..i,name="猫:"..i..".png",kind="file"} end
+        local sources={};for i=1,128 do sources[i]={handle="h:"..i,name="猫:"..i..".png",kind="file"} end -- l10n-allow: Unicode filename fixture, not UI text
         local encoded=album.encodeSources(sources);assert(#encoded==128 and type(encoded[1])=="string")
-        local decoded=album.decodeSources(encoded);assert(#decoded==128 and decoded[128].name=="猫:128.png")
+        local decoded=album.decodeSources(encoded);assert(#decoded==128 and decoded[128].name=="猫:128.png") -- l10n-allow: Unicode filename fixture, not UI text
         assert(album.decodeSources({folder})[1].kind=="folder")
     end,
     ["single photo stays static and preserves source across restart"]=function()
