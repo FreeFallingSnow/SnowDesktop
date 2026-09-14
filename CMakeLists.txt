@@ -2099,11 +2099,14 @@ if (BUILD_TESTING)
         dock_and_window_rules
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/desktop_backdrop_compositor_tests.cpp
+            src/app/desktop_backdrop_compositor.cpp
+            src/l10n.cpp
             src/dock_window_preview.cpp
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
+        LINK_LIBRARIES d2d1 dwrite dwmapi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
 

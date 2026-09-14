@@ -35,6 +35,7 @@
 #include <winrt/Windows.Graphics.Effects.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Composition.h>
+#include <winrt/Windows.UI.Composition.Core.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
 #pragma pop_macro("GetCurrentTime")
 
@@ -53,6 +54,7 @@ namespace wfn = winrt::Windows::Foundation::Numerics;
 namespace wge = winrt::Windows::Graphics::Effects;
 namespace ws = winrt::Windows::System;
 namespace wuc = winrt::Windows::UI::Composition;
+namespace wucc = winrt::Windows::UI::Composition::Core;
 namespace wucd = winrt::Windows::UI::Composition::Desktop;
 namespace awge = ABI::Windows::Graphics::Effects;
 namespace awucd = ABI::Windows::UI::Composition::Desktop;
@@ -300,6 +302,7 @@ using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOption
 struct SharedBackdropCompositionContext
 {
     ws::DispatcherQueueController dispatcherController{nullptr};
+    wucc::CompositorController compositorController{nullptr};
     wuc::Compositor compositor{nullptr};
 };
 
@@ -333,6 +336,7 @@ struct DesktopBackdropCompositor::Impl
     HWND contentWindow = nullptr;
     HWND backdropWindow = nullptr;
     ws::DispatcherQueueController dispatcherController{nullptr};
+    wucc::CompositorController compositorController{nullptr};
     wuc::Compositor compositor{nullptr};
     wucd::DesktopWindowTarget target{nullptr};
     wuc::ContainerVisual root{nullptr};
@@ -415,8 +419,17 @@ struct DesktopBackdropCompositor::Impl
         try
         {
             if (!shared.compositor)
-                shared.compositor = wuc::Compositor();
+            {
+                wucc::CompositorController controller;
+                controller.CommitNeeded([](const auto& sender, const auto&) noexcept {
+                    try { sender.Commit(); }
+                    catch (...) { /* Explicit frame commits retain error handling. */ }
+                });
+                shared.compositor = controller.Compositor();
+                shared.compositorController = std::move(controller);
+            }
             compositor = shared.compositor;
+            compositorController = shared.compositorController;
             dispatcherController =
                 shared.dispatcherController;
         }
@@ -607,23 +620,23 @@ struct DesktopBackdropCompositor::Impl
         SyncPanelWindowRegion();
     }
 
-    void RequestCommit() noexcept
+    bool RequestCommit() noexcept
     {
-        if (!available || !compositor)
-            return;
+        if (!available || !compositorController)
+            return false;
         try
         {
-            // Do not await this action on the UI thread. Requesting a cycle is
-            // enough to submit the transactional visual changes; the helper
-            // HWND region provides the synchronous visibility boundary.
-            const wf::IAsyncAction pendingCommit =
-                compositor.RequestCommitAsync();
-            (void)pendingCommit;
+            // Submit now, like the content's IDCompositionDevice::Commit.
+            // RequestCommitAsync only schedules a cycle: a drop can present
+            // the resized content and then save layout while glass is still
+            // waiting for the UI dispatcher. Do not wait for GPU completion.
+            compositorController.Commit();
+            return true;
         }
-        catch (const winrt::hresult_error&)
+        catch (const winrt::hresult_error& error)
         {
-            // Older Windows builds can lack RequestCommitAsync. Their normal
-            // implicit compositor cycle remains the fallback.
+            SetError(_LW("backdrop.update_panel"), error.code());
+            return false;
         }
     }
 
@@ -631,13 +644,15 @@ struct DesktopBackdropCompositor::Impl
         HWND notifyWindow, UINT message,
         WPARAM token) noexcept
     {
-        if (!available || !compositor ||
+        if (!available || !compositorController ||
             !notifyWindow || !IsWindow(notifyWindow))
             return false;
         try
         {
+            if (!RequestCommit())
+                return false;
             wf::IAsyncAction pendingCommit =
-                compositor.RequestCommitAsync();
+                compositorController.EnsurePreviousCommitCompletedAsync();
             pendingCommit.Completed(
                 [notifyWindow, message, token](
                     const wf::IAsyncAction&,
@@ -653,9 +668,8 @@ struct DesktopBackdropCompositor::Impl
         }
         catch (const winrt::hresult_error&)
         {
-            // Keep the normal implicit compositor cycle as the compatibility
-            // fallback. The caller will retain the old target instead of
-            // destroying it before an unavailable completion fence.
+            // The caller retains the old target when a completion fence is
+            // unavailable, instead of destroying glass before it is ready.
             return false;
         }
     }
@@ -753,6 +767,7 @@ struct DesktopBackdropCompositor::Impl
         // target on this UI thread. Releasing one target must not invalidate
         // the desktop/floating counterpart during a hand-off.
         compositor = nullptr;
+        compositorController = nullptr;
         dispatcherController = nullptr;
         if (backdropWindow && IsWindow(backdropWindow))
             DestroyWindow(backdropWindow);
