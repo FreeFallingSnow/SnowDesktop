@@ -112,3 +112,9 @@ Alt、Ctrl+Shift 及含 Alt 的组合不启用合并或建组。有效单键启�
 本轮标准 `scripts/build.bat --reload-shell` 于 20:41:20–20:49:29（UTC+8）完成，退出码 0，生成 `.build/Release/SnowDesktop.exe`，约 489 秒。按预检提示后终止正在运行的宿主并重启 Explorer；日志 `.codex-probes/group-transition-build.log`。观察到既有 WinUI 生成头 `GetCurrentTime` 的 C4002，以及未修改的 `widget_engine.cpp:12705` 中 `snapshot` 遮蔽外层变量的 C4456；已核对该文件与前一候选 `2401c892` 相同，无本次引入的警告。
 
 本次 `scripts/test.bat full` 于 20:49:41–20:51:22（UTC+8）完成，118/118 通过、退出码 0，默认排除 `manual` 诊断。配置 1.02 秒、聚合构建 32.06 秒、CTest 66.75 秒；日志 `.codex-probes/group-transition-full.log`，JUnit `.build/Testing/test-run-9a4e6ba3bf164f25b4fb66333ebc0119.xml`。本轮 9 个非文档输入在检查前后哈希一致，快照 `.codex-probes/group-transition-inputs.json` 绑定 `71413ccc`（运行代码同 `2401c892`）及本次修改，Release、MSVC 19.50.35730.0、MSBuild 18.5.4、Windows SDK 10.0.26100.0。聚合测试重新链接后，最终宿主 SHA-256 为 `d5530a7aefcc95e3a6c6b069c5e60103e2bbe281805bec252548ccd7a5261b43`。以 `try` 交付，实际闪烁是否消除仍待用户在原场景确认。
+
+## 文件组还原过渡实机确认（a7488346）
+
+2026-09-14，交付 `a7488346` 并请求复测文件组还原时的中间状态闪现后，用户回复“没问题”。据此记录：用户反馈所指的文件组还原过渡场景实机验收通过，关闭 `71413ccc` 中记录的该项失败；保留原 `try` 提交，不改写历史验证状态。
+
+本次只更新验证记录。复核工作区运行代码未变、9 个候选输入哈希一致，当前 `.build/Release/SnowDesktop.exe` SHA-256 仍为 `d5530a7aefcc95e3a6c6b069c5e60103e2bbe281805bec252548ccd7a5261b43`。引用上节仍有效的标准构建及 118/118 全量通过结果，本次未重复构建或运行测试，也未操作桌面宿主。用户未逐项说明其他拖放组合，集合组、独立 Dock 路径、取消／OLE、所有新建模板等未明确确认场景不因此自动标记通过。
