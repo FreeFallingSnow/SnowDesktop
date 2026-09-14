@@ -2081,8 +2081,14 @@ if (BUILD_TESTING)
             src/item_location.cpp
             src/shell_file_operation_worker.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32
         LABELS integration shell interaction)
+    set_tests_properties(shell_file_operation_worker PROPERTIES SKIP_RETURN_CODE 77)
+    add_test(NAME shell_file_operation_worker_network_preflight
+        COMMAND SnowDesktopShellFileOperationWorkerTests --network-preflight-tests)
+    set_tests_properties(shell_file_operation_worker_network_preflight PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
+        TIMEOUT 20 LABELS "rules;shell;test-infrastructure")
 
     snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests

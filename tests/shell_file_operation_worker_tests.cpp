@@ -3,6 +3,7 @@
 #include "item_location.h"
 #include "app/shell_change_notification.h"
 #include "low_level_mouse_hook.h"
+#include "shell_network_preflight.h"
 
 #include <algorithm>
 #include <atomic>
@@ -465,8 +466,49 @@ void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& ro
     std::cout << "metadata read enqueue us=" << enqueueUs << '\n';
 }
 
-int wmain()
+int wmain(int argc, wchar_t** argv)
 {
+    using namespace shell_network_preflight;
+    if (argc == 2)
+    {
+        const std::wstring mode(argv[1]);
+        if (mode == L"--query-network-connections") return QueryConnections();
+        if (mode == L"--probe-ready") return Ready;
+        if (mode == L"--probe-unavailable") return Unavailable;
+        if (mode == L"--probe-unknown") return Unknown;
+        if (mode == L"--probe-broken") return 42;
+        if (mode == L"--probe-blocked")
+        {
+            WaitForSingleObject(GetCurrentProcess(), INFINITE);
+            return Failed;
+        }
+        if (mode == L"--network-preflight-tests")
+        {
+            // Provider responses are substitutes; process deadlines, cleanup
+            // and result propagation use the same boundary as the real probe.
+            Expect(ClassifyConnection(USE_OK) == Ready, "connected drives allow Shell coverage");
+            for (DWORD status : {USE_PAUSED, USE_SESSLOST, USE_NETERR, USE_CONN, USE_RECONN})
+                Expect(ClassifyConnection(status) == Unavailable, "unavailable drives prevent Shell startup");
+            Expect(ClassifyConnection(0xffffffff) == Unknown, "unknown state is not treated as connected");
+            Expect(RunProbe(L"--probe-ready") == Ready, "ready probe allows integration");
+            Expect(RunProbe(L"--probe-unavailable") == Unavailable, "offline probe is distinct from success");
+            Expect(RunProbe(L"--probe-unknown") == Unknown, "unknown probe is distinct from success");
+            Expect(RunProbe(L"--probe-broken") == Failed, "unexpected probe failure cannot silently skip coverage");
+            const auto start = std::chrono::steady_clock::now();
+            Expect(RunProbe(L"--probe-blocked", 500) == TimedOut,
+                "blocked provider is stopped and reaped before environment skip");
+            Expect(std::chrono::steady_clock::now() - start < std::chrono::seconds(5),
+                "a blocked connection query does not consume the integration timeout");
+            std::cout << "network preflight tests passed\n";
+            return 0;
+        }
+        std::cerr << "Unknown test mode\n";
+        return 1;
+    }
+    if (argc != 1) return 1;
+    const int environment = CheckEnvironment();
+    if (environment != Ready) return environment;
+
     const HRESULT comResult =
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Expect(SUCCEEDED(comResult),
