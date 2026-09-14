@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -465,8 +466,29 @@ void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& ro
     std::cout << "metadata read enqueue us=" << enqueueUs << '\n';
 }
 
-int wmain()
+int wmain(int argc, wchar_t** argv)
 {
+    // These cases verify our queue and the Windows Shell, not installed
+    // namespace/overlay extensions. Such DLLs can stay loaded past COM
+    // cleanup and stall process detach after every assertion has passed.
+    // Keep the real Shell calls; constrain DLL loading only in this test
+    // process, before the first COM/Shell call. The explicit diagnostic mode
+    // retains the machine's extension environment for compatibility probes.
+    const bool withThirdPartyExtensions = argc == 2 &&
+        std::wcscmp(argv[1], L"--with-third-party-shell-extensions") == 0;
+    Expect(argc == 1 || withThirdPartyExtensions,
+        "usage: SnowDesktopShellFileOperationWorkerTests.exe [--with-third-party-shell-extensions]");
+    if (!withThirdPartyExtensions)
+    {
+        PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY policy{};
+        policy.MicrosoftSignedOnly = 1;
+        Expect(SetProcessMitigationPolicy(
+                ProcessSignaturePolicy, &policy, sizeof(policy)) != FALSE,
+            "the system Shell regression must enable process-local DLL isolation");
+    }
+    std::cout << (withThirdPartyExtensions
+        ? "Shell environment: installed third-party extensions enabled (diagnostic)\n"
+        : "Shell environment: Microsoft-signed DLL loading only\n");
     const HRESULT comResult =
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Expect(SUCCEEDED(comResult),
