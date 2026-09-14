@@ -99,11 +99,13 @@ local function desktop(context,m)
                 number.height=math.max(number.height,number.fontSize*1.5)
                 -- Segoe UI numerals sit slightly below the center of their line box.
                 number.padding={bottom=number.fontSize*0.10}
-                -- Centered text moves by half the top inset: lower labels by 8% of the numeral size.
-                prefix.padding={top=number.fontSize*0.16}
-                suffix.padding={top=number.fontSize*0.16}
+                -- Segoe UI numeral ink is about 0.7em high; place label centers 20% above its bottom.
+                local labelOffset=number.fontSize*0.70*0.30
+                -- A centered child's top margin moves its center by half that margin without squeezing the text.
+                prefix.margin={top=labelOffset*2}
+                suffix.margin={top=labelOffset*2}
                 sideHeight=math.max(0,(h-pad*2-number.height)/2)
-                -- Keep the labels just below center as longer counts shrink.
+                -- Scale the label position with the visible number as longer counts shrink.
                 local countRow=view.row({key="event.count",height=number.height,gap=unit*0.025,
                     justifyContent="center",alignItems="center",children={prefix,number,suffix}})
                 children={heading,countRow,footer}
