@@ -865,6 +865,7 @@
   "core.drag.reorder": "重新排序",
   "core.drag.resize_widget": "釋放：調整元件大小",
   "core.drag.move_collection_dock": "釋放：移動集合到 Dock",
+    "core.drag.move_widget_dock": "放開：移動元件至 Dock",
   "core.drag.move_widget": "釋放：移動元件",
   "core.drag.collection_pair_hint": "按 Shift 放開以合併集合；按 Ctrl 放開以建立集合群組",
   "core.drag.desktop_files_pair_hint": "按 Shift 放開以合併桌面檔案；按 Ctrl 放開以建立檔案群組",

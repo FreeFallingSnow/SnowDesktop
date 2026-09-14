@@ -816,7 +816,7 @@ void DesktopApp::OnMouseMoveAt(
             widgetDockTarget_ = true;
             widgetDockTargetContainer_ = dock;
             widgetDockInsertIndex_ = dock->GetInsertIndexAtPoint(current);
-            ShowDragHintWindow(current, _LW("core.drag.move_collection_dock"));
+            ShowDragHintWindow(current, _LW("core.drag.move_widget_dock"));
             return;
         }
         widgetDockTarget_ = false;
@@ -1131,7 +1131,8 @@ void DesktopApp::OnMouseMoveAt(
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), currentMods);
 
-        ShowDragHintWindow(current, hint);
+        if (!UpdateDockWidgetPairHint(current, currentMods))
+            ShowDragHintWindow(current, hint);
         return;
     }
 

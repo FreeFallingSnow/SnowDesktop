@@ -104,6 +104,11 @@ void DesktopApp::LayoutItems()
             widget.bounds = IsGroupedWidget(widget) ? RECT{} : GetGridRect(gridPages_, widget.gridCell, widget.gridSpan);
     }
     RebuildContainersAndItems();
+    // Defer vector erasure until callers and any nested input/menu loop release
+    // their widget indices and pointers. Recheck the live membership on dispatch.
+    if (hwnd_ && std::any_of(widgets_.begin(), widgets_.end(),
+            snowdesktop::widget_pair_drop::ShouldDissolve))
+        SetTimer(hwnd_, kDissolveWidgetGroupsTimerId, 50, nullptr);
 }
 
 /**

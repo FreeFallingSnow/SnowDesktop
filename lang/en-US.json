@@ -865,6 +865,7 @@
     "core.drag.reorder": "Reorder",
     "core.drag.resize_widget": "Drop: Resize Widget",
     "core.drag.move_collection_dock": "Drop: Move Collection to Dock",
+    "core.drag.move_widget_dock": "Release: Move widget to Dock",
     "core.drag.move_widget": "Drop: Move Widget",
     "core.drag.collection_pair_hint": "Hold Shift and drop to merge collections; Ctrl to create a collection group",
     "core.drag.desktop_files_pair_hint": "Hold Shift and drop to merge desktop files; Ctrl to create a file group",

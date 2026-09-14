@@ -38,7 +38,7 @@ static_assert(payloads.size() == contract::ToIndex(Payload::Count),
 // Columns follow payloads above; rows follow surfaces above.
 inline constexpr bool emits[10][9]{
     {true, false, false, true, true, true, true, false, false},
-    {true, true, false, true, true, false, false, false, false},
+    {true, true, false, true, true, true, false, false, false},
     {true, false, false, false, false, false, false, false, false},
     {true, false, false, false, false, false, false, false, false},
     {false, true, false, false, false, false, false, false, false},
@@ -71,7 +71,7 @@ inline constexpr Route destinationRoutes[9][10]{
     {Route::PlaceOnDesktop, Route::AddToDock, Route::Reject, Route::Reject,
      Route::Reject, Route::Reject, Route::MoveFileSourceIntoGroup,
      Route::Reject, Route::Reject, Route::Reject},
-    {Route::PlaceOnDesktop, Route::Reject, Route::Reject, Route::Reject,
+    {Route::PlaceOnDesktop, Route::AddToDock, Route::Reject, Route::Reject,
      Route::Reject, Route::Reject, Route::MoveFileSourceIntoGroup,
      Route::Reject, Route::Reject, Route::Reject},
     {Route::PlaceOnDesktop, Route::Reject, Route::Reject, Route::Reject,
@@ -80,14 +80,14 @@ inline constexpr Route destinationRoutes[9][10]{
     {Route::ReleaseGroupedChild, Route::Reject, Route::Reject, Route::Reject,
      Route::Reject, Route::TransferGroupedLabel, Route::Reject,
      Route::Reject, Route::Reject, Route::Reject},
-    {Route::ReleaseGroupedChild, Route::Reject, Route::Reject, Route::Reject,
+    {Route::ReleaseGroupedChild, Route::AddToDock, Route::Reject, Route::Reject,
      Route::Reject, Route::Reject, Route::TransferGroupedLabel,
      Route::Reject, Route::Reject, Route::Reject},
 };
 
 inline constexpr bool reordersInSameInstance[10][9]{
     {true, false, false, false, false, false, false, false, false},
-    {true, false, false, true, true, false, false, false, false},
+    {true, false, false, true, true, true, false, false, false},
     {true, false, false, false, false, false, false, false, false},
     {true, false, false, false, false, false, false, false, false},
     {false, true, false, false, false, false, false, false, false},

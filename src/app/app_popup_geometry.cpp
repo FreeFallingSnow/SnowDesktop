@@ -28,7 +28,7 @@ std::vector<Item*> DesktopApp::GetDockFolderPopupSelectedItems()
 
 std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidget& widget) const
 {
-    if (widget.type == DesktopWidgetType::Collection)
+    if (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories)
         return widget.itemKeys;
     return {};
 }
@@ -54,7 +54,7 @@ size_t DesktopApp::GetPopupItemCount(
 {
     if (widget.type == DesktopWidgetType::FolderMapping)
         return widget.folderEntries.size();
-    return widget.type == DesktopWidgetType::Collection ? widget.itemKeys.size() : 0;
+    return (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories) ? widget.itemKeys.size() : 0;
 }
 
 bool DesktopApp::CollectionPopupFanRootAbove() const

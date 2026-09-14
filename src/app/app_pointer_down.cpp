@@ -115,8 +115,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pointDock->EntryAtPoint(pt);
             pressedDockItem)
         {
-            if (pressedDockItem->GetEntryType() ==
-                    DockEntryType::Collection)
+            if (IsLogicalDockEntryType(pressedDockItem->GetEntryType()))
             {
                 pressedDockCollectionWidgetIndex =
                     FindWidgetIndexById(
@@ -598,8 +597,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
                 if (dockPressedEntry_ < dockEntries_.size() &&
-                    dockEntries_[dockPressedEntry_].type ==
-                        DockEntryType::Collection)
+                    IsLogicalDockEntryType(dockEntries_[dockPressedEntry_].type))
                 {
                     dockPressedClosedCollectionPopup_ =
                         collectionPopupClosedByPointerDown;

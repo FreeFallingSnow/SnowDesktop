@@ -865,6 +865,7 @@
   "core.drag.reorder": "Neu anordnen",
   "core.drag.resize_widget": "Drop: Widgetgröße ändern",
   "core.drag.move_collection_dock": "Drop: Sammlung ins Dock verschieben",
+    "core.drag.move_widget_dock": "Loslassen: Widget ins Dock verschieben",
   "core.drag.move_widget": "Drop: Widget verschieben",
   "core.drag.collection_pair_hint": "Mit Umschalt ablegen: Sammlungen vereinen; mit Strg: Sammlungsgruppe erstellen",
   "core.drag.desktop_files_pair_hint": "Mit Umschalt ablegen: Desktopdateien vereinen; mit Strg: Dateigruppe erstellen",

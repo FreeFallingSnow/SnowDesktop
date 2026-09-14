@@ -353,6 +353,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.gridSpan.columns = std::max(1, saved.width);
         widget.gridSpan.rows = std::max(1, saved.height);
         widget.autoCollect = saved.autoCollect;
+        widget.dissolveWhenSingle = saved.dissolveWhenSingle;
         widget.listMode = saved.listMode;
         widget.fanPopup = saved.fanPopup;
         if (hasTrustedDetailColumns)
@@ -639,6 +640,14 @@ void DesktopApp::LoadLayoutSlots()
         else
             entry.type = DockEntryType::DesktopItem;
         entry.reference = Utf8ToWide(saved.reference);
+        // Preserve the existing on-disk "collection" reference token. The
+        // referenced widget supplies its precise runtime type, including desktop files.
+        if (entry.type == DockEntryType::Collection)
+        {
+            const size_t index = FindWidgetIndexById(entry.reference);
+            if (index < widgets_.size() && widgets_[index].type == DesktopWidgetType::FileCategories)
+                entry.type = DockEntryType::DesktopFiles;
+        }
         if (entry.type == DockEntryType::DesktopItem)
             entry.reference = ToUpperInvariant(entry.reference);
         entry.keepOnDesktop = saved.keepOnDesktop;
@@ -683,15 +692,14 @@ void DesktopApp::LoadLayoutSlots()
     }
 
     std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-        if (entry.type != DockEntryType::Collection &&
-            entry.type != DockEntryType::FolderMapping)
+        if (!IsWidgetDockEntryType(entry.type))
             return false;
         const size_t widgetIndex =
             FindWidgetIndexById(entry.reference);
         if (widgetIndex >= widgets_.size())
             return true;
-        if (entry.type ==
-                DockEntryType::FolderMapping)
+        if (entry.type == DockEntryType::FolderMapping ||
+            entry.type == DockEntryType::DesktopFiles)
         {
             for (auto& group : widgets_)
             {
@@ -720,8 +728,7 @@ void DesktopApp::LoadLayoutSlots()
     std::unordered_set<std::wstring> legacyDockPageCandidates;
     for (auto& entry : dockEntries_)
     {
-        if (entry.type == DockEntryType::Collection ||
-            entry.type == DockEntryType::FolderMapping)
+        if (IsWidgetDockEntryType(entry.type))
         {
             entry.keepOnDesktop = false;
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
@@ -1002,6 +1009,7 @@ bool DesktopApp::SaveLayoutSlots()
              << ", \"w\": " << std::max(1, w.gridSpan.columns)
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
+             << ", \"dissolveWhenSingle\": " << (w.dissolveWhenSingle ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
              << ", \"fanPopup\": " << (w.fanPopup ? "true" : "false")
              << ", \"showDetails\": "
@@ -1067,7 +1075,7 @@ bool DesktopApp::SaveLayoutSlots()
     {
         const DockEntry& entry = dockEntries_[i];
         file << "    { \"type\": \""
-             << (entry.type == DockEntryType::Collection
+             << (IsLogicalDockEntryType(entry.type)
                     ? "collection"
                     : (entry.type == DockEntryType::FolderMapping
                         ? "folderMapping" : "item"))

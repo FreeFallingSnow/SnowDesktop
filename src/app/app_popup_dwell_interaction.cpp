@@ -194,7 +194,7 @@ void DesktopApp::UpdateCollectionPopupDwell(POINT point)
             entry)
         {
             hoverHit = L"dock-other-entry";
-            if (entry->GetEntryType() == DockEntryType::Collection)
+            if (IsLogicalDockEntryType(entry->GetEntryType()))
             {
                 hoverHit = L"dock-collection";
                 hoveredCollection =
@@ -320,8 +320,8 @@ bool DesktopApp::TryOpenDwellCollectionPopup(DWORD now)
         collectionPopupDockHost_ ==
             FindPersistentDockHost(candidateDock);
     if (samePopupSource ||
-        widgets_[candidate].type !=
-            DesktopWidgetType::Collection)
+        (widgets_[candidate].type != DesktopWidgetType::Collection &&
+         widgets_[candidate].type != DesktopWidgetType::FileCategories))
     {
         TraceCollectionPopupDwell(
             samePopupSource

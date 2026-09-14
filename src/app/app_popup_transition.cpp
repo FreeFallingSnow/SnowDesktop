@@ -143,7 +143,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         WriteDiagnosticLogEntry(message);
     }
     if (widgetIndex >= widgets_.size() ||
-        widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
+         widgets_[widgetIndex].type != DesktopWidgetType::FileCategories))
         return;
 
     CancelCollectionPopupDwell();
@@ -157,8 +158,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         if (DockEntryItem* requestedItem =
                 requestedDock->EntryAtPoint(anchorPoint);
             requestedItem &&
-            requestedItem->GetEntryType() ==
-                DockEntryType::Collection &&
+            IsLogicalDockEntryType(requestedItem->GetEntryType()) &&
             requestedItem->GetReference() ==
                 widgets_[widgetIndex].id)
         {
@@ -221,8 +221,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         if (DockEntryItem* dockItem =
                 dock->EntryAtPoint(anchorPoint);
             dockItem &&
-            dockItem->GetEntryType() ==
-                DockEntryType::Collection &&
+            IsLogicalDockEntryType(dockItem->GetEntryType()) &&
             dockItem->GetReference() ==
                 widgets_[widgetIndex].id)
         {
@@ -290,7 +289,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             if (!dockPage) dockPage = GetFirstPageGridPage();
             if (dockPage) popupPageId_ = dockPage->id;
             if (DockEntryItem* dockItem = dock->EntryAtPoint(anchorPoint);
-                dockItem && dockItem->GetEntryType() == DockEntryType::Collection &&
+                dockItem && IsLogicalDockEntryType(dockItem->GetEntryType()) &&
                 dockItem->GetReference() == widgets_[widgetIndex].id)
             {
                 RECT itemBounds = dock->GetElementVisualRect(

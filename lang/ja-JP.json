@@ -865,6 +865,7 @@
   "core.drag.reorder": "並べ替え",
   "core.drag.resize_widget": "ドロップ：コンポーネントのサイズを変更",
   "core.drag.move_collection_dock": "ドロップ: コレクションをドックに移動",
+    "core.drag.move_widget_dock": "離す：ウィジェットを Dock に移動",
   "core.drag.move_widget": "ドロップ: ウィジェットの移動",
   "core.drag.collection_pair_hint": "Shift を押してドロップ：コレクションを統合／Ctrl：コレクショングループを作成",
   "core.drag.desktop_files_pair_hint": "Shift を押してドロップ：デスクトップファイルを統合／Ctrl：ファイルグループを作成",

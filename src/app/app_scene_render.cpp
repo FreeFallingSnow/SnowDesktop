@@ -277,15 +277,16 @@ void DesktopApp::DrawDynamicOverlays(
         ctx->SetTransform(previousTransform);
     };
 
+    // Both handle drags and Dock item drags share the pair target overlay.
+    const bool pairActive = (widgetAction_ == WidgetAction::Move || dragSession_.IsActive()) &&
+        widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None &&
+        widgetPairTargetIndex_ < widgets_.size();
     // Widget drag/resize preview
     if (!renderingFloatingPopup_ &&
-        (widgetAction_ == WidgetAction::Move ||
+        (pairActive || ((widgetAction_ == WidgetAction::Move ||
          widgetAction_ == WidgetAction::Resize) &&
-        mouseDownWidgetIndex_ < widgets_.size())
+        mouseDownWidgetIndex_ < widgets_.size())))
     {
-        const bool pairActive = widgetAction_ == WidgetAction::Move &&
-            widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None &&
-            widgetPairTargetIndex_ < widgets_.size();
         const size_t highlightedTarget = pairActive
             ? widgetPairTargetIndex_ : widgetCollectionGroupTargetIndex_;
         if (pairActive || (widgetAction_ == WidgetAction::Move &&

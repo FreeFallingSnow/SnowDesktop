@@ -522,8 +522,7 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
             app_->dragSession_.Items().end(), [](Item* item) {
                 auto* dockItem = dynamic_cast<DockEntryItem*>(item);
                 return dockItem &&
-                    (dockItem->GetEntryType() == DockEntryType::Collection ||
-                     dockItem->GetEntryType() == DockEntryType::FolderMapping);
+                    (IsWidgetDockEntryType(dockItem->GetEntryType()));
         });
         if (hasWidgetEntry)
         {
@@ -555,8 +554,7 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
             for (DockEntryItem* dockItem : dockItems)
             {
                 GridSpan span{ 1, 1 };
-                if (dockItem->GetEntryType() == DockEntryType::Collection ||
-                    dockItem->GetEntryType() == DockEntryType::FolderMapping)
+                if (IsWidgetDockEntryType(dockItem->GetEntryType()))
                 {
                     size_t widgetIndex = app_->FindWidgetIndexById(dockItem->GetReference());
                     if (widgetIndex < app_->widgets_.size())

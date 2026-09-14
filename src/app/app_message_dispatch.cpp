@@ -612,6 +612,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockItem->GetEntryIndex();
                     bool specialDoubleClickHandled = false;
                     if (entryIndex < dockEntries_.size() &&
+                        !IsLogicalDockEntryType(dockEntries_[entryIndex].type) &&
                         IsFolderDockEntry(
                             dockEntries_[entryIndex]) &&
                         dockPendingDoubleClickEntry_ ==

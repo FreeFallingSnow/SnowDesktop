@@ -1298,8 +1298,7 @@ void DesktopApp::ShowWidgetContextMenu(
         // 成员落点已在删除前逐个分配；移除组件后重新进入桌面容器。
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
         std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-            return (entry.type == DockEntryType::Collection ||
-                    entry.type == DockEntryType::FolderMapping) &&
+            return (IsWidgetDockEntryType(entry.type)) &&
                 entry.reference == deletedWidgetId;
         });
         EnsureNavTabOrder();

@@ -348,6 +348,18 @@ void DesktopApp::OnTimer(WPARAM timerId)
         return;
     }
 
+    if (timerId == kDissolveWidgetGroupsTimerId)
+    {
+        if (mouseDown_ || dragSession_.HasContext() ||
+            dragDropController_.IsTransportActive() ||
+            widgetAction_ != WidgetAction::None || renameEdit_ ||
+            HasActiveContextMenuSession())
+            return;
+        KillTimer(hwnd_, kDissolveWidgetGroupsTimerId);
+        DissolveSingleItemWidgetGroups();
+        return;
+    }
+
     if (timerId == kNativeDragHoverRecoveryTimerId)
     {
         if (widgetAction_ == WidgetAction::Move)
@@ -384,6 +396,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (TryGetNativeDragHoverPointFromCursor(
                 recoveredPoint))
         {
+            if (GetDockWidgetPairSourceIndex() < widgets_.size())
+                RefreshDragHintFromKeyboard();
             UpdateCollectionPopupDwell(recoveredPoint);
             UpdateCollectionGroupTabDwell(recoveredPoint);
         }
@@ -641,8 +655,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     : static_cast<size_t>(-1);
             if (entryIndex <
                     dockEntries_.size() &&
-                IsFolderDockEntry(
-                    dockEntries_[entryIndex]))
+                IsFolderDockEntry(dockEntries_[entryIndex]) &&
+                !IsLogicalDockEntryType(dockEntries_[entryIndex].type))
             {
                 ResetDockHandoffDwell();
                 OpenDockFolderPopupAt(

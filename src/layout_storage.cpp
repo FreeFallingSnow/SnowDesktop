@@ -427,6 +427,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 error) ||
             !ReadBoolean(object, "autoCollect", path + ".autoCollect",
                 record.autoCollect, error) ||
+            !ReadBoolean(object, "dissolveWhenSingle", path + ".dissolveWhenSingle",
+                record.dissolveWhenSingle, error) ||
             !ReadBoolean(object, "listMode", path + ".listMode",
                 record.listMode, error) ||
             !ReadBoolean(object, "fanPopup", path + ".fanPopup",

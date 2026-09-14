@@ -31,10 +31,10 @@ constexpr Options GetOptions(DesktopWidgetType source, DesktopWidgetType target)
     if (source == DesktopWidgetType::FileCategories &&
         target == DesktopWidgetType::FileCategories)
         return {true, Action::CreateFileGroup};
-    if ((source == DesktopWidgetType::FileCategories &&
-         target == DesktopWidgetType::FolderMapping) ||
-        (source == DesktopWidgetType::FolderMapping &&
-         target == DesktopWidgetType::FileCategories))
+    if ((source == DesktopWidgetType::FileCategories ||
+         source == DesktopWidgetType::FolderMapping) &&
+        (target == DesktopWidgetType::FileCategories ||
+         target == DesktopWidgetType::FolderMapping))
         return {false, Action::CreateFileGroup};
     return {};
 }
@@ -107,16 +107,53 @@ bool Apply(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock,
             ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup;
         group.childWidgetIds = {targetId, sourceId};
         group.activeCategoryId = targetId;
+        group.dissolveWhenSingle = true;
         widgets.push_back(std::move(group));
         widgets[sourceIndex].selected = false;
         widgets[targetIndex].selected = false;
     }
     std::erase_if(dock, [&](const DockEntry& entry) {
-        return (entry.type == DockEntryType::Collection ||
-                entry.type == DockEntryType::FolderMapping) &&
+        return IsWidgetDockEntryType(entry.type) &&
             (entry.reference == sourceId ||
              (action != Action::Merge && entry.reference == targetId));
     });
+    return true;
+}
+
+inline bool ShouldDissolve(const DesktopWidget& group)
+{
+    return group.dissolveWhenSingle &&
+        (group.type == DesktopWidgetType::CollectionGroup ||
+         group.type == DesktopWidgetType::FileGroup) &&
+        group.childWidgetIds.size() <= 1;
+}
+
+// The host plans a free landing before this ownership transaction. Keep the
+// original child (including its size and settings), and remove only its wrapper.
+inline bool Dissolve(std::vector<DesktopWidget>& widgets, size_t groupIndex,
+    GridCell landing)
+{
+    if (groupIndex >= widgets.size() || !ShouldDissolve(widgets[groupIndex]))
+        return false;
+    const auto& group = widgets[groupIndex];
+    if (!group.childWidgetIds.empty())
+    {
+        const auto child = std::find_if(widgets.begin(), widgets.end(),
+            [&](const auto& widget) { return widget.id == group.childWidgetIds.front(); });
+        if (child == widgets.end() || child == widgets.begin() + groupIndex)
+            return false;
+        const auto expected = GetOptions(child->type, child->type).group;
+        if ((group.type == DesktopWidgetType::CollectionGroup &&
+             expected != Action::CreateCollectionGroup) ||
+            (group.type == DesktopWidgetType::FileGroup && expected != Action::CreateFileGroup))
+            return false;
+        for (size_t i = 0; i < widgets.size(); ++i)
+            if (i != groupIndex && std::find(widgets[i].childWidgetIds.begin(),
+                    widgets[i].childWidgetIds.end(), child->id) != widgets[i].childWidgetIds.end())
+                return false;
+        child->gridCell = std::move(landing);
+    }
+    widgets.erase(widgets.begin() + static_cast<std::ptrdiff_t>(groupIndex));
     return true;
 }
 }

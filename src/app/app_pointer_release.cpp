@@ -573,6 +573,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     }
     const bool folderEntry =
         pressedEntryIndex < dockEntries_.size() &&
+        !IsLogicalDockEntryType(dockEntries_[pressedEntryIndex].type) &&
         IsFolderDockEntry(dockEntries_[pressedEntryIndex]);
 
     size_t appItemIndex = frequentItemIndex;
@@ -615,7 +616,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     ReleaseCapture();
     InvalidateDragStaticScene();
     const bool popupEntryOnFloatingDock =
-        (entryType == DockEntryType::Collection ||
+        (IsLogicalDockEntryType(entryType) ||
          folderEntry) &&
         IsDockContainerEffectivelyFloating(dock);
     if (hwnd_ && !popupEntryOnFloatingDock)
@@ -753,7 +754,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                     capturePolicy);
             });
     }
-    else if (entryType == DockEntryType::Collection)
+    else if (IsLogicalDockEntryType(entryType))
     {
         const size_t widgetIndex = FindWidgetIndexById(reference);
         if (widgetIndex < widgets_.size())
@@ -1289,6 +1290,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         goto cleanup;
     }
 
+    if (TryCommitDockWidgetPairDrop(upPoint,
+            static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)) |
+            ((GetAsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
+        goto cleanup;
+
     ResolveCurrentDragTargetAt(upPoint);
 
     if (!GetDockDragOutRemovalHint(upPoint).empty())
@@ -1390,7 +1396,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                         hwnd_, nullptr, FALSE);
                     goto cleanup;
                 }
-                if (dockTarget->GetEntryType() == DockEntryType::Collection)
+                if (IsLogicalDockEntryType(dockTarget->GetEntryType()))
                 {
                     const bool executed = DropItemsIntoDockCollection(
                         dragSession_.Items(), dragSession_.Source(), dockTarget, mods);

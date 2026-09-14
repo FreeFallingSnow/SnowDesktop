@@ -23,8 +23,7 @@ bool DesktopApp::IsDockExclusiveItemKey(const std::wstring& key) const
 bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
 {
     return std::any_of(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& entry) {
-        return (entry.type == DockEntryType::Collection ||
-                entry.type == DockEntryType::FolderMapping) &&
+        return (IsWidgetDockEntryType(entry.type)) &&
             entry.reference == id;
     });
 }
@@ -88,7 +87,8 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry) const
 
 bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const
 {
-    return entry.type == DockEntryType::FolderMapping ||
+    return entry.type == DockEntryType::DesktopFiles ||
+        entry.type == DockEntryType::FolderMapping ||
         ResolveDockFolderTarget(entry).kind !=
             snowdesktop::item_location::FolderTargetKind::None;
 }

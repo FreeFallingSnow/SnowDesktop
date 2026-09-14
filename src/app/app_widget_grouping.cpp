@@ -578,7 +578,7 @@ void DesktopApp::AddFileGroupWidgetAt(POINT screenPoint)
 size_t DesktopApp::HitTestWidgetPairTarget(POINT point, size_t sourceIndex) const
 {
     if (sourceIndex >= widgets_.size() || GetDockContainerAtPoint(point) ||
-        IsPointOccludedByOpenPopup(point))
+        IsPointOccludedByOpenPopup(point) || IsExternalDropWindowAt(point))
         return static_cast<size_t>(-1);
     for (size_t i = widgets_.size(); i-- > 0;)
     {
@@ -685,6 +685,135 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     return true;
 }
 
+size_t DesktopApp::GetDockWidgetPairSourceIndex() const
+{
+    const auto& entries = dragSession_.SourceList().entries;
+    if (!dragSession_.IsActive() || entries.size() != 1 ||
+        !entries.front().fromDock || entries.front().kind != DropSourceKind::Widget)
+        return static_cast<size_t>(-1);
+    const auto& source = entries.front();
+    const size_t index = FindWidgetIndexById(source.dockReference);
+    if (index >= widgets_.size() || !IsWidgetDockEntryType(source.dockEntryType) ||
+        DockEntryTypeForWidget(widgets_[index].type) != source.dockEntryType ||
+        std::none_of(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& entry) {
+            return entry.type == source.dockEntryType && entry.reference == source.dockReference;
+        }))
+        return static_cast<size_t>(-1);
+    return index;
+}
+
+bool DesktopApp::UpdateDockWidgetPairHint(POINT point, int mods)
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    const size_t previousTarget = widgetPairTargetIndex_;
+    const auto previousAction = widgetPairAction_;
+    const size_t source = GetDockWidgetPairSourceIndex();
+    widgetPairTargetIndex_ = HitTestWidgetPairTarget(point, source);
+    widgetPairAction_ = pair::Action::None;
+    std::wstring hint;
+    if (widgetPairTargetIndex_ < widgets_.size())
+    {
+        const auto type = widgets_[source].type;
+        const auto options = pair::GetOptions(type, widgets_[widgetPairTargetIndex_].type);
+        widgetPairAction_ = pair::ResolveAction(options,
+            (mods & MK_CONTROL) != 0, (mods & MK_SHIFT) != 0, (mods & MK_ALT) != 0);
+        if ((widgetPairAction_ == pair::Action::CreateCollectionGroup ||
+             widgetPairAction_ == pair::Action::CreateFileGroup) &&
+            !GetWidgetPairGroupSpan(source, widgetPairTargetIndex_))
+            widgetPairAction_ = pair::Action::None;
+        const char* key = widgetPairAction_ == pair::Action::Merge
+            ? (type == DesktopWidgetType::Collection
+                ? "core.drag.merge_collections" : "core.drag.merge_desktop_files")
+            : widgetPairAction_ == pair::Action::CreateCollectionGroup
+                ? "core.drag.create_collection_group"
+            : widgetPairAction_ == pair::Action::CreateFileGroup
+                ? "core.drag.create_file_group"
+            : options.merge
+                ? (type == DesktopWidgetType::Collection
+                    ? "core.drag.collection_pair_hint" : "core.drag.desktop_files_pair_hint")
+                : "core.drag.file_source_pair_hint";
+        hint = _LW(key);
+    }
+    if (previousTarget != widgetPairTargetIndex_ || previousAction != widgetPairAction_)
+        InvalidateDragStaticScene();
+    if (hint.empty()) return false;
+    if (widgetPairAction_ != pair::Action::None)
+    {
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+        SetPageNavHotEdgeHover(0);
+        navAutoFlipDir_ = 0;
+        navAutoFlipTick_ = 0;
+    }
+    ShowDragHintWindow(point, hint, widgetPairAction_ != pair::Action::None);
+    return true;
+}
+
+bool DesktopApp::TryCommitDockWidgetPairDrop(POINT point, int mods)
+{
+    const size_t source = GetDockWidgetPairSourceIndex();
+    UpdateDockWidgetPairHint(point, mods); // Commit uses the release point and keys.
+    if (widgetPairAction_ == snowdesktop::widget_pair_drop::Action::None)
+        return false;
+    const size_t target = widgetPairTargetIndex_;
+    const auto action = widgetPairAction_;
+    // End the session before erasing widgets or rebuilding Dock item wrappers.
+    EndDragSession();
+    HideDragHintWindow();
+    if (!CommitWidgetPairDrop(source, target, action))
+        MessageBeep(MB_ICONWARNING);
+    return true; // A rejected transaction preserves its Dock source as well.
+}
+
+void DesktopApp::DissolveSingleItemWidgetGroups()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    std::vector<std::wstring> candidates;
+    for (const auto& widget : widgets_)
+        if (pair::ShouldDissolve(widget)) candidates.push_back(widget.id);
+    bool changed = false;
+    for (const auto& id : candidates)
+    {
+        const size_t index = FindWidgetIndexById(id);
+        if (index >= widgets_.size() || !pair::ShouldDissolve(widgets_[index])) continue;
+        const auto& group = widgets_[index];
+        GridCell landing = group.gridCell;
+        if (!group.childWidgetIds.empty())
+        {
+            const size_t child = FindWidgetIndexById(group.childWidgetIds.front());
+            if (child >= widgets_.size() || IsDockExclusiveWidgetId(widgets_[child].id)) continue;
+            const auto span = widgets_[child].gridSpan;
+            std::unordered_set<std::wstring> used;
+            for (size_t i = 0; i < widgets_.size(); ++i)
+                if (i != index && i != child && !IsGroupedWidget(widgets_[i]) &&
+                    widgets_[i].gridCell.pageId != kDockPageId)
+                    MarkGridArea(used, widgets_[i].gridCell, widgets_[i].gridSpan);
+            for (const auto& item : items_)
+                if (!item.name.empty() && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item))
+                    MarkGridArea(used, item.gridCell, item.gridSpan);
+            const auto* page = FindGridPage(gridPages_, landing.pageId);
+            if ((!page || !GridAreaFitsPage(*page, landing, span) ||
+                    AreGridSlotsMarked(used, landing, span)) &&
+                !FindDockReturnCell(used, landing.pageId, 0, span, landing))
+                continue;
+        }
+        if (GetOpenPopupWidget())
+        {
+            CloseCollectionPopup();
+            FinalizeCloseCollectionPopup();
+        }
+        changed = pair::Dissolve(widgets_, index, landing) || changed;
+    }
+    if (!changed) return;
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    keyboardNavInsideWidget_ = false;
+    keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+    EnsureNavTabOrder();
+    ApplyPageMapping();
+    LayoutItems();
+    SaveLayoutSlots();
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
 size_t DesktopApp::HitTestCollectionGroupIndex(
     POINT point, size_t excludeWidgetIndex) const
 {
@@ -769,7 +898,7 @@ bool DesktopApp::AddWidgetToFileGroup(
     return true;
 }
 
-bool DesktopApp::MoveFolderMappingsToFileGroup(
+bool DesktopApp::MoveFileSourcesToFileGroup(
     const std::vector<Item*>& sourceItems,
     size_t groupIndex, size_t insertIndex)
 {
@@ -786,8 +915,8 @@ bool DesktopApp::MoveFolderMappingsToFileGroup(
         if (auto* dockItem =
                 dynamic_cast<DockEntryItem*>(source))
         {
-            if (dockItem->GetEntryType() !=
-                    DockEntryType::FolderMapping)
+            if ((dockItem->GetEntryType() != DockEntryType::FolderMapping &&
+                 dockItem->GetEntryType() != DockEntryType::DesktopFiles))
                 return false;
             id = dockItem->GetReference();
         }
@@ -804,9 +933,8 @@ bool DesktopApp::MoveFolderMappingsToFileGroup(
             DesktopWidget* data =
                 widget->GetWidgetData();
             if (!data ||
-                data->type !=
-                    DesktopWidgetType::
-                        FolderMapping)
+                (data->type != DesktopWidgetType::FolderMapping &&
+                 data->type != DesktopWidgetType::FileCategories))
                 return false;
             id = data->id;
         }
@@ -818,8 +946,8 @@ bool DesktopApp::MoveFolderMappingsToFileGroup(
         const size_t childIndex =
             FindWidgetIndexById(id);
         if (childIndex >= widgets_.size() ||
-            widgets_[childIndex].type !=
-                DesktopWidgetType::FolderMapping)
+            (widgets_[childIndex].type != DesktopWidgetType::FolderMapping &&
+             widgets_[childIndex].type != DesktopWidgetType::FileCategories))
             return false;
         if (std::find(
                 movingIds.begin(),
@@ -895,9 +1023,8 @@ bool DesktopApp::MoveFolderMappingsToFileGroup(
     std::erase_if(
         dockEntries_,
         [&](const DockEntry& entry) {
-            return entry.type ==
-                    DockEntryType::
-                        FolderMapping &&
+            return (entry.type == DockEntryType::FolderMapping ||
+                    entry.type == DockEntryType::DesktopFiles) &&
                 movingSet.contains(
                     entry.reference);
         });

@@ -64,7 +64,7 @@ TryActivateDockPopupFromMenuPointerPress(
     PersistentDockHost* requestedDockHost =
         FindPersistentDockHost(dock);
     const bool collectionEntry =
-        entry.type == DockEntryType::Collection;
+        IsLogicalDockEntryType(entry.type);
     const bool folderEntry = IsFolderDockEntry(entry);
     if (!collectionEntry && !folderEntry)
         return false;
@@ -128,6 +128,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     size_t entryIndex, POINT anchorPoint)
 {
     if (entryIndex >= dockEntries_.size() ||
+        IsLogicalDockEntryType(dockEntries_[entryIndex].type) ||
         !IsFolderDockEntry(dockEntries_[entryIndex]))
         return;
 

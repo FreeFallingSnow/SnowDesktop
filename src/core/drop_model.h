@@ -325,8 +325,8 @@ struct DragSourceList
             [](const DragSourceEntry& entry) {
                 return entry.fromDock &&
                     entry.kind == DropSourceKind::Widget &&
-                    entry.dockEntryType ==
-                        DockEntryType::FolderMapping;
+                    (entry.dockEntryType == DockEntryType::FolderMapping ||
+                     entry.dockEntryType == DockEntryType::DesktopFiles);
             });
     }
 
@@ -368,10 +368,12 @@ struct DragSourceList
     {
         bool collectionWidgetsOnly = false;
         bool folderMappingWidgetsOnly = false;
+        bool fileSourceWidgetsOnly = false;
         if (hasWidgets)
         {
             collectionWidgetsOnly = true;
             folderMappingWidgetsOnly = true;
+            fileSourceWidgetsOnly = true;
             bool sawWidget = false;
             for (const auto& entry : entries)
             {
@@ -384,6 +386,9 @@ struct DragSourceList
                         entry.dockEntryType == DockEntryType::Collection;
                     folderMappingWidgetsOnly = folderMappingWidgetsOnly &&
                         entry.dockEntryType == DockEntryType::FolderMapping;
+                    fileSourceWidgetsOnly = fileSourceWidgetsOnly &&
+                        (entry.dockEntryType == DockEntryType::FolderMapping ||
+                         entry.dockEntryType == DockEntryType::DesktopFiles);
                     continue;
                 }
                 if (entry.dockEntryType == DockEntryType::FolderMapping)
@@ -399,10 +404,14 @@ struct DragSourceList
                 folderMappingWidgetsOnly =
                     folderMappingWidgetsOnly && data &&
                     data->type == DesktopWidgetType::FolderMapping;
+                fileSourceWidgetsOnly = fileSourceWidgetsOnly && data &&
+                    (data->type == DesktopWidgetType::FolderMapping ||
+                     data->type == DesktopWidgetType::FileCategories);
             }
             collectionWidgetsOnly = sawWidget && collectionWidgetsOnly;
             folderMappingWidgetsOnly =
                 sawWidget && folderMappingWidgetsOnly;
+            fileSourceWidgetsOnly = sawWidget && fileSourceWidgetsOnly;
         }
         return snowdesktop::slot_contract::ClassifyPayload({
             hasDesktopIcons,
@@ -413,6 +422,7 @@ struct DragSourceList
             hasCollectionGroupEntries,
             hasFileGroupEntries,
             folderMappingWidgetsOnly,
+            fileSourceWidgetsOnly,
         });
     }
 

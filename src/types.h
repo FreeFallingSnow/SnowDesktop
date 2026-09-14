@@ -478,6 +478,7 @@ struct DesktopWidget
     float cellScale = 1.0f; // Runtime layout cache; recalculated by LayoutItems().
     bool selected = false;
     bool autoCollect = false;
+    bool dissolveWhenSingle = false; // Only groups created by the pair-drop gesture.
     bool listMode = false;
     bool fanPopup = false; // Per-object popup layout; preserves the inline view.
     bool showDetails = false;
@@ -526,13 +527,33 @@ enum class DockEntryType
     DesktopItem,
     Collection,
     FolderMapping,
+    DesktopFiles,
 };
+
+constexpr bool IsWidgetDockEntryType(DockEntryType type)
+{
+    return type == DockEntryType::Collection ||
+        type == DockEntryType::FolderMapping || type == DockEntryType::DesktopFiles;
+}
+
+constexpr bool IsLogicalDockEntryType(DockEntryType type)
+{
+    return type == DockEntryType::Collection || type == DockEntryType::DesktopFiles;
+}
+
+constexpr DockEntryType DockEntryTypeForWidget(DesktopWidgetType type)
+{
+    return type == DesktopWidgetType::Collection ? DockEntryType::Collection
+        : type == DesktopWidgetType::FolderMapping ? DockEntryType::FolderMapping
+        : type == DesktopWidgetType::FileCategories ? DockEntryType::DesktopFiles
+        : DockEntryType::DesktopItem;
+}
 
 /**
  * @brief 主屏 Dock 条目。
- * @details DesktopItem 使用 layoutKey，Collection/FolderMapping 使用 widget id。
+ * @details DesktopItem 使用 layoutKey，Collection/FolderMapping/DesktopFiles 使用 widget id。
  *          DesktopItem 的 keepOnDesktop=true 表示 Ctrl“假复制”；
- *          Collection/FolderMapping 始终是唯一实例，进入 Dock 后不会保留桌面入口。
+ *          组件始终是唯一实例，进入 Dock 后不会保留桌面入口。
  */
 struct DockEntry
 {

@@ -740,6 +740,28 @@ int main()
             typedLayout.dockEntries.size() == 1 &&
             !typedLayout.componentSpacing.has_value(),
         "legacy schema and reordered fields decode into one typed document");
+    // Opt-in group ownership must survive restart; older/manual groups retain
+    // their previous behavior. The production parser and validated disk store
+    // are exercised, using only this test's isolated temporary layout directory.
+    Expect(!typedLayout.widgets[0].dissolveWhenSingle,
+        "legacy groups default to retaining their wrapper");
+    const std::string pairLayoutText = R"({"widgets":[
+        {"id":"automatic","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":true},
+        {"id":"manual","page":"page-a","x":4,"y":0,"type":"collectionGroup","dissolveWhenSingle":false}]})";
+    const auto pairLayoutPath = root / L"layout-storage" / L"pair.layout.json";
+    snowdesktop::layout_storage::Document pairLayout;
+    Expect(snowdesktop::layout_storage::SaveDocument(pairLayoutPath, pairLayoutText, &layoutError),
+        "automatic group ownership saves through the validated layout store");
+    const auto pairLoad = snowdesktop::layout_storage::LoadDocument(pairLayoutPath, pairLayout);
+    Expect(pairLoad.status == snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            pairLayout.widgets.size() == 2 && pairLayout.widgets[0].dissolveWhenSingle &&
+            !pairLayout.widgets[1].dissolveWhenSingle,
+        "restart must retain the explicit automatic/manual group distinction");
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+            R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":"true"}]})",
+            pairLayout, &layoutError) && layoutError.find("dissolveWhenSingle") != std::string::npos,
+        "invalid automatic group state must be rejected before replacing the layout");
+
     snowdesktop::layout_storage::Document spacingLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"componentSpacing\":1.5,\"iconSizeScale\":1.1,"

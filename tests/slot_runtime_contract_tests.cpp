@@ -839,6 +839,41 @@ void TestDropActionModifiers()
     }
 }
 
+void TestDesktopFilesDockPayload()
+{
+    namespace contract = snowdesktop::slot_contract;
+    DragSourceList list;
+    ContractContainer source(BarStyle::VBar, contract::SlotSurfaceKind::Dock);
+    list.BindRuntimeOrigin(&source);
+    list.hasWidgets = true;
+    DragSourceEntry entry;
+    entry.fromDock = true;
+    entry.kind = DropSourceKind::Widget;
+    entry.dockReference = L"desktop-files";
+    entry.dockEntryType = DockEntryType::DesktopFiles;
+    list.entries.push_back(entry);
+    Check(list.SlotPayloadKind() == contract::DragPayloadKind::FileSourceWidget &&
+            list.UsesFileGroupSourceInsertion(),
+        "Dock desktop files must remain a file-source component, including group insertion");
+    Check(contract::EvaluateSlotDrop(list.SourceSurfaceKind(), list.SlotPayloadKind(),
+            contract::SlotSurfaceKind::Dock, contract::DragRelation::SameInstance) ==
+                contract::DropRoute::ReorderWithinContainer &&
+          contract::EvaluateSlotDrop(list.SourceSurfaceKind(), list.SlotPayloadKind(),
+            contract::SlotSurfaceKind::Desktop, contract::DragRelation::CrossSurface) ==
+                contract::DropRoute::PlaceOnDesktop,
+        "a Dock desktop-files component must support local reorder and restoration to the desktop");
+    entry.dockReference = L"mapping";
+    entry.dockEntryType = DockEntryType::FolderMapping;
+    list.entries.push_back(entry);
+    Check(list.SlotPayloadKind() == contract::DragPayloadKind::FileSourceWidget,
+        "mixed mapped-folder and desktop-file components share the file-source route");
+    entry.dockEntryType = DockEntryType::Collection;
+    list.entries.push_back(entry);
+    Check(list.SlotPayloadKind() == contract::DragPayloadKind::OtherWidget &&
+            !list.UsesFileGroupSourceInsertion(),
+        "a mixed collection selection cannot enter a file group");
+}
+
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
 {
     using snowdesktop::drag_source_rebind::ResolveRecordedDockItems;
@@ -2825,6 +2860,7 @@ int wmain(int argc, wchar_t** argv)
     TestDropActionModifiers();
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDockPayloadSurvivesPageTurnWithoutSelection();
+    TestDesktopFilesDockPayload();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();

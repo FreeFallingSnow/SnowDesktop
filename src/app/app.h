@@ -2813,6 +2813,10 @@ private:
     std::optional<GridSpan> GetWidgetPairGroupSpan(size_t sourceIndex, size_t targetIndex) const;
     bool CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
         snowdesktop::widget_pair_drop::Action action);
+    size_t GetDockWidgetPairSourceIndex() const;
+    bool UpdateDockWidgetPairHint(POINT point, int mods);
+    bool TryCommitDockWidgetPairDrop(POINT point, int mods);
+    void DissolveSingleItemWidgetGroups();
     bool AddCollectionToGroup(size_t collectionIndex, size_t groupIndex,
         size_t insertIndex = static_cast<size_t>(-1));
     bool ReleaseCollectionFromGroup(const std::wstring& collectionId,
@@ -2824,7 +2828,7 @@ private:
         size_t excludeWidgetIndex = static_cast<size_t>(-1)) const;
     bool AddWidgetToFileGroup(size_t childIndex, size_t groupIndex,
         size_t insertIndex = static_cast<size_t>(-1));
-    bool MoveFolderMappingsToFileGroup(
+    bool MoveFileSourcesToFileGroup(
         const std::vector<Item*>& sourceItems,
         size_t groupIndex, size_t insertIndex);
     bool ReleaseWidgetFromFileGroup(const std::wstring& childId,

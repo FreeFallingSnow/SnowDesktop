@@ -393,9 +393,8 @@ bool DockContainer::HasOnlyFolderDragSource() const
                 DesktopApp::WidgetAction::Move &&
             app_->mouseDownWidgetIndex_ <
                 app_->widgets_.size() &&
-            app_->widgets_[app_->
-                mouseDownWidgetIndex_].type ==
-                DesktopWidgetType::FolderMapping;
+            (app_->widgets_[app_->mouseDownWidgetIndex_].type == DesktopWidgetType::FolderMapping ||
+             app_->widgets_[app_->mouseDownWidgetIndex_].type == DesktopWidgetType::FileCategories);
     }
     return std::all_of(sourceItems.begin(), sourceItems.end(),
         [&](Item* source) {
@@ -409,7 +408,7 @@ bool DockContainer::HasOnlyFolderDragSource() const
             {
                 const DesktopWidget* data = widget->GetWidgetData();
                 return data &&
-                    data->type == DesktopWidgetType::FolderMapping;
+                    (data->type == DesktopWidgetType::FolderMapping || data->type == DesktopWidgetType::FileCategories);
             }
             if (auto* groupEntry =
                     dynamic_cast<FileGroupEntryItem*>(
@@ -421,10 +420,8 @@ bool DockContainer::HasOnlyFolderDragSource() const
                             GetChildWidgetId());
                 return widgetIndex <
                         app_->widgets_.size() &&
-                    app_->widgets_[widgetIndex].
-                        type ==
-                        DesktopWidgetType::
-                            FolderMapping;
+                    (app_->widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
+                     app_->widgets_[widgetIndex].type == DesktopWidgetType::FileCategories);
             }
             if (auto* icon = dynamic_cast<DesktopIcon*>(source))
             {
@@ -2578,8 +2575,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
                     folderTarget);
         const bool collectionTarget =
             folderDockItem &&
-            folderDockItem->GetEntryType() ==
-                DockEntryType::Collection;
+            IsLogicalDockEntryType(folderDockItem->GetEntryType());
         const bool canHandoff = !dockMetadataReorder &&
             targetItem && !targetItem->IsSelected() &&
             snowdesktop::dock_drop_rules::
@@ -2592,7 +2588,7 @@ HitRegion DockContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         if (canHandoff && app_)
         {
             const size_t index = slot->GetIndex();
-            if (folderTarget)
+            if (folderTarget && !collectionTarget)
             {
                 const size_t entryIndex =
                     folderDockItem->

@@ -677,7 +677,7 @@ HRESULT DesktopApp::HandleOleDrop(
             Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
             if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
             {
-                if (dockTarget->GetEntryType() == DockEntryType::Collection)
+                if (IsLogicalDockEntryType(dockTarget->GetEntryType()))
                 {
                     const bool executed = DropItemsIntoDockCollection(
                         dragSession_.Items(), dragSession_.Source(), dockTarget,

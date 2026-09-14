@@ -865,6 +865,7 @@
   "core.drag.reorder": "순서 변경",
   "core.drag.resize_widget": "놓기: 위젯 크기 조정",
   "core.drag.move_collection_dock": "놓기: 컬렉션을 Dock으로 이동",
+    "core.drag.move_widget_dock": "놓기: 위젯을 Dock으로 이동",
   "core.drag.move_widget": "놓기: 위젯 이동",
   "core.drag.collection_pair_hint": "Shift를 누르고 놓기: 컬렉션 병합 / Ctrl: 컬렉션 그룹 만들기",
   "core.drag.desktop_files_pair_hint": "Shift를 누르고 놓기: 바탕 화면 파일 병합 / Ctrl: 파일 그룹 만들기",

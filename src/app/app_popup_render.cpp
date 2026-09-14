@@ -455,7 +455,7 @@ void DesktopApp::DrawCollectionPopup(
                 items_[itemIndex].selected ? 2 : (hovered ? 1 : 0),
                 collectionPopupLightTheme_,
                 titleLayers.drawWithItem, false,
-                widget.type == DesktopWidgetType::Collection
+                (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories)
                     ? &widget : nullptr);
         }
     }
@@ -488,7 +488,7 @@ void DesktopApp::DrawCollectionPopup(
             icon.DrawTitle(
                 ctx, itemRect, true, 1.0f,
                 collectionPopupLightTheme_,
-                widget.type == DesktopWidgetType::Collection
+                (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories)
                     ? &widget : nullptr);
         }
     }

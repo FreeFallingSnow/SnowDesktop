@@ -422,6 +422,8 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    widgetPairTargetIndex_ = static_cast<size_t>(-1);
+    widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
     ResetDockHandoffDwell();

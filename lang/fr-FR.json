@@ -865,6 +865,7 @@
   "core.drag.reorder": "Réorganiser",
   "core.drag.resize_widget": "Déposer : redimensionner le composant",
   "core.drag.move_collection_dock": "Déposer : déplacer la collection vers le Dock",
+    "core.drag.move_widget_dock": "Relâcher : déplacer le widget dans le Dock",
   "core.drag.move_widget": "Déposer : déplacer le composant",
   "core.drag.collection_pair_hint": "Déposer avec Maj : fusionner les collections ; avec Ctrl : créer un groupe de collections",
   "core.drag.desktop_files_pair_hint": "Déposer avec Maj : fusionner les fichiers du bureau ; avec Ctrl : créer un groupe de fichiers",

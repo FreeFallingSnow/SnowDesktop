@@ -1043,7 +1043,7 @@ void TestWidgetPairDrops()
         {Type::FileCategories, Type::FileCategories, true, Action::CreateFileGroup},
         {Type::FileCategories, Type::FolderMapping, false, Action::CreateFileGroup},
         {Type::FolderMapping, Type::FileCategories, false, Action::CreateFileGroup},
-        {Type::FolderMapping, Type::FolderMapping, false, Action::None},
+        {Type::FolderMapping, Type::FolderMapping, false, Action::CreateFileGroup},
         {Type::Collection, Type::FileCategories, false, Action::None},
         {Type::FileCategories, Type::Collection, false, Action::None},
         {Type::LuaScript, Type::Collection, false, Action::None},
@@ -1070,6 +1070,7 @@ void TestWidgetPairDrops()
             widgets[0].showSearchBox = true;
             widgets[1].id = L"target";
             widgets[1].type = entry.target;
+            widgets[1].sourceFolderPath = L"C:\\mapped-target";
             widgets[1].itemKeys = {L"target-first", L"SHARED"};
             widgets[1].customTitle = L"Keep target title";
             widgets[1].showFileCategories = true;
@@ -1118,7 +1119,8 @@ void TestWidgetPairDrops()
                     widgets[0].id == L"source" && widgets[0].itemKeys.size() == 3 &&
                     widgets[0].sourceFolderPath == L"C:\\mapped-source" &&
                     widgets[0].gridSpan.columns == 3 && widgets[0].gridSpan.rows == 4 &&
-                    widgets[0].showSearchBox && widgets[1].customTitle == L"Keep target title",
+                    widgets[0].showSearchBox && widgets[1].customTitle == L"Keep target title" &&
+                    widgets[1].sourceFolderPath == L"C:\\mapped-target",
                 "group creation must retain both children and their settings, put target first and activate it");
             Check(!pair::Apply(widgets, dock, 0, 1, entry.group, group, normalize) && widgets.size() == 4,
                 "a repeated release must not create another group or reparent hidden children");
@@ -1145,6 +1147,68 @@ void TestWidgetPairDrops()
             widgets[0].itemKeys == std::vector<std::wstring>{L"kept"} &&
             dock.size() == 1 && dock[0].reference == L"target",
         "merging an empty later source must preserve the target and remove only the stale source Dock reference");
+}
+
+void TestPairGroupsDissolveAndDockOwnership()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    using Type = DesktopWidgetType;
+    const auto normalize = [](const std::wstring& key) { return key; };
+    for (const auto type : {Type::Collection, Type::FileCategories, Type::FolderMapping})
+    {
+        std::vector<DesktopWidget> widgets(2);
+        widgets[0].id = L"source";
+        widgets[0].type = type;
+        widgets[0].itemKeys = {L"original-a", L"original-b"};
+        widgets[0].sourceFolderPath = L"C:\\original-mapping";
+        widgets[0].gridSpan = {3, 4};
+        widgets[0].customTitle = L"Original title";
+        widgets[0].showSearchBox = true;
+        widgets[0].gridCell = {L"__dock", 0, 0};
+        widgets[1].id = L"target";
+        widgets[1].type = type;
+        const auto dockType = type == Type::Collection ? DockEntryType::Collection
+            : type == Type::FileCategories ? DockEntryType::DesktopFiles : DockEntryType::FolderMapping;
+        std::vector<DockEntry> dock{{dockType, L"source"}, {DockEntryType::DesktopItem, L"unrelated"}};
+        DesktopWidget group;
+        group.id = L"group";
+        group.gridCell = {L"page", 2, 3};
+        const auto action = type == Type::Collection
+            ? pair::Action::CreateCollectionGroup : pair::Action::CreateFileGroup;
+        Check(!pair::Apply(widgets, dock, 0, 0, action, group, normalize) &&
+                dock.size() == 2 && widgets.size() == 2,
+            "a rejected Dock pair must keep its widget and Dock reference");
+        Check(pair::Apply(widgets, dock, 0, 1, action, group, normalize) &&
+                dock.size() == 1 && dock[0].reference == L"unrelated" &&
+                widgets.size() == 3 && widgets[2].dissolveWhenSingle,
+            "a committed Dock pair must transfer sole ownership and persist automatic dissolution");
+        Check(!pair::Dissolve(widgets, 2, {L"page", 2, 3}) && widgets.size() == 3,
+            "a pair group with two children must remain a group");
+        widgets[2].childWidgetIds = {L"source"}; // The target was moved out through a group label.
+        widgets[1].gridCell = {L"elsewhere", 0, 0};
+        widgets[2].dissolveWhenSingle = false;
+        Check(!pair::Dissolve(widgets, 2, {L"page", 2, 3}),
+            "manual and legacy groups must not dissolve automatically");
+        widgets[2].dissolveWhenSingle = true;
+        Check(pair::Dissolve(widgets, 2, {L"page", 2, 3}) && widgets.size() == 2 &&
+                widgets[0].id == L"source" && widgets[0].type == type &&
+                widgets[0].itemKeys == std::vector<std::wstring>{L"original-a", L"original-b"} &&
+                widgets[0].sourceFolderPath == L"C:\\original-mapping" &&
+                widgets[0].gridSpan.columns == 3 && widgets[0].gridSpan.rows == 4 &&
+                widgets[0].customTitle == L"Original title" && widgets[0].showSearchBox &&
+                widgets[0].gridCell.pageId == L"page" && widgets[0].gridCell.column == 2 &&
+                widgets[0].gridCell.row == 3 && widgets[1].gridCell.pageId == L"elsewhere",
+            "single-child dissolution must restore the original source and leave the released sibling untouched");
+        group.type = type == Type::Collection ? Type::CollectionGroup : Type::FileGroup;
+        group.dissolveWhenSingle = true;
+        group.childWidgetIds = {L"missing"};
+        widgets.push_back(group);
+        Check(!pair::Dissolve(widgets, 2, {}) && widgets.size() == 3,
+            "an unresolved child must not be discarded with its group");
+        widgets[2].childWidgetIds.clear();
+        Check(pair::Dissolve(widgets, 2, {}) && widgets.size() == 2,
+            "an empty auto group must remove only the wrapper");
+    }
 }
 
 void TestBottomBarContentReservation()
@@ -1441,6 +1505,7 @@ int main()
     TestPopupIconLoadCancellationRules();
     TestDragHintRasterRules();
     TestWidgetPairDrops();
+    TestPairGroupsDissolveAndDockOwnership();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();

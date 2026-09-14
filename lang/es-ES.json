@@ -865,6 +865,7 @@
   "core.drag.reorder": "Reordenar",
   "core.drag.resize_widget": "Soltar: cambiar el tamaño del componente",
   "core.drag.move_collection_dock": "Soltar: mover la colección al Dock",
+    "core.drag.move_widget_dock": "Soltar: Mover widget al Dock",
   "core.drag.move_widget": "Soltar: mover el componente",
   "core.drag.collection_pair_hint": "Soltar con Mayús: combinar colecciones; con Ctrl: crear grupo de colecciones",
   "core.drag.desktop_files_pair_hint": "Soltar con Mayús: combinar archivos del escritorio; con Ctrl: crear grupo de archivos",

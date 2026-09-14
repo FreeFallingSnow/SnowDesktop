@@ -55,6 +55,7 @@ struct WidgetRecord
     int folderSortMode = -1;
     bool folderSortAscending = true;
     bool autoCollect = false;
+    bool dissolveWhenSingle = false;
     bool listMode = false;
     bool fanPopup = false;
     bool showDetails = false;
