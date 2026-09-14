@@ -149,6 +149,9 @@ void DesktopApp::PresentPointerInteractionFrame(
         widgetCollectionGroupTargetIndex_;
     widgetDragFeedback.groupInsertIndex =
         widgetCollectionGroupInsertIndex_;
+    widgetDragFeedback.pairTargetIndex = widgetPairTargetIndex_;
+    widgetDragFeedback.pairActive = widgetPairAction_ !=
+        snowdesktop::widget_pair_drop::Action::None;
     widgetDragFeedback.navigationSide = navHoverSide_;
     const bool widgetDragFeedbackChanged =
         snowdesktop::widget_composition_layer_rules::
@@ -563,6 +566,9 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         static_cast<size_t>(-1);
     widgetCollectionGroupInsertIndex_ =
         static_cast<size_t>(-1);
+    widgetPairTargetIndex_ = static_cast<size_t>(-1);
+    widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
+    KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
     if (dragSession_.IsActive())
         EndDragSession();
     // End the session before destroying popup-owned Item/Slot wrappers that

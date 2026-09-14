@@ -5,6 +5,12 @@
 
 void DesktopApp::RefreshDragHintFromKeyboard()
 {
+    if (widgetAction_ == WidgetAction::Move)
+    {
+        OnMouseMoveAt(0, lastMousePoint_);
+        PresentPointerInteractionFrame();
+        return;
+    }
     if (!dragSession_.IsActive() &&
         !dragDropController_.IsTransportActive()) return;
 

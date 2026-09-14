@@ -350,6 +350,26 @@ void DesktopApp::OnTimer(WPARAM timerId)
 
     if (timerId == kNativeDragHoverRecoveryTimerId)
     {
+        if (widgetAction_ == WidgetAction::Move)
+        {
+            if (mouseDownWidgetIndex_ < widgets_.size() &&
+                widgetPairTargetIndex_ < widgets_.size())
+            {
+                namespace pair = snowdesktop::widget_pair_drop;
+                auto action = pair::ResolveAction(pair::GetOptions(
+                    widgets_[mouseDownWidgetIndex_].type, widgets_[widgetPairTargetIndex_].type),
+                    (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+                    (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
+                    (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
+                if ((action == pair::Action::CreateCollectionGroup ||
+                     action == pair::Action::CreateFileGroup) &&
+                    !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
+                    action = pair::Action::None;
+                if (action != widgetPairAction_)
+                    RefreshDragHintFromKeyboard();
+            }
+            return;
+        }
         if (!dragSession_.IsActive())
         {
             if (hwnd_ && IsWindow(hwnd_))

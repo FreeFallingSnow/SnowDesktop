@@ -1,4 +1,5 @@
 #include "widgets/collection_group_rules.h"
+#include "widgets/widget_pair_drop.h"
 #include "desktop_hover_rules.h"
 #include "drag_input_rules.h"
 #include "drag_hint_rules.h"
@@ -998,6 +999,8 @@ void TestPopupIconLoadCancellationRules()
 
 void TestDragHintRasterRules()
 {
+    Check(!dragHintRules::ShouldReuseRaster(true, true, 96, 96, false),
+        "arming or releasing a modifier must repaint a cached hint with identical text");
     Check(dragHintRules::ShouldReuseRaster(true, true, 96, 96),
         "valid cached text at the same DPI is eligible for raster reuse");
     Check(
@@ -1021,6 +1024,127 @@ void TestDragHintRasterRules()
         48, 22, 8);
     Check(tinyWorkArea.x == -50 && tinyWorkArea.y == -10,
         "undersized work areas must center overflow without invalid clamp bounds");
+}
+
+void TestWidgetPairDrops()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    using Type = DesktopWidgetType;
+    using Action = pair::Action;
+    // Independent supported pairs. The production entry is the same Apply
+    // transaction used by pointer release; only key normalization is supplied.
+    const auto normalize = [](std::wstring key) {
+        for (auto& c : key) if (c >= L'a' && c <= L'z') c -= L'a' - L'A';
+        return key;
+    };
+    struct Case { Type source; Type target; bool merge; Action group; };
+    const Case cases[] = {
+        {Type::Collection, Type::Collection, true, Action::CreateCollectionGroup},
+        {Type::FileCategories, Type::FileCategories, true, Action::CreateFileGroup},
+        {Type::FileCategories, Type::FolderMapping, false, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FileCategories, false, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FolderMapping, false, Action::None},
+        {Type::Collection, Type::FileCategories, false, Action::None},
+        {Type::FileCategories, Type::Collection, false, Action::None},
+        {Type::LuaScript, Type::Collection, false, Action::None},
+        {Type::Collection, Type::CollectionGroup, false, Action::None},
+        {Type::FileCategories, Type::FileGroup, false, Action::None},
+    };
+    for (const auto& entry : cases)
+    {
+        const auto options = pair::GetOptions(entry.source, entry.target);
+        for (unsigned mods = 0; mods < 8; ++mods)
+        {
+            const Action expected = mods == 1 ? entry.group
+                : (mods == 2 && entry.merge ? Action::Merge : Action::None);
+            Check(pair::ResolveAction(options, mods & 1, mods & 2, mods & 4) == expected,
+                "only a lone Ctrl or supported lone Shift arms the requested pair operation");
+        }
+        const auto makeWidgets = [&] {
+            std::vector<DesktopWidget> widgets(3);
+            widgets[0].id = L"source";
+            widgets[0].type = entry.source;
+            widgets[0].itemKeys = {L"shared", L"source-only", L"missing-on-disk"};
+            widgets[0].sourceFolderPath = L"C:\\mapped-source";
+            widgets[0].gridSpan = {3, 4};
+            widgets[0].showSearchBox = true;
+            widgets[1].id = L"target";
+            widgets[1].type = entry.target;
+            widgets[1].itemKeys = {L"target-first", L"SHARED"};
+            widgets[1].customTitle = L"Keep target title";
+            widgets[1].showFileCategories = true;
+            widgets[1].gridCell = {L"page-a", 2, 3};
+            widgets[1].gridSpan = {2, 2};
+            widgets[2].id = L"untouched";
+            widgets[2].itemKeys = {L"unrelated"};
+            return widgets;
+        };
+        DesktopWidget group;
+        group.id = L"new-group";
+        group.gridCell = {L"page-a", 2, 3};
+        group.gridSpan = {2, 2};
+        std::vector<DockEntry> dock;
+        auto widgets = makeWidgets();
+        Check(!pair::Apply(widgets, dock, 0, 1, Action::None, {}, normalize) &&
+                widgets.size() == 3 && widgets[0].itemKeys.size() == 3,
+            "cancelled or unarmed drops must retain the complete source");
+        Check(pair::Apply(widgets, dock, 0, 1, Action::Merge, {}, normalize) == entry.merge,
+            "merge must reject mismatched component types");
+        if (entry.merge)
+        {
+            Check(widgets.size() == 2 && widgets[0].id == L"target" &&
+                    widgets[0].itemKeys == std::vector<std::wstring>{
+                        L"target-first", L"SHARED", L"source-only", L"missing-on-disk"} &&
+                    widgets[0].customTitle == L"Keep target title" &&
+                    widgets[0].showFileCategories && widgets[1].id == L"untouched" &&
+                    widgets[1].itemKeys == std::vector<std::wstring>{L"unrelated"},
+                "merge must append all source contents before deleting the source, deduplicate keys and preserve target/unrelated data");
+        }
+        else
+            Check(widgets.size() == 3 && widgets[0].itemKeys.size() == 3 &&
+                    widgets[1].itemKeys.size() == 2,
+                "rejected merges must leave both components intact");
+        widgets = makeWidgets();
+        const bool grouped = pair::Apply(widgets, dock, 0, 1, entry.group, group, normalize);
+        Check(grouped == (entry.group != Action::None), "group creation must enforce the supported pair matrix");
+        if (grouped)
+        {
+            Check(widgets.size() == 4 && widgets[3].id == L"new-group" &&
+                    widgets[3].childWidgetIds == std::vector<std::wstring>{L"target", L"source"} &&
+                    widgets[3].activeCategoryId == L"target" &&
+                    widgets[3].type == (entry.group == Action::CreateCollectionGroup
+                        ? Type::CollectionGroup : Type::FileGroup) &&
+                    widgets[3].gridCell.pageId == L"page-a" && widgets[3].gridCell.column == 2 &&
+                    widgets[0].id == L"source" && widgets[0].itemKeys.size() == 3 &&
+                    widgets[0].sourceFolderPath == L"C:\\mapped-source" &&
+                    widgets[0].gridSpan.columns == 3 && widgets[0].gridSpan.rows == 4 &&
+                    widgets[0].showSearchBox && widgets[1].customTitle == L"Keep target title",
+                "group creation must retain both children and their settings, put target first and activate it");
+            Check(!pair::Apply(widgets, dock, 0, 1, entry.group, group, normalize) && widgets.size() == 4,
+                "a repeated release must not create another group or reparent hidden children");
+        }
+        widgets = makeWidgets();
+        Check(!pair::Apply(widgets, dock, 0, 0, Action::Merge, {}, normalize) &&
+                !pair::Apply(widgets, dock, 0, 90, Action::Merge, {}, normalize) && widgets.size() == 3,
+            "self drops and stale targets must never delete a component");
+        group.id = L"target";
+        Check(!pair::Apply(widgets, dock, 0, 1, entry.group, group, normalize) && widgets.size() == 3,
+            "group IDs must not overwrite an existing component");
+    }
+
+    std::vector<DesktopWidget> widgets(2);
+    widgets[0].id = L"target";
+    widgets[0].itemKeys = {L"kept"};
+    widgets[1].id = L"source";
+    std::vector<DockEntry> dock(2);
+    dock[0].type = dock[1].type = DockEntryType::Collection;
+    dock[0].reference = L"source";
+    dock[1].reference = L"target";
+    Check(pair::Apply(widgets, dock, 1, 0, Action::Merge, {}, normalize) &&
+            widgets.size() == 1 && widgets[0].id == L"target" &&
+            widgets[0].itemKeys == std::vector<std::wstring>{L"kept"} &&
+            dock.size() == 1 && dock[0].reference == L"target",
+        "merging an empty later source must preserve the target and remove only the stale source Dock reference");
 }
 
 void TestBottomBarContentReservation()
@@ -1316,6 +1440,7 @@ int main()
     TestDragInputSampling();
     TestPopupIconLoadCancellationRules();
     TestDragHintRasterRules();
+    TestWidgetPairDrops();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();

@@ -647,6 +647,9 @@ void DesktopApp::OnMouseMoveAt(
             widgetAction_ = WidgetAction::Move;
         else if (widgetAction_ == WidgetAction::PendingResize)
             widgetAction_ = WidgetAction::Resize;
+        if (widgetAction_ == WidgetAction::Move)
+            SetTimer(hwnd_, kNativeDragHoverRecoveryTimerId,
+                kNativeDragHoverRecoveryIntervalMs, nullptr);
         UpdateWidgetHandleCursor(current);
         if (widgetEngine_)
             widgetEngine_->ClearInteractionHover();
@@ -693,6 +696,9 @@ void DesktopApp::OnMouseMoveAt(
 
         const DesktopWidgetType movingType =
             widgets_[mouseDownWidgetIndex_].type;
+        namespace pair = snowdesktop::widget_pair_drop;
+        widgetPairTargetIndex_ = static_cast<size_t>(-1);
+        widgetPairAction_ = pair::Action::None;
         const auto movingPayload = snowdesktop::slot_contract::
             PayloadForWidgetType(movingType);
         const bool movingCollection =
@@ -760,6 +766,41 @@ void DesktopApp::OnMouseMoveAt(
         widgetCollectionGroupInsertIndex_ =
             static_cast<size_t>(-1);
 
+        widgetPairTargetIndex_ = HitTestWidgetPairTarget(current, mouseDownWidgetIndex_);
+        std::wstring pairHint;
+        if (widgetPairTargetIndex_ < widgets_.size())
+        {
+            const auto options = pair::GetOptions(movingType,
+                widgets_[widgetPairTargetIndex_].type);
+            widgetPairAction_ = pair::ResolveAction(options,
+                (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+                (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
+                (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
+            if ((widgetPairAction_ == pair::Action::CreateCollectionGroup ||
+                 widgetPairAction_ == pair::Action::CreateFileGroup) &&
+                !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
+                widgetPairAction_ = pair::Action::None;
+            if (widgetPairAction_ != pair::Action::None)
+            {
+                widgetDockTarget_ = false;
+                widgetDockTargetContainer_ = nullptr;
+                SetPageNavHotEdgeHover(0);
+                navAutoFlipDir_ = 0;
+                navAutoFlipTick_ = 0;
+                const char* key = widgetPairAction_ == pair::Action::Merge
+                    ? (movingType == DesktopWidgetType::Collection
+                        ? "core.drag.merge_collections" : "core.drag.merge_desktop_files")
+                    : (widgetPairAction_ == pair::Action::CreateCollectionGroup
+                        ? "core.drag.create_collection_group" : "core.drag.create_file_group");
+                ShowDragHintWindow(current, _LW(key), true);
+                return;
+            }
+            pairHint = _LW(options.merge
+                ? (movingType == DesktopWidgetType::Collection
+                    ? "core.drag.collection_pair_hint" : "core.drag.desktop_files_pair_hint")
+                : "core.drag.file_source_pair_hint");
+        }
+
         DockContainer* dock = GetDockContainerAtPoint(current);
         const bool canDock = dock &&
             snowdesktop::slot_contract::AcceptsSlotDrop(
@@ -800,7 +841,8 @@ void DesktopApp::OnMouseMoveAt(
             }
             widgetPreviewCell_ = cell;
         }
-        ShowDragHintWindow(current, _LW("core.drag.move_widget"));
+        ShowDragHintWindow(current, pairHint.empty()
+            ? _LW("core.drag.move_widget") : pairHint);
         return;
     }
 

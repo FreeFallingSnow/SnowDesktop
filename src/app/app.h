@@ -22,6 +22,7 @@
 #include "desktop.h"
 #include "dock.h"
 #include "widget.h"
+#include "../widgets/widget_pair_drop.h"
 #include "drop_model.h"
 #include "drag_session.h"
 #include "drag_target_resolver.h"
@@ -2808,6 +2809,10 @@ private:
      * @param isMove 是否为移动操作
      */
     void PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell targetCell, GridSpan targetSpan, bool isMove = false);
+    size_t HitTestWidgetPairTarget(POINT point, size_t sourceIndex) const;
+    std::optional<GridSpan> GetWidgetPairGroupSpan(size_t sourceIndex, size_t targetIndex) const;
+    bool CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
+        snowdesktop::widget_pair_drop::Action action);
     bool AddCollectionToGroup(size_t collectionIndex, size_t groupIndex,
         size_t insertIndex = static_cast<size_t>(-1));
     bool ReleaseCollectionFromGroup(const std::wstring& collectionId,
@@ -3843,6 +3848,9 @@ private:
     DockContainer* widgetDockTargetContainer_ = nullptr;
     size_t widgetDockInsertIndex_ = 0;
     size_t widgetCollectionGroupTargetIndex_ = static_cast<size_t>(-1);
+    size_t widgetPairTargetIndex_ = static_cast<size_t>(-1);
+    snowdesktop::widget_pair_drop::Action widgetPairAction_ =
+        snowdesktop::widget_pair_drop::Action::None;
     size_t widgetCollectionGroupInsertIndex_ = static_cast<size_t>(-1);
     size_t dockHandoffDwellIndex_ = static_cast<size_t>(-1);
     DWORD dockHandoffDwellStartTick_ = 0;
@@ -3996,6 +4004,7 @@ private:
     SIZE hintRasterSize_{};
     UINT hintRasterDpi_ = 0;
     bool hintRasterValid_ = false;
+    bool hintModifierActiveCache_ = false;
     /** @brief 确保拖拽提示窗口已创建。 @return 成功返回 true */
     bool EnsureDragHintWindow();
     /** @brief 使已提交的拖拽提示位图缓存失效。 */
@@ -4003,9 +4012,11 @@ private:
     /** @brief 同步拖拽提示与悬浮 Dock 的 owner 关系。 */
     void SyncDragHintWindowOwner();
     /** @brief 在客户端坐标位置显示拖拽提示。 @param clientPoint 客户端坐标 @param text 提示文本 */
-    void ShowDragHintWindow(POINT clientPoint, const std::wstring& text);
+    void ShowDragHintWindow(POINT clientPoint, const std::wstring& text,
+        bool modifierActive = false);
     /** @brief 在屏幕坐标位置显示拖拽提示。 @param screenPoint 屏幕坐标 @param text 提示文本 */
-    void ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text);
+    void ShowDragHintWindowScreen(POINT screenPoint, const std::wstring& text,
+        bool modifierActive = false);
     /** @brief 隐藏拖拽提示窗口。 */
     void HideDragHintWindow();
     /** @brief 销毁拖拽提示窗口。 */

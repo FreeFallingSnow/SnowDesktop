@@ -684,7 +684,13 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_ESCAPE:
         handled = true;
         restoreFloatingDockLayer = true;
-        if (dragSession_.IsActive())
+        if (widgetAction_ != WidgetAction::None)
+        {
+            CancelPointerPressWithoutCaptureRelease();
+            ReleaseCapture();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        else if (dragSession_.IsActive())
         {
             CancelActiveItemDrag();
             ClearSelection();

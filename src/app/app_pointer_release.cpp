@@ -1055,6 +1055,18 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         const WidgetAction completedWidgetAction = widgetAction_;
         if (completedWidgetAction == WidgetAction::Move)
         {
+            // Sample both geometry and modifiers at release, including a final
+            // key transition with no intervening mouse-move message.
+            OnMouseMoveAt(wp, upPoint);
+            HideDragHintWindow();
+            const size_t pairTarget = HitTestWidgetPairTarget(upPoint, mouseDownWidgetIndex_);
+            const auto pairAction = pairTarget < widgets_.size()
+                ? snowdesktop::widget_pair_drop::ResolveAction(
+                    snowdesktop::widget_pair_drop::GetOptions(
+                        widgets_[mouseDownWidgetIndex_].type, widgets_[pairTarget].type),
+                    (wp & MK_CONTROL) != 0, (wp & MK_SHIFT) != 0,
+                    (GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+                : snowdesktop::widget_pair_drop::Action::None;
             const auto movingPayload = snowdesktop::slot_contract::
                 PayloadForWidgetType(
                     widgets_[mouseDownWidgetIndex_].type);
@@ -1099,7 +1111,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
             // release test, then end the gesture before any placement path
             // rebuilds the persistent DockHost from normal interaction bounds.
             widgetAction_ = WidgetAction::None;
-            if (canGroup)
+            if (pairAction != snowdesktop::widget_pair_drop::Action::None)
+            {
+                CommitWidgetPairDrop(mouseDownWidgetIndex_, pairTarget, pairAction);
+            }
+            else if (canGroup)
             {
                 if (canCollectionGroup)
                     AddCollectionToGroup(
@@ -1140,6 +1156,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
             static_cast<size_t>(-1);
         widgetCollectionGroupInsertIndex_ =
             static_cast<size_t>(-1);
+        widgetPairTargetIndex_ = static_cast<size_t>(-1);
+        widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
+        KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
         InvalidateDragStaticScene();
         mouseDown_ = false;
         mouseDownHit_ = nullptr;

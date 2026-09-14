@@ -283,16 +283,21 @@ void DesktopApp::DrawDynamicOverlays(
          widgetAction_ == WidgetAction::Resize) &&
         mouseDownWidgetIndex_ < widgets_.size())
     {
-        if (widgetAction_ == WidgetAction::Move &&
+        const bool pairActive = widgetAction_ == WidgetAction::Move &&
+            widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None &&
+            widgetPairTargetIndex_ < widgets_.size();
+        const size_t highlightedTarget = pairActive
+            ? widgetPairTargetIndex_ : widgetCollectionGroupTargetIndex_;
+        if (pairActive || (widgetAction_ == WidgetAction::Move &&
             widgetCollectionGroupTargetIndex_ <
                 widgets_.size() &&
             (widgets_[widgetCollectionGroupTargetIndex_].type ==
                  DesktopWidgetType::CollectionGroup ||
              widgets_[widgetCollectionGroupTargetIndex_].type ==
-                 DesktopWidgetType::FileGroup))
+                 DesktopWidgetType::FileGroup)))
         {
             RECT target =
-                widgets_[widgetCollectionGroupTargetIndex_].bounds;
+                widgets_[highlightedTarget].bounds;
             for (const auto& container : containers_)
             {
                 auto* group =
@@ -300,14 +305,14 @@ void DesktopApp::DrawDynamicOverlays(
                         container.get());
                 if (group &&
                     group->GetWidgetData() ==
-                        &widgets_[widgetCollectionGroupTargetIndex_])
+                        &widgets_[highlightedTarget])
                 {
                     target = group->GetFrameRect();
                     break;
                 }
             }
             const float cellScale =
-                widgets_[widgetCollectionGroupTargetIndex_]
+                widgets_[highlightedTarget]
                     .cellScale;
             const int targetPadding =
                 ScaleWidgetCu(3.0f, cellScale);

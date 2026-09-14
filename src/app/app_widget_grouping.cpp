@@ -575,6 +575,116 @@ void DesktopApp::AddFileGroupWidgetAt(POINT screenPoint)
     ApplyWidgetPreviewSettings(screenPoint, settings);
 }
 
+size_t DesktopApp::HitTestWidgetPairTarget(POINT point, size_t sourceIndex) const
+{
+    if (sourceIndex >= widgets_.size() || GetDockContainerAtPoint(point) ||
+        IsPointOccludedByOpenPopup(point))
+        return static_cast<size_t>(-1);
+    for (size_t i = widgets_.size(); i-- > 0;)
+    {
+        if (i == sourceIndex || IsGroupedWidget(widgets_[i]) ||
+            (desktopIconsHidden_ && !widgets_[i].keepWhenDesktopHidden))
+            continue;
+        RECT frame = widgets_[i].bounds;
+        for (const auto& container : containers_)
+        {
+            const auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+            if (widget && widget->GetWidgetData() == &widgets_[i])
+            {
+                frame = widget->GetFrameRect();
+                break;
+            }
+        }
+        if (IsRectEmptyRect(frame) || !PtInRect(&frame, point)) continue;
+        // An incompatible foreground component blocks targets behind it.
+        return snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, i)
+            ? i : static_cast<size_t>(-1);
+    }
+    return static_cast<size_t>(-1);
+}
+
+std::optional<GridSpan> DesktopApp::GetWidgetPairGroupSpan(
+    size_t sourceIndex, size_t targetIndex) const
+{
+    if (!snowdesktop::widget_pair_drop::CanPair(widgets_, sourceIndex, targetIndex))
+        return std::nullopt;
+    const auto& target = widgets_[targetIndex];
+    const auto* page = FindGridPage(gridPages_, target.gridCell.pageId);
+    if (!page) return std::nullopt;
+    DesktopWidget group;
+    group.type = DesktopWidgetType::FileGroup;
+    ConfigureWidgetGridLimits(group);
+    const auto span = ClampWidgetGridSpan(group, target.gridSpan,
+        page->columns - target.gridCell.column, page->rows - target.gridCell.row);
+    for (size_t i = 0; i < widgets_.size(); ++i)
+    {
+        const auto& other = widgets_[i];
+        if (i == sourceIndex || i == targetIndex || IsGroupedWidget(other) ||
+            other.gridCell.pageId != target.gridCell.pageId)
+            continue;
+        if (target.gridCell.column < other.gridCell.column + other.gridSpan.columns &&
+            other.gridCell.column < target.gridCell.column + span.columns &&
+            target.gridCell.row < other.gridCell.row + other.gridSpan.rows &&
+            other.gridCell.row < target.gridCell.row + span.rows)
+            return std::nullopt;
+    }
+    return span;
+}
+
+bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
+    snowdesktop::widget_pair_drop::Action action)
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    if (!pair::CanPair(widgets_, sourceIndex, targetIndex)) return false;
+    DesktopWidget group;
+    group.id = MakeNewWidgetId();
+    group.type = action == pair::Action::CreateCollectionGroup
+        ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup;
+    group.title = _LW(action == pair::Action::CreateCollectionGroup
+        ? "widget.collection_group" : "widget.file_group");
+    group.showTitle = true;
+    group.gridCell = widgets_[targetIndex].gridCell;
+    group.gridSpan = widgets_[targetIndex].gridSpan;
+    group.keepWhenDesktopHidden = widgets_[targetIndex].keepWhenDesktopHidden;
+    ConfigureWidgetGridLimits(group);
+    if (action != pair::Action::Merge)
+    {
+        const auto plannedSpan = GetWidgetPairGroupSpan(sourceIndex, targetIndex);
+        if (!plannedSpan) return false;
+        group.gridSpan = *plannedSpan;
+    }
+    const GridCell landing = group.gridCell;
+    const GridSpan span = group.gridSpan;
+    // Vector insertion/erasure invalidates every popup's widget pointer/index.
+    if (GetOpenPopupWidget())
+    {
+        CloseCollectionPopup();
+        FinalizeCloseCollectionPopup();
+    }
+    if (!pair::Apply(widgets_, dockEntries_, sourceIndex, targetIndex,
+            action, std::move(group), ToUpperInvariant))
+        return false;
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    keyboardNavInsideWidget_ = false;
+    keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
+    if (action != pair::Action::Merge)
+    {
+        // Small collections can form a group with a larger minimum span;
+        // use the existing placement transaction to resolve its neighbours.
+        EnsureNavTabOrder();
+        PlaceWidgetWithDisplacement(widgets_.size() - 1, landing, span, true);
+    }
+    else
+    {
+        EnsureNavTabOrder();
+        ApplyPageMapping();
+        LayoutItems();
+        SaveLayoutSlots();
+    }
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    return true;
+}
+
 size_t DesktopApp::HitTestCollectionGroupIndex(
     POINT point, size_t excludeWidgetIndex) const
 {

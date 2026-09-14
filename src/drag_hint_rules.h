@@ -26,9 +26,10 @@ constexpr bool ShouldReuseRaster(
     bool rasterValid,
     bool sameText,
     unsigned cachedDpi,
-    unsigned currentDpi)
+    unsigned currentDpi,
+    bool sameStyle = true)
 {
-    return rasterValid && sameText &&
+    return rasterValid && sameText && sameStyle &&
         cachedDpi != 0 && cachedDpi == currentDpi;
 }
 

@@ -212,6 +212,15 @@ int main(int argc, char** argv)
     Check(rules::NeedsWidgetDragFeedbackPresent(
             presentedFeedback, currentFeedback),
         "changing widget page navigation feedback must redraw it");
+    presentedFeedback = currentFeedback;
+    currentFeedback.pairTargetIndex = 3;
+    currentFeedback.pairActive = true;
+    Check(rules::NeedsWidgetDragFeedbackPresent(presentedFeedback, currentFeedback),
+        "arming a widget merge or group must repaint the yellow target without pointer movement");
+    presentedFeedback = currentFeedback;
+    currentFeedback.pairActive = false;
+    Check(rules::NeedsWidgetDragFeedbackPresent(presentedFeedback, currentFeedback),
+        "releasing the modifier must clear the yellow widget target");
     currentFeedback.active = false;
     Check(!rules::NeedsWidgetDragFeedbackPresent(
             presentedFeedback, currentFeedback),
