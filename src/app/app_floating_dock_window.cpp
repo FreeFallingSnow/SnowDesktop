@@ -313,6 +313,7 @@ bool DesktopApp::SyncPersistentDockHosts()
             host->container = dock;
             host->sourceRect = {};
             host->dockRect = {};
+            host->animationVisualRect = {};
             host->popupRect = {};
             host->tooltipRect = {};
         }
@@ -701,6 +702,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
 
     const RECT nextDockRect =
         host.container->GetInteractiveBounds();
+    const RECT nextAnimationVisualRect =
+        host.container->GetAnimationVisualBounds();
     const RECT nextTooltipRect =
         host.container->
             GetHoveredTitleBounds(
@@ -738,6 +741,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     const bool popupRegionChanged =
         !EqualRect(&nextPopupRect,
             &floatingDockPopupRect_);
+    const bool animationRegionChanged =
+        !EqualRect(&nextAnimationVisualRect, &host.animationVisualRect);
     const bool titleRegionChanged =
         !EqualRect(&nextTooltipRect,
             &floatingDockTooltipRect_);
@@ -745,6 +750,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !EqualRect(&previousSourceRect,
             &floatingDockSourceRect_);
     if (!dockGeometryChanged &&
+        !animationRegionChanged &&
         !popupRegionChanged &&
         !titleRegionChanged &&
         !sourceRectChanged &&
@@ -754,6 +760,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         return;
     }
     floatingDockRect_ = nextDockRect;
+    host.animationVisualRect = nextAnimationVisualRect;
     floatingDockPopupRect_ = nextPopupRect;
     floatingDockTooltipRect_ = nextTooltipRect;
 
@@ -773,63 +780,14 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
                 dockAppearance.widgetEdgeHighlightWidth)
             : dockAppearance.widgetBorderWidth,
         kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    const int borderOverdraw =
-        snowdesktop::floating_dock_rules::ResolveBorderOverdraw(
-            dockBorderWidth);
-    const RECT dockRegionRect =
-        snowdesktop::floating_dock_rules::
-            ExpandForBorderOverdraw(
-                floatingDockRect_, dockBorderWidth);
-    const RECT dockLocal =
-        snowdesktop::floating_dock_rules::
-            DesktopRectToWindowRect(
-                dockRegionRect,
-                floatingDockSourceRect_);
     const int radius = std::max(1,
         static_cast<int>(std::round(
             promoted
                 ? floatingDockPersonalization_.cornerRadius
                 : CurrentDockAppearance().cornerRadius)));
-    HRGN windowRegion = CreateRoundRectRgn(
-        dockLocal.left, dockLocal.top,
-        dockLocal.right + 1, dockLocal.bottom + 1,
-        (radius + borderOverdraw) * 2,
-        (radius + borderOverdraw) * 2);
-    auto appendRegion = [&](
-        const RECT& desktopRect,
-        int cornerRadius) {
-        if (!windowRegion ||
-            IsRectEmpty(&desktopRect))
-            return;
-        const RECT overdrawRect =
-            snowdesktop::
-                floating_dock_rules::
-                    ExpandForBorderOverdraw(
-                        desktopRect);
-        const RECT local =
-            snowdesktop::floating_dock_rules::
-                DesktopRectToWindowRect(
-                    overdrawRect,
-                    floatingDockSourceRect_);
-        HRGN addedRegion = CreateRoundRectRgn(
-            local.left, local.top,
-            local.right + 1,
-            local.bottom + 1,
-            (cornerRadius +
-                borderOverdraw) * 2,
-            (cornerRadius +
-                borderOverdraw) * 2);
-        if (addedRegion)
-        {
-            CombineRgn(windowRegion, windowRegion,
-                addedRegion, RGN_OR);
-            DeleteObject(addedRegion);
-        }
-    };
-    appendRegion(
-        floatingDockPopupRect_, radius);
-    appendRegion(
-        floatingDockTooltipRect_, 7);
+    HRGN windowRegion = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
+        floatingDockRect_, host.animationVisualRect, floatingDockPopupRect_,
+        floatingDockTooltipRect_, floatingDockSourceRect_, radius, dockBorderWidth);
     if (windowRegion &&
         !SetWindowRgn(
             dockHostHwnd, windowRegion, FALSE))

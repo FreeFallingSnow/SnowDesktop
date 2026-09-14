@@ -3191,28 +3191,79 @@ int main(int argc, char** argv)
             floatingPopupRect,
             RECT{}),
         "points outside every visible floating layer are genuine leaves");
-    const RECT floatingTooltipRect{ 120, 840, 280, 890 };
-    Check(floatingDock::IsTooltipOnlyPoint(
+    Check(floatingDock::IsVisualOnlyPoint(
               POINT{ 180, 860 },
               floatingDockRect,
-              floatingPopupRect,
-              floatingTooltipRect) &&
-            !floatingDock::IsTooltipOnlyPoint(
+              floatingPopupRect) &&
+            !floatingDock::IsVisualOnlyPoint(
                 POINT{ 150, 930 },
                 floatingDockRect,
-                floatingPopupRect,
-                floatingTooltipRect) &&
-            !floatingDock::IsTooltipOnlyPoint(
+                floatingPopupRect) &&
+            !floatingDock::IsVisualOnlyPoint(
                 POINT{ 300, 600 },
                 floatingDockRect,
-                floatingPopupRect,
-                RECT{ 260, 560, 360, 660 }) &&
-            !floatingDock::IsTooltipOnlyPoint(
+                floatingPopupRect) &&
+            floatingDock::IsVisualOnlyPoint(
                 POINT{ 20, 20 },
                 floatingDockRect,
-                floatingPopupRect,
-                RECT{}),
-        "only the visual title chip outside interactive Dock and popup regions may pass through input");
+                floatingPopupRect),
+        "titles and visual overdraw must pass through input while Dock and popup targets stay interactive");
+
+    // The host's actual HRGN builder must not cut a bouncing icon into two
+    // pieces between the Dock and its title. Exercise GDI regions without
+    // creating or operating a desktop host window.
+    const RECT launchDock{ 200, 200, 400, 400 };
+    struct LaunchRegionCase
+    {
+        RECT animation;
+        RECT title;
+        POINT gap;
+        POINT behindTitle;
+    };
+    const LaunchRegionCase launchRegionCases[]{
+        {{200, 174, 400, 400}, {240, 162, 360, 192}, {300, 196}, {300, 190}},
+        {{200, 200, 400, 426}, {240, 408, 360, 438}, {300, 404}, {300, 410}},
+        {{200, 200, 426, 400}, {408, 240, 438, 360}, {404, 300}, {410, 300}},
+        {{174, 200, 400, 400}, {162, 240, 192, 360}, {196, 300}, {190, 300}}
+    };
+    for (const auto& sample : launchRegionCases)
+    {
+        for (const POINT origin : {POINT{100, 100}, POINT{-1920, -1080}})
+        {
+            const RECT source{origin.x, origin.y, origin.x + 2560, origin.y + 1440};
+            for (const bool showTitle : {false, true})
+            {
+                const RECT title = showTitle ? sample.title : RECT{};
+                HRGN active = floatingDock::CreateHostWindowRegion(
+                    launchDock, sample.animation, RECT{}, title, source, 8, 1.0f);
+                HRGN resting = floatingDock::CreateHostWindowRegion(
+                    launchDock, launchDock, RECT{}, title, source, 8, 1.0f);
+                Check(active && resting, "launch visibility regions must be created");
+                if (active && resting)
+                {
+                    const auto contains = [&](HRGN region, POINT point) {
+                        return PtInRegion(region, point.x - origin.x, point.y - origin.y) != FALSE;
+                    };
+                    Check(contains(active, sample.gap),
+                        "launch envelope must keep the Dock/title gap visible in all four directions");
+                    Check(contains(active, sample.behindTitle),
+                        "launch visibility must remain continuous with or without a title");
+                    Check(!contains(resting, sample.gap),
+                        "ending or disabling bounce must retire the animation-only region");
+                    Check(!showTitle || contains(resting, sample.behindTitle),
+                        "retiring bounce must preserve the title region");
+                    Check(contains(active, POINT{300, 300}) &&
+                            contains(resting, POINT{300, 300}),
+                        "launch region changes must preserve the Dock body");
+                }
+                Check(floatingDock::IsVisualOnlyPoint(sample.gap, launchDock, RECT{}) &&
+                        floatingDock::IsVisualOnlyPoint(sample.behindTitle, launchDock, RECT{}),
+                    "both animation-only and title pixels must remain mouse-transparent");
+                if (active) DeleteObject(active);
+                if (resting) DeleteObject(resting);
+            }
+        }
+    }
     Check(!floatingDock::ShouldRenderDesktopDock(
             true, true),
         "only the Dock mirrored by the floating host must be hidden");

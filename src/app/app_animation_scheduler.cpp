@@ -108,7 +108,7 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
         InvalidateDragStaticScene();
         InvalidateRect(hwnd_, nullptr, FALSE);
         UpdateFloatingPopupWindowBounds(true);
-        InvalidateFloatingDockWindow(false);
+        UpdateFloatingDockWindowBounds(false);
     }
 }
 

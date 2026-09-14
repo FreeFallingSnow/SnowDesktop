@@ -44,6 +44,7 @@ bool DesktopApp::StartDockLaunchBounce(size_t itemIndex)
         nullptr
     };
     EnsureUiAnimationFrame();
+    UpdateFloatingDockWindowBounds(false);
     InvalidateDockLaunchBounceRects();
     return true;
 }
@@ -104,9 +105,11 @@ void DesktopApp::OnDockLaunchBounceTimer()
         !snowdesktop::animation::RuntimeAnimationsEnabled())
     {
         dockLaunchBounces_.clear();
+        UpdateFloatingDockWindowBounds(false);
         return;
     }
 
+    const size_t previousBounceCount = dockLaunchBounces_.size();
     for (auto bounce = dockLaunchBounces_.begin();
         bounce != dockLaunchBounces_.end();)
     {
@@ -168,6 +171,10 @@ void DesktopApp::OnDockLaunchBounceTimer()
         ++bounce;
     }
 
+    // Retire the visual envelope even when the last item disappeared. The
+    // item-based invalidation below has no remaining item in that case.
+    if (dockLaunchBounces_.size() != previousBounceCount)
+        UpdateFloatingDockWindowBounds(false);
     InvalidateDockLaunchBounceRects();
 }
 

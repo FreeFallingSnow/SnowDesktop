@@ -236,16 +236,14 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         if (hwnd_ && IsWindow(hwnd_) &&
             ScreenToClient(hwnd_, &hitDesktopPoint) &&
             snowdesktop::floating_dock_rules::
-                IsTooltipOnlyPoint(
+                IsVisualOnlyPoint(
                     hitDesktopPoint,
                     host.dockRect,
-                    host.popupRect,
-                    host.tooltipRect))
+                    host.popupRect))
         {
-            // The title chip is visual feedback, not an interaction surface.
-            // Passing its hit through lets an upward exit reach the paired
-            // desktop window and prevents an invisible stale title region
-            // from intercepting left or right button input.
+            // Titles, launch overdraw and border padding are visual only.
+            // Expanding the visible region must not enlarge the Dock's
+            // hover, click or drag target.
             return HTTRANSPARENT;
         }
         return HTCLIENT;

@@ -718,6 +718,7 @@ private:
         HWND hwnd = nullptr;
         RECT sourceRect{};
         RECT dockRect{};
+        RECT animationVisualRect{};
         RECT popupRect{};
         RECT tooltipRect{};
         bool active = false;
