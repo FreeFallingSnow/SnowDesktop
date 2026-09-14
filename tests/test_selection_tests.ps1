@@ -9,7 +9,7 @@ $parseErrors = $null
 $manager = [System.Management.Automation.Language.Parser]::ParseFile(
     $managerPath, [ref]$parseTokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw "test manager must parse" }
-foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport")) {
+foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Get-TestRunOptions", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport")) {
     $definition = $manager.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -102,6 +102,43 @@ Set-Inventory @($preview)
 Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests"
 Check ($script:invocations.Count -eq 2 -and $script:invocations[0].FilePath -eq "cmake" -and
     $script:invocations[1].FilePath -eq "ctest") "full aggregate must not arrange its runtime twice"
+
+# Manual Shell diagnostics must never start through an automatic mode, while
+# explicit selection must still reach them. Verify the real preset inventories
+# (no tests execute here), not just the presence of a label in source text.
+Push-Location (Join-Path $PSScriptRoot "..")
+try {
+    foreach ($mode in @("full", "core", "fast", "name", "label")) {
+        $filter = if ($mode -eq "name") { "^shell_file_operation_worker$" } else { "^manual$" }
+        $options = Get-TestRunOptions -Mode $mode -Filter $filter
+        $arguments = @("--preset", $options.TestPreset, "--show-only=json-v1") + $options.CTestFilterArguments
+        $inventory = (& ctest.exe @arguments) -join [Environment]::NewLine
+        Check ($LASTEXITCODE -eq 0) "actual preset query must succeed for $mode"
+        $selected = @(($inventory | ConvertFrom-Json).tests)
+        $names = @($selected | ForEach-Object name)
+        $manual = @($selected | Where-Object {
+            @($_.properties | Where-Object name -eq LABELS | ForEach-Object value) -contains "manual"
+        })
+        if ($mode -in "full", "core", "fast") {
+            Check ($selected.Count -gt 0 -and $manual.Count -eq 0 -and
+                $names -notcontains "shell_file_operation_worker") "automatic $mode must exclude manual Shell diagnostics"
+            if ($mode -eq "full" -or $mode -eq "fast") {
+                Check ($names -contains "shell_file_operation_worker_network_preflight") "automatic $mode must retain preflight regressions"
+            }
+        }
+        else {
+            Check ($names.Count -eq 1 -and $names[0] -eq "shell_file_operation_worker") "explicit $mode selection must include manual Shell diagnostics"
+        }
+        Set-Inventory @($built)
+        Invoke-FilteredTests @options
+        Check (($script:queryArguments -join " ").StartsWith("--preset $($options.TestPreset) ")) "query must use mode preset for $mode"
+        Check (($script:invocations[-1].Arguments -join " ") -eq
+            ((@("--preset", $options.TestPreset) + $options.CTestFilterArguments) -join " ")) "execution must use the queried preset and filter for $mode"
+    }
+}
+finally { Pop-Location }
+Expect-Failure { Get-TestRunOptions -Mode name } "non-empty"
+Expect-Failure { Get-TestRunOptions -Mode label } "non-empty"
 
 Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" status="run" /></testsuite>') -ExpectedTests @("a")
 Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite />') } "no executed test cases"

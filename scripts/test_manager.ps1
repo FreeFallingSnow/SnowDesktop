@@ -59,11 +59,10 @@ function Assert-CompleteTestReport {
 }
 
 function Get-TestSelection {
-    param([string[]]$CTestFilterArguments = @())
+    param([string[]]$CTestFilterArguments = @(), [string]$TestPreset = "tests")
 
     $arguments = @(
-        "--test-dir", ".build",
-        "-C", "Release",
+        "--preset", $TestPreset,
         "--show-only=json-v1"
     ) + $CTestFilterArguments
     $output = & ctest @arguments
@@ -105,10 +104,11 @@ function Get-TestSelection {
 function Invoke-FilteredTests {
     param(
         [string[]]$CTestFilterArguments,
-        [string]$BuildPreset = ""
+        [string]$BuildPreset = "",
+        [string]$TestPreset = "tests"
     )
 
-    $selection = Get-TestSelection -CTestFilterArguments $CTestFilterArguments
+    $selection = Get-TestSelection -CTestFilterArguments $CTestFilterArguments -TestPreset $TestPreset
     if ($selection.Tests.Count -eq 0) {
         throw "The requested filter did not match any configured tests."
     }
@@ -144,7 +144,26 @@ function Invoke-FilteredTests {
     Write-Host ""
     Write-Host "=== Running $($selection.Tests.Count) selected test(s) ==="
     Invoke-Checked -FilePath "ctest" -Arguments (
-        @("--preset", "tests") + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
+        @("--preset", $TestPreset) + $CTestFilterArguments) -ExpectedTests @($selection.Tests.name)
+}
+
+function Get-TestRunOptions {
+    param([string]$Mode, [string]$Filter = "")
+    switch ($Mode) {
+        "full" { return @{ TestPreset = "tests"; BuildPreset = "tests"; CTestFilterArguments = @() } }
+        "core" { return @{ TestPreset = "core-tests"; BuildPreset = "core-tests"; CTestFilterArguments = @() } }
+        "fast" { return @{ TestPreset = "fast-tests"; BuildPreset = "fast-tests"; CTestFilterArguments = @() } }
+        { $_ -in "name", "label" } {
+            if ([string]::IsNullOrWhiteSpace($Filter)) {
+                throw "$Mode mode requires a non-empty regular expression."
+            }
+            $flag = if ($Mode -eq "name") { "-R" } else { "-L" }
+            # Explicit selection can opt into manual diagnostics. The same
+            # preset must be used to query inventory and execute that selection.
+            return @{ TestPreset = "all-tests"; CTestFilterArguments = @($flag, $Filter) }
+        }
+        default { throw "Unknown execution mode: $Mode" }
+    }
 }
 
 function Get-HostRuntimeLocks {
@@ -203,34 +222,8 @@ function Test-IsolatedOutput {
 Write-Host "=== Configuring tests ==="
 Invoke-Checked -FilePath "cmake" -Arguments @("--preset", "tests")
 
-switch ($Mode) {
-    "full" {
-        Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests"
-        Write-Host ""
-        Write-Host "=== Verifying isolated test output ==="
-        Test-IsolatedOutput
-    }
-    "core" {
-        Invoke-FilteredTests -CTestFilterArguments @("-L", "^core$") -BuildPreset "core-tests"
-    }
-    "fast" {
-        Invoke-FilteredTests -CTestFilterArguments @(
-            "-LE", "^integration$") -BuildPreset "fast-tests"
-    }
-    "label" {
-        if ([string]::IsNullOrWhiteSpace($Filter)) {
-            throw "label mode requires a non-empty label regular expression."
-        }
-        Invoke-FilteredTests -CTestFilterArguments @("-L", $Filter)
-    }
-    "name" {
-        if ([string]::IsNullOrWhiteSpace($Filter)) {
-            throw "name mode requires a non-empty test-name regular expression."
-        }
-        Invoke-FilteredTests -CTestFilterArguments @("-R", $Filter)
-    }
-    "list" {
-        $selection = Get-TestSelection
+if ($Mode -eq "list") {
+        $selection = Get-TestSelection -TestPreset "all-tests"
         foreach ($test in $selection.Tests) {
             $labelProperty = @($test.properties |
                 Where-Object name -eq "LABELS")
@@ -244,6 +237,17 @@ switch ($Mode) {
         }
         Write-Host ""
         Write-Host "$($selection.Tests.Count) test(s) configured."
+}
+else {
+    $options = Get-TestRunOptions -Mode $Mode -Filter $Filter
+    if ($Mode -in "full", "core", "fast") {
+        Write-Host "Manual diagnostic tests are excluded; select them explicitly with name or label."
+    }
+    Invoke-FilteredTests @options
+    if ($Mode -eq "full") {
+        Write-Host ""
+        Write-Host "=== Verifying isolated test output ==="
+        Test-IsolatedOutput
     }
 }
 

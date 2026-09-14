@@ -2083,12 +2083,16 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32
         LABELS integration shell interaction)
-    set_tests_properties(shell_file_operation_worker PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(shell_file_operation_worker PROPERTIES
+        SKIP_RETURN_CODE 77 LABELS "integration;shell;interaction;manual")
     add_test(NAME shell_file_operation_worker_network_preflight
         COMMAND SnowDesktopShellFileOperationWorkerTests --network-preflight-tests)
     set_tests_properties(shell_file_operation_worker_network_preflight PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 20 LABELS "rules;shell;test-infrastructure")
+    # The automatic preflight regression shares the manual integration binary.
+    # A cold fast build still needs it, although it never runs the integration.
+    list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS SnowDesktopShellFileOperationWorkerTests)
 
     snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests

@@ -241,6 +241,10 @@
 - `scripts/test.bat` 支持分层验证：`name <regex>` 按测试名定向运行，`label <regex>` 按 CTest
   标签定向运行，`core` 运行核心测试，`fast` 排除 `integration` 标签，`full` 或无参数运行完整测试。
   筛选模式必须从 CTest 清单动态推导构建目标，不得在脚本中复制测试目标列表。
+- `manual` 标签表示仅按需执行的诊断测试；无参数、`full`、`core`、`fast` 及对应 CTest 预设默认排除。
+  当前 `shell_file_operation_worker` 独立为手动诊断，仅在相关文件操作或 Shell 阻塞问题排查时通过
+  `scripts/test.bat name "^shell_file_operation_worker$"` 显式运行；预检回归仍在自动测试集合中。
+  `name`、`label` 可显式选中手动条目，`list` 必须展示它们；自动全量通过不代表手动诊断已执行。
 - 开发中显式选择 `name` 或 `label` 等模式，运行覆盖本次变化的最小充分测试组；原生改动还应
   完成匹配编译。`fast`、`core` 和固定正则不自动等于本次改动的充分集合。零匹配必须报错。
 - 不因每轮编辑、中间 Commit、状态回复或同一候选的重复交付机械运行完整测试。选择范围按下表

@@ -74,7 +74,7 @@ scripts/test.bat full
 
 选择由改动及调用链决定。上面的拖放正则适合内容读取相关回归，并非所有拖放改动的固定充分集合；Shell 文件操作、落点、持久化等变化还需纳入对应测试。零匹配必须报错，不得记为通过。
 
-本次规则更新不改变现有无参数默认行为，也未新增命令。后续若修改 CLI 语义，须按公共 API 变更提醒规则单独说明兼容影响。
+无参数与 `full` 运行完整自动测试集合；`manual` 条目只按需显式运行，不包含在自动全量中。`core`、`fast` 及对应 CTest 预设也排除手动诊断。后续若修改 CLI 语义，须按公共 API 变更提醒规则单独说明兼容影响。
 
 ## 4. 验证结果的有效性
 
@@ -196,10 +196,12 @@ DND-01 必须从带异步能力的外部输入进入实际宿主组件提交；D
 
 ### Shell 文件操作与离线映射盘
 
+`shell_file_operation_worker` 标记为 `manual`，平时不运行，仅在相关文件操作或 Shell 阻塞问题排查时使用 `scripts/test.bat name "^shell_file_operation_worker$"` 单独执行。默认入口与 `full`、`core`、`fast` 均排除它；`list` 仍展示它，显式 `name` / `label` 筛选可以选中。CTest 的 `tests`、`core-tests`、`fast-tests` 预设与脚本保持一致；`all-tests` 保留包括手动诊断的完整登记集合。自动集合通过不表示手动诊断已执行。
+
 `shell_file_operation_worker` 的夹具全部位于隔离临时目录，但 Windows Shell 会在后台读取映射盘根目录的 `desktop.ini`。离线或正在重连的 SMB 映射可能使测试在本地断言完成后仍无法退出。
 
 该条目在初始化 COM 和创建夹具之前，用独立进程查询 SMB 映射状态；断线、重连、未知状态或查询超过 3 秒时，停止预检进程并返回 CTest 跳过码 77。仅终止只读预检，绝不在实际文件测试运行后终止进程并报告通过。预检启动、回收失败或异常退出仍是测试失败。不会断开映射、修改注册表或读取共享文件内容。
 
 由于后台读取来自 Windows Shell 内部，此处跳过整个文件操作集成条目，无法只排除某个盘符；原有复制、移动、重命名、快捷方式、IDropTarget 与失败保护断言全部保留。恢复可用的 SMB 映射后，下次运行自动执行原有用例。状态查询超时只表示无法确认环境，不等于已证明盘离线；SMB 状态快照也不能保证后续网络不掉线，且不覆盖 DFS、WebDAV 等其他提供程序。
 
-`shell_file_operation_worker_network_preflight` 使用同一测试程序，单独验证状态分流、查询超时、子进程回收和异常不伪装成跳过；替身只替代网络提供程序响应，不声称完成 Shell 文件操作。使用 `scripts/test.bat name shell_file_operation_worker` 可运行两项。环境跳过仍按运行器规则标记为验证未完成，完整测试不会因此被记为全部通过；应在映射恢复的环境补足集成验收。
+`shell_file_operation_worker_network_preflight` 使用同一测试程序，单独验证状态分流、查询超时、子进程回收和异常不伪装成跳过；它保留在自动集合中。替身只替代网络提供程序响应，不声称完成 Shell 文件操作。使用 `scripts/test.bat name shell_file_operation_worker` 可显式运行两项。手动执行时的环境跳过仍按运行器规则标记为验证未完成，不能把它算作通过；相关问题验收应在映射恢复的环境补足集成验证。

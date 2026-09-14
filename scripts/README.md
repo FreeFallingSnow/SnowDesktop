@@ -53,7 +53,11 @@ scripts\release.bat steam-upload-public -Yes -ConfirmVersion 1.0.5.0 -ConfirmPub
 本地脚本、CI 和 IDE 共用 `CMakePresets.json` 中的配置。
 
 测试按使用场景分层：日常改动优先用 `name <regex>` 或 `label <regex>` 运行最小充分集合；
-`core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；无参数或 `full` 运行全部测试。
+`core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；无参数或 `full` 运行完整自动测试集合。
+这些自动模式与对应 CTest 预设都排除 `manual` 手动诊断。Shell 文件操作集成测试已独立为手动诊断，
+平时不执行，遇到相关文件操作或 Shell 阻塞问题时运行 `scripts\test.bat name "^shell_file_operation_worker$"`；
+其预检回归仍自动运行。`name` / `label` 的显式筛选可以包含手动条目，`list` 会显示全部条目及标签。
+直接使用 CTest 时，`tests` 是自动全量，`all-tests` 包含手动诊断；自动全量通过不代表手动条目已执行。
 筛选参数是 CTest 正则表达式。完整测试用于任务最终交付、Pull Request 和发布验证，不要求每个
 中间 Commit 重复执行。
 
