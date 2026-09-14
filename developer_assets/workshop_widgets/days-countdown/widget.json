@@ -369,7 +369,6 @@
     "ui.datePicker",
     "view.surface.panel",
     "view.tree.core",
-    "view.styledText.basic",
     "view.inputControls",
     "view.theme.tokens",
     "view.keyboardNavigation.basic",

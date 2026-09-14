@@ -89,14 +89,20 @@ local function desktop(context,m)
                 local labelWidth=math.max(labelUnits(state),labelUnits(c.days))
                 local labelSize=math.min(unit*0.08,(w-pad*2)*0.30/labelWidth)
                 local sideWidth=labelSize*labelWidth
+                local prefix=text("event.status",state,unit*0.20,false)
+                local suffix=text("event.unit",c.days,unit*0.20,false)
+                prefix.fontSize=labelSize;prefix.width=sideWidth;prefix.flexShrink=0;prefix.textAlign="end"
+                suffix.fontSize=labelSize;suffix.width=sideWidth;suffix.flexShrink=0
                 number.fontSize=math.min(unit*0.34,(w-pad*2-sideWidth*2-unit*0.05)/(#value*0.72))
-                -- One shaped line keeps mixed font sizes on the same baseline as the count shrinks.
-                local countRow=view.styledText({key="event.count",width="fill",height=unit*0.38,
-                    fontSize=labelSize,textAlign="center",verticalAlign="center",textWrap="noWrap",
-                    overflowText="clip",style={foreground="textPrimary"},spans={
-                        {text=state.." ",fontSize=labelSize},
-                        {text=value,fontSize=number.fontSize,bold=true},
-                        {text=" "..c.days,fontSize=labelSize}}})
+                number.width="auto";number.minWidth=number.fontSize*#value*0.72;number.flexShrink=0
+                -- Reserve the full font line before centering; large digits otherwise overflow below it.
+                number.height=math.max(number.height,number.fontSize*1.5)
+                -- Segoe UI numerals sit slightly below the center of their line box.
+                number.padding={bottom=number.fontSize*0.10}
+                sideHeight=math.max(0,(h-pad*2-number.height)/2)
+                -- Center the labels with the number even when its font shrinks for longer counts.
+                local countRow=view.row({key="event.count",height=number.height,gap=unit*0.025,
+                    justifyContent="center",alignItems="center",children={prefix,number,suffix}})
                 children={heading,countRow,footer}
             else children={heading,number,footer} end
             -- Balance the visible glyph, whose baseline sits below the text line center.
