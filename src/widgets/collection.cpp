@@ -1066,6 +1066,16 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
 HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
 {
+    if (data_ && !data_->scrollContainerMode &&
+        GetCollectionPresentation(this, false).interactiveItemCount == 0)
+    {
+        // The four compact thumbnails remain drawable slots, but drops
+        // belong to the collection, never to a previewed application/file.
+        outSlot = nullptr;
+        const RECT frame = GetFrameRect();
+        return PtInRect(&frame, pt) ? HitRegion::SortAfter : HitRegion::None;
+    }
+
     const auto insertionRegion = [pt](Slot* slot) {
         if (!slot) return HitRegion::SortAfter;
         const RECT bounds = slot->GetBounds();
@@ -1327,15 +1337,21 @@ RECT Collection::GetContentViewportRect() const
 void Collection::ApplyMarqueeSelection(const RECT& contentRect)
 {
     if (!data_ || !app_) return;
-    if (!data_->scrollContainerMode) return;
-    const int scroll = GetScrollOffset();
+    const bool scrolling = data_->scrollContainerMode;
+    const size_t interactiveCount = scrolling ? data_->itemKeys.size()
+        : GetCollectionPresentation(this, false).interactiveItemCount;
+    const int scroll = scrolling ? GetScrollOffset() : 0;
     for (size_t i = 0; i < data_->itemKeys.size(); ++i)
     {
-        RECT itemRect = CollectionItemRect(const_cast<Collection*>(this), i);
+        RECT itemRect{};
+        if (i < interactiveCount)
+            itemRect = scrolling ? CollectionItemRect(this, i)
+                : GetCollectionSlotRect(this, i, GetBodyRect());
         OffsetRect(&itemRect, 0, scroll);
         size_t itemIdx = app_->FindItemIndexByKey(data_->itemKeys[i]);
         if (itemIdx != static_cast<size_t>(-1))
-            app_->GetDesktopItems()[itemIdx].selected = RectsIntersect(itemRect, contentRect);
+            app_->GetDesktopItems()[itemIdx].selected =
+                !IsRectEmptyRect(itemRect) && RectsIntersect(itemRect, contentRect);
     }
 }
 

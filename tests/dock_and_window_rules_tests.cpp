@@ -1371,6 +1371,15 @@ int main(int argc, char** argv)
         Check(EqualRect(&movedTitle, &expectedTitle),
             "collection title rendering and editing must follow the popup across monitors");
     }
+    // A saved fan preference must not leak from a Dock widget onto the desktop.
+    Check(popupLayout::ResolveView(false, true, false) == popupLayout::View::Grid &&
+            popupLayout::ResolveView(false, true, true) == popupLayout::View::List,
+        "desktop popups must ignore saved fan preferences and retain their grid/list view");
+    Check(popupLayout::ResolveView(true, true, false) == popupLayout::View::Fan &&
+            popupLayout::ResolveView(true, true, true) == popupLayout::View::Fan &&
+            popupLayout::ResolveView(true, false, true) == popupLayout::View::List &&
+            popupLayout::ResolveView(true, false, false) == popupLayout::View::Grid,
+        "Dock popups must retain fan priority and restore the chosen grid/list view when disabled");
     Check(
         popupLayout::AllowsMarqueeStart(
             true, false, false),
@@ -2108,6 +2117,17 @@ int main(int argc, char** argv)
             compactCollectionDuringDrag.visibleItemCount == 4 &&
             !compactCollectionDuringDrag.showAllButton,
         "1x1 compact Collections must retain their four-thumbnail presentation across drag states");
+
+    Check(compactCollection.interactiveItemCount == 0 &&
+            compactCollectionDuringDrag.interactiveItemCount == 0,
+        "1x1 mosaic thumbnails must never become inline file selection or open-with targets");
+    Check(belowCollectionCapacity.interactiveItemCount == 3 &&
+            fullCollection.interactiveItemCount == 4 &&
+            overflowingCollection.interactiveItemCount == 3 &&
+            fullCollectionDuringDrag.interactiveItemCount == 3 &&
+            denseFullCollection.interactiveItemCount == 9 &&
+            denseFullCollectionDuringDrag.interactiveItemCount == 8,
+        "large-folder selection must include every exposed file while excluding the Show all mosaic and hidden members");
 
     constexpr float standardLineHeight =
         14.0f * 7.0f / 6.0f;

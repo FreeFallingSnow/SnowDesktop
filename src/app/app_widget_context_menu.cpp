@@ -351,6 +351,7 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
     const auto appendFanToggle = [&]() {
+        if (widget.gridCell.pageId != kDockPageId) return;
         const auto label = statusLabel(_LW("app.interact.popup_fan"),
             widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"));
         AppendMenuW(menu, MF_STRING, kContextPopupFan, label.c_str());
@@ -515,8 +516,7 @@ void DesktopApp::ShowWidgetContextMenu(
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
-        if (widget.gridCell.pageId == kDockPageId)
-            appendFanToggle();
+        appendFanToggle();
         AppendMenuW(menu,
             HasPasteableFileClipboardData()
                 ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -981,8 +981,9 @@ void DesktopApp::ShowWidgetContextMenu(
                 hwnd_, effectiveSource.sourceFolderPath);
         break;
     case kContextPopupFan:
-        if (widgets_[widgetIndex].type == DesktopWidgetType::Collection ||
-            widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
+        if (widgets_[widgetIndex].gridCell.pageId == kDockPageId &&
+            (widgets_[widgetIndex].type == DesktopWidgetType::Collection ||
+             widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping))
         {
             widgets_[widgetIndex].fanPopup = !widgets_[widgetIndex].fanPopup;
             if ((!dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) ||

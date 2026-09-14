@@ -17,6 +17,16 @@ inline constexpr int kEmptyColumns = 3;
 inline constexpr int kEmptyRows = 2;
 inline constexpr int kMinimumListRows = 5;
 
+enum class View { Grid, List, Fan };
+
+// Retain the preference when moving a widget off the Dock, but never let it
+// change a desktop popup or suppress that widget's list preference.
+inline View ResolveView(bool anchoredToDock, bool fanPopup, bool listMode)
+{
+    if (anchoredToDock && fanPopup) return View::Fan;
+    return listMode ? View::List : View::Grid;
+}
+
 struct Metrics
 {
     float scale = 1.0f;

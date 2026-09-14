@@ -38,6 +38,8 @@ struct CollectionPresentation
     std::size_t visibleItemCount = 0;
     std::size_t allButtonSlot = 0;
     bool showAllButton = false;
+    // Compact mosaics are previews; only full-size exposed items are targets.
+    std::size_t interactiveItemCount = 0;
 };
 
 inline bool IsCompactCollectionSpan(int columns, int rows)
@@ -83,6 +85,7 @@ inline CollectionPresentation ResolveCollectionPresentation(
         visibleItemCount,
         ordinaryCapacity,
         showAllButton,
+        visibleItemCount,
     };
 }
 

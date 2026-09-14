@@ -86,7 +86,9 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
     namespace layout = snowdesktop::collection_popup_layout;
-    if (!widget.fanPopup || popupFanShowAll_ || GetPopupItemCount(widget) == 0)
+    if (layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
+            widget.listMode) != layout::View::Fan ||
+        popupFanShowAll_ || GetPopupItemCount(widget) == 0)
         return false;
     // A vertical side Dock has no native fan counterpart. Use the existing
     // grid there, and when there is insufficient space for an anchored fan.
@@ -101,7 +103,9 @@ bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 
 bool DesktopApp::UsesCollectionPopupList(const DesktopWidget& widget) const
 {
-    return widget.listMode && !widget.fanPopup;
+    namespace layout = snowdesktop::collection_popup_layout;
+    return layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
+        widget.listMode) == layout::View::List;
 }
 
 size_t DesktopApp::GetCollectionPopupFanVisibleCount(const RECT& popup) const
