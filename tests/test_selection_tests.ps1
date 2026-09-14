@@ -9,7 +9,7 @@ $parseErrors = $null
 $manager = [System.Management.Automation.Language.Parser]::ParseFile(
     $managerPath, [ref]$parseTokens, [ref]$parseErrors)
 if ($parseErrors.Count -ne 0) { throw "test manager must parse" }
-foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Get-TestRunOptions", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport")) {
+foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Get-TestRunOptions", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport", "Test-IsolatedOutput")) {
     $definition = $manager.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -139,6 +139,39 @@ try {
 finally { Pop-Location }
 Expect-Failure { Get-TestRunOptions -Mode name } "non-empty"
 Expect-Failure { Get-TestRunOptions -Mode label } "non-empty"
+
+# Exercise output isolation with disposable files, never the user's .build.
+$fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$outputFixture = Join-Path $fixtureParent ("SnowDesktop-test-output-" + [Guid]::NewGuid().ToString("N"))
+[void][IO.Directory]::CreateDirectory($outputFixture)
+$originalProcessDirectory = [Environment]::CurrentDirectory
+Push-Location $outputFixture
+try {
+    [Environment]::CurrentDirectory = $outputFixture
+    [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/tests"))
+    [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/SnowDesktop.Runtime/payload"))
+    [IO.File]::WriteAllText((Join-Path $outputFixture ".build/Release/tests/SnowDesktopFixtureTests.exe"), "fixture")
+    Test-IsolatedOutput
+    foreach ($misplaced in @("SnowDesktopMisplacedTests.exe", "misplaced.dll")) {
+        $badPath = Join-Path $outputFixture ".build/Release/$misplaced"
+        [IO.File]::WriteAllText($badPath, "fixture")
+        Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+        Remove-Item -LiteralPath $badPath
+    }
+    [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/payload"))
+    Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+    Remove-Item -LiteralPath (Join-Path $outputFixture ".build/Release/payload")
+    Remove-Item -LiteralPath (Join-Path $outputFixture ".build/Release/tests/SnowDesktopFixtureTests.exe")
+    Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+}
+finally {
+    [Environment]::CurrentDirectory = $originalProcessDirectory
+    Pop-Location
+    $resolvedFixture = [IO.Path]::GetFullPath($outputFixture)
+    Check ($resolvedFixture.StartsWith($fixtureParent, [StringComparison]::OrdinalIgnoreCase) -and
+        [IO.Path]::GetFileName($resolvedFixture).StartsWith("SnowDesktop-test-output-")) "cleanup must stay in the isolated temporary fixture"
+    Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
+}
 
 Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" status="run" /></testsuite>') -ExpectedTests @("a")
 Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite />') } "no executed test cases"
