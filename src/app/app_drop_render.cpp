@@ -1,6 +1,8 @@
 #include "app.h"
 #include "../pending_drop_rules.h"
 #include "pending_drop_completion.h"
+#include "new_item_placement.h"
+#include "../shell_new_item_capture.h"
 
 // Desktop drop-preview rendering, caching and deferred placement.
 
@@ -189,6 +191,19 @@ const DropPreviewList& DesktopApp::GetCachedDesktopDropPreview(
 void DesktopApp::ApplyPendingPlacement()
 {
     bool changed = false;
+    std::erase_if(pendingNewItemCaptures_, [&](const auto& capture) {
+        return capture->Consume([&](const auto& widgetId, const auto& path, size_t& insertIndex) {
+            const auto result = snowdesktop::new_item_placement::Apply(
+                widgets_, items_, widgetId, path, insertIndex, ToUpperInvariant);
+            if (result == snowdesktop::new_item_placement::Result::Applied)
+            {
+                ++insertIndex;
+                changed = true;
+            }
+            return result != snowdesktop::new_item_placement::Result::Pending;
+        });
+    });
+    if (changed) RefreshCollectedKeysCache();
     std::unordered_set<std::wstring> claimed;
     for (auto& cache : pendingLandingCaches_)
         changed = ApplyPendingPlacement(cache, claimed) || changed;

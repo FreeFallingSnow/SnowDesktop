@@ -340,14 +340,18 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (!repeated)
         {
             std::wstring directory;
+            std::wstring desktopFilesWidgetId;
             if (dockFolderPopupOpen_ && dockFolderPopupAvailable_)
                 directory = dockFolderPopupWidget_.sourceFolderPath;
             else
             {
-                const size_t target = FindFolderMappingShortcutTarget();
-                if (target < widgets_.size()) directory = widgets_[target].sourceFolderPath;
+                const size_t target = FindNewItemShortcutTarget();
+                if (target < widgets_.size() &&
+                    widgets_[target].type == DesktopWidgetType::FolderMapping)
+                    directory = widgets_[target].sourceFolderPath;
                 else
                 {
+                    if (target < widgets_.size()) desktopFilesWidgetId = widgets_[target].id;
                     wchar_t desktopPath[MAX_PATH]{};
                     if (SHGetSpecialFolderPathW(nullptr, desktopPath,
                             CSIDL_DESKTOPDIRECTORY, FALSE)) directory = desktopPath;
@@ -357,7 +361,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             {
                 POINT point = lastMousePoint_;
                 ClientToScreen(hwnd_, &point);
-                ShowNewMenuAndInvoke(point, directory, true);
+                ShowNewMenuAndInvoke(point, directory, true, std::move(desktopFilesWidgetId));
                 RequestShellRefresh();
             }
         }

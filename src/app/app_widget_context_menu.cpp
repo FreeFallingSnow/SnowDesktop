@@ -1350,7 +1350,8 @@ void DesktopApp::ShowWidgetContextMenu(
                     CSIDL_DESKTOPDIRECTORY, FALSE))
             {
                 ShowNewMenuAndInvoke(
-                    screenPoint, desktopPath);
+                    screenPoint, desktopPath, false,
+                    widgets_[effectiveSourceIndex].id);
                 RequestShellRefresh();
             }
         }

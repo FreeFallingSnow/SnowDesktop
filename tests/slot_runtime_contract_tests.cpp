@@ -9,6 +9,8 @@
 #include "external_drop_content.h"
 #include "app/drag_drop_controller.h"
 #include "app/pending_drop_completion.h"
+#include "app/new_item_placement.h"
+#include "shell_new_item_capture.h"
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
 #include "app/rename_controller.h"
@@ -2828,6 +2830,74 @@ void TestIndependentDropCompletions()
         "folder reconciliation receives only its own request's actual paths");
 }
 
+void TestNewItemsRetainTheirDesktopFilesOwner()
+{
+    using namespace snowdesktop;
+    using Result = new_item_placement::Result;
+    for (bool reverse : {false, true})
+    {
+        std::vector<DesktopWidget> widgets(3);
+        widgets[0].id = L"files-a"; widgets[0].type = DesktopWidgetType::FileCategories;
+        widgets[0].gridCell = {L"group-page", 3, 2}; widgets[0].itemKeys = {L"KEPT-A"};
+        widgets[1].id = L"files-b"; widgets[1].type = DesktopWidgetType::FileCategories;
+        widgets[1].gridCell = {L"__dock", 0, 0}; widgets[1].itemKeys = {L"KEPT-B"};
+        widgets[2].id = L"auto-collector"; widgets[2].type = DesktopWidgetType::FileCategories;
+        widgets[2].itemKeys = {L"NEW-A", L"NEW-B", L"UNRELATED"};
+        ShellNewItemCapture first(L"C:\\desktop", L"files-a", 1);
+        ShellNewItemCapture second(L"C:\\desktop", L"files-b", 0);
+        if (reverse)
+        {
+            second.Record(L"C:\\desktop\\new (2).txt");
+            first.Record(L"C:\\desktop\\new.txt");
+        }
+        else
+        {
+            first.Record(L"C:\\desktop\\new.txt");
+            second.Record(L"C:\\desktop\\new (2).txt");
+        }
+        first.Record(L"c:\\DESKTOP\\NEW.TXT"); // Shell can send both select and edit callbacks.
+        first.Record(L"C:\\elsewhere\\new.txt");
+        first.Finish(); second.Finish();
+        std::vector<DesktopItem> items;
+        int applied = 0;
+        auto commit = [&](const auto& id, const auto& path, size_t& index) {
+            const auto result = new_item_placement::Apply(widgets, items, id, path, index,
+                [](const auto& key) { return key; });
+            if (result == Result::Applied) { ++applied; ++index; }
+            return result != Result::Pending;
+        };
+        Check(!first.Consume(commit, 0) && !second.Consume(commit, 0) && applied == 0,
+            "an early refresh retains exact New outputs until desktop enumeration catches up");
+        items.resize(3);
+        items[0].layoutKey = L"NEW-B"; items[0].parsingName = L"C:\\desktop\\new (2).txt";
+        items[1].layoutKey = L"UNRELATED"; items[1].parsingName = L"C:\\desktop\\unrelated.txt";
+        items[2].layoutKey = L"NEW-A"; items[2].parsingName = L"C:\\desktop\\new.txt";
+        // Reallocation/reordering must not retarget the stored owner. The
+        // host uses this same transaction for grouped and Dock FileCategories.
+        std::swap(widgets[0], widgets[1]);
+        Check(first.Consume(commit) && second.Consume(commit) && applied == 2 &&
+            widgets[1].itemKeys == std::vector<std::wstring>{L"KEPT-A", L"NEW-A"} &&
+            widgets[0].itemKeys == std::vector<std::wstring>{L"NEW-B", L"KEPT-B"} &&
+            widgets[2].itemKeys == std::vector<std::wstring>{L"UNRELATED"} &&
+            items[2].gridCell.pageId == L"group-page" && items[0].gridCell.pageId == L"__dock",
+            "New outputs reach only their captured owners once, with insertion order and provisional ownership corrected");
+        Check(first.Consume(commit) && applied == 2,
+            "subsequent refreshes never recommit a consumed New callback");
+        ShellNewItemCapture deleted(L"C:\\desktop", L"deleted-owner", 0);
+        deleted.Record(L"C:\\desktop\\unrelated.txt"); deleted.Finish();
+        Check(deleted.Consume(commit) && applied == 2 && widgets[2].itemKeys.size() == 1,
+            "deleting a New-menu owner does not move its output into an unrelated widget");
+        ShellNewItemCapture cancelled(L"C:\\desktop", L"files-a", 0);
+        cancelled.Finish();
+        Check(cancelled.Consume(commit) && applied == 2,
+            "a cancelled New invocation cannot collect files created by another operation");
+        ShellNewItemCapture expired(L"C:\\desktop", L"files-a", 0);
+        expired.Record(L"C:\\desktop\\unrelated.txt"); expired.Finish();
+        Check(expired.Consume(commit, GetTickCount64() + 30001) && applied == 2,
+            "an expired unobserved creation must not claim a later file reusing its path");
+    }
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     if (argc == 4 && std::wstring(argv[1]) == L"--register-notification-shortcut")
@@ -2848,6 +2918,7 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2 && std::wstring(argv[1]) == L"--notification-identity-probe")
         return RunTrayNotificationIdentityProbe();
     TestIndependentDropCompletions();
+    TestNewItemsRetainTheirDesktopFilesOwner();
     TestSlotCacheAndIdentity();
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();

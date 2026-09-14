@@ -781,7 +781,7 @@ void DesktopApp::DissolveSingleItemWidgetGroups()
         {
             const size_t child = FindWidgetIndexById(group.childWidgetIds.front());
             if (child >= widgets_.size() || IsDockExclusiveWidgetId(widgets_[child].id)) continue;
-            const auto span = widgets_[child].gridSpan;
+            const auto span = group.gridSpan;
             std::unordered_set<std::wstring> used;
             for (size_t i = 0; i < widgets_.size(); ++i)
                 if (i != index && i != child && !IsGroupedWidget(widgets_[i]) &&

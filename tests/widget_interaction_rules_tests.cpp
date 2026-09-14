@@ -1173,6 +1173,7 @@ void TestPairGroupsDissolveAndDockOwnership()
         DesktopWidget group;
         group.id = L"group";
         group.gridCell = {L"page", 2, 3};
+        group.gridSpan = {2, 2};
         const auto action = type == Type::Collection
             ? pair::Action::CreateCollectionGroup : pair::Action::CreateFileGroup;
         Check(!pair::Apply(widgets, dock, 0, 0, action, group, normalize) &&
@@ -1190,15 +1191,16 @@ void TestPairGroupsDissolveAndDockOwnership()
         Check(!pair::Dissolve(widgets, 2, {L"page", 2, 3}),
             "manual and legacy groups must not dissolve automatically");
         widgets[2].dissolveWhenSingle = true;
+        widgets[2].gridSpan = {4, 3}; // The user resized the group after creation.
         Check(pair::Dissolve(widgets, 2, {L"page", 2, 3}) && widgets.size() == 2 &&
                 widgets[0].id == L"source" && widgets[0].type == type &&
                 widgets[0].itemKeys == std::vector<std::wstring>{L"original-a", L"original-b"} &&
                 widgets[0].sourceFolderPath == L"C:\\original-mapping" &&
-                widgets[0].gridSpan.columns == 3 && widgets[0].gridSpan.rows == 4 &&
+                widgets[0].gridSpan.columns == 4 && widgets[0].gridSpan.rows == 3 &&
                 widgets[0].customTitle == L"Original title" && widgets[0].showSearchBox &&
                 widgets[0].gridCell.pageId == L"page" && widgets[0].gridCell.column == 2 &&
                 widgets[0].gridCell.row == 3 && widgets[1].gridCell.pageId == L"elsewhere",
-            "single-child dissolution must restore the original source and leave the released sibling untouched");
+            "single-child dissolution must inherit the current group size, retain source settings and leave the sibling untouched");
         group.type = type == Type::Collection ? Type::CollectionGroup : Type::FileGroup;
         group.dissolveWhenSingle = true;
         group.childWidgetIds = {L"missing"};

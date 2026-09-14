@@ -129,7 +129,7 @@ inline bool ShouldDissolve(const DesktopWidget& group)
 }
 
 // The host plans a free landing before this ownership transaction. Keep the
-// original child (including its size and settings), and remove only its wrapper.
+// original child settings, inherit the wrapper's current size, and remove the wrapper.
 inline bool Dissolve(std::vector<DesktopWidget>& widgets, size_t groupIndex,
     GridCell landing)
 {
@@ -152,6 +152,7 @@ inline bool Dissolve(std::vector<DesktopWidget>& widgets, size_t groupIndex,
                     widgets[i].childWidgetIds.end(), child->id) != widgets[i].childWidgetIds.end())
                 return false;
         child->gridCell = std::move(landing);
+        child->gridSpan = group.gridSpan;
     }
     widgets.erase(widgets.begin() + static_cast<std::ptrdiff_t>(groupIndex));
     return true;

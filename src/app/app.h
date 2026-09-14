@@ -165,6 +165,7 @@ class WidgetSettingsService;
 namespace snowdesktop
 {
 class ShellContextMenuSite;
+class ShellNewItemCapture;
 struct AutoStartQueryResult
 {
     bool packaged = false;
@@ -1704,6 +1705,7 @@ private:
     std::vector<std::wstring> GetSelectedFolderEntryPaths(size_t* firstWidgetIndex = nullptr) const;
     /** @brief 查找文件夹映射中选中的快捷方式的目标索引。 @return 目标索引 */
     size_t FindFolderMappingShortcutTarget() const;
+    size_t FindNewItemShortcutTarget() const;
     /**
      * @brief 复制或剪切选中的文件夹条目。
      * @param cut true 为剪切，false 为复制
@@ -1908,7 +1910,7 @@ private:
             std::nullopt);
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
-        bool folderOnly = false);
+        bool folderOnly = false, std::wstring desktopFilesWidgetId = {});
     /** @brief 显示桌面背景的专用上下文菜单（含新建、显示设置等）。 @param screenPoint 屏幕坐标 */
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
     /** @brief 为指定路径显示外壳扩展上下文菜单。 @param folderPath 文件夹路径 @param screenPoint 屏幕坐标 */
@@ -3913,6 +3915,7 @@ private:
     /** @name 待处理放置缓存（源列表 -> 预览在外壳刷新后仍存活） */
     /** @{ */
     std::vector<PendingLandingCache> pendingLandingCaches_;
+    std::vector<std::shared_ptr<snowdesktop::ShellNewItemCapture>> pendingNewItemCaptures_;
     /** @} */
 
     /** @brief 将屏幕坐标转换为客户端坐标。 @param screen 屏幕坐标 @return 客户端坐标 */

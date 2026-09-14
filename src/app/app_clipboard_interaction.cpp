@@ -97,6 +97,34 @@ std::vector<std::wstring> DesktopApp::GetSelectedFolderEntryPaths(size_t* firstW
     return {};
 }
 
+// New commands target the visible file source, including a FileGroup tab or
+// the Desktop Files popup in Dock, before considering other selected sources.
+size_t DesktopApp::FindNewItemShortcutTarget() const
+{
+    constexpr size_t missing = static_cast<size_t>(-1);
+    auto resolve = [&](const DesktopWidget& widget) -> size_t {
+        size_t index = FindWidgetIndexById(widget.type == DesktopWidgetType::FileGroup
+            ? widget.activeCategoryId : widget.id);
+        if (index >= widgets_.size()) return missing;
+        const auto& source = widgets_[index];
+        return source.type == DesktopWidgetType::FileCategories ||
+            (source.type == DesktopWidgetType::FolderMapping && !source.sourceFolderPath.empty())
+            ? index : missing;
+    };
+    if (const auto* popup = GetOpenPopupWidget())
+        if (const auto index = resolve(*popup); index < widgets_.size()) return index;
+    if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size())
+        if (const auto index = resolve(widgets_[keyboardNavWidgetIndex_]); index < widgets_.size()) return index;
+    for (size_t i = widgets_.size(); i-- > 0;)
+        if (!IsGroupedWidget(widgets_[i]) && widgets_[i].gridCell.pageId != kDockPageId &&
+            PtInRect(&widgets_[i].bounds, lastMousePoint_))
+            return resolve(widgets_[i]);
+    for (const auto& widget : widgets_)
+        if (widget.selected)
+            if (const auto index = resolve(widget); index < widgets_.size()) return index;
+    return FindFolderMappingShortcutTarget();
+}
+
 /**
  * @brief 查找文件夹映射的快捷操作目标部件
  * @return 部件索引，未找到返回 (size_t)-1
