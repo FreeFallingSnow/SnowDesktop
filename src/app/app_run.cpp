@@ -1522,6 +1522,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         {
             OnIconLoaded(iconMessage.wParam, iconMessage.lParam);
         }
+        FinishWidgetGroupTransitions();
         if (!OnPaint() || !FlushPendingCompositionCommit())
         {
             WriteDiagnosticLogEntry(
@@ -1657,6 +1658,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            FinishWidgetGroupTransitions();
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a
             // panel animation transaction cannot delay this presentation.
@@ -1675,6 +1677,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // initial wait result must be retained because the high-resolution
             // waitable timer is auto-reset and that wait consumes its signal.
             uiAnimationScheduler_.DispatchDue();
+            FinishWidgetGroupTransitions();
             FlushPendingCompositionCommit();
             FlushPendingQuickNavigationCompositionCommit();
         }

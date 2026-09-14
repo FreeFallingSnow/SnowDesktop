@@ -23,6 +23,7 @@
 #include "dock.h"
 #include "widget.h"
 #include "../widgets/widget_pair_drop.h"
+#include "widget_group_transition.h"
 #include "drop_model.h"
 #include "drag_session.h"
 #include "drag_target_resolver.h"
@@ -2819,6 +2820,8 @@ private:
     bool UpdateDockWidgetPairHint(POINT point, int mods);
     bool TryCommitDockWidgetPairDrop(POINT point, int mods);
     void DissolveSingleItemWidgetGroups();
+    void FinishWidgetGroupTransitions();
+    snowdesktop::WidgetGroupTransition widgetGroupTransition_;
     bool AddCollectionToGroup(size_t collectionIndex, size_t groupIndex,
         size_t insertIndex = static_cast<size_t>(-1));
     bool ReleaseCollectionFromGroup(const std::wstring& collectionId,

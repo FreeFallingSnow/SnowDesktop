@@ -88,3 +88,27 @@ Alt、Ctrl+Shift 及含 Alt 的组合不启用合并或建组。有效单键启�
 本轮标准构建 `scripts/build.bat --reload-shell` 于 20:21:26–20:28:09（UTC+8）完成，退出码 0，生成 `.build/Release/SnowDesktop.exe`，约 403 秒。预检发现运行中的宿主及 Explorer Hook，已事先说明后关闭宿主并重启 Explorer。日志 `.codex-probes/group-new-item-build.log`；只有既有 WinUI 生成头 `GetCurrentTime` 的 C4002 警告。
 
 本次 `scripts/test.bat full` 于 20:28:25–20:29:55（UTC+8）完成，118/118 通过、退出码 0，默认排除 `manual` 诊断。配置 1.02 秒、聚合构建 22.91 秒、CTest 65.03 秒；日志 `.codex-probes/group-new-item-full.log`，JUnit `.build/Testing/test-run-6f4166df40ea43a49a2aa73e571fb7b7.xml`。检查绑定基线 `2ed6dc36` 及本次 13 个非文档输入，前后哈希全部一致，快照 `.codex-probes/group-new-item-inputs.json`；Release、MSVC 19.50.35730.0、MSBuild 18.5.4、Windows SDK 10.0.26100.0。全量聚合重新链接后的宿主 SHA-256：`23d584c3a662a51a641b07029daf9c3ccca51856a5b7999b34628cc7b1c41e2d`。本轮以 `try` 交付，不将构建与模型／Shell 测试通过写成桌面实机验收通过。
+
+## 文件组还原中间帧反馈与调整
+
+用户在 `2401c892` 后反馈文件组还原成单个组件时会闪现中间状态，已用 `71413ccc` 记录该项视觉验收失败；该反馈不代表其他未测场景验收通过。
+
+审查发现：原 `LayoutItems` 先重建单成员组的容器，并设置 50 毫秒的还原计时器；在计时器触发前，桌面绘制可以展示该临时组。既有 `DissolveSingleItemWidgetGroups` 已负责尺寸、落点、归属与保存，既有应用主循环也已有每次消息／动画调度后的 DComp 提交边界，因此复用这两个入口，无需新增动画、遮罩或其他界面元素。
+
+本次移除固定延迟，在运行时容器重建时合并还原请求。该操作尚未退出调用栈时，嵌套桌面绘制保留上一完整帧；外层消息或动画调度返回后，确认鼠标、保留拖拽上下文、OLE 传输、组件操作、重命名、菜单、加载与绘制均不占用模型，再执行既有还原事务。完成布局后立即绘制整个最终帧，再进入本轮 DComp 提交。启动首帧采用同一整理入口。
+
+若外层调度结束时仍有长时间交互，保留待还原请求，同时解除短暂的帧保留，允许桌面其他内容继续更新；交互结束后的第一个安全调度边界再尝试还原。还原内部的布局重建与重入调度不会递归还原；失效引用或无法还原的组也会释放绘制，不建立无限重试循环。没有改动组尺寸或文件归属规则、公共 Lua API、布局 schema。
+
+调用链与风险映射：成员释放／转组／进入 Dock／删除 → `LayoutItems` 或直接 `RebuildContainersAndItems` → `WidgetGroupTransition::Request`；嵌套 `OnPaint` 检查保留状态；外层 `Run` 消息／动画边界 → `FinishWidgetGroupTransitions` → 既有还原与完整重绘 → DComp 提交。涉及调度、绘制和模型引用生命周期，需要标准构建及本候选的一次完整测试。
+
+定向 `scripts/test.bat name "^(widget_interaction_rules|widget_composition_layer_rules|slot_runtime_contract|ui_animation_scheduler)$"`：4/4 通过，退出码 0，配置 1.01 秒、目标构建 5.26 秒、CTest 0.81 秒。日志 `.codex-probes/group-transition-targeted.log`，JUnit `.build/Testing/test-run-069e2cabbdd340da933fdf400dda768f.xml`。首次测试编辑将 include 放在使用之后导致编译失败，修正后通过；该夹具错误不作为产品缺陷复现。
+
+新增测试用真实组件模型调用生产还原事务及调度状态器，绘制回调记录可发布的模型快照：应只记录原两成员组与继承尺寸后的单组件，不包含单成员组、部分重建帧；同时检查请求合并、阻塞期间的引用保留与绘制恢复、后续安全边界、重入和失效候选。替身是外层调度及绘制记录器，未调用桌面窗口或 DComp，因此不能证明最终像素没有闪烁。
+
+隔离副本负向对照 `python .codex-probes/run_group_transition_negative.py` 分别放行中间帧、跳过还原回调、忽略活动引用保护，均编译成功且对应行为断言失败，运行退出码 1；日志 `.codex-probes/group-transition-negative.log`。生产源码和用户文件未被覆盖。
+
+待实机：在同一文件组样本上拖出一个来源、转入另一组、移入 Dock 及删除来源，分别留下桌面文件或映射文件夹；观察松手后是否直接显示单组件，宽高、位置和内容是否稳定，是否出现单标签组、空白或旧尺寸。回归集合组、取消拖拽，以及菜单／重命名／OLE 尚未结束时的行为。未使用桌面自动化进行此项验收。
+
+本轮标准 `scripts/build.bat --reload-shell` 于 20:41:20–20:49:29（UTC+8）完成，退出码 0，生成 `.build/Release/SnowDesktop.exe`，约 489 秒。按预检提示后终止正在运行的宿主并重启 Explorer；日志 `.codex-probes/group-transition-build.log`。观察到既有 WinUI 生成头 `GetCurrentTime` 的 C4002，以及未修改的 `widget_engine.cpp:12705` 中 `snapshot` 遮蔽外层变量的 C4456；已核对该文件与前一候选 `2401c892` 相同，无本次引入的警告。
+
+本次 `scripts/test.bat full` 于 20:49:41–20:51:22（UTC+8）完成，118/118 通过、退出码 0，默认排除 `manual` 诊断。配置 1.02 秒、聚合构建 32.06 秒、CTest 66.75 秒；日志 `.codex-probes/group-transition-full.log`，JUnit `.build/Testing/test-run-9a4e6ba3bf164f25b4fb66333ebc0119.xml`。本轮 9 个非文档输入在检查前后哈希一致，快照 `.codex-probes/group-transition-inputs.json` 绑定 `71413ccc`（运行代码同 `2401c892`）及本次修改，Release、MSVC 19.50.35730.0、MSBuild 18.5.4、Windows SDK 10.0.26100.0。聚合测试重新链接后，最终宿主 SHA-256 为 `d5530a7aefcc95e3a6c6b069c5e60103e2bbe281805bec252548ccd7a5261b43`。以 `try` 交付，实际闪烁是否消除仍待用户在原场景确认。

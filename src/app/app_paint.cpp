@@ -11,6 +11,8 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     // those partial bootstrap frames; runtime paints keep their normal path.
     if (!startupInitializationComplete_)
         return false;
+    if (widgetGroupTransition_.ShouldDeferPaint())
+        return false; // The dispatch boundary invalidates and paints the final model.
     snowdesktop::performance::Scope performanceScope("desktop", "paint");
     if (updateRect)
         snowdesktop::performance::Value("desktop", "dirty_pixels", {},

@@ -764,6 +764,26 @@ bool DesktopApp::TryCommitDockWidgetPairDrop(POINT point, int mods)
     return true; // A rejected transaction preserves its Dock source as well.
 }
 
+void DesktopApp::FinishWidgetGroupTransitions()
+{
+    // Called only by the outer application pump, after dispatch has released
+    // stack-local widget/container references (including Dock input handlers).
+    const bool canRestore = !mouseDown_ && !dragSession_.HasContext() &&
+        !dragDropController_.IsTransportActive() &&
+        widgetAction_ == WidgetAction::None && !renameEdit_ &&
+        !HasActiveContextMenuSession() && !reloading_ &&
+        !compositionPaintInProgress_;
+    if (!widgetGroupTransition_.FinishDispatch(canRestore,
+            [this] { DissolveSingleItemWidgetGroups(); })) return;
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        // Rebuild the final content and glass in one paint before the pump
+        // flushes DComp. Startup prepares its first frame explicitly below.
+        if (!desktopStartupPresentationPending_) UpdateWindow(hwnd_);
+    }
+}
+
 void DesktopApp::DissolveSingleItemWidgetGroups()
 {
     namespace pair = snowdesktop::widget_pair_drop;

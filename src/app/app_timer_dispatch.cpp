@@ -348,18 +348,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
         return;
     }
 
-    if (timerId == kDissolveWidgetGroupsTimerId)
-    {
-        if (mouseDown_ || dragSession_.HasContext() ||
-            dragDropController_.IsTransportActive() ||
-            widgetAction_ != WidgetAction::None || renameEdit_ ||
-            HasActiveContextMenuSession())
-            return;
-        KillTimer(hwnd_, kDissolveWidgetGroupsTimerId);
-        DissolveSingleItemWidgetGroups();
-        return;
-    }
-
     if (timerId == kNativeDragHoverRecoveryTimerId)
     {
         if (widgetAction_ == WidgetAction::Move)

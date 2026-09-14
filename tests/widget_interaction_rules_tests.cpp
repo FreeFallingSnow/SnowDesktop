@@ -1,4 +1,5 @@
 #include "widgets/collection_group_rules.h"
+#include "app/widget_group_transition.h"
 #include "widgets/widget_pair_drop.h"
 #include "desktop_hover_rules.h"
 #include "drag_input_rules.h"
@@ -1213,6 +1214,71 @@ void TestPairGroupsDissolveAndDockOwnership()
     }
 }
 
+void TestGroupRestorationPublishesOnlyTheFinalFrame()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    for (const auto type : {DesktopWidgetType::Collection,
+            DesktopWidgetType::FileCategories, DesktopWidgetType::FolderMapping})
+    {
+        snowdesktop::WidgetGroupTransition transition;
+        std::vector<DesktopWidget> widgets(2);
+        widgets[0].id = L"group";
+        widgets[0].type = type == DesktopWidgetType::Collection
+            ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup;
+        widgets[0].gridCell = {L"page", 1, 2};
+        widgets[0].gridSpan = {4, 3};
+        widgets[0].dissolveWhenSingle = true;
+        widgets[0].childWidgetIds = {L"child", L"outgoing"};
+        widgets[1].id = L"child";
+        widgets[1].type = type;
+        widgets[1].gridSpan = {2, 2};
+        struct Frame { DesktopWidgetType type; size_t members; GridSpan span; };
+        std::vector<Frame> frames;
+        auto paint = [&] {
+            if (!transition.ShouldDeferPaint())
+                frames.push_back({widgets[0].type, widgets[0].childWidgetIds.size(), widgets[0].gridSpan});
+        };
+        paint(); // Previously presented group, before the drop removes a member.
+        widgets[0].childWidgetIds = {L"child"};
+        transition.Request(); // The production runtime rebuild requests restoration.
+        transition.Request(); // Repeated layout passes in the same input dispatch.
+        paint(); // A nested WM_PAINT must retain the previous complete frame.
+        int restores = 0;
+        Check(transition.FinishDispatch(true, [&] {
+                ++restores;
+                Check(pair::Dissolve(widgets, 0, {L"page", 1, 2}), "restoration commits at the dispatch boundary");
+                transition.Request(); // A rebuild during restoration cannot schedule a loop.
+                paint(); // Nor can a nested paint publish a partially rebuilt final model.
+            }), "settled restoration requests one complete final repaint");
+        paint();
+        Check(restores == 1 && frames.size() == 2 && frames[0].members == 2 &&
+                frames.back().type == type && frames.back().span.columns == 4 &&
+                frames.back().span.rows == 3,
+            "presentation moves directly from the full group to its resized child without a single-member group frame");
+        Check(!transition.FinishDispatch(true, [&] { ++restores; }) && restores == 1,
+            "one dispatch coalesces repeated rebuild requests into a single restoration");
+    }
+
+    snowdesktop::WidgetGroupTransition blocked;
+    int restores = 0;
+    blocked.Request();
+    Check(blocked.FinishDispatch(false, [&] { ++restores; }) && restores == 0 &&
+            !blocked.ShouldDeferPaint(),
+        "an active drag/menu/rename keeps its references and releases the short paint hold at the outer boundary");
+    Check(!blocked.FinishDispatch(false, [&] { ++restores; }),
+        "a long interaction cannot force repeated repaint or freeze unrelated desktop updates");
+    Check(blocked.FinishDispatch(true, [&] {
+            ++restores;
+            Check(!blocked.FinishDispatch(true, [&] { ++restores; }),
+                "nested dispatch cannot re-enter an in-progress restoration");
+        }) && restores == 1,
+        "the first safe dispatch consumes a previously blocked restoration without a timer delay");
+    blocked.Request();
+    Check(blocked.FinishDispatch(true, [] {}) && !blocked.ShouldDeferPaint() &&
+            !blocked.FinishDispatch(true, [] {}),
+        "an invalid or no-longer-single group releases its frame without an unbounded retry loop");
+}
+
 void TestBottomBarContentReservation()
 {
     Check(
@@ -1508,6 +1574,7 @@ int main()
     TestDragHintRasterRules();
     TestWidgetPairDrops();
     TestPairGroupsDissolveAndDockOwnership();
+    TestGroupRestorationPublishesOnlyTheFinalFrame();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();

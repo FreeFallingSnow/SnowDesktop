@@ -325,7 +325,6 @@ constexpr UINT kExternalOleDragLeaveGraceMs = 80;
 // Recover collection dwell from the physical pointer when another desktop
 // surface transition starves that captured stream before it reaches an opener.
 constexpr UINT_PTR kNativeDragHoverRecoveryTimerId = 25;
-constexpr UINT_PTR kDissolveWidgetGroupsTimerId = 27;
 constexpr UINT_PTR kLargeIconRetryTimerId = 26;
 constexpr UINT kNativeDragHoverRecoveryIntervalMs = 50;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
