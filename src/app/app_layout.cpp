@@ -107,6 +107,7 @@ void DesktopApp::LoadLayoutSlots()
     // A clear-layout document intentionally has no page or placement records.
     // Existing layouts (including last-good recovery) remain authoritative.
     initializeGridFromWindows_ = snowdesktop::layout_storage::NeedsGridInitialization(document);
+    desktopItemsReady_ = false;
     layoutRecords_.clear();
     widgets_.clear();
     dockEntries_.clear();
@@ -796,6 +797,10 @@ void DesktopApp::LoadLayoutSlots()
  */
 bool DesktopApp::SaveLayoutSlots()
 {
+    // Do not replace a loaded layout with incomplete startup/enumeration state.
+    if (!desktopItemsReady_ || gridPages_.empty())
+        return false;
+
     // Container membership is committed before this persistence boundary.
     // Rendering a temporary drag target or sending files to an application never
     // changes membership and therefore never reaches this conversion.

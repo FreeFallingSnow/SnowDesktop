@@ -749,6 +749,14 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         }
     }
     LoadDesktopItems(snapshot);
+    if (!desktopItemsReady_)
+    {
+        // A failed initial read is not an empty desktop. Preserve the loaded
+        // placement records and let the existing Shell refresh path retry.
+        reloading_ = false;
+        RequestShellRefresh();
+        return;
+    }
     InitializeGridFromWindows();
     // LoadLayoutSlots may normalize Dock entries before the freshly
     // enumerated desktop items are available. Discard those provisional

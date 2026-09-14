@@ -258,6 +258,7 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
         if (oldItem.iconBitmap)
             EraseD2DIconCacheForBitmap(oldItem.iconBitmap);
     RefreshDesktopItemIndexCache();
+    desktopItemsReady_ = true;
 }
 
 /**
@@ -385,7 +386,8 @@ void DesktopApp::PollDisplayTopology()
     if (exitRequested_)
         return;
 
-    if (CaptureDisplayTopologySignature() != displayTopologySignature_ ||
+    if (gridPages_.empty() ||
+        CaptureDisplayTopologySignature() != displayTopologySignature_ ||
         DesktopWindowNeedsDisplaySynchronization())
     {
         ScheduleDisplayTopologyRefresh();
@@ -401,7 +403,7 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         return;
 
     const std::wstring currentSignature = CaptureDisplayTopologySignature();
-    const bool topologyChanged =
+    const bool topologyChanged = gridPages_.empty() ||
         currentSignature != displayTopologySignature_;
     const bool windowBoundsOutOfSync =
         DesktopWindowNeedsDisplaySynchronization();
@@ -460,7 +462,16 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
 
         // Build the monitor pages before a replacement window performs its
         // first synchronous paint.
-        UpdateLayoutWorkArea();
+        if (!UpdateLayoutWorkArea())
+        {
+            // Keep the old coordinate origin paired with the retained pages.
+            // The signature is not committed, so the next poll retries.
+            virtualLeft_ = previousBounds.left;
+            virtualTop_ = previousBounds.top;
+            virtualWidth_ = previousBounds.right - previousBounds.left;
+            virtualHeight_ = previousBounds.bottom - previousBounds.top;
+            return;
+        }
         LayoutItems();
 
         snowdesktop::display_topology_refresh::PageIdSet

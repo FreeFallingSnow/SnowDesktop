@@ -1035,7 +1035,7 @@ private:
     void RequestShellRefresh();
     void RefreshShellItemsAsync();
     /** @brief 根据可用显示器信息更新布局工作区域。 */
-    void UpdateLayoutWorkArea(bool preserveActiveDimensions = true);
+    bool UpdateLayoutWorkArea(bool preserveActiveDimensions = true);
     /** @brief 用当前设置（行列数）配置指定网格页面。 @param page 网格页面引用 */
     void ConfigureGridPage(GridPage& page) const;
     /** @brief Seed a fresh layout from Explorer's spacing and icon positions. */
@@ -3509,6 +3509,7 @@ private:
     std::unordered_map<std::wstring, int> savedPageColumns_;
     std::unordered_map<std::wstring, int> savedPageRows_;
     std::vector<std::wstring> savedPageIds_;
+    bool desktopItemsReady_ = false;
     bool initializeGridFromWindows_ = false;
     std::filesystem::path initializationExperimentDirectory_;
     RECT layoutWorkArea_{};

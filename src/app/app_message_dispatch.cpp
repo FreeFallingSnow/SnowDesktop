@@ -271,24 +271,16 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 1;
     case WM_SIZE:
     {
-        if (updatingDisplayTopology_)
-        {
-            virtualWidth_ = LOWORD(lp);
-            virtualHeight_ = HIWORD(lp);
+        if (updatingDisplayTopology_ || wp == SIZE_MINIMIZED ||
+            LOWORD(lp) == 0 || HIWORD(lp) == 0)
             return 0;
-        }
-        bool wasDragging = dragSession_.IsActive();
-        virtualWidth_ = LOWORD(lp);
-        virtualHeight_ = HIWORD(lp);
+
+        // WM_SIZE describes the HWND client area, not the virtual desktop.
+        // Explorer can resize its child before monitor/window geometry agrees.
+        // Let the topology path synchronize the window and rebuild page grids.
         ResetDesktopWidgetComposition();
         dcompSurface_.Reset();
-        UpdateLayoutWorkArea();
-        LayoutItems();
-        if (wasDragging && !dragSession_.IsActive())
-        {
-            mouseDownHit_ = nullptr;
-            mouseDown_ = false;
-        }
+        ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, TRUE);
         return 0;
     }

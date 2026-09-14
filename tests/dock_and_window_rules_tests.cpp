@@ -1116,6 +1116,81 @@ int main(int argc, char** argv)
         "only virtual desktops extending beyond the old layered allocation "
         "must recreate the overlay");
 
+    {
+        // GRID-01: an empty reconnected monitor must not derive a permanent
+        // grid from the desktop HWND's old one-screen client width.
+        const auto secondary = displayRefresh::ResolveMonitorWorkArea(
+            { 1920, 0, 3840, 1080 }, { 1920, 0, 3840, 1040 });
+        Check(secondary && secondary->left == 1920 &&
+                secondary->right == 3840 && secondary->bottom == 1040 &&
+                snowdesktop::grid_spacing_rules::InitialAxisCount(
+                    secondary->right - secondary->left, 96,
+                    kGridMarginX, kCellWidth, 4) == 20,
+            "a right-side monitor must keep its own full work-area width for new-page initialization");
+        const auto left = displayRefresh::ResolveMonitorWorkArea(
+            { -1920, -200, 0, 880 }, { -1920, -200, 0, 840 });
+        Check(left && left->left == -1920 && left->top == -200 &&
+                left->right == 0 && left->bottom == 840,
+            "monitor work areas must retain negative desktop coordinates");
+        const auto clipped = displayRefresh::ResolveMonitorWorkArea(
+            { 1920, 0, 3840, 1080 }, { 1900, -20, 3860, 1040 });
+        Check(clipped && clipped->left == 1920 && clipped->top == 0 &&
+                clipped->right == 3840 && clipped->bottom == 1040,
+            "work-area clipping must use the owning monitor rather than a window or another display");
+        Check(!displayRefresh::ResolveMonitorWorkArea(
+                  { 1920, 0, 3840, 1080 }, { 1920, 0, 1920, 1080 }) &&
+                !displayRefresh::ResolveMonitorWorkArea(
+                  { 1920, 0, 3840, 1080 }, { 1920, 0, 3840, 0 }) &&
+                !displayRefresh::ResolveMonitorWorkArea(
+                  { 1920, 0, 1920, 1080 }, { 1920, 0, 3840, 1080 }) &&
+                !displayRefresh::ResolveMonitorWorkArea(
+                  { 1920, 0, 3840, 1080 }, { 0, 0, 1920, 1080 }),
+            "unusable or unrelated work-area samples must be rejected before page dimensions are committed");
+    }
+
+    {
+        // GRID-02: loaded placement records precede Shell item enumeration.
+        // Unknown content must not erase dimensions later needed by a file.
+        std::vector<std::wstring> ids{ L"main", L"secondary" };
+        std::unordered_map<std::wstring, int> columns{
+            { L"main", 27 }, { L"secondary", 20 } };
+        std::unordered_map<std::wstring, int> rows{
+            { L"main", 11 }, { L"secondary", 10 } };
+        int prematureReads = 0;
+        pageNavigation::PruneEmptyPages(ids, columns, rows, 1, false,
+            [&](const std::wstring&) { ++prematureReads; return false; });
+        Check(ids == std::vector<std::wstring>{ L"main", L"secondary" } &&
+                columns.at(L"secondary") == 20 &&
+                rows.at(L"secondary") == 10 && prematureReads == 0,
+            "an unready or failed initial enumeration must retain offline page identity and dimensions");
+        pageNavigation::PruneEmptyPages(ids, columns, rows, 1, true,
+            [](const std::wstring&) { return true; });
+        Check(ids.size() == 2 && columns.at(L"secondary") == 20 &&
+                rows.at(L"secondary") == 10,
+            "a restored ordinary file must keep its offline page grid intact");
+        pageNavigation::PruneEmptyPages(ids, columns, rows, 1, true,
+            [](const std::wstring& id) { return id == L"main"; });
+        Check(ids == std::vector<std::wstring>{ L"main" } &&
+                !columns.contains(L"secondary") && !rows.contains(L"secondary"),
+            "a genuinely empty disconnected page must still be reclaimed once content is known");
+
+        ids = { L"fixed", L"empty-last", L"populated", L"empty-overflow" };
+        columns = { { L"fixed", 27 }, { L"empty-last", 20 },
+            { L"populated", 1 }, { L"empty-overflow", 20 } };
+        rows = { { L"fixed", 11 }, { L"empty-last", 10 },
+            { L"populated", 1 }, { L"empty-overflow", 10 } };
+        pageNavigation::PruneEmptyPages(ids, columns, rows, 2, true,
+            [](const std::wstring& id) { return id == L"populated"; });
+        Check(ids == std::vector<std::wstring>{ L"fixed", L"populated" } &&
+                columns.size() == 2 && rows.size() == 2 &&
+                columns.at(L"populated") == 1 && rows.at(L"populated") == 1,
+            "normal pruning must retain fixed empty slots and manual 1x1 pages while promoting populated overflow");
+        pageNavigation::PruneEmptyPages(ids, columns, rows, 2, true,
+            [](const std::wstring&) { return false; });
+        Check(ids.size() == 2 && columns.size() == 2 && rows.size() == 2,
+            "the final empty monitor placeholder must remain when no populated overflow follows it");
+    }
+
     const displayRefresh::PageIdSet twoMappedPages{
         L"page-1", L"page-2" };
     const displayRefresh::PageIdSet oneMappedPage{ L"page-1" };

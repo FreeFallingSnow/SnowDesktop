@@ -4,6 +4,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace snowdesktop::page_navigation_rules
 {
@@ -163,6 +167,50 @@ inline bool ShortcutMatches(
         configuredVirtualKey == pressedVirtualKey &&
         NormalizeModifiers(configuredModifiers) ==
             NormalizeModifiers(pressedModifiers);
+}
+
+// Before Shell enumeration completes, an empty runtime item vector does not
+// prove that the pages loaded from disk are empty. Once ready, retain the
+// ordinary empty-page reclamation policy, including disconnected empty pages.
+template <typename HasContent>
+void PruneEmptyPages(
+    std::vector<std::wstring>& pageIds,
+    std::unordered_map<std::wstring, int>& columns,
+    std::unordered_map<std::wstring, int>& rows,
+    std::size_t monitorCount,
+    bool contentReady,
+    HasContent&& hasContent)
+{
+    if (!contentReady || monitorCount == 0 || pageIds.empty())
+        return;
+
+    std::vector<bool> populated(pageIds.size());
+    std::vector<bool> hasNonEmptyAfter(pageIds.size());
+    bool seen = false;
+    for (std::size_t index = pageIds.size(); index-- > 0;)
+    {
+        hasNonEmptyAfter[index] = seen;
+        populated[index] = hasContent(pageIds[index]);
+        seen = seen || populated[index];
+    }
+
+    std::vector<std::wstring> keep;
+    for (std::size_t index = 0; index < pageIds.size(); ++index)
+    {
+        const bool fixedSlot = monitorCount >= 2 && index < monitorCount - 1;
+        const bool lastDefault = index == monitorCount - 1;
+        if (fixedSlot || populated[index] ||
+            (lastDefault && !hasNonEmptyAfter[index]))
+        {
+            keep.push_back(pageIds[index]);
+        }
+        else
+        {
+            columns.erase(pageIds[index]);
+            rows.erase(pageIds[index]);
+        }
+    }
+    pageIds = std::move(keep);
 }
 
 template <typename HasContentAtPageIndex>

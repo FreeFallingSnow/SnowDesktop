@@ -90,14 +90,14 @@ BOOL CALLBACK EnumGridPageMonitorProc(HMONITOR monitor, HDC, LPRECT, LPARAM lPar
     auto* context = reinterpret_cast<MonitorEnumContext*>(lParam);
     if (context == nullptr || context->pages == nullptr)
     {
-        return TRUE;
+        return FALSE;
     }
 
     MONITORINFOEXW monitorInfo{};
     monitorInfo.cbSize = sizeof(monitorInfo);
     if (!GetMonitorInfoW(monitor, &monitorInfo))
     {
-        return TRUE;
+        return FALSE;
     }
 
     GridPage page;

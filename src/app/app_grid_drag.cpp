@@ -105,8 +105,42 @@ void DesktopApp::InitializeGridFromWindows()
     WriteDiagnosticLogEntry(message.c_str());
 }
 
-void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
+bool DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
 {
+    // Build a complete valid sample before replacing any live geometry or
+    // dimensions. A failed monitor query must not look like a disconnected
+    // display and prune its empty page.
+    std::vector<GridPage> nextPages;
+    MonitorEnumContext ctx{};
+    ctx.virtualLeft = virtualLeft_;
+    ctx.virtualTop = virtualTop_;
+    ctx.pages = &nextPages;
+    if (!EnumDisplayMonitors(nullptr, nullptr, EnumGridPageMonitorProc,
+            reinterpret_cast<LPARAM>(&ctx)) || nextPages.empty())
+    {
+        ScheduleDisplayTopologyRefresh();
+        return false;
+    }
+    for (auto& page : nextPages)
+    {
+        const auto work = snowdesktop::display_topology_refresh::
+            ResolveMonitorWorkArea(
+                { page.bounds.left, page.bounds.top,
+                    page.bounds.right, page.bounds.bottom },
+                { page.workArea.left, page.workArea.top,
+                    page.workArea.right, page.workArea.bottom });
+        if (!work)
+        {
+            ScheduleDisplayTopologyRefresh();
+            return false;
+        }
+        page.workArea = MakeRect(work->left, work->top,
+            work->right, work->bottom);
+        page.visualWorkArea = page.workArea;
+        ConfigureGridPage(page);
+        ApplyIconSpacingToPage(page);
+    }
+
     layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
     // Preserve the active page dimensions before rebuilding monitor geometry.
     // DPI, resolution and work-area changes may resize cells, but must not
@@ -127,22 +161,7 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
     // "restores" that stale reservation into the fresh work area and can
     // expand it across the Windows taskbar.
     dockAreas_.clear();
-    gridPages_.clear();
-
-    MonitorEnumContext ctx{};
-    ctx.virtualLeft = virtualLeft_;
-    ctx.virtualTop = virtualTop_;
-    ctx.pages = &gridPages_;
-    EnumDisplayMonitors(nullptr, nullptr, EnumGridPageMonitorProc, reinterpret_cast<LPARAM>(&ctx));
-
-    if (gridPages_.empty())
-    {
-        GridPage fb;
-        fb.id = L"Primary"; fb.monitorId = fb.id; fb.isPrimary = true;
-        fb.bounds = layoutWorkArea_; fb.workArea = layoutWorkArea_;
-        fb.visualWorkArea = fb.workArea;
-        gridPages_.push_back(fb);
-    }
+    gridPages_ = std::move(nextPages);
 
     // 从枚举结果提取系统主屏 monitorId（供双锚点回退解析使用）
     primaryMonitorId_.clear();
@@ -155,19 +174,9 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
         return a.bounds.left < b.bounds.left;
     });
 
-    for (auto& page : gridPages_)
-    {
-        page.workArea.left   = std::clamp<LONG>(page.workArea.left,   0, static_cast<LONG>(virtualWidth_));
-        page.workArea.top    = std::clamp<LONG>(page.workArea.top,    0, static_cast<LONG>(virtualHeight_));
-        page.workArea.right  = std::clamp<LONG>(page.workArea.right,  page.workArea.left, static_cast<LONG>(virtualWidth_));
-        page.workArea.bottom = std::clamp<LONG>(page.workArea.bottom, page.workArea.top,  static_cast<LONG>(virtualHeight_));
-        page.visualWorkArea = page.workArea;
-        ConfigureGridPage(page);
-        ApplyIconSpacingToPage(page);
-    }
-
     ApplyPageMapping();
     ApplyDockWorkAreaReservation();
+    return true;
 }
 
 /**
