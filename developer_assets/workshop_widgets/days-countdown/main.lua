@@ -73,8 +73,7 @@ local function desktop(context,m)
             local number=text("event.days",value,unit*0.38,false)
             number.fontSize=delta==0 and unit*0.16 or math.min(unit*0.34,(w-pad*2)/math.max(1,#value)*1.3)
             number.bold=true;number.textAlign="center";number.overflowText="clip"
-            local state=text("event.status",delta>0 and c.remaining or c.elapsed,unit*0.20,false)
-            state.textAlign="end"
+            local state=delta>0 and c.remaining or c.elapsed
             local date=text("event.date",item.date,unit*0.14,false);date.fontSize=title.fontSize;date.textAlign="center"
             local sideHeight=math.max(0,(h-pad*2-unit*0.38)/2)
             local heading=view.column({key="event.heading",height=sideHeight,gap=unit*0.015,
@@ -82,22 +81,22 @@ local function desktop(context,m)
             local footer=view.column({key="event.footer",height=sideHeight,
                 justifyContent="center",children={date}})
             if delta~=0 then
-                local suffix=text("event.unit",c.days,unit*0.20,false)
                 local function labelUnits(s)
                     local characters=#(s:gsub("[\128-\191]",""))
                     local _,ascii=s:gsub("[\1-\127]","")
                     return math.max(1.1,ascii*0.65+(characters-ascii)*1.1)
                 end
-                local labelWidth=math.max(labelUnits(state.text),labelUnits(c.days))
+                local labelWidth=math.max(labelUnits(state),labelUnits(c.days))
                 local labelSize=math.min(unit*0.08,(w-pad*2)*0.30/labelWidth)
                 local sideWidth=labelSize*labelWidth
-                state.fontSize=labelSize;state.width=sideWidth;state.flexShrink=0
-                suffix.fontSize=labelSize;suffix.width=sideWidth;suffix.flexShrink=0
                 number.fontSize=math.min(unit*0.34,(w-pad*2-sideWidth*2-unit*0.05)/(#value*0.72))
-                number.width="auto";number.minWidth=number.fontSize*#value*0.72;number.flexShrink=0
-                local countRow=view.row({key="event.count",height=unit*0.38,gap=unit*0.025,
-                    justifyContent="center",alignItems="end",children={
-                        state,number,suffix}})
+                -- One shaped line keeps mixed font sizes on the same baseline as the count shrinks.
+                local countRow=view.styledText({key="event.count",width="fill",height=unit*0.38,
+                    fontSize=labelSize,textAlign="center",verticalAlign="center",textWrap="noWrap",
+                    overflowText="clip",style={foreground="textPrimary"},spans={
+                        {text=state.." ",fontSize=labelSize},
+                        {text=value,fontSize=number.fontSize,bold=true},
+                        {text=" "..c.days,fontSize=labelSize}}})
                 children={heading,countRow,footer}
             else children={heading,number,footer} end
             -- Balance the visible glyph, whose baseline sits below the text line center.
