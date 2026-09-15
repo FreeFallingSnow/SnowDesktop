@@ -420,21 +420,9 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             continue;
         if (!failure.retry)
         {
-            const RECT dirty = position->second.bounds;
-            if (position->second.backdropRegistered)
-            {
-                (void)desktopBackdropCompositor_.RemovePanel(
-                    position->second.bounds);
-            }
-            if (desktopWidgetCompositionLayer_ && position->second.visual)
-            {
-                (void)desktopWidgetCompositionLayer_->RemoveVisual(
-                    position->second.visual.Get());
-            }
-            desktopWidgetCompositionItems_.erase(position);
-            desktopWidgetCompositionZOrder_.clear();
-            if (hwnd_ && IsWindow(hwnd_))
-                InvalidateRect(hwnd_, &dirty, FALSE);
+            // Retire child marquees and queued work with the failed owner,
+            // just as an explicit widget removal does.
+            RemoveDesktopWidgetComposition(failure.widgetId, true);
             continue;
         }
 
@@ -735,6 +723,10 @@ bool DesktopApp::SyncDesktopWidgetCompositionZOrder()
 
 void DesktopApp::ResetDesktopWidgetComposition()
 {
+    // Marquee visuals belong to these parents. Retire their cache and queued
+    // submissions even when only WM_SIZE/topology (not the device) is reset;
+    // otherwise a later draw reuses children detached from the visible tree.
+    ResetWidgetMarqueeComposition();
     presentedWidgetDragFeedback_ = {};
     pendingDesktopWidgetCompositions_.clear();
     desktopWidgetCompositionItems_.clear();

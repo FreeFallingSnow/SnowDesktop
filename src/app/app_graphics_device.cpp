@@ -176,7 +176,6 @@ void DesktopApp::RecreateComponentListTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
-    ResetWidgetMarqueeComposition();
     ResetDesktopWidgetComposition();
     ResetDesktopForegroundComposition();
     ResetDragPreviewCompositionResources();

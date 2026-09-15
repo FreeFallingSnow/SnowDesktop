@@ -1,10 +1,12 @@
 #include "widget_composition_layer_rules.h"
 #include "widget_surface_retention.h"
+#include "test_source_boundary.h"
 
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <string>
 
@@ -259,6 +261,32 @@ int main(int argc, char** argv)
         const std::string floatingPopup = ReadFile(
             root / "src" / "app" /
                 "app_floating_popup_window.cpp");
+
+        // Architectural guard for the WM_SIZE/topology recovery defect:
+        // parent teardown owns child-cache retirement. This checks source
+        // structure only; it does not claim that DComp pixels were presented.
+        const auto resetBegin = composition.find(
+            "void DesktopApp::ResetDesktopWidgetComposition()");
+        Check(resetBegin != std::string::npos,
+            "the shared desktop widget reset entry is present");
+        const auto resetCode = snowdesktop::test::CompactSource(
+            std::regex_replace(composition.substr(resetBegin),
+                std::regex(R"(//[^\r\n]*|/\*[\s\S]*?\*/)"), ""));
+        const auto retireChildren = resetCode.find(
+            "ResetWidgetMarqueeComposition();");
+        const auto retireParents = resetCode.find(
+            "desktopWidgetCompositionItems_.clear();");
+        Check(retireChildren != std::string::npos &&
+                retireParents != std::string::npos &&
+                retireChildren < retireParents,
+            "shared parent reset must own marquee cache retirement before clearing parents");
+        Check(snowdesktop::test::CheckSourceBoundaries(root, {
+            {"src/app/app_widget_composition.cpp",
+             "bool DesktopApp::FlushPendingDesktopWidgetComposition()",
+             "bool DesktopApp::HasDesktopWidgetComposition(",
+             {"desktopWidgetCompositionItems_.erase(",
+              "desktopWidgetCompositionItems_.clear("}},
+        }), "surface failure recovery must not bypass the shared owner-removal path");
 
         const std::size_t queueBegin = composition.find(
             "bool DesktopApp::QueueDesktopWidgetComposition(");
