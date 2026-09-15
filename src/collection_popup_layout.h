@@ -20,10 +20,12 @@ inline constexpr int kMinimumListRows = 5;
 enum class View { Grid, List, Fan };
 
 // Retain the preference when moving a widget off the Dock, but never let it
-// change a desktop popup or suppress that widget's list preference.
-inline View ResolveView(bool anchoredToDock, bool fanPopup, bool listMode)
+// change a desktop popup or suppress that widget's list preference. Showing all
+// items temporarily restores that preference without changing the saved fan flag.
+inline View ResolveView(bool anchoredToDock, bool fanPopup, bool listMode,
+    bool showAllItems = false)
 {
-    if (anchoredToDock && fanPopup) return View::Fan;
+    if (anchoredToDock && fanPopup && !showAllItems) return View::Fan;
     return listMode ? View::List : View::Grid;
 }
 

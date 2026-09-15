@@ -1383,6 +1383,20 @@ int main(int argc, char** argv)
             popupLayout::ResolveView(true, false, true) == popupLayout::View::List &&
             popupLayout::ResolveView(true, false, false) == popupLayout::View::Grid,
         "Dock popups must retain fan priority and restore the chosen grid/list view when disabled");
+    // Show all used to suppress the fan only in the rendering path, leaving
+    // list mode suppressed by the saved fan flag and forcing every full view to grid.
+    Check(popupLayout::ResolveView(true, true, true, true) == popupLayout::View::List,
+        "show all from a Dock fan must restore the object's saved list mode");
+    Check(popupLayout::ResolveView(true, true, false, true) == popupLayout::View::Grid,
+        "show all from a Dock fan must retain the object's saved icon mode");
+    Check(popupLayout::ResolveView(true, true, true, false) == popupLayout::View::Fan &&
+            popupLayout::ResolveView(true, true, false, false) == popupLayout::View::Fan,
+        "reopening after show all must restore the fan for both saved display modes");
+    Check(popupLayout::ResolveView(false, true, true, true) == popupLayout::View::List &&
+            popupLayout::ResolveView(false, true, false, true) == popupLayout::View::Grid &&
+            popupLayout::ResolveView(true, false, true, true) == popupLayout::View::List &&
+            popupLayout::ResolveView(true, false, false, true) == popupLayout::View::Grid,
+        "show all must preserve desktop and non-fan Dock display modes");
     Check(
         popupLayout::AllowsMarqueeStart(
             true, false, false),

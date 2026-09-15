@@ -87,8 +87,8 @@ bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
     namespace layout = snowdesktop::collection_popup_layout;
     if (layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
-            widget.listMode) != layout::View::Fan ||
-        popupFanShowAll_ || GetPopupItemCount(widget) == 0)
+            widget.listMode, popupFanShowAll_) != layout::View::Fan ||
+        GetPopupItemCount(widget) == 0)
         return false;
     // A vertical side Dock has no native fan counterpart. Use the existing
     // grid there, and when there is insufficient space for an anchored fan.
@@ -105,7 +105,7 @@ bool DesktopApp::UsesCollectionPopupList(const DesktopWidget& widget) const
 {
     namespace layout = snowdesktop::collection_popup_layout;
     return layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
-        widget.listMode) == layout::View::List;
+        widget.listMode, popupFanShowAll_) == layout::View::List;
 }
 
 size_t DesktopApp::GetCollectionPopupFanVisibleCount(const RECT& popup) const
@@ -242,7 +242,7 @@ void DesktopApp::ShowAllCollectionPopupItems()
     if (handlingFloatingPopupInput_)
     {
         // The Dock's timer also samples physical presses. Consume this handled
-        // press before publishing the grid, including the since-last-read bit.
+        // press before publishing the full view, including the since-last-read bit.
         const SHORT state = GetAsyncKeyState(VK_LBUTTON);
         constexpr UINT leftButtonBit = 1u << 0;
         floatingDockPointerButtonsDown_ =
