@@ -112,7 +112,7 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
     const auto background = highContrast ? systemColor(COLOR_WINDOW) : D2D1::ColorF(light ? 0xf9f9f9 : 0x292929, 0.98f);
     const auto foreground = highContrast ? systemColor(COLOR_WINDOWTEXT) : D2D1::ColorF(light ? 0x202020 : 0xf5f5f5);
     const auto border = highContrast ? foreground : D2D1::ColorF(light ? 0xc6c6c6 : 0x606060);
-    DrawD2DRoundedRectangle(ctx, frame, px(8), background, border, 1);
+    DrawD2DRoundedRectangle(ctx, frame, 8.0f * scale, background, border, 1);
     RECT textRect{frame.left + padding, frame.top + padding, frame.right - padding, frame.top + padding + titleHeight};
     DrawD2DText(ctx, title, textRect, format.Get(), foreground);
     textRect.top = textRect.bottom + px(8); textRect.bottom = textRect.top + textHeight;
@@ -122,8 +122,8 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
     onboardingSettingsRect_ = {frame.left + width / 2 + px(4), buttonTop, frame.right - padding, buttonTop + buttonHeight};
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    DrawD2DRoundedRectangle(ctx, onboardingPauseRect_, px(4), background, border, 1);
-    DrawD2DRoundedRectangle(ctx, onboardingSettingsRect_, px(4), background, border, 1);
+    DrawD2DRoundedRectangle(ctx, onboardingPauseRect_, 4.0f * scale, background, border, 1);
+    DrawD2DRoundedRectangle(ctx, onboardingSettingsRect_, 4.0f * scale, background, border, 1);
     DrawD2DText(ctx, pauseText, onboardingPauseRect_, format.Get(), foreground);
     DrawD2DText(ctx, settingsText, onboardingSettingsRect_, format.Get(), foreground);
 }
