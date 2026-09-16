@@ -19,31 +19,70 @@ void Check(bool condition, const char* message);
 void CheckUsageGuide()
 {
     using namespace snowdesktop::usage_guide;
-    // Production selection and prerequisites; no simulated widget mutation.
+    // The same navigation model is used by the host's pointer/menu actions.
+    // Manual advancement is separate from current-desktop availability.
     Practice practice;
-    Check(!practice.active, "a new process starts no desktop tutorial");
+    Check(!practice.Visible() && !practice.active, "a new process starts no desktop tutorial");
     Check(!ParseTopic("unknown") && ParseTopic("layout") == Topic::Move,
         "unknown requests are rejected and old move/resize routes remain usable");
-    Check(practice.Begin(Topic::FolderMapping, 0) && practice.active == Topic::FolderMapping,
-        "a user can start a later lesson with no completed earlier lessons");
-    Check(!practice.Begin(Topic::Application, 0) && practice.active == Topic::FolderMapping,
-        "a missing collection explains prerequisites without replacing the current practice");
-    Check(practice.Begin(Topic::Application, CollectionAvailable) && practice.End() == Topic::Application && !practice.active,
-        "any available collection allows practice and return identifies the same lesson");
-    Check(practice.Begin(Topic::Resize, StandaloneWidget) && practice.End() == Topic::Resize,
-        "resize can be practiced independently before move on any standalone widget");
-    Check(!practice.Begin(Topic::Startup, 127) && !practice.Begin(static_cast<Topic>(999), 127),
-        "settings-only and invalid topics cannot start desktop practice");
-    Check(MissingPrerequisite(*Find(Topic::DockCollection), 0) == DockEnabled &&
-        MissingPrerequisite(*Find(Topic::DockCollection), DockEnabled) == StandaloneCollection,
-        "Dock availability is explained before a missing source component");
-    Check(!practice.Begin(Topic::DockFiles, DockEnabled) && practice.Begin(Topic::DockFiles, DockEnabled | StandaloneFileSource),
-        "Dock file practice requires a usable file-source component as well as Dock");
-    Check(!practice.Begin(Topic::CollectionGroup, StandaloneCollection) &&
-        practice.Begin(Topic::CollectionGroup, TwoStandaloneCollections),
-        "collection grouping requires two existing standalone collections, not historical progress");
-    Check(!practice.Begin(Topic::Navigation, 0) && practice.Begin(Topic::Navigation, NavigationEnabled),
-        "quick navigation practice requires an enabled invocation hotkey");
+    Check(practice.Begin(Topic::FolderMapping) && practice.active == Topic::FolderMapping,
+        "a user can enter any lesson without completing earlier lessons");
+    Check(practice.Advance(StandaloneFileSource) == AdvanceResult::Advanced &&
+        practice.active == Topic::FileGroup && !practice.sectionEnd,
+        "done changes the current file lesson without returning to settings");
+    Check(practice.Advance(StandaloneFileSource) == AdvanceResult::SectionEnd &&
+        practice.active == Topic::FileGroup && practice.sectionEnd,
+        "the last lesson stops at a topic boundary rather than silently crossing it");
+    Check(practice.Advance(127) == AdvanceResult::Unavailable && practice.active == Topic::FileGroup,
+        "a repeated done action at the boundary cannot skip into another theme");
+    Check(practice.ContinueSection(127) && practice.active == Topic::Grid && !practice.sectionEnd,
+        "an explicit continue enters the next theme, including settings lessons");
+    practice.Pause();
+    Check(!practice.Visible() && practice.active == Topic::Grid &&
+        practice.Advance(127) == AdvanceResult::Unavailable,
+        "pause retains the current lesson and prevents hidden advancement");
+    Check(practice.Resume(127) && practice.Visible() && practice.active == Topic::Grid,
+        "resume returns to the same lesson after settings navigation");
+    Check(practice.Advance(127) == AdvanceResult::Advanced && practice.active == Topic::Icons,
+        "settings lessons participate in the same manual sequence");
+    Check(practice.Previous(127) && practice.active == Topic::Grid && !practice.Previous(127),
+        "previous stays within the theme without wrapping to unrelated lessons");
+    Check(practice.Begin(Topic::DockCollection) && practice.preparation == DockEnabled,
+        "an unavailable lesson opens its preparation guidance rather than rejecting practice");
+    Check(practice.Advance(0) == AdvanceResult::Prerequisite && practice.active == Topic::DockCollection,
+        "ready cannot advance when Dock is still unavailable");
+    Check(practice.Advance(DockEnabled) == AdvanceResult::Prerequisite && practice.preparation == StandaloneCollection,
+        "preparation next explains the missing standalone source after Dock is enabled");
+    Check(practice.Advance(DockEnabled | StandaloneCollection) == AdvanceResult::Prepared &&
+        practice.active == Topic::DockCollection && !practice.preparation,
+        "finishing prerequisite preparation never completes or skips the requested lesson");
+    Check(practice.Advance(DockEnabled | StandaloneCollection) == AdvanceResult::Advanced &&
+        practice.active == Topic::DockFiles && practice.preparation == StandaloneFileSource,
+        "each new lesson rechecks its own current prerequisites");
+    Check(practice.Advance(0, true) == AdvanceResult::Advanced && practice.active == Topic::DockSummon,
+        "explicit skip can leave unavailable guidance without marking it learned");
+    Check(practice.Begin(Topic::DockCollection, DockEnabled | StandaloneCollection),
+        "a lesson with an existing source starts directly with its instructions");
+    practice.ObserveContext(DockEnabled); // The user has moved the source into Dock.
+    practice.Pause(); practice.Resume(DockEnabled);
+    Check(!practice.preparation && practice.Advance(DockEnabled) == AdvanceResult::Advanced &&
+        practice.active == Topic::DockFiles,
+        "moving the practice source into Dock does not rearm prerequisites or trap manual completion");
+    practice.Begin(Topic::CollectionGroup, TwoStandaloneCollections);
+    Check(practice.Advance(0) == AdvanceResult::SectionEnd,
+        "grouping both standalone collections cannot make the grouping lesson impossible to finish");
+    Check(practice.Begin(Topic::CollectionGroup, StandaloneCollection) &&
+        practice.preparation == TwoStandaloneCollections,
+        "grouping checks current standalone count, not previous lesson completion");
+    Check(practice.Begin(Topic::Navigation) && practice.preparation == NavigationEnabled &&
+        practice.Advance(NavigationEnabled) == AdvanceResult::Prepared,
+        "quick navigation can be prepared in settings without losing its lesson");
+    Check(practice.Begin(Topic::Backup) && practice.Advance(0) == AdvanceResult::SectionEnd &&
+        !practice.ContinueSection(0), "the final theme cannot loop unexpectedly to the beginning");
+    Check(practice.End() == Topic::Backup && !practice.active && !practice.preparation && !practice.sectionEnd,
+        "end discards this session and reports the actual last lesson");
+    Check(!practice.Begin(static_cast<Topic>(999)) && !practice.active,
+        "invalid requests cannot create a practice session");
     for (const auto& lesson : kLessons)
     {
         Check(ParseTopic(lesson.key) == lesson.topic, "every visible lesson can be requested through the host");

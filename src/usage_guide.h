@@ -8,7 +8,8 @@
 #include <optional>
 #include <string_view>
 
-// Private settings help. No completion history, widget identity or learning order.
+// Private settings help. Practice navigation is process-local; no completion
+// history or widget identity is persisted.
 namespace snowdesktop::usage_guide
 {
 enum class Section { Settings, Basics, Files, Dock, Navigation, More };
@@ -95,20 +96,127 @@ inline SettingsRoute PrerequisiteRoute(Context context)
     if (context == StandaloneFileSource) return SettingsRoute::ForPage(SettingsPage::General, "start.files");
     return SettingsRoute::ForPage(SettingsPage::General, "start.collection");
 }
+inline constexpr std::array<Section, 6> kSections{
+    Section::Basics, Section::Files, Section::Settings, Section::Dock, Section::Navigation, Section::More};
+inline const char* SectionTitle(Section section)
+{
+    switch (section)
+    {
+    case Section::Basics: return L10N_KEY("start.basics");
+    case Section::Files: return L10N_KEY("start.section.files");
+    case Section::Settings: return L10N_KEY("start.section.settings");
+    case Section::Dock: return L10N_KEY("start.section.dock");
+    case Section::Navigation: return L10N_KEY("start.section.navigation");
+    case Section::More: return L10N_KEY("start.section.more");
+    }
+    return L10N_KEY("start.title");
+}
+inline bool HasSettings(const Lesson& lesson)
+{
+    return !lesson.practice || lesson.settingsPage != SettingsPage::General || *lesson.settingsFocus;
+}
+inline std::optional<Topic> Adjacent(Topic topic, bool forward)
+{
+    const auto* selected = Find(topic);
+    if (!selected) return {};
+    std::optional<Topic> previous;
+    bool found = false;
+    for (const auto& lesson : kLessons)
+    {
+        if (lesson.section != selected->section) continue;
+        if (found) return lesson.topic;
+        if (lesson.topic == topic)
+        {
+            if (!forward) return previous;
+            found = true;
+        }
+        previous = lesson.topic;
+    }
+    return {};
+}
+inline std::optional<Topic> NextSection(Topic topic)
+{
+    const auto* selected = Find(topic);
+    if (!selected) return {};
+    for (std::size_t i = 0; i + 1 < kSections.size(); ++i)
+        if (kSections[i] == selected->section)
+            for (const auto& lesson : kLessons)
+                if (lesson.section == kSections[i + 1]) return lesson.topic;
+    return {};
+}
+inline std::optional<Topic> PreparationLesson(Context context)
+{
+    if (context == DockEnabled || context == NavigationEnabled) return {};
+    return context == StandaloneFileSource ? Topic::Files : Topic::Collection;
+}
+enum class AdvanceResult { Unavailable, Prerequisite, Prepared, Advanced, SectionEnd };
 struct Practice
 {
     std::optional<Topic> active;
-    bool Begin(Topic topic, std::uint32_t context)
+    bool paused = false;
+    bool sectionEnd = false;
+    std::optional<Context> preparation;
+    bool Visible() const { return active.has_value() && !paused; }
+    bool Begin(Topic topic, std::uint32_t context = 0)
     {
         const auto* lesson = Find(topic);
-        if (!lesson || !lesson->practice || MissingPrerequisite(*lesson, context)) return false;
+        if (!lesson) return false;
+        // Missing prerequisites are taught in place. Starting never completes
+        // a lesson, creates a widget or changes a setting.
         active = topic;
+        paused = sectionEnd = false;
+        preparation = MissingPrerequisite(*lesson, context);
         return true;
+    }
+    void ObserveContext(std::uint32_t context)
+    {
+        // Preparation is an entry condition. A successful operation may itself
+        // consume the source (grouping it or moving it into Dock).
+        if (active && preparation && !sectionEnd)
+            if (const auto missing = MissingPrerequisite(*Find(*active), context)) preparation = missing;
+    }
+    bool Resume(std::uint32_t context)
+    {
+        if (!active) return false;
+        paused = false; ObserveContext(context); return true;
+    }
+    void Pause() { if (active) paused = true; }
+    AdvanceResult Advance(std::uint32_t context, bool skip = false)
+    {
+        if (!Visible() || sectionEnd) return AdvanceResult::Unavailable;
+        ObserveContext(context);
+        if (!skip && preparation && MissingPrerequisite(*Find(*active), context)) return AdvanceResult::Prerequisite;
+        if (!skip && preparation) { preparation.reset(); return AdvanceResult::Prepared; }
+        preparation.reset();
+        if (const auto next = Adjacent(*active, true))
+        {
+            active = *next;
+            preparation = MissingPrerequisite(*Find(*active), context);
+            return AdvanceResult::Advanced;
+        }
+        sectionEnd = true;
+        return AdvanceResult::SectionEnd;
+    }
+    bool Previous(std::uint32_t context)
+    {
+        if (!Visible()) return false;
+        if (sectionEnd) { sectionEnd = false; ObserveContext(context); return true; }
+        if (const auto previous = Adjacent(*active, false))
+        { active = *previous; preparation = MissingPrerequisite(*Find(*active), context); return true; }
+        return false;
+    }
+    bool ContinueSection(std::uint32_t context)
+    {
+        if (!Visible() || !sectionEnd) return false;
+        if (const auto next = NextSection(*active)) return Begin(*next, context);
+        return false;
     }
     std::optional<Topic> End()
     {
         const auto previous = active;
         active.reset();
+        paused = sectionEnd = false;
+        preparation.reset();
         return previous;
     }
 };

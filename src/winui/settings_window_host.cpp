@@ -2058,7 +2058,11 @@ struct SettingsWindowHost::Impl
             state->owner->ShowActionError(result);
             // The child owns its window lifecycle; never hide it from the
             // parent's synchronous RPC while its controls are being invoked.
-            if (result.Succeeded()) (void)state->owner->HideWindow();
+            if (result.Succeeded())
+            {
+                if (lesson->practice) (void)state->owner->HideWindow();
+                else state->owner->RequestRoute(SettingsRoute::ForPage(lesson->settingsPage, lesson->settingsFocus));
+            }
         };
         general.onboarding.expandedChanged = [weak](std::uint64_t generation, bool expanded) {
             const auto state = weak.lock();

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../modern_menu.h"
 
 void DesktopApp::LoadUsageGuidePreferences()
 {
@@ -66,23 +67,37 @@ snowdesktop::SettingsActionResult DesktopApp::StartUsageGuidePractice(snowdeskto
         return SettingsActionResult::Failure(_LW("start.error.unavailable"));
     const auto* lesson = snowdesktop::usage_guide::Find(topic);
     if (!lesson) return SettingsActionResult::Failure(_LW("start.error.unavailable"));
-    const auto context = UsageGuideContext();
-    if (const auto missing = snowdesktop::usage_guide::MissingPrerequisite(*lesson, context))
-        return SettingsActionResult::Failure(_LW(snowdesktop::usage_guide::PrerequisiteText(*missing)));
-    if (!usageGuidePractice_.Begin(topic, context))
-        return SettingsActionResult::Failure(_LW("start.error.unavailable"));
+    if (usageGuidePractice_.active == topic) usageGuidePractice_.Resume(UsageGuideContext());
+    else
+    {
+        if (!usageGuidePractice_.Begin(topic, UsageGuideContext())) return SettingsActionResult::Failure(_LW("start.error.unavailable"));
+        usageGuideDetails_ = false; usageGuideDetailPage_ = 0;
+    }
     ClearWidgetAddedHint();
     usageGuideWaitingForDesktop_ = true;
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    RefreshUsageGuidePractice();
     return SettingsActionResult::Success();
+}
+
+void DesktopApp::RefreshUsageGuidePractice()
+{
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideNextRect_ = usageGuideMoreRect_ = usageGuideOpenSettingsRect_ = {};
+    usageGuidePressedButton_ = 0;
+    PublishHomeAboutStatus();
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 bool DesktopApp::HandleUsageGuidePointerDown(POINT point)
 {
-    if (!usageGuidePractice_.active || !customDesktopVisible_ || desktopIconsHidden_ ||
-        !luaWidgetPanelRequest_.widgetId.empty()) return false;
+    if (!usageGuidePractice_.Visible() || !customDesktopVisible_ || desktopIconsHidden_ || reloading_ ||
+        !luaWidgetPanelRequest_.widgetId.empty() || shellPopupMenuLayerDepth_ > 0 ||
+        snowdesktop::modern_menu::IsActive() ||
+        (settingsWindow_ && IsWindowVisible(settingsWindow_->Window()))) return false;
     usageGuidePressedButton_ = PtInRect(&usageGuidePauseRect_, point) ? 1 :
-        PtInRect(&usageGuideSettingsRect_, point) ? 2 : 0;
+        PtInRect(&usageGuideSettingsRect_, point) ? 2 :
+        PtInRect(&usageGuideNextRect_, point) ? 3 :
+        PtInRect(&usageGuideMoreRect_, point) ? 4 :
+        PtInRect(&usageGuideOpenSettingsRect_, point) ? 5 : 0;
     if (!usageGuidePressedButton_) return false;
     SetCapture(hwnd_);
     return true;
@@ -93,21 +108,78 @@ bool DesktopApp::HandleUsageGuidePointerUp(POINT point)
     const int pressed = std::exchange(usageGuidePressedButton_, 0);
     if (!pressed) return false;
     if (GetCapture() == hwnd_) ReleaseCapture();
-    if ((pressed == 1 && PtInRect(&usageGuidePauseRect_, point)) ||
-        (pressed == 2 && PtInRect(&usageGuideSettingsRect_, point)))
+    if (!usageGuidePractice_.Visible()) return true;
+    const auto topic = *usageGuidePractice_.active;
+    const auto& lesson = *snowdesktop::usage_guide::Find(topic);
+    if (pressed == 1 && PtInRect(&usageGuidePauseRect_, point))
     {
-        const auto previous = usageGuidePractice_.End();
+        usageGuidePractice_.Pause();
         usageGuideWaitingForDesktop_ = false;
-        usageGuidePauseRect_ = usageGuideSettingsRect_ = {};
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        if (pressed == 2 && previous)
+        RefreshUsageGuidePractice();
+    }
+    else if (pressed == 2 && PtInRect(&usageGuideSettingsRect_, point))
+    {
+        usageGuidePractice_.Pause();
+        RefreshUsageGuidePractice();
+        ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::General, "start." + std::string(lesson.key)));
+    }
+    else if (pressed == 3 && PtInRect(&usageGuideNextRect_, point))
+    {
+        if (usageGuidePractice_.sectionEnd)
         {
-            const auto* lesson = snowdesktop::usage_guide::Find(*previous);
-            ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
-                snowdesktop::SettingsPage::General, lesson ?
-                    "start." + std::string(lesson->key) : "start.basics"));
+            if (!usageGuidePractice_.ContinueSection(UsageGuideContext())) usageGuidePractice_.End();
         }
+        else usageGuidePractice_.Advance(UsageGuideContext());
+        usageGuideDetails_ = false; usageGuideDetailPage_ = 0;
+        RefreshUsageGuidePractice();
+    }
+    else if (pressed == 4 && PtInRect(&usageGuideMoreRect_, point))
+    {
+        ClientToScreen(hwnd_, &point); ShowUsageGuideActions(point);
+    }
+    else if (pressed == 5 && PtInRect(&usageGuideOpenSettingsRect_, point))
+    {
+        const auto missing = snowdesktop::usage_guide::MissingPrerequisite(lesson, UsageGuideContext());
+        usageGuideWaitingForDesktop_ = true;
+        ShowSettingsWindow(missing && !snowdesktop::usage_guide::PreparationLesson(*missing) ?
+            snowdesktop::usage_guide::PrerequisiteRoute(*missing) :
+            snowdesktop::SettingsRoute::ForPage(lesson.settingsPage, lesson.settingsFocus));
     }
     return true;
+}
+
+void DesktopApp::ShowUsageGuideActions(POINT point)
+{
+    using namespace snowdesktop::usage_guide;
+    if (!usageGuidePractice_.Visible()) return;
+    const auto topic = *usageGuidePractice_.active;
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return;
+    AppendMenuW(menu, MF_STRING, 1, _LW(usageGuideDetails_ ? "start.hideDetails" : "start.details"));
+    if (usageGuideDetailPages_ > 1)
+    {
+        AppendMenuW(menu, MF_STRING | (usageGuideDetailPage_ ? 0 : MF_GRAYED), 5, _LW("start.previousPage"));
+        AppendMenuW(menu, MF_STRING | (usageGuideDetailPage_ + 1 < usageGuideDetailPages_ ? 0 : MF_GRAYED), 6, _LW("start.nextPage"));
+    }
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (usageGuidePractice_.sectionEnd || Adjacent(topic, false) ? 0 : MF_GRAYED), 2, _LW("start.previous"));
+    AppendMenuW(menu, MF_STRING | (usageGuidePractice_.sectionEnd ? MF_GRAYED : 0), 3, _LW("start.skip"));
+    AppendMenuW(menu, MF_STRING, 4, _LW("start.endPractice"));
+    const UINT command = ShowModernMenu(menu, point, hwnd_);
+    DestroyMenu(menu);
+    // The menu runs a nested event loop; initialization can end a session.
+    if (!usageGuidePractice_.Visible() || usageGuidePractice_.active != topic) return;
+    switch (command)
+    {
+    case 1: usageGuideDetails_ = !usageGuideDetails_; usageGuideDetailPage_ = 0; break;
+    case 2: usageGuidePractice_.Previous(UsageGuideContext()); usageGuideDetails_ = false; usageGuideDetailPage_ = 0; break;
+    case 3: usageGuidePractice_.Advance(UsageGuideContext(), true); usageGuideDetails_ = false; usageGuideDetailPage_ = 0; break;
+    case 4: usageGuidePractice_.End(); usageGuideWaitingForDesktop_ = false; break;
+    case 5: if (usageGuideDetailPage_) --usageGuideDetailPage_; break;
+    case 6: if (usageGuideDetailPage_ + 1 < usageGuideDetailPages_) ++usageGuideDetailPage_; break;
+    default: break;
+    }
+    RefreshUsageGuidePractice();
 }
 

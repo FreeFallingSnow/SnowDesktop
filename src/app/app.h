@@ -3533,8 +3533,12 @@ private:
     bool usageGuideWelcomeQueued_ = false;
     snowdesktop::usage_guide::Practice usageGuidePractice_;
     bool usageGuideWaitingForDesktop_ = false;
-    RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{};
+    RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{}, usageGuideNextRect_{}, usageGuideMoreRect_{}, usageGuideOpenSettingsRect_{};
     int usageGuidePressedButton_ = 0;
+    bool usageGuideDetails_ = false;
+    std::size_t usageGuideDetailPage_ = 0, usageGuideDetailPages_ = 1;
+    void ShowUsageGuideActions(POINT point);
+    void RefreshUsageGuidePractice();
     void DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx);
     bool HandleUsageGuidePointerDown(POINT point);
     bool HandleUsageGuidePointerUp(POINT point);

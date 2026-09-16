@@ -1,8 +1,7 @@
 #include "pch.h"
 #include "start_page_presenter.h"
-#include <winrt/Microsoft.UI.Xaml.Automation.h>
-#include <winrt/Microsoft.UI.Xaml.Markup.h>
-#include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
+#include <algorithm>
+#include <cmath>
 
 namespace snowdesktop::winui
 {
@@ -16,36 +15,49 @@ struct StartPagePresenter::Impl
     struct Group
     {
         Section section;
-        const char* title;
         const wchar_t* asset;
         const wchar_t* glyph;
         muxc::SelectorBarItem tab;
+    };
+    struct Row
+    {
+        Topic topic;
+        muxc::ListViewItem item;
+        muxc::Grid layout, heading;
+        muxc::StackPanel labels, details;
+        muxc::TextBlock title, description, status, instructions, tips, prerequisite, launchLabel, settingsLabel;
+        muxc::Button disclosure, launch, settings;
+        muxc::FontIcon chevron;
+        muxc::ContentControl icon;
+        winrt::event_token disclosureToken{}, launchToken{}, settingsToken{};
+        explicit Row(Topic value) : topic(value) {}
+        ~Row()
+        {
+            disclosure.Click(disclosureToken); launch.Click(launchToken); settings.Click(settingsToken);
+        }
     };
     LocalizeCallback localize;
     StartPageActions actions;
     muxc::Expander root;
     muxc::StackPanel header, body;
-    muxc::TextBlock title, summary, description, stepsLabel, instructions, tipsLabel, tips;
+    muxc::TextBlock title, summary;
     muxc::ScrollViewer tabsScroll;
     muxc::SelectorBar tabs;
-    muxc::ComboBox lessons;
-    muxc::InfoBar prerequisite;
-    muxc::Button prepare, practice, settings;
-    muxc::TextBlock prepareLabel, practiceLabel, settingsLabel;
-    muxc::Grid buttons;
+    muxc::ListView lessons;
     std::array<Group, 6> groups{{
-        {Section::Basics, L10N_KEY("start.basics"), L"categories.svg", L"\xE8B7"},
-        {Section::Files, L10N_KEY("start.section.files"), L"desktop.svg", L"\xE7F4"},
-        {Section::Settings, L10N_KEY("start.section.settings"), L"appearance-desktop-icons.svg", L"\xE8A9"},
-        {Section::Dock, L10N_KEY("start.section.dock"), L"dock.svg", L"\xEBC8"},
-        {Section::Navigation, L10N_KEY("start.section.navigation"), L"search.svg", L"\xE721"},
-        {Section::More, L10N_KEY("start.section.more"), L"widgets.svg", L"\xE74C"},
+        {Section::Basics, L"categories.svg", L"\xE8B7"},
+        {Section::Files, L"desktop.svg", L"\xE7F4"},
+        {Section::Settings, L"appearance-desktop-icons.svg", L"\xE8A9"},
+        {Section::Dock, L"dock.svg", L"\xEBC8"},
+        {Section::Navigation, L"search.svg", L"\xE721"},
+        {Section::More, L"widgets.svg", L"\xE74C"},
     }};
-    std::vector<Topic> listedTopics;
+    std::vector<std::unique_ptr<Row>> rows;
     Topic selected = Topic::Startup;
     Section section = Section::Basics;
-    mux::Style secondaryStyle{nullptr};
-    winrt::event_token tabsToken{}, lessonsToken{}, prepareToken{}, practiceToken{}, settingsToken{}, themeToken{}, sizeToken{};
+    std::optional<Topic> expandedTopic, practiceTopic;
+    mux::Style secondaryStyle{nullptr}, quietButtonStyle{nullptr};
+    winrt::event_token tabsToken{}, themeToken{}, sizeToken{};
     std::int64_t expandedToken{};
     std::uint64_t generation = 0, revision = 0;
     std::uint32_t context = 0;
@@ -56,6 +68,10 @@ struct StartPagePresenter::Impl
     static void Wrap(const muxc::TextBlock& text) { text.TextWrapping(mux::TextWrapping::Wrap); }
     static void Heading(const muxc::TextBlock& text)
     { Wrap(text); text.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); }
+    static void Column(const muxc::Grid& grid, double width, mux::GridUnitType unit)
+    { muxc::ColumnDefinition column; column.Width({width, unit}); grid.ColumnDefinitions().Append(column); }
+    static void AutoRow(const muxc::Grid& grid)
+    { muxc::RowDefinition row; row.Height({1, mux::GridUnitType::Auto}); grid.RowDefinitions().Append(row); }
 
     explicit Impl(LocalizeCallback callback) : localize(std::move(callback))
     {
@@ -63,18 +79,25 @@ struct StartPagePresenter::Impl
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="TextBlock">
  <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
  </Style>)").as<mux::Style>();
+        quietButtonStyle = mux::Markup::XamlReader::Load(LR"(<Style
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
+ <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>
+ <Setter Property="Padding" Value="8,10"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+ </Style>)").as<mux::Style>();
         root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         root.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         root.IsExpanded(true); root.IsEnabled(false);
         Heading(title); Wrap(summary); summary.Style(secondaryStyle);
         header.Spacing(4); header.Children().Append(title); header.Children().Append(summary); root.Header(header);
-        body.Spacing(12); root.Content(body);
+        body.Spacing(8); root.Content(body);
         sizeToken = root.SizeChanged([this](auto&&, const mux::SizeChangedEventArgs& args) {
             if (closed) return;
-            // Match the existing widget settings expanders: their template
-            // contributes 16 DIP per side. Constrain long, wrapped lessons.
+            // Expander's native template contributes 16 DIP on each side.
             const auto border = root.BorderThickness();
             body.Width(std::max(0.0, static_cast<double>(args.NewSize().Width) - 32.0 - border.Left - border.Right));
+            if (const auto xamlRoot = root.XamlRoot())
+                lessons.MaxHeight(std::clamp(static_cast<double>(xamlRoot.Size().Height) * .48, 200.0, 420.0));
+            SizeRows();
         });
         tabsScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
         tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
@@ -83,91 +106,137 @@ struct StartPagePresenter::Impl
         tabsScroll.Content(tabs); body.Children().Append(tabsScroll);
         for (auto& group : groups) tabs.Items().Append(group.tab);
         tabs.SelectedItem(groups[0].tab);
-        lessons.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        // The native list owns scrolling, including expanded details.
+        lessons.SelectionMode(muxc::ListViewSelectionMode::None);
         lessons.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        lessons.MaxHeight(360);
+        lessons.ItemContainerStyle(mux::Markup::XamlReader::Load(LR"(<Style
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ListViewItem">
+ <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/>
+ <Setter Property="Margin" Value="0,0,0,4"/>
+ </Style>)").as<mux::Style>());
         body.Children().Append(lessons);
-        Wrap(description); description.Style(secondaryStyle); body.Children().Append(description);
-        prerequisite.IsClosable(false); prerequisite.Severity(muxc::InfoBarSeverity::Informational);
-        Wrap(prepareLabel); prepare.Content(prepareLabel); prepare.MinHeight(40);
-        prerequisite.ActionButton(prepare); body.Children().Append(prerequisite);
-        Heading(stepsLabel); Wrap(instructions); Heading(tipsLabel); Wrap(tips); tips.Style(secondaryStyle);
-        body.Children().Append(stepsLabel); body.Children().Append(instructions);
-        body.Children().Append(tipsLabel); body.Children().Append(tips);
-        Wrap(practiceLabel); Wrap(settingsLabel); practice.Content(practiceLabel); settings.Content(settingsLabel);
-        practice.MinHeight(40); settings.MinHeight(40);
-        practice.HorizontalAlignment(mux::HorizontalAlignment::Left); settings.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        for (int i = 0; i < 2; ++i) { muxc::ColumnDefinition col; col.Width({1, mux::GridUnitType::Star}); buttons.ColumnDefinitions().Append(col); }
-        buttons.ColumnSpacing(12); buttons.Children().Append(practice); muxc::Grid::SetColumn(settings, 1);
-        buttons.Children().Append(settings); body.Children().Append(buttons);
         tabsToken = tabs.SelectionChanged([this](auto&&, auto&&) {
             if (closed || updating) return;
             for (auto& group : groups) if (tabs.SelectedItem() == group.tab) section = group.section;
             PopulateLessons();
-        });
-        lessonsToken = lessons.SelectionChanged([this](auto&&, auto&&) {
-            if (closed || updating) return;
-            const auto index = lessons.SelectedIndex();
-            if (index >= 0 && static_cast<std::size_t>(index) < listedTopics.size()) selected = listedTopics[index];
-            Render();
         });
         expandedToken = root.RegisterPropertyChangedCallback(muxc::Expander::IsExpandedProperty(), [this](auto&&, auto&&) {
             if (closed || applyingPreference) return;
             routeExpanded = false;
             if (active && hasSnapshot && hasStatus && actions.expandedChanged) actions.expandedChanged(generation, root.IsExpanded());
         });
-        prepareToken = prepare.Click([this](auto&&, auto&&) {
-            if (!active || closed || !actions.navigate) return;
-            if (const auto missing = MissingPrerequisite(*Find(selected), context)) actions.navigate(PrerequisiteRoute(*missing));
-        });
-        practiceToken = practice.Click([this](auto&&, auto&&) {
-            if (active && hasSnapshot && hasStatus && !closed && actions.begin && !MissingPrerequisite(*Find(selected), context))
-                actions.begin(generation, selected);
-        });
-        settingsToken = settings.Click([this](auto&&, auto&&) {
-            if (active && hasSnapshot && !closed && actions.navigate)
-            {
-                const auto& lesson = *Find(selected);
-                actions.navigate(SettingsRoute::ForPage(lesson.settingsPage, lesson.settingsFocus));
-            }
-        });
         themeToken = root.ActualThemeChanged([this](auto&&, auto&&) { if (!closed) RefreshIcons(); });
-        RefreshIcons(); RefreshLocalizedText();
+        RefreshLocalizedText();
+    }
+    void SizeRows()
+    {
+        const double width = std::max(0.0, body.Width() - 20.0); // Native scrollbar gutter.
+        if (!std::isfinite(width) || width <= 0) return;
+        for (auto& row : rows)
+        {
+            row->layout.Width(width);
+            // Long translations and large text remain clear of the action.
+            const bool narrow = width < 440;
+            muxc::Grid::SetRow(row->launch, narrow ? 1 : 0);
+            muxc::Grid::SetColumn(row->launch, narrow ? 0 : 1);
+            muxc::Grid::SetColumnSpan(row->launch, narrow ? 2 : 1);
+            row->launch.HorizontalAlignment(narrow ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right);
+            row->launch.Margin(narrow ? mux::Thickness{44, 0, 8, 8} : mux::Thickness{8, 0, 8, 0});
+        }
+    }
+    const Group& GroupFor(Section value) const
+    {
+        for (const auto& group : groups) if (group.section == value) return group;
+        return groups.front();
+    }
+    muxc::IconElement Icon(const wchar_t* asset, const wchar_t* glyph, bool highContrast)
+    {
+        if (highContrast) { muxc::FontIcon icon; icon.Glyph(glyph); icon.FontSize(20); return icon; }
+        mux::Media::Imaging::SvgImageSource source;
+        source.UriSource(winrt::Windows::Foundation::Uri{std::wstring(L"ms-appx:///Assets/Settings/Icons/") + asset});
+        muxc::ImageIcon icon; icon.Source(source); icon.Width(24); icon.Height(24); return icon;
     }
     void RefreshIcons()
     {
         HIGHCONTRASTW contrast{sizeof(contrast)};
         const bool highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) && (contrast.dwFlags & HCF_HIGHCONTRASTON);
-        for (auto& group : groups)
+        for (auto& group : groups) group.tab.Icon(Icon(group.asset, group.glyph, highContrast));
+        for (auto& row : rows)
         {
-            if (highContrast) { muxc::FontIcon icon; icon.Glyph(group.glyph); group.tab.Icon(icon); }
-            else
+            const auto& group = GroupFor(Find(row->topic)->section);
+            const wchar_t* asset = group.asset;
+            switch (row->topic)
             {
-                mux::Media::Imaging::SvgImageSource source;
-                source.UriSource(winrt::Windows::Foundation::Uri{std::wstring(L"ms-appx:///Assets/Settings/Icons/") + group.asset});
-                muxc::ImageIcon icon; icon.Source(source); icon.Width(20); icon.Height(20); group.tab.Icon(icon);
+            case Topic::Startup: asset = L"general.svg"; break;
+            case Topic::Grid: case Topic::Move: case Topic::Resize: asset = L"pages.svg"; break;
+            case Topic::Beautify: asset = L"appearance-icon-beautification.svg"; break;
+            case Topic::Theme: asset = L"appearance-theme.svg"; break;
+            case Topic::Backup: asset = L"backup.svg"; break;
+            default: break;
             }
+            row->icon.Content(Icon(asset, group.glyph, highContrast));
         }
     }
     void PopulateLessons()
     {
-        updating = true; lessons.Items().Clear(); listedTopics.clear();
-        int selection = 0;
+        rows.clear(); lessons.Items().Clear();
         for (const auto& lesson : kLessons)
         {
             if (lesson.section != section) continue;
-            if (lesson.topic == selected) selection = static_cast<int>(listedTopics.size());
-            muxc::TextBlock label; Wrap(label); label.Text(L(lesson.title));
-            muxc::ComboBoxItem item; item.Content(label); lessons.Items().Append(item); listedTopics.push_back(lesson.topic);
+            auto row = std::make_unique<Row>(lesson.topic);
+            auto* r = row.get();
+            Column(r->layout, 1, mux::GridUnitType::Star); Column(r->layout, 1, mux::GridUnitType::Auto);
+            AutoRow(r->layout); AutoRow(r->layout); AutoRow(r->layout);
+            Column(r->heading, 24, mux::GridUnitType::Pixel); Column(r->heading, 1, mux::GridUnitType::Star);
+            Column(r->heading, 16, mux::GridUnitType::Pixel); r->heading.ColumnSpacing(12);
+            r->icon.VerticalAlignment(mux::VerticalAlignment::Top); r->icon.Margin({0, 3, 0, 0});
+            r->heading.Children().Append(r->icon);
+            Heading(r->title); r->title.Text(L(lesson.title));
+            Wrap(r->description); r->description.Style(secondaryStyle); r->description.Text(L(lesson.description));
+            r->description.MaxLines(2); r->description.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+            Wrap(r->status); r->status.Style(secondaryStyle);
+            r->labels.Spacing(3); r->labels.Children().Append(r->title); r->labels.Children().Append(r->description); r->labels.Children().Append(r->status);
+            muxc::Grid::SetColumn(r->labels, 1); r->heading.Children().Append(r->labels);
+            r->chevron.FontSize(12); muxc::Grid::SetColumn(r->chevron, 2); r->heading.Children().Append(r->chevron);
+            r->disclosure.Style(quietButtonStyle); r->disclosure.Content(r->heading);
+            r->disclosure.HorizontalAlignment(mux::HorizontalAlignment::Stretch); r->disclosure.MinHeight(64);
+            r->layout.Children().Append(r->disclosure);
+            r->launch.MinHeight(36); r->launch.VerticalAlignment(mux::VerticalAlignment::Center);
+            Wrap(r->launchLabel); r->launchLabel.Text(L(lesson.practice ? "start.practiceShort" : "start.openSettings"));
+            r->launch.Content(r->launchLabel); r->launch.MaxWidth(180);
+            muxc::Grid::SetColumn(r->launch, 1); r->layout.Children().Append(r->launch);
+            r->details.Spacing(10); r->details.Margin({44, 0, 12, 16});
+            Wrap(r->prerequisite); r->details.Children().Append(r->prerequisite);
+            Wrap(r->instructions); r->instructions.Text(L(lesson.instructions)); r->details.Children().Append(r->instructions);
+            Wrap(r->tips); r->tips.Style(secondaryStyle); r->tips.Text(L(lesson.tips)); r->details.Children().Append(r->tips);
+            Wrap(r->settingsLabel); r->settingsLabel.Text(L("start.openSettings")); r->settings.Content(r->settingsLabel);
+            r->settings.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            r->settings.Visibility(lesson.practice && HasSettings(lesson) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            r->details.Children().Append(r->settings);
+            muxc::Grid::SetRow(r->details, 2); muxc::Grid::SetColumnSpan(r->details, 2); r->layout.Children().Append(r->details);
+            r->item.Content(r->layout); lessons.Items().Append(r->item);
+            muxa::AutomationProperties::SetName(r->launch, L(lesson.practice ? "start.practice" : "start.openSettings") + L" · " + L(lesson.title));
+            r->disclosureToken = r->disclosure.Click([this, topic = lesson.topic](auto&&, auto&&) {
+                if (closed) return;
+                selected = topic; expandedTopic = expandedTopic == topic ? std::nullopt : std::optional{topic}; Render();
+            });
+            r->launchToken = r->launch.Click([this, topic = lesson.topic](auto&&, auto&&) {
+                if (closed || !active || !hasSnapshot || !hasStatus || !actions.begin) return;
+                selected = topic; actions.begin(generation, topic);
+            });
+            r->settingsToken = r->settings.Click([this, topic = lesson.topic](auto&&, auto&&) {
+                if (!closed && active && actions.navigate)
+                { const auto& lesson = *Find(topic); actions.navigate(SettingsRoute::ForPage(lesson.settingsPage, lesson.settingsFocus)); }
+            });
+            rows.push_back(std::move(row));
         }
-        lessons.SelectedIndex(selection); selected = listedTopics[selection]; updating = false; Render();
+        SizeRows(); RefreshIcons(); Render();
     }
     void RefreshLocalizedText()
     {
         title.Text(L("start.title")); summary.Text(L("start.description"));
-        for (auto& group : groups) group.tab.Text(L(group.title));
-        lessons.Header(winrt::box_value(L("start.choose")));
-        stepsLabel.Text(L("start.steps")); tipsLabel.Text(L("start.tips"));
-        prepareLabel.Text(L("start.prepare")); practiceLabel.Text(L("start.practice")); settingsLabel.Text(L("start.openSettings"));
+        for (auto& group : groups) group.tab.Text(L(SectionTitle(group.section)));
         muxa::AutomationProperties::SetName(root, title.Text()); muxa::AutomationProperties::SetHelpText(root, summary.Text());
         muxa::AutomationProperties::SetName(lessons, L("start.choose")); PopulateLessons();
     }
@@ -175,27 +244,29 @@ struct StartPagePresenter::Impl
     {
         if (closed) return;
         root.IsEnabled(hasSnapshot && hasStatus);
-        const auto& lesson = *Find(selected);
-        description.Text(L(lesson.description)); instructions.Text(L(lesson.instructions)); tips.Text(L(lesson.tips));
-        const auto missing = MissingPrerequisite(lesson, context);
-        prerequisite.IsOpen(hasStatus && missing.has_value());
-        prerequisite.Visibility(hasStatus && missing ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        if (missing) prerequisite.Message(L(PrerequisiteText(*missing)));
-        practice.Visibility(lesson.practice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        practice.IsEnabled(hasStatus && !missing);
-        const bool hasSettings = !lesson.practice || lesson.settingsPage != SettingsPage::General || *lesson.settingsFocus;
-        settings.Visibility(hasSettings ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        muxc::Grid::SetColumn(settings, lesson.practice ? 1 : 0);
-        muxa::AutomationProperties::SetName(practice, L("start.practice") + L" · " + L(lesson.title));
+        for (auto& row : rows)
+        {
+            const auto& lesson = *Find(row->topic);
+            const bool expanded = expandedTopic == row->topic, current = practiceTopic == row->topic;
+            row->details.Visibility(expanded ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            row->chevron.Glyph(expanded ? L"\xE70E" : L"\xE70D");
+            row->status.Text(current ? L("start.currentPractice") : L"");
+            row->status.Visibility(current ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            row->launchLabel.Text(L(current && lesson.practice ? "start.resume" : lesson.practice ? "start.practiceShort" : "start.openSettings"));
+            row->description.MaxLines(expanded ? 0 : 2);
+            muxa::AutomationProperties::SetName(row->disclosure, L(lesson.title) + L" · " + L(expanded ? "start.hideDetails" : "start.details"));
+            const auto missing = MissingPrerequisite(lesson, context);
+            row->prerequisite.Visibility(missing ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            if (missing) row->prerequisite.Text(L(PrerequisiteText(*missing)));
+        }
     }
     void Close()
     {
         if (closed) return;
         closed = true; active = false;
         root.UnregisterPropertyChangedCallback(muxc::Expander::IsExpandedProperty(), expandedToken);
-        root.ActualThemeChanged(themeToken); root.SizeChanged(sizeToken);
-        tabs.SelectionChanged(tabsToken); lessons.SelectionChanged(lessonsToken);
-        prepare.Click(prepareToken); practice.Click(practiceToken); settings.Click(settingsToken); actions = {};
+        root.ActualThemeChanged(themeToken); root.SizeChanged(sizeToken); tabs.SelectionChanged(tabsToken);
+        rows.clear(); actions = {};
     }
 };
 StartPagePresenter::StartPagePresenter(LocalizeCallback localize, const mux::Style&, const mux::Style&)
@@ -217,6 +288,7 @@ void StartPagePresenter::ApplyStatusPatch(const HomeAboutStatusPatch& patch)
         impl_->applyingPreference = true; impl_->root.IsExpanded(impl_->routeExpanded || *patch.usageGuideExpanded); impl_->applyingPreference = false;
     }
     if (patch.usageGuideContext) impl_->context = *patch.usageGuideContext;
+    if (patch.usageGuideTopic) impl_->practiceTopic = ParseTopic(*patch.usageGuideTopic);
     impl_->hasStatus = true; impl_->revision = patch.revision; impl_->Render();
 }
 void StartPagePresenter::RefreshLocalizedText() { impl_->RefreshLocalizedText(); }
@@ -226,6 +298,7 @@ mux::UIElement StartPagePresenter::Content() const { return impl_->root; }
 void StartPagePresenter::SelectRoute(std::string_view id)
 {
     if (!id.starts_with("start.")) return;
+    const auto oldSection = impl_->section;
     if (id == "start.basics") impl_->section = Section::Basics;
     else if (id == "start.explore") impl_->section = Section::Settings;
     else if (id == "start.welcome")
@@ -234,7 +307,8 @@ void StartPagePresenter::SelectRoute(std::string_view id)
         impl_->routeExpanded = false; impl_->applyingPreference = true;
         impl_->root.IsExpanded(impl_->expandedPreference); impl_->applyingPreference = false;
     }
-    else if (const auto topic = ParseTopic(id.substr(6))) { impl_->selected = *topic; impl_->section = Find(*topic)->section; }
+    else if (const auto topic = ParseTopic(id.substr(6)))
+    { impl_->selected = *topic; impl_->section = Find(*topic)->section; impl_->expandedTopic = *topic; }
     if (id != "start.welcome")
     {
         impl_->routeExpanded = true; impl_->applyingPreference = true;
@@ -242,6 +316,9 @@ void StartPagePresenter::SelectRoute(std::string_view id)
     }
     impl_->updating = true;
     for (auto& group : impl_->groups) if (group.section == impl_->section) impl_->tabs.SelectedItem(group.tab);
-    impl_->updating = false; impl_->PopulateLessons();
+    impl_->updating = false;
+    if (oldSection != impl_->section) impl_->PopulateLessons(); else impl_->Render();
+    if (id != "start.welcome")
+        for (auto& row : impl_->rows) if (row->topic == impl_->selected) impl_->lessons.ScrollIntoView(row->item);
 }
 }

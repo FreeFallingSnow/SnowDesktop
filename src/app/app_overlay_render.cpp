@@ -6,16 +6,41 @@
 
 void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
 {
-    usageGuidePauseRect_ = usageGuideSettingsRect_ = {};
-    if (!ctx || !usageGuidePractice_.active ||
+    using namespace snowdesktop::usage_guide;
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideNextRect_ = usageGuideMoreRect_ = usageGuideOpenSettingsRect_ = {};
+    if (!ctx || !usageGuidePractice_.Visible() ||
         !customDesktopVisible_ || desktopIconsHidden_ || reloading_ ||
         (shellPopupMenuLayerDepth_ > 0 && !snowdesktop::modern_menu::IsActive()) ||
         (settingsWindow_ && IsWindowVisible(settingsWindow_->Window())) ||
         !luaWidgetPanelRequest_.widgetId.empty()) return;
-    const auto* lesson = snowdesktop::usage_guide::Find(*usageGuidePractice_.active);
-    if (!lesson) return;
-    const std::wstring title = _LW(lesson->title);
-    const std::wstring hint = _LW(lesson->hint);
+    const auto& lesson = *Find(*usageGuidePractice_.active);
+    usageGuidePractice_.ObserveContext(UsageGuideContext());
+    const auto missing = usageGuidePractice_.preparation;
+    const bool sectionEnd = usageGuidePractice_.sectionEnd;
+    const auto next = sectionEnd ? NextSection(lesson.topic) : Adjacent(lesson.topic, true);
+    const bool showSettings = !sectionEnd && (HasSettings(lesson) || (missing && !PreparationLesson(*missing)));
+    std::wstring caption = _LW(SectionTitle(lesson.section));
+    unsigned position = 0, count = 0;
+    for (const auto& candidate : kLessons)
+        if (candidate.section == lesson.section) { ++count; if (candidate.topic == lesson.topic) position = count; }
+    caption += L" · " + std::to_wstring(position) + L" / " + std::to_wstring(count);
+    const std::wstring title = _LW(lesson.title);
+    std::wstring hint = _LW(lesson.hint);
+    if (usageGuideDetails_) hint = std::wstring(_LW(lesson.instructions)) + L"\n\n" + _LW(lesson.tips);
+    if (!sectionEnd && missing)
+    {
+        const auto& preparation = PreparationLesson(*missing) ? *Find(*PreparationLesson(*missing)) : lesson;
+        hint = std::wstring(_LW(PrerequisiteText(*missing))) + L"\n\n" +
+            (usageGuideDetails_ ? std::wstring(_LW(preparation.instructions)) + L"\n\n" + _LW(preparation.tips) : _LW(preparation.hint));
+    }
+    if (sectionEnd) hint = std::wstring(_LW("start.sectionEnd")) + L"\n\n" + hint;
+    std::wstring nextText = next ? std::wstring(_LW("start.next")) + L" " +
+        _LW(sectionEnd ? SectionTitle(Find(*next)->section) : Find(*next)->title) : _LW("start.lastLesson");
+    const std::wstring primaryText = sectionEnd ?
+        (next ? _LW("start.continueSection") : _LW("start.endPractice")) :
+        missing ? _LW("start.checkPreparation") : next ? _LW("start.completeNext") : _LW("start.complete");
+    const std::wstring pauseText = _LW("start.pause"), settingsText = _LW("start.returnSettings"),
+        moreText = _LW("start.moreActions"), openText = _LW("start.openSettings");
     POINT cursor{}; GetCursorPos(&cursor);
     const auto* page = GridPageFromScreenPoint(cursor);
     if (!page) page = GetFirstPageGridPage();
@@ -24,26 +49,79 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     const float scale = std::max(1.0f, page->dpiX / 96.0f);
     const auto px = [scale](float value) { return static_cast<int>(std::ceil(value * scale)); };
     const int padding = px(16), margin = px(24);
-    const int width = std::min(px(400), static_cast<int>(area.right - area.left) - margin * 2);
-    if (width < px(200)) return;
+    const int width = std::min(px(440), static_cast<int>(area.right - area.left) - margin * 2);
+    if (width < px(240)) return;
     const int textWidth = width - padding * 2;
     auto* factory = GetDWriteFactory();
     if (!factory) return;
-    ComPtr<IDWriteTextFormat> format;
-    if (FAILED(factory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14 * scale, L"", &format))) return;
-    format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
-    const auto measure = [&](const std::wstring& text) {
-        ComPtr<IDWriteTextLayout> layout;
-        DWRITE_TEXT_METRICS metrics{};
+    DWORD textScale = 100, bytes = sizeof(textScale);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility", L"TextScaleFactor",
+        RRF_RT_REG_DWORD, nullptr, &textScale, &bytes);
+    const float fontScale = scale * std::clamp(textScale / 100.0f, 1.0f, 2.25f);
+    ComPtr<IDWriteTextFormat> format, titleFormat, smallFormat;
+    const auto makeFormat = [&](float size, DWRITE_FONT_WEIGHT weight, ComPtr<IDWriteTextFormat>& value) {
+        if (FAILED(factory->CreateTextFormat(L"Segoe UI", nullptr, weight,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size * fontScale, L"", &value))) return false;
+        value->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP); return true;
+    };
+    if (!makeFormat(14, DWRITE_FONT_WEIGHT_NORMAL, format) ||
+        !makeFormat(16, DWRITE_FONT_WEIGHT_SEMI_BOLD, titleFormat) ||
+        !makeFormat(12, DWRITE_FONT_WEIGHT_NORMAL, smallFormat)) return;
+    const auto measure = [&](const std::wstring& text, IDWriteTextFormat* style, int availableWidth) {
+        ComPtr<IDWriteTextLayout> layout; DWRITE_TEXT_METRICS metrics{};
         if (SUCCEEDED(factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
-                format.Get(), static_cast<float>(textWidth), 1000, &layout))) layout->GetMetrics(&metrics);
+            style, static_cast<float>(availableWidth), 100000, &layout))) layout->GetMetrics(&metrics);
         return static_cast<int>(std::ceil(metrics.height));
     };
-    const int titleHeight = measure(title), textHeight = measure(hint), buttonHeight = px(40);
-    const std::wstring pauseText = _LW("start.pause");
-    const std::wstring settingsText = _LW("start.returnSettings");
-    const int height = padding * 2 + titleHeight + px(8) + textHeight + px(12) + buttonHeight;
+    const int captionHeight = measure(caption, smallFormat.Get(), textWidth);
+    const int titleHeight = measure(title, titleFormat.Get(), textWidth);
+    const int primaryHeight = std::max(px(40), measure(primaryText, format.Get(), textWidth - px(16)) + px(12));
+    const int openHeight = showSettings ? std::max(px(36), measure(openText, format.Get(), textWidth - px(16)) + px(12)) : 0;
+    const int thirdWidth = (textWidth - px(16)) / 3;
+    const int secondaryHeight = std::max(px(36), std::max({
+        measure(moreText, smallFormat.Get(), thirdWidth - px(12)),
+        measure(settingsText, smallFormat.Get(), thirdWidth - px(12)),
+        measure(pauseText, smallFormat.Get(), thirdWidth - px(12))}) + px(12));
+    // Reserve one short line for a details page indicator before pagination.
+    const int nextHeight = measure(nextText, smallFormat.Get(), textWidth) +
+        measure(L"1 / 9", smallFormat.Get(), textWidth) + px(4);
+    const int fixedHeight = padding * 2 + captionHeight + px(4) + titleHeight + px(10) +
+        px(10) + nextHeight + px(12) + primaryHeight + px(8) + secondaryHeight +
+        (showSettings ? openHeight + px(8) : 0);
+    const int bodyLimit = std::min(px(240), static_cast<int>(area.bottom - area.top) - margin * 2 - fixedHeight);
+    if (bodyLimit < px(24)) return;
+    // Page long instructions at real DirectWrite line boundaries. No clipped
+    // wall of text and no new wheel interception over the desktop.
+    std::vector<std::wstring> pages;
+    ComPtr<IDWriteTextLayout> fullLayout;
+    if (SUCCEEDED(factory->CreateTextLayout(hint.c_str(), static_cast<UINT32>(hint.size()),
+        format.Get(), static_cast<float>(textWidth), 100000, &fullLayout)))
+    {
+        UINT32 lineCount = 0; fullLayout->GetLineMetrics(nullptr, 0, &lineCount);
+        std::vector<DWRITE_LINE_METRICS> lines(lineCount);
+        if (lineCount && SUCCEEDED(fullLayout->GetLineMetrics(lines.data(), lineCount, &lineCount)))
+        {
+            std::size_t start = 0, offset = 0; float used = 0;
+            for (const auto& line : lines)
+            {
+                if (used + line.height > bodyLimit && offset > start)
+                { pages.push_back(hint.substr(start, offset - start)); start = offset; used = 0; }
+                offset += line.length; used += line.height;
+            }
+            if (offset > start) pages.push_back(hint.substr(start, offset - start));
+        }
+    }
+    if (pages.empty()) pages.push_back(hint);
+    usageGuideDetailPages_ = pages.size();
+    usageGuideDetailPage_ = std::min(usageGuideDetailPage_, pages.size() - 1);
+    hint = pages[usageGuideDetailPage_];
+    // A trailing newline belongs to the next paragraph and must not add an
+    // extra empty visual line outside the page's measured budget.
+    while (!hint.empty() && (hint.back() == L'\n' || hint.back() == L'\r')) hint.pop_back();
+    if (pages.size() > 1) nextText += L"\n" + std::to_wstring(usageGuideDetailPage_ + 1) + L" / " + std::to_wstring(pages.size());
+    const int textHeight = std::min(bodyLimit, measure(hint, format.Get(), textWidth));
+    const int actualNextHeight = measure(nextText, smallFormat.Get(), textWidth);
+    const int height = fixedHeight - nextHeight + actualNextHeight + textHeight;
     if (height + margin * 2 > area.bottom - area.top) return;
     RECT practiceRect{};
     POINT clientCursor = cursor;
@@ -81,7 +159,7 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
                     menuBounds.push_back(bounds);
                 }
     }
-    // Only the two button rectangles participate in hit testing. The rest of
+    // Only the action button rectangles participate in hit testing. The rest of
     // this existing host overlay remains transparent to desktop interaction.
     for (const auto anchor : {POINT{area.right - margin - width, area.bottom - margin - height},
              POINT{area.right - margin - width, area.top + margin},
@@ -107,21 +185,42 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     const bool light = IsLightContentTheme();
     const auto background = highContrast ? systemColor(COLOR_WINDOW) : D2D1::ColorF(light ? 0xf9f9f9 : 0x292929, 0.98f);
     const auto foreground = highContrast ? systemColor(COLOR_WINDOWTEXT) : D2D1::ColorF(light ? 0x202020 : 0xf5f5f5);
-    const auto border = highContrast ? foreground : D2D1::ColorF(light ? 0xc6c6c6 : 0x606060);
+    const auto secondary = highContrast ? foreground : D2D1::ColorF(light ? 0x606060 : 0xc5c5c5);
+    const auto border = highContrast ? foreground : D2D1::ColorF(light ? 0xd6d6d6 : 0x505050);
+    const auto accent = systemColor(COLOR_HIGHLIGHT), onAccent = systemColor(COLOR_HIGHLIGHTTEXT);
     DrawD2DRoundedRectangle(ctx, frame, 8.0f * scale, background, border, 1);
-    RECT textRect{frame.left + padding, frame.top + padding, frame.right - padding, frame.top + padding + titleHeight};
-    DrawD2DText(ctx, title, textRect, format.Get(), foreground);
-    textRect.top = textRect.bottom + px(8); textRect.bottom = textRect.top + textHeight;
-    DrawD2DText(ctx, hint, textRect, format.Get(), foreground);
-    const int buttonTop = textRect.bottom + px(12);
-    usageGuidePauseRect_ = {frame.left + padding, buttonTop, frame.left + width / 2 - px(4), buttonTop + buttonHeight};
-    usageGuideSettingsRect_ = {frame.left + width / 2 + px(4), buttonTop, frame.right - padding, buttonTop + buttonHeight};
-    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    DrawD2DRoundedRectangle(ctx, usageGuidePauseRect_, 4.0f * scale, background, border, 1);
-    DrawD2DRoundedRectangle(ctx, usageGuideSettingsRect_, 4.0f * scale, background, border, 1);
-    DrawD2DText(ctx, pauseText, usageGuidePauseRect_, format.Get(), foreground);
-    DrawD2DText(ctx, settingsText, usageGuideSettingsRect_, format.Get(), foreground);
+    int y = frame.top + padding;
+    const auto drawLine = [&](const std::wstring& value, int h, IDWriteTextFormat* style, D2D1_COLOR_F color) {
+        RECT bounds{frame.left + padding, y, frame.right - padding, y + h};
+        DrawD2DText(ctx, value, bounds, style, color); y += h;
+    };
+    drawLine(caption, captionHeight, smallFormat.Get(), secondary); y += px(4);
+    drawLine(title, titleHeight, titleFormat.Get(), foreground); y += px(10);
+    drawLine(hint, textHeight, format.Get(), foreground); y += px(10);
+    drawLine(nextText, actualNextHeight, smallFormat.Get(), secondary); y += px(12);
+    const auto drawButton = [&](RECT& bounds, const std::wstring& label, IDWriteTextFormat* style, bool primary) {
+        const bool hover = PtInRect(&bounds, clientCursor) != FALSE;
+        const auto fill = primary ? accent : highContrast ? background :
+            D2D1::ColorF(light ? (hover ? 0xe8e8e8 : 0xf9f9f9) : (hover ? 0x414141 : 0x292929));
+        DrawD2DRoundedRectangle(ctx, bounds, 4.0f * scale, fill, primary ? accent : border, 1);
+        style->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        style->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        RECT labelBounds = bounds; InflateRect(&labelBounds, -px(6), 0);
+        DrawD2DText(ctx, label, labelBounds, style, primary ? onAccent : foreground);
+    };
+    if (showSettings)
+    {
+        usageGuideOpenSettingsRect_ = {frame.left + padding, y, frame.right - padding, y + openHeight};
+        drawButton(usageGuideOpenSettingsRect_, openText, format.Get(), false); y += openHeight + px(8);
+    }
+    usageGuideNextRect_ = {frame.left + padding, y, frame.right - padding, y + primaryHeight};
+    drawButton(usageGuideNextRect_, primaryText, format.Get(), true); y += primaryHeight + px(8);
+    usageGuideMoreRect_ = {frame.left + padding, y, frame.left + padding + thirdWidth, y + secondaryHeight};
+    usageGuideSettingsRect_ = {usageGuideMoreRect_.right + px(8), y, usageGuideMoreRect_.right + px(8) + thirdWidth, y + secondaryHeight};
+    usageGuidePauseRect_ = {usageGuideSettingsRect_.right + px(8), y, frame.right - padding, y + secondaryHeight};
+    drawButton(usageGuideMoreRect_, moreText, smallFormat.Get(), false);
+    drawButton(usageGuideSettingsRect_, settingsText, smallFormat.Get(), false);
+    drawButton(usageGuidePauseRect_, pauseText, smallFormat.Get(), false);
 }
 
 void DesktopApp::ShowPageNotify(const std::wstring& text)

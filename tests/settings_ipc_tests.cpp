@@ -35,6 +35,19 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    snowdesktop::winui::HomeAboutStatusPatch guide;
+    guide.generation = 71; guide.revision = 9;
+    guide.usageGuideTopic = "dockFiles"; guide.usageGuideContext = 24;
+    guide.usageGuideExpanded = false;
+    const auto restoredGuide = Unpack<snowdesktop::winui::HomeAboutStatusPatch>(Pack(guide));
+    Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
+        restoredGuide.usageGuideTopic == "dockFiles" && restoredGuide.usageGuideContext == 24 &&
+        restoredGuide.usageGuideExpanded == false,
+        "host practice position reaches the guide without overwriting the saved collapsed preference");
+    guide.usageGuideTopic = "";
+    const auto endedGuide = Unpack<snowdesktop::winui::HomeAboutStatusPatch>(Pack(guide));
+    Check(endedGuide.usageGuideTopic && endedGuide.usageGuideTopic->empty(),
+        "ending practice sends an explicit empty topic rather than leaving a stale current row");
     // These types exercise Unicode paths, optional values, wide counters and
     // nested metadata used by settings and component editor snapshots.
     using Value = std::tuple<std::wstring, std::uint64_t,
@@ -238,18 +251,18 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 7 carried network-update fields removed from About status.
+        // Version 8 did not carry the process-local guide position.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{7},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{8},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
                   &written, nullptr) && written == header.size(),
-            "retired update-protocol frame reaches the channel");
+            "previous settings-protocol frame reaches the channel");
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers carrying retired update fields disconnect before dispatch");
+            "settings peers missing guide position fields disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);
