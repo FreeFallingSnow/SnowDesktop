@@ -1,5 +1,6 @@
 #include "settings_ipc_channel.h"
 #include "settings_ipc_values.h"
+#include "winui/home_about_ipc_values.h"
 #include "large_icon_edit_rules.h"
 #include "settings_process.h"
 

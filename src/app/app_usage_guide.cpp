@@ -59,14 +59,15 @@ std::uint32_t DesktopApp::UsageGuideContext() const
 snowdesktop::SettingsActionResult DesktopApp::StartUsageGuidePractice(snowdesktop::usage_guide::Topic topic)
 {
     using snowdesktop::SettingsActionResult;
-    if (!startupInitializationComplete_ || !desktopItemsReady_ ||
-        !customDesktopVisible_ || desktopIconsHidden_ || reloading_ || exitRequested_ ||
-        !luaWidgetPanelRequest_.widgetId.empty() ||
-        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
-        dragSession_.HasContext() || dragDropController_.IsTransportActive())
-        return SettingsActionResult::Failure(_LW("start.error.unavailable"));
     const auto* lesson = snowdesktop::usage_guide::Find(topic);
     if (!lesson) return SettingsActionResult::Failure(_LW("start.error.unavailable"));
+    // Settings lessons remain usable while desktop icons are hidden. Only
+    // lessons that actually enter desktop practice require an idle desktop.
+    if (!startupInitializationComplete_ || reloading_ || exitRequested_ ||
+        (lesson->practice && (!desktopItemsReady_ || !customDesktopVisible_ || desktopIconsHidden_ ||
+            !luaWidgetPanelRequest_.widgetId.empty() || shellFileOperationInFlight_ > 0 ||
+            !pendingRenames_.empty() || dragSession_.HasContext() || dragDropController_.IsTransportActive())))
+        return SettingsActionResult::Failure(_LW("start.error.unavailable"));
     if (usageGuidePractice_.active == topic) usageGuidePractice_.Resume(UsageGuideContext());
     else
     {
