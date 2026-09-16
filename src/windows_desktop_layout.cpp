@@ -34,6 +34,7 @@ struct CaptureState
 Snapshot ReadView(std::chrono::steady_clock::time_point deadline)
 {
     Snapshot result;
+    result.stage = L"ShellWindows";
     ComPtr<IShellWindows> windows;
     result.status = CoCreateInstance(CLSID_ShellWindows, nullptr,
         CLSCTX_LOCAL_SERVER, IID_PPV_ARGS(&windows));
@@ -43,24 +44,31 @@ Snapshot ReadView(std::chrono::steady_clock::time_point deadline)
     location.lVal = CSIDL_DESKTOP;
     long ignoredWindow = 0;
     ComPtr<IDispatch> dispatch;
+    result.stage = L"FindWindowSW";
     result.status = windows->FindWindowSW(&location, &unused, SWC_DESKTOP,
         &ignoredWindow, SWFO_NEEDDISPATCH, &dispatch);
     if (FAILED(result.status) || !dispatch) return result;
     ComPtr<IServiceProvider> provider;
+    result.stage = L"IServiceProvider";
     result.status = dispatch.As(&provider);
     if (FAILED(result.status)) return result;
     ComPtr<IShellBrowser> browser;
+    result.stage = L"QueryService";
     result.status = provider->QueryService(SID_STopLevelBrowser, IID_PPV_ARGS(&browser));
     if (FAILED(result.status)) return result;
     ComPtr<IShellView> shellView;
+    result.stage = L"QueryActiveShellView";
     result.status = browser->QueryActiveShellView(&shellView);
     if (FAILED(result.status)) return result;
     ComPtr<IFolderView> view;
+    result.stage = L"IFolderView";
     result.status = shellView.As(&view);
     if (FAILED(result.status)) return result;
+    result.stage = L"GetSpacing";
     result.status = view->GetSpacing(&result.spacing);
     if (!result.Available()) return result;
     HWND window = nullptr;
+    result.stage = L"GetWindow";
     result.status = shellView->GetWindow(&window);
     if (FAILED(result.status) || !IsWindow(window))
     {
@@ -76,9 +84,11 @@ Snapshot ReadView(std::chrono::steady_clock::time_point deadline)
         view2->GetViewModeAndIconSize(&mode, &result.iconSize);
     }
     ComPtr<IShellFolder> folder;
+    result.stage = L"GetFolder";
     result.status = view->GetFolder(IID_PPV_ARGS(&folder));
     if (FAILED(result.status)) return result;
     ComPtr<IEnumIDList> enumeration;
+    result.stage = L"Items";
     result.status = view->Items(SVGIO_ALLVIEW, IID_PPV_ARGS(&enumeration));
     if (FAILED(result.status) || !enumeration) return result;
     while (std::chrono::steady_clock::now() < deadline && result.items.size() < 10000)
@@ -131,7 +141,12 @@ Snapshot Capture(std::chrono::milliseconds budget)
             const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
             if (SUCCEEDED(initialized))
             {
-                try { snapshot = ReadView(deadline); }
+                try
+                {
+                    snapshot = detail::ReadWhenReady(deadline, ReadView,
+                        [] { return std::chrono::steady_clock::now(); },
+                        [](auto until) { std::this_thread::sleep_until(until); });
+                }
                 catch (...) { snapshot.status = E_FAIL; }
                 CoUninitialize();
             }

@@ -41,6 +41,35 @@ struct HomeAboutStatusPatch
     std::optional<bool> onboardingVisible;
 };
 
+// Shared by requested snapshots and unsolicited host publications. This
+// stream is independent of persisted settings/controller revisions.
+class HomeAboutStatusSequence
+{
+public:
+    HomeAboutStatusPatch Next(std::uint64_t generation) noexcept
+    {
+        HomeAboutStatusPatch patch;
+        patch.generation = generation;
+        patch.revision = ++revision_;
+        return patch;
+    }
+private:
+    std::uint64_t revision_ = 0;
+};
+
+class DebugPageSession
+{
+public:
+    void Unlock() noexcept { unlocked_ = true; }
+    bool Visible(bool temporaryInitialization) noexcept
+    {
+        unlocked_ = unlocked_ || temporaryInitialization;
+        return unlocked_;
+    }
+private:
+    bool unlocked_ = false;
+};
+
 /** Every external link from the legacy About page, without raw URLs in UI. */
 enum class HomeAboutLink : std::uint8_t
 {

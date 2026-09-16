@@ -798,7 +798,7 @@ struct SettingsWindowHost::Impl
     std::optional<SIZE_T> settingsSessionWorkingSetBaseline;
     ULONGLONG lastWorkingSetTrimTick = 0;
     /** Legacy five-click About unlock; retained for this host lifetime. */
-    bool debugUnlocked = false;
+    DebugPageSession debugSession;
     bool systemBackdropUpdateQueued = false;
     bool integratedTitleBarInsetsUpdateQueued = false;
     bool externalStateRefreshQueued = false;
@@ -816,10 +816,11 @@ struct SettingsWindowHost::Impl
             IsWindowVisible(window) != FALSE;
     }
 
-    [[nodiscard]] bool DebugPageVisible() const
+    [[nodiscard]] bool DebugPageVisible()
     {
-        return debugUnlocked ||
-            (options.debugVisible && options.debugVisible());
+        // Reopening settings during an experiment also unlocks this settings
+        // session. Turning the experiment off must not remove its own page.
+        return debugSession.Visible(options.debugVisible && options.debugVisible());
     }
 
     std::wstring L(std::string_view key) const
@@ -1182,7 +1183,7 @@ struct SettingsWindowHost::Impl
         shell->ShowConfirmation(std::move(request), std::move(completed));
     }
 
-    SettingsSearchIndexInput BuildSearchInput() const
+    SettingsSearchIndexInput BuildSearchInput()
     {
         SettingsSearchIndexInput input;
         if (options.searchInput)
@@ -1361,8 +1362,8 @@ struct SettingsWindowHost::Impl
         {
             HomeAboutStatusPatch patch = options.homeAboutStatus(
                 snapshot->generation, snapshot->revision);
-            patch.generation = snapshot->generation;
-            patch.revision = snapshot->revision;
+            // Preserve the host's status sequence; it also orders direct
+            // publications while the controller snapshot is unchanged.
             (void)shell->ApplyHomeAboutStatusPatch(patch);
             if (patch.onboardingVisible && onboardingVisible != *patch.onboardingVisible)
             {
@@ -2044,6 +2045,7 @@ struct SettingsWindowHost::Impl
             request.action = SettingsHostActions::Action::StartOnboardingTask;
             request.value = std::wstring(key.begin(), key.end());
             const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
             state->owner->ShowActionError(result);
             // The child owns its window lifecycle; never hide it from the
             // parent's synchronous RPC while its controls are being invoked.
@@ -2343,6 +2345,7 @@ struct SettingsWindowHost::Impl
             request.action = SettingsHostActions::Action::SetTemporaryGridInitialization;
             request.boolValue = enabled;
             const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
             state->owner->ShowActionError(result);
             if (state->owner->shell) state->owner->shell->RefreshRuntimeState();
         };
@@ -2354,7 +2357,7 @@ struct SettingsWindowHost::Impl
             {
                 return false;
             }
-            state->owner->debugUnlocked = true;
+            state->owner->debugSession.Unlock();
             state->owner->RebuildSearchIndex();
             return state->owner->DebugPageVisible();
         };

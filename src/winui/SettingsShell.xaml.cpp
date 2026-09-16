@@ -2531,6 +2531,18 @@ void SettingsShell::FocusPendingTarget()
         return;
     }
     const auto& focusId = navigation_.Route().focusId;
+    if (navigation_.Route().page == SettingsPage::General &&
+        focusId.starts_with("start."))
+    {
+        // The guide lives at the top of General. Selecting a section and
+        // scrolling there needs no forced focus on SelectorBarItem: during
+        // view replacement its internal presenter may not be realized yet
+        // (the initialization crash dump stops inside WinUI's Focus call).
+        // Normal Tab/arrow navigation still enters the native controls.
+        if (generalPage_) generalPage_->Activate(focusId);
+        PageScrollViewer().ChangeView(nullptr, 0.0, nullptr, true);
+        return;
+    }
     if (!focusId.empty() &&
         navigation_.Route().page == SettingsPage::WidgetSettings &&
         widgetSettingsPage_)

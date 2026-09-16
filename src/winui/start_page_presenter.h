@@ -30,7 +30,6 @@ public:
     void SelectRoute(std::string_view id);
     void Close();
     winrt::Microsoft::UI::Xaml::UIElement Content() const;
-    winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(std::string_view id);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

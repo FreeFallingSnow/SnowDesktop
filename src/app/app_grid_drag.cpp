@@ -22,7 +22,8 @@ void DesktopApp::InitializeGridFromWindows()
     if (!snapshot.Available())
     {
         const std::wstring message = L"Windows desktop grid capture unavailable; using DPI defaults. HRESULT=" +
-            std::to_wstring(static_cast<unsigned long>(snapshot.status));
+            std::to_wstring(static_cast<unsigned long>(snapshot.status)) +
+            L", stage=" + snapshot.stage + L", attempts=" + std::to_wstring(snapshot.attempts);
         WriteDiagnosticLogEntry(message.c_str());
         return;
     }

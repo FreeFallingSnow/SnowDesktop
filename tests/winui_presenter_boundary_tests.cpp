@@ -59,6 +59,15 @@ int main(int argc, char** argv)
 
     if (profile == "home_about")
     {
+        // The repeated-initialization dump stops in WinUI Focus after the
+        // guide registered SelectorBarItem as a route focus target. Guide
+        // routes select/scroll; their controls remain reachable by keyboard.
+        const auto general = ReadSource(root, "src/winui/general_page_presenter.cpp");
+        Forbid(general, "onboarding->FocusTarget(",
+            "guide routing must not force focus on unmaterialized selector items");
+        const auto host = ReadSource(root, "src/winui/settings_window_host.cpp");
+        Forbid(host, "patch.revision=snapshot->revision;",
+            "host status ordering cannot be overwritten with controller revisions");
         // Reproduced in an ordinary Win32 STA: the UWP accessibility event
         // subscription throws 0x80070490 during General presenter construction.
         // The desktop island must use WinUI's existing theme notifications.

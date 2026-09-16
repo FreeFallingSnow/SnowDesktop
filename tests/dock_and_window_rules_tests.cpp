@@ -39,6 +39,7 @@
 #include "layout_spacing_rules.h"
 #include "grid_spacing_rules.h"
 #include "windows_desktop_layout_rules.h"
+#include "windows_desktop_layout.h"
 #include "widget_item_layout.h"
 #include "app/grid_geometry.h"
 
@@ -73,6 +74,51 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void CheckNativeDesktopCaptureReadiness()
+{
+    namespace native = snowdesktop::windows_desktop_layout;
+    using Clock = std::chrono::steady_clock;
+    auto now = Clock::time_point{};
+    const auto deadline = now + std::chrono::milliseconds(350);
+    unsigned reads = 0;
+    auto clock = [&] { return now; };
+    auto wait = [&](auto until) { now = until; };
+    // Production capture uses this loop; only Explorer's replies and time
+    // are substituted. The first S_FALSE must not commit the fallback grid.
+    auto ready = native::detail::ReadWhenReady(deadline, [&](auto) {
+        native::Snapshot result;
+        result.status = ++reads == 1 ? S_FALSE : S_OK;
+        if (result.status == S_OK)
+        {
+            result.spacing = {93, 128};
+            result.items.push_back({L"application.lnk", {120, 240}});
+        }
+        return result;
+    }, clock, wait);
+    Check(ready.Available() && reads == 2 && ready.items.size() == 1 &&
+        ready.items.front().screenPosition.x == 120,
+        "native capture waits for the initially missing view and returns actual positions");
+
+    now = {}; reads = 0;
+    auto denied = native::detail::ReadWhenReady(deadline, [&](auto) {
+        ++reads; native::Snapshot result; result.status = E_ACCESSDENIED; return result;
+    }, clock, wait);
+    Check(!denied.Available() && denied.status == E_ACCESSDENIED && reads == 1 && now == Clock::time_point{},
+        "native capture preserves a permanent failure without retry or delay");
+
+    now = {}; reads = 0;
+    auto pending = native::detail::ReadWhenReady(deadline, [&](auto) {
+        ++reads; native::Snapshot result; result.status = E_PENDING; return result;
+    }, clock, wait);
+    Check(!pending.Available() && pending.status == HRESULT_FROM_WIN32(ERROR_TIMEOUT) &&
+        now == deadline && reads > 1,
+        "a desktop that never becomes ready exhausts only the original time budget");
+
+    native::Snapshot incomplete;
+    incomplete.status = S_FALSE; incomplete.spacing = {93, 128};
+    Check(!incomplete.Available(), "S_FALSE cannot publish partial native layout as a successful capture");
 }
 
 void CheckRowMargins(
@@ -529,6 +575,7 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    CheckNativeDesktopCaptureReadiness();
     failures += RunDesktopBackdropCompositorTests();
     CheckAdaptiveRenameEditor();
     CheckMenuProtectedHostPositionChanges();

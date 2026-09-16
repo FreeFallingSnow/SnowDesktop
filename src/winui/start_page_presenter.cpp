@@ -418,11 +418,4 @@ void StartPagePresenter::SelectRoute(std::string_view id)
         { impl_->selected = i; impl_->reviewing = true; }
     impl_->Render();
 }
-mux::FrameworkElement StartPagePresenter::FocusTarget(std::string_view id)
-{
-    if (id == "start.explore") return impl_->exploreTab;
-    for (std::size_t i = 0; i < impl_->steps.size(); ++i)
-        if (id == "start." + std::string(onboarding::TaskKey(static_cast<Task>(i)))) return impl_->steps[i].button;
-    return impl_->basicsTab;
-}
 }

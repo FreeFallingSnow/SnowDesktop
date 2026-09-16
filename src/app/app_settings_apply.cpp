@@ -555,11 +555,16 @@ void DesktopApp::PublishHomeAboutStatus()
     const auto snapshot = settingsController_
         ? settingsController_->Snapshot() : nullptr;
     if (!snapshot || !snapshot->sessionActive || !settingsWindow_) return;
-    snowdesktop::winui::HomeAboutStatusPatch patch;
-    patch.generation = snapshot->generation;
-    homeAboutStatusRevision_ = std::max(
-        homeAboutStatusRevision_ + 1, snapshot->revision + 1);
-    patch.revision = homeAboutStatusRevision_;
+    (void)settingsWindow_->PublishHomeAboutStatus(BuildHomeAboutStatus(snapshot->generation));
+}
+
+snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::uint64_t generation)
+{
+    // Pushes and snapshot-triggered reads share one sequence. Controller
+    // revisions cannot order session-only changes such as temporary layouts.
+    auto patch = homeAboutStatusSequence_.Next(generation);
+    patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
+    patch.installedWidgetCount = widgets_.size();
     patch.onboardingSteps = onboarding_.Current().steps;
     patch.onboardingVisible = onboarding_.Current().Visible();
     patch.packaged = snowdesktop::deployment::IsPackaged();
@@ -568,7 +573,7 @@ void DesktopApp::PublishHomeAboutStatus()
     patch.temporaryInitializationEnabled = !initializationExperimentDirectory_.empty();
     patch.animationDiagnosticsStatus =
         BuildAnimationDiagnosticsStatus();
-    (void)settingsWindow_->PublishHomeAboutStatus(std::move(patch));
+    return patch;
 }
 
 std::wstring DesktopApp::BuildAnimationDiagnosticsStatus() const

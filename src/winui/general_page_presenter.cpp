@@ -1069,9 +1069,6 @@ void GeneralPagePresenter::RegisterFocusTargets(
             registrar(std::string(id), element);
     };
 
-    for (const auto id : {"start.basics", "start.explore", "start.collection",
-            "start.application", "start.layout", "start.files"})
-        registrar(id, impl_->onboarding->FocusTarget(id));
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
     registerAliases(impl_->registerAdvancedFeaturesButton,

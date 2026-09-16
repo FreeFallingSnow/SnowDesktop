@@ -1388,6 +1388,7 @@ private:
         bool enabled);
     snowdesktop::SettingsActionResult OpenStoreUpdates();
     void PublishHomeAboutStatus();
+    snowdesktop::winui::HomeAboutStatusPatch BuildHomeAboutStatus(std::uint64_t generation);
     [[nodiscard]] std::wstring BuildAnimationDiagnosticsStatus() const;
     /** @brief 尝试完成一个已经登记的设置窗口打开请求。 */
     void TryShowPendingSettingsWindow();
@@ -3345,7 +3346,7 @@ private:
     std::optional<LargeIconGesture> largeIconGesture_;
     std::unique_ptr<snowdesktop::steam_entitlement::Service>
         steamEntitlementService_;
-    std::uint64_t homeAboutStatusRevision_ = 1;
+    snowdesktop::winui::HomeAboutStatusSequence homeAboutStatusSequence_;
     std::unique_ptr<snowdesktop::WidgetAccessibilityProviderHost>
         widgetAccessibilityProvider_;
     struct PendingLuaWidgetConsent

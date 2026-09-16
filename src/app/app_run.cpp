@@ -732,21 +732,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.homeAboutStatus = [this](
         std::uint64_t generation,
-        std::uint64_t revision) {
-        snowdesktop::winui::HomeAboutStatusPatch patch;
-        patch.generation = generation;
-        patch.revision = revision;
-        patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
-        patch.installedWidgetCount = widgets_.size();
-        patch.onboardingSteps = onboarding_.Current().steps;
-        patch.onboardingVisible = onboarding_.Current().Visible();
-        patch.packaged = snowdesktop::deployment::IsPackaged();
-        patch.animationDiagnosticsEnabled =
-            uiAnimationScheduler_.DiagnosticsEnabled();
-        patch.temporaryInitializationEnabled = !initializationExperimentDirectory_.empty();
-        patch.animationDiagnosticsStatus =
-            BuildAnimationDiagnosticsStatus();
-        return patch;
+        std::uint64_t) {
+        return BuildHomeAboutStatus(generation);
     };
     settingsHostOptions.startupConflict = [this]() {
         using snowdesktop::winui::GeneralStartupConflict;
