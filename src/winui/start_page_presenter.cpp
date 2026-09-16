@@ -45,7 +45,7 @@ struct StartPagePresenter::Impl
     Topic selected = Topic::Startup;
     Section section = Section::Basics;
     mux::Style secondaryStyle{nullptr};
-    winrt::event_token tabsToken{}, lessonsToken{}, prepareToken{}, practiceToken{}, settingsToken{}, themeToken{};
+    winrt::event_token tabsToken{}, lessonsToken{}, prepareToken{}, practiceToken{}, settingsToken{}, themeToken{}, sizeToken{};
     std::int64_t expandedToken{};
     std::uint64_t generation = 0, revision = 0;
     std::uint32_t context = 0;
@@ -69,6 +69,13 @@ struct StartPagePresenter::Impl
         Heading(title); Wrap(summary); summary.Style(secondaryStyle);
         header.Spacing(4); header.Children().Append(title); header.Children().Append(summary); root.Header(header);
         body.Spacing(12); root.Content(body);
+        sizeToken = root.SizeChanged([this](auto&&, const mux::SizeChangedEventArgs& args) {
+            if (closed) return;
+            // Match the existing widget settings expanders: their template
+            // contributes 16 DIP per side. Constrain long, wrapped lessons.
+            const auto border = root.BorderThickness();
+            body.Width(std::max(0.0, static_cast<double>(args.NewSize().Width) - 32.0 - border.Left - border.Right));
+        });
         tabsScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
         tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
         tabsScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
@@ -186,7 +193,8 @@ struct StartPagePresenter::Impl
         if (closed) return;
         closed = true; active = false;
         root.UnregisterPropertyChangedCallback(muxc::Expander::IsExpandedProperty(), expandedToken);
-        root.ActualThemeChanged(themeToken); tabs.SelectionChanged(tabsToken); lessons.SelectionChanged(lessonsToken);
+        root.ActualThemeChanged(themeToken); root.SizeChanged(sizeToken);
+        tabs.SelectionChanged(tabsToken); lessons.SelectionChanged(lessonsToken);
         prepare.Click(prepareToken); practice.Click(practiceToken); settings.Click(settingsToken); actions = {};
     }
 };

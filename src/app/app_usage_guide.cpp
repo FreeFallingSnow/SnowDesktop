@@ -41,8 +41,10 @@ std::uint32_t DesktopApp::UsageGuideContext() const
     unsigned standaloneCollections = 0;
     for (const auto& widget : widgets_)
     {
-        if (widget.type == DesktopWidgetType::Collection) context |= CollectionAvailable;
-        if (IsGroupedWidget(widget) || widget.gridCell.pageId == kDockPageId || widget.type == DesktopWidgetType::Guide) continue;
+        const bool inDock = widget.gridCell.pageId == kDockPageId || IsDockExclusiveWidgetId(widget.id);
+        if (widget.type == DesktopWidgetType::Collection && (!inDock || generalSettings_.dockEnabled))
+            context |= CollectionAvailable;
+        if (IsGroupedWidget(widget) || inDock || widget.type == DesktopWidgetType::Guide) continue;
         context |= StandaloneWidget;
         if (widget.type == DesktopWidgetType::Collection) ++standaloneCollections;
         if (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping)
