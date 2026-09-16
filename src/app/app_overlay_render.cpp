@@ -48,8 +48,11 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     RECT practiceRect{};
     POINT clientCursor = cursor;
     ScreenToClient(hwnd_, &clientCursor);
-    const auto avoidIndex = mouseDownWidgetIndex_ < widgets_.size() ? mouseDownWidgetIndex_ :
-        HitTestStandaloneWidgetIndex(clientCursor);
+    // Hovering over a button may also hit a widget underneath this transparent
+    // overlay. Avoid only a manipulated widget, so the buttons do not move away
+    // from a pointer that is trying to activate them.
+    const auto avoidIndex = widgetAction_ != WidgetAction::None ?
+        mouseDownWidgetIndex_ : static_cast<size_t>(-1);
     if (avoidIndex < widgets_.size() && !IsGroupedWidget(widgets_[avoidIndex]) &&
         widgets_[avoidIndex].gridCell.pageId != kDockPageId)
         practiceRect = GetStandaloneWidgetFrameRect(widgets_[avoidIndex]);
