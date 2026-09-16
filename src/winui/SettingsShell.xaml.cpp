@@ -314,7 +314,8 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
             return;
         generalPage_ =
             std::make_unique<snowdesktop::winui::GeneralPagePresenter>(
-                localize, cardStyle());
+                localize, cardStyle(), Resources().Lookup(
+                    winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>());
         generalPage_->SetActions(generalPageActions_);
     };
     const auto ensurePersonalization = [&]() {

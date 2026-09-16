@@ -64,7 +64,10 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
         return static_cast<int>(std::ceil(metrics.height));
     };
     const int titleHeight = measure(title), textHeight = measure(hint), buttonHeight = px(40);
-    const std::wstring pauseText = _LW("start.pause"), settingsText = _LW("start.returnSettings");
+    const bool allDone = (onboarding_.Current().steps & snowdesktop::onboarding::kAllSteps) ==
+        snowdesktop::onboarding::kAllSteps;
+    const std::wstring pauseText = _LW("start.pause");
+    const std::wstring settingsText = allDone ? _LW("start.exploreMore") : _LW("start.returnSettings");
     const int height = padding * 2 + titleHeight + px(8) + textHeight + px(12) + buttonHeight;
     if (height + margin * 2 > area.bottom - area.top) return;
     RECT practiceRect{};

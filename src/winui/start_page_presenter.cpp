@@ -2,7 +2,11 @@
 #include "start_page_presenter.h"
 #include "../l10n.h"
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
+#include <winrt/Microsoft.UI.Dispatching.h>
+#include <winrt/Windows.UI.ViewManagement.h>
 #include <array>
 
 namespace snowdesktop::winui
@@ -36,7 +40,10 @@ struct StartPagePresenter::Impl
     {
         const char* titleKey;
         const char* descriptionKey;
-        muxc::HyperlinkButton link;
+        const wchar_t* asset;
+        const wchar_t* fallbackGlyph;
+        muxc::Button link;
+        muxc::ContentControl icon;
         muxc::TextBlock title, description;
         winrt::event_token token{};
     };
@@ -44,18 +51,21 @@ struct StartPagePresenter::Impl
     StartPageActions actions;
     muxc::Border root;
     muxc::StackPanel body, basics, explore, detail;
-    muxc::Grid track;
+    muxc::Grid track, footer;
+    muxc::StackPanel footerActions;
     muxc::SelectorBar tabs;
     muxc::SelectorBarItem basicsTab, exploreTab;
-    muxc::TextBlock progress, instructions, collectionsText;
+    muxc::TextBlock progress, instructions, practiceLabel, dismissLabel, reviewLabel;
     muxc::Button practice;
     muxc::HyperlinkButton dismiss, review;
-    muxc::InfoBar experimentNotice;
+    winrt::Windows::UI::ViewManagement::AccessibilitySettings accessibility;
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     std::array<Step, 4> steps;
     std::array<muxc::Border, 3> lines;
     std::vector<Discovery> discoveries;
     mux::ResourceDictionary styles{nullptr};
     winrt::event_token tabsToken{}, sizeToken{}, practiceToken{}, dismissToken{}, reviewToken{};
+    winrt::event_token contrastToken{};
     std::uint64_t generation = 0, revision = 0;
     std::uint32_t completed = 0;
     std::size_t selected = 0;
@@ -65,7 +75,8 @@ struct StartPagePresenter::Impl
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
     mux::Style Style(const wchar_t* key) const { return styles.Lookup(winrt::box_value(key)).as<mux::Style>(); }
 
-    Impl(LocalizeCallback callback, const mux::Style& cardStyle) : localize(std::move(callback))
+    Impl(LocalizeCallback callback, const mux::Style& cardStyle, const mux::Style& navigationCardStyle)
+        : localize(std::move(callback))
     {
         // Native theme references remain live across light/dark/high-contrast changes.
         styles = mux::Markup::XamlReader::Load(LR"(<ResourceDictionary
@@ -77,7 +88,7 @@ struct StartPagePresenter::Impl
   <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
  </Style>
  <Style x:Key="Pending" TargetType="Border">
-  <Setter Property="Background" Value="{ThemeResource ControlFillColorDefaultBrush}"/>
+  <Setter Property="Background" Value="{ThemeResource ControlAltFillColorQuarternaryBrush}"/>
   <Setter Property="BorderBrush" Value="{ThemeResource ControlStrongStrokeColorDefaultBrush}"/>
  </Style>
  <Style x:Key="Current" TargetType="Border">
@@ -85,12 +96,13 @@ struct StartPagePresenter::Impl
   <Setter Property="BorderBrush" Value="{ThemeResource AccentFillColorDefaultBrush}"/>
  </Style>
  <Style x:Key="Done" TargetType="Border">
-  <Setter Property="Background" Value="{ThemeResource ControlFillColorDefaultBrush}"/>
+  <Setter Property="Background" Value="{ThemeResource ControlAltFillColorQuarternaryBrush}"/>
   <Setter Property="BorderBrush" Value="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
  </Style>
  <Style x:Key="Number" TargetType="TextBlock"><Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/></Style>
  <Style x:Key="CurrentNumber" TargetType="TextBlock"><Setter Property="Foreground" Value="{ThemeResource TextOnAccentFillColorPrimaryBrush}"/></Style>
  <Style x:Key="DoneNumber" TargetType="TextBlock"><Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}"/></Style>
+ <Style x:Key="Description" TargetType="TextBlock"><Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/></Style>
  <Style x:Key="Line" TargetType="Border"><Setter Property="Background" Value="{ThemeResource ControlStrongStrokeColorDefaultBrush}"/></Style>
  <Style x:Key="DoneLine" TargetType="Border"><Setter Property="Background" Value="{ThemeResource AccentTextFillColorPrimaryBrush}"/></Style>
  </ResourceDictionary>)").as<mux::ResourceDictionary>();
@@ -102,22 +114,35 @@ struct StartPagePresenter::Impl
         tabs.Items().Append(exploreTab);
         tabs.SelectedItem(basicsTab);
         body.Children().Append(tabs);
-        experimentNotice.IsClosable(false);
-        body.Children().Append(experimentNotice);
         basics.Spacing(12); explore.Spacing(8); detail.Spacing(12);
-        Wrap(progress); Wrap(instructions); Wrap(collectionsText);
+        Wrap(progress); Wrap(instructions);
+        Wrap(practiceLabel); Wrap(dismissLabel); Wrap(reviewLabel);
+        practice.Content(practiceLabel); dismiss.Content(dismissLabel); review.Content(reviewLabel);
         progress.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         basics.Children().Append(progress);
-        basics.Children().Append(review);
         basics.Children().Append(track);
         detail.Children().Append(instructions);
         practice.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        detail.Children().Append(practice);
         basics.Children().Append(detail);
         body.Children().Append(basics);
         body.Children().Append(explore);
+        muxc::ColumnDefinition actionsColumn, dismissColumn;
+        actionsColumn.Width({1, mux::GridUnitType::Star});
+        dismissColumn.Width({1, mux::GridUnitType::Auto});
+        footer.ColumnDefinitions().Append(actionsColumn);
+        footer.ColumnDefinitions().Append(dismissColumn);
+        footer.ColumnSpacing(12);
+        footerActions.Children().Append(practice);
+        footerActions.Children().Append(review);
+        footer.Children().Append(footerActions);
         dismiss.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        body.Children().Append(dismiss);
+        dismiss.VerticalAlignment(mux::VerticalAlignment::Center);
+        dismiss.MinHeight(40);
+        muxc::Grid::SetColumn(dismiss, 1);
+        footer.Children().Append(dismiss);
+        body.Children().Append(footer);
+        practice.MinHeight(40);
+        review.MinHeight(40);
         review.HorizontalAlignment(mux::HorizontalAlignment::Left);
         for (std::size_t i = 0; i < steps.size(); ++i)
         {
@@ -126,14 +151,16 @@ struct StartPagePresenter::Impl
             step.button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             step.content.Spacing(8);
             step.dot.Width(24); step.dot.Height(24);
-            step.dot.CornerRadius(mux::CornerRadius{12});
-            step.dot.BorderThickness(mux::Thickness{1});
+            step.dot.CornerRadius(mux::CornerRadius{12, 12, 12, 12});
+            step.dot.BorderThickness(mux::Thickness{1, 1, 1, 1});
             step.number.HorizontalAlignment(mux::HorizontalAlignment::Center);
             step.number.VerticalAlignment(mux::VerticalAlignment::Center);
             step.number.FontSize(12);
+            step.number.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
             step.number.IsTextScaleFactorEnabled(false);
             step.dot.Child(step.number);
             Wrap(step.title);
+            step.title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
             step.content.Children().Append(step.dot);
             step.content.Children().Append(step.title);
             step.button.Content(step.content);
@@ -163,31 +190,78 @@ struct StartPagePresenter::Impl
             if (active && visible && hasSnapshot && !closed && actions.dismiss) actions.dismiss(generation);
         });
         reviewToken = review.Click([this](auto&&, auto&&) { reviewing = true; Render(); });
-        // Collections are an introduction, with no shortcut that performs the lesson.
-        explore.Children().Append(collectionsText);
-        const auto add = [&](const char* title, const char* description, SettingsPage page, const char* focus = "") {
-            Discovery item{title, description};
-            muxc::StackPanel row;
-            row.Spacing(2); Wrap(item.title); Wrap(item.description);
-            item.link.Padding(mux::Thickness{0});
-            item.link.HorizontalAlignment(mux::HorizontalAlignment::Left);
-            item.link.Content(item.title);
-            row.Children().Append(item.link); row.Children().Append(item.description);
+        // Native navigation cards share the settings styles and official icon assets.
+        const auto add = [&](const char* title, const char* description, const wchar_t* asset,
+                             const wchar_t* fallbackGlyph, SettingsPage page, const char* focus = "") {
+            Discovery item{title, description, asset, fallbackGlyph};
+            muxc::Grid row;
+            row.ColumnSpacing(16);
+            for (const auto unit : {mux::GridUnitType::Auto, mux::GridUnitType::Star, mux::GridUnitType::Auto})
+            {
+                muxc::ColumnDefinition column;
+                column.Width({1, unit}); row.ColumnDefinitions().Append(column);
+            }
+            item.icon.Width(28); item.icon.Height(28);
+            item.icon.VerticalAlignment(mux::VerticalAlignment::Center);
+            item.icon.IsHitTestVisible(false);
+            muxa::AutomationProperties::SetAccessibilityView(item.icon, muxa::Peers::AccessibilityView::Raw);
+            row.Children().Append(item.icon);
+            muxc::StackPanel text;
+            text.Spacing(4); Wrap(item.title); Wrap(item.description);
+            item.title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+            item.description.Style(Style(L"Description"));
+            text.Children().Append(item.title); text.Children().Append(item.description);
+            muxc::Grid::SetColumn(text, 1); row.Children().Append(text);
+            muxc::FontIcon arrow;
+            arrow.Glyph(L"\xE76C"); arrow.FontSize(12);
+            arrow.IsHitTestVisible(false);
+            muxa::AutomationProperties::SetAccessibilityView(arrow, muxa::Peers::AccessibilityView::Raw);
+            muxc::Grid::SetColumn(arrow, 2); row.Children().Append(arrow);
+            item.link.Style(navigationCardStyle);
+            item.link.Content(row);
             const auto route = SettingsRoute::ForPage(page, focus);
             item.token = item.link.Click([this, route](auto&&, auto&&) {
                 if (active && hasSnapshot && !closed && actions.navigate) actions.navigate(route);
             });
-            explore.Children().Append(row);
+            explore.Children().Append(item.link);
             discoveries.push_back(std::move(item));
         };
-        add(L10N_KEY("start.explore.organize"), L10N_KEY("start.explore.organize.description"), SettingsPage::DesktopCategories);
-        add(L10N_KEY("start.explore.dock"), L10N_KEY("start.explore.dock.description"), SettingsPage::Dock);
-        add(L10N_KEY("start.explore.navigation"), L10N_KEY("start.explore.navigation.description"), SettingsPage::General, "general.quickNavigation");
-        add(L10N_KEY("start.explore.pages"), L10N_KEY("start.explore.pages.description"), SettingsPage::DesktopPages);
-        add(L10N_KEY("start.explore.appearance"), L10N_KEY("start.explore.appearance.description"), SettingsPage::AppearanceTheme);
-        add(L10N_KEY("start.explore.widgets"), L10N_KEY("start.explore.widgets.description"), SettingsPage::Widgets);
-        add(L10N_KEY("start.explore.backup"), L10N_KEY("start.explore.backup.description"), SettingsPage::BackupAndData);
+        add(L10N_KEY("start.explore.collections"), L10N_KEY("start.explore.collections.description"), L"categories.svg", L"\xE8B7", SettingsPage::General, "start.collection");
+        add(L10N_KEY("start.explore.organize"), L10N_KEY("start.explore.organize.description"), L"desktop.svg", L"\xE7F4", SettingsPage::DesktopCategories);
+        add(L10N_KEY("start.explore.dock"), L10N_KEY("start.explore.dock.description"), L"dock.svg", L"\xEBC8", SettingsPage::Dock);
+        add(L10N_KEY("start.explore.navigation"), L10N_KEY("start.explore.navigation.description"), L"search.svg", L"\xE721", SettingsPage::General, "general.quickNavigation");
+        add(L10N_KEY("start.explore.pages"), L10N_KEY("start.explore.pages.description"), L"pages.svg", L"\xE8A5", SettingsPage::DesktopPages);
+        add(L10N_KEY("start.explore.appearance"), L10N_KEY("start.explore.appearance.description"), L"appearance.svg", L"\xE771", SettingsPage::AppearanceTheme);
+        add(L10N_KEY("start.explore.widgets"), L10N_KEY("start.explore.widgets.description"), L"widgets.svg", L"\xECA5", SettingsPage::Widgets);
+        add(L10N_KEY("start.explore.backup"), L10N_KEY("start.explore.backup.description"), L"backup.svg", L"\xE74E", SettingsPage::BackupAndData);
+        RefreshIcons();
+        contrastToken = accessibility.HighContrastChanged([this, lifetime = alive, queue = root.DispatcherQueue()](auto&&, auto&&) {
+            queue.TryEnqueue([this, lifetime] { if (*lifetime) RefreshIcons(); });
+        });
         RefreshLocalizedText();
+    }
+
+    void RefreshIcons()
+    {
+        const bool highContrast = accessibility.HighContrast();
+        for (auto& item : discoveries)
+        {
+            if (highContrast)
+            {
+                muxc::FontIcon icon;
+                icon.Glyph(item.fallbackGlyph); icon.FontSize(24);
+                item.icon.Content(icon);
+            }
+            else
+            {
+                mux::Media::Imaging::SvgImageSource source;
+                source.UriSource(winrt::Windows::Foundation::Uri{
+                    std::wstring(L"ms-appx:///Assets/Settings/Icons/") + item.asset});
+                muxc::ImageIcon icon;
+                icon.Source(source); icon.Width(28); icon.Height(28);
+                item.icon.Content(icon);
+            }
+        }
     }
 
     void Layout(bool narrow)
@@ -232,17 +306,15 @@ struct StartPagePresenter::Impl
     void RefreshLocalizedText()
     {
         basicsTab.Text(L("start.basics")); exploreTab.Text(L("start.explore"));
-        practice.Content(winrt::box_value(L("start.practice")));
-        dismiss.Content(winrt::box_value(L("start.dismiss")));
-        review.Content(winrt::box_value(L("start.review")));
-        experimentNotice.Title(L("start.experiment"));
-        experimentNotice.Message(L("start.experiment.description"));
-        collectionsText.Text(L("start.explore.collections.description"));
+        practiceLabel.Text(L("start.practice"));
+        dismissLabel.Text(L("start.dismiss"));
+        reviewLabel.Text(L("start.review"));
         for (std::size_t i = 0; i < steps.size(); ++i) steps[i].title.Text(L(kTitles[i]));
         for (auto& item : discoveries)
         {
             item.title.Text(L(item.titleKey)); item.description.Text(L(item.descriptionKey));
             muxa::AutomationProperties::SetName(item.link, item.title.Text());
+            muxa::AutomationProperties::SetHelpText(item.link, item.description.Text());
         }
         Render();
     }
@@ -257,7 +329,8 @@ struct StartPagePresenter::Impl
         const bool allDone = (completed & onboarding::kAllSteps) == onboarding::kAllSteps;
         track.Visibility(allDone && !reviewing ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         detail.Visibility(track.Visibility());
-        review.Visibility(allDone && !reviewing ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        review.Visibility(basic && allDone && !reviewing ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        practice.Visibility(basic && (!allDone || reviewing) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         unsigned count = 0;
         for (std::size_t i = 0; i < steps.size(); ++i)
         {
@@ -275,6 +348,8 @@ struct StartPagePresenter::Impl
         if (const auto pos = summary.find(L"{0}"); pos != std::wstring::npos) summary.replace(pos, 3, std::to_wstring(count));
         progress.Text(summary);
         auto text = L(kInstructions[selected]);
+        if (selected == static_cast<std::size_t>(Task::Files) && onboarding::Completed(completed, Task::Files))
+            text = L("start.files.hint");
         if (selected == static_cast<std::size_t>(Task::Layout) && !onboarding::Completed(completed, Task::Layout))
         {
             if (completed & onboarding::kMoved) text += L"\n" + L("start.layout.resizeRemaining");
@@ -288,6 +363,8 @@ struct StartPagePresenter::Impl
     {
         if (closed) return;
         closed = true; active = false;
+        *alive = false;
+        accessibility.HighContrastChanged(contrastToken);
         tabs.SelectionChanged(tabsToken); track.SizeChanged(sizeToken);
         practice.Click(practiceToken); dismiss.Click(dismissToken); review.Click(reviewToken);
         for (auto& step : steps) step.button.Click(step.token);
@@ -296,8 +373,8 @@ struct StartPagePresenter::Impl
     }
 };
 
-StartPagePresenter::StartPagePresenter(LocalizeCallback localize, const mux::Style& style)
-    : impl_(std::make_unique<Impl>(std::move(localize), style)) {}
+StartPagePresenter::StartPagePresenter(LocalizeCallback localize, const mux::Style& style, const mux::Style& navigationCardStyle)
+    : impl_(std::make_unique<Impl>(std::move(localize), style, navigationCardStyle)) {}
 StartPagePresenter::~StartPagePresenter() { Close(); }
 void StartPagePresenter::SetActions(StartPageActions actions) { impl_->actions = std::move(actions); }
 void StartPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
@@ -326,7 +403,6 @@ void StartPagePresenter::ApplyStatusPatch(const HomeAboutStatusPatch& patch)
     }
     impl_->hasStatus = true; impl_->revision = patch.revision;
     if (patch.onboardingVisible) impl_->visible = *patch.onboardingVisible;
-    if (patch.temporaryInitializationEnabled) impl_->experimentNotice.IsOpen(*patch.temporaryInitializationEnabled);
     impl_->Render();
 }
 void StartPagePresenter::RefreshLocalizedText() { impl_->RefreshLocalizedText(); }

@@ -104,8 +104,13 @@ bool DesktopApp::HandleOnboardingPointerUp(POINT point)
         onboardingPractice_.Pause();
         onboardingPauseRect_ = onboardingSettingsRect_ = {};
         InvalidateRect(hwnd_, nullptr, FALSE);
-        if (pressed == 2) ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
-            snowdesktop::SettingsPage::General, "start.basics"));
+        if (pressed == 2)
+        {
+            const bool allDone = (onboarding_.Current().steps & snowdesktop::onboarding::kAllSteps) ==
+                snowdesktop::onboarding::kAllSteps;
+            ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+                snowdesktop::SettingsPage::General, allDone ? "start.explore" : "start.basics"));
+        }
     }
     return true;
 }

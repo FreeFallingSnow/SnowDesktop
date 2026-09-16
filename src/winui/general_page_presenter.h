@@ -120,7 +120,8 @@ public:
 
     GeneralPagePresenter(
         LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        const winrt::Microsoft::UI::Xaml::Style& navigationCardStyle);
     ~GeneralPagePresenter();
 
     GeneralPagePresenter(const GeneralPagePresenter&) = delete;

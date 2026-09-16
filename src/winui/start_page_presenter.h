@@ -19,7 +19,8 @@ class StartPagePresenter final
 public:
     using LocalizeCallback = std::function<std::wstring(std::string_view)>;
     StartPagePresenter(LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        const winrt::Microsoft::UI::Xaml::Style& navigationCardStyle);
     ~StartPagePresenter();
     void SetActions(StartPageActions actions);
     void ApplySnapshot(const SettingsSnapshot& snapshot);

@@ -85,8 +85,8 @@ HotkeyChord Chord(UINT modifiers, UINT virtualKey) noexcept
 
 struct GeneralPagePresenter::Impl
 {
-    explicit Impl(LocalizeCallback callback, const mux::Style& style)
-        : localize(std::move(callback)), cardStyle(style)
+    explicit Impl(LocalizeCallback callback, const mux::Style& style, const mux::Style& navigationStyle)
+        : localize(std::move(callback)), cardStyle(style), navigationCardStyle(navigationStyle)
     {
         BuildControls();
         HookEvents();
@@ -98,6 +98,7 @@ struct GeneralPagePresenter::Impl
     GeneralPageActions actions;
     std::unique_ptr<StartPagePresenter> onboarding;
     mux::Style cardStyle{nullptr};
+    mux::Style navigationCardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel desktopRoot{nullptr};
     muxc::StackPanel pageNavigationRoot{nullptr};
@@ -192,7 +193,7 @@ struct GeneralPagePresenter::Impl
         dockShortcutRoot = muxc::StackPanel{};
         dockShortcutRoot.Spacing(8.0);
 
-        onboarding = std::make_unique<StartPagePresenter>(localize, cardStyle);
+        onboarding = std::make_unique<StartPagePresenter>(localize, cardStyle, navigationCardStyle);
         root.Children().Append(onboarding->Content());
         InitializeCard(startupCard, cardStyle, root);
         autoStartToggle = muxc::ToggleSwitch{};
@@ -996,8 +997,8 @@ struct GeneralPagePresenter::Impl
 
 GeneralPagePresenter::GeneralPagePresenter(
     LocalizeCallback localize,
-    const mux::Style& cardStyle)
-    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle))
+    const mux::Style& cardStyle, const mux::Style& navigationCardStyle)
+    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, navigationCardStyle))
 {
 }
 
