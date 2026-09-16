@@ -2,7 +2,6 @@
 
 #include "../settings_controller.h"
 #include "home_about_page_model.h"
-#include "../onboarding_state.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 

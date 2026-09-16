@@ -236,9 +236,9 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_render_geometry.cpp
     src/app/app_render_primitives.cpp
     src/app/app_run.cpp
-    src/app/app_onboarding.cpp
-    src/onboarding_state.cpp
-    src/onboarding_state.h
+    src/app/app_usage_guide.cpp
+    src/usage_guide.cpp
+    src/usage_guide.h
     src/app/app_shell_context_menu.cpp
     src/app/app_shell_file_operation.cpp
     src/app/app_shell_menu.cpp
@@ -1391,7 +1391,7 @@ if (BUILD_TESTING)
         SnowDesktopSettingsWindowOpenRulesTests
         settings_window_open_rules
         SOURCES tests/settings_window_open_rules_tests.cpp
-            src/onboarding_state.cpp src/atomic_file.cpp
+            src/usage_guide.cpp src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract settings)
@@ -2273,5 +2273,4 @@ if (BUILD_TESTING)
             -AllowMissingFirstPartyRuntime
         DEPENDS ${SNOWDESKTOP_TEST_TARGETS})
 endif()
-
 

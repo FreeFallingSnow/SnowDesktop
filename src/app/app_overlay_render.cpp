@@ -4,41 +4,18 @@
 
 // Transient page, privacy and widget-positioning overlays.
 
-void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
+void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
 {
-    onboardingPauseRect_ = onboardingSettingsRect_ = {};
-    if (!ctx || !onboardingPractice_.active || !onboarding_.Current().Visible() ||
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = {};
+    if (!ctx || !usageGuidePractice_.active ||
         !customDesktopVisible_ || desktopIconsHidden_ || reloading_ ||
         (shellPopupMenuLayerDepth_ > 0 && !snowdesktop::modern_menu::IsActive()) ||
         (settingsWindow_ && IsWindowVisible(settingsWindow_->Window())) ||
         !luaWidgetPanelRequest_.widgetId.empty()) return;
-    using snowdesktop::onboarding::Task;
-    auto task = *onboardingPractice_.active;
-    const bool missing = (task == Task::Application || task == Task::Layout) && !HasOnboardingCollection();
-    if (missing) onboardingPractice_.active = task = Task::Collection;
-    const char* titleKey = nullptr;
-    const char* hintKey = nullptr;
-    switch (task)
-    {
-    case Task::Collection:
-        titleKey = L10N_KEY("start.collection.title");
-        hintKey = L10N_KEY("start.collection.hint"); break;
-    case Task::Application:
-        titleKey = L10N_KEY("start.application.title");
-        hintKey = L10N_KEY("start.application.hint"); break;
-    case Task::Layout:
-        titleKey = L10N_KEY("start.layout.title");
-        hintKey = (onboarding_.Current().steps & snowdesktop::onboarding::kMoved)
-            ? L10N_KEY("start.layout.resizeRemaining")
-            : (onboarding_.Current().steps & snowdesktop::onboarding::kResized)
-                ? L10N_KEY("start.layout.moveRemaining") : L10N_KEY("start.layout.hint"); break;
-    case Task::Files:
-        titleKey = L10N_KEY("start.files.title");
-        hintKey = snowdesktop::onboarding::Completed(onboarding_.Current().steps, Task::Files)
-            ? L10N_KEY("start.files.hint") : L10N_KEY("start.files.addHint"); break;
-    }
-    const std::wstring title = std::to_wstring(static_cast<unsigned>(task) + 1) + L" / 4 · " + _LW(titleKey);
-    const std::wstring hint = _LW(hintKey);
+    const auto* lesson = snowdesktop::usage_guide::Find(*usageGuidePractice_.active);
+    if (!lesson) return;
+    const std::wstring title = _LW(lesson->title);
+    const std::wstring hint = _LW(lesson->hint);
     POINT cursor{}; GetCursorPos(&cursor);
     const auto* page = GridPageFromScreenPoint(cursor);
     if (!page) page = GetFirstPageGridPage();
@@ -64,15 +41,18 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
         return static_cast<int>(std::ceil(metrics.height));
     };
     const int titleHeight = measure(title), textHeight = measure(hint), buttonHeight = px(40);
-    const bool allDone = (onboarding_.Current().steps & snowdesktop::onboarding::kAllSteps) ==
-        snowdesktop::onboarding::kAllSteps;
     const std::wstring pauseText = _LW("start.pause");
-    const std::wstring settingsText = allDone ? _LW("start.exploreMore") : _LW("start.returnSettings");
+    const std::wstring settingsText = _LW("start.returnSettings");
     const int height = padding * 2 + titleHeight + px(8) + textHeight + px(12) + buttonHeight;
     if (height + margin * 2 > area.bottom - area.top) return;
     RECT practiceRect{};
-    if (HasOnboardingCollection())
-        practiceRect = GetStandaloneWidgetFrameRect(widgets_[FindWidgetIndexById(Utf8ToWide(onboarding_.Current().collectionId))]);
+    POINT clientCursor = cursor;
+    ScreenToClient(hwnd_, &clientCursor);
+    const auto avoidIndex = mouseDownWidgetIndex_ < widgets_.size() ? mouseDownWidgetIndex_ :
+        HitTestStandaloneWidgetIndex(clientCursor);
+    if (avoidIndex < widgets_.size() && !IsGroupedWidget(widgets_[avoidIndex]) &&
+        widgets_[avoidIndex].gridCell.pageId != kDockPageId)
+        practiceRect = GetStandaloneWidgetFrameRect(widgets_[avoidIndex]);
     RECT dropRect{};
     if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || widgetAction_ != WidgetAction::None)
     {
@@ -87,6 +67,16 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
     {
         MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&bounds), 2);
         InflateRect(&bounds, px(8), px(8));
+    }
+    if (generalSettings_.dockEnabled)
+    {
+        for (const auto& container : containers_)
+            if (const auto* dock = dynamic_cast<const DockContainer*>(container.get()))
+                for (auto bounds : dock->GetOcclusionRects(clientCursor))
+                {
+                    InflateRect(&bounds, px(8), px(8));
+                    menuBounds.push_back(bounds);
+                }
     }
     // Only the two button rectangles participate in hit testing. The rest of
     // this existing host overlay remains transparent to desktop interaction.
@@ -121,14 +111,14 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
     textRect.top = textRect.bottom + px(8); textRect.bottom = textRect.top + textHeight;
     DrawD2DText(ctx, hint, textRect, format.Get(), foreground);
     const int buttonTop = textRect.bottom + px(12);
-    onboardingPauseRect_ = {frame.left + padding, buttonTop, frame.left + width / 2 - px(4), buttonTop + buttonHeight};
-    onboardingSettingsRect_ = {frame.left + width / 2 + px(4), buttonTop, frame.right - padding, buttonTop + buttonHeight};
+    usageGuidePauseRect_ = {frame.left + padding, buttonTop, frame.left + width / 2 - px(4), buttonTop + buttonHeight};
+    usageGuideSettingsRect_ = {frame.left + width / 2 + px(4), buttonTop, frame.right - padding, buttonTop + buttonHeight};
     format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    DrawD2DRoundedRectangle(ctx, onboardingPauseRect_, 4.0f * scale, background, border, 1);
-    DrawD2DRoundedRectangle(ctx, onboardingSettingsRect_, 4.0f * scale, background, border, 1);
-    DrawD2DText(ctx, pauseText, onboardingPauseRect_, format.Get(), foreground);
-    DrawD2DText(ctx, settingsText, onboardingSettingsRect_, format.Get(), foreground);
+    DrawD2DRoundedRectangle(ctx, usageGuidePauseRect_, 4.0f * scale, background, border, 1);
+    DrawD2DRoundedRectangle(ctx, usageGuideSettingsRect_, 4.0f * scale, background, border, 1);
+    DrawD2DText(ctx, pauseText, usageGuidePauseRect_, format.Get(), foreground);
+    DrawD2DText(ctx, settingsText, usageGuideSettingsRect_, format.Get(), foreground);
 }
 
 void DesktopApp::ShowPageNotify(const std::wstring& text)

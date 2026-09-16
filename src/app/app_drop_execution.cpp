@@ -443,7 +443,6 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 preview.targetWidget->itemKeys.insert(
                     preview.targetWidget->itemKeys.begin() + static_cast<std::ptrdiff_t>(insertAt), key);
                 ++inserted;
-                RecordOnboardingApplicationDrop(preview.targetWidget->id, key, true);
             }
             size_t itemIndex = FindItemIndexByKey(key);
             if (itemIndex != static_cast<size_t>(-1))

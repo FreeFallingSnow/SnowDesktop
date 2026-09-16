@@ -813,7 +813,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
-    if (HandleOnboardingPointerUp(upPoint)) return;
+    if (HandleUsageGuidePointerUp(upPoint)) return;
     if (HandleLargeIconPointerUp()) return;
     if (middleButtonWidgetMove_) return;
     (void)wp;
@@ -1055,9 +1055,6 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
     if (widgetAction_ != WidgetAction::None && mouseDownWidgetIndex_ < widgets_.size())
     {
         const WidgetAction completedWidgetAction = widgetAction_;
-        const auto onboardingWidgetId = widgets_[mouseDownWidgetIndex_].id;
-        const auto onboardingCell = widgets_[mouseDownWidgetIndex_].gridCell;
-        const auto onboardingSpan = widgets_[mouseDownWidgetIndex_].gridSpan;
         if (completedWidgetAction == WidgetAction::Move)
         {
             // Sample both geometry and modifiers at release, including a final
@@ -1152,21 +1149,6 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
         }
         // PendingMove/PendingResize: just cancel without displacement
-        const auto onboardingIndex = FindWidgetIndexById(onboardingWidgetId);
-        if (onboardingIndex < widgets_.size())
-        {
-            const auto& placed = widgets_[onboardingIndex];
-            const bool moved = completedWidgetAction == WidgetAction::Move &&
-                !IsGroupedWidget(placed) && placed.gridCell.pageId != kDockPageId &&
-                (placed.gridCell.pageId != onboardingCell.pageId ||
-                    placed.gridCell.column != onboardingCell.column ||
-                    placed.gridCell.row != onboardingCell.row);
-            const bool resized = completedWidgetAction == WidgetAction::Resize &&
-                (placed.gridSpan.columns != onboardingSpan.columns ||
-                    placed.gridSpan.rows != onboardingSpan.rows);
-            if (onboarding_.Current().GeometryCommitted(
-                    WideToUtf8(onboardingWidgetId), moved, resized)) SaveOnboarding();
-        }
         SetCursor(LoadCursorW(nullptr, IDC_ARROW));
         UpdateWidgetHandleCursor(upPoint);
         widgetDockTarget_ = false;

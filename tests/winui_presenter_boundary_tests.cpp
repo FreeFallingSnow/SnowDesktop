@@ -74,10 +74,17 @@ int main(int argc, char** argv)
         Forbid(source, "HighContrastChanged(",
             "desktop presenters cannot subscribe to the CoreWindow accessibility event");
         for (const auto token : {"std::filesystem", "atomic_file::", "SaveLayoutSlots(", "DesktopApp"})
-            Forbid(source, token, "onboarding progress and desktop mutations belong to the host");
+            Forbid(source, token, "guide preferences and desktop mutations belong to the host");
         // Negative architecture contract: the practice command may publish an
         // instruction, but must never perform the menu lesson for the user.
-        const auto practice = ReadSource(root, "src/app/app_onboarding.cpp");
+        const auto practice = ReadSource(root, "src/app/app_usage_guide.cpp");
+        Forbid(practice, "SnowDesktop.onboarding.json", "permanent help cannot read or write old tutorial progress");
+        for (const auto path : {"src/app/app_drop_execution.cpp", "src/app/app_pointer_release.cpp", "src/app/app_widget_grouping.cpp"})
+        {
+            const auto interactions = ReadSource(root, path);
+            for (const auto token : {"RecordOnboarding", "GeometryCommitted(", "SaveOnboarding("})
+                Forbid(interactions, token, "real desktop operations must not record or advance tutorials");
+        }
         for (const auto token : {"AddCollectionWidgetAt(", "AddFileCategoryWidgetAt(", "ShowAddWidgetMenu("})
             Forbid(practice, token, "practice requests cannot create widgets or open the add menu");
     }

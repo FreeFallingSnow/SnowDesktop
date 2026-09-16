@@ -236,12 +236,28 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AnimationPerformance, "animation.onBattery",
         "settings.animation.onBattery", "settings.animation.onBattery.description"},
 
-    {SettingsPage::General, "start.basics", "start.basics", "start.basics.description"},
-    {SettingsPage::General, "start.explore", "start.explore", "start.explore.description"},
+    {SettingsPage::General, "start.explore", "start.title", "start.description"},
+    {SettingsPage::General, "start.startup", "start.startup.title", "start.startup.description"},
+    {SettingsPage::General, "start.grid", "start.grid.title", "start.grid.description"},
+    {SettingsPage::General, "start.icons", "start.icons.title", "start.icons.description"},
+    {SettingsPage::General, "start.beautify", "start.beautify.title", "start.beautify.description"},
+    {SettingsPage::General, "start.theme", "start.theme.title", "start.theme.description"},
     {SettingsPage::General, "start.collection", "start.collection.title", "start.collection.description"},
     {SettingsPage::General, "start.application", "start.application.title", "start.application.description"},
-    {SettingsPage::General, "start.layout", "start.layout.title", "start.layout.description"},
+    {SettingsPage::General, "start.move", "start.move.title", "start.move.description"},
+    {SettingsPage::General, "start.resize", "start.resize.title", "start.resize.description"},
+    {SettingsPage::General, "start.collectionGroup", "start.collectionGroup.title", "start.collectionGroup.description"},
     {SettingsPage::General, "start.files", "start.files.title", "start.files.description"},
+    {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description"},
+    {SettingsPage::General, "start.fileGroup", "start.fileGroup.title", "start.fileGroup.description"},
+    {SettingsPage::General, "start.dockPin", "start.dockPin.title", "start.dockPin.description"},
+    {SettingsPage::General, "start.dockMapping", "start.dockMapping.title", "start.dockMapping.description"},
+    {SettingsPage::General, "start.dockCollection", "start.dockCollection.title", "start.dockCollection.description"},
+    {SettingsPage::General, "start.dockFiles", "start.dockFiles.title", "start.dockFiles.description"},
+    {SettingsPage::General, "start.dockSummon", "start.dockSummon.title", "start.dockSummon.description"},
+    {SettingsPage::General, "start.navigation", "start.navigation.title", "start.navigation.description"},
+    {SettingsPage::General, "start.luaWidget", "start.luaWidget.title", "start.luaWidget.description"},
+    {SettingsPage::General, "start.backup", "start.backup.title", "start.backup.description"},
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
         "settings.general.startup.description"},
@@ -1258,8 +1274,6 @@ struct SettingsWindowHost::Impl
                     : (definition.page == SettingsPage::DeveloperTools
                         ? input.developerToolsVisible
                         : input.debugVisible);
-                if (descriptor.focusId.starts_with("start.") && !onboardingVisible)
-                    descriptor.visible = false;
                 if (!descriptor.label.empty())
                     input.staticSettings.push_back(std::move(descriptor));
             }
@@ -1275,7 +1289,6 @@ struct SettingsWindowHost::Impl
         return input;
     }
 
-    bool onboardingVisible = false;
 
     void RebuildSearchIndex()
     {
@@ -1365,12 +1378,7 @@ struct SettingsWindowHost::Impl
             // Preserve the host's status sequence; it also orders direct
             // publications while the controller snapshot is unchanged.
             (void)shell->ApplyHomeAboutStatusPatch(patch);
-            if (patch.onboardingVisible && onboardingVisible != *patch.onboardingVisible)
-            {
-                onboardingVisible = *patch.onboardingVisible;
-                RebuildSearchIndex();
-                shell->ClearSearch();
-            }
+
         }
     }
 
@@ -2034,15 +2042,16 @@ struct SettingsWindowHost::Impl
             }
         };
         general.onboarding.begin = [weak](std::uint64_t generation,
-            onboarding::Task task) {
+            usage_guide::Topic topic) {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner ||
                 !state->owner->controller ||
                 !state->owner->controller->IsGenerationCurrent(generation)) return;
-            const auto key = onboarding::TaskKey(task);
-            if (key.empty()) return;
+            const auto* lesson = usage_guide::Find(topic);
+            if (!lesson) return;
+            const std::string_view key = lesson->key;
             SettingsHostActions::Request request;
-            request.action = SettingsHostActions::Action::StartOnboardingTask;
+            request.action = SettingsHostActions::Action::StartUsageGuidePractice;
             request.value = std::wstring(key.begin(), key.end());
             const auto result = state->owner->controller->InvokeHostAction(request);
             if (!state->alive.load() || !state->owner) return;
@@ -2051,13 +2060,16 @@ struct SettingsWindowHost::Impl
             // parent's synchronous RPC while its controls are being invoked.
             if (result.Succeeded()) (void)state->owner->HideWindow();
         };
-        general.onboarding.dismiss = [weak](std::uint64_t generation) {
+        general.onboarding.expandedChanged = [weak](std::uint64_t generation, bool expanded) {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
                 !state->owner->controller->IsGenerationCurrent(generation)) return;
             SettingsHostActions::Request request;
-            request.action = SettingsHostActions::Action::DismissOnboarding;
-            state->owner->ShowActionError(state->owner->controller->InvokeHostAction(request));
+            request.action = SettingsHostActions::Action::SetUsageGuideExpanded;
+            request.boolValue = expanded;
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
+            state->owner->ShowActionError(result);
         };
         general.onboarding.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
@@ -3635,12 +3647,6 @@ bool SettingsWindowHost::PublishHomeAboutStatus(
         impl_->controller &&
         impl_->controller->IsGenerationCurrent(patch.generation) &&
         impl_->shell->ApplyHomeAboutStatusPatch(patch);
-    if (applied && patch.onboardingVisible && impl_->onboardingVisible != *patch.onboardingVisible)
-    {
-        impl_->onboardingVisible = *patch.onboardingVisible;
-        impl_->RebuildSearchIndex();
-        impl_->shell->ClearSearch();
-    }
     return applied;
 }
 

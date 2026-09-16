@@ -19,7 +19,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     ClearPopupDragTarget();
     pendingGuideAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-    if (HandleOnboardingPointerDown(pt)) return;
+    if (HandleUsageGuidePointerDown(pt)) return;
     if (HandleLargeIconPointerDown(pt)) return;
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())

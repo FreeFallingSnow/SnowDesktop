@@ -1388,13 +1388,6 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
 
-    struct MenuCreationScope
-    {
-        bool& flag;
-        bool previous;
-        explicit MenuCreationScope(bool& value) : flag(value), previous(value) { flag = true; }
-        ~MenuCreationScope() { flag = previous; }
-    } menuCreation(onboardingMenuCreation_);
     if (previewApply)
     {
         ApplyWidgetPreviewSettings(screenPoint, *previewApply);
@@ -2009,13 +2002,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     newMenuContextMenu_.Reset();
     ClearMenuIcons();
 
-    struct MenuCreationScope
-    {
-        bool& flag;
-        bool previous;
-        explicit MenuCreationScope(bool& value) : flag(value), previous(value) { flag = true; }
-        ~MenuCreationScope() { flag = previous; }
-    } menuCreation(onboardingMenuCreation_);
     if (previewApply)
     {
         RestoreDesktopWindowLayer();

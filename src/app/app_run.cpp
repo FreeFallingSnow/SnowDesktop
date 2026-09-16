@@ -343,7 +343,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         Locale::Instance().Init(langDir.c_str());
     }
 
-    LoadOnboarding();
+    LoadUsageGuidePreferences();
     InitializeSettingsController();
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -1561,7 +1561,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     startupAnimation.Finish();
     logStartupStage(L"desktop handoff complete");
-    ShowOnboardingWelcome();
+    ShowUsageGuideWelcome();
     TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_
         ? L"Window shown, entering loop"
@@ -1650,11 +1650,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 DispatchMessageW(&msg);
             }
             FinishWidgetGroupTransitions();
-            if (onboardingWelcomeQueued_) ShowOnboardingWelcome();
-            if (onboardingPracticeWaitingForDesktop_ &&
+            if (usageGuideWelcomeQueued_) ShowUsageGuideWelcome();
+            if (usageGuideWaitingForDesktop_ &&
                 (!settingsWindow_ || !IsWindowVisible(settingsWindow_->Window())))
             {
-                onboardingPracticeWaitingForDesktop_ = false;
+                usageGuideWaitingForDesktop_ = false;
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
             // Pointer-driven desktop/Dock pixels must enter their own DComp

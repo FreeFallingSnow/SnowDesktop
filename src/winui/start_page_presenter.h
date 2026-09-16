@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
-#include "../onboarding_state.h"
+#include "../usage_guide.h"
 #include "home_about_page_model.h"
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <memory>
@@ -10,8 +10,8 @@ namespace snowdesktop::winui
 {
 struct StartPageActions
 {
-    std::function<void(std::uint64_t, onboarding::Task)> begin;
-    std::function<void(std::uint64_t)> dismiss;
+    std::function<void(std::uint64_t, usage_guide::Topic)> begin;
+    std::function<void(std::uint64_t, bool)> expandedChanged;
     std::function<void(const SettingsRoute&)> navigate;
 };
 class StartPagePresenter final

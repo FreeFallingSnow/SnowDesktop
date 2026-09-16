@@ -37,8 +37,8 @@ struct HomeAboutStatusPatch
     std::optional<bool> animationDiagnosticsEnabled;
     std::optional<bool> temporaryInitializationEnabled;
     std::optional<std::wstring> animationDiagnosticsStatus;
-    std::optional<std::uint32_t> onboardingSteps;
-    std::optional<bool> onboardingVisible;
+    std::optional<bool> usageGuideExpanded;
+    std::optional<std::uint32_t> usageGuideContext;
 };
 
 // Shared by requested snapshots and unsolicited host publications. This

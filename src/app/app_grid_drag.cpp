@@ -13,9 +13,9 @@ void DesktopApp::InitializeGridFromWindows()
     if (gridPages_.empty() || !layoutRecords_.empty() ||
         !widgets_.empty() || !dockEntries_.empty()) return;
 
-    // Enrollment follows actual initialization, including capture fallback.
-    if ((onboardingWritable_ || onboarding_.experiment) && onboarding_.Current().Initialized()) SaveOnboarding();
-    onboardingWelcomeQueued_ = onboarding_.Current().welcomePending;
+    // Offer help only for actual initialization, including capture fallback.
+    // Opening the page respects the saved panel preference and starts no practice.
+    usageGuideWelcomePending_ = usageGuideWelcomeQueued_ = true;
 
     namespace native = snowdesktop::windows_desktop_layout;
     const auto snapshot = native::Capture();

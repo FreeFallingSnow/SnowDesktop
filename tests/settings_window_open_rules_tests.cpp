@@ -1,5 +1,6 @@
 #include "settings_window_open_rules.h"
-#include "onboarding_state.h"
+#include "usage_guide.h"
+#include "json_value.h"
 #include <windows.h>
 
 #include <algorithm>
@@ -15,133 +16,61 @@ int failures = 0;
 
 void Check(bool condition, const char* message);
 
-void CheckOnboarding()
+void CheckUsageGuide()
 {
-    using namespace snowdesktop::onboarding;
-    // These are the production state transitions used by initialization, IPC,
-    // successful menu creation, committed drops and committed widget geometry.
-    State progress;
+    using namespace snowdesktop::usage_guide;
+    // Production selection and prerequisites; no simulated widget mutation.
     Practice practice;
-    Check(!progress.Visible() && !progress.welcomePending &&
-        !progress.CollectionCreated("old-user-widget", false, true) &&
-        !progress.FilesCreated(true) && !practice.Begin(progress, Task::Collection, false),
-        "missing eligibility never enrolls an existing user through ordinary actions");
-    Check(progress.Initialized() && progress.Visible() && progress.welcomePending,
-        "actual initialization enables a pending guide even if native extraction later fails");
-    progress.welcomePending = false; // settings opened, not dismissed
-    Check(progress.Visible(), "closing the settings window does not dismiss the guide");
-    const auto beforePractice = progress;
-    Check(practice.Begin(progress, Task::Collection, false) && progress == beforePractice,
-        "practice selection changes no completion, target, or persisted state");
-    Check(!progress.CollectionCreated("widget-1", false, false) &&
-        !progress.CollectionCreated("", false, true) && progress == beforePractice,
-        "programmatic creation and a cancelled/failed menu without a created ID cannot finish a task");
-    practice.Advance(progress);
-    Check(practice.active == Task::Collection, "menu cancellation stays on the add instruction");
-    Check(!progress.ApplicationDropped("widget-1", true, true),
-        "an unrelated drop before collection creation cannot finish onboarding");
-    Check(progress.CollectionCreated("widget-1", false, true) && Completed(progress.steps, Task::Collection),
-        "successful menu creation completes only the collection task");
-    practice.Advance(progress);
-    Check(practice.active == Task::Application && !Completed(progress.steps, Task::Application) &&
-        !Completed(progress.steps, Task::Layout), "creation advances the instruction without completing later tasks");
-    Check(!progress.ApplicationDropped("widget-2", true, true) &&
-        !progress.ApplicationDropped("widget-1", false, true) &&
-        !progress.ApplicationDropped("widget-1", true, false),
-        "wrong target, ordinary file, and duplicate/reorder cannot complete application ingress");
-    Check(progress.ApplicationDropped("widget-1", true, true) && Completed(progress.steps, Task::Application),
-        "actual application ingress into the practice collection completes the task");
-    practice.Advance(progress);
-    Check(practice.active == Task::Layout, "committed application drop advances to geometry practice");
-    Check(!progress.GeometryCommitted("widget-2", true, true) &&
-        !progress.GeometryCommitted("widget-1", false, false),
-        "other collections and cancelled/no-op gestures cannot advance layout practice");
-    Check(progress.GeometryCommitted("widget-1", true, false) && !Completed(progress.steps, Task::Layout),
-        "moving alone does not finish the combined move/resize task");
-    practice.Advance(progress);
-    Check(practice.active == Task::Layout, "resize instruction remains after moving alone");
-    Check(progress.GeometryCommitted("widget-1", false, true) && Completed(progress.steps, Task::Layout),
-        "a separate resize finishes layout practice");
-    practice.Advance(progress);
-    Check(practice.active == Task::Files && !progress.FilesCreated(false) &&
-        !Completed(progress.steps, Task::Files), "desktop files must also come from the real menu");
-    Check(progress.FilesCreated(true) && Completed(progress.steps, Task::Files),
-        "menu creation completes Files without requiring automatic collection");
-    practice.Advance(progress);
-    Check(practice.active == Task::Files, "final optional auto-collect instruction remains visible");
-    practice.Pause();
-    Check(!practice.active && progress.Visible(), "pausing the prompt does not dismiss the guide");
-    Check(practice.Begin(progress, Task::Application, false) && practice.active == Task::Collection,
-        "missing/grouped/docked practice collection redirects to independent collection creation");
-    progress.CollectionCreated("widget-2", true, true);
-    Check(progress.collectionId == "widget-1", "unrelated collection creation preserves the practice target");
-    progress.CollectionCreated("widget-3", false, true);
-    Check(progress.collectionId == "widget-3" && progress.steps == kAllSteps,
-        "replacing a missing collection retains learned history");
-    Check(progress.Initialized() && progress.steps == kAllSteps && progress.welcomePending,
-        "reinitialization requests one new focus while retaining learned steps");
-    Check(progress.Dismiss() && !progress.Visible() && !progress.welcomePending,
-        "explicit dismissal hides the guide and clears any pending first focus");
-    const auto dismissed = progress;
-    Check(!progress.Initialized() && progress == dismissed && !practice.Begin(progress, Task::Files, true),
-        "permanent dismissal wins over reinitialization and practice requests");
-    practice.Advance(progress);
-    Check(!practice.active && !progress.CollectionCreated("widget-4", false, true),
-        "dismissal ends the live prompt and prevents later events from replacing its target");
-
-    Session session;
-    session.regular = progress;
-    const auto saved = session.regular;
-    session.BeginExperiment();
-    Check(session.Current().Visible() && session.Current().welcomePending && session.Current().steps == 0,
-        "every debug initialization starts a fresh visible guide even if normal user dismissed it");
-    session.Current().CollectionCreated("widget-test", false, true);
-    session.Current().Dismiss();
-    Check(session.regular == saved, "debug activity and dismissal cannot mutate normal onboarding state");
-    session.EndExperiment();
-    Check(session.Current() == saved, "ending initialization restores original dismissal and history");
-    session.BeginExperiment();
-    Check(session.Current().Visible() && session.Current().welcomePending && session.Current().collectionId.empty(),
-        "a second experiment replays the complete first-run experience");
-
-    State decoded;
-    Check(Decode(Encode(progress), decoded) && decoded == progress, "guide dismissal and progress round-trip");
-    Check(!decoded.Initialized() && decoded == dismissed, "restart cannot defeat persisted dismissal");
-    const auto beforeBadRead = decoded;
-    Check(!Decode("{\"version\":1,\"steps\":999}", decoded) && decoded == beforeBadRead,
-        "invalid stored progress cannot replace valid in-memory history");
-    Check(Decode(R"({"version":1,"welcomePending":false,"steps":7,"deferred":0,"collectionId":"widget-old"})", decoded) &&
-        !decoded.Visible() && !decoded.dismissed && decoded.steps == 7,
-        "old shown flag is not dismissal and does not enroll old users from historical operations");
-    Check(decoded.Initialized() && decoded.Visible() && decoded.steps == 7,
-        "actual reinitialization enables migrated state without erasing progress");
-    Check(Decode(R"({"version":1,"welcomePending":true,"steps":1,"deferred":0,"collectionId":"widget-old"})", decoded) &&
-        decoded.Visible() && decoded.welcomePending && decoded.steps == 1,
-        "a pending old guide migrates as eligible, preserving learned tasks");
-
-    const auto directory = std::filesystem::temp_directory_path() /
-        ("SnowDesktop-onboarding-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()));
-    if (!std::filesystem::create_directory(directory))
-    { Check(false, "isolated onboarding test directory is created"); return; }
-    struct Cleanup
+    Check(!practice.active, "a new process starts no desktop tutorial");
+    Check(!ParseTopic("unknown") && ParseTopic("layout") == Topic::Move,
+        "unknown requests are rejected and old move/resize routes remain usable");
+    Check(practice.Begin(Topic::FolderMapping, 0) && practice.active == Topic::FolderMapping,
+        "a user can start a later lesson with no completed earlier lessons");
+    Check(!practice.Begin(Topic::Application, 0) && practice.active == Topic::FolderMapping,
+        "a missing collection explains prerequisites without replacing the current practice");
+    Check(practice.Begin(Topic::Application, CollectionAvailable) && practice.End() == Topic::Application && !practice.active,
+        "any available collection allows practice and return identifies the same lesson");
+    Check(practice.Begin(Topic::Resize, StandaloneWidget) && practice.End() == Topic::Resize,
+        "resize can be practiced independently before move on any standalone widget");
+    Check(!practice.Begin(Topic::Startup, 127) && !practice.Begin(static_cast<Topic>(999), 127),
+        "settings-only and invalid topics cannot start desktop practice");
+    Check(MissingPrerequisite(*Find(Topic::DockCollection), 0) == DockEnabled &&
+        MissingPrerequisite(*Find(Topic::DockCollection), DockEnabled) == StandaloneCollection,
+        "Dock availability is explained before a missing source component");
+    Check(!practice.Begin(Topic::DockFiles, DockEnabled) && practice.Begin(Topic::DockFiles, DockEnabled | StandaloneFileSource),
+        "Dock file practice requires a usable file-source component as well as Dock");
+    Check(!practice.Begin(Topic::CollectionGroup, StandaloneCollection) &&
+        practice.Begin(Topic::CollectionGroup, TwoStandaloneCollections),
+        "collection grouping requires two existing standalone collections, not historical progress");
+    Check(!practice.Begin(Topic::Navigation, 0) && practice.Begin(Topic::Navigation, NavigationEnabled),
+        "quick navigation practice requires an enabled invocation hotkey");
+    for (const auto& lesson : kLessons)
     {
-        std::filesystem::path path;
-        ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); }
-    } cleanup{directory};
-    State first;
-    Check(Load(directory / "new.json", first) && !first.Visible() && !first.welcomePending,
-        "a missing progress file alone never opens or shows onboarding");
-    first.Initialized();
-    Check(Save(directory / "new.json", first) && Load(directory / "new.json", decoded) && decoded.welcomePending,
-        "an initialization offer survives a failed first display and restart");
-    first.welcomePending = false;
-    first.CollectionCreated("widget-42", false, true);
-    Check(Save(directory / "new.json", first) && Load(directory / "new.json", decoded) && decoded == first && decoded.Visible(),
-        "ordinary restart retains the panel and progress without reopening settings");
-    first.Dismiss();
-    Check(Save(directory / "new.json", first) && Load(directory / "new.json", decoded) &&
-        !decoded.Initialized() && !decoded.Visible(), "dismissal persists across restart and later initialization");
-
+        Check(ParseTopic(lesson.key) == lesson.topic, "every visible lesson can be requested through the host");
+        Check(std::count_if(kLessons.begin(), kLessons.end(), [&](const auto& other) {
+            return std::string_view(other.key) == lesson.key; }) == 1, "lesson routes have unique identities");
+    }
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("SnowDesktop-usage-guide-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()));
+    if (!std::filesystem::create_directory(directory)) { Check(false, "create isolated preference directory"); return; }
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{directory};
+    // An old opt-out file is retained, but cannot hide the new permanent help.
+    { std::ofstream old(directory / "SnowDesktop.onboarding.json"); old << R"({"version":2,"dismissed":true,"steps":31})"; }
+    bool expanded = false;
+    const auto path = directory / "SnowDesktop.guide.json";
+    Check(LoadExpanded(path, expanded) && expanded, "first-use help defaults expanded regardless of old tutorial dismissal");
+    Check(SaveExpanded(path, false) && LoadExpanded(path, expanded) && !expanded,
+        "the user's collapsed panel preference survives a new load");
+    Practice restarted;
+    Check(!restarted.active, "persisting the panel never resumes a desktop practice on restart");
+    Check(SaveExpanded(path, true) && LoadExpanded(path, expanded) && expanded, "expanded preference also round-trips");
+    { std::ifstream input(path); std::string text((std::istreambuf_iterator<char>(input)), {}); JsonValue value;
+      Check(ParseJson(text, value) && value.Find("expanded") && !value.Find("steps") && !value.Find("collectionId") && !value.Find("active"),
+          "preference storage contains neither progress nor practice identities"); }
+    { std::ofstream output(path); output << R"({"version":1,"expanded":"false"})"; }
+    Check(!LoadExpanded(path, expanded) && expanded, "malformed preferences cannot overwrite the last valid in-memory choice");
+    { std::ofstream blocker(directory / "blocked"); blocker << "not a directory"; }
+    Check(!SaveExpanded(directory / "blocked" / "value.json", false), "preference write failure is observable");
 }
 
 void Check(bool condition, const char* message)
@@ -165,7 +94,7 @@ std::string ReadFile(const std::filesystem::path& path)
 
 int main(int argc, char** argv)
 {
-    CheckOnboarding();
+    CheckUsageGuide();
     using snowdesktop::settings_window_open_rules::PostOpenAction;
     using snowdesktop::settings_window_open_rules::RequestState;
 

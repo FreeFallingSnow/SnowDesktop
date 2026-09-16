@@ -769,7 +769,7 @@ void DesktopApp::ConfigureModernMenuEventPump(
         uiAnimationScheduler_.DispatchDue();
     };
     options.eventPump.flushPresentation = [this, previousBounds = std::vector<RECT>{}]() mutable {
-        if (onboardingPractice_.active)
+        if (usageGuidePractice_.active)
         {
             auto bounds = snowdesktop::modern_menu::ActivePopupBounds();
             const RECT preview = snowdesktop::component_preview::ActivePreviewBounds();
@@ -829,6 +829,6 @@ void DesktopApp::PreserveModernMenuHostZOrder(
 
 void DesktopApp::ClearMenuIcons()
 {
-    if (onboardingPractice_.active) InvalidateRect(hwnd_, nullptr, FALSE);
+    if (usageGuidePractice_.active) InvalidateRect(hwnd_, nullptr, FALSE);
     menuIconPool_.clear();
 }

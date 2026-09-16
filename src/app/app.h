@@ -31,7 +31,7 @@
 #include "settings_window.h"
 #include "settings_window_open_rules.h"
 #include "settings_controller.h"
-#include "../onboarding_state.h"
+#include "../usage_guide.h"
 #include "large_icon_settings.h"
 #include "large_icon_assets.h"
 #include "website_icon.h"
@@ -3528,26 +3528,21 @@ private:
     bool desktopItemsReady_ = false;
     bool initializeGridFromWindows_ = false;
     std::filesystem::path initializationExperimentDirectory_;
-    snowdesktop::onboarding::Session onboarding_;
-    bool onboardingWritable_ = false;
-    bool onboardingWelcomeQueued_ = false;
-    snowdesktop::onboarding::Practice onboardingPractice_;
-    bool onboardingPracticeWaitingForDesktop_ = false;
-    bool onboardingMenuCreation_ = false;
-    RECT onboardingPauseRect_{}, onboardingSettingsRect_{};
-    int onboardingPressedButton_ = 0;
-    bool HasOnboardingCollection() const;
-    void DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx);
-    bool HandleOnboardingPointerDown(POINT point);
-    bool HandleOnboardingPointerUp(POINT point);
-    void LoadOnboarding();
-    void SaveOnboarding();
-    void ShowOnboardingWelcome();
-    void RecordOnboardingWidgetCreated(const DesktopWidget& widget);
-    void RecordOnboardingApplicationDrop(const std::wstring& collectionId,
-        const std::wstring& key, bool newlyInserted);
-    snowdesktop::SettingsActionResult StartOnboardingTask(
-        snowdesktop::onboarding::Task task);
+    bool usageGuideExpanded_ = true;
+    bool usageGuideWelcomePending_ = false;
+    bool usageGuideWelcomeQueued_ = false;
+    snowdesktop::usage_guide::Practice usageGuidePractice_;
+    bool usageGuideWaitingForDesktop_ = false;
+    RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{};
+    int usageGuidePressedButton_ = 0;
+    void DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx);
+    bool HandleUsageGuidePointerDown(POINT point);
+    bool HandleUsageGuidePointerUp(POINT point);
+    void LoadUsageGuidePreferences();
+    std::uint32_t UsageGuideContext() const;
+    void ShowUsageGuideWelcome();
+    snowdesktop::SettingsActionResult StartUsageGuidePractice(snowdesktop::usage_guide::Topic topic);
+    snowdesktop::SettingsActionResult SetUsageGuideExpanded(bool expanded);
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     bool iconSpacingPreviewActive_ = false;

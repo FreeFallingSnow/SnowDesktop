@@ -536,7 +536,6 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     // Confirm the created instance rather than comparing vector sizes.
     const size_t createdIndex = FindWidgetIndexById(createdId);
     if (createdIndex >= widgets_.size()) return;
-    RecordOnboardingWidgetCreated(widgets_[createdIndex]);
     if (enumerateFolder)
     {
         EnumerateFolderMappingEntries(widgets_[createdIndex]);

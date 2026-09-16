@@ -461,7 +461,7 @@ void DesktopApp::ClearDockPressedState()
 
 bool DesktopApp::HasCancelablePointerPressState() const
 {
-    return onboardingPressedButton_ != 0 || mouseDown_ || mouseDownHit_ != nullptr ||
+    return usageGuidePressedButton_ != 0 || mouseDown_ || mouseDownHit_ != nullptr ||
         dragSession_.IsActive() ||
         dockPressedEntry_ != static_cast<size_t>(-1) ||
         dockPressedFrequentItem_ != static_cast<size_t>(-1) ||
@@ -503,7 +503,7 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
-    onboardingPressedButton_ = 0;
+    usageGuidePressedButton_ = 0;
     const bool layoutNeedsSave =
         widgetScrollbarDragging_ ||
         detailColumnResizeActive_;
