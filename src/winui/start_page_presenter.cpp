@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "start_page_presenter.h"
+#include "../l10n.h"
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <array>
 
@@ -9,6 +10,27 @@ namespace mux = winrt::Microsoft::UI::Xaml;
 namespace muxc = mux::Controls;
 namespace muxa = mux::Automation;
 using onboarding::Task;
+
+namespace
+{
+struct TaskTextKeys
+{
+    const char* title;
+    const char* description;
+    const char* instructions;
+    const char* action;
+};
+constexpr std::array<TaskTextKeys, 4> kTaskTextKeys{{
+    {L10N_KEY("start.collection.title"), L10N_KEY("start.collection.description"),
+        L10N_KEY("start.collection.instructions"), L10N_KEY("start.collection.action")},
+    {L10N_KEY("start.application.title"), L10N_KEY("start.application.description"),
+        L10N_KEY("start.application.instructions"), L10N_KEY("start.application.action")},
+    {L10N_KEY("start.layout.title"), L10N_KEY("start.layout.description"),
+        L10N_KEY("start.layout.instructions"), L10N_KEY("start.layout.action")},
+    {L10N_KEY("start.files.title"), L10N_KEY("start.files.description"),
+        L10N_KEY("start.files.instructions"), L10N_KEY("start.files.action")}
+}};
+}
 
 struct StartPagePresenter::Impl
 {
@@ -22,7 +44,7 @@ struct StartPagePresenter::Impl
     };
     struct ExploreCard
     {
-        std::string key;
+        std::string titleKey, descriptionKey;
         SettingsRoute route;
         muxc::Button root;
         muxc::TextBlock title, description;
@@ -125,9 +147,11 @@ struct StartPagePresenter::Impl
             basics.Children().Append(card.root);
         }
         tasks.front().root.IsExpanded(true);
-        const auto add = [&](const char* key, SettingsPage page, const char* focus = "") {
+        const auto add = [&](const char* titleKey, const char* descriptionKey,
+            SettingsPage page, const char* focus = "") {
             ExploreCard card;
-            card.key = key;
+            card.titleKey = titleKey;
+            card.descriptionKey = descriptionKey;
             card.route = SettingsRoute::ForPage(page, focus);
             card.root.Style(cardStyle);
             card.root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -148,7 +172,8 @@ struct StartPagePresenter::Impl
             explore.Children().Append(card.root);
             discoveries.push_back(std::move(card));
         };
-        add("organize", SettingsPage::DesktopCategories);
+        add(L10N_KEY("start.explore.organize"), L10N_KEY("start.explore.organize.description"),
+            SettingsPage::DesktopCategories);
         collectionsGuide.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         collectionsGuide.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         Body(collectionsTitle);
@@ -166,12 +191,18 @@ struct StartPagePresenter::Impl
                 actions.invoke(generation, HomeAboutCommand::OpenWidgetMenu);
         });
         explore.Children().Append(collectionsGuide);
-        add("dock", SettingsPage::Dock);
-        add("navigation", SettingsPage::General, "general.quickNavigation");
-        add("pages", SettingsPage::DesktopPages);
-        add("appearance", SettingsPage::AppearanceTheme);
-        add("widgets", SettingsPage::Widgets);
-        add("backup", SettingsPage::BackupAndData);
+        add(L10N_KEY("start.explore.dock"), L10N_KEY("start.explore.dock.description"),
+            SettingsPage::Dock);
+        add(L10N_KEY("start.explore.navigation"), L10N_KEY("start.explore.navigation.description"),
+            SettingsPage::General, "general.quickNavigation");
+        add(L10N_KEY("start.explore.pages"), L10N_KEY("start.explore.pages.description"),
+            SettingsPage::DesktopPages);
+        add(L10N_KEY("start.explore.appearance"), L10N_KEY("start.explore.appearance.description"),
+            SettingsPage::AppearanceTheme);
+        add(L10N_KEY("start.explore.widgets"), L10N_KEY("start.explore.widgets.description"),
+            SettingsPage::Widgets);
+        add(L10N_KEY("start.explore.backup"), L10N_KEY("start.explore.backup.description"),
+            SettingsPage::BackupAndData);
         RefreshLocalizedText();
         Render();
     }
@@ -191,18 +222,18 @@ struct StartPagePresenter::Impl
         for (std::size_t i = 0; i < tasks.size(); ++i)
         {
             auto& card = tasks[i];
-            const std::string prefix = "start." + std::string(onboarding::TaskKey(static_cast<Task>(i)));
-            card.title.Text(std::to_wstring(i + 1) + L". " + L(prefix + ".title"));
-            card.description.Text(L(prefix + ".description"));
-            card.instructions.Text(L(prefix + ".instructions"));
-            card.action.Content(winrt::box_value(L(prefix + ".action")));
+            const auto& keys = kTaskTextKeys[i];
+            card.title.Text(std::to_wstring(i + 1) + L". " + L(keys.title));
+            card.description.Text(L(keys.description));
+            card.instructions.Text(L(keys.instructions));
+            card.action.Content(winrt::box_value(L(keys.action)));
             card.later.Content(winrt::box_value(L("start.later")));
             muxa::AutomationProperties::SetName(card.root, card.title.Text());
         }
         for (auto& card : discoveries)
         {
-            card.title.Text(L("start.explore." + card.key));
-            card.description.Text(L("start.explore." + card.key + ".description"));
+            card.title.Text(L(card.titleKey));
+            card.description.Text(L(card.descriptionKey));
             muxa::AutomationProperties::SetName(card.root, card.title.Text());
             muxa::AutomationProperties::SetHelpText(card.root, card.description.Text());
         }
@@ -221,8 +252,8 @@ struct StartPagePresenter::Impl
             const bool done = onboarding::Completed(steps, task);
             const bool later = (deferred & (1u << i)) != 0;
             if (done) ++completed;
-            std::string key = done ? "start.completed" : later ? "start.deferred"
-                : next ? "start.next" : "start.notStarted";
+            std::string key = done ? L10N_KEY("start.completed") : later ? L10N_KEY("start.deferred")
+                : next ? L10N_KEY("start.next") : L10N_KEY("start.notStarted");
             if (!done && !later) next = false;
             std::wstring status = L(key);
             if (task == Task::Layout && !done)

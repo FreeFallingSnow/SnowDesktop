@@ -28,6 +28,15 @@
 
 自动回归加入现有 `settings_window_open_rules` 条目，覆盖状态转移、目标身份、部分完成、暂缓、持久化与实验隔离。`winui_home_about_page_presenter` 检查开始页不得直接执行文件操作或桌面修改。完整自动测试不等于桌面交互验收。
 
+2026-09-16 当前候选的验证记录：
+
+- `scripts/build.bat`：Release 标准构建退出码 0；最后一轮增量日志无编译警告。前一轮仍观察到既有 WinUI 生成头文件的 `GetCurrentTime` C4002 警告。
+- `scripts/test.bat name settings_window_open_rules` 和 `scripts/test.bat name localization_contract`：退出码均为 0。
+- `scripts/test.bat full`：退出码 0，118 项自动测试通过，CTest 用时 58.68 秒；按既有策略排除 `manual` 条目。前次本地化契约失败已经通过完整键引用调整后重跑。
+- 状态模型的隔离负向对照：原始输入通过；移除目标身份限制、仅移动就判定完成、实验进度泄漏、重启重新弹出四个变异均被相应断言检出。此后只改开始页文本引用，模型、测试及其依赖未变，这组负向证据仍有效。
+- 新 SVG 的 Filled/Regular 路径与固定上游原始文件一致。十种语言的 52 个引导键齐全，构建输出中的语言文件及图标与源码哈希一致。
+- 构建和全量日志位于 `.codex-probes/20260916-start-build-3.log`、`.codex-probes/20260916-start-full-final.log`；源码及产物哈希位于 `.codex-probes/start-validation-inputs.json`，负向对照位于 `.codex-probes/onboarding-negative/`。这些本地证据不进入发行包。
+
 本轮桌面和视觉验收待实机，建议使用临时初始化：
 
 1. 开启临时初始化，确认自动切到“开始 → 基础”，四项进度归零；关闭页面后不会自行反复弹出。
