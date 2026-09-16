@@ -230,6 +230,9 @@ public:
         TriggerCrashTest,
         ProbeHotkeyAvailability,
         SetTemporaryGridInitialization,
+        StartOnboardingTask,
+        DeferOnboardingTask,
+        OpenWidgetMenu,
     };
 
     struct Request

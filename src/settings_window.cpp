@@ -152,8 +152,6 @@ void SettingsWindow::Shutdown() noexcept
 bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
 {
     auto canonical = snowdesktop::CanonicalizeSettingsRoute(route);
-    if (canonical.page == snowdesktop::SettingsPage::Home)
-        canonical.page = snowdesktop::SettingsPage::General;
     if (!impl_->EnsureInitialized()) return false;
     AllowSetForegroundWindow(impl_->process.ProcessId());
     try

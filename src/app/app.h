@@ -31,6 +31,7 @@
 #include "settings_window.h"
 #include "settings_window_open_rules.h"
 #include "settings_controller.h"
+#include "../onboarding_state.h"
 #include "large_icon_settings.h"
 #include "large_icon_assets.h"
 #include "website_icon.h"
@@ -3526,6 +3527,20 @@ private:
     bool desktopItemsReady_ = false;
     bool initializeGridFromWindows_ = false;
     std::filesystem::path initializationExperimentDirectory_;
+    snowdesktop::onboarding::Session onboarding_;
+    bool onboardingWritable_ = false;
+    bool onboardingWelcomeQueued_ = false;
+    bool onboardingMenuQueued_ = false;
+    POINT onboardingMenuAnchor_{};
+    std::string onboardingHintKey_;
+    void LoadOnboarding();
+    void SaveOnboarding();
+    void ShowOnboardingWelcome();
+    void RecordOnboardingWidgetCreated(const DesktopWidget& widget);
+    void RecordOnboardingApplicationDrop(const std::wstring& collectionId,
+        const std::wstring& key, bool newlyInserted);
+    snowdesktop::SettingsActionResult StartOnboardingTask(
+        snowdesktop::onboarding::Task task, bool defer);
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     bool iconSpacingPreviewActive_ = false;

@@ -560,6 +560,8 @@ void DesktopApp::PublishHomeAboutStatus()
     homeAboutStatusRevision_ = std::max(
         homeAboutStatusRevision_ + 1, snapshot->revision + 1);
     patch.revision = homeAboutStatusRevision_;
+    patch.onboardingSteps = onboarding_.Current().steps;
+    patch.onboardingDeferred = onboarding_.Current().deferred;
     patch.packaged = snowdesktop::deployment::IsPackaged();
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
@@ -812,6 +814,17 @@ snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(boo
     firstPageMonitorId_.clear();
     lastPageMonitorId_.clear();
     const auto result = ReloadLayoutAndSynchronizeSettings();
+    if (enabled)
+    {
+        onboarding_.BeginExperiment();
+        onboardingWelcomeQueued_ = true;
+    }
+    else
+    {
+        onboarding_.EndExperiment();
+        onboardingWelcomeQueued_ = false;
+    }
+    onboardingHintKey_.clear();
     PublishHomeAboutStatus();
 
     if (!enabled)
@@ -1257,6 +1270,21 @@ public:
             break;
         case Action::SetTemporaryGridInitialization:
             return app_.SetTemporaryGridInitialization(request.boolValue);
+        case Action::StartOnboardingTask:
+        case Action::DeferOnboardingTask:
+        {
+            const auto task = snowdesktop::onboarding::ParseTask(WideToUtf8(request.value));
+            if (!task) return snowdesktop::SettingsActionResult::Failure(
+                _LW("start.error.unavailable"));
+            return app_.StartOnboardingTask(*task,
+                request.action == Action::DeferOnboardingTask);
+        }
+        case Action::OpenWidgetMenu:
+            if (!app_.customDesktopVisible_ || app_.reloading_ || app_.exitRequested_)
+                return snowdesktop::SettingsActionResult::Failure(_LW("start.error.unavailable"));
+            GetCursorPos(&app_.onboardingMenuAnchor_);
+            app_.onboardingMenuQueued_ = true;
+            return snowdesktop::SettingsActionResult::Success();
         case Action::TriggerCrashTest:
             TriggerCrashForTesting();
             break;
@@ -1530,6 +1558,12 @@ void DesktopApp::TryShowPendingSettingsWindow()
     const bool shown = settingsWindow_ && settingsWindow_->Open(route);
     if (shown)
     {
+        if (route.page == snowdesktop::SettingsPage::Home &&
+            onboarding_.Current().welcomePending)
+        {
+            onboarding_.Current().welcomePending = false;
+            SaveOnboarding();
+        }
         const auto postOpenAction =
             settingsWindowOpenRequest_.MarkShown();
         if (controlHwnd_ && IsWindow(controlHwnd_))
@@ -2197,6 +2231,7 @@ void DesktopApp::ShowWidgetAddedHint()
 
 void DesktopApp::ClearWidgetAddedHint()
 {
+    onboardingHintKey_.clear();
     showWidgetAddedHint_ = false;
     widgetAddedHintStartTick_ = 0;
     if (hwnd_ && IsWindow(hwnd_))

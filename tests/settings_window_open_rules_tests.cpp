@@ -1,4 +1,6 @@
 #include "settings_window_open_rules.h"
+#include "onboarding_state.h"
+#include <windows.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -10,6 +12,89 @@
 namespace
 {
 int failures = 0;
+
+void CheckOnboarding()
+{
+    using namespace snowdesktop::onboarding;
+    State progress;
+    Check(!progress.ApplicationDropped("widget-1", true, true),
+        "an unrelated drop before collection creation cannot finish onboarding");
+    Check(progress.CollectionCreated("widget-1", false) && Completed(progress.steps, Task::Collection),
+        "creating the practice collection completes only the add task");
+    Check(!Completed(progress.steps, Task::Application) && !Completed(progress.steps, Task::Layout),
+        "creation does not imply dragging, moving, or resizing");
+    Check(!progress.ApplicationDropped("widget-2", true, true) &&
+        !progress.ApplicationDropped("widget-1", false, true) &&
+        !progress.ApplicationDropped("widget-1", true, false),
+        "wrong target, ordinary file, and duplicate/reorder cannot complete application ingress");
+    Check(progress.ApplicationDropped("widget-1", true, true) && Completed(progress.steps, Task::Application),
+        "actual application ingress into the practice collection completes the task");
+    Check(!progress.GeometryCommitted("widget-2", true, true) &&
+        !progress.GeometryCommitted("widget-1", false, false),
+        "other collections and cancelled/no-op gestures cannot advance layout practice");
+    Check(progress.GeometryCommitted("widget-1", true, false) && !Completed(progress.steps, Task::Layout),
+        "moving alone does not finish the combined move/resize task");
+    Check(progress.GeometryCommitted("widget-1", false, true) && Completed(progress.steps, Task::Layout),
+        "a separate resize finishes layout practice");
+    Check(progress.Defer(Task::Files) && !Completed(progress.steps, Task::Files),
+        "deferring a task never counts as completion");
+    Check(progress.Resume(Task::Files) && progress.deferred == 0,
+        "returning to a deferred task clears its deferred state");
+    progress.Defer(Task::Files);
+    Check(progress.Record(kFiles) && progress.deferred == 0 && Completed(progress.steps, Task::Files),
+        "creating desktop files completes its task without enabling automatic collection");
+    progress.CollectionCreated("widget-2", true);
+    Check(progress.collectionId == "widget-1", "adding unrelated collections preserves the practice target");
+    progress.CollectionCreated("widget-3", false);
+    Check(progress.collectionId == "widget-3" && progress.steps == kAllSteps,
+        "replacing a missing collection preserves learned history and selects a usable target");
+
+    Session session;
+    session.regular = progress;
+    const auto saved = session.regular;
+    session.BeginExperiment();
+    Check(session.Current().welcomePending && session.Current().steps == 0,
+        "every debug initialization starts a fresh welcome and progress");
+    session.Current().CollectionCreated("widget-test", false);
+    session.Current().welcomePending = false;
+    Check(session.regular == saved, "debug activity cannot mutate normal onboarding state");
+    session.EndExperiment();
+    Check(session.Current() == saved, "ending initialization restores original guide history");
+    session.BeginExperiment();
+    Check(session.Current().welcomePending && session.Current().collectionId.empty(),
+        "a second experiment replays the full first-run experience");
+
+    State decoded;
+    Check(Decode(Encode(progress), decoded) && decoded == progress, "guide progress round-trips through its own storage");
+    const auto beforeBadRead = decoded;
+    Check(!Decode("{\"version\":1,\"steps\":999}", decoded) && decoded == beforeBadRead,
+        "invalid stored progress cannot replace valid in-memory history");
+
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("SnowDesktop-onboarding-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()));
+    if (!std::filesystem::create_directory(directory))
+    {
+        Check(false, "isolated onboarding test directory is created");
+        return;
+    }
+    struct Cleanup
+    {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); }
+    } cleanup{directory};
+    State first;
+    Check(Load(directory / "new.json", false, first) && first.welcomePending,
+        "a new user is offered the start page and the pending offer is stored before bootstrap");
+    Check(Load(directory / "new.json", true, first) && first.welcomePending,
+        "a failed first display survives creation of the layout and the next startup");
+    first.welcomePending = false;
+    first.CollectionCreated("widget-42", false);
+    Check(Save(directory / "new.json", first) && Load(directory / "new.json", false, decoded) && decoded == first,
+        "closing a shown welcome preserves progress and prevents reopening after restart or layout reset");
+    State existing;
+    Check(Load(directory / "existing.json", true, existing) && !existing.welcomePending,
+        "an existing user upgrading without a guide record is not treated as a first launch");
+}
 
 void Check(bool condition, const char* message)
 {
@@ -32,6 +117,7 @@ std::string ReadFile(const std::filesystem::path& path)
 
 int main(int argc, char** argv)
 {
+    CheckOnboarding();
     using snowdesktop::settings_window_open_rules::PostOpenAction;
     using snowdesktop::settings_window_open_rules::RequestState;
 
@@ -146,7 +232,7 @@ int main(int argc, char** argv)
         Check(source.find("SettingsWindow::Open(") != std::string::npos &&
                 source.find("CanonicalizeSettingsRoute(route)") !=
                     std::string::npos &&
-                source.find("SettingsPage::Home") != std::string::npos &&
+                source.find("canonical.page = snowdesktop::SettingsPage::General") == std::string::npos &&
                 source.find("SettingsPage::General") !=
                     std::string::npos &&
                 source.find("SettingsPage::Dock, \"dock.enable\"") !=

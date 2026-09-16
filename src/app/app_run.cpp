@@ -343,6 +343,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         Locale::Instance().Init(langDir.c_str());
     }
 
+    LoadOnboarding();
     InitializeSettingsController();
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -737,6 +738,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         patch.revision = revision;
         patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
         patch.installedWidgetCount = widgets_.size();
+        patch.onboardingSteps = onboarding_.Current().steps;
+        patch.onboardingDeferred = onboarding_.Current().deferred;
         patch.packaged = snowdesktop::deployment::IsPackaged();
         patch.animationDiagnosticsEnabled =
             uiAnimationScheduler_.DiagnosticsEnabled();
@@ -1571,6 +1574,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     startupAnimation.Finish();
     logStartupStage(L"desktop handoff complete");
+    ShowOnboardingWelcome();
     TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_
         ? L"Window shown, entering loop"
@@ -1659,6 +1663,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 DispatchMessageW(&msg);
             }
             FinishWidgetGroupTransitions();
+            if (onboardingWelcomeQueued_) ShowOnboardingWelcome();
+            if (onboardingMenuQueued_)
+            {
+                onboardingMenuQueued_ = false;
+                ShowAddWidgetMenu(onboardingMenuAnchor_);
+            }
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a
             // panel animation transaction cannot delay this presentation.

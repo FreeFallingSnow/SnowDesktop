@@ -2,6 +2,7 @@
 
 #include "../settings_controller.h"
 #include "home_about_page_model.h"
+#include "../onboarding_state.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -21,6 +22,8 @@ struct HomeAboutPageActions
     using GeneralEdit = std::function<void(GeneralSettings&)>;
 
     std::function<void(const SettingsRoute& route)> navigate;
+    std::function<void(std::uint64_t generation,
+        onboarding::Task task, bool defer)> onboardingTask;
     std::function<void(
         std::uint64_t generation,
         HomeAboutCommand command)> invoke;
@@ -87,7 +90,7 @@ public:
         const HomeAboutStatusPatch& patch);
     void RefreshLocalizedText();
 
-    void Activate(SettingsPage page) noexcept;
+    void Activate(SettingsPage page, std::string_view focusId = {}) noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         FocusTarget(

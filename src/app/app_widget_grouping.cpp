@@ -532,6 +532,8 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         widget.type == DesktopWidgetType::FolderMapping;
     const size_t oldWidgetCount = widgets_.size();
     AddWidgetToGrid(std::move(widget), span);
+    if (widgets_.size() > oldWidgetCount)
+        RecordOnboardingWidgetCreated(widgets_.back());
     if (enumerateFolder && widgets_.size() > oldWidgetCount)
     {
         EnumerateFolderMappingEntries(widgets_.back());

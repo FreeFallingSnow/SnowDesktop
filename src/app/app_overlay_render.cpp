@@ -468,7 +468,8 @@ void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
     }
 
     const std::wstring hintText =
-        _LW("app.overlay.widget_move_hint");
+        _LW(onboardingHintKey_.empty()
+            ? "app.overlay.widget_move_hint" : onboardingHintKey_.c_str());
 
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,

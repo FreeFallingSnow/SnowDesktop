@@ -1872,6 +1872,8 @@ void SettingsShell::ApplyNavigationIcons()
     };
 
     const std::array descriptors{
+        IconDescriptor{HomeItem(),
+            L"ms-appx:///Assets/Settings/Icons/start.svg", L"\xE80F"},
         IconDescriptor{GeneralItem(),
             L"ms-appx:///Assets/Settings/Icons/general.svg", L"\xE713"},
         IconDescriptor{AnimationItem(),
@@ -2143,14 +2145,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(homeAboutPage_->HomeContent());
             for (const std::string_view focusId : {
-                     "home.theme", "home.dock", "home.widgets",
-                     "home.update", "home.backup"})
+                     "start.basics", "start.explore", "start.collection",
+                     "start.application", "start.layout", "start.files"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     homeAboutPage_->FocusTarget(
                         SettingsPage::Home, focusId));
             }
-            homeAboutPage_->Activate(SettingsPage::Home);
+            homeAboutPage_->Activate(SettingsPage::Home, pageRoute.focusId);
         }
         break;
     case SettingsPage::General:

@@ -148,10 +148,7 @@
             </NavigationView.PaneCustomContent>
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="HomeItem"
-                                    Tag="home"
-                                    Visibility="Collapsed">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
+                                    Tag="home" />
                 <NavigationViewItem x:Name="GeneralItem" Tag="general" />
                 <NavigationViewItem x:Name="PersonalizationItem"
                                     Tag="appearance"
