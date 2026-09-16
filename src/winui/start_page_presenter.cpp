@@ -5,8 +5,6 @@
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
-#include <winrt/Microsoft.UI.Dispatching.h>
-#include <winrt/Windows.UI.ViewManagement.h>
 #include <array>
 
 namespace snowdesktop::winui
@@ -58,14 +56,12 @@ struct StartPagePresenter::Impl
     muxc::TextBlock progress, instructions, practiceLabel, dismissLabel, reviewLabel;
     muxc::Button practice;
     muxc::HyperlinkButton dismiss, review;
-    winrt::Windows::UI::ViewManagement::AccessibilitySettings accessibility;
-    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     std::array<Step, 4> steps;
     std::array<muxc::Border, 3> lines;
     std::vector<Discovery> discoveries;
     mux::ResourceDictionary styles{nullptr};
     winrt::event_token tabsToken{}, sizeToken{}, practiceToken{}, dismissToken{}, reviewToken{};
-    winrt::event_token contrastToken{};
+    winrt::event_token themeToken{};
     std::uint64_t generation = 0, revision = 0;
     std::uint32_t completed = 0;
     std::size_t selected = 0;
@@ -235,15 +231,20 @@ struct StartPagePresenter::Impl
         add(L10N_KEY("start.explore.widgets"), L10N_KEY("start.explore.widgets.description"), L"widgets.svg", L"\xECA5", SettingsPage::Widgets);
         add(L10N_KEY("start.explore.backup"), L10N_KEY("start.explore.backup.description"), L"backup.svg", L"\xE74E", SettingsPage::BackupAndData);
         RefreshIcons();
-        contrastToken = accessibility.HighContrastChanged([this, lifetime = alive, queue = root.DispatcherQueue()](auto&&, auto&&) {
-            queue.TryEnqueue([this, lifetime] { if (*lifetime) RefreshIcons(); });
-        });
         RefreshLocalizedText();
+        // Use the same WinUI theme notification as the settings shell. The
+        // island has no UWP CoreWindow for Windows.UI accessibility events.
+        themeToken = root.ActualThemeChanged([this](auto&&, auto&&) {
+            if (!closed) RefreshIcons();
+        });
     }
 
     void RefreshIcons()
     {
-        const bool highContrast = accessibility.HighContrast();
+        HIGHCONTRASTW contrast{sizeof(contrast)};
+        const bool highContrast = SystemParametersInfoW(
+            SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) != FALSE &&
+            (contrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
         for (auto& item : discoveries)
         {
             if (highContrast)
@@ -363,8 +364,7 @@ struct StartPagePresenter::Impl
     {
         if (closed) return;
         closed = true; active = false;
-        *alive = false;
-        accessibility.HighContrastChanged(contrastToken);
+        root.ActualThemeChanged(themeToken);
         tabs.SelectionChanged(tabsToken); track.SizeChanged(sizeToken);
         practice.Click(practiceToken); dismiss.Click(dismissToken); review.Click(reviewToken);
         for (auto& step : steps) step.button.Click(step.token);

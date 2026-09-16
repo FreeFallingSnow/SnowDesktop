@@ -23,7 +23,7 @@
 
 探索使用可点击的导航卡片，每张包含图标、标题、介绍和跳转箭头，复用原有设置卡片样式。集合卡片回到添加集合教学，其余卡片连接文件分类、Dock、快捷导航、页面、外观、组件及备份设置，不复制设置控件。组件和高级功能仍遵守原有可用性规则。
 
-彩色图标复用现有设置资源；快捷导航使用相同固定版本的官方 Fluent Search 24 Filled + Regular 原始路径，映射见 `assets/settings/icons/README.md`。高对比度切换到系统字形，变化通知回到设置 UI 线程更新，关闭页面后不再执行排队更新。
+彩色图标复用现有设置资源；快捷导航使用相同固定版本的官方 Fluent Search 24 Filled + Regular 原始路径，映射见 `assets/settings/icons/README.md`。高对比度切换到系统字形；通过 Win32 `SPI_GETHIGHCONTRAST` 读取状态，沿用设置窗口的 WinUI `ActualThemeChanged` 通知更新，关闭时解除订阅。
 
 ## 初始化、迁移与关闭
 
@@ -58,7 +58,15 @@
 - 引导状态和相应测试没有修改，八组状态负向对照的生产、测试及传递依赖哈希再次核对一致，引用其仍有效结果；未重复执行变异扫描。
 - 构建、测试及资源日志分别为 `.codex-probes/20260916-guide-refinement-build.log`、`.codex-probes/20260916-guide-refinement-tests.log`、`.codex-probes/20260916-guide-refinement-assets.log`。提交、源码、资源、环境与产物哈希记录在 `.codex-probes/guide-refinement-validation-inputs.json`。
 
-桌面及视觉验收仍待实机，代码按 `try` 提交。建议先用临时初始化：
+### 通用页空白反馈
+
+用户在 `d012b09e` 实机看到通用页只剩标题，临时初始化与普通打开均受影响；失败结论已记录在 `1d17a0bd`。隔离 Win32 STA 程序实际执行该版新增的 API：`AccessibilitySettings` 构造与状态读取成功，订阅 `HighContrastChanged` 抛出 `0x80070490`。这条订阅在引导构造期间执行，导致通用页创建被中断；此前的自动测试没有执行真实 WinUI 控件构造。
+
+后续候选移除该订阅及异步队列生命周期逻辑，改用已有 WinUI 主题事件和 Win32 状态读取，没有改变引导显示与学习进度规则。现有 `winui_home_about_page_presenter` 增加对该不兼容订阅的负向边界检查；改动前退出 1，移除调用后同一检查退出 0。它用于防止已知不兼容 API 再次进入桌面页面，不代表视觉或完整控件构造已验收。
+
+本轮标准 `scripts/build.bat --reload-shell` 退出 0，无编译警告。定向入口 `scripts/test.bat name "^(settings_window_open_rules|settings_controller|winui_home_about_page_presenter|localization_contract)$"` 的 4/4 条目通过，退出 0，CTest 1.69 秒，覆盖初始化与关闭、路由、引导边界、本地化；完整测试没有在这次局部调整中重跑。诊断和回归日志位于 `.codex-probes/20260916-onboarding-accessibility-probe.log`、`20260916-onboarding-boundary-before.log`、`20260916-onboarding-boundary-after.log`、`20260916-general-recovery-build.log`、`20260916-general-recovery-tests.log`，均在 `.codex-probes/` 下。
+
+桌面及视觉验收仍待实机，代码按 `try` 提交。先确认普通通用页内容恢复，再用临时初始化：
 
 1. 开启临时初始化，确认自动定位“常规”顶部、四步归零；普通关闭设置后引导仍在，设置不会反复自动打开。
 2. 点击任意节点，只改变说明；点击练习只显示桌面提示。取消右键菜单、取消预览、没有空位均不完成。直接从菜单添加及预览后添加分别成功推进。

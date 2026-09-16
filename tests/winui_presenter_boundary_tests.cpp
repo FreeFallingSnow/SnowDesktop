@@ -59,6 +59,11 @@ int main(int argc, char** argv)
 
     if (profile == "home_about")
     {
+        // Reproduced in an ordinary Win32 STA: the UWP accessibility event
+        // subscription throws 0x80070490 during General presenter construction.
+        // The desktop island must use WinUI's existing theme notifications.
+        Forbid(source, "HighContrastChanged(",
+            "desktop presenters cannot subscribe to the CoreWindow accessibility event");
         for (const auto token : {"std::filesystem", "atomic_file::", "SaveLayoutSlots(", "DesktopApp"})
             Forbid(source, token, "onboarding progress and desktop mutations belong to the host");
         // Negative architecture contract: the practice command may publish an
