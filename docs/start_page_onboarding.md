@@ -96,6 +96,12 @@
 
 首轮构建 `scripts/build.bat --reload-shell` 退出 0，生成 19:09 的 Release 程序；只有既有 WinUI 生成头 `GetCurrentTime` 的 C4002 警告。首轮 `scripts/test.bat full` 退出 1（CTest 8）：117/118 通过，61.34 秒；唯一失败为 `settings_host_actions_semantics` 中要求出现 `debugUnlocked = true` 的旧源码名称检查，新增会话行为和就绪等待回归均通过。日志为 `.codex-probes/20260916-temp-init-build.log`、`20260916-temp-init-full.log`，报告为 `.build/Testing/test-run-81bc8fae7deb4d1c8ab7dfc2e94ede2c.xml`。按编译检查点先保存 `try`，随后清理这组不能证明控件行为的旧检查并更新测试证据。
 
+后续测试清理仅移除 About/Debug 那组正向源码名称检查：回调或变量名出现不能证明实际调用、代际门禁或确认交互。调试入口与状态发布由 `winui_settings_window_host` 的会话行为检查覆盖；实际链接及确认交互没有因此被算作已验收。宿主生产代码保持 `f73de036` 的输入，引用该次有效标准构建。
+
+第二轮全量 117/118 通过，`test_selection` 在无输出状态下达到 30 秒超时（`.codex-probes/20260916-temp-init-full-final.log`）。同一原脚本的单独诊断随后在 0.799 秒内通过，未复现超时原因；不修改超时或跳过条目，保留这一不稳定记录。最终重新执行 `scripts/test.bat full` 退出 0，118/118 通过，CTest 61.79 秒，含 `localization_contract`；选择器此次为 1.25 秒。最终日志为 `.codex-probes/20260916-temp-init-full-checked.log`，报告为 `.build/Testing/test-run-9dbcc57fa94d49f68436c5a1e6b26bb8.xml`。这些是本次实际执行结果，不代表已经解释了前次超时。
+
+最终输入及产物哈希记录在 `.codex-probes/20260916-temp-init-validation.json`，保留标准构建、三次全量、独立诊断和负向对照证据。六项负向对照的相关生产和测试输入没有在后续清理中变化，不重复执行；桌面/视觉验收继续待用户实机。
+
 ## 设计参考
 
 - [VS Code Walkthroughs](https://code.visualstudio.com/api/references/contribution-points#contributes.walkthroughs)：实际事件驱动完成进度。
