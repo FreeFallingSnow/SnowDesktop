@@ -61,6 +61,11 @@ int main(int argc, char** argv)
     {
         for (const auto token : {"std::filesystem", "atomic_file::", "SaveLayoutSlots(", "DesktopApp"})
             Forbid(source, token, "onboarding progress and desktop mutations belong to the host");
+        // Negative architecture contract: the practice command may publish an
+        // instruction, but must never perform the menu lesson for the user.
+        const auto practice = ReadSource(root, "src/app/app_onboarding.cpp");
+        for (const auto token : {"AddCollectionWidgetAt(", "AddFileCategoryWidgetAt(", "ShowAddWidgetMenu("})
+            Forbid(practice, token, "practice requests cannot create widgets or open the add menu");
     }
     else if (profile == "dock")
     {

@@ -314,11 +314,15 @@ void StartPagePresenter::ApplyStatusPatch(const HomeAboutStatusPatch& patch)
         (impl_->hasStatus && patch.revision <= impl_->revision)) return;
     if (patch.onboardingSteps && (!impl_->hasStatus || *patch.onboardingSteps != impl_->completed))
     {
+        const bool keepExplicitSelection = !impl_->hasStatus && impl_->reviewing;
         impl_->completed = *patch.onboardingSteps;
-        impl_->reviewing = false;
-        impl_->selected = 0;
-        while (impl_->selected < 3 && onboarding::Completed(impl_->completed, static_cast<Task>(impl_->selected)))
-            ++impl_->selected;
+        if (!keepExplicitSelection)
+        {
+            impl_->reviewing = false;
+            impl_->selected = 0;
+            while (impl_->selected < 3 && onboarding::Completed(impl_->completed, static_cast<Task>(impl_->selected)))
+                ++impl_->selected;
+        }
     }
     impl_->hasStatus = true; impl_->revision = patch.revision;
     if (patch.onboardingVisible) impl_->visible = *patch.onboardingVisible;

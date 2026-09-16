@@ -1,4 +1,5 @@
 #include "modern_menu.h"
+#include "onboarding_overlay_bounds.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
@@ -629,6 +630,18 @@ public:
         SelectObject(memoryDc, oldBitmap);
         DeleteDC(memoryDc);
         DeleteObject(bitmap);
+    }
+
+    std::vector<RECT> VisiblePopupBounds() const
+    {
+        std::vector<RECT> result;
+        for (const auto& popup : popups_)
+        {
+            RECT bounds{};
+            if (popup->hwnd && IsWindowVisible(popup->hwnd) && GetWindowRect(popup->hwnd, &bounds))
+                result.push_back(bounds);
+        }
+        return result;
     }
 
 private:
@@ -2529,6 +2542,14 @@ HWND ActiveRootWindow()
 {
     const HWND root = gActiveRootMenu.load();
     return root && IsWindow(root) ? root : nullptr;
+}
+
+std::vector<RECT> ActivePopupBounds()
+{
+    const HWND root = ActiveRootWindow();
+    if (!root || GetWindowThreadProcessId(root, nullptr) != GetCurrentThreadId()) return {};
+    const auto* popup = reinterpret_cast<Popup*>(GetWindowLongPtrW(root, GWLP_USERDATA));
+    return popup && popup->controller ? popup->controller->VisiblePopupBounds() : std::vector<RECT>{};
 }
 
 void DismissActive()

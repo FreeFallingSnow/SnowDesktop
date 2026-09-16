@@ -1,4 +1,5 @@
 #include "component_preview.h"
+#include "onboarding_overlay_bounds.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
@@ -1802,6 +1803,19 @@ LRESULT CALLBACK Window::WindowProc(
         break;
     }
     return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+RECT ActivePreviewBounds()
+{
+    RECT result{};
+    // Inspect only this UI thread's own preview window; no global discovery.
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM parameter) -> BOOL {
+        wchar_t className[128]{};
+        if (!IsWindowVisible(window) || !GetClassNameW(window, className, 128) ||
+            std::wcscmp(className, kPreviewWindowClass) != 0) return TRUE;
+        return GetWindowRect(window, reinterpret_cast<RECT*>(parameter)) ? FALSE : TRUE;
+    }, reinterpret_cast<LPARAM>(&result));
+    return result;
 }
 
 } // namespace snowdesktop::component_preview

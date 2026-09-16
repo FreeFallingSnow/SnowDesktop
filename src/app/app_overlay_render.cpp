@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../modern_menu.h"
+#include "../onboarding_overlay_bounds.h"
 
 // Transient page, privacy and widget-positioning overlays.
 
@@ -8,7 +9,7 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
     onboardingPauseRect_ = onboardingSettingsRect_ = {};
     if (!ctx || !onboardingPractice_.active || !onboarding_.Current().Visible() ||
         !customDesktopVisible_ || desktopIconsHidden_ || reloading_ ||
-        snowdesktop::modern_menu::IsActive() || shellPopupMenuLayerDepth_ > 0 ||
+        (shellPopupMenuLayerDepth_ > 0 && !snowdesktop::modern_menu::IsActive()) ||
         (settingsWindow_ && IsWindowVisible(settingsWindow_->Window())) ||
         !luaWidgetPanelRequest_.widgetId.empty()) return;
     using snowdesktop::onboarding::Task;
@@ -76,6 +77,14 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
         dropRect = {cursor.x - px(80), cursor.y - px(80), cursor.x + px(80), cursor.y + px(80)};
     }
     RECT frame{};
+    auto menuBounds = snowdesktop::modern_menu::ActivePopupBounds();
+    const RECT previewBounds = snowdesktop::component_preview::ActivePreviewBounds();
+    if (!IsRectEmpty(&previewBounds)) menuBounds.push_back(previewBounds);
+    for (auto& bounds : menuBounds)
+    {
+        MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&bounds), 2);
+        InflateRect(&bounds, px(8), px(8));
+    }
     // Only the two button rectangles participate in hit testing. The rest of
     // this existing host overlay remains transparent to desktop interaction.
     for (const auto anchor : {POINT{area.right - margin - width, area.bottom - margin - height},
@@ -84,6 +93,9 @@ void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
     {
         const RECT candidate{anchor.x, anchor.y, anchor.x + width, anchor.y + height};
         RECT intersection{};
+        if (std::any_of(menuBounds.begin(), menuBounds.end(), [&](const RECT& bounds) {
+                return IntersectRect(&intersection, &candidate, &bounds) != FALSE;
+            })) continue;
         if ((!IsRectEmpty(&practiceRect) && IntersectRect(&intersection, &candidate, &practiceRect)) ||
             (!IsRectEmpty(&dropRect) && IntersectRect(&intersection, &candidate, &dropRect))) continue;
         frame = candidate; break;
