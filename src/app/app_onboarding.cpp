@@ -51,8 +51,14 @@ void DesktopApp::RecordOnboardingWidgetCreated(const DesktopWidget& widget)
     auto& state = onboarding_.Current();
     bool changed = false;
     if (widget.type == DesktopWidgetType::Collection)
+    {
+        const auto previous = FindWidgetIndexById(Utf8ToWide(state.collectionId));
         changed = state.CollectionCreated(WideToUtf8(widget.id),
-            FindWidgetIndexById(Utf8ToWide(state.collectionId)) < widgets_.size());
+            previous < widgets_.size() &&
+                widgets_[previous].type == DesktopWidgetType::Collection &&
+                !IsGroupedWidget(widgets_[previous]) &&
+                widgets_[previous].gridCell.pageId != kDockPageId);
+    }
     else if (widget.type == DesktopWidgetType::FileCategories)
         changed = state.Record(snowdesktop::onboarding::kFiles);
     if (changed) SaveOnboarding();
@@ -83,25 +89,29 @@ snowdesktop::SettingsActionResult DesktopApp::StartOnboardingTask(
     }
     if (!startupInitializationComplete_ || !desktopItemsReady_ ||
         !customDesktopVisible_ || reloading_ || exitRequested_ ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
         dragSession_.HasContext() || dragDropController_.IsTransportActive())
         return SettingsActionResult::Failure(_LW("start.error.unavailable"));
 
-    if (task == Task::Application || task == Task::Layout)
-    {
-        const auto index = FindWidgetIndexById(Utf8ToWide(state.collectionId));
-        if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::Collection ||
-            IsGroupedWidget(widgets_[index]))
-            return SettingsActionResult::Failure(_LW("start.error.collectionMissing"));
-        const auto& pageId = widgets_[index].gridCell.pageId;
+    const auto showWidget = [this](std::size_t index) {
+        const auto id = widgets_[index].id;
+        const auto pageId = widgets_[index].gridCell.pageId;
         const auto page = std::find(savedPageIds_.begin(), savedPageIds_.end(), pageId);
-        if (page != savedPageIds_.end())
+        if (page != savedPageIds_.end() && !FindGridPage(gridPages_, pageId))
         {
             const int pageIndex = static_cast<int>(page - savedPageIds_.begin());
             const int fixedPages = std::max(0, static_cast<int>(gridPages_.size()) - 1);
             if (pageIndex >= fixedPages) JumpToPageOffset(pageIndex - fixedPages);
         }
-        ClearSelection();
-        widgets_[index].selected = true;
+        SelectWidgetOnly(FindWidgetIndexById(id));
+    };
+    if (task == Task::Application || task == Task::Layout)
+    {
+        const auto index = FindWidgetIndexById(Utf8ToWide(state.collectionId));
+        if (index >= widgets_.size() || widgets_[index].type != DesktopWidgetType::Collection ||
+            IsGroupedWidget(widgets_[index]) || widgets_[index].gridCell.pageId == kDockPageId)
+            return SettingsActionResult::Failure(_LW("start.error.collectionMissing"));
+        showWidget(index);
         onboardingHintKey_ = task == Task::Application
             ? "start.application.hint" : "app.overlay.widget_move_hint";
         ShowWidgetAddedHint();
@@ -115,11 +125,20 @@ snowdesktop::SettingsActionResult DesktopApp::StartOnboardingTask(
         if (settingsWindow_ && GetWindowRect(settingsWindow_->Window(), &settingsRect))
             anchor = {(settingsRect.left + settingsRect.right) / 2,
                 (settingsRect.top + settingsRect.bottom) / 2};
-        const auto oldCount = widgets_.size();
+        std::unordered_set<std::wstring> previousIds;
+        for (const auto& widget : widgets_) previousIds.insert(widget.id);
         if (task == Task::Collection) AddCollectionWidgetAt(anchor);
         else AddFileCategoryWidgetAt(anchor);
-        if (widgets_.size() <= oldCount)
+        const auto created = std::find_if(widgets_.begin(), widgets_.end(),
+            [&](const DesktopWidget& widget) { return !previousIds.contains(widget.id) &&
+                widget.type == (task == Task::Collection ? DesktopWidgetType::Collection
+                    : DesktopWidgetType::FileCategories); });
+        if (created == widgets_.end())
             return SettingsActionResult::Failure(_LW("start.error.noSpace"));
+        // An explicit Add in the guide chooses the new practice collection.
+        if (task == Task::Collection &&
+            state.CollectionCreated(WideToUtf8(created->id), false)) SaveOnboarding();
+        showWidget(static_cast<std::size_t>(created - widgets_.begin()));
         onboardingHintKey_ = task == Task::Collection
             ? "start.application.hint" : "start.files.hint";
         ShowWidgetAddedHint();

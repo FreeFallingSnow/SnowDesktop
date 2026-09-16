@@ -1156,6 +1156,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         {
             const auto& placed = widgets_[onboardingIndex];
             const bool moved = completedWidgetAction == WidgetAction::Move &&
+                !IsGroupedWidget(placed) && placed.gridCell.pageId != kDockPageId &&
                 (placed.gridCell.pageId != onboardingCell.pageId ||
                     placed.gridCell.column != onboardingCell.column ||
                     placed.gridCell.row != onboardingCell.row);

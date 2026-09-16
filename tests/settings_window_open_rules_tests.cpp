@@ -13,6 +13,8 @@ namespace
 {
 int failures = 0;
 
+void Check(bool condition, const char* message);
+
 void CheckOnboarding()
 {
     using namespace snowdesktop::onboarding;

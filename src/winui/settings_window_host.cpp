@@ -2222,7 +2222,7 @@ struct SettingsWindowHost::Impl
             state->owner->ShowActionError(result);
             // The child owns its window lifecycle; never hide it from the
             // parent's synchronous RPC while its controls are being invoked.
-            if (result.Succeeded() && !defer) state->owner->HideWindow();
+            if (result.Succeeded() && !defer) (void)state->owner->HideWindow();
         };
         homeAbout.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock();
@@ -2266,7 +2266,7 @@ struct SettingsWindowHost::Impl
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
             if (result.Succeeded() && command == HomeAboutCommand::OpenWidgetMenu)
-                state->owner->HideWindow();
+                (void)state->owner->HideWindow();
         };
         homeAbout.openLink = [weak](
                                  std::uint64_t generation,

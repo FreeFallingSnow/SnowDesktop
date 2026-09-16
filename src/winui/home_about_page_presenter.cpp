@@ -142,7 +142,6 @@ struct HomeAboutPagePresenter::Impl
     muxc::Button crashButton{nullptr};
 
     std::uint64_t generation = 0;
-    std::uint64_t personalizationRevision = 0;
     std::uint64_t generalRevision = 0;
     std::uint64_t statusRevision = 0;
     bool hasSnapshot = false;
@@ -157,14 +156,8 @@ struct HomeAboutPagePresenter::Impl
     bool debugUnlocked = false;
     unsigned versionClickCount = 0;
 
-    int themePreset = kAppearancePresetDark;
-    bool dockEnabled = false;
     std::wstring applicationVersion;
-    std::optional<std::size_t> installedWidgetCount;
     bool packaged = false;
-    SettingsBackupState backupState = SettingsBackupState::Unknown;
-    std::size_t backupCount = 0;
-    std::wstring backupDetail;
     std::wstring animationDiagnosticsStatus;
 
     winrt::event_token checkUpdateToken{};
@@ -493,52 +486,6 @@ struct HomeAboutPagePresenter::Impl
             actions.invoke(generation, command);
     }
 
-    [[nodiscard]] std::wstring ThemeSummary() const
-    {
-        switch (NormalizeAppearancePresetId(themePreset))
-        {
-        case kAppearancePresetLight:
-            return L("app.settings.light", L"Light");
-        case kAppearancePresetGlassDark:
-            return L("app.settings.dark_glass", L"Dark Glass");
-        case kAppearancePresetGlassLight:
-            return L("app.settings.light_glass", L"Light Glass");
-        case kAppearancePresetAcrylicDark:
-            return L("app.settings.dark_acrylic", L"Dark Acrylic");
-        case kAppearancePresetAcrylicLight:
-            return L("app.settings.light_acrylic", L"Light Acrylic");
-        case kAppearancePresetCustom:
-            return L("app.settings.custom", L"Custom");
-        default:
-            return L("app.settings.dark", L"Dark");
-        }
-    }
-
-    [[nodiscard]] std::wstring BackupSummary() const
-    {
-        if (!backupDetail.empty())
-            return backupDetail;
-        switch (backupState)
-        {
-        case SettingsBackupState::Empty:
-            return L("app.settings.no_backups", L"No backups yet");
-        case SettingsBackupState::Ready:
-            return backupCount != 0
-                ? std::to_wstring(backupCount)
-                : L("settings.home.backup.ready", L"Backups available");
-        case SettingsBackupState::Running:
-            return L("app.settings.checking", L"Working...");
-        case SettingsBackupState::Succeeded:
-            return L("app.settings.create_full_backup_success",
-                L"The complete backup was created.");
-        case SettingsBackupState::Failed:
-            return L("app.settings.create_full_backup_failed",
-                L"Could not create the complete backup.");
-        default:
-            return L("settings.home.backup.unknown", L"Status unavailable");
-        }
-    }
-
     void SetButtonText(
         const muxc::Button& button,
         std::string_view key,
@@ -678,11 +625,7 @@ struct HomeAboutPagePresenter::Impl
         statusRevision = 0;
         hasStatusRevision = false;
         applicationVersion.clear();
-        installedWidgetCount.reset();
         packaged = false;
-        backupState = SettingsBackupState::Unknown;
-        backupCount = 0;
-        backupDetail.clear();
         animationDiagnosticsEnabled = false;
         temporaryInitializationEnabled = false;
         animationDiagnosticsStatus.clear();
@@ -700,18 +643,10 @@ struct HomeAboutPagePresenter::Impl
             generation = snapshot.generation;
             ResetStatusForGeneration();
         }
-        if (newGeneration || personalizationRevision !=
-                snapshot.domainRevisions.personalization)
-        {
-            personalizationRevision =
-                snapshot.domainRevisions.personalization;
-            themePreset = snapshot.values.personalization.backgroundPreset;
-        }
         if (newGeneration || generalRevision !=
                 snapshot.domainRevisions.general)
         {
             generalRevision = snapshot.domainRevisions.general;
-            dockEnabled = snapshot.values.general.dockEnabled;
             demoModeEnabled = snapshot.values.general.demoModeEnabled;
         }
         hasSnapshot = true;
@@ -731,20 +666,8 @@ struct HomeAboutPagePresenter::Impl
         hasStatusRevision = true;
         if (patch.applicationVersion)
             applicationVersion = *patch.applicationVersion;
-        if (patch.installedWidgetCount)
-            installedWidgetCount = *patch.installedWidgetCount;
         if (patch.packaged)
             packaged = *patch.packaged;
-        if (patch.backupState)
-        {
-            if (*patch.backupState != backupState)
-                backupDetail.clear();
-            backupState = *patch.backupState;
-        }
-        if (patch.backupCount)
-            backupCount = *patch.backupCount;
-        if (patch.backupDetail)
-            backupDetail = *patch.backupDetail;
         if (patch.animationDiagnosticsEnabled)
             animationDiagnosticsEnabled =
                 *patch.animationDiagnosticsEnabled;

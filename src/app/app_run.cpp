@@ -1664,10 +1664,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }
             FinishWidgetGroupTransitions();
             if (onboardingWelcomeQueued_) ShowOnboardingWelcome();
-            if (onboardingMenuQueued_)
+            if (onboardingMenuQueued_ &&
+                (!settingsWindow_ || !IsWindowVisible(settingsWindow_->Window())))
             {
                 onboardingMenuQueued_ = false;
-                ShowAddWidgetMenu(onboardingMenuAnchor_);
+                if (customDesktopVisible_ && !reloading_ && !exitRequested_)
+                    ShowAddWidgetMenu(onboardingMenuAnchor_);
             }
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a

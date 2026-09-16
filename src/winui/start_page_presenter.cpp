@@ -284,7 +284,12 @@ void StartPagePresenter::ApplyStatusPatch(const HomeAboutStatusPatch& patch)
     if (patch.onboardingSteps) impl_->steps = *patch.onboardingSteps;
     if (patch.onboardingDeferred) impl_->deferred = *patch.onboardingDeferred;
     if (patch.temporaryInitializationEnabled)
+    {
+        if (*patch.temporaryInitializationEnabled && !impl_->experimentNotice.IsOpen())
+            for (std::size_t i = 0; i < impl_->tasks.size(); ++i)
+                impl_->tasks[i].root.IsExpanded(i == 0);
         impl_->experimentNotice.IsOpen(*patch.temporaryInitializationEnabled);
+    }
     impl_->Render();
 }
 void StartPagePresenter::RefreshLocalizedText() { impl_->RefreshLocalizedText(); }

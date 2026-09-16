@@ -530,15 +530,19 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
 
     const bool enumerateFolder =
         widget.type == DesktopWidgetType::FolderMapping;
-    const size_t oldWidgetCount = widgets_.size();
+    const std::wstring createdId = widget.id;
     AddWidgetToGrid(std::move(widget), span);
-    if (widgets_.size() > oldWidgetCount)
-        RecordOnboardingWidgetCreated(widgets_.back());
-    if (enumerateFolder && widgets_.size() > oldWidgetCount)
+    // LayoutItems may remove an empty-page Guide during this insertion.
+    // Confirm the created instance rather than comparing vector sizes.
+    const size_t createdIndex = FindWidgetIndexById(createdId);
+    if (createdIndex >= widgets_.size()) return;
+    RecordOnboardingWidgetCreated(widgets_[createdIndex]);
+    if (enumerateFolder)
     {
-        EnumerateFolderMappingEntries(widgets_.back());
+        EnumerateFolderMappingEntries(widgets_[createdIndex]);
         RebuildContainersAndItems();
     }
+    ClearWidgetAddedHint();
     ShowWidgetAddedHint();
 }
 

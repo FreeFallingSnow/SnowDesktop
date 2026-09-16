@@ -51,11 +51,18 @@ int main(int argc, char** argv)
     const std::filesystem::path root(argv[1]);
     const std::string stem = "src/winui/" + profile +
         (profile == "widget_settings" ? "_presenter" : "_page_presenter");
-    const auto source = ReadSource(root, stem + ".cpp");
+    auto source = ReadSource(root, stem + ".cpp");
+    if (profile == "home_about")
+        source += ReadSource(root, "src/winui/start_page_presenter.cpp");
     for (const auto token : {"ShellExecute", "WinHttp", "CreateThread", "std::thread"})
         Forbid(source, token, "presenters delegate external operations to host actions");
 
-    if (profile == "dock")
+    if (profile == "home_about")
+    {
+        for (const auto token : {"std::filesystem", "atomic_file::", "SaveLayoutSlots(", "DesktopApp"})
+            Forbid(source, token, "onboarding progress and desktop mutations belong to the host");
+    }
+    else if (profile == "dock")
     {
         for (const auto token : {"RestartWindowsExplorer(", "RequestSystemTaskbar",
                  "IsSystemTaskbarAutoHideEnabled(", "IsSystemTaskbarAlignmentCentered(",
