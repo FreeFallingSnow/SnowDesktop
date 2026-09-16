@@ -231,11 +231,14 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
-    if (usageGuidePractice_.Visible())
+    if (HandleUsageGuidePointerMove(current)) return;
+    if (IsUsageGuideVisible())
         for (const auto bounds : {usageGuidePauseRect_, usageGuideSettingsRect_,
-                usageGuideNextRect_, usageGuideMoreRect_, usageGuideOpenSettingsRect_})
+                usageGuideMoreRect_, usageGuideOpenSettingsRect_})
             if (PtInRect(&bounds, oldMouse) != PtInRect(&bounds, current))
                 InvalidateRect(hwnd_, &bounds, FALSE);
+    if (IsPointInUsageGuide(current) && !mouseDown_ && widgetAction_ == WidgetAction::None &&
+        !dragSession_.HasContext() && !dragDropController_.IsTransportActive()) return;
     if (HandleLargeIconPointerMove(current)) return;
     UpdateLargeIconHover();
     UpdateSystemTaskbarRevealGuard();

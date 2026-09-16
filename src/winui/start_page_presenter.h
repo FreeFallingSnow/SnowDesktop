@@ -3,6 +3,7 @@
 #include "../settings_controller.h"
 #include "../usage_guide.h"
 #include "home_about_page_model.h"
+#include "../settings_search_index.h"
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <memory>
 
@@ -13,6 +14,7 @@ struct StartPageActions
     std::function<void(std::uint64_t, usage_guide::Topic)> begin;
     std::function<void(std::uint64_t, bool)> expandedChanged;
     std::function<void(const SettingsRoute&)> navigate;
+    std::function<std::vector<StaticSettingSearchDescriptor>()> settingsIndex;
 };
 class StartPagePresenter final
 {

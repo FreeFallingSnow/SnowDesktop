@@ -331,6 +331,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/home_about_page_presenter.cpp
     src/winui/start_page_presenter.cpp
     src/winui/start_page_presenter.h
+    src/winui/usage_settings_guide.cpp
+    src/winui/usage_settings_guide.h
     src/winui/home_about_page_presenter.h
     src/winui/home_about_page_model.h
     src/winui/hotkey_recorder.cpp
@@ -2273,4 +2275,3 @@ if (BUILD_TESTING)
             -AllowMissingFirstPartyRuntime
         DEPENDS ${SNOWDESKTOP_TEST_TARGETS})
 endif()
-

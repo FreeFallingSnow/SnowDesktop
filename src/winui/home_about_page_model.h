@@ -38,8 +38,6 @@ struct HomeAboutStatusPatch
     std::optional<bool> temporaryInitializationEnabled;
     std::optional<std::wstring> animationDiagnosticsStatus;
     std::optional<bool> usageGuideExpanded;
-    std::optional<std::uint32_t> usageGuideContext;
-    std::optional<std::string> usageGuideTopic;
 };
 
 // Shared by requested snapshots and unsolicited host publications. This

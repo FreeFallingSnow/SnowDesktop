@@ -1,5 +1,7 @@
 #include "settings_window_open_rules.h"
 #include "usage_guide.h"
+#include "usage_guide_panel.h"
+#include "usage_guide_settings.h"
 #include "json_value.h"
 #include <windows.h>
 
@@ -19,70 +21,47 @@ void Check(bool condition, const char* message);
 void CheckUsageGuide()
 {
     using namespace snowdesktop::usage_guide;
-    // The same navigation model is used by the host's pointer/menu actions.
-    // Manual advancement is separate from current-desktop availability.
-    Practice practice;
-    Check(!practice.Visible() && !practice.active, "a new process starts no desktop tutorial");
-    Check(!ParseTopic("unknown") && ParseTopic("layout") == Topic::Move,
-        "unknown requests are rejected and old move/resize routes remain usable");
-    Check(practice.Begin(Topic::FolderMapping) && practice.active == Topic::FolderMapping,
-        "a user can enter any lesson without completing earlier lessons");
-    Check(practice.Advance(StandaloneFileSource) == AdvanceResult::Advanced &&
-        practice.active == Topic::FileGroup && !practice.sectionEnd,
-        "done changes the current file lesson without returning to settings");
-    Check(practice.Advance(StandaloneFileSource) == AdvanceResult::SectionEnd &&
-        practice.active == Topic::FileGroup && practice.sectionEnd,
-        "the last lesson stops at a topic boundary rather than silently crossing it");
-    Check(practice.Advance(127) == AdvanceResult::Unavailable && practice.active == Topic::FileGroup,
-        "a repeated done action at the boundary cannot skip into another theme");
-    Check(practice.ContinueSection(127) && practice.active == Topic::Grid && !practice.sectionEnd,
-        "an explicit continue enters the next theme, including settings lessons");
-    practice.Pause();
-    Check(!practice.Visible() && practice.active == Topic::Grid &&
-        practice.Advance(127) == AdvanceResult::Unavailable,
-        "pause retains the current lesson and prevents hidden advancement");
-    Check(practice.Resume(127) && practice.Visible() && practice.active == Topic::Grid,
-        "resume returns to the same lesson after settings navigation");
-    Check(practice.Advance(127) == AdvanceResult::Advanced && practice.active == Topic::Icons,
-        "settings lessons participate in the same manual sequence");
-    Check(practice.Previous(127) && practice.active == Topic::Grid && !practice.Previous(127),
-        "previous stays within the theme without wrapping to unrelated lessons");
-    Check(practice.Begin(Topic::DockCollection) && practice.preparation == DockEnabled,
-        "an unavailable lesson opens its preparation guidance rather than rejecting practice");
-    Check(practice.Advance(0) == AdvanceResult::Prerequisite && practice.active == Topic::DockCollection,
-        "ready cannot advance when Dock is still unavailable");
-    Check(practice.Advance(DockEnabled) == AdvanceResult::Prerequisite && practice.preparation == StandaloneCollection,
-        "preparation next explains the missing standalone source after Dock is enabled");
-    Check(practice.Advance(DockEnabled | StandaloneCollection) == AdvanceResult::Prepared &&
-        practice.active == Topic::DockCollection && !practice.preparation,
-        "finishing prerequisite preparation never completes or skips the requested lesson");
-    Check(practice.Advance(DockEnabled | StandaloneCollection) == AdvanceResult::Advanced &&
-        practice.active == Topic::DockFiles && practice.preparation == StandaloneFileSource,
-        "each new lesson rechecks its own current prerequisites");
-    Check(practice.Advance(0, true) == AdvanceResult::Advanced && practice.active == Topic::DockSummon,
-        "explicit skip can leave unavailable guidance without marking it learned");
-    Check(practice.Begin(Topic::DockCollection, DockEnabled | StandaloneCollection),
-        "a lesson with an existing source starts directly with its instructions");
-    practice.ObserveContext(DockEnabled); // The user has moved the source into Dock.
-    practice.Pause(); practice.Resume(DockEnabled);
-    Check(!practice.preparation && practice.Advance(DockEnabled) == AdvanceResult::Advanced &&
-        practice.active == Topic::DockFiles,
-        "moving the practice source into Dock does not rearm prerequisites or trap manual completion");
-    practice.Begin(Topic::CollectionGroup, TwoStandaloneCollections);
-    Check(practice.Advance(0) == AdvanceResult::SectionEnd,
-        "grouping both standalone collections cannot make the grouping lesson impossible to finish");
-    Check(practice.Begin(Topic::CollectionGroup, StandaloneCollection) &&
-        practice.preparation == TwoStandaloneCollections,
-        "grouping checks current standalone count, not previous lesson completion");
-    Check(practice.Begin(Topic::Navigation) && practice.preparation == NavigationEnabled &&
-        practice.Advance(NavigationEnabled) == AdvanceResult::Prepared,
-        "quick navigation can be prepared in settings without losing its lesson");
-    Check(practice.Begin(Topic::Backup) && practice.Advance(0) == AdvanceResult::SectionEnd &&
-        !practice.ContinueSection(0), "the final theme cannot loop unexpectedly to the beginning");
-    Check(practice.End() == Topic::Backup && !practice.active && !practice.preparation && !practice.sectionEnd,
-        "end discards this session and reports the actual last lesson");
-    Check(!practice.Begin(static_cast<Topic>(999)) && !practice.active,
-        "invalid requests cannot create a practice session");
+    Check(!ParseTopic("unknown") && ParseTopic("layout") == Topic::Move &&
+        ParseTopic("resize") == Topic::Move && ParseTopic("application") == Topic::Collection,
+        "merged tutorials preserve old routes without duplicate entries");
+    Check(!Find(Topic::DockSummon)->practice && !Find(Topic::Navigation)->practice,
+        "preference choices never start desktop exercises");
+    Check(Find(Topic::DockFiles)->required == DockEnabled,
+        "Dock folder guidance does not require creating a file widget");
+
+    // The renderer and pointer handlers use this exact placement model.
+    // Repaints have no menu or cursor input, so they cannot chase the pointer.
+    PanelPlacement panel;
+    RECT work{0, 0, 1920, 1040};
+    auto frame = panel.Arrange(work, 440, 300, 24);
+    Check(frame.left == 1456 && frame.top == 716, "first reference starts inside the work area");
+    panel.BeginDrag({1500, 730}); panel.DragTo({544, 214}); panel.EndDrag();
+    frame = panel.Arrange(work, 440, 300, 24);
+    Check(frame.left == 500 && frame.top == 200, "drag keeps the grabbed header offset");
+    Check(!panel.DragTo({1700, 900}), "pointer motion after release cannot reposition the panel");
+    frame = panel.Arrange(work, 440, 300, 24);
+    Check(frame.left == 500 && frame.top == 200, "ordinary repaint preserves the manual anchor");
+    frame = panel.Arrange(work, 440, 500, 24);
+    Check(frame.left == 500 && frame.top == 200, "opening details keeps the top-left position when space permits");
+    frame = panel.Arrange({0, 0, 800, 600}, 440, 500, 24);
+    Check(frame.left == 336 && frame.top == 76, "smaller work area keeps the entire panel reachable");
+    panel.BeginDrag({380, 90}); panel.DragTo({-1456, 214}); panel.EndDrag();
+    frame = panel.Arrange({-1920, 0, 0, 1040}, 440, 300, 24);
+    Check(frame.left == -1500 && frame.top == 200, "drag supports a monitor with negative screen coordinates");
+
+    snowdesktop::StaticSettingSearchDescriptor entry;
+    entry.page = snowdesktop::SettingsPage::AnimationPerformance; entry.focusId = "animation.hover";
+    Check(ClassifySetting(entry) == Module::Dock, "Dock animation is found under Dock despite its separate settings page");
+    entry.page = snowdesktop::SettingsPage::AppearanceTheme; entry.focusId = "personalization.quickNavigationTheme";
+    Check(ClassifySetting(entry) == Module::Navigation, "navigation appearance is indexed with navigation");
+    entry.page = snowdesktop::SettingsPage::DesktopCategories; entry.focusId = "desktop.categoryRules";
+    Check(ClassifySetting(entry) == Module::Files, "classification rules belong to file preferences");
+    entry.visible = false;
+    Check(!ClassifySetting(entry), "hidden settings cannot leak through the guide index");
+    entry.visible = true; entry.page = snowdesktop::SettingsPage::General; entry.focusId = "start.collection";
+    Check(!ClassifySetting(entry), "guide self-links cannot recursively duplicate the index");
+    entry.page = snowdesktop::SettingsPage::Debug; entry.focusId = "debug.crash";
+    Check(!ClassifySetting(entry), "diagnostics are excluded from everyday preference guidance");
     for (const auto& lesson : kLessons)
     {
         Check(ParseTopic(lesson.key) == lesson.topic, "every visible lesson can be requested through the host");
@@ -100,8 +79,6 @@ void CheckUsageGuide()
     Check(LoadExpanded(path, expanded) && expanded, "first-use help defaults expanded regardless of old tutorial dismissal");
     Check(SaveExpanded(path, false) && LoadExpanded(path, expanded) && !expanded,
         "the user's collapsed panel preference survives a new load");
-    Practice restarted;
-    Check(!restarted.active, "persisting the panel never resumes a desktop practice on restart");
     Check(SaveExpanded(path, true) && LoadExpanded(path, expanded) && expanded, "expanded preference also round-trips");
     { std::ifstream input(path); std::string text((std::istreambuf_iterator<char>(input)), {}); JsonValue value;
       Check(ParseJson(text, value) && value.Find("expanded") && !value.Find("steps") && !value.Find("collectionId") && !value.Find("active"),

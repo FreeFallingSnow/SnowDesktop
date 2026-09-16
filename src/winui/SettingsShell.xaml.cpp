@@ -2162,6 +2162,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
+                "personalization.dockAppearance",
                 "personalization.backgroundColor",
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
@@ -2190,6 +2191,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.cornerRadius",
                 "personalization.barHeight",
+                "personalization.luaWidgetRowHeight",
                 "desktop.categoryLayout",
                 "desktop.tabHeight",
                 "personalization.tabHeight"});

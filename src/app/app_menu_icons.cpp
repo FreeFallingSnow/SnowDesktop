@@ -1,5 +1,4 @@
 #include "app.h"
-#include "../onboarding_overlay_bounds.h"
 #include "../menu_icon_render.h"
 #include "../modern_menu.h"
 #include "../widget_package_image_cache.h"
@@ -768,20 +767,7 @@ void DesktopApp::ConfigureModernMenuEventPump(
     options.eventPump.dispatchScheduledWork = [this]() {
         uiAnimationScheduler_.DispatchDue();
     };
-    options.eventPump.flushPresentation = [this, previousBounds = std::vector<RECT>{}]() mutable {
-        if (usageGuidePractice_.Visible())
-        {
-            auto bounds = snowdesktop::modern_menu::ActivePopupBounds();
-            const RECT preview = snowdesktop::component_preview::ActivePreviewBounds();
-            if (!IsRectEmpty(&preview)) bounds.push_back(preview);
-            if (bounds.size() != previousBounds.size() ||
-                !std::equal(bounds.begin(), bounds.end(), previousBounds.begin(),
-                    [](const RECT& a, const RECT& b) { return EqualRect(&a, &b) != FALSE; }))
-            {
-                previousBounds = std::move(bounds);
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            }
-        }
+    options.eventPump.flushPresentation = [this]() {
         FlushPendingCompositionCommit();
         FlushPendingQuickNavigationCompositionCommit();
     };
@@ -829,6 +815,5 @@ void DesktopApp::PreserveModernMenuHostZOrder(
 
 void DesktopApp::ClearMenuIcons()
 {
-    if (usageGuidePractice_.Visible()) InvalidateRect(hwnd_, nullptr, FALSE);
     menuIconPool_.clear();
 }

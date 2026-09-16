@@ -566,9 +566,6 @@ snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::u
     patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
     patch.installedWidgetCount = widgets_.size();
     patch.usageGuideExpanded = usageGuideExpanded_;
-    patch.usageGuideContext = UsageGuideContext();
-    patch.usageGuideTopic = usageGuidePractice_.active ?
-        snowdesktop::usage_guide::Find(*usageGuidePractice_.active)->key : "";
     patch.packaged = snowdesktop::deployment::IsPackaged();
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
@@ -821,9 +818,12 @@ snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(boo
     firstPageMonitorId_.clear();
     lastPageMonitorId_.clear();
     usageGuideWelcomePending_ = usageGuideWelcomeQueued_ = false;
-    usageGuidePractice_.End();
+    usageGuideTopic_.reset();
+    usageGuidePlacement_.EndDrag();
+    usageGuidePressedButton_ = 0;
+    usageGuideFrame_ = usageGuideDragRect_ = {};
     usageGuideWaitingForDesktop_ = false;
-    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideNextRect_ = usageGuideMoreRect_ = usageGuideOpenSettingsRect_ = {};
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideMoreRect_ = usageGuideOpenSettingsRect_ = {};
     usageGuideDetails_ = false;
     usageGuideDetailPage_ = 0;
     const auto result = ReloadLayoutAndSynchronizeSettings();

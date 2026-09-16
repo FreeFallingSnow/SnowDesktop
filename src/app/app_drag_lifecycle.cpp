@@ -504,6 +504,7 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
     usageGuidePressedButton_ = 0;
+    usageGuidePlacement_.EndDrag();
     const bool layoutNeedsSave =
         widgetScrollbarDragging_ ||
         detailColumnResizeActive_;

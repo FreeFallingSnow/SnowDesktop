@@ -218,7 +218,7 @@ void DesktopApp::DrawDesktopForeground(
     DrawLargeIconInteractionOverlay(ctx);
     if (desktopIconsHidden_ && showHiddenHint_)
         DrawHiddenHintOverlay(ctx);
-    if (showWidgetAddedHint_ && !usageGuidePractice_.Visible())
+    if (showWidgetAddedHint_ && !IsUsageGuideVisible())
         DrawWidgetAddedHintOverlay(ctx);
     DrawUsageGuideHintOverlay(ctx);
     if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())

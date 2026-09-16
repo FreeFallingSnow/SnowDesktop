@@ -237,15 +237,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.animation.onBattery", "settings.animation.onBattery.description"},
 
     {SettingsPage::General, "start.explore", "start.title", "start.description"},
-    {SettingsPage::General, "start.startup", "start.startup.title", "start.startup.description"},
-    {SettingsPage::General, "start.grid", "start.grid.title", "start.grid.description"},
-    {SettingsPage::General, "start.icons", "start.icons.title", "start.icons.description"},
-    {SettingsPage::General, "start.beautify", "start.beautify.title", "start.beautify.description"},
-    {SettingsPage::General, "start.theme", "start.theme.title", "start.theme.description"},
     {SettingsPage::General, "start.collection", "start.collection.title", "start.collection.description"},
-    {SettingsPage::General, "start.application", "start.application.title", "start.application.description"},
     {SettingsPage::General, "start.move", "start.move.title", "start.move.description"},
-    {SettingsPage::General, "start.resize", "start.resize.title", "start.resize.description"},
     {SettingsPage::General, "start.collectionGroup", "start.collectionGroup.title", "start.collectionGroup.description"},
     {SettingsPage::General, "start.files", "start.files.title", "start.files.description"},
     {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description"},
@@ -254,10 +247,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "start.dockMapping", "start.dockMapping.title", "start.dockMapping.description"},
     {SettingsPage::General, "start.dockCollection", "start.dockCollection.title", "start.dockCollection.description"},
     {SettingsPage::General, "start.dockFiles", "start.dockFiles.title", "start.dockFiles.description"},
-    {SettingsPage::General, "start.dockSummon", "start.dockSummon.title", "start.dockSummon.description"},
-    {SettingsPage::General, "start.navigation", "start.navigation.title", "start.navigation.description"},
     {SettingsPage::General, "start.luaWidget", "start.luaWidget.title", "start.luaWidget.description"},
-    {SettingsPage::General, "start.backup", "start.backup.title", "start.backup.description"},
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
         "settings.general.startup.description"},
@@ -309,6 +299,11 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.floatingShortcutMode.hotkey",
         "app.settings.hotkey",
         "settings.general.floatingDock.description"},
+    {SettingsPage::AppearanceTheme, "personalization.dockAppearance",
+        "guide.setting.dockAppearance.title", "guide.setting.dockAppearance"},
+    {SettingsPage::AppearanceWidgets, "personalization.luaWidgetRowHeight",
+        "app.settings.lua_widget_row_height", "settings.personalization.widgets.description"},
+    {SettingsPage::DesktopPages, "pages.rows", "settings.pages.rows", "settings.pages.grid.description"},
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
@@ -2049,6 +2044,11 @@ struct SettingsWindowHost::Impl
                 !state->owner->controller->IsGenerationCurrent(generation)) return;
             const auto* lesson = usage_guide::Find(topic);
             if (!lesson) return;
+            if (!lesson->practice)
+            {
+                state->owner->RequestRoute(SettingsRoute::ForPage(lesson->settingsPage, lesson->settingsFocus));
+                return;
+            }
             const std::string_view key = lesson->key;
             SettingsHostActions::Request request;
             request.action = SettingsHostActions::Action::StartUsageGuidePractice;
@@ -2060,8 +2060,7 @@ struct SettingsWindowHost::Impl
             // parent's synchronous RPC while its controls are being invoked.
             if (result.Succeeded())
             {
-                if (lesson->practice) (void)state->owner->HideWindow();
-                else state->owner->RequestRoute(SettingsRoute::ForPage(lesson->settingsPage, lesson->settingsFocus));
+                (void)state->owner->HideWindow();
             }
         };
         general.onboarding.expandedChanged = [weak](std::uint64_t generation, bool expanded) {
@@ -2078,6 +2077,11 @@ struct SettingsWindowHost::Impl
         general.onboarding.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
                 state->owner->RequestRoute(route);
+        };
+        general.onboarding.settingsIndex = [weak]() {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                return state->owner->BuildSearchInput().staticSettings;
+            return std::vector<StaticSettingSearchDescriptor>{};
         };
         shell->SetGeneralPageActions(std::move(general));
 

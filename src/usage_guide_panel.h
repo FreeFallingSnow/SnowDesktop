@@ -1,0 +1,38 @@
+#pragma once
+
+#include <windows.h>
+#include <algorithm>
+#include <optional>
+
+namespace snowdesktop::usage_guide
+{
+// Screen coordinates survive changes to the desktop host's virtual origin.
+// Only an explicit drag changes the anchor, except when the work area shrinks
+// or the panel grows beyond its edge. Menus and desktop objects are not inputs.
+struct PanelPlacement
+{
+    std::optional<POINT> anchor;
+    std::optional<POINT> dragOffset;
+
+    RECT Arrange(RECT workArea, LONG width, LONG height, LONG margin)
+    {
+        const LONG left = workArea.left + margin, top = workArea.top + margin;
+        const LONG right = std::max(left, workArea.right - margin - width);
+        const LONG bottom = std::max(top, workArea.bottom - margin - height);
+        if (!anchor) anchor = POINT{right, bottom};
+        anchor = POINT{std::clamp(anchor->x, left, right), std::clamp(anchor->y, top, bottom)};
+        return {anchor->x, anchor->y, anchor->x + width, anchor->y + height};
+    }
+    void BeginDrag(POINT pointer)
+    {
+        if (anchor) dragOffset = POINT{pointer.x - anchor->x, pointer.y - anchor->y};
+    }
+    bool DragTo(POINT pointer)
+    {
+        if (!dragOffset) return false;
+        anchor = POINT{pointer.x - dragOffset->x, pointer.y - dragOffset->y};
+        return true;
+    }
+    void EndDrag() { dragOffset.reset(); }
+};
+}

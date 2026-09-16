@@ -114,6 +114,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (GetCursorPos(&point))
         {
             ScreenToClient(hwnd_, &point);
+            if (IsPointInUsageGuide(point)) return MA_NOACTIVATE;
             if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
                 if (dock->ContainsInteractivePoint(point))
@@ -130,6 +131,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return TRUE;
         }
         if (LOWORD(lp) != HTCLIENT) break;
+        POINT guidePoint{};
+        if (GetCursorPos(&guidePoint) && ScreenToClient(hwnd_, &guidePoint) && IsPointInUsageGuide(guidePoint))
+        {
+            SetCursor(LoadCursorW(nullptr, PtInRect(&usageGuideDragRect_, guidePoint) ? IDC_SIZEALL : IDC_ARROW));
+            return TRUE;
+        }
         POINT handlePoint{};
         if (GetCursorPos(&handlePoint) && ScreenToClient(hwnd_, &handlePoint) && UpdateWidgetHandleCursor(handlePoint)) return TRUE;
         if (CanEditLargeIcons() && !HasActiveContextMenuSession())
@@ -301,6 +308,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
             return 0;
+        if (IsPointInUsageGuide(pt)) return 0;
         OnMiddleButtonDown(wp, lp);
         return 0;
     }
@@ -529,6 +537,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEWHEEL:
     {
         POINT wheelPt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        POINT guidePt = wheelPt; ScreenToClient(hwnd_, &guidePt);
+        if (IsPointInUsageGuide(guidePt)) return 0;
         if (desktopIconsHidden_)
         {
             ScreenToClient(hwnd_, &wheelPt);
@@ -540,11 +550,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
+        if (IsPointInUsageGuide({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return 0;
         OnRightButtonDown(nullptr);
         return 0;
     case WM_RBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (IsPointInUsageGuide(pt))
+        { POINT screen = pt; ClientToScreen(hwnd_, &screen); ShowUsageGuideActions(screen); return 0; }
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
             ShowHiddenHint();
@@ -556,6 +569,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (HandleUsageGuidePointerDown(pt)) return 0;
         const auto clearSelectionAfterAcceptedOpen =
             [this](bool accepted) {
                 if (!accepted)

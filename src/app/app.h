@@ -32,6 +32,7 @@
 #include "settings_window_open_rules.h"
 #include "settings_controller.h"
 #include "../usage_guide.h"
+#include "../usage_guide_panel.h"
 #include "large_icon_settings.h"
 #include "large_icon_assets.h"
 #include "website_icon.h"
@@ -3531,19 +3532,23 @@ private:
     bool usageGuideExpanded_ = true;
     bool usageGuideWelcomePending_ = false;
     bool usageGuideWelcomeQueued_ = false;
-    snowdesktop::usage_guide::Practice usageGuidePractice_;
+    std::optional<snowdesktop::usage_guide::Topic> usageGuideTopic_;
+    snowdesktop::usage_guide::PanelPlacement usageGuidePlacement_;
+    RECT usageGuideFrame_{}, usageGuideDragRect_{};
     bool usageGuideWaitingForDesktop_ = false;
-    RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{}, usageGuideNextRect_{}, usageGuideMoreRect_{}, usageGuideOpenSettingsRect_{};
+    RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{}, usageGuideMoreRect_{}, usageGuideOpenSettingsRect_{};
     int usageGuidePressedButton_ = 0;
     bool usageGuideDetails_ = false;
     std::size_t usageGuideDetailPage_ = 0, usageGuideDetailPages_ = 1;
     void ShowUsageGuideActions(POINT point);
-    void RefreshUsageGuidePractice();
+    void RefreshUsageGuideReference();
+    bool IsUsageGuideVisible() const;
+    bool IsPointInUsageGuide(POINT point) const;
+    bool HandleUsageGuidePointerMove(POINT point);
     void DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx);
     bool HandleUsageGuidePointerDown(POINT point);
     bool HandleUsageGuidePointerUp(POINT point);
     void LoadUsageGuidePreferences();
-    std::uint32_t UsageGuideContext() const;
     void ShowUsageGuideWelcome();
     snowdesktop::SettingsActionResult StartUsageGuidePractice(snowdesktop::usage_guide::Topic topic);
     snowdesktop::SettingsActionResult SetUsageGuideExpanded(bool expanded);
