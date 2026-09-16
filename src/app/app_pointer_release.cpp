@@ -813,6 +813,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
+    if (HandleOnboardingPointerUp(upPoint)) return;
     if (HandleLargeIconPointerUp()) return;
     if (middleButtonWidgetMove_) return;
     (void)wp;

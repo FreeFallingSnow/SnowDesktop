@@ -768,6 +768,12 @@ void DesktopApp::ConfigureModernMenuEventPump(
         uiAnimationScheduler_.DispatchDue();
     };
     options.eventPump.flushPresentation = [this]() {
+        if (onboardingPractice_.active && snowdesktop::modern_menu::IsActive() &&
+            !IsRectEmpty(&onboardingPauseRect_))
+        {
+            onboardingPauseRect_ = onboardingSettingsRect_ = {};
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         FlushPendingCompositionCommit();
         FlushPendingQuickNavigationCompositionCommit();
     };
@@ -815,5 +821,6 @@ void DesktopApp::PreserveModernMenuHostZOrder(
 
 void DesktopApp::ClearMenuIcons()
 {
+    if (onboardingPractice_.active) InvalidateRect(hwnd_, nullptr, FALSE);
     menuIconPool_.clear();
 }

@@ -96,6 +96,7 @@ struct GeneralPagePresenter::Impl
 
     LocalizeCallback localize;
     GeneralPageActions actions;
+    std::unique_ptr<StartPagePresenter> onboarding;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel desktopRoot{nullptr};
@@ -191,6 +192,8 @@ struct GeneralPagePresenter::Impl
         dockShortcutRoot = muxc::StackPanel{};
         dockShortcutRoot.Spacing(8.0);
 
+        onboarding = std::make_unique<StartPagePresenter>(localize, cardStyle);
+        root.Children().Append(onboarding->Content());
         InitializeCard(startupCard, cardStyle, root);
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
@@ -680,6 +683,7 @@ struct GeneralPagePresenter::Impl
         const bool wasUpdating = updatingControls;
         updatingControls = true;
 
+        onboarding->RefreshLocalizedText();
         SetCardText(startupCard, "settings.general.startup");
         SetCardText(advancedFeaturesCard,
             "settings.general.advancedFeatures");
@@ -905,6 +909,7 @@ struct GeneralPagePresenter::Impl
     void ApplySnapshot(const SettingsSnapshot& snapshot)
     {
         if (closed) return;
+        onboarding->ApplySnapshot(snapshot);
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         const bool generalChanged = newGeneration ||
@@ -964,6 +969,7 @@ struct GeneralPagePresenter::Impl
         closed = true;
         try
         {
+            onboarding->Close();
             autoStartToggle.Toggled(autoStartToken);
             registerAdvancedFeaturesButton.Click(
                 registerAdvancedFeaturesToken);
@@ -1003,6 +1009,7 @@ GeneralPagePresenter::~GeneralPagePresenter()
 void GeneralPagePresenter::SetActions(GeneralPageActions actions)
 {
     if (!impl_ || impl_->closed) return;
+    impl_->onboarding->SetActions(actions.onboarding);
     impl_->actions = std::move(actions);
     impl_->RefreshLocalizedText();
 }
@@ -1061,6 +1068,9 @@ void GeneralPagePresenter::RegisterFocusTargets(
             registrar(std::string(id), element);
     };
 
+    for (const auto id : {"start.basics", "start.explore", "start.collection",
+            "start.application", "start.layout", "start.files"})
+        registrar(id, impl_->onboarding->FocusTarget(id));
     registerAliases(impl_->autoStartToggle,
         {"general.startup", "general.autoStart"});
     registerAliases(impl_->registerAdvancedFeaturesButton,
@@ -1096,12 +1106,19 @@ void GeneralPagePresenter::RegisterFocusTargets(
         {"desktop.doubleClickHide", "general.doubleClickHide"});
 }
 
-void GeneralPagePresenter::Activate() noexcept
+void GeneralPagePresenter::ApplyOnboardingStatus(const HomeAboutStatusPatch& patch)
+{
+    if (impl_ && !impl_->closed) impl_->onboarding->ApplyStatusPatch(patch);
+}
+
+void GeneralPagePresenter::Activate(std::string_view focusId) noexcept
 {
     if (!impl_ || impl_->closed) return;
     impl_->active = true;
     try
     {
+        impl_->onboarding->Activate(true);
+        impl_->onboarding->SelectRoute(focusId);
         // Snapshots are applied before the route presenter is activated.
         // Re-probe every saved chord now that the generation gate is live.
         impl_->UpdateDependentEnabledStates();
@@ -1117,6 +1134,7 @@ void GeneralPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed) return;
     impl_->active = false;
+    impl_->onboarding->Activate(false);
     impl_->CancelCaptures();
 }
 

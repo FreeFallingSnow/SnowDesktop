@@ -1,7 +1,6 @@
 #include "pch.h"
 
 #include "home_about_page_presenter.h"
-#include "start_page_presenter.h"
 #include "settings_presenter_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -93,7 +92,6 @@ struct HomeAboutPagePresenter::Impl
     HomeAboutPageActions actions;
     mux::Style cardStyle{nullptr};
     mux::Style navigationCardStyle{nullptr};
-    std::unique_ptr<StartPagePresenter> startPage;
     muxc::StackPanel aboutRoot{nullptr};
     muxc::StackPanel debugRoot{nullptr};
 
@@ -237,7 +235,6 @@ struct HomeAboutPagePresenter::Impl
 
     void BuildControls()
     {
-        startPage = std::make_unique<StartPagePresenter>(localize, navigationCardStyle);
 
         aboutRoot = muxc::StackPanel{};
         aboutRoot.Spacing(8.0);
@@ -539,7 +536,6 @@ struct HomeAboutPagePresenter::Impl
     {
         if (closed)
             return;
-        startPage->RefreshLocalizedText();
 
         SetSectionTitle(introductionSection,
             "app.settings.about_snowdesktop", L"About SnowDesktop");
@@ -633,7 +629,6 @@ struct HomeAboutPagePresenter::Impl
 
     void ApplySnapshot(const SettingsSnapshot& snapshot)
     {
-        startPage->ApplySnapshot(snapshot);
         if (closed)
             return;
         const bool newGeneration =
@@ -661,7 +656,6 @@ struct HomeAboutPagePresenter::Impl
         {
             return false;
         }
-        startPage->ApplyStatusPatch(patch);
         statusRevision = patch.revision;
         hasStatusRevision = true;
         if (patch.applicationVersion)
@@ -684,10 +678,6 @@ struct HomeAboutPagePresenter::Impl
         SettingsPage page,
         std::string_view focusId) const noexcept
     {
-        if (page == SettingsPage::Home)
-        {
-            return startPage->FocusTarget(focusId);
-        }
         if (page == SettingsPage::About)
         {
             if (focusId == "about.profile") return links[0].button;
@@ -717,7 +707,6 @@ struct HomeAboutPagePresenter::Impl
         active = false;
         try
         {
-            startPage->Close();
             for (LinkEntry& link : links)
                 link.button.Click(link.clickToken);
             checkUpdateButton.Click(checkUpdateToken);
@@ -754,14 +743,8 @@ void HomeAboutPagePresenter::SetActions(HomeAboutPageActions actions)
 {
     if (impl_ && !impl_->closed)
     {
-        impl_->startPage->SetActions(actions);
         impl_->actions = std::move(actions);
     }
-}
-
-mux::UIElement HomeAboutPagePresenter::HomeContent() const noexcept
-{
-    return impl_ ? impl_->startPage->Content() : nullptr;
 }
 
 mux::UIElement HomeAboutPagePresenter::AboutContent() const noexcept
@@ -793,15 +776,12 @@ void HomeAboutPagePresenter::RefreshLocalizedText()
         impl_->RefreshLocalizedText();
 }
 
-void HomeAboutPagePresenter::Activate(SettingsPage page, std::string_view focusId) noexcept
+void HomeAboutPagePresenter::Activate(SettingsPage page) noexcept
 {
     if (!impl_ || impl_->closed)
         return;
-    impl_->active = page == SettingsPage::Home ||
-        page == SettingsPage::About || page == SettingsPage::Debug;
+    impl_->active = page == SettingsPage::About || page == SettingsPage::Debug;
     impl_->activePage = page;
-    impl_->startPage->Activate(page == SettingsPage::Home);
-    if (page == SettingsPage::Home) impl_->startPage->SelectRoute(focusId);
 }
 
 void HomeAboutPagePresenter::Deactivate() noexcept
@@ -809,7 +789,6 @@ void HomeAboutPagePresenter::Deactivate() noexcept
     if (impl_ && !impl_->closed)
     {
         impl_->active = false;
-        impl_->startPage->Activate(false);
     }
 }
 

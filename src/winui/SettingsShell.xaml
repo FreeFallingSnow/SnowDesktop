@@ -147,8 +147,6 @@
                         Style="{ThemeResource NavigationViewPaneSearchButtonStyle}" />
             </NavigationView.PaneCustomContent>
             <NavigationView.MenuItems>
-                <NavigationViewItem x:Name="HomeItem"
-                                    Tag="home" />
                 <NavigationViewItem x:Name="GeneralItem" Tag="general" />
                 <NavigationViewItem x:Name="PersonalizationItem"
                                     Tag="appearance"

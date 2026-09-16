@@ -3530,9 +3530,15 @@ private:
     snowdesktop::onboarding::Session onboarding_;
     bool onboardingWritable_ = false;
     bool onboardingWelcomeQueued_ = false;
-    bool onboardingMenuQueued_ = false;
-    POINT onboardingMenuAnchor_{};
-    std::string onboardingHintKey_;
+    snowdesktop::onboarding::Practice onboardingPractice_;
+    bool onboardingPracticeWaitingForDesktop_ = false;
+    bool onboardingMenuCreation_ = false;
+    RECT onboardingPauseRect_{}, onboardingSettingsRect_{};
+    int onboardingPressedButton_ = 0;
+    bool HasOnboardingCollection() const;
+    void DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx);
+    bool HandleOnboardingPointerDown(POINT point);
+    bool HandleOnboardingPointerUp(POINT point);
     void LoadOnboarding();
     void SaveOnboarding();
     void ShowOnboardingWelcome();
@@ -3540,7 +3546,7 @@ private:
     void RecordOnboardingApplicationDrop(const std::wstring& collectionId,
         const std::wstring& key, bool newlyInserted);
     snowdesktop::SettingsActionResult StartOnboardingTask(
-        snowdesktop::onboarding::Task task, bool defer);
+        snowdesktop::onboarding::Task task);
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     bool iconSpacingPreviewActive_ = false;

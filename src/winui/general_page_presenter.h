@@ -2,6 +2,7 @@
 
 #include "../settings_controller.h"
 #include "hotkey_recorder.h"
+#include "start_page_presenter.h"
 
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -70,6 +71,7 @@ struct GeneralAdvancedFeatureStatus
 /** Commands emitted by the cached General settings presenter. */
 struct GeneralPageActions
 {
+    StartPageActions onboarding;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using NavigationEdit = std::function<void(NavigationSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;
@@ -143,7 +145,8 @@ public:
     void RefreshRuntimeState() noexcept;
     void RegisterFocusTargets(const FocusRegistrar& registrar) const;
 
-    void Activate() noexcept;
+    void ApplyOnboardingStatus(const HomeAboutStatusPatch& patch);
+    void Activate(std::string_view focusId = {}) noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] bool IsHotkeyCaptureActive() const noexcept;
     void CaptureRegisteredHotkey(

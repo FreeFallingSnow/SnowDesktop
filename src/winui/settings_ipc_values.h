@@ -98,7 +98,7 @@ SD_IPC_FIELDS(winui::HomeAboutStatusPatch,
     v.packaged,
     v.backupState, v.backupCount, v.backupDetail, v.animationDiagnosticsEnabled,
     v.animationDiagnosticsStatus, v.temporaryInitializationEnabled,
-    v.onboardingSteps, v.onboardingDeferred);
+    v.onboardingSteps, v.onboardingVisible);
 SD_IPC_FIELDS(winui::LayoutBackupEntry,
     v.id, v.displayName, v.createdAt, v.hasStorageCompanion);
 SD_IPC_FIELDS(winui::FullDataBackupEntry,

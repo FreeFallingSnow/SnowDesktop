@@ -1,6 +1,120 @@
 #include "app.h"
+#include "../modern_menu.h"
 
 // Transient page, privacy and widget-positioning overlays.
+
+void DesktopApp::DrawOnboardingHintOverlay(ID2D1DeviceContext* ctx)
+{
+    onboardingPauseRect_ = onboardingSettingsRect_ = {};
+    if (!ctx || !onboardingPractice_.active || !onboarding_.Current().Visible() ||
+        !customDesktopVisible_ || desktopIconsHidden_ || reloading_ ||
+        snowdesktop::modern_menu::IsActive() || shellPopupMenuLayerDepth_ > 0 ||
+        (settingsWindow_ && IsWindowVisible(settingsWindow_->Window())) ||
+        !luaWidgetPanelRequest_.widgetId.empty()) return;
+    using snowdesktop::onboarding::Task;
+    auto task = *onboardingPractice_.active;
+    const bool missing = (task == Task::Application || task == Task::Layout) && !HasOnboardingCollection();
+    if (missing) onboardingPractice_.active = task = Task::Collection;
+    const char* titleKey = nullptr;
+    const char* hintKey = nullptr;
+    switch (task)
+    {
+    case Task::Collection:
+        titleKey = L10N_KEY("start.collection.title");
+        hintKey = L10N_KEY("start.collection.hint"); break;
+    case Task::Application:
+        titleKey = L10N_KEY("start.application.title");
+        hintKey = L10N_KEY("start.application.hint"); break;
+    case Task::Layout:
+        titleKey = L10N_KEY("start.layout.title");
+        hintKey = (onboarding_.Current().steps & snowdesktop::onboarding::kMoved)
+            ? L10N_KEY("start.layout.resizeRemaining")
+            : (onboarding_.Current().steps & snowdesktop::onboarding::kResized)
+                ? L10N_KEY("start.layout.moveRemaining") : L10N_KEY("start.layout.hint"); break;
+    case Task::Files:
+        titleKey = L10N_KEY("start.files.title");
+        hintKey = snowdesktop::onboarding::Completed(onboarding_.Current().steps, Task::Files)
+            ? L10N_KEY("start.files.hint") : L10N_KEY("start.files.addHint"); break;
+    }
+    const std::wstring title = std::to_wstring(static_cast<unsigned>(task) + 1) + L" / 4 · " + _LW(titleKey);
+    const std::wstring hint = _LW(hintKey);
+    POINT cursor{}; GetCursorPos(&cursor);
+    const auto* page = GridPageFromScreenPoint(cursor);
+    if (!page) page = GetFirstPageGridPage();
+    if (!page) return;
+    const auto area = page->workArea;
+    const float scale = std::max(1.0f, page->dpiX / 96.0f);
+    const auto px = [scale](float value) { return static_cast<int>(std::ceil(value * scale)); };
+    const int padding = px(16), margin = px(24);
+    const int width = std::min(px(400), static_cast<int>(area.right - area.left) - margin * 2);
+    if (width < px(200)) return;
+    const int textWidth = width - padding * 2;
+    auto* factory = GetDWriteFactory();
+    if (!factory) return;
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(factory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14 * scale, L"", &format))) return;
+    format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    const auto measure = [&](const std::wstring& text) {
+        ComPtr<IDWriteTextLayout> layout;
+        DWRITE_TEXT_METRICS metrics{};
+        if (SUCCEEDED(factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
+                format.Get(), static_cast<float>(textWidth), 1000, &layout))) layout->GetMetrics(&metrics);
+        return static_cast<int>(std::ceil(metrics.height));
+    };
+    const int titleHeight = measure(title), textHeight = measure(hint), buttonHeight = px(40);
+    const std::wstring pauseText = _LW("start.pause"), settingsText = _LW("start.returnSettings");
+    const int height = padding * 2 + titleHeight + px(8) + textHeight + px(12) + buttonHeight;
+    if (height + margin * 2 > area.bottom - area.top) return;
+    RECT practiceRect{};
+    if (HasOnboardingCollection())
+        practiceRect = GetStandaloneWidgetFrameRect(widgets_[FindWidgetIndexById(Utf8ToWide(onboarding_.Current().collectionId))]);
+    RECT dropRect{};
+    if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || widgetAction_ != WidgetAction::None)
+    {
+        ScreenToClient(hwnd_, &cursor);
+        dropRect = {cursor.x - px(80), cursor.y - px(80), cursor.x + px(80), cursor.y + px(80)};
+    }
+    RECT frame{};
+    // Only the two button rectangles participate in hit testing. The rest of
+    // this existing host overlay remains transparent to desktop interaction.
+    for (const auto anchor : {POINT{area.right - margin - width, area.bottom - margin - height},
+             POINT{area.right - margin - width, area.top + margin},
+             POINT{area.left + margin, area.bottom - margin - height}, POINT{area.left + margin, area.top + margin}})
+    {
+        const RECT candidate{anchor.x, anchor.y, anchor.x + width, anchor.y + height};
+        RECT intersection{};
+        if ((!IsRectEmpty(&practiceRect) && IntersectRect(&intersection, &candidate, &practiceRect)) ||
+            (!IsRectEmpty(&dropRect) && IntersectRect(&intersection, &candidate, &dropRect))) continue;
+        frame = candidate; break;
+    }
+    if (IsRectEmpty(&frame)) return;
+    HIGHCONTRASTW contrast{sizeof(contrast)};
+    const bool highContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+        (contrast.dwFlags & HCF_HIGHCONTRASTON);
+    const auto systemColor = [](int index) {
+        const auto color = GetSysColor(index);
+        return D2D1::ColorF(GetRValue(color) / 255.f, GetGValue(color) / 255.f, GetBValue(color) / 255.f);
+    };
+    const bool light = IsLightContentTheme();
+    const auto background = highContrast ? systemColor(COLOR_WINDOW) : D2D1::ColorF(light ? 0xf9f9f9 : 0x292929, 0.98f);
+    const auto foreground = highContrast ? systemColor(COLOR_WINDOWTEXT) : D2D1::ColorF(light ? 0x202020 : 0xf5f5f5);
+    const auto border = highContrast ? foreground : D2D1::ColorF(light ? 0xc6c6c6 : 0x606060);
+    DrawD2DRoundedRectangle(ctx, frame, px(8), background, border, 1);
+    RECT textRect{frame.left + padding, frame.top + padding, frame.right - padding, frame.top + padding + titleHeight};
+    DrawD2DText(ctx, title, textRect, format.Get(), foreground);
+    textRect.top = textRect.bottom + px(8); textRect.bottom = textRect.top + textHeight;
+    DrawD2DText(ctx, hint, textRect, format.Get(), foreground);
+    const int buttonTop = textRect.bottom + px(12);
+    onboardingPauseRect_ = {frame.left + padding, buttonTop, frame.left + width / 2 - px(4), buttonTop + buttonHeight};
+    onboardingSettingsRect_ = {frame.left + width / 2 + px(4), buttonTop, frame.right - padding, buttonTop + buttonHeight};
+    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    DrawD2DRoundedRectangle(ctx, onboardingPauseRect_, px(4), background, border, 1);
+    DrawD2DRoundedRectangle(ctx, onboardingSettingsRect_, px(4), background, border, 1);
+    DrawD2DText(ctx, pauseText, onboardingPauseRect_, format.Get(), foreground);
+    DrawD2DText(ctx, settingsText, onboardingSettingsRect_, format.Get(), foreground);
+}
 
 void DesktopApp::ShowPageNotify(const std::wstring& text)
 {
@@ -467,9 +581,7 @@ void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
         }
     }
 
-    const std::wstring hintText =
-        _LW(onboardingHintKey_.empty()
-            ? "app.overlay.widget_move_hint" : onboardingHintKey_.c_str());
+    const std::wstring hintText = _LW("app.overlay.widget_move_hint");
 
     ComPtr<IDWriteTextFormat> fmt;
     if (FAILED(dwrite->CreateTextFormat(L"Segoe UI", nullptr,

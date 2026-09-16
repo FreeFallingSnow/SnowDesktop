@@ -218,8 +218,9 @@ void DesktopApp::DrawDesktopForeground(
     DrawLargeIconInteractionOverlay(ctx);
     if (desktopIconsHidden_ && showHiddenHint_)
         DrawHiddenHintOverlay(ctx);
-    if (showWidgetAddedHint_)
+    if (showWidgetAddedHint_ && !onboardingPractice_.active)
         DrawWidgetAddedHintOverlay(ctx);
+    DrawOnboardingHintOverlay(ctx);
     if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
         dockWindowTransition_->RefreshOcclusion();
 }

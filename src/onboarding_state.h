@@ -46,15 +46,29 @@ struct State
     std::uint32_t steps = 0;
     std::uint32_t deferred = 0;
     std::string collectionId;
+    bool eligible = false;
+    bool dismissed = false;
 
+    bool Visible() const { return eligible && !dismissed; }
+    bool Initialized();
+    bool Dismiss();
     bool Record(std::uint32_t step);
-    bool CollectionCreated(std::string id, bool previousCollectionExists);
+    bool CollectionCreated(std::string id, bool previousCollectionExists, bool fromMenu);
+    bool FilesCreated(bool fromMenu) { return fromMenu && Record(kFiles); }
     bool ApplicationDropped(std::string_view id, bool application,
         bool newlyInserted);
     bool GeometryCommitted(std::string_view id, bool moved, bool resized);
-    bool Defer(Task task);
-    bool Resume(Task task);
     friend bool operator==(const State&, const State&) = default;
+};
+
+// A practice request only changes the transient instruction. It cannot create
+// a widget, open a menu, or mark a task complete.
+struct Practice
+{
+    std::optional<Task> active;
+    bool Begin(const State& state, Task task, bool usableCollection);
+    void Advance(const State& state);
+    void Pause() { active.reset(); }
 };
 
 // Debug initialization has an independent, in-memory lifetime. Ending it
@@ -65,13 +79,13 @@ struct Session
     std::optional<State> experiment;
     State& Current() { return experiment ? *experiment : regular; }
     const State& Current() const { return experiment ? *experiment : regular; }
-    void BeginExperiment() { experiment = State{.welcomePending = true}; }
+    void BeginExperiment() { experiment = State{}; experiment->Initialized(); }
     void EndExperiment() { experiment.reset(); }
 };
 
 std::string Encode(const State& state);
 bool Decode(std::string_view text, State& state);
-bool Load(const std::filesystem::path& path, bool existingUser, State& state,
+bool Load(const std::filesystem::path& path, State& state,
     std::string* error = nullptr);
 bool Save(const std::filesystem::path& path, const State& state,
     std::string* error = nullptr);

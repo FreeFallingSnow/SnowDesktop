@@ -38,7 +38,7 @@ struct HomeAboutStatusPatch
     std::optional<bool> temporaryInitializationEnabled;
     std::optional<std::wstring> animationDiagnosticsStatus;
     std::optional<std::uint32_t> onboardingSteps;
-    std::optional<std::uint32_t> onboardingDeferred;
+    std::optional<bool> onboardingVisible;
 };
 
 /** Every external link from the legacy About page, without raw URLs in UI. */
@@ -102,7 +102,6 @@ enum class HomeAboutCommand : std::uint8_t
     OpenProject = 2,
     OpenLicense,
     OpenThirdPartyNotices,
-    OpenWidgetMenu,
 };
 
 } // namespace snowdesktop::winui

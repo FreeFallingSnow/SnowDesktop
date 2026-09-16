@@ -22,8 +22,6 @@ struct HomeAboutPageActions
     using GeneralEdit = std::function<void(GeneralSettings&)>;
 
     std::function<void(const SettingsRoute& route)> navigate;
-    std::function<void(std::uint64_t generation,
-        onboarding::Task task, bool defer)> onboardingTask;
     std::function<void(
         std::uint64_t generation,
         HomeAboutCommand command)> invoke;
@@ -78,8 +76,6 @@ public:
     void SetActions(HomeAboutPageActions actions);
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
-        HomeContent() const noexcept;
-    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         AboutContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DebugContent() const noexcept;
@@ -90,7 +86,7 @@ public:
         const HomeAboutStatusPatch& patch);
     void RefreshLocalizedText();
 
-    void Activate(SettingsPage page, std::string_view focusId = {}) noexcept;
+    void Activate(SettingsPage page) noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         FocusTarget(

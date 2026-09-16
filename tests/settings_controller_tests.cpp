@@ -246,6 +246,11 @@ void TestRoutes()
     Check(leafKeysAreUnique,
         "every appended settings leaf is valid and has a unique stable page key");
 
+    const auto route = snowdesktop::CanonicalizeSettingsRoute(
+        snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Home, "start.explore"));
+    Check(route.page == snowdesktop::SettingsPage::General && route.focusId == "start.explore",
+        "legacy Home route targets General without changing guide eligibility");
+
     const SettingsRoute legacyAppearance = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization));
     const SettingsRoute legacyTheme = CanonicalizeSettingsRoute(

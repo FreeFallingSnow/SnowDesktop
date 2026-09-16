@@ -739,7 +739,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
         patch.installedWidgetCount = widgets_.size();
         patch.onboardingSteps = onboarding_.Current().steps;
-        patch.onboardingDeferred = onboarding_.Current().deferred;
+        patch.onboardingVisible = onboarding_.Current().Visible();
         patch.packaged = snowdesktop::deployment::IsPackaged();
         patch.animationDiagnosticsEnabled =
             uiAnimationScheduler_.DiagnosticsEnabled();
@@ -1664,12 +1664,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             }
             FinishWidgetGroupTransitions();
             if (onboardingWelcomeQueued_) ShowOnboardingWelcome();
-            if (onboardingMenuQueued_ &&
+            if (onboardingPracticeWaitingForDesktop_ &&
                 (!settingsWindow_ || !IsWindowVisible(settingsWindow_->Window())))
             {
-                onboardingMenuQueued_ = false;
-                if (customDesktopVisible_ && !reloading_ && !exitRequested_)
-                    ShowAddWidgetMenu(onboardingMenuAnchor_);
+                onboardingPracticeWaitingForDesktop_ = false;
+                InvalidateRect(hwnd_, nullptr, FALSE);
             }
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a

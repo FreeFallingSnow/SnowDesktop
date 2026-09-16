@@ -231,8 +231,7 @@ public:
         ProbeHotkeyAvailability,
         SetTemporaryGridInitialization,
         StartOnboardingTask,
-        DeferOnboardingTask,
-        OpenWidgetMenu,
+        DismissOnboarding,
     };
 
     struct Request

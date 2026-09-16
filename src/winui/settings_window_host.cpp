@@ -236,12 +236,12 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AnimationPerformance, "animation.onBattery",
         "settings.animation.onBattery", "settings.animation.onBattery.description"},
 
-    {SettingsPage::Home, "start.basics", "start.basics", "start.basics.description"},
-    {SettingsPage::Home, "start.explore", "start.explore", "start.explore.description"},
-    {SettingsPage::Home, "start.collection", "start.collection.title", "start.collection.description"},
-    {SettingsPage::Home, "start.application", "start.application.title", "start.application.description"},
-    {SettingsPage::Home, "start.layout", "start.layout.title", "start.layout.description"},
-    {SettingsPage::Home, "start.files", "start.files.title", "start.files.description"},
+    {SettingsPage::General, "start.basics", "start.basics", "start.basics.description"},
+    {SettingsPage::General, "start.explore", "start.explore", "start.explore.description"},
+    {SettingsPage::General, "start.collection", "start.collection.title", "start.collection.description"},
+    {SettingsPage::General, "start.application", "start.application.title", "start.application.description"},
+    {SettingsPage::General, "start.layout", "start.layout.title", "start.layout.description"},
+    {SettingsPage::General, "start.files", "start.files.title", "start.files.description"},
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
         "settings.general.startup.description"},
@@ -1257,6 +1257,8 @@ struct SettingsWindowHost::Impl
                     : (definition.page == SettingsPage::DeveloperTools
                         ? input.developerToolsVisible
                         : input.debugVisible);
+                if (descriptor.focusId.starts_with("start.") && !onboardingVisible)
+                    descriptor.visible = false;
                 if (!descriptor.label.empty())
                     input.staticSettings.push_back(std::move(descriptor));
             }
@@ -1271,6 +1273,8 @@ struct SettingsWindowHost::Impl
         }
         return input;
     }
+
+    bool onboardingVisible = false;
 
     void RebuildSearchIndex()
     {
@@ -1360,6 +1364,12 @@ struct SettingsWindowHost::Impl
             patch.generation = snapshot->generation;
             patch.revision = snapshot->revision;
             (void)shell->ApplyHomeAboutStatusPatch(patch);
+            if (patch.onboardingVisible && onboardingVisible != *patch.onboardingVisible)
+            {
+                onboardingVisible = *patch.onboardingVisible;
+                RebuildSearchIndex();
+                shell->ClearSearch();
+            }
         }
     }
 
@@ -2022,6 +2032,35 @@ struct SettingsWindowHost::Impl
                             "settings.about.link.openFailed")));
             }
         };
+        general.onboarding.begin = [weak](std::uint64_t generation,
+            onboarding::Task task) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            const auto key = onboarding::TaskKey(task);
+            if (key.empty()) return;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::StartOnboardingTask;
+            request.value = std::wstring(key.begin(), key.end());
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            state->owner->ShowActionError(result);
+            // The child owns its window lifecycle; never hide it from the
+            // parent's synchronous RPC while its controls are being invoked.
+            if (result.Succeeded()) (void)state->owner->HideWindow();
+        };
+        general.onboarding.dismiss = [weak](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::DismissOnboarding;
+            state->owner->ShowActionError(state->owner->controller->InvokeHostAction(request));
+        };
+        general.onboarding.navigate = [weak](const SettingsRoute& route) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->RequestRoute(route);
+        };
         shell->SetGeneralPageActions(std::move(general));
 
         PageLayoutPageActions pageLayout = options.pageLayoutPage;
@@ -2206,24 +2245,6 @@ struct SettingsWindowHost::Impl
         shell->SetDockPageActions(std::move(dock));
 
         HomeAboutPageActions homeAbout;
-        homeAbout.onboardingTask = [weak](std::uint64_t generation,
-            onboarding::Task task, bool defer) {
-            const auto state = weak.lock();
-            if (!state || !state->alive.load() || !state->owner ||
-                !state->owner->controller ||
-                !state->owner->controller->IsGenerationCurrent(generation)) return;
-            const auto key = onboarding::TaskKey(task);
-            if (key.empty()) return;
-            SettingsHostActions::Request request;
-            request.action = defer ? SettingsHostActions::Action::DeferOnboardingTask
-                : SettingsHostActions::Action::StartOnboardingTask;
-            request.value = std::wstring(key.begin(), key.end());
-            const auto result = state->owner->controller->InvokeHostAction(request);
-            state->owner->ShowActionError(result);
-            // The child owns its window lifecycle; never hide it from the
-            // parent's synchronous RPC while its controls are being invoked.
-            if (result.Succeeded() && !defer) (void)state->owner->HideWindow();
-        };
         homeAbout.navigate = [weak](const SettingsRoute& route) {
             if (const auto state = weak.lock();
                 state && state->alive.load() && state->owner)
@@ -2258,15 +2279,10 @@ struct SettingsWindowHost::Impl
                 request.action =
                     SettingsHostActions::Action::OpenThirdPartyNotices;
                 break;
-            case HomeAboutCommand::OpenWidgetMenu:
-                request.action = SettingsHostActions::Action::OpenWidgetMenu;
-                break;
             }
             const SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
-            if (result.Succeeded() && command == HomeAboutCommand::OpenWidgetMenu)
-                (void)state->owner->HideWindow();
         };
         homeAbout.openLink = [weak](
                                  std::uint64_t generation,
@@ -3612,10 +3628,17 @@ void SettingsWindowHost::ApplyLanguageChange(bool widgetRuntimeReloaded)
 bool SettingsWindowHost::PublishHomeAboutStatus(
     HomeAboutStatusPatch patch)
 {
-    return impl_->initialized && impl_->OnOwnerThread() && impl_->shell &&
+    const bool applied = impl_->initialized && impl_->OnOwnerThread() && impl_->shell &&
         impl_->controller &&
         impl_->controller->IsGenerationCurrent(patch.generation) &&
         impl_->shell->ApplyHomeAboutStatusPatch(patch);
+    if (applied && patch.onboardingVisible && impl_->onboardingVisible != *patch.onboardingVisible)
+    {
+        impl_->onboardingVisible = *patch.onboardingVisible;
+        impl_->RebuildSearchIndex();
+        impl_->shell->ClearSearch();
+    }
+    return applied;
 }
 
 bool SettingsWindowHost::PreTranslateMessage(MSG* message) noexcept

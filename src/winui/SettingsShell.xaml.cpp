@@ -390,11 +390,11 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
 
     switch (page)
     {
-    case SettingsPage::Home:
     case SettingsPage::About:
     case SettingsPage::Debug:
         ensureHomeAbout();
         break;
+    case SettingsPage::Home:
     case SettingsPage::General:
     case SettingsPage::Desktop:
         ensureGeneral();
@@ -649,7 +649,6 @@ void SettingsShell::RefreshLocalizedText()
     if (closed_)
         return;
 
-    HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     AnimationItem().Content(winrt::box_value(Localize("settings.nav.animation")));
     PersonalizationItem().Content(
@@ -909,7 +908,9 @@ void SettingsShell::SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAct
 bool SettingsShell::ApplyHomeAboutStatusPatch(
     const snowdesktop::winui::HomeAboutStatusPatch& patch)
 {
-    return homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);
+    if (generalPage_) generalPage_->ApplyOnboardingStatus(patch);
+    const bool applied = homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);
+    return generalPage_ || applied;
 }
 
 void SettingsShell::SetWidgetSettingsService(
@@ -1657,7 +1658,7 @@ void SettingsShell::HookEvents()
             if (!item)
                 return;
             for (const SettingsPage page : {
-                     SettingsPage::Home, SettingsPage::General,
+                     SettingsPage::General,
                      SettingsPage::AnimationPerformance,
                      SettingsPage::AppearanceTheme,
                      SettingsPage::AppearanceWidgets,
@@ -1872,8 +1873,6 @@ void SettingsShell::ApplyNavigationIcons()
     };
 
     const std::array descriptors{
-        IconDescriptor{HomeItem(),
-            L"ms-appx:///Assets/Settings/Icons/start.svg", L"\xE80F"},
         IconDescriptor{GeneralItem(),
             L"ms-appx:///Assets/Settings/Icons/general.svg", L"\xE713"},
         IconDescriptor{AnimationItem(),
@@ -2141,20 +2140,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::Home:
-        if (homeAboutPage_)
-        {
-            PageCards().Children().Append(homeAboutPage_->HomeContent());
-            for (const std::string_view focusId : {
-                     "start.basics", "start.explore", "start.collection",
-                     "start.application", "start.layout", "start.files"})
-            {
-                RegisterFocusTarget(std::string(focusId),
-                    homeAboutPage_->FocusTarget(
-                        SettingsPage::Home, focusId));
-            }
-            homeAboutPage_->Activate(SettingsPage::Home, pageRoute.focusId);
-        }
-        break;
     case SettingsPage::General:
         if (generalPage_)
         {
@@ -2164,7 +2149,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                        const mux::FrameworkElement& element) {
                     RegisterFocusTarget(std::move(focusId), element);
                 });
-            generalPage_->Activate();
+            generalPage_->Activate(pageRoute.focusId);
         }
         break;
     case SettingsPage::Personalization:
@@ -2690,7 +2675,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
 {
     switch (page)
     {
-    case SettingsPage::Home: return HomeItem();
+    case SettingsPage::Home: return GeneralItem();
     case SettingsPage::General: return GeneralItem();
     case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:

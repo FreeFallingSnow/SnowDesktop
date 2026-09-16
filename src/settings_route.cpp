@@ -69,6 +69,11 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    if (route.page == SettingsPage::Home)
+    {
+        route.page = SettingsPage::General;
+        if (route.focusId.empty()) route.focusId = "start.basics";
+    }
     if (route.page == SettingsPage::General)
     {
         if (route.focusId == "general.pageNavigation" ||

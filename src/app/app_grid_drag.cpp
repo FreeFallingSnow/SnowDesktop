@@ -13,6 +13,10 @@ void DesktopApp::InitializeGridFromWindows()
     if (gridPages_.empty() || !layoutRecords_.empty() ||
         !widgets_.empty() || !dockEntries_.empty()) return;
 
+    // Enrollment follows actual initialization, including capture fallback.
+    if ((onboardingWritable_ || onboarding_.experiment) && onboarding_.Current().Initialized()) SaveOnboarding();
+    onboardingWelcomeQueued_ = onboarding_.Current().welcomePending;
+
     namespace native = snowdesktop::windows_desktop_layout;
     const auto snapshot = native::Capture();
     if (!snapshot.Available())
