@@ -1667,7 +1667,7 @@
     "start.layout.action": "바탕 화면에서 해보기",
     "start.files.title": "바탕 화면 파일",
     "start.files.description": "바탕 화면 파일을 한곳에 표시하고 유형별로 살펴보세요.",
-    "start.files.instructions": "바탕 화면의 빈 곳을 우클릭하고 위젯 추가 → 바탕 화면 파일을 선택하세요. 추가한 위젯을 우클릭하면 필요에 따라 자동 수집을 켤 수 있습니다.",
+    "start.files.instructions": "바탕 화면의 빈 곳을 우클릭하고 위젯 추가 → 데스크톱 파일을 선택하세요. 추가한 위젯을 우클릭하면 필요에 따라 자동 수집을 켤 수 있습니다.",
     "start.files.action": "바탕 화면 파일 추가",
     "start.application.hint": "바탕 화면의 앱 아이콘을 새 컬렉션에 끌어 넣으세요",
     "start.files.hint": "바탕 화면 파일 위젯을 오른쪽 클릭하면 자동 수집을 켤 수 있습니다",
@@ -1700,6 +1700,6 @@
     "start.pause": "접기",
     "start.returnSettings": "설정으로 돌아가기",
     "start.collection.hint": "바탕 화면의 빈 곳을 우클릭 → 위젯 추가 → 컬렉션에서 독립된 컬렉션을 추가하세요.",
-    "start.files.addHint": "바탕 화면의 빈 곳을 우클릭 → 위젯 추가 → 바탕 화면 파일.",
+    "start.files.addHint": "바탕 화면의 빈 곳을 우클릭 → 위젯 추가 → 데스크톱 파일.",
     "start.layout.hint": "컬렉션 하단을 끌거나 가운데 버튼을 누른 채 이동한 다음, 오른쪽 아래 모서리를 끌어 크기를 조절하세요."
 }

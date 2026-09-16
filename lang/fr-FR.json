@@ -1655,7 +1655,7 @@
     "start.notStarted": "Non terminée",
     "start.collection.title": "Ajouter une collection",
     "start.collection.description": "Regroupez vos applications habituelles dans une collection.",
-    "start.collection.instructions": "Faites un clic droit dans une zone vide du bureau, puis choisissez Ajouter un widget → Collection. Vous pouvez aussi afficher son aperçu dans le menu avant de l’ajouter.",
+    "start.collection.instructions": "Faites un clic droit dans une zone vide du bureau, puis choisissez Ajouter un composant → Collection. Vous pouvez aussi afficher son aperçu dans le menu avant de l’ajouter.",
     "start.collection.action": "Ajouter une collection",
     "start.application.title": "Glisser une appli",
     "start.application.description": "Déplacez une icône d’application du bureau vers la collection que vous venez d’ajouter.",
@@ -1667,7 +1667,7 @@
     "start.layout.action": "Essayer sur le bureau",
     "start.files.title": "Fichiers du bureau",
     "start.files.description": "Rassemblez l’affichage des fichiers du bureau et parcourez-les par type.",
-    "start.files.instructions": "Faites un clic droit dans une zone vide du bureau, puis choisissez Ajouter un widget → Fichiers du bureau. Une fois ajouté, un clic droit sur le widget permet d’activer la collecte automatique si vous le souhaitez.",
+    "start.files.instructions": "Faites un clic droit dans une zone vide du bureau, puis choisissez Ajouter un composant → Fichiers de bureau. Une fois ajouté, un clic droit sur le widget permet d’activer la collecte automatique si vous le souhaitez.",
     "start.files.action": "Ajouter les fichiers du bureau",
     "start.application.hint": "Glissez une icône d’application du bureau dans votre nouvelle collection",
     "start.files.hint": "Activez la collecte automatique par un clic droit sur le widget de fichiers du bureau",
@@ -1699,7 +1699,7 @@
     "start.basicsCompleted": "Bases terminées",
     "start.pause": "Masquer",
     "start.returnSettings": "Retour aux réglages",
-    "start.collection.hint": "Clic droit sur une zone vide du bureau → Ajouter un widget → Collection, pour ajouter une collection indépendante.",
-    "start.files.addHint": "Clic droit sur une zone vide du bureau → Ajouter un widget → Fichiers du bureau.",
+    "start.collection.hint": "Clic droit sur une zone vide du bureau → Ajouter un composant → Collection, pour ajouter une collection indépendante.",
+    "start.files.addHint": "Clic droit sur une zone vide du bureau → Ajouter un composant → Fichiers de bureau.",
     "start.layout.hint": "Déplacez la collection par son bord inférieur ou avec le bouton central enfoncé, puis redimensionnez-la par le coin inférieur droit."
 }

@@ -1655,7 +1655,7 @@
     "start.notStarted": "Sin completar",
     "start.collection.title": "Añadir colección",
     "start.collection.description": "Reúne las aplicaciones que más utilizas en una colección.",
-    "start.collection.instructions": "Haz clic derecho en un espacio vacío del escritorio y elige Añadir widget → Colección. También puedes ver una vista previa en el menú antes de añadirla.",
+    "start.collection.instructions": "Haz clic derecho en un espacio vacío del escritorio y elige Añadir componente → Colección. También puedes ver una vista previa en el menú antes de añadirla.",
     "start.collection.action": "Añadir colección",
     "start.application.title": "Arrastrar una app",
     "start.application.description": "Lleva un icono de aplicación del escritorio a la colección que acabas de añadir.",
@@ -1667,7 +1667,7 @@
     "start.layout.action": "Probar en el escritorio",
     "start.files.title": "Archivos del escritorio",
     "start.files.description": "Muestra juntos los archivos del escritorio y examínalos por tipo.",
-    "start.files.instructions": "Haz clic derecho en un espacio vacío del escritorio y elige Añadir widget → Archivos del escritorio. Después, haz clic derecho en el widget para activar la recopilación automática si lo deseas.",
+    "start.files.instructions": "Haz clic derecho en un espacio vacío del escritorio y elige Añadir componente → Archivos de escritorio. Después, haz clic derecho en el widget para activar la recopilación automática si lo deseas.",
     "start.files.action": "Añadir archivos del escritorio",
     "start.application.hint": "Arrastra un icono de aplicación del escritorio a la nueva colección",
     "start.files.hint": "Haz clic derecho en el widget de archivos del escritorio para activar la recopilación automática",
@@ -1699,7 +1699,7 @@
     "start.basicsCompleted": "Conceptos básicos completados",
     "start.pause": "Ocultar",
     "start.returnSettings": "Volver a ajustes",
-    "start.collection.hint": "Clic derecho en un espacio vacío del escritorio → Añadir widget → Colección para añadir una colección independiente.",
-    "start.files.addHint": "Clic derecho en un espacio vacío del escritorio → Añadir widget → Archivos del escritorio.",
+    "start.collection.hint": "Clic derecho en un espacio vacío del escritorio → Añadir componente → Colección para añadir una colección independiente.",
+    "start.files.addHint": "Clic derecho en un espacio vacío del escritorio → Añadir componente → Archivos de escritorio.",
     "start.layout.hint": "Arrastra el borde inferior de la colección o mantén pulsado el botón central para moverla; después arrastra la esquina inferior derecha para cambiar su tamaño."
 }
