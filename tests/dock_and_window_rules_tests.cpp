@@ -889,6 +889,23 @@ int main(int argc, char** argv)
                     false, 0, hiddenDragHint,
                     -1, dragHintAtTop),
             "drag dwell hints must redraw when their bounds move or when the hint disappears");
+        using PageKeyAction = pageNavigation::KeyboardNavigationAction;
+        Check(pageNavigation::ResolveKeyboardNavigationAction(true, false, false, true) ==
+                PageKeyAction::NavigateDuringDrag,
+            "page shortcuts stay available during icon dragging");
+        Check(pageNavigation::ResolveKeyboardNavigationAction(true, false, false, false) ==
+                PageKeyAction::Navigate,
+            "ordinary desktop paging retains its non-drag path");
+        for (bool dragging : {false, true})
+        {
+            Check(pageNavigation::ResolveKeyboardNavigationAction(false, false, false, dragging) ==
+                    PageKeyAction::Ignore &&
+                pageNavigation::ResolveKeyboardNavigationAction(true, true, false, dragging) ==
+                    PageKeyAction::Ignore &&
+                pageNavigation::ResolveKeyboardNavigationAction(true, false, true, dragging) ==
+                    PageKeyAction::Ignore,
+                "disabled paging, text editing and popup input retain priority even during dragging");
+        }
         Check(pageNavigation::ShortcutMatches(
                 MOD_CONTROL, VK_PRIOR,
                 MOD_CONTROL, VK_PRIOR) &&

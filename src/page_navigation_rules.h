@@ -15,6 +15,17 @@ namespace snowdesktop::page_navigation_rules
 constexpr int kHotEdgeWidthDip = 8;
 constexpr UINT kHotEdgeHintDelayMs = 500;
 
+enum class KeyboardNavigationAction { Ignore, Navigate, NavigateDuringDrag };
+
+inline KeyboardNavigationAction ResolveKeyboardNavigationAction(
+    bool enabled, bool textInputActive, bool popupActive, bool dragging) noexcept
+{
+    if (!enabled || textInputActive || popupActive)
+        return KeyboardNavigationAction::Ignore;
+    return dragging ? KeyboardNavigationAction::NavigateDuringDrag
+                    : KeyboardNavigationAction::Navigate;
+}
+
 enum class PointerTarget
 {
     None,

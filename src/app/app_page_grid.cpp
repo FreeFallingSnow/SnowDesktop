@@ -1165,7 +1165,8 @@ void DesktopApp::NavigatePageOffset(int delta)
     LayoutItems();
     RefreshPageNavHotEdgeHoverAt(lastMousePoint_);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
-    RestoreDesktopWindowLayer();
+    if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None)
+        RestoreDesktopWindowLayer();
 }
 
 void DesktopApp::JumpToPageOffset(int targetOffset)

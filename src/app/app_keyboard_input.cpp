@@ -7,22 +7,29 @@
 bool DesktopApp::TryHandlePageNavigationKey(
     WPARAM key, bool repeated)
 {
-    if (!generalSettings_.pageNavigationKeyboardEnabled ||
-        key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT ||
-        renameEdit_ != nullptr || quickNavigationOpen_ ||
-        IsCollectionPopupInteractive() || dragSession_.IsActive() ||
-        !luaWidgetPanelRequest_.widgetId.empty())
+    if (key == VK_CONTROL || key == VK_MENU || key == VK_SHIFT)
         return false;
 
-    if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
-        return false;
+    bool textInputActive = renameEdit_ != nullptr ||
+        (widgetEngine_ && widgetEngine_->HasFocusedHostInput());
     for (const auto& container : containers_)
     {
         const auto* searchable =
             dynamic_cast<const ScrollingItemWidget*>(container.get());
         if (searchable && searchable->IsSearchFocused())
-            return false;
+            textInputActive = true;
     }
+    const bool movingWidget = widgetAction_ == WidgetAction::Move &&
+        mouseDownWidgetIndex_ < widgets_.size();
+    using snowdesktop::page_navigation_rules::KeyboardNavigationAction;
+    const auto navigationAction =
+        snowdesktop::page_navigation_rules::ResolveKeyboardNavigationAction(
+            generalSettings_.pageNavigationKeyboardEnabled, textInputActive,
+            quickNavigationOpen_ || IsCollectionPopupInteractive() ||
+                !luaWidgetPanelRequest_.widgetId.empty(),
+            dragSession_.IsActive() || movingWidget);
+    if (navigationAction == KeyboardNavigationAction::Ignore)
+        return false;
 
     UINT pressedModifiers = 0;
     if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0)
@@ -84,7 +91,45 @@ bool DesktopApp::TryHandlePageNavigationKey(
     // A configured key remains consumed at page boundaries and on repeats,
     // but only a fresh physical press may initiate one page transition.
     if (!repeated)
+    {
+        const int oldOffset = pageOffset_;
+        const RECT oldWidgetBounds = movingWidget
+            ? widgets_[mouseDownWidgetIndex_].bounds : RECT{};
         NavigatePageOffset(matchesPrevious ? -1 : 1);
+        if (pageOffset_ != oldOffset &&
+            navigationAction == KeyboardNavigationAction::NavigateDuringDrag)
+        {
+            // Paging is a preview: retain the source cells until release.
+            // Rebuild the target now, including when the next event is button-up.
+            navAutoFlipDir_ = 0;
+            navAutoFlipTick_ = 0;
+            cachedDropPreview_ = {};
+            cachedDropPreviewPoint_ = { -1, -1 };
+            cachedDropPreviewTarget_ = nullptr;
+            cachedDropPreviewSlot_ = nullptr;
+            InvalidateDragStaticScene();
+            if (dragSession_.IsActive())
+            {
+                int mods = 0;
+                if (pressedModifiers & MOD_CONTROL) mods |= MK_CONTROL;
+                if (pressedModifiers & MOD_SHIFT) mods |= MK_SHIFT;
+                if (pressedModifiers & MOD_ALT) mods |= MK_ALT;
+                RefreshDragTargetAt(dragSession_.CurrentPoint(), mods);
+            }
+            else if (movingWidget && mouseDownWidgetIndex_ < widgets_.size())
+            {
+                const RECT bounds = widgets_[mouseDownWidgetIndex_].bounds;
+                const int dx = bounds.left - oldWidgetBounds.left;
+                const int dy = bounds.top - oldWidgetBounds.top;
+                dragGroupOriginX_ += dx;
+                dragGroupOriginY_ += dy;
+                mouseDownPoint_.x += dx;
+                mouseDownPoint_.y += dy;
+                OnMouseMoveAt(0, lastMousePoint_);
+            }
+            PresentPointerInteractionFrame();
+        }
+    }
     return true;
 }
 
