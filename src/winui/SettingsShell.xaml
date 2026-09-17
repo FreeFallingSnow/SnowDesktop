@@ -253,6 +253,11 @@
                                   HorizontalContentAlignment="Stretch"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
+                        <!-- Keep the scroll extent as wide as the viewport. A
+                             MaxWidth on the direct scroll child makes WinUI's
+                             extent/alignment calculation disagree with layout
+                             when the window grows past the reading width. -->
+                        <Grid HorizontalAlignment="Stretch">
                         <Border x:Name="PageSurface"
                                 MaxWidth="1120"
                                 Margin="40,16,40,48"
@@ -298,6 +303,7 @@
                             </Canvas>
                             </Grid>
                         </Border>
+                        </Grid>
                     </ScrollViewer>
 
                     <Border x:Name="ProgressHost"
