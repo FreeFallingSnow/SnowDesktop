@@ -9,6 +9,23 @@
 
 namespace snowdesktop
 {
+inline UINT FindNewFolderCommand(IContextMenu* contextMenu, HMENU menu)
+{
+    if (!contextMenu || !menu) return 0;
+    for (int i = 0; i < GetMenuItemCount(menu); ++i)
+    {
+        const UINT candidate = GetMenuItemID(menu, i);
+        if (candidate == 0 || candidate == static_cast<UINT>(-1)) continue;
+        char verb[128]{};
+        if (SUCCEEDED(contextMenu->GetCommandString(candidate - 1,
+                GCS_VERBA, nullptr, verb, static_cast<UINT>(sizeof(verb)))) &&
+            lstrcmpiA(verb, "NewFolder") == 0 &&
+            (GetMenuState(menu, candidate, MF_BYCOMMAND) &
+                (MF_DISABLED | MF_GRAYED)) == 0)
+            return candidate;
+    }
+    return 0;
+}
 
 inline std::wstring DesktopShellInvocationDirectory()
 {

@@ -837,18 +837,6 @@ bool DesktopApp::LaunchQuickNavigationAppEntry(
     if (!entry.absolutePidl.get())
         return false;
 
-    if (snowdesktop::ShellLaunchWorker::
-            ShortcutRequestsAdministrator(entry.parsingName))
-    {
-        return RunPathAsAdministrator(entry.parsingName);
-    }
-
-    Pidl launchPidl;
-    launchPidl.reset(
-        ILClone(entry.absolutePidl.get()));
-    if (!launchPidl.get())
-        return false;
-
     const size_t dockItemIndex =
         FindDockItemIndexForQuickNavigationApp(entry);
     const bool wasClosed =
@@ -856,12 +844,8 @@ bool DesktopApp::LaunchQuickNavigationAppEntry(
         GetDockWindowVisualState(dockItemIndex) ==
             DockWindowVisualState::Closed;
 
-    SHELLEXECUTEINFOW sei{};
-    sei.cbSize = sizeof(sei);
-    sei.fMask = SEE_MASK_IDLIST;
-    sei.lpIDList = launchPidl.get();
-    sei.nShow = SW_SHOWNORMAL;
-    if (!ShellExecuteExW(&sei))
+    if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+            ShellDialogOwnerHwnd(), entry.parsingName, entry.absolutePidl.get()))
         return false;
 
     if (dockItemIndex < items_.size())

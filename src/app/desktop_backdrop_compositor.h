@@ -31,7 +31,7 @@ public:
     DesktopBackdropCompositor& operator=(const DesktopBackdropCompositor&) = delete;
 
     /** @brief 为指定 SnowDesktop 内容窗口创建原生 backdrop 合成窗口。 */
-    bool Initialize(HWND contentWindow);
+    bool Initialize(HWND contentWindow, bool initiallyVisible = true);
     /**
      * @brief 为指定顶层弹出窗口创建原生 backdrop 合成窗口。
      * @param topmost 辅助窗口是否加入 TOPMOST 带；必须与内容窗口策略一致。
@@ -110,24 +110,27 @@ public:
     bool SetPanelOpacity(const RECT& frame, float opacity);
     /** @brief 修改根视觉透明度；由 CommitVisualChanges 统一提交。 */
     bool SetVisualOpacity(float opacity);
-    /** @brief 提交同线程所有 backdrop 目标的共享视觉事务。 */
+    /** @brief 立即提交同线程所有 backdrop 目标的共享视觉事务，不等待 GPU 完成。 */
     void CommitVisualChanges();
     /**
      * @brief 提交共享视觉事务，并在该批次真正完成后投递窗口消息。
      *
      * 用于跨 HWND 的视觉交接；接收方可在通知后安全回收旧目标，避免
-     * RequestCommitAsync 尚未落屏时提前隐藏旧玻璃层。
+     * 合成提交尚未完成时提前隐藏旧玻璃层。
      */
     bool CommitVisualChangesAndNotify(
         HWND notifyWindow, UINT message, WPARAM token);
     /**
      * @brief 结束本帧面板集合并同步辅助窗口区域。
-     * @param requestCommit 是否立即请求非阻塞合成提交；跨目标交接可延后到
+     * @param requestCommit 是否立即执行合成提交；跨目标交接可延后到
      *        两侧属性全部设置后，通过 CommitVisualChangesAndNotify 一次提交。
      */
     void EndFrame(bool requestCommit = true);
     /** @brief 销毁合成目标和辅助窗口。 */
     void Reset();
+
+    // Internal host-local exclusion for a desktop guide above a Dock HWND.
+    void SetOcclusionRect(const RECT& bounds);
 
     bool IsAvailable() const;
     /** @brief 判断窗口是否为该实例创建的 backdrop 辅助窗口。 */

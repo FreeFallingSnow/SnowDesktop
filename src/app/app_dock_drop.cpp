@@ -104,8 +104,9 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
         if (data && data->type == DesktopWidgetType::Collection)
             additions.push_back({ DockEntryType::Collection, data->id, false });
-        else if (data && data->type == DesktopWidgetType::FolderMapping)
-            additions.push_back({ DockEntryType::FolderMapping, data->id, false });
+        else if (data && (data->type == DesktopWidgetType::FolderMapping ||
+                          data->type == DesktopWidgetType::FileCategories))
+            additions.push_back({ DockEntryTypeForWidget(data->type), data->id, false });
         else if (auto* groupEntry =
                      dynamic_cast<FileGroupEntryItem*>(source))
         {
@@ -113,11 +114,11 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                 FindWidgetIndexById(
                     groupEntry->GetChildWidgetId());
             if (widgetIndex < widgets_.size() &&
-                widgets_[widgetIndex].type ==
-                    DesktopWidgetType::FolderMapping)
+                (widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
+                 widgets_[widgetIndex].type == DesktopWidgetType::FileCategories))
             {
                 additions.push_back({
-                    DockEntryType::FolderMapping,
+                    DockEntryTypeForWidget(widgets_[widgetIndex].type),
                     widgets_[widgetIndex].id,
                     false });
             }
@@ -152,14 +153,14 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
         {
             const bool becomingExclusive = existing->keepOnDesktop && !addition.keepOnDesktop;
             existing->keepOnDesktop = addition.keepOnDesktop;
-            if (addition.type == DockEntryType::Collection ||
-                addition.type == DockEntryType::FolderMapping)
+            if (IsWidgetDockEntryType(addition.type))
             {
                 existing->keepOnDesktop = false;
                 size_t widgetIndex = FindWidgetIndexById(addition.reference);
                 if (widgetIndex < widgets_.size())
                 {
-                    if (addition.type == DockEntryType::FolderMapping)
+                    if (addition.type == DockEntryType::FolderMapping ||
+                    addition.type == DockEntryType::DesktopFiles)
                     {
                         for (auto& group : widgets_)
                         {
@@ -208,7 +209,8 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             size_t widgetIndex = FindWidgetIndexById(addition.reference);
             if (widgetIndex < widgets_.size())
             {
-                if (addition.type == DockEntryType::FolderMapping)
+                if (addition.type == DockEntryType::FolderMapping ||
+                    addition.type == DockEntryType::DesktopFiles)
                 {
                     for (auto& group : widgets_)
                     {
@@ -325,16 +327,21 @@ bool DesktopApp::DropItemsIntoDockCollection(
     const std::vector<Item*>& sourceItems, Container* origin,
     DockEntryItem* targetItem, int mods)
 {
-    if (!targetItem || targetItem->GetEntryType() != DockEntryType::Collection)
+    if (!targetItem || !IsLogicalDockEntryType(targetItem->GetEntryType()))
         return false;
     size_t widgetIndex = FindWidgetIndexById(targetItem->GetReference());
     if (widgetIndex >= widgets_.size() ||
-        widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
+         widgets_[widgetIndex].type != DesktopWidgetType::FileCategories))
         return false;
 
-    Collection collection(&widgets_[widgetIndex], this);
+    std::unique_ptr<WidgetContainer> collection;
+    if (widgets_[widgetIndex].type == DesktopWidgetType::FileCategories)
+        collection = std::make_unique<FileCategories>(&widgets_[widgetIndex], this);
+    else
+        collection = std::make_unique<Collection>(&widgets_[widgetIndex], this);
     DragSourceList sourceList = BuildDragSourceList(sourceItems, origin);
-    DropPreviewList preview = BuildDropPreviewList(sourceList, &collection,
+    DropPreviewList preview = BuildDropPreviewList(sourceList, collection.get(),
         nullptr, HitRegion::SortAfter, mods, dragSession_.CurrentPoint());
     return ExecuteDropPipeline(sourceList, preview);
 }
@@ -379,8 +386,7 @@ void DesktopApp::MoveDockItemsToDesktop(
             moving[movingIndex].second;
         if (entry.keepOnDesktop) continue;
         GridSpan span{ 1, 1 };
-        if (entry.type == DockEntryType::Collection ||
-            entry.type == DockEntryType::FolderMapping)
+        if (IsWidgetDockEntryType(entry.type))
         {
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
             if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;
@@ -459,8 +465,7 @@ void DesktopApp::RestoreDockEntriesToDesktop()
     {
         if (entry.keepOnDesktop) continue;
         GridSpan span{ 1, 1 };
-        if (entry.type == DockEntryType::Collection ||
-            entry.type == DockEntryType::FolderMapping)
+        if (IsWidgetDockEntryType(entry.type))
         {
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
             if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;

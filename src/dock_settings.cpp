@@ -471,7 +471,7 @@ public:
 
     bool Apply(bool hookEnabled, bool defaultEnabled,
         const PersonalizationSettings& appearance,
-        const std::vector<SystemTaskbarTargetAppearance>& targets)
+        const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled)
     {
         // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
@@ -491,6 +491,7 @@ public:
         InterlockedIncrement(&state_->generation); // odd: write in progress
         state_->enabled = hookEnabled ? TRUE : FALSE;
         state_->defaultEnabled = defaultEnabled ? TRUE : FALSE;
+        state_->appearanceEnabled = hookEnabled && appearanceEnabled ? TRUE : FALSE;
         state_->style = appearance.glassEnabled
             ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
         if (appearance.glassEnabled && appearance.acrylicEnabled)
@@ -522,6 +523,7 @@ public:
             destination.taskbar =
                 reinterpret_cast<std::uintptr_t>(source.taskbar);
             destination.enabled = source.enabled ? TRUE : FALSE;
+            destination.protectAutoHideActivation = source.protectAutoHideActivation ? TRUE : FALSE;
             destination.style = source.appearance.glassEnabled
                 ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
             if (source.appearance.glassEnabled &&
@@ -652,6 +654,15 @@ public:
         if (state_->status < snowdesktop::taskbar_hook::kStatusIdle)
             return SystemTaskbarBackdropRuntimeState::Failed;
         return SystemTaskbarBackdropRuntimeState::Loading;
+    }
+
+    LONG DrainAutoHideTrace(std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
+        snowdesktop::taskbar_hook::kAutoHideTraceCapacity>& records, LONG& dropped)
+    {
+        std::lock_guard lock(mutex_);
+        dropped = 0;
+        return state_ ? snowdesktop::taskbar_hook::DrainAutoHideTrace(
+            state_->autoHideTrace, records, dropped) : 0;
     }
 
 private:
@@ -904,12 +915,19 @@ void NotifySystemTaskbarCreated()
     GetTaskbarBackdropController().NotifyTaskbarCreated();
 }
 
+LONG DrainSystemTaskbarAutoHideTrace(
+    std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
+        snowdesktop::taskbar_hook::kAutoHideTraceCapacity>& records, LONG& dropped)
+{
+    return GetTaskbarBackdropController().DrainAutoHideTrace(records, dropped);
+}
+
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& appearance,
-    const std::vector<SystemTaskbarTargetAppearance>& targets)
+    const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled)
 {
     return GetTaskbarBackdropController().Apply(hookEnabled, defaultEnabled,
-        appearance, targets);
+        appearance, targets, appearanceEnabled);
 }
 
 PersonalizationSettings MakeTransparentTaskbarAppearance()

@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 207> kHostFeatures = {
+constexpr std::array<std::string_view, 216> kHostFeatures = {
     "animation.frame",
     "calendar.dateMath",
     "calendar.selection",
@@ -33,6 +33,7 @@ constexpr std::array<std::string_view, 207> kHostFeatures = {
     "data.audio.output.default",
     "data.audio.output.volume",
     "data.calendar.events",
+    "data.calendar.events.byId",
     "data.calendar.selectedDate",
     "data.desktop.changes",
     "data.desktop.items",
@@ -62,6 +63,8 @@ constexpr std::array<std::string_view, 207> kHostFeatures = {
     "interaction.contextMenu",
     "interaction.contextMenu.resourceImage",
     "interaction.contextMenu.submenu",
+    "interaction.fileDrop",
+    "interaction.fileDrop.async",
     "interaction.keyboard",
     "interaction.pointerActions",
     "interaction.pointerCapture",
@@ -143,6 +146,9 @@ constexpr std::array<std::string_view, 207> kHostFeatures = {
     "task.filesystem.picker",
     "task.filesystem.access",
     "task.filesystem.binary",
+    "task.filesystem.image",
+    "task.filesystem.list.names",
+    "task.filesystem.picker.multiple",
     "task.start",
     "task.system.openSettings",
     "task.shell.openUri",
@@ -150,6 +156,9 @@ constexpr std::array<std::string_view, 207> kHostFeatures = {
     "time.basic",
     "time.calendar",
     "time.previewClock",
+    "ui.datePicker",
+    "ui.timePicker",
+    "ui.durationPicker",
     "ui.semanticMetrics.rowUnit",
     "widget.backgroundLayer",
     "widget.context",
@@ -379,7 +388,7 @@ kSystemDataTopicContracts = {{
         "SnowFilesystemWatchSubscribeOptions",
         "SnowFilesystemWatchDataValue" },
 }};
-constexpr std::array<SystemTaskContract, 41> kSystemTaskContracts = {{
+constexpr std::array<SystemTaskContract, 42> kSystemTaskContracts = {{
     { "network.request", "task.network.request", "network.internet",
         false, 2, "SnowNetworkRequestArguments", "SnowNetworkTaskValue" },
     { "notification.show", "task.notification.show", "notification.post",
@@ -414,6 +423,9 @@ constexpr std::array<SystemTaskContract, 41> kSystemTaskContracts = {{
     { "filesystem.stat", "task.filesystem.access",
         "filesystem.userSelected.read", false, 4,
         "SnowFilesystemHandleArguments", "SnowFilesystemMetadata" },
+    { "filesystem.image", "task.filesystem.image",
+        "filesystem.userSelected.read", false, 1,
+        "SnowFilesystemImageArguments", "SnowFilesystemImageTaskValue" },
     { "filesystem.list", "task.filesystem.access",
         "filesystem.userSelected.read", false, 2,
         "SnowFilesystemListArguments", "SnowFilesystemListTaskValue" },

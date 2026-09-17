@@ -143,7 +143,8 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         WriteDiagnosticLogEntry(message);
     }
     if (widgetIndex >= widgets_.size() ||
-        widgets_[widgetIndex].type != DesktopWidgetType::Collection)
+        (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
+         widgets_[widgetIndex].type != DesktopWidgetType::FileCategories))
         return;
 
     CancelCollectionPopupDwell();
@@ -157,8 +158,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         if (DockEntryItem* requestedItem =
                 requestedDock->EntryAtPoint(anchorPoint);
             requestedItem &&
-            requestedItem->GetEntryType() ==
-                DockEntryType::Collection &&
+            IsLogicalDockEntryType(requestedItem->GetEntryType()) &&
             requestedItem->GetReference() ==
                 widgets_[widgetIndex].id)
         {
@@ -221,8 +221,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
         if (DockEntryItem* dockItem =
                 dock->EntryAtPoint(anchorPoint);
             dockItem &&
-            dockItem->GetEntryType() ==
-                DockEntryType::Collection &&
+            IsLogicalDockEntryType(dockItem->GetEntryType()) &&
             dockItem->GetReference() ==
                 widgets_[widgetIndex].id)
         {
@@ -253,6 +252,9 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     ClearDockFolderPopupEntries();
     popupWidgetIndex_ = widgetIndex;
     popupScrollOffset_ = 0;
+    ResetCollectionPopupFanScroll();
+    popupFanShowAll_ = false;
+    popupFanActionFocused_ = false;
     popupHasAnchor_ = anchorPoint.x != LONG_MIN || anchorPoint.y != LONG_MIN;
     popupAnchoredToDock_ = false;
     collectionPopupDockHost_ = nullptr;
@@ -287,7 +289,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
             if (!dockPage) dockPage = GetFirstPageGridPage();
             if (dockPage) popupPageId_ = dockPage->id;
             if (DockEntryItem* dockItem = dock->EntryAtPoint(anchorPoint);
-                dockItem && dockItem->GetEntryType() == DockEntryType::Collection &&
+                dockItem && IsLogicalDockEntryType(dockItem->GetEntryType()) &&
                 dockItem->GetReference() == widgets_[widgetIndex].id)
             {
                 RECT itemBounds = dock->GetElementVisualRect(
@@ -620,6 +622,7 @@ void DesktopApp::RefreshDockFolderPopup(
                 source.itemKeys;
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.fanPopup = source.fanPopup;
             dockFolderPopupWidget_.showDetails =
                 source.showDetails;
             dockFolderPopupWidget_.detailShowModified =
@@ -741,6 +744,7 @@ CommitDockFolderPopupStateToSource()
                 dockFolderPopupWidget_.itemKeys;
             source.listMode =
                 dockFolderPopupWidget_.listMode;
+            source.fanPopup = dockFolderPopupWidget_.fanPopup;
             source.showDetails =
                 dockFolderPopupWidget_.showDetails;
             source.detailShowModified =
@@ -791,6 +795,7 @@ CommitDockFolderPopupStateToSource()
             dockFolderPopupWidget_.itemKeys;
         entry.listMode =
             dockFolderPopupWidget_.listMode;
+        entry.fanPopup = dockFolderPopupWidget_.fanPopup;
         entry.detailShowModified =
             dockFolderPopupWidget_.detailShowModified;
         entry.detailShowType =
@@ -871,5 +876,6 @@ void DesktopApp::SortDockFolderPopupContents(
     }
 
     popupScrollOffset_ = 0;
+    ResetCollectionPopupFanScroll();
     RefreshDockFolderPopupGeometry();
 }

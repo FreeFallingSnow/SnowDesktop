@@ -20,6 +20,13 @@ inline constexpr int kSteamOperationFailed = 5;
 inline constexpr int kSteamOperationTimedOut = 6;
 inline constexpr int kInvalidArguments = 64;
 
+// Steam visibility values: public=0, friends=1, private=2, unlisted=3.
+inline std::optional<int> ResolveWorkshopVisibility(bool creating,
+    std::optional<int> requested) noexcept
+{
+    return creating ? std::optional<int>(requested.value_or(0)) : requested;
+}
+
 struct CoreError
 {
     int exitCode = kSteamOperationFailed;

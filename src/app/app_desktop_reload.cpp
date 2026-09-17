@@ -538,6 +538,9 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
         return 0;
+    case kWebsiteIconReadyMessage:
+        OnWebsiteIconReady();
+        return 0;
     case kUrlDropDownloadCompletedMessage:
         OnUrlDropDownloadCompleted(lp);
         return 0;
@@ -550,6 +553,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case kWidgetAudioAnalysisWakeMessage:
         if (widgetEngine_)
             widgetEngine_->OnAudioAnalysisWake();
+        return 0;
+    case kWidgetTaskWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnTaskWake();
         return 0;
     case kActivateExistingInstanceMessage:
         ShowSettingsWindow();
@@ -742,6 +749,15 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         }
     }
     LoadDesktopItems(snapshot);
+    if (!desktopItemsReady_)
+    {
+        // A failed initial read is not an empty desktop. Preserve the loaded
+        // placement records and let the existing Shell refresh path retry.
+        reloading_ = false;
+        RequestShellRefresh();
+        return;
+    }
+    InitializeGridFromWindows();
     // LoadLayoutSlots may normalize Dock entries before the freshly
     // enumerated desktop items are available. Discard those provisional
     // resolutions so paths and shortcut targets are classified from the new

@@ -9,6 +9,14 @@
     mc:Ignorable="d">
 
     <UserControl.Resources>
+        <Style x:Key="SettingsShellContentColumnStyle" TargetType="Border">
+            <Setter Property="MaxWidth" Value="1120" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
+        <Style x:Key="SettingsShellGuideButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
         <Style x:Key="SettingsShellCardButtonStyle" TargetType="Button">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -64,6 +72,7 @@
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="PageSurface.Margin" Value="20,12,20,32" />
+                        <Setter Target="GuideReturnBanner.Margin" Value="20,8,20,0" />
                         <Setter Target="PageTitle.FontSize" Value="28" />
                         <Setter Target="PageHeaderIconHost.Width" Value="40" />
                         <Setter Target="PageHeaderIconHost.Height" Value="40" />
@@ -75,6 +84,7 @@
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="PageSurface.Margin" Value="40,16,40,48" />
+                        <Setter Target="GuideReturnBanner.Margin" Value="40,8,40,0" />
                         <Setter Target="PageTitle.FontSize" Value="32" />
                         <Setter Target="PageHeaderIconHost.Width" Value="44" />
                         <Setter Target="PageHeaderIconHost.Height" Value="44" />
@@ -147,11 +157,6 @@
                         Style="{ThemeResource NavigationViewPaneSearchButtonStyle}" />
             </NavigationView.PaneCustomContent>
             <NavigationView.MenuItems>
-                <NavigationViewItem x:Name="HomeItem"
-                                    Tag="home"
-                                    Visibility="Collapsed">
-                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
-                </NavigationViewItem>
                 <NavigationViewItem x:Name="GeneralItem" Tag="general" />
                 <NavigationViewItem x:Name="PersonalizationItem"
                                     Tag="appearance"
@@ -198,6 +203,7 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
@@ -207,17 +213,60 @@
                          IsOpen="False"
                          IsClosable="True" />
 
-                <Grid Grid.Row="1">
+                <Border x:Name="GuideReturnBanner"
+                        Grid.Row="1"
+                        Style="{StaticResource SettingsShellContentColumnStyle}"
+                        Margin="40,8,40,0"
+                        Visibility="Collapsed"
+                        Padding="4"
+                        CornerRadius="8"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <Grid ColumnSpacing="4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="GuideReturnButton"
+                                Style="{StaticResource SettingsShellGuideButtonStyle}"
+                                Padding="12,8" MinHeight="40"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Glyph="&#xE72B;" FontSize="16" />
+                                <TextBlock x:Name="GuideReturnText" Grid.Column="1"
+                                           TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </Grid>
+                        </Button>
+                        <Button x:Name="GuideReturnCloseButton" Grid.Column="1"
+                                Style="{StaticResource SettingsShellGuideButtonStyle}"
+                                Width="40" Height="40" Padding="0"
+                                VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE711;" FontSize="12" />
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="2">
                     <ScrollViewer x:Name="PageScrollViewer"
-                                  MaxWidth="1200"
                                   HorizontalAlignment="Stretch"
                                   HorizontalContentAlignment="Stretch"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
+                        <!-- Keep the scroll extent as wide as the viewport. A
+                             MaxWidth on the direct scroll child makes WinUI's
+                             extent/alignment calculation disagree with layout
+                             when the window grows past the reading width. -->
+                        <Grid HorizontalAlignment="Stretch">
                         <Border x:Name="PageSurface"
-                                MaxWidth="1120"
-                                Margin="40,16,40,48"
-                                HorizontalAlignment="Stretch">
+                                Style="{StaticResource SettingsShellContentColumnStyle}"
+                                Margin="40,16,40,48">
+                            <Grid x:Name="PageContentGrid">
                             <StackPanel Spacing="16">
                                 <BreadcrumbBar x:Name="PageBreadcrumb" />
                                 <Grid MinHeight="52" ColumnSpacing="16">
@@ -250,7 +299,15 @@
                                 </Grid>
                                 <StackPanel x:Name="PageCards" Spacing="8" />
                             </StackPanel>
+                            <Canvas x:Name="FocusHighlightLayer" IsHitTestVisible="False" Visibility="Collapsed">
+                                <Grid x:Name="FocusHighlight" Opacity="0">
+                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="8" />
+                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" />
+                                </Grid>
+                            </Canvas>
+                            </Grid>
                         </Border>
+                        </Grid>
                     </ScrollViewer>
 
                     <Border x:Name="ProgressHost"

@@ -18,6 +18,7 @@
 #include "widgets_page_presenter.h"
 
 #include <winrt/Microsoft.UI.Xaml.Media.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -236,6 +237,9 @@ private:
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
     void ScheduleFocus();
+    void HighlightSetting(const winrt::Microsoft::UI::Xaml::FrameworkElement& target);
+    void StopFocusHighlight() noexcept;
+    void UpdateFocusHighlight();
     void FocusPendingTarget();
 
     void RequestRoute(const snowdesktop::SettingsRoute& route);
@@ -309,6 +313,7 @@ private:
         backupDataPage_;
 
     snowdesktop::winui::SettingsShellNavigationState navigation_;
+    snowdesktop::winui::SettingsShellNavigationFeedback navigationFeedback_;
     std::vector<snowdesktop::SettingsSearchResult> searchResults_;
     std::vector<snowdesktop::SettingsRoute> breadcrumbRoutes_;
     winrt::Windows::Foundation::Collections::IObservableVector<
@@ -328,6 +333,11 @@ private:
     double largeIconParentOffset_ = 0;
     bool restoreLargeIconParent_ = false;
     winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> largeIconParentFocus_;
+    winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> highlightTarget_;
+    winrt::Microsoft::UI::Xaml::Media::Animation::Storyboard focusAnimation_{nullptr};
+    winrt::event_token focusAnimationCompletedToken_{};
+    std::uint64_t focusAnimationSerial_ = 0;
+    bool focusPendingLayout_ = false;
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
@@ -338,6 +348,7 @@ private:
     std::optional<bool> navigationIconsHighContrast_;
 
     winrt::event_token actualThemeChangedToken_{};
+    winrt::event_token guideReturnToken_{}, guideReturnCloseToken_{}, focusLayoutToken_{};
     winrt::event_token backKeyboardAcceleratorToken_{};
     winrt::event_token searchKeyboardAcceleratorToken_{};
     winrt::event_token compactSearchButtonClickToken_{};

@@ -87,6 +87,23 @@ inline bool Apply(
         IsAbove(preserveAboveWindow, contentWindow);
     const bool backdropValid =
         backdropWindow && IsWindow(backdropWindow);
+    const auto synchronizeBackdropGeometry = [&]() {
+        RECT current{};
+        const bool hasRect = GetWindowRect(backdropWindow, &current) != FALSE;
+        const bool sameOrigin = hasRect && current.left == backdropOrigin.x &&
+            current.top == backdropOrigin.y;
+        const bool sameSize = hasRect && current.right - current.left == backdropSize.cx &&
+            current.bottom - current.top == backdropSize.cy;
+        // Even an identical SetWindowPos sends positioning messages and can
+        // disturb the native backdrop during a focus/layer-policy refresh.
+        if (sameOrigin && sameSize)
+            return true;
+        const UINT flags = backdropFlags | SWP_NOZORDER |
+            (sameOrigin ? SWP_NOMOVE : 0) | (sameSize ? SWP_NOSIZE : 0);
+        return SetWindowPos(backdropWindow, nullptr,
+            backdropOrigin.x, backdropOrigin.y,
+            backdropSize.cx, backdropSize.cy, flags) != FALSE;
+    };
     if (protectedWindowAlreadyAbove)
     {
         // Preserve the actual order for either requested band while this
@@ -94,11 +111,7 @@ inline bool Apply(
         // is topmost, so do not infer the requested band from menu styles.
         if (!backdropValid)
             return true;
-        return SetWindowPos(
-            backdropWindow, nullptr,
-            backdropOrigin.x, backdropOrigin.y,
-            backdropSize.cx, backdropSize.cy,
-            backdropFlags | SWP_NOZORDER) != FALSE;
+        return synchronizeBackdropGeometry();
     }
 
     if (!backdropValid)
@@ -112,16 +125,17 @@ inline bool Apply(
         IsTopmost(contentWindow) == topmost &&
         IsTopmost(backdropWindow) == topmost &&
         IsPaired(contentWindow, backdropWindow);
-    if (usesBandSentinel && pairAlreadySynchronized)
+    const bool concreteAnchorAlreadySynchronized =
+        contentInsertAfter && IsWindow(contentInsertAfter) &&
+        GetWindow(contentWindow, GW_HWNDPREV) == contentInsertAfter;
+    if (pairAlreadySynchronized &&
+        (usesBandSentinel || concreteAnchorAlreadySynchronized))
     {
         // A layer-policy refresh must not raise an already-correct popup
         // pair above a menu that Windows has since placed over its content.
-        // Keep the helper geometry synchronized without changing Z order.
-        return SetWindowPos(
-            backdropWindow, nullptr,
-            backdropOrigin.x, backdropOrigin.y,
-            backdropSize.cx, backdropSize.cy,
-            backdropFlags | SWP_NOZORDER) != FALSE;
+        // The same applies to an already-correct concrete desktop anchor.
+        // Only touch the helper if its geometry actually changed.
+        return synchronizeBackdropGeometry();
     }
 
     const bool changesZOrderBand =
@@ -186,6 +200,18 @@ inline bool Apply(
         backdropFlags) != FALSE;
     return contentPositioned && backdropPositioned &&
         IsPaired(contentWindow, backdropWindow);
+}
+
+// A transparent popup has no backdrop to establish pair adjacency. Refreshing
+// its band must be idempotent too, so it does not overtake drag HUD windows.
+inline bool MaintainContentBand(HWND contentWindow, bool topmost,
+    HWND preserveAboveWindow = nullptr)
+{
+    if (!contentWindow || !IsWindow(contentWindow)) return false;
+    if (IsTopmost(contentWindow) == topmost) return true;
+    return Apply(contentWindow, nullptr,
+        topmost ? HWND_TOPMOST : HWND_NOTOPMOST, topmost,
+        POINT{}, SIZE{}, preserveAboveWindow);
 }
 
 } // namespace snowdesktop::popup_window_pair_z_order

@@ -350,6 +350,12 @@ void DesktopApp::ShowWidgetContextMenu(
         widget.scrollContainerMode
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
+    const auto appendFanToggle = [&]() {
+        if (widget.gridCell.pageId != kDockPageId) return;
+        const auto label = statusLabel(_LW("app.interact.popup_fan"),
+            widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"));
+        AppendMenuW(menu, MF_STRING, kContextPopupFan, label.c_str());
+    };
     std::vector<LuaWidgetMenuItem> luaMenuItems;
     std::vector<LuaWidgetMenuItem> luaMenuActions;
     auto luaMenuScope = snowdesktop::right_click_contract::
@@ -361,6 +367,7 @@ void DesktopApp::ShowWidgetContextMenu(
     if (widget.type == DesktopWidgetType::Collection)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpen, _LW("app.interact.open_all"));
+        appendFanToggle();
         if (generalSettings_.demoModeEnabled &&
             demoIdentityAssetsAvailable_)
         {
@@ -509,6 +516,7 @@ void DesktopApp::ShowWidgetContextMenu(
     else if (widget.type == DesktopWidgetType::FolderMapping)
     {
         AppendMenuW(menu, MF_STRING, kContextWidgetOpenFolder, _LW("app.interact.open_folder"));
+        appendFanToggle();
         AppendMenuW(menu,
             HasPasteableFileClipboardData()
                 ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -742,6 +750,7 @@ void DesktopApp::ShowWidgetContextMenu(
             _LW("app.interact.delete_widget"));
     }
 
+    setFluentIcon(menu, kContextPopupFan, snowdesktop::menu_fluent_glyphs::kFanExpansion);
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
     setFluentIcon(menu, kContextWidgetManualCollect,
         snowdesktop::menu_fluent_glyphs::kCollectItems);
@@ -919,6 +928,7 @@ void DesktopApp::ShowWidgetContextMenu(
         {
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.fanPopup = source.fanPopup;
             dockFolderPopupWidget_.showDetails =
                 source.showDetails;
             dockFolderPopupWidget_.detailShowModified =
@@ -969,6 +979,30 @@ void DesktopApp::ShowWidgetContextMenu(
             !effectiveSource.sourceFolderPath.empty())
             shellLaunchWorker_.Enqueue(
                 hwnd_, effectiveSource.sourceFolderPath);
+        break;
+    case kContextPopupFan:
+        if (widgets_[widgetIndex].gridCell.pageId == kDockPageId &&
+            (widgets_[widgetIndex].type == DesktopWidgetType::Collection ||
+             widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping))
+        {
+            widgets_[widgetIndex].fanPopup = !widgets_[widgetIndex].fanPopup;
+            if ((!dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) ||
+                (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id))
+            {
+                ResetCollectionPopupFanScroll();
+                popupFanShowAll_ = false;
+                popupFanActionFocused_ = false;
+                ResetCollectionPopupAnimationCache();
+                popupAnimation_.ShowImmediately();
+                popupAnimation_.Configure(
+                    snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+                    snowdesktop::animation::RuntimeDurationScale() *
+                        (widgets_[widgetIndex].fanPopup ? 2.4 : 1.0));
+            }
+            SaveLayoutSlots();
+            refreshOpenPopupDisplay();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         break;
     case kContextWidgetToggleListMode:
         widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
@@ -1264,8 +1298,7 @@ void DesktopApp::ShowWidgetContextMenu(
         // 成员落点已在删除前逐个分配；移除组件后重新进入桌面容器。
         widgets_.erase(widgets_.begin() + static_cast<std::ptrdiff_t>(widgetIndex));
         std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-            return (entry.type == DockEntryType::Collection ||
-                    entry.type == DockEntryType::FolderMapping) &&
+            return (IsWidgetDockEntryType(entry.type)) &&
                 entry.reference == deletedWidgetId;
         });
         EnsureNavTabOrder();
@@ -1317,7 +1350,8 @@ void DesktopApp::ShowWidgetContextMenu(
                     CSIDL_DESKTOPDIRECTORY, FALSE))
             {
                 ShowNewMenuAndInvoke(
-                    screenPoint, desktopPath);
+                    screenPoint, desktopPath, false,
+                    widgets_[effectiveSourceIndex].id);
                 RequestShellRefresh();
             }
         }

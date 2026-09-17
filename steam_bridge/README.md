@@ -150,7 +150,7 @@ On the first launch after upgrading, an older
 are removed. A marker below `<SnowDesktop data>\migrations` prevents later
 launches from touching that legacy root again.
 
-New items are created private. On update, title, description, and visibility
+New items are public by default; an explicit `--visibility` overrides this. On update, title, description, and visibility
 are left untouched; primary preview and tags change only when selected. After a
 successful upload the Manager opens Steam Owner Controls for additional media,
 visibility, contributors, legal terms, and deletion.
@@ -187,7 +187,7 @@ SnowDesktopSteamBridge.exe workshop publish `
   --change-note "Version 1.1.0"
 ```
 
-Creation requires a title and a preview. New items default to private. Steam
+Creation requires a title and a preview. New items default to public; `--visibility private` creates a private item. Steam
 requires Workshop previews to be smaller than 1 MiB. The bridge uploads a
 folder containing exactly `package.snowwidget`; it does not reuse or copy the
 GPL package validator. Consumers remain responsible for authoritative package

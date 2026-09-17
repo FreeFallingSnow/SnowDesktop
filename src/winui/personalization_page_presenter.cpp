@@ -1323,6 +1323,15 @@ void PersonalizationPagePresenter::SetActions(
         impl_->actions = std::move(actions);
 }
 
+void PersonalizationPagePresenter::SetLayoutSpacingContent(
+    const mux::UIElement& content)
+{
+    if (!impl_ || !content) return;
+    uint32_t index = 0;
+    const auto children = impl_->layoutCard.content.Children();
+    if (!children.IndexOf(content, index)) children.InsertAt(0, content);
+}
+
 mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 {
     return impl_ ? impl_->themeRoot : nullptr;

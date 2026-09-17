@@ -1786,7 +1786,7 @@ void FileGroup::OnItemsDropped(
     HitRegion region, int mods)
 {
     if (!app_ || !data_ || sourceItems.empty()) return;
-    const bool allFolderMappings =
+    const bool allFileSources =
         std::all_of(
             sourceItems.begin(),
             sourceItems.end(),
@@ -1796,9 +1796,8 @@ void FileGroup::OnItemsDropped(
                         dynamic_cast<
                             DockEntryItem*>(item))
                 {
-                    if (dockItem->GetEntryType() !=
-                            DockEntryType::
-                                FolderMapping)
+                    if (dockItem->GetEntryType() != DockEntryType::FolderMapping &&
+                        dockItem->GetEntryType() != DockEntryType::DesktopFiles)
                         return false;
                     id = dockItem->GetReference();
                 }
@@ -1819,12 +1818,10 @@ void FileGroup::OnItemsDropped(
                     app_->FindWidgetIndexById(id);
                 return childIndex <
                         app_->widgets_.size() &&
-                    app_->widgets_[childIndex].
-                        type ==
-                        DesktopWidgetType::
-                            FolderMapping;
+                    (app_->widgets_[childIndex].type == DesktopWidgetType::FolderMapping ||
+                     app_->widgets_[childIndex].type == DesktopWidgetType::FileCategories);
             });
-    if (allFolderMappings)
+    if (allFileSources)
     {
         size_t insertIndex =
             GetDropInsertIndex(
@@ -1837,7 +1834,7 @@ void FileGroup::OnItemsDropped(
         const size_t groupIndex =
             app_->FindWidgetIndexById(
                 data_->id);
-        app_->MoveFolderMappingsToFileGroup(
+        app_->MoveFileSourcesToFileGroup(
             sourceItems, groupIndex,
             insertIndex);
         return;

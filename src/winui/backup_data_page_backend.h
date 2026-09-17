@@ -15,11 +15,15 @@
 namespace snowdesktop::winui
 {
 
+// Includes detached work until its application-owned completion is released.
+bool HasPendingBackupDataWork() noexcept;
+
 /** Validated documents handed back to DesktopApp for an STA-owned commit. */
 struct LayoutRestorePayload
 {
     std::string layoutDocument;
     std::optional<std::string> storageDocument;
+    bool clearLayout = false;
 };
 
 /**
@@ -83,6 +87,8 @@ struct BackupDataPageBackendOptions
      */
     std::function<SettingsActionResult(LayoutRestorePayload payload)>
         commitLayoutRestore;
+
+    std::function<SettingsActionResult()> allowDataOperations;
 
     std::function<std::wstring(std::string_view key)> localize;
 };

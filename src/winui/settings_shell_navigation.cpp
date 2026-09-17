@@ -9,6 +9,48 @@ namespace
 constexpr std::size_t kMaximumHistoryEntries = 64;
 }
 
+bool SettingsShellNavigationFeedback::UpdateRoute(
+    const SettingsRoute& route, std::uint64_t generation)
+{
+    if (route_ == route && generation_ == generation)
+        return false;
+    route_ = route;
+    generation_ = generation;
+    Restart();
+    return true;
+}
+
+void SettingsShellNavigationFeedback::Restart() noexcept
+{
+    highlightConsumed_ = false;
+    returnDismissed_ = false;
+}
+
+bool SettingsShellNavigationFeedback::ConsumeHighlight() noexcept
+{
+    if (!route_ || route_->focusId.empty() || highlightConsumed_)
+        return false;
+    highlightConsumed_ = true;
+    return true;
+}
+
+bool SettingsShellNavigationFeedback::ShowGuideReturn() const noexcept
+{
+    return route_ && !returnDismissed_ && !route_->guideTopic.empty() &&
+        route_->page != SettingsPage::General && route_->page != SettingsPage::Home;
+}
+
+void SettingsShellNavigationFeedback::DismissGuideReturn() noexcept
+{
+    returnDismissed_ = true;
+    CancelHighlight();
+}
+
+void SettingsShellNavigationFeedback::CancelHighlight() noexcept
+{
+    highlightConsumed_ = true;
+}
+
 bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
 {
     switch (page)

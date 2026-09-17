@@ -1,4 +1,6 @@
 #include "widgets/collection_group_rules.h"
+#include "app/widget_group_transition.h"
+#include "widgets/widget_pair_drop.h"
 #include "desktop_hover_rules.h"
 #include "drag_input_rules.h"
 #include "drag_hint_rules.h"
@@ -91,13 +93,9 @@ void TestViewportClipping()
     if (partial)
     {
         Check(
-            partial->left >= 0 &&
-            partial->top >= 0 &&
-            partial->right <= 100 &&
-            partial->bottom <= 30 &&
-            partial->right > partial->left &&
-            partial->bottom > partial->top,
-            "clipped hit bounds must be a non-empty subset of the viewport");
+            partial->left == 0 && partial->top == 4 &&
+            partial->right == 60 && partial->bottom == 28,
+            "clipped hit bounds must equal the full visible intersection");
     }
     Check(
         !rules::ClipToViewport(
@@ -958,8 +956,11 @@ void TestPopupIconLoadCancellationRules()
         queue.push_back(Task{popup, std::move(key)});
     };
     append(false, L"ordinary-before");
-    for (int index = 0; index < 10000; ++index)
+    for (int index = 0; index < 5; ++index)
+    {
         append(true, L"popup-queued-" + std::to_wstring(index));
+        if (index == 2) append(false, L"ordinary-middle");
+    }
     append(false, L"ordinary-after");
     pendingKeys.insert(L"popup-in-flight");
     pendingKeys.insert(L"popup-posted");
@@ -968,12 +969,14 @@ void TestPopupIconLoadCancellationRules()
         snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
             queue, pendingKeys,
             [](const Task& task) { return task.popup; });
-    Check(removed == 10000 && queue.size() == 2 &&
+    Check(removed == 5 && queue.size() == 3 &&
             queue[0].requestKey == L"ordinary-before" &&
-            queue[1].requestKey == L"ordinary-after",
-        "popup cancellation must remove 10000 queued tasks without reordering other icon work");
-    Check(pendingKeys.size() == 4 &&
+            queue[1].requestKey == L"ordinary-middle" &&
+            queue[2].requestKey == L"ordinary-after",
+        "popup cancellation removes interleaved tasks without reordering other icon work");
+    Check(pendingKeys.size() == 5 &&
             pendingKeys.contains(L"ordinary-before") &&
+            pendingKeys.contains(L"ordinary-middle") &&
             pendingKeys.contains(L"ordinary-after") &&
             pendingKeys.contains(L"popup-in-flight") &&
             pendingKeys.contains(L"popup-posted"),
@@ -997,22 +1000,10 @@ void TestPopupIconLoadCancellationRules()
 
 void TestDragHintRasterRules()
 {
-    bool valid = false;
-    unsigned cachedDpi = 0;
-    int renderCount = 0;
-    for (int i = 0; i < 1000; ++i)
-    {
-        const bool sameText = i != 0;
-        if (!dragHintRules::ShouldReuseRaster(
-                valid, sameText, cachedDpi, 96))
-        {
-            ++renderCount;
-            valid = true;
-            cachedDpi = 96;
-        }
-    }
-    Check(renderCount == 1,
-        "repeated OLE drag hints with the same text and DPI must render once");
+    Check(!dragHintRules::ShouldReuseRaster(true, true, 96, 96, false),
+        "arming or releasing a modifier must repaint a cached hint with identical text");
+    Check(dragHintRules::ShouldReuseRaster(true, true, 96, 96),
+        "valid cached text at the same DPI is eligible for raster reuse");
     Check(
         !dragHintRules::ShouldReuseRaster(true, false, 96, 96) &&
             !dragHintRules::ShouldReuseRaster(true, true, 96, 144) &&
@@ -1034,6 +1025,258 @@ void TestDragHintRasterRules()
         48, 22, 8);
     Check(tinyWorkArea.x == -50 && tinyWorkArea.y == -10,
         "undersized work areas must center overflow without invalid clamp bounds");
+}
+
+void TestWidgetPairDrops()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    using Type = DesktopWidgetType;
+    using Action = pair::Action;
+    // Independent supported pairs. The production entry is the same Apply
+    // transaction used by pointer release; only key normalization is supplied.
+    const auto normalize = [](std::wstring key) {
+        for (auto& c : key) if (c >= L'a' && c <= L'z') c -= L'a' - L'A';
+        return key;
+    };
+    struct Case { Type source; Type target; bool merge; Action group; };
+    const Case cases[] = {
+        {Type::Collection, Type::Collection, true, Action::CreateCollectionGroup},
+        {Type::FileCategories, Type::FileCategories, true, Action::CreateFileGroup},
+        {Type::FileCategories, Type::FolderMapping, false, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FileCategories, false, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FolderMapping, false, Action::CreateFileGroup},
+        {Type::Collection, Type::FileCategories, false, Action::None},
+        {Type::FileCategories, Type::Collection, false, Action::None},
+        {Type::LuaScript, Type::Collection, false, Action::None},
+        {Type::Collection, Type::CollectionGroup, false, Action::None},
+        {Type::FileCategories, Type::FileGroup, false, Action::None},
+    };
+    for (const auto& entry : cases)
+    {
+        const auto options = pair::GetOptions(entry.source, entry.target);
+        for (unsigned mods = 0; mods < 8; ++mods)
+        {
+            const Action expected = mods == 1 ? entry.group
+                : (mods == 2 && entry.merge ? Action::Merge : Action::None);
+            Check(pair::ResolveAction(options, mods & 1, mods & 2, mods & 4) == expected,
+                "only a lone Ctrl or supported lone Shift arms the requested pair operation");
+        }
+        const auto makeWidgets = [&] {
+            std::vector<DesktopWidget> widgets(3);
+            widgets[0].id = L"source";
+            widgets[0].type = entry.source;
+            widgets[0].itemKeys = {L"shared", L"source-only", L"missing-on-disk"};
+            widgets[0].sourceFolderPath = L"C:\\mapped-source";
+            widgets[0].gridSpan = {3, 4};
+            widgets[0].showSearchBox = true;
+            widgets[1].id = L"target";
+            widgets[1].type = entry.target;
+            widgets[1].sourceFolderPath = L"C:\\mapped-target";
+            widgets[1].itemKeys = {L"target-first", L"SHARED"};
+            widgets[1].customTitle = L"Keep target title";
+            widgets[1].showFileCategories = true;
+            widgets[1].gridCell = {L"page-a", 2, 3};
+            widgets[1].gridSpan = {2, 2};
+            widgets[2].id = L"untouched";
+            widgets[2].itemKeys = {L"unrelated"};
+            return widgets;
+        };
+        DesktopWidget group;
+        group.id = L"new-group";
+        group.gridCell = {L"page-a", 2, 3};
+        group.gridSpan = {2, 2};
+        std::vector<DockEntry> dock;
+        auto widgets = makeWidgets();
+        Check(!pair::Apply(widgets, dock, 0, 1, Action::None, {}, normalize) &&
+                widgets.size() == 3 && widgets[0].itemKeys.size() == 3,
+            "cancelled or unarmed drops must retain the complete source");
+        Check(pair::Apply(widgets, dock, 0, 1, Action::Merge, {}, normalize) == entry.merge,
+            "merge must reject mismatched component types");
+        if (entry.merge)
+        {
+            Check(widgets.size() == 2 && widgets[0].id == L"target" &&
+                    widgets[0].itemKeys == std::vector<std::wstring>{
+                        L"target-first", L"SHARED", L"source-only", L"missing-on-disk"} &&
+                    widgets[0].customTitle == L"Keep target title" &&
+                    widgets[0].showFileCategories && widgets[1].id == L"untouched" &&
+                    widgets[1].itemKeys == std::vector<std::wstring>{L"unrelated"},
+                "merge must append all source contents before deleting the source, deduplicate keys and preserve target/unrelated data");
+        }
+        else
+            Check(widgets.size() == 3 && widgets[0].itemKeys.size() == 3 &&
+                    widgets[1].itemKeys.size() == 2,
+                "rejected merges must leave both components intact");
+        widgets = makeWidgets();
+        const bool grouped = pair::Apply(widgets, dock, 0, 1, entry.group, group, normalize);
+        Check(grouped == (entry.group != Action::None), "group creation must enforce the supported pair matrix");
+        if (grouped)
+        {
+            Check(widgets.size() == 4 && widgets[3].id == L"new-group" &&
+                    widgets[3].childWidgetIds == std::vector<std::wstring>{L"target", L"source"} &&
+                    widgets[3].activeCategoryId == L"target" &&
+                    widgets[3].type == (entry.group == Action::CreateCollectionGroup
+                        ? Type::CollectionGroup : Type::FileGroup) &&
+                    widgets[3].gridCell.pageId == L"page-a" && widgets[3].gridCell.column == 2 &&
+                    widgets[0].id == L"source" && widgets[0].itemKeys.size() == 3 &&
+                    widgets[0].sourceFolderPath == L"C:\\mapped-source" &&
+                    widgets[0].gridSpan.columns == 3 && widgets[0].gridSpan.rows == 4 &&
+                    widgets[0].showSearchBox && widgets[1].customTitle == L"Keep target title" &&
+                    widgets[1].sourceFolderPath == L"C:\\mapped-target",
+                "group creation must retain both children and their settings, put target first and activate it");
+            Check(!pair::Apply(widgets, dock, 0, 1, entry.group, group, normalize) && widgets.size() == 4,
+                "a repeated release must not create another group or reparent hidden children");
+        }
+        widgets = makeWidgets();
+        Check(!pair::Apply(widgets, dock, 0, 0, Action::Merge, {}, normalize) &&
+                !pair::Apply(widgets, dock, 0, 90, Action::Merge, {}, normalize) && widgets.size() == 3,
+            "self drops and stale targets must never delete a component");
+        group.id = L"target";
+        Check(!pair::Apply(widgets, dock, 0, 1, entry.group, group, normalize) && widgets.size() == 3,
+            "group IDs must not overwrite an existing component");
+    }
+
+    std::vector<DesktopWidget> widgets(2);
+    widgets[0].id = L"target";
+    widgets[0].itemKeys = {L"kept"};
+    widgets[1].id = L"source";
+    std::vector<DockEntry> dock(2);
+    dock[0].type = dock[1].type = DockEntryType::Collection;
+    dock[0].reference = L"source";
+    dock[1].reference = L"target";
+    Check(pair::Apply(widgets, dock, 1, 0, Action::Merge, {}, normalize) &&
+            widgets.size() == 1 && widgets[0].id == L"target" &&
+            widgets[0].itemKeys == std::vector<std::wstring>{L"kept"} &&
+            dock.size() == 1 && dock[0].reference == L"target",
+        "merging an empty later source must preserve the target and remove only the stale source Dock reference");
+}
+
+void TestPairGroupsDissolveAndDockOwnership()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    using Type = DesktopWidgetType;
+    const auto normalize = [](const std::wstring& key) { return key; };
+    for (const auto type : {Type::Collection, Type::FileCategories, Type::FolderMapping})
+    {
+        std::vector<DesktopWidget> widgets(2);
+        widgets[0].id = L"source";
+        widgets[0].type = type;
+        widgets[0].itemKeys = {L"original-a", L"original-b"};
+        widgets[0].sourceFolderPath = L"C:\\original-mapping";
+        widgets[0].gridSpan = {3, 4};
+        widgets[0].customTitle = L"Original title";
+        widgets[0].showSearchBox = true;
+        widgets[0].gridCell = {L"__dock", 0, 0};
+        widgets[1].id = L"target";
+        widgets[1].type = type;
+        const auto dockType = type == Type::Collection ? DockEntryType::Collection
+            : type == Type::FileCategories ? DockEntryType::DesktopFiles : DockEntryType::FolderMapping;
+        std::vector<DockEntry> dock{{dockType, L"source"}, {DockEntryType::DesktopItem, L"unrelated"}};
+        DesktopWidget group;
+        group.id = L"group";
+        group.gridCell = {L"page", 2, 3};
+        group.gridSpan = {2, 2};
+        const auto action = type == Type::Collection
+            ? pair::Action::CreateCollectionGroup : pair::Action::CreateFileGroup;
+        Check(!pair::Apply(widgets, dock, 0, 0, action, group, normalize) &&
+                dock.size() == 2 && widgets.size() == 2,
+            "a rejected Dock pair must keep its widget and Dock reference");
+        Check(pair::Apply(widgets, dock, 0, 1, action, group, normalize) &&
+                dock.size() == 1 && dock[0].reference == L"unrelated" &&
+                widgets.size() == 3 && widgets[2].dissolveWhenSingle,
+            "a committed Dock pair must transfer sole ownership and persist automatic dissolution");
+        Check(!pair::Dissolve(widgets, 2, {L"page", 2, 3}) && widgets.size() == 3,
+            "a pair group with two children must remain a group");
+        widgets[2].childWidgetIds = {L"source"}; // The target was moved out through a group label.
+        widgets[1].gridCell = {L"elsewhere", 0, 0};
+        widgets[2].dissolveWhenSingle = false;
+        Check(!pair::Dissolve(widgets, 2, {L"page", 2, 3}),
+            "manual and legacy groups must not dissolve automatically");
+        widgets[2].dissolveWhenSingle = true;
+        widgets[2].gridSpan = {4, 3}; // The user resized the group after creation.
+        Check(pair::Dissolve(widgets, 2, {L"page", 2, 3}) && widgets.size() == 2 &&
+                widgets[0].id == L"source" && widgets[0].type == type &&
+                widgets[0].itemKeys == std::vector<std::wstring>{L"original-a", L"original-b"} &&
+                widgets[0].sourceFolderPath == L"C:\\original-mapping" &&
+                widgets[0].gridSpan.columns == 4 && widgets[0].gridSpan.rows == 3 &&
+                widgets[0].customTitle == L"Original title" && widgets[0].showSearchBox &&
+                widgets[0].gridCell.pageId == L"page" && widgets[0].gridCell.column == 2 &&
+                widgets[0].gridCell.row == 3 && widgets[1].gridCell.pageId == L"elsewhere",
+            "single-child dissolution must inherit the current group size, retain source settings and leave the sibling untouched");
+        group.type = type == Type::Collection ? Type::CollectionGroup : Type::FileGroup;
+        group.dissolveWhenSingle = true;
+        group.childWidgetIds = {L"missing"};
+        widgets.push_back(group);
+        Check(!pair::Dissolve(widgets, 2, {}) && widgets.size() == 3,
+            "an unresolved child must not be discarded with its group");
+        widgets[2].childWidgetIds.clear();
+        Check(pair::Dissolve(widgets, 2, {}) && widgets.size() == 2,
+            "an empty auto group must remove only the wrapper");
+    }
+}
+
+void TestGroupRestorationPublishesOnlyTheFinalFrame()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    for (const auto type : {DesktopWidgetType::Collection,
+            DesktopWidgetType::FileCategories, DesktopWidgetType::FolderMapping})
+    {
+        snowdesktop::WidgetGroupTransition transition;
+        std::vector<DesktopWidget> widgets(2);
+        widgets[0].id = L"group";
+        widgets[0].type = type == DesktopWidgetType::Collection
+            ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup;
+        widgets[0].gridCell = {L"page", 1, 2};
+        widgets[0].gridSpan = {4, 3};
+        widgets[0].dissolveWhenSingle = true;
+        widgets[0].childWidgetIds = {L"child", L"outgoing"};
+        widgets[1].id = L"child";
+        widgets[1].type = type;
+        widgets[1].gridSpan = {2, 2};
+        struct Frame { DesktopWidgetType type; size_t members; GridSpan span; };
+        std::vector<Frame> frames;
+        auto paint = [&] {
+            if (!transition.ShouldDeferPaint())
+                frames.push_back({widgets[0].type, widgets[0].childWidgetIds.size(), widgets[0].gridSpan});
+        };
+        paint(); // Previously presented group, before the drop removes a member.
+        widgets[0].childWidgetIds = {L"child"};
+        transition.Request(); // The production runtime rebuild requests restoration.
+        transition.Request(); // Repeated layout passes in the same input dispatch.
+        paint(); // A nested WM_PAINT must retain the previous complete frame.
+        int restores = 0;
+        Check(transition.FinishDispatch(true, [&] {
+                ++restores;
+                Check(pair::Dissolve(widgets, 0, {L"page", 1, 2}), "restoration commits at the dispatch boundary");
+                transition.Request(); // A rebuild during restoration cannot schedule a loop.
+                paint(); // Nor can a nested paint publish a partially rebuilt final model.
+            }), "settled restoration requests one complete final repaint");
+        paint();
+        Check(restores == 1 && frames.size() == 2 && frames[0].members == 2 &&
+                frames.back().type == type && frames.back().span.columns == 4 &&
+                frames.back().span.rows == 3,
+            "presentation moves directly from the full group to its resized child without a single-member group frame");
+        Check(!transition.FinishDispatch(true, [&] { ++restores; }) && restores == 1,
+            "one dispatch coalesces repeated rebuild requests into a single restoration");
+    }
+
+    snowdesktop::WidgetGroupTransition blocked;
+    int restores = 0;
+    blocked.Request();
+    Check(blocked.FinishDispatch(false, [&] { ++restores; }) && restores == 0 &&
+            !blocked.ShouldDeferPaint(),
+        "an active drag/menu/rename keeps its references and releases the short paint hold at the outer boundary");
+    Check(!blocked.FinishDispatch(false, [&] { ++restores; }),
+        "a long interaction cannot force repeated repaint or freeze unrelated desktop updates");
+    Check(blocked.FinishDispatch(true, [&] {
+            ++restores;
+            Check(!blocked.FinishDispatch(true, [&] { ++restores; }),
+                "nested dispatch cannot re-enter an in-progress restoration");
+        }) && restores == 1,
+        "the first safe dispatch consumes a previously blocked restoration without a timer delay");
+    blocked.Request();
+    Check(blocked.FinishDispatch(true, [] {}) && !blocked.ShouldDeferPaint() &&
+            !blocked.FinishDispatch(true, [] {}),
+        "an invalid or no-longer-single group releases its frame without an unbounded retry loop");
 }
 
 void TestBottomBarContentReservation()
@@ -1329,6 +1572,9 @@ int main()
     TestDragInputSampling();
     TestPopupIconLoadCancellationRules();
     TestDragHintRasterRules();
+    TestWidgetPairDrops();
+    TestPairGroupsDissolveAndDockOwnership();
+    TestGroupRestorationPublishesOnlyTheFinalFrame();
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();

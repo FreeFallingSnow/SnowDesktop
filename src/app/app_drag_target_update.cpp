@@ -7,6 +7,11 @@
 
 void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
 {
+    if (HitTestLuaFileDropTarget(clientPoint) < widgets_.size())
+    {
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+        return;
+    }
     if (!dragSession_.IsActive()) return;
 
     dragSession_.UpdatePoint(clientPoint);
@@ -83,7 +88,8 @@ void DesktopApp::RefreshDragTargetAt(POINT clientPoint, int mods)
             dragSession_.TargetSlot(), dragSession_.TargetRegion(),
             dragSession_.Items(), dragSession_.Source(), mods);
     }
-    ShowDragHintWindow(clientPoint, hint);
+    if (!UpdateDockWidgetPairHint(clientPoint, mods))
+        ShowDragHintWindow(clientPoint, hint);
     InvalidateFloatingDockWindow(true);
 }
 
@@ -312,20 +318,16 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             RECT clipped{};
             if (!IntersectRect(
                     &clipped, &itemRect, &content) ||
-                !PtInRect(&clipped, client))
+                (!HitTestCollectionPopupItem(popup, i, client) &&
+                 !HitTestCollectionPopupHandoff(popup, i, client)))
                 continue;
 
             FolderEntry& entry =
                 dockFolderPopupWidget_.folderEntries[i];
-            const RECT handoffRect =
-                snowdesktop::popup_drag_rules::
-                    HandoffActivationBounds(
-                        GetCollectionPopupItemIconRect(
-                            itemRect));
             if (snowdesktop::popup_drag_rules::
                     CanHandoffToItem(
                         true, entry.selected) &&
-                PtInRect(&handoffRect, client))
+                HitTestCollectionPopupHandoff(popup, i, client))
             {
                 targetSlot = popupDragTarget_.BindHandoff(
                     targetContainer,
@@ -351,9 +353,13 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        dockFolderPopupWidget_.listMode)
+                        (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_)))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
+            if (UsesCollectionPopupFan(dockFolderPopupWidget_))
+                targetRegion = snowdesktop::collection_popup_layout::FanIsAfterInsertion(
+                    GetCollectionPopupFanItem(popup, i), client, CollectionPopupFanRootAbove())
+                    ? HitRegion::SortAfter : HitRegion::SortBefore;
             return true;
         }
 
@@ -387,14 +393,18 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 const auto popupMetrics =
                     GetOpenCollectionPopupLayoutMetrics();
                 const long gutter =
-                    dockFolderPopupWidget_.listMode
+                    (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_))
                     ? popupMetrics.gapY / 2
                     : popupMetrics.gapX / 2;
-                const long long distance =
-                    snowdesktop::popup_drag_rules::
+                const long long distance = UsesCollectionPopupFan(dockFolderPopupWidget_)
+                    ? snowdesktop::collection_popup_layout::FanInsertionDistanceSquared(
+                        snowdesktop::collection_popup_layout::FanInsertionLine(
+                            GetCollectionPopupFanItem(popup, i), popupMetrics,
+                            CollectionPopupFanRootAbove(), after), client)
+                    : snowdesktop::popup_drag_rules::
                         InsertionEdgeDistanceSquared(
                             itemRect, clipped, client,
-                            dockFolderPopupWidget_.listMode,
+                            (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_)),
                             after, gutter);
                 if (distance >=
                     bestDistanceSquared)
@@ -479,7 +489,8 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
         RECT itemRect = GetCollectionPopupItemRect(popup, i);
         RECT clipped{};
         if (!IntersectRect(&clipped, &itemRect, &content) ||
-            !PtInRect(&clipped, client))
+            (!HitTestCollectionPopupItem(popup, i, client) &&
+             !HitTestCollectionPopupHandoff(popup, i, client)))
             continue;
 
         size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
@@ -489,13 +500,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     itemIndex != static_cast<size_t>(-1) &&
                         items_[itemIndex].selected))
         {
-            RECT iconRect =
-                GetCollectionPopupItemIconRect(
-                    itemRect);
-            const RECT handoffRect =
-                snowdesktop::popup_drag_rules::
-                    HandoffActivationBounds(iconRect);
-            if (PtInRect(&handoffRect, client))
+            if (HitTestCollectionPopupHandoff(popup, i, client))
             {
                 region = HitRegion::Handoff;
                 // Keep the icon-sized activation area, but present the same
@@ -515,10 +520,14 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             region = snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        widgets_[popupWidgetIndex_].listMode)
+                        (UsesCollectionPopupList(widgets_[popupWidgetIndex_]) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_])))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
         }
+        if (region != HitRegion::Handoff && UsesCollectionPopupFan(widgets_[popupWidgetIndex_]))
+            region = snowdesktop::collection_popup_layout::FanIsAfterInsertion(
+                GetCollectionPopupFanItem(popup, i), client, CollectionPopupFanRootAbove())
+                ? HitRegion::SortAfter : HitRegion::SortBefore;
         if (region == HitRegion::Handoff)
         {
             targetSlot = popupDragTarget_.BindHandoff(
@@ -559,12 +568,16 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             const auto popupMetrics =
                 GetOpenCollectionPopupLayoutMetrics();
             const bool listMode =
-                widgets_[popupWidgetIndex_].listMode;
+                (UsesCollectionPopupList(widgets_[popupWidgetIndex_]) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_]));
             const long gutter = listMode
                 ? popupMetrics.gapY / 2
                 : popupMetrics.gapX / 2;
-            const long long distanceSquared =
-                snowdesktop::popup_drag_rules::
+            const long long distanceSquared = UsesCollectionPopupFan(widgets_[popupWidgetIndex_])
+                ? snowdesktop::collection_popup_layout::FanInsertionDistanceSquared(
+                    snowdesktop::collection_popup_layout::FanInsertionLine(
+                        GetCollectionPopupFanItem(popup, i), popupMetrics,
+                        CollectionPopupFanRootAbove(), after), client)
+                : snowdesktop::popup_drag_rules::
                     InsertionEdgeDistanceSquared(
                         itemRect, clipped, client,
                         listMode, after, gutter);

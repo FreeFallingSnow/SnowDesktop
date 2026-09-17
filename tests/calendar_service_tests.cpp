@@ -185,6 +185,22 @@ int main()
         updated.ok && updated.revision == 2,
         "matching revision updates event");
 
+    CalendarEvent linked;
+    linked.title="Countdown"; linked.date="2026-09-11"; linked.allDay=true;
+    linked.reminderMinutes=-1;
+    const auto createdLink=service.Create(linked);
+    Expect(createdLink.ok,"linked event created through production service");
+    auto found=service.EventById(createdLink.id);
+    Expect(found && found->date=="2026-09-11","ID lookup finds the event");
+    linked.title="Renamed";linked.date="2035-02-28";
+    const auto moved=service.Update(createdLink.id,createdLink.revision,linked);
+    found=service.EventById(createdLink.id);
+    Expect(moved.ok && found && found->title=="Renamed" && found->date=="2035-02-28",
+        "stable ID follows rename and rescheduling outside the old date window");
+    Expect(service.Remove(createdLink.id).ok && !service.EventById(createdLink.id),
+        "deleted IDs return no event");
+    Expect(!service.EventById("missing"),"unknown ID does not select another event");
+
     int notifications = 0;
     std::string notifiedTitle;
     service.SetNotificationCallback(

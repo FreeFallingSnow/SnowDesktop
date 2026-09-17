@@ -124,7 +124,7 @@ tags, visibility, and the exact required confirmation flag.
 
 `component-publish` rebuilds the plan and refuses to proceed unless the caller
 passes the matching confirmation. New items require `--confirm-create` and are
-always private; bound items require `--confirm-update`. It emits
+public by default (`--visibility private|friends|public|unlisted` overrides this); bound items require `--confirm-update`. It emits
 `component-plan` and `component-publish-progress` JSON Lines before the final
 result. A newly allocated PublishedFileId is persisted as soon as Steam returns
 it, including when upload or a later localization fails.

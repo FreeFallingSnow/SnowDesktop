@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
+#include "startup_animation.h"
 #include "../data_paths.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
@@ -42,6 +43,8 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
         options |= FOS_OVERWRITEPROMPT;
     else
         options |= FOS_PICKFOLDERS;
+    if (request.multiple && request.kind != LuaWidgetFilePickerKind::SaveFile)
+        options |= FOS_ALLOWMULTISELECT;
     if (FAILED(dialog->SetOptions(options)))
     {
         result.error = "pickerFailed";
@@ -56,6 +59,16 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
         patterns.reserve(request.extensions.size());
         for (const auto& extension : request.extensions)
             patterns.push_back(L"*." + extension);
+        if (request.multiple)
+        {
+            std::wstring combined;
+            for (const auto& pattern : patterns)
+            {
+                if (!combined.empty()) combined += L';';
+                combined += pattern;
+            }
+            patterns.insert(patterns.begin(), std::move(combined));
+        }
         filters.reserve(patterns.size());
         for (const auto& pattern : patterns)
             filters.push_back({ pattern.c_str(), pattern.c_str() });
@@ -94,6 +107,35 @@ LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
         return result;
     }
 
+    if (request.multiple)
+    {
+        ComPtr<IFileOpenDialog> open;
+        ComPtr<IShellItemArray> items;
+        DWORD count = 0;
+        if (FAILED(dialog.As(&open)) || FAILED(open->GetResults(&items)) ||
+            FAILED(items->GetCount(&count)) || count == 0 || count > 128)
+        {
+            result.error = count > 128 ? "tooManySelections" : "invalidSelection";
+            return result;
+        }
+        for (DWORD index = 0; index < count; ++index)
+        {
+            ComPtr<IShellItem> selectedItem;
+            PWSTR selectedPath = nullptr;
+            if (FAILED(items->GetItemAt(index, &selectedItem)) ||
+                FAILED(selectedItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedPath)) ||
+                !selectedPath)
+            {
+                if (selectedPath) CoTaskMemFree(selectedPath);
+                result.error = "invalidSelection";
+                return result;
+            }
+            result.paths.emplace_back(selectedPath);
+            CoTaskMemFree(selectedPath);
+        }
+        result.path = result.paths.front();
+        return result;
+    }
     ComPtr<IShellItem> item;
     if (FAILED(dialog->GetResult(&item)) || !item)
     {
@@ -284,6 +326,14 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 {
     (void)showCommand;
 
+    const ULONGLONG startupStarted = GetTickCount64();
+    const auto logStartupStage = [startupStarted](const wchar_t* stage) {
+        const std::wstring message = std::wstring(L"Startup stage: ") +
+            stage + L" elapsed_ms=" +
+            std::to_wstring(GetTickCount64() - startupStarted);
+        WriteDiagnosticLogEntry(message.c_str());
+    };
+
     MigrateLegacyDataPaths();
     WriteDiagnosticLogEntry(L"Run start");
 
@@ -293,6 +343,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         Locale::Instance().Init(langDir.c_str());
     }
 
+    LoadUsageGuidePreferences();
     InitializeSettingsController();
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -333,7 +384,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // before the overlay is created; periodic discovery remains read-only.
     EnsureDesktopWorkerWindow();
 
-    // Find and optionally hide Explorer icon layer.
+    // Discover Explorer now, but retain its icons until our first complete
+    // composition frame has been prepared. Bootstrap can take several seconds.
     desktopWindows_ = FindDesktopWindows();
     if (desktopWindows_.host && IsWindow(desktopWindows_.host))
         GetWindowThreadProcessId(desktopWindows_.host,
@@ -345,13 +397,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             desktopWindows_.listView, desktopWindows_.host);
         WriteDiagnosticLogEntry(buf);
     }
+    snowdesktop::StartupAnimation startupAnimation;
     if (customDesktopVisible_)
     {
-        HideExplorerIcons();
-        if (desktopWindows_.listView && desktopWindows_.listViewWasVisible)
-            WriteDiagnosticLogEntry(L"Explorer icon layer hidden");
-        else
-            WriteDiagnosticLogEntry(L"Explorer icon layer not found or already hidden");
+        (void)startupAnimation.Start(instance_, desktopWindows_.host,
+            snowdesktop::animation::RuntimeAnimationsEnabled(),
+            snowdesktop::animation::RuntimeDurationScale(),
+            Locale::Instance().TrW("app.startup.starting"),
+            Locale::Instance().TrW("app.startup.cancel"));
+        WriteDiagnosticLogEntry(
+            L"Explorer icon layer retained during startup");
     }
     else
     {
@@ -367,6 +422,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     LoadDockSettingsAndApply();
     LoadDockUsageStats();
     LoadLayoutSlots();
+    logStartupStage(L"layout loaded");
     if (settingsController_)
     {
         // dockEnabled is persisted in the layout document rather than the
@@ -375,6 +431,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         // domain before any WinUI presenter can observe the controller's
         // earlier default-false snapshot.
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
+
+        // Layout-owned Dock values override the legacy Dock settings file.
+        (void)settingsController_->SynchronizeDock(dockSettings_);
 
         snowdesktop::DesktopDisplaySettings desktopSettings;
         desktopSettings.dockEnabled = generalSettings_.dockEnabled;
@@ -474,7 +533,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);
     if (!hwnd_) { WriteDiagnosticLogEntry(L"CreateWindow FAILED"); return __LINE__; }
-    AttachWindowToDesktopHost(parent);
+    // Keep the main UI window unparented while initialization can block.
+    // Cross-process child windows couple the main and Explorer input queues,
+    // even when the child is hidden. The startup layer has its own UI thread.
     dockWindowPreview_ = std::make_unique<DockWindowPreview>();
     if (!dockWindowPreview_->Initialize(
             instance_,
@@ -501,28 +562,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     if (!InitGraphics()) { WriteDiagnosticLogEntry(L"InitGraphics FAILED"); return __LINE__; }
     WriteDiagnosticLogEntry(L"InitGraphics ok");
-    dockWindowTransition_ =
-        std::make_unique<DockWindowTransition>();
-    if (!dockWindowTransition_->Initialize(
-            instance_, &uiAnimationScheduler_,
-            d2dDevice_.Get(), dcompDevice_.Get()))
-        dockWindowTransition_.reset();
-    if (dockWindowTransition_)
-    {
-        dockWindowTransition_->SetOcclusionRectsProvider([this] {
-            return GetDockWindowTransitionOcclusionRects();
-        });
-        dockWindowTransition_->SetPresentationCallback([this](HWND) {
-            ApplyFloatingDockLayerPolicy();
-        });
-        dockWindowTransition_->SetDiagnosticCallback([this](const wchar_t* message) {
-            snowdesktop::dock_taskbar_diagnostics::Record(message,
-                dockWindowTransition_->GetPresentationWindow());
-            if (std::wcsncmp(message, L"Dock taskbar phase:", 19) == 0)
-                return; // Buffered until the bounded observation ends.
-            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
-        });
-    }
+    InitializeDockWindowTransition();
 
     // Create control window for tray icon ownership
     {
@@ -549,26 +589,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     if (FAILED(CreateOrResizeCompositionSurface()))
         { WriteDiagnosticLogEntry(L"CreateCompositionSurface FAILED"); return __LINE__; }
     WriteDiagnosticLogEntry(L"Composition target ready");
-    if (customDesktopVisible_)
-    {
-        if (desktopBackdropCompositor_.Initialize(hwnd_))
-        {
-            nativeGlassPanelReadyLogged_ = false;
-            WriteDiagnosticLogEntry(
-                L"Native desktop CompositionBackdropBrush initialized");
-        }
-        else
-        {
-            std::wstring message =
-                L"Native desktop CompositionBackdropBrush unavailable: ";
-            message += desktopBackdropCompositor_.LastError();
-            WriteDiagnosticLogEntry(message.c_str());
-        }
-    }
 
     LoadCategorySettingsAndApply();
     GetDemoIdentityIconDirectory();
     StartDemoIconLoader();
+    logStartupStage(L"graphics ready");
 
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
@@ -578,6 +603,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     WriteDiagnosticLogEntry(L"LoadDesktopItems ok");
     WriteDiagnosticLogEntry(L"Layout done");
     WriteDiagnosticLogEntry(L"RebuildContainersAndItems ok");
+    logStartupStage(L"desktop items ready");
 
     // App icon
     if (HICON appIcon = LoadAppIcon())
@@ -685,18 +711,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.homeAboutStatus = [this](
         std::uint64_t generation,
-        std::uint64_t revision) {
-        snowdesktop::winui::HomeAboutStatusPatch patch;
-        patch.generation = generation;
-        patch.revision = revision;
-        patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
-        patch.installedWidgetCount = widgets_.size();
-        patch.packaged = snowdesktop::deployment::IsPackaged();
-        patch.animationDiagnosticsEnabled =
-            uiAnimationScheduler_.DiagnosticsEnabled();
-        patch.animationDiagnosticsStatus =
-            BuildAnimationDiagnosticsStatus();
-        return patch;
+        std::uint64_t) {
+        return BuildHomeAboutStatus(generation);
     };
     settingsHostOptions.startupConflict = [this]() {
         using snowdesktop::winui::GeneralStartupConflict;
@@ -794,7 +810,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         return generalSettings_.widgetDeveloperToolsEnabled;
     };
-    settingsHostOptions.debugVisible = []() { return false; };
+    settingsHostOptions.debugVisible = [this]() {
+        return !initializationExperimentDirectory_.empty();
+    };
     settingsHostOptions.ensureWidgetSettingsInstance = [this](
         std::wstring_view instanceId) {
         if (!widgetEngine_ || instanceId.empty())
@@ -812,6 +830,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     settingsHostOptions.backupDataPage.commitLayoutRestore = [this](
         snowdesktop::winui::LayoutRestorePayload payload) {
         return CommitLayoutRestore(std::move(payload));
+    };
+    settingsHostOptions.backupDataPage.allowDataOperations = [this]() {
+        return initializationExperimentDirectory_.empty()
+            ? snowdesktop::SettingsActionResult::Success()
+            : snowdesktop::SettingsActionResult::Failure(
+                  _LW("settings.debug.initialization.backupBlocked"));
     };
 
     settingsHostOptions.widgetsPage.locale = []() {
@@ -856,9 +880,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     };
     settingsHostOptions.widgetsPage.openDevelopmentFolder = [this]() {
         const auto paths = WidgetEngine::GetWidgetPackagePaths();
-        if (reinterpret_cast<INT_PTR>(ShellExecuteW(controlHwnd_, L"open",
-                paths.development.c_str(), nullptr, nullptr,
-                SW_SHOWNORMAL)) <= 32)
+        if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                controlHwnd_, paths.development.wstring(), nullptr))
         {
             return snowdesktop::winui::WidgetsPageHostOperationResult::
                 Failure(_LW(
@@ -883,8 +906,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         if (!projectRoot.empty())
         {
-            (void)ShellExecuteW(controlHwnd_, L"open",
-                projectRoot.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            (void)snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                controlHwnd_, projectRoot.wstring(), nullptr);
         }
         if (settingsWindow_)
         {
@@ -1330,6 +1353,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             });
         const HWND widgetAudioWakeWindow =
             controlHwnd_ ? controlHwnd_ : hwnd_;
+        widgetEngine_->SetTaskWakeCallback(
+            [widgetAudioWakeWindow]() {
+                if (widgetAudioWakeWindow)
+                    (void)PostMessageW(widgetAudioWakeWindow,
+                        kWidgetTaskWakeMessage, 0, 0);
+            });
         widgetEngine_->SetAudioAnalysisWakeCallback(
             [widgetAudioWakeWindow]() {
                 if (widgetAudioWakeWindow)
@@ -1449,8 +1478,57 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // are configured. Activation requests received during startup remain
     // pending until this point, including when native initialization is retried.
     startupInitializationComplete_ = true;
+    logStartupStage(L"services ready");
+    if (customDesktopVisible_)
+    {
+        // Consume only already-completed icon work, without pumping unrelated
+        // commands or waiting for slow Shell providers. Bound the batch even if
+        // phase-two results arrive while phase-one completions are applied.
+        MSG iconMessage{};
+        for (unsigned count = 0; count < 256 &&
+            PeekMessageW(&iconMessage, hwnd_, kIconLoadedMessage,
+                kIconLoadedMessage, PM_REMOVE); ++count)
+        {
+            OnIconLoaded(iconMessage.wParam, iconMessage.lParam);
+        }
+        FinishWidgetGroupTransitions();
+        if (!OnPaint() || !FlushPendingCompositionCommit())
+        {
+            WriteDiagnosticLogEntry(
+                L"Startup first frame FAILED; native desktop retained",
+                DiagnosticLogLevel::Error);
+            return __LINE__;
+        }
+        logStartupStage(L"first frame ready");
+    }
+    // Retire cancellation before any Explorer ownership change. If a click
+    // wins this race, the animation thread terminates the process and this
+    // thread cannot hide native icons or attach an input queue to Explorer.
+    if (!startupAnimation.BeginDesktopHandoff())
+        return ERROR_CANCELLED;
+    // Resolve the current host again after slow Shell/widget initialization.
+    // Attach only once the full initial model and its first frame are ready.
+    desktopWindows_ = FindDesktopWindows();
+    parent = desktopWindows_.host ? desktopWindows_.host : GetDesktopWindow();
+    AttachWindowToDesktopHost(parent);
+    if (customDesktopVisible_)
+    {
+        if (desktopBackdropCompositor_.Initialize(hwnd_, false))
+        {
+            nativeGlassPanelReadyLogged_ = false;
+            WriteDiagnosticLogEntry(
+                L"Native desktop CompositionBackdropBrush initialized");
+        }
+        else
+        {
+            const std::wstring message =
+                L"Native desktop CompositionBackdropBrush unavailable: " +
+                desktopBackdropCompositor_.LastError();
+            WriteDiagnosticLogEntry(message.c_str());
+        }
+    }
+    desktopStartupPresentationPending_ = false;
     AddTrayIcon();
-    TryShowPendingSettingsWindow();
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)
     {
@@ -1460,6 +1538,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         UpdateWindow(hwnd_);
         FlushPendingCompositionCommit();
     }
+    startupAnimation.Finish();
+    logStartupStage(L"desktop handoff complete");
+    ShowUsageGuideWelcome();
+    TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_
         ? L"Window shown, entering loop"
         : L"Native desktop active, entering loop");
@@ -1468,12 +1550,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     bool running = true;
     while (running)
     {
+        ProcessGraphicsDeviceRecovery();
         HANDLE animationWait = uiAnimationScheduler_.WaitHandle();
         const DWORD handleCount = animationWait ? 1U : 0U;
         const DWORD waitResult = MsgWaitForMultipleObjectsEx(
             handleCount,
             animationWait ? &animationWait : nullptr,
-            INFINITE,
+            graphicsDeviceRecovery_.Pending() ? 250 : INFINITE,
             QS_ALLINPUT,
             MWMO_INPUTAVAILABLE);
         if (waitResult == WAIT_FAILED)
@@ -1546,6 +1629,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            FinishWidgetGroupTransitions();
+            if (usageGuideWelcomeQueued_) ShowUsageGuideWelcome();
+            if (usageGuideWaitingForDesktop_ &&
+                (!settingsWindow_ || !IsWindowVisible(settingsWindow_->Window()) ||
+                    IsIconic(settingsWindow_->Window())))
+            {
+                usageGuideWaitingForDesktop_ = false;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a
             // panel animation transaction cannot delay this presentation.
@@ -1564,6 +1656,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // initial wait result must be retained because the high-resolution
             // waitable timer is auto-reset and that wait consumes its signal.
             uiAnimationScheduler_.DispatchDue();
+            FinishWidgetGroupTransitions();
             FlushPendingCompositionCommit();
             FlushPendingQuickNavigationCompositionCommit();
         }

@@ -1,0 +1,185 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# Execute the actual selection functions without running test_manager's entry
+# point. Only the CTest query and build/test subprocess boundary are replaced.
+$managerPath = Join-Path $PSScriptRoot "../scripts/test_manager.ps1"
+$parseTokens = $null
+$parseErrors = $null
+$manager = [System.Management.Automation.Language.Parser]::ParseFile(
+    $managerPath, [ref]$parseTokens, [ref]$parseErrors)
+if ($parseErrors.Count -ne 0) { throw "test manager must parse" }
+foreach ($functionName in @("Get-TestSelection", "Invoke-FilteredTests", "Get-TestRunOptions", "Assert-HostRuntimeAvailable", "Assert-CompleteTestReport", "Test-IsolatedOutput")) {
+    $definition = $manager.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+    }, $false)
+    if ($null -eq $definition) { throw "missing selection function: $functionName" }
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
+
+$script:fixture = ""
+$script:queryArguments = @()
+$script:invocations = @()
+$script:runtimeLocks = @()
+$script:runtimeInspections = 0
+function Get-HostRuntimeLocks {
+    ++$script:runtimeInspections
+    $script:runtimeLocks
+}
+function ctest {
+    $script:queryArguments = @($args)
+    $global:LASTEXITCODE = 0
+    $script:fixture
+}
+function Invoke-Checked {
+    param([string]$FilePath, [string[]]$Arguments = @(), [string[]]$ExpectedTests = @())
+    $script:invocations += [pscustomobject]@{ FilePath = $FilePath; Arguments = $Arguments }
+}
+function Check([bool]$Condition, [string]$Message) {
+    if (-not $Condition) { throw $Message }
+}
+function Set-Inventory([object[]]$Tests) {
+    $script:fixture = @{ tests = @($Tests) } | ConvertTo-Json -Depth 8 -Compress
+    $script:invocations = @()
+}
+function Expect-Failure([scriptblock]$Action, [string]$MessagePart) {
+    $caught = $null
+    try { & $Action } catch { $caught = $_.Exception.Message }
+    Check ($null -ne $caught -and $caught.Contains($MessagePart)) "expected failure: $MessagePart"
+}
+
+$testBinary = "C:/isolated-tests/SnowDesktopSelectionFixtureTests.exe"
+# A real CTest cold-build manifest has no command field at all.
+$unbuilt = @{ name = "unbuilt"; properties = @(
+    @{ name = "REQUIRED_FILES"; value = @($testBinary) }) }
+Set-Inventory @($unbuilt)
+Invoke-FilteredTests -CTestFilterArguments @("-R", "^unbuilt$")
+Check ($script:invocations.Count -eq 2) "cold selection must build then run once"
+Check ($script:invocations[0].FilePath -eq "cmake" -and
+    ($script:invocations[0].Arguments -join " ") -eq
+        "--build --preset tests --target SnowDesktopSelectionFixtureTests") "cold selection must build only the declared target"
+Check ($script:invocations[1].FilePath -eq "ctest" -and
+    ($script:invocations[1].Arguments -join " ") -eq
+        "--preset tests -R ^unbuilt$") "cold selection must retain the requested test filter"
+
+$built = @{ name = "built"; command = @($testBinary, "case-a"); properties = @() }
+$alias = @{ name = "alias"; command = @($testBinary, "case-b"); properties = @() }
+Set-Inventory @($built, $alias)
+$selection = Get-TestSelection -CTestFilterArguments @("-L", "widget")
+Check ($selection.Tests.Count -eq 2 -and $selection.Targets.Count -eq 1 -and
+    $selection.Targets[0] -eq "SnowDesktopSelectionFixtureTests") "aliases must share one build target without losing test entries"
+Check (($script:queryArguments -join " ").EndsWith("-L widget")) "labels must reach CTest selection"
+
+Set-Inventory @(@{ name = "script"; command = @("powershell.exe", "test.ps1"); properties = @() })
+Invoke-FilteredTests -CTestFilterArguments @("-R", "script")
+Check ($script:invocations.Count -eq 1 -and $script:invocations[0].FilePath -eq "ctest") "script tests must run without inventing a native build target"
+
+Set-Inventory @()
+Expect-Failure { Invoke-FilteredTests -CTestFilterArguments @("-R", "missing") } "did not match"
+Check ($script:invocations.Count -eq 0) "zero matches must neither build nor pass a test run"
+
+Set-Inventory @(@{ name = "missing-metadata"; properties = @() })
+Expect-Failure { Get-TestSelection } "Cannot resolve the build target"
+Set-Inventory @(@{ name = "ambiguous-metadata"; properties = @(
+    @{ name = "REQUIRED_FILES"; value = @($testBinary, "C:/isolated-tests/SnowDesktopOtherTests.exe") }) })
+Expect-Failure { Get-TestSelection } "Cannot resolve the build target"
+
+$preview = @{ name = "preview"; command = @("C:/tests/SnowDesktopWidgetAuthorPreviewCliTests.exe"); properties = @() }
+$script:runtimeLocks = @("owned fixture process")
+Set-Inventory @($preview)
+Expect-Failure { Invoke-FilteredTests -CTestFilterArguments @("-R", "preview") } "Host runtime is in use"
+Check ($script:invocations.Count -eq 0) "occupied runtime must fail before compilation or output arrangement"
+Set-Inventory @($built)
+Expect-Failure { Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests" } "Host runtime is in use"
+Check ($script:invocations.Count -eq 0) "full aggregate must preflight before it builds and arranges"
+$inspections = $script:runtimeInspections
+Invoke-FilteredTests -CTestFilterArguments @("-R", "built")
+Check ($script:runtimeInspections -eq $inspections -and $script:invocations.Count -eq 2) "ordinary targeted tests must remain usable with the host running"
+$script:runtimeLocks = @()
+Set-Inventory @($preview)
+Invoke-FilteredTests -CTestFilterArguments @() -BuildPreset "tests"
+Check ($script:invocations.Count -eq 2 -and $script:invocations[0].FilePath -eq "cmake" -and
+    $script:invocations[1].FilePath -eq "ctest") "full aggregate must not arrange its runtime twice"
+
+# Manual Shell diagnostics must never start through an automatic mode, while
+# explicit selection must still reach them. Verify the real preset inventories
+# (no tests execute here), not just the presence of a label in source text.
+Push-Location (Join-Path $PSScriptRoot "..")
+try {
+    foreach ($mode in @("full", "core", "fast", "name", "label")) {
+        $filter = if ($mode -eq "name") { "^shell_file_operation_worker$" } else { "^manual$" }
+        $options = Get-TestRunOptions -Mode $mode -Filter $filter
+        $arguments = @("--preset", $options.TestPreset, "--show-only=json-v1") + $options.CTestFilterArguments
+        $inventory = (& ctest.exe @arguments) -join [Environment]::NewLine
+        Check ($LASTEXITCODE -eq 0) "actual preset query must succeed for $mode"
+        $selected = @(($inventory | ConvertFrom-Json).tests)
+        $names = @($selected | ForEach-Object name)
+        $manual = @($selected | Where-Object {
+            @($_.properties | Where-Object name -eq LABELS | ForEach-Object value) -contains "manual"
+        })
+        if ($mode -in "full", "core", "fast") {
+            Check ($selected.Count -gt 0 -and $manual.Count -eq 0 -and
+                $names -notcontains "shell_file_operation_worker") "automatic $mode must exclude manual Shell diagnostics"
+            if ($mode -eq "full" -or $mode -eq "fast") {
+                Check ($names -contains "shell_file_operation_worker_network_preflight") "automatic $mode must retain preflight regressions"
+            }
+        }
+        else {
+            Check ($names.Count -eq 1 -and $names[0] -eq "shell_file_operation_worker") "explicit $mode selection must include manual Shell diagnostics"
+        }
+        Set-Inventory @($built)
+        Invoke-FilteredTests @options
+        Check (($script:queryArguments -join " ").StartsWith("--preset $($options.TestPreset) ")) "query must use mode preset for $mode"
+        Check (($script:invocations[-1].Arguments -join " ") -eq
+            ((@("--preset", $options.TestPreset) + $options.CTestFilterArguments) -join " ")) "execution must use the queried preset and filter for $mode"
+    }
+}
+finally { Pop-Location }
+Expect-Failure { Get-TestRunOptions -Mode name } "non-empty"
+Expect-Failure { Get-TestRunOptions -Mode label } "non-empty"
+
+# Exercise output isolation with disposable files, never the user's .build.
+$fixtureParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$outputFixture = Join-Path $fixtureParent ("SnowDesktop-test-output-" + [Guid]::NewGuid().ToString("N"))
+[void][IO.Directory]::CreateDirectory($outputFixture)
+$originalProcessDirectory = [Environment]::CurrentDirectory
+Push-Location $outputFixture
+try {
+    [Environment]::CurrentDirectory = $outputFixture
+    [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/tests"))
+    [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/SnowDesktop.Runtime/payload"))
+    [IO.File]::WriteAllText((Join-Path $outputFixture ".build/Release/tests/SnowDesktopFixtureTests.exe"), "fixture")
+    Test-IsolatedOutput
+    foreach ($misplaced in @("SnowDesktopMisplacedTests.exe", "misplaced.dll")) {
+        $badPath = Join-Path $outputFixture ".build/Release/$misplaced"
+        [IO.File]::WriteAllText($badPath, "fixture")
+        Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+        Remove-Item -LiteralPath $badPath
+    }
+    [void][IO.Directory]::CreateDirectory((Join-Path $outputFixture ".build/Release/payload"))
+    Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+    Remove-Item -LiteralPath (Join-Path $outputFixture ".build/Release/payload")
+    Remove-Item -LiteralPath (Join-Path $outputFixture ".build/Release/tests/SnowDesktopFixtureTests.exe")
+    Expect-Failure { Test-IsolatedOutput } "escaped its dedicated"
+}
+finally {
+    [Environment]::CurrentDirectory = $originalProcessDirectory
+    Pop-Location
+    $resolvedFixture = [IO.Path]::GetFullPath($outputFixture)
+    Check ($resolvedFixture.StartsWith($fixtureParent, [StringComparison]::OrdinalIgnoreCase) -and
+        [IO.Path]::GetFileName($resolvedFixture).StartsWith("SnowDesktop-test-output-")) "cleanup must stay in the isolated temporary fixture"
+    Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
+}
+
+Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" status="run" /></testsuite>') -ExpectedTests @("a")
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite />') } "no executed test cases"
+foreach ($state in @('<skipped />', '<failure />', '<error />')) {
+    Expect-Failure { Assert-CompleteTestReport -Report ([xml]("<testsuite><testcase name='a'>$state</testcase></testsuite>")) } "not fully verified"
+}
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" status="notrun" /></testsuite>') } "not fully verified"
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="b" /></testsuite>') -ExpectedTests @("a") } "does not match"
+Expect-Failure { Assert-CompleteTestReport -Report ([xml]'<testsuite><testcase name="a" /><testcase name="a" /></testsuite>') -ExpectedTests @("a") } "does not match"
+
+Write-Output "Test selection regressions passed (cold build, aliases, scripts, filters, metadata, runtime preflight and complete reports)."

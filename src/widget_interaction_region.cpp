@@ -99,7 +99,7 @@ bool IsSupportedEvent(std::string_view eventName) noexcept
     return eventName == "pointerEnter" || eventName == "pointerLeave" ||
         eventName == "pointerDown" || eventName == "pointerUp" ||
         eventName == "pointerMove" || eventName == "click" ||
-        eventName == "doubleClick" || eventName == "wheel" ||
+        eventName == "doubleClick" || eventName == "fileDrop" || eventName == "wheel" ||
         eventName == "contextMenu" || eventName == "keyDown" ||
         eventName == "keyUp" || eventName == "change" ||
         eventName == "scrollEnd";
@@ -766,6 +766,22 @@ const InteractionAction* WidgetInteractionRegions::ActionAt(
     return action == region->events.end() ? nullptr : &action->second;
 }
 
+const InteractionAction* WidgetInteractionRegions::FileDropActionAt(
+    float x, float y, std::string* targetKey) const noexcept
+{
+    // An enclosing drop zone remains reachable over non-drop child controls.
+    for (auto region = active_.rbegin(); region != active_.rend(); ++region)
+    {
+        if (!region->enabled || !ContainsPoint(*region, x, y)) continue;
+        const auto action = region->events.find("fileDrop");
+        if (action == region->events.end()) continue;
+        if (targetKey) *targetKey = region->key;
+        return &action->second;
+    }
+    if (targetKey) targetKey->clear();
+    return nullptr;
+}
+
 const InteractionAction* WidgetInteractionRegions::ContextMenuActionAt(
     float x, float y, bool componentScopeOnly,
     std::string* targetKey) const noexcept
@@ -919,6 +935,17 @@ bool IsWidgetMenuSelectionCurrent(
     return capturedRuntimeToken != 0 &&
         capturedRuntimeToken == currentRuntimeToken &&
         !targetKey.empty() && regions.Find(targetKey) != nullptr;
+}
+
+bool IsWidgetFileDropTargetCurrent(const WidgetInteractionRegions& regions,
+    std::string_view targetKey, const InteractionAction& capturedAction,
+    std::uint64_t capturedRuntimeToken, std::uint64_t currentRuntimeToken) noexcept
+{
+    if (capturedRuntimeToken == 0 || capturedRuntimeToken != currentRuntimeToken)
+        return false;
+    const auto* region = regions.Find(targetKey);
+    const auto* action = regions.FindAction(targetKey, "fileDrop");
+    return region && region->enabled && action && *action == capturedAction;
 }
 
 void WidgetInteractionRegions::Reset() noexcept

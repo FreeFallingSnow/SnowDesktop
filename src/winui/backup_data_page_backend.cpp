@@ -35,6 +35,13 @@ constexpr wchar_t kStorageFileName[] = L"SnowDesktop.storage.json";
 constexpr wchar_t kStorageBackupSuffix[] = L".storage.json";
 std::timed_mutex gBackupStorageMutex;
 std::atomic_bool gExternalReplacementQueued{false};
+std::atomic_uint gBackupDataTasks{0};
+
+struct BackupTaskLifetime
+{
+    BackupTaskLifetime() { ++gBackupDataTasks; }
+    ~BackupTaskLifetime() { --gBackupDataTasks; }
+};
 
 struct BackendPaths
 {
@@ -61,6 +68,7 @@ enum class WorkKind : std::uint8_t
 
 struct WorkContext
 {
+    std::shared_ptr<BackupTaskLifetime> lifetime;
     WorkKind kind = WorkKind::Refresh;
     std::uint64_t generation = 0;
     std::uint64_t activationId = 0;
@@ -618,6 +626,25 @@ WorkResult CreateLayoutBackup(
     return result;
 }
 
+WorkResult ClearLayout(const WorkContext& context, std::stop_token stop)
+{
+    // Layout backups include their component-storage companion.
+    WorkResult result = CreateLayoutBackup(context, MakeLayoutTimestampName(),
+        stop, false);
+    if (!result.ok)
+        return result;
+    if (stop.stop_requested() || !TryBeginNonInterruptible(context))
+    {
+        result.ok = false;
+        result.cancelled = true;
+        return result;
+    }
+    // The application STA clears disk and memory together; no directory
+    // replacement or restart transaction is queued.
+    result.layoutRestore = LayoutRestorePayload{"{}", std::string("{}\n"), true};
+    return result;
+}
+
 WorkResult RestoreLayoutBackup(
     const WorkContext& context,
     std::stop_token stop)
@@ -809,6 +836,8 @@ WorkResult RunAction(const WorkContext& context, std::stop_token stop)
         return CreateLayoutBackup(
             context, context.request.displayName, stop);
     }
+    if (context.request.command == BackupDataCommand::ClearLayout)
+        return ClearLayout(context, stop);
     if (context.request.command == BackupDataCommand::RestoreLayoutBackup)
         return RestoreLayoutBackup(context, stop);
     if (context.request.command == BackupDataCommand::DeleteLayoutBackup)
@@ -1086,6 +1115,8 @@ BackupDataOperation ToOperation(BackupDataCommand command) noexcept
         return BackupDataOperation::DeleteFullBackup;
     case BackupDataCommand::MigrateData:
         return BackupDataOperation::MigrateData;
+    case BackupDataCommand::ClearLayout:
+        return BackupDataOperation::ClearLayout;
     default:
         return BackupDataOperation::None;
     }
@@ -1102,6 +1133,7 @@ BackupDataCompletionPolicy RequiredCompletionPolicy(
     case BackupDataCommand::DeleteFullBackup:
         return BackupDataCompletionPolicy::RefreshBackupLists;
     case BackupDataCommand::RestoreLayoutBackup:
+    case BackupDataCommand::ClearLayout:
         return BackupDataCompletionPolicy::ReloadDesktopLayout;
     case BackupDataCommand::ExportFullBackup:
         return BackupDataCompletionPolicy::ShowResultOnly;
@@ -1134,6 +1166,11 @@ bool QueuesExternalReplacement(BackupDataCommand command) noexcept
 }
 
 } // namespace
+
+bool HasPendingBackupDataWork() noexcept
+{
+    return gBackupDataTasks.load() != 0 || gExternalReplacementQueued.load();
+}
 
 struct BackupDataPageBackend::State final
     : std::enable_shared_from_this<BackupDataPageBackend::State>
@@ -1231,6 +1268,8 @@ struct BackupDataPageBackend::State final
             return L("app.settings.layout_backups", L"Layout backups");
         case BackupDataCommand::MigrateData:
             return L("app.settings.data_migration", L"Data migration");
+        case BackupDataCommand::ClearLayout:
+            return L("settings.backup.clearData", L"Clear layout");
         default:
             return L("app.settings.full_data_backups",
                 L"Complete data backups");
@@ -1267,6 +1306,9 @@ struct BackupDataPageBackend::State final
                 L"Deleting complete backup…");
         case BackupDataCommand::MigrateData:
             return L("settings.backup.progress.migrate", L"Staging data…");
+        case BackupDataCommand::ClearLayout:
+            return L("settings.backup.clearData.progress",
+                L"Backing up the layout and widget storage, and reinitializing the grid…");
         default:
             return L("settings.backup.progress.refresh",
                 L"Refreshing backups…");
@@ -1304,6 +1346,9 @@ struct BackupDataPageBackend::State final
         case BackupDataCommand::MigrateData:
             return L("app.settings.migrate_data_success",
                 L"The data will be moved in after restart.");
+        case BackupDataCommand::ClearLayout:
+            return L("settings.backup.clearData.success",
+                L"The layout and widget storage have been backed up and cleared. The grid has been reinitialized.");
         default:
             return L("settings.backup.success.generic",
                 L"The backup operation completed.");
@@ -1332,6 +1377,9 @@ struct BackupDataPageBackend::State final
         case BackupDataCommand::MigrateData:
             return L("app.settings.migrate_data_failed",
                 L"Data migration failed.");
+        case BackupDataCommand::ClearLayout:
+            return L("settings.backup.clearData.failed",
+                L"Could not clear the layout.");
         default:
             return L("settings.backup.error.layoutOperation",
                 L"The layout backup operation failed.");
@@ -1403,6 +1451,8 @@ struct BackupDataPageBackend::State final
         }
 
         context.generation = snapshot.generation;
+        if (context.kind == WorkKind::Action)
+            context.lifetime = std::make_shared<BackupTaskLifetime>();
         context.activationId = activationId;
         context.requestId = nextRequestId++;
         context.paths = paths;
@@ -1657,6 +1707,15 @@ struct BackupDataPageBackend::State final
         // worker reads the live data tree. In particular, a complete backup
         // must include the final coalesced setting values and a layout restore
         // must not race an already-pending desktop-layout commit.
+        const SettingsActionResult permitted = options.allowDataOperations
+            ? options.allowDataOperations() : SettingsActionResult::Success();
+        if (!permitted.Succeeded())
+        {
+            SetNotice(BackupDataNoticeSeverity::Error,
+                OperationTitle(request.command), permitted.message);
+            Publish();
+            return;
+        }
         const SettingsActionResult flush = controller->FlushAll();
         if (!flush.Succeeded())
         {

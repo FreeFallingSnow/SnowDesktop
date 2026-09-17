@@ -9,6 +9,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <thread>
 #include <variant>
@@ -44,11 +45,26 @@ struct ShellExactFileCopyOperationStep
     std::wstring destination;
 };
 
+// Written only on the executing STA, read only after its completion. Each
+// record represents an actual output, including successes in a failed batch.
+struct ShellFileOperationOutput
+{
+    std::wstring source;
+    std::wstring destination;
+    bool referencesSource = false;
+};
+
+struct ShellFileOperationResult
+{
+    std::vector<ShellFileOperationOutput> outputs;
+};
+
 struct ShellFileOperationRequest
 {
     std::vector<ShellFileOperationStep> steps;
     std::vector<ShellExactFileCopyOperationStep> exactFileCopies;
     std::vector<ShellShortcutOperationStep> shortcuts;
+    std::shared_ptr<ShellFileOperationResult> result;
 };
 
 /** A rename owns only copied paths/PIDL bytes, never UI-thread COM objects. */

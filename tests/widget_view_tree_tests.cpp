@@ -1,5 +1,10 @@
 #include "widget_view_lua.h"
+#include "widget_date_picker_lua.h"
+#include "widget_time_picker_lua.h"
+#include "widget_duration_picker_lua.h"
 #include "widget_view_tree.h"
+#include "widget_surface_theme.h"
+#include "widget_button_fill.h"
 #include "widget_resource_lua.h"
 
 #include <cmath>
@@ -7,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 extern "C" {
@@ -4814,8 +4820,227 @@ void TestLuaFieldPresenceAfterMutation()
     lua_close(state);
 }
 
+
+void TestDatePickerController()
+{
+    lua_State* state=luaL_newstate();
+    luaL_openlibs(state);
+    RegisterViewLibrary(state);
+    Check(luaL_loadbuffer(state,kWidgetDatePickerLua,sizeof(kWidgetDatePickerLua)-1,
+        "@host/ui.datePicker")==LUA_OK,"date picker source loads");
+    lua_setglobal(state,"makePicker");
+    const char* source=R"LUA(
+        local labels={date="Date",startDate="Start",endDate="End",year="Year",month="Month",
+            previous="Previous",next="Next",today="Today",clear="Clear",confirm="Confirm",
+            invalid="Invalid date",order="Reversed range",weekday1="Sun",weekday2="Mon",weekday3="Tue",
+            weekday4="Wed",weekday5="Thu",weekday6="Fri",weekday7="Sat"}
+        local p=makePicker({key="dates",mode="range",todayDate="2026-09-11",minDate="2024-01-01",
+            maxDate="2030-12-31",disabledDates={"2026-09-15"}},labels)
+        local function send(id,text) return p:handle({kind="action",id="dates:"..id,text=text}) end
+        send("day:2026-09-12");send("day:2026-09-10")
+        assert(p:draftValue().startDate=="2026-09-10" and p:draftValue().endDate=="2026-09-12")
+        assert(p:value().startDate=="")
+        assert(send("confirm").changed and p:value().endDate=="2026-09-12")
+        send("end","2026-09-16")
+        assert(p:validation() and not send("confirm").changed)
+        assert(p:value().endDate=="2026-09-12")
+        send("start","2025-02-29");assert(p:validation())
+        send("start","2024-02-29");send("end","2024-03-01");assert(not p:validation())
+        send("end","2024-02-28");assert(p:validation()==labels.order)
+        send("clear");assert(send("confirm").changed and p:value().startDate=="")
+        send("day:2023-12-31");assert(p:draftValue().startDate=="")
+        send("day:2026-09-15");assert(p:draftValue().startDate=="")
+        local q=makePicker({key="single",todayDate="2026-09-11",value="2026-09-11",allowClear=false},labels)
+        assert(not q:setValue("1900-02-29"));assert(q:value()=="2026-09-11")
+        assert(q:setValue("2000-02-29"));assert(q:handle({kind="action",id="other:confirm"})==nil)
+        q:handle({kind="action",id="single:start",text="2026-02-30"})
+        assert(q:validation() and not q:handle({kind="action",id="single:confirm"}).changed)
+        q:setValue("2026-09-11")
+        q:handle({kind="action",id="single:year",numberValid=true,controlValue=2027.0})
+        local yearNode=q:view({rowHeight=32}).children[2].children[2]
+        assert(math.type(yearNode.value)=="integer" and tostring(yearNode.value)=="2027")
+        return q:view({rowHeight=32})
+    )LUA";
+    if(luaL_dostring(state,source)!=LUA_OK) {
+        std::cerr<<lua_tostring(state,-1)<<'\n';
+        Check(false,"date picker rejects invalid drafts and commits valid selections only");
+    }
+    ViewNode root;std::string error;
+    const bool parsed=ParseLuaViewTree(state,-1,root,error);
+    if(!parsed)std::cerr<<error<<'\n';
+    Check(parsed,"date picker returns a real supported declarative tree");
+    Check(ValidateAndLayoutViewTree(root,520.0f,640.0f,error),"date picker tree validates");
+    lua_close(state);
+}
+
+void TestTimePickerController()
+{
+    lua_State* state=luaL_newstate();luaL_openlibs(state);RegisterViewLibrary(state);
+    Check(luaL_loadbuffer(state,kWidgetTimePickerLua,sizeof(kWidgetTimePickerLua)-1,"@host/ui.timePicker")==LUA_OK,"time picker loads");
+    lua_setglobal(state,"makeTimePicker");
+    const char* script=R"LUA(
+      local labels={time="Time",startTime="Start",endTime="End",hour="Hour",minute="Minute",invalid="Invalid",order="Order",clear="Clear",confirm="Confirm"}
+      local p=makeTimePicker({key="time",mode="range",value={startTime="09:00",endTime="10:00"},allowClear=false},labels)
+      local function send(id,text,selection) return p:handle({kind="action",id="time:"..id,text=text,selection=selection}) end
+      send("startTime","24:00");assert(p:validation() and not send("confirm").changed)
+      assert(p:value().startTime=="09:00")
+      send("startTime","09:30");send("endTime","09:29");assert(p:validation()=="Order")
+      send("endTime:h",nil,"23");send("endTime:m",nil,"59")
+      assert(send("confirm").value.endTime=="23:59")
+      send("startTime","00:00");assert(send("confirm").value.startTime=="00:00")
+      assert(not p:setValue({startTime="12:60",endTime="23:59"}))
+      local q=makeTimePicker({key="step",minuteStep=15,minTime="09:00",maxTime="18:00",value="09:00"},labels)
+      assert(not q:setValue("09:01"));assert(not q:setValue("18:15"));assert(q:setValue("12:45"))
+      local v=q:value();q:handle({kind="action",id="other:clear"});assert(q:value()==v)
+      local locked=makeTimePicker({key="locked",value="10:00",disabled=true},labels)
+      assert(not locked:handle({kind="action",id="locked:clear"}).changed and locked:draftValue()=="10:00")
+      local immediate=makeTimePicker({key="immediate",value="09:00",needConfirm=false},labels)
+      assert(not immediate:handle({kind="action",id="immediate:startTime:h",expanded=true}).changed)
+      assert(immediate:handle({kind="action",id="immediate:startTime:m",selection="30"}).value=="09:30")
+      return p:view({rowHeight=32})
+    )LUA";
+    if(luaL_dostring(state,script)!=LUA_OK){std::cerr<<lua_tostring(state,-1)<<'\n';Check(false,"time validation and confirmed selection");}
+    ViewNode root;std::string error;
+    Check(ParseLuaViewTree(state,-1,root,error),"time picker uses supported controls");
+    Check(ValidateAndLayoutViewTree(root,520,640,error),"time picker layout validates");
+    lua_close(state);
+}
+
+void TestDurationPickerController()
+{
+    // Exercise the shipped controller and parse its real control tree. Only
+    // OS input delivery and translated labels are substituted here.
+    lua_State* state=luaL_newstate();luaL_openlibs(state);RegisterViewLibrary(state);
+    Check(luaL_loadbuffer(state,kWidgetDurationPickerLua,sizeof(kWidgetDurationPickerLua)-1,
+        "@host/ui.durationPicker")==LUA_OK,"duration picker loads");
+    lua_setglobal(state,"makeDurationPicker");
+    const char* script=R"LUA(
+        local labels={hours="Hours",minutes="Minutes",seconds="Seconds",invalid="Invalid",confirm="Confirm",increase="Increase",decrease="Decrease"}
+        local p=makeDurationPicker({key="duration",value=300,minSeconds=1},labels)
+        local function send(id,n,valid)
+            return p:handle({kind="action",id="duration:"..id,controlValue=n,numberValid=valid})
+        end
+        assert(p:value()==300 and p:draftValue()==300)
+        send("hours",1,true);send("minutes",2,true);send("seconds",3,true)
+        assert(p:draftValue()==3723 and p:value()==300)
+        assert(send("confirm").changed and p:value()==3723)
+        -- Empty, fractional and out-of-range edits must never submit the old value.
+        for _,v in ipairs({-1,60,1.5,math.huge}) do
+            send("seconds",v,true)
+            assert(p:validation() and p:draftValue()==nil)
+            assert(not send("confirm").changed and p:value()==3723)
+        end
+        send("seconds",0,false);assert(p:validation() and not send("confirm").changed)
+        send("seconds",59,true);assert(not p:validation() and send("confirm").value==3779)
+        assert(not p:setValue(360000) and p:value()==3779)
+        assert(p:setValue(359999) and p:draftValue()==359999)
+        assert(not p:setValue(0) and p:value()==359999)
+        send("seconds.up");assert(p:draftValue()==359999)
+        send("seconds.down");assert(p:draftValue()==359998 and p:value()==359999)
+        assert(send("confirm").value==359998)
+        assert(p:setValue(300))
+        local function wheel(delta) return p:handle({kind="action",id="duration:seconds.wheel",delta=delta}) end
+        for i=1,3 do wheel(30);assert(p:draftValue()==300) end
+        wheel(30);assert(p:draftValue()==301)
+        wheel(-240);assert(p:draftValue()==300) -- bounded at zero, no carry into minutes
+        wheel(math.huge);assert(p:draftValue()==300)
+        wheel(60);assert(p:setValue(300));wheel(60);assert(p:draftValue()==300)
+        assert(p:handle({kind="action",id="other:confirm"})==nil)
+        assert(p:handle({kind="action",id="duration:unrelated"})==nil)
+        local limited=makeDurationPicker({key="limited",minSeconds=30,maxSeconds=90,value=60,needConfirm=false},labels)
+        assert(not limited:handle({kind="action",id="limited:minutes",numberValid=true,controlValue=2}).changed)
+        assert(limited:value()==60 and limited:validation())
+        assert(limited:handle({kind="action",id="limited:minutes",numberValid=true,controlValue=0}).changed==false)
+        assert(limited:handle({kind="action",id="limited:seconds",numberValid=true,controlValue=45}).value==45)
+        for _,flag in ipairs({"disabled","readOnly"}) do
+            local o={key="locked",value=60};o[flag]=true
+            local locked=makeDurationPicker(o,labels)
+            assert(not locked:handle({kind="action",id="locked:minutes",numberValid=true,controlValue=2}).changed)
+            locked:handle({kind="action",id="locked:minutes.up"})
+            locked:handle({kind="action",id="locked:seconds.wheel",delta=120})
+            assert(locked:draftValue()==60 and locked:value()==60)
+        end
+        assert(not pcall(makeDurationPicker,{key="bad",minSeconds=90,maxSeconds=30},labels))
+        assert(not pcall(makeDurationPicker,{key="bad",value=1.5},labels))
+        return p:view({rowHeight=32})
+    )LUA";
+    if(luaL_dostring(state,script)!=LUA_OK){std::cerr<<lua_tostring(state,-1)<<'\n';Check(false,"duration drafts, bounds and commits");}
+    ViewNode root;std::string error;
+    Check(ParseLuaViewTree(state,-1,root,error),"duration picker uses supported controls");
+    Check(ValidateAndLayoutViewTree(root,360,220,error),"duration picker layout validates");
+    lua_close(state);
+}
+
+void TestSurfaceThemeRouting()
+{
+    LuaWidgetTheme desktop, popup;
+    desktop.contentTheme = 0; desktop.bg = 0x102030;
+    popup.contentTheme = 1; popup.bg = 0xFAF0E0;
+    popup.border = 0x223344; popup.alpha = 0.8f;
+    for (const auto surface : {"panel", "dialog", "popover"})
+    {
+        const auto result = ResolveSurfaceTheme(desktop, &popup, surface);
+        Check(result.contentTheme == 1 && result.bg == 0xFAF0E0 &&
+                result.border == 0x223344 && Near(result.alpha, 0.8f),
+            "auxiliary surfaces must use the complete popup palette despite an opposite desktop foreground");
+        Check(ResolveSurfaceTheme(desktop, nullptr, surface).bg == 0x102030,
+            "standalone previews without a host popup theme retain their own palette");
+    }
+    Check(ResolveSurfaceTheme(desktop, &popup, "desktop").contentTheme == 0 &&
+            desktop.bg == 0x102030,
+        "popup rendering must not overwrite the desktop palette");
+    popup.contentTheme = 0; desktop.contentTheme = 1;
+    Check(ResolveSurfaceTheme(desktop, &popup, "panel").contentTheme == 0,
+        "switching the host popup back to dark updates an already open panel");
+}
+
+void TestScrollPageRestoration()
+{
+    // A short picker must not clamp its parent editor's saved scroll position.
+    std::unordered_map<std::string, float> offsets{{"editor", 180.0f}};
+    const auto renderPage = [&](const char* key, float contentHeight) {
+        ViewNode root; root.type = ViewNodeType::Scroll; root.key = key;
+        root.orientation = ViewOrientation::Vertical;
+        ViewNode content; content.type = ViewNodeType::Column; content.key = "body";
+        content.height = {ViewLengthKind::Fixed, contentHeight};
+        root.children.push_back(content);
+        std::string error; std::vector<ViewScrollViewport> viewports;
+        Check(ValidateAndLayoutViewTree(root, 200, 100, error), "page layout validates");
+        Check(ApplyViewScrollOffsets(root, [&](std::string_view id, float) {
+            const auto it = offsets.find(std::string(id));
+            return it == offsets.end() ? 0.0f : it->second;
+        }, viewports, error) && viewports.size() == 1, "page scroll state resolves");
+        offsets[viewports[0].key] = viewports[0].offset;
+        return viewports[0].offset;
+    };
+    Check(Near(renderPage("editor", 500), 180), "editor starts at saved position");
+    Check(Near(renderPage("picker", 50), 0), "short child has its own zero offset");
+    Check(Near(renderPage("editor", 500), 180), "return restores the editor offset");
+    Check(Near(renderPage("results:2", 500), 0), "new query results start at the top");
+}
+
 int main()
 {
+    const auto lightButton = ResolveWidgetButtonFill({}, 0x161616, true, false, false);
+    Check(lightButton.color == 0x161616 &&
+            (255.0f * (1.0f - lightButton.alpha) + 22.0f * lightButton.alpha) < 230.0f,
+        "default buttons must visibly darken a white popup instead of adding white");
+    const auto darkButton = ResolveWidgetButtonFill({}, 0xFFFFFF, true, false, false);
+    Check(darkButton.color == 0xFFFFFF && Near(darkButton.alpha, 0.12f),
+        "dark popup buttons retain their light translucent fill");
+    Check(ResolveWidgetButtonFill({}, 0x161616, true, true, false).alpha > lightButton.alpha &&
+            ResolveWidgetButtonFill({}, 0x161616, true, true, true).alpha >
+                ResolveWidgetButtonFill({}, 0x161616, true, true, false).alpha &&
+            Near(ResolveWidgetButtonFill({}, 0x161616, false, true, true).alpha, lightButton.alpha),
+        "hover and press distinguish enabled buttons without highlighting disabled buttons");
+    const auto customButton = ResolveWidgetButtonFill(0x175CD3, 0x161616, true, true, true);
+    Check(customButton.color == 0x175CD3 && Near(customButton.alpha, 1.0f),
+        "explicit component background colors retain their authored appearance");
+    TestSurfaceThemeRouting();
+    TestScrollPageRestoration();
+    TestTimePickerController();
+    TestDurationPickerController();
+    TestDatePickerController();
     TestLayoutAndRegions();
     TestValidationFailures();
     TestLuaParsing();

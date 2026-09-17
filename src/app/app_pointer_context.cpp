@@ -471,6 +471,9 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
+    if (popupOccludesPoint)
+        popupFanActionFocused_ = false;
+
     if (dockFolderPopupOpen_ &&
         popupOccludesPoint)
     {
@@ -492,7 +495,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 clipped.bottom =
                     std::min(clipped.bottom, content.bottom);
                 if (clipped.bottom <= clipped.top ||
-                    !PtInRect(&clipped, pt))
+                    !HitTestCollectionPopupItem(popup, i, pt))
                     continue;
                 ClearSelection();
                 if (!dockFolderPopupWidget_.
@@ -531,7 +534,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                 RECT clipped = itemRect;
                 clipped.top = std::max(clipped.top, content.top);
                 clipped.bottom = std::min(clipped.bottom, content.bottom);
-                if (clipped.bottom <= clipped.top || !PtInRect(&clipped, pt)) continue;
+                if (clipped.bottom <= clipped.top || !HitTestCollectionPopupItem(popup, i, pt)) continue;
 
                 size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
                 if (itemIndex != static_cast<size_t>(-1))

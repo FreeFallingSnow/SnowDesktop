@@ -239,6 +239,10 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
   `bg`、alpha、壁纸和 normal/glass/acrylic 材质相互独立。`widget.context().theme.mode`
   的等价映射为 `"dark"` 使用浅色前景、`"light"` 使用深色前景。组件不得根据背景
   RGB 亮度或材质名称反推前景主题。
+  在 `panel`、`dialog`、`popover` 回调内，主题快照、`ui.theme()` 和声明式颜色令牌
+  使用宿主设置的“弹窗主题”；桌面回调继续使用组件卡片主题。弹窗打开时及设置变化时
+  宿主会更新该主题。不要缓存桌面主题并用于弹窗。此行为纠正保持 API/schema v2，
+  早期宿主仍可能让弹窗继承卡片前景主题。
 - `widget.hasPermission(name)`：查询当前实例已授予权限。
 - `widget.setTitle(text)`、`widget.invalidate()`、`widget.log(level, text)`。
 - `widget.invalidate()` 请求刷新当前 surface。同一宿主事件/计时器回调内的重复请求
@@ -336,6 +340,10 @@ scroll content extent 和虚拟 item extent；同级间的公共间隔仍优先�
 由宿主最多 16 层受控衰减绘制，blur 限制为 0 到 64，不参与布局或扩大命中区；对应 feature
 为 `view.shadow`。图片在探测 `view.image.tint` 后可声明 `tint=0xRRGGBB`，宿主替换 RGB、
 保留源 alpha，并继续遵循 fit、alignment、interpolation 和节点 opacity。
+
+未指定背景的 `view.button` / `view.iconButton` 使用当前主题前景的半透明填充，
+并提供悬停、按下反馈及内侧细边框；浅色表面使用深色填充，深色表面使用浅色填充。
+显式背景和状态样式优先，`borderWidth=0` 可关闭默认边框。此默认外观调整保持 API/schema v2。
 
 探测 `view.theme.tokens` 后，所有声明式 RGB 颜色槽都可用下列字符串代替
 `0xRRGGBB`：
@@ -1823,6 +1831,11 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 闭区间、最长 366 天）；未传时使用当前选中日期前后各 62 天。value 返回实际
 `fromDate/toDate`、最多 512 个本地事件、`revision` 和 `truncated`，事件包含
 `id/revision/title/date/allDay/startMinutes/endMinutes/notes/reminderMinutes`。
+声明 `data.calendar.events.byId` 后可传入 `eventId`（1–128 字节、无 NUL 的稳定 ID），
+与 `fromDate/toDate` 互斥。该模式不限制日期范围，改名和跨年改期后仍跟踪同一日程；
+返回相同事件结构、最多一项，`fromDate/toDate` 为空字符串，`truncated=false`。
+成功读取但 ID 不存在时返回空 events；权限不足或 provider 不可用仍返回错误状态，不能解释为删除。
+此能力需要支持它的宿主；仅比较版本号不能识别同版本的早期构建。
 selectedDate value 返回 `date/revision`。创建、修改和删除日程仍不由这些只读 topic
 执行；`calendar.selectDate(date)` 只改变 SnowDesktop 内部共享选中日期，不修改事件，
 因此不要求 `calendar.write`。纯 `calendar.dateInfo/addDays` 也不读取用户数据、不要求
@@ -2041,6 +2054,40 @@ UTF-8 读取返回 `text`，NUL 或非法编码返回 `invalidEncoding`。探测
 `task.filesystem.binary` 后可显式使用 `encoding=binary`，读取结果改为 `data`，写入也必须
 传 `data`；Lua 字符串中的 NUL 和非 UTF-8 字节会被原样保留。两种模式的调用方上限与宿主
 硬上限都不超过 1 MiB，整文件读写不会因此开放路径或扩展句柄范围。
+
+新增的 `task.filesystem.picker.multiple` 支持对 `pickOpen`、`pickFolder` 传入
+`multiple=true`，每次最多选择 128 项。结果增加 `items` 数组，原来的
+`handle/kind/access/name` 仍表示第一项；`pickSave` 不接受 `multiple`。
+取消不会改变已有选择；一次授权失败时回收本次新创建的句柄，保留既有句柄。
+
+新增的 `task.filesystem.list.names` 支持 `filesystem.list` 的 `grantHandles=false`。
+此模式只返回子项元数据，不创建永久子句柄，`items[*].handle` 缺省；其他分页、排序、
+目录边界保持原样。适用于大量图片目录；组件只需保存文件夹句柄及子项名称。
+
+新增任务 `filesystem.image`（feature `task.filesystem.image`，权限
+`filesystem.userSelected.read`）在工作线程解码所选文件：
+
+```lua
+task.start("filesystem.image", { handle = selectedFile, maxDimension = 2048 })
+task.start("filesystem.image", { handle = selectedFolder, name = "photo.jpg" })
+```
+
+`name` 仅允许一个直接子文件名；传入时句柄必须为文件夹，省略时必须为文件。
+拒绝路径穿越、分隔符、NTFS 备用数据流及 reparse point。解码过程中固定目录和文件句柄，
+防止路径替换。结果含 `image/width/height` 及文件元数据；其中 `handle` 仍是传入的授权
+句柄，文件夹子图片再次加载须继续提供 `name`。`image` 是当前实例的临时资源句柄，可用于
+`draw.image`、`draw.imageFit`、`view.image`，不得写入 storage。
+最长边默认及最大 2048，可指定 1–2048，保持比例且不放大小图。文件上限 64 MiB、源图最多
+32768×32768 且总像素不超过 64 Mi；WIC 支持的格式按首帧解码，并应用 EXIF 方向。
+GIF/TIFF 不播放动画；WebP 等格式取决于系统解码器。损坏或不支持的文件返回
+`imageDecodeFailed`，超尺寸返回 `imageDimensionsInvalid`，打开失败为 `imageOpenFailed`。
+任务受取消、实例销毁、权限撤回和来源句柄约束；禁止跨实例使用图片资源。
+共享运行时图片的 CPU 像素缓存上限 64 MiB，GPU 位图随资源一起淘汰，原有实例/全局数量
+限制继续有效。资源被淘汰后 `resource.status(image).state` 为 `error`，组件应重新加载。
+
+以上能力属于 API v2 的增量扩展，不提高 `apiVersion`。依赖它们的组件必须声明相应
+`requiredFeatures`，不能只判断 `minHostVersion=1.0.6.0`：同版本早期构建也可能缺少能力。
+官方相册组件应在具备以上 feature 的宿主发布后发布；旧宿主不执行不兼容组件。
 
 `write` 是 1 MiB 内的原子整文件替换，同一实例最短间隔 100 ms；传入
 `expectedRevision` 时，文件不存在或 revision 已变化均返回 `conflict`。成功返回新的
@@ -2802,3 +2849,122 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 均已通过 `task.start` / `data.subscribe` 的窄能力开放，并继续受清单权限、可信手势、额度、
 取消和预览无副作用策略约束。尚未出现在 `system.capabilities()`、feature 目录和 LuaLS 中的
 能力仍视为未开放；不要根据权限词汇自行推测函数名。
+
+
+### `ui.datePicker` 日期与范围选择
+
+新增 capability `ui.datePicker`，API v2。参考 Ant Design DatePicker / RangePicker 的
+单日期、范围、输入校验、清空与确认交互（https://ant.design/components/date-picker/），
+实现使用宿主现有声明式控件，不引入浏览器或前端运行时。
+
+在 setup 或打开面板的 event 中创建 `ui.datePicker(options)`，不要在 view 中重建。
+`key` 为 1–80 字节的实例内唯一标识；`todayDate` 为当前本地 ISO 日期。
+`mode` 为 `single`（默认）或 `range`；value 分别为 ISO 字符串或
+`{startDate,endDate}`。`minDate/maxDate` 为包含端点的日期边界，
+`disabledDates` 最多 366 项；范围不能跨越禁用日期。`firstDayOfWeek` 为 1（周日）至 7。
+只支持公历日粒度，不隐式创建日程或改变宿主日程选中日期。
+
+- `picker:view({rowHeight=ui.metrics().layoutRowHeight})` 返回可用于 panel 或桌面的声明式树。
+- `picker:handle(event)` 处理本选择器 action，返回 `{handled,changed,value}`；无关事件返回 nil。
+  `changed=true` 才表示提交成功，组件自行持久化 value。需按正常事件流程 invalidate。
+- `picker:draftValue()` 保留无效手输文本；`picker:validation()` 返回本地化错误或 nil。
+- `picker:value()` 返回上次有效提交的独立副本；`picker:setValue(value)` 拒绝无效值，保留原状态。
+- `needConfirm` 默认 true，确认前不改变已提交值；false 时有效输入和完整选区即时提交。
+- `allowClear` 默认 true，清空值为 `""` 或两个空端点；false 时空值不能提交。
+- 范围反向点选自动排序；手输反向区间保留输入并提示错误。选择完整范围后再次点选开始新范围。
+- `disabled=true` 禁止交互；可直接输入年份并选择月份，或逐月翻页；“今天”定位今天所在月份。
+- 宿主提供全部语言文案、输入焦点与键盘导航；尚未提交的草稿只在当前选择器对象中保留。
+
+新增组件需声明 `ui.datePicker`，并在对应宿主发布后再公开分发；缺少 capability 的同版本
+早期构建也不能视为兼容。已有 `view.monthCalendar` 与其事件结构不变。
+
+### `ui.timePicker` 时间与时间范围
+
+API/schema v2，最低宿主 1.0.6.0，要求 `ui.timePicker` capability。同版本早期构建缺少该 capability 时不可加载；依赖此 API 的社区组件须晚于支持它的宿主发布。
+
+`ui.timePicker(options)` 返回 `view({rowHeight?})`、`handle(event)`、`value()`、`draftValue()`、`validation()` 和 `setValue(value)`。在 setup 或打开面板时创建，在 panel 中返回其 view，在 event 中转发事件。`handle` 返回 nil 表示不属于它；`changed=true` 时读取返回的 `value`。只有校验通过并确认的输入才改变已提交值；取消面板可丢弃整个控制器。
+
+选项：`key`（必需，1–80 字节）、`mode`（single 默认或 range）、`value`（HH:MM，或 `{startTime,endTime}`）、`minTime/maxTime`（默认 00:00/23:59）、`minuteStep`（默认 1，1–30 的整数且整除 60）、`allowClear`（默认 true）、`needConfirm`（默认 true）、`disabled`。使用 24 小时本地墙上时间；不携带日期、时区或夏令时语义，不自动将逆序解释为跨午夜。范围两端包含边界，结束不得早于开始；小时/分钟下拉与手输共用校验。`setValue` 失败保留原值并返回 false/error。清空范围返回两个空字符串。
+
+### `ui.durationPicker` 时长选择器
+
+API v2 新增 capability `ui.durationPicker`，与 `ui.timePicker` 的一天内时刻语义独立。
+使用宿主本地化的小时、分钟、秒三行纵向输入，每行依次为单位标签、数值框、留有间距的减号／加号步进器。复用已有输入、焦点、步进和无障碍路径。三个字段总高为 3.9 行，容器还须预留错误和确认按钮空间。
+需要 `view.inputControls`、`view.theme.tokens`、`view.pointer.events`。不改变既有接口或 API/schema 版本。
+
+`ui.durationPicker({key, value?, minSeconds?, maxSeconds?, needConfirm?, disabled?, readOnly?})`
+在 setup 或打开面板的事件中创建，不能在 view 回调内反复重建。`key` 长度 1–80 字节，
+不同控制器应使用互不冲突的 key；内部事件使用 `key:hours/minutes/seconds/confirm`。
+`value` 和边界都以**整数总秒数**表示，边界包含端点，默认 `0..359999`（99:59:59）。
+初值默认等于最小值；非法参数或初值抛出错误。分钟和秒字段范围为 0–59，小时为 0–99，
+直接输入不会把 60 秒静默转换或把超范围值静默截断。每列提供减号／加号按钮；悬停数值框滚轮每 120 delta 调整一单位，不足一格按字段累积。步进仅在本字段范围内停止，不跨字段进位；`setValue` 清空滚轮余量。禁用和只读状态同样禁止按钮与滚轮修改。
+
+返回控制器：
+
+- `view({rowHeight?})`：返回可用于 panel、dialog 或 desktop 的宿主声明式树；默认行高来自
+  `ui.metrics().layoutRowHeight`，自定义行高须为 `(0,512]` 内的有限值。
+- `handle(event)`：转发事件，非本控制器事件返回 nil；已处理事件返回
+  `{handled=true, changed=false|true, value?}`。仅有效提交返回总秒数 `value`，即使值未变化。
+- `value()`：最后提交的总秒数。默认显示确认按钮，确认或输入框 Enter 提交。
+  `needConfirm=false` 隐藏内部确认按钮，每次有效编辑立即提交。
+- `draftValue()`：草稿总秒数；字段无效时返回 nil，字段有效但总值越界时仍可能返回越界值，
+  所以消费草稿前必须检查 `validation()`。
+- `validation()`：有效时返回 nil，否则返回宿主本地化错误；错误输入不会提交先前的值。
+- `setValue(seconds)`：更新草稿和已提交值；非法值返回 `false,error` 且保留原状态。
+
+`disabled` 和 `readOnly` 阻止用户编辑与提交；`setValue` 仍允许调用方程序化更新。
+取消面板时可丢弃整个控制器，下次打开从持久值创建。不要把 `value()` 的旧有效值当作当前
+无效草稿的确认结果。带自定义“开始”按钮的面板可以使用 `needConfirm=false`，点击开始时
+检查 `validation()`，再读取 `draftValue()`。
+
+```lua
+-- panel-open event
+model.duration = ui.durationPicker({key="duration", value=300,
+    minSeconds=1, maxSeconds=359999, needConfirm=false})
+-- panel callback: include model.duration:view() in the children
+-- event callback: forward model.duration:handle(event), then invalidate
+-- start action
+if not model.duration:validation() then
+    local milliseconds = model.duration:draftValue() * 1000
+end
+```
+
+兼容与发布：此接口进入 1.0.6.0 开发版本；同版本早期构建不一定提供它，不能仅检查版本号。
+必须声明并探测 capability。官方计时器将其声明为 optional，并在缺少时回退到原有分钟／分:秒
+文本输入。因此组件在旧宿主和同版本早期构建仍可运行。若其他组件将它声明为 required，
+则必须等支持该接口的宿主发布后再发布组件；缺少 capability 时宿主应拒绝加载。
+
+
+## Desktop file and folder drops
+
+Probe and require `interaction.fileDrop` before binding `events.fileDrop = { id = "import" }`
+on a desktop view node. The component must already have `filesystem.userSelected.read`.
+The enabled, clipped node becomes a file-drop zone; non-drop child controls do not hide it.
+The current implementation supports standalone desktop components, local files/folders from
+Explorer via synchronous CF_HDROP, and native desktop file-item drags. Require the additional
+`interaction.fileDrop.async` feature for Explorer sources with enabled IDataObjectAsyncCapability.
+The host probes their CF_HDROP format without rendering data during hover, captures the original
+widget/runtime/action on Drop, then reads the marshaled source on the existing STA read queue.
+It does not accept virtual-file-only payloads, URLs, or panel/dialog/popover drops.
+
+The event has `kind = "action"`, `action = "fileDrop"`, the binding `id`/`value`, `targetKey`,
+`surface = "desktop"`, `source = "host.drop"`, `trustedGesture = true`, and `items`.
+Each item contains an opaque `handle`, basename `name`, `kind = "file" | "folder"`, and
+`access = "read"`. Paths are never sent to Lua. At most 128 top-level selections are accepted;
+existing handle-store quotas still apply. Duplicates reuse references. Permission and target
+validity are checked again at delivery. Delayed delivery follows the original stable target;
+unrelated redraws or movement do not redirect it. Removal, runtime replacement, a disabled target,
+or changed action ID/value rejects the pending delivery. Failed grant batches or failed Lua delivery revoke
+only newly created grants. A successful callback owns the delivered handles and must release
+ones it does not retain through `filesystem.release`.
+
+Drops report COPY semantics and preserve the original files, folders and desktop placement.
+This transfers read references, not file ownership or bytes. Folder expansion is a component
+choice: use `filesystem.list` with child grants for a fixed snapshot, release unused child
+grants and the directory grant after saving; keep a directory grant with names-only listing
+for an explicitly chosen binding mode. Do not claim real drag acceptance based only on the
+cursor, hit-test, grant helper or automated component tests.
+
+Existing components without this binding keep their behavior. API version remains 2; a
+version number alone does not establish support in early 1.0.6.0 builds. Release the host
+capability before dependent community widgets; unsupported hosts reject required features.

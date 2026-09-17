@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -19,6 +21,21 @@ struct Bounds
     int right = 0;
     int bottom = 0;
 };
+
+// A monitor's grid must use its own work area, never the desktop HWND's
+// transient client extent. Reject unusable samples before committing pages.
+inline std::optional<Bounds> ResolveMonitorWorkArea(
+    const Bounds& monitor, const Bounds& work)
+{
+    const Bounds result{
+        std::max(monitor.left, work.left),
+        std::max(monitor.top, work.top),
+        std::min(monitor.right, work.right),
+        std::min(monitor.bottom, work.bottom) };
+    if (result.right <= result.left || result.bottom <= result.top)
+        return std::nullopt;
+    return result;
+}
 
 /**
  * @brief Return true when the new virtual desktop exposes pixels outside the

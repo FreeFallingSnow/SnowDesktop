@@ -65,6 +65,7 @@ struct DataSubscriptionOptions
     bool preview = false;
     std::string rangeStart;
     std::string rangeEnd;
+    std::string eventId;
     bool audioWaveform = true;
     bool audioSpectrum = true;
     bool audioRms = true;

@@ -573,6 +573,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     }
     const bool folderEntry =
         pressedEntryIndex < dockEntries_.size() &&
+        !IsLogicalDockEntryType(dockEntries_[pressedEntryIndex].type) &&
         IsFolderDockEntry(dockEntries_[pressedEntryIndex]);
 
     size_t appItemIndex = frequentItemIndex;
@@ -615,7 +616,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     ReleaseCapture();
     InvalidateDragStaticScene();
     const bool popupEntryOnFloatingDock =
-        (entryType == DockEntryType::Collection ||
+        (IsLogicalDockEntryType(entryType) ||
          folderEntry) &&
         IsDockContainerEffectivelyFloating(dock);
     if (hwnd_ && !popupEntryOnFloatingDock)
@@ -753,7 +754,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
                     capturePolicy);
             });
     }
-    else if (entryType == DockEntryType::Collection)
+    else if (IsLogicalDockEntryType(entryType))
     {
         const size_t widgetIndex = FindWidgetIndexById(reference);
         if (widgetIndex < widgets_.size())
@@ -812,6 +813,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
 
 void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
 {
+    if (HandleUsageGuidePointerUp(upPoint)) return;
     if (HandleLargeIconPointerUp()) return;
     if (middleButtonWidgetMove_) return;
     (void)wp;
@@ -1055,6 +1057,18 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         const WidgetAction completedWidgetAction = widgetAction_;
         if (completedWidgetAction == WidgetAction::Move)
         {
+            // Sample both geometry and modifiers at release, including a final
+            // key transition with no intervening mouse-move message.
+            OnMouseMoveAt(wp, upPoint);
+            HideDragHintWindow();
+            const size_t pairTarget = HitTestWidgetPairTarget(upPoint, mouseDownWidgetIndex_);
+            const auto pairAction = pairTarget < widgets_.size()
+                ? snowdesktop::widget_pair_drop::ResolveAction(
+                    snowdesktop::widget_pair_drop::GetOptions(
+                        widgets_[mouseDownWidgetIndex_].type, widgets_[pairTarget].type),
+                    (wp & MK_CONTROL) != 0, (wp & MK_SHIFT) != 0,
+                    (GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+                : snowdesktop::widget_pair_drop::Action::None;
             const auto movingPayload = snowdesktop::slot_contract::
                 PayloadForWidgetType(
                     widgets_[mouseDownWidgetIndex_].type);
@@ -1099,7 +1113,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
             // release test, then end the gesture before any placement path
             // rebuilds the persistent DockHost from normal interaction bounds.
             widgetAction_ = WidgetAction::None;
-            if (canGroup)
+            if (pairAction != snowdesktop::widget_pair_drop::Action::None)
+            {
+                CommitWidgetPairDrop(mouseDownWidgetIndex_, pairTarget, pairAction);
+            }
+            else if (canGroup)
             {
                 if (canCollectionGroup)
                     AddCollectionToGroup(
@@ -1140,6 +1158,9 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
             static_cast<size_t>(-1);
         widgetCollectionGroupInsertIndex_ =
             static_cast<size_t>(-1);
+        widgetPairTargetIndex_ = static_cast<size_t>(-1);
+        widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
+        KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
         InvalidateDragStaticScene();
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
@@ -1264,6 +1285,17 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         goto cleanup;
     }
 
+    if (HitTestLuaFileDropTarget(upPoint) < widgets_.size())
+    {
+        (void)DeliverLuaFileDrop(upPoint, dragSession_.SourceList().FilePaths());
+        goto cleanup;
+    }
+
+    if (TryCommitDockWidgetPairDrop(upPoint,
+            static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)) |
+            ((GetAsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
+        goto cleanup;
+
     ResolveCurrentDragTargetAt(upPoint);
 
     if (!GetDockDragOutRemovalHint(upPoint).empty())
@@ -1365,7 +1397,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                         hwnd_, nullptr, FALSE);
                     goto cleanup;
                 }
-                if (dockTarget->GetEntryType() == DockEntryType::Collection)
+                if (IsLogicalDockEntryType(dockTarget->GetEntryType()))
                 {
                     const bool executed = DropItemsIntoDockCollection(
                         dragSession_.Items(), dragSession_.Source(), dockTarget, mods);

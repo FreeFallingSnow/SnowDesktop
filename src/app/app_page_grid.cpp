@@ -1165,7 +1165,8 @@ void DesktopApp::NavigatePageOffset(int delta)
     LayoutItems();
     RefreshPageNavHotEdgeHoverAt(lastMousePoint_);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
-    RestoreDesktopWindowLayer();
+    if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None)
+        RestoreDesktopWindowLayer();
 }
 
 void DesktopApp::JumpToPageOffset(int targetOffset)
@@ -1366,44 +1367,11 @@ void DesktopApp::NormalizePageIds()
  */
 void DesktopApp::PruneEmptyOverflowPages()
 {
-    const size_t N = gridPages_.size();
-    if (N == 0 || savedPageIds_.empty()) return;
-
-    // 预计算：每个 index 之后是否存在非空页
-    const size_t total = savedPageIds_.size();
-    std::vector<bool> hasNonEmptyAfter(total, false);
-    {
-        bool seen = false;
-        for (size_t i = total; i-- > 0; )
-        {
-            hasNonEmptyAfter[i] = seen;
-            if (PageHasContent(savedPageIds_[i]))
-                seen = true;
-        }
-    }
-
-    std::vector<std::wstring> keep;
-    for (size_t i = 0; i < total; ++i)
-    {
-        const bool isSlotPage = (N >= 2) && (i < N - 1);        // 前 N-1 槽位页
-        const bool isLastDefault = (i == N - 1);                // 末屏默认页（pageOffset=0 时显示）
-        const bool isEmpty = !PageHasContent(savedPageIds_[i]);
-
-        if (isSlotPage)
-            keep.push_back(savedPageIds_[i]);                   // 槽位页永远保留
-        else if (!isEmpty)
-            keep.push_back(savedPageIds_[i]);                   // 非空保留
-        else if (isLastDefault && !hasNonEmptyAfter[i])
-            keep.push_back(savedPageIds_[i]);                   // 末屏默认页空 + 后面无非空 → 保留作占位
-        else
-        {
-            // 末屏默认页空 + 后面有非空 → 清理递补
-            // 溢出区其余页空 → 清理
-            savedPageColumns_.erase(savedPageIds_[i]);
-            savedPageRows_.erase(savedPageIds_[i]);
-        }
-    }
-    savedPageIds_ = std::move(keep);
+    snowdesktop::page_navigation_rules::PruneEmptyPages(
+        savedPageIds_, savedPageColumns_, savedPageRows_, gridPages_.size(),
+        desktopItemsReady_, [this](const std::wstring& pageId) {
+            return PageHasContent(pageId);
+        });
 }
 
 /**

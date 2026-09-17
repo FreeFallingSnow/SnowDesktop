@@ -19,6 +19,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     ClearPopupDragTarget();
     pendingGuideAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    if (HandleUsageGuidePointerDown(pt)) return;
     if (HandleLargeIconPointerDown(pt)) return;
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
         luaWidgetPanelAnimation_.IsInteractive())
@@ -115,8 +116,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 pointDock->EntryAtPoint(pt);
             pressedDockItem)
         {
-            if (pressedDockItem->GetEntryType() ==
-                    DockEntryType::Collection)
+            if (IsLogicalDockEntryType(pressedDockItem->GetEntryType()))
             {
                 pressedDockCollectionWidgetIndex =
                     FindWidgetIndexById(
@@ -263,6 +263,21 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         if (popupWidget && !pressedPopupToggle)
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
+            if (UsesCollectionPopupFan(*popupWidget))
+            {
+                popupFanActionFocused_ = false;
+                if (snowdesktop::collection_popup_layout::FanItemContains(
+                        GetCollectionPopupFanItem(popup, GetPopupItemCount(*popupWidget)), pt))
+                {
+                    mouseDown_ = false;
+                    mouseDownHit_ = nullptr;
+                    marqueeActive_ = false;
+                    marqueeDockFolderPopup_ = false;
+                    ClearPopupMouseDownItem();
+                    ShowAllCollectionPopupItems();
+                    return;
+                }
+            }
             const RECT viewport = GetCollectionPopupContentRect(popup);
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
@@ -359,7 +374,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 clipped.bottom =
                     std::min(clipped.bottom, content.bottom);
                 if (clipped.bottom <= clipped.top ||
-                    !PtInRect(&clipped, pt))
+                    !HitTestCollectionPopupItem(popup, i, pt))
                     continue;
 
                 auto& entries =
@@ -476,7 +491,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             RECT clipped = itemRect;
             clipped.top = std::max(clipped.top, content.top);
             clipped.bottom = std::min(clipped.bottom, content.bottom);
-            if (clipped.bottom <= clipped.top || !PtInRect(&clipped, pt)) continue;
+            if (clipped.bottom <= clipped.top || !HitTestCollectionPopupItem(popup, i, pt)) continue;
 
             size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
             if (itemIndex != static_cast<size_t>(-1))
@@ -583,8 +598,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
                 if (dockPressedEntry_ < dockEntries_.size() &&
-                    dockEntries_[dockPressedEntry_].type ==
-                        DockEntryType::Collection)
+                    IsLogicalDockEntryType(dockEntries_[dockPressedEntry_].type))
                 {
                     dockPressedClosedCollectionPopup_ =
                         collectionPopupClosedByPointerDown;

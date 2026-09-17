@@ -1,5 +1,6 @@
 #include "application_crash_watchdog.h"
 #include "application_restart_policy.h"
+#include "app/startup_cancellation.h"
 
 #include <iostream>
 #include <string>
@@ -16,7 +17,7 @@ void Expect(bool condition, const char* message)
     ++failures;
 }
 
-HANDLE StartExitCodeChild(DWORD exitCode)
+HANDLE StartChild(std::wstring_view argument)
 {
     std::wstring executable(MAX_PATH, L'\0');
     const DWORD length = GetModuleFileNameW(
@@ -25,9 +26,7 @@ HANDLE StartExitCodeChild(DWORD exitCode)
     if (length == 0 || length >= executable.size())
         return nullptr;
     executable.resize(length);
-    std::wstring commandLine = L"\"" + executable +
-        L"\" --child-exit=" +
-        std::to_wstring(static_cast<unsigned long long>(exitCode));
+    std::wstring commandLine = L"\"" + executable + L"\" " + std::wstring(argument);
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -42,9 +41,11 @@ HANDLE StartExitCodeChild(DWORD exitCode)
 }
 
 void TestRealProcessExit(DWORD exitCode, bool preventRestart,
-    bool launchSucceeds, bool expectedCrash, bool expectedAttempt)
+    bool launchSucceeds, bool expectedCrash, bool expectedAttempt,
+    bool cancelStartup = false)
 {
-    HANDLE child = StartExitCodeChild(exitCode);
+    HANDLE child = StartChild(cancelStartup ? L"--child-cancel-startup" :
+        L"--child-exit=" + std::to_wstring(static_cast<unsigned long long>(exitCode)));
     Expect(child != nullptr, "watchdog test child starts");
     if (!child)
         return;
@@ -88,6 +89,12 @@ int wmain(int argc, wchar_t* argv[])
     if (argc == 2)
     {
         const std::wstring_view argument(argv[1]);
+        if (argument == L"--child-cancel-startup")
+        {
+            snowdesktop::StartupCancellation cancellation;
+            (void)cancellation.TerminateStartup();
+            return ERROR_INVALID_FUNCTION; // Successful self-termination never returns.
+        }
         if (argument.starts_with(childExitPrefix))
         {
             const std::wstring value(
@@ -129,6 +136,17 @@ int wmain(int argc, wchar_t* argv[])
     }
     TestRealProcessExit(
         ERROR_SUCCESS, false, true, false, false);
+    // Exercise the actual button action in an isolated child, then the real
+    // watchdog: deliberate cancellation must terminate without auto-relaunch.
+    TestRealProcessExit(
+        ERROR_CANCELLED, false, true, false, false, true);
+    snowdesktop::StartupCancellation completedStartup;
+    Expect(completedStartup.IsStarting(), "startup initially accepts cancellation");
+    Expect(completedStartup.BeginDesktopHandoff(), "ready startup allows desktop takeover");
+    Expect(!completedStartup.IsStarting(), "desktop takeover closes cancellation");
+    Expect(!completedStartup.TerminateStartup(),
+        "a stale button action cannot terminate a ready desktop");
+    Expect(completedStartup.BeginDesktopHandoff(), "repeated completion remains safe");
     TestRealProcessExit(
         0xC0000409u, false, true, true, true);
     TestRealProcessExit(

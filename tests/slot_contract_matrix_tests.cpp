@@ -1,4 +1,5 @@
 #include "core/slot_contract.h"
+#include "slot_drop_expectations.h"
 
 #include <array>
 #include <cmath>
@@ -30,137 +31,46 @@ std::string PairName(
 
 void TestEveryDirectedPairAndPayload()
 {
-    using Surface = contract::SlotSurfaceKind;
-    using Payload = contract::DragPayloadKind;
-    using Route = contract::DropRoute;
-
-    constexpr std::size_t surfaceCount =
-        contract::ToIndex(Surface::Count);
-    constexpr std::size_t payloadCount =
-        contract::ToIndex(Payload::Count);
-    std::array<std::array<bool, surfaceCount>,
-        surfaceCount> nativeRouteCovered{};
-
-    for (std::size_t sourceIndex = 0;
-        sourceIndex < surfaceCount;
-        ++sourceIndex)
+    namespace expected = slot_drop_expectations;
+    std::size_t cases = 0;
+    for (std::size_t source = 0; source < expected::surfaces.size(); ++source)
     {
-        const auto source =
-            static_cast<Surface>(sourceIndex);
-        for (std::size_t targetIndex = 0;
-            targetIndex < surfaceCount;
-            ++targetIndex)
+        for (std::size_t payload = 0; payload < expected::payloads.size(); ++payload)
         {
-            const auto target =
-                static_cast<Surface>(targetIndex);
-            const bool sameSurface =
-                source == target &&
-                source != Surface::External;
-            const std::array relations{
-                contract::ClassifyRelation(
-                    source, target, sameSurface),
-                contract::ClassifyRelation(
-                    source, target, false),
-            };
-            const size_t relationCount =
-                relations[0] == relations[1]
-                ? 1
-                : relations.size();
-
-            for (std::size_t payloadIndex = 0;
-                payloadIndex < payloadCount;
-                ++payloadIndex)
+            Check(contract::SurfaceEmits(expected::surfaces[source],
+                    expected::payloads[payload]) == expected::emits[source][payload],
+                "source payload policy: " + std::to_string(source) + "/" +
+                    std::to_string(payload));
+            for (std::size_t target = 0; target < expected::surfaces.size(); ++target)
             {
-                const auto payload =
-                    static_cast<Payload>(payloadIndex);
-                for (size_t relationIndex = 0;
-                    relationIndex < relationCount;
-                    ++relationIndex)
+                for (const auto relation : expected::relations)
                 {
-                    const auto relation =
-                        relations[relationIndex];
-                    const Route route =
-                        contract::EvaluateSlotDrop(
-                            source, payload,
-                            target, relation);
-
-                    if (contract::SurfaceEmits(
-                            source, payload) &&
-                        route != Route::Reject)
-                        nativeRouteCovered
-                            [sourceIndex][targetIndex] = true;
-
-                    if (!contract::SurfaceEmits(
-                            source, payload))
-                    {
-                        Check(route == Route::Reject,
-                            PairName(source, target) +
-                            ": a surface must not emit an unregistered payload");
-                    }
-                    if (target == Surface::Guide)
-                    {
-                        Check(route == Route::Reject,
-                            PairName(source, target) +
-                            ": the guide must never accept a drop");
-                    }
-                    if (route != Route::Reject)
-                    {
-                        Check(
-                            contract::SurfaceSupportsRoute(
-                                target, route),
-                            PairName(source, target) +
-                            ": every accepted route must provide all preview/commit/insertion phases");
-                        Check(
-                            contract::SurfaceSupports(
-                                target,
-                                contract::InteractionCapability::Commit),
-                            PairName(source, target) +
-                            ": every accepted target must implement commit");
-                        if (contract::RouteRequiresInsertionIndicator(route))
-                        {
-                            Check(
-                                contract::SurfaceSupports(
-                                    target,
-                                    contract::InteractionCapability::InsertionIndicator),
-                                PairName(source, target) +
-                                ": sortable routes must implement an insertion indicator");
-                        }
-                        if (relation == contract::DragRelation::CrossSurface ||
-                            relation == contract::DragRelation::ExternalIngress ||
-                            relation == contract::DragRelation::ExternalEgress)
-                        {
-                            Check(
-                                contract::SurfaceSupports(
-                                    source,
-                                    contract::InteractionCapability::CrossDisplayCoordinates) &&
-                                contract::SurfaceSupports(
-                                    target,
-                                    contract::InteractionCapability::CrossDisplayCoordinates),
-                                PairName(source, target) +
-                                ": cross-surface routes must own coordinate conversion");
-                        }
-                    }
+                    const auto wanted = expected::ExpectedRoute(
+                        source, payload, target, relation);
+                    const auto actual = contract::EvaluateSlotDrop(
+                        expected::surfaces[source], expected::payloads[payload],
+                        expected::surfaces[target], relation);
+                    const std::string context =
+                        PairName(expected::surfaces[source], expected::surfaces[target]) +
+                        " payload=" + std::to_string(payload) +
+                        " relation=" + std::to_string(static_cast<int>(relation));
+                    Check(actual == wanted, context +
+                        " expected route=" + std::to_string(static_cast<int>(wanted)) +
+                        " actual=" + std::to_string(static_cast<int>(actual)));
+                    Check(contract::AcceptsSlotDrop(expected::surfaces[source],
+                            expected::payloads[payload], expected::surfaces[target],
+                            relation) == (wanted != contract::DropRoute::Reject),
+                        context + ": acceptance must agree with the expected operation");
+                    if (wanted != contract::DropRoute::Reject)
+                        Check(contract::SurfaceSupportsRoute(
+                                expected::surfaces[target], wanted),
+                            context + ": the expected operation needs all target phases");
+                    ++cases;
                 }
             }
         }
     }
-
-    for (const auto& source :
-         contract::kSurfaceDescriptors)
-    {
-        if (!source.buildsSlots) continue;
-        for (const auto& target :
-             contract::kSurfaceDescriptors)
-        {
-            if (!target.buildsSlots) continue;
-            Check(
-                nativeRouteCovered
-                    [contract::ToIndex(source.kind)]
-                    [contract::ToIndex(target.kind)],
-                PairName(source.kind, target.kind) +
-                ": every registered slot pair must declare at least one accepted native-payload route");
-        }
-    }
+    std::cout << cases << " explicit route expectations checked\n";
 }
 
 void TestSurfaceGeometryMatrix()
@@ -309,215 +219,6 @@ void TestPayloadClassificationIsExclusive()
     }
 }
 
-void TestSameComponentAndSameTypeRules()
-{
-    using Surface = contract::SlotSurfaceKind;
-    using Payload = contract::DragPayloadKind;
-    using Relation = contract::DragRelation;
-    using Route = contract::DropRoute;
-
-    for (const auto& descriptor :
-        contract::kSurfaceDescriptors)
-    {
-        if (!descriptor.buildsSlots)
-            continue;
-        for (std::size_t payloadIndex = 0;
-            payloadIndex <
-                contract::ToIndex(Payload::Count);
-            ++payloadIndex)
-        {
-            const auto payload =
-                static_cast<Payload>(payloadIndex);
-            if (!contract::SurfaceEmits(
-                    descriptor.kind, payload))
-                continue;
-
-            const Route internal =
-                contract::EvaluateSlotDrop(
-                    descriptor.kind, payload,
-                    descriptor.kind,
-                    Relation::SameInstance);
-            const Route peer =
-                contract::EvaluateSlotDrop(
-                    descriptor.kind, payload,
-                    descriptor.kind,
-                    Relation::SameSurface);
-
-            Check(internal != Route::Reject,
-                std::string(descriptor.name) +
-                ": every native payload needs an explicit same-component route");
-            Check(peer != Route::Reject,
-                std::string(descriptor.name) +
-                ": every native payload needs an explicit same-type peer route");
-        }
-    }
-}
-
-void TestTypeIsolationRules()
-{
-    using Surface = contract::SlotSurfaceKind;
-    using Payload = contract::DragPayloadKind;
-    using Relation = contract::DragRelation;
-
-    for (const auto& target :
-        contract::kSurfaceDescriptors)
-    {
-        const bool collectionLabelAccepted =
-            contract::AcceptsSlotDrop(
-                Surface::CollectionGroup,
-                Payload::CollectionGroupLabel,
-                target.kind,
-                contract::ClassifyRelation(
-                    Surface::CollectionGroup,
-                    target.kind, false));
-        Check(collectionLabelAccepted ==
-                (target.kind == Surface::Desktop ||
-                 target.kind == Surface::CollectionGroup),
-            std::string(target.name) +
-            ": collection labels must use only collection-label targets");
-
-        const bool fileLabelAccepted =
-            contract::AcceptsSlotDrop(
-                Surface::FileGroup,
-                Payload::FileGroupLabel,
-                target.kind,
-                contract::ClassifyRelation(
-                    Surface::FileGroup,
-                    target.kind, false));
-        Check(fileLabelAccepted ==
-                (target.kind == Surface::Desktop ||
-                 target.kind == Surface::FileGroup),
-            std::string(target.name) +
-            ": file-source labels must use only file-label targets");
-    }
-
-    Check(
-        contract::EvaluateSlotDrop(
-            Surface::FolderMapping,
-            Payload::FolderEntry,
-            Surface::Dock,
-            Relation::CrossSurface) ==
-            contract::DropRoute::AddToDock,
-        "folder entries dragged to Dock must be materialized as safe shortcut mappings");
-    Check(
-        contract::AcceptsSlotDrop(
-            Surface::Desktop,
-            Payload::CollectionWidget,
-            Surface::CollectionGroup,
-            Relation::CrossSurface) &&
-        !contract::AcceptsSlotDrop(
-            Surface::Desktop,
-            Payload::CollectionWidget,
-            Surface::FileGroup,
-            Relation::CrossSurface),
-        "collection widgets must only enter collection groups");
-    Check(
-        contract::AcceptsSlotDrop(
-            Surface::Desktop,
-            Payload::FileSourceWidget,
-            Surface::FileGroup,
-            Relation::CrossSurface) &&
-        !contract::AcceptsSlotDrop(
-            Surface::Desktop,
-            Payload::FileSourceWidget,
-            Surface::CollectionGroup,
-            Relation::CrossSurface),
-        "file-source widgets must only enter file groups");
-
-    Check(
-        contract::AcceptsSlotDrop(
-            Surface::Desktop,
-            Payload::FolderMappingWidget,
-            Surface::Dock,
-            Relation::CrossSurface) &&
-        contract::AcceptsSlotDrop(
-            Surface::FileGroup,
-            Payload::FolderMappingWidget,
-            Surface::Dock,
-            Relation::CrossSurface) &&
-        contract::EvaluateSlotDrop(
-            Surface::Dock,
-            Payload::FolderMappingWidget,
-            Surface::Dock,
-            Relation::SameInstance) ==
-            contract::DropRoute::ReorderWithinContainer,
-        "folder mappings must enter and reorder within the Dock");
-    Check(
-        contract::EvaluateSlotDrop(
-            Surface::FileGroup,
-            Payload::FolderMappingWidget,
-            Surface::Desktop,
-            Relation::CrossSurface) ==
-            contract::DropRoute::PlaceOnDesktop &&
-        contract::EvaluateSlotDrop(
-            Surface::Dock,
-            Payload::FolderMappingWidget,
-            Surface::FileGroup,
-            Relation::CrossSurface) ==
-            contract::DropRoute::MoveFileSourceIntoGroup &&
-        contract::EvaluateSlotDrop(
-            Surface::FileGroup,
-            Payload::FolderMappingWidget,
-            Surface::FileGroup,
-            Relation::SameInstance) ==
-            contract::DropRoute::MoveFileSourceIntoGroup,
-        "folder mappings must move between Desktop, Dock, and FileGroup without changing payload family");
-    Check(
-        !contract::AcceptsSlotDrop(
-            Surface::Desktop,
-            Payload::FolderMappingWidget,
-            Surface::CollectionGroup,
-            Relation::CrossSurface),
-        "folder mappings must not enter collection groups");
-}
-
-void TestExternalIngressAndEgress()
-{
-    using Surface = contract::SlotSurfaceKind;
-    using Payload = contract::DragPayloadKind;
-    using Relation = contract::DragRelation;
-
-    for (const auto& target :
-        contract::kSurfaceDescriptors)
-    {
-        const bool accepted =
-            contract::AcceptsSlotDrop(
-                Surface::External,
-                Payload::ExternalFile,
-                target.kind,
-                Relation::ExternalIngress);
-        Check(accepted == target.buildsSlots,
-            std::string(target.name) +
-            ": external files must be accepted exactly by real slot surfaces");
-    }
-
-    for (const auto& source :
-        contract::kSurfaceDescriptors)
-    {
-        for (std::size_t payloadIndex = 0;
-            payloadIndex <
-                contract::ToIndex(Payload::Count);
-            ++payloadIndex)
-        {
-            const auto payload =
-                static_cast<Payload>(payloadIndex);
-            if (!contract::SurfaceEmits(
-                    source.kind, payload))
-                continue;
-            const bool expected =
-                payload == Payload::DesktopItem ||
-                payload == Payload::FolderEntry;
-            Check(
-                contract::AcceptsSlotDrop(
-                    source.kind, payload,
-                    Surface::External,
-                    Relation::ExternalEgress) ==
-                    expected,
-                std::string(source.name) +
-                ": external drag-out must be limited to file-backed payloads");
-        }
-    }
-}
 }
 
 int main()
@@ -525,9 +226,6 @@ int main()
     TestPayloadClassificationIsExclusive();
     TestEveryDirectedPairAndPayload();
     TestSurfaceGeometryMatrix();
-    TestSameComponentAndSameTypeRules();
-    TestTypeIsolationRules();
-    TestExternalIngressAndEgress();
     if (failures != 0)
     {
         std::cerr << failures

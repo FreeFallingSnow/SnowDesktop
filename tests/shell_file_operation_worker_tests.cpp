@@ -1,7 +1,9 @@
 #include "shell_file_operation_worker.h"
+#include "external_drop_resources.h"
 #include "item_location.h"
 #include "app/shell_change_notification.h"
 #include "low_level_mouse_hook.h"
+#include "shell_network_preflight.h"
 
 #include <algorithm>
 #include <atomic>
@@ -11,6 +13,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <stdexcept>
 
@@ -45,6 +48,93 @@ std::filesystem::path CreateTemporaryDirectory()
     Expect(length != 0 && length < MAX_PATH,
         "temporary fixture paths normalize 8.3 aliases before Shell comparisons");
     return std::filesystem::path(longPath);
+}
+
+// DND-04: real STA worker -> per-item outputs -> production content cleanup.
+// Missing parent/source faults are deterministic and never touch user data.
+void TestTrackedDropResults()
+{
+    using namespace snowdesktop;
+    const auto root = CreateTemporaryDirectory();
+    struct Cleanup { std::filesystem::path root; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(root, ec); } } cleanup{root};
+    auto check = [](bool ok, const char* message) { if (!ok) throw std::runtime_error(message); };
+    const auto retained = root / L"retained.txt";
+    const auto discarded = root / L"discarded.txt";
+    const auto borrowed = root / L"borrowed.txt";
+    { std::ofstream(retained) << "retained payload"; }
+    { std::ofstream(discarded) << "discarded payload"; }
+    { std::ofstream(borrowed) << "user payload"; }
+    const auto link = root / L"retained.lnk";
+    auto result = std::make_shared<ShellFileOperationResult>();
+    ShellFileOperationRequest request;
+    request.result = result;
+    request.shortcuts = {{retained.wstring(), link.wstring(), root.wstring(), true},
+        {discarded.wstring(), (root / L"missing" / L"failed.lnk").wstring(), root.wstring(), true}};
+    ShellFileOperationWorker worker;
+    std::promise<bool> finished;
+    auto future = finished.get_future();
+    check(worker.Enqueue(request, [&](bool succeeded) { finished.set_value(succeeded); }), "partial reference batch queues");
+    check(future.wait_for(std::chrono::seconds(15)) == std::future_status::ready, "partial reference batch finishes within deadline");
+    check(!future.get(), "partial reference batch reports failure");
+    check(result->outputs.size() == 1 && result->outputs[0].source == retained.wstring() &&
+        result->outputs[0].destination == link.wstring() && result->outputs[0].referencesSource,
+        "partial failure still reports the exact live reference");
+    external_drop_content::Content content;
+    content.paths = {retained.wstring(), discarded.wstring()}; content.owned = true;
+    external_drop_content::Cleanup(content, *result);
+    external_drop_content::Content userContent; userContent.paths = {borrowed.wstring()};
+    external_drop_content::Cleanup(userContent, {});
+    Microsoft::WRL::ComPtr<IShellLinkW> loaded;
+    check(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&loaded))), "read saved shortcut");
+    Microsoft::WRL::ComPtr<IPersistFile> persist;
+    check(SUCCEEDED(loaded.As(&persist)) && SUCCEEDED(persist->Load(link.c_str(), STGM_READ)), "load retained shortcut");
+    wchar_t path[MAX_PATH]{};
+    check(SUCCEEDED(loaded->GetPath(path, MAX_PATH, nullptr, SLGP_RAWPATH)), "read shortcut target");
+    std::ifstream payload{std::filesystem::path(path)};
+    const std::string bytes{std::istreambuf_iterator<char>(payload), {}};
+    check(bytes == "retained payload" && !std::filesystem::exists(discarded) && std::filesystem::exists(borrowed),
+        "cleanup preserves usable successful references, removes unreferenced temp data and preserves user data");
+
+    // The same source basename in two requests must yield distinct actual
+    // destinations; absence of a source must not hide another successful copy.
+    std::filesystem::create_directories(root / L"a");
+    std::filesystem::create_directories(root / L"b");
+    std::filesystem::create_directories(root / L"target");
+    const auto a = root / L"a" / L"same.txt";
+    const auto b = root / L"b" / L"same.txt";
+    { std::ofstream(a) << "A"; } { std::ofstream(b) << "B"; }
+    auto run = [&](UINT action, const std::filesystem::path& source, bool missing) {
+        auto outputs = std::make_shared<ShellFileOperationResult>();
+        ShellFileOperationRequest operation; operation.result = outputs;
+        ShellFileOperationStep step{action, {source.wstring()}, (root / L"target").wstring(),
+            static_cast<FILEOP_FLAGS>(FOF_NO_UI | FOF_RENAMEONCOLLISION)};
+        if (missing) step.sources.push_back((root / L"absent.txt").wstring());
+        operation.steps.push_back(step);
+        const bool ok = ShellFileOperationWorker::Execute(operation);
+        check(ok == !missing && outputs->outputs.size() == 1, "tracked copy/move reports each actual success even on partial failure");
+        return outputs->outputs[0].destination;
+    };
+    const auto aOut = run(FO_COPY, a, false);
+    const auto bOut = run(FO_MOVE, b, true);
+    auto read = [](const auto& file) { std::ifstream in{std::filesystem::path(file)}; return std::string{std::istreambuf_iterator<char>(in), {}}; };
+    check(aOut != bOut && read(aOut) == "A" && read(bOut) == "B" &&
+        std::filesystem::exists(a) && !std::filesystem::exists(b),
+        "real copy/move collision outputs preserve contents and correct source ownership");
+    const auto directory = root / L"directory";
+    std::filesystem::create_directory(directory);
+    { std::ofstream(directory / L"child.txt") << "child payload"; }
+    const auto directoryOut = run(FO_COPY, directory, false);
+    check(std::filesystem::is_directory(directoryOut) &&
+        read(std::filesystem::path(directoryOut) / L"child.txt") == "child payload" &&
+        std::filesystem::exists(directory / L"child.txt"),
+        "recursive copy records the top-level directory, preserves contents and retains its source");
+    // Copied .lnk files do not borrow their input file's lifetime.
+    ShellFileOperationRequest exact; exact.result = std::make_shared<ShellFileOperationResult>();
+    const auto copied = root / L"copied.lnk";
+    exact.exactFileCopies = {{link.wstring(), copied.wstring()}};
+    check(ShellFileOperationWorker::Execute(exact) && exact.result->outputs.size() == 1 &&
+        !exact.result->outputs[0].referencesSource, "an exact shortcut copy does not retain the temporary source shortcut");
+    worker.Stop();
 }
 
 void TestAsyncRenames(const std::filesystem::path& root)
@@ -216,6 +306,33 @@ BOOL WINAPI UninstallHookFixture(HHOOK hook)
     return DestroyWindow(reinterpret_cast<HWND>(hook));
 }
 
+std::string ReadContents(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    Expect(stream.is_open(), "the resulting file must be readable");
+    return { std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>() };
+}
+
+HANDLE hookWaitEntered = nullptr;
+unsigned hookInputWaitCalls = 0;
+
+DWORD WINAPI WaitForInputDuringHookStop(
+    DWORD count, const HANDLE* handles, BOOL waitAll, DWORD timeout, DWORD wakeMask)
+{
+    Expect(count == 1 && !waitAll && timeout == INFINITE && wakeMask == QS_ALLINPUT,
+        "hook pump waits for its stop event and input");
+    // Model the dump's input wake winning over an already-signaled stop event.
+    // Bound the broken implementation to two calls so this regression fails
+    // deterministically instead of hanging the test process in Stop()/join().
+    if (++hookInputWaitCalls > 1)
+        return WAIT_FAILED;
+    SetEvent(hookWaitEntered);
+    Expect(WaitForSingleObject(handles[0], 5000) == WAIT_OBJECT_0,
+        "caller signals shutdown while the hook pump waits for input");
+    return WAIT_OBJECT_0 + count;
+}
+
 void TestMouseHookRemainsResponsiveWhileCallerWaits()
 {
     const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -257,6 +374,27 @@ void TestMouseHookRemainsResponsiveWhileCallerWaits()
         "hook installation failure leaves no running monitor");
     hook.Stop();
     hookInstallShouldFail = false;
+    hookWaitEntered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Expect(hookWaitEntered != nullptr, "hook shutdown fixture event is available");
+    snowdesktop::LowLevelMouseHook stoppingHook({
+        &InstallHookFixture, &UninstallHookFixture, &WaitForInputDuringHookStop});
+    for (int run = 0; run != 2; ++run)
+    {
+        hookInputWaitCalls = 0;
+        hookUninstallThread = 0;
+        ResetEvent(hookWaitEntered);
+        Expect(stoppingHook.Start(instance, nullptr), "shutdown fixture can start and restart");
+        Expect(WaitForSingleObject(hookWaitEntered, 5000) == WAIT_OBJECT_0,
+            "hook pump enters input wait before shutdown");
+        stoppingHook.Stop();
+        Expect(hookInputWaitCalls == 1,
+            "a signaled stop exits the whole pump even when input wake wins");
+        Expect(!stoppingHook && hookUninstallThread == hookInstallThread &&
+                !IsWindow(hookFixtureWindow),
+            "input wake during shutdown still uninstalls on the hook thread");
+    }
+    CloseHandle(hookWaitEntered);
+    hookWaitEntered = nullptr;
     CloseHandle(answered);
     UnregisterClassW(hookFixtureClass, instance);
 }
@@ -328,8 +466,49 @@ void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& ro
     std::cout << "metadata read enqueue us=" << enqueueUs << '\n';
 }
 
-int wmain()
+int wmain(int argc, wchar_t** argv)
 {
+    using namespace shell_network_preflight;
+    if (argc == 2)
+    {
+        const std::wstring mode(argv[1]);
+        if (mode == L"--query-network-connections") return QueryConnections();
+        if (mode == L"--probe-ready") return Ready;
+        if (mode == L"--probe-unavailable") return Unavailable;
+        if (mode == L"--probe-unknown") return Unknown;
+        if (mode == L"--probe-broken") return 42;
+        if (mode == L"--probe-blocked")
+        {
+            WaitForSingleObject(GetCurrentProcess(), INFINITE);
+            return Failed;
+        }
+        if (mode == L"--network-preflight-tests")
+        {
+            // Provider responses are substitutes; process deadlines, cleanup
+            // and result propagation use the same boundary as the real probe.
+            Expect(ClassifyConnection(USE_OK) == Ready, "connected drives allow Shell coverage");
+            for (DWORD status : {USE_PAUSED, USE_SESSLOST, USE_NETERR, USE_CONN, USE_RECONN})
+                Expect(ClassifyConnection(status) == Unavailable, "unavailable drives prevent Shell startup");
+            Expect(ClassifyConnection(0xffffffff) == Unknown, "unknown state is not treated as connected");
+            Expect(RunProbe(L"--probe-ready") == Ready, "ready probe allows integration");
+            Expect(RunProbe(L"--probe-unavailable") == Unavailable, "offline probe is distinct from success");
+            Expect(RunProbe(L"--probe-unknown") == Unknown, "unknown probe is distinct from success");
+            Expect(RunProbe(L"--probe-broken") == Failed, "unexpected probe failure cannot silently skip coverage");
+            const auto start = std::chrono::steady_clock::now();
+            Expect(RunProbe(L"--probe-blocked", 500) == TimedOut,
+                "blocked provider is stopped and reaped before environment skip");
+            Expect(std::chrono::steady_clock::now() - start < std::chrono::seconds(5),
+                "a blocked connection query does not consume the integration timeout");
+            std::cout << "network preflight tests passed\n";
+            return 0;
+        }
+        std::cerr << "Unknown test mode\n";
+        return 1;
+    }
+    if (argc != 1) return 1;
+    const int environment = CheckEnvironment();
+    if (environment != Ready) return environment;
+
     const HRESULT comResult =
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Expect(SUCCEEDED(comResult),
@@ -677,21 +856,37 @@ int wmain()
 
     Expect(std::filesystem::exists(source),
         "copy preserves the original source");
+    Expect(ReadContents(source) == "SnowDesktop async Shell worker",
+        "copy preserves the complete original source bytes");
     Expect(!std::filesystem::exists(
             firstDirectory / source.filename()),
         "move removes the intermediate copy");
     Expect(std::filesystem::exists(
             secondDirectory / source.filename()),
         "move creates the final destination");
+    Expect(ReadContents(secondDirectory / source.filename()) ==
+            "SnowDesktop async Shell worker",
+        "copy then move preserves the complete payload at the final destination");
     Expect(std::filesystem::exists(
             handoffDirectory / handoffSource.filename()),
         "IDropTarget handoff creates the copied file");
+    Expect(ReadContents(handoffDirectory / handoffSource.filename()) ==
+            "SnowDesktop async IDropTarget worker" &&
+            ReadContents(handoffSource) == "SnowDesktop async IDropTarget worker",
+        "IDropTarget copy preserves both destination and original payload bytes");
     Expect(std::filesystem::exists(
             multiHandoffDirectory / source.filename()) &&
         std::filesystem::exists(
             multiHandoffDirectory /
                 alternateHandoffSource.filename()),
         "multi-parent IDropTarget handoff copies every source");
+    Expect(ReadContents(multiHandoffDirectory / source.filename()) ==
+            "SnowDesktop async Shell worker" &&
+            ReadContents(multiHandoffDirectory / alternateHandoffSource.filename()) ==
+                "SnowDesktop multi-parent IDropTarget worker" &&
+            ReadContents(alternateHandoffSource) ==
+                "SnowDesktop multi-parent IDropTarget worker",
+        "multi-parent handoff keeps each source's own complete contents");
     Expect(!std::filesystem::exists(
             rejectedHandoffDirectory /
                 rejectedHandoffSource.filename()),
@@ -734,6 +929,9 @@ int wmain()
                 equivalentError) &&
             !equivalentError,
         "a colliding queued shortcut leaves the first target unchanged");
+
+    try { TestTrackedDropResults(); }
+    catch (const std::exception& error) { Expect(false, error.what()); }
 
     std::error_code cleanupError;
     std::filesystem::remove_all(root, cleanupError);

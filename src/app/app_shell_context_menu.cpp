@@ -90,6 +90,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand,
         _LW("app.menu.properties"));
+    if (singleSelection) AppendWebsiteIconMenu(menu, fullPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
         singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -178,6 +179,9 @@ void DesktopApp::ShowFolderEntryContextMenu(
     case kContextPropertiesCommand:
         if (canShowProperties)
             ShowPathProperties(selectedPaths.front());
+        break;
+    case kContextFetchWebsiteIconCommand:
+        if (singleSelection) FetchWebsiteIcon(selectedPaths.front());
         break;
     case kContextRenameCommand:
         if (singleSelection)

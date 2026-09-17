@@ -15,7 +15,16 @@
  */
 std::wstring DesktopApp::GetLayoutPath() const
 {
+    if (!initializationExperimentDirectory_.empty())
+        return (initializationExperimentDirectory_ / L"SnowDesktop.layout.json").wstring();
     return GetDataFilePath(L"SnowDesktop.layout.json");
+}
+
+std::wstring DesktopApp::GetActiveWidgetStoragePath() const
+{
+    if (!initializationExperimentDirectory_.empty())
+        return (initializationExperimentDirectory_ / L"SnowDesktop.storage.json").wstring();
+    return GetDataFilePath(L"SnowDesktop.storage.json");
 }
 
 /**
@@ -36,6 +45,7 @@ void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
  */
 void DesktopApp::LoadLayoutSlots()
 {
+    initializeGridFromWindows_ = false;
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     snowdesktop::layout_storage::Document document;
     const auto loadResult = snowdesktop::layout_storage::LoadDocument(
@@ -43,6 +53,7 @@ void DesktopApp::LoadLayoutSlots()
     if (loadResult.status ==
         snowdesktop::layout_storage::LoadStatus::Missing)
     {
+        initializeGridFromWindows_ = true;
         return;
     }
     if (loadResult.status ==
@@ -93,6 +104,10 @@ void DesktopApp::LoadLayoutSlots()
         preservedFolderEntries.clear();
     };
 
+    // A clear-layout document intentionally has no page or placement records.
+    // Existing layouts (including last-good recovery) remain authoritative.
+    initializeGridFromWindows_ = snowdesktop::layout_storage::NeedsGridInitialization(document);
+    desktopItemsReady_ = false;
     layoutRecords_.clear();
     widgets_.clear();
     dockEntries_.clear();
@@ -118,6 +133,8 @@ void DesktopApp::LoadLayoutSlots()
 
     if (document.dockEnabled)
         generalSettings_.dockEnabled = *document.dockEnabled;
+    if (document.dockLayout)
+        static_cast<DockLayoutSettings&>(dockSettings_) = *document.dockLayout;
 
     const std::optional<float> savedItemFontSizeCu =
         snowdesktop::font_cu_rules::ResolveStoredSize(
@@ -336,7 +353,9 @@ void DesktopApp::LoadLayoutSlots()
         widget.gridSpan.columns = std::max(1, saved.width);
         widget.gridSpan.rows = std::max(1, saved.height);
         widget.autoCollect = saved.autoCollect;
+        widget.dissolveWhenSingle = saved.dissolveWhenSingle;
         widget.listMode = saved.listMode;
+        widget.fanPopup = saved.fanPopup;
         if (hasTrustedDetailColumns)
         {
             widget.detailShowModified = saved.detailShowModified;
@@ -621,6 +640,14 @@ void DesktopApp::LoadLayoutSlots()
         else
             entry.type = DockEntryType::DesktopItem;
         entry.reference = Utf8ToWide(saved.reference);
+        // Preserve the existing on-disk "collection" reference token. The
+        // referenced widget supplies its precise runtime type, including desktop files.
+        if (entry.type == DockEntryType::Collection)
+        {
+            const size_t index = FindWidgetIndexById(entry.reference);
+            if (index < widgets_.size() && widgets_[index].type == DesktopWidgetType::FileCategories)
+                entry.type = DockEntryType::DesktopFiles;
+        }
         if (entry.type == DockEntryType::DesktopItem)
             entry.reference = ToUpperInvariant(entry.reference);
         entry.keepOnDesktop = saved.keepOnDesktop;
@@ -632,6 +659,7 @@ void DesktopApp::LoadLayoutSlots()
         for (const auto& key : saved.folderItems)
             entry.folderItemKeys.push_back(Utf8ToWide(key));
         entry.listMode = saved.listMode;
+        entry.fanPopup = saved.fanPopup;
         entry.detailShowModified = saved.detailShowModified;
         entry.detailShowType = saved.detailShowType;
         entry.detailShowSize = saved.detailShowSize;
@@ -664,15 +692,14 @@ void DesktopApp::LoadLayoutSlots()
     }
 
     std::erase_if(dockEntries_, [&](const DockEntry& entry) {
-        if (entry.type != DockEntryType::Collection &&
-            entry.type != DockEntryType::FolderMapping)
+        if (!IsWidgetDockEntryType(entry.type))
             return false;
         const size_t widgetIndex =
             FindWidgetIndexById(entry.reference);
         if (widgetIndex >= widgets_.size())
             return true;
-        if (entry.type ==
-                DockEntryType::FolderMapping)
+        if (entry.type == DockEntryType::FolderMapping ||
+            entry.type == DockEntryType::DesktopFiles)
         {
             for (auto& group : widgets_)
             {
@@ -701,8 +728,7 @@ void DesktopApp::LoadLayoutSlots()
     std::unordered_set<std::wstring> legacyDockPageCandidates;
     for (auto& entry : dockEntries_)
     {
-        if (entry.type == DockEntryType::Collection ||
-            entry.type == DockEntryType::FolderMapping)
+        if (IsWidgetDockEntryType(entry.type))
         {
             entry.keepOnDesktop = false;
             size_t widgetIndex = FindWidgetIndexById(entry.reference);
@@ -778,6 +804,10 @@ void DesktopApp::LoadLayoutSlots()
  */
 bool DesktopApp::SaveLayoutSlots()
 {
+    // Do not replace a loaded layout with incomplete startup/enumeration state.
+    if (!desktopItemsReady_ || gridPages_.empty())
+        return false;
+
     // Container membership is committed before this persistence boundary.
     // Rendering a temporary drag target or sending files to an application never
     // changes membership and therefore never reaches this conversion.
@@ -865,6 +895,7 @@ bool DesktopApp::SaveLayoutSlots()
          << ",\n  \"firstPageMonitor\": \"" << JsonEscapeUtf8(firstPageMonitorId_)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
+         << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
@@ -978,7 +1009,9 @@ bool DesktopApp::SaveLayoutSlots()
              << ", \"w\": " << std::max(1, w.gridSpan.columns)
              << ", \"h\": " << std::max(1, w.gridSpan.rows)
              << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
+             << ", \"dissolveWhenSingle\": " << (w.dissolveWhenSingle ? "true" : "false")
              << ", \"listMode\": " << (w.listMode ? "true" : "false")
+             << ", \"fanPopup\": " << (w.fanPopup ? "true" : "false")
              << ", \"showDetails\": "
              << (snowdesktop::list_detail_rules::HasMetadataColumns(
                     w.detailShowModified,
@@ -1042,7 +1075,7 @@ bool DesktopApp::SaveLayoutSlots()
     {
         const DockEntry& entry = dockEntries_[i];
         file << "    { \"type\": \""
-             << (entry.type == DockEntryType::Collection
+             << (IsLogicalDockEntryType(entry.type)
                     ? "collection"
                     : (entry.type == DockEntryType::FolderMapping
                         ? "folderMapping" : "item"))
@@ -1057,6 +1090,7 @@ bool DesktopApp::SaveLayoutSlots()
                     ? "true" : "false")
              << ", \"listMode\": "
              << (entry.listMode ? "true" : "false")
+             << ", \"fanPopup\": " << (entry.fanPopup ? "true" : "false")
              << ", \"detailShowModified\": "
              << (entry.detailShowModified ? "true" : "false")
              << ", \"detailShowType\": "

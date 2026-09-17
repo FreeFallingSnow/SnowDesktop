@@ -149,6 +149,9 @@ void DesktopApp::PresentPointerInteractionFrame(
         widgetCollectionGroupTargetIndex_;
     widgetDragFeedback.groupInsertIndex =
         widgetCollectionGroupInsertIndex_;
+    widgetDragFeedback.pairTargetIndex = widgetPairTargetIndex_;
+    widgetDragFeedback.pairActive = widgetPairAction_ !=
+        snowdesktop::widget_pair_drop::Action::None;
     widgetDragFeedback.navigationSide = navHoverSide_;
     const bool widgetDragFeedbackChanged =
         snowdesktop::widget_composition_layer_rules::
@@ -419,6 +422,8 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    widgetPairTargetIndex_ = static_cast<size_t>(-1);
+    widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
     ResetDockHandoffDwell();
@@ -426,6 +431,7 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
+    dragFanIconsOnly_ = false;
     ClearPopupDragTarget();
     presentedDragFeedbackRevision_ = 0;
     presentedDragNavHoverSide_ = 0;
@@ -455,7 +461,7 @@ void DesktopApp::ClearDockPressedState()
 
 bool DesktopApp::HasCancelablePointerPressState() const
 {
-    return mouseDown_ || mouseDownHit_ != nullptr ||
+    return usageGuidePressedButton_ != 0 || mouseDown_ || mouseDownHit_ != nullptr ||
         dragSession_.IsActive() ||
         dockPressedEntry_ != static_cast<size_t>(-1) ||
         dockPressedFrequentItem_ != static_cast<size_t>(-1) ||
@@ -497,6 +503,8 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    usageGuidePressedButton_ = 0;
+    usageGuidePlacement_.EndDrag();
     const bool layoutNeedsSave =
         widgetScrollbarDragging_ ||
         detailColumnResizeActive_;
@@ -562,6 +570,9 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
         static_cast<size_t>(-1);
     widgetCollectionGroupInsertIndex_ =
         static_cast<size_t>(-1);
+    widgetPairTargetIndex_ = static_cast<size_t>(-1);
+    widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
+    KillTimer(hwnd_, kNativeDragHoverRecoveryTimerId);
     if (dragSession_.IsActive())
         EndDragSession();
     // End the session before destroying popup-owned Item/Slot wrappers that

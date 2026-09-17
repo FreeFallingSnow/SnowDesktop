@@ -1,10 +1,12 @@
 #include "widget_filesystem_task_executor.h"
+#include "test_temporary_directory.h"
 
 #include <windows.h>
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -15,22 +17,6 @@ namespace
 void Expect(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
-}
-
-std::filesystem::path CreateProbeDirectory()
-{
-    wchar_t temporary[MAX_PATH]{};
-    Expect(GetTempPathW(MAX_PATH, temporary) > 0,
-        "temporary directory is available");
-    const auto root = std::filesystem::path(temporary) /
-        (L"SnowDesktopWidgetFilesystemTaskExecutorTests-" +
-            std::to_wstring(GetCurrentProcessId()));
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    error.clear();
-    Expect(std::filesystem::create_directories(root, error) && !error,
-        "probe directory is created");
-    return std::filesystem::weakly_canonical(root);
 }
 
 snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion WaitFor(
@@ -52,7 +38,8 @@ snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion WaitFor(
 int main()
 {
     using namespace snowdesktop::widget_runtime;
-    const auto root = CreateProbeDirectory();
+    const snowdesktop::test::TemporaryDirectory temporary;
+    const auto root = std::filesystem::weakly_canonical(temporary.path);
     const auto file = root / L"note.txt";
     const auto second = root / L"second.txt";
     const auto binaryFile = root / L"payload.bin";
@@ -76,6 +63,57 @@ int main()
             statResult.metadata.size == 5 &&
             !statResult.metadata.revision.empty(),
         "stat returns bounded file metadata and revision");
+
+    // A completed image/file task must wake the UI instead of waiting for the
+    // host's one-second maintenance timer. Draining in the callback also checks
+    // that publication and notification happen outside the worker's lock.
+    {
+        std::promise<WidgetFilesystemTaskCompletion> result;
+        auto future = result.get_future();
+        WidgetFilesystemTaskExecutor notified;
+        notified.SetCompletionCallback([&] {
+            auto ready = notified.DrainCompletions();
+            if (!ready.empty()) result.set_value(std::move(ready.front()));
+        });
+        Expect(static_cast<bool>(notified.Start(901, "wake-test", stat)),
+            "notified filesystem task starts");
+        Expect(future.wait_for(std::chrono::seconds(3)) == std::future_status::ready,
+            "completion notification must deliver without polling");
+        const auto completed = future.get();
+        Expect(completed.id == 901 && completed.ok && completed.metadata.size == 5,
+            "the notification exposes the completed production file read");
+    }
+
+    {
+        std::promise<void> entered, release;
+        auto running = entered.get_future();
+        auto resume = release.get_future();
+        std::promise<WidgetFilesystemTaskCompletion> canceled;
+        auto future = canceled.get_future();
+        WidgetFilesystemTaskExecutor queued([&](const auto&) {
+            entered.set_value();
+            resume.wait();
+            WidgetFilesystemTaskRunResult result; result.ok = true; return result;
+        });
+        queued.SetCompletionCallback([&] {
+            for (auto& ready : queued.DrainCompletions())
+                if (ready.id == 903) canceled.set_value(std::move(ready));
+        });
+        Expect(static_cast<bool>(queued.Start(902, "wake-test", stat)),
+            "controlled filesystem task starts");
+        const bool started = running.wait_for(std::chrono::seconds(3)) == std::future_status::ready;
+        if (!started) release.set_value();
+        Expect(started, "controlled filesystem task reaches its runner");
+        const bool queuedOk = static_cast<bool>(queued.Start(903, "wake-test", stat));
+        const bool canceledOk = queued.Cancel(903);
+        release.set_value();
+        Expect(queuedOk && canceledOk, "queued navigation can be canceled");
+        Expect(future.wait_for(std::chrono::seconds(3)) == std::future_status::ready,
+            "cancellation before execution must also wake the host");
+        const auto completed = future.get();
+        Expect(!completed.ok && completed.error == "canceled",
+            "the queued cancellation wake carries a canceled result");
+    }
 
     WidgetFilesystemTaskRequest read;
     read.action = "filesystem.read";
@@ -166,8 +204,70 @@ int main()
             binaryVerification.text == binaryWrite.text,
         "binary write round-trips exact bytes");
 
-    std::error_code cleanupError;
-    std::filesystem::remove_all(root, cleanupError);
+    // Real WIC decoding through the production worker must preserve these
+    // independently specified red/green pixels, not just accept an extension.
+    const auto photo = root / L"photo.bmp";
+    {
+        BITMAPFILEHEADER header{};
+        header.bfType = 0x4d42;
+        header.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        header.bfSize = header.bfOffBits + 8;
+        BITMAPINFOHEADER bitmap{};
+        bitmap.biSize = sizeof(bitmap);
+        bitmap.biWidth = 2;
+        bitmap.biHeight = 1;
+        bitmap.biPlanes = 1;
+        bitmap.biBitCount = 24;
+        bitmap.biSizeImage = 8;
+        const unsigned char bytes[] = { 0, 0, 255, 0, 255, 0, 0, 0 };
+        std::ofstream output(photo, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+        output.write(reinterpret_cast<const char*>(&bitmap), sizeof(bitmap));
+        output.write(reinterpret_cast<const char*>(bytes), sizeof(bytes));
+    }
+    WidgetFilesystemTaskRequest image;
+    image.action = "filesystem.image";
+    image.path = photo;
+    image.handle = "test-owner-file";
+    Expect(static_cast<bool>(executor.Start(11, "instance", image)), "image task starts");
+    const auto decoded = WaitFor(executor, 11);
+    const std::vector<std::uint8_t> expectedPixels{ 0, 0, 255, 255, 0, 255, 0, 255 };
+    Expect(decoded.ok && decoded.image && decoded.image->width == 2 && decoded.image->height == 1 &&
+            decoded.image->bgraPremultiplied == expectedPixels &&
+            decoded.metadata.handle == image.handle && IsWidgetRuntimeImageToken(decoded.resourceToken),
+        "real file decoding preserves pixel colors and the authorizing handle");
+    image.path = root;
+    image.name = "photo.bmp";
+    image.handle = "test-owner-folder";
+    image.maxDimension = 1;
+    Expect(static_cast<bool>(executor.Start(12, "instance", image)), "folder child image starts");
+    const auto scaled = WaitFor(executor, 12);
+    Expect(scaled.ok && scaled.image && scaled.image->width == 1 && scaled.image->height == 1 &&
+            scaled.metadata.handle == "test-owner-folder",
+        "folder image preserves authorization and fits requested output bounds");
+    image.name = "note.txt";
+    Expect(static_cast<bool>(executor.Start(13, "instance", image)), "nonimage decode starts");
+    const auto corrupt = WaitFor(executor, 13);
+    Expect(!corrupt.ok && corrupt.error == "imageDecodeFailed" && !corrupt.image,
+        "unsupported content returns a decode failure without image pixels");
+    for (const char* name : { "../photo.bmp", "..\\photo.bmp", "C:\\photo.bmp",
+            "photo.bmp:secret", "sub/photo.bmp", ".", "..", "photo.bmp ", "photo.bmp." })
+    {
+        image.name = name;
+        Expect(!WidgetFilesystemTaskExecutor::ValidateRequest(image),
+            "image requests reject traversal, absolute paths, aliases, and alternate streams");
+    }
+    image.name = "photo.bmp";
+    image.maxDimension = 2049;
+    Expect(!WidgetFilesystemTaskExecutor::ValidateRequest(image), "image output ceiling is enforced");
+    image.maxDimension = 0;
+    Expect(!WidgetFilesystemTaskExecutor::ValidateRequest(image), "zero image size is rejected");
+    list.limit = 100;
+    list.grantHandles = false;
+    Expect(static_cast<bool>(executor.Start(14, "instance", list)), "names-only list starts");
+    const auto names = WaitFor(executor, 14);
+    Expect(names.ok && !names.grantHandles && !names.items.empty() && names.items[0].handle.empty(),
+        "names-only enumeration reaches the completion without child grants");
     std::cout << "widget filesystem task executor tests passed\n";
     return 0;
 }

@@ -7,6 +7,7 @@
 // https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
 
 #include "taskbar_hook_protocol.h"
+#include "taskbar_autohide_observer.h"
 #include "taskview_visibility.h"
 
 #include <windows.h>
@@ -313,6 +314,7 @@ bool ReadSnapshot(Snapshot& snapshot)
         snapshot.enabled = g_sharedState->enabled != FALSE;
         snapshot.defaultEnabled =
             g_sharedState->defaultEnabled != FALSE;
+        snapshot.appearanceEnabled = g_sharedState->appearanceEnabled != FALSE;
         snapshot.style = g_sharedState->style;
         snapshot.contentTheme = g_sharedState->contentTheme;
         snapshot.systemUsesLightTheme = g_sharedState->systemUsesLightTheme;
@@ -385,6 +387,7 @@ void WatchOwnerProcess(DWORD processId)
     if (!process)
     {
         g_forceRestore = true;
+        autohide_observer::Disable();
         return;
     }
     std::thread([processId, process] {
@@ -393,6 +396,7 @@ void WatchOwnerProcess(DWORD processId)
         if (g_watchedOwnerProcessId.load() == processId)
         {
             g_forceRestore = true;
+            autohide_observer::Disable();
             BroadcastApply();
         }
     }).detach();
@@ -751,6 +755,7 @@ public:
         Snapshot snapshot;
         if (!ReadSnapshot(snapshot))
         {
+            autohide_observer::Configure(nullptr, taskbar, false, false);
             // Shared memory is gone (process exited/crashed). Restore the
             // values that Explorer owned before SnowDesktop changed them.
             for (auto& [handle, info] : taskbars_)
@@ -764,8 +769,14 @@ public:
         const bool ownerAlive = IsProcessAlive(snapshot.ownerProcessId);
         if (snapshot.enabled && ownerAlive)
             WatchOwnerProcess(snapshot.ownerProcessId);
-        const bool controllerEnabled = snapshot.enabled && ownerAlive &&
+        const bool hookEnabled = snapshot.enabled && ownerAlive &&
             !g_forceRestore.load();
+        const bool controllerEnabled = hookEnabled && snapshot.appearanceEnabled;
+        bool protectActivation = false;
+        for (LONG index = 0; index < snapshot.targetCount; ++index)
+            if (reinterpret_cast<HWND>(snapshot.targets[index].taskbar) == taskbar)
+                protectActivation = snapshot.targets[index].protectAutoHideActivation != FALSE;
+        autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, hookEnabled, protectActivation);
 
         bool applied = false;
         for (auto& [handle, info] : taskbars_)
@@ -1253,7 +1264,7 @@ private:
                 kTaskbarSubclassId);
             self->OnTaskbarDestroyed(window);
         }
-        return DefSubclassProc(window, message, wParam, lParam);
+        return autohide_observer::Dispatch(window, message, wParam, lParam);
     }
 
     winrt::com_ptr<IXamlDiagnostics> diagnostics_;

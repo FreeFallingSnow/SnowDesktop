@@ -1505,7 +1505,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         spacingMenu = CreatePopupMenu();
         if (spacingMenu)
         {
-            const int presets[] = { 50, 70, 80, 90, 100, 110, 120, 130, 150, 200 };
+            const int presets[] = { 10, 25, 50, 70, 80, 90, 100, 110, 120, 130, 150, 200 };
             const int currentSpacingPercent = static_cast<int>(
                 std::round(iconSpacingScale_ * 100.0f));
             for (int pct : presets)

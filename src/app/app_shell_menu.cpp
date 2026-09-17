@@ -3,6 +3,7 @@
 #include "dock_taskbar_diagnostics.h"
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
+#include "../shell_new_item_capture.h"
 
 // Shell New menu, desktop host restoration and protected-icon handling.
 
@@ -329,7 +330,8 @@ BOOL DesktopApp::InvokeShellMenuCommand(
     return result;
 }
 
-void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir)
+void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
+    bool folderOnly, std::wstring desktopFilesWidgetId)
 {
     ComPtr<IContextMenu> ctxMenu;
     if (FAILED(CoCreateInstance(CLSID_NewMenu, nullptr, CLSCTX_INPROC_SERVER,
@@ -348,6 +350,23 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     ILFree(pidl);
     if (FAILED(hr)) return;
 
+    if (!desktopFilesWidgetId.empty())
+    {
+        const size_t target = FindWidgetIndexById(desktopFilesWidgetId);
+        if (target >= widgets_.size() ||
+            widgets_[target].type != DesktopWidgetType::FileCategories) return;
+        auto capture = std::make_shared<snowdesktop::ShellNewItemCapture>(
+            targetDir, std::move(desktopFilesWidgetId), widgets_[target].itemKeys.size(),
+            hwnd_, kShellChangeMessage);
+        if (FAILED(snowdesktop::AttachShellNewItemCapture(ctxMenu.Get(), capture)))
+        {
+            WriteDiagnosticLogEntry(L"New-menu item ownership site unavailable");
+            MessageBeep(MB_ICONWARNING);
+            return;
+        }
+        pendingNewItemCaptures_.push_back(std::move(capture));
+    }
+
     HMENU tmpMenu = CreatePopupMenu();
     if (!tmpMenu) return;
     hr = ctxMenu->QueryContextMenu(tmpMenu, 0, 1, 0x7FFF, CMF_NORMAL);
@@ -360,6 +379,17 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
     const HWND menuOwner = ShellDialogOwnerHwnd();
     SetForegroundWindow(menuOwner);
     UINT cmd = 0;
+    if (folderOnly)
+    {
+        // Resolve the canonical Shell verb, never a localized label or a
+        // position that a third-party New-menu extension can reorder.
+        if (newMenuContextMenu_)
+            newMenuContextMenu_->HandleMenuMsg(WM_INITMENUPOPUP,
+                reinterpret_cast<WPARAM>(newSub), 0);
+        cmd = snowdesktop::FindNewFolderCommand(ctxMenu.Get(), newSub);
+        if (!cmd) MessageBeep(MB_ICONWARNING);
+    }
+    else
     {
         ShellPopupMenuLayerGuard shellMenuLayer(*this);
         cmd = TrackShellPopupMenuWithDesktopPump(

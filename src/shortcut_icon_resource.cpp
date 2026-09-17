@@ -1,6 +1,10 @@
 #include "shortcut_icon_resource.h"
 
 #include <windows.h>
+#include <shlobj.h>
+#include <shlwapi.h>
+#include <wrl/client.h>
+#include "shortcut_application_rules.h"
 
 #include <climits>
 #include <cwchar>
@@ -115,5 +119,52 @@ std::optional<IconResourceLocation> ReadInternetShortcutIconResource(
         shortcut.c_str());
     return IconResourceLocation{
         std::move(resourcePath), ParseIconIndex(iconIndex) };
+}
+std::vector<IconResourceLocation> ReadShortcutIconResources(
+    std::wstring_view shortcutPath)
+{
+    namespace rules = shortcut_application_rules;
+    std::vector<IconResourceLocation> result;
+    const std::wstring path(shortcutPath);
+    if (rules::HasExtension(path, L".url"))
+    {
+        if (auto icon = ReadInternetShortcutIconResource(path))
+            result.push_back(std::move(*icon));
+        wchar_t url[32768]{};
+        GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
+            static_cast<DWORD>(std::size(url)), path.c_str());
+        const wchar_t* protocol = rules::StartsWithIgnoreCase(url, L"https://") ? L"https" :
+            rules::StartsWithIgnoreCase(url, L"http://") ? L"http" : nullptr;
+        if (protocol)
+        {
+            wchar_t location[32768]{};
+            DWORD size = static_cast<DWORD>(std::size(location));
+            if (SUCCEEDED(AssocQueryStringW(ASSOCF_IS_PROTOCOL, ASSOCSTR_DEFAULTICON,
+                    protocol, nullptr, location, &size)) && location[0])
+            {
+                const int index = PathParseIconLocationW(location);
+                result.push_back({ExpandIconPath(location), index});
+            }
+            size = static_cast<DWORD>(std::size(location));
+            if (SUCCEEDED(AssocQueryStringW(ASSOCF_IS_PROTOCOL, ASSOCSTR_EXECUTABLE,
+                    protocol, L"open", location, &size)) && location[0])
+                result.push_back({ExpandIconPath(location), 0});
+        }
+    }
+    else if (rules::HasExtension(path, L".lnk"))
+    {
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&link))) || FAILED(link.As(&file)) ||
+            FAILED(file->Load(path.c_str(), STGM_READ))) return result;
+        wchar_t location[32768]{};
+        int index = 0;
+        if (SUCCEEDED(link->GetIconLocation(location, static_cast<int>(std::size(location)), &index)) && location[0])
+            result.push_back({ResolveRelativeIconPath(path, ExpandIconPath(location)), index});
+        if (SUCCEEDED(link->GetPath(location, static_cast<int>(std::size(location)), nullptr, SLGP_RAWPATH)) && location[0])
+            result.push_back({ExpandIconPath(location), 0});
+    }
+    return result;
 }
 } // namespace snowdesktop::shortcut_icon_resource

@@ -350,6 +350,26 @@ void DesktopApp::OnTimer(WPARAM timerId)
 
     if (timerId == kNativeDragHoverRecoveryTimerId)
     {
+        if (widgetAction_ == WidgetAction::Move)
+        {
+            if (mouseDownWidgetIndex_ < widgets_.size() &&
+                widgetPairTargetIndex_ < widgets_.size())
+            {
+                namespace pair = snowdesktop::widget_pair_drop;
+                auto action = pair::ResolveAction(pair::GetOptions(
+                    widgets_[mouseDownWidgetIndex_].type, widgets_[widgetPairTargetIndex_].type),
+                    (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+                    (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
+                    (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);
+                if ((action == pair::Action::CreateCollectionGroup ||
+                     action == pair::Action::CreateFileGroup) &&
+                    !GetWidgetPairGroupSpan(mouseDownWidgetIndex_, widgetPairTargetIndex_))
+                    action = pair::Action::None;
+                if (action != widgetPairAction_)
+                    RefreshDragHintFromKeyboard();
+            }
+            return;
+        }
         if (!dragSession_.IsActive())
         {
             if (hwnd_ && IsWindow(hwnd_))
@@ -364,6 +384,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (TryGetNativeDragHoverPointFromCursor(
                 recoveredPoint))
         {
+            if (GetDockWidgetPairSourceIndex() < widgets_.size())
+                RefreshDragHintFromKeyboard();
             UpdateCollectionPopupDwell(recoveredPoint);
             UpdateCollectionGroupTabDwell(recoveredPoint);
         }
@@ -532,7 +554,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     {
         snowdesktop::dock_taskbar_diagnostics::Poll();
         UpdateSystemShowDesktopDockLayerGuard();
-        UpdateSystemTaskbarRevealGuard();
+        snowdesktop::dock_taskbar_diagnostics::PollNativeAutoHideTrace();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();
         const DWORD windowStateTick =
@@ -548,12 +570,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
-        if (IsSystemTaskbarHookRequired(dockSettings_) &&
+        // Reconcile guard ownership after Dock/display changes and external
+        // auto-hide changes, including when appearance effects are disabled.
+        const bool controlRefreshDue = now - systemTaskbarBackdropRefreshTick_ >= 1000;
+        if (controlRefreshDue || (IsSystemTaskbarHookRequired(dockSettings_) &&
             (foregroundChanged || windowStateRefreshDue ||
-                foregroundSettling))
+                foregroundSettling)))
         {
             const bool taskbarAppearanceApplied =
-                RefreshSystemTaskbarAppearance(true, true);
+                RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
             if (taskbarAppearanceApplied &&
                 hwnd_ && IsWindow(hwnd_))
@@ -621,8 +646,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     : static_cast<size_t>(-1);
             if (entryIndex <
                     dockEntries_.size() &&
-                IsFolderDockEntry(
-                    dockEntries_[entryIndex]))
+                IsFolderDockEntry(dockEntries_[entryIndex]) &&
+                !IsLogicalDockEntryType(dockEntries_[entryIndex].type))
             {
                 ResetDockHandoffDwell();
                 OpenDockFolderPopupAt(

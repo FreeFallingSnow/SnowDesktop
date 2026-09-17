@@ -218,8 +218,14 @@ void DesktopApp::DrawDesktopForeground(
     DrawLargeIconInteractionOverlay(ctx);
     if (desktopIconsHidden_ && showHiddenHint_)
         DrawHiddenHintOverlay(ctx);
-    if (showWidgetAddedHint_)
+    if (showWidgetAddedHint_ && !IsUsageGuideVisible())
         DrawWidgetAddedHintOverlay(ctx);
+    DrawUsageGuideHintOverlay(ctx);
+    // Independent Dock content and backdrop HWNDs must expose the guide's
+    // desktop hit area as well as its pixels. Native menus stay above both.
+    for (const auto& host : persistentDockHosts_)
+        if (host && !EqualRect(&host->guideOcclusionRect, &usageGuideFrame_))
+            UpdateFloatingDockWindowBounds(*host, false, true);
     if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
         dockWindowTransition_->RefreshOcclusion();
 }
@@ -277,22 +283,28 @@ void DesktopApp::DrawDynamicOverlays(
         ctx->SetTransform(previousTransform);
     };
 
+    // Both handle drags and Dock item drags share the pair target overlay.
+    const bool pairActive = (widgetAction_ == WidgetAction::Move || dragSession_.IsActive()) &&
+        widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None &&
+        widgetPairTargetIndex_ < widgets_.size();
     // Widget drag/resize preview
     if (!renderingFloatingPopup_ &&
-        (widgetAction_ == WidgetAction::Move ||
+        (pairActive || ((widgetAction_ == WidgetAction::Move ||
          widgetAction_ == WidgetAction::Resize) &&
-        mouseDownWidgetIndex_ < widgets_.size())
+        mouseDownWidgetIndex_ < widgets_.size())))
     {
-        if (widgetAction_ == WidgetAction::Move &&
+        const size_t highlightedTarget = pairActive
+            ? widgetPairTargetIndex_ : widgetCollectionGroupTargetIndex_;
+        if (pairActive || (widgetAction_ == WidgetAction::Move &&
             widgetCollectionGroupTargetIndex_ <
                 widgets_.size() &&
             (widgets_[widgetCollectionGroupTargetIndex_].type ==
                  DesktopWidgetType::CollectionGroup ||
              widgets_[widgetCollectionGroupTargetIndex_].type ==
-                 DesktopWidgetType::FileGroup))
+                 DesktopWidgetType::FileGroup)))
         {
             RECT target =
-                widgets_[widgetCollectionGroupTargetIndex_].bounds;
+                widgets_[highlightedTarget].bounds;
             for (const auto& container : containers_)
             {
                 auto* group =
@@ -300,14 +312,14 @@ void DesktopApp::DrawDynamicOverlays(
                         container.get());
                 if (group &&
                     group->GetWidgetData() ==
-                        &widgets_[widgetCollectionGroupTargetIndex_])
+                        &widgets_[highlightedTarget])
                 {
                     target = group->GetFrameRect();
                     break;
                 }
             }
             const float cellScale =
-                widgets_[widgetCollectionGroupTargetIndex_]
+                widgets_[highlightedTarget]
                     .cellScale;
             const int targetPadding =
                 ScaleWidgetCu(3.0f, cellScale);
@@ -436,7 +448,7 @@ void DesktopApp::DrawDynamicOverlays(
                 popupTargetRect = popup;
                 const RECT content =
                     GetCollectionPopupContentRect(popup);
-                clipViewport = openPopupWidget->listMode
+                clipViewport = (UsesCollectionPopupList(*openPopupWidget) || UsesCollectionPopupFan(*openPopupWidget))
                     ? snowdesktop::popup_drag_rules::
                         ExpandInsertionClipVertically(
                             content, popup,
@@ -477,7 +489,18 @@ void DesktopApp::DrawDynamicOverlays(
         {
             RECT bounds = targetSlot->GetBounds();
             float radius = 6.f;
-            if (dynamic_cast<DesktopGrid*>(targetContainer))
+            D2D1_MATRIX_3X2_F handoffTransform{};
+            ctx->GetTransform(&handoffTransform);
+            if (popupTarget && UsesCollectionPopupFan(*openPopupWidget))
+            {
+                const auto pose = GetCollectionPopupFanItem(popupTargetRect, targetSlot->GetIndex());
+                const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+                bounds = snowdesktop::collection_popup_layout::FanHandoffBounds(pose, metrics);
+                radius *= metrics.scale;
+                ctx->SetTransform(D2D1::Matrix3x2F::Rotation(pose.angle,
+                    D2D1::Point2F(pose.center.x, pose.center.y)) * handoffTransform);
+            }
+            else if (dynamic_cast<DesktopGrid*>(targetContainer))
             {
                 // The pointer may be in a covered cell whose Slot is empty.
                 // Resolve the same actual item used by Shell handoff hit testing.
@@ -495,6 +518,7 @@ void DesktopApp::DrawDynamicOverlays(
             DrawD2DRoundedRectangle(ctx, bounds, radius,
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.15f),
                 D2D1::ColorF(0.20f, 0.80f, 0.40f, 0.60f), 2.0f);
+            ctx->SetTransform(handoffTransform);
         }
         else
         {
@@ -502,8 +526,21 @@ void DesktopApp::DrawDynamicOverlays(
                 (targetRegion == HitRegion::SortBefore ||
                  targetRegion == HitRegion::SortAfter))
             {
-                targetSlot->DrawDropIndicator(ctx, targetRegion,
-                    static_cast<float>(kCollectionPopupGapX) * 0.5f);
+                if (UsesCollectionPopupFan(*openPopupWidget))
+                {
+                    const auto pose = GetCollectionPopupFanItem(popupTargetRect, targetSlot->GetIndex());
+                    const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+                    const auto line = snowdesktop::collection_popup_layout::FanInsertionLine(
+                        pose, metrics, CollectionPopupFanRootAbove(), targetRegion == HitRegion::SortAfter);
+                    ComPtr<ID2D1SolidColorBrush> brush;
+                    if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.92f), &brush)))
+                        ctx->DrawLine(D2D1::Point2F(line.start.x, line.start.y),
+                            D2D1::Point2F(line.end.x, line.end.y), brush.Get(), 3.0f * metrics.scale);
+                }
+                else
+                    targetSlot->DrawDropIndicatorWithStyle(ctx, targetRegion,
+                        UsesCollectionPopupList(*openPopupWidget) ? BarStyle::HBar : BarStyle::VBar,
+                        static_cast<float>(kCollectionPopupGapX) * 0.5f);
             }
             else
             {
@@ -593,9 +630,10 @@ void DesktopApp::DrawDynamicOverlays(
     const bool popupMarquee = marqueeDockFolderPopup_ ||
         (marqueeWidgetIndex_ < widgets_.size() &&
          marqueeWidgetIndex_ == popupWidgetIndex_);
-    const bool marqueeBelongsToCurrentSurface = popupMarquee
-        ? popupBelongsToCurrentSurface
-        : !renderingFloatingPopup_;
+    const bool marqueeBelongsToCurrentSurface =
+        snowdesktop::widget_composition_layer_rules::MarqueeBelongsToSurface(
+            popupMarquee, popupBelongsToCurrentSurface,
+            renderingFloatingDock_, renderingFloatingPopup_);
     if (marqueeActive_ && marqueeBelongsToCurrentSurface)
     {
         if (!marqueeDockFolderPopup_ &&

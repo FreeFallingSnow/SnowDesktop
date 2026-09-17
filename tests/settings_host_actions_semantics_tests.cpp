@@ -319,28 +319,9 @@ int main(int argc, char** argv)
             run.find("snapshot->values.general.") !=
                 std::string::npos,
         "legacy General-owned appearance choices and the developer-tools switch use the current controller snapshot");
-    Check(controllerHeader.find("SetAnimationDiagnostics") !=
-                std::string::npos &&
-            controllerHeader.find("TriggerCrashTest") !=
-                std::string::npos &&
-            host.find("homeAbout.openLink") != std::string::npos &&
-            host.find("HomeAboutLinkUri(link)") != std::string::npos &&
-            host.find("settings.about.link.openFailed") !=
-                std::string::npos &&
-            host.find("homeAbout.setAnimationDiagnostics") !=
-                std::string::npos &&
-            host.find("Action::SetAnimationDiagnostics") !=
-                std::string::npos &&
-            host.find("homeAbout.unlockDebug") != std::string::npos &&
-            host.find("debugUnlocked = true") != std::string::npos &&
-            host.find("RebuildSearchIndex();") != std::string::npos &&
-            host.find("homeAbout.requestCrashTestConfirmation") !=
-                std::string::npos &&
-            host.find("ShowGenerationConfirmation(") !=
-                std::string::npos &&
-            host.find("Action::TriggerCrashTest") !=
-                std::string::npos,
-        "About links and legacy Debug controls use localized generation-gated host actions and confirmation");
+    // Debug visibility/publication transitions are exercised in
+    // winui_settings_window_host. Finding callback/variable names here did
+    // not prove invocation, generation checks, or confirmation behavior.
     Check(run.find("widgetsPage.agentSkillTargetMask") ==
                 std::string::npos &&
             run.find("widgetsPage.setAgentSkillTargetMask") ==

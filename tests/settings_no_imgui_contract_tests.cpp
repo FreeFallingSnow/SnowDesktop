@@ -58,9 +58,10 @@ void TestSettingsEngineHasNoImGui(
                 source.find(removed) == std::string::npos,
             "the application widget engine has no legacy ImGui settings symbol");
     }
-    Check(header.find("ImGuiContext") == std::string::npos &&
-            header.find("PersonalizationSettings") == std::string::npos,
-        "the widget engine header has no legacy editor forward declarations");
+    // PersonalizationSettings is also used by host surface themes and does not
+    // imply an editor dependency. Keep the negative boundary on ImGui itself.
+    Check(header.find("ImGuiContext") == std::string::npos,
+        "the widget engine header has no legacy ImGui context declaration");
 }
 
 void TestBuildTargetBoundary(

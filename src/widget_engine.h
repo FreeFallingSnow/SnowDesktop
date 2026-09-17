@@ -25,6 +25,7 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 #include "personalization.h"
+#include "widget_surface_theme.h"
 #include "system_snapshot.h"
 #include "http_runtime.h"
 #include "calendar_service.h"
@@ -329,6 +330,7 @@ struct LuaWidgetFilePickerRequest
         snowdesktop::widget_runtime::WidgetFilesystemHandleAccess::Read;
     std::vector<std::wstring> extensions;
     std::wstring suggestedName;
+    bool multiple = false;
 };
 
 struct LuaWidgetFilePickerResult
@@ -341,25 +343,7 @@ struct LuaWidgetFilePickerResult
     {
         return !path.empty() && !canceled && error.empty();
     }
-};
-
-/**
- * @struct LuaWidgetTheme
- * @brief 小部件主题色定义，控制背景、边框和渐变透明度
- *
- * 当小部件启用自定义样式时，引擎使用此结构中的颜色值替代默认渲染。
- *
- * @note 颜色字段采用 ARGB 格式（0xAARRGGBB），Alpha 通道默认不透明。
- */
-struct LuaWidgetTheme
-{
-    int bg = 0x151A21;          ///< 背景色（ARGB 格式，默认深灰蓝）
-    int border = 0xFFFFFF;      ///< 边框色（ARGB 格式，默认白色）
-    float alpha = 0.36f;        ///< 背景透明度（0~1，默认 0.36）
-    float borderAlpha = 0.40f;  ///< 边框透明度（0~1，默认 0.40）
-    float gradientEndA = 0.65f; ///< 渐变末端透明度（0~1，默认 0.65）
-    float cornerRadius = 12.0f; ///< 圆角半径（cu）
-    int contentTheme = 0;       ///< 文字颜色主题 (0=浅色/白字, 1=深色/黑字)
+    std::vector<std::filesystem::path> paths;
 };
 
 enum class LuaWidgetPreviewDataState
@@ -785,6 +769,8 @@ public:
     bool InitPreview(ID2D1DeviceContext* d2dContext,
         IDWriteFactory* dwriteFactory);
     bool IsPreviewOnly() const { return previewOnly_; }
+    // Host-internal device lifecycle; does not reload Lua or change the widget API.
+    void ResetGraphicsResources(ID2D1DeviceContext* context);
 
     /**
      * @brief 关闭引擎，释放所有资源，卸载所有已加载的小部件
@@ -820,6 +806,7 @@ public:
     using WidgetTimerRequestCallback = std::function<UINT_PTR(const std::wstring& widgetId, UINT intervalMs)>;
     using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
     using AudioAnalysisWakeCallback = std::function<void()>;
+    using TaskWakeCallback = std::function<void()>;
 
     /** @brief 设置桌面快照提供者回调 */
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
@@ -891,6 +878,7 @@ public:
     void SetWidgetTimerKillCallback(WidgetTimerKillCallback callback) { widgetTimerKillCallback_ = std::move(callback); }
     /** @brief 设置音频分析线程发布新快照时的 UI 线程唤醒回调。 */
     void SetAudioAnalysisWakeCallback(AudioAnalysisWakeCallback callback);
+    void SetTaskWakeCallback(TaskWakeCallback callback);
     /** @brief 主宿主窗口重建后，将组件刷新与命名定时器重新绑定到新 HWND。 */
     void RebindHostTimers();
 
@@ -973,6 +961,7 @@ public:
     void TickRuntime();
     /** @brief 在 UI 线程消费一次已合并的音频分析更新。 */
     void OnAudioAnalysisWake();
+    void OnTaskWake();
     /**
      * @brief 处理宿主转发的组件调度截止时间到期
      * @param widgetId 触发刷新的小部件实例 ID
@@ -1024,6 +1013,21 @@ public:
      */
     void InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
         int button = 0, int delta = 0);
+    bool HasFileDropTarget(const std::wstring& widgetId, int x, int y) const;
+    struct FileDropTarget
+    {
+        std::wstring widgetId;
+        std::string packageId;
+        std::string targetKey;
+        std::uint64_t runtimeToken = 0;
+        snowdesktop::widget_runtime::InteractionAction action;
+    };
+    std::optional<FileDropTarget> CaptureFileDropTarget(
+        const std::wstring& widgetId, int x, int y) const;
+    bool InvokeFileDrop(const std::wstring& widgetId, int x, int y,
+        const std::vector<std::wstring>& paths);
+    bool InvokeFileDrop(const FileDropTarget& target,
+        const std::vector<std::wstring>& paths);
     bool HasInteractionPointerCapture(const std::wstring& widgetId,
         std::string_view surface = "desktop") const;
     void CancelInteractionPointerPress(std::string_view surface = {});
@@ -1233,7 +1237,7 @@ public:
             std::string rangeStart = {}, std::string rangeEnd = {},
             std::string scopeHandle = {},
             snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
-                audioAnalysis = {});
+                audioAnalysis = {}, std::string eventId = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId) const;
@@ -1427,6 +1431,8 @@ public:
         const std::wstring& widgetId) const;
 
     void ReloadStorage();
+    // Host-only session switch. Retire all loaded instances before calling.
+    void SetInitializationExperimentStoragePath(const std::wstring& path);
 
     /**
      * @brief 获取小部件的持久化存储值
@@ -1482,6 +1488,7 @@ public:
      * @param theme 主题配置
      */
     void SetWidgetTheme(const std::wstring& widgetId, const LuaWidgetTheme& theme);
+    void SetPanelTheme(const PersonalizationSettings& appearance);
 
     /** Store host layout context for one widget without mutating an active
      * callback belonging to another widget. The context is also applied to a
@@ -1778,6 +1785,7 @@ private:
     double hostAnimationDurationScale_ = 1.0;
     int hostAnimationFrameLimit_ = 0;
 
+    std::optional<LuaWidgetTheme> panelTheme_;
     D2DState* d2dState_ = nullptr;                     ///< Direct2D 渲染状态管理对象指针
     ComPtr<ID2D1DeviceContext> d2dContext_;            ///< Direct2D 设备上下文
     ComPtr<IDWriteFactory> dwriteFactory_;             ///< DirectWrite 工厂接口
@@ -1813,6 +1821,9 @@ private:
     WidgetTimerRequestCallback widgetTimerRequestCallback_; ///< 请求宿主为 widget 开独立 timer
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     AudioAnalysisWakeCallback audioAnalysisWakeCallback_;
+    TaskWakeCallback taskWakeCallback_;
+    bool applyingTaskBrokerActions_ = false;
+    bool taskWakePending_ = false;
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetDataBroker>
         dataBroker_;
@@ -1870,7 +1881,7 @@ private:
         snowdesktop::widget_runtime::WidgetClipboardTaskCompletion>
         clipboardTaskCompletions_;
     std::unordered_map<std::uint64_t,
-        snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>
+        std::vector<snowdesktop::widget_runtime::WidgetFilesystemHandleEntry>>
         filesystemPickerCompletions_;
     std::unordered_map<std::uint64_t,
         snowdesktop::widget_runtime::WidgetFilesystemTaskCompletion>

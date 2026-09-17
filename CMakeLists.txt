@@ -168,8 +168,12 @@ set(SNOWDESKTOP_SOURCES
     src/drop_text_rules.cpp
     src/drop_text_rules.h
     src/app/app_drop_data_extraction.cpp
+    src/external_drop_content.cpp
     src/app/app_url_drop_download.cpp
+    src/app/app_website_icon.cpp
+    src/website_icon.cpp
     src/app/app_drop_execution.cpp
+    src/app/app_external_slot_drop.cpp
     src/app/app_drop_preview.cpp
     src/app/app_drop_render.cpp
     src/app/app_floating_dock_interaction.cpp
@@ -200,6 +204,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_menu_icons.cpp
     src/app/app_message_dispatch.cpp
     src/shell_context_menu_site.cpp
+    src/windows_desktop_layout.cpp
     src/shell_launch_worker.cpp
     src/shell_launch_process.cpp
     src/shell_file_operation_worker.cpp
@@ -231,6 +236,9 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_render_geometry.cpp
     src/app/app_render_primitives.cpp
     src/app/app_run.cpp
+    src/app/app_usage_guide.cpp
+    src/usage_guide.cpp
+    src/usage_guide.h
     src/app/app_shell_context_menu.cpp
     src/app/app_shell_file_operation.cpp
     src/app/app_shell_menu.cpp
@@ -256,6 +264,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/tray_icon_controller.cpp
     src/app/widget_notification_presenter.cpp
     src/app/desktop_backdrop_compositor.cpp
+    src/app/startup_animation.cpp
     src/app/wallpaper_engine_capture.cpp
     src/atomic_file.cpp
     src/dock_window_preview.cpp
@@ -320,6 +329,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/general_page_presenter.cpp
     src/winui/general_page_presenter.h
     src/winui/home_about_page_presenter.cpp
+    src/winui/start_page_presenter.cpp
+    src/winui/start_page_presenter.h
     src/winui/home_about_page_presenter.h
     src/winui/home_about_page_model.h
     src/winui/hotkey_recorder.cpp
@@ -595,6 +606,11 @@ if (MSVC)
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
+        src/taskbar_hook/taskbar_autohide_observer.cpp
+        src/taskbar_hook/taskbar_autohide_observer.h
+        src/taskbar_hook/taskbar_autohide_trace.h
+        src/taskbar_hook/taskbar_autohide_rules.h
+        ${MINHOOK64_SOURCES}
         src/taskbar_hook/taskview_visibility.h
         src/taskbar_hook/taskbar_hook.def
         "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
@@ -605,6 +621,7 @@ if (MSVC)
     target_compile_features(SnowDesktopTaskbarHook PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopTaskbarHook PRIVATE
         src/taskbar_hook
+        third_party/minhook/include
         "${CPPWINRT_OUTPUT_DIR}"
     )
     target_compile_definitions(SnowDesktopTaskbarHook PRIVATE
@@ -997,7 +1014,9 @@ if (BUILD_TESTING)
             COMMAND ${TEST_TARGET}
                 ${SNOW_TEST_COMMAND_ARGUMENTS})
         set_tests_properties(
-            ${TEST_NAME} PROPERTIES TIMEOUT 60)
+            ${TEST_NAME} PROPERTIES
+            TIMEOUT 60
+            REQUIRED_FILES "$<TARGET_FILE:${TEST_TARGET}>")
         if (SNOW_TEST_LABELS)
             set_tests_properties(
                 ${TEST_NAME} PROPERTIES
@@ -1098,7 +1117,7 @@ if (BUILD_TESTING)
             tests/widget_time_tests.cpp
             src/widget_time.cpp
         INCLUDE_DIRECTORIES src
-        LABELS contract l10n lua time widget)
+        LABELS integration contract l10n lua time widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetRuntimeDiagnosticsTests
@@ -1221,6 +1240,7 @@ if (BUILD_TESTING)
             src/widget_filesystem_task_executor.cpp
             src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 windowscodecs
         LABELS contract filesystem security task lua widget)
 
     snowdesktop_add_test(
@@ -1377,6 +1397,7 @@ if (BUILD_TESTING)
         SnowDesktopSettingsWindowOpenRulesTests
         settings_window_open_rules
         SOURCES tests/settings_window_open_rules_tests.cpp
+            src/usage_guide.cpp src/atomic_file.cpp src/settings_route.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract settings)
@@ -1518,32 +1539,32 @@ if (BUILD_TESTING)
         LABELS contract hotkey input settings ui winui)
 
     snowdesktop_add_test(
-        SnowDesktopWinUiPersonalizationPagePresenterTests
+        SnowDesktopWinUiPresenterBoundaryTests
         winui_personalization_page_presenter
-        SOURCES tests/winui_personalization_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        SOURCES tests/winui_presenter_boundary_tests.cpp
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}" personalization
         LABELS contract personalization settings ui winui)
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiDesktopPagePresenterTests
-        winui_desktop_page_presenter
-        SOURCES tests/winui_desktop_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract desktop personalization settings ui winui)
+    add_test(NAME winui_desktop_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" desktop)
+    set_tests_properties(winui_desktop_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;desktop;personalization;settings;ui;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiDockPagePresenterTests
-        winui_dock_page_presenter
-        SOURCES tests/winui_dock_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract dock settings taskbar ui winui)
+    add_test(NAME winui_dock_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" dock)
+    set_tests_properties(winui_dock_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;dock;settings;taskbar;ui;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiHomeAboutPagePresenterTests
-        winui_home_about_page_presenter
-        SOURCES tests/winui_home_about_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS about backup contract settings ui update winui)
+    add_test(NAME winui_home_about_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" home_about)
+    set_tests_properties(winui_home_about_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "about;backup;contract;settings;ui;update;winui")
 
     snowdesktop_add_test(
         SnowDesktopSettingsUpdateRulesTests
@@ -1559,26 +1580,26 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LABELS contract rules settings startup)
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiWidgetSettingsPresenterTests
-        winui_widget_settings_presenter
-        SOURCES tests/winui_widget_settings_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract lua security settings storage ui widget winui)
+    add_test(NAME winui_widget_settings_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" widget_settings)
+    set_tests_properties(winui_widget_settings_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;lua;security;settings;storage;ui;widget;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiWidgetsPagePresenterTests
-        winui_widgets_page_presenter
-        SOURCES tests/winui_widgets_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract package permission settings steam ui widget winui)
+    add_test(NAME winui_widgets_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" widgets)
+    set_tests_properties(winui_widgets_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "contract;package;permission;settings;steam;ui;widget;winui")
 
-    snowdesktop_add_test(
-        SnowDesktopWinUiBackupDataPagePresenterTests
-        winui_backup_data_page_presenter
-        SOURCES tests/winui_backup_data_page_presenter_tests.cpp
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS backup contract data migration recovery settings ui winui)
+    add_test(NAME winui_backup_data_page_presenter
+        COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
+            "${CMAKE_CURRENT_SOURCE_DIR}" backup_data)
+    set_tests_properties(winui_backup_data_page_presenter PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>"
+        LABELS "backup;contract;data;migration;recovery;settings;ui;winui")
 
     snowdesktop_add_test(
         SnowDesktopWinUiBackupDataPageBackendTests
@@ -1599,7 +1620,7 @@ if (BUILD_TESTING)
         winui_settings_window_host
         SOURCES tests/winui_settings_window_host_tests.cpp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS contract integration lifecycle navigation settings ui winui)
+        LABELS contract lifecycle navigation settings ui winui)
 
     snowdesktop_add_test(
         SnowDesktopSettingsNoImguiContractTests
@@ -1620,6 +1641,8 @@ if (BUILD_TESTING)
         slot_runtime_contract
         SOURCES
             tests/slot_runtime_contract_tests.cpp
+            src/external_drop_content.cpp
+            src/app_icon.rc
             src/app/drag_drop_controller.cpp
             src/app/ole_drag_drop_adapter.cpp
             src/app/tray_icon_controller.cpp
@@ -1628,7 +1651,7 @@ if (BUILD_TESTING)
             src/core/container.cpp
             src/l10n.cpp
         INCLUDE_DIRECTORIES src src/core
-        LINK_LIBRARIES d2d1 ole32 shell32 user32 uuid
+        LINK_LIBRARIES advapi32 d2d1 ole32 shell32 user32 uuid
         LABELS core contract interaction slot integration)
 
     snowdesktop_add_test(
@@ -1923,8 +1946,14 @@ if (BUILD_TESTING)
         shortcut_application_rules
         SOURCES
             tests/shortcut_application_rules_tests.cpp
+            tests/website_icon_tests.cpp
             src/shortcut_icon_resource.cpp
+            src/website_icon.cpp
+            src/http_runtime.cpp
+            src/atomic_file.cpp
+            src/preview_png_writer.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs winhttp ws2_32
         LABELS rules shell)
 
     snowdesktop_add_test(
@@ -1954,11 +1983,13 @@ if (BUILD_TESTING)
     add_test(NAME large_icon_shell_assets
         COMMAND SnowDesktopIconRenderRulesTests --large-icon-shell)
     set_tests_properties(large_icon_shell_assets PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
         TIMEOUT 60 LABELS "integration;shell;icon;resource")
 
     add_test(NAME large_icon_rendering
         COMMAND SnowDesktopIconRenderRulesTests --large-icon-rendering)
     set_tests_properties(large_icon_rendering PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
         TIMEOUT 60 LABELS "integration;icon;ui;rendering")
 
     snowdesktop_add_test(
@@ -1986,6 +2017,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/virtual_file_drop_tests.cpp
             src/virtual_file_drop.cpp
+            src/external_drop_content.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 user32
         LABELS contract interaction shell)
@@ -2032,8 +2064,8 @@ if (BUILD_TESTING)
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32
-        LABELS contract shell)
+        LINK_LIBRARIES ole32 shell32 uuid
+        LABELS integration contract shell)
 
     snowdesktop_add_test(
         SnowDesktopShellIntegrationContractTests
@@ -2050,7 +2082,7 @@ if (BUILD_TESTING)
             src/shell_launch_worker.cpp
             src/shell_launch_process.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi user32
+        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 uuid
         LABELS integration shell interaction)
 
     snowdesktop_add_test(
@@ -2061,21 +2093,34 @@ if (BUILD_TESTING)
             src/item_location.cpp
             src/shell_file_operation_worker.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32
         LABELS integration shell interaction)
+    set_tests_properties(shell_file_operation_worker PROPERTIES
+        SKIP_RETURN_CODE 77 LABELS "integration;shell;interaction;manual")
+    add_test(NAME shell_file_operation_worker_network_preflight
+        COMMAND SnowDesktopShellFileOperationWorkerTests --network-preflight-tests)
+    set_tests_properties(shell_file_operation_worker_network_preflight PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
+        TIMEOUT 20 LABELS "rules;shell;test-infrastructure")
+    # The automatic preflight regression shares the manual integration binary.
+    # A cold fast build still needs it, although it never runs the integration.
+    list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS SnowDesktopShellFileOperationWorkerTests)
 
     snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests
         dock_and_window_rules
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/desktop_backdrop_compositor_tests.cpp
+            src/app/desktop_backdrop_compositor.cpp
+            src/l10n.cpp
             src/dock_window_preview.cpp
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 dwrite dwmapi gdi32 shcore user32
+        LINK_LIBRARIES d2d1 dwrite dwmapi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
-        LABELS core rules window)
+        LABELS integration core rules window)
 
     snowdesktop_add_test(
         SnowDesktopDesktopDropCacheTests
@@ -2213,6 +2258,16 @@ if (BUILD_TESTING)
     add_custom_target(
         SnowDesktopCoreTests
         DEPENDS ${SNOWDESKTOP_CORE_TEST_TARGETS})
+    add_test(NAME test_selection
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selection_tests.ps1")
+    set_tests_properties(test_selection PROPERTIES
+        TIMEOUT 30 LABELS "core;contract;build")
+    # Partial environment coverage must not be presented as a passing entry.
+    # Failures take precedence over this distinct unavailable-environment code.
+    set_tests_properties(application_data_lifecycle steam_runtime_update steam_workshop_manager
+        PROPERTIES SKIP_RETURN_CODE 77)
+
     add_custom_target(
         SnowDesktopFastTests
         DEPENDS ${SNOWDESKTOP_FAST_TEST_TARGETS})
@@ -2224,5 +2279,3 @@ if (BUILD_TESTING)
             -AllowMissingFirstPartyRuntime
         DEPENDS ${SNOWDESKTOP_TEST_TARGETS})
 endif()
-
-

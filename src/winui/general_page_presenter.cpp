@@ -85,8 +85,8 @@ HotkeyChord Chord(UINT modifiers, UINT virtualKey) noexcept
 
 struct GeneralPagePresenter::Impl
 {
-    explicit Impl(LocalizeCallback callback, const mux::Style& style)
-        : localize(std::move(callback)), cardStyle(style)
+    explicit Impl(LocalizeCallback callback, const mux::Style& style, const mux::Style& navigationStyle)
+        : localize(std::move(callback)), cardStyle(style), navigationCardStyle(navigationStyle)
     {
         BuildControls();
         HookEvents();
@@ -96,7 +96,9 @@ struct GeneralPagePresenter::Impl
 
     LocalizeCallback localize;
     GeneralPageActions actions;
+    std::unique_ptr<StartPagePresenter> onboarding;
     mux::Style cardStyle{nullptr};
+    mux::Style navigationCardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel desktopRoot{nullptr};
     muxc::StackPanel pageNavigationRoot{nullptr};
@@ -191,6 +193,8 @@ struct GeneralPagePresenter::Impl
         dockShortcutRoot = muxc::StackPanel{};
         dockShortcutRoot.Spacing(8.0);
 
+        onboarding = std::make_unique<StartPagePresenter>(localize, cardStyle, navigationCardStyle);
+        root.Children().Append(onboarding->Content());
         InitializeCard(startupCard, cardStyle, root);
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
@@ -680,6 +684,7 @@ struct GeneralPagePresenter::Impl
         const bool wasUpdating = updatingControls;
         updatingControls = true;
 
+        onboarding->RefreshLocalizedText();
         SetCardText(startupCard, "settings.general.startup");
         SetCardText(advancedFeaturesCard,
             "settings.general.advancedFeatures");
@@ -905,6 +910,7 @@ struct GeneralPagePresenter::Impl
     void ApplySnapshot(const SettingsSnapshot& snapshot)
     {
         if (closed) return;
+        onboarding->ApplySnapshot(snapshot);
         const bool newGeneration =
             !hasSnapshot || snapshot.generation != generation;
         const bool generalChanged = newGeneration ||
@@ -964,6 +970,7 @@ struct GeneralPagePresenter::Impl
         closed = true;
         try
         {
+            onboarding->Close();
             autoStartToggle.Toggled(autoStartToken);
             registerAdvancedFeaturesButton.Click(
                 registerAdvancedFeaturesToken);
@@ -990,8 +997,8 @@ struct GeneralPagePresenter::Impl
 
 GeneralPagePresenter::GeneralPagePresenter(
     LocalizeCallback localize,
-    const mux::Style& cardStyle)
-    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle))
+    const mux::Style& cardStyle, const mux::Style& navigationCardStyle)
+    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, navigationCardStyle))
 {
 }
 
@@ -1003,6 +1010,7 @@ GeneralPagePresenter::~GeneralPagePresenter()
 void GeneralPagePresenter::SetActions(GeneralPageActions actions)
 {
     if (!impl_ || impl_->closed) return;
+    impl_->onboarding->SetActions(actions.onboarding);
     impl_->actions = std::move(actions);
     impl_->RefreshLocalizedText();
 }
@@ -1096,12 +1104,19 @@ void GeneralPagePresenter::RegisterFocusTargets(
         {"desktop.doubleClickHide", "general.doubleClickHide"});
 }
 
-void GeneralPagePresenter::Activate() noexcept
+void GeneralPagePresenter::ApplyOnboardingStatus(const HomeAboutStatusPatch& patch)
+{
+    if (impl_ && !impl_->closed) impl_->onboarding->ApplyStatusPatch(patch);
+}
+
+void GeneralPagePresenter::Activate(std::string_view focusId) noexcept
 {
     if (!impl_ || impl_->closed) return;
     impl_->active = true;
     try
     {
+        impl_->onboarding->Activate(true);
+        impl_->onboarding->SelectRoute(focusId);
         // Snapshots are applied before the route presenter is activated.
         // Re-probe every saved chord now that the generation gate is live.
         impl_->UpdateDependentEnabledStates();
@@ -1117,6 +1132,7 @@ void GeneralPagePresenter::Deactivate() noexcept
 {
     if (!impl_ || impl_->closed) return;
     impl_->active = false;
+    impl_->onboarding->Activate(false);
     impl_->CancelCaptures();
 }
 

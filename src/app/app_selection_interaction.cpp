@@ -483,9 +483,9 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
                     dockFolderPopupMarqueeInitialSelection_.
                         size() &&
                  dockFolderPopupMarqueeInitialSelection_[i]) ||
-                RectsIntersect(
+                (!IsRectEmptyRect(itemRect) && RectsIntersect(
                     itemRect,
-                    contentSelectionRect);
+                    contentSelectionRect));
         }
         return;
     }
@@ -520,7 +520,7 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
                 if (itemIndex == static_cast<size_t>(-1))
                     continue;
                 items_[itemIndex].selected =
-                    RectsIntersect(itemRect, contentSelectionRect);
+                    !IsRectEmptyRect(itemRect) && RectsIntersect(itemRect, contentSelectionRect);
             }
         }
         else

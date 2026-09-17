@@ -1,4 +1,5 @@
 #include "widget_author_test.h"
+#include "test_temporary_directory.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -9,25 +10,7 @@
 
 namespace
 {
-class TemporaryDirectory
-{
-public:
-    TemporaryDirectory()
-    {
-        path = std::filesystem::temp_directory_path() /
-            ("snowdesktop-author-test-" + std::to_string(
-                static_cast<unsigned long long>(std::rand())));
-        std::filesystem::create_directories(path);
-    }
-
-    ~TemporaryDirectory()
-    {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
-
-    std::filesystem::path path;
-};
+using snowdesktop::test::TemporaryDirectory;
 
 void Write(const std::filesystem::path& path, std::string_view value)
 {
@@ -40,7 +23,7 @@ void Check(bool condition, const char* message)
 {
     if (condition) return;
     std::cerr << "FAILED: " << message << '\n';
-    std::exit(1);
+    throw std::runtime_error(message);
 }
 
 bool HasIssue(const snowdesktop::widget_authoring::TestRunReport& report,
@@ -95,10 +78,15 @@ void TestContractAndMissingDirectory()
 }
 }
 
-int main()
+int main() try
 {
     TestIsolatedCasesAndModules();
     TestContractAndMissingDirectory();
     std::cout << "widget author test runner tests passed\n";
     return 0;
+}
+catch (const std::exception& error)
+{
+    std::cerr << "FAILED: " << error.what() << '\n';
+    return 1;
 }

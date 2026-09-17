@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../external_drop_content.h"
 #include "../drop_data_url.h"
 #include "../drop_image_data.h"
 #include "../drop_text_rules.h"
@@ -353,26 +354,7 @@ DesktopApp::ReadDropReferenceSnapshot(IDataObject* dataObject)
 
 std::vector<std::wstring> DesktopApp::GetDropPaths(IDataObject* dataObject)
 {
-    std::vector<std::wstring> paths;
-    FORMATETC fmt{};
-    fmt.cfFormat = CF_HDROP;
-    fmt.dwAspect = DVASPECT_CONTENT;
-    fmt.lindex = -1;
-    fmt.tymed = TYMED_HGLOBAL;
-    STGMEDIUM med{};
-    if (SUCCEEDED(dataObject->GetData(&fmt, &med)))
-    {
-        HDROP hDrop = static_cast<HDROP>(med.hGlobal);
-        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
-        for (UINT i = 0; i < count; ++i)
-        {
-            wchar_t path[MAX_PATH]{};
-            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
-                paths.push_back(path);
-        }
-        ReleaseStgMedium(&med);
-    }
-    return paths;
+    return snowdesktop::external_drop_content::ReadFilePaths(dataObject);
 }
 
 std::vector<std::wstring>

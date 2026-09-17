@@ -1,12 +1,14 @@
 #include "pch.h"
 
 #include "SettingsShell.xaml.h"
+#include "../usage_guide.h"
 #if __has_include("SettingsShell.g.cpp")
 #include "SettingsShell.g.cpp"
 #endif
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
@@ -123,7 +125,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.search.placeholder", L"Find a setting"},
     LocalizedFallback{"settings.search.clear", L"Clear search"},
     LocalizedFallback{"settings.progress.cancel", L"Cancel"},
-    LocalizedFallback{"settings.nav.home", L"Home"},
+    LocalizedFallback{"settings.nav.home", L"Get started"},
     LocalizedFallback{"settings.nav.general", L"General"},
     LocalizedFallback{"settings.nav.personalization", L"Personalization"},
     LocalizedFallback{"settings.nav.desktop", L"Desktop"},
@@ -138,7 +140,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.nav.about", L"About"},
     LocalizedFallback{"settings.nav.developer", L"Developer tools"},
     LocalizedFallback{"settings.nav.debug", L"Debug"},
-    LocalizedFallback{"settings.page.home.description", L"Your most-used SnowDesktop settings and status at a glance."},
+    LocalizedFallback{"settings.page.home.description", L"Learn the basics and explore more ways to use SnowDesktop."},
     LocalizedFallback{"settings.page.general.description", L"Startup, language, navigation, hotkeys and everyday behavior."},
     LocalizedFallback{"settings.page.personalization.description", L"Theme, widget surfaces, desktop icons and icon beautification."},
     LocalizedFallback{"settings.page.desktop.description", L"Desktop behavior, display selection and pointer interaction."},
@@ -191,9 +193,9 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.personalization.menu", L"Context menu"},
     LocalizedFallback{"settings.personalization.menu.description", L"Configure SnowDesktop context-menu appearance."},
     LocalizedFallback{"settings.personalization.widgets", L"Widgets & layout"},
-    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust widget dimensions, category tabs and search controls."},
+    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust layout spacing, widget corners, title bars, category tabs and content row heights."},
     LocalizedFallback{"settings.desktop.layout", L"Icon layout"},
-    LocalizedFallback{"settings.desktop.layout.description", L"Adjust icon size, spacing, fonts and shortcut arrows."},
+    LocalizedFallback{"settings.desktop.layout.description", L"Adjust icon size, title and list fonts, and shortcut arrows."},
     LocalizedFallback{"settings.desktop.beautify", L"Icon beautification"},
     LocalizedFallback{"settings.desktop.beautify.description", L"Apply complete icon appearance rules."},
     LocalizedFallback{"settings.desktop.categories", L"Categories"},
@@ -314,7 +316,8 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
             return;
         generalPage_ =
             std::make_unique<snowdesktop::winui::GeneralPagePresenter>(
-                localize, cardStyle());
+                localize, cardStyle(), Resources().Lookup(
+                    winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>());
         generalPage_->SetActions(generalPageActions_);
     };
     const auto ensurePersonalization = [&]() {
@@ -390,11 +393,11 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
 
     switch (page)
     {
-    case SettingsPage::Home:
     case SettingsPage::About:
     case SettingsPage::Debug:
         ensureHomeAbout();
         break;
+    case SettingsPage::Home:
     case SettingsPage::General:
     case SettingsPage::Desktop:
         ensureGeneral();
@@ -414,8 +417,12 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
+        ensurePersonalization();
+        break;
     case SettingsPage::AppearanceWidgets:
         ensurePersonalization();
+        ensureDesktop();
+        personalizationPage_->SetLayoutSpacingContent(desktopPage_->LayoutSpacingContent());
         break;
     case SettingsPage::DesktopCategories:
     case SettingsPage::AppearanceDesktopIcons:
@@ -455,6 +462,7 @@ void SettingsShell::Close() noexcept
         return;
     closed_ = true;
     focusSearchWhenPaneOpens_ = false;
+    StopFocusHighlight();
     try
     {
         UnhookEvents();
@@ -649,7 +657,6 @@ void SettingsShell::RefreshLocalizedText()
     if (closed_)
         return;
 
-    HomeItem().Content(winrt::box_value(Localize("settings.nav.home")));
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     AnimationItem().Content(winrt::box_value(Localize("settings.nav.animation")));
     PersonalizationItem().Content(
@@ -909,7 +916,9 @@ void SettingsShell::SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAct
 bool SettingsShell::ApplyHomeAboutStatusPatch(
     const snowdesktop::winui::HomeAboutStatusPatch& patch)
 {
-    return homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);
+    if (generalPage_) generalPage_->ApplyOnboardingStatus(patch);
+    const bool applied = homeAboutPage_ && homeAboutPage_->ApplyStatusPatch(patch);
+    return generalPage_ || applied;
 }
 
 void SettingsShell::SetWidgetSettingsService(
@@ -1159,6 +1168,9 @@ void SettingsShell::SuspendInteraction() noexcept
 {
     if (closed_)
         return;
+    navigationFeedback_.CancelHighlight();
+    focusPendingLayout_ = false;
+    StopFocusHighlight();
     try
     {
         if (generalPage_)
@@ -1259,6 +1271,7 @@ bool SettingsShell::Navigate(
     {
         const SettingsRoute canonicalRoute =
             CanonicalizeSettingsRoute(route);
+        const bool repeatedRoute = navigation_.Route() == canonicalRoute;
         if (notifyHost && routeRequested_)
         {
             // The host synchronously validates and commits the route before
@@ -1267,7 +1280,15 @@ bool SettingsShell::Navigate(
             // before the presenter becomes active.
             routeRequested_(canonicalRoute);
             if (navigation_.Route() == canonicalRoute)
+            {
+                if (repeatedRoute)
+                {
+                    navigationFeedback_.Restart();
+                    StopFocusHighlight();
+                    RenderRoute();
+                }
                 return true;
+            }
             RenderRoute();
             return false;
         }
@@ -1277,7 +1298,11 @@ bool SettingsShell::Navigate(
             RenderRoute();
         else if (navigation_.IsRouteAvailable(canonicalRoute) &&
                  navigation_.Route() == canonicalRoute)
-            ScheduleFocus();
+        {
+            navigationFeedback_.Restart();
+            StopFocusHighlight();
+            RenderRoute();
+        }
         else
             return false;
 
@@ -1563,6 +1588,24 @@ void SettingsShell::UpdateCompactSearchButtonVisibility() noexcept
 
 void SettingsShell::HookEvents()
 {
+    guideReturnToken_ = GuideReturnButton().Click([this](auto&&, auto&&) {
+        if (closed_) return;
+        if (const auto route = snowdesktop::usage_guide::ReturnDestination(navigation_.Route()))
+            RequestRoute(*route);
+    });
+    guideReturnCloseToken_ = GuideReturnCloseButton().Click([this](auto&&, auto&&) {
+        if (closed_) return;
+        navigationFeedback_.DismissGuideReturn();
+        focusPendingLayout_ = false;
+        StopFocusHighlight();
+        GuideReturnBanner().Visibility(mux::Visibility::Collapsed);
+        (void)PageScrollViewer().Focus(mux::FocusState::Programmatic);
+    });
+    focusLayoutToken_ = PageContentGrid().LayoutUpdated([this](auto&&, auto&&) {
+        if (closed_) return;
+        if (focusPendingLayout_) FocusPendingTarget();
+        UpdateFocusHighlight();
+    });
     shellPointerPressedHandler_ = winrt::box_value(muxi::PointerEventHandler{
         [this](const winrt::Windows::Foundation::IInspectable&,
                const muxi::PointerRoutedEventArgs& args) {
@@ -1657,7 +1700,7 @@ void SettingsShell::HookEvents()
             if (!item)
                 return;
             for (const SettingsPage page : {
-                     SettingsPage::Home, SettingsPage::General,
+                     SettingsPage::General,
                      SettingsPage::AnimationPerformance,
                      SettingsPage::AppearanceTheme,
                      SettingsPage::AppearanceWidgets,
@@ -1736,6 +1779,9 @@ void SettingsShell::UnhookEvents() noexcept
 {
     try
     {
+        if (guideReturnToken_.value) GuideReturnButton().Click(guideReturnToken_);
+        if (guideReturnCloseToken_.value) GuideReturnCloseButton().Click(guideReturnCloseToken_);
+        if (focusLayoutToken_.value) PageContentGrid().LayoutUpdated(focusLayoutToken_);
         if (shellPointerPressedHandler_)
         {
             ShellRoot().RemoveHandler(
@@ -1778,6 +1824,7 @@ void SettingsShell::UnhookEvents() noexcept
     {
     }
     actualThemeChangedToken_ = {};
+    guideReturnToken_ = {}; guideReturnCloseToken_ = {}; focusLayoutToken_ = {};
     backKeyboardAcceleratorToken_ = {};
     searchKeyboardAcceleratorToken_ = {};
     compactSearchButtonClickToken_ = {};
@@ -1800,6 +1847,22 @@ void SettingsShell::RenderRoute(
 {
     RenderNavigationSelection();
     const auto route = navigation_.Route();
+    if (navigationFeedback_.UpdateRoute(route, navigation_.Generation()) || forcePageCards)
+        StopFocusHighlight();
+    focusPendingLayout_ = false;
+    const auto guideTopic = snowdesktop::usage_guide::ParseTopic(route.guideTopic);
+    GuideReturnBanner().Visibility(guideTopic && navigationFeedback_.ShowGuideReturn()
+        ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    if (guideTopic)
+    {
+        const auto* lesson = snowdesktop::usage_guide::Find(*guideTopic);
+        const auto text = Localize("start.returnSettings") + L" · " + Localize(lesson->title);
+        GuideReturnText().Text(text);
+        muxa::AutomationProperties::SetName(GuideReturnButton(), text);
+    }
+    const auto closeReturnLabel = Localize("start.closeReturnBanner");
+    muxa::AutomationProperties::SetName(GuideReturnCloseButton(), closeReturnLabel);
+    muxc::ToolTipService::SetToolTip(GuideReturnCloseButton(), winrt::box_value(closeReturnLabel));
     if (renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::AppearanceDesktopIcons && route.page == SettingsPage::LargeIcon)
     {
         largeIconParentOffset_ = PageScrollViewer().VerticalOffset();
@@ -1996,6 +2059,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
 {
     SettingsRoute pageRoute = navigation_.Route();
     pageRoute.focusId.clear();
+    pageRoute.guideTopic.clear();
     if (!sessionActive_)
     {
         PageCards().Children().Clear();
@@ -2022,7 +2086,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             page == SettingsPage::AppearanceWidgets;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
-        return page == SettingsPage::DesktopCategories ||
+        return page == SettingsPage::AppearanceWidgets ||
+            page == SettingsPage::DesktopCategories ||
             page == SettingsPage::AppearanceDesktopIcons ||
             page == SettingsPage::AppearanceIconBeautification;
     };
@@ -2139,20 +2204,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::Home:
-        if (homeAboutPage_)
-        {
-            PageCards().Children().Append(homeAboutPage_->HomeContent());
-            for (const std::string_view focusId : {
-                     "home.theme", "home.dock", "home.widgets",
-                     "home.update", "home.backup"})
-            {
-                RegisterFocusTarget(std::string(focusId),
-                    homeAboutPage_->FocusTarget(
-                        SettingsPage::Home, focusId));
-            }
-            homeAboutPage_->Activate(SettingsPage::Home);
-        }
-        break;
     case SettingsPage::General:
         if (generalPage_)
         {
@@ -2162,7 +2213,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                        const mux::FrameworkElement& element) {
                     RegisterFocusTarget(std::move(focusId), element);
                 });
-            generalPage_->Activate();
+            generalPage_->Activate(pageRoute.focusId);
         }
         break;
     case SettingsPage::Personalization:
@@ -2174,6 +2225,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
+                "personalization.dockAppearance",
                 "personalization.backgroundColor",
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
@@ -2195,6 +2247,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::AppearanceWidgets:
+        if (desktopPage_)
+        {
+            registerDesktopFocus({"desktop.spacing", "desktop.iconSpacing"});
+            desktopPage_->Activate();
+        }
         if (personalizationPage_)
         {
             PageCards().Children().Append(
@@ -2202,6 +2259,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.cornerRadius",
                 "personalization.barHeight",
+                "personalization.luaWidgetRowHeight",
                 "desktop.categoryLayout",
                 "desktop.tabHeight",
                 "personalization.tabHeight"});
@@ -2256,7 +2314,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 desktopPage_->DesktopIconsContent());
             registerDesktopFocus({
-                "desktop.spacing", "desktop.iconSpacing", "desktop.iconSize",
+                "desktop.iconSize",
                 "desktop.itemFontSize", "desktop.listFontSize",
                 "desktop.fontWeight", "desktop.shortcutArrow"});
             desktopPage_->Activate();
@@ -2413,7 +2471,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(backupDataPage_->Content());
             for (const std::string_view focusId : {
                      "backup.layout", "backup.full", "backup.directory",
-                     "backup.migration"})
+                     "backup.migration", "backup.clearData"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     backupDataPage_->FocusTarget(focusId));
@@ -2534,6 +2592,7 @@ void SettingsShell::ScheduleFocus()
 
 void SettingsShell::FocusPendingTarget()
 {
+    focusPendingLayout_ = false;
     if (restoreLargeIconParent_)
     {
         restoreLargeIconParent_ = false;
@@ -2543,14 +2602,27 @@ void SettingsShell::FocusPendingTarget()
         return;
     }
     const auto& focusId = navigation_.Route().focusId;
+    if (navigation_.Route().page == SettingsPage::General &&
+        focusId.starts_with("start."))
+    {
+        // The guide lives at the top of General. Selecting a section and
+        // scrolling there needs no forced focus on SelectorBarItem: during
+        // view replacement its internal presenter may not be realized yet
+        // (the initialization crash dump stops inside WinUI's Focus call).
+        // Normal Tab/arrow navigation still enters the native controls.
+        if (generalPage_) generalPage_->Activate(focusId);
+        PageScrollViewer().ChangeView(nullptr, 0.0, nullptr, true);
+        return;
+    }
     if (!focusId.empty() &&
         navigation_.Route().page == SettingsPage::WidgetSettings &&
         widgetSettingsPage_)
     {
         if (auto target = widgetSettingsPage_->FocusTarget(focusId))
         {
-            target.StartBringIntoView();
-            (void)target.Focus(mux::FocusState::Keyboard);
+            if (!target.IsLoaded() || target.ActualHeight() <= 0) { focusPendingLayout_ = true; return; }
+            HighlightSetting(target);
+            (void)target.Focus(mux::FocusState::Programmatic);
             return;
         }
     }
@@ -2561,13 +2633,110 @@ void SettingsShell::FocusPendingTarget()
         {
             if (auto target = it->second.get())
             {
-                target.StartBringIntoView();
-                (void)target.Focus(mux::FocusState::Keyboard);
+                if (!target.IsLoaded() || target.ActualHeight() <= 0) { focusPendingLayout_ = true; return; }
+                HighlightSetting(target);
+                (void)target.Focus(mux::FocusState::Programmatic);
                 return;
             }
         }
     }
     (void)PageScrollViewer().Focus(mux::FocusState::Programmatic);
+}
+
+void SettingsShell::HighlightSetting(const mux::FrameworkElement& target)
+{
+    // A snapshot/layout refresh must not replay a locator the user has already
+    // seen or dismissed. Explicit navigation rearms it, including the same route.
+    if (!navigationFeedback_.ConsumeHighlight()) return;
+    StopFocusHighlight();
+    // Locate the outer setting card, ignoring labeled rows, nested expanders
+    // and Borders inside editor templates. Never fall back to a single control.
+    const auto cardStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>();
+    const auto buttonStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>();
+    mux::FrameworkElement region{nullptr};
+    mux::FrameworkElement expander{nullptr};
+    auto node = target.as<mux::DependencyObject>();
+    while (node && node != PageCards())
+    {
+        if (auto element = node.try_as<mux::FrameworkElement>())
+        {
+            if (element.Style() == cardStyle || element.Style() == buttonStyle)
+                region = element;
+            if (node.try_as<muxc::Expander>()) expander = element;
+        }
+        node = muxm::VisualTreeHelper::GetParent(node);
+    }
+    if (!region) region = expander;
+    mux::BringIntoViewOptions options;
+    options.AnimationDesired(false);
+    (region ? region : target).StartBringIntoView(options);
+    if (!region) return;
+    highlightTarget_ = winrt::make_weak(region);
+    UpdateFocusHighlight();
+
+    namespace animation = winrt::Microsoft::UI::Xaml::Media::Animation;
+    animation::DoubleAnimation pulse;
+    pulse.From(0.0);
+    pulse.To(1.0);
+    pulse.Duration(mux::DurationHelper::FromTimeSpan(std::chrono::milliseconds(400)));
+    pulse.AutoReverse(true);
+    pulse.RepeatBehavior(animation::RepeatBehaviorHelper::FromCount(3));
+    pulse.FillBehavior(animation::FillBehavior::Stop);
+    animation::Storyboard::SetTarget(pulse, FocusHighlight());
+    animation::Storyboard::SetTargetProperty(pulse, L"Opacity");
+    focusAnimation_ = animation::Storyboard{};
+    focusAnimation_.Children().Append(pulse);
+    const auto serial = focusAnimationSerial_;
+    focusAnimationCompletedToken_ = focusAnimation_.Completed(
+        [weak = get_weak(), serial](auto&&, auto&&) {
+            if (const auto self = weak.get(); self && !self->closed_ &&
+                self->focusAnimationSerial_ == serial)
+                self->StopFocusHighlight();
+        });
+    focusAnimation_.Begin();
+}
+
+void SettingsShell::StopFocusHighlight() noexcept
+{
+    // Clear the target before layout runs again; a late completion from an old
+    // route must not clear a newer card's animation.
+    ++focusAnimationSerial_;
+    highlightTarget_ = {};
+    auto animation = std::exchange(focusAnimation_, nullptr);
+    const auto completed = std::exchange(focusAnimationCompletedToken_, {});
+    try
+    {
+        if (animation)
+        {
+            if (completed.value) animation.Completed(completed);
+            animation.Stop();
+        }
+        FocusHighlightLayer().Visibility(mux::Visibility::Collapsed);
+        FocusHighlight().Opacity(0);
+    }
+    catch (...)
+    {
+    }
+}
+
+void SettingsShell::UpdateFocusHighlight()
+{
+    const auto target = highlightTarget_.get();
+    if (!target || !target.IsLoaded() || target.Visibility() != mux::Visibility::Visible)
+    {
+        if (target || focusAnimation_) StopFocusHighlight();
+        return;
+    }
+    const auto bounds = target.TransformToVisual(PageContentGrid()).TransformBounds(
+        {0, 0, static_cast<float>(target.ActualWidth()), static_cast<float>(target.ActualHeight())});
+    // This overlay shares the scroll content's coordinates, has no layout
+    // footprint and receives no input. Only update changed values during layout.
+    const auto highlight = FocusHighlight();
+    if (highlight.Width() != bounds.Width) highlight.Width(bounds.Width);
+    if (highlight.Height() != bounds.Height) highlight.Height(bounds.Height);
+    if (muxc::Canvas::GetLeft(highlight) != bounds.X) muxc::Canvas::SetLeft(highlight, bounds.X);
+    if (muxc::Canvas::GetTop(highlight) != bounds.Y) muxc::Canvas::SetTop(highlight, bounds.Y);
+    FocusHighlightLayer().Visibility(mux::Visibility::Visible);
 }
 
 void SettingsShell::RequestRoute(const SettingsRoute& route)
@@ -2688,7 +2857,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
 {
     switch (page)
     {
-    case SettingsPage::Home: return HomeItem();
+    case SettingsPage::Home: return GeneralItem();
     case SettingsPage::General: return GeneralItem();
     case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:

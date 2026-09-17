@@ -1,6 +1,7 @@
 #include "full_data_backup.h"
 #include "large_icon_backup.h"
 #include "layout_storage.h"
+#include "json_value.h"
 #include "widget_package.h"
 #include "portable_data_migration.h"
 #include "single_instance.h"
@@ -23,6 +24,7 @@ namespace
 using namespace snowdesktop::widget;
 
 int failures = 0;
+int skippedScenarios = 0;
 
 void Expect(bool condition, const char* message)
 {
@@ -82,7 +84,9 @@ void Write32(std::ofstream& output, std::uint32_t value)
     Write16(output, static_cast<std::uint16_t>(value >> 16));
 }
 
-void MakeUnsafeArchive(const std::filesystem::path& path,
+// A local-entry fragment, not a complete ZIP/package. Negative checks must
+// require the path diagnostic so a later missing manifest cannot satisfy them.
+void MakeStoredZipEntryFragment(const std::filesystem::path& path,
     const std::vector<std::string>& names)
 {
     std::filesystem::create_directories(path.parent_path());
@@ -220,6 +224,207 @@ PackagePaths TestPaths(const std::filesystem::path& root)
     paths.registry = root / L"data" / L"widgets" / L"packages.json";
     return paths;
 }
+
+void TestDockLayoutBackup(const std::filesystem::path& root)
+{
+    namespace layout = snowdesktop::layout_storage;
+    const auto primary = root / L"dock-layout" / L"SnowDesktop.layout.json";
+    const auto backup = root / L"dock-layout" / L"backups" / L"saved.json";
+    for (int position = 0; position < 4; ++position)
+    {
+        for (bool attached : {false, true})
+        {
+            DockLayoutSettings saved;
+            saved.position = static_cast<DockPosition>(position);
+            saved.edgeAttached = attached;
+            saved.monitorScope = DockMonitorScope::All;
+            saved.showWindowsButton = false;
+            saved.showFrequentItems = true;
+            saved.keepWhenDesktopHidden = true;
+            saved.allowDesktopContentOverlap = true;
+            saved.showOnlyWhenSummoned = true;
+            saved.frequentItemCount = 7;
+            saved.thicknessScale = 0.73f;
+            const std::string contents = std::string("{\"dockEnabled\":") +
+                (attached ? "true" : "false") + ",\"dockLayout\":" +
+                layout::SerializeDockLayout(saved) + "}";
+            Expect(layout::SaveDocument(primary, contents),
+                "layout persistence includes Dock geometry, visibility and content");
+            Write(backup, Read(primary));
+            Expect(layout::SaveDocument(primary, "{}") &&
+                    layout::SaveDocument(primary, Read(backup)),
+                "ordinary layout backup restores the recorded Dock settings");
+            layout::Document restored;
+            Expect(layout::LoadDocument(primary, restored).status == layout::LoadStatus::LoadedPrimary &&
+                    restored.dockEnabled == attached && restored.dockLayout &&
+                    *restored.dockLayout == saved,
+                "all four Dock edges and both forms survive a layout backup round trip");
+
+            Expect(contents.find("customAppearance") == std::string::npos &&
+                    contents.find("floatingHotkey") == std::string::npos &&
+                    contents.find("systemTaskbar") == std::string::npos,
+                "layout backups exclude independent Dock and system preferences");
+        }
+    }
+    layout::Document legacy;
+    for (const char* savedLayout : {
+             R"({"pages":[{"id":"empty-page","columns":22,"rows":10}]})",
+             R"({"items":[{"key":"file","page":"old","x":1,"y":0}]})",
+             R"({"widgets":[{"id":"clock","type":"lua","page":"old","x":0,"y":0}]})",
+             R"({"dockEntries":[{"type":"item","ref":"file"}]})"})
+    {
+        Expect(layout::ParseDocument(savedLayout, legacy) && !layout::NeedsGridInitialization(legacy),
+            "saved layouts, including empty pages and legacy placements, never resync from Windows");
+    }
+    Expect(layout::ParseDocument("{\"dockEnabled\":true}", legacy) &&
+            legacy.dockEnabled == true && !legacy.dockLayout,
+        "old layout backups preserve their switch without inventing Dock geometry");
+    for (const char* malformed : {
+             R"({"dockLayout":false})",
+             R"({"dockLayout":{"position":4}})",
+             R"({"dockLayout":{"position":1.5}})",
+             R"({"dockLayout":{"monitorScope":-1}})",
+             R"({"dockLayout":{"edgeAttached":1}})",
+             R"({"dockLayout":{"frequentItemCount":0}})",
+             R"({"dockLayout":{"thicknessScale":0.1}})"})
+    {
+        Expect(!layout::ValidateDocument(malformed),
+            "invalid Dock layout values are rejected before replacing live data");
+    }
+}
+
+void TestInitializationExperiment(const std::filesystem::path& root)
+{
+    namespace layout = snowdesktop::layout_storage;
+    const auto data = root / L"initialization-original";
+    std::filesystem::create_directory(data);
+    const auto original = data / L"SnowDesktop.layout.json";
+    const auto storage = data / L"SnowDesktop.storage.json";
+    const auto recovery = layout::BackupPath(original);
+    const std::string originalText = R"({"pages":[{"id":"primary","columns":22,"rows":10}],"dockEnabled":true,"dockLayout":{"position":2},"widgets":[{"id":"clock","type":"lua","page":"primary","x":0,"y":0}]})";
+    Write(original, originalText);
+    Write(recovery, originalText);
+    Write(storage, R"({"clock":"original data"})");
+    const auto originalStorage = Read(storage);
+    const auto experiment = root / L"initialization-experiment";
+    std::string error;
+    Expect(layout::PrepareInitializationExperiment(original, experiment, &error),
+        "temporary initialization creates a separate layout and storage pair");
+    layout::Document fresh;
+    const auto experimentalLayout = experiment / L"SnowDesktop.layout.json";
+    Expect(layout::LoadDocument(experimentalLayout, fresh).status == layout::LoadStatus::LoadedPrimary &&
+            layout::NeedsGridInitialization(fresh) && fresh.dockEnabled == false &&
+            Read(experiment / L"SnowDesktop.storage.json") == "{}\n",
+        "experimental data follows the actual first-launch initialization path");
+    Write(experimentalLayout, R"({"pages":[{"id":"experiment","columns":20,"rows":8}]})");
+    Write(experiment / L"SnowDesktop.storage.json", R"({"clock":"experiment data"})");
+    Expect(!layout::PrepareInitializationExperiment(original, data, &error) &&
+            !layout::PrepareInitializationExperiment(original, experiment, &error),
+        "an experiment can never overwrite the original or another existing data directory");
+    Expect(Read(original) == originalText && Read(recovery) == originalText &&
+            Read(storage) == originalStorage,
+        "experimental edits preserve the original layout, recovery and component storage byte-for-byte");
+    layout::Document restored;
+    Expect(layout::LoadDocument(original, restored).status == layout::LoadStatus::LoadedPrimary &&
+            restored.dockEnabled == true && restored.widgets.size() == 1 &&
+            !layout::NeedsGridInitialization(restored),
+        "returning to the original files restores Dock and components without reinitializing");
+}
+
+void TestLayoutReset(const std::filesystem::path& root)
+{
+    namespace layout = snowdesktop::layout_storage;
+    const auto data = root / L"layout-reset" / L"data";
+    const auto primary = data / L"SnowDesktop.layout.json";
+    const auto recovery = layout::BackupPath(primary);
+    const auto storage = data / L"SnowDesktop.storage.json";
+    const std::string original = R"({
+        "layoutSchemaVersion":1,"itemFontSizeCu":0.27,"iconSpacing":1.3,
+        "dockEnabled":true,"firstPageMonitor":"old","lastPageMonitor":"old",
+        "dockLayout":{"position":2,"edgeAttached":true,"monitorScope":2,
+            "showOnlyWhenSummoned":true,"thicknessScale":0.7},
+        "pages":[{"id":"old","columns":41,"rows":17}],
+        "items":[{"key":"file","page":"old","x":1,"y":0}],
+        "widgets":[{"id":"clock","type":"lua","page":"old","x":0,"y":0}],
+        "dockEntries":[{"type":"item","ref":"file"}],"navTabOrder":["clock"],
+        "metadata":{"label":"quoted \"text\"\n中文","values":[null,false,3]}
+    })";
+    const std::string widgetData = "{\"clock.counter\":\"27\"}\n";
+    Write(primary, original);
+    Write(recovery, original);
+    Write(storage, widgetData);
+    const auto backup = data / L"backups" / L"before-clear.json";
+    const auto storageBackup = data / L"backups" / L"before-clear.storage.json";
+    Write(backup, original);
+    Write(storageBackup, widgetData);
+    const std::vector<std::filesystem::path> retained = {
+        L"SnowDesktop.general.json", L"SnowDesktop.dock.json",
+        L"SnowDesktop.calendar.json", L"SnowDesktop.widget-notifications.json",
+        L"SnowDesktop.widget-file-handles.json", L"widgets/packages.json",
+        L"widgets/installed/demo/main.lua", L"large-icons/user.png",
+        L"DropContent/user.txt"};
+    for (const auto& relative : retained)
+        Write(data / relative, "retained data");
+
+    // A directory handle can prevent an entire-data-tree exchange. Reset must
+    // still work because it only replaces the layout and storage documents.
+    HANDLE directory = CreateFileW(data.c_str(), FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Expect(directory != INVALID_HANDLE_VALUE, "hold the active data directory open");
+    std::string error;
+    Expect(layout::ClearLayoutAndStorage(primary, storage, &error),
+        "layout reset succeeds without renaming the open data directory");
+    if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
+    layout::Document fresh;
+    Expect(layout::LoadDocument(primary, fresh).status == layout::LoadStatus::LoadedPrimary &&
+            fresh.pages.empty() && fresh.items.empty() && fresh.widgets.empty() &&
+            fresh.dockEntries.empty() && fresh.navTabOrder.empty() &&
+            !fresh.firstPageMonitor && !fresh.lastPageMonitor &&
+            fresh.itemFontSizeCu == 0.27f && fresh.iconSpacing == 1.3f &&
+            fresh.dockEnabled == kDefaultDockEnabled && fresh.dockLayout &&
+            *fresh.dockLayout == DockLayoutSettings{} && Read(storage) == "{}\n" &&
+            layout::NeedsGridInitialization(fresh),
+        "reset clears placement and storage and restores default Dock layout while retaining appearance");
+    JsonValue encoded;
+    Expect(ParseJson(Read(primary), encoded) && encoded.Find("metadata") &&
+            encoded.Find("metadata")->Find("label") &&
+            encoded.Find("metadata")->Find("label")->string == "quoted \"text\"\n中文",
+        "reset preserves unrelated nested metadata and escaped Unicode text");
+    for (const auto& relative : retained)
+        Expect(Read(data / relative) == "retained data",
+            "layout reset does not alter packages, settings or unrelated data");
+    Expect(Read(backup) == original && Read(storageBackup) == widgetData &&
+            !std::filesystem::exists(data.parent_path() / L"FullBackups") &&
+            !std::filesystem::exists(data.parent_path() / L"TempState"),
+        "reset retains layout backups and creates no full backup or startup replacement");
+
+    Write(primary, "{invalid");
+    Expect(layout::LoadDocument(primary, fresh).status == layout::LoadStatus::RecoveredBackup &&
+            fresh.pages.empty() && fresh.widgets.empty() &&
+            fresh.dockEnabled == kDefaultDockEnabled && fresh.dockLayout &&
+            *fresh.dockLayout == DockLayoutSettings{},
+        "automatic last-good recovery cannot resurrect the pre-reset layout");
+
+    Write(primary, original);
+    Write(recovery, original);
+    Write(storage, widgetData);
+    HANDLE locked = CreateFileW(storage.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(locked != INVALID_HANDLE_VALUE, "lock component storage against replacement");
+    Expect(!layout::ClearLayoutAndStorage(primary, storage, &error) &&
+            Read(primary) == original && Read(recovery) == original && Read(storage) == widgetData,
+        "failed component-storage replacement rolls back both layout documents");
+    if (locked != INVALID_HANDLE_VALUE) CloseHandle(locked);
+
+    locked = CreateFileW(primary.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(locked != INVALID_HANDLE_VALUE, "lock the primary layout against replacement");
+    Expect(!layout::ClearLayoutAndStorage(primary, storage, &error) &&
+            Read(primary) == original && Read(recovery) == original && Read(storage) == widgetData,
+        "failed primary replacement preserves layout, recovery and component storage");
+    if (locked != INVALID_HANDLE_VALUE) CloseHandle(locked);
+}
 }
 
 int main()
@@ -245,6 +450,9 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestDockLayoutBackup(root);
+    TestLayoutReset(root);
+    TestInitializationExperiment(root);
     Write(hashInput, "abc");
     Expect(WidgetPackageManager::Sha256File(hashInput) ==
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
@@ -532,6 +740,28 @@ int main()
             typedLayout.dockEntries.size() == 1 &&
             !typedLayout.componentSpacing.has_value(),
         "legacy schema and reordered fields decode into one typed document");
+    // Opt-in group ownership must survive restart; older/manual groups retain
+    // their previous behavior. The production parser and validated disk store
+    // are exercised, using only this test's isolated temporary layout directory.
+    Expect(!typedLayout.widgets[0].dissolveWhenSingle,
+        "legacy groups default to retaining their wrapper");
+    const std::string pairLayoutText = R"({"widgets":[
+        {"id":"automatic","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":true},
+        {"id":"manual","page":"page-a","x":4,"y":0,"type":"collectionGroup","dissolveWhenSingle":false}]})";
+    const auto pairLayoutPath = root / L"layout-storage" / L"pair.layout.json";
+    snowdesktop::layout_storage::Document pairLayout;
+    Expect(snowdesktop::layout_storage::SaveDocument(pairLayoutPath, pairLayoutText, &layoutError),
+        "automatic group ownership saves through the validated layout store");
+    const auto pairLoad = snowdesktop::layout_storage::LoadDocument(pairLayoutPath, pairLayout);
+    Expect(pairLoad.status == snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            pairLayout.widgets.size() == 2 && pairLayout.widgets[0].dissolveWhenSingle &&
+            !pairLayout.widgets[1].dissolveWhenSingle,
+        "restart must retain the explicit automatic/manual group distinction");
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+            R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":"true"}]})",
+            pairLayout, &layoutError) && layoutError.find("dissolveWhenSingle") != std::string::npos,
+        "invalid automatic group state must be rejected before replacing the layout");
+
     snowdesktop::layout_storage::Document spacingLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"componentSpacing\":1.5,\"iconSizeScale\":1.1,"
@@ -619,6 +849,28 @@ int main()
             loadedDetailsLayout.widgets[0].largeFolderTitleless,
         "list font and detail view fields round-trip through layout storage");
     snowdesktop::layout_storage::Document dockPopupLayout;
+    {
+        snowdesktop::layout_storage::Document fanLayout;
+        const std::string fanDocument = R"({"widgets":[
+            {"id":"fan","type":"collection","page":"p","x":0,"y":0,"fanPopup":true,"listMode":true},
+            {"id":"normal","type":"collection","page":"p","x":1,"y":0}],
+            "dockEntries":[{"type":"item","ref":"folder-a","fanPopup":true},
+                {"type":"item","ref":"folder-b"}]})";
+        Expect(snowdesktop::layout_storage::ParseDocument(fanDocument, fanLayout, &layoutError) &&
+            fanLayout.widgets[0].fanPopup && fanLayout.widgets[0].listMode &&
+            !fanLayout.widgets[1].fanPopup && fanLayout.dockEntries[0].fanPopup &&
+            !fanLayout.dockEntries[1].fanPopup,
+            "fan preferences belong to individual objects, preserve list settings and default off for older layouts");
+        const auto fanPath = root / "fan-layout.json";
+        Expect(snowdesktop::layout_storage::SaveDocument(fanPath, fanDocument, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(fanPath, fanLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            fanLayout.widgets[0].fanPopup && fanLayout.dockEntries[0].fanPopup,
+            "fan preferences survive saving and reloading without changing other objects");
+        Expect(!snowdesktop::layout_storage::ValidateDocument(
+            R"({"dockEntries":[{"type":"item","ref":"folder-a","fanPopup":"true"}]})", &layoutError),
+            "invalid fan flags must be rejected instead of silently changing popup behavior");
+    }
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"dockEntries\":[{\"type\":\"item\",\"ref\":\"folder-a\","
             "\"listMode\":true,\"detailShowModified\":true,"
@@ -1206,6 +1458,16 @@ int main()
             nestedResolved->root, nestedInstalled.root),
         "nested entry resolves back to the package root");
 
+    const auto legacyDevPaths = TestPaths(root / L"legacy-development-selection");
+    std::filesystem::create_directories(legacyDevPaths.builtin);
+    std::filesystem::copy(sourcePackage, legacyDevPaths.builtin / L"sample", std::filesystem::copy_options::recursive, ec);
+    std::filesystem::create_directories(legacyDevPaths.development);
+    std::filesystem::copy(sourcePackage, legacyDevPaths.development / L"sample", std::filesystem::copy_options::recursive, ec);
+    Write(legacyDevPaths.registry, R"({"schemaVersion":1,"packages":[],"developmentOverrides":[]})");
+    WidgetPackageManager legacyDevelopment(legacyDevPaths);
+    Expect(legacyDevelopment.Initialize(error) && legacyDevelopment.Resolve(manifest.id)->builtin,
+        "legacy inactive development candidates are not silently activated on upgrade");
+
     const auto managerPaths = TestPaths(root / L"manager");
     std::filesystem::create_directories(managerPaths.builtin);
     std::filesystem::copy(sourcePackage, managerPaths.builtin / L"package-test",
@@ -1216,10 +1478,14 @@ int main()
         std::filesystem::copy_options::recursive, ec);
     WidgetPackageManager manager(managerPaths);
     Expect(manager.Initialize(error), "package manager initializes");
-    Expect(manager.Resolve(manifest.id)->builtin &&
-            manager.Resolve(manifest.id)->permissionState ==
-                PermissionDecisionState::LegacyImplicit,
-        "a discovered development package is inactive by default");
+    Expect(manager.Resolve(manifest.id)->development &&
+            manager.Resolve(manifest.id)->permissionState == PermissionDecisionState::Pending &&
+            manager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "new development source defaults active without granting sensitive permissions");
+    Expect(manager.SetDevelopmentOverride(manifest.id, false, error), "development source can opt out");
+    WidgetPackageManager optedOut(managerPaths);
+    Expect(optedOut.Initialize(error) && optedOut.Resolve(manifest.id)->builtin,
+        "explicit development opt-out survives a restart and rediscovery");
     Expect(manager.SetPermissionDecision(manifest.id,
             PermissionDecisionState::Granted, manifest.permissions,
             manifest.networkDomains, error) &&
@@ -1529,6 +1795,7 @@ int main()
     }
     else
     {
+        ++skippedScenarios;
         std::cout << "SKIPPED: archive file reparse-point validation ("
                   << ec.message() << ")\n";
     }
@@ -1550,6 +1817,7 @@ int main()
     }
     else
     {
+        ++skippedScenarios;
         std::cout << "SKIPPED: archive parent reparse-point validation ("
                   << ec.message() << ")\n";
     }
@@ -1562,13 +1830,25 @@ int main()
         "archive CRC corruption is rejected");
     const auto traversalArchive =
         root / L"exports" / L"traversal.snowwidget";
-    MakeUnsafeArchive(traversalArchive, { "../escape.lua" });
-    Expect(!manager.ValidateArchive(traversalArchive).Ok(),
+    MakeStoredZipEntryFragment(traversalArchive, { "../escape.lua" });
+    const auto traversalReport = manager.ValidateArchive(traversalArchive);
+    Expect(!traversalReport.Ok() &&
+            std::any_of(traversalReport.issues.begin(), traversalReport.issues.end(),
+                [](const auto& issue) {
+                    return issue.code == "archive.content" &&
+                        issue.message == "archive contains an unsafe or duplicate path: ../escape.lua";
+                }),
         "ZIP path traversal is rejected before extraction");
     const auto collisionArchive =
         root / L"exports" / L"case-collision.snowwidget";
-    MakeUnsafeArchive(collisionArchive, { "Assets/icon.png", "assets/icon.png" });
-    Expect(!manager.ValidateArchive(collisionArchive).Ok(),
+    MakeStoredZipEntryFragment(collisionArchive, { "Assets/icon.png", "assets/icon.png" });
+    const auto collisionReport = manager.ValidateArchive(collisionArchive);
+    Expect(!collisionReport.Ok() &&
+            std::any_of(collisionReport.issues.begin(), collisionReport.issues.end(),
+                [](const auto& issue) {
+                    return issue.code == "archive.content" &&
+                        issue.message == "archive contains an unsafe or duplicate path: assets/icon.png";
+                }),
         "case-insensitive ZIP path collisions are rejected");
 
     WidgetPackageManager importedManager(TestPaths(root / L"imported"));
@@ -1610,10 +1890,11 @@ int main()
             return package.development && package.manifest.id == manifest.id;
         });
     Expect(copiedDevelopment != developmentPackages.end() &&
-            !copiedDevelopment->active &&
+            copiedDevelopment->active &&
             developmentCopyManager.Resolve(manifest.id) &&
-            !developmentCopyManager.Resolve(manifest.id)->development,
-        "creating a development project keeps the installed version active");
+            developmentCopyManager.Resolve(manifest.id)->development &&
+            developmentCopyManager.Resolve(manifest.id)->grantedPermissions.empty(),
+        "creating a development project selects its source without granting permissions");
     std::filesystem::path duplicateDevelopmentProject;
     error.clear();
     Expect(!developmentCopyManager.CreateDevelopmentProject(
@@ -2192,10 +2473,11 @@ int main()
 
     const auto unsafeBackup =
         root / L"exports" / L"unsafe.snowbackup";
-    MakeUnsafeArchive(unsafeBackup, { "../escape.txt" });
+    MakeStoredZipEntryFragment(unsafeBackup, { "../escape.txt" });
     const auto unsafeImport =
         importBackupManager.ImportAndQueue(unsafeBackup);
     Expect(!unsafeImport.ok &&
+            unsafeImport.error == "backup archive contains an unsafe path" &&
         !std::filesystem::exists(
             importedBackupState / L"escape.txt"),
         "backup archive path traversal is rejected");
@@ -2223,5 +2505,11 @@ int main()
     if (failures)
         std::cerr << failures
             << " application data lifecycle test(s) failed\n";
-    return failures == 0 ? 0 : 1;
+    if (failures) return 1;
+    if (skippedScenarios)
+    {
+        std::cout << skippedScenarios << " safety scenario(s) could not run; this entry is not fully verified\n";
+        return 77;
+    }
+    return 0;
 }

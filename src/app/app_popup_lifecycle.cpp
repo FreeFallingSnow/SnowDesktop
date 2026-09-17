@@ -64,7 +64,7 @@ TryActivateDockPopupFromMenuPointerPress(
     PersistentDockHost* requestedDockHost =
         FindPersistentDockHost(dock);
     const bool collectionEntry =
-        entry.type == DockEntryType::Collection;
+        IsLogicalDockEntryType(entry.type);
     const bool folderEntry = IsFolderDockEntry(entry);
     if (!collectionEntry && !folderEntry)
         return false;
@@ -128,6 +128,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     size_t entryIndex, POINT anchorPoint)
 {
     if (entryIndex >= dockEntries_.size() ||
+        IsLogicalDockEntryType(dockEntries_[entryIndex].type) ||
         !IsFolderDockEntry(dockEntries_[entryIndex]))
         return;
 
@@ -187,6 +188,12 @@ void DesktopApp::OpenDockFolderPopupAt(
     dockFolderPopupMappingWidgetId_.clear();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     popupScrollOffset_ = 0;
+    if (!reverseClosingAnimation)
+    {
+        ResetCollectionPopupFanScroll();
+        popupFanShowAll_ = false;
+        popupFanActionFocused_ = false;
+    }
     popupHasAnchor_ = true;
     popupAnchoredToDock_ = false;
     collectionPopupDockHost_ = nullptr;
@@ -213,6 +220,7 @@ void DesktopApp::OpenDockFolderPopupAt(
         entry.folderItemKeys;
     dockFolderPopupWidget_.listMode =
         entry.listMode;
+    dockFolderPopupWidget_.fanPopup = entry.fanPopup;
     dockFolderPopupWidget_.detailShowModified =
         entry.detailShowModified;
     dockFolderPopupWidget_.detailShowType =
@@ -261,6 +269,7 @@ void DesktopApp::OpenDockFolderPopupAt(
                     itemKeys;
             dockFolderPopupWidget_.listMode =
                 widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.fanPopup = widgets_[widgetIndex].fanPopup;
             dockFolderPopupWidget_.showDetails =
                 widgets_[widgetIndex].showDetails;
             dockFolderPopupWidget_.detailShowModified =
@@ -376,6 +385,11 @@ void DesktopApp::OpenDockFolderPopupAt(
 void DesktopApp::StartCollectionPopupAnimation(
     bool reverseClosingAnimation)
 {
+    const DesktopWidget* widget = GetOpenPopupWidget();
+    popupAnimation_.Configure(
+        snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+        snowdesktop::animation::RuntimeDurationScale() *
+            (widget && UsesCollectionPopupFan(*widget) ? 2.4 : 1.0));
     if (!reverseClosingAnimation)
         popupAnimation_.ResetHidden();
     if (!(snowdesktop::animation::RuntimePopupEffect() != 0))
@@ -478,6 +492,9 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     ClearDockFolderPopupEntries();
     marqueeDockFolderPopup_ = false;
     popupScrollOffset_ = 0;
+    ResetCollectionPopupFanScroll();
+    popupFanShowAll_ = false;
+    popupFanActionFocused_ = false;
     popupHasAnchor_ = false;
     popupAnchoredToDock_ = false;
     collectionPopupDockHost_ = nullptr;

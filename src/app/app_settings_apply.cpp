@@ -555,17 +555,24 @@ void DesktopApp::PublishHomeAboutStatus()
     const auto snapshot = settingsController_
         ? settingsController_->Snapshot() : nullptr;
     if (!snapshot || !snapshot->sessionActive || !settingsWindow_) return;
-    snowdesktop::winui::HomeAboutStatusPatch patch;
-    patch.generation = snapshot->generation;
-    homeAboutStatusRevision_ = std::max(
-        homeAboutStatusRevision_ + 1, snapshot->revision + 1);
-    patch.revision = homeAboutStatusRevision_;
+    (void)settingsWindow_->PublishHomeAboutStatus(BuildHomeAboutStatus(snapshot->generation));
+}
+
+snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::uint64_t generation)
+{
+    // Pushes and snapshot-triggered reads share one sequence. Controller
+    // revisions cannot order session-only changes such as temporary layouts.
+    auto patch = homeAboutStatusSequence_.Next(generation);
+    patch.applicationVersion = Utf8ToWide(SNOWDESKTOP_VERSION);
+    patch.installedWidgetCount = widgets_.size();
+    patch.usageGuideExpanded = usageGuideExpanded_;
     patch.packaged = snowdesktop::deployment::IsPackaged();
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
+    patch.temporaryInitializationEnabled = !initializationExperimentDirectory_.empty();
     patch.animationDiagnosticsStatus =
         BuildAnimationDiagnosticsStatus();
-    (void)settingsWindow_->PublishHomeAboutStatus(std::move(patch));
+    return patch;
 }
 
 std::wstring DesktopApp::BuildAnimationDiagnosticsStatus() const
@@ -609,7 +616,7 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     using snowdesktop::SettingsActionResult;
 
     if (!settingsController_ || exitRequested_ || reloading_ ||
-        shellFileOperationInFlight_ > 0 || dragSession_.HasContext() ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive())
     {
         return SettingsActionResult::Failure(
@@ -631,8 +638,7 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     }
 
     const std::filesystem::path layoutPath = GetLayoutPath();
-    const std::filesystem::path storagePath =
-        GetDataFilePath(L"SnowDesktop.storage.json");
+    const std::filesystem::path storagePath = GetActiveWidgetStoragePath();
     std::string previousLayout;
     if (!snowdesktop::atomic_file::ReadAll(
             layoutPath, previousLayout, &validationError) ||
@@ -644,7 +650,7 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     }
 
     std::optional<std::string> previousStorage;
-    const bool storageExisted =
+    const bool storageExisted = !payload.clearLayout && payload.storageDocument &&
         GetFileAttributesW(storagePath.c_str()) != INVALID_FILE_ATTRIBUTES;
     if (storageExisted)
     {
@@ -658,15 +664,37 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         previousStorage = std::move(contents);
     }
 
-    std::string commitError;
-    if (!snowdesktop::layout_storage::SaveDocument(
-            layoutPath, payload.layoutDocument, &commitError))
+    if (payload.clearLayout && widgetEngine_)
     {
+        // Emptying the layout model alone does not stop loaded Lua instances.
+        // Retire callbacks/timers before clearing storage, including final
+        // writes from onHidden/dispose, so old runtimes cannot repopulate it.
+        std::vector<std::wstring> instances;
+        for (const auto& widget : widgetEngine_->GetWidgets())
+            if (!widget.preview)
+                instances.push_back(widget.widgetId);
+        for (const auto& id : instances)
+            widgetEngine_->UnloadWidget(id);
+    }
+
+    std::string commitError;
+    const bool saved = payload.clearLayout
+        ? snowdesktop::layout_storage::ClearLayoutAndStorage(
+              layoutPath, storagePath, &commitError)
+        : snowdesktop::layout_storage::SaveDocument(
+              layoutPath, payload.layoutDocument, &commitError);
+    if (!saved)
+    {
+        if (payload.clearLayout && widgetEngine_)
+        {
+            widgetEngine_->ReloadStorage();
+            RebuildContainersAndItems();
+        }
         return SettingsActionResult::Failure(
             _LW("settings.backup.restoreLayout.commitFailed"));
     }
 
-    if (payload.storageDocument &&
+    if (!payload.clearLayout && payload.storageDocument &&
         !snowdesktop::atomic_file::WriteAll(
             storagePath, *payload.storageDocument, {}, &commitError))
     {
@@ -698,7 +726,19 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     // ReloadItems reads both restored documents and writes only the newly
     // reconstructed model. Synchronizing the mirrors prevents a later close
     // from persisting the pre-restore desktop values.
+    if (payload.clearLayout)
+    {
+        firstPageMonitorId_.clear();
+        lastPageMonitorId_.clear();
+    }
+    return ReloadLayoutAndSynchronizeSettings();
+}
+
+snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings()
+{
+    using snowdesktop::SettingsActionResult;
     ReloadItems(true);
+    ApplyFloatingDockHotkey();
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;
     desktop.iconSpacingScale = iconSpacingScale_;
@@ -712,7 +752,9 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         settingsController_->SynchronizeGeneral(generalSettings_);
     const bool desktopSynchronized =
         settingsController_->SynchronizeDesktop(std::move(desktop));
-    if (!generalSynchronized || !desktopSynchronized)
+    const bool dockSynchronized =
+        settingsController_->SynchronizeDock(dockSettings_);
+    if (!generalSynchronized || !desktopSynchronized || !dockSynchronized)
     {
         WriteDiagnosticLogEntry(
             L"Layout restored but settings mirror synchronization failed",
@@ -721,6 +763,82 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
             _LW("settings.backup.restoreLayout.commitFailed"));
     }
     return SettingsActionResult::Success();
+}
+
+snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(bool enabled)
+{
+    using snowdesktop::SettingsActionResult;
+    if (enabled == !initializationExperimentDirectory_.empty())
+        return SettingsActionResult::Success();
+    const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
+    if (!settingsController_ || exitRequested_ || reloading_ ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        snowdesktop::winui::HasPendingBackupDataWork() ||
+        !snapshot || snapshot->externalReplacementPending)
+        return SettingsActionResult::Failure(_LW("settings.backup.restoreLayout.busy"));
+    const auto flushed = settingsController_->FlushAll();
+    if (!flushed.Succeeded()) return flushed;
+
+    std::filesystem::path nextDirectory;
+    std::string error;
+    if (enabled)
+    {
+        if (!SaveLayoutSlots())
+            return SettingsActionResult::Failure(_LW("settings.debug.initialization.failed"));
+        nextDirectory = std::filesystem::path(GetDataSubdirectoryPath(L"initialization-experiments")) /
+            (L"session-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                std::to_wstring(GetTickCount64()));
+        if (!snowdesktop::layout_storage::PrepareInitializationExperiment(
+                GetLayoutPath(), nextDirectory, &error))
+            return SettingsActionResult::Failure(_LW("settings.debug.initialization.failed"));
+    }
+    else
+    {
+        // A failed read leaves the experiment active and its off switch available.
+        std::string original;
+        if (!snowdesktop::atomic_file::ReadAll(GetDataFilePath(L"SnowDesktop.layout.json"), original, &error) ||
+            !snowdesktop::layout_storage::ValidateDocument(original, &error))
+            return SettingsActionResult::Failure(_LW("settings.debug.initialization.failed"));
+    }
+
+    // Dispose writes belong to the current storage file. Retire previews too,
+    // before switching the global Lua store to the other data set.
+    if (widgetEngine_)
+    {
+        std::vector<std::wstring> instances;
+        for (const auto& widget : widgetEngine_->GetWidgets())
+            instances.push_back(widget.widgetId);
+        for (const auto& id : instances) widgetEngine_->UnloadWidget(id);
+    }
+    const auto previousDirectory = initializationExperimentDirectory_;
+    initializationExperimentDirectory_ = std::move(nextDirectory);
+    if (widgetEngine_)
+        widgetEngine_->SetInitializationExperimentStoragePath(GetActiveWidgetStoragePath());
+    firstPageMonitorId_.clear();
+    lastPageMonitorId_.clear();
+    usageGuideWelcomePending_ = usageGuideWelcomeQueued_ = false;
+    usageGuideTopic_.reset();
+    usageGuidePlacement_.EndDrag();
+    usageGuidePressedButton_ = 0;
+    usageGuideFrame_ = {};
+    usageGuideWaitingForDesktop_ = false;
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
+    usageGuideScroll_ = {};
+    const auto result = ReloadLayoutAndSynchronizeSettings();
+    PublishHomeAboutStatus();
+
+    if (!enabled)
+    {
+        // Only remove this experiment's known files, never the original tree.
+        std::error_code cleanupError;
+        const auto layout = previousDirectory / L"SnowDesktop.layout.json";
+        for (const auto& file : {layout, snowdesktop::layout_storage::BackupPath(layout),
+                 previousDirectory / L"SnowDesktop.storage.json"})
+            std::filesystem::remove(file, cleanupError);
+        std::filesystem::remove(previousDirectory, cleanupError);
+    }
+    return result;
 }
 
 class DesktopApp::SettingsHostActionsAdapter final
@@ -1079,9 +1197,8 @@ public:
         case Action::OpenDataDirectory:
         {
             const std::wstring path = GetDataDirectoryPath();
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
-                    app_.controlHwnd_, L"open", path.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                    app_.controlHwnd_, path, nullptr))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.backup.error.openLocation"));
@@ -1139,9 +1256,8 @@ public:
                     : L"https://github.com/FreeFallingSnow/"
                       L"SnowDesktop/blob/main/THIRD_PARTY_NOTICES.md";
             }
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
-                    app_.controlHwnd_, L"open", target.c_str(),
-                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
+                    app_.controlHwnd_, target.wstring(), nullptr))
             {
                 return snowdesktop::SettingsActionResult::Failure(
                     _LW("settings.about.link.openFailed"));
@@ -1153,6 +1269,17 @@ public:
                 request.boolValue);
             app_.PublishHomeAboutStatus();
             break;
+        case Action::SetTemporaryGridInitialization:
+            return app_.SetTemporaryGridInitialization(request.boolValue);
+        case Action::StartUsageGuidePractice:
+        {
+            const auto task = snowdesktop::usage_guide::ParseTopic(WideToUtf8(request.value));
+            if (!task) return snowdesktop::SettingsActionResult::Failure(
+                _LW("start.error.unavailable"));
+            return app_.StartUsageGuidePractice(*task);
+        }
+        case Action::SetUsageGuideExpanded:
+            return app_.SetUsageGuideExpanded(request.boolValue);
         case Action::TriggerCrashTest:
             TriggerCrashForTesting();
             break;
@@ -1426,6 +1553,9 @@ void DesktopApp::TryShowPendingSettingsWindow()
     const bool shown = settingsWindow_ && settingsWindow_->Open(route);
     if (shown)
     {
+        if (route.page == snowdesktop::SettingsPage::General &&
+            route.focusId.starts_with("start."))
+            usageGuideWelcomePending_ = false;
         const auto postOpenAction =
             settingsWindowOpenRequest_.MarkShown();
         if (controlHwnd_ && IsWindow(controlHwnd_))
@@ -1730,8 +1860,11 @@ void DesktopApp::ApplyCollectionPopupAppearance()
         collectionPopupAppearance_.glassBlurRadius,
         4.0f, 48.0f);
 
+    if (widgetEngine_)
+        widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
+    ResetLuaWidgetPanelAnimationCache();
     UpdateCollectionPopupBackdrop();
-    if (GetOpenPopupWidget())
+    if (GetOpenPopupWidget() || !luaWidgetPanelRequest_.widgetId.empty())
         InvalidateFloatingPopupWindow(true);
 }
 

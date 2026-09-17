@@ -143,7 +143,7 @@ void Monitor(Handle process, Handle job, DWORD timeoutMs,
 
 std::vector<unsigned char> Encode(const Request& request)
 {
-    if (request.path.empty() || request.path.size() > kMaxPathChars ||
+    if ((request.path.empty() && request.absolutePidl.empty()) || request.path.size() > kMaxPathChars ||
         request.path.find(L'\0') != std::wstring::npos ||
         request.action > Action::RunAs || request.showCommand < SW_HIDE ||
         request.showCommand > SW_MAX || !ValidPidl(request.absolutePidl)) return {};
@@ -176,7 +176,7 @@ std::optional<Request> Decode(std::span<const unsigned char> bytes)
     const auto action = Get<std::uint32_t>(bytes, 20);
     const auto show = Get<std::int32_t>(bytes, 24);
     const auto owner = Get<std::uint64_t>(bytes, 32);
-    if (!pathChars || pathChars > kMaxPathChars || pidlBytes > kMaxPidlBytes ||
+    if ((!pathChars && !pidlBytes) || pathChars > kMaxPathChars || pidlBytes > kMaxPidlBytes ||
         action > static_cast<std::uint32_t>(Action::RunAs) ||
         show < SW_HIDE || show > SW_MAX || owner > UINTPTR_MAX ||
         kHeaderBytes + pathChars * sizeof(wchar_t) + pidlBytes != bytes.size())

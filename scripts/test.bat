@@ -37,8 +37,8 @@ exit /b %ERRORLEVEL%
 
 :usage
 echo Usage:
-echo   scripts\test.bat                         Full suite
-echo   scripts\test.bat full                    Full suite
+echo   scripts\test.bat                         Full automatic suite, excludes manual diagnostics
+echo   scripts\test.bat full                    Full automatic suite, excludes manual diagnostics
 echo   scripts\test.bat fast                    Exclude integration tests
 echo   scripts\test.bat core                    Core tests only
 echo   scripts\test.bat label ^<regex^>           Tests matching a CTest label
@@ -49,4 +49,5 @@ echo Examples:
 echo   scripts\test.bat label rules
 echo   scripts\test.bat label "^(ui^|winui^)$"
 echo   scripts\test.bat name quick_navigation
+echo   scripts\test.bat label manual
 exit /b 2

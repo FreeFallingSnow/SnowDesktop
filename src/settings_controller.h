@@ -229,6 +229,9 @@ public:
         SetAnimationDiagnostics,
         TriggerCrashTest,
         ProbeHotkeyAvailability,
+        SetTemporaryGridInitialization,
+        StartUsageGuidePractice,
+        SetUsageGuideExpanded,
     };
 
     struct Request

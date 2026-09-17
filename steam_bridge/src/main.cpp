@@ -1070,7 +1070,9 @@ void PrintComponentPlan(
     }
     std::cout << "},\"visibility\":";
     if (plan.action == ComponentPublishAction::Create)
-        WriteJsonString(std::cout, "private");
+        WriteJsonString(std::cout, plan.visibility == 1 ? "friends" :
+            plan.visibility == 2 ? "private" :
+            plan.visibility == 3 ? "unlisted" : "public");
     else if (plan.visibility)
         std::cout << *plan.visibility;
     else std::cout << "null";
@@ -1170,12 +1172,6 @@ int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
     if (!BuildComponentPublishPlan(*project, inspection, artifact,
             publishOptions, plan, message))
         return PrintError(kInvalidArguments, "publish_plan_failed", message);
-    if (plan.action == ComponentPublishAction::Create &&
-        publishOptions.visibility && *publishOptions.visibility !=
-            static_cast<int>(
-                k_ERemoteStoragePublishedFileVisibilityPrivate))
-        return PrintError(kInvalidArguments, "invalid_visibility",
-            "new component items are always created private");
     if (!execute)
     {
         PrintComponentPlan(*project, plan, registered, false);

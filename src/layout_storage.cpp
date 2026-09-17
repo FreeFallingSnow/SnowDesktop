@@ -4,12 +4,99 @@
 #include "json_value.h"
 
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <locale>
+#include <sstream>
 
 namespace snowdesktop::layout_storage
 {
 namespace
 {
+void WriteJsonString(std::ostream& out, std::string_view value)
+{
+    constexpr char hex[] = "0123456789abcdef";
+    out << '"';
+    for (unsigned char ch : value)
+    {
+        if (ch == '"' || ch == '\\')
+            out << '\\' << static_cast<char>(ch);
+        else if (ch < 0x20)
+            out << "\\u00" << hex[ch >> 4] << hex[ch & 15];
+        else
+            out << static_cast<char>(ch);
+    }
+    out << '"';
+}
+
+void WriteJsonValue(std::ostream& out, const JsonValue& value)
+{
+    switch (value.type)
+    {
+    case JsonValue::Type::Null: out << "null"; break;
+    case JsonValue::Type::Boolean: out << (value.boolean ? "true" : "false"); break;
+    case JsonValue::Type::Number: out << value.number; break;
+    case JsonValue::Type::String: WriteJsonString(out, value.string); break;
+    case JsonValue::Type::Array:
+        out << '[';
+        for (size_t i = 0; i < value.array.size(); ++i)
+        {
+            if (i) out << ',';
+            WriteJsonValue(out, value.array[i]);
+        }
+        out << ']';
+        break;
+    case JsonValue::Type::Object:
+        out << '{';
+        bool first = true;
+        for (const auto& [key, child] : value.object)
+        {
+            if (!first) out << ',';
+            first = false;
+            WriteJsonString(out, key);
+            out << ':';
+            WriteJsonValue(out, child);
+        }
+        out << '}';
+        break;
+    }
+}
+
+JsonValue BooleanValue(bool value)
+{
+    JsonValue encoded;
+    encoded.type = JsonValue::Type::Boolean;
+    encoded.boolean = value;
+    return encoded;
+}
+
+JsonValue NumberValue(double value)
+{
+    JsonValue encoded;
+    encoded.type = JsonValue::Type::Number;
+    encoded.number = value;
+    return encoded;
+}
+
+JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
+{
+    JsonValue encoded;
+    encoded.type = JsonValue::Type::Object;
+    encoded.object = {
+        {"position", NumberValue(static_cast<int>(settings.position))},
+        {"edgeAttached", BooleanValue(settings.edgeAttached)},
+        {"monitorScope", NumberValue(static_cast<int>(settings.monitorScope))},
+        {"showWindowsButton", BooleanValue(settings.showWindowsButton)},
+        {"showFrequentItems", BooleanValue(settings.showFrequentItems)},
+        {"keepWhenDesktopHidden", BooleanValue(settings.keepWhenDesktopHidden)},
+        {"allowDesktopContentOverlap", BooleanValue(settings.allowDesktopContentOverlap)},
+        {"showOnlyWhenSummoned", BooleanValue(settings.showOnlyWhenSummoned)},
+        {"frequentItemCount", NumberValue(settings.frequentItemCount)},
+        {"thicknessScale", NumberValue(settings.thicknessScale)},
+    };
+    return encoded;
+}
+
 bool Fail(std::string* error, std::string_view path,
     std::string_view expectation)
 {
@@ -340,8 +427,12 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 error) ||
             !ReadBoolean(object, "autoCollect", path + ".autoCollect",
                 record.autoCollect, error) ||
+            !ReadBoolean(object, "dissolveWhenSingle", path + ".dissolveWhenSingle",
+                record.dissolveWhenSingle, error) ||
             !ReadBoolean(object, "listMode", path + ".listMode",
                 record.listMode, error) ||
+            !ReadBoolean(object, "fanPopup", path + ".fanPopup",
+                record.fanPopup, error) ||
             !ReadBoolean(object, "showDetails", path + ".showDetails",
                 record.showDetails, error) ||
             !ReadBoolean(object, "detailShowModified",
@@ -444,6 +535,8 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
                 path + ".folderItems", record.folderItems, error) ||
             !ReadBoolean(object, "listMode",
                 path + ".listMode", record.listMode, error) ||
+            !ReadBoolean(object, "fanPopup", path + ".fanPopup",
+                record.fanPopup, error) ||
             !ReadBoolean(object, "detailShowModified",
                 path + ".detailShowModified",
                 record.detailShowModified, error) ||
@@ -467,6 +560,43 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
         }
         document.dockEntries.push_back(std::move(record));
     }
+    return true;
+}
+
+bool DecodeDockLayout(const JsonValue& root, Document& document,
+    std::string* error)
+{
+    const auto* value = root.Find("dockLayout");
+    if (!value) return true;
+    if (!value->IsObject())
+        return Fail(error, "dockLayout", "must be an object");
+    DockLayoutSettings decoded;
+    int position = static_cast<int>(decoded.position);
+    int monitorScope = static_cast<int>(decoded.monitorScope);
+    std::optional<float> thickness;
+    if (!ReadInteger(*value, "position", "dockLayout.position", position, error) ||
+        !ReadInteger(*value, "monitorScope", "dockLayout.monitorScope", monitorScope, error) ||
+        !ReadInteger(*value, "frequentItemCount", "dockLayout.frequentItemCount", decoded.frequentItemCount, error) ||
+        !ReadOptionalFloat(*value, "thicknessScale", "dockLayout.thicknessScale", thickness, error) ||
+        !ReadBoolean(*value, "edgeAttached", "dockLayout.edgeAttached", decoded.edgeAttached, error) ||
+        !ReadBoolean(*value, "showWindowsButton", "dockLayout.showWindowsButton", decoded.showWindowsButton, error) ||
+        !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||
+        !ReadBoolean(*value, "keepWhenDesktopHidden", "dockLayout.keepWhenDesktopHidden", decoded.keepWhenDesktopHidden, error) ||
+        !ReadBoolean(*value, "allowDesktopContentOverlap", "dockLayout.allowDesktopContentOverlap", decoded.allowDesktopContentOverlap, error) ||
+        !ReadBoolean(*value, "showOnlyWhenSummoned", "dockLayout.showOnlyWhenSummoned", decoded.showOnlyWhenSummoned, error))
+        return false;
+    if (position < 0 || position > 3)
+        return Fail(error, "dockLayout.position", "must be between 0 and 3");
+    if (monitorScope < 0 || monitorScope > 2)
+        return Fail(error, "dockLayout.monitorScope", "must be between 0 and 2");
+    if (decoded.frequentItemCount < 1 || decoded.frequentItemCount > 8)
+        return Fail(error, "dockLayout.frequentItemCount", "must be between 1 and 8");
+    decoded.thicknessScale = thickness.value_or(decoded.thicknessScale);
+    if (decoded.thicknessScale < kDockMinimumScale || decoded.thicknessScale > kDockMaximumScale)
+        return Fail(error, "dockLayout.thicknessScale", "is outside the supported range");
+    decoded.position = static_cast<DockPosition>(position);
+    decoded.monitorScope = static_cast<DockMonitorScope>(monitorScope);
+    document.dockLayout = decoded;
     return true;
 }
 
@@ -502,6 +632,7 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.lastPageMonitor, error) ||
         !ReadOptionalRootBoolean(root, "dockEnabled",
             decoded.dockEnabled, error) ||
+        !DecodeDockLayout(root, decoded, error) ||
         !ReadOptionalFloat(root, "itemFontSizeCu", "itemFontSizeCu",
             decoded.itemFontSizeCu, error) ||
         !ReadOptionalFloat(root, "listItemFontSizeCu", "listItemFontSizeCu",
@@ -715,5 +846,119 @@ bool SaveDocument(const std::filesystem::path& layoutPath,
         hasValidPrevious ? BackupPath(layoutPath) :
             std::filesystem::path{},
         error);
+}
+
+bool NeedsGridInitialization(const Document& document) noexcept
+{
+    return document.pages.empty() && document.items.empty() &&
+        document.widgets.empty() && document.dockEntries.empty();
+}
+
+std::string SerializeDockLayout(const DockLayoutSettings& settings)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(std::numeric_limits<float>::max_digits10);
+    WriteJsonValue(output, EncodeDockLayout(settings));
+    return output.str();
+}
+
+bool BuildClearedDocument(std::string_view contents, std::string& cleared,
+    std::string* error)
+{
+    cleared.clear();
+    JsonValue root;
+    Document document;
+    if (!ParseJson(contents, root, error) || !DecodeDocument(root, document, error))
+        return false;
+    for (const char* key : {"pages", "items", "widgets", "dockEntries", "navTabOrder",
+             "firstPageMonitor", "lastPageMonitor"})
+        root.object.erase(key);
+    root.object["dockEnabled"] = BooleanValue(kDefaultDockEnabled);
+    root.object["dockLayout"] = EncodeDockLayout(DockLayoutSettings{});
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << std::setprecision(std::numeric_limits<double>::max_digits10);
+    WriteJsonValue(output, root);
+    output << '\n';
+    cleared = output.str();
+    return ValidateDocument(cleared, error);
+}
+
+bool SaveClearedDocument(const std::filesystem::path& layoutPath,
+    std::string_view cleared, std::string* error)
+{
+    Document document;
+    if (!ParseDocument(cleared, document, error) ||
+        !document.pages.empty() || !document.items.empty() ||
+        !document.widgets.empty() || !document.dockEntries.empty() ||
+        !document.navTabOrder.empty())
+        return Fail(error, "cleared layout", "must not contain placement records");
+
+    const auto recovery = BackupPath(layoutPath);
+    std::error_code existsError;
+    const bool hadRecovery = std::filesystem::exists(recovery, existsError);
+    std::string previousRecovery;
+    if (existsError || (hadRecovery &&
+            !atomic_file::ReadAll(recovery, previousRecovery, error)))
+        return false;
+
+    // Publish the fresh fallback first, then atomically replace the primary.
+    // An interrupted commit still has either the old valid primary or the
+    // new valid primary; a completed reset never recovers the old layout.
+    if (!atomic_file::WriteAll(recovery, cleared, {}, error))
+        return false;
+    if (atomic_file::WriteAll(layoutPath, cleared, {}, error))
+        return true;
+
+    std::string rollbackError;
+    const bool restored = hadRecovery
+        ? atomic_file::WriteAll(recovery, previousRecovery, {}, &rollbackError)
+        : (std::filesystem::remove(recovery, existsError), !existsError);
+    if (!restored && error)
+        *error += "; recovery rollback failed: " + rollbackError + existsError.message();
+    return false;
+}
+
+bool PrepareInitializationExperiment(const std::filesystem::path& originalLayout,
+    const std::filesystem::path& experimentDirectory, std::string* error)
+{
+    std::string original, cleared;
+    if (!atomic_file::ReadAll(originalLayout, original, error) ||
+        !BuildClearedDocument(original, cleared, error)) return false;
+    std::error_code ec;
+    if (!std::filesystem::create_directory(experimentDirectory, ec))
+        return Fail(error, "initialization experiment", "directory must be new: " + ec.message());
+    return SaveClearedDocument(experimentDirectory / L"SnowDesktop.layout.json", cleared, error) &&
+        atomic_file::WriteAll(experimentDirectory / L"SnowDesktop.storage.json", "{}\n", {}, error);
+}
+
+bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
+    const std::filesystem::path& storagePath, std::string* error)
+{
+    std::string previous, cleared, previousRecovery;
+    const auto recovery = BackupPath(layoutPath);
+    std::error_code filesystemError;
+    const bool hadRecovery = std::filesystem::exists(recovery, filesystemError);
+    if (filesystemError || !atomic_file::ReadAll(layoutPath, previous, error) ||
+        !BuildClearedDocument(previous, cleared, error) ||
+        (hadRecovery && !atomic_file::ReadAll(recovery, previousRecovery, error)))
+        return false;
+    if (!SaveClearedDocument(layoutPath, cleared, error))
+        return false;
+    if (atomic_file::WriteAll(storagePath, "{}\n", {}, error))
+        return true;
+
+    // A failed atomic storage write leaves its old contents in place. Restore
+    // both layout documents before the application reloads or reports failure.
+    std::string rollbackError;
+    const bool primaryRestored =
+        atomic_file::WriteAll(layoutPath, previous, {}, &rollbackError);
+    const bool recoveryRestored = hadRecovery
+        ? atomic_file::WriteAll(recovery, previousRecovery, {}, &rollbackError)
+        : (std::filesystem::remove(recovery, filesystemError), !filesystemError);
+    if ((!primaryRestored || !recoveryRestored) && error)
+        *error += "; layout rollback failed: " + rollbackError + filesystemError.message();
+    return false;
 }
 }

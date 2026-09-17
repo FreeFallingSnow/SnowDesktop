@@ -4,6 +4,7 @@
 #include "settings_presenter_controls.h"
 
 #include "../constants.h"
+#include "../layout_spacing_rules.h"
 #include "../icon_beautify.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -730,7 +731,9 @@ struct DesktopPagePresenter::Impl
         root = categoryRoot;
 
         InitializeCard(displayCard, cardStyle, desktopIconsRoot);
-        iconSpacing = MakeDesktopNumber(50.0, 200.0, 1.0, 0,
+        iconSpacing = MakeDesktopNumber(
+            layout_spacing_rules::kMinimumScale * 100.0f,
+            layout_spacing_rules::kMaximumScale * 100.0f, 1.0, 0,
             [](DesktopDisplaySettings& settings, double value) {
                 settings.iconSpacingScale =
                     static_cast<float>(value / 100.0);
@@ -760,7 +763,7 @@ struct DesktopPagePresenter::Impl
         iconSize->SetUnit(L"%");
         itemFontSize->SetUnit(L"cu");
         listFontSize->SetUnit(L"cu");
-        for (const auto* editor : {iconSpacing.get(), iconSize.get(),
+        for (const auto* editor : {iconSize.get(),
                  itemFontSize.get(), listFontSize.get(), itemFontWeight.get()})
         {
             displayCard.content.Children().Append(editor->root);
@@ -1587,7 +1590,7 @@ struct DesktopPagePresenter::Impl
             L"Category rules");
 
         iconSpacing->SetLabel(L(
-            "app.settings.layout_spacing", L"Icon spacing"), L(
+            "app.settings.layout_spacing", L"Layout spacing"), L(
             "app.settings.layout_spacing_hint"));
         iconSize->SetLabel(L("app.settings.icon_size", L"Icon size"), L(
             "app.settings.icon_size_hint"));
@@ -1894,6 +1897,12 @@ void DesktopPagePresenter::SetActions(DesktopPageActions actions)
 mux::FrameworkElement DesktopPagePresenter::Content() const noexcept
 {
     return impl_ ? impl_->categoryRoot : nullptr;
+}
+
+mux::FrameworkElement
+DesktopPagePresenter::LayoutSpacingContent() const noexcept
+{
+    return impl_ ? impl_->iconSpacing->root : nullptr;
 }
 
 mux::FrameworkElement

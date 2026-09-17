@@ -1,6 +1,7 @@
 #pragma once
 
 #include "large_icon_config.h"
+#include "dock_layout_settings.h"
 
 #include <filesystem>
 #include <optional>
@@ -54,7 +55,9 @@ struct WidgetRecord
     int folderSortMode = -1;
     bool folderSortAscending = true;
     bool autoCollect = false;
+    bool dissolveWhenSingle = false;
     bool listMode = false;
+    bool fanPopup = false;
     bool showDetails = false;
     bool detailShowModified = false;
     bool detailShowType = false;
@@ -91,6 +94,7 @@ struct DockRecord
     bool folderSortAscending = true;
     std::vector<std::string> folderItems;
     bool listMode = false;
+    bool fanPopup = false;
     bool detailShowModified = false;
     bool detailShowType = false;
     bool detailShowSize = false;
@@ -108,6 +112,8 @@ struct Document
     std::optional<std::string> firstPageMonitor;
     std::optional<std::string> lastPageMonitor;
     std::optional<bool> dockEnabled;
+    // Absent in older layouts: retain the current Dock preferences on restore.
+    std::optional<DockLayoutSettings> dockLayout;
     // cu-native font sizes. The fields without the Cu suffix are legacy point
     // values that are converted once when older layouts are loaded.
     std::optional<float> itemFontSizeCu;
@@ -181,8 +187,23 @@ std::filesystem::path BackupPath(const std::filesystem::path& layoutPath);
 bool ParseDocument(std::string_view contents, Document& document,
     std::string* error = nullptr);
 bool ValidateDocument(std::string_view contents, std::string* error = nullptr);
+bool NeedsGridInitialization(const Document& document) noexcept;
 LoadResult LoadDocument(const std::filesystem::path& layoutPath,
     Document& document);
 bool SaveDocument(const std::filesystem::path& layoutPath,
     std::string_view contents, std::string* error = nullptr);
+std::string SerializeDockLayout(const DockLayoutSettings& settings);
+// Clear placement records and reset Dock layout while preserving appearance.
+bool BuildClearedDocument(std::string_view contents, std::string& cleared,
+    std::string* error = nullptr);
+// Caller must first create a user-visible layout backup. Commit both the
+// primary and recovery document so automatic recovery cannot revive old items.
+bool SaveClearedDocument(const std::filesystem::path& layoutPath,
+    std::string_view cleared, std::string* error = nullptr);
+bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
+    const std::filesystem::path& storagePath, std::string* error = nullptr);
+// Prepare a fresh layout/storage pair in a new, exclusive experiment directory.
+// The original layout, recovery file and component storage are never replaced.
+bool PrepareInitializationExperiment(const std::filesystem::path& originalLayout,
+    const std::filesystem::path& experimentDirectory, std::string* error = nullptr);
 }

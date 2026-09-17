@@ -1,7 +1,10 @@
 #include "drop_image_data.h"
+#include "test_temporary_directory.h"
 
 #include <windows.h>
 #include <objidl.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
@@ -30,7 +33,7 @@ void Check(bool condition, const char* message)
     if (!condition)
     {
         std::cerr << "FAILED: " << message << '\n';
-        std::exit(1);
+        throw std::runtime_error(message);
     }
 }
 
@@ -234,7 +237,7 @@ std::vector<std::uint8_t> HeaderAndPixels(
     return bytes;
 }
 
-std::vector<std::uint8_t> ValidDibV5()
+std::vector<std::uint8_t> ValidDibV5(std::uint8_t alpha = 0xff)
 {
     BITMAPV5HEADER header{};
     header.bV5Size = sizeof(header);
@@ -250,7 +253,7 @@ std::vector<std::uint8_t> ValidDibV5()
     header.bV5AlphaMask = 0xff000000;
     header.bV5CSType = LCS_sRGB;
     header.bV5Intent = LCS_GM_IMAGES;
-    return HeaderAndPixels(header, { 0x10, 0x20, 0x30, 0xff });
+    return HeaderAndPixels(header, { 0x10, 0x20, 0x30, alpha });
 }
 
 std::vector<std::uint8_t> ValidDib()
@@ -321,26 +324,36 @@ std::vector<std::uint8_t> ReadFile(
         std::istreambuf_iterator<char>() };
 }
 
-std::uint32_t ReadBigEndian32(
-    const std::vector<std::uint8_t>& bytes, std::size_t offset)
+void CheckOnePixelPng(const std::filesystem::path& path,
+    const std::array<std::uint8_t, 4>& expectedRgba)
 {
-    return (static_cast<std::uint32_t>(bytes[offset]) << 24) |
-        (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
-        (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) |
-        bytes[offset + 3];
-}
-
-void CheckOnePixelPng(const std::filesystem::path& path)
-{
-    const auto bytes = ReadFile(path);
-    static constexpr std::array<std::uint8_t, 8> signature{
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a
-    };
-    Check(bytes.size() >= 24 &&
-            std::equal(signature.begin(), signature.end(), bytes.begin()) &&
-            ReadBigEndian32(bytes, 16) == 1 &&
-            ReadBigEndian32(bytes, 20) == 1,
-        "saved image must be a decodable one-pixel PNG container");
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    Check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))),
+        "WIC must be available to independently decode the saved file");
+    ComPtr<IWICBitmapDecoder> decoder;
+    Check(SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr,
+            GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)),
+        "saved PNG must have a complete decodable container");
+    GUID container{};
+    Check(SUCCEEDED(decoder->GetContainerFormat(&container)) &&
+            container == GUID_ContainerFormatPng,
+        "saved file must be PNG rather than another decodable image format");
+    ComPtr<IWICBitmapFrameDecode> frame;
+    Check(SUCCEEDED(decoder->GetFrame(0, &frame)), "PNG frame must decode");
+    UINT width = 0, height = 0;
+    Check(SUCCEEDED(frame->GetSize(&width, &height)) && width == 1 && height == 1,
+        "saved PNG must retain the one-pixel dimensions");
+    ComPtr<IWICFormatConverter> converter;
+    Check(SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+            SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA,
+                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom)),
+        "PNG pixels must convert to straight RGBA");
+    std::array<std::uint8_t, 4> actual{};
+    Check(SUCCEEDED(converter->CopyPixels(nullptr, 4, 4, actual.data())) &&
+            actual == expectedRgba,
+        "saved PNG must preserve independently specified color and alpha bytes");
 }
 
 void TestFormatPriorityAndMalformedFallback(
@@ -363,7 +376,7 @@ void TestFormatPriorityAndMalformedFallback(
         Check(result && result.source == SourceFormat::DibV5 &&
                 result.width == 1 && result.height == 1,
             "CF_DIBV5 must win over lower-fidelity representations");
-        CheckOnePixelPng(path);
+        CheckOnePixelPng(path, { 0x30, 0x20, 0x10, 0xff });
     }
 
     {
@@ -387,6 +400,7 @@ void TestFormatPriorityAndMalformedFallback(
             &object, root / L"fallback-bitmap.png");
         Check(result && result.source == SourceFormat::Bitmap,
             "CF_BITMAP must follow malformed encoded and DIB data");
+        CheckOnePixelPng(root / L"fallback-bitmap.png", { 0x90, 0x80, 0x70, 0xff });
     }
 
     {
@@ -399,6 +413,15 @@ void TestFormatPriorityAndMalformedFallback(
             &object, root / L"fallback-dib-after-png.png");
         Check(result && result.source == SourceFormat::Dib,
             "CF_DIB must follow malformed higher-fidelity formats");
+        CheckOnePixelPng(root / L"fallback-dib-after-png.png", { 0x60, 0x50, 0x40, 0xff });
+    }
+    {
+        ImageDataObject object;
+        object.AddBytes(CF_DIBV5, ValidDibV5(0x80));
+        const auto path = root / L"translucent-v5.png";
+        Check(static_cast<bool>(SaveAsPng(&object, path)),
+            "a translucent DIBV5 must save successfully");
+        CheckOnePixelPng(path, { 0x30, 0x20, 0x10, 0x80 });
     }
 }
 
@@ -519,26 +542,27 @@ int main()
 {
     const HRESULT apartment = CoInitializeEx(nullptr,
         COINIT_APARTMENTTHREADED);
-    Check(SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE,
-        "COM must be available for WIC image tests");
+    int result = 0;
+    try
+    {
+        Check(SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE,
+            "COM must be available for WIC image tests");
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto& root = temporary.path;
 
-    const auto root = std::filesystem::temp_directory_path() /
-        (L"SnowDesktopDropImageDataTests-" +
-            std::to_wstring(GetCurrentProcessId()));
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    Check(std::filesystem::create_directories(root),
-        "the test output directory must be created");
+        TestFormatPriorityAndMalformedFallback(root);
+        TestBoundsRejectTruncationAndOversizedSources(root);
+        TestMimeNamedPngFormat(root);
+        TestStreamBackedPngFormat(root);
+        TestBoundedOutputDoesNotOverwrite(root);
 
-    TestFormatPriorityAndMalformedFallback(root);
-    TestBoundsRejectTruncationAndOversizedSources(root);
-    TestMimeNamedPngFormat(root);
-    TestStreamBackedPngFormat(root);
-    TestBoundedOutputDoesNotOverwrite(root);
-
-    std::filesystem::remove_all(root, error);
-    Check(!error, "the image extraction test output must be removable");
+        std::cout << "drop image data tests passed\n";
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "FAILED: " << error.what() << '\n';
+        result = 1;
+    }
     if (SUCCEEDED(apartment)) CoUninitialize();
-    std::cout << "drop image data tests passed\n";
-    return 0;
+    return result;
 }

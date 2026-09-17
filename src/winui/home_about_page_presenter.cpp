@@ -18,19 +18,6 @@ namespace controls = presenter_controls;
 namespace
 {
 
-struct HomeCard
-{
-    muxc::Button root{nullptr};
-    muxc::StackPanel content{nullptr};
-    muxc::TextBlock title{nullptr};
-    muxc::StackPanel statusRow{nullptr};
-    muxc::TextBlock value{nullptr};
-    muxc::ProgressRing progress{nullptr};
-    muxc::TextBlock description{nullptr};
-    SettingsRoute route;
-    winrt::event_token clickToken{};
-};
-
 struct Section
 {
     muxc::Border root{nullptr};
@@ -46,50 +33,6 @@ struct LinkEntry
     muxc::HyperlinkButton button{nullptr};
     winrt::event_token clickToken{};
 };
-
-void InitializeHomeCard(
-    HomeCard& card,
-    const mux::Style& style,
-    const muxc::StackPanel& page,
-    SettingsRoute route)
-{
-    card.root = muxc::Button{};
-    card.root.Style(style);
-    card.root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-    card.root.HorizontalContentAlignment(
-        mux::HorizontalAlignment::Stretch);
-    card.root.UseSystemFocusVisuals(true);
-    card.route = std::move(route);
-
-    card.content = muxc::StackPanel{};
-    card.content.Spacing(5.0);
-    card.content.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-    card.title = muxc::TextBlock{};
-    card.title.FontWeight(
-        winrt::Windows::UI::Text::FontWeights::SemiBold());
-    card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.statusRow = muxc::StackPanel{};
-    card.statusRow.Orientation(muxc::Orientation::Horizontal);
-    card.statusRow.Spacing(8.0);
-    card.value = muxc::TextBlock{};
-    card.value.TextWrapping(mux::TextWrapping::Wrap);
-    card.value.VerticalAlignment(mux::VerticalAlignment::Center);
-    card.progress = muxc::ProgressRing{};
-    card.progress.Width(18.0);
-    card.progress.Height(18.0);
-    card.progress.IsActive(false);
-    card.progress.Visibility(mux::Visibility::Collapsed);
-    card.statusRow.Children().Append(card.progress);
-    card.statusRow.Children().Append(card.value);
-    card.description = muxc::TextBlock{};
-    card.description.Opacity(0.72);
-    card.description.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
-    card.content.Children().Append(card.statusRow);
-    card.content.Children().Append(card.description);
-    card.root.Content(card.content);
-    page.Children().Append(card.root);
-}
 
 void InitializeSection(
     Section& section,
@@ -149,15 +92,8 @@ struct HomeAboutPagePresenter::Impl
     HomeAboutPageActions actions;
     mux::Style cardStyle{nullptr};
     mux::Style navigationCardStyle{nullptr};
-    muxc::StackPanel homeRoot{nullptr};
     muxc::StackPanel aboutRoot{nullptr};
     muxc::StackPanel debugRoot{nullptr};
-
-    HomeCard themeCard;
-    HomeCard dockCard;
-    HomeCard widgetCard;
-    HomeCard updateCard;
-    HomeCard backupCard;
 
     Section introductionSection;
     Section authorSection;
@@ -181,12 +117,15 @@ struct HomeAboutPagePresenter::Impl
 
     Section debugTitleSection;
     Section demoModeSection;
+    Section initializationSection;
     Section animationSection;
     Section resetUnlockSection;
     Section crashSection;
     muxc::TextBlock debugPageDescription{nullptr};
     controls::SettingRow demoModeRow;
     muxc::ToggleSwitch demoModeToggle{nullptr};
+    controls::SettingRow initializationRow;
+    muxc::ToggleSwitch initializationToggle{nullptr};
     controls::SettingRow animationRow;
     muxc::StackPanel animationControls{nullptr};
     muxc::ToggleSwitch animationToggle{nullptr};
@@ -201,7 +140,6 @@ struct HomeAboutPagePresenter::Impl
     muxc::Button crashButton{nullptr};
 
     std::uint64_t generation = 0;
-    std::uint64_t personalizationRevision = 0;
     std::uint64_t generalRevision = 0;
     std::uint64_t statusRevision = 0;
     bool hasSnapshot = false;
@@ -212,27 +150,18 @@ struct HomeAboutPagePresenter::Impl
     bool updatingControls = false;
     bool demoModeEnabled = false;
     bool animationDiagnosticsEnabled = false;
+    bool temporaryInitializationEnabled = false;
     bool debugUnlocked = false;
     unsigned versionClickCount = 0;
 
-    int themePreset = kAppearancePresetDark;
-    bool dockEnabled = false;
     std::wstring applicationVersion;
-    std::optional<std::size_t> installedWidgetCount;
     bool packaged = false;
-    SettingsBackupState backupState = SettingsBackupState::Unknown;
-    std::size_t backupCount = 0;
-    std::wstring backupDetail;
     std::wstring animationDiagnosticsStatus;
 
-    winrt::event_token themeClickToken{};
-    winrt::event_token dockClickToken{};
-    winrt::event_token widgetClickToken{};
-    winrt::event_token updateClickToken{};
-    winrt::event_token backupClickToken{};
     winrt::event_token checkUpdateToken{};
     winrt::event_token versionClickToken{};
     winrt::event_token demoModeToken{};
+    winrt::event_token initializationToken{};
     winrt::event_token animationToken{};
     winrt::event_token resetUnlockToken{};
     winrt::event_token crashToken{};
@@ -306,18 +235,6 @@ struct HomeAboutPagePresenter::Impl
 
     void BuildControls()
     {
-        homeRoot = muxc::StackPanel{};
-        homeRoot.Spacing(8.0);
-        InitializeHomeCard(themeCard, navigationCardStyle, homeRoot,
-            SettingsRoute::ForPage(SettingsPage::Personalization));
-        InitializeHomeCard(dockCard, navigationCardStyle, homeRoot,
-            SettingsRoute::ForPage(SettingsPage::Dock));
-        InitializeHomeCard(widgetCard, navigationCardStyle, homeRoot,
-            SettingsRoute::ForPage(SettingsPage::Widgets));
-        InitializeHomeCard(updateCard, navigationCardStyle, homeRoot,
-            SettingsRoute::ForPage(SettingsPage::About, "about.version"));
-        InitializeHomeCard(backupCard, navigationCardStyle, homeRoot,
-            SettingsRoute::ForPage(SettingsPage::BackupAndData));
 
         aboutRoot = muxc::StackPanel{};
         aboutRoot.Spacing(8.0);
@@ -411,6 +328,14 @@ struct HomeAboutPagePresenter::Impl
         demoModeRow.Initialize(demoModeToggle, 180.0);
         demoModeSection.content.Children().Append(demoModeRow.root);
 
+        InitializeSection(initializationSection, cardStyle, debugRoot);
+        initializationSection.title.Visibility(mux::Visibility::Collapsed);
+        initializationToggle = muxc::ToggleSwitch{};
+        initializationToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        initializationToggle.UseSystemFocusVisuals(true);
+        initializationRow.Initialize(initializationToggle, 180.0);
+        initializationSection.content.Children().Append(initializationRow.root);
+
         InitializeSection(animationSection, cardStyle, debugRoot);
         animationSection.title.Visibility(mux::Visibility::Collapsed);
         animationControls = muxc::StackPanel{};
@@ -460,25 +385,6 @@ struct HomeAboutPagePresenter::Impl
 
     void HookEvents()
     {
-        const auto navigate = [this](HomeCard& card) {
-            const SettingsRoute route = card.route;
-            card.clickToken = card.root.Click(
-                [this, route](const auto&, const auto&) {
-                    if (CanInvoke() && actions.navigate)
-                        actions.navigate(route);
-                });
-        };
-        navigate(themeCard);
-        themeClickToken = themeCard.clickToken;
-        navigate(dockCard);
-        dockClickToken = dockCard.clickToken;
-        navigate(widgetCard);
-        widgetClickToken = widgetCard.clickToken;
-        navigate(updateCard);
-        updateClickToken = updateCard.clickToken;
-        navigate(backupCard);
-        backupClickToken = backupCard.clickToken;
-
         for (LinkEntry& link : links)
         {
             const HomeAboutLink target = link.target;
@@ -523,6 +429,13 @@ struct HomeAboutPagePresenter::Impl
                     [enabled](GeneralSettings& settings) {
                         settings.demoModeEnabled = enabled;
                     });
+            });
+        initializationToken = initializationToggle.Toggled(
+            [this](const auto&, const auto&) {
+                if (updatingControls || !CanInvokeDebug() || !actions.setTemporaryInitialization)
+                    return;
+                actions.setTemporaryInitialization(generation, initializationToggle.IsOn());
+                RenderStatus();
             });
         animationToken = animationToggle.Toggled(
             [this](const auto&, const auto&) {
@@ -570,52 +483,6 @@ struct HomeAboutPagePresenter::Impl
             actions.invoke(generation, command);
     }
 
-    [[nodiscard]] std::wstring ThemeSummary() const
-    {
-        switch (NormalizeAppearancePresetId(themePreset))
-        {
-        case kAppearancePresetLight:
-            return L("app.settings.light", L"Light");
-        case kAppearancePresetGlassDark:
-            return L("app.settings.dark_glass", L"Dark Glass");
-        case kAppearancePresetGlassLight:
-            return L("app.settings.light_glass", L"Light Glass");
-        case kAppearancePresetAcrylicDark:
-            return L("app.settings.dark_acrylic", L"Dark Acrylic");
-        case kAppearancePresetAcrylicLight:
-            return L("app.settings.light_acrylic", L"Light Acrylic");
-        case kAppearancePresetCustom:
-            return L("app.settings.custom", L"Custom");
-        default:
-            return L("app.settings.dark", L"Dark");
-        }
-    }
-
-    [[nodiscard]] std::wstring BackupSummary() const
-    {
-        if (!backupDetail.empty())
-            return backupDetail;
-        switch (backupState)
-        {
-        case SettingsBackupState::Empty:
-            return L("app.settings.no_backups", L"No backups yet");
-        case SettingsBackupState::Ready:
-            return backupCount != 0
-                ? std::to_wstring(backupCount)
-                : L("settings.home.backup.ready", L"Backups available");
-        case SettingsBackupState::Running:
-            return L("app.settings.checking", L"Working...");
-        case SettingsBackupState::Succeeded:
-            return L("app.settings.create_full_backup_success",
-                L"The complete backup was created.");
-        case SettingsBackupState::Failed:
-            return L("app.settings.create_full_backup_failed",
-                L"Could not create the complete backup.");
-        default:
-            return L("settings.home.backup.unknown", L"Status unavailable");
-        }
-    }
-
     void SetButtonText(
         const muxc::Button& button,
         std::string_view key,
@@ -636,38 +503,10 @@ struct HomeAboutPagePresenter::Impl
         SetAutomation(section.root, text);
     }
 
-    void SetHomeCardText(
-        HomeCard& card,
-        std::string_view titleKey,
-        std::wstring_view titleFallback,
-        std::string_view descriptionKey,
-        std::wstring_view descriptionFallback)
-    {
-        card.title.Text(L(titleKey, titleFallback));
-        card.description.Text(L(descriptionKey, descriptionFallback));
-        SetAutomation(card.root, card.title.Text(), card.description.Text());
-    }
-
     void RenderStatus()
     {
         if (closed)
             return;
-        themeCard.value.Text(ThemeSummary());
-        dockCard.value.Text(dockEnabled
-            ? L("app.settings.widgets_enabled", L"Enabled")
-            : L("app.settings.widgets_disabled", L"Disabled"));
-        widgetCard.value.Text(installedWidgetCount
-            ? std::to_wstring(*installedWidgetCount)
-            : L("settings.home.widgets.unknown", L"Status unavailable"));
-
-        updateCard.value.Text(applicationVersion);
-        const bool backupRunning =
-            backupState == SettingsBackupState::Running;
-        backupCard.progress.IsActive(backupRunning);
-        backupCard.progress.Visibility(backupRunning
-            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        backupCard.value.Text(BackupSummary());
-
         const std::wstring version = applicationVersion.empty()
             ? L("settings.about.version.unknown", L"Version unavailable")
             : L"SnowDesktop v" + applicationVersion;
@@ -682,6 +521,7 @@ struct HomeAboutPagePresenter::Impl
         updatingControls = true;
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
+        initializationToggle.IsOn(temporaryInitializationEnabled);
         updatingControls = false;
         animationStatus.Text(animationDiagnosticsStatus);
         animationStatus.Visibility(
@@ -690,44 +530,12 @@ struct HomeAboutPagePresenter::Impl
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
 
-        const auto updateCardHelp = [](const HomeCard& card) {
-            std::wstring help = card.description.Text().c_str();
-            if (!help.empty() && !card.value.Text().empty())
-                help.append(L" ");
-            help.append(card.value.Text().c_str());
-            muxa::AutomationProperties::SetHelpText(card.root, help);
-        };
-        updateCardHelp(themeCard);
-        updateCardHelp(dockCard);
-        updateCardHelp(widgetCard);
-        updateCardHelp(updateCard);
-        updateCardHelp(backupCard);
     }
 
     void RefreshLocalizedText()
     {
         if (closed)
             return;
-        SetHomeCardText(themeCard,
-            "settings.home.theme", L"Current theme",
-            "settings.home.theme.description",
-            L"Review colors, materials and appearance.");
-        SetHomeCardText(dockCard,
-            "settings.home.dock", L"Dock status",
-            "settings.home.dock.description",
-            L"Open Dock and taskbar settings.");
-        SetHomeCardText(widgetCard,
-            "settings.home.widgets", L"Installed widgets",
-            "settings.home.widgets.description",
-            L"Manage widgets and their settings.");
-        SetHomeCardText(updateCard,
-            "settings.home.update", L"Updates",
-            "settings.home.update.description",
-            L"Review the installed version.");
-        SetHomeCardText(backupCard,
-            "settings.home.backup", L"Backup status",
-            "settings.home.backup.description",
-            L"Create or restore a backup.");
 
         SetSectionTitle(introductionSection,
             "app.settings.about_snowdesktop", L"About SnowDesktop");
@@ -771,6 +579,13 @@ struct HomeAboutPagePresenter::Impl
             L("app.settings.demo_mode_hint"));
         SetAutomation(demoModeToggle,
             demoModeRow.label.Text(), demoModeRow.help.Text());
+        SetSectionTitle(initializationSection,
+            "settings.debug.initialization", L"Temporary initialization");
+        initializationRow.SetText(
+            L("settings.debug.initialization", L"Temporary initialization"),
+            L("settings.debug.initialization.description"));
+        SetAutomation(initializationToggle,
+            initializationRow.label.Text(), initializationRow.help.Text());
         SetSectionTitle(animationSection,
             "app.settings.animation_diagnostics",
             L"Animation diagnostics (this session)");
@@ -806,12 +621,9 @@ struct HomeAboutPagePresenter::Impl
         statusRevision = 0;
         hasStatusRevision = false;
         applicationVersion.clear();
-        installedWidgetCount.reset();
         packaged = false;
-        backupState = SettingsBackupState::Unknown;
-        backupCount = 0;
-        backupDetail.clear();
         animationDiagnosticsEnabled = false;
+        temporaryInitializationEnabled = false;
         animationDiagnosticsStatus.clear();
     }
 
@@ -826,18 +638,10 @@ struct HomeAboutPagePresenter::Impl
             generation = snapshot.generation;
             ResetStatusForGeneration();
         }
-        if (newGeneration || personalizationRevision !=
-                snapshot.domainRevisions.personalization)
-        {
-            personalizationRevision =
-                snapshot.domainRevisions.personalization;
-            themePreset = snapshot.values.personalization.backgroundPreset;
-        }
         if (newGeneration || generalRevision !=
                 snapshot.domainRevisions.general)
         {
             generalRevision = snapshot.domainRevisions.general;
-            dockEnabled = snapshot.values.general.dockEnabled;
             demoModeEnabled = snapshot.values.general.demoModeEnabled;
         }
         hasSnapshot = true;
@@ -856,23 +660,13 @@ struct HomeAboutPagePresenter::Impl
         hasStatusRevision = true;
         if (patch.applicationVersion)
             applicationVersion = *patch.applicationVersion;
-        if (patch.installedWidgetCount)
-            installedWidgetCount = *patch.installedWidgetCount;
         if (patch.packaged)
             packaged = *patch.packaged;
-        if (patch.backupState)
-        {
-            if (*patch.backupState != backupState)
-                backupDetail.clear();
-            backupState = *patch.backupState;
-        }
-        if (patch.backupCount)
-            backupCount = *patch.backupCount;
-        if (patch.backupDetail)
-            backupDetail = *patch.backupDetail;
         if (patch.animationDiagnosticsEnabled)
             animationDiagnosticsEnabled =
                 *patch.animationDiagnosticsEnabled;
+        if (patch.temporaryInitializationEnabled)
+            temporaryInitializationEnabled = *patch.temporaryInitializationEnabled;
         if (patch.animationDiagnosticsStatus)
             animationDiagnosticsStatus =
                 *patch.animationDiagnosticsStatus;
@@ -884,15 +678,6 @@ struct HomeAboutPagePresenter::Impl
         SettingsPage page,
         std::string_view focusId) const noexcept
     {
-        if (page == SettingsPage::Home)
-        {
-            if (focusId == "home.theme") return themeCard.root;
-            if (focusId == "home.dock") return dockCard.root;
-            if (focusId == "home.widgets") return widgetCard.root;
-            if (focusId == "home.update") return updateCard.root;
-            if (focusId == "home.backup") return backupCard.root;
-            return themeCard.root;
-        }
         if (page == SettingsPage::About)
         {
             if (focusId == "about.profile") return links[0].button;
@@ -905,6 +690,7 @@ struct HomeAboutPagePresenter::Impl
         if (page == SettingsPage::Debug)
         {
             if (focusId == "debug.demo_mode") return demoModeToggle;
+            if (focusId == "debug.initialization") return initializationToggle;
             if (focusId == "debug.animation") return animationToggle;
             if (focusId == "debug.resetUnlock") return resetUnlockButton;
             if (focusId == "debug.crash") return crashExpander;
@@ -921,20 +707,15 @@ struct HomeAboutPagePresenter::Impl
         active = false;
         try
         {
-            themeCard.root.Click(themeClickToken);
-            dockCard.root.Click(dockClickToken);
-            widgetCard.root.Click(widgetClickToken);
-            updateCard.root.Click(updateClickToken);
-            backupCard.root.Click(backupClickToken);
             for (LinkEntry& link : links)
                 link.button.Click(link.clickToken);
             checkUpdateButton.Click(checkUpdateToken);
             versionButton.Click(versionClickToken);
             demoModeToggle.Toggled(demoModeToken);
+            initializationToggle.Toggled(initializationToken);
             animationToggle.Toggled(animationToken);
             resetUnlockButton.Click(resetUnlockToken);
             crashButton.Click(crashToken);
-            backupCard.progress.IsActive(false);
         }
         catch (...)
         {
@@ -961,12 +742,9 @@ HomeAboutPagePresenter::~HomeAboutPagePresenter()
 void HomeAboutPagePresenter::SetActions(HomeAboutPageActions actions)
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->actions = std::move(actions);
-}
-
-mux::UIElement HomeAboutPagePresenter::HomeContent() const noexcept
-{
-    return impl_ ? impl_->homeRoot : nullptr;
+    }
 }
 
 mux::UIElement HomeAboutPagePresenter::AboutContent() const noexcept
@@ -1002,15 +780,16 @@ void HomeAboutPagePresenter::Activate(SettingsPage page) noexcept
 {
     if (!impl_ || impl_->closed)
         return;
-    impl_->active = page == SettingsPage::Home ||
-        page == SettingsPage::About || page == SettingsPage::Debug;
+    impl_->active = page == SettingsPage::About || page == SettingsPage::Debug;
     impl_->activePage = page;
 }
 
 void HomeAboutPagePresenter::Deactivate() noexcept
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->active = false;
+    }
 }
 
 mux::FrameworkElement HomeAboutPagePresenter::FocusTarget(

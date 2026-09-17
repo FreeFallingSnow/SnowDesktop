@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <wincodec.h>
 #include <wrl/client.h>
+#include "test_temporary_directory.h"
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -21,7 +23,7 @@ void Check(bool condition, const char* message)
 {
     if (condition) return;
     std::cerr << "FAILED: " << message << '\n';
-    std::exit(1);
+    throw std::runtime_error(message);
 }
 
 std::wstring Quote(std::wstring_view value)
@@ -40,36 +42,49 @@ std::wstring Quote(std::wstring_view value)
     return result;
 }
 
-class TemporaryDirectory
+using snowdesktop::test::TemporaryDirectory;
+
+class Handle
 {
 public:
-    TemporaryDirectory()
-    {
-        wchar_t root[MAX_PATH]{};
-        Check(GetTempPathW(MAX_PATH, root) != 0,
-            "temporary root is available");
-        path = std::filesystem::path(root) /
-            (L"SnowDesktopPreviewTest-" +
-                std::to_wstring(GetCurrentProcessId()) + L"-" +
-                std::to_wstring(GetTickCount64()));
-        std::error_code error;
-        Check(std::filesystem::create_directory(path, error),
-            "temporary preview directory is created");
-    }
+    explicit Handle(HANDLE handle) : value(handle) {}
+    ~Handle() { Reset(); }
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+    void Reset() { if (value) CloseHandle(value); value = nullptr; }
+    HANDLE value = nullptr;
+};
 
-    ~TemporaryDirectory()
-    {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
+struct ProcessTimeout : std::runtime_error
+{
+    explicit ProcessTimeout(std::string captured)
+        : std::runtime_error("preview child exceeded its execution deadline"),
+          output(std::move(captured)) {}
+    std::string output;
+};
 
-    std::filesystem::path path;
+struct ComApartment
+{
+    ComApartment()
+    {
+        Check(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)),
+            "COM initializes for preview pixel decoding");
+    }
+    ~ComApartment() { CoUninitialize(); }
 };
 
 std::pair<int, std::string> Run(
     const std::filesystem::path& executable,
-    const std::vector<std::wstring>& arguments)
+    const std::vector<std::wstring>& arguments,
+    DWORD timeoutMilliseconds = 120000)
 {
+    Handle job(CreateJobObjectW(nullptr, nullptr));
+    Check(job.value != nullptr, "preview child job is created");
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    Check(SetInformationJobObject(job.value, JobObjectExtendedLimitInformation,
+            &limits, sizeof(limits)) != FALSE,
+        "preview descendants must terminate when the owning test exits");
     SECURITY_ATTRIBUTES security{};
     security.nLength = sizeof(security);
     security.bInheritHandle = TRUE;
@@ -77,6 +92,8 @@ std::pair<int, std::string> Run(
     HANDLE writePipe = nullptr;
     Check(CreatePipe(&readPipe, &writePipe, &security, 0) != FALSE,
         "preview output pipe is created");
+    Handle reader(readPipe);
+    Handle writer(writePipe);
     Check(SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0) != FALSE,
         "preview output read handle is private to the test");
 
@@ -94,24 +111,68 @@ std::pair<int, std::string> Run(
     PROCESS_INFORMATION process{};
     const BOOL launched = CreateProcessW(executable.c_str(),
         mutableCommand.data(), nullptr, nullptr, TRUE,
-        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
-    CloseHandle(writePipe);
+        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &process);
+    Handle child(process.hProcess);
+    Handle thread(process.hThread);
+    writer.Reset();
     Check(launched != FALSE, "snowwidget preview process starts");
-    CloseHandle(process.hThread);
+    if (!AssignProcessToJobObject(job.value, child.value))
+    {
+        TerminateProcess(child.value, 1);
+        WaitForSingleObject(child.value, 5000);
+        Check(false, "the suspended child must join its cleanup job before running");
+    }
+    Check(ResumeThread(thread.value) != static_cast<DWORD>(-1),
+        "the owned preview process resumes");
+    thread.Reset();
 
     std::string output;
     std::array<char, 1024> buffer{};
-    DWORD read = 0;
-    while (ReadFile(readPipe, buffer.data(),
-            static_cast<DWORD>(buffer.size()), &read, nullptr) && read > 0)
-        output.append(buffer.data(), read);
-    CloseHandle(readPipe);
-    Check(WaitForSingleObject(process.hProcess, 120000) == WAIT_OBJECT_0,
-        "snowwidget preview process completes");
+    const ULONGLONG deadline = GetTickCount64() + timeoutMilliseconds;
+    for (;;)
+    {
+        DWORD available = 0;
+        const BOOL pipeOpen = PeekNamedPipe(reader.value, nullptr, 0, nullptr,
+            &available, nullptr);
+        Check(pipeOpen || GetLastError() == ERROR_BROKEN_PIPE,
+            "preview output pipe can be inspected without blocking");
+        if (available > 0)
+        {
+            DWORD read = 0;
+            Check(ReadFile(reader.value, buffer.data(),
+                    std::min(available, static_cast<DWORD>(buffer.size())),
+                    &read, nullptr) != FALSE,
+                "available preview output can be read");
+            output.append(buffer.data(), read);
+        }
+        const DWORD status = WaitForSingleObject(child.value, 0);
+        Check(status != WAIT_FAILED, "preview process state can be inspected");
+        if (status == WAIT_OBJECT_0 && available == 0) break;
+        if (GetTickCount64() >= deadline)
+        {
+            Check(TerminateJobObject(job.value, 1) != FALSE &&
+                    WaitForSingleObject(child.value, 5000) == WAIT_OBJECT_0,
+                "timed-out preview process is terminated before reporting failure");
+            throw ProcessTimeout(std::move(output));
+        }
+        if (available == 0) WaitForSingleObject(child.value, 10);
+    }
     DWORD exitCode = 1;
-    GetExitCodeProcess(process.hProcess, &exitCode);
-    CloseHandle(process.hProcess);
+    Check(GetExitCodeProcess(child.value, &exitCode) != FALSE,
+        "preview process exit code is available");
     return { static_cast<int>(exitCode), std::move(output) };
+}
+
+void TestProcessTimeout(const std::filesystem::path& executable)
+{
+    bool timedOut = false;
+    try { Run(executable, {L"--runner-hang"}, 2000); }
+    catch (const ProcessTimeout& error)
+    {
+        timedOut = error.output.find("ready") != std::string::npos;
+    }
+    Check(timedOut,
+        "a ready child holding stdout open must time out and be terminated");
 }
 
 void CheckPng(const std::filesystem::path& path)
@@ -818,12 +879,18 @@ return widget.define({
 }
 }
 
-int wmain(int argc, wchar_t** argv)
+int wmain(int argc, wchar_t** argv) try
 {
-    Check(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)),
-        "COM initializes for preview pixel decoding");
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
+    {
+        std::cout << "ready\n" << std::flush;
+        WaitForSingleObject(GetCurrentProcess(), INFINITE);
+        return 1;
+    }
+    ComApartment apartment;
     Check(argc == 4,
         "test receives snowwidget, SnowDesktop, and repository root");
+    TestProcessTimeout(std::filesystem::absolute(argv[0]));
     const std::filesystem::path snowwidget = argv[1];
     const std::filesystem::path host = argv[2];
     const std::filesystem::path repository = argv[3];
@@ -1664,6 +1731,10 @@ int wmain(int argc, wchar_t** argv)
         "preview rejects padding that consumes the square canvas");
 
     std::cout << "widget author preview CLI tests passed\n";
-    CoUninitialize();
     return 0;
+}
+catch (const std::exception& error)
+{
+    std::cerr << "FAILED: " << error.what() << '\n';
+    return 1;
 }

@@ -35,9 +35,7 @@ bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
 
 bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept
 {
-    return focusId == "desktop.spacing" ||
-        focusId == "desktop.iconSpacing" ||
-        focusId == "desktop.iconSize" ||
+    return focusId == "desktop.iconSize" ||
         focusId == "desktop.itemFontSize" ||
         focusId == "desktop.listFontSize" ||
         focusId == "desktop.fontWeight" ||
@@ -69,6 +67,11 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    if (route.page == SettingsPage::Home)
+    {
+        route.page = SettingsPage::General;
+        if (route.focusId.empty()) route.focusId = "start.basics";
+    }
     if (route.page == SettingsPage::General)
     {
         if (route.focusId == "general.pageNavigation" ||
@@ -179,6 +182,12 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
         route.page = SettingsPage::AppearanceWidgets;
         route.focusId = "desktop.categoryLayout";
     }
+    // Retain old focus aliases while moving the shared layout control.
+    if ((route.page == SettingsPage::Desktop ||
+         route.page == SettingsPage::AppearanceDesktopIcons ||
+         route.page == SettingsPage::AppearanceWidgets) &&
+        (route.focusId == "desktop.spacing" || route.focusId == "desktop.iconSpacing"))
+        route.page = SettingsPage::AppearanceWidgets;
     return route;
 }
 

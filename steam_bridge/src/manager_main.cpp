@@ -889,6 +889,7 @@ private:
         {
             localizationStateProjectId_ = project.localId;
             localizationStateCreating_ = creating;
+            publishPublic_ = true;
             syncPackageLocalization_ =
                 project.publishPreferences.textSource ==
                 WorkshopTextSource::Package;
@@ -909,8 +910,11 @@ private:
         if (creating)
         {
             ImGui::TextWrapped("%s", T(
-                "首次发布默认复用组件包内的多语言标题和说明，并以私有状态创建项目。关闭复用后可手动填写英文回退文案。",
-                "Creation uses the component package's localized titles and descriptions by default and creates the item private. Disable reuse to enter an English fallback manually."));
+                "新项目默认公开。关闭“公开发布”可创建私有项目。",
+                "New items are public by default. Turn off Publish publicly to create a private item."));
+            BeginSettingRow(T("公开发布", "Publish publicly"), ImGui::GetFrameHeight());
+            if (ImGui::Checkbox("##publish-publicly", &publishPublic_))
+                InvalidatePreparedPublishUnlocked();
         }
         else
         {
@@ -1123,12 +1127,15 @@ private:
         else
         {
             const ComponentPublishPlan& plan = prepared->plan;
-            const char* action = T("创建私有项目", "Create private item");
+            const char* action = T("创建项目", "Create item");
             if (plan.action == ComponentPublishAction::UpdateContent)
                 action = T("更新组件内容", "Update component content");
             else if (plan.action == ComponentPublishAction::UpdateMetadata)
                 action = T("仅更新资料", "Update listing metadata only");
             ImGui::Text("%s: %s", T("操作", "Action"), action);
+            if (plan.action == ComponentPublishAction::Create)
+                ImGui::Text("%s: %s", T("可见性", "Visibility"),
+                    plan.visibility == 0 ? T("公开", "Public") : T("私有", "Private"));
             ImGui::Text("%s: %s", T("版本", "Version"),
                 plan.version.c_str());
             ImGui::TextWrapped("SHA-256: %s", plan.sha256.c_str());
@@ -1212,7 +1219,7 @@ private:
         if (hasPreparedPlan)
         {
             ImGui::SameLine();
-            const char* confirm = T("确认创建私有项目", "Confirm private creation");
+            const char* confirm = T("确认创建项目", "Confirm creation");
             if (preparedAction == ComponentPublishAction::UpdateContent)
                 confirm = T("确认更新内容", "Confirm content update");
             else if (preparedAction == ComponentPublishAction::UpdateMetadata)
@@ -1330,10 +1337,11 @@ private:
         const bool syncPackageLocalization = syncPackageLocalization_;
         const bool updatePreview = updatePreview_;
         const bool updateTags = updateTags_;
+        const bool publishPublic = publishPublic_;
         const std::uint64_t inputRevision = publishInputsRevision_;
         StartWork([this, localId = std::move(localId), title, description,
                    syncPackageLocalization, updatePreview, updateTags,
-                   inputRevision]
+                   inputRevision, publishPublic]
         {
             WorkshopProject snapshot;
             {
@@ -1367,8 +1375,10 @@ private:
                 return;
             }
             ComponentPublishPlan plan;
+            ComponentPublishOptions options;
+            if (creating) options.visibility = publishPublic ? 0 : 2;
             if (!BuildComponentPublishPlan(snapshot, inspection, artifact,
-                    {}, plan, error))
+                    options, plan, error))
             {
                 SetMessage(false, error);
                 return;
@@ -1704,6 +1714,7 @@ private:
     bool localizationStateCreating_ = false;
     bool localizationPreviewLoading_ = false;
     bool syncPackageLocalization_ = true;
+    bool publishPublic_ = true;
     bool updatePreview_ = false;
     bool updateTags_ = false;
     bool steamClientUnavailable_ = false;

@@ -1,5 +1,6 @@
 #include "settings_ipc_channel.h"
 #include "settings_ipc_values.h"
+#include "winui/home_about_ipc_values.h"
 #include "large_icon_edit_rules.h"
 #include "settings_process.h"
 
@@ -35,6 +36,13 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    snowdesktop::winui::HomeAboutStatusPatch guide;
+    guide.generation = 71; guide.revision = 9;
+    guide.usageGuideExpanded = false;
+    const auto restoredGuide = Unpack<snowdesktop::winui::HomeAboutStatusPatch>(Pack(guide));
+    Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
+        restoredGuide.usageGuideExpanded == false,
+        "host fold preference reaches the guide without inventing tutorial state");
     // These types exercise Unicode paths, optional values, wide counters and
     // nested metadata used by settings and component editor snapshots.
     using Value = std::tuple<std::wstring, std::uint64_t,
@@ -61,6 +69,12 @@ void TestCodec()
 
     snowdesktop::SettingsSnapshot settings;
     settings.generation = 17;
+    settings.route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, "dock.position");
+    settings.route.guideTopic = "dockPosition";
+    const auto guideRoute = Unpack<snowdesktop::SettingsRoute>(Pack(settings.route));
+    Check(guideRoute.guideTopic == "dockPosition" && guideRoute.focusId == "dock.position" &&
+        guideRoute.page == snowdesktop::SettingsPage::Dock,
+        "cross-process guide navigation preserves both the setting and return destination");
     settings.revision = UINT64_MAX;
     settings.externalReplacementPending = true;
     settings.values.general.animationMode = 1;
@@ -238,18 +252,18 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 7 carried network-update fields removed from About status.
+        // Version 10 had no guide return destination in SettingsRoute.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{7},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{10},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
                   &written, nullptr) && written == header.size(),
-            "retired update-protocol frame reaches the channel");
+            "previous settings-protocol frame reaches the channel");
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers carrying retired update fields disconnect before dispatch");
+            "settings peers without guide return routes disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);

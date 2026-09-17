@@ -154,6 +154,12 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         if (PtInRect(&popup, pt))
         {
             int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            if (UsesCollectionPopupFan(*popupWidget))
+            {
+                ScrollCollectionPopupFan(-static_cast<double>(delta) / WHEEL_DELTA);
+                (void)refreshDragAfterScroll();
+                return;
+            }
             int maxScroll =
                 GetCollectionPopupMaxScrollOffset(
                     *popupWidget, popup);

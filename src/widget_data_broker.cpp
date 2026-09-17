@@ -76,6 +76,11 @@ DataSubscriptionResult WidgetDataBroker::Subscribe(
     {
         return { 0, "data range is invalid" };
     }
+    if (!options.eventId.empty() &&
+        (topic != "calendar.events" || options.eventId.size() > 128 ||
+            options.eventId.find('\0') != std::string::npos ||
+            !options.rangeStart.empty() || !options.rangeEnd.empty()))
+        return { 0, "eventId requires calendar.events without a date range" };
     if (topic == "audio.output.analysis" &&
         (!(options.audioWaveform || options.audioSpectrum ||
                 options.audioRms || options.audioPeak) ||

@@ -1,21 +1,28 @@
 #include "app.h"
+#include "dock_taskbar_diagnostics.h"
 
 // Graphics-device and composition-surface lifecycle.
 
-bool DesktopApp::InitGraphics()
+HRESULT DesktopApp::InitGraphicsDevices()
 {
+    ComPtr<ID3D11Device> d3dDevice;
+    ComPtr<ID3D11DeviceContext> d3dImmediateContext;
+    ComPtr<ID2D1Factory1> d2dFactory = d2dFactory_;
+    ComPtr<ID2D1Device> d2dDevice;
+    ComPtr<ID2D1DeviceContext> d2dContext;
+    ComPtr<IDCompositionDesktopDevice> dcompDevice;
     // D3D11
     D3D_FEATURE_LEVEL fl{};
     bool usingWarp = false;
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
         D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-        &d3dDevice_, &fl, nullptr);
+        &d3dDevice, &fl, nullptr);
     if (FAILED(hr))
     {
         usingWarp = true;
         hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
             D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-            &d3dDevice_, &fl, nullptr);
+            &d3dDevice, &fl, nullptr);
     }
     {
         wchar_t buf[128];
@@ -24,21 +31,24 @@ bool DesktopApp::InitGraphics()
             static_cast<unsigned>(hr), static_cast<unsigned>(fl));
         WriteDiagnosticLogEntry(buf);
     }
-    if (FAILED(hr)) return false;
-    uiAnimationScheduler_.SetSoftwareRendering(usingWarp);
-    d3dDevice_->GetImmediateContext(&d3dImmediateContext_);
-    if (!d3dImmediateContext_) return false;
+    if (FAILED(hr)) return hr;
+    d3dDevice->GetImmediateContext(&d3dImmediateContext);
+    if (!d3dImmediateContext) return E_FAIL;
 
-    // D2D
-    D2D1_FACTORY_OPTIONS factoryOptions{};
-    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
-        __uuidof(ID2D1Factory1), &factoryOptions,
-        reinterpret_cast<void**>(d2dFactory_.GetAddressOf()));
-    if (FAILED(hr)) return false;
+    // The factory and its geometries are device-independent. Keep their
+    // identity across GPU loss; only the D2D device/context must be replaced.
+    if (!d2dFactory)
+    {
+        D2D1_FACTORY_OPTIONS factoryOptions{};
+        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            __uuidof(ID2D1Factory1), &factoryOptions,
+            reinterpret_cast<void**>(d2dFactory.GetAddressOf()));
+        if (FAILED(hr)) return hr;
+    }
 
     ComPtr<IDXGIDevice> dxgiDevice;
-    hr = d3dDevice_.As(&dxgiDevice);
-    if (FAILED(hr)) return false;
+    hr = d3dDevice.As(&dxgiDevice);
+    if (FAILED(hr)) return hr;
     {
         ComPtr<IDXGIAdapter> adapter;
         DXGI_ADAPTER_DESC desc{};
@@ -51,14 +61,29 @@ bool DesktopApp::InitGraphics()
             WriteDiagnosticLogEntry(buf);
         }
     }
-    hr = d2dFactory_->CreateDevice(dxgiDevice.Get(), &d2dDevice_);
-    if (FAILED(hr)) return false;
-    hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext_);
-    if (FAILED(hr)) return false;
+    hr = d2dFactory->CreateDevice(dxgiDevice.Get(), &d2dDevice);
+    if (FAILED(hr)) return hr;
+    hr = d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &d2dContext);
+    if (FAILED(hr)) return hr;
 
     // DComp — create from the D2D device for interop
-    hr = DCompositionCreateDevice2(d2dDevice_.Get(), __uuidof(IDCompositionDesktopDevice),
-        reinterpret_cast<void**>(dcompDevice_.GetAddressOf()));
+    hr = DCompositionCreateDevice2(d2dDevice.Get(), __uuidof(IDCompositionDesktopDevice),
+        reinterpret_cast<void**>(dcompDevice.GetAddressOf()));
+    if (FAILED(hr)) return hr;
+
+    d3dDevice_ = std::move(d3dDevice);
+    d3dImmediateContext_ = std::move(d3dImmediateContext);
+    d2dFactory_ = std::move(d2dFactory);
+    d2dDevice_ = std::move(d2dDevice);
+    d2dContext_ = std::move(d2dContext);
+    dcompDevice_ = std::move(dcompDevice);
+    uiAnimationScheduler_.SetSoftwareRendering(usingWarp);
+    return S_OK;
+}
+
+bool DesktopApp::InitGraphics()
+{
+    HRESULT hr = InitGraphicsDevices();
     if (FAILED(hr)) return false;
 
     // DWrite
@@ -176,7 +201,6 @@ void DesktopApp::RecreateComponentListTextFormat()
 
 void DesktopApp::ResetCompositionRenderCaches()
 {
-    ResetWidgetMarqueeComposition();
     ResetDesktopWidgetComposition();
     ResetDesktopForegroundComposition();
     ResetDragPreviewCompositionResources();
@@ -203,6 +227,8 @@ void DesktopApp::ResetCompositionRenderCaches()
 
 void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT hr)
 {
+    if (RequestGraphicsDeviceRecovery(stage, hr))
+        return;
     wchar_t buf[192];
     wsprintfW(buf, L"%s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render", static_cast<unsigned>(hr));
@@ -222,6 +248,8 @@ void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT h
 
 HRESULT DesktopApp::CreateOrResizeCompositionSurface()
     {
+        if (!dcompDevice_ || !dcompVisual_ || !hwnd_ || !IsWindow(hwnd_))
+            return E_UNEXPECTED;
         RECT client{};
         GetClientRect(hwnd_, &client);
         const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
@@ -262,3 +290,176 @@ HRESULT DesktopApp::CreateOrResizeCompositionSurface()
         compositionHeight_ = height;
         return CreateOrResizeDesktopForegroundCompositionSurface();
     }
+
+void DesktopApp::InitializeDockWindowTransition()
+{
+    dockWindowTransition_ =
+        std::make_unique<DockWindowTransition>();
+    if (!dockWindowTransition_->Initialize(
+            instance_, &uiAnimationScheduler_,
+            d2dDevice_.Get(), dcompDevice_.Get()))
+        dockWindowTransition_.reset();
+    if (dockWindowTransition_)
+    {
+        dockWindowTransition_->SetOcclusionRectsProvider([this] {
+            return GetDockWindowTransitionOcclusionRects();
+        });
+        dockWindowTransition_->SetPresentationCallback([this](HWND) {
+            ApplyFloatingDockLayerPolicy();
+        });
+        dockWindowTransition_->SetDiagnosticCallback([this](const wchar_t* message) {
+            snowdesktop::dock_taskbar_diagnostics::Record(message,
+                dockWindowTransition_->GetPresentationWindow());
+            if (std::wcsncmp(message, L"Dock taskbar phase:", 19) == 0)
+                return; // Buffered until the bounded observation ends.
+            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+        });
+    }
+
+}
+
+bool DesktopApp::RequestGraphicsDeviceRecovery(const wchar_t* stage, HRESULT hr)
+{
+    if (graphicsDeviceRecovery_.Pending()) return true;
+    const HRESULT reason = d3dDevice_
+        ? d3dDevice_->GetDeviceRemovedReason() : S_OK;
+    if (!snowdesktop::GraphicsDeviceRecovery::IsDeviceFailure(hr, reason))
+        return false;
+    if (graphicsDeviceRecovery_.Request())
+    {
+        wchar_t message[256]{};
+        swprintf_s(message,
+            L"%s FAILED hr=0x%08X removedReason=0x%08X; queued graphics device recovery",
+            stage ? stage : L"Graphics", static_cast<unsigned>(hr),
+            static_cast<unsigned>(reason));
+        WriteDiagnosticLogEntry(message);
+    }
+    return true;
+}
+
+void DesktopApp::ReleaseGraphicsDeviceResources()
+{
+    // Run only at the outer message-pump boundary, after every BeginDraw has
+    // unwound. Keep Lua instances, layout and user state intact.
+    if (dockWindowTransition_)
+    {
+        dockWindowTransition_->SetPresentationCallback({});
+        dockWindowTransition_->SetOcclusionRectsProvider({});
+        dockWindowTransition_->SetDiagnosticCallback({});
+    }
+    dockWindowTransition_.reset();
+    ResetCompositionRenderCaches();
+    popupAnimationOverlay_ = {};
+    luaWidgetPanelAnimationOverlay_ = {};
+    pageNotifyAnimationOverlay_ = {};
+    const auto releaseRoot = [](auto& target, auto& visual) {
+        if (target) (void)target->SetRoot(nullptr);
+        visual.Reset();
+        target.Reset();
+    };
+    dcompSurface_.Reset();
+    releaseRoot(dcompTarget_, dcompVisual_);
+    compositionWidth_ = compositionHeight_ = 0;
+    compositionCommitPending_ = false;
+    compositionRenderRecoveryPending_ = false;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host) continue;
+        ResetFloatingDockCompositionResources(*host);
+        releaseRoot(host->dcompTarget, host->dcompVisual);
+        host->compositionRenderRecoveryPending = false;
+    }
+    ResetFloatingPopupCompositionResources();
+    releaseRoot(floatingPopupDcompTarget_, floatingPopupDcompVisual_);
+    floatingPopupCompositionRenderRecoveryPending_ = false;
+    releaseRoot(dragPreviewDcompTarget_, dragPreviewDcompVisual_);
+    ResetQuickNavCompositionResources();
+    releaseRoot(quickNavDcompTarget_, quickNavDcompVisual_);
+    quickNavDcompEffect_.Reset();
+    quickNavDcompScaleTransform_.Reset();
+    quickNavDcompDevice_.Reset();
+    quickNavCompositionRenderRecoveryPending_ = false;
+    if (widgetEngine_) widgetEngine_->ResetGraphicsResources(nullptr);
+    if (d3dImmediateContext_) d3dImmediateContext_->ClearState();
+}
+
+void DesktopApp::ProcessGraphicsDeviceRecovery()
+{
+    if (!startupInitializationComplete_ || exitRequested_)
+        return;
+    if (!graphicsDeviceRecovery_.Pending())
+    {
+        // Also detect loss when all surfaces are idle or an inner renderer
+        // returned a generic E_FAIL instead of propagating the DXGI HRESULT.
+        (void)RequestGraphicsDeviceRecovery(L"Device health", S_OK);
+        ComPtr<IDCompositionDevice> device;
+        if (!graphicsDeviceRecovery_.Pending() && dcompDevice_ &&
+            SUCCEEDED(dcompDevice_.As(&device)))
+        {
+            BOOL valid = TRUE;
+            const HRESULT hr = device->CheckDeviceState(&valid);
+            if (FAILED(hr)) (void)RequestGraphicsDeviceRecovery(L"CheckDeviceState", hr);
+            else if (!valid)
+                (void)RequestGraphicsDeviceRecovery(L"CheckDeviceState", DXGI_ERROR_DEVICE_REMOVED);
+        }
+    }
+    const bool drawing = compositionPaintInProgress_ ||
+        desktopWidgetCompositionDrawInProgress_ ||
+        dragPreviewCompositionPaintInProgress_ ||
+        floatingPopupCompositionPaintInProgress_ ||
+        quickNavCompositionPaintInProgress_ || IsAnyPersistentDockHostPainting();
+    if (!graphicsDeviceRecovery_.Ready(GetTickCount64(), drawing)) return;
+
+    ReleaseGraphicsDeviceResources();
+    // Rebinding a target to the surviving layered desktop HWND did not restore
+    // input after TDR: native Shell menus still received clicks. Retire that
+    // HWND through its normal cleanup and rebuild its input/presentation pair.
+    // Hidden native-desktop mode keeps its independent Dock window lifecycle.
+    const bool rebuildDesktopWindow = customDesktopVisible_;
+    if (rebuildDesktopWindow && hwnd_ && IsWindow(hwnd_))
+        DestroyWindow(hwnd_);
+    HRESULT hr = InitGraphicsDevices();
+    // Explorer recovery may temporarily remove the desktop HWND. Rebuild the
+    // device even then: CreateDesktopOverlayWindow otherwise keeps retrying
+    // target creation on the lost device and can never restore that HWND.
+    if (SUCCEEDED(hr) && hwnd_ && IsWindow(hwnd_))
+    {
+        hr = dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_);
+        if (SUCCEEDED(hr)) hr = dcompDevice_->CreateVisual(&dcompVisual_);
+        if (SUCCEEDED(hr)) hr = dcompTarget_->SetRoot(dcompVisual_.Get());
+        if (SUCCEEDED(hr)) hr = CreateOrResizeCompositionSurface();
+    }
+    graphicsDeviceRecovery_.Complete(GetTickCount64(), SUCCEEDED(hr));
+    if (FAILED(hr))
+    {
+        wchar_t message[192]{};
+        swprintf_s(message, L"Graphics device recovery FAILED hr=0x%08X; retry in 2000 ms",
+            static_cast<unsigned>(hr));
+        WriteDiagnosticLogEntry(message);
+        return;
+    }
+    if (widgetEngine_) widgetEngine_->ResetGraphicsResources(d2dContext_.Get());
+    InitializeDockWindowTransition();
+    desktopBackdropFullCollectionPending_ = true;
+    if (rebuildDesktopWindow)
+    {
+        // This restores OLE registration, Shell notifications, widget timers,
+        // backdrop and Dock windows without restarting Lua or resetting data.
+        // If Explorer is unavailable, the existing host watcher retries later.
+        RecoverDesktopHostAfterExplorerRestart();
+        WriteDiagnosticLogEntry(hwnd_ && IsWindow(hwnd_)
+            ? L"Graphics recovery desktop HWND recreated"
+            : L"Graphics recovery waiting for desktop host recreation");
+    }
+    const auto repaint = [](HWND window) {
+        if (window && IsWindow(window)) InvalidateRect(window, nullptr, FALSE);
+    };
+    repaint(hwnd_);
+    for (const auto& host : persistentDockHosts_)
+        if (host) repaint(host->hwnd);
+    repaint(floatingPopupHwnd_);
+    repaint(quickNavigationHwnd_);
+    repaint(dragPreviewHwnd_);
+    EnsureUiAnimationFrame();
+    WriteDiagnosticLogEntry(L"Graphics devices recreated; surface repaints requested");
+}

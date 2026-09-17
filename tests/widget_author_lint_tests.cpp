@@ -1,4 +1,5 @@
 #include "widget_author_lint.h"
+#include "test_temporary_directory.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -14,31 +15,13 @@ using snowdesktop::widget::LocalizedMetadata;
 using snowdesktop::widget_authoring::LintWidgetDirectory;
 using snowdesktop::widget_authoring::LintWidgetSource;
 
-class TemporaryDirectory
-{
-public:
-    TemporaryDirectory()
-    {
-        path = std::filesystem::temp_directory_path() /
-            ("SnowDesktopWidgetAuthorLintTests-" + std::to_string(
-                std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::filesystem::create_directories(path);
-    }
-
-    ~TemporaryDirectory()
-    {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
-
-    std::filesystem::path path;
-};
+using snowdesktop::test::TemporaryDirectory;
 
 void Check(bool condition, const char* message)
 {
     if (condition) return;
     std::cerr << "FAILED: " << message << '\n';
-    std::exit(1);
+    throw std::runtime_error(message);
 }
 
 bool HasIssue(const snowdesktop::widget_authoring::LintReport& report,
@@ -299,7 +282,7 @@ void TestLocaleAndPreviewQuality()
 }
 }
 
-int main()
+int main() try
 {
     TestCleanLocalizedSource();
     TestApiPermissionAndSandboxFailures();
@@ -314,4 +297,9 @@ int main()
     TestLocaleAndPreviewQuality();
     std::cout << "widget author lint tests passed\n";
     return 0;
+}
+catch (const std::exception& error)
+{
+    std::cerr << "FAILED: " << error.what() << '\n';
+    return 1;
 }

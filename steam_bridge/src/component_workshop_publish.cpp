@@ -112,7 +112,7 @@ bool BuildComponentPublishPlan(const WorkshopProject& project,
         (plan.updateContent ? ComponentPublishAction::UpdateContent :
             ComponentPublishAction::UpdateMetadata);
     plan.metadata = BuildWorkshopMetadata(package.packageId, package.version);
-    plan.visibility = options.visibility;
+    plan.visibility = ResolveWorkshopVisibility(creating, options.visibility);
     plan.changeNote = options.changeNote;
     plan.timeout = options.timeout;
     return true;

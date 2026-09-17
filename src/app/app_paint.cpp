@@ -4,8 +4,17 @@
 
 // Desktop composition paint transaction.
 
-void DesktopApp::OnPaint(const RECT* updateRect)
+bool DesktopApp::OnPaint(const RECT* updateRect)
 {
+    // Shell enumeration and COM initialization can pump WM_PAINT before the
+    // model and widget engine are complete. One prepared first frame replaces
+    // those partial bootstrap frames; runtime paints keep their normal path.
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
+    if (!startupInitializationComplete_)
+        return false;
+    if (widgetGroupTransition_.ShouldDeferPaint())
+        return false; // The dispatch boundary invalidates and paints the final model.
     snowdesktop::performance::Scope performanceScope("desktop", "paint");
     if (updateRect)
         snowdesktop::performance::Value("desktop", "dirty_pixels", {},
@@ -19,14 +28,14 @@ void DesktopApp::OnPaint(const RECT* updateRect)
     {
         if (hwnd_ && IsWindow(hwnd_))
             InvalidateRect(hwnd_, updateRect, FALSE);
-        return;
+        return false;
     }
     if (desktopWidgetCompositionFailurePending_)
     {
         desktopWidgetCompositionFailurePending_ = false;
         RecoverCompositionRenderFailure(
             L"Desktop widget composition", E_FAIL);
-        return;
+        return false;
     }
     compositionPaintInProgress_ = true;
     struct PaintScope final
@@ -40,7 +49,7 @@ void DesktopApp::OnPaint(const RECT* updateRect)
     {
         RecoverCompositionRenderFailure(
             L"CreateOrResizeCompositionSurface", hr);
-        return;
+        return false;
     }
     PruneDesktopWidgetCompositions();
 
@@ -67,7 +76,7 @@ void DesktopApp::OnPaint(const RECT* updateRect)
     if (FAILED(hr) || !rawContext)
     {
         RecoverCompositionRenderFailure(L"Background BeginDraw", hr);
-        return;
+        return false;
     }
 
     ComPtr<ID2D1DeviceContext> context;
@@ -117,7 +126,7 @@ void DesktopApp::OnPaint(const RECT* updateRect)
     if (FAILED(hr))
     {
         RecoverCompositionRenderFailure(L"Background EndDraw", hr);
-        return;
+        return false;
     }
 
     if (!FlushPendingDesktopWidgetComposition() ||
@@ -126,7 +135,7 @@ void DesktopApp::OnPaint(const RECT* updateRect)
         desktopWidgetCompositionFailurePending_ = false;
         RecoverCompositionRenderFailure(
             L"Desktop widget composition", E_FAIL);
-        return;
+        return false;
     }
 
     if (!RenderDesktopForegroundComposition(
@@ -135,7 +144,7 @@ void DesktopApp::OnPaint(const RECT* updateRect)
     {
         RecoverCompositionRenderFailure(
             L"Desktop foreground composition", E_FAIL);
-        return;
+        return false;
     }
 
     KeepDesktopWidgetBackdropPanels();
@@ -158,24 +167,25 @@ void DesktopApp::OnPaint(const RECT* updateRect)
     {
         RecoverCompositionRenderFailure(
             L"Widget marquee composition", E_FAIL);
-        return;
+        return false;
     }
     if (!SyncWidgetMarqueeCompositionVisibility())
     {
         RecoverCompositionRenderFailure(
             L"Widget marquee visibility", E_FAIL);
-        return;
+        return false;
     }
 
     if (!CommitCompositionAnimationFrame())
     {
         RecoverCompositionRenderFailure(
             L"Queue Paint Commit", E_FAIL);
-        return;
+        return false;
     }
     compositionRenderRecoveryPending_ = false;
     if (widgetAccessibilityProvider_)
         widgetAccessibilityProvider_->RefreshEvents();
     UpdateFloatingPopupWindowBounds(false);
     RecordShellHoverTrace(ShellHoverTraceEvent::PaintEnd);
+    return true;
 }

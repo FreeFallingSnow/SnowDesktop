@@ -1542,7 +1542,10 @@ int main()
         return 1;
     }
     if (skips != 0)
-        std::cout << skips << " Steam runtime reparse check(s) skipped\n";
+    {
+        std::cout << skips << " Steam runtime reparse check(s) skipped; this entry is not fully verified\n";
+        return 77;
+    }
     std::cout << "Steam runtime update checks passed\n";
     return 0;
 }

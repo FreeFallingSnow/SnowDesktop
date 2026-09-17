@@ -343,6 +343,8 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu,
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand, _LW("app.menu.properties"));
+    if (selectedCount == 1 && canFile)
+        AppendWebsiteIconMenu(menu, itemPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     if (!namespaceItem)
     {
@@ -371,6 +373,10 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     if (dockFolderEntry)
     {
+        std::wstring fanLabel = _LW("app.interact.popup_fan");
+        fanLabel += L"\t";
+        fanLabel += dockFolderEntry->fanPopup ? _LW("app.interact.on") : _LW("app.interact.off");
+        AppendMenuW(menu, MF_STRING, kContextPopupFan, fanLabel.c_str());
         const auto statusLabel = [](
             const wchar_t* title,
             const wchar_t* status) {
@@ -479,6 +485,8 @@ void DesktopApp::ShowItemContextMenu(
     SetMenuItemQuickAction(menu, kContextCutCommand);
     SetMenuItemQuickAction(menu, kContextCopyCommand);
     SetMenuItemQuickAction(menu, kContextDeleteCommand);
+    SetMenuItemIcon(menu, kContextPopupFan,
+        snowdesktop::menu_fluent_glyphs::kFanExpansion, MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions,
         MenuIconFont::FluentRegular);
@@ -603,8 +611,23 @@ void DesktopApp::ShowItemContextMenu(
             dockFolderPopupSourceId_ != sourceId)
             return;
 
+        if (command == kContextPopupFan)
+        {
+            ResetCollectionPopupFanScroll();
+            popupFanShowAll_ = false;
+            popupFanActionFocused_ = false;
+        }
+        if (dockFolderPopupWidget_.fanPopup != dockFolderEntry->fanPopup)
+        {
+            ResetCollectionPopupAnimationCache();
+            popupAnimation_.ShowImmediately();
+            popupAnimation_.Configure(
+                snowdesktop::animation::RuntimePopupEffect() == snowdesktop::animation::Fade,
+                snowdesktop::animation::RuntimeDurationScale() * (dockFolderEntry->fanPopup ? 2.4 : 1.0));
+        }
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
+        dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;
         dockFolderPopupWidget_.detailShowModified =
             dockFolderEntry->detailShowModified;
         dockFolderPopupWidget_.detailShowType =
@@ -714,6 +737,16 @@ void DesktopApp::ShowItemContextMenu(
     case kContextPropertiesCommand:
         if (canShowProperties)
             ShowPathProperties(itemPath);
+        break;
+    case kContextFetchWebsiteIconCommand:
+        if (selectedCount == 1 && canFile) FetchWebsiteIcon(itemPath);
+        break;
+    case kContextPopupFan:
+        if (dockFolderEntry)
+        {
+            dockFolderEntry->fanPopup = !dockFolderEntry->fanPopup;
+            applyDockFolderDisplayChange();
+        }
         break;
     case kContextWidgetToggleListMode:
         if (dockFolderEntry)

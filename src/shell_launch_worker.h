@@ -46,8 +46,9 @@ public:
     /**
      * @brief Queue a Shell item activation using a private copy of its PIDL.
      *
-     * Shortcut activation uses IContextMenu inside the helper process. The
-     * path remains available as a compatibility fallback.
+     * Activation queries only default Shell commands inside the helper.
+     * Paths without a supplied PIDL use the same policy after helper-side
+     * parsing. A supported failed command is not retried through another API.
      */
     bool EnqueueShellItem(
         HWND owner,

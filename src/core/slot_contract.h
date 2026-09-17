@@ -113,6 +113,7 @@ struct DragPayloadFlags
     bool collectionGroupLabels = false;
     bool fileGroupLabels = false;
     bool folderMappingWidgetsOnly = false;
+    bool fileSourceWidgetsOnly = false;
 };
 
 constexpr DragPayloadKind ClassifyPayload(
@@ -139,6 +140,8 @@ constexpr DragPayloadKind ClassifyPayload(
             return DragPayloadKind::CollectionWidget;
         if (flags.folderMappingWidgetsOnly)
             return DragPayloadKind::FolderMappingWidget;
+        if (flags.fileSourceWidgetsOnly)
+            return DragPayloadKind::FileSourceWidget;
         return DragPayloadKind::OtherWidget;
     }
     if (flags.folderEntries)
@@ -196,6 +199,7 @@ inline constexpr std::array<
             PayloadBit(DragPayloadKind::DesktopItem) |
                 PayloadBit(DragPayloadKind::CollectionWidget) |
                 PayloadBit(DragPayloadKind::FolderMappingWidget) |
+                PayloadBit(DragPayloadKind::FileSourceWidget) |
                 PayloadBit(DragPayloadKind::FolderEntry),
             kInteractiveSlotCapabilities,
     },
@@ -547,6 +551,8 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
 
     if (payload == DragPayloadKind::FileGroupLabel)
     {
+        if (target == SlotSurfaceKind::Dock)
+            return DropRoute::AddToDock;
         if (target == SlotSurfaceKind::Desktop)
             return DropRoute::ReleaseGroupedChild;
         if (target == SlotSurfaceKind::FileGroup)
@@ -586,6 +592,9 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
 
     if (payload == DragPayloadKind::FileSourceWidget)
     {
+        if (target == SlotSurfaceKind::Dock)
+            return relation == DragRelation::SameInstance
+                ? DropRoute::ReorderWithinContainer : DropRoute::AddToDock;
         if (target == SlotSurfaceKind::Desktop)
             return DropRoute::PlaceOnDesktop;
         if (target == SlotSurfaceKind::FileGroup)

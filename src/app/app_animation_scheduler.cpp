@@ -33,7 +33,9 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
 
     const bool fade = generalSettings_.popupAnimationEffect == motion::Fade;
     const double durationScale = motion::RuntimeDurationScale();
-    popupAnimation_.Configure(fade, durationScale);
+    const DesktopWidget* popupWidget = GetOpenPopupWidget();
+    popupAnimation_.Configure(fade, durationScale *
+        (popupWidget && UsesCollectionPopupFan(*popupWidget) ? 2.4 : 1.0));
     luaWidgetPanelAnimation_.Configure(fade, durationScale);
 
     // Finish the old timeline when its duration/effect changes.
@@ -106,7 +108,7 @@ void DesktopApp::ApplyAnimationPreferences(bool systemChanged)
         InvalidateDragStaticScene();
         InvalidateRect(hwnd_, nullptr, FALSE);
         UpdateFloatingPopupWindowBounds(true);
-        InvalidateFloatingDockWindow(false);
+        UpdateFloatingDockWindowBounds(false);
     }
 }
 
@@ -157,6 +159,34 @@ void DesktopApp::EnsureUiAnimationFrame()
                         popupAnimationFrameToken_ = 0;
                     return keep;
                 });
+    }
+
+    const auto* fanScrollWidget = GetOpenPopupWidget();
+    if (fanScrollWidget && UsesCollectionPopupFan(*fanScrollWidget) &&
+        !popupFanScrollFrameToken_ && popupFanScroll_.position != popupFanScroll_.target &&
+        !popupAnimation_.IsClosing() && !popupAnimation_.IsHidden())
+    {
+        popupFanScrollFrameToken_ = uiAnimationScheduler_.StartAnimation(
+            snowdesktop::UiAnimationSurface::Popup, [this](double now) {
+                const auto* widget = GetOpenPopupWidget();
+                if (!widget || !UsesCollectionPopupFan(*widget) || popupAnimation_.IsClosing())
+                {
+                    popupFanScrollFrameToken_ = 0;
+                    return false;
+                }
+                popupFanScroll_.Clamp(snowdesktop::collection_popup_layout::FanMaximumScroll(
+                    GetPopupItemCount(*widget), GetCollectionPopupFanVisibleCount(popupRect_)));
+                const bool keep = popupFanScroll_.Advance(
+                    snowdesktop::animation::RuntimeAnimationsEnabled() ? now :
+                        popupFanScroll_.started + popupFanScroll_.duration);
+                if (marqueeActive_ && (marqueeDockFolderPopup_ ||
+                    marqueeWidgetIndex_ == popupWidgetIndex_))
+                    UpdateMarqueeSelection(lastMousePoint_);
+                if (dragSession_.IsActive()) ResolveCurrentDragTargetAt(lastMousePoint_);
+                InvalidateCollectionPopupAnimation(true);
+                if (!keep) popupFanScrollFrameToken_ = 0;
+                return keep;
+            });
     }
 
     if (!luaPanelAnimationFrameToken_ &&
@@ -404,6 +434,7 @@ void DesktopApp::CancelUiAnimationFrame()
 {
     snowdesktop::UiScheduleToken* const tracks[] = {
         &popupAnimationFrameToken_,
+        &popupFanScrollFrameToken_,
         &luaPanelAnimationFrameToken_,
         &quickNavigationAnimationFrameToken_,
         &dockBounceAnimationFrameToken_,

@@ -1835,7 +1835,7 @@ bool ReadTextSpansField(lua_State* state, int table,
             if (!ValidateObjectFields(state, events,
                     { "pointerEnter", "pointerLeave", "pointerDown",
                         "pointerMove", "pointerUp", "click",
-                        "doubleClick", "wheel", "contextMenu", "keyDown", "keyUp" },
+                        "doubleClick", "fileDrop", "wheel", "contextMenu", "keyDown", "keyUp" },
                     "styledText span events", error))
             {
                 lua_pop(state, 3);
@@ -1843,7 +1843,7 @@ bool ReadTextSpansField(lua_State* state, int table,
             }
             for (const char* eventName : { "pointerEnter", "pointerLeave",
                 "pointerDown", "pointerMove", "pointerUp", "click",
-                "doubleClick", "wheel", "contextMenu", "keyDown", "keyUp" })
+                "doubleClick", "fileDrop", "wheel", "contextMenu", "keyDown", "keyUp" })
             {
                 lua_getfield(state, events, eventName);
                 if (!lua_isnil(state, -1))

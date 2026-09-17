@@ -15,6 +15,7 @@ namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
 int RunLargeIconShellAssetTests();
 int RunLargeIconRenderingTests(const char* outputDirectory);
+int RunLargeIconSourceProbe(const char* shortcutPath, const char* outputDirectory);
 
 namespace
 {
@@ -31,6 +32,7 @@ void Check(bool condition, const char* message)
 
 int main(int argc, char** argv)
 {
+    if (argc == 4 && std::string_view(argv[1]) == "--source-probe") return RunLargeIconSourceProbe(argv[2], argv[3]);
     if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
     failures += RunLargeIconAssetTests();

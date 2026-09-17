@@ -1,4 +1,9 @@
 #include "settings_window_open_rules.h"
+#include "usage_guide.h"
+#include "usage_guide_panel.h"
+#include "usage_guide_settings.h"
+#include "json_value.h"
+#include <windows.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -10,6 +15,126 @@
 namespace
 {
 int failures = 0;
+
+void Check(bool condition, const char* message);
+
+void CheckUsageGuide()
+{
+    using namespace snowdesktop::usage_guide;
+    Check(!ParseTopic("unknown") && ParseTopic("layout") == Topic::Move &&
+        ParseTopic("resize") == Topic::Move && ParseTopic("application") == Topic::Collection &&
+        ParseTopic("dockMapping") == Topic::DockPin,
+        "merged tutorials preserve old routes without duplicate entries");
+    Check(!Find(Topic::DockSummon)->practice && !Find(Topic::Navigation)->practice,
+        "preference choices never start desktop exercises");
+    Check(!CanShowDesktop(*Find(Topic::DockFiles), false) && CanShowDesktop(*Find(Topic::DockFiles), true),
+        "Dock guidance requires Dock but never a newly created file component");
+    Check(!CanShowDesktop(*Find(Topic::DockSummon), true), "preference articles cannot become desktop exercises");
+    const auto destination = snowdesktop::CanonicalizeSettingsRoute(SettingsDestination(*Find(Topic::DockPosition)));
+    Check(destination.page == snowdesktop::SettingsPage::Dock && destination.focusId == "dock.position" &&
+        ReturnDestination(destination) == snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General, "start.dockPosition"),
+        "settings links return to the originating guide without dropping the setting focus");
+    const auto secondary = SettingsDestination(*Find(Topic::DockAppearance), true);
+    Check(secondary.page == snowdesktop::SettingsPage::AnimationPerformance && secondary.focusId == "animation.hover" &&
+        ReturnDestination(secondary) == snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General, "start.dockAppearance"),
+        "secondary settings links retain the same guide origin");
+    Check(!ReturnDestination(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock)),
+        "ordinary settings navigation has no guide return banner");
+    auto invalidReturn = destination; invalidReturn.guideTopic = "removed-topic";
+    Check(!ReturnDestination(invalidReturn), "unknown guide origins cannot create dead return links");
+    const auto returnRoute = ReturnDestination(destination);
+    Check(returnRoute && !ReturnDestination(*returnRoute), "returning consumes the guide context");
+    Check(Find(Topic::PagesDrag)->section == Section::Pages && CanShowDesktop(*Find(Topic::PagesDrag), false) &&
+        !CanShowDesktop(*Find(Topic::PagesKeys), true),
+        "page dragging supports desktop reference while keyboard preferences only open settings");
+
+    // The renderer and pointer handlers use this exact placement model.
+    // Repaints have no menu or cursor input, so they cannot chase the pointer.
+    PanelPlacement panel;
+    RECT work{0, 0, 1920, 1040};
+    auto frame = panel.Arrange(work, 440, 300, 24);
+    Check(frame.left == 1456 && frame.top == 716, "first reference starts inside the work area");
+    panel.BeginDrag({1500, 730}); panel.DragTo({544, 214}, true, true); panel.EndDrag();
+    frame = panel.Arrange(work, 440, 300, 24);
+    Check(frame.left == 500 && frame.top == 200, "drag keeps the grabbed header offset");
+    Check(!panel.DragTo({1700, 900}, false, false), "pointer motion after release cannot reposition the panel");
+    frame = panel.Arrange(work, 440, 300, 24);
+    Check(frame.left == 500 && frame.top == 200, "ordinary repaint preserves the manual anchor");
+    frame = panel.Arrange(work, 440, 500, 24);
+    Check(frame.left == 500 && frame.top == 200, "opening details keeps the top-left position when space permits");
+    frame = panel.Arrange({0, 0, 800, 600}, 440, 500, 24);
+    Check(frame.left == 336 && frame.top == 76, "smaller work area keeps the entire panel reachable");
+    panel.BeginDrag({380, 90}); panel.DragTo({-1456, 214}, true, true); panel.EndDrag();
+    frame = panel.Arrange({-1920, 0, 0, 1040}, 440, 300, 24);
+    Check(frame.left == -1500 && frame.top == 200, "drag supports a monitor with negative screen coordinates");
+
+    // User regression: queued/resampled moves precede WM_LBUTTONUP. Physical
+    // release must freeze the last accepted anchor even before that message.
+    const POINT releasedAnchor = *panel.anchor;
+    panel.BeginDrag({-1450, 220});
+    Check(!panel.DragTo({-1000, 500}, false, true) && !panel.dragOffset &&
+        panel.anchor->x == releasedAnchor.x && panel.anchor->y == releasedAnchor.y,
+        "physical release rejects a queued move before button-up dispatch");
+    Check(!panel.DragTo({-900, 550}, true, true),
+        "later button state cannot revive the ended guide drag");
+    panel.BeginDrag({-1450, 220});
+    Check(!panel.DragTo({-1000, 500}, true, false) && !panel.dragOffset &&
+        panel.anchor->x == releasedAnchor.x && panel.anchor->y == releasedAnchor.y,
+        "capture loss cancels movement even while the button remains down");
+
+    // Real renderer/input use this model: every line must remain reachable,
+    // with no blank overscroll after text scaling or a monitor change.
+    PanelScroll scroll;
+    scroll.Arrange(900, 300); scroll.By(48);
+    Check(scroll.offset == 48 && scroll.maximum == 600, "wheel exposes the next part of a long document");
+    scroll.ToFraction(1.0);
+    Check(scroll.offset == 600, "dragging the scrollbar can reach the final instruction");
+    scroll.By(1000);
+    Check(scroll.offset == 600, "scrolling cannot pass the final line");
+    scroll.Arrange(250, 300);
+    Check(scroll.offset == 0 && scroll.maximum == 0, "a resized document that fits shows all text from the start");
+    scroll.By(-48);
+    Check(scroll.offset == 0, "scrolling above the first line is clamped");
+
+    snowdesktop::StaticSettingSearchDescriptor entry;
+    entry.focusId = "widgets.workshop"; entry.visible = false;
+    Check(!IsLessonVisible(*Find(Topic::Workshop), {entry}), "unavailable Workshop cannot appear in the guide");
+    entry.visible = true;
+    Check(IsLessonVisible(*Find(Topic::Workshop), {entry}), "available Workshop retains its entry");
+    Check(!IsLessonVisible(*Find(Topic::CategoryRules), {entry}), "an unrelated visible setting cannot unlock an article");
+    entry.focusId = "desktop.categoryRules";
+    Check(IsLessonVisible(*Find(Topic::CategoryRules), {entry}) &&
+        Find(Topic::CategoryRules)->section == Section::Files && !Find(Topic::CategoryRules)->practice,
+        "file classification stays with organizers and only opens settings");
+    entry.focusId = "widgets.developer";
+    Check(IsLessonVisible(*Find(Topic::Develop), {entry}), "development help is discoverable before opting into developer tools");
+    Check(IsLessonVisible(*Find(Topic::Move), {}), "basic component guidance does not depend on settings search availability");
+    for (const auto& lesson : kLessons)
+    {
+        Check(ParseTopic(lesson.key) == lesson.topic, "every visible lesson can be requested through the host");
+        Check(std::count_if(kLessons.begin(), kLessons.end(), [&](const auto& other) {
+            return std::string_view(other.key) == lesson.key; }) == 1, "lesson routes have unique identities");
+    }
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("SnowDesktop-usage-guide-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()));
+    if (!std::filesystem::create_directory(directory)) { Check(false, "create isolated preference directory"); return; }
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{directory};
+    // An old opt-out file is retained, but cannot hide the new permanent help.
+    { std::ofstream old(directory / "SnowDesktop.onboarding.json"); old << R"({"version":2,"dismissed":true,"steps":31})"; }
+    bool expanded = false;
+    const auto path = directory / "SnowDesktop.guide.json";
+    Check(LoadExpanded(path, expanded) && expanded, "first-use help defaults expanded regardless of old tutorial dismissal");
+    Check(SaveExpanded(path, false) && LoadExpanded(path, expanded) && !expanded,
+        "the user's collapsed panel preference survives a new load");
+    Check(SaveExpanded(path, true) && LoadExpanded(path, expanded) && expanded, "expanded preference also round-trips");
+    { std::ifstream input(path); std::string text((std::istreambuf_iterator<char>(input)), {}); JsonValue value;
+      Check(ParseJson(text, value) && value.Find("expanded") && !value.Find("steps") && !value.Find("collectionId") && !value.Find("active"),
+          "preference storage contains neither progress nor practice identities"); }
+    { std::ofstream output(path); output << R"({"version":1,"expanded":"false"})"; }
+    Check(!LoadExpanded(path, expanded) && expanded, "malformed preferences cannot overwrite the last valid in-memory choice");
+    { std::ofstream blocker(directory / "blocked"); blocker << "not a directory"; }
+    Check(!SaveExpanded(directory / "blocked" / "value.json", false), "preference write failure is observable");
+}
 
 void Check(bool condition, const char* message)
 {
@@ -32,6 +157,7 @@ std::string ReadFile(const std::filesystem::path& path)
 
 int main(int argc, char** argv)
 {
+    CheckUsageGuide();
     using snowdesktop::settings_window_open_rules::PostOpenAction;
     using snowdesktop::settings_window_open_rules::RequestState;
 
@@ -146,7 +272,7 @@ int main(int argc, char** argv)
         Check(source.find("SettingsWindow::Open(") != std::string::npos &&
                 source.find("CanonicalizeSettingsRoute(route)") !=
                     std::string::npos &&
-                source.find("SettingsPage::Home") != std::string::npos &&
+                source.find("canonical.page = snowdesktop::SettingsPage::General") == std::string::npos &&
                 source.find("SettingsPage::General") !=
                     std::string::npos &&
                 source.find("SettingsPage::Dock, \"dock.enable\"") !=

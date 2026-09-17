@@ -5,6 +5,12 @@
 
 void DesktopApp::RefreshDragHintFromKeyboard()
 {
+    if (widgetAction_ == WidgetAction::Move)
+    {
+        OnMouseMoveAt(0, lastMousePoint_);
+        PresentPointerInteractionFrame();
+        return;
+    }
     if (!dragSession_.IsActive() &&
         !dragDropController_.IsTransportActive()) return;
 
@@ -17,6 +23,14 @@ void DesktopApp::RefreshDragHintFromKeyboard()
             mods,
             dragDropController_.IsExternalDragActive()
                 ? DropAction::Copy : DropAction::Move);
+
+    if (GetDockWidgetPairSourceIndex() < widgets_.size() &&
+        !dragDropController_.IsTransportActive())
+    {
+        RefreshDragTargetAt(dragSession_.CurrentPoint(), mods);
+        PresentPointerInteractionFrame();
+        return;
+    }
 
     std::wstring hint = GetDockDragOutRemovalHint(dragSession_.CurrentPoint());
     if (hint.empty() && dragSession_.TargetContainer() &&
@@ -937,9 +951,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
         popupWidgetIndex_ < widgets_.size())
     {
-        int popupCols = GetCollectionPopupColumnCount(popupRect_);
-        if (popupCols > 0 && !isListMode)
-            columns = popupCols;
+        isListMode = UsesCollectionPopupList(widget);
+        columns = GetCollectionPopupColumnCount(popupRect_);
     }
 
     // FileCategories：获取当前可见项目键列表（受搜索/分类标签页过滤）

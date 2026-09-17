@@ -12,6 +12,7 @@
  * - CreateWidget：组件工厂函数，根据 DesktopWidgetType 创建对应的具体组件实例。
  */
 #include "widget.h"
+#include "../widget_clip_geometry.h"
 #include "types.h"
 #include "constants.h"
 #include "utils.h"
@@ -2359,26 +2360,8 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
 ID2D1RoundedRectangleGeometry* WidgetContainer::GetCachedClipGeometry(
     ID2D1Factory1* factory, const RECT& frame, float radius)
 {
-    if (!factory) return nullptr;
-    if (cachedClipGeometry_ &&
-        cachedClipFrame_.left == frame.left &&
-        cachedClipFrame_.top == frame.top &&
-        cachedClipFrame_.right == frame.right &&
-        cachedClipFrame_.bottom == frame.bottom &&
-        cachedClipRadius_ == radius)
-        return cachedClipGeometry_.Get();
-
-    ComPtr<ID2D1RoundedRectangleGeometry> geo;
-    if (FAILED(factory->CreateRoundedRectangleGeometry(
-            D2D1::RoundedRect(
-                D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-                    static_cast<float>(frame.right), static_cast<float>(frame.bottom)),
-                radius, radius), &geo)) || !geo)
-        return nullptr;
-    cachedClipGeometry_ = std::move(geo);
-    cachedClipFrame_ = frame;
-    cachedClipRadius_ = radius;
-    return cachedClipGeometry_.Get();
+    return snowdesktop::ResolveWidgetClipGeometry(factory, frame, radius,
+        cachedClipGeometry_, cachedClipFrame_, cachedClipRadius_);
 }
 
 // ── DrawChrome ────────────────────────────────────────────────

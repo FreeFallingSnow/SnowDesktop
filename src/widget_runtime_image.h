@@ -18,7 +18,7 @@ struct WidgetRuntimeImagePixels
 
 inline bool IsValidWidgetRuntimeImage(
     const WidgetRuntimeImagePixels& pixels,
-    std::uint32_t maximumDimension = 512) noexcept
+    std::uint32_t maximumDimension = 2048) noexcept
 {
     return pixels.width > 0 && pixels.height > 0 &&
         pixels.width <= maximumDimension &&
@@ -57,7 +57,8 @@ inline std::string MakeWidgetRuntimeImageToken(
 inline bool IsWidgetRuntimeImageToken(std::string_view token) noexcept
 {
     return (token.starts_with("@media:") ||
-            token.starts_with("@clipboard:")) &&
+            token.starts_with("@clipboard:") ||
+            token.starts_with("@filesystem:")) &&
         token.size() <= 64;
 }
 }

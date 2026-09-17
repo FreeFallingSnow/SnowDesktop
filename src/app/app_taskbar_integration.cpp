@@ -107,6 +107,7 @@ void DesktopApp::HandleDockForegroundInteractionChanged()
 {
     ReconcileDesktopHoverState();
     UpdateSystemShowDesktopDockLayerGuard();
+    RefreshDockForegroundState();
 }
 
 void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
@@ -175,8 +176,9 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
     WriteDiagnosticLogEntry(guardTrace);
 }
 
-bool DesktopApp::IsSystemTaskbarHookRequired(
-    const DockSettings& settings) const
+namespace
+{
+bool AppearanceRequiresTaskbarHook(const DockSettings& settings)
 {
     const auto ruleNeedsHook = [](const SystemTaskbarDynamicRule& rule) {
         return rule.enabled &&
@@ -186,6 +188,14 @@ bool DesktopApp::IsSystemTaskbarHookRequired(
         ruleNeedsHook(settings.systemTaskbarVisibleWindow) ||
         ruleNeedsHook(settings.systemTaskbarMaximizedWindow) ||
         ruleNeedsHook(settings.systemTaskbarShellUi);
+}
+}
+
+bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
+{
+    return AppearanceRequiresTaskbarHook(settings) ||
+        ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
+            settings.systemTaskbarAutoHide);
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -405,7 +415,10 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
 bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
-    const bool hookRequired = IsSystemTaskbarHookRequired(dockSettings_);
+    const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
+    const bool protectActivation = ShouldProtectAutoHideTaskbar(dockSettings_,
+        generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
+    const bool hookRequired = appearanceRequired || protectActivation;
     if (!hookRequired)
     {
         ApplySystemTaskbarBackdrop(false, false,
@@ -467,6 +480,22 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
 
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
+    std::vector<HMONITOR> dockMonitors;
+    if (protectActivation && hwnd_)
+    {
+        for (const auto& container : containers_)
+        {
+            const auto* dock = dynamic_cast<DockContainer*>(container.get());
+            if (!dock) continue;
+            const RECT bounds = dock->GetBounds();
+            if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) continue;
+            // Use the same virtual-desktop origin as SyncPersistentDockHosts.
+            POINT center{bounds.left + (bounds.right - bounds.left) / 2 + virtualLeft_,
+                bounds.top + (bounds.bottom - bounds.top) / 2 + virtualTop_};
+            if (const HMONITOR monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONULL))
+                dockMonitors.push_back(monitor);
+        }
+    }
     std::vector<SystemTaskbarTargetAppearance> targets;
     targets.reserve(context.windows.size());
     for (HWND taskbar : context.windows)
@@ -493,6 +522,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
 
         SystemTaskbarTargetAppearance target;
         target.taskbar = taskbar;
+        target.protectAutoHideActivation = protectActivation &&
+            std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
         if (selectedRule)
         {
             target.enabled =
@@ -509,80 +540,9 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     }
 
     ApplySystemTaskbarBackdrop(true,
-        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets);
+        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;
-}
-
-void DesktopApp::UpdateSystemTaskbarRevealGuard()
-{
-    if (!generalSettings_.dockEnabled || !dockSettings_.systemTaskbarAutoHide ||
-        dockSettings_.edgeAttached ||
-        dockSettings_.position != DockPosition::Bottom)
-        return;
-
-    constexpr int kRevealGuardPixels = 6;
-    POINT cursor{};
-    if (!GetCursorPos(&cursor)) return;
-    const HMONITOR cursorMonitor =
-        MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO cursorMonitorInfo{};
-    cursorMonitorInfo.cbSize = sizeof(cursorMonitorInfo);
-    if (!cursorMonitor ||
-        !GetMonitorInfoW(cursorMonitor, &cursorMonitorInfo) ||
-        cursor.y < cursorMonitorInfo.rcMonitor.bottom -
-            kRevealGuardPixels)
-        return;
-
-    if (!IsSystemTaskbarAutoHideEnabled())
-        return;
-
-    APPBARDATA taskbarPosition{};
-    taskbarPosition.cbSize = sizeof(taskbarPosition);
-    if (!SHAppBarMessage(ABM_GETTASKBARPOS, &taskbarPosition) ||
-        taskbarPosition.uEdge != ABE_BOTTOM)
-        return;
-
-    if (!hwnd_) return;
-
-    RECT screen{};
-    bool foundProtectedDock = false;
-    for (const auto& container : containers_)
-    {
-        auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (!dock) continue;
-        RECT candidate = dock->GetBounds();
-        POINT topLeft{ candidate.left, candidate.top };
-        POINT bottomRight{ candidate.right, candidate.bottom };
-        if (!ClientToScreen(hwnd_, &topLeft) ||
-            !ClientToScreen(hwnd_, &bottomRight))
-            continue;
-        candidate = { topLeft.x, topLeft.y, bottomRight.x, bottomRight.y };
-        const POINT center{
-            (candidate.left + candidate.right) / 2,
-            (candidate.top + candidate.bottom) / 2
-        };
-        MONITORINFO monitorInfo{};
-        monitorInfo.cbSize = sizeof(monitorInfo);
-        const HMONITOR monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
-        if (!monitor || monitor != cursorMonitor ||
-            !GetMonitorInfoW(monitor, &monitorInfo))
-            continue;
-        if (cursor.x < candidate.left || cursor.x >= candidate.right ||
-            cursor.y < candidate.top || cursor.y >= monitorInfo.rcMonitor.bottom)
-            continue;
-        screen = monitorInfo.rcMonitor;
-        foundProtectedDock = true;
-        break;
-    }
-    if (!foundProtectedDock) return;
-
-    const int guardedEdgeTop = screen.bottom - kRevealGuardPixels;
-    if (cursor.y >= guardedEdgeTop)
-    {
-        snowdesktop::dock_taskbar_diagnostics::Record(L"cursor-edge-guard");
-        SetCursorPos(cursor.x, guardedEdgeTop - 1);
-    }
 }
 
 void DesktopApp::ToggleWindowsStartMenu()

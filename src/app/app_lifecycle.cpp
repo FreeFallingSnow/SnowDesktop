@@ -16,6 +16,7 @@ DesktopApp::~DesktopApp()
     dockWindowActivationObservationToken_ = 0;
     dockWindowActivationObservations_.clear();
     popupAnimationFrameToken_ = 0;
+    popupFanScrollFrameToken_ = 0;
     luaPanelAnimationFrameToken_ = 0;
     quickNavigationAnimationFrameToken_ = 0;
     dockBounceAnimationFrameToken_ = 0;
@@ -30,6 +31,7 @@ DesktopApp::~DesktopApp()
     shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
+    StopWebsiteIconWorker();
     StopSteamWorkshopWatcher();
     EndDesktopPassthroughHold(false);
     UnregisterDesktopPassthroughHotkey();
@@ -104,6 +106,10 @@ void DesktopApp::ShutdownSettingsInfrastructure() noexcept
  */
 void DesktopApp::HideExplorerIcons()
 {
+    // Shell COM calls can dispatch host-watch messages during bootstrap.
+    // Never remove the usable native desktop before our first frame is ready.
+    if (desktopStartupPresentationPending_)
+        return;
     if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
         return;
 
@@ -253,7 +259,6 @@ void DesktopApp::ResetDesktopWindowResources()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
-    ResetWidgetMarqueeComposition();
     ResetDesktopWidgetComposition();
     ResetDesktopForegroundComposition();
     dcompSurface_.Reset();
@@ -270,7 +275,7 @@ void DesktopApp::ResetDesktopWindowResources()
  * @param host 目标桌面宿主窗口句柄（通常是 WorkerW 或 Progman）
  *
  * 将主窗口样式改为 WS_CHILD 并设置 parent 为 host，
- * 同时调整位置到虚拟屏幕原点并显示窗口。
+ * 同时调整位置到虚拟屏幕原点；启动首帧就绪前保持窗口隐藏。
  */
 void DesktopApp::AttachWindowToDesktopHost(HWND host)
 {
@@ -281,15 +286,17 @@ void DesktopApp::AttachWindowToDesktopHost(HWND host)
         SetParent(hwnd_, host);
 
     LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
-    style &= ~WS_POPUP;
-    style |= WS_CHILD | WS_VISIBLE;
+    const bool showDesktop =
+        !desktopStartupPresentationPending_ && customDesktopVisible_;
+    style &= ~(WS_POPUP | WS_VISIBLE);
+    style |= WS_CHILD | (showDesktop ? WS_VISIBLE : 0);
     SetWindowLongPtrW(hwnd_, GWL_STYLE, style);
 
     POINT origin{ virtualLeft_, virtualTop_ };
     ScreenToClient(host, &origin);
     SetWindowPos(hwnd_, HWND_TOP, origin.x, origin.y, virtualWidth_, virtualHeight_,
-        SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
-    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        SWP_FRAMECHANGED | SWP_NOACTIVATE |
+            (showDesktop ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     desktopBackdropCompositor_.Reattach(hwnd_);
     if (inputHwnd_ && IsWindow(inputHwnd_))
         AttachInputWindowToDesktopHost(host);
@@ -854,7 +861,10 @@ bool DesktopApp::CreateDesktopOverlayWindow()
  */
 void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
 {
-    if (exitRequested_)
+    // Bootstrap owns initial attachment; Shell COM calls can dispatch this
+    // callback while the main thread is intentionally detached from Explorer.
+    if (exitRequested_ || desktopStartupPresentationPending_ ||
+        graphicsDeviceRecovery_.Pending())
         return;
 
     // TaskbarCreated can be dispatched re-entrantly by a shell COM call made
@@ -933,7 +943,7 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
  */
 void DesktopApp::WatchDesktopHost()
 {
-    if (exitRequested_)
+    if (exitRequested_ || desktopStartupPresentationPending_)
         return;
 
     // Low-cost fallback for display-driver paths that do not broadcast the
@@ -1008,6 +1018,7 @@ void DesktopApp::RequestExit()
     shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
     StopUrlDropDownloadWorker();
+    StopWebsiteIconWorker();
     quickNavigationEverythingSearch_.Stop();
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();

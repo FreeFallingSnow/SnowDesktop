@@ -258,6 +258,8 @@ public:
     const InteractionAction* ContextMenuActionAt(
         float x, float y, bool componentScopeOnly,
         std::string* targetKey = nullptr) const noexcept;
+    const InteractionAction* FileDropActionAt(float x, float y,
+        std::string* targetKey = nullptr) const noexcept;
 
     std::vector<std::string> KeyboardFocusableKeys() const;
     const InteractionRegion* FindAccessKey(
@@ -300,4 +302,8 @@ bool IsWidgetMenuSelectionCurrent(
     std::string_view targetKey,
     std::uint64_t capturedRuntimeToken,
     std::uint64_t currentRuntimeToken) noexcept;
+
+bool IsWidgetFileDropTargetCurrent(const WidgetInteractionRegions& regions,
+    std::string_view targetKey, const InteractionAction& capturedAction,
+    std::uint64_t capturedRuntimeToken, std::uint64_t currentRuntimeToken) noexcept;
 }

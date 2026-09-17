@@ -18,6 +18,7 @@ public:
     {
         decltype(&SetWindowsHookExW) install = &SetWindowsHookExW;
         decltype(&UnhookWindowsHookEx) uninstall = &UnhookWindowsHookEx;
+        decltype(&MsgWaitForMultipleObjects) waitForInput = &MsgWaitForMultipleObjects;
     };
 
     LowLevelMouseHook() = default;
@@ -52,7 +53,12 @@ public:
                     return;
 
                 bool quit = false;
-                while (!quit && MsgWaitForMultipleObjects(
+                // A system/input wake can win over the stop event. Check stop
+                // before every outer wait as well as while draining messages,
+                // otherwise shutdown can keep re-entering the message branch.
+                while (!quit &&
+                    WaitForSingleObject(stopEvent_, 0) == WAIT_TIMEOUT &&
+                    api_.waitForInput(
                     1, &stopEvent_, FALSE, INFINITE, QS_ALLINPUT) ==
                         WAIT_OBJECT_0 + 1)
                 {

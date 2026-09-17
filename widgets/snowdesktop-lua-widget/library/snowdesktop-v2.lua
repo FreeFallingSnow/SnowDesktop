@@ -258,6 +258,7 @@
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read; require interaction.fileDrop.async for delayed Explorer files. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction Declarative nodes require view.pointer.events; host scrolling still proceeds.
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-node key press observation; requires view.keyboard.events and cannot cancel host behavior.
@@ -302,6 +303,7 @@
 ---@field pointerUp? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read; require interaction.fileDrop.async for delayed Explorer files. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-span key press observation; requires view.keyboard.events and cannot cancel host behavior.
@@ -541,6 +543,7 @@
 ---@field pointerMove? SnowInteractionAction
 ---@field click? SnowInteractionAction
 ---@field doubleClick? SnowInteractionAction
+---@field fileDrop? SnowInteractionAction Desktop file/folder drop zone; requires interaction.fileDrop and filesystem.userSelected.read; require interaction.fileDrop.async for delayed Explorer files. Receives action=fileDrop with items containing opaque read handles.
 ---@field wheel? SnowInteractionAction
 ---@field contextMenu? SnowInteractionAction
 ---@field keyDown? SnowInteractionAction Focused-region key press observation; requires interaction.keyboard and cannot cancel host behavior.
@@ -672,6 +675,7 @@
 ---@field settings? SnowWidgetSettings
 
 ---@class SnowWidgetEvent Lifecycle event. Raw pointer events are emitted only for immediate render surfaces; declarative views use explicit node pointer actions and host-owned visual state.
+---@field items? SnowFilesystemPickerTaskValue[] fileDrop selections: opaque read handles, basenames and kinds; no absolute paths.
 ---@field kind 'visibility'|'resize'|'pointer'|'timer'|'schedule'|'frame'|'action'|'selection'|'environment'|'settings.changed'|'panel'|'dialog'|'popover'|'data.change'|'task.complete'|'slot.changed'|'notification.delivered'|'notification.action'
 ---@field action? 'click'|'change'|'selectionChange'|'focus'|'blur'|'submit'|'doubleClick'|'pointerDown'|'pointerMove'|'pointerUp'|'wheel'|'keyDown'|'keyUp'|'opened'|'closed'|string
 ---@field id? string
@@ -732,9 +736,9 @@
 ---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
----@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
----@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
+---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
 ---@field notificationId? string Host-issued notification ID for notification.delivered.
 ---@field actionId? string Declared action ID for notification.action.
@@ -1200,6 +1204,7 @@ function widget.context() end
 ---@return SnowWidgetInfo
 function widget.info() end
 
+---Current surface palette: host popup theme in panel/dialog/popover, widget theme on desktop.
 ---@return SnowWidgetTheme
 function widget.theme() end
 
@@ -1303,6 +1308,7 @@ function animation.cancelFrame(id) end
 ---@field whenHidden? SnowDataHiddenPolicy
 
 ---@class SnowCalendarEventsSubscribeOptions: SnowDataSubscribeOptions
+---@field eventId? string Stable event ID, 1-128 bytes without NUL; requires data.calendar.events.byId, mutually exclusive with fromDate/toDate.
 ---@field fromDate? string YYYY-MM-DD; must be paired with toDate.
 ---@field toDate? string YYYY-MM-DD; range is limited to 366 days.
 
@@ -1535,7 +1541,7 @@ function animation.cancelFrame(id) end
 
 ---@class SnowCalendarEventsDataValue
 ---@field events SnowCalendarEventDataValue[] At most 512 entries.
----@field fromDate string Inclusive range start.
+---@field fromDate string Inclusive range start; empty for an eventId query.
 ---@field toDate string Inclusive range end.
 ---@field revision integer
 ---@field truncated boolean
@@ -1672,18 +1678,22 @@ function data.subscribe(topic, options) end
 
 ---@class SnowFilesystemPickOpenArguments
 ---@field extensions? string[] Up to 16 safe extension names without wildcards, for example {'png', 'jpg'}.
+---@field multiple? boolean Requires task.filesystem.picker.multiple. Defaults to false; at most 128 selections per dialog.
 
 ---@class SnowFilesystemPickSaveArguments: SnowFilesystemPickOpenArguments
 ---@field suggestedName? string File name only; absolute and relative paths are rejected.
+---@field multiple? nil Not accepted by pickSave.
 
 ---@class SnowFilesystemPickFolderArguments
 ---@field access? 'read'|'write'|'readWrite' Defaults to read and requires each corresponding declared permission.
+---@field multiple? boolean Requires task.filesystem.picker.multiple. Defaults to false; at most 128 selected folders.
 
 ---@class SnowFilesystemPickerTaskValue
 ---@field handle string Persistent opaque handle scoped to this widget instance and package; never a filesystem path.
 ---@field kind 'file'|'folder'
 ---@field access 'read'|'write'|'readWrite'
 ---@field name string Display-only selected item name.
+---@field items? SnowFilesystemPickerTaskValue[] Present with task.filesystem.picker.multiple; selected entries without nested items. Legacy fields describe the first selection.
 
 ---@class SnowFilesystemHandleArguments
 ---@field handle string Opaque handle returned by a filesystem picker or list task.
@@ -1691,6 +1701,16 @@ function data.subscribe(topic, options) end
 ---@class SnowFilesystemListArguments: SnowFilesystemHandleArguments
 ---@field offset? integer Entry offset from 0 through 10000; defaults to 0.
 ---@field limit? integer Entry count from 1 through 100; defaults to 50.
+---@field grantHandles? boolean Defaults to true. False requires task.filesystem.list.names and omits child handles without consuming persistent handle quota.
+
+---@class SnowFilesystemImageArguments: SnowFilesystemHandleArguments
+---@field name? string Direct child filename for a folder handle; omit for a file handle. No separators, traversal, alternate streams, or reparse points.
+---@field maxDimension? integer Longest output edge, 1 through 2048; default 2048. The aspect ratio is preserved without upscaling.
+
+---@class SnowFilesystemImageTaskValue: SnowFilesystemMetadata
+---@field image SnowImageResource Temporary instance-scoped handle for draw.image, draw.imageFit or view.image. Do not persist; reload if resource.status reports eviction.
+---@field width integer Decoded width after EXIF orientation and scaling.
+---@field height integer Decoded height after EXIF orientation and scaling.
 
 ---@class SnowFilesystemReadArguments: SnowFilesystemHandleArguments
 ---@field encoding? 'utf8'|'binary' Defaults to utf8; binary returns an exact byte string in data.
@@ -1709,7 +1729,7 @@ function data.subscribe(topic, options) end
 ---@alias SnowFilesystemWriteArguments SnowFilesystemTextWriteArguments|SnowFilesystemBinaryWriteArguments
 
 ---@class SnowFilesystemMetadata
----@field handle string Opaque instance-and-package-scoped handle.
+---@field handle? string Opaque instance-and-package-scoped handle; omitted for list with grantHandles=false.
 ---@field kind 'file'|'folder'
 ---@field name string Display-only item name; never a path.
 ---@field size? integer File byte count; absent for folders.
@@ -1876,6 +1896,7 @@ task = {}
 ---@overload fun(name: 'filesystem.pickFolder', arguments?: SnowFilesystemPickFolderArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.stat', arguments: SnowFilesystemHandleArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.list', arguments: SnowFilesystemListArguments): taskId: integer?, error: string?
+---@overload fun(name: 'filesystem.image', arguments: SnowFilesystemImageArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.read', arguments: SnowFilesystemReadArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.write', arguments: SnowFilesystemWriteArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'filesystem.release', arguments: SnowFilesystemHandleArguments): taskId: integer?, error: string?
@@ -1896,7 +1917,7 @@ task = {}
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error
@@ -2449,3 +2470,85 @@ function state.clear() end
 
 ---@type string
 widgetId = ''
+
+---@class SnowDatePickerOptions
+---@field key string Stable instance-local key, 1-80 bytes; create outside view callbacks.
+---@field mode? 'single'|'range' Defaults to single.
+---@field todayDate string Current local ISO YYYY-MM-DD date.
+---@field value? string|SnowDateRange Initial value; invalid date text remains an uncommitted draft.
+---@field minDate? string Inclusive ISO date; defaults to 0001-01-01.
+---@field maxDate? string Inclusive ISO date; defaults to 9999-12-31.
+---@field disabledDates? string[] At most 366 unavailable ISO dates. Ranges may not cross them.
+---@field firstDayOfWeek? integer 1=Sunday through 7=Saturday; defaults to Sunday.
+---@field allowClear? boolean Defaults to true; false makes an empty draft invalid.
+---@field needConfirm? boolean Defaults to true; false commits valid input and complete selections immediately.
+---@field disabled? boolean Disables all user actions.
+---@class SnowDateRange
+---@field startDate string
+---@field endDate string
+---@class SnowDatePickerResult
+---@field handled boolean
+---@field changed boolean True only for a valid committed selection.
+---@field value? string|SnowDateRange Detached committed value when changed=true.
+---@class SnowDatePicker
+---@field view fun(self: SnowDatePicker, options?: {rowHeight?: number}): SnowViewNode
+---@field handle fun(self: SnowDatePicker, event: SnowWidgetEvent): SnowDatePickerResult? Forward action events; nil means unrelated.
+---@field value fun(self: SnowDatePicker): string|SnowDateRange Last committed value.
+---@field draftValue fun(self: SnowDatePicker): string|SnowDateRange Current input including invalid drafts.
+---@field validation fun(self: SnowDatePicker): string? Localized draft error; nil when valid.
+---@field setValue fun(self: SnowDatePicker, value: string|SnowDateRange): boolean, string? Invalid values are rejected without changing state.
+---@param options SnowDatePickerOptions
+---@return SnowDatePicker
+function ui.datePicker(options) end
+
+---@class SnowDurationPickerOptions
+---@field key string Stable instance key, 1-80 bytes; create once in setup or panel-open event.
+---@field value? integer Initial total seconds; defaults to minSeconds and must be in range.
+---@field minSeconds? integer Inclusive minimum, 0..359999; defaults to 0.
+---@field maxSeconds? integer Inclusive maximum, minSeconds..359999; defaults to 359999 (99:59:59).
+---@field needConfirm? boolean Defaults to true; false commits each valid edit.
+---@field disabled? boolean Disables editing and user commits.
+---@field readOnly? boolean Keeps inputs focusable but prevents editing and user commits.
+---@class SnowDurationPickerResult
+---@field handled boolean True for owned actions; unrelated actions return nil.
+---@field changed boolean True only when a valid commit changes total seconds.
+---@field value? integer Valid committed total seconds; also returned on unchanged confirmation.
+---@class SnowDurationPicker
+---@field view fun(self: SnowDurationPicker, options?: {rowHeight?: number}): SnowViewNode Host-localized hour/minute/second inputs; rowHeight defaults to ui.metrics().layoutRowHeight.
+---@field handle fun(self: SnowDurationPicker, event: SnowWidgetEvent): SnowDurationPickerResult? Forward action events.
+---@field value fun(self: SnowDurationPicker): integer Last valid committed total seconds.
+---@field draftValue fun(self: SnowDurationPicker): integer? Draft total seconds; nil while an individual field is invalid. May be outside total bounds: check validation before use.
+---@field validation fun(self: SnowDurationPicker): string? Localized error; nil if draft is valid.
+---@field setValue fun(self: SnowDurationPicker, value: integer): boolean, string? Replace draft and committed seconds; invalid values leave both unchanged.
+---Requires ui.durationPicker and existing view.inputControls/view.theme.tokens/view.pointer.events capabilities.
+---Each field has decrement/increment buttons and wheel stepping (120 delta per step, partial deltas accumulated).
+---Three vertical rows: unit label, input, then spaced decrement/increment buttons. Allow 3.9 row units for fields plus footer/error content.
+---Steps clamp within each field without carrying; read-only/disabled states reject all user stepping.
+---Additive API v2; probe capability on older hosts, including early 1.0.6.0 builds.
+---@param options SnowDurationPickerOptions
+---@return SnowDurationPicker
+function ui.durationPicker(options) end
+
+---@class SnowTimeRange
+---@field startTime string HH:MM
+---@field endTime string HH:MM
+---@class SnowTimePickerOptions
+---@field key string
+---@field mode? 'single'|'range'
+---@field value? string|SnowTimeRange
+---@field minTime? string
+---@field maxTime? string
+---@field minuteStep? integer
+---@field allowClear? boolean
+---@field needConfirm? boolean
+---@field disabled? boolean
+---@class SnowTimePicker
+---@field view fun(self:SnowTimePicker, options?:{rowHeight?:number}):table
+---@field handle fun(self:SnowTimePicker, event:table):table|nil
+---@field value fun(self:SnowTimePicker):string|SnowTimeRange
+---@field draftValue fun(self:SnowTimePicker):string|SnowTimeRange
+---@field validation fun(self:SnowTimePicker):string|nil
+---@field setValue fun(self:SnowTimePicker, value:string|SnowTimeRange):boolean,string|nil
+---@param options SnowTimePickerOptions
+---@return SnowTimePicker
+function ui.timePicker(options) end

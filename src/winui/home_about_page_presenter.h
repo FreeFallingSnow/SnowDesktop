@@ -37,6 +37,7 @@ struct HomeAboutPageActions
     std::function<void(
         std::uint64_t generation,
         bool enabled)> setAnimationDiagnostics;
+    std::function<void(std::uint64_t generation, bool enabled)> setTemporaryInitialization;
     /** Makes the conditional Debug route visible; true permits navigation. */
     std::function<bool(std::uint64_t generation)> unlockDebug;
     /** The host confirms and clears the local Steam unlock state. */
@@ -73,8 +74,6 @@ public:
 
     void SetActions(HomeAboutPageActions actions);
 
-    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
-        HomeContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         AboutContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement

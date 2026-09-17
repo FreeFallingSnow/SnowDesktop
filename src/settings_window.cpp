@@ -152,8 +152,6 @@ void SettingsWindow::Shutdown() noexcept
 bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
 {
     auto canonical = snowdesktop::CanonicalizeSettingsRoute(route);
-    if (canonical.page == snowdesktop::SettingsPage::Home)
-        canonical.page = snowdesktop::SettingsPage::General;
     if (!impl_->EnsureInitialized()) return false;
     AllowSetForegroundWindow(impl_->process.ProcessId());
     try
@@ -166,6 +164,8 @@ bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
 }
 bool SettingsWindow::Show()
 { return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General)); }
+void SettingsWindow::CloseIfMinimized()
+{ impl_->Notify("ui.closeIfMinimized"); }
 bool SettingsWindow::ShowDockSettings()
 { return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, "dock.enable")); }
 bool SettingsWindow::ShowAppearanceSettings()

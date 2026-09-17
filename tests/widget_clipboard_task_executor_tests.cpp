@@ -114,6 +114,17 @@ void TestValidationResultsAndRateLimit()
         { .action = "clipboard.clear" });
     Check(!limited && limited.error == "rateLimited",
         "one widget must not churn the clipboard faster than the limit");
+    std::vector<snowdesktop::widget_runtime::
+        WidgetClipboardTaskCompletion> completions;
+    const auto collectUntil = [&](std::size_t count) {
+        return WaitUntil([&] {
+            auto batch = executor.DrainCompletions();
+            completions.insert(completions.end(), batch.begin(), batch.end());
+            return completions.size() >= count;
+        });
+    };
+    Check(collectUntil(1) && completions.size() == 1,
+        "the first completion must be consumed before the next batch starts");
     Check(static_cast<bool>(executor.Start(3, "widget-b",
             { .action = "clipboard.write", .format = "text",
                 .text = "new" })),
@@ -125,12 +136,7 @@ void TestValidationResultsAndRateLimit()
                     .format = "file-reference" })),
         "image and file-reference reads must enter the asynchronous worker");
 
-    std::vector<snowdesktop::widget_runtime::
-        WidgetClipboardTaskCompletion> completions;
-    Check(WaitUntil([&] {
-            completions = executor.DrainCompletions();
-            return completions.size() == 4;
-        }),
+    Check(collectUntil(4) && completions.size() == 4,
         "started clipboard tasks must complete asynchronously");
     Check(completions[0].id == 1 && completions[0].ok &&
             completions[0].format == "text" &&

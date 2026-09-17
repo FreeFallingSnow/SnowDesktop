@@ -2,6 +2,7 @@
 
 #include "settings_window_host.h"
 #include "../performance_trace.h"
+#include "../shell_launch_worker.h"
 
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -235,6 +236,18 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AnimationPerformance, "animation.onBattery",
         "settings.animation.onBattery", "settings.animation.onBattery.description"},
 
+    {SettingsPage::General, "start.explore", "start.title", "start.description"},
+    {SettingsPage::General, "start.collection", "start.collection.title", "start.collection.description"},
+    {SettingsPage::General, "start.move", "start.move.title", "start.move.description"},
+    {SettingsPage::General, "start.collectionGroup", "start.collectionGroup.title", "start.collectionGroup.description"},
+    {SettingsPage::General, "start.files", "start.files.title", "start.files.description"},
+    {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description"},
+    {SettingsPage::General, "start.fileGroup", "start.fileGroup.title", "start.fileGroup.description"},
+    {SettingsPage::General, "start.dockPin", "start.dockPin.title", "start.dockPin.description"},
+    {SettingsPage::General, "start.dockMapping", "start.dockMapping.title", "start.dockMapping.description"},
+    {SettingsPage::General, "start.dockCollection", "start.dockCollection.title", "start.dockCollection.description"},
+    {SettingsPage::General, "start.dockFiles", "start.dockFiles.title", "start.dockFiles.description"},
+    {SettingsPage::General, "start.luaWidget", "start.luaWidget.title", "start.luaWidget.description"},
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
         "settings.general.startup.description"},
@@ -286,6 +299,11 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.floatingShortcutMode.hotkey",
         "app.settings.hotkey",
         "settings.general.floatingDock.description"},
+    {SettingsPage::AppearanceTheme, "personalization.dockAppearance",
+        "guide.setting.dockAppearance.title", "guide.setting.dockAppearance"},
+    {SettingsPage::AppearanceWidgets, "personalization.luaWidgetRowHeight",
+        "app.settings.lua_widget_row_height", "settings.personalization.widgets.description"},
+    {SettingsPage::DesktopPages, "pages.rows", "settings.pages.rows", "settings.pages.grid.description"},
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
@@ -357,7 +375,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "desktop.categoryCounts",
         "app.settings.category_show_count",
         "settings.desktop.categoryLayout.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.spacing",
+    {SettingsPage::AppearanceWidgets, "desktop.spacing",
         "settings.desktop.spacing", "settings.desktop.spacing.description"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.iconSize",
         "settings.desktop.iconSize", "settings.desktop.iconSize.description"},
@@ -572,6 +590,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::BackupAndData, "backup.migration",
         "app.settings.migrate_all_data",
         "settings.backup.full.description"},
+    {SettingsPage::BackupAndData, "backup.clearData",
+        "settings.backup.clearData", "settings.backup.clearData.description"},
     {SettingsPage::About, "about.version", "settings.about.version",
         "settings.about.version.description"},
     {SettingsPage::About, "about.profile", "app.settings.personal_homepages",
@@ -610,6 +630,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.developer.tools.description"},
     {SettingsPage::Debug, "debug.demo_mode", "app.settings.demo_mode",
         "app.settings.demo_mode_hint"},
+    {SettingsPage::Debug, "debug.initialization", "settings.debug.initialization",
+        "settings.debug.initialization.description"},
     {SettingsPage::Debug, "debug.animation",
         "app.settings.animation_diagnostics",
         "app.settings.animation_diagnostics_desc"},
@@ -787,7 +809,7 @@ struct SettingsWindowHost::Impl
     std::optional<SIZE_T> settingsSessionWorkingSetBaseline;
     ULONGLONG lastWorkingSetTrimTick = 0;
     /** Legacy five-click About unlock; retained for this host lifetime. */
-    bool debugUnlocked = false;
+    DebugPageSession debugSession;
     bool systemBackdropUpdateQueued = false;
     bool integratedTitleBarInsetsUpdateQueued = false;
     bool externalStateRefreshQueued = false;
@@ -805,10 +827,11 @@ struct SettingsWindowHost::Impl
             IsWindowVisible(window) != FALSE;
     }
 
-    [[nodiscard]] bool DebugPageVisible() const
+    [[nodiscard]] bool DebugPageVisible()
     {
-        return debugUnlocked ||
-            (options.debugVisible && options.debugVisible());
+        // Reopening settings during an experiment also unlocks this settings
+        // session. Turning the experiment off must not remove its own page.
+        return debugSession.Visible(options.debugVisible && options.debugVisible());
     }
 
     std::wstring L(std::string_view key) const
@@ -1171,7 +1194,7 @@ struct SettingsWindowHost::Impl
         shell->ShowConfirmation(std::move(request), std::move(completed));
     }
 
-    SettingsSearchIndexInput BuildSearchInput() const
+    SettingsSearchIndexInput BuildSearchInput()
     {
         SettingsSearchIndexInput input;
         if (options.searchInput)
@@ -1261,6 +1284,7 @@ struct SettingsWindowHost::Impl
         return input;
     }
 
+
     void RebuildSearchIndex()
     {
         if (!shell)
@@ -1346,9 +1370,10 @@ struct SettingsWindowHost::Impl
         {
             HomeAboutStatusPatch patch = options.homeAboutStatus(
                 snapshot->generation, snapshot->revision);
-            patch.generation = snapshot->generation;
-            patch.revision = snapshot->revision;
+            // Preserve the host's status sequence; it also orders direct
+            // publications while the controller snapshot is unchanged.
             (void)shell->ApplyHomeAboutStatusPatch(patch);
+
         }
     }
 
@@ -1416,6 +1441,8 @@ struct SettingsWindowHost::Impl
             return L("app.settings.delete_full_backup_confirm");
         case BackupDataConfirmationKind::MigrateData:
             return L("app.settings.migrate_data_confirm");
+        case BackupDataConfirmationKind::ClearLayout:
+            return L("settings.backup.clearData.confirm");
         }
         return {};
     }
@@ -1430,6 +1457,8 @@ struct SettingsWindowHost::Impl
             return L("app.settings.layout_backups");
         case BackupDataConfirmationKind::MigrateData:
             return L("app.settings.data_migration");
+        case BackupDataConfirmationKind::ClearLayout:
+            return L("settings.backup.clearData");
         default:
             return L("app.settings.full_data_backups");
         }
@@ -1468,6 +1497,34 @@ struct SettingsWindowHost::Impl
             updateAvailable = false;
         }
         shell->SetAgentSkillUpdateAvailable(updateAvailable);
+    }
+
+    bool SetWidgetDeveloperToolsEnabled(std::uint64_t generation, bool enabled)
+    {
+            EditGeneral(
+                generation, SettingsUpdateMode::PreviewAndCommit,
+                [enabled](GeneralSettings& settings) {
+                    settings.widgetDeveloperToolsEnabled = enabled;
+                });
+            const auto snapshot = controller->Snapshot();
+            const bool applied = snapshot &&
+                snapshot->generation == generation &&
+                snapshot->values.general.widgetDeveloperToolsEnabled ==
+                    enabled;
+            if (applied)
+            {
+                // Publish the new toggle state back to the cached Widgets
+                // presenter before another click can derive its next value.
+                // Without this refresh, disabling and then re-enabling from
+                // the same page keeps using the stale pre-click snapshot.
+                if (widgetsPageBackend)
+                    (void)widgetsPageBackend->Refresh();
+                // Keep the conditional NavigationView item and its search
+                // entries in sync before the presenter optionally navigates
+                // to Developer Tools on this same click.
+                RebuildSearchIndex();
+            }
+            return applied;
     }
 
     void ConfigureWidgetsPageBackend()
@@ -1587,30 +1644,7 @@ struct SettingsWindowHost::Impl
             {
                 return false;
             }
-            state->owner->EditGeneral(
-                generation, SettingsUpdateMode::PreviewAndCommit,
-                [enabled](GeneralSettings& settings) {
-                    settings.widgetDeveloperToolsEnabled = enabled;
-                });
-            const auto snapshot = state->owner->controller->Snapshot();
-            const bool applied = snapshot &&
-                snapshot->generation == generation &&
-                snapshot->values.general.widgetDeveloperToolsEnabled ==
-                    enabled;
-            if (applied)
-            {
-                // Publish the new toggle state back to the cached Widgets
-                // presenter before another click can derive its next value.
-                // Without this refresh, disabling and then re-enabling from
-                // the same page keeps using the stale pre-click snapshot.
-                if (state->owner->widgetsPageBackend)
-                    (void)state->owner->widgetsPageBackend->Refresh();
-                // Keep the conditional NavigationView item and its search
-                // entries in sync before the presenter optionally navigates
-                // to Developer Tools on this same click.
-                state->owner->RebuildSearchIndex();
-            }
-            return applied;
+            return state->owner->SetWidgetDeveloperToolsEnabled(generation, enabled);
         };
         actions.reloadWidgetInstance = [weak](
                                            std::uint64_t generation,
@@ -1674,6 +1708,16 @@ struct SettingsWindowHost::Impl
             return;
         const std::weak_ptr<CallbackState> weak = callbacks;
         auto configured = options.backupDataPage;
+        if (!configured.openPath)
+        {
+            configured.openPath = [this](HWND owner, const std::filesystem::path& path) {
+                // This same-executable helper is also available in the
+                // independent settings process. Success means dispatched.
+                return snowdesktop::ShellLaunchWorker::ExecuteInteractive(owner, path.wstring(), nullptr)
+                    ? SettingsActionResult::Success()
+                    : SettingsActionResult::Failure(L("settings.backup.error.openLocation"));
+            };
+        }
         configured.ownerWindow = [weak]() -> HWND {
             const auto state = weak.lock();
             return state && state->alive.load() && state->owner
@@ -1713,7 +1757,10 @@ struct SettingsWindowHost::Impl
             state->owner->ShowGenerationConfirmation(snapshot->generation,
                 state->owner->BackupConfirmationTitle(request.kind),
                 state->owner->BackupConfirmationMessage(request.kind),
-                std::move(completed));
+                std::move(completed), true,
+                request.kind == BackupDataConfirmationKind::ClearLayout
+                    ? state->owner->L("settings.backup.clearData.action")
+                    : std::wstring{});
         };
         configured.pickPath = [weak](HWND owner,
                                   BackupDataPickerRequest request,
@@ -1994,6 +2041,89 @@ struct SettingsWindowHost::Impl
                             "settings.about.link.openFailed")));
             }
         };
+        general.onboarding.begin = [weak](std::uint64_t generation,
+            usage_guide::Topic topic) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            const auto* lesson = usage_guide::Find(topic);
+            if (!lesson) return;
+            auto& owner = *state->owner;
+            if (topic == usage_guide::Topic::Workshop)
+            {
+                if (!owner.options.widgetsPage.workshopAvailable ||
+                    !owner.options.widgetsPage.workshopAvailable() || !owner.options.widgetsPage.openWorkshop)
+                {
+                    owner.ShowActionError(SettingsActionResult::Failure(owner.L("app.settings.widgets_error_workshop_unavailable")));
+                    return;
+                }
+                try
+                {
+                    const auto result = owner.options.widgetsPage.openWorkshop("steam-workshop");
+                    if (state->alive.load() && state->owner && !result.succeeded)
+                        state->owner->ShowActionError(SettingsActionResult::Failure(result.message));
+                }
+                catch (...)
+                {
+                    if (state->alive.load() && state->owner)
+                        state->owner->ShowActionError(SettingsActionResult::Failure(
+                            state->owner->L("settings.widgets.workshop.openFailed")));
+                }
+                return;
+            }
+            if (topic == usage_guide::Topic::Develop)
+            {
+                if (owner.SetWidgetDeveloperToolsEnabled(generation, true))
+                    owner.RequestRoute(usage_guide::SettingsDestination(*lesson));
+                return;
+            }
+            if (!lesson->practice)
+            {
+                state->owner->RequestRoute(usage_guide::SettingsDestination(*lesson));
+                return;
+            }
+            const std::string_view key = lesson->key;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::StartUsageGuidePractice;
+            request.value = std::wstring(key.begin(), key.end());
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
+            state->owner->ShowActionError(result);
+            // Keep the session and its presenters alive. Only the child may
+            // minimize after the parent's synchronous start RPC has returned.
+            if (result.Succeeded())
+            {
+                ShowWindow(state->owner->window, SW_MINIMIZE);
+            }
+        };
+        general.onboarding.expandedChanged = [weak](std::uint64_t generation, bool expanded) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::SetUsageGuideExpanded;
+            request.boolValue = expanded;
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
+            state->owner->ShowActionError(result);
+        };
+        general.onboarding.navigate = [weak](const SettingsRoute& route) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->RequestRoute(route);
+        };
+        general.onboarding.settingsIndex = [weak]() {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+            {
+                auto entries = state->owner->BuildSearchInput().staticSettings;
+                const auto& widgets = state->owner->options.widgetsPage;
+                const bool workshop = widgets.workshopAvailable && widgets.workshopAvailable() && widgets.openWorkshop;
+                for (auto& entry : entries)
+                    if (entry.focusId == "widgets.workshop") entry.visible = entry.visible && workshop;
+                return entries;
+            }
+            return std::vector<StaticSettingSearchDescriptor>{};
+        };
         shell->SetGeneralPageActions(std::move(general));
 
         PageLayoutPageActions pageLayout = options.pageLayoutPage;
@@ -2267,6 +2397,19 @@ struct SettingsWindowHost::Impl
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
         };
+        homeAbout.setTemporaryInitialization = [weak](std::uint64_t generation, bool enabled) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller || !state->owner->DebugPageVisible() ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            SettingsHostActions::Request request;
+            request.action = SettingsHostActions::Action::SetTemporaryGridInitialization;
+            request.boolValue = enabled;
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
+            state->owner->ShowActionError(result);
+            if (state->owner->shell) state->owner->shell->RefreshRuntimeState();
+        };
         homeAbout.unlockDebug = [weak](std::uint64_t generation) {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner ||
@@ -2275,7 +2418,7 @@ struct SettingsWindowHost::Impl
             {
                 return false;
             }
-            state->owner->debugUnlocked = true;
+            state->owner->debugSession.Unlock();
             state->owner->RebuildSearchIndex();
             return state->owner->DebugPageVisible();
         };
@@ -3549,10 +3692,11 @@ void SettingsWindowHost::ApplyLanguageChange(bool widgetRuntimeReloaded)
 bool SettingsWindowHost::PublishHomeAboutStatus(
     HomeAboutStatusPatch patch)
 {
-    return impl_->initialized && impl_->OnOwnerThread() && impl_->shell &&
+    const bool applied = impl_->initialized && impl_->OnOwnerThread() && impl_->shell &&
         impl_->controller &&
         impl_->controller->IsGenerationCurrent(patch.generation) &&
         impl_->shell->ApplyHomeAboutStatusPatch(patch);
+    return applied;
 }
 
 bool SettingsWindowHost::PreTranslateMessage(MSG* message) noexcept

@@ -246,6 +246,11 @@ void TestRoutes()
     Check(leafKeysAreUnique,
         "every appended settings leaf is valid and has a unique stable page key");
 
+    const auto route = snowdesktop::CanonicalizeSettingsRoute(
+        snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Home, "start.explore"));
+    Check(route.page == snowdesktop::SettingsPage::General && route.focusId == "start.explore",
+        "legacy Home route targets General without changing guide eligibility");
+
     const SettingsRoute legacyAppearance = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization));
     const SettingsRoute legacyTheme = CanonicalizeSettingsRoute(
@@ -288,6 +293,14 @@ void TestRoutes()
     const SettingsRoute legacyCategoryLayout = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::DesktopCategories, "desktop.categoryLayout"));
+    for (const auto page : {SettingsPage::Desktop, SettingsPage::AppearanceDesktopIcons,
+             SettingsPage::AppearanceWidgets})
+        for (const auto focus : {"desktop.spacing", "desktop.iconSpacing"})
+        {
+            const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(page, focus));
+            Check(spacing.page == SettingsPage::AppearanceWidgets && spacing.focusId == focus,
+                "layout spacing links reach Widgets & layout while retaining their focus target");
+        }
     const SettingsRoute desktopBehavior = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Desktop));
     const SettingsRoute pageNavigation = CanonicalizeSettingsRoute(

@@ -3,6 +3,7 @@
 #include "../ole_drag_rules.h"
 #include "../drag_input_rules.h"
 #include "../virtual_file_drop.h"
+#include "../external_drop_content.h"
 #include "../widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
@@ -192,6 +193,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
 {
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
+    externalLuaFileDropAvailable_ = false;
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -214,7 +216,9 @@ HRESULT DesktopApp::HandleOleDragEnter(
         UpdateCollectionPopupDwell(client);
         CancelCollectionGroupTabDwell();
         HideDragHintWindow();
-        *effect = DROPEFFECT_NONE;
+        *effect = HitTestLuaFileDropTarget(client) < widgets_.size() &&
+            !dragSession_.SourceList().FilePaths().empty() && (*effect & DROPEFFECT_COPY)
+            ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         PresentOleDragInteractionFrame();
         return S_OK;
     }
@@ -222,11 +226,10 @@ HRESULT DesktopApp::HandleOleDragEnter(
     ExternalDragSummary externalSummary;
     if (dataObject)
     {
-        const bool delayedFileDrop = snowdesktop::virtual_file_drop::
-            UsesAsyncMode(dataObject);
-        const std::vector<std::wstring> paths = delayedFileDrop
-            ? std::vector<std::wstring>{}
-            : GetDropPaths(dataObject);
+        const auto fileSource = snowdesktop::external_drop_content::ProbeFileSource(dataObject);
+        const bool delayedFileDrop = fileSource.asynchronous;
+        const auto& paths = fileSource.paths;
+        externalLuaFileDropAvailable_ = fileSource.available;
         const auto virtualFiles = delayedFileDrop
             ? std::vector<snowdesktop::virtual_file_drop::
                 VirtualFileDescriptor>{}
@@ -291,6 +294,16 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     }
     UpdateCollectionPopupDwell(client);
+
+    if (HitTestLuaFileDropTarget(client) < widgets_.size())
+    {
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+        *effect = externalLuaFileDropAvailable_ && (*effect & DROPEFFECT_COPY)
+            ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        HideDragHintWindow();
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
 
     // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;
@@ -380,7 +393,9 @@ HRESULT DesktopApp::HandleOleDragOver(
         }
         UpdateCollectionPopupDwell(client);
         HideDragHintWindow();
-        *effect = DROPEFFECT_NONE;
+        *effect = HitTestLuaFileDropTarget(client) < widgets_.size() &&
+            !dragSession_.SourceList().FilePaths().empty() && (*effect & DROPEFFECT_COPY)
+            ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         return S_OK;
     }
 
@@ -401,6 +416,16 @@ HRESULT DesktopApp::HandleOleDragOver(
         return S_OK;
     }
     UpdateCollectionPopupDwell(client);
+
+    if (HitTestLuaFileDropTarget(client) < widgets_.size())
+    {
+        dragSession_.UpdateTarget(nullptr, nullptr, HitRegion::None);
+        *effect = externalLuaFileDropAvailable_ && (*effect & DROPEFFECT_COPY)
+            ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        HideDragHintWindow();
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
 
     // OO hit-test for external drop：优先检查集合弹窗
     Container* targetContainer = nullptr;
@@ -525,6 +550,41 @@ HRESULT DesktopApp::HandleOleDrop(
     navAutoFlipTick_ = 0;
 
     POINT clientPoint = ScreenPointToClient(point);
+    if (HitTestLuaFileDropTarget(clientPoint) < widgets_.size())
+    {
+        const bool self = dragDropController_.IsSelfDragActive();
+        DWORD acceptedEffect = DROPEFFECT_NONE;
+        if (*effect & DROPEFFECT_COPY)
+        {
+            if (self)
+                acceptedEffect = DeliverLuaFileDrop(clientPoint,
+                    dragSession_.SourceList().FilePaths()) ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+            else
+            {
+                const auto fileSource = snowdesktop::external_drop_content::ProbeFileSource(dataObject);
+                const auto index = HitTestLuaFileDropTarget(clientPoint);
+                if (fileSource.available && index < widgets_.size())
+                {
+                    const RECT frame = GetStandaloneWidgetFrameRect(widgets_[index]);
+                    ExternalSlotDestination destination;
+                    destination.preview.action = DropAction::Copy;
+                    destination.fileDropTarget = widgetEngine_->CaptureFileDropTarget(
+                        widgets_[index].id, clientPoint.x - frame.left, clientPoint.y - frame.top);
+                    if (destination.fileDropTarget)
+                        acceptedEffect = DropExternalSlotContent(dataObject, destination,
+                            *effect, fileSource.asynchronous, fileSource.paths);
+                }
+            }
+        }
+        if (self) dragDropController_.MarkSelfDragReturned();
+        else dragDropController_.EndExternalDrag();
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        ReleaseCapturePreservingPointerState();
+        EndDragSession();
+        *effect = acceptedEffect;
+        return S_OK;
+    }
     ResolveCurrentDragTargetAt(clientPoint);
 
     if (dragSession_.TargetRegion() == HitRegion::Blocked)
@@ -617,7 +677,7 @@ HRESULT DesktopApp::HandleOleDrop(
             Item* targetItem = dragSession_.TargetSlot() ? dragSession_.TargetSlot()->GetItem() : nullptr;
             if (auto* dockTarget = dynamic_cast<DockEntryItem*>(targetItem))
             {
-                if (dockTarget->GetEntryType() == DockEntryType::Collection)
+                if (IsLogicalDockEntryType(dockTarget->GetEntryType()))
                 {
                     const bool executed = DropItemsIntoDockCollection(
                         dragSession_.Items(), dragSession_.Source(), dockTarget,
@@ -917,6 +977,17 @@ HRESULT DesktopApp::HandleOleDrop(
         dropPaths = localFileUrlPaths;
         forceCopyDrop = true;
         *effect = DROPEFFECT_COPY;
+    }
+
+    if (auto destination = CaptureExternalSlotDestination(clientPoint, keyState))
+    {
+        if (forceCopyDrop && !destination->preview.pinMaterializedItemsToDock)
+            destination->preview.action = DropAction::Copy;
+        *effect = DropExternalSlotContent(dataObject, *destination, *effect,
+            sourceUsesAsyncMode, dropPaths);
+        EndDragSession();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return S_OK;
     }
 
     if (dragSession_.TargetRegion() == HitRegion::Handoff && dataObject)
@@ -2016,10 +2087,14 @@ HRESULT DesktopApp::HandleOleDrop(
         dropPaths = localFileUrlPaths;
         if (dropPaths.empty())
         {
-            (void)adoptStagedDropPaths(
-                TryGetNonFileDropPaths(
-                    dataObject,
-                    dropReferenceSnapshot));
+            snowdesktop::external_drop_content::Readers readers;
+            readers.image = [&] { return TryExtractImageFromDataObject(dataObject); };
+            readers.dataUrl = [&] { return TryExtractDataUrlFromDataObject(dropReferenceSnapshot); };
+            readers.shortcut = [&] { return TryExtractUrlFromDataObject(dropReferenceSnapshot); };
+            readers.text = [&] { return TryExtractTextFromDataObject(dropReferenceSnapshot); };
+            auto content = snowdesktop::external_drop_content::Read(
+                sourceUsesAsyncMode, true, readers);
+            (void)adoptStagedDropPaths(std::move(content.paths));
         }
         if (!dropPaths.empty())
         {

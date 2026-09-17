@@ -114,6 +114,11 @@ void DesktopApp::LayoutItems()
  */
 void DesktopApp::RebuildContainersAndItems()
 {
+    // Cover direct rebuild callers as well as LayoutItems. A nested paint must
+    // not publish the temporary single-member group while its caller unwinds.
+    if (std::any_of(widgets_.begin(), widgets_.end(),
+            snowdesktop::widget_pair_drop::ShouldDissolve))
+        widgetGroupTransition_.Request();
     demoCollectionIdentityCache_.clear();
     const bool wasDragging = dragSession_.IsActive();
     if (wasDragging)

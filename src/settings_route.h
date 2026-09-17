@@ -51,6 +51,8 @@ struct SettingsRoute
     std::wstring widgetInstanceId;
     std::string focusId;
     std::wstring itemKey;
+    // Session-only return destination for settings opened from the usage guide.
+    std::string guideTopic;
 
     [[nodiscard]] static SettingsRoute ForPage(
         SettingsPage page,

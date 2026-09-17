@@ -580,7 +580,7 @@ void TestRepresentativeApplicability()
 void TestEventContract()
 {
     const auto events = ViewEventContracts();
-    Check(events.size() == 17,
+    Check(events.size() == 18 && IsKnownViewEvent("fileDrop"),
         "the event matrix must enumerate the complete public event vocabulary");
     std::set<std::string> names;
     for (const auto& event : events)
@@ -690,7 +690,7 @@ void TestMachineReadableContract()
     Check(nodes && nodes->IsArray() && nodes->array.size() == 44 &&
             properties && properties->IsArray() &&
             properties->array.size() == 146 &&
-            events && events->IsArray() && events->array.size() == 17,
+            events && events->IsArray() && events->array.size() == ViewEventContracts().size(),
         "the JSON contract must expose the complete public catalogs");
 
     const auto findNamed = [](const JsonValue& array,

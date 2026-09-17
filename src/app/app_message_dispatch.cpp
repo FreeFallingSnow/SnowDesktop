@@ -2,6 +2,7 @@
 #include "shell_change_notification.h"
 #include "../desktop_keyboard_rules.h"
 #include "../drag_input_rules.h"
+#include "../performance_trace.h"
 
 #include <imm.h>
 #include <shldisp.h>
@@ -114,6 +115,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (GetCursorPos(&point))
         {
             ScreenToClient(hwnd_, &point);
+            if (IsPointInUsageGuide(point)) return MA_NOACTIVATE;
             if (DockContainer* dock = GetDockContainerAtPoint(point))
             {
                 if (dock->ContainsInteractivePoint(point))
@@ -130,6 +132,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return TRUE;
         }
         if (LOWORD(lp) != HTCLIENT) break;
+        POINT guidePoint{};
+        if (GetCursorPos(&guidePoint) && ScreenToClient(hwnd_, &guidePoint) && IsPointInUsageGuide(guidePoint))
+        {
+            SetCursor(LoadCursorW(nullptr, (PtInRect(&usageGuidePauseRect_, guidePoint) ||
+                PtInRect(&usageGuideSettingsRect_, guidePoint) ||
+                PtInRect(&usageGuideOpenSettingsRect_, guidePoint)) ? IDC_ARROW : IDC_SIZEALL));
+            return TRUE;
+        }
         POINT handlePoint{};
         if (GetCursorPos(&handlePoint) && ScreenToClient(hwnd_, &handlePoint) && UpdateWidgetHandleCursor(handlePoint)) return TRUE;
         if (CanEditLargeIcons() && !HasActiveContextMenuSession())
@@ -271,24 +281,16 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 1;
     case WM_SIZE:
     {
-        if (updatingDisplayTopology_)
-        {
-            virtualWidth_ = LOWORD(lp);
-            virtualHeight_ = HIWORD(lp);
+        if (updatingDisplayTopology_ || wp == SIZE_MINIMIZED ||
+            LOWORD(lp) == 0 || HIWORD(lp) == 0)
             return 0;
-        }
-        bool wasDragging = dragSession_.IsActive();
-        virtualWidth_ = LOWORD(lp);
-        virtualHeight_ = HIWORD(lp);
+
+        // WM_SIZE describes the HWND client area, not the virtual desktop.
+        // Explorer can resize its child before monitor/window geometry agrees.
+        // Let the topology path synchronize the window and rebuild page grids.
         ResetDesktopWidgetComposition();
         dcompSurface_.Reset();
-        UpdateLayoutWorkArea();
-        LayoutItems();
-        if (wasDragging && !dragSession_.IsActive())
-        {
-            mouseDownHit_ = nullptr;
-            mouseDown_ = false;
-        }
+        ScheduleDisplayTopologyRefresh();
         InvalidateRect(hwnd_, nullptr, TRUE);
         return 0;
     }
@@ -309,12 +311,17 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
             return 0;
+        if (IsPointInUsageGuide(pt)) return 0;
         OnMiddleButtonDown(wp, lp);
         return 0;
     }
     case WM_MOUSEMOVE:
     {
+        snowdesktop::performance::Scope pointerScope("desktop.input", "mouse.move");
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        // The guide owns its captured gesture, including moves outside its
+        // bounds. Handle it before passive-hover filtering can discard them.
+        if (HandleUsageGuidePointerMove(pt)) return 0;
         const bool nativeDragActive =
             snowdesktop::drag_input_rules::IsNativeDragActive(
                 dragSession_.IsActive(),
@@ -391,6 +398,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                 pointerOnContentWindow,
                                 pointerOnPairedBackdropWindow))
                     {
+                        snowdesktop::performance::Value("desktop.input", "hover.rejected", {}, 1);
                         if (lastMousePoint_.x != LONG_MIN ||
                             lastMousePoint_.y != LONG_MIN)
                         {
@@ -537,6 +545,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEWHEEL:
     {
         POINT wheelPt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        POINT guidePt = wheelPt; ScreenToClient(hwnd_, &guidePt);
+        if (IsPointInUsageGuide(guidePt)) { ScrollUsageGuide(GET_WHEEL_DELTA_WPARAM(wp)); return 0; }
         if (desktopIconsHidden_)
         {
             ScreenToClient(hwnd_, &wheelPt);
@@ -548,11 +558,14 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
+        if (IsPointInUsageGuide({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return 0;
         OnRightButtonDown(nullptr);
         return 0;
     case WM_RBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (IsPointInUsageGuide(pt))
+        return 0;
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
             ShowHiddenHint();
@@ -564,6 +577,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDBLCLK:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (HandleUsageGuidePointerDown(pt)) return 0;
         const auto clearSelectionAfterAcceptedOpen =
             [this](bool accepted) {
                 if (!accepted)
@@ -620,6 +634,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockItem->GetEntryIndex();
                     bool specialDoubleClickHandled = false;
                     if (entryIndex < dockEntries_.size() &&
+                        !IsLogicalDockEntryType(dockEntries_[entryIndex].type) &&
                         IsFolderDockEntry(
                             dockEntries_[entryIndex]) &&
                         dockPendingDoubleClickEntry_ ==
@@ -780,7 +795,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         clipped.bottom,
                         content.bottom);
                     if (clipped.bottom <= clipped.top ||
-                        !PtInRect(&clipped, pt))
+                        !HitTestCollectionPopupItem(popup, i, pt))
                         continue;
                     const std::wstring path =
                         dockFolderPopupWidget_.
@@ -807,7 +822,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     RECT clipped = itemRect;
                     clipped.top = std::max(clipped.top, content.top);
                     clipped.bottom = std::min(clipped.bottom, content.bottom);
-                    if (clipped.bottom <= clipped.top || !PtInRect(&clipped, pt)) continue;
+                    if (clipped.bottom <= clipped.top || !HitTestCollectionPopupItem(popup, i, pt)) continue;
                     size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
                     if (itemIndex != static_cast<size_t>(-1))
                     {
@@ -931,6 +946,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_SYSKEYDOWN:
     {
+        if (wp == VK_RETURN && OnKeyDown(wp,
+                (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0))
+            return 0;
         using snowdesktop::desktop_keyboard_rules::AltF4Action;
         const AltF4Action altF4Action =
             snowdesktop::desktop_keyboard_rules::ResolveAltF4Action(
@@ -1014,6 +1032,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (usageGuidePressedButton_ &&
+            (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
+        {
+            usageGuidePressedButton_ = 0;
+            usageGuidePlacement_.EndDrag();
+            if (msg == WM_CANCELMODE && GetCapture() == hwnd_) ReleaseCapture();
+        }
         if (largeIconGesture_ && (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
             CancelLargeIconGesture();
         ForgetLuaWidgetPanelCapture(hwnd);
@@ -1110,6 +1135,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (widgetEngine_)
             widgetEngine_->OnAudioAnalysisWake();
         return 0;
+    case kWidgetTaskWakeMessage:
+        if (widgetEngine_)
+            widgetEngine_->OnTaskWake();
+        return 0;
     case kQuickNavigationAppsIndexedMessage:
         OnQuickNavigationAppsIndexed(wp, lp);
         return 0;
@@ -1128,6 +1157,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
+        return 0;
+    case kWebsiteIconReadyMessage:
+        OnWebsiteIconReady();
         return 0;
     case kUrlDropDownloadCompletedMessage:
         OnUrlDropDownloadCompleted(lp);

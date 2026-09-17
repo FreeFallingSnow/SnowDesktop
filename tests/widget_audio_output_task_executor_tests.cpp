@@ -73,6 +73,17 @@ void TestValidationCompletionAndRateLimit()
         { .action = "audio.output.setMute", .muted = true });
     Check(!limited && limited.error == "rateLimited",
         "one widget must not issue audio changes faster than the limit");
+    std::vector<snowdesktop::widget_runtime::
+        WidgetAudioOutputTaskCompletion> completions;
+    const auto collectUntil = [&](std::size_t count) {
+        return WaitUntil([&] {
+            auto batch = executor.DrainCompletions();
+            completions.insert(completions.end(), batch.begin(), batch.end());
+            return completions.size() >= count;
+        });
+    };
+    Check(collectUntil(1) && completions.size() == 1,
+        "the first completion must be consumed before the next batch starts");
     Check(static_cast<bool>(executor.Start(3, "widget-b",
             { .action = "audio.output.setMute", .muted = false })),
         "rate limiting must be isolated by widget instance");
@@ -81,12 +92,7 @@ void TestValidationCompletionAndRateLimit()
             { .action = "audio.output.setMute", .muted = false })),
         "the same widget may act after the minimum interval");
 
-    std::vector<snowdesktop::widget_runtime::
-        WidgetAudioOutputTaskCompletion> completions;
-    Check(WaitUntil([&] {
-            completions = executor.DrainCompletions();
-            return completions.size() == 3;
-        }),
+    Check(collectUntil(3) && completions.size() == 3,
         "started audio actions must complete asynchronously");
     Check(completions[0].id == 1 && completions[0].accepted &&
             completions[1].id == 3 && !completions[1].accepted &&

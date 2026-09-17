@@ -1,10 +1,13 @@
+#include "graphics_device_recovery.h"
 #include "widget_composition_layer_rules.h"
 #include "widget_surface_retention.h"
+#include "test_source_boundary.h"
 
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <string>
 
@@ -30,6 +33,35 @@ std::string ReadFile(const std::filesystem::path& path)
 
 int main(int argc, char** argv)
 {
+    // Issue #11: device loss must escape surface-only retries, including when
+    // an inner renderer masks the HRESULT. Ordinary surface errors stay local.
+    using Recovery = snowdesktop::GraphicsDeviceRecovery;
+    Check(Recovery::IsDeviceFailure(DXGI_ERROR_DEVICE_REMOVED, S_OK),
+        "a removed device must trigger whole-device recovery");
+    Check(Recovery::IsDeviceFailure(E_FAIL, DXGI_ERROR_DEVICE_RESET),
+        "generic render errors must consult the device removal reason");
+    Check(Recovery::IsDeviceFailure(DXGI_ERROR_DEVICE_HUNG, S_OK) &&
+        Recovery::IsDeviceFailure(DXGI_ERROR_DRIVER_INTERNAL_ERROR, S_OK),
+        "hung devices and internal driver errors require device recovery");
+    Check(!Recovery::IsDeviceFailure(E_FAIL, S_OK) &&
+        !Recovery::IsDeviceFailure(E_OUTOFMEMORY, S_OK) &&
+        !Recovery::IsDeviceFailure(S_OK, S_OK),
+        "healthy devices must not be rebuilt for unrelated surface failures");
+    Recovery recovery;
+    Check(!recovery.Ready(100, false), "healthy startup has no pending recovery");
+    Check(recovery.Request() && recovery.Pending(), "first failure queues recovery");
+    Check(!recovery.Request(), "sibling failures must coalesce into one recovery");
+    Check(!recovery.Ready(100, true), "active draws must retain their original devices");
+    Check(recovery.Ready(100, false), "unwound draws allow the first recovery attempt");
+    recovery.Complete(100, false);
+    Check(!recovery.Request() && !recovery.Ready(2099, false),
+        "repeated failures cannot bypass the retry delay");
+    Check(recovery.Ready(2100, false), "failed initialization must retry at the deadline");
+    recovery.Complete(2100, true);
+    Check(!recovery.Pending() && !recovery.Ready(2100, false),
+        "successful recovery must reopen rendering without redundant rebuilds");
+    Check(recovery.Request() && recovery.Ready(2101, false),
+        "a later independent device loss must recover again");
     namespace retention = snowdesktop::widget_surface_retention;
     constexpr std::uint64_t mib = 1024 * 1024;
     std::vector<retention::Candidate> surfaces{
@@ -101,6 +133,37 @@ int main(int argc, char** argv)
                 CompositionHost::Desktop,
                 CompositionHost::FloatingPopup),
         "composition roots must reject visuals owned by another host");
+
+    // A desktop selection crossing the Dock must retain one translucent fill,
+    // including when unrelated popup ownership state remains set.
+    for (const bool popupOwnsSurface : {false, true})
+    {
+        Check(rules::MarqueeBelongsToSurface(
+                false, popupOwnsSurface, false, false),
+            "desktop and inline-widget marquees must remain on the desktop foreground");
+        Check(!rules::MarqueeBelongsToSurface(
+                false, popupOwnsSurface, true, false),
+            "a Dock repaint must not duplicate desktop selection inside its magnification reserve");
+        Check(!rules::MarqueeBelongsToSurface(
+                false, popupOwnsSurface, false, true),
+            "an independent popup repaint must not duplicate desktop selection");
+    }
+    // Keep collection/folder selection on exactly one owner, including the
+    // legacy Dock-hosted popup fallback as well as desktop and popup hosts.
+    for (int popupOwner = 0; popupOwner < 3; ++popupOwner)
+    {
+        int marqueeCopies = 0;
+        for (int surface = 0; surface < 3; ++surface)
+        {
+            const bool drawsMarquee = rules::MarqueeBelongsToSurface(
+                true, surface == popupOwner, surface == 1, surface == 2);
+            Check(drawsMarquee == (surface == popupOwner),
+                "collection and folder marquees must follow their popup when its host changes");
+            marqueeCopies += drawsMarquee ? 1 : 0;
+        }
+        Check(marqueeCopies == 1,
+            "a popup marquee must render exactly once across desktop, Dock and popup surfaces");
+    }
 
     Check(rules::ShouldPresentWidgetSurface(true, false),
         "a visible widget must present its child surface");
@@ -181,6 +244,15 @@ int main(int argc, char** argv)
     Check(rules::NeedsWidgetDragFeedbackPresent(
             presentedFeedback, currentFeedback),
         "changing widget page navigation feedback must redraw it");
+    presentedFeedback = currentFeedback;
+    currentFeedback.pairTargetIndex = 3;
+    currentFeedback.pairActive = true;
+    Check(rules::NeedsWidgetDragFeedbackPresent(presentedFeedback, currentFeedback),
+        "arming a widget merge or group must repaint the yellow target without pointer movement");
+    presentedFeedback = currentFeedback;
+    currentFeedback.pairActive = false;
+    Check(rules::NeedsWidgetDragFeedbackPresent(presentedFeedback, currentFeedback),
+        "releasing the modifier must clear the yellow widget target");
     currentFeedback.active = false;
     Check(!rules::NeedsWidgetDragFeedbackPresent(
             presentedFeedback, currentFeedback),
@@ -219,6 +291,32 @@ int main(int argc, char** argv)
         const std::string floatingPopup = ReadFile(
             root / "src" / "app" /
                 "app_floating_popup_window.cpp");
+
+        // Architectural guard for the WM_SIZE/topology recovery defect:
+        // parent teardown owns child-cache retirement. This checks source
+        // structure only; it does not claim that DComp pixels were presented.
+        const auto resetBegin = composition.find(
+            "void DesktopApp::ResetDesktopWidgetComposition()");
+        Check(resetBegin != std::string::npos,
+            "the shared desktop widget reset entry is present");
+        const auto resetCode = snowdesktop::test::CompactSource(
+            std::regex_replace(composition.substr(resetBegin),
+                std::regex(R"(//[^\r\n]*|/\*[\s\S]*?\*/)"), ""));
+        const auto retireChildren = resetCode.find(
+            "ResetWidgetMarqueeComposition();");
+        const auto retireParents = resetCode.find(
+            "desktopWidgetCompositionItems_.clear();");
+        Check(retireChildren != std::string::npos &&
+                retireParents != std::string::npos &&
+                retireChildren < retireParents,
+            "shared parent reset must own marquee cache retirement before clearing parents");
+        Check(snowdesktop::test::CheckSourceBoundaries(root, {
+            {"src/app/app_widget_composition.cpp",
+             "bool DesktopApp::FlushPendingDesktopWidgetComposition()",
+             "bool DesktopApp::HasDesktopWidgetComposition(",
+             {"desktopWidgetCompositionItems_.erase(",
+              "desktopWidgetCompositionItems_.clear("}},
+        }), "surface failure recovery must not bypass the shared owner-removal path");
 
         const std::size_t queueBegin = composition.find(
             "bool DesktopApp::QueueDesktopWidgetComposition(");

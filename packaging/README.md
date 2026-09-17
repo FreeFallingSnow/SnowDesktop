@@ -67,9 +67,15 @@ scripts\release.bat steam-upload-public -Yes `
 `github-release` 优先使用已安装并登录的 GitHub CLI (`gh`)；没有 `gh` 时也
 可使用环境变量 `GITHUB_TOKEN` 调用 GitHub API。不要把令牌写进参数、脚本或
 仓库。Agent 还可以在外层通过已授权且支持 Release API 的 GitHub 连接器完成
-同一动作。GitHub Release 默认公开上传携带版和 SHA-256 清单；只有 MSIX
-已经签名时才会同时公开上传 MSIX。Partner Center 专用的 `.msixupload` 不会
-作为公开附件上传。
+同一动作。GitHub Release 标题仅使用 `version.json` 的原始版本号，例如
+`1.0.6.0`；Git 标签仍为 `v1.0.6.0`，版本 Commit 保留双语摘要。
+
+默认公开附件只有便携版 ZIP 和对应的 `SHA256SUMS.txt`。未签名 MSIX、本地
+自签名测试 MSIX、Partner Center 专用的 `.msixupload` 和 `.appxsym` 留在本地；
+签名成功或元数据中的 `signed` 标记不会使 MSIX 自动成为公开附件。
+发布入口将公开校验清单单独写入 `artifacts\vA.B.C.D\github-release\SHA256SUMS.txt`，
+只列实际上传的发行文件，并保留版本根目录的完整校验清单。发布后核对线上标题、
+附件和哈希；用户已手动修正线上内容时只读核对，不覆盖修改或补回已移除的附件。
 
 ## SteamPipe 分支发布
 

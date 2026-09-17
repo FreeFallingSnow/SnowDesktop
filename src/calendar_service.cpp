@@ -532,6 +532,13 @@ bool CalendarService::ValidateAndNormalize(
     return true;
 }
 
+std::optional<CalendarEvent> CalendarService::EventById(const std::string& id) const
+{
+    for (const auto& event : events_)
+        if (event.id == id) return event;
+    return std::nullopt;
+}
+
 std::vector<CalendarEvent> CalendarService::Events(
     const std::string& fromDate,
     const std::string& toDate) const

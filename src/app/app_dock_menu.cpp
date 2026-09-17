@@ -138,9 +138,11 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
     {
         UpdateLayoutWorkArea();
         LayoutItems();
-        SaveLayoutSlots();
         InvalidateDragStaticScene();
     }
+    // Visibility preferences also belong to layout backups, even when the
+    // current geometry does not change.
+    SaveLayoutSlots();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);
 }

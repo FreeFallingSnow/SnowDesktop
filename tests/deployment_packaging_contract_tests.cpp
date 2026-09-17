@@ -268,9 +268,7 @@ void TestPackagers(const std::string& module,
 }
 
 void TestBuildOutputLayout(const std::string& cmake,
-    const std::string& arranger,
-    const std::string& testScript,
-    const std::string& testManager)
+    const std::string& arranger)
 {
     Check(cmake.find(
               "${CMAKE_BINARY_DIR}/$<CONFIG>/tests") !=
@@ -299,31 +297,9 @@ void TestBuildOutputLayout(const std::string& cmake,
             arranger.find("Build output still contains root-level DLLs") !=
                 std::string::npos,
         "standard builds become directly runnable private-runtime layouts without root DLLs");
-    Check(testScript.find("test_manager.ps1") !=
-                std::string::npos &&
-            testScript.find("MODE=fast") !=
-                std::string::npos &&
-            testScript.find("MODE=core") !=
-                std::string::npos &&
-            testScript.find("MODE=label") !=
-                std::string::npos &&
-            testScript.find("MODE=name") !=
-                std::string::npos &&
-            testManager.find("--show-only=json-v1") !=
-                std::string::npos &&
-            testManager.find("^SnowDesktop.+Tests\\.exe$") !=
-                std::string::npos &&
-            testManager.find("-LE\", \"^integration$") !=
-                std::string::npos &&
-            testManager.find("BuildPreset \"fast-tests\"") !=
-                std::string::npos &&
-            testManager.find("rootTests.Count -ne 0") !=
-                std::string::npos &&
-            testManager.find("rootDlls.Count -ne 0") !=
-                std::string::npos &&
-            testManager.find("emptyRuntimeDirs.Count -ne 0") !=
-                std::string::npos,
-        "the standard test entry point supports layered CTest selection without duplicating target lists");
+    // Selection, cold target resolution and output-isolation failures execute
+    // the actual runner functions in test_selection_tests.ps1. Source spelling
+    // here cannot establish those behaviors and must not duplicate that suite.
 }
 
 void TestReleaseManagerShellReload(const std::string& manager,
@@ -355,6 +331,17 @@ void TestReleaseManagerShellReload(const std::string& manager,
               "scripts\\release.bat prepare -ReloadShell") !=
                 std::string::npos,
         "release documentation describes shell reload for package and prepare");
+}
+
+void TestGitHubReleasePublication(const std::filesystem::path& root)
+{
+    // Exercise the production publication plan so local Store packages and
+    // their checksums cannot leak into the public GitHub attachment set.
+    const std::wstring command =
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"" +
+        (root / "tests/release_publication_tests.ps1").wstring() + L"\"";
+    Check(_wsystem(command.c_str()) == 0,
+        "GitHub publication uses a version-only title and portable-only assets");
 }
 
 void TestSteamPipeAutomation(const std::string& steamPipe,
@@ -604,12 +591,11 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/package_steam.ps1"));
         TestBuildOutputLayout(
             ReadText(root / "CMakeLists.txt"),
-            ReadText(root / "scripts/arrange_build_output.ps1"),
-            ReadText(root / "scripts/test.bat"),
-            ReadText(root / "scripts/test_manager.ps1"));
+            ReadText(root / "scripts/arrange_build_output.ps1"));
         TestReleaseManagerShellReload(
             ReadText(root / "scripts/release_manager.ps1"),
             ReadText(root / "packaging/README.md"));
+        TestGitHubReleasePublication(root);
         TestSteamPipeAutomation(
             ReadText(root / "scripts/steam_pipe.ps1"),
             ReadText(root / "packaging/steam-pipe.json"),

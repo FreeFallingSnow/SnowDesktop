@@ -31,6 +31,8 @@ void DesktopApp::OpenLuaWidgetPanel(
 {
     if (request.widgetId.empty())
         return;
+    if (widgetEngine_)
+        widgetEngine_->SetPanelTheme(collectionPopupAppearance_);
     {
         wchar_t message[320]{};
         swprintf_s(

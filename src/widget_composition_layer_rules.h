@@ -58,6 +58,8 @@ struct WidgetDragFeedbackState
     std::size_t dockInsertIndex = 0;
     std::size_t groupTargetIndex = static_cast<std::size_t>(-1);
     std::size_t groupInsertIndex = static_cast<std::size_t>(-1);
+    std::size_t pairTargetIndex = static_cast<std::size_t>(-1);
+    bool pairActive = false;
     int navigationSide = 0;
 
     bool operator==(const WidgetDragFeedbackState&) const = default;
@@ -75,6 +77,20 @@ constexpr bool BelongsToCompositionRoot(
     CompositionHost rootHost)
 {
     return visualHost == rootHost;
+}
+
+constexpr bool MarqueeBelongsToSurface(
+    bool popupMarquee,
+    bool popupBelongsToSurface,
+    bool renderingFloatingDock,
+    bool renderingFloatingPopup)
+{
+    // Repainting a desktop marquee on a Dock surface double-blends its fill
+    // and exposes the transparent magnification reserve inside the Dock HRGN.
+    // Popup marquees continue to follow their popup's actual host.
+    return popupMarquee
+        ? popupBelongsToSurface
+        : !renderingFloatingDock && !renderingFloatingPopup;
 }
 
 constexpr int ZOrder(DesktopLayer layer)

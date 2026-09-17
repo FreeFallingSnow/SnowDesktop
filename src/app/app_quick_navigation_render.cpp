@@ -207,6 +207,8 @@ void DesktopApp::ResetQuickNavCompositionResources()
  */
 void DesktopApp::RecoverQuickNavCompositionFailure(const wchar_t* stage, HRESULT hr)
 {
+    if (RequestGraphicsDeviceRecovery(stage, hr))
+        return;
     wchar_t buf[192];
     wsprintfW(buf, L"QuickNav %s FAILED hr=0x%08X; resetting composition surface",
         stage ? stage : L"Render", static_cast<unsigned>(hr));
@@ -384,6 +386,11 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         return;
     // hdc 仅用于验证绘制区域；实际绘制走 DComp surface。
     (void)hdc;
+    if (graphicsDeviceRecovery_.Pending())
+    {
+        EndPaint(hwnd, &ps);
+        return;
+    }
     if (quickNavCompositionPaintInProgress_)
     {
         EndPaint(hwnd, &ps);

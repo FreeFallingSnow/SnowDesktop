@@ -1,11 +1,151 @@
 #include "app.h"
 #include "../desktop_drop_search.h"
 #include "../widgets/collection_group_rules.h"
+#include "../windows_desktop_layout.h"
+#include "../windows_desktop_layout_rules.h"
 
 // Grid geometry, drag-group planning and cross-monitor migration.
 
-void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
+void DesktopApp::InitializeGridFromWindows()
 {
+    if (!initializeGridFromWindows_) return;
+    initializeGridFromWindows_ = false;
+    if (gridPages_.empty() || !layoutRecords_.empty() ||
+        !widgets_.empty() || !dockEntries_.empty()) return;
+
+    // Offer help only for actual initialization, including capture fallback.
+    // Opening the page respects the saved panel preference and starts no practice.
+    usageGuideWelcomePending_ = usageGuideWelcomeQueued_ = true;
+
+    namespace native = snowdesktop::windows_desktop_layout;
+    const auto snapshot = native::Capture();
+    if (!snapshot.Available())
+    {
+        const std::wstring message = L"Windows desktop grid capture unavailable; using DPI defaults. HRESULT=" +
+            std::to_wstring(static_cast<unsigned long>(snapshot.status)) +
+            L", stage=" + snapshot.stage + L", attempts=" + std::to_wstring(snapshot.attempts);
+        WriteDiagnosticLogEntry(message.c_str());
+        return;
+    }
+
+    std::unordered_map<std::wstring, POINT> positions;
+    for (const auto& item : snapshot.items)
+        positions.emplace(ToUpperInvariant(item.parsingName), item.screenPosition);
+    std::vector<POINT> spacingByPage;
+    spacingByPage.reserve(gridPages_.size());
+    for (auto& page : gridPages_)
+    {
+        const POINT spacing{
+            native::MonitorSpacing(snapshot.spacing.x, snapshot.spacingDpi, page.dpiX),
+            native::MonitorSpacing(snapshot.spacing.y, snapshot.spacingDpi, page.dpiY)};
+        spacingByPage.push_back(spacing);
+        page.columns = native::AxisCount(
+            page.workArea.right - page.workArea.left, spacing.x);
+        page.rows = native::AxisCount(
+            page.workArea.bottom - page.workArea.top, spacing.y);
+        page.columns = std::max(1, page.columns);
+        page.rows = std::max(1, page.rows);
+    }
+
+    struct Placement
+    {
+        size_t itemIndex;
+        size_t pageIndex;
+        native::Cell requested;
+    };
+    std::vector<Placement> placements;
+    for (size_t index = 0; index < items_.size(); ++index)
+    {
+        const auto& item = items_[index];
+        if (item.name.empty()) continue;
+        const auto found = positions.find(ToUpperInvariant(item.parsingName));
+        if (found == positions.end()) continue;
+        // GridPage bounds and work areas are relative to the virtual desktop,
+        // while the Shell capture uses physical screen coordinates.
+        const POINT point{found->second.x - virtualLeft_, found->second.y - virtualTop_};
+        for (size_t pageIndex = 0; pageIndex < gridPages_.size(); ++pageIndex)
+        {
+            auto& page = gridPages_[pageIndex];
+            if (!PtInRect(&page.bounds, point)) continue;
+            const POINT spacing = spacingByPage[pageIndex];
+            const native::Cell cell{
+                native::AxisIndex(point.x, page.workArea.left, spacing.x),
+                native::AxisIndex(point.y, page.workArea.top, spacing.y)};
+            // Explorer may use a partially visible last row/column. Preserve
+            // those cells instead of folding their items onto the previous one.
+            page.columns = std::max(page.columns, cell.column + 1);
+            page.rows = std::max(page.rows, cell.row + 1);
+            placements.push_back({index, pageIndex, cell});
+            break;
+        }
+    }
+
+    std::vector<std::vector<bool>> occupied;
+    occupied.reserve(gridPages_.size());
+    for (auto& page : gridPages_)
+    {
+        savedPageColumns_[page.id] = page.columns;
+        savedPageRows_[page.id] = page.rows;
+        ApplyIconSpacingToPage(page);
+        occupied.emplace_back(static_cast<size_t>(page.columns * page.rows), false);
+    }
+    size_t imported = 0;
+    for (const auto& placement : placements)
+    {
+        const auto& page = gridPages_[placement.pageIndex];
+        const auto cell = native::ClaimNearestCell(placement.requested,
+            page.columns, page.rows, occupied[placement.pageIndex]);
+        if (!cell) continue; // Existing overflow placement handles a full page.
+        auto& item = items_[placement.itemIndex];
+        item.gridCell = {page.id, cell->column, cell->row};
+        item.gridSpan = {1, 1};
+        ++imported;
+    }
+    RefreshIconBitmapResolution();
+    const std::wstring message = L"Initialized grid from Windows: spacing=" +
+        std::to_wstring(snapshot.spacing.x) + L"x" + std::to_wstring(snapshot.spacing.y) +
+        L", icon=" + std::to_wstring(snapshot.iconSize) +
+        L", captured=" + std::to_wstring(snapshot.items.size()) +
+        L", imported=" + std::to_wstring(imported);
+    WriteDiagnosticLogEntry(message.c_str());
+}
+
+bool DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
+{
+    // Build a complete valid sample before replacing any live geometry or
+    // dimensions. A failed monitor query must not look like a disconnected
+    // display and prune its empty page.
+    std::vector<GridPage> nextPages;
+    MonitorEnumContext ctx{};
+    ctx.virtualLeft = virtualLeft_;
+    ctx.virtualTop = virtualTop_;
+    ctx.pages = &nextPages;
+    if (!EnumDisplayMonitors(nullptr, nullptr, EnumGridPageMonitorProc,
+            reinterpret_cast<LPARAM>(&ctx)) || nextPages.empty())
+    {
+        ScheduleDisplayTopologyRefresh();
+        return false;
+    }
+    for (auto& page : nextPages)
+    {
+        const auto work = snowdesktop::display_topology_refresh::
+            ResolveMonitorWorkArea(
+                { page.bounds.left, page.bounds.top,
+                    page.bounds.right, page.bounds.bottom },
+                { page.workArea.left, page.workArea.top,
+                    page.workArea.right, page.workArea.bottom });
+        if (!work)
+        {
+            ScheduleDisplayTopologyRefresh();
+            return false;
+        }
+        page.workArea = MakeRect(work->left, work->top,
+            work->right, work->bottom);
+        page.visualWorkArea = page.workArea;
+        ConfigureGridPage(page);
+        ApplyIconSpacingToPage(page);
+    }
+
     layoutWorkArea_ = MakeRect(0, 0, virtualWidth_, virtualHeight_);
     // Preserve the active page dimensions before rebuilding monitor geometry.
     // DPI, resolution and work-area changes may resize cells, but must not
@@ -26,22 +166,7 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
     // "restores" that stale reservation into the fresh work area and can
     // expand it across the Windows taskbar.
     dockAreas_.clear();
-    gridPages_.clear();
-
-    MonitorEnumContext ctx{};
-    ctx.virtualLeft = virtualLeft_;
-    ctx.virtualTop = virtualTop_;
-    ctx.pages = &gridPages_;
-    EnumDisplayMonitors(nullptr, nullptr, EnumGridPageMonitorProc, reinterpret_cast<LPARAM>(&ctx));
-
-    if (gridPages_.empty())
-    {
-        GridPage fb;
-        fb.id = L"Primary"; fb.monitorId = fb.id; fb.isPrimary = true;
-        fb.bounds = layoutWorkArea_; fb.workArea = layoutWorkArea_;
-        fb.visualWorkArea = fb.workArea;
-        gridPages_.push_back(fb);
-    }
+    gridPages_ = std::move(nextPages);
 
     // 从枚举结果提取系统主屏 monitorId（供双锚点回退解析使用）
     primaryMonitorId_.clear();
@@ -54,19 +179,9 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
         return a.bounds.left < b.bounds.left;
     });
 
-    for (auto& page : gridPages_)
-    {
-        page.workArea.left   = std::clamp<LONG>(page.workArea.left,   0, static_cast<LONG>(virtualWidth_));
-        page.workArea.top    = std::clamp<LONG>(page.workArea.top,    0, static_cast<LONG>(virtualHeight_));
-        page.workArea.right  = std::clamp<LONG>(page.workArea.right,  page.workArea.left, static_cast<LONG>(virtualWidth_));
-        page.workArea.bottom = std::clamp<LONG>(page.workArea.bottom, page.workArea.top,  static_cast<LONG>(virtualHeight_));
-        page.visualWorkArea = page.workArea;
-        ConfigureGridPage(page);
-        ApplyIconSpacingToPage(page);
-    }
-
     ApplyPageMapping();
     ApplyDockWorkAreaReservation();
+    return true;
 }
 
 /**
@@ -75,19 +190,14 @@ void DesktopApp::UpdateLayoutWorkArea(bool preserveActiveDimensions)
  */
 void DesktopApp::ConfigureGridPage(GridPage& page) const
 {
-    const int marginX = kGridMarginX;
-    const int marginY = kGridMarginY;
-    // The work area is already in physical pixels. Default rows and columns are
-    // derived from the physical screen area only, so changing Windows DPI does
-    // not change the page grid.
-    const int cw = kCellWidth;
-    const int ch = kMinCellHeight;
+    // Work areas are physical pixels; the initial cell and margins are DIPs.
+    // Existing page dimensions still take precedence in ApplyPageMapping().
     const int w  = static_cast<int>(std::max<LONG>(1, page.workArea.right - page.workArea.left));
     const int h  = static_cast<int>(std::max<LONG>(1, page.workArea.bottom - page.workArea.top));
-    const int uw = std::max(1, w - marginX * 2);
-    const int uh = std::max(1, h - marginY * 2);
-    page.columns   = std::max(4, uw / cw);
-    page.rows      = std::max(3, uh / ch);
+    page.columns = snowdesktop::grid_spacing_rules::InitialAxisCount(
+        w, page.dpiX, kGridMarginX, kCellWidth, 4);
+    page.rows = snowdesktop::grid_spacing_rules::InitialAxisCount(
+        h, page.dpiY, kGridMarginY, kMinCellHeight, 3);
 }
 
 /**

@@ -178,7 +178,8 @@ void DesktopApp::DestroyDragHintWindow()
 
 void DesktopApp::ShowDragHintWindow(
     POINT clientPoint,
-    const std::wstring& text)
+    const std::wstring& text,
+    bool modifierActive)
 {
     if (text.empty())
     {
@@ -196,12 +197,13 @@ void DesktopApp::ShowDragHintWindow(
         HideDragHintWindow();
         return;
     }
-    ShowDragHintWindowScreen(screenPoint, text);
+    ShowDragHintWindowScreen(screenPoint, text, modifierActive);
 }
 
 void DesktopApp::ShowDragHintWindowScreen(
     POINT screenPoint,
-    const std::wstring& text)
+    const std::wstring& text,
+    bool modifierActive)
 {
     if (text.empty() || !EnsureDragHintWindow())
     {
@@ -228,7 +230,7 @@ void DesktopApp::ShowDragHintWindowScreen(
 
     if (snowdesktop::drag_hint_rules::ShouldReuseRaster(
             hintRasterValid_, text == hintTextCache_,
-            hintRasterDpi_, dpi))
+            hintRasterDpi_, dpi, hintModifierActiveCache_ == modifierActive))
     {
         const POINT windowPos = ResolveDragHintWindowPosition(
             screenPoint, hintRasterSize_, monitorInfo.rcWork, dpi);
@@ -263,12 +265,11 @@ void DesktopApp::ShowDragHintWindowScreen(
     }
 
     const HGDIOBJ oldScreenFont = SelectObject(screenDc, font);
-    SIZE textSize{};
+    RECT measuredText{0, 0, ScaleDragHintMetric(496, dpi), 0};
     const bool measured =
         IsValidPreviousGdiObject(oldScreenFont) &&
-        GetTextExtentPoint32W(
-            screenDc, text.c_str(),
-            static_cast<int>(text.size()), &textSize) != FALSE;
+        DrawTextW(screenDc, text.c_str(), -1, &measuredText,
+            DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX) != 0;
     if (IsValidPreviousGdiObject(oldScreenFont))
         SelectObject(screenDc, oldScreenFont);
     if (!measured)
@@ -281,13 +282,12 @@ void DesktopApp::ShowDragHintWindowScreen(
     }
 
     const int panelWidth = std::clamp(
-        static_cast<int>(textSize.cx) + ScaleDragHintMetric(24, dpi),
+        static_cast<int>(measuredText.right) + ScaleDragHintMetric(24, dpi),
         ScaleDragHintMetric(130, dpi),
         ScaleDragHintMetric(520, dpi));
-    const int panelHeight = std::clamp(
-        static_cast<int>(textSize.cy) + ScaleDragHintMetric(14, dpi),
-        ScaleDragHintMetric(32, dpi),
-        ScaleDragHintMetric(46, dpi));
+    const int panelHeight = std::max(
+        static_cast<int>(measuredText.bottom) + ScaleDragHintMetric(14, dpi),
+        ScaleDragHintMetric(32, dpi));
     const int shadowInset = ScaleDragHintMetric(5, dpi);
     const int width = panelWidth + shadowInset * 2;
     const int height = panelHeight + shadowInset * 2;
@@ -384,12 +384,15 @@ void DesktopApp::ShowDragHintWindowScreen(
             std::uint32_t pixel = PackPremultipliedArgb(
                 shadowAlpha, 45.0f, 55.0f, 70.0f);
 
-            const float backgroundRed = 252.0f +
-                (205.0f - 252.0f) * borderCoverage;
-            const float backgroundGreen = 253.0f +
-                (211.0f - 253.0f) * borderCoverage;
-            const float backgroundBlue = 255.0f +
-                (220.0f - 255.0f) * borderCoverage;
+            const float fillRed = modifierActive ? 255.0f : 252.0f;
+            const float fillGreen = modifierActive ? 244.0f : 253.0f;
+            const float fillBlue = modifierActive ? 194.0f : 255.0f;
+            const float backgroundRed = fillRed +
+                ((modifierActive ? 224.0f : 205.0f) - fillRed) * borderCoverage;
+            const float backgroundGreen = fillGreen +
+                ((modifierActive ? 166.0f : 211.0f) - fillGreen) * borderCoverage;
+            const float backgroundBlue = fillBlue +
+                ((modifierActive ? 35.0f : 220.0f) - fillBlue) * borderCoverage;
             pixel = SourceOverPremultiplied(
                 PackPremultipliedArgb(
                     255.0f * panelCoverage,
@@ -407,12 +410,13 @@ void DesktopApp::ShowDragHintWindowScreen(
     SetTextColor(memoryDc, RGB(25, 32, 42));
     const int horizontalPadding = ScaleDragHintMetric(10, dpi);
     RECT textRect{
-        shadowInset + horizontalPadding, shadowInset,
+        shadowInset + horizontalPadding,
+        shadowInset + (panelHeight - measuredText.bottom) / 2,
         shadowInset + panelWidth - horizontalPadding,
         shadowInset + panelHeight};
     const int drawnHeight = DrawTextW(
         memoryDc, text.c_str(), -1, &textRect,
-        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        DT_WORDBREAK | DT_NOPREFIX);
 
     // GDI text drawing does not reliably preserve the alpha byte of a 32-bit
     // DIB. Restore the analytic mask so glyph pixels stay opaque without
@@ -450,6 +454,7 @@ void DesktopApp::ShowDragHintWindowScreen(
     // Publish only after the layered pixels have been accepted. A failed
     // render must never make stale pixels eligible for the move-only path.
     hintTextCache_ = text;
+    hintModifierActiveCache_ = modifierActive;
     hintRasterSize_ = windowSize;
     hintRasterDpi_ = dpi;
     hintRasterValid_ = true;

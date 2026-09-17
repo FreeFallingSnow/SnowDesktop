@@ -5,7 +5,12 @@
 #include "core/item.h"
 #include "core/owned_transient_drag_target.h"
 #include "core/slot.h"
+#include "slot_drop_expectations.h"
+#include "external_drop_content.h"
 #include "app/drag_drop_controller.h"
+#include "app/pending_drop_completion.h"
+#include "app/new_item_placement.h"
+#include "shell_new_item_capture.h"
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
 #include "app/rename_controller.h"
@@ -14,13 +19,23 @@
 #include "app/shell_refresh_snapshot.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
+#include "app/tray_notification_window.h"
+#include "constants.h"
 #include "drag_input_rules.h"
 #include "ole_drag_rules.h"
+
+#include <propsys.h>
+#include <propkey.h>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -104,6 +119,12 @@ public:
     HitRegion HitTestDrag(
         POINT point, Slot*& outSlot) override
     {
+        const RECT bounds = GetBounds();
+        if (blockHit && PtInRect(&bounds, point))
+        {
+            outSlot = nullptr;
+            return HitRegion::Blocked;
+        }
         for (const auto& slot : GetSlots())
         {
             const HitRegion region =
@@ -118,6 +139,20 @@ public:
         return HitRegion::None;
     }
 
+    bool AcceptsDragPayload(
+        snowdesktop::slot_contract::DragPayloadKind payload,
+        std::size_t count) const override
+    {
+        observedPayload = payload;
+        observedCount = count;
+        return acceptPayload;
+    }
+
+    bool acceptPayload = true;
+    bool blockHit = false;
+    mutable std::size_t observedCount = 0;
+    mutable snowdesktop::slot_contract::DragPayloadKind observedPayload =
+        snowdesktop::slot_contract::DragPayloadKind::Count;
     int buildCount = 0;
     int dropCount = 0;
     std::vector<Item*> lastItems;
@@ -193,8 +228,9 @@ public:
         lastDataObject = dataObject;
         lastKeyState = keyState;
         lastPoint = point;
-        if (effect) *effect = DROPEFFECT_COPY;
-        return S_OK;
+        incomingDropEffect = effect ? *effect : DROPEFFECT_NONE;
+        if (effect) *effect = dropEffect;
+        return dropResult;
     }
 
     HRESULT HandleOleQueryContinueDrag(
@@ -222,6 +258,9 @@ public:
     DWORD lastKeyState = 0;
     DWORD lastEffect = 0;
     POINTL lastPoint{};
+    DWORD incomingDropEffect = DROPEFFECT_NONE;
+    DWORD dropEffect = DROPEFFECT_COPY;
+    HRESULT dropResult = S_OK;
 };
 
 Item* NonOwningItemToken()
@@ -769,30 +808,72 @@ void TestEveryRegisteredSurfaceOriginLifecycle()
 
 void TestDropActionModifiers()
 {
-    DragSession session;
-    session.Begin(nullptr, {}, {}, POINT{}, POINT{});
-    Check(session.Action() == DropAction::Move,
-        "an internal drag must begin as a move");
+    struct Case { int mods; DropAction internal; DropAction external; };
+    const std::array cases{
+        Case{0, DropAction::Move, DropAction::Copy},
+        Case{MK_CONTROL, DropAction::Copy, DropAction::Copy},
+        Case{MK_SHIFT, DropAction::Move, DropAction::Move},
+        Case{MK_ALT, DropAction::Link, DropAction::Link},
+        Case{MK_CONTROL | MK_SHIFT, DropAction::Copy, DropAction::Copy},
+        Case{MK_CONTROL | MK_ALT, DropAction::Link, DropAction::Link},
+        Case{MK_SHIFT | MK_ALT, DropAction::Link, DropAction::Link},
+        Case{MK_CONTROL | MK_SHIFT | MK_ALT, DropAction::Link, DropAction::Link},
+    };
+    for (const bool external : {false, true})
+    {
+        DragSession session;
+        session.Begin(nullptr, {}, {}, POINT{}, POINT{});
+        for (const auto& entry : cases)
+        {
+            const DropAction wanted = external ? entry.external : entry.internal;
+            const DropAction fallback = external ? DropAction::Copy : DropAction::Move;
+            const DropAction previous = session.Action();
+            Check(session.UpdateActionFromMods(entry.mods, fallback) == (previous != wanted) &&
+                    session.Action() == wanted,
+                "every modifier combination must report both operation and state change");
+            Check(!session.UpdateActionFromMods(entry.mods | MK_LBUTTON, fallback) &&
+                    session.Action() == wanted,
+                "button state alone must not change the chosen operation");
+        }
+        session.UpdateActionFromMods(0, external ? DropAction::Copy : DropAction::Move);
+        Check(session.Action() == (external ? DropAction::Copy : DropAction::Move),
+            "releasing all modifiers must restore the source-specific default");
+    }
+}
 
-    Check(session.UpdateActionFromMods(
-            MK_CONTROL) &&
-            session.Action() == DropAction::Copy,
-        "Ctrl must select copy");
-    Check(session.UpdateActionFromMods(
-            MK_ALT | MK_CONTROL) &&
-            session.Action() == DropAction::Link,
-        "Alt must take precedence and select link");
-    Check(session.UpdateActionFromMods(
-            MK_SHIFT) &&
-            session.Action() == DropAction::Move,
-        "Shift must select move");
-    Check(session.UpdateActionFromMods(
-            0, DropAction::Copy) &&
-            session.Action() == DropAction::Copy,
-        "external ingress can provide copy as its default action");
-    Check(!session.UpdateActionFromMods(
-            0, DropAction::Copy),
-        "reapplying the same action must not invalidate state");
+void TestDesktopFilesDockPayload()
+{
+    namespace contract = snowdesktop::slot_contract;
+    DragSourceList list;
+    ContractContainer source(BarStyle::VBar, contract::SlotSurfaceKind::Dock);
+    list.BindRuntimeOrigin(&source);
+    list.hasWidgets = true;
+    DragSourceEntry entry;
+    entry.fromDock = true;
+    entry.kind = DropSourceKind::Widget;
+    entry.dockReference = L"desktop-files";
+    entry.dockEntryType = DockEntryType::DesktopFiles;
+    list.entries.push_back(entry);
+    Check(list.SlotPayloadKind() == contract::DragPayloadKind::FileSourceWidget &&
+            list.UsesFileGroupSourceInsertion(),
+        "Dock desktop files must remain a file-source component, including group insertion");
+    Check(contract::EvaluateSlotDrop(list.SourceSurfaceKind(), list.SlotPayloadKind(),
+            contract::SlotSurfaceKind::Dock, contract::DragRelation::SameInstance) ==
+                contract::DropRoute::ReorderWithinContainer &&
+          contract::EvaluateSlotDrop(list.SourceSurfaceKind(), list.SlotPayloadKind(),
+            contract::SlotSurfaceKind::Desktop, contract::DragRelation::CrossSurface) ==
+                contract::DropRoute::PlaceOnDesktop,
+        "a Dock desktop-files component must support local reorder and restoration to the desktop");
+    entry.dockReference = L"mapping";
+    entry.dockEntryType = DockEntryType::FolderMapping;
+    list.entries.push_back(entry);
+    Check(list.SlotPayloadKind() == contract::DragPayloadKind::FileSourceWidget,
+        "mixed mapped-folder and desktop-file components share the file-source route");
+    entry.dockEntryType = DockEntryType::Collection;
+    list.entries.push_back(entry);
+    Check(list.SlotPayloadKind() == contract::DragPayloadKind::OtherWidget &&
+            !list.UsesFileGroupSourceInsertion(),
+        "a mixed collection selection cannot enter a file group");
 }
 
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
@@ -958,9 +1039,8 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
             ContractItem reboundItem(pageTurn.reboundBounds);
             const bool needsRecordedMemberRestore =
                 pageTurn.sourcePageHidden &&
-                snowdesktop::drag_source_rebind::
-                    CanRestoreRecordedWidgetMembers(
-                        session.SourceList());
+                (descriptor.kind == contract::SlotSurfaceKind::Collection ||
+                    descriptor.kind == contract::SlotSurfaceKind::FolderMapping);
             std::vector<Item*> runtimeItems;
             if (!needsRecordedMemberRestore)
                 runtimeItems.push_back(&reboundItem);
@@ -1131,6 +1211,316 @@ void TestDragTargetResolutionUsesContractAndZOrder()
     Check(!DragTargetResolver::AcceptsInternal(
             *upperPointer, mixed),
         "ambiguous mixed payload families must not bypass centralized classification");
+}
+
+void TestExternalDropContentRegressions()
+{
+    namespace content = snowdesktop::external_drop_content;
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    GUID id{};
+    CoCreateGuid(&id);
+    wchar_t suffix[40]{};
+    StringFromGUID2(id, suffix, static_cast<int>(std::size(suffix)));
+    const auto root = std::filesystem::temp_directory_path() /
+        (std::wstring(L"SnowDesktop-drop-regression-") + suffix);
+    std::filesystem::create_directory(root);
+    const auto sourcePath = root / L"source.txt";
+    { std::ofstream file(sourcePath, std::ios::binary); file << "source content"; }
+    PIDLIST_ABSOLUTE absolute = nullptr;
+    Microsoft::WRL::ComPtr<IDataObject> data;
+    Check(SUCCEEDED(SHParseDisplayName(sourcePath.c_str(), nullptr,
+            &absolute, 0, nullptr)) && absolute,
+        "parse real file for the Explorer-compatible data object");
+    if (absolute)
+    {
+        PIDLIST_ABSOLUTE parent = ILCloneFull(absolute);
+        ILRemoveLastID(parent);
+        PCUITEMID_CHILD child = ILFindLastID(absolute);
+        Check(SUCCEEDED(SHCreateDataObject(parent, 1, &child, nullptr,
+                IID_PPV_ARGS(&data))), "create the actual Shell file data object");
+        CoTaskMemFree(parent);
+        CoTaskMemFree(absolute);
+    }
+    if (data)
+    {
+        // SHCreateDataObject supplies real local paths but does not guarantee
+        // an enabled async capability. Delayed rendering is covered by the
+        // instrumented source in virtual_file_drop_tests.
+        const auto immediate = content::ProbeFileSource(data.Get());
+        Check(immediate.available && (immediate.asynchronous ||
+                (immediate.paths.size() == 1 &&
+                 std::filesystem::equivalent(immediate.paths.front(), sourcePath))),
+            "album ingress admits the real Shell file source without changing its path");
+        content::Readers readers;
+        readers.files = [&] { return content::ReadFilePaths(data.Get()); };
+        for (const bool asynchronous : {false, true})
+        {
+            const auto result = content::Read(asynchronous, true, readers);
+            const bool sameFile = result.paths.size() == 1 &&
+                std::filesystem::equivalent(result.paths.front(), sourcePath);
+            if (!asynchronous && !sameFile)
+            {
+                std::wcerr << L"CONTROL expected=" << sourcePath.wstring() << L'\n';
+                for (const auto& path : result.paths)
+                    std::wcerr << L"CONTROL actual=" << path << L'\n';
+            }
+            Check(sameFile && !result.owned,
+                asynchronous ?
+                    "DND-01: async component ingress must retain the actual Shell file paths" :
+                    "synchronous component ingress must retain the actual Shell file paths");
+        }
+    }
+    data.Reset();
+
+    const std::wstring huabanUrl =
+        L"https://gd-hbimg.huaban.com/"
+        L"08aaeb96f1f7360a2016ab5da1d6dd2d8f9933b62f9137-uqfbvd_fw658webp";
+    const auto image = root / L"resource.webp";
+    const auto shortcut = root / L"resource.url";
+    int downloads = 0;
+    int shortcuts = 0;
+    content::Readers readers;
+    readers.urls = [&] { return content::Paths{huabanUrl}; };
+    // Only the remote service is substituted. Read's selection/fallback code
+    // is production code used by the host, not FakeOleDragDropHandler.
+    readers.download = [&](const content::Paths& urls) {
+        Check(urls == content::Paths{huabanUrl}, "preserve the original image URL");
+        ++downloads;
+        std::ofstream file(image, std::ios::binary);
+        file << "RIFF-test-WEBP";
+        return content::Paths{image.wstring()};
+    };
+    readers.shortcut = [&] {
+        ++shortcuts;
+        std::ofstream file(shortcut, std::ios::binary);
+        file << "[InternetShortcut]";
+        return content::Paths{shortcut.wstring()};
+    };
+    const auto resource = content::Read(false, true, readers);
+    Check(downloads == 1 && shortcuts == 0 && resource.owned &&
+            resource.paths == content::Paths{image.wstring()} &&
+            std::filesystem::exists(image),
+        "DND-02: component image URLs must execute the download path before shortcut fallback");
+    // Only the uniquely created test directory is removed.
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    if (SUCCEEDED(initialized)) CoUninitialize();
+}
+
+void TestExternalContentSelectionMatrix()
+{
+    namespace content = snowdesktop::external_drop_content;
+    struct Scenario {
+        const char* name;
+        content::Paths files, image, inlineData, virtualFiles, urls, downloaded, shortcut, text;
+        content::Paths expected;
+        bool allowContent = true;
+        int expectedDownloads = 0;
+    };
+    const std::vector<Scenario> scenarios{
+        {"local files win", {L"local"}, {L"image"}, {}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"local"}},
+        {"embedded image wins", {}, {L"image"}, {L"inline"}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"image"}},
+        {"inline content wins", {}, {}, {L"inline"}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"inline"}},
+        {"all virtual files retained", {}, {}, {}, {L"first", L"second"},
+            {L"https://page"}, {L"download"}, {L"shortcut"}, {}, {L"first", L"second"}},
+        {"virtual batch wins over preview image", {}, {L"preview"}, {L"inline"},
+            {L"first", L"second"}, {L"https://page"}, {L"download"},
+            {L"shortcut"}, {}, {L"first", L"second"}},
+        {"download before shortcut", {}, {}, {}, {}, {L"https://image"},
+            {L"download"}, {L"shortcut"}, {}, {L"download"}, true, 1},
+        {"download failure fallback", {}, {}, {}, {}, {L"https://image"},
+            {}, {L"shortcut"}, {}, {L"shortcut"}, true, 1},
+        {"plain text fallback", {}, {}, {}, {}, {}, {}, {}, {L"text"}, {L"text"}},
+        {"no copy permission", {}, {L"image"}, {L"inline"}, {L"virtual"},
+            {L"https://image"}, {L"download"}, {L"shortcut"}, {L"text"}, {}, false},
+        {"empty source rejected", {}, {}, {}, {}, {}, {}, {}, {}, {}},
+    };
+    for (const auto& scenario : scenarios)
+    {
+        for (const bool asynchronous : {false, true})
+        {
+            int downloads = 0;
+            int fileReads = 0;
+            content::Readers readers;
+            readers.files = [&] { ++fileReads; return scenario.files; };
+            readers.image = [&] { return scenario.image; };
+            readers.dataUrl = [&] { return scenario.inlineData; };
+            readers.virtualFiles = [&] { return scenario.virtualFiles; };
+            readers.virtualFileCount = scenario.virtualFiles.size();
+            readers.urls = [&] { return scenario.urls; };
+            readers.download = [&](const content::Paths& urls) {
+                ++downloads;
+                Check(urls == scenario.urls, "download receives the complete candidate list");
+                return scenario.downloaded;
+            };
+            readers.shortcut = [&] { return scenario.shortcut; };
+            readers.text = [&] { return scenario.text; };
+            const auto result = content::Read(asynchronous, scenario.allowContent, readers);
+            Check(result.paths == scenario.expected &&
+                    downloads == scenario.expectedDownloads && fileReads == 1,
+                std::string(scenario.name) + ": preserve content priority and execute one selected path");
+            if (!result.paths.empty())
+                Check(result.owned == scenario.files.empty(),
+                    "borrowed source files and materialized content need different cleanup ownership");
+        }
+    }
+    int shortcuts = 0;
+    content::Readers deferred;
+    deferred.urls = [] { return content::Paths{L"https://image"}; };
+    deferred.shortcut = [&] { ++shortcuts; return content::Paths{L"shortcut"}; };
+    const auto pending = content::Read(false, true, deferred);
+    Check(pending.paths.empty() && pending.pendingUrls == content::Paths{L"https://image"} &&
+            shortcuts == 0,
+        "a UI-thread read must defer URL IO instead of prematurely creating a shortcut");
+    content::Readers incomplete;
+    incomplete.virtualFileCount = 2;
+    incomplete.virtualFiles = [] { return content::Paths{}; };
+    incomplete.image = [] { return content::Paths{L"thumbnail"}; };
+    incomplete.shortcut = [] { return content::Paths{L"shortcut"}; };
+    Check(content::Read(true, true, incomplete).paths.empty(),
+        "an incomplete virtual file batch must fail instead of importing only a thumbnail or link");
+    content::Readers localUrl;
+    localUrl.localFileUrls = [] { return content::Paths{L"existing-source"}; };
+    localUrl.image = [] { return content::Paths{L"preview"}; };
+    const auto local = content::Read(true, true, localUrl);
+    Check(local.paths == content::Paths{L"existing-source"} && !local.owned && local.copyOnly,
+        "file URLs must copy the existing file without taking cleanup ownership of its source");
+    Check(content::Read(true, false, localUrl).paths.empty(),
+        "file URL content must not bypass COPY permission");
+}
+
+void TestRuntimeSourceTargetMatrix()
+{
+    namespace expected = slot_drop_expectations;
+    // Whole-widget movement has a separate native application path. These
+    // entries exercise the real DragSourceList classifier and target resolver.
+    for (std::size_t from = 0; from < expected::surfaces.size(); ++from)
+    {
+        ContractContainer origin(BarStyle::VBar, expected::surfaces[from]);
+        for (const std::size_t payload : {0u, 1u, 2u, 7u, 8u})
+        {
+            for (const std::size_t count : {1u, 3u})
+            {
+                DragSourceList source;
+                source.BindRuntimeOrigin(&origin);
+                source.entries.resize(count);
+                source.hasDesktopIcons = payload == 0;
+                source.hasFolderEntries = payload == 1;
+                source.hasExternalFiles = payload == 2;
+                source.hasCollectionGroupEntries = payload == 7;
+                source.hasFileGroupEntries = payload == 8;
+                Check(source.SlotPayloadKind() == expected::payloads[payload],
+                    "runtime payload family must retain its exact classification");
+                for (std::size_t to = 0; to < expected::surfaces.size(); ++to)
+                {
+                    std::vector<std::unique_ptr<Container>> containers;
+                    auto target = std::make_unique<ContractContainer>(
+                        BarStyle::VBar, expected::surfaces[to]);
+                    auto* targetPointer = target.get();
+                    containers.push_back(std::move(target));
+                    const auto relation = from == 9 ? expected::Relation::ExternalIngress :
+                        to == 9 ? expected::Relation::ExternalEgress :
+                        from == to ? expected::Relation::SameSurface :
+                        expected::Relation::CrossSurface;
+                    const bool accepted = expected::ExpectedRoute(from, payload, to,
+                        relation) != expected::Route::Reject;
+                    const std::string context = "runtime source=" + std::to_string(from) +
+                        " target=" + std::to_string(to) + " payload=" +
+                        std::to_string(payload) + " count=" + std::to_string(count);
+                    const auto resolved = DragTargetResolver::ResolveInternal(
+                        containers, POINT{50, 50}, source);
+                    Check((resolved.container == targetPointer) == accepted,
+                        context + ": runtime resolution must follow expected routes");
+                    if (accepted)
+                    {
+                        Check(targetPointer->observedCount == count &&
+                                targetPointer->observedPayload == expected::payloads[payload],
+                            context + ": target policy must receive actual payload and count");
+                        targetPointer->acceptPayload = false;
+                        Check(!DragTargetResolver::ResolveInternal(
+                                containers, POINT{50, 50}, source).container,
+                            context + ": runtime policy veto must prevent targeting");
+                    }
+                    if (from == to)
+                        Check(DragTargetResolver::AcceptsInternal(origin, source) ==
+                                (expected::ExpectedRoute(from, payload, to,
+                                    expected::Relation::SameInstance) != expected::Route::Reject),
+                            context + ": same-instance classification must retain origin identity");
+                }
+            }
+        }
+    }
+}
+
+void TestExternalResolutionAndSessionMatrix()
+{
+    namespace expected = slot_drop_expectations;
+    DragSession session;
+    DragDropController controller(session);
+    for (std::size_t to = 0; to < expected::surfaces.size(); ++to)
+    {
+        for (const int count : {0, 1, 3, 256})
+        {
+            for (const bool shortcut : {false, true})
+            {
+                for (const bool foldersOnly : {false, true})
+                {
+                    std::vector<std::unique_ptr<Container>> containers;
+                    auto desktop = std::make_unique<ContractContainer>(
+                        BarStyle::VBar, expected::Surface::Desktop);
+                    auto* desktopPointer = desktop.get();
+                    containers.push_back(std::move(desktop));
+                    auto target = std::make_unique<ContractContainer>(
+                        BarStyle::VBar, expected::surfaces[to]);
+                    auto* targetPointer = target.get();
+                    containers.push_back(std::move(target));
+                    const bool accepts = to < 8;
+                    controller.BeginExternalDrag({count, shortcut, foldersOnly});
+                    controller.ContinueExternalDrag();
+                    const auto summary = controller.ExternalSummary();
+                    Check(summary.fileCount == count && summary.hasShortcut == shortcut &&
+                            summary.foldersOnly == foldersOnly,
+                        "drag-over must preserve count, shortcut and directory metadata");
+                    auto resolved = controller.ResolveExternalTarget(containers, {50, 50});
+                    Check(resolved.container == (accepts ? targetPointer : desktopPointer),
+                        "external ingress must select the top accepting surface");
+                    if (accepts)
+                    {
+                        Check(targetPointer->observedCount ==
+                                static_cast<std::size_t>(std::max(1, count)),
+                            "unknown external count uses one; known multi-selection is preserved");
+                        targetPointer->blockHit = true;
+                        resolved = controller.ResolveExternalTarget(containers, {50, 50});
+                        Check(resolved.container == targetPointer &&
+                                resolved.region == HitRegion::Blocked && !resolved.slot,
+                            "blocked regions must stop hit testing instead of dropping through");
+                        targetPointer->blockHit = false;
+                        resolved = controller.ResolveExternalTarget(containers, {50, 50},
+                            [targetPointer](const Container& candidate) {
+                                return &candidate != targetPointer;
+                            });
+                        Check(resolved.container == desktopPointer,
+                            "an explicit application filter must exclude the upper target");
+                        targetPointer->acceptPayload = false;
+                        Check(controller.ResolveExternalTarget(containers, {50, 50}).container ==
+                                desktopPointer,
+                            "target policy veto must be honored for external payloads");
+                    }
+                    Check(!controller.ResolveExternalTarget(containers, {-1, -1}).container,
+                        "leaving all target bounds must clear the resolved destination");
+                    controller.EndExternalDrag();
+                    Check(!controller.IsTransportActive() &&
+                            controller.ExternalSummary().fileCount == 0 &&
+                            !controller.ExternalSummary().hasShortcut &&
+                            !controller.ExternalSummary().foldersOnly,
+                        "ending ingress must clear all metadata before the next source");
+                }
+            }
+        }
+    }
 }
 
 void TestDragDropControllerOwnsTransportTransitions()
@@ -1690,6 +2080,57 @@ void TestOleAdapterOwnsComBoundary()
     adapter->Release();
 }
 
+void TestOleDropCompletionBoundaryMatrix()
+{
+    // Exercise IDropTarget::Drop itself, including negative results. The handler
+    // is a fixture: this does not validate DesktopApp's file-operation dispatch.
+    struct Completion { HRESULT result; DWORD effect; };
+    const std::array outcomes{
+        Completion{S_OK, DROPEFFECT_COPY}, Completion{S_OK, DROPEFFECT_MOVE},
+        Completion{S_OK, DROPEFFECT_LINK}, Completion{S_OK, DROPEFFECT_NONE},
+        Completion{S_FALSE, DROPEFFECT_NONE}, Completion{E_ABORT, DROPEFFECT_NONE},
+        Completion{E_FAIL, DROPEFFECT_NONE},
+    };
+    for (const auto& outcome : outcomes)
+    {
+        for (const DWORD allowed : {DWORD{DROPEFFECT_NONE}, DWORD{DROPEFFECT_COPY},
+            DWORD{DROPEFFECT_MOVE}, DWORD{DROPEFFECT_LINK},
+            DWORD{DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK}})
+        {
+            FakeOleDragDropHandler handler;
+            handler.dropResult = outcome.result;
+            handler.dropEffect = outcome.effect;
+            auto* adapter = new OleDragDropAdapter(&handler);
+            auto* dataObject = reinterpret_cast<IDataObject*>(
+                static_cast<std::uintptr_t>(1));
+            DWORD effect = allowed;
+            adapter->DragEnter(dataObject, MK_LBUTTON, {-2560, -240}, &effect);
+            effect = allowed;
+            const auto result = adapter->Drop(dataObject, MK_CONTROL | MK_SHIFT,
+                {-2501, 432}, &effect);
+            Check(result == outcome.result && effect == outcome.effect &&
+                    handler.dropCount == 1 && handler.incomingDropEffect == allowed &&
+                    handler.lastDataObject == dataObject &&
+                    handler.lastKeyState == (MK_CONTROL | MK_SHIFT) &&
+                    handler.lastPoint.x == -2501 && handler.lastPoint.y == 432,
+                "Drop must forward allowed effects, release coordinates and final outcome exactly once");
+            adapter->Detach();
+            Check(adapter->Drop(dataObject, 0, {}, &effect) == E_UNEXPECTED &&
+                    adapter->DragLeave() == E_UNEXPECTED && handler.dropCount == 1,
+                "late callbacks after detach must never reach the destroyed application");
+            adapter->Release();
+        }
+    }
+    FakeOleDragDropHandler handler;
+    auto* adapter = new OleDragDropAdapter(&handler);
+    DWORD effect = DROPEFFECT_COPY;
+    adapter->DragEnter(nullptr, 0, {}, &effect);
+    adapter->DragLeave();
+    Check(handler.dropCount == 0,
+        "leaving a target must not commit a drop");
+    adapter->Release();
+}
+
 void TestTrayCallbackClassification()
 {
     Check(TrayIconController::ClassifyCallback(
@@ -1707,6 +2148,214 @@ void TestTrayCallbackClassification()
             MAKELPARAM(WM_MOUSEMOVE, 0)) ==
             TrayCallbackAction::None,
         "unhandled tray notifications must not leak into application behavior");
+}
+
+void TestTrayNotificationSourceAndRouting()
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HWND callback = CreateWindowExW(0, L"STATIC", L"SnowDesktopControl",
+        WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(callback != nullptr, "create an isolated callback window for tray notification checks");
+    if (!callback)
+    {
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return;
+    }
+    const HWND notification = snowdesktop::tray_notification::CreateOwnerWindow(callback);
+    Check(notification != nullptr, "create a dedicated notification source window");
+    if (notification)
+    {
+        wchar_t caption[128]{};
+        GetWindowTextW(notification, caption, static_cast<int>(std::size(caption)));
+        Check(std::wstring(caption) == L"SnowDesktop" && !IsWindowVisible(notification) &&
+            GetAncestor(notification, GA_ROOTOWNER) == notification,
+            "system notifications use the software name without inheriting an internal root-owner caption");
+        GetWindowTextW(callback, caption, static_cast<int>(std::size(caption)));
+        Check(std::wstring(caption) == L"SnowDesktopControl",
+            "notification branding preserves the control caption used by older versions and tools");
+        Microsoft::WRL::ComPtr<IPropertyStore> properties;
+        Check(SUCCEEDED(SHGetPropertyStoreForWindow(notification, IID_PPV_ARGS(&properties))),
+            "read the actual Shell property store of the notification window");
+        if (properties)
+        {
+            PROPVARIANT identity{};
+            Check(SUCCEEDED(properties->GetValue(PKEY_AppUserModel_ID, &identity)) &&
+                identity.vt == VT_LPWSTR && identity.pwszVal &&
+                std::wstring(identity.pwszVal) == snowdesktop::tray_notification::ApplicationId() &&
+                std::wstring(identity.pwszVal) == L"SnowDesktop",
+                "portable notifications carry a stable software identity before Shell adds the tray icon");
+            PropVariantClear(&identity);
+        }
+        for (const UINT action : {WM_CONTEXTMENU, WM_LBUTTONDBLCLK})
+        {
+            const WPARAM coordinates = MAKEWPARAM(123, 456);
+            const LPARAM event = MAKELPARAM(action, kTrayIconId);
+            SendMessageW(notification, kTrayCallbackMessage, coordinates, event);
+            MSG routed{};
+            Check(PeekMessageW(&routed, callback, kTrayCallbackMessage,
+                    kTrayCallbackMessage, PM_REMOVE) &&
+                routed.wParam == coordinates && routed.lParam == event,
+                "tray callback forwarding preserves action, icon ID and screen coordinates");
+        }
+        DestroyWindow(notification);
+        Check(IsWindow(callback), "destroying the notification source keeps the application control window alive");
+    }
+    DestroyWindow(callback);
+    Check(!snowdesktop::tray_notification::CreateOwnerWindow(nullptr),
+        "notification owners require a live callback window");
+    if (SUCCEEDED(initialized)) CoUninitialize();
+}
+
+void TestTrayNotificationRegistrationPreservesPreferences()
+{
+    GUID unique{};
+    Check(SUCCEEDED(CoCreateGuid(&unique)), "create an isolated notification registration key");
+    wchar_t suffix[40]{};
+    StringFromGUID2(unique, suffix, static_cast<int>(std::size(suffix)));
+    const std::wstring path = std::wstring(L"Software\\SnowDesktopTests\\TrayNotification-") + suffix;
+    HKEY root = nullptr;
+    Check(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0,
+        KEY_ALL_ACCESS, nullptr, &root, nullptr) == ERROR_SUCCESS,
+        "open a test-only registry root without touching notification settings");
+    if (!root) return;
+    using namespace snowdesktop::tray_notification;
+    const std::wstring icon = L"C:\\Snow Desktop\\软件\\SnowDesktop.png";
+    Check(RegisterApplication(root, PortableApplicationId, icon),
+        "register the software name and Unicode icon path for portable notifications");
+    HKEY entry = nullptr;
+    Check(RegOpenKeyExW(root, PortableApplicationId, 0, KEY_ALL_ACCESS, &entry) == ERROR_SUCCESS,
+        "registration creates the stable application identity");
+    if (entry)
+    {
+        const DWORD disabled = 0;
+        RegSetValueExW(entry, L"Enabled", 0, REG_DWORD,
+            reinterpret_cast<const BYTE*>(&disabled), sizeof(disabled));
+        Check(RegisterApplication(root, PortableApplicationId, {}),
+            "registration can refresh metadata when an icon asset is unavailable");
+        wchar_t value[256]{};
+        DWORD bytes = sizeof(value);
+        Check(RegGetValueW(entry, nullptr, L"DisplayName", RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+                nullptr, value, &bytes) == ERROR_SUCCESS && std::wstring(value) == L"SnowDesktop",
+            "Windows display metadata uses the software name");
+        bytes = sizeof(value);
+        Check(RegGetValueW(entry, nullptr, L"IconUri", RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+                nullptr, value, &bytes) == ERROR_SUCCESS && std::wstring(value) == icon,
+            "metadata refresh retains the existing icon when no replacement asset exists");
+        DWORD enabled = 1;
+        bytes = sizeof(enabled);
+        Check(RegGetValueW(entry, nullptr, L"Enabled", RRF_RT_REG_DWORD,
+                nullptr, &enabled, &bytes) == ERROR_SUCCESS && enabled == 0,
+            "notification branding does not overwrite existing preference values");
+        RegCloseKey(entry);
+    }
+    Check(!RegisterApplication(root, L"bad\\identity", icon),
+        "registration cannot escape the application identity key");
+    RegDeleteTreeW(root, nullptr);
+    RegCloseKey(root);
+    RegDeleteKeyW(HKEY_CURRENT_USER, path.c_str());
+}
+
+void TestTrayNotificationShortcutPreservesUserEntry()
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    GUID unique{};
+    CoCreateGuid(&unique);
+    wchar_t suffix[40]{};
+    StringFromGUID2(unique, suffix, static_cast<int>(std::size(suffix)));
+    const auto directory = std::filesystem::temp_directory_path() /
+        (std::wstring(L"SnowDesktop-notification-") + suffix);
+    std::filesystem::create_directory(directory);
+    const auto shortcut = directory / L"SnowDesktop.lnk";
+    wchar_t executable[32768]{};
+    GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    const HRESULT created = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&link));
+    Check(SUCCEEDED(created), "create a user shortcut fixture for notification registration");
+    if (link)
+    {
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        link.As(&file);
+        link->SetPath(executable);
+        link->SetArguments(L"--settings \"用户参数\"");
+        link->SetIconLocation(executable, 2);
+        Check(SUCCEEDED(file->Save(shortcut.c_str(), TRUE)), "save the original shortcut fixture");
+        using namespace snowdesktop::tray_notification;
+        Check(EnsureApplicationShortcut(shortcut.wstring(), executable) == S_OK,
+            "bind an existing matching shortcut to the notification identity");
+        // Reload through a new ShellLink: an existing instance can retain its
+        // previous property store after another object replaces the file.
+        file.Reset();
+        link.Reset();
+        CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link));
+        link.As(&file);
+        file->Load(shortcut.c_str(), STGM_READWRITE);
+        wchar_t arguments[256]{};
+        wchar_t icon[32768]{};
+        int iconIndex = 0;
+        link->GetArguments(arguments, static_cast<int>(std::size(arguments)));
+        link->GetIconLocation(icon, static_cast<int>(std::size(icon)), &iconIndex);
+        Check(std::wstring(arguments) == L"--settings \"用户参数\"" &&
+                std::wstring(icon) == executable && iconIndex == 2,
+            "notification registration preserves user arguments and custom shortcut icons");
+        Microsoft::WRL::ComPtr<IPropertyStore> properties;
+        link.As(&properties);
+        PROPVARIANT identity{};
+        properties->GetValue(PKEY_AppUserModel_ID, &identity);
+        Check(identity.vt == VT_LPWSTR && identity.pwszVal &&
+                std::wstring(identity.pwszVal) == PortableApplicationId,
+            "the Start menu shortcut exposes the same identity used to send notifications");
+        PropVariantClear(&identity);
+        Check(EnsureApplicationShortcut(shortcut.wstring(), executable) == S_FALSE,
+            "an unchanged notification identity does not rewrite the shortcut");
+        Check(FAILED(EnsureApplicationShortcut(shortcut.wstring(), L"C:\\other.exe")),
+            "a notification registration cannot replace another executable's shortcut");
+        identity.vt = VT_LPWSTR;
+        identity.pwszVal = const_cast<wchar_t*>(L"User.Custom.Identity");
+        Check(SUCCEEDED(properties->SetValue(PKEY_AppUserModel_ID, identity)) &&
+                SUCCEEDED(properties->Commit()) && SUCCEEDED(file->Save(shortcut.c_str(), TRUE)),
+            "persist an explicit user-defined identity in the test fixture");
+        Check(FAILED(EnsureApplicationShortcut(shortcut.wstring(), executable)),
+            "a notification registration cannot replace a user's explicit application identity");
+        DeleteFileW(shortcut.c_str());
+        Check(EnsureApplicationShortcut(shortcut.wstring(), executable) == S_OK,
+            "a missing application entry is created with the software icon and identity");
+        file->Load(shortcut.c_str(), STGM_READ);
+        link->GetIconLocation(icon, static_cast<int>(std::size(icon)), &iconIndex);
+        Check(std::wstring(icon) == executable && iconIndex == 0,
+            "new notification registrations resolve the actual executable's application icon");
+    }
+    DeleteFileW(shortcut.c_str());
+    RemoveDirectoryW(directory.c_str());
+    link.Reset();
+    if (SUCCEEDED(initialized)) CoUninitialize();
+}
+
+// Opt-in equivalent evidence: use the production tray controller without
+// creating or automating SnowDesktop's desktop host. Never run this in CTest.
+int RunTrayNotificationIdentityProbe()
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HWND callback = CreateWindowExW(0, L"STATIC", L"SnowDesktopControl",
+        WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    bool shown = false;
+    {
+        TrayIconController tray;
+        shown = tray.ShowBalloon(callback, "identity-probe",
+            L"SnowDesktop 通知身份验证", L"此提醒用于检查 Windows 通知来源名称。");
+        const ULONGLONG end = GetTickCount64() + 3000;
+        while (shown && GetTickCount64() < end)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                DispatchMessageW(&message);
+            Sleep(20);
+        }
+    }
+    if (callback) DestroyWindow(callback);
+    if (SUCCEEDED(initialized)) CoUninitialize();
+    std::cout << "Production tray notification submitted: " << shown << '\n';
+    return shown ? 0 : 1;
 }
 
 void TestSelectionControllerCoversEveryRegisteredRange()
@@ -2095,8 +2744,181 @@ void TestPopupDwellControllerHandlesCandidateChanges()
 }
 }
 
-int main()
+// DND-03: drive the production completion publisher in both completion orders;
+// delayed refresh must retain each request's independent snapshot and target.
+void TestIndependentDropCompletions()
 {
+    using namespace snowdesktop;
+    auto make = [](const wchar_t* source, const wchar_t* widget, size_t index) {
+        PendingLandingCache cache;
+        cache.existingDesktopKeys.insert(L"EXISTING");
+        PendingLandingEntry entry;
+        entry.sourcePath = source;
+        entry.sourceName = L"same.txt";
+        entry.widgetId = widget;
+        entry.kind = DropLandingKind::WidgetIndex;
+        entry.insertIndex = index;
+        cache.entries.push_back(entry);
+        return cache;
+    };
+    for (bool reverse : {false, true})
+    {
+        pending_drop::Queue queue;
+        const ShellFileOperationResult a{{{L"C:\\a\\same.txt", L"C:\\desktop\\same.txt", false}}};
+        const ShellFileOperationResult b{{{L"C:\\b\\same.txt", L"C:\\desktop\\same (2).txt", false}}};
+        auto completeA = [&] { pending_drop::Complete(queue, make(L"C:\\a\\same.txt", L"collection-a", 2), a); };
+        auto completeB = [&] { pending_drop::Complete(queue, make(L"C:\\b\\same.txt", L"collection-b", 0), b); };
+        if (reverse) { completeB(); completeA(); } else { completeA(); completeB(); }
+        pending_drop::Complete(queue, make(L"missing", L"failed", 1), {});
+        Check(queue.size() == 2, "a failed third drop cannot clear either completed request");
+        if (queue.size() != 2) continue;
+        const auto& first = queue[reverse ? 1 : 0];
+        const auto& second = queue[reverse ? 0 : 1];
+        Check(first.entries.size() == 1 && second.entries.size() == 1 &&
+            first.entries[0].widgetId == L"collection-a" && first.entries[0].insertIndex == 2 &&
+            second.entries[0].widgetId == L"collection-b" && second.entries[0].insertIndex == 0,
+            "independent completions preserve target ownership and insertion boundaries");
+        Check(pending_drop::MatchesExactPath(L"C:\\desktop\\same.txt", first.entries[0].createdPath) &&
+            !pending_drop::MatchesExactPath(L"C:\\desktop\\same (2).txt", first.entries[0].createdPath) &&
+            pending_drop::MatchesExactPath(L"C:\\desktop\\same (2).txt", second.entries[0].createdPath),
+            "collision-renamed outputs cannot match another request's landing");
+        std::vector<DesktopWidget> widgets(3);
+        widgets[0].id = L"collection-a"; widgets[0].itemKeys = {L"K0", L"K1", L"K2"};
+        widgets[1].id = L"collection-b"; widgets[1].itemKeys = {L"R0"};
+        widgets[2].id = L"auto-collector"; widgets[2].itemKeys = {L"NEW-A", L"NEW-B"};
+        // Reverse enumeration order relative to A/B; the exact output path
+        // determines ownership, not basename, callback order or item order.
+        std::vector<DesktopItem> items(2);
+        items[0].layoutKey = L"NEW-B"; items[0].parsingName = b.outputs[0].destination;
+        items[1].layoutKey = L"NEW-A"; items[1].parsingName = a.outputs[0].destination;
+        size_t commits = 0;
+        for (const auto& completed : queue)
+            for (const auto& landing : completed.entries)
+                for (auto& item : items)
+                    if (pending_drop::MatchesExactPath(item.parsingName, landing.createdPath) &&
+                        pending_drop::CommitKeyedLanding(widgets, item, landing, item.layoutKey)) ++commits;
+        Check(commits == 2 && widgets[0].itemKeys == std::vector<std::wstring>{L"K0", L"K1", L"NEW-A", L"K2"} &&
+            widgets[1].itemKeys == std::vector<std::wstring>{L"NEW-B", L"R0"} && widgets[2].itemKeys.empty(),
+            "refresh commits both outputs once, restores exact insertion positions and removes provisional owners");
+        PendingLandingEntry removedTarget = first.entries[0]; removedTarget.widgetId = L"deleted";
+        Check(!pending_drop::CommitKeyedLanding(widgets, items[1], removedTarget, items[1].layoutKey) && widgets[0].itemKeys[2] == L"NEW-A",
+            "a removed asynchronous target cannot consume an unrelated collection's items");
+        queue.erase(queue.begin());
+        Check(queue.size() == 1 && queue[0].existingDesktopKeys.contains(L"EXISTING"),
+            "consuming one request does not consume another request's snapshot");
+    }
+    auto partial = make(L"missing", L"collection-a", 2);
+    auto retained = partial.entries.front(); retained.sourcePath = L"retained"; retained.insertIndex = 3;
+    partial.entries.push_back(retained);
+    pending_drop::Queue partialQueue;
+    pending_drop::Complete(partialQueue, partial, {{{L"retained", L"actual", false}}});
+    Check(partialQueue.size() == 1 && partialQueue[0].entries.size() == 1 && partialQueue[0].entries[0].insertIndex == 2,
+        "partial success starts at the requested insertion boundary without a gap for the failed item");
+    pending_drop::Queue folders;
+    PendingLandingCache first;
+    PendingFolderPlacement folder;
+    folder.widgetId = L"folder-a";
+    folder.insertIndex = 3;
+    first.folderPlacements.push_back(folder);
+    pending_drop::Complete(folders, first, {{{L"source-a", L"folder-a/new.txt", false}}});
+    folder.widgetId = L"folder-b";
+    first.folderPlacements = {folder};
+    pending_drop::Complete(folders, first, {{{L"source-b", L"folder-b/new.txt", false}}});
+    Check(folders.size() == 2 && folders[0].folderPlacements[0].createdPaths ==
+        std::vector<std::wstring>{L"folder-a/new.txt"} &&
+        folders[1].folderPlacements[0].createdPaths == std::vector<std::wstring>{L"folder-b/new.txt"},
+        "folder reconciliation receives only its own request's actual paths");
+}
+
+void TestNewItemsRetainTheirDesktopFilesOwner()
+{
+    using namespace snowdesktop;
+    using Result = new_item_placement::Result;
+    for (bool reverse : {false, true})
+    {
+        std::vector<DesktopWidget> widgets(3);
+        widgets[0].id = L"files-a"; widgets[0].type = DesktopWidgetType::FileCategories;
+        widgets[0].gridCell = {L"group-page", 3, 2}; widgets[0].itemKeys = {L"KEPT-A"};
+        widgets[1].id = L"files-b"; widgets[1].type = DesktopWidgetType::FileCategories;
+        widgets[1].gridCell = {L"__dock", 0, 0}; widgets[1].itemKeys = {L"KEPT-B"};
+        widgets[2].id = L"auto-collector"; widgets[2].type = DesktopWidgetType::FileCategories;
+        widgets[2].itemKeys = {L"NEW-A", L"NEW-B", L"UNRELATED"};
+        ShellNewItemCapture first(L"C:\\desktop", L"files-a", 1);
+        ShellNewItemCapture second(L"C:\\desktop", L"files-b", 0);
+        if (reverse)
+        {
+            second.Record(L"C:\\desktop\\new (2).txt");
+            first.Record(L"C:\\desktop\\new.txt");
+        }
+        else
+        {
+            first.Record(L"C:\\desktop\\new.txt");
+            second.Record(L"C:\\desktop\\new (2).txt");
+        }
+        first.Record(L"c:\\DESKTOP\\NEW.TXT"); // Shell can send both select and edit callbacks.
+        first.Record(L"C:\\elsewhere\\new.txt");
+        first.Finish(); second.Finish();
+        std::vector<DesktopItem> items;
+        int applied = 0;
+        auto commit = [&](const auto& id, const auto& path, size_t& index) {
+            const auto result = new_item_placement::Apply(widgets, items, id, path, index,
+                [](const auto& key) { return key; });
+            if (result == Result::Applied) { ++applied; ++index; }
+            return result != Result::Pending;
+        };
+        Check(!first.Consume(commit, 0) && !second.Consume(commit, 0) && applied == 0,
+            "an early refresh retains exact New outputs until desktop enumeration catches up");
+        items.resize(3);
+        items[0].layoutKey = L"NEW-B"; items[0].parsingName = L"C:\\desktop\\new (2).txt";
+        items[1].layoutKey = L"UNRELATED"; items[1].parsingName = L"C:\\desktop\\unrelated.txt";
+        items[2].layoutKey = L"NEW-A"; items[2].parsingName = L"C:\\desktop\\new.txt";
+        // Reallocation/reordering must not retarget the stored owner. The
+        // host uses this same transaction for grouped and Dock FileCategories.
+        std::swap(widgets[0], widgets[1]);
+        Check(first.Consume(commit) && second.Consume(commit) && applied == 2 &&
+            widgets[1].itemKeys == std::vector<std::wstring>{L"KEPT-A", L"NEW-A"} &&
+            widgets[0].itemKeys == std::vector<std::wstring>{L"NEW-B", L"KEPT-B"} &&
+            widgets[2].itemKeys == std::vector<std::wstring>{L"UNRELATED"} &&
+            items[2].gridCell.pageId == L"group-page" && items[0].gridCell.pageId == L"__dock",
+            "New outputs reach only their captured owners once, with insertion order and provisional ownership corrected");
+        Check(first.Consume(commit) && applied == 2,
+            "subsequent refreshes never recommit a consumed New callback");
+        ShellNewItemCapture deleted(L"C:\\desktop", L"deleted-owner", 0);
+        deleted.Record(L"C:\\desktop\\unrelated.txt"); deleted.Finish();
+        Check(deleted.Consume(commit) && applied == 2 && widgets[2].itemKeys.size() == 1,
+            "deleting a New-menu owner does not move its output into an unrelated widget");
+        ShellNewItemCapture cancelled(L"C:\\desktop", L"files-a", 0);
+        cancelled.Finish();
+        Check(cancelled.Consume(commit) && applied == 2,
+            "a cancelled New invocation cannot collect files created by another operation");
+        ShellNewItemCapture expired(L"C:\\desktop", L"files-a", 0);
+        expired.Record(L"C:\\desktop\\unrelated.txt"); expired.Finish();
+        Check(expired.Consume(commit, GetTickCount64() + 30001) && applied == 2,
+            "an expired unobserved creation must not claim a later file reusing its path");
+    }
+}
+
+int wmain(int argc, wchar_t** argv)
+{
+    if (argc == 4 && std::wstring(argv[1]) == L"--register-notification-shortcut")
+    {
+        const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        const HRESULT registered = snowdesktop::tray_notification::EnsureApplicationShortcut(
+            argv[2], argv[3]);
+        if (registered == S_OK)
+        {
+            SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW,
+                argv[2], nullptr);
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+        }
+        std::cout << "Notification shortcut registration result: " << registered << '\n';
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return SUCCEEDED(registered) ? 0 : 1;
+    }
+    if (argc == 2 && std::wstring(argv[1]) == L"--notification-identity-probe")
+        return RunTrayNotificationIdentityProbe();
+    TestIndependentDropCompletions();
+    TestNewItemsRetainTheirDesktopFilesOwner();
     TestSlotCacheAndIdentity();
     TestHitRegionsUseContainerOrientation();
     TestExecuteDropDelegatesOnce();
@@ -2109,14 +2931,23 @@ int main()
     TestDropActionModifiers();
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
     TestDockPayloadSurvivesPageTurnWithoutSelection();
+    TestDesktopFilesDockPayload();
     TestDragTargetResolutionUsesContractAndZOrder();
+    TestRuntimeSourceTargetMatrix();
+    TestExternalDropContentRegressions();
+    TestExternalContentSelectionMatrix();
+    TestExternalResolutionAndSessionMatrix();
     TestDragDropControllerOwnsTransportTransitions();
     TestModelReloadDeferralCoversRetainedDragLifecycle();
     TestOwnedTransientDragTargetBoundsMemberWrappers();
     TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
+    TestOleDropCompletionBoundaryMatrix();
     TestTrayCallbackClassification();
+    TestTrayNotificationSourceAndRouting();
+    TestTrayNotificationRegistrationPreservesPreferences();
+    TestTrayNotificationShortcutPreservesUserEntry();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();

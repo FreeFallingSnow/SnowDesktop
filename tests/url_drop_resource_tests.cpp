@@ -45,6 +45,18 @@ void ExpectShortcut(std::wstring_view url, std::wstring_view contentType,
 
 int main()
 {
+    // Original Edge/huaban reproduction: the URL has no dotted extension.
+    // This checks MIME/filename policy, not DesktopApp's target dispatch.
+    constexpr std::wstring_view huabanUrl =
+        L"https://gd-hbimg.huaban.com/"
+        L"08aaeb96f1f7360a2016ab5da1d6dd2d8f9933b62f9137-uqfbvd_fw658webp";
+    ExpectDownload(huabanUrl, L"image/webp",
+        L"08aaeb96f1f7360a2016ab5da1d6dd2d8f9933b62f9137-uqfbvd_fw658webp.webp");
+    ExpectDownload(huabanUrl, L" IMAGE/WEBP; charset=binary ",
+        L"08aaeb96f1f7360a2016ab5da1d6dd2d8f9933b62f9137-uqfbvd_fw658webp.webp");
+    ExpectShortcut(huabanUrl, L"text/html");
+    ExpectShortcut(huabanUrl, L"application/x-unknown");
+
     snowdesktop::UrlDropDownloadResult retryableFailure;
     retryableFailure.outcome =
         snowdesktop::UrlDropDownloadOutcome::Failed;

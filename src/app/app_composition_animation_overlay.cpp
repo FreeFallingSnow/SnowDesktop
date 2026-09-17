@@ -288,6 +288,8 @@ bool DesktopApp::CommitCompositionAnimationFrame()
 
 bool DesktopApp::FlushPendingCompositionCommit()
 {
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
     if (!compositionCommitPending_)
         return true;
     snowdesktop::performance::Scope performanceScope("composition.shared", "commit");
@@ -365,6 +367,8 @@ bool DesktopApp::CommitQuickNavigationCompositionFrame()
 
 bool DesktopApp::FlushPendingQuickNavigationCompositionCommit()
 {
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
     if (!quickNavCompositionCommitPending_)
         return true;
     if (!quickNavDcompDevice_)

@@ -254,6 +254,8 @@ bool DesktopApp::RenderDesktopForegroundComposition(
 bool DesktopApp::PresentDesktopForegroundComposition(
     const RECT& updateRect)
 {
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
     if (!hwnd_ || !IsWindow(hwnd_) || IsRectEmpty(&updateRect))
         return false;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_ipc_values.h"
+#include "home_about_ipc_values.h"
 #include "settings_window_host.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no
@@ -93,11 +94,6 @@ SD_IPC_FIELDS(winui::GeneralStartupConflict,
 SD_IPC_FIELDS(winui::GeneralAdvancedFeatureStatus,
     v.state, v.failure, v.bridgeAvailable, v.registered,
     v.validUntil, v.cardVisible, v.offerSteamStore);
-SD_IPC_FIELDS(winui::HomeAboutStatusPatch,
-    v.generation, v.revision, v.applicationVersion, v.installedWidgetCount,
-    v.packaged,
-    v.backupState, v.backupCount, v.backupDetail, v.animationDiagnosticsEnabled,
-    v.animationDiagnosticsStatus);
 SD_IPC_FIELDS(winui::LayoutBackupEntry,
     v.id, v.displayName, v.createdAt, v.hasStorageCompanion);
 SD_IPC_FIELDS(winui::FullDataBackupEntry,

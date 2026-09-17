@@ -1,4 +1,6 @@
 #include "component_preview.h"
+#include "widget_clip_geometry.h"
+#include <wincodec.h>
 #include "widget_preview_scene.h"
 
 #include <windows.h>
@@ -20,6 +22,69 @@ void Expect(bool condition, const char* message)
     if (condition) return;
     std::cerr << "FAILED: " << message << '\n';
     std::exit(1);
+}
+
+void TestWidgetClipFactoryReplacement()
+{
+    // Issue #11: the real widget cache survives recovery. Replacing its factory
+    // with unchanged bounds used to return geometry from the previous factory.
+    using Microsoft::WRL::ComPtr;
+    Expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "initialize clip test COM");
+    {
+        ComPtr<IWICImagingFactory> images;
+        Expect(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&images))), "create clip test WIC factory");
+        ComPtr<ID2D1Factory1> first, second;
+        Expect(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            first.GetAddressOf())) && SUCCEEDED(D2D1CreateFactory(
+            D2D1_FACTORY_TYPE_SINGLE_THREADED, second.GetAddressOf())), "create two independent D2D factories");
+        const auto draw = [&](ID2D1Factory1* factory, ID2D1Geometry* geometry) {
+            ComPtr<IWICBitmap> pixels;
+            ComPtr<ID2D1RenderTarget> target;
+            ComPtr<ID2D1SolidColorBrush> brush;
+            ComPtr<ID2D1Layer> layer;
+            Expect(SUCCEEDED(images->CreateBitmap(64, 64, GUID_WICPixelFormat32bppPBGRA,
+                WICBitmapCacheOnLoad, &pixels)), "create isolated clip bitmap");
+            Expect(SUCCEEDED(factory->CreateWicBitmapRenderTarget(pixels.Get(),
+                D2D1::RenderTargetProperties(), &target)), "create clip render target");
+            Expect(SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White),
+                &brush)) && SUCCEEDED(target->CreateLayer(&layer)), "create clip draw resources");
+            target->BeginDraw();
+            target->Clear(D2D1::ColorF(0, 0.0f));
+            target->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geometry), layer.Get());
+            target->FillRectangle(D2D1::RectF(0, 0, 64, 64), brush.Get());
+            target->PopLayer();
+            const HRESULT result = target->EndDraw();
+            if (SUCCEEDED(result))
+            {
+                std::uint32_t data[64 * 64]{};
+                Expect(SUCCEEDED(pixels->CopyPixels(nullptr, 64 * 4, sizeof(data),
+                    reinterpret_cast<BYTE*>(data))), "read actual clipped pixels");
+                Expect(data[32 * 64 + 32] == 0xffffffff && data[0] == 0,
+                    "recovered clip must retain visible center and transparent exterior");
+            }
+            return result;
+        };
+        ComPtr<ID2D1RoundedRectangleGeometry> cached;
+        RECT cachedFrame{};
+        float cachedRadius = 0;
+        const RECT frame{8, 8, 56, 56};
+        auto* geometry = snowdesktop::ResolveWidgetClipGeometry(first.Get(), frame, 10,
+            cached, cachedFrame, cachedRadius);
+        Expect(geometry && SUCCEEDED(draw(first.Get(), geometry)), "initial widget clipping renders");
+        // Controlled failure: the old geometry and the new target reproduce
+        // the observed HRESULT through a real D2D PushLayer/EndDraw transaction.
+        Expect(draw(second.Get(), geometry) == D2DERR_WRONG_FACTORY,
+            "old factory geometry must reproduce the runtime WRONG_FACTORY error");
+        for (ID2D1Factory1* factory : {second.Get(), first.Get(), second.Get()})
+        {
+            geometry = snowdesktop::ResolveWidgetClipGeometry(factory, frame, 10,
+                cached, cachedFrame, cachedRadius);
+            Expect(geometry && SUCCEEDED(draw(factory, geometry)),
+                "widget clipping must render after repeated factory replacement");
+        }
+    }
+    CoUninitialize();
 }
 
 bool IsVisuallyCentered(const RECT& inner, const RECT& outer)
@@ -69,6 +134,7 @@ void RunWidgetTextLayoutCacheTests();
 
 int wmain()
 {
+    TestWidgetClipFactoryReplacement();
     RunWidgetBackgroundCacheTests();
     RunWidgetTextLayoutCacheTests();
     using namespace snowdesktop::component_preview;
@@ -535,13 +601,18 @@ int wmain()
             false, {}, itemBounds),
         "hovering a sibling schedules its preview");
     POINT savedCursor{};
-    GetCursorPos(&savedCursor);
-    SetCursorPos(0, 0);
+    Expect(GetCursorPos(&savedCursor) != FALSE,
+        "the preview fixture can save the cursor position");
+    Expect(SetCursorPos(0, 0) != FALSE,
+        "the preview fixture can move outside the pending preview");
     SendMessageW(window.Handle(), WM_TIMER, 2, 0);
-    Expect(IsWindowVisible(window.Handle()) != FALSE,
-        "a stale close timer keeps the old frame while a sibling is pending");
+    const bool oldFrameRetained = IsWindowVisible(window.Handle()) != FALSE;
     SendMessageW(window.Handle(), WM_TIMER, 1, 0);
-    SetCursorPos(savedCursor.x, savedCursor.y);
+    // Restore before any assertion can terminate the test process.
+    const bool cursorRestored = SetCursorPos(savedCursor.x, savedCursor.y) != FALSE;
+    Expect(cursorRestored, "the preview fixture restores the saved cursor position");
+    Expect(oldFrameRetained,
+        "a stale close timer keeps the old frame while a sibling is pending");
     Expect(replacementRendered && IsWindowVisible(window.Handle()) != FALSE,
         "the sibling preview atomically replaces the old frame");
 

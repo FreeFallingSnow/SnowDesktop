@@ -35,6 +35,7 @@ using namespace snowdesktop::widget;
 namespace
 {
 int failures = 0;
+int skippedScenarios = 0;
 
 void Check(bool condition, const char* message)
 {
@@ -581,6 +582,12 @@ void TestProjectStore()
             SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE))
         Check(!loaded.AddDirectory(linked, invalid, error),
             "project store rejects project paths containing a reparse point");
+    else
+    {
+        ++skippedScenarios;
+        std::cout << "SKIP: project reparse-point fixture could not be created (Windows error "
+                  << GetLastError() << ")\n";
+    }
     const auto second = temporary.path / L"second";
     std::filesystem::create_directory(second);
     std::ofstream(second / L"widget.json") << "{}";
@@ -837,13 +844,27 @@ void TestComponentPublishPlan()
     std::string error;
     Check(BuildComponentPublishPlan(project, inspection, package,
             options, plan, error) &&
-            plan.action == ComponentPublishAction::Create &&
+            plan.action == ComponentPublishAction::Create && plan.visibility == 0 &&
             plan.updateContent && plan.preview == preview &&
             plan.tags && plan.tags->size() == 1 &&
             plan.localizations.size() == 2 &&
             plan.localizations.front().language == "english" &&
             plan.localizations[1].language == "schinese",
-        "a new component plan creates a private-ready multilingual item from package and local sources");
+        "a new component plan defaults to a public multilingual item from package and local sources");
+
+    for (const int visibility : {0, 1, 2, 3})
+    {
+        options.visibility = visibility;
+        Check(BuildComponentPublishPlan(project, inspection, package,
+                options, plan, error) && plan.visibility == visibility &&
+                ResolveWorkshopVisibility(true, visibility) == visibility &&
+                ResolveWorkshopVisibility(false, visibility) == visibility,
+            "explicit visibility overrides are honored for creation and updates");
+    }
+    options.visibility.reset();
+    Check(ResolveWorkshopVisibility(true, {}) == 0 &&
+            !ResolveWorkshopVisibility(false, {}),
+        "default visibility is public only for creation; existing visibility is preserved");
 
     project.publishedFileId = 100;
     project.lastPublishedSha256 = package.sha256;
@@ -854,7 +875,7 @@ void TestComponentPublishPlan()
             options, plan, error) &&
             plan.action == ComponentPublishAction::UpdateMetadata &&
             !plan.updateContent && plan.localizations.empty() &&
-            !plan.preview && !plan.tags,
+            !plan.preview && !plan.tags && !plan.visibility,
         "an unchanged bound component plan preserves Steam-managed listing fields without reuploading content");
 
     project.publishPreferences.textSource = WorkshopTextSource::Package;
@@ -1109,6 +1130,11 @@ int wmain(int argc, wchar_t** argv)
         TestManagerFontCoverage(argv[2]);
     }
     else Check(false, "test requires snowwidget.exe and repository root arguments");
+    if (failures == 0 && skippedScenarios)
+    {
+        std::cout << skippedScenarios << " safety scenario(s) could not run; this entry is not fully verified\n";
+        return 77;
+    }
     if (failures == 0)
         std::cout << "Steam Workshop manager tests passed\n";
     return failures == 0 ? 0 : 1;

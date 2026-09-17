@@ -688,6 +688,69 @@ inline RECT DesktopRectToWindowRect(
     return desktopRect;
 }
 
+// Returns an owned region; SetWindowRgn takes ownership only on success.
+// Use the animation envelope for visibility, independently of mouse targets.
+inline HRGN CreateHostWindowRegion(
+    const RECT& dockRect, const RECT& animationVisualRect, const RECT& popupRect,
+    const RECT& tooltipRect, const RECT& sourceRect,
+    int radius, float dockBorderWidth)
+{
+    const RECT dockVisualRect = UnionNonEmptyRects(dockRect, animationVisualRect);
+    const int borderOverdraw =
+        snowdesktop::floating_dock_rules::ResolveBorderOverdraw(
+            dockBorderWidth);
+    const RECT dockRegionRect =
+        snowdesktop::floating_dock_rules::
+            ExpandForBorderOverdraw(
+                dockVisualRect, dockBorderWidth);
+    const RECT dockLocal =
+        snowdesktop::floating_dock_rules::
+            DesktopRectToWindowRect(
+                dockRegionRect,
+                sourceRect);
+    HRGN windowRegion = CreateRoundRectRgn(
+        dockLocal.left, dockLocal.top,
+        dockLocal.right + 1, dockLocal.bottom + 1,
+        (radius + borderOverdraw) * 2,
+        (radius + borderOverdraw) * 2);
+    auto appendRegion = [&](
+        const RECT& desktopRect,
+        int cornerRadius) {
+        if (!windowRegion ||
+            IsRectEmpty(&desktopRect))
+            return;
+        const RECT overdrawRect =
+            snowdesktop::
+                floating_dock_rules::
+                    ExpandForBorderOverdraw(
+                        desktopRect);
+        const RECT local =
+            snowdesktop::floating_dock_rules::
+                DesktopRectToWindowRect(
+                    overdrawRect,
+                    sourceRect);
+        HRGN addedRegion = CreateRoundRectRgn(
+            local.left, local.top,
+            local.right + 1,
+            local.bottom + 1,
+            (cornerRadius +
+                borderOverdraw) * 2,
+            (cornerRadius +
+                borderOverdraw) * 2);
+        if (addedRegion)
+        {
+            CombineRgn(windowRegion, windowRegion,
+                addedRegion, RGN_OR);
+            DeleteObject(addedRegion);
+        }
+    };
+    appendRegion(
+        popupRect, radius);
+    appendRegion(
+        tooltipRect, 7);
+    return windowRegion;
+}
+
 inline RECT DockAssociatedPopupInteractionRect(
     bool anchoredToDock,
     const RECT& hostedPopupRect)
@@ -742,19 +805,13 @@ inline bool IsPointInVisibleLayer(
                 desktopPoint) != FALSE);
 }
 
-inline bool IsTooltipOnlyPoint(
-    POINT desktopPoint,
-    const RECT& dockRect,
-    const RECT& popupRect,
-    const RECT& tooltipRect)
+// Called for points inside the HWND's visual region, including overdraw.
+inline bool IsVisualOnlyPoint(
+    POINT desktopPoint, const RECT& dockRect, const RECT& popupRect)
 {
-    if (IsRectEmpty(&tooltipRect) ||
-        !PtInRect(&tooltipRect, desktopPoint))
-        return false;
     if (PtInRect(&dockRect, desktopPoint))
         return false;
     return IsRectEmpty(&popupRect) ||
         !PtInRect(&popupRect, desktopPoint);
 }
-
 } // namespace snowdesktop::floating_dock_rules
