@@ -4,8 +4,10 @@
 
 namespace snowdesktop::taskbar_hook::autohide_observer
 {
-// All lifecycle calls run on the taskbar UI thread. No function suppresses a
-// native call. Unsupported images retain message-only observations.
-void Configure(AutoHideTraceBuffer* buffer, bool enabled) noexcept;
+// Unsupported images retain message-only observations. Native focus hooks and
+// reveal hooks must all be available before activation filtering can run.
+void Configure(AutoHideTraceBuffer* buffer, HWND taskbar, bool enabled,
+    bool protectActivation) noexcept;
+void Disable() noexcept;
 LRESULT Dispatch(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 }

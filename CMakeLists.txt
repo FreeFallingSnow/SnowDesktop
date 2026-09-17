@@ -609,6 +609,7 @@ if (MSVC)
         src/taskbar_hook/taskbar_autohide_observer.cpp
         src/taskbar_hook/taskbar_autohide_observer.h
         src/taskbar_hook/taskbar_autohide_trace.h
+        src/taskbar_hook/taskbar_autohide_rules.h
         ${MINHOOK64_SOURCES}
         src/taskbar_hook/taskview_visibility.h
         src/taskbar_hook/taskbar_hook.def

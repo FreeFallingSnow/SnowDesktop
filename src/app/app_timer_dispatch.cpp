@@ -570,12 +570,15 @@ void DesktopApp::OnTimer(WPARAM timerId)
         const bool foregroundSettling = foregroundTick != 0 &&
             now - foregroundTick <= 400 &&
             now - systemTaskbarBackdropRefreshTick_ >= 100;
-        if (IsSystemTaskbarHookRequired(dockSettings_) &&
+        // Reconcile guard ownership after Dock/display changes and external
+        // auto-hide changes, including when appearance effects are disabled.
+        const bool controlRefreshDue = now - systemTaskbarBackdropRefreshTick_ >= 1000;
+        if (controlRefreshDue || (IsSystemTaskbarHookRequired(dockSettings_) &&
             (foregroundChanged || windowStateRefreshDue ||
-                foregroundSettling))
+                foregroundSettling)))
         {
             const bool taskbarAppearanceApplied =
-                RefreshSystemTaskbarAppearance(true, true);
+                RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
             if (taskbarAppearanceApplied &&
                 hwnd_ && IsWindow(hwnd_))

@@ -176,8 +176,9 @@ void DesktopApp::UpdateSystemShowDesktopDockLayerGuard()
     WriteDiagnosticLogEntry(guardTrace);
 }
 
-bool DesktopApp::IsSystemTaskbarHookRequired(
-    const DockSettings& settings) const
+namespace
+{
+bool AppearanceRequiresTaskbarHook(const DockSettings& settings)
 {
     const auto ruleNeedsHook = [](const SystemTaskbarDynamicRule& rule) {
         return rule.enabled &&
@@ -187,6 +188,14 @@ bool DesktopApp::IsSystemTaskbarHookRequired(
         ruleNeedsHook(settings.systemTaskbarVisibleWindow) ||
         ruleNeedsHook(settings.systemTaskbarMaximizedWindow) ||
         ruleNeedsHook(settings.systemTaskbarShellUi);
+}
+}
+
+bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
+{
+    return AppearanceRequiresTaskbarHook(settings) ||
+        (generalSettings_.dockEnabled && settings.position == DockPosition::Bottom &&
+            !settings.floatingShortcutMode && settings.systemTaskbarAutoHide);
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -406,7 +415,11 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
 bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
-    const bool hookRequired = IsSystemTaskbarHookRequired(dockSettings_);
+    const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
+    const bool protectActivation = generalSettings_.dockEnabled &&
+        dockSettings_.position == DockPosition::Bottom && !dockSettings_.floatingShortcutMode &&
+        IsSystemTaskbarAutoHideEnabled();
+    const bool hookRequired = appearanceRequired || protectActivation;
     if (!hookRequired)
     {
         ApplySystemTaskbarBackdrop(false, false,
@@ -468,6 +481,22 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
 
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
+    std::vector<HMONITOR> dockMonitors;
+    if (protectActivation && hwnd_)
+    {
+        for (const auto& container : containers_)
+        {
+            const auto* dock = dynamic_cast<DockContainer*>(container.get());
+            if (!dock) continue;
+            const RECT bounds = dock->GetBounds();
+            if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) continue;
+            POINT center{bounds.left + (bounds.right - bounds.left) / 2,
+                bounds.top + (bounds.bottom - bounds.top) / 2};
+            if (!ClientToScreen(hwnd_, &center)) continue;
+            if (const HMONITOR monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONULL))
+                dockMonitors.push_back(monitor);
+        }
+    }
     std::vector<SystemTaskbarTargetAppearance> targets;
     targets.reserve(context.windows.size());
     for (HWND taskbar : context.windows)
@@ -494,6 +523,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
 
         SystemTaskbarTargetAppearance target;
         target.taskbar = taskbar;
+        target.protectAutoHideActivation = protectActivation &&
+            std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
         if (selectedRule)
         {
             target.enabled =
@@ -510,7 +541,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     }
 
     ApplySystemTaskbarBackdrop(true,
-        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets);
+        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;
 }

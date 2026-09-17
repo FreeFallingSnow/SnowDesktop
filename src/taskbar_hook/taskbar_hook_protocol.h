@@ -10,15 +10,15 @@
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 7;
+inline constexpr std::uint32_t kSharedStateVersion = 8;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v7";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v8";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v7";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v8";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v7";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v8";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -93,6 +93,7 @@ struct TargetAppearance
     float borderBlue = 1.0f;
     float borderAlpha = 0.40f;
     Gradient gradient;
+    LONG protectAutoHideActivation = FALSE;
 };
 
 struct SharedState
@@ -101,10 +102,11 @@ struct SharedState
     std::uint32_t version = kSharedStateVersion;
     std::uint32_t size = sizeof(SharedState);
     volatile LONG generation = 0;
-    // enabled controls hook lifetime; defaultEnabled controls the visual
-    // fallback used when no per-taskbar record matches.
+    // enabled controls hook lifetime; appearanceEnabled controls visual
+    // ownership; defaultEnabled is the unmatched-taskbar visual fallback.
     volatile LONG enabled = FALSE;
     volatile LONG defaultEnabled = FALSE;
+    volatile LONG appearanceEnabled = FALSE;
     volatile LONG style = 0;
     volatile LONG contentTheme = 0; // 0=dark(white text), 1=light(black text)
     volatile LONG systemUsesLightTheme = TRUE; // 1=system light, 0=system dark
@@ -149,6 +151,7 @@ struct Snapshot
     LONG generation = 0;
     bool enabled = false;
     bool defaultEnabled = false;
+    bool appearanceEnabled = false;
     LONG style = 0;
     LONG contentTheme = 0;
     LONG systemUsesLightTheme = TRUE;

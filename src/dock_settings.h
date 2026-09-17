@@ -52,6 +52,7 @@ struct SystemTaskbarTargetAppearance
     bool enabled = false;
     PersonalizationSettings appearance =
         PersonalizationSettings::DarkPreset();
+    bool protectAutoHideActivation = false;
 };
 
 struct DockSettings : DockLayoutSettings
@@ -131,6 +132,7 @@ LONG DrainSystemTaskbarAutoHideTrace(
         snowdesktop::taskbar_hook::kAutoHideTraceCapacity>& records, LONG& dropped);
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& defaultAppearance,
-    const std::vector<SystemTaskbarTargetAppearance>& targets = {});
+    const std::vector<SystemTaskbarTargetAppearance>& targets = {},
+    bool appearanceEnabled = true);
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings);
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings);

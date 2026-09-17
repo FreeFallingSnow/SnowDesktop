@@ -11,7 +11,8 @@ namespace snowdesktop::taskbar_hook
 {
 enum class AutoHideTraceKind : LONG
 {
-    Adapter = 0, ActivateBefore, ActivateAfter, PrimaryUnhide, SecondaryUnhide
+    Adapter = 0, ActivateBefore, ActivateAfter, PrimaryUnhide, SecondaryUnhide,
+    SuppressedActivation, FocusEnter, FocusLeave
 };
 
 struct AutoHideTraceRecord
@@ -24,6 +25,7 @@ struct AutoHideTraceRecord
     POINT cursor{};
     LONG activation = 0, previousIconic = 0, geometryValid = 0;
     LONG flags = 0, request = 0;
+    LONG explicitFocus = 0;
     std::uint32_t callerRva = 0;
 };
 

@@ -323,7 +323,8 @@ inline void PollNativeAutoHideTrace()
     const LONG count = DrainSystemTaskbarAutoHideTrace(records, dropped);
     if (!count && !dropped) return;
     constexpr const wchar_t* kinds[] = {
-        L"adapter", L"activate-before", L"activate-after", L"primary-unhide", L"secondary-unhide"};
+        L"adapter", L"activate-before", L"activate-after", L"primary-unhide", L"secondary-unhide",
+        L"suppressed-activation", L"focus-enter", L"focus-leave"};
     for (LONG i = 0; i < count; ++i)
     {
         const auto& r = records[static_cast<size_t>(i)];
@@ -336,6 +337,7 @@ inline void PollNativeAutoHideTrace()
              << L" foreground=0x" << r.foreground << L" callerRva=0x" << r.callerRva << std::dec
              << L" activation=" << r.activation << L" previousIconic=" << r.previousIconic
              << L" flags=" << r.flags << L" request=" << r.request
+             << L" explicitFocus=" << r.explicitFocus
              << L" geometryValid=" << r.geometryValid
              << L" rect=" << r.rect.left << L"," << r.rect.top << L"," << r.rect.right << L"," << r.rect.bottom
              << L" cursor=" << r.cursor.x << L"," << r.cursor.y;

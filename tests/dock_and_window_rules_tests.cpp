@@ -43,6 +43,7 @@
 #include "widget_item_layout.h"
 #include "app/grid_geometry.h"
 #include "taskbar_hook/taskbar_autohide_trace.h"
+#include "taskbar_hook/taskbar_autohide_rules.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -114,6 +115,71 @@ void CheckTaskbarAutoHideTraceTransport()
     Check(AppendAutoHideTrace(buffer, record) &&
         DrainAutoHideTrace(buffer, drained, dropped) == 1 && drained.front().tick == 9000,
         "the trace buffer must accept new samples after draining");
+}
+
+void CheckTaskbarActivationRevealDispatch()
+{
+    using namespace snowdesktop::taskbar_hook;
+    ActivationRevealContext hidden;
+    hidden.protectedTaskbar = true;
+    hidden.geometryValid = true;
+    hidden.activation = WA_ACTIVE;
+    hidden.callerRva = 0x92af3;
+    hidden.monitor = {0, 0, 2560, 1440};
+    hidden.taskbar = {0, 1438, 2560, 1498};
+    hidden.cursor = {987, 1407};
+    auto expect = [&](const ActivationRevealContext& context, int flags, int request,
+        bool suppress, const char* failure) {
+        int originalCalls = 0;
+        const bool result = DispatchActivationReveal(context, flags, request, [&](int f, int r) {
+            ++originalCalls;
+            Check(f == flags && r == request, "forwarding must preserve native request arguments");
+        });
+        Check(result == suppress && originalCalls == (suppress ? 0 : 1), failure);
+    };
+    // Values from the user's ordinary Dock minimization, Trace 5. The fake
+    // boundary is only Explorer's native Unhide function, never the decision.
+    expect(hidden, 0, 8, true, "known hidden-taskbar activation must not invoke native expansion");
+    auto alternate = hidden;
+    alternate.explicitFocus = true;
+    expect(alternate, 0, 8, false, "Win+T/Win+B can share request 8 and must retain native expansion");
+    alternate = hidden;
+    alternate.cursor = {987, 1439};
+    expect(alternate, 0, 8, false, "intentional bottom-edge reveal must survive activation during minimization");
+    expect(hidden, 0, 15, false, "native edge request 15 must pass without any focus context");
+    expect(hidden, 1, 2, false, "Start-menu request must preserve native flags and expansion");
+    expect(hidden, 1, 9, false, "other observed native requests must remain untouched");
+    expect(hidden, 0, 27, false, "unknown request semantics must fail open");
+    alternate = hidden;
+    alternate.activation = WA_CLICKACTIVE;
+    expect(alternate, 0, 8, false, "direct taskbar mouse activation must pass");
+    alternate = hidden;
+    alternate.protectedTaskbar = false;
+    expect(alternate, 0, 8, false, "disabled Dock, unmatched monitor, or unavailable adapter must pass");
+    alternate = hidden;
+    alternate.geometryValid = false;
+    expect(alternate, 0, 8, false, "failed geometry or pointer queries must fail open");
+    alternate = hidden;
+    alternate.callerRva = 0x12345;
+    expect(alternate, 0, 8, false, "request 8 from an unrecognized call site must pass");
+    alternate = hidden;
+    alternate.taskbar = {0, 1380, 2560, 1440};
+    expect(alternate, 0, 8, false, "an already revealed taskbar must retain its native interaction");
+    alternate = hidden;
+    alternate.taskbar = {0, 1410, 2560, 1470};
+    expect(alternate, 0, 8, false, "an ongoing reveal must not be interrupted");
+    alternate = hidden;
+    alternate.taskbar = {0, -58, 2560, 2};
+    expect(alternate, 0, 8, false, "a top taskbar is outside the bottom-Dock policy");
+    alternate = hidden;
+    alternate.secondary = true;
+    alternate.callerRva = 0x22550;
+    alternate.monitor = {-1920, 0, 0, 1080};
+    alternate.taskbar = {-1920, 1078, 0, 1138};
+    alternate.cursor = {987, 1407};
+    expect(alternate, 0, 8, true, "secondary passive activation must not depend on pointer monitor");
+    alternate.cursor = {-500, 1079};
+    expect(alternate, 0, 8, false, "negative-coordinate monitor edges must retain intentional reveal");
 }
 
 void CheckNativeDesktopCaptureReadiness()
@@ -687,6 +753,7 @@ void CheckAdaptiveRenameEditor()
 int main(int argc, char** argv)
 {
     CheckTaskbarAutoHideTraceTransport();
+    CheckTaskbarActivationRevealDispatch();
     CheckNativeDesktopCaptureReadiness();
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();

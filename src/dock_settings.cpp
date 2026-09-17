@@ -471,7 +471,7 @@ public:
 
     bool Apply(bool hookEnabled, bool defaultEnabled,
         const PersonalizationSettings& appearance,
-        const std::vector<SystemTaskbarTargetAppearance>& targets)
+        const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled)
     {
         // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
@@ -491,6 +491,7 @@ public:
         InterlockedIncrement(&state_->generation); // odd: write in progress
         state_->enabled = hookEnabled ? TRUE : FALSE;
         state_->defaultEnabled = defaultEnabled ? TRUE : FALSE;
+        state_->appearanceEnabled = hookEnabled && appearanceEnabled ? TRUE : FALSE;
         state_->style = appearance.glassEnabled
             ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
         if (appearance.glassEnabled && appearance.acrylicEnabled)
@@ -522,6 +523,7 @@ public:
             destination.taskbar =
                 reinterpret_cast<std::uintptr_t>(source.taskbar);
             destination.enabled = source.enabled ? TRUE : FALSE;
+            destination.protectAutoHideActivation = source.protectAutoHideActivation ? TRUE : FALSE;
             destination.style = source.appearance.glassEnabled
                 ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
             if (source.appearance.glassEnabled &&
@@ -922,10 +924,10 @@ LONG DrainSystemTaskbarAutoHideTrace(
 
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& appearance,
-    const std::vector<SystemTaskbarTargetAppearance>& targets)
+    const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled)
 {
     return GetTaskbarBackdropController().Apply(hookEnabled, defaultEnabled,
-        appearance, targets);
+        appearance, targets, appearanceEnabled);
 }
 
 PersonalizationSettings MakeTransparentTaskbarAppearance()

@@ -1,4 +1,5 @@
 #include "taskbar_autohide_observer.h"
+#include "taskbar_autohide_rules.h"
 #include <MinHook.h>
 #include <commctrl.h>
 #include <intrin.h>
@@ -12,6 +13,13 @@ namespace
 {
 using Unhide = void(WINAPI*)(void*, int, int);
 Unhide primaryOriginal = nullptr, secondaryOriginal = nullptr;
+using Focus = void(WINAPI*)(void*);
+using FocusCommand = bool(WINAPI*)(void*, int, bool);
+Focus focusOriginal = nullptr;
+FocusCommand focusCommandOriginal = nullptr;
+std::atomic<unsigned> explicitFocusCalls{0};
+std::atomic<bool> adapterReady{false};
+constexpr wchar_t kProtectedTaskbar[] = L"SnowDesktop.Taskbar.AutoHideActivation.v8";
 std::atomic<std::uintptr_t> moduleBase{0};
 std::atomic<AutoHideTraceBuffer*> output{nullptr};
 std::once_flag adapterOnce;
@@ -27,8 +35,9 @@ thread_local Activation activation;
 
 // Microsoft public PDB: Taskbar.pdb BC068C70D2B5878D1FBBAFD6824EC5D2 age 1.
 // Offline inspection of this exact image found WM_ACTIVATE -> Unhide(0, 8)
-// in both TrayUI::WndProc and CSecondaryTray::v_WndProc. These are diagnostic
-// adapters, not an assumption that every Windows build shares this ABI/RVA.
+// in both TrayUI::WndProc and CSecondaryTray::v_WndProc. Explicit focus also
+// reaches that branch, so both TaskbarHost focus paths must be hooked together.
+// No assumption is made that other Windows builds share this ABI/RVA.
 constexpr GUID kPdb = {0xbc068c70, 0xd2b5, 0x878d,
     {0x1f, 0xbb, 0xaf, 0xd6, 0x82, 0x4e, 0xc5, 0xd2}};
 constexpr DWORD kImageSize = 0x308000, kTimestamp = 0x01dffebf;
@@ -96,21 +105,79 @@ void Record(AutoHideTraceKind kind, int flags = 0, int request = 0,
     record.geometryValid = GetWindowRect(activation.taskbar, &record.rect) && cursorValid;
     record.flags = flags;
     record.request = request;
+    record.explicitFocus = static_cast<LONG>(explicitFocusCalls.load(std::memory_order_acquire));
     const auto offset = reinterpret_cast<std::uintptr_t>(caller) -
         moduleBase.load(std::memory_order_acquire);
     if (caller && offset < kImageSize) record.callerRva = static_cast<DWORD>(offset);
     AppendAutoHideTrace(*buffer, record);
 }
 
+struct ExplicitFocusScope
+{
+    bool active;
+    int source, command;
+    ExplicitFocusScope(bool isActive, int origin, int value = 0) noexcept
+        : active(isActive), source(origin), command(value)
+    {
+        if (!active) return;
+        explicitFocusCalls.fetch_add(1, std::memory_order_acq_rel);
+        Record(AutoHideTraceKind::FocusEnter, source, command);
+    }
+    ~ExplicitFocusScope()
+    {
+        if (!active) return;
+        Record(AutoHideTraceKind::FocusLeave, source, command);
+        explicitFocusCalls.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    ExplicitFocusScope(const ExplicitFocusScope&) = delete;
+    ExplicitFocusScope& operator=(const ExplicitFocusScope&) = delete;
+};
+
+void WINAPI SetFocus(void* self)
+{
+    ExplicitFocusScope scope(true, 1);
+    focusOriginal(self);
+}
+bool WINAPI SetFocusWithCommand(void* self, int command, bool fromDesktop)
+{
+    ExplicitFocusScope scope(true, 2, command);
+    return focusCommandOriginal(self, command, fromDesktop);
+}
+
+void Reveal(void* self, int flags, int request, bool secondary, void* caller)
+{
+    const DWORD savedError = GetLastError();
+    Record(secondary ? AutoHideTraceKind::SecondaryUnhide : AutoHideTraceKind::PrimaryUnhide,
+        flags, request, caller);
+    ActivationRevealContext context;
+    context.secondary = secondary;
+    context.activation = activation.value;
+    const auto offset = reinterpret_cast<std::uintptr_t>(caller) - moduleBase.load(std::memory_order_acquire);
+    if (offset < kImageSize) context.callerRva = static_cast<DWORD>(offset);
+    context.protectedTaskbar = output.load(std::memory_order_acquire) && adapterReady.load() &&
+        activation.taskbar && GetPropW(activation.taskbar, kProtectedTaskbar);
+    context.explicitFocus = explicitFocusCalls.load(std::memory_order_acquire) != 0;
+    if (context.protectedTaskbar && !context.explicitFocus && flags == 0 && request == 8)
+    {
+        MONITORINFO monitor{sizeof(monitor)};
+        context.geometryValid = GetWindowRect(activation.taskbar, &context.taskbar) &&
+            GetMonitorInfoW(MonitorFromWindow(activation.taskbar, MONITOR_DEFAULTTONULL), &monitor) &&
+            GetCursorPos(&context.cursor);
+        context.monitor = monitor.rcMonitor;
+    }
+    SetLastError(savedError);
+    if (DispatchActivationReveal(context, flags, request, [&](int originalFlags, int originalRequest) {
+        (secondary ? secondaryOriginal : primaryOriginal)(self, originalFlags, originalRequest);
+    }))
+        Record(AutoHideTraceKind::SuppressedActivation, flags, request, caller);
+}
 void WINAPI Primary(void* self, int flags, int request)
 {
-    Record(AutoHideTraceKind::PrimaryUnhide, flags, request, _ReturnAddress());
-    primaryOriginal(self, flags, request);
+    Reveal(self, flags, request, false, _ReturnAddress());
 }
 void WINAPI Secondary(void* self, int flags, int request)
 {
-    Record(AutoHideTraceKind::SecondaryUnhide, flags, request, _ReturnAddress());
-    secondaryOriginal(self, flags, request);
+    Reveal(self, flags, request, true, _ReturnAddress());
 }
 
 LONG InstallAdapter() noexcept
@@ -121,36 +188,58 @@ LONG InstallAdapter() noexcept
     const MH_STATUS init = MH_Initialize();
     if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) return -2;
     auto* base = reinterpret_cast<BYTE*>(taskbarModule);
-    void* primary = base + 0x924c0;
-    void* secondary = base + 0x14cca8;
-    // Verify entry bytes as well as image identity before writing a trampoline.
-    constexpr BYTE prologue[] = {0x48, 0x89, 0x5c, 0x24, 0x18};
-    if (std::memcmp(primary, prologue, sizeof(prologue)) != 0 ||
-        std::memcmp(secondary, prologue, sizeof(prologue)) != 0) return -3;
-    if (MH_CreateHook(primary, &Primary, reinterpret_cast<void**>(&primaryOriginal)) != MH_OK)
-        return -4;
-    if (MH_CreateHook(secondary, &Secondary, reinterpret_cast<void**>(&secondaryOriginal)) != MH_OK)
+    struct Entry { DWORD rva; void* callback; void** original; BYTE prologue[5]; };
+    const Entry entries[] = {
+        {0x924c0, reinterpret_cast<void*>(&Primary), reinterpret_cast<void**>(&primaryOriginal),
+            {0x48, 0x89, 0x5c, 0x24, 0x18}},
+        {0x14cca8, reinterpret_cast<void*>(&Secondary), reinterpret_cast<void**>(&secondaryOriginal),
+            {0x48, 0x89, 0x5c, 0x24, 0x18}},
+        // Microsoft PDB confirms void TaskbarHost::SetFocusOnTaskbar(), and
+        // bool TaskbarHost::SetFocusWithCommand(TaskbarCommand, bool).
+        {0x84de0, reinterpret_cast<void*>(&SetFocus), reinterpret_cast<void**>(&focusOriginal),
+            {0x48, 0x83, 0xec, 0x28, 0x48}},
+        {0x123e30, reinterpret_cast<void*>(&SetFocusWithCommand), reinterpret_cast<void**>(&focusCommandOriginal),
+            {0x48, 0x89, 0x5c, 0x24, 0x08}},
+    };
+    for (const auto& entry : entries)
+        if (std::memcmp(base + entry.rva, entry.prologue, sizeof(entry.prologue)) != 0) return -3;
+    size_t created = 0;
+    for (const auto& entry : entries)
     {
-        MH_RemoveHook(primary);
-        return -5;
+        if (MH_CreateHook(base + entry.rva, entry.callback, entry.original) != MH_OK)
+        {
+            // Nothing has been enabled yet, so removing these is safe.
+            for (size_t i = 0; i < created; ++i) MH_RemoveHook(base + entries[i].rva);
+            return -4;
+        }
+        ++created;
     }
-    if (MH_EnableHook(primary) != MH_OK || MH_EnableHook(secondary) != MH_OK)
+    bool queued = true;
+    for (const auto& entry : entries)
+        queued = (MH_QueueEnableHook(base + entry.rva) == MH_OK) && queued;
+    if (!queued || MH_ApplyQueued() != MH_OK)
     {
-        // Leave successfully created trampolines alive: a callback may already
-        // be in flight. Disabled diagnostics always call the original function.
-        MH_DisableHook(primary);
-        MH_DisableHook(secondary);
+        // Keep trampolines alive for calls already in flight. Filtering stays
+        // disabled unless every focus and reveal hook was enabled together.
+        for (const auto& entry : entries) MH_DisableHook(base + entry.rva);
         return -6;
     }
+    adapterReady.store(true, std::memory_order_release);
     return 1;
 }
 }
 
-void Configure(AutoHideTraceBuffer* buffer, bool observe) noexcept
+void Disable() noexcept
+{
+    output.store(nullptr, std::memory_order_release);
+}
+
+void Configure(AutoHideTraceBuffer* buffer, HWND taskbar, bool observe, bool protectActivation) noexcept
 {
     if (!observe)
     {
-        output.store(nullptr, std::memory_order_release);
+        Disable();
+        if (taskbar) RemovePropW(taskbar, kProtectedTaskbar);
         return;
     }
     try
@@ -159,6 +248,15 @@ void Configure(AutoHideTraceBuffer* buffer, bool observe) noexcept
         // Its shared mapping also stays mapped until process detach. Retained
         // trampolines can therefore always call the original after shutdown.
         std::call_once(adapterOnce, [] { adapterStatus = InstallAdapter(); });
+        if (taskbar)
+        {
+            if (protectActivation && adapterReady.load())
+            {
+                if (!GetPropW(taskbar, kProtectedTaskbar))
+                    SetPropW(taskbar, kProtectedTaskbar, reinterpret_cast<HANDLE>(1));
+            }
+            else RemovePropW(taskbar, kProtectedTaskbar);
+        }
         if (!output.exchange(buffer, std::memory_order_acq_rel))
             Record(AutoHideTraceKind::Adapter, adapterStatus);
     }
@@ -167,6 +265,15 @@ void Configure(AutoHideTraceBuffer* buffer, bool observe) noexcept
 
 LRESULT Dispatch(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    // Native keyboard taskbar commands remain explicit even if focus crosses
+    // threads during a synchronous XAML call; the counter is not a timed lease.
+    // These three IDs are dispatched by this image's HandleTaskbarHotkey.
+    // Do not grant the same bypass to unrelated shortcuts such as Show Desktop.
+    const bool taskbarHotkey = message == WM_HOTKEY &&
+        (wParam == 0x1fe || wParam == 0x1ff || wParam == 0x24e);
+    ExplicitFocusScope focus(taskbarHotkey ||
+        (message == WM_SYSCOMMAND && (wParam & 0xfff0) == SC_TASKLIST), 3,
+        static_cast<int>(message));
     if (message != WM_ACTIVATE || !output.load(std::memory_order_acquire))
         return DefSubclassProc(window, message, wParam, lParam);
     const Activation previous = activation;
