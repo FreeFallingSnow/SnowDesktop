@@ -863,7 +863,8 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
 {
     // Bootstrap owns initial attachment; Shell COM calls can dispatch this
     // callback while the main thread is intentionally detached from Explorer.
-    if (exitRequested_ || desktopStartupPresentationPending_)
+    if (exitRequested_ || desktopStartupPresentationPending_ ||
+        graphicsDeviceRecovery_.Pending())
         return;
 
     // TaskbarCreated can be dispatched re-entrantly by a shell COM call made

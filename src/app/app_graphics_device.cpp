@@ -340,7 +340,7 @@ bool DesktopApp::RequestGraphicsDeviceRecovery(const wchar_t* stage, HRESULT hr)
 void DesktopApp::ReleaseGraphicsDeviceResources()
 {
     // Run only at the outer message-pump boundary, after every BeginDraw has
-    // unwound. Keep all HWNDs, Lua instances, layout and user state intact.
+    // unwound. Keep Lua instances, layout and user state intact.
     if (dockWindowTransition_)
     {
         dockWindowTransition_->SetPresentationCallback({});
@@ -411,6 +411,13 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     if (!graphicsDeviceRecovery_.Ready(GetTickCount64(), drawing)) return;
 
     ReleaseGraphicsDeviceResources();
+    // Rebinding a target to the surviving layered desktop HWND did not restore
+    // input after TDR: native Shell menus still received clicks. Retire that
+    // HWND through its normal cleanup and rebuild its input/presentation pair.
+    // Hidden native-desktop mode keeps its independent Dock window lifecycle.
+    const bool rebuildDesktopWindow = customDesktopVisible_;
+    if (rebuildDesktopWindow && hwnd_ && IsWindow(hwnd_))
+        DestroyWindow(hwnd_);
     HRESULT hr = InitGraphicsDevices();
     // Explorer recovery may temporarily remove the desktop HWND. Rebuild the
     // device even then: CreateDesktopOverlayWindow otherwise keeps retrying
@@ -433,13 +440,17 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     }
     if (widgetEngine_) widgetEngine_->ResetGraphicsResources(d2dContext_.Get());
     InitializeDockWindowTransition();
-    // TDR can leave the surviving Explorer child behind a Shell surface even
-    // though its replacement DComp target presents successfully. Reapply the
-    // existing parent/style/Z-order transaction, including the backdrop pair;
-    // repaint alone does not restore pointer delivery to this child HWND.
-    if (hwnd_ && IsWindow(hwnd_) && customDesktopVisible_)
-        AttachWindowToDesktopHost(desktopWindows_.host);
     desktopBackdropFullCollectionPending_ = true;
+    if (rebuildDesktopWindow)
+    {
+        // This restores OLE registration, Shell notifications, widget timers,
+        // backdrop and Dock windows without restarting Lua or resetting data.
+        // If Explorer is unavailable, the existing host watcher retries later.
+        RecoverDesktopHostAfterExplorerRestart();
+        WriteDiagnosticLogEntry(hwnd_ && IsWindow(hwnd_)
+            ? L"Graphics recovery desktop HWND recreated"
+            : L"Graphics recovery waiting for desktop host recreation");
+    }
     const auto repaint = [](HWND window) {
         if (window && IsWindow(window)) InvalidateRect(window, nullptr, FALSE);
     };
