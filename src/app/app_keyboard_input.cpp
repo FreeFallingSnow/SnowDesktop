@@ -654,14 +654,24 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         handled = true;
         restoreFloatingDockLayer = true;
     {
-        if (IsCollectionPopupInteractive() &&
-            dockFolderPopupOpen_)
+        if (auto* popup = GetOpenPopupWidget();
+            IsCollectionPopupInteractive() && popup)
         {
             ClearSelection();
-            for (auto& entry :
-                 dockFolderPopupWidget_.
-                    folderEntries)
-                entry.selected = true;
+            if (dockFolderPopupOpen_)
+            {
+                for (auto& entry : popup->folderEntries)
+                    entry.selected = true;
+            }
+            else
+            {
+                for (const auto& itemKey : popup->itemKeys)
+                {
+                    const size_t index = FindItemIndexByKey(itemKey);
+                    if (index < items_.size())
+                        items_[index].selected = true;
+                }
+            }
             InvalidateRect(
                 hwnd_, nullptr, FALSE);
             break;
