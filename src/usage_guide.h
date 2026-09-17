@@ -11,7 +11,7 @@
 namespace snowdesktop::usage_guide
 {
 enum class Section { Basics, Files, Dock, More, Pages };
-enum class Topic { Startup, Grid, Icons, Beautify, Theme, Collection, Application, Move, Resize, CollectionGroup, Files, FolderMapping, FileGroup, DockPin, DockMapping, DockCollection, DockFiles, DockSummon, Navigation, LuaWidget, Backup, CategoryRules, DockEnable, DockPosition, DockHotkeys, DockSpace, DockAppearance, Workshop, Develop, PagesOverview, PagesManage, PagesEdge, PagesDrag, PagesKeys };
+enum class Topic { Startup, Grid, Icons, Beautify, Theme, Collection, Application, Move, Resize, CollectionGroup, Files, FolderMapping, FileGroup, DockPin, DockMapping, DockCollection, DockFiles, DockSummon, Navigation, LuaWidget, Backup, CategoryRules, DockEnable, DockPosition, DockHotkeys, DockSpace, DockAppearance, Workshop, Develop, PagesOverview, PagesManage, PagesEdge, PagesDrag, PagesKeys, WidgetLayout };
 struct Lesson
 {
     Topic topic;
@@ -28,11 +28,12 @@ struct Lesson
     const char* secondaryFocus = "";
     const char* secondaryLabel = "";
 };
-inline constexpr std::array<Lesson, 31> kLessons{{
+inline constexpr std::array<Lesson, 32> kLessons{{
     {Topic::Startup, "startup", Section::Basics, L10N_KEY("start.startup.title"), L10N_KEY("start.startup.description"), L10N_KEY("start.startup.instructions"), SettingsPage::General, "general.autoStart", false, false},
     {Topic::Move, "move", Section::Basics, L10N_KEY("start.move.title"), L10N_KEY("start.move.description"), L10N_KEY("start.move.instructions"), SettingsPage::General, "", true, false},
     {Topic::Grid, "grid", Section::Basics, L10N_KEY("start.grid.title"), L10N_KEY("start.grid.description"), L10N_KEY("start.grid.instructions"), SettingsPage::DesktopPages, "pages.grid", false, false},
     {Topic::Icons, "icons", Section::Basics, L10N_KEY("start.icons.title"), L10N_KEY("start.icons.description"), L10N_KEY("start.icons.instructions"), SettingsPage::AppearanceDesktopIcons, "desktop.iconSize", false, false},
+    {Topic::WidgetLayout, "widgetLayout", Section::Basics, L10N_KEY("start.widgetLayout.title"), L10N_KEY("start.widgetLayout.description"), L10N_KEY("start.widgetLayout.instructions"), SettingsPage::AppearanceWidgets, "desktop.spacing", false, false},
     {Topic::Beautify, "beautify", Section::Basics, L10N_KEY("start.beautify.title"), L10N_KEY("start.beautify.description"), L10N_KEY("start.beautify.instructions"), SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify", false, false},
     {Topic::Theme, "theme", Section::Basics, L10N_KEY("start.theme.title"), L10N_KEY("start.theme.description"), L10N_KEY("start.theme.instructions"), SettingsPage::AppearanceTheme, "personalization.theme", false, false},
     {Topic::Backup, "backup", Section::Basics, L10N_KEY("start.backup.title"), L10N_KEY("start.backup.description"), L10N_KEY("start.backup.instructions"), SettingsPage::BackupAndData, "backup.layout", false, false},

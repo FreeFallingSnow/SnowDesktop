@@ -193,9 +193,9 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.personalization.menu", L"Context menu"},
     LocalizedFallback{"settings.personalization.menu.description", L"Configure SnowDesktop context-menu appearance."},
     LocalizedFallback{"settings.personalization.widgets", L"Widgets & layout"},
-    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust widget dimensions, category tabs and search controls."},
+    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust layout spacing, widget corners, title bars, category tabs and content row heights."},
     LocalizedFallback{"settings.desktop.layout", L"Icon layout"},
-    LocalizedFallback{"settings.desktop.layout.description", L"Adjust icon size, spacing, fonts and shortcut arrows."},
+    LocalizedFallback{"settings.desktop.layout.description", L"Adjust icon size, title and list fonts, and shortcut arrows."},
     LocalizedFallback{"settings.desktop.beautify", L"Icon beautification"},
     LocalizedFallback{"settings.desktop.beautify.description", L"Apply complete icon appearance rules."},
     LocalizedFallback{"settings.desktop.categories", L"Categories"},
@@ -417,8 +417,12 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
+        ensurePersonalization();
+        break;
     case SettingsPage::AppearanceWidgets:
         ensurePersonalization();
+        ensureDesktop();
+        personalizationPage_->SetLayoutSpacingContent(desktopPage_->LayoutSpacingContent());
         break;
     case SettingsPage::DesktopCategories:
     case SettingsPage::AppearanceDesktopIcons:
@@ -2082,7 +2086,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             page == SettingsPage::AppearanceWidgets;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
-        return page == SettingsPage::DesktopCategories ||
+        return page == SettingsPage::AppearanceWidgets ||
+            page == SettingsPage::DesktopCategories ||
             page == SettingsPage::AppearanceDesktopIcons ||
             page == SettingsPage::AppearanceIconBeautification;
     };
@@ -2242,6 +2247,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::AppearanceWidgets:
+        if (desktopPage_)
+        {
+            registerDesktopFocus({"desktop.spacing", "desktop.iconSpacing"});
+            desktopPage_->Activate();
+        }
         if (personalizationPage_)
         {
             PageCards().Children().Append(
@@ -2304,7 +2314,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 desktopPage_->DesktopIconsContent());
             registerDesktopFocus({
-                "desktop.spacing", "desktop.iconSpacing", "desktop.iconSize",
+                "desktop.iconSize",
                 "desktop.itemFontSize", "desktop.listFontSize",
                 "desktop.fontWeight", "desktop.shortcutArrow"});
             desktopPage_->Activate();

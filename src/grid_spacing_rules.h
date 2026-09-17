@@ -1,5 +1,7 @@
 #pragma once
 
+#include "layout_spacing_rules.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -62,7 +64,7 @@ inline AxisGeometry ResolveAxis(
     result.gap = std::clamp(
         static_cast<int>(std::round(
             pitch * gapPercent *
-            std::clamp(spacingScale, 0.5f, 2.0f))),
+            layout_spacing_rules::ClampScale(spacingScale))),
         0, std::min(maximumGap, minimumCellGapLimit));
     result.margin = result.baseMargin + result.gap / 2;
 

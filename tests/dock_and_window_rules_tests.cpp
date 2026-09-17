@@ -1965,13 +1965,13 @@ int main(int argc, char** argv)
     const auto jitterPageVisual =
         itemVisual::ResolvePageItemVisualMetrics(
             68, 90, kDefaultItemFontSizeCu);
-    for (int percent = 50; percent <= 200; ++percent)
+    for (int percent = 10; percent <= 200; ++percent)
     {
         const auto axis = gridSpacing::ResolveAxis(
             1707, 25, 4, kGapPercentX,
             jitterPageVisual.minimumGridWidth,
             static_cast<float>(percent) / 100.0f);
-        if (percent == 50) firstPageCell = axis.cell;
+        if (percent == 10) firstPageCell = axis.cell;
         pageGapMonotonic = pageGapMonotonic &&
             axis.gap >= previousPageGap;
         pageCellMonotonic = pageCellMonotonic &&
@@ -2107,13 +2107,19 @@ int main(int argc, char** argv)
             { 10, 140, 90, 240 }, true),
         "a wrapped grid row must not be mistaken for a horizontal insertion gap");
 
+    Check(layoutSpacing::ClampScale(0.1f) == 0.1f &&
+            layoutSpacing::ClampScale(0.0f) == 0.1f &&
+            layoutSpacing::ResolveStoredScale(0.1f, std::nullopt, 1.0f) == 0.1f &&
+            layoutSpacing::ComponentVisualGap(64, 1.0f, 0.1f) == 1 &&
+            gridSpacing::ResolveAxis(1000, 5, 0, 0.1f, 1, 0.1f).gap == 2,
+        "ten-percent spacing survives input clamping, reload and widget geometry");
     Check(layoutSpacing::ResolveStoredScale(
             1.25f, 1.75f) == 1.25f,
         "iconSpacing must win when both current and legacy spacing keys exist");
     Check(layoutSpacing::ResolveStoredScale(
             std::nullopt, 2.75f) == 2.0f &&
             layoutSpacing::ResolveStoredScale(
-                std::nullopt, 0.25f) == 0.5f,
+                std::nullopt, 0.25f) == 0.25f,
         "legacy componentSpacing-only layouts must migrate into the new supported range");
     Check(layoutSpacing::ComponentVisualGap(
             16, 1.0f, 1.0f) == 12 &&

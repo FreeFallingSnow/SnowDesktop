@@ -375,7 +375,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "desktop.categoryCounts",
         "app.settings.category_show_count",
         "settings.desktop.categoryLayout.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.spacing",
+    {SettingsPage::AppearanceWidgets, "desktop.spacing",
         "settings.desktop.spacing", "settings.desktop.spacing.description"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.iconSize",
         "settings.desktop.iconSize", "settings.desktop.iconSize.description"},

@@ -1,6 +1,6 @@
 # 使用指南内容与入口核对
 
-2026-09-17：指南按五个功能标签组织，共 31 条内容。每页把操作教程和关键偏好放进同一列表，使用按钮区分操作。不再逐项复制设置搜索目录。
+2026-09-17：指南按五个功能标签组织，共 32 条内容。每页把操作教程和关键偏好放进同一列表，使用按钮区分操作。不再逐项复制设置搜索目录。
 
 ## 当前目录
 
@@ -10,6 +10,7 @@
 | 基础 | 添加和调整组件 | 桌面指引 |
 | 基础 | 调整桌面网格 | `DesktopPages` / `pages.grid` |
 | 基础 | 调整桌面图标 | `AppearanceDesktopIcons` / `desktop.iconSize` |
+| 基础 | 调整组件与布局 | `AppearanceWidgets` / `desktop.spacing`；布局间距、组件圆角及各类行高 |
 | 基础 | 美化应用图标 | `AppearanceIconBeautification` / `desktop.iconBeautify` |
 | 基础 | 更换主题与材质 | `AppearanceTheme` / `personalization.theme` |
 | 基础 | 保存布局与备份 | `BackupAndData` / `backup.layout` |

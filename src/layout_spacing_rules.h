@@ -7,7 +7,7 @@
 namespace snowdesktop::layout_spacing_rules
 {
 
-inline constexpr float kMinimumScale = 0.50f;
+inline constexpr float kMinimumScale = 0.10f;
 inline constexpr float kMaximumScale = 2.00f;
 inline constexpr float kComponentGapBaseline = 12.0f;
 

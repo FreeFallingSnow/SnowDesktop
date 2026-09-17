@@ -68,7 +68,10 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Desktop icon layout, typography, and shortcut-arrow controls. */
+    /** Shared layout spacing editor, hosted on Widgets & layout. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        LayoutSpacingContent() const noexcept;
+    /** Icon rendering, typography, and shortcut-arrow controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         DesktopIconsContent() const noexcept;
     /** Icon-beautification preset and advanced appearance controls. */

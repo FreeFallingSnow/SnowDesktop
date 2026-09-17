@@ -191,6 +191,7 @@ struct StartPagePresenter::Impl
             {
             case Topic::Startup: asset = L"general.svg"; break;
             case Topic::Grid: case Topic::Move: asset = L"pages.svg"; break;
+            case Topic::WidgetLayout: asset = L"appearance-widgets.svg"; break;
             case Topic::Icons: asset = L"appearance-desktop-icons.svg"; break;
             case Topic::Navigation: asset = L"search.svg"; break;
             case Topic::Beautify: asset = L"appearance-icon-beautification.svg"; break;
