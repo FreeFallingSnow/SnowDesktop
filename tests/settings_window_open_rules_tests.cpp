@@ -54,19 +54,33 @@ void CheckUsageGuide()
     RECT work{0, 0, 1920, 1040};
     auto frame = panel.Arrange(work, 440, 300, 24);
     Check(frame.left == 1456 && frame.top == 716, "first reference starts inside the work area");
-    panel.BeginDrag({1500, 730}); panel.DragTo({544, 214}); panel.EndDrag();
+    panel.BeginDrag({1500, 730}); panel.DragTo({544, 214}, true, true); panel.EndDrag();
     frame = panel.Arrange(work, 440, 300, 24);
     Check(frame.left == 500 && frame.top == 200, "drag keeps the grabbed header offset");
-    Check(!panel.DragTo({1700, 900}), "pointer motion after release cannot reposition the panel");
+    Check(!panel.DragTo({1700, 900}, false, false), "pointer motion after release cannot reposition the panel");
     frame = panel.Arrange(work, 440, 300, 24);
     Check(frame.left == 500 && frame.top == 200, "ordinary repaint preserves the manual anchor");
     frame = panel.Arrange(work, 440, 500, 24);
     Check(frame.left == 500 && frame.top == 200, "opening details keeps the top-left position when space permits");
     frame = panel.Arrange({0, 0, 800, 600}, 440, 500, 24);
     Check(frame.left == 336 && frame.top == 76, "smaller work area keeps the entire panel reachable");
-    panel.BeginDrag({380, 90}); panel.DragTo({-1456, 214}); panel.EndDrag();
+    panel.BeginDrag({380, 90}); panel.DragTo({-1456, 214}, true, true); panel.EndDrag();
     frame = panel.Arrange({-1920, 0, 0, 1040}, 440, 300, 24);
     Check(frame.left == -1500 && frame.top == 200, "drag supports a monitor with negative screen coordinates");
+
+    // User regression: queued/resampled moves precede WM_LBUTTONUP. Physical
+    // release must freeze the last accepted anchor even before that message.
+    const POINT releasedAnchor = *panel.anchor;
+    panel.BeginDrag({-1450, 220});
+    Check(!panel.DragTo({-1000, 500}, false, true) && !panel.dragOffset &&
+        panel.anchor->x == releasedAnchor.x && panel.anchor->y == releasedAnchor.y,
+        "physical release rejects a queued move before button-up dispatch");
+    Check(!panel.DragTo({-900, 550}, true, true),
+        "later button state cannot revive the ended guide drag");
+    panel.BeginDrag({-1450, 220});
+    Check(!panel.DragTo({-1000, 500}, true, false) && !panel.dragOffset &&
+        panel.anchor->x == releasedAnchor.x && panel.anchor->y == releasedAnchor.y,
+        "capture loss cancels movement even while the button remains down");
 
     // Real renderer/input use this model: every line must remain reachable,
     // with no blank overscroll after text scaling or a monitor change.

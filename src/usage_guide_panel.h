@@ -40,8 +40,11 @@ struct PanelPlacement
     {
         if (anchor) dragOffset = POINT{pointer.x - anchor->x, pointer.y - anchor->y};
     }
-    bool DragTo(POINT pointer)
+    bool DragTo(POINT pointer, bool primaryButtonDown, bool ownsCapture)
     {
+        // A queued move may arrive before button-up, or after capture loss.
+        // Never apply its position once the physical gesture has ended.
+        if (!primaryButtonDown || !ownsCapture) EndDrag();
         if (!dragOffset) return false;
         anchor = POINT{pointer.x - dragOffset->x, pointer.y - dragOffset->y};
         return true;

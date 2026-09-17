@@ -317,6 +317,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEMOVE:
     {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        // The guide owns its captured gesture, including moves outside its
+        // bounds. Handle it before passive-hover filtering can discard them.
+        if (HandleUsageGuidePointerMove(pt)) return 0;
         const bool nativeDragActive =
             snowdesktop::drag_input_rules::IsNativeDragActive(
                 dragSession_.IsActive(),
@@ -1026,6 +1029,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (usageGuidePressedButton_ &&
+            (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
+        {
+            usageGuidePressedButton_ = 0;
+            usageGuidePlacement_.EndDrag();
+            if (msg == WM_CANCELMODE && GetCapture() == hwnd_) ReleaseCapture();
+        }
         if (largeIconGesture_ && (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
             CancelLargeIconGesture();
         ForgetLuaWidgetPanelCapture(hwnd);

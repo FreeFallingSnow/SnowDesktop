@@ -98,8 +98,21 @@ bool DesktopApp::HandleUsageGuidePointerMove(POINT point)
     if (!usageGuidePressedButton_) return false;
     if (usageGuidePlacement_.dragOffset)
     {
+        const bool ownsCapture = GetCapture() == hwnd_;
         ClientToScreen(hwnd_, &point);
-        if (usageGuidePlacement_.DragTo(point)) InvalidateRect(hwnd_, nullptr, FALSE);
+        // Follow the live sample only while the button remains physically down.
+        // Do not let passive-hover resampling advance a released gesture.
+        GetCursorPos(&point);
+        const bool primaryButtonDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        if (usageGuidePlacement_.DragTo(point, primaryButtonDown, ownsCapture))
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        if (!usageGuidePlacement_.dragOffset)
+        {
+            usageGuidePressedButton_ = 0;
+            if (ownsCapture) ReleaseCapture();
+            SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+            return true;
+        }
         SetCursor(LoadCursorW(nullptr, IDC_SIZEALL));
     }
     return true;
