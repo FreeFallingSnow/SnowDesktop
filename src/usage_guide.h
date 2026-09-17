@@ -1,5 +1,4 @@
 #pragma once
-
 #include "l10n.h"
 #include "settings_route.h"
 #include <array>
@@ -8,16 +7,11 @@
 #include <optional>
 #include <string_view>
 
-// Private reference content. Only panel expansion is persisted.
+// Private reference catalogue; only the outer expansion preference is saved.
 namespace snowdesktop::usage_guide
 {
-enum class Section { Settings, Basics, Files, Dock, Navigation, More };
-enum class Topic { Startup, Grid, Icons, Beautify, Theme, Collection, Application, Move, Resize, CollectionGroup, Files, FolderMapping, FileGroup, DockPin, DockMapping, DockCollection, DockFiles, DockSummon, Navigation, LuaWidget, Backup };
-// Declarative prerequisites, shown as reference text, never a progress gate.
-enum Context : std::uint32_t {
-    CollectionAvailable = 1, TwoStandaloneCollections = 2, StandaloneWidget = 4,
-    DockEnabled = 8, StandaloneFileSource = 16, StandaloneCollection = 32, NavigationEnabled = 64
-};
+enum class Section { Basics, Files, Dock, More };
+enum class Topic { Startup, Grid, Icons, Beautify, Theme, Collection, Application, Move, Resize, CollectionGroup, Files, FolderMapping, FileGroup, DockPin, DockMapping, DockCollection, DockFiles, DockSummon, Navigation, LuaWidget, Backup, CategoryRules, DockEnable, DockPosition, DockHotkeys, DockSpace, DockAppearance, Workshop, Develop };
 struct Lesson
 {
     Topic topic;
@@ -26,33 +20,41 @@ struct Lesson
     const char* title;
     const char* description;
     const char* instructions;
-    const char* tips;
-    const char* hint;
-    std::uint32_t required;
     SettingsPage settingsPage;
     const char* settingsFocus;
     bool practice;
+    bool needsDock = false;
+    SettingsPage secondaryPage = SettingsPage::General;
+    const char* secondaryFocus = "";
+    const char* secondaryLabel = "";
 };
-inline constexpr std::array<Lesson, 19> kLessons{{
-    {Topic::Startup, "startup", Section::Basics, L10N_KEY("start.startup.title"), L10N_KEY("start.startup.description"), L10N_KEY("start.startup.instructions"), L10N_KEY("start.startup.tips"), L10N_KEY("start.startup.hint"), 0, SettingsPage::General, "general.autoStart", false},
-    {Topic::Grid, "grid", Section::Settings, L10N_KEY("start.grid.title"), L10N_KEY("start.grid.description"), L10N_KEY("start.grid.instructions"), L10N_KEY("start.grid.tips"), L10N_KEY("start.grid.hint"), 0, SettingsPage::DesktopPages, "pages.grid", false},
-    {Topic::Icons, "icons", Section::Settings, L10N_KEY("start.icons.title"), L10N_KEY("start.icons.description"), L10N_KEY("start.icons.instructions"), L10N_KEY("start.icons.tips"), L10N_KEY("start.icons.hint"), 0, SettingsPage::AppearanceDesktopIcons, "", false},
-    {Topic::Beautify, "beautify", Section::Settings, L10N_KEY("start.beautify.title"), L10N_KEY("start.beautify.description"), L10N_KEY("start.beautify.instructions"), L10N_KEY("start.beautify.tips"), L10N_KEY("start.beautify.hint"), 0, SettingsPage::AppearanceIconBeautification, "", false},
-    {Topic::Theme, "theme", Section::Settings, L10N_KEY("start.theme.title"), L10N_KEY("start.theme.description"), L10N_KEY("start.theme.instructions"), L10N_KEY("start.theme.tips"), L10N_KEY("start.theme.hint"), 0, SettingsPage::AppearanceTheme, "", false},
-    {Topic::Collection, "collection", Section::Basics, L10N_KEY("start.collection.title"), L10N_KEY("start.collection.description"), L10N_KEY("start.collection.instructions"), L10N_KEY("start.collection.tips"), L10N_KEY("start.collection.hint"), 0, SettingsPage::General, "", true},
-    {Topic::Move, "move", Section::Basics, L10N_KEY("start.move.title"), L10N_KEY("start.move.description"), L10N_KEY("start.move.instructions"), L10N_KEY("start.move.tips"), L10N_KEY("start.move.hint"), 4, SettingsPage::General, "", true},
-    {Topic::CollectionGroup, "collectionGroup", Section::Basics, L10N_KEY("start.collectionGroup.title"), L10N_KEY("start.collectionGroup.description"), L10N_KEY("start.collectionGroup.instructions"), L10N_KEY("start.collectionGroup.tips"), L10N_KEY("start.collectionGroup.hint"), 2, SettingsPage::General, "", true},
-    {Topic::Files, "files", Section::Files, L10N_KEY("start.files.title"), L10N_KEY("start.files.description"), L10N_KEY("start.files.instructions"), L10N_KEY("start.files.tips"), L10N_KEY("start.files.hint"), 0, SettingsPage::General, "", true},
-    {Topic::FolderMapping, "folderMapping", Section::Files, L10N_KEY("start.folderMapping.title"), L10N_KEY("start.folderMapping.description"), L10N_KEY("start.folderMapping.instructions"), L10N_KEY("start.folderMapping.tips"), L10N_KEY("start.folderMapping.hint"), 0, SettingsPage::General, "", true},
-    {Topic::FileGroup, "fileGroup", Section::Files, L10N_KEY("start.fileGroup.title"), L10N_KEY("start.fileGroup.description"), L10N_KEY("start.fileGroup.instructions"), L10N_KEY("start.fileGroup.tips"), L10N_KEY("start.fileGroup.hint"), 16, SettingsPage::General, "", true},
-    {Topic::DockPin, "dockPin", Section::Dock, L10N_KEY("start.dockPin.title"), L10N_KEY("start.dockPin.description"), L10N_KEY("start.dockPin.instructions"), L10N_KEY("start.dockPin.tips"), L10N_KEY("start.dockPin.hint"), 8, SettingsPage::Dock, "dock.enable", true},
-    {Topic::DockMapping, "dockMapping", Section::Dock, L10N_KEY("start.dockMapping.title"), L10N_KEY("start.dockMapping.description"), L10N_KEY("start.dockMapping.instructions"), L10N_KEY("start.dockMapping.tips"), L10N_KEY("start.dockMapping.hint"), 8, SettingsPage::Dock, "dock.enable", true},
-    {Topic::DockCollection, "dockCollection", Section::Dock, L10N_KEY("start.dockCollection.title"), L10N_KEY("start.dockCollection.description"), L10N_KEY("start.dockCollection.instructions"), L10N_KEY("start.dockCollection.tips"), L10N_KEY("start.dockCollection.hint"), 40, SettingsPage::Dock, "dock.enable", true},
-    {Topic::DockFiles, "dockFiles", Section::Dock, L10N_KEY("start.dockFiles.title"), L10N_KEY("start.dockFiles.description"), L10N_KEY("start.dockFiles.instructions"), L10N_KEY("start.dockFiles.tips"), L10N_KEY("start.dockFiles.hint"), 8, SettingsPage::Dock, "dock.enable", true},
-    {Topic::DockSummon, "dockSummon", Section::Dock, L10N_KEY("start.dockSummon.title"), L10N_KEY("start.dockSummon.description"), L10N_KEY("start.dockSummon.instructions"), L10N_KEY("start.dockSummon.tips"), L10N_KEY("start.dockSummon.hint"), 8, SettingsPage::Dock, "dock.showOnlyWhenSummoned", false},
-    {Topic::Navigation, "navigation", Section::Navigation, L10N_KEY("start.navigation.title"), L10N_KEY("start.navigation.description"), L10N_KEY("start.navigation.instructions"), L10N_KEY("start.navigation.tips"), L10N_KEY("start.navigation.hint"), 64, SettingsPage::General, "general.quickNavigation", false},
-    {Topic::LuaWidget, "luaWidget", Section::More, L10N_KEY("start.luaWidget.title"), L10N_KEY("start.luaWidget.description"), L10N_KEY("start.luaWidget.instructions"), L10N_KEY("start.luaWidget.tips"), L10N_KEY("start.luaWidget.hint"), 0, SettingsPage::Widgets, "", true},
-    {Topic::Backup, "backup", Section::More, L10N_KEY("start.backup.title"), L10N_KEY("start.backup.description"), L10N_KEY("start.backup.instructions"), L10N_KEY("start.backup.tips"), L10N_KEY("start.backup.hint"), 0, SettingsPage::BackupAndData, "", false},
+inline constexpr std::array<Lesson, 26> kLessons{{
+    {Topic::Startup, "startup", Section::Basics, L10N_KEY("start.startup.title"), L10N_KEY("start.startup.description"), L10N_KEY("start.startup.instructions"), SettingsPage::General, "general.autoStart", false, false},
+    {Topic::Move, "move", Section::Basics, L10N_KEY("start.move.title"), L10N_KEY("start.move.description"), L10N_KEY("start.move.instructions"), SettingsPage::General, "", true, false},
+    {Topic::Grid, "grid", Section::Basics, L10N_KEY("start.grid.title"), L10N_KEY("start.grid.description"), L10N_KEY("start.grid.instructions"), SettingsPage::DesktopPages, "pages.grid", false, false},
+    {Topic::Icons, "icons", Section::Basics, L10N_KEY("start.icons.title"), L10N_KEY("start.icons.description"), L10N_KEY("start.icons.instructions"), SettingsPage::AppearanceDesktopIcons, "desktop.iconSize", false, false},
+    {Topic::Beautify, "beautify", Section::Basics, L10N_KEY("start.beautify.title"), L10N_KEY("start.beautify.description"), L10N_KEY("start.beautify.instructions"), SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify", false, false},
+    {Topic::Theme, "theme", Section::Basics, L10N_KEY("start.theme.title"), L10N_KEY("start.theme.description"), L10N_KEY("start.theme.instructions"), SettingsPage::AppearanceTheme, "personalization.theme", false, false},
+    {Topic::Backup, "backup", Section::Basics, L10N_KEY("start.backup.title"), L10N_KEY("start.backup.description"), L10N_KEY("start.backup.instructions"), SettingsPage::BackupAndData, "backup.layout", false, false},
+    {Topic::Collection, "collection", Section::Files, L10N_KEY("start.collection.title"), L10N_KEY("start.collection.description"), L10N_KEY("start.collection.instructions"), SettingsPage::General, "", true, false},
+    {Topic::CollectionGroup, "collectionGroup", Section::Files, L10N_KEY("start.collectionGroup.title"), L10N_KEY("start.collectionGroup.description"), L10N_KEY("start.collectionGroup.instructions"), SettingsPage::General, "", true, false},
+    {Topic::Files, "files", Section::Files, L10N_KEY("start.files.title"), L10N_KEY("start.files.description"), L10N_KEY("start.files.instructions"), SettingsPage::General, "", true, false},
+    {Topic::FolderMapping, "folderMapping", Section::Files, L10N_KEY("start.folderMapping.title"), L10N_KEY("start.folderMapping.description"), L10N_KEY("start.folderMapping.instructions"), SettingsPage::General, "", true, false},
+    {Topic::FileGroup, "fileGroup", Section::Files, L10N_KEY("start.fileGroup.title"), L10N_KEY("start.fileGroup.description"), L10N_KEY("start.fileGroup.instructions"), SettingsPage::General, "", true, false},
+    {Topic::CategoryRules, "categoryRules", Section::Files, L10N_KEY("start.categoryRules.title"), L10N_KEY("start.categoryRules.description"), L10N_KEY("start.categoryRules.instructions"), SettingsPage::DesktopCategories, "desktop.categoryRules", false, false},
+    {Topic::DockEnable, "dockEnable", Section::Dock, L10N_KEY("start.dockEnable.title"), L10N_KEY("start.dockEnable.description"), L10N_KEY("start.dockEnable.instructions"), SettingsPage::Dock, "dock.enable", false, false},
+    {Topic::DockPin, "dockPin", Section::Dock, L10N_KEY("start.dockPin.title"), L10N_KEY("start.dockPin.description"), L10N_KEY("start.dockPin.instructions"), SettingsPage::Dock, "dock.enable", true, true},
+    {Topic::DockCollection, "dockCollection", Section::Dock, L10N_KEY("start.dockCollection.title"), L10N_KEY("start.dockCollection.description"), L10N_KEY("start.dockCollection.instructions"), SettingsPage::Dock, "dock.enable", true, true},
+    {Topic::DockFiles, "dockFiles", Section::Dock, L10N_KEY("start.dockFiles.title"), L10N_KEY("start.dockFiles.description"), L10N_KEY("start.dockFiles.instructions"), SettingsPage::Dock, "dock.enable", true, true},
+    {Topic::DockPosition, "dockPosition", Section::Dock, L10N_KEY("start.dockPosition.title"), L10N_KEY("start.dockPosition.description"), L10N_KEY("start.dockPosition.instructions"), SettingsPage::Dock, "dock.position", false, false},
+    {Topic::DockSummon, "dockSummon", Section::Dock, L10N_KEY("start.dockSummon.title"), L10N_KEY("start.dockSummon.description"), L10N_KEY("start.dockSummon.instructions"), SettingsPage::Dock, "dock.showOnlyWhenSummoned", false, false},
+    {Topic::DockHotkeys, "dockHotkeys", Section::Dock, L10N_KEY("start.dockHotkeys.title"), L10N_KEY("start.dockHotkeys.description"), L10N_KEY("start.dockHotkeys.instructions"), SettingsPage::Dock, "dock.floatingShortcutMode", false, false},
+    {Topic::DockSpace, "dockSpace", Section::Dock, L10N_KEY("start.dockSpace.title"), L10N_KEY("start.dockSpace.description"), L10N_KEY("start.dockSpace.instructions"), SettingsPage::Dock, "dock.allowDesktopContentOverlap", false, false},
+    {Topic::DockAppearance, "dockAppearance", Section::Dock, L10N_KEY("start.dockAppearance.title"), L10N_KEY("start.dockAppearance.description"), L10N_KEY("start.dockAppearance.instructions"), SettingsPage::AppearanceTheme, "personalization.dockAppearance", false, false, SettingsPage::AnimationPerformance, "animation.hover", L10N_KEY("settings.nav.animation")},
+    {Topic::Navigation, "navigation", Section::Dock, L10N_KEY("start.navigation.title"), L10N_KEY("start.navigation.description"), L10N_KEY("start.navigation.instructions"), SettingsPage::General, "general.quickNavigation", false, false},
+    {Topic::LuaWidget, "luaWidget", Section::More, L10N_KEY("start.luaWidget.title"), L10N_KEY("start.luaWidget.description"), L10N_KEY("start.luaWidget.instructions"), SettingsPage::Widgets, "widgets.included", true, false},
+    {Topic::Workshop, "workshop", Section::More, L10N_KEY("start.workshop.title"), L10N_KEY("start.workshop.description"), L10N_KEY("start.workshop.instructions"), SettingsPage::Widgets, "widgets.workshop", false, false},
+    {Topic::Develop, "develop", Section::More, L10N_KEY("start.develop.title"), L10N_KEY("start.develop.description"), L10N_KEY("start.develop.instructions"), SettingsPage::DeveloperTools, "developer.agentSkill", false, false},
 }};
 inline const Lesson* Find(Topic topic)
 {
@@ -62,39 +64,19 @@ inline const Lesson* Find(Topic topic)
 inline std::optional<Topic> ParseTopic(std::string_view key)
 {
     if (key == "application") return Topic::Collection;
-    if (key == "layout" || key == "resize") return Topic::Move; // Old private route.
+    if (key == "layout" || key == "resize") return Topic::Move;
+    if (key == "dockMapping") return Topic::DockPin;
     for (const auto& lesson : kLessons) if (key == lesson.key) return lesson.topic;
     return std::nullopt;
 }
-inline constexpr std::array<Context, 7> kPrerequisites{
-    DockEnabled, TwoStandaloneCollections, StandaloneCollection,
-    CollectionAvailable, StandaloneFileSource, StandaloneWidget, NavigationEnabled};
-inline const char* PrerequisiteText(Context context)
-{
-    switch (context)
-    {
-    case DockEnabled: return L10N_KEY("start.requires.dock");
-    case TwoStandaloneCollections: return L10N_KEY("start.requires.twoCollections");
-    case StandaloneCollection: return L10N_KEY("start.requires.standaloneCollection");
-    case CollectionAvailable: return L10N_KEY("start.requires.collection");
-    case StandaloneFileSource: return L10N_KEY("start.requires.fileSource");
-    case StandaloneWidget: return L10N_KEY("start.requires.widget");
-    case NavigationEnabled: return L10N_KEY("start.requires.navigation");
-    }
-    return L10N_KEY("start.error.unavailable");
-}
-inline constexpr std::array<Section, 6> kSections{
-    Section::Basics, Section::Files, Section::Settings, Section::Dock, Section::Navigation, Section::More};
 inline const char* SectionTitle(Section section)
 {
     switch (section)
     {
     case Section::Basics: return L10N_KEY("start.basics");
     case Section::Files: return L10N_KEY("start.section.files");
-    case Section::Settings: return L10N_KEY("start.section.settings");
     case Section::Dock: return L10N_KEY("start.section.dock");
-    case Section::Navigation: return L10N_KEY("start.section.navigation");
-    case Section::More: return L10N_KEY("app.settings.widgets");
+    case Section::More: return L10N_KEY("start.section.lua");
     }
     return L10N_KEY("start.title");
 }
@@ -102,7 +84,9 @@ inline bool HasSettings(const Lesson& lesson)
 {
     return !lesson.practice || lesson.settingsPage != SettingsPage::General || *lesson.settingsFocus;
 }
-// The only persisted preference is the outer panel's expansion state.
+// Route choices describe existing preferences; they never apply a setting.
+inline bool CanShowDesktop(const Lesson& lesson, bool dockEnabled)
+{ return lesson.practice && (!lesson.needsDock || dockEnabled); }
 bool LoadExpanded(const std::filesystem::path& path, bool& expanded, std::string* error = nullptr);
 bool SaveExpanded(const std::filesystem::path& path, bool expanded, std::string* error = nullptr);
 }

@@ -51,14 +51,13 @@ snowdesktop::SettingsActionResult DesktopApp::StartUsageGuidePractice(snowdeskto
     using snowdesktop::SettingsActionResult;
     const auto* lesson = snowdesktop::usage_guide::Find(topic);
     // Settings-only articles never start a desktop indicator, even through IPC.
-    if (!lesson || !lesson->practice || !startupInitializationComplete_ || reloading_ || exitRequested_ ||
+    if (!lesson || !snowdesktop::usage_guide::CanShowDesktop(*lesson, generalSettings_.dockEnabled) || !startupInitializationComplete_ || reloading_ || exitRequested_ ||
         !desktopItemsReady_ || !customDesktopVisible_ || desktopIconsHidden_ ||
         !luaWidgetPanelRequest_.widgetId.empty() || shellFileOperationInFlight_ > 0 ||
         !pendingRenames_.empty() || dragSession_.HasContext() || dragDropController_.IsTransportActive())
         return SettingsActionResult::Failure(_LW("start.error.unavailable"));
     usageGuideTopic_ = topic;
-    usageGuideDetails_ = false;
-    usageGuideDetailPage_ = 0;
+    usageGuideScroll_ = {};
     ClearWidgetAddedHint();
     usageGuideWaitingForDesktop_ = true;
     RefreshUsageGuideReference();
@@ -67,8 +66,8 @@ snowdesktop::SettingsActionResult DesktopApp::StartUsageGuidePractice(snowdeskto
 
 void DesktopApp::RefreshUsageGuideReference()
 {
-    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideMoreRect_ = usageGuideOpenSettingsRect_ = {};
-    usageGuideFrame_ = usageGuideDragRect_ = {};
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
+    usageGuideFrame_ = usageGuideDragRect_ = usageGuideBodyRect_ = usageGuideScrollTrack_ = usageGuideScrollThumb_ = {};
     usageGuidePressedButton_ = 0;
     usageGuidePlacement_.EndDrag();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -80,9 +79,15 @@ bool DesktopApp::HandleUsageGuidePointerDown(POINT point)
         snowdesktop::modern_menu::IsActive()) return false;
     usageGuidePressedButton_ = PtInRect(&usageGuidePauseRect_, point) ? 1 :
         PtInRect(&usageGuideSettingsRect_, point) ? 2 :
-        PtInRect(&usageGuideMoreRect_, point) ? 4 :
+        PtInRect(&usageGuideScrollTrack_, point) ? 8 :
         PtInRect(&usageGuideOpenSettingsRect_, point) ? 5 :
         PtInRect(&usageGuideDragRect_, point) ? 6 : 7;
+    if (usageGuidePressedButton_ == 8)
+    {
+        const int thumbHeight = usageGuideScrollThumb_.bottom - usageGuideScrollThumb_.top;
+        usageGuideScrollGrab_ = PtInRect(&usageGuideScrollThumb_, point) ? point.y - usageGuideScrollThumb_.top : thumbHeight / 2;
+        HandleUsageGuidePointerMove(point);
+    }
     if (usageGuidePressedButton_ == 6)
     {
         ClientToScreen(hwnd_, &point);
@@ -97,6 +102,14 @@ bool DesktopApp::HandleUsageGuidePointerDown(POINT point)
 bool DesktopApp::HandleUsageGuidePointerMove(POINT point)
 {
     if (!usageGuidePressedButton_) return false;
+    if (usageGuidePressedButton_ == 8)
+    {
+        const int travel = usageGuideScrollTrack_.bottom - usageGuideScrollTrack_.top -
+            (usageGuideScrollThumb_.bottom - usageGuideScrollThumb_.top);
+        if (travel > 0) usageGuideScroll_.ToFraction(
+            static_cast<double>(point.y - usageGuideScrollTrack_.top - usageGuideScrollGrab_) / travel);
+        InvalidateRect(hwnd_, &usageGuideFrame_, FALSE);
+    }
     if (usageGuidePlacement_.dragOffset)
     {
         ClientToScreen(hwnd_, &point);
@@ -129,10 +142,6 @@ bool DesktopApp::HandleUsageGuidePointerUp(POINT point)
         RefreshUsageGuideReference();
         ShowSettingsWindow(route);
     }
-    else if (pressed == 4 && PtInRect(&usageGuideMoreRect_, point))
-    {
-        ClientToScreen(hwnd_, &point); ShowUsageGuideActions(point);
-    }
     else if (pressed == 5 && PtInRect(&usageGuideOpenSettingsRect_, point))
     {
         const auto route = snowdesktop::SettingsRoute::ForPage(lesson.settingsPage, lesson.settingsFocus);
@@ -144,29 +153,9 @@ bool DesktopApp::HandleUsageGuidePointerUp(POINT point)
     return true;
 }
 
-void DesktopApp::ShowUsageGuideActions(POINT point)
+void DesktopApp::ScrollUsageGuide(int delta)
 {
-    if (!IsUsageGuideVisible()) return;
-    const auto topic = usageGuideTopic_;
-    HMENU menu = CreatePopupMenu();
-    if (!menu) return;
-    AppendMenuW(menu, MF_STRING, 1, _LW(usageGuideDetails_ ? "start.hideDetails" : "start.details"));
-    if (usageGuideDetailPages_ > 1)
-    {
-        AppendMenuW(menu, MF_STRING | (usageGuideDetailPage_ ? 0 : MF_GRAYED), 5, _LW("start.previousPage"));
-        AppendMenuW(menu, MF_STRING | (usageGuideDetailPage_ + 1 < usageGuideDetailPages_ ? 0 : MF_GRAYED), 6, _LW("start.nextPage"));
-    }
-    const UINT command = ShowModernMenu(menu, point, hwnd_);
-    DestroyMenu(menu);
-    // A nested menu loop can close or replace the indicator during reload.
-    if (!IsUsageGuideVisible() || usageGuideTopic_ != topic) return;
-    switch (command)
-    {
-    case 1: usageGuideDetails_ = !usageGuideDetails_; usageGuideDetailPage_ = 0; break;
-    case 5: if (usageGuideDetailPage_) --usageGuideDetailPage_; break;
-    case 6: if (usageGuideDetailPage_ + 1 < usageGuideDetailPages_) ++usageGuideDetailPage_; break;
-    default: return; // Cancelling a menu changes neither content nor placement.
-    }
-    RefreshUsageGuideReference();
+    if (!IsUsageGuideVisible() || usageGuidePressedButton_) return;
+    usageGuideScroll_.By(-MulDiv(delta, 48, WHEEL_DELTA));
+    InvalidateRect(hwnd_, &usageGuideFrame_, FALSE);
 }
-

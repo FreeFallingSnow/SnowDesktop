@@ -78,9 +78,9 @@ int main(int argc, char** argv)
         // Negative architecture contract: the practice command may publish an
         // instruction, but must never perform the menu lesson for the user.
         const auto practice = ReadSource(root, "src/app/app_usage_guide.cpp");
-        const auto index = ReadSource(root, "src/winui/usage_settings_guide.cpp");
-        for (const auto token : {"InvokeHostAction(", "SettingsUpdateMode::", "SaveExpanded(", "StartUsageGuidePractice("})
-            Forbid(index, token, "personalization reference can locate controls but never update settings or start practice");
+        const auto guide = ReadSource(root, "src/winui/start_page_presenter.cpp");
+        for (const auto token : {"InvokeHostAction(", "SettingsUpdateMode::", "SaveExpanded("})
+            Forbid(guide, token, "guide controls delegate explicit actions rather than applying settings themselves");
         const auto overlay = ReadSource(root, "src/app/app_overlay_render.cpp");
         for (const auto token : {"ActivePopupBounds(", "ActivePreviewBounds(", "GetOcclusionRects("})
             Forbid(overlay, token, "a manually positioned reference must not move to avoid menus or desktop objects");

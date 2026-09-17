@@ -538,7 +538,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         POINT wheelPt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT guidePt = wheelPt; ScreenToClient(hwnd_, &guidePt);
-        if (IsPointInUsageGuide(guidePt)) return 0;
+        if (IsPointInUsageGuide(guidePt)) { ScrollUsageGuide(GET_WHEEL_DELTA_WPARAM(wp)); return 0; }
         if (desktopIconsHidden_)
         {
             ScreenToClient(hwnd_, &wheelPt);
@@ -557,7 +557,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (IsPointInUsageGuide(pt))
-        { POINT screen = pt; ClientToScreen(hwnd_, &screen); ShowUsageGuideActions(screen); return 0; }
+        return 0;
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
             ShowHiddenHint();

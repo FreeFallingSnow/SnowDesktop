@@ -823,9 +823,8 @@ snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(boo
     usageGuidePressedButton_ = 0;
     usageGuideFrame_ = usageGuideDragRect_ = {};
     usageGuideWaitingForDesktop_ = false;
-    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideMoreRect_ = usageGuideOpenSettingsRect_ = {};
-    usageGuideDetails_ = false;
-    usageGuideDetailPage_ = 0;
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
+    usageGuideScroll_ = {};
     const auto result = ReloadLayoutAndSynchronizeSettings();
     PublishHomeAboutStatus();
 

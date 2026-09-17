@@ -234,7 +234,7 @@ void DesktopApp::OnMouseMoveAt(
     if (HandleUsageGuidePointerMove(current)) return;
     if (IsUsageGuideVisible())
         for (const auto bounds : {usageGuidePauseRect_, usageGuideSettingsRect_,
-                usageGuideMoreRect_, usageGuideOpenSettingsRect_})
+                usageGuideOpenSettingsRect_})
             if (PtInRect(&bounds, oldMouse) != PtInRect(&bounds, current))
                 InvalidateRect(hwnd_, &bounds, FALSE);
     if (IsPointInUsageGuide(current) && !mouseDown_ && widgetAction_ == WidgetAction::None &&

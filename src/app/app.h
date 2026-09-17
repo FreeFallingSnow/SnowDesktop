@@ -3536,11 +3536,12 @@ private:
     snowdesktop::usage_guide::PanelPlacement usageGuidePlacement_;
     RECT usageGuideFrame_{}, usageGuideDragRect_{};
     bool usageGuideWaitingForDesktop_ = false;
-    RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{}, usageGuideMoreRect_{}, usageGuideOpenSettingsRect_{};
+    RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{}, usageGuideOpenSettingsRect_{};
     int usageGuidePressedButton_ = 0;
-    bool usageGuideDetails_ = false;
-    std::size_t usageGuideDetailPage_ = 0, usageGuideDetailPages_ = 1;
-    void ShowUsageGuideActions(POINT point);
+    snowdesktop::usage_guide::PanelScroll usageGuideScroll_;
+    RECT usageGuideBodyRect_{}, usageGuideScrollTrack_{}, usageGuideScrollThumb_{};
+    int usageGuideScrollGrab_ = 0;
+    void ScrollUsageGuide(int delta);
     void RefreshUsageGuideReference();
     bool IsUsageGuideVisible() const;
     bool IsPointInUsageGuide(POINT point) const;

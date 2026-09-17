@@ -1,6 +1,6 @@
 #include "pch.h"
 #include "start_page_presenter.h"
-#include "usage_settings_guide.h"
+#include "../usage_guide_settings.h"
 #include <algorithm>
 #include <cmath>
 
@@ -25,8 +25,8 @@ struct StartPagePresenter::Impl
         Topic topic;
         muxc::ListViewItem item;
         muxc::Grid layout, heading;
-        muxc::StackPanel labels, details;
-        muxc::TextBlock title, description, instructions, tips, prerequisite, launchLabel, settingsLabel;
+        muxc::StackPanel labels, details, buttons;
+        muxc::TextBlock title, description, instructions, prerequisite, launchLabel, settingsLabel;
         muxc::Button disclosure, launch, settings;
         muxc::FontIcon chevron;
         muxc::ContentControl icon;
@@ -41,27 +41,24 @@ struct StartPagePresenter::Impl
     StartPageActions actions;
     muxc::Expander root;
     muxc::StackPanel header, body;
-    muxc::TextBlock title, summary;
+    muxc::TextBlock title;
     muxc::ScrollViewer tabsScroll;
-    muxc::SelectorBar tabs, categories;
-    muxc::SelectorBarItem tutorialsTab, personalizationTab;
-    std::unique_ptr<UsageSettingsGuide> settingsGuide;
-    bool personalization = false;
+    muxc::SelectorBar tabs;
+    bool dockEnabled = false;
     muxc::ListView lessons;
-    std::array<Group, 6> groups{{
+    std::array<Group, 4> groups{{
         {Section::Basics, L"categories.svg", L"\xE8B7"},
         {Section::Files, L"desktop.svg", L"\xE7F4"},
-        {Section::Settings, L"appearance-desktop-icons.svg", L"\xE8A9"},
         {Section::Dock, L"dock.svg", L"\xEBC8"},
-        {Section::Navigation, L"search.svg", L"\xE721"},
         {Section::More, L"widgets.svg", L"\xE74C"},
     }};
     std::vector<std::unique_ptr<Row>> rows;
-    Topic selected = Topic::Collection;
+    Topic selected = Topic::Startup;
+    std::vector<Topic> visibleTopics;
     Section section = Section::Basics;
     std::optional<Topic> expandedTopic;
     mux::Style secondaryStyle{nullptr}, quietButtonStyle{nullptr};
-    winrt::event_token tabsToken{}, themeToken{}, sizeToken{}, categoryToken{};
+    winrt::event_token tabsToken{}, themeToken{}, sizeToken{};
     std::int64_t expandedToken{};
     std::uint64_t generation = 0, revision = 0;
     bool hasSnapshot = false, hasStatus = false, active = false, closed = false;
@@ -90,17 +87,8 @@ struct StartPagePresenter::Impl
         root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         root.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         root.IsExpanded(true); root.IsEnabled(false);
-        Heading(title); Wrap(summary); summary.Style(secondaryStyle);
-        header.Spacing(4); header.Children().Append(title); header.Children().Append(summary); root.Header(header);
+        Heading(title); root.Header(title);
         body.Spacing(8); root.Content(body);
-        categories.Items().Append(tutorialsTab); categories.Items().Append(personalizationTab);
-        categories.SelectedItem(tutorialsTab); body.Children().Append(categories);
-        settingsGuide = std::make_unique<UsageSettingsGuide>(localize);
-        categoryToken = categories.SelectionChanged([this](auto&&, auto&&) {
-            if (closed || updating) return;
-            personalization = categories.SelectedItem() == personalizationTab;
-            ShowCategory();
-        });
         sizeToken = root.SizeChanged([this](auto&&, const mux::SizeChangedEventArgs& args) {
             if (closed) return;
             // Expander's native template contributes 16 DIP on each side.
@@ -108,17 +96,14 @@ struct StartPagePresenter::Impl
             body.Width(std::max(0.0, static_cast<double>(args.NewSize().Width) - 32.0 - border.Left - border.Right));
             if (const auto xamlRoot = root.XamlRoot())
                 lessons.MaxHeight(std::clamp(static_cast<double>(xamlRoot.Size().Height) * .48, 200.0, 420.0));
-            if (settingsGuide)
-                settingsGuide->Resize(body.Width(), root.XamlRoot() ? root.XamlRoot().Size().Height : 750);
             SizeRows();
         });
         tabsScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
-        tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
+        tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Hidden);
         tabsScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
         tabsScroll.VerticalScrollBarVisibility(muxc::ScrollBarVisibility::Disabled);
         tabsScroll.Content(tabs); body.Children().Append(tabsScroll);
-        for (auto& group : groups)
-            if (group.section != Section::Settings && group.section != Section::Navigation) tabs.Items().Append(group.tab);
+        for (auto& group : groups) tabs.Items().Append(group.tab);
         tabs.SelectedItem(groups[0].tab);
         // The native list owns scrolling, including expanded details.
         lessons.SelectionMode(muxc::ListViewSelectionMode::None);
@@ -130,11 +115,10 @@ struct StartPagePresenter::Impl
  <Setter Property="Margin" Value="0,0,0,4"/>
  </Style>)").as<mux::Style>());
         body.Children().Append(lessons);
-        settingsGuide->Content().Visibility(mux::Visibility::Collapsed);
-        body.Children().Append(settingsGuide->Content());
         tabsToken = tabs.SelectionChanged([this](auto&&, auto&&) {
             if (closed || updating) return;
             for (auto& group : groups) if (tabs.SelectedItem() == group.tab) section = group.section;
+            if (const auto tab = tabs.SelectedItem(); tab && tab.IsLoaded()) tab.StartBringIntoView();
             PopulateLessons();
         });
         expandedToken = root.RegisterPropertyChangedCallback(muxc::Expander::IsExpandedProperty(), [this](auto&&, auto&&) {
@@ -145,18 +129,21 @@ struct StartPagePresenter::Impl
         themeToken = root.ActualThemeChanged([this](auto&&, auto&&) { if (!closed) RefreshIcons(); });
         RefreshLocalizedText();
     }
-    void ShowCategory()
+    void RefreshEntries()
     {
-        if (!personalization && (section == Section::Settings || section == Section::Navigation))
-        {
-            section = Section::Basics;
-            updating = true; tabs.SelectedItem(groups.front().tab); updating = false;
-            PopulateLessons();
-        }
-        tabsScroll.Visibility(personalization ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        lessons.Visibility(personalization ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-        settingsGuide->Content().Visibility(personalization ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        if (personalization) settingsGuide->Refresh();
+        if (closed || !actions.settingsIndex) return;
+        const auto entries = actions.settingsIndex();
+        std::vector<Topic> next;
+        for (const auto& lesson : kLessons)
+            if (IsLessonVisible(lesson, entries)) next.push_back(lesson.topic);
+        if (next != visibleTopics) { visibleTopics = std::move(next); PopulateLessons(); }
+    }
+    const char* ActionLabel(const Lesson& lesson) const
+    {
+        if (lesson.topic == Topic::Workshop) return L10N_KEY("app.settings.widgets_open_steam_workshop");
+        if (lesson.topic == Topic::Develop) return L10N_KEY("app.settings.widgets_developer_tools");
+        if (lesson.needsDock && !dockEnabled) return L10N_KEY("settings.dock.enable");
+        return lesson.practice ? L10N_KEY("start.practiceShort") : L10N_KEY("start.openSettings");
     }
     void SizeRows()
     {
@@ -166,12 +153,16 @@ struct StartPagePresenter::Impl
         {
             row->layout.Width(width);
             // Long translations and large text remain clear of the action.
-            const bool narrow = width < 440;
-            muxc::Grid::SetRow(row->launch, narrow ? 1 : 0);
-            muxc::Grid::SetColumn(row->launch, narrow ? 0 : 1);
-            muxc::Grid::SetColumnSpan(row->launch, narrow ? 2 : 1);
-            row->launch.HorizontalAlignment(narrow ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right);
-            row->launch.Margin(narrow ? mux::Thickness{44, 0, 8, 8} : mux::Thickness{8, 0, 8, 0});
+            const bool twoButtons = *Find(row->topic)->secondaryFocus;
+            const bool narrow = width < (twoButtons ? 640 : 480);
+            const double buttonWidth = std::min(180.0, std::max(60.0,
+                (width - 68.0) / (twoButtons ? 2 : 1) - (twoButtons ? 4 : 0)));
+            row->launch.MaxWidth(buttonWidth); row->settings.MaxWidth(buttonWidth);
+            muxc::Grid::SetRow(row->buttons, narrow ? 1 : 0);
+            muxc::Grid::SetColumn(row->buttons, narrow ? 0 : 1);
+            muxc::Grid::SetColumnSpan(row->buttons, narrow ? 2 : 1);
+            row->buttons.HorizontalAlignment(narrow ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right);
+            row->buttons.Margin(narrow ? mux::Thickness{44, 0, 8, 8} : mux::Thickness{8, 0, 8, 0});
         }
     }
     const Group& GroupFor(Section value) const
@@ -198,7 +189,9 @@ struct StartPagePresenter::Impl
             switch (row->topic)
             {
             case Topic::Startup: asset = L"general.svg"; break;
-            case Topic::Grid: case Topic::Move: case Topic::Resize: asset = L"pages.svg"; break;
+            case Topic::Grid: case Topic::Move: asset = L"pages.svg"; break;
+            case Topic::Icons: asset = L"appearance-desktop-icons.svg"; break;
+            case Topic::Navigation: asset = L"search.svg"; break;
             case Topic::Beautify: asset = L"appearance-icon-beautification.svg"; break;
             case Topic::Theme: asset = L"appearance-theme.svg"; break;
             case Topic::Backup: asset = L"backup.svg"; break;
@@ -212,7 +205,7 @@ struct StartPagePresenter::Impl
         rows.clear(); lessons.Items().Clear();
         for (const auto& lesson : kLessons)
         {
-            if (!lesson.practice || lesson.section != section) continue;
+            if (lesson.section != section || std::find(visibleTopics.begin(), visibleTopics.end(), lesson.topic) == visibleTopics.end()) continue;
             auto row = std::make_unique<Row>(lesson.topic);
             auto* r = row.get();
             Column(r->layout, 1, mux::GridUnitType::Star); Column(r->layout, 1, mux::GridUnitType::Auto);
@@ -231,17 +224,19 @@ struct StartPagePresenter::Impl
             r->disclosure.HorizontalAlignment(mux::HorizontalAlignment::Stretch); r->disclosure.MinHeight(64);
             r->layout.Children().Append(r->disclosure);
             r->launch.MinHeight(36); r->launch.VerticalAlignment(mux::VerticalAlignment::Center);
-            Wrap(r->launchLabel); r->launchLabel.Text(L(lesson.practice ? "start.practiceShort" : "start.openSettings"));
+            Wrap(r->launchLabel); r->launchLabel.Text(L(ActionLabel(lesson)));
             r->launch.Content(r->launchLabel); r->launch.MaxWidth(180);
-            muxc::Grid::SetColumn(r->launch, 1); r->layout.Children().Append(r->launch);
+            r->buttons.Orientation(muxc::Orientation::Horizontal); r->buttons.Spacing(8);
+            r->buttons.VerticalAlignment(mux::VerticalAlignment::Center);
+            r->buttons.Children().Append(r->launch);
+            muxc::Grid::SetColumn(r->buttons, 1); r->layout.Children().Append(r->buttons);
             r->details.Spacing(10); r->details.Margin({44, 0, 12, 16});
             Wrap(r->prerequisite); r->details.Children().Append(r->prerequisite);
             Wrap(r->instructions); r->instructions.Text(L(lesson.instructions)); r->details.Children().Append(r->instructions);
-            Wrap(r->tips); r->tips.Style(secondaryStyle); r->tips.Text(L(lesson.tips)); r->details.Children().Append(r->tips);
-            Wrap(r->settingsLabel); r->settingsLabel.Text(L("start.openSettings")); r->settings.Content(r->settingsLabel);
+            Wrap(r->settingsLabel); if (*lesson.secondaryLabel) r->settingsLabel.Text(L(lesson.secondaryLabel)); r->settings.Content(r->settingsLabel);
             r->settings.HorizontalAlignment(mux::HorizontalAlignment::Left);
-            r->settings.Visibility(lesson.practice && HasSettings(lesson) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-            r->details.Children().Append(r->settings);
+            r->settings.Visibility(*lesson.secondaryFocus ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            r->settings.MaxWidth(180); r->settings.MinHeight(36); r->buttons.Children().Append(r->settings);
             muxc::Grid::SetRow(r->details, 2); muxc::Grid::SetColumnSpan(r->details, 2); r->layout.Children().Append(r->details);
             r->item.Content(r->layout); lessons.Items().Append(r->item);
             muxa::AutomationProperties::SetName(r->launch, L(lesson.practice ? "start.practice" : "start.openSettings") + L" · " + L(lesson.title));
@@ -251,11 +246,18 @@ struct StartPagePresenter::Impl
             });
             r->launchToken = r->launch.Click([this, topic = lesson.topic](auto&&, auto&&) {
                 if (closed || !active || !hasSnapshot || !hasStatus || !actions.begin) return;
-                selected = topic; actions.begin(generation, topic);
+                selected = topic;
+                const auto& lesson = *Find(topic);
+                if (lesson.needsDock && !dockEnabled)
+                {
+                    if (actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Dock, "dock.enable"));
+                    return;
+                }
+                actions.begin(generation, topic);
             });
             r->settingsToken = r->settings.Click([this, topic = lesson.topic](auto&&, auto&&) {
                 if (!closed && active && actions.navigate)
-                { const auto& lesson = *Find(topic); actions.navigate(SettingsRoute::ForPage(lesson.settingsPage, lesson.settingsFocus)); }
+                { const auto& lesson = *Find(topic); actions.navigate(SettingsRoute::ForPage(lesson.secondaryPage, lesson.secondaryFocus)); }
             });
             rows.push_back(std::move(row));
         }
@@ -263,11 +265,9 @@ struct StartPagePresenter::Impl
     }
     void RefreshLocalizedText()
     {
-        title.Text(L("start.title")); summary.Text(L("start.description"));
-        tutorialsTab.Text(L("guide.tutorials")); personalizationTab.Text(L("guide.personalization"));
-        if (settingsGuide && personalization) settingsGuide->Refresh();
+        title.Text(L("start.title"));
         for (auto& group : groups) group.tab.Text(L(SectionTitle(group.section)));
-        muxa::AutomationProperties::SetName(root, title.Text()); muxa::AutomationProperties::SetHelpText(root, summary.Text());
+        muxa::AutomationProperties::SetName(root, title.Text());
         muxa::AutomationProperties::SetName(lessons, L("start.choose")); PopulateLessons();
     }
     void Render()
@@ -280,18 +280,13 @@ struct StartPagePresenter::Impl
             const bool expanded = expandedTopic == row->topic;
             row->details.Visibility(expanded ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             row->chevron.Glyph(expanded ? L"\xE70E" : L"\xE70D");
-            row->launchLabel.Text(L(lesson.practice ? "start.practiceShort" : "start.openSettings"));
+            row->launchLabel.Text(L(ActionLabel(lesson)));
             row->description.MaxLines(expanded ? 0 : 2);
             muxa::AutomationProperties::SetName(row->disclosure, L(lesson.title) + L" · " + L(expanded ? "start.hideDetails" : "start.details"));
-            std::wstring prerequisites;
-            for (const auto condition : kPrerequisites)
-                if (lesson.required & condition)
-                {
-                    if (!prerequisites.empty()) prerequisites += L"\n";
-                    prerequisites += L(PrerequisiteText(condition));
-                }
-            row->prerequisite.Visibility(prerequisites.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
-            row->prerequisite.Text(prerequisites);
+            const bool blocked = lesson.needsDock && !dockEnabled;
+            row->prerequisite.Visibility(blocked ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            row->prerequisite.Text(blocked ? L("start.requires.dock") : L"");
+            muxa::AutomationProperties::SetName(row->launch, L(ActionLabel(lesson)) + L" · " + L(lesson.title));
         }
     }
     void Close()
@@ -299,8 +294,7 @@ struct StartPagePresenter::Impl
         if (closed) return;
         closed = true; active = false;
         root.UnregisterPropertyChangedCallback(muxc::Expander::IsExpandedProperty(), expandedToken);
-        root.ActualThemeChanged(themeToken); root.SizeChanged(sizeToken); tabs.SelectionChanged(tabsToken); categories.SelectionChanged(categoryToken);
-        settingsGuide->Close();
+        root.ActualThemeChanged(themeToken); root.SizeChanged(sizeToken); tabs.SelectionChanged(tabsToken);
         rows.clear(); actions = {};
     }
 };
@@ -310,12 +304,13 @@ StartPagePresenter::~StartPagePresenter() { Close(); }
 void StartPagePresenter::SetActions(StartPageActions actions)
 {
     impl_->actions = std::move(actions);
-    impl_->settingsGuide->SetActions(impl_->actions.settingsIndex, impl_->actions.navigate);
+    impl_->RefreshEntries();
 }
 void StartPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {
     if (impl_->closed) return;
     if (!impl_->hasSnapshot || impl_->generation != snapshot.generation) impl_->hasStatus = false;
+    impl_->dockEnabled = snapshot.values.desktop.dockEnabled;
     impl_->generation = snapshot.generation; impl_->hasSnapshot = true; impl_->Render();
 }
 void StartPagePresenter::ApplyStatusPatch(const HomeAboutStatusPatch& patch)
@@ -327,13 +322,13 @@ void StartPagePresenter::ApplyStatusPatch(const HomeAboutStatusPatch& patch)
         impl_->applyingPreference = true; impl_->root.IsExpanded(impl_->routeExpanded || *patch.usageGuideExpanded); impl_->applyingPreference = false;
     }
     impl_->hasStatus = true; impl_->revision = patch.revision; impl_->Render();
-    if (impl_->active && impl_->personalization) impl_->settingsGuide->Refresh();
+    if (impl_->active) impl_->RefreshEntries();
 }
 void StartPagePresenter::RefreshLocalizedText() { impl_->RefreshLocalizedText(); }
 void StartPagePresenter::Activate(bool active)
 {
     impl_->active = active;
-    if (active && impl_->personalization) impl_->settingsGuide->Refresh();
+    if (active) impl_->RefreshEntries();
 }
 void StartPagePresenter::Close() { if (impl_) impl_->Close(); }
 mux::UIElement StartPagePresenter::Content() const { return impl_->root; }
@@ -341,11 +336,10 @@ void StartPagePresenter::SelectRoute(std::string_view id)
 {
     if (!id.starts_with("start.")) return;
     const auto oldSection = impl_->section;
-    if (id == "start.basics") { impl_->section = Section::Basics; impl_->personalization = false; }
-    else if (id == "start.explore") impl_->personalization = true;
+    if (id == "start.basics" || id == "start.explore") impl_->section = Section::Basics;
     else if (id == "start.welcome")
     {
-        impl_->selected = Topic::Collection; impl_->section = Section::Basics; impl_->personalization = false;
+        impl_->selected = Topic::Startup; impl_->section = Section::Basics;
         impl_->routeExpanded = false; impl_->applyingPreference = true;
         impl_->root.IsExpanded(impl_->expandedPreference); impl_->applyingPreference = false;
     }
@@ -353,9 +347,6 @@ void StartPagePresenter::SelectRoute(std::string_view id)
     {
         const auto& lesson = *Find(*topic);
         impl_->selected = *topic; impl_->section = lesson.section; impl_->expandedTopic = *topic;
-        impl_->personalization = !lesson.practice;
-        if (impl_->personalization)
-            impl_->settingsGuide->SelectRoute(SettingsRoute::ForPage(lesson.settingsPage, lesson.settingsFocus));
     }
     if (id != "start.welcome")
     {
@@ -363,11 +354,10 @@ void StartPagePresenter::SelectRoute(std::string_view id)
         impl_->root.IsExpanded(true); impl_->applyingPreference = false;
     }
     impl_->updating = true;
-    impl_->categories.SelectedItem(impl_->personalization ? impl_->personalizationTab : impl_->tutorialsTab);
-    if (!impl_->personalization)
-        for (auto& group : impl_->groups) if (group.section == impl_->section) impl_->tabs.SelectedItem(group.tab);
+    for (auto& group : impl_->groups) if (group.section == impl_->section)
+    { impl_->tabs.SelectedItem(group.tab); if (group.tab.IsLoaded()) group.tab.StartBringIntoView(); }
     impl_->updating = false;
-    impl_->ShowCategory();
+    impl_->RefreshEntries();
     if (oldSection != impl_->section) impl_->PopulateLessons(); else impl_->Render();
     if (id != "start.welcome")
         for (auto& row : impl_->rows) if (row->topic == impl_->selected) impl_->lessons.ScrollIntoView(row->item);

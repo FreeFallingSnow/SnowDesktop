@@ -22,12 +22,14 @@ void CheckUsageGuide()
 {
     using namespace snowdesktop::usage_guide;
     Check(!ParseTopic("unknown") && ParseTopic("layout") == Topic::Move &&
-        ParseTopic("resize") == Topic::Move && ParseTopic("application") == Topic::Collection,
+        ParseTopic("resize") == Topic::Move && ParseTopic("application") == Topic::Collection &&
+        ParseTopic("dockMapping") == Topic::DockPin,
         "merged tutorials preserve old routes without duplicate entries");
     Check(!Find(Topic::DockSummon)->practice && !Find(Topic::Navigation)->practice,
         "preference choices never start desktop exercises");
-    Check(Find(Topic::DockFiles)->required == DockEnabled,
-        "Dock folder guidance does not require creating a file widget");
+    Check(!CanShowDesktop(*Find(Topic::DockFiles), false) && CanShowDesktop(*Find(Topic::DockFiles), true),
+        "Dock guidance requires Dock but never a newly created file component");
+    Check(!CanShowDesktop(*Find(Topic::DockSummon), true), "preference articles cannot become desktop exercises");
 
     // The renderer and pointer handlers use this exact placement model.
     // Repaints have no menu or cursor input, so they cannot chase the pointer.
@@ -49,19 +51,33 @@ void CheckUsageGuide()
     frame = panel.Arrange({-1920, 0, 0, 1040}, 440, 300, 24);
     Check(frame.left == -1500 && frame.top == 200, "drag supports a monitor with negative screen coordinates");
 
+    // Real renderer/input use this model: every line must remain reachable,
+    // with no blank overscroll after text scaling or a monitor change.
+    PanelScroll scroll;
+    scroll.Arrange(900, 300); scroll.By(48);
+    Check(scroll.offset == 48 && scroll.maximum == 600, "wheel exposes the next part of a long document");
+    scroll.ToFraction(1.0);
+    Check(scroll.offset == 600, "dragging the scrollbar can reach the final instruction");
+    scroll.By(1000);
+    Check(scroll.offset == 600, "scrolling cannot pass the final line");
+    scroll.Arrange(250, 300);
+    Check(scroll.offset == 0 && scroll.maximum == 0, "a resized document that fits shows all text from the start");
+    scroll.By(-48);
+    Check(scroll.offset == 0, "scrolling above the first line is clamped");
+
     snowdesktop::StaticSettingSearchDescriptor entry;
-    entry.page = snowdesktop::SettingsPage::AnimationPerformance; entry.focusId = "animation.hover";
-    Check(ClassifySetting(entry) == Module::Dock, "Dock animation is found under Dock despite its separate settings page");
-    entry.page = snowdesktop::SettingsPage::AppearanceTheme; entry.focusId = "personalization.quickNavigationTheme";
-    Check(ClassifySetting(entry) == Module::Navigation, "navigation appearance is indexed with navigation");
-    entry.page = snowdesktop::SettingsPage::DesktopCategories; entry.focusId = "desktop.categoryRules";
-    Check(ClassifySetting(entry) == Module::Files, "classification rules belong to file preferences");
-    entry.visible = false;
-    Check(!ClassifySetting(entry), "hidden settings cannot leak through the guide index");
-    entry.visible = true; entry.page = snowdesktop::SettingsPage::General; entry.focusId = "start.collection";
-    Check(!ClassifySetting(entry), "guide self-links cannot recursively duplicate the index");
-    entry.page = snowdesktop::SettingsPage::Debug; entry.focusId = "debug.crash";
-    Check(!ClassifySetting(entry), "diagnostics are excluded from everyday preference guidance");
+    entry.focusId = "widgets.workshop"; entry.visible = false;
+    Check(!IsLessonVisible(*Find(Topic::Workshop), {entry}), "unavailable Workshop cannot appear in the guide");
+    entry.visible = true;
+    Check(IsLessonVisible(*Find(Topic::Workshop), {entry}), "available Workshop retains its entry");
+    Check(!IsLessonVisible(*Find(Topic::CategoryRules), {entry}), "an unrelated visible setting cannot unlock an article");
+    entry.focusId = "desktop.categoryRules";
+    Check(IsLessonVisible(*Find(Topic::CategoryRules), {entry}) &&
+        Find(Topic::CategoryRules)->section == Section::Files && !Find(Topic::CategoryRules)->practice,
+        "file classification stays with organizers and only opens settings");
+    entry.focusId = "widgets.developer";
+    Check(IsLessonVisible(*Find(Topic::Develop), {entry}), "development help is discoverable before opting into developer tools");
+    Check(IsLessonVisible(*Find(Topic::Move), {}), "basic component guidance does not depend on settings search availability");
     for (const auto& lesson : kLessons)
     {
         Check(ParseTopic(lesson.key) == lesson.topic, "every visible lesson can be requested through the host");

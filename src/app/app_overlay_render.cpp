@@ -6,25 +6,16 @@
 void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
 {
     using namespace snowdesktop::usage_guide;
-    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideMoreRect_ = usageGuideOpenSettingsRect_ = {};
-    usageGuideFrame_ = usageGuideDragRect_ = {};
+    usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
+    usageGuideFrame_ = usageGuideDragRect_ = usageGuideBodyRect_ = usageGuideScrollTrack_ = usageGuideScrollThumb_ = {};
     if (!ctx || !IsUsageGuideVisible()) return;
     const auto& lesson = *Find(*usageGuideTopic_);
     const bool showSettings = HasSettings(lesson);
     const std::wstring caption = std::wstring(_LW(SectionTitle(lesson.section))) + L" · " + _LW("start.dragPanel");
     const std::wstring title = _LW(lesson.title);
-    std::wstring hint = _LW(lesson.hint);
-    if (usageGuideDetails_)
-    {
-        hint.clear();
-        for (const auto condition : kPrerequisites)
-            if (lesson.required & condition)
-                hint += std::wstring(_LW(PrerequisiteText(condition))) + L"\n";
-        if (!hint.empty()) hint += L"\n";
-        hint += std::wstring(_LW(lesson.instructions)) + L"\n\n" + _LW(lesson.tips);
-    }
+    const std::wstring hint = _LW(lesson.instructions);
     const std::wstring pauseText = _LW("start.pause"), settingsText = _LW("start.returnSettings"),
-        moreText = _LW("start.moreActions"), openText = _LW("start.openSettings");
+        openText = _LW("start.openSettings");
     POINT cursor{}; GetCursorPos(&cursor);
     // Pick a display once; following the mouse or menus during repaint would
     // move a button out from under the user. Only a deliberate drag follows it.
@@ -44,6 +35,7 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     const int width = std::min(px(440), static_cast<int>(area.right - area.left) - margin * 2);
     if (width < px(240)) return;
     const int textWidth = width - padding * 2;
+    const int bodyWidth = textWidth - px(16);
     auto* factory = GetDWriteFactory();
     if (!factory) return;
     DWORD textScale = 100, bytes = sizeof(textScale);
@@ -68,45 +60,17 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     const int captionHeight = measure(caption, smallFormat.Get(), textWidth);
     const int titleHeight = measure(title, titleFormat.Get(), textWidth);
     const int openHeight = showSettings ? std::max(px(36), measure(openText, format.Get(), textWidth - px(16)) + px(12)) : 0;
-    const int thirdWidth = (textWidth - px(16)) / 3;
-    const int secondaryHeight = std::max(px(36), std::max({
-        measure(moreText, smallFormat.Get(), thirdWidth - px(12)),
-        measure(settingsText, smallFormat.Get(), thirdWidth - px(12)),
-        measure(pauseText, smallFormat.Get(), thirdWidth - px(12))}) + px(12));
-    const int pageHeight = measure(L"1 / 9", smallFormat.Get(), textWidth) + px(4);
+    const int halfWidth = (textWidth - px(8)) / 2;
+    const int secondaryHeight = std::max(px(36), std::max(
+        measure(settingsText, smallFormat.Get(), halfWidth - px(12)),
+        measure(pauseText, smallFormat.Get(), halfWidth - px(12))) + px(12));
     const int fixedHeight = padding * 2 + captionHeight + px(4) + titleHeight + px(12) +
-        px(12) + pageHeight + secondaryHeight + (showSettings ? openHeight + px(8) : 0);
-    const int bodyLimit = std::min(px(240), static_cast<int>(area.bottom - area.top) - margin * 2 - fixedHeight);
+        px(12) + secondaryHeight + (showSettings ? openHeight + px(8) : 0);
+    const int bodyLimit = static_cast<int>(area.bottom - area.top) - margin * 2 - fixedHeight;
     if (bodyLimit < px(24)) return;
-    // Page long instructions at real DirectWrite line boundaries. No clipped
-    // wall of text and no new wheel interception over the desktop.
-    std::vector<std::wstring> pages;
-    ComPtr<IDWriteTextLayout> fullLayout;
-    if (SUCCEEDED(factory->CreateTextLayout(hint.c_str(), static_cast<UINT32>(hint.size()),
-        format.Get(), static_cast<float>(textWidth), 100000, &fullLayout)))
-    {
-        UINT32 lineCount = 0; fullLayout->GetLineMetrics(nullptr, 0, &lineCount);
-        std::vector<DWRITE_LINE_METRICS> lines(lineCount);
-        if (lineCount && SUCCEEDED(fullLayout->GetLineMetrics(lines.data(), lineCount, &lineCount)))
-        {
-            std::size_t start = 0, offset = 0; float used = 0;
-            for (const auto& line : lines)
-            {
-                if (used + line.height > bodyLimit && offset > start)
-                { pages.push_back(hint.substr(start, offset - start)); start = offset; used = 0; }
-                offset += line.length; used += line.height;
-            }
-            if (offset > start) pages.push_back(hint.substr(start, offset - start));
-        }
-    }
-    if (pages.empty()) pages.push_back(hint);
-    usageGuideDetailPages_ = pages.size();
-    usageGuideDetailPage_ = std::min(usageGuideDetailPage_, pages.size() - 1);
-    hint = pages[usageGuideDetailPage_];
-    // A trailing newline belongs to the next paragraph and must not add an
-    // extra empty visual line outside the page's measured budget.
-    while (!hint.empty() && (hint.back() == L'\n' || hint.back() == L'\r')) hint.pop_back();
-    const int textHeight = std::min(bodyLimit, measure(hint, format.Get(), textWidth));
+    const int contentHeight = measure(hint, format.Get(), bodyWidth);
+    const int textHeight = std::min(bodyLimit, contentHeight);
+    usageGuideScroll_.Arrange(contentHeight, textHeight);
     const int height = fixedHeight + textHeight;
     if (height + margin * 2 > area.bottom - area.top) return;
     RECT frame = usageGuidePlacement_.Arrange(area, width, height, margin);
@@ -138,10 +102,23 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     };
     drawLine(caption, captionHeight, smallFormat.Get(), secondary); y += px(4);
     drawLine(title, titleHeight, titleFormat.Get(), foreground); y += px(12);
-    drawLine(hint, textHeight, format.Get(), foreground); y += px(12);
-    const std::wstring pageText = pages.size() > 1 ?
-        std::to_wstring(usageGuideDetailPage_ + 1) + L" / " + std::to_wstring(pages.size()) : L"";
-    drawLine(pageText, pageHeight, smallFormat.Get(), secondary);
+    usageGuideBodyRect_ = {frame.left + padding, y, frame.right - padding - px(16), y + textHeight};
+    RECT textBounds = usageGuideBodyRect_;
+    textBounds.top -= usageGuideScroll_.offset;
+    textBounds.bottom = textBounds.top + contentHeight;
+    ctx->PushAxisAlignedClip(ToD2DRect(usageGuideBodyRect_), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    DrawD2DText(ctx, hint, textBounds, format.Get(), foreground);
+    ctx->PopAxisAlignedClip();
+    if (usageGuideScroll_.maximum > 0)
+    {
+        usageGuideScrollTrack_ = {frame.right - padding - px(12), y, frame.right - padding, y + textHeight};
+        const int thumbHeight = std::min(textHeight, std::max(px(32), MulDiv(textHeight, textHeight, contentHeight)));
+        const int thumbTop = y + MulDiv(textHeight - thumbHeight, usageGuideScroll_.offset, usageGuideScroll_.maximum);
+        usageGuideScrollThumb_ = {usageGuideScrollTrack_.left, thumbTop, usageGuideScrollTrack_.right, thumbTop + thumbHeight};
+        RECT visibleThumb = usageGuideScrollThumb_; InflateRect(&visibleThumb, -px(4), 0);
+        DrawD2DRoundedRectangle(ctx, visibleThumb, 2.0f * scale, secondary, secondary, 0);
+    }
+    y += textHeight + px(12);
     const auto drawButton = [&](RECT& bounds, const std::wstring& label, IDWriteTextFormat* style) {
         const bool hover = PtInRect(&bounds, clientCursor) != FALSE;
         const auto fill = highContrast ? background :
@@ -157,10 +134,8 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
         usageGuideOpenSettingsRect_ = {frame.left + padding, y, frame.right - padding, y + openHeight};
         drawButton(usageGuideOpenSettingsRect_, openText, format.Get()); y += openHeight + px(8);
     }
-    usageGuideMoreRect_ = {frame.left + padding, y, frame.left + padding + thirdWidth, y + secondaryHeight};
-    usageGuideSettingsRect_ = {usageGuideMoreRect_.right + px(8), y, usageGuideMoreRect_.right + px(8) + thirdWidth, y + secondaryHeight};
+    usageGuideSettingsRect_ = {frame.left + padding, y, frame.left + padding + halfWidth, y + secondaryHeight};
     usageGuidePauseRect_ = {usageGuideSettingsRect_.right + px(8), y, frame.right - padding, y + secondaryHeight};
-    drawButton(usageGuideMoreRect_, moreText, smallFormat.Get());
     drawButton(usageGuideSettingsRect_, settingsText, smallFormat.Get());
     drawButton(usageGuidePauseRect_, pauseText, smallFormat.Get());
 }

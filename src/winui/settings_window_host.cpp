@@ -1499,6 +1499,34 @@ struct SettingsWindowHost::Impl
         shell->SetAgentSkillUpdateAvailable(updateAvailable);
     }
 
+    bool SetWidgetDeveloperToolsEnabled(std::uint64_t generation, bool enabled)
+    {
+            EditGeneral(
+                generation, SettingsUpdateMode::PreviewAndCommit,
+                [enabled](GeneralSettings& settings) {
+                    settings.widgetDeveloperToolsEnabled = enabled;
+                });
+            const auto snapshot = controller->Snapshot();
+            const bool applied = snapshot &&
+                snapshot->generation == generation &&
+                snapshot->values.general.widgetDeveloperToolsEnabled ==
+                    enabled;
+            if (applied)
+            {
+                // Publish the new toggle state back to the cached Widgets
+                // presenter before another click can derive its next value.
+                // Without this refresh, disabling and then re-enabling from
+                // the same page keeps using the stale pre-click snapshot.
+                if (widgetsPageBackend)
+                    (void)widgetsPageBackend->Refresh();
+                // Keep the conditional NavigationView item and its search
+                // entries in sync before the presenter optionally navigates
+                // to Developer Tools on this same click.
+                RebuildSearchIndex();
+            }
+            return applied;
+    }
+
     void ConfigureWidgetsPageBackend()
     {
         if (!shell || !callbacks || (!widgetEngine && !options.createWidgetsBackend) || widgetsPageBackend)
@@ -1616,30 +1644,7 @@ struct SettingsWindowHost::Impl
             {
                 return false;
             }
-            state->owner->EditGeneral(
-                generation, SettingsUpdateMode::PreviewAndCommit,
-                [enabled](GeneralSettings& settings) {
-                    settings.widgetDeveloperToolsEnabled = enabled;
-                });
-            const auto snapshot = state->owner->controller->Snapshot();
-            const bool applied = snapshot &&
-                snapshot->generation == generation &&
-                snapshot->values.general.widgetDeveloperToolsEnabled ==
-                    enabled;
-            if (applied)
-            {
-                // Publish the new toggle state back to the cached Widgets
-                // presenter before another click can derive its next value.
-                // Without this refresh, disabling and then re-enabling from
-                // the same page keeps using the stale pre-click snapshot.
-                if (state->owner->widgetsPageBackend)
-                    (void)state->owner->widgetsPageBackend->Refresh();
-                // Keep the conditional NavigationView item and its search
-                // entries in sync before the presenter optionally navigates
-                // to Developer Tools on this same click.
-                state->owner->RebuildSearchIndex();
-            }
-            return applied;
+            return state->owner->SetWidgetDeveloperToolsEnabled(generation, enabled);
         };
         actions.reloadWidgetInstance = [weak](
                                            std::uint64_t generation,
@@ -2044,6 +2049,35 @@ struct SettingsWindowHost::Impl
                 !state->owner->controller->IsGenerationCurrent(generation)) return;
             const auto* lesson = usage_guide::Find(topic);
             if (!lesson) return;
+            auto& owner = *state->owner;
+            if (topic == usage_guide::Topic::Workshop)
+            {
+                if (!owner.options.widgetsPage.workshopAvailable ||
+                    !owner.options.widgetsPage.workshopAvailable() || !owner.options.widgetsPage.openWorkshop)
+                {
+                    owner.ShowActionError(SettingsActionResult::Failure(owner.L("app.settings.widgets_error_workshop_unavailable")));
+                    return;
+                }
+                try
+                {
+                    const auto result = owner.options.widgetsPage.openWorkshop("steam-workshop");
+                    if (state->alive.load() && state->owner && !result.succeeded)
+                        state->owner->ShowActionError(SettingsActionResult::Failure(result.message));
+                }
+                catch (...)
+                {
+                    if (state->alive.load() && state->owner)
+                        state->owner->ShowActionError(SettingsActionResult::Failure(
+                            state->owner->L("settings.widgets.workshop.openFailed")));
+                }
+                return;
+            }
+            if (topic == usage_guide::Topic::Develop)
+            {
+                if (owner.SetWidgetDeveloperToolsEnabled(generation, true))
+                    owner.RequestRoute(SettingsRoute::ForPage(SettingsPage::DeveloperTools, "developer.agentSkill"));
+                return;
+            }
             if (!lesson->practice)
             {
                 state->owner->RequestRoute(SettingsRoute::ForPage(lesson->settingsPage, lesson->settingsFocus));
@@ -2080,7 +2114,14 @@ struct SettingsWindowHost::Impl
         };
         general.onboarding.settingsIndex = [weak]() {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
-                return state->owner->BuildSearchInput().staticSettings;
+            {
+                auto entries = state->owner->BuildSearchInput().staticSettings;
+                const auto& widgets = state->owner->options.widgetsPage;
+                const bool workshop = widgets.workshopAvailable && widgets.workshopAvailable() && widgets.openWorkshop;
+                for (auto& entry : entries)
+                    if (entry.focusId == "widgets.workshop") entry.visible = entry.visible && workshop;
+                return entries;
+            }
             return std::vector<StaticSettingSearchDescriptor>{};
         };
         shell->SetGeneralPageActions(std::move(general));
