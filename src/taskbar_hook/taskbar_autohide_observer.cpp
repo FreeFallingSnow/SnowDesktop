@@ -4,6 +4,7 @@
 #include <commctrl.h>
 #include <intrin.h>
 #include <cstring>
+#include <cwchar>
 #include <atomic>
 #include <mutex>
 
@@ -17,6 +18,10 @@ using Focus = void(WINAPI*)(void*);
 using FocusCommand = bool(WINAPI*)(void*, int, bool);
 Focus focusOriginal = nullptr;
 FocusCommand focusCommandOriginal = nullptr;
+using Hotkey = void(WINAPI*)(void*, WPARAM);
+using FocusMessage = void(WINAPI*)(void*, UINT, WPARAM, LPARAM);
+Hotkey hotkeyOriginal = nullptr;
+FocusMessage focusMessageOriginal = nullptr;
 std::atomic<unsigned> explicitFocusCalls{0};
 std::atomic<bool> adapterReady{false};
 constexpr wchar_t kProtectedTaskbar[] = L"SnowDesktop.Taskbar.AutoHideActivation.v8";
@@ -76,7 +81,7 @@ bool IsSupportedImage(HMODULE module) noexcept
 }
 
 void Record(AutoHideTraceKind kind, int flags = 0, int request = 0,
-    void* caller = nullptr) noexcept
+    void* caller = nullptr, HWND observedWindow = nullptr) noexcept
 {
     auto* buffer = output.load(std::memory_order_acquire);
     if (!buffer) return;
@@ -96,13 +101,14 @@ void Record(AutoHideTraceKind kind, int flags = 0, int request = 0,
     record.tick = now;
     record.kind = kind;
     record.threadId = GetCurrentThreadId();
-    record.taskbar = reinterpret_cast<std::uintptr_t>(activation.taskbar);
+    const HWND taskbar = observedWindow ? observedWindow : activation.taskbar;
+    record.taskbar = reinterpret_cast<std::uintptr_t>(taskbar);
     record.previous = reinterpret_cast<std::uintptr_t>(activation.previous);
     record.foreground = reinterpret_cast<std::uintptr_t>(GetForegroundWindow());
     record.activation = activation.value;
     record.previousIconic = activation.previous && IsIconic(activation.previous);
     const bool cursorValid = GetCursorPos(&record.cursor) != FALSE;
-    record.geometryValid = GetWindowRect(activation.taskbar, &record.rect) && cursorValid;
+    record.geometryValid = GetWindowRect(taskbar, &record.rect) && cursorValid;
     record.flags = flags;
     record.request = request;
     record.explicitFocus = static_cast<LONG>(explicitFocusCalls.load(std::memory_order_acquire));
@@ -110,6 +116,23 @@ void Record(AutoHideTraceKind kind, int flags = 0, int request = 0,
         moduleBase.load(std::memory_order_acquire);
     if (caller && offset < kImageSize) record.callerRva = static_cast<DWORD>(offset);
     AppendAutoHideTrace(*buffer, record);
+}
+
+ActivationRevealContext ReadRevealContext(HWND taskbar, bool queryGeometry)
+{
+    ActivationRevealContext context;
+    context.protectedTaskbar = output.load(std::memory_order_acquire) && adapterReady.load() &&
+        taskbar && GetPropW(taskbar, kProtectedTaskbar);
+    context.explicitFocus = explicitFocusCalls.load(std::memory_order_acquire) != 0;
+    if (context.protectedTaskbar && queryGeometry)
+    {
+        MONITORINFO monitor{sizeof(monitor)};
+        context.geometryValid = GetWindowRect(taskbar, &context.taskbar) &&
+            GetMonitorInfoW(MonitorFromWindow(taskbar, MONITOR_DEFAULTTONULL), &monitor) &&
+            GetCursorPos(&context.cursor);
+        context.monitor = monitor.rcMonitor;
+    }
+    return context;
 }
 
 struct ExplicitFocusScope
@@ -144,27 +167,55 @@ bool WINAPI SetFocusWithCommand(void* self, int command, bool fromDesktop)
     return focusCommandOriginal(self, command, fromDesktop);
 }
 
+bool IsTaskbarHotkey(WPARAM id) noexcept
+{
+    return id == 0x1fe || id == 0x1ff || id == 0x24e;
+}
+
+void RevealForExplicitFocus(void* tray)
+{
+    const DWORD savedError = GetLastError();
+    const HWND foreground = GetForegroundWindow();
+    wchar_t className[64]{};
+    const bool primaryForeground = foreground &&
+        GetClassNameW(foreground, className, 64) &&
+        std::wcscmp(className, L"Shell_TrayWnd") == 0;
+    const auto context = ReadRevealContext(primaryForeground ? foreground : nullptr, true);
+    SetLastError(savedError);
+    if (DispatchExplicitForegroundReveal(context, primaryForeground, [&](int flags, int request) {
+        primaryOriginal(tray, flags, request);
+    }))
+        Record(AutoHideTraceKind::ExplicitReveal, 0, 8, nullptr, foreground);
+}
+
+void WINAPI HandleTaskbarHotkey(void* self, WPARAM id)
+{
+    const bool explicitRequest = IsTaskbarHotkey(id);
+    ExplicitFocusScope scope(explicitRequest, 4, static_cast<int>(id));
+    if (explicitRequest) RevealForExplicitFocus(self);
+    hotkeyOriginal(self, id);
+}
+
+void WINAPI OnFocusMessage(void* self, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    // This exact image routes native taskbar/notification-area focus through
+    // _OnFocusMsg. Zero wParam gives focus back to the desktop and is excluded.
+    const bool explicitRequest = (message == 0x55c || message == 0x55d) && wParam != 0;
+    ExplicitFocusScope scope(explicitRequest, 5, static_cast<int>(message));
+    if (explicitRequest) RevealForExplicitFocus(self);
+    focusMessageOriginal(self, message, wParam, lParam);
+}
+
 void Reveal(void* self, int flags, int request, bool secondary, void* caller)
 {
     const DWORD savedError = GetLastError();
     Record(secondary ? AutoHideTraceKind::SecondaryUnhide : AutoHideTraceKind::PrimaryUnhide,
         flags, request, caller);
-    ActivationRevealContext context;
+    auto context = ReadRevealContext(activation.taskbar, flags == 0 && request == 8);
     context.secondary = secondary;
     context.activation = activation.value;
     const auto offset = reinterpret_cast<std::uintptr_t>(caller) - moduleBase.load(std::memory_order_acquire);
     if (offset < kImageSize) context.callerRva = static_cast<DWORD>(offset);
-    context.protectedTaskbar = output.load(std::memory_order_acquire) && adapterReady.load() &&
-        activation.taskbar && GetPropW(activation.taskbar, kProtectedTaskbar);
-    context.explicitFocus = explicitFocusCalls.load(std::memory_order_acquire) != 0;
-    if (context.protectedTaskbar && !context.explicitFocus && flags == 0 && request == 8)
-    {
-        MONITORINFO monitor{sizeof(monitor)};
-        context.geometryValid = GetWindowRect(activation.taskbar, &context.taskbar) &&
-            GetMonitorInfoW(MonitorFromWindow(activation.taskbar, MONITOR_DEFAULTTONULL), &monitor) &&
-            GetCursorPos(&context.cursor);
-        context.monitor = monitor.rcMonitor;
-    }
     SetLastError(savedError);
     if (DispatchActivationReveal(context, flags, request, [&](int originalFlags, int originalRequest) {
         (secondary ? secondaryOriginal : primaryOriginal)(self, originalFlags, originalRequest);
@@ -199,6 +250,12 @@ LONG InstallAdapter() noexcept
         {0x84de0, reinterpret_cast<void*>(&SetFocus), reinterpret_cast<void**>(&focusOriginal),
             {0x48, 0x83, 0xec, 0x28, 0x48}},
         {0x123e30, reinterpret_cast<void*>(&SetFocusWithCommand), reinterpret_cast<void**>(&focusCommandOriginal),
+            {0x48, 0x89, 0x5c, 0x24, 0x08}},
+        // void TrayUI::HandleTaskbarHotkey(WPARAM) and
+        // void TrayUI::_OnFocusMsg(UINT, WPARAM, LPARAM), verified in the PDB.
+        {0xdc860, reinterpret_cast<void*>(&HandleTaskbarHotkey), reinterpret_cast<void**>(&hotkeyOriginal),
+            {0x48, 0x89, 0x5c, 0x24, 0x10}},
+        {0xe7ecc, reinterpret_cast<void*>(&OnFocusMessage), reinterpret_cast<void**>(&focusMessageOriginal),
             {0x48, 0x89, 0x5c, 0x24, 0x08}},
     };
     for (const auto& entry : entries)
@@ -238,8 +295,9 @@ void Configure(AutoHideTraceBuffer* buffer, HWND taskbar, bool observe, bool pro
 {
     if (!observe)
     {
+        if (taskbar && RemovePropW(taskbar, kProtectedTaskbar))
+            Record(AutoHideTraceKind::Protection, 0, 0, nullptr, taskbar);
         Disable();
-        if (taskbar) RemovePropW(taskbar, kProtectedTaskbar);
         return;
     }
     try
@@ -248,17 +306,23 @@ void Configure(AutoHideTraceBuffer* buffer, HWND taskbar, bool observe, bool pro
         // Its shared mapping also stays mapped until process detach. Retained
         // trampolines can therefore always call the original after shutdown.
         std::call_once(adapterOnce, [] { adapterStatus = InstallAdapter(); });
+        if (!output.exchange(buffer, std::memory_order_acq_rel))
+            Record(AutoHideTraceKind::Adapter, adapterStatus);
         if (taskbar)
         {
-            if (protectActivation && adapterReady.load())
+            const bool protectedBefore = GetPropW(taskbar, kProtectedTaskbar) != nullptr;
+            const bool requestedProtection = protectActivation && adapterReady.load();
+            if (requestedProtection)
             {
                 if (!GetPropW(taskbar, kProtectedTaskbar))
                     SetPropW(taskbar, kProtectedTaskbar, reinterpret_cast<HANDLE>(1));
             }
             else RemovePropW(taskbar, kProtectedTaskbar);
+            if (protectedBefore != requestedProtection)
+                Record(AutoHideTraceKind::Protection,
+                    GetPropW(taskbar, kProtectedTaskbar) ? 1 : 0,
+                    requestedProtection ? 1 : 0, nullptr, taskbar);
         }
-        if (!output.exchange(buffer, std::memory_order_acq_rel))
-            Record(AutoHideTraceKind::Adapter, adapterStatus);
     }
     catch (...) { output.store(nullptr, std::memory_order_release); }
 }
@@ -269,8 +333,7 @@ LRESULT Dispatch(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     // threads during a synchronous XAML call; the counter is not a timed lease.
     // These three IDs are dispatched by this image's HandleTaskbarHotkey.
     // Do not grant the same bypass to unrelated shortcuts such as Show Desktop.
-    const bool taskbarHotkey = message == WM_HOTKEY &&
-        (wParam == 0x1fe || wParam == 0x1ff || wParam == 0x24e);
+    const bool taskbarHotkey = message == WM_HOTKEY && IsTaskbarHotkey(wParam);
     ExplicitFocusScope focus(taskbarHotkey ||
         (message == WM_SYSCOMMAND && (wParam & 0xfff0) == SC_TASKLIST), 3,
         static_cast<int>(message));

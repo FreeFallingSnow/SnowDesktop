@@ -324,7 +324,7 @@ inline void PollNativeAutoHideTrace()
     if (!count && !dropped) return;
     constexpr const wchar_t* kinds[] = {
         L"adapter", L"activate-before", L"activate-after", L"primary-unhide", L"secondary-unhide",
-        L"suppressed-activation", L"focus-enter", L"focus-leave"};
+        L"suppressed-activation", L"focus-enter", L"focus-leave", L"protection", L"explicit-reveal"};
     for (LONG i = 0; i < count; ++i)
     {
         const auto& r = records[static_cast<size_t>(i)];

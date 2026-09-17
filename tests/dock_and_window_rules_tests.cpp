@@ -22,6 +22,7 @@
 #include "page_navigation_rules.h"
 #include "page_layout_settings.h"
 #include "dock_settings_rules.h"
+#include "dock_settings.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
 #include "app/native_menu_presentation_rules.h"
@@ -60,6 +61,13 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+
+// As in settings_update_rules_tests, replace only the unrelated appearance
+// value factory; the actual DockSettings type and protection decision run.
+PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
+{
+    return {};
+}
 
 namespace rules = snowdesktop::dock_window_rules;
 namespace identityRules = snowdesktop::dock_app_identity_rules;
@@ -121,7 +129,13 @@ void CheckTaskbarActivationRevealDispatch()
 {
     using namespace snowdesktop::taskbar_hook;
     ActivationRevealContext hidden;
-    hidden.protectedTaskbar = true;
+    // The failed runtime candidate excluded this real configuration by
+    // confusing an enabled summon hotkey with an absent ordinary Dock.
+    DockSettings settings;
+    settings.position = DockPosition::Bottom;
+    settings.floatingShortcutMode = true;
+    settings.showOnlyWhenSummoned = false;
+    hidden.protectedTaskbar = ShouldProtectAutoHideTaskbar(settings, true, true);
     hidden.geometryValid = true;
     hidden.activation = WA_ACTIVE;
     hidden.callerRva = 0x92af3;
@@ -180,6 +194,40 @@ void CheckTaskbarActivationRevealDispatch()
     expect(alternate, 0, 8, true, "secondary passive activation must not depend on pointer monitor");
     alternate.cursor = {-500, 1079};
     expect(alternate, 0, 8, false, "negative-coordinate monitor edges must retain intentional reveal");
+
+    Check(!ShouldProtectAutoHideTaskbar(settings, false, true) &&
+        !ShouldProtectAutoHideTaskbar(settings, true, false),
+        "disabled Dock or native auto-hide must relinquish protection");
+    settings.position = DockPosition::Left;
+    Check(!ShouldProtectAutoHideTaskbar(settings, true, true),
+        "a side Dock must not control bottom-taskbar activation");
+
+    auto expectExplicit = [&](const ActivationRevealContext& context, bool primaryForeground,
+        bool reveal, const char* failure) {
+        int originalCalls = 0;
+        const bool result = DispatchExplicitForegroundReveal(context, primaryForeground, [&](int flags, int request) {
+            ++originalCalls;
+            Check(flags == 0 && request == 8, "explicit focus must use the verified native activation request");
+        });
+        Check(result == reveal && originalCalls == (reveal ? 1 : 0), failure);
+    };
+    alternate = hidden;
+    alternate.explicitFocus = true;
+    expectExplicit(alternate, true, true,
+        "keyboard focus must reveal a foreground taskbar left hidden after passive activation");
+    expectExplicit(alternate, false, false,
+        "keyboard focus to a different foreground window must retain normal native activation");
+    expectExplicit(hidden, true, false, "passive focus must not undo activation suppression");
+    alternate.taskbar = {0, 1380, 2560, 1440};
+    expectExplicit(alternate, true, false, "keyboard focus must not add a reveal to an already visible taskbar");
+    alternate = hidden;
+    alternate.explicitFocus = true;
+    alternate.protectedTaskbar = false;
+    expectExplicit(alternate, true, false, "disabled protection must not add keyboard reveals");
+    alternate = hidden;
+    alternate.explicitFocus = true;
+    alternate.secondary = true;
+    expectExplicit(alternate, true, false, "primary TrayUI must not receive a secondary taskbar object");
 }
 
 void CheckNativeDesktopCaptureReadiness()

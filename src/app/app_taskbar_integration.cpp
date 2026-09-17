@@ -194,8 +194,8 @@ bool AppearanceRequiresTaskbarHook(const DockSettings& settings)
 bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 {
     return AppearanceRequiresTaskbarHook(settings) ||
-        (generalSettings_.dockEnabled && settings.position == DockPosition::Bottom &&
-            !settings.floatingShortcutMode && settings.systemTaskbarAutoHide);
+        ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
+            settings.systemTaskbarAutoHide);
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -416,9 +416,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
-    const bool protectActivation = generalSettings_.dockEnabled &&
-        dockSettings_.position == DockPosition::Bottom && !dockSettings_.floatingShortcutMode &&
-        IsSystemTaskbarAutoHideEnabled();
+    const bool protectActivation = ShouldProtectAutoHideTaskbar(dockSettings_,
+        generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
     const bool hookRequired = appearanceRequired || protectActivation;
     if (!hookRequired)
     {
@@ -490,9 +489,9 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
             if (!dock) continue;
             const RECT bounds = dock->GetBounds();
             if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) continue;
-            POINT center{bounds.left + (bounds.right - bounds.left) / 2,
-                bounds.top + (bounds.bottom - bounds.top) / 2};
-            if (!ClientToScreen(hwnd_, &center)) continue;
+            // Use the same virtual-desktop origin as SyncPersistentDockHosts.
+            POINT center{bounds.left + (bounds.right - bounds.left) / 2 + virtualLeft_,
+                bounds.top + (bounds.bottom - bounds.top) / 2 + virtualTop_};
             if (const HMONITOR monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONULL))
                 dockMonitors.push_back(monitor);
         }

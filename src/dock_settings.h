@@ -89,6 +89,14 @@ struct DockSettings : DockLayoutSettings
     SystemTaskbarDynamicRule systemTaskbarShellUi;
 };
 
+inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
+    bool dockEnabled, bool autoHideEnabled) noexcept
+{
+    // floatingShortcutMode enables a summon hotkey; it does not replace the
+    // ordinary bottom Dock. Appearance preferences are independent as well.
+    return dockEnabled && settings.position == DockPosition::Bottom && autoHideEnabled;
+}
+
 inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
 {
     auto value = settings.followComponentAppearance ? global :
