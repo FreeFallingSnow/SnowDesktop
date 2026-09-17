@@ -42,6 +42,7 @@
 #include "windows_desktop_layout.h"
 #include "widget_item_layout.h"
 #include "app/grid_geometry.h"
+#include "taskbar_hook/taskbar_autohide_trace.h"
 
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -74,6 +75,45 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void CheckTaskbarAutoHideTraceTransport()
+{
+    using namespace snowdesktop::taskbar_hook;
+    AutoHideTraceBuffer buffer;
+    std::array<AutoHideTraceRecord, kAutoHideTraceCapacity> drained;
+    LONG dropped = 0;
+    AutoHideTraceRecord record;
+    record.kind = AutoHideTraceKind::PrimaryUnhide;
+    record.taskbar = 0x12345678;
+    record.request = 8;
+    record.callerRva = 0x92af3;
+    record.previousIconic = TRUE;
+    // Explorer must never wait behind a paused host reader, nor overwrite
+    // earlier causal evidence when a burst fills the bounded IPC buffer.
+    InterlockedExchange(&buffer.lock, 1);
+    Check(!AppendAutoHideTrace(buffer, record), "a busy host reader must not block Explorer");
+    Check(DrainAutoHideTrace(buffer, drained, dropped) == 0,
+        "a busy Explorer writer must not block the host");
+    InterlockedExchange(&buffer.lock, 0);
+    for (LONG i = 0; i < kAutoHideTraceCapacity; ++i)
+    {
+        record.tick = 1000 + i;
+        Check(AppendAutoHideTrace(buffer, record), "available trace slots must retain native observations");
+    }
+    record.tick = 9000;
+    Check(!AppendAutoHideTrace(buffer, record), "a full trace buffer must reject the newest sample");
+    Check(DrainAutoHideTrace(buffer, drained, dropped) == 64 && dropped == 2,
+        "draining must report both contention and overflow losses");
+    Check(drained.front().tick == 1000 && drained.back().tick == 1063 &&
+        drained.front().taskbar == 0x12345678 && drained.front().request == 8 &&
+        drained.front().callerRva == 0x92af3 && drained.front().previousIconic == TRUE,
+        "draining must preserve causal order and native call arguments");
+    Check(DrainAutoHideTrace(buffer, drained, dropped) == 0 && dropped == 0,
+        "consumed observations and loss counts must not be replayed");
+    Check(AppendAutoHideTrace(buffer, record) &&
+        DrainAutoHideTrace(buffer, drained, dropped) == 1 && drained.front().tick == 9000,
+        "the trace buffer must accept new samples after draining");
 }
 
 void CheckNativeDesktopCaptureReadiness()
@@ -646,6 +686,7 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    CheckTaskbarAutoHideTraceTransport();
     CheckNativeDesktopCaptureReadiness();
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();

@@ -7,6 +7,7 @@
 // https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b
 
 #include "taskbar_hook_protocol.h"
+#include "taskbar_autohide_observer.h"
 #include "taskview_visibility.h"
 
 #include <windows.h>
@@ -751,6 +752,7 @@ public:
         Snapshot snapshot;
         if (!ReadSnapshot(snapshot))
         {
+            autohide_observer::Configure(nullptr, false);
             // Shared memory is gone (process exited/crashed). Restore the
             // values that Explorer owned before SnowDesktop changed them.
             for (auto& [handle, info] : taskbars_)
@@ -766,6 +768,7 @@ public:
             WatchOwnerProcess(snapshot.ownerProcessId);
         const bool controllerEnabled = snapshot.enabled && ownerAlive &&
             !g_forceRestore.load();
+        autohide_observer::Configure(&g_sharedState->autoHideTrace, controllerEnabled);
 
         bool applied = false;
         for (auto& [handle, info] : taskbars_)
@@ -1253,7 +1256,7 @@ private:
                 kTaskbarSubclassId);
             self->OnTaskbarDestroyed(window);
         }
-        return DefSubclassProc(window, message, wParam, lParam);
+        return autohide_observer::Dispatch(window, message, wParam, lParam);
     }
 
     winrt::com_ptr<IXamlDiagnostics> diagnostics_;

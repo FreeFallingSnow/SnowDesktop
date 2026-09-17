@@ -606,6 +606,10 @@ if (MSVC)
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
+        src/taskbar_hook/taskbar_autohide_observer.cpp
+        src/taskbar_hook/taskbar_autohide_observer.h
+        src/taskbar_hook/taskbar_autohide_trace.h
+        ${MINHOOK64_SOURCES}
         src/taskbar_hook/taskview_visibility.h
         src/taskbar_hook/taskbar_hook.def
         "${SNOWDESKTOP_TASKBAR_HOOK_VERSION_RESOURCE}"
@@ -616,6 +620,7 @@ if (MSVC)
     target_compile_features(SnowDesktopTaskbarHook PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopTaskbarHook PRIVATE
         src/taskbar_hook
+        third_party/minhook/include
         "${CPPWINRT_OUTPUT_DIR}"
     )
     target_compile_definitions(SnowDesktopTaskbarHook PRIVATE

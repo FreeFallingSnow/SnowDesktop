@@ -4,6 +4,7 @@
 #include "dock_layout_settings.h"
 #include "personalization.h"
 #include "animation_settings.h"
+#include "taskbar_hook/taskbar_autohide_trace.h"
 
 #include <windows.h>
 
@@ -125,6 +126,9 @@ bool RestartWindowsExplorer();
 PersonalizationSettings MakeTransparentTaskbarAppearance();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
 void NotifySystemTaskbarCreated();
+LONG DrainSystemTaskbarAutoHideTrace(
+    std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
+        snowdesktop::taskbar_hook::kAutoHideTraceCapacity>& records, LONG& dropped);
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& defaultAppearance,
     const std::vector<SystemTaskbarTargetAppearance>& targets = {});

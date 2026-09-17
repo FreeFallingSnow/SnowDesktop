@@ -5,19 +5,20 @@
 #include <cstddef>
 #include <cstdint>
 #include "../panel_gradient.h"
+#include "taskbar_autohide_trace.h"
 
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 6;
+inline constexpr std::uint32_t kSharedStateVersion = 7;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v6";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v7";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v6";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v7";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v6";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v7";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -124,6 +125,7 @@ struct SharedState
     volatile LONG status = kStatusIdle;
     volatile LONG lastError = ERROR_SUCCESS;
     volatile LONG diagnosticStage = 0;
+    AutoHideTraceBuffer autoHideTrace;
 };
 
 struct SharedRegistryQueryState

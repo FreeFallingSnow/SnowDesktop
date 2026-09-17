@@ -1322,7 +1322,6 @@ private:
     void HandleDockForegroundInteractionChanged();
     void UpdateSystemShowDesktopDockLayerGuard();
     bool IsShellDesktopForegroundWindow(HWND window) const;
-    void UpdateSystemTaskbarRevealGuard();
     bool IsSystemTaskbarHookRequired(const DockSettings& settings) const;
     PersonalizationSettings ResolveSystemTaskbarDynamicAppearance(
         const SystemTaskbarDynamicRule& rule) const;

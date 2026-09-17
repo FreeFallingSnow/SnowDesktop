@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../diagnostic_log.h"
+#include "../dock_settings.h"
 #include <windows.h>
 #include <array>
 #include <cwchar>
@@ -313,6 +314,38 @@ inline void Poll()
     for (size_t i = 0; i < state.taskbarCount; ++i)
         changed = changed || !detail::SameTaskbar(entry.taskbars[i], state.lastTaskbars[i]);
     if (changed) detail::Append(state, entry);
+}
+inline void PollNativeAutoHideTrace()
+{
+    using namespace snowdesktop::taskbar_hook;
+    std::array<AutoHideTraceRecord, kAutoHideTraceCapacity> records;
+    LONG dropped = 0;
+    const LONG count = DrainSystemTaskbarAutoHideTrace(records, dropped);
+    if (!count && !dropped) return;
+    constexpr const wchar_t* kinds[] = {
+        L"adapter", L"activate-before", L"activate-after", L"primary-unhide", L"secondary-unhide"};
+    for (LONG i = 0; i < count; ++i)
+    {
+        const auto& r = records[static_cast<size_t>(i)];
+        const auto kind = static_cast<unsigned>(r.kind);
+        std::wostringstream line;
+        line << L"[TaskbarAutoHide] hostPid=" << GetCurrentProcessId()
+             << L" tick=" << r.tick << L" thread=" << r.threadId
+             << L" phase=" << (kind < std::size(kinds) ? kinds[kind] : L"unknown")
+             << L" taskbar=0x" << std::hex << r.taskbar << L" previous=0x" << r.previous
+             << L" foreground=0x" << r.foreground << L" callerRva=0x" << r.callerRva << std::dec
+             << L" activation=" << r.activation << L" previousIconic=" << r.previousIconic
+             << L" flags=" << r.flags << L" request=" << r.request
+             << L" geometryValid=" << r.geometryValid
+             << L" rect=" << r.rect.left << L"," << r.rect.top << L"," << r.rect.right << L"," << r.rect.bottom
+             << L" cursor=" << r.cursor.x << L"," << r.cursor.y;
+        WriteDiagnosticLogEntry(line.str().c_str());
+    }
+    if (dropped)
+    {
+        const std::wstring line = L"[TaskbarAutoHide] dropped=" + std::to_wstring(dropped);
+        WriteDiagnosticLogEntry(line.c_str());
+    }
 }
 inline void Stop()
 {

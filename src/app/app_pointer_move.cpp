@@ -241,7 +241,6 @@ void DesktopApp::OnMouseMoveAt(
         !dragSession_.HasContext() && !dragDropController_.IsTransportActive()) return;
     if (HandleLargeIconPointerMove(current)) return;
     UpdateLargeIconHover();
-    UpdateSystemTaskbarRevealGuard();
     const bool activeWidgetGesture =
         (widgetAction_ == WidgetAction::Move ||
          widgetAction_ == WidgetAction::Resize) &&

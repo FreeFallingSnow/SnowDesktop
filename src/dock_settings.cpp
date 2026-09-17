@@ -654,6 +654,15 @@ public:
         return SystemTaskbarBackdropRuntimeState::Loading;
     }
 
+    LONG DrainAutoHideTrace(std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
+        snowdesktop::taskbar_hook::kAutoHideTraceCapacity>& records, LONG& dropped)
+    {
+        std::lock_guard lock(mutex_);
+        dropped = 0;
+        return state_ ? snowdesktop::taskbar_hook::DrainAutoHideTrace(
+            state_->autoHideTrace, records, dropped) : 0;
+    }
+
 private:
     bool OpenState()
     {
@@ -902,6 +911,13 @@ SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState()
 void NotifySystemTaskbarCreated()
 {
     GetTaskbarBackdropController().NotifyTaskbarCreated();
+}
+
+LONG DrainSystemTaskbarAutoHideTrace(
+    std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
+        snowdesktop::taskbar_hook::kAutoHideTraceCapacity>& records, LONG& dropped)
+{
+    return GetTaskbarBackdropController().DrainAutoHideTrace(records, dropped);
 }
 
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,

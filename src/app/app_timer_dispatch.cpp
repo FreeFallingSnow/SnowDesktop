@@ -554,7 +554,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     {
         snowdesktop::dock_taskbar_diagnostics::Poll();
         UpdateSystemShowDesktopDockLayerGuard();
-        UpdateSystemTaskbarRevealGuard();
+        snowdesktop::dock_taskbar_diagnostics::PollNativeAutoHideTrace();
         const DWORD now = GetTickCount();
         const DWORD foregroundTick = dockForegroundChangedTick_.load();
         const DWORD windowStateTick =
