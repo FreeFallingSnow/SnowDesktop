@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "Aktivieren Sie die Schnellnavigation und legen Sie ein Tastenkürzel fest. Geben Sie einen Namen ein, wählen Sie mit Pfeiltasten und öffnen Sie mit Enter. Die Dateisuche hängt von Quellen und Everything ab.",
     "start.luaWidget.title": "Integrierte Lua-Widget hinzufügen",
     "start.luaWidget.description": "Eine mitgelieferte Komponente auswählen und vorab ansehen.",
-    "start.luaWidget.instructions": "1. Öffnen Sie per Desktop-Rechtsklick Widget hinzufügen und wählen Sie eine integrierte Lua-Komponente.\n2. Sehen Sie die Vorschau an und fügen Sie sie hinzu. Entscheiden Sie bei Berechtigungsanfragen nach Bedarf.\n3. Rechtsklick öffnet ihre Einstellungen. Folgen Sie der Beschreibung für Netzwerk- oder Ordneroptionen.",
+    "start.luaWidget.instructions": "1. Öffnen Sie per Desktop-Rechtsklick Widget hinzufügen und wählen Sie eine integrierte Lua-Komponente.\n2. Sehen Sie die Vorschau an und fügen Sie sie hinzu. Entscheiden Sie bei Berechtigungsanfragen nach Bedarf.\n3. Rechtsklick öffnet ihre Einstellungen.",
     "start.backup.title": "Layouts und Sicherungen speichern",
     "start.backup.description": "Die Anordnung behalten oder auf einen anderen PC übertragen.",
     "start.backup.instructions": "Eine Layout-Sicherung speichert die Desktop-Anordnung und Komponentenpositionen. Eine vollständige Sicherung enthält SnowDesktop-Layouts, Einstellungen, Komponentenpakete und Komponentenspeicher zur Wiederherstellung oder Migration. Sichern Sie die ursprünglichen Desktop-Dateien und Dateien in zugeordneten Ordnern separat. Prüfen Sie vor der Wiederherstellung den Sicherungstyp und den Umfang der Überschreibung.",

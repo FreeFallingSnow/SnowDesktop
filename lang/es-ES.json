@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "Activa la navegación rápida y configura un atajo. Escribe un nombre, selecciona con las flechas y abre con Enter. La búsqueda de archivos depende de las fuentes disponibles y de Everything.",
     "start.luaWidget.title": "Añadir un componente Lua integrado",
     "start.luaWidget.description": "Elige un componente incluido y mira su vista previa.",
-    "start.luaWidget.instructions": "1. Haz clic derecho en el escritorio, abre Añadir componente y elige un componente Lua integrado.\n2. Mira la vista previa antes de añadirlo. Si pide permisos, decide según lo que necesite.\n3. Haz clic derecho para abrir sus ajustes. Sigue sus indicaciones para la red o las carpetas.",
+    "start.luaWidget.instructions": "1. Haz clic derecho en el escritorio, abre Añadir componente y elige un componente Lua integrado.\n2. Mira la vista previa antes de añadirlo. Si pide permisos, decide según lo que necesite.\n3. Haz clic derecho para abrir sus ajustes.",
     "start.backup.title": "Guardar diseños y copias",
     "start.backup.description": "Conserva tu organización o pásala a otro ordenador.",
     "start.backup.instructions": "La copia de diseño guarda la organización del escritorio y las posiciones de los componentes. La copia completa conserva los diseños, ajustes, paquetes y datos de los componentes de SnowDesktop para restaurarlos o trasladarlos. Haz copias separadas de los archivos originales del escritorio y de las carpetas mapeadas. Comprueba el tipo de copia y qué se sustituirá antes de restaurar.",

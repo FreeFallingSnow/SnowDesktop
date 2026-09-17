@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "啟用快速導覽並設定快捷鍵。開啟後輸入名稱，用方向鍵選擇，按 Enter 開啟。檔案搜尋範圍與來源和 Everything 是否可用有關。",
     "start.luaWidget.title": "新增內建 Lua 元件",
     "start.luaWidget.description": "從內建元件中選一個，先看看預覽。",
-    "start.luaWidget.instructions": "1. 右鍵桌面，開啟「新增元件」，在內建元件中選一個 Lua 元件。\n2. 查看預覽，了解用途後再新增。若需要權限，依提示選擇。\n3. 右鍵元件查看它自己的設定；網路或資料夾等選項依元件說明設定。",
+    "start.luaWidget.instructions": "1. 右鍵桌面，開啟「新增元件」，在內建元件中選一個 Lua 元件。\n2. 查看預覽，了解用途後再新增。若需要權限，依提示選擇。\n3. 右鍵元件查看它自己的設定。",
     "start.backup.title": "儲存配置與備份",
     "start.backup.description": "儲存整理好的桌面，或移轉到另一台電腦。",
     "start.backup.instructions": "配置備份儲存桌面安排和元件位置。完整備份儲存 SnowDesktop 的配置、設定、元件套件和元件儲存資料，可用於還原或移轉；桌面原始檔案和對應資料夾中的檔案需要另外備份。還原前請確認備份類型和覆寫範圍。",

@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "빠른 탐색을 켜고 단축키를 설정하세요. 이름을 입력하고 방향키로 선택한 뒤 Enter로 여세요. 파일 검색 범위는 사용 가능한 소스와 Everything에 따라 달라집니다.",
     "start.luaWidget.title": "기본 Lua 위젯 추가",
     "start.luaWidget.description": "기본 제공 구성 요소를 고르고 미리 봅니다.",
-    "start.luaWidget.instructions": "1. 바탕 화면을 오른쪽 클릭하고 위젯 추가에서 기본 Lua 구성 요소를 선택하세요.\n2. 미리 본 뒤 추가하세요. 권한을 요청하면 내용을 보고 선택하세요.\n3. 오른쪽 클릭하면 전용 설정이 나옵니다. 네트워크나 폴더는 해당 설명에 따라 설정하세요.",
+    "start.luaWidget.instructions": "1. 바탕 화면을 오른쪽 클릭하고 위젯 추가에서 기본 Lua 구성 요소를 선택하세요.\n2. 미리 본 뒤 추가하세요. 권한을 요청하면 내용을 보고 선택하세요.\n3. 오른쪽 클릭하면 전용 설정이 나옵니다.",
     "start.backup.title": "배치 저장 및 백업",
     "start.backup.description": "정리한 화면을 보관하거나 다른 컴퓨터로 옮깁니다.",
     "start.backup.instructions": "배치 백업은 바탕 화면 구성과 구성 요소 위치를 저장합니다. 전체 백업은 복구나 이전을 위해 SnowDesktop의 배치, 설정, 구성 요소 패키지와 저장 데이터를 보관합니다. 바탕 화면의 원본 파일과 매핑된 폴더 안의 파일은 별도로 백업하세요. 복원 전에 백업 종류와 덮어쓸 범위를 확인하세요.",

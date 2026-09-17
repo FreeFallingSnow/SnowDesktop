@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "Enable Quick Navigation and set a shortcut. Type a name, select with the arrow keys and press Enter to open it. File results depend on available sources and Everything.",
     "start.luaWidget.title": "Add a built-in Lua component",
     "start.luaWidget.description": "Pick a bundled component and preview it.",
-    "start.luaWidget.instructions": "1. Right-click the desktop, open Add Widget and choose a built-in Lua component.\n2. Preview it before adding. If it requests permissions, choose as prompted.\n3. Right-click it for its own settings. Follow its instructions for network or folder options.",
+    "start.luaWidget.instructions": "1. Right-click the desktop, open Add Widget and choose a built-in Lua component.\n2. Preview it before adding. If it requests permissions, choose as prompted.\n3. Right-click it for its own settings.",
     "start.backup.title": "Save layouts and backups",
     "start.backup.description": "Keep your arrangement or move to another computer.",
     "start.backup.instructions": "A layout backup saves your desktop arrangement and component positions. A full backup saves SnowDesktop layouts, settings, component packages and component storage for recovery or migration. Back up the original desktop files and files in mapped folders separately. Check the backup type and what will be overwritten before restoring.",

@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "Ative a navegação rápida e configure um atalho. Digite um nome, selecione com as setas e abra com Enter. A busca de arquivos depende das fontes disponíveis e do Everything.",
     "start.luaWidget.title": "Adicionar um componente Lua integrado",
     "start.luaWidget.description": "Escolher um componente incluído e ver a prévia.",
-    "start.luaWidget.instructions": "1. Clique com o botão direito na área de trabalho, abra Adicionar widget e escolha um componente Lua integrado.\n2. Veja a prévia antes de adicionar. Se forem solicitadas permissões, escolha conforme necessário.\n3. Clique com o botão direito para abrir seus ajustes. Siga as instruções para rede ou pastas.",
+    "start.luaWidget.instructions": "1. Clique com o botão direito na área de trabalho, abra Adicionar widget e escolha um componente Lua integrado.\n2. Veja a prévia antes de adicionar. Se forem solicitadas permissões, escolha conforme necessário.\n3. Clique com o botão direito para abrir seus ajustes.",
     "start.backup.title": "Salvar layouts e backups",
     "start.backup.description": "Guardar sua organização ou mudar de computador.",
     "start.backup.instructions": "O backup de layout guarda a organização da área de trabalho e as posições dos componentes. O backup completo preserva layouts, configurações, pacotes e dados dos componentes do SnowDesktop para restauração ou migração. Faça backup separado dos arquivos originais da área de trabalho e das pastas mapeadas. Confira o tipo de backup e o que será substituído antes de restaurar.",

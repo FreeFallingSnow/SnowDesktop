@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "Activez la navigation rapide et définissez un raccourci. Saisissez un nom, sélectionnez avec les flèches et ouvrez avec Enter. La recherche de fichiers dépend des sources et de Everything.",
     "start.luaWidget.title": "Ajouter un composant Lua intégré",
     "start.luaWidget.description": "Choisir un composant fourni et regarder son aperçu.",
-    "start.luaWidget.instructions": "1. Faites un clic droit sur le bureau, ouvrez Ajouter un composant et choisissez un composant Lua intégré.\n2. Regardez l’aperçu avant l’ajout. Répondez aux demandes d’autorisation si nécessaire.\n3. Un clic droit ouvre ses réglages. Suivez ses indications pour le réseau ou les dossiers.",
+    "start.luaWidget.instructions": "1. Faites un clic droit sur le bureau, ouvrez Ajouter un composant et choisissez un composant Lua intégré.\n2. Regardez l’aperçu avant l’ajout. Répondez aux demandes d’autorisation si nécessaire.\n3. Un clic droit ouvre ses réglages.",
     "start.backup.title": "Enregistrer la disposition et sauvegarder",
     "start.backup.description": "Conserver votre bureau ou le transférer sur un autre ordinateur.",
     "start.backup.instructions": "Une sauvegarde de disposition conserve l’organisation du bureau et les positions des composants. Une sauvegarde complète contient les dispositions, paramètres, paquets et données des composants de SnowDesktop pour une restauration ou un transfert. Sauvegardez séparément les fichiers d’origine du bureau et des dossiers mappés. Vérifiez le type de sauvegarde et les données qui seront remplacées avant de restaurer.",

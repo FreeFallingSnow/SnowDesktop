@@ -1708,7 +1708,7 @@
     "start.navigation.instructions": "启用快捷导航并设置快捷键。打开后输入名称，用方向键选择，按 Enter 打开。文件搜索范围与来源和 Everything 是否可用有关。",
     "start.luaWidget.title": "添加内置 Lua 组件",
     "start.luaWidget.description": "从自带组件中选一个，先看看预览。",
-    "start.luaWidget.instructions": "1. 右键桌面，打开“添加组件”，在内置组件中选一个 Lua 组件。\n2. 查看预览，了解用途后再添加。若需要权限，按提示选择。\n3. 右键组件查看它自己的设置；网络或文件夹等选项按组件说明配置。",
+    "start.luaWidget.instructions": "1. 右键桌面，打开“添加组件”，在内置组件中选一个 Lua 组件。\n2. 查看预览，了解用途后再添加。若需要权限，按提示选择。\n3. 右键组件查看它自己的设置。",
     "start.backup.title": "保存布局与备份",
     "start.backup.description": "保存整理好的桌面，或迁移到另一台电脑。",
     "start.backup.instructions": "布局备份保存桌面安排和组件位置。完整备份保存 SnowDesktop 的布局、设置、组件包和组件存储，可用于恢复或迁移；桌面原文件和映射文件夹中的文件需要另行备份。恢复前请确认备份类型和覆盖范围。",
