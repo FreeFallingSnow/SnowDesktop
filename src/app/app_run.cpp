@@ -562,28 +562,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     if (!InitGraphics()) { WriteDiagnosticLogEntry(L"InitGraphics FAILED"); return __LINE__; }
     WriteDiagnosticLogEntry(L"InitGraphics ok");
-    dockWindowTransition_ =
-        std::make_unique<DockWindowTransition>();
-    if (!dockWindowTransition_->Initialize(
-            instance_, &uiAnimationScheduler_,
-            d2dDevice_.Get(), dcompDevice_.Get()))
-        dockWindowTransition_.reset();
-    if (dockWindowTransition_)
-    {
-        dockWindowTransition_->SetOcclusionRectsProvider([this] {
-            return GetDockWindowTransitionOcclusionRects();
-        });
-        dockWindowTransition_->SetPresentationCallback([this](HWND) {
-            ApplyFloatingDockLayerPolicy();
-        });
-        dockWindowTransition_->SetDiagnosticCallback([this](const wchar_t* message) {
-            snowdesktop::dock_taskbar_diagnostics::Record(message,
-                dockWindowTransition_->GetPresentationWindow());
-            if (std::wcsncmp(message, L"Dock taskbar phase:", 19) == 0)
-                return; // Buffered until the bounded observation ends.
-            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
-        });
-    }
+    InitializeDockWindowTransition();
 
     // Create control window for tray icon ownership
     {
@@ -1571,12 +1550,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     bool running = true;
     while (running)
     {
+        ProcessGraphicsDeviceRecovery();
         HANDLE animationWait = uiAnimationScheduler_.WaitHandle();
         const DWORD handleCount = animationWait ? 1U : 0U;
         const DWORD waitResult = MsgWaitForMultipleObjectsEx(
             handleCount,
             animationWait ? &animationWait : nullptr,
-            INFINITE,
+            graphicsDeviceRecovery_.Pending() ? 250 : INFINITE,
             QS_ALLINPUT,
             MWMO_INPUTAVAILABLE);
         if (waitResult == WAIT_FAILED)

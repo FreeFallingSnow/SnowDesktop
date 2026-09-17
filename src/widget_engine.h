@@ -769,6 +769,8 @@ public:
     bool InitPreview(ID2D1DeviceContext* d2dContext,
         IDWriteFactory* dwriteFactory);
     bool IsPreviewOnly() const { return previewOnly_; }
+    // Host-internal device lifecycle; does not reload Lua or change the widget API.
+    void ResetGraphicsResources(ID2D1DeviceContext* context);
 
     /**
      * @brief 关闭引擎，释放所有资源，卸载所有已加载的小部件

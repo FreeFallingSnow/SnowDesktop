@@ -16,6 +16,7 @@
  *       Dock、快捷导航、渲染和平台生命周期拆分到对应 .cpp 文件。
  */
 #pragma once
+#include "../graphics_device_recovery.h"
 #include "item.h"
 #include "slot.h"
 #include "container.h"
@@ -858,6 +859,11 @@ private:
     // ── Graphics ────────────────────────────────────────────
     /** @brief 初始化 Direct2D、Direct3D 和 DirectComposition 图形管线。 @return 成功返回 true */
     bool InitGraphics();
+    HRESULT InitGraphicsDevices();
+    void InitializeDockWindowTransition();
+    bool RequestGraphicsDeviceRecovery(const wchar_t* stage, HRESULT hr);
+    void ProcessGraphicsDeviceRecovery();
+    void ReleaseGraphicsDeviceResources();
     /** @brief 重建图标标题文本格式（字号变更时调用）。 */
     void RecreateItemTextFormat();
     /** @brief 重建组件列表文本格式。 */
@@ -3227,6 +3233,7 @@ private:
     std::unordered_map<std::wstring, PendingWidgetMarqueeComposition>
         pendingWidgetMarqueeCompositions_;
     UINT compositionWidth_ = 0, compositionHeight_ = 0;
+    snowdesktop::GraphicsDeviceRecovery graphicsDeviceRecovery_;
     bool compositionRenderRecoveryPending_ = false;
     bool compositionPaintInProgress_ = false;
     bool desktopWidgetCompositionFailurePending_ = false;

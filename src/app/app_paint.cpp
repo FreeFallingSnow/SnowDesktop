@@ -9,6 +9,8 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
     // Shell enumeration and COM initialization can pump WM_PAINT before the
     // model and widget engine are complete. One prepared first frame replaces
     // those partial bootstrap frames; runtime paints keep their normal path.
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
     if (!startupInitializationComplete_)
         return false;
     if (widgetGroupTransition_.ShouldDeferPaint())

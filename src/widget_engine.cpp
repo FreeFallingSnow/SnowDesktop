@@ -15094,6 +15094,27 @@ bool WidgetEngine::InitPreview(
     return d2dState_ != nullptr;
 }
 
+void WidgetEngine::ResetGraphicsResources(ID2D1DeviceContext* context)
+{
+    d2dContext_ = context;
+    if (!d2dState_) return;
+    d2dState_->ctx = nullptr;
+    d2dState_->bitmapDevice.Reset();
+    d2dState_->immediateCommandContext.Reset();
+    d2dState_->backgroundCache.Clear();
+    d2dState_->brushCache.clear();
+    d2dState_->brushContext = nullptr;
+    d2dState_->imageCache.clear();
+    d2dState_->runtimeImageBitmaps.clear();
+    d2dState_->shellIconCache.clear();
+    d2dState_->shellIconFailures.clear();
+    for (auto& widget : widgets_)
+    {
+        widget.desktopMarquee = {};
+        widget.panelMarquee = {};
+    }
+}
+
 void WidgetEngine::Shutdown()
 {
     focusedHostInput_ = {};

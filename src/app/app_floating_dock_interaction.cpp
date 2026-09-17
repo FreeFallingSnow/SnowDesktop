@@ -419,6 +419,8 @@ RecoverFloatingDockCompositionFailure(
     const wchar_t* stage, HRESULT hr,
     bool preserveExistingFrame)
 {
+    if (RequestGraphicsDeviceRecovery(stage, hr))
+        return;
     wchar_t message[224]{};
     wsprintfW(message,
         L"FloatingDock %s FAILED hr=0x%08X; %s composition frame",

@@ -406,6 +406,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
     // failure still reaches the structural recovery path above/at Commit.
     for (const auto& failure : surfaceFailures)
     {
+        if (RequestGraphicsDeviceRecovery(failure.stage, failure.hr))
+            continue;
         wchar_t message[256]{};
         wsprintfW(message,
             L"Desktop widget %s FAILED hr=0x%08X; %s child surface",

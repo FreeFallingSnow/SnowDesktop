@@ -8,6 +8,8 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     PersistentDockHost& host)
 {
     snowdesktop::performance::Scope performanceScope("dock", "floating.paint");
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
     if (host.compositionPaintInProgress)
         return false;
     host.compositionPaintInProgress = true;

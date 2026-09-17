@@ -512,6 +512,8 @@ void DesktopApp::ResetFloatingPopupCompositionResources()
 void DesktopApp::RecoverFloatingPopupCompositionFailure(
     const wchar_t* stage, HRESULT hr)
 {
+    if (RequestGraphicsDeviceRecovery(stage, hr))
+        return;
     wchar_t message[208]{};
     wsprintfW(
         message,
@@ -610,6 +612,8 @@ HRESULT DesktopApp::CreateOrResizeFloatingPopupCompositionSurface()
 
 bool DesktopApp::RenderFloatingPopupCompositionFrame()
 {
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
     if (!ShouldShowFloatingPopupWindow() ||
         IsRectEmpty(&floatingPopupWindowBounds_) ||
         floatingPopupCompositionPaintInProgress_)

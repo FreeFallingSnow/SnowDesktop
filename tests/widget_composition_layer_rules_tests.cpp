@@ -1,3 +1,4 @@
+#include "graphics_device_recovery.h"
 #include "widget_composition_layer_rules.h"
 #include "widget_surface_retention.h"
 #include "test_source_boundary.h"
@@ -32,6 +33,35 @@ std::string ReadFile(const std::filesystem::path& path)
 
 int main(int argc, char** argv)
 {
+    // Issue #11: device loss must escape surface-only retries, including when
+    // an inner renderer masks the HRESULT. Ordinary surface errors stay local.
+    using Recovery = snowdesktop::GraphicsDeviceRecovery;
+    Check(Recovery::IsDeviceFailure(DXGI_ERROR_DEVICE_REMOVED, S_OK),
+        "a removed device must trigger whole-device recovery");
+    Check(Recovery::IsDeviceFailure(E_FAIL, DXGI_ERROR_DEVICE_RESET),
+        "generic render errors must consult the device removal reason");
+    Check(Recovery::IsDeviceFailure(DXGI_ERROR_DEVICE_HUNG, S_OK) &&
+        Recovery::IsDeviceFailure(DXGI_ERROR_DRIVER_INTERNAL_ERROR, S_OK),
+        "hung devices and internal driver errors require device recovery");
+    Check(!Recovery::IsDeviceFailure(E_FAIL, S_OK) &&
+        !Recovery::IsDeviceFailure(E_OUTOFMEMORY, S_OK) &&
+        !Recovery::IsDeviceFailure(S_OK, S_OK),
+        "healthy devices must not be rebuilt for unrelated surface failures");
+    Recovery recovery;
+    Check(!recovery.Ready(100, false), "healthy startup has no pending recovery");
+    Check(recovery.Request() && recovery.Pending(), "first failure queues recovery");
+    Check(!recovery.Request(), "sibling failures must coalesce into one recovery");
+    Check(!recovery.Ready(100, true), "active draws must retain their original devices");
+    Check(recovery.Ready(100, false), "unwound draws allow the first recovery attempt");
+    recovery.Complete(100, false);
+    Check(!recovery.Request() && !recovery.Ready(2099, false),
+        "repeated failures cannot bypass the retry delay");
+    Check(recovery.Ready(2100, false), "failed initialization must retry at the deadline");
+    recovery.Complete(2100, true);
+    Check(!recovery.Pending() && !recovery.Ready(2100, false),
+        "successful recovery must reopen rendering without redundant rebuilds");
+    Check(recovery.Request() && recovery.Ready(2101, false),
+        "a later independent device loss must recover again");
     namespace retention = snowdesktop::widget_surface_retention;
     constexpr std::uint64_t mib = 1024 * 1024;
     std::vector<retention::Candidate> surfaces{

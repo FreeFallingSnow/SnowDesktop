@@ -148,6 +148,8 @@ HRESULT DesktopApp::CreateOrResizeDragPreviewCompositionSurface(
 bool DesktopApp::RenderDragPreviewCompositionFrame(
     const RECT& desktopBounds)
 {
+    if (graphicsDeviceRecovery_.Pending())
+        return false;
     if (dragPreviewCompositionPaintInProgress_)
         return false;
     dragPreviewCompositionPaintInProgress_ = true;
