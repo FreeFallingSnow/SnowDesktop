@@ -2075,12 +2075,12 @@ struct SettingsWindowHost::Impl
             if (topic == usage_guide::Topic::Develop)
             {
                 if (owner.SetWidgetDeveloperToolsEnabled(generation, true))
-                    owner.RequestRoute(SettingsRoute::ForPage(SettingsPage::DeveloperTools, "developer.agentSkill"));
+                    owner.RequestRoute(usage_guide::SettingsDestination(*lesson));
                 return;
             }
             if (!lesson->practice)
             {
-                state->owner->RequestRoute(SettingsRoute::ForPage(lesson->settingsPage, lesson->settingsFocus));
+                state->owner->RequestRoute(usage_guide::SettingsDestination(*lesson));
                 return;
             }
             const std::string_view key = lesson->key;
@@ -2090,11 +2090,11 @@ struct SettingsWindowHost::Impl
             const auto result = state->owner->controller->InvokeHostAction(request);
             if (!state->alive.load() || !state->owner) return;
             state->owner->ShowActionError(result);
-            // The child owns its window lifecycle; never hide it from the
-            // parent's synchronous RPC while its controls are being invoked.
+            // Keep the session and its presenters alive. Only the child may
+            // minimize after the parent's synchronous start RPC has returned.
             if (result.Succeeded())
             {
-                (void)state->owner->HideWindow();
+                ShowWindow(state->owner->window, SW_MINIMIZE);
             }
         };
         general.onboarding.expandedChanged = [weak](std::uint64_t generation, bool expanded) {

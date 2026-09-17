@@ -1741,5 +1741,21 @@
     "start.develop.title": "Mit einem Agent eine Komponente erstellen",
     "start.develop.description": "Den Entwicklungs-Skill installieren und die Idee beschreiben.",
     "start.develop.instructions": "1. Öffnen Sie die Entwicklertools, wählen Sie Ihren Agent und wenden Sie die Auswahl an, um den Skill zu installieren.\n2. Beschreiben Sie in einer neuen Agent-Unterhaltung etwa einen Countdown mit einstellbarem Datum.\n3. Folgen Sie den Anweisungen des Agent für Vorschau und Anpassungen und fügen Sie die Komponente hinzu.",
-    "start.section.lua": "Lua-Komponenten"
+    "start.section.lua": "Lua-Komponenten",
+    "start.section.pages": "Seiten",
+    "start.pagesOverview.title": "Desktops nach Zweck aufteilen",
+    "start.pagesOverview.description": "Arbeit, Freizeit und vorübergehende Inhalte auf eigene Seiten legen.",
+    "start.pagesOverview.instructions": "Jede Seite hat eigene Symbole, Komponenten und ein eigenes Raster. Beim Blättern wechseln die sichtbaren Inhalte; Dateien werden nicht kopiert.\nEin Bildschirm zeigt alle Seiten nacheinander. Bei mehreren Bildschirmen bleiben die vorderen Seiten fest zugeordnet; auf dem letzten werden die übrigen durchgeblättert. Den ersten und letzten Bildschirm wählen Sie im Desktop-Kontextmenü.",
+    "start.pagesManage.title": "Seiten hinzufügen und verwalten",
+    "start.pagesManage.description": "Seiten im Desktop-Menü hinzufügen, Reihenfolge und Raster in den Einstellungen ändern.",
+    "start.pagesManage.instructions": "1. Klicken Sie mit rechts auf eine freie Desktop-Stelle und fügen Sie eine Seite hinzu. Vorhandene Seiten lassen sich über das Sprungmenü auswählen.\n2. Ist eine angezeigte Seite leer, wird zuerst eine Platzhalter-Komponente eingefügt. Wählen Sie die Aktion erneut für eine weitere Seite. Fügen Sie eigene Inhalte hinzu, bevor Sie den Platzhalter entfernen.\n3. Öffnen Sie im Desktop-Menü die Einstellungen für Seiten und Raster, oder verwenden Sie die Schaltfläche unten. Dort ändern Sie Reihenfolge, Zeilen und Spalten.",
+    "start.pagesEdge.title": "Am Bildschirmrand blättern",
+    "start.pagesEdge.description": "An den linken oder rechten Rand bewegen und zum Blättern klicken.",
+    "start.pagesEdge.instructions": "1. Sie benötigen mindestens zwei Seiten mit Inhalt. Nutzen Sie vorhandene Seiten oder fügen Sie eine über das Desktop-Menü hinzu.\n2. Bewegen Sie den Zeiger an den linken oder rechten Rand und klicken Sie auf den Hinweis. Bloßes Zeigen blättert nicht; ohne weitere Seite erscheint kein Hinweis.\n3. Bei mehreren Bildschirmen nutzen Sie den letzten. Im Desktop-Menü können Sie auch direkt zu einer Seite springen.",
+    "start.pagesDrag.title": "Inhalte auf eine andere Seite ziehen",
+    "start.pagesDrag.description": "Die Maustaste beim Seitenwechsel gedrückt halten.",
+    "start.pagesDrag.instructions": "1. Bereiten Sie eine weitere Seite mit Inhalt und ausreichend freiem Platz vor.\n2. Ziehen Sie ein Symbol oder den unteren Verschiebebereich einer Komponente an den Bildschirmrand und warten Sie kurz. Bei mehreren Bildschirmen nutzen Sie den letzten.\n3. Halten Sie die Taste nach dem Wechsel weiter gedrückt, bewegen Sie den Inhalt an eine freie Stelle und lassen Sie los. Erneutes Warten am Rand blättert weiter. Esc bricht das Ziehen vor dem Loslassen ab.",
+    "start.pagesKeys.title": "Mit der Tastatur blättern",
+    "start.pagesKeys.description": "Tastaturblättern nach Wunsch einschalten und Tasten auswählen.",
+    "start.pagesKeys.instructions": "Aktivieren Sie das Tastaturblättern und legen Sie getrennte Kürzel für die vorherige und nächste Seite fest. Sie gelten, wenn der Desktop Tastatureingaben erhält, nicht in anderen Apps oder beim Umbenennen, Suchen oder Ziehen.\nSie können die Funktion ausgeschaltet lassen und Bildschirmränder oder Desktop-Menü verwenden."
 }

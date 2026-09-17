@@ -1741,5 +1741,21 @@
     "start.develop.title": "Crear un componente con un Agent",
     "start.develop.description": "Instala el Skill de desarrollo y describe tu idea.",
     "start.develop.instructions": "1. Abre las herramientas de desarrollo, elige tu Agent y aplica la selección para instalar el Skill.\n2. En una conversación nueva con el Agent, pide por ejemplo una cuenta regresiva con fecha configurable.\n3. Sigue las indicaciones del Agent para previsualizar, ajustar y agregar el componente al escritorio.",
-    "start.section.lua": "Componentes Lua"
+    "start.section.lua": "Componentes Lua",
+    "start.section.pages": "Páginas",
+    "start.pagesOverview.title": "Separar el escritorio por uso",
+    "start.pagesOverview.description": "Dedica páginas distintas al trabajo, al ocio o a contenido temporal.",
+    "start.pagesOverview.instructions": "Cada página tiene sus propios iconos, componentes y cuadrícula. Cambiar de página solo cambia lo que se muestra, sin copiar archivos.\nCon un monitor puedes recorrer todas las páginas. Con varios, los primeros conservan sus páginas y el último muestra las restantes. El menú del escritorio permite elegir el primer y el último monitor.",
+    "start.pagesManage.title": "Añadir y organizar páginas",
+    "start.pagesManage.description": "Añade páginas desde el escritorio; ajusta su orden y cuadrícula en Configuración.",
+    "start.pagesManage.instructions": "1. Haz clic derecho en un espacio vacío y añade una página. El menú de salto permite elegir una existente.\n2. Si una página visible está vacía, primero se coloca un componente de relleno. Repite la acción para añadir otra página. Añade contenido propio antes de quitar el componente.\n3. Desde el menú del escritorio, abre Configuración → Páginas y cuadrícula para cambiar el orden, las filas y las columnas, o usa el botón inferior.",
+    "start.pagesEdge.title": "Cambiar de página en el borde",
+    "start.pagesEdge.description": "Mueve el puntero al borde izquierdo o derecho y haz clic.",
+    "start.pagesEdge.instructions": "1. Prepara al menos dos páginas con contenido. Usa páginas existentes o añade una desde el menú del escritorio.\n2. Mueve el puntero a un borde lateral y haz clic cuando aparezca el aviso. Pasar el puntero no cambia la página; no hay aviso si no hay más páginas en esa dirección.\n3. Con varios monitores, usa el último. También puedes saltar directamente a una página desde el menú del escritorio.",
+    "start.pagesDrag.title": "Arrastrar contenido entre páginas",
+    "start.pagesDrag.description": "Mantén pulsado el botón del ratón mientras cambias de página.",
+    "start.pagesDrag.instructions": "1. Prepara otra página con contenido y espacio libre suficiente.\n2. Arrastra un icono o la zona inferior de movimiento de un componente hasta un borde lateral y espera un momento. Con varios monitores, usa el último.\n3. Tras el cambio, mantén pulsado el botón, busca un espacio libre y suelta. Espera de nuevo en el borde para seguir pasando páginas. Pulsa Esc antes de soltar para cancelar el arrastre.",
+    "start.pagesKeys.title": "Cambiar de página con el teclado",
+    "start.pagesKeys.description": "Decide si quieres activar los atajos y qué teclas usar.",
+    "start.pagesKeys.instructions": "Activa la navegación por teclado y asigna atajos distintos para la página anterior y la siguiente. Funcionan cuando el escritorio recibe la entrada del teclado, no en otras aplicaciones ni al renombrar, buscar o arrastrar.\nPuedes dejarla desactivada y seguir usando los bordes o el menú del escritorio."
 }

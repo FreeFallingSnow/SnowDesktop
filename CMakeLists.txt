@@ -1391,7 +1391,7 @@ if (BUILD_TESTING)
         SnowDesktopSettingsWindowOpenRulesTests
         settings_window_open_rules
         SOURCES tests/settings_window_open_rules_tests.cpp
-            src/usage_guide.cpp src/atomic_file.cpp
+            src/usage_guide.cpp src/atomic_file.cpp src/settings_route.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS contract settings)

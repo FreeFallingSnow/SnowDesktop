@@ -1741,5 +1741,21 @@
     "start.develop.title": "讓 Agent 幫你做元件",
     "start.develop.description": "安裝開發 Skill，再把想法告訴 Agent。",
     "start.develop.instructions": "1. 開啟元件開發工具，選擇使用的 Agent，點擊「套用選擇」安裝 Skill。\n2. 新建 Agent 對話，描述想做的元件，例如「做一個能設定日期的倒數元件」。\n3. 依 Agent 的說明預覽和調整，再新增到桌面。",
-    "start.section.lua": "Lua 元件"
+    "start.section.lua": "Lua 元件",
+    "start.section.pages": "多頁",
+    "start.pagesOverview.title": "依用途分開桌面",
+    "start.pagesOverview.description": "把工作、娛樂或臨時內容放在不同頁面。",
+    "start.pagesOverview.instructions": "每頁都有自己的圖示、元件和網格，翻頁只切換桌面上顯示的內容，不會複製檔案。\n單螢幕可以翻閱所有頁面；多螢幕時，前面的螢幕固定顯示各自頁面，末螢幕翻閱其餘頁面。可在桌面右鍵選單中指定首螢幕與末螢幕。",
+    "start.pagesManage.title": "新增與管理頁面",
+    "start.pagesManage.description": "從桌面右鍵新增頁面，在設定中調整順序與網格。",
+    "start.pagesManage.instructions": "1. 在桌面空白處按右鍵，選擇「新增頁」；已有多頁時也可用「跳轉到」切換。\n2. 若目前顯示空頁，「新增頁」會先放入預留位置的元件。需要另一頁時，再選擇一次。先放入自己的內容，再移除該元件。\n3. 右鍵 → 軟體設定 → 頁面與網格，可調整頁面順序和每頁行列數。也可用下方按鈕直接開啟。",
+    "start.pagesEdge.title": "在螢幕邊緣換頁",
+    "start.pagesEdge.description": "把滑鼠移到螢幕左側或右側，再點擊翻頁。",
+    "start.pagesEdge.instructions": "1. 先準備至少兩頁有內容的桌面，可使用現有頁面或從右鍵選單新增。\n2. 將滑鼠移到螢幕左右邊緣，出現翻頁提示後點擊。只移動滑鼠不會換頁；無頁可翻的方向不會出現提示。\n3. 多螢幕時，在末螢幕邊緣操作。也可用右鍵選單的「跳轉到」直接選頁。",
+    "start.pagesDrag.title": "拖著內容換頁",
+    "start.pagesDrag.description": "不放開滑鼠，把圖示或元件帶到另一頁。",
+    "start.pagesDrag.instructions": "1. 先準備另一頁有內容的桌面，並為要移動的內容留出空位。\n2. 拖住圖示，或拖住元件底部的移動區域，移到螢幕左右邊緣稍作停留。多螢幕時在末螢幕操作。\n3. 換頁後繼續按住滑鼠，移到目標空位再放開。還要翻頁時，可再次停留在邊緣；放開前按 Esc 可取消拖曳。",
+    "start.pagesKeys.title": "用鍵盤翻頁",
+    "start.pagesKeys.description": "選擇是否啟用鍵盤翻頁，並設定前後頁快捷鍵。",
+    "start.pagesKeys.instructions": "開啟鍵盤翻頁，分別設定上一頁和下一頁按鍵。僅在桌面取得鍵盤輸入時生效；在其他應用程式、重新命名、搜尋或拖曳時不會翻頁。\n不習慣鍵盤翻頁可保持關閉，螢幕邊緣和右鍵選單仍可使用。"
 }

@@ -64,7 +64,7 @@ SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale, v.itemIconSizeScale, v.itemFontSizeCu,
     v.listItemFontSizeCu, v.itemFontWeight, v.shortcutArrowMode, v.iconBeautify);
 SD_IPC_FIELDS(SettingsRoute,
-    v.page, v.widgetInstanceId, v.focusId, v.itemKey);
+    v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,

@@ -236,6 +236,8 @@ private:
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
     void ScheduleFocus();
+    void HighlightSetting(const winrt::Microsoft::UI::Xaml::FrameworkElement& target);
+    void UpdateFocusHighlight();
     void FocusPendingTarget();
 
     void RequestRoute(const snowdesktop::SettingsRoute& route);
@@ -328,6 +330,8 @@ private:
     double largeIconParentOffset_ = 0;
     bool restoreLargeIconParent_ = false;
     winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> largeIconParentFocus_;
+    winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> highlightTarget_;
+    bool focusPendingLayout_ = false;
     std::uint32_t ownerThreadId_ = 0;
     bool updatingNavigation_ = false;
     bool updatingSearch_ = false;
@@ -338,6 +342,7 @@ private:
     std::optional<bool> navigationIconsHighContrast_;
 
     winrt::event_token actualThemeChangedToken_{};
+    winrt::event_token guideReturnToken_{}, focusLayoutToken_{};
     winrt::event_token backKeyboardAcceleratorToken_{};
     winrt::event_token searchKeyboardAcceleratorToken_{};
     winrt::event_token compactSearchButtonClickToken_{};

@@ -59,6 +59,8 @@ public:
     [[nodiscard]] bool ShowExitConfirm();
     /** Persist active page/controller edits without hiding the window. */
     [[nodiscard]] bool FlushPendingChanges();
+    /** End desktop guidance without closing a settings window the user restored. */
+    void CloseIfMinimized();
 
     void SetWidgetSettingsService(
         snowdesktop::widget_runtime::WidgetSettingsService* service) noexcept;

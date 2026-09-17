@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "SettingsShell.xaml.h"
+#include "../usage_guide.h"
 #if __has_include("SettingsShell.g.cpp")
 #include "SettingsShell.g.cpp"
 #endif
@@ -1565,6 +1566,16 @@ void SettingsShell::UpdateCompactSearchButtonVisibility() noexcept
 
 void SettingsShell::HookEvents()
 {
+    guideReturnToken_ = GuideReturnButton().Click([this](auto&&, auto&&) {
+        if (closed_) return;
+        if (const auto route = snowdesktop::usage_guide::ReturnDestination(navigation_.Route()))
+            RequestRoute(*route);
+    });
+    focusLayoutToken_ = PageContentGrid().LayoutUpdated([this](auto&&, auto&&) {
+        if (closed_) return;
+        if (focusPendingLayout_) FocusPendingTarget();
+        UpdateFocusHighlight();
+    });
     shellPointerPressedHandler_ = winrt::box_value(muxi::PointerEventHandler{
         [this](const winrt::Windows::Foundation::IInspectable&,
                const muxi::PointerRoutedEventArgs& args) {
@@ -1738,6 +1749,8 @@ void SettingsShell::UnhookEvents() noexcept
 {
     try
     {
+        if (guideReturnToken_.value) GuideReturnButton().Click(guideReturnToken_);
+        if (focusLayoutToken_.value) PageContentGrid().LayoutUpdated(focusLayoutToken_);
         if (shellPointerPressedHandler_)
         {
             ShellRoot().RemoveHandler(
@@ -1780,6 +1793,7 @@ void SettingsShell::UnhookEvents() noexcept
     {
     }
     actualThemeChangedToken_ = {};
+    guideReturnToken_ = {}; focusLayoutToken_ = {};
     backKeyboardAcceleratorToken_ = {};
     searchKeyboardAcceleratorToken_ = {};
     compactSearchButtonClickToken_ = {};
@@ -1802,6 +1816,18 @@ void SettingsShell::RenderRoute(
 {
     RenderNavigationSelection();
     const auto route = navigation_.Route();
+    highlightTarget_ = {};
+    FocusHighlightLayer().Visibility(mux::Visibility::Collapsed);
+    focusPendingLayout_ = false;
+    const auto guideTopic = snowdesktop::usage_guide::ParseTopic(route.guideTopic);
+    GuideReturnButton().Visibility(guideTopic ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    if (guideTopic)
+    {
+        const auto* lesson = snowdesktop::usage_guide::Find(*guideTopic);
+        const auto text = Localize("start.returnSettings") + L" · " + Localize(lesson->title);
+        GuideReturnText().Text(text);
+        muxa::AutomationProperties::SetName(GuideReturnButton(), text);
+    }
     if (renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::AppearanceDesktopIcons && route.page == SettingsPage::LargeIcon)
     {
         largeIconParentOffset_ = PageScrollViewer().VerticalOffset();
@@ -1998,6 +2024,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
 {
     SettingsRoute pageRoute = navigation_.Route();
     pageRoute.focusId.clear();
+    pageRoute.guideTopic.clear();
     if (!sessionActive_)
     {
         PageCards().Children().Clear();
@@ -2524,6 +2551,7 @@ void SettingsShell::ScheduleFocus()
 
 void SettingsShell::FocusPendingTarget()
 {
+    focusPendingLayout_ = false;
     if (restoreLargeIconParent_)
     {
         restoreLargeIconParent_ = false;
@@ -2551,8 +2579,9 @@ void SettingsShell::FocusPendingTarget()
     {
         if (auto target = widgetSettingsPage_->FocusTarget(focusId))
         {
-            target.StartBringIntoView();
-            (void)target.Focus(mux::FocusState::Keyboard);
+            if (!target.IsLoaded() || target.ActualHeight() <= 0) { focusPendingLayout_ = true; return; }
+            HighlightSetting(target);
+            (void)target.Focus(mux::FocusState::Programmatic);
             return;
         }
     }
@@ -2563,13 +2592,61 @@ void SettingsShell::FocusPendingTarget()
         {
             if (auto target = it->second.get())
             {
-                target.StartBringIntoView();
-                (void)target.Focus(mux::FocusState::Keyboard);
+                if (!target.IsLoaded() || target.ActualHeight() <= 0) { focusPendingLayout_ = true; return; }
+                HighlightSetting(target);
+                (void)target.Focus(mux::FocusState::Programmatic);
                 return;
             }
         }
     }
     (void)PageScrollViewer().Focus(mux::FocusState::Programmatic);
+}
+
+void SettingsShell::HighlightSetting(const mux::FrameworkElement& target)
+{
+    // Editors stay focusable, but the visual locator includes their label and
+    // help. Ignore the Borders inside a ToggleSwitch/ComboBox template.
+    const auto cardStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>();
+    const auto buttonStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>();
+    mux::FrameworkElement region{nullptr};
+    auto node = target.as<mux::DependencyObject>();
+    while (node && node != PageCards())
+    {
+        if (auto element = node.try_as<mux::FrameworkElement>())
+        {
+            const auto marker = element.Tag().try_as<winrt::Windows::Foundation::IPropertyValue>();
+            const bool row = marker && marker.Type() == winrt::Windows::Foundation::PropertyType::String &&
+                marker.GetString() == L"SnowDesktop.SettingRow";
+            if (row || element.Style() == cardStyle || element.Style() == buttonStyle || node.try_as<muxc::Expander>())
+            { region = element; break; }
+        }
+        node = muxm::VisualTreeHelper::GetParent(node);
+    }
+    highlightTarget_ = region ? winrt::make_weak(region) : winrt::weak_ref<mux::FrameworkElement>{};
+    mux::BringIntoViewOptions options;
+    options.AnimationDesired(false);
+    (region ? region : target).StartBringIntoView(options);
+    UpdateFocusHighlight();
+}
+
+void SettingsShell::UpdateFocusHighlight()
+{
+    const auto target = highlightTarget_.get();
+    if (!target || !target.IsLoaded() || target.Visibility() != mux::Visibility::Visible)
+    {
+        FocusHighlightLayer().Visibility(mux::Visibility::Collapsed);
+        return;
+    }
+    const auto bounds = target.TransformToVisual(PageContentGrid()).TransformBounds(
+        {0, 0, static_cast<float>(target.ActualWidth()), static_cast<float>(target.ActualHeight())});
+    // This overlay shares the scroll content's coordinates, has no layout
+    // footprint and receives no input. Only update changed values during layout.
+    const auto highlight = FocusHighlight();
+    if (highlight.Width() != bounds.Width) highlight.Width(bounds.Width);
+    if (highlight.Height() != bounds.Height) highlight.Height(bounds.Height);
+    if (muxc::Canvas::GetLeft(highlight) != bounds.X) muxc::Canvas::SetLeft(highlight, bounds.X);
+    if (muxc::Canvas::GetTop(highlight) != bounds.Y) muxc::Canvas::SetTop(highlight, bounds.Y);
+    FocusHighlightLayer().Visibility(mux::Visibility::Visible);
 }
 
 void SettingsShell::RequestRoute(const SettingsRoute& route)

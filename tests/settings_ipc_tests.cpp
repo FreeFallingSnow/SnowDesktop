@@ -69,6 +69,12 @@ void TestCodec()
 
     snowdesktop::SettingsSnapshot settings;
     settings.generation = 17;
+    settings.route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, "dock.position");
+    settings.route.guideTopic = "dockPosition";
+    const auto guideRoute = Unpack<snowdesktop::SettingsRoute>(Pack(settings.route));
+    Check(guideRoute.guideTopic == "dockPosition" && guideRoute.focusId == "dock.position" &&
+        guideRoute.page == snowdesktop::SettingsPage::Dock,
+        "cross-process guide navigation preserves both the setting and return destination");
     settings.revision = UINT64_MAX;
     settings.externalReplacementPending = true;
     settings.values.general.animationMode = 1;
@@ -246,9 +252,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 9 carried retired tutorial context/position fields.
+        // Version 10 had no guide return destination in SettingsRoute.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{9},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{10},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
@@ -257,7 +263,7 @@ void TestRetiredUpdateProtocol()
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers with retired guide fields disconnect before dispatch");
+            "settings peers without guide return routes disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);

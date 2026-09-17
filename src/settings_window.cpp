@@ -164,6 +164,8 @@ bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
 }
 bool SettingsWindow::Show()
 { return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General)); }
+void SettingsWindow::CloseIfMinimized()
+{ impl_->Notify("ui.closeIfMinimized"); }
 bool SettingsWindow::ShowDockSettings()
 { return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, "dock.enable")); }
 bool SettingsWindow::ShowAppearanceSettings()

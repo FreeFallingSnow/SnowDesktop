@@ -46,9 +46,10 @@ struct StartPagePresenter::Impl
     muxc::SelectorBar tabs;
     bool dockEnabled = false;
     muxc::ListView lessons;
-    std::array<Group, 4> groups{{
+    std::array<Group, 5> groups{{
         {Section::Basics, L"categories.svg", L"\xE8B7"},
         {Section::Files, L"desktop.svg", L"\xE7F4"},
+        {Section::Pages, L"pages.svg", L"\xE8A9"},
         {Section::Dock, L"dock.svg", L"\xEBC8"},
         {Section::More, L"widgets.svg", L"\xE74C"},
     }};
@@ -250,14 +251,14 @@ struct StartPagePresenter::Impl
                 const auto& lesson = *Find(topic);
                 if (lesson.needsDock && !dockEnabled)
                 {
-                    if (actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Dock, "dock.enable"));
+                    if (actions.navigate) actions.navigate(SettingsDestination(lesson));
                     return;
                 }
                 actions.begin(generation, topic);
             });
             r->settingsToken = r->settings.Click([this, topic = lesson.topic](auto&&, auto&&) {
                 if (!closed && active && actions.navigate)
-                { const auto& lesson = *Find(topic); actions.navigate(SettingsRoute::ForPage(lesson.secondaryPage, lesson.secondaryFocus)); }
+                { const auto& lesson = *Find(topic); actions.navigate(SettingsDestination(lesson, true)); }
             });
             rows.push_back(std::move(row));
         }

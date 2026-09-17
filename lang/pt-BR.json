@@ -1741,5 +1741,21 @@
     "start.develop.title": "Criar um componente com um Agent",
     "start.develop.description": "Instalar o Skill de desenvolvimento e descrever sua ideia.",
     "start.develop.instructions": "1. Abra as ferramentas de desenvolvimento, selecione seu Agent e aplique a seleção para instalar o Skill.\n2. Inicie uma conversa com o Agent e peça, por exemplo, uma contagem regressiva com data configurável.\n3. Siga as instruções do Agent para visualizar, ajustar e adicionar à área de trabalho.",
-    "start.section.lua": "Componentes Lua"
+    "start.section.lua": "Componentes Lua",
+    "start.section.pages": "Páginas",
+    "start.pagesOverview.title": "Separar a área de trabalho por uso",
+    "start.pagesOverview.description": "Use páginas diferentes para trabalho, lazer ou itens temporários.",
+    "start.pagesOverview.instructions": "Cada página tem seus próprios ícones, componentes e grade. Trocar de página muda apenas o conteúdo exibido, sem copiar arquivos.\nCom um monitor, você pode percorrer todas as páginas. Com vários, os primeiros mantêm suas páginas e o último percorre as restantes. O menu da área de trabalho permite escolher o primeiro e o último monitor.",
+    "start.pagesManage.title": "Adicionar e organizar páginas",
+    "start.pagesManage.description": "Adicione pelo menu da área de trabalho; ajuste a ordem e a grade nas configurações.",
+    "start.pagesManage.instructions": "1. Clique com o botão direito em um espaço vazio e adicione uma página. O menu de navegação permite selecionar uma página existente.\n2. Se uma página exibida estiver vazia, um componente provisório será colocado nela primeiro. Repita a ação para criar outra página. Adicione seu conteúdo antes de remover o componente.\n3. Abra as configurações de páginas e grade pelo menu da área de trabalho, ou pelo botão abaixo, para ajustar a ordem, as linhas e as colunas.",
+    "start.pagesEdge.title": "Trocar de página na borda da tela",
+    "start.pagesEdge.description": "Leve o ponteiro à borda esquerda ou direita e clique.",
+    "start.pagesEdge.instructions": "1. Tenha pelo menos duas páginas com conteúdo. Use as existentes ou adicione uma pelo menu da área de trabalho.\n2. Vá até uma borda lateral e clique quando aparecer a indicação. Apenas passar o ponteiro não troca a página; sem outra página naquela direção, não há indicação.\n3. Com vários monitores, use o último. Também é possível escolher uma página diretamente no menu da área de trabalho.",
+    "start.pagesDrag.title": "Arrastar conteúdo entre páginas",
+    "start.pagesDrag.description": "Continue segurando o botão do mouse ao trocar de página.",
+    "start.pagesDrag.instructions": "1. Prepare outra página com conteúdo e espaço livre suficiente.\n2. Arraste um ícone ou a área inferior de movimentação de um componente até uma borda lateral e aguarde um instante. Com vários monitores, use o último.\n3. Após a troca, mantenha o botão pressionado, vá até um espaço livre e solte. Aguarde novamente na borda para continuar passando páginas. Esc cancela o arraste antes de soltar.",
+    "start.pagesKeys.title": "Trocar de página pelo teclado",
+    "start.pagesKeys.description": "Escolha se quer usar atalhos e quais teclas prefere.",
+    "start.pagesKeys.instructions": "Ative a navegação pelo teclado e defina atalhos separados para a página anterior e a próxima. Eles funcionam quando a área de trabalho recebe a entrada do teclado, não em outros aplicativos nem ao renomear, pesquisar ou arrastar.\nVocê pode deixar a opção desativada e continuar usando as bordas ou o menu da área de trabalho."
 }

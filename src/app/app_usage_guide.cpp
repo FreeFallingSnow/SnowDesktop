@@ -38,7 +38,8 @@ bool DesktopApp::IsUsageGuideVisible() const
 {
     return usageGuideTopic_.has_value() && customDesktopVisible_ && !desktopIconsHidden_ && !reloading_ &&
         luaWidgetPanelRequest_.widgetId.empty() &&
-        !(settingsWindow_ && IsWindowVisible(settingsWindow_->Window()));
+        !(settingsWindow_ && IsWindowVisible(settingsWindow_->Window()) &&
+            !IsIconic(settingsWindow_->Window()));
 }
 
 bool DesktopApp::IsPointInUsageGuide(POINT point) const
@@ -129,6 +130,7 @@ bool DesktopApp::HandleUsageGuidePointerUp(POINT point)
     const auto& lesson = *snowdesktop::usage_guide::Find(*usageGuideTopic_);
     if (pressed == 1 && PtInRect(&usageGuidePauseRect_, point))
     {
+        if (settingsWindow_) settingsWindow_->CloseIfMinimized();
         usageGuideTopic_.reset();
         usageGuideWaitingForDesktop_ = false;
         RefreshUsageGuideReference();
@@ -144,7 +146,7 @@ bool DesktopApp::HandleUsageGuidePointerUp(POINT point)
     }
     else if (pressed == 5 && PtInRect(&usageGuideOpenSettingsRect_, point))
     {
-        const auto route = snowdesktop::SettingsRoute::ForPage(lesson.settingsPage, lesson.settingsFocus);
+        const auto route = snowdesktop::usage_guide::SettingsDestination(lesson);
         usageGuideTopic_.reset();
         usageGuideWaitingForDesktop_ = false;
         RefreshUsageGuideReference();

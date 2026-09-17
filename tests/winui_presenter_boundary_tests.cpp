@@ -66,6 +66,14 @@ int main(int argc, char** argv)
         Forbid(general, "onboarding->FocusTarget(",
             "guide routing must not force focus on unmaterialized selector items");
         const auto host = ReadSource(root, "src/winui/settings_window_host.cpp");
+        const auto beginGuide = host.find("general.onboarding.begin=");
+        const auto endGuide = host.find("general.onboarding.expandedChanged=", beginGuide);
+        const auto guideAction = beginGuide == std::string::npos || endGuide == std::string::npos
+            ? std::string_view{} : std::string_view(host).substr(beginGuide, endGuide - beginGuide);
+        // A desktop-reference launch must not dispose the settings session.
+        // These bans catch the old path; minimization/restore remains runtime QA.
+        for (const auto token : {"HideWindow(", "CloseSession(", "DisposePageBackends(", "SW_HIDE"})
+            Forbid(guideAction, token, "starting a desktop guide must preserve the settings session");
         Forbid(host, "patch.revision=snapshot->revision;",
             "host status ordering cannot be overwritten with controller revisions");
         // Reproduced in an ordinary Win32 STA: the UWP accessibility event

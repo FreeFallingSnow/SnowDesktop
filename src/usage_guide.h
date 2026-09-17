@@ -10,8 +10,8 @@
 // Private reference catalogue; only the outer expansion preference is saved.
 namespace snowdesktop::usage_guide
 {
-enum class Section { Basics, Files, Dock, More };
-enum class Topic { Startup, Grid, Icons, Beautify, Theme, Collection, Application, Move, Resize, CollectionGroup, Files, FolderMapping, FileGroup, DockPin, DockMapping, DockCollection, DockFiles, DockSummon, Navigation, LuaWidget, Backup, CategoryRules, DockEnable, DockPosition, DockHotkeys, DockSpace, DockAppearance, Workshop, Develop };
+enum class Section { Basics, Files, Dock, More, Pages };
+enum class Topic { Startup, Grid, Icons, Beautify, Theme, Collection, Application, Move, Resize, CollectionGroup, Files, FolderMapping, FileGroup, DockPin, DockMapping, DockCollection, DockFiles, DockSummon, Navigation, LuaWidget, Backup, CategoryRules, DockEnable, DockPosition, DockHotkeys, DockSpace, DockAppearance, Workshop, Develop, PagesOverview, PagesManage, PagesEdge, PagesDrag, PagesKeys };
 struct Lesson
 {
     Topic topic;
@@ -28,7 +28,7 @@ struct Lesson
     const char* secondaryFocus = "";
     const char* secondaryLabel = "";
 };
-inline constexpr std::array<Lesson, 26> kLessons{{
+inline constexpr std::array<Lesson, 31> kLessons{{
     {Topic::Startup, "startup", Section::Basics, L10N_KEY("start.startup.title"), L10N_KEY("start.startup.description"), L10N_KEY("start.startup.instructions"), SettingsPage::General, "general.autoStart", false, false},
     {Topic::Move, "move", Section::Basics, L10N_KEY("start.move.title"), L10N_KEY("start.move.description"), L10N_KEY("start.move.instructions"), SettingsPage::General, "", true, false},
     {Topic::Grid, "grid", Section::Basics, L10N_KEY("start.grid.title"), L10N_KEY("start.grid.description"), L10N_KEY("start.grid.instructions"), SettingsPage::DesktopPages, "pages.grid", false, false},
@@ -55,6 +55,11 @@ inline constexpr std::array<Lesson, 26> kLessons{{
     {Topic::LuaWidget, "luaWidget", Section::More, L10N_KEY("start.luaWidget.title"), L10N_KEY("start.luaWidget.description"), L10N_KEY("start.luaWidget.instructions"), SettingsPage::Widgets, "widgets.included", true, false},
     {Topic::Workshop, "workshop", Section::More, L10N_KEY("start.workshop.title"), L10N_KEY("start.workshop.description"), L10N_KEY("start.workshop.instructions"), SettingsPage::Widgets, "widgets.workshop", false, false},
     {Topic::Develop, "develop", Section::More, L10N_KEY("start.develop.title"), L10N_KEY("start.develop.description"), L10N_KEY("start.develop.instructions"), SettingsPage::DeveloperTools, "developer.agentSkill", false, false},
+    {Topic::PagesOverview, "pagesOverview", Section::Pages, L10N_KEY("start.pagesOverview.title"), L10N_KEY("start.pagesOverview.description"), L10N_KEY("start.pagesOverview.instructions"), SettingsPage::DesktopPages, "pages.order", false},
+    {Topic::PagesManage, "pagesManage", Section::Pages, L10N_KEY("start.pagesManage.title"), L10N_KEY("start.pagesManage.description"), L10N_KEY("start.pagesManage.instructions"), SettingsPage::DesktopPages, "pages.order", true},
+    {Topic::PagesEdge, "pagesEdge", Section::Pages, L10N_KEY("start.pagesEdge.title"), L10N_KEY("start.pagesEdge.description"), L10N_KEY("start.pagesEdge.instructions"), SettingsPage::DesktopPages, "pages.add", true},
+    {Topic::PagesDrag, "pagesDrag", Section::Pages, L10N_KEY("start.pagesDrag.title"), L10N_KEY("start.pagesDrag.description"), L10N_KEY("start.pagesDrag.instructions"), SettingsPage::DesktopPages, "pages.add", true},
+    {Topic::PagesKeys, "pagesKeys", Section::Pages, L10N_KEY("start.pagesKeys.title"), L10N_KEY("start.pagesKeys.description"), L10N_KEY("start.pagesKeys.instructions"), SettingsPage::DesktopPages, "general.pageNavigation", false},
 }};
 inline const Lesson* Find(Topic topic)
 {
@@ -77,6 +82,7 @@ inline const char* SectionTitle(Section section)
     case Section::Files: return L10N_KEY("start.section.files");
     case Section::Dock: return L10N_KEY("start.section.dock");
     case Section::More: return L10N_KEY("start.section.lua");
+    case Section::Pages: return L10N_KEY("start.section.pages");
     }
     return L10N_KEY("start.title");
 }
@@ -87,6 +93,19 @@ inline bool HasSettings(const Lesson& lesson)
 // Route choices describe existing preferences; they never apply a setting.
 inline bool CanShowDesktop(const Lesson& lesson, bool dockEnabled)
 { return lesson.practice && (!lesson.needsDock || dockEnabled); }
+inline SettingsRoute SettingsDestination(const Lesson& lesson, bool secondary = false)
+{
+    auto route = SettingsRoute::ForPage(secondary ? lesson.secondaryPage : lesson.settingsPage,
+        secondary ? lesson.secondaryFocus : lesson.settingsFocus);
+    route.guideTopic = lesson.key;
+    return route;
+}
+inline std::optional<SettingsRoute> ReturnDestination(const SettingsRoute& route)
+{
+    const auto topic = ParseTopic(route.guideTopic);
+    if (!topic) return std::nullopt;
+    return SettingsRoute::ForPage(SettingsPage::General, "start." + std::string(Find(*topic)->key));
+}
 bool LoadExpanded(const std::filesystem::path& path, bool& expanded, std::string* error = nullptr);
 bool SaveExpanded(const std::filesystem::path& path, bool expanded, std::string* error = nullptr);
 }

@@ -288,6 +288,19 @@ struct BackendServer::Impl
             return options.widgetsPage.locale ? options.widgetsPage.locale() : std::string("en-US");
         });
         channel.Bind<std::wstring>("options.title", [this] { return options.windowTitle; });
+        channel.Bind<bool>("options.workshopAvailable", [this] {
+            const auto& widgets = options.widgetsPage;
+            return widgets.workshopAvailable && widgets.workshopAvailable() && widgets.openWorkshop;
+        });
+        channel.Bind<std::pair<bool, std::wstring>>("options.openGuideWorkshop", [this] {
+            const auto& widgets = options.widgetsPage;
+            // Availability can change while a guide row remains displayed.
+            if (!widgets.workshopAvailable || !widgets.workshopAvailable() || !widgets.openWorkshop)
+                return std::pair{false, options.localize
+                    ? options.localize("app.settings.widgets_error_workshop_unavailable") : std::wstring{}};
+            const auto result = widgets.openWorkshop("steam-workshop");
+            return std::pair{result.succeeded, result.message};
+        });
         channel.Bind<HomeAboutStatusPatch, Token, Token>("options.homeAboutStatus", [this](Token generation, Token revision) {
             return options.homeAboutStatus ? options.homeAboutStatus(generation, revision) : HomeAboutStatusPatch{};
         });
@@ -433,6 +446,11 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.refreshExternalState = [&channel] { channel.Call<void>("options.refreshExternalState"); };
     options.registerAdvancedFeatures = [&channel] { channel.Call<void>("options.registerAdvancedFeatures"); };
     options.resetAdvancedFeatures = [&channel] { return channel.Call<bool>("options.resetAdvancedFeatures"); };
+    options.widgetsPage.workshopAvailable = [&channel] { return channel.Call<bool>("options.workshopAvailable"); };
+    options.widgetsPage.openWorkshop = [&channel](std::string_view) {
+        const auto [succeeded, message] = channel.Call<std::pair<bool, std::wstring>>("options.openGuideWorkshop");
+        return winui::WidgetsPageHostOperationResult{succeeded, false, message};
+    };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);

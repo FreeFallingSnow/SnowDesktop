@@ -1741,5 +1741,21 @@
     "start.develop.title": "让 Agent 帮你做组件",
     "start.develop.description": "安装开发 Skill，再把想法告诉 Agent。",
     "start.develop.instructions": "1. 打开组件开发工具，选择使用的 Agent，点击“应用选择”安装 Skill。\n2. 新建 Agent 对话，描述想做的组件，例如“做一个能设置日期的倒计时组件”。\n3. 按 Agent 的说明预览和调整，再添加到桌面。",
-    "start.section.lua": "Lua 组件"
+    "start.section.lua": "Lua 组件",
+    "start.section.pages": "多页",
+    "start.pagesOverview.title": "按用途分开桌面",
+    "start.pagesOverview.description": "把工作、娱乐或临时内容放在不同页面。",
+    "start.pagesOverview.instructions": "每页都有自己的图标、组件和网格，翻页只切换桌面上显示的内容，不会复制文件。\n单屏可以翻阅所有页面；多屏时，前面的屏幕固定显示各自页面，末屏翻阅其余页面。可在桌面右键菜单中指定首屏和末屏。",
+    "start.pagesManage.title": "新增与管理页面",
+    "start.pagesManage.description": "从桌面右键新增页面，在设置中调整顺序和网格。",
+    "start.pagesManage.instructions": "1. 在桌面空白处右键，选择“新增页”；已有多页时也可用“跳转到”切换。\n2. 若当前显示着空页，“新增页”会先放入一个占位组件。需要另一页时，再选择一次“新增页”。先放入自己的内容，再移除占位组件。\n3. 右键 → 软件设置 → 页面与网格，可调整页面顺序和每页的行列数。也可用下方按钮直接打开。",
+    "start.pagesEdge.title": "在屏幕边缘换页",
+    "start.pagesEdge.description": "把鼠标移到屏幕左侧或右侧，再点击翻页。",
+    "start.pagesEdge.instructions": "1. 先准备至少两页有内容的桌面，可以使用现有页面，也可以从右键菜单新增。\n2. 将鼠标移到屏幕左侧或右侧边缘，出现翻页提示后点击。只移动鼠标不会换页；没有可翻页面的方向不会出现提示。\n3. 多屏时，在末屏边缘操作。想直接到某一页，也可以用右键菜单的“跳转到”。",
+    "start.pagesDrag.title": "拖着内容换页",
+    "start.pagesDrag.description": "不松开鼠标，把图标或组件带到另一页。",
+    "start.pagesDrag.instructions": "1. 先准备另一页有内容的桌面，并为要移动的内容留出空位。\n2. 拖住图标，或拖住组件的底部移动区域，移到屏幕左右边缘并稍作停留。多屏时在末屏操作。\n3. 页面切换后继续按住鼠标，移到目标空位再松开。仍需继续翻页时，可再次停留在边缘；松开前按 Esc 可取消拖动。",
+    "start.pagesKeys.title": "用键盘翻页",
+    "start.pagesKeys.description": "选择是否启用键盘翻页，并设置前后页快捷键。",
+    "start.pagesKeys.instructions": "打开“键盘翻页”，分别设置上一页和下一页的按键。桌面获得键盘输入时才能使用；在其他应用中、重命名、搜索或拖动时不用于翻页。\n不习惯键盘翻页可以保持关闭，屏幕边缘和右键菜单仍然可用。"
 }

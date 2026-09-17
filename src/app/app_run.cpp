@@ -1652,7 +1652,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FinishWidgetGroupTransitions();
             if (usageGuideWelcomeQueued_) ShowUsageGuideWelcome();
             if (usageGuideWaitingForDesktop_ &&
-                (!settingsWindow_ || !IsWindowVisible(settingsWindow_->Window())))
+                (!settingsWindow_ || !IsWindowVisible(settingsWindow_->Window()) ||
+                    IsIconic(settingsWindow_->Window())))
             {
                 usageGuideWaitingForDesktop_ = false;
                 InvalidateRect(hwnd_, nullptr, FALSE);

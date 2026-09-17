@@ -168,6 +168,8 @@ struct SettingRow
         double controlWidth = kSettingControlWidth)
     {
         root = muxc::Grid{};
+        // The shell highlights the complete labeled row when routing here.
+        root.Tag(winrt::box_value(L"SnowDesktop.SettingRow"));
         root.ColumnSpacing(20.0);
         root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
 

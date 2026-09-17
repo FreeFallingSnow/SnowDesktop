@@ -59,6 +59,11 @@ int RunSettingsProcess(HINSTANCE instance)
             return std::pair{opened, host ? host->LastError() : std::wstring{}};
         });
         channel.Bind<bool>("ui.flush", [&] { return host && host->FlushPendingChanges(); });
+        channel.Bind<void>("ui.closeIfMinimized", [&] {
+            // Recheck on the UI owner thread: the user may have restored it
+            // between collapsing the desktop reference and receiving this message.
+            if (host && !closing && IsIconic(host->Window())) (void)host->Hide();
+        });
         channel.Bind<bool>("ui.prepareLanguage", [&] { return !host || host->PrepareLanguageChange(); });
         channel.Bind<void, bool>("ui.applyLanguage", [&](bool reloaded) {
             loadLanguage();

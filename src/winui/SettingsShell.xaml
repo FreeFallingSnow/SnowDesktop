@@ -193,6 +193,7 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
@@ -202,7 +203,27 @@
                          IsOpen="False"
                          IsClosable="True" />
 
-                <Grid Grid.Row="1">
+                <Button x:Name="GuideReturnButton"
+                        Grid.Row="1"
+                        Visibility="Collapsed"
+                        Margin="24,4,24,8"
+                        Padding="16,10"
+                        MinHeight="44"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Glyph="&#xE72B;" FontSize="16" />
+                        <TextBlock x:Name="GuideReturnText" Grid.Column="1" TextWrapping="Wrap" />
+                    </Grid>
+                </Button>
+
+                <Grid Grid.Row="2">
                     <ScrollViewer x:Name="PageScrollViewer"
                                   MaxWidth="1200"
                                   HorizontalAlignment="Stretch"
@@ -213,6 +234,7 @@
                                 MaxWidth="1120"
                                 Margin="40,16,40,48"
                                 HorizontalAlignment="Stretch">
+                            <Grid x:Name="PageContentGrid">
                             <StackPanel Spacing="16">
                                 <BreadcrumbBar x:Name="PageBreadcrumb" />
                                 <Grid MinHeight="52" ColumnSpacing="16">
@@ -245,6 +267,13 @@
                                 </Grid>
                                 <StackPanel x:Name="PageCards" Spacing="8" />
                             </StackPanel>
+                            <Canvas x:Name="FocusHighlightLayer" IsHitTestVisible="False" Visibility="Collapsed">
+                                <Grid x:Name="FocusHighlight">
+                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="6" />
+                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="6" />
+                                </Grid>
+                            </Canvas>
+                            </Grid>
                         </Border>
                     </ScrollViewer>
 

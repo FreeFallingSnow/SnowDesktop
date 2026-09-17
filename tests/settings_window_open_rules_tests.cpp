@@ -30,6 +30,23 @@ void CheckUsageGuide()
     Check(!CanShowDesktop(*Find(Topic::DockFiles), false) && CanShowDesktop(*Find(Topic::DockFiles), true),
         "Dock guidance requires Dock but never a newly created file component");
     Check(!CanShowDesktop(*Find(Topic::DockSummon), true), "preference articles cannot become desktop exercises");
+    const auto destination = snowdesktop::CanonicalizeSettingsRoute(SettingsDestination(*Find(Topic::DockPosition)));
+    Check(destination.page == snowdesktop::SettingsPage::Dock && destination.focusId == "dock.position" &&
+        ReturnDestination(destination) == snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General, "start.dockPosition"),
+        "settings links return to the originating guide without dropping the setting focus");
+    const auto secondary = SettingsDestination(*Find(Topic::DockAppearance), true);
+    Check(secondary.page == snowdesktop::SettingsPage::AnimationPerformance && secondary.focusId == "animation.hover" &&
+        ReturnDestination(secondary) == snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General, "start.dockAppearance"),
+        "secondary settings links retain the same guide origin");
+    Check(!ReturnDestination(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock)),
+        "ordinary settings navigation has no guide return banner");
+    auto invalidReturn = destination; invalidReturn.guideTopic = "removed-topic";
+    Check(!ReturnDestination(invalidReturn), "unknown guide origins cannot create dead return links");
+    const auto returnRoute = ReturnDestination(destination);
+    Check(returnRoute && !ReturnDestination(*returnRoute), "returning consumes the guide context");
+    Check(Find(Topic::PagesDrag)->section == Section::Pages && CanShowDesktop(*Find(Topic::PagesDrag), false) &&
+        !CanShowDesktop(*Find(Topic::PagesKeys), true),
+        "page dragging supports desktop reference while keyboard preferences only open settings");
 
     // The renderer and pointer handlers use this exact placement model.
     // Repaints have no menu or cursor input, so they cannot chase the pointer.
