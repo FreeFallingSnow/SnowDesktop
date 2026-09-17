@@ -7,7 +7,7 @@ HRESULT DesktopApp::InitGraphicsDevices()
 {
     ComPtr<ID3D11Device> d3dDevice;
     ComPtr<ID3D11DeviceContext> d3dImmediateContext;
-    ComPtr<ID2D1Factory1> d2dFactory;
+    ComPtr<ID2D1Factory1> d2dFactory = d2dFactory_;
     ComPtr<ID2D1Device> d2dDevice;
     ComPtr<ID2D1DeviceContext> d2dContext;
     ComPtr<IDCompositionDesktopDevice> dcompDevice;
@@ -35,12 +35,16 @@ HRESULT DesktopApp::InitGraphicsDevices()
     d3dDevice->GetImmediateContext(&d3dImmediateContext);
     if (!d3dImmediateContext) return E_FAIL;
 
-    // D2D
-    D2D1_FACTORY_OPTIONS factoryOptions{};
-    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
-        __uuidof(ID2D1Factory1), &factoryOptions,
-        reinterpret_cast<void**>(d2dFactory.GetAddressOf()));
-    if (FAILED(hr)) return hr;
+    // The factory and its geometries are device-independent. Keep their
+    // identity across GPU loss; only the D2D device/context must be replaced.
+    if (!d2dFactory)
+    {
+        D2D1_FACTORY_OPTIONS factoryOptions{};
+        hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            __uuidof(ID2D1Factory1), &factoryOptions,
+            reinterpret_cast<void**>(d2dFactory.GetAddressOf()));
+        if (FAILED(hr)) return hr;
+    }
 
     ComPtr<IDXGIDevice> dxgiDevice;
     hr = d3dDevice.As(&dxgiDevice);
