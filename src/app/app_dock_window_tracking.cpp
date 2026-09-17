@@ -763,6 +763,11 @@ void DesktopApp::RefreshDockRunningWindows(
     {
         InvalidateDockContainers();
         InvalidateDragStaticScene();
+        // Startup discovers running apps after the persistent hosts are laid
+        // out. Refresh their HWND regions before repainting the wider Dock;
+        // painting alone updates the glass but retains the old content clip.
+        // This also applies to reloads that suppress desktop invalidation.
+        UpdateFloatingDockWindowBounds(false);
     }
 
     if ((changed || runningVisualChanged) && invalidateChanged && hwnd_)
