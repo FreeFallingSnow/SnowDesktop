@@ -9,6 +9,10 @@
     mc:Ignorable="d">
 
     <UserControl.Resources>
+        <Style x:Key="SettingsShellContentColumnStyle" TargetType="Border">
+            <Setter Property="MaxWidth" Value="1120" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
         <Style x:Key="SettingsShellGuideButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
@@ -68,6 +72,7 @@
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="PageSurface.Margin" Value="20,12,20,32" />
+                        <Setter Target="GuideReturnBanner.Margin" Value="20,8,20,0" />
                         <Setter Target="PageTitle.FontSize" Value="28" />
                         <Setter Target="PageHeaderIconHost.Width" Value="40" />
                         <Setter Target="PageHeaderIconHost.Height" Value="40" />
@@ -79,6 +84,7 @@
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="PageSurface.Margin" Value="40,16,40,48" />
+                        <Setter Target="GuideReturnBanner.Margin" Value="40,8,40,0" />
                         <Setter Target="PageTitle.FontSize" Value="32" />
                         <Setter Target="PageHeaderIconHost.Width" Value="44" />
                         <Setter Target="PageHeaderIconHost.Height" Value="44" />
@@ -209,9 +215,8 @@
 
                 <Border x:Name="GuideReturnBanner"
                         Grid.Row="1"
-                        Width="{Binding ActualWidth, ElementName=PageSurface}"
-                        HorizontalAlignment="Center"
-                        Margin="0,8,0,0"
+                        Style="{StaticResource SettingsShellContentColumnStyle}"
+                        Margin="40,8,40,0"
                         Visibility="Collapsed"
                         Padding="4"
                         CornerRadius="8"
@@ -259,9 +264,8 @@
                              when the window grows past the reading width. -->
                         <Grid HorizontalAlignment="Stretch">
                         <Border x:Name="PageSurface"
-                                MaxWidth="1120"
-                                Margin="40,16,40,48"
-                                HorizontalAlignment="Stretch">
+                                Style="{StaticResource SettingsShellContentColumnStyle}"
+                                Margin="40,16,40,48">
                             <Grid x:Name="PageContentGrid">
                             <StackPanel Spacing="16">
                                 <BreadcrumbBar x:Name="PageBreadcrumb" />
