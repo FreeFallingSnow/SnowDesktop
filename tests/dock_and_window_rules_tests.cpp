@@ -139,6 +139,77 @@ void CheckRowMargins(
     Check(std::abs(leftMargin - rightMargin) <= 1, message);
 }
 
+LRESULT CALLBACK PairRefreshProbeProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    if (message == WM_WINDOWPOSCHANGING)
+        if (auto* count = reinterpret_cast<unsigned*>(GetWindowLongPtrW(window, GWLP_USERDATA)))
+            ++*count;
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+void CheckPopupPairRefreshDoesNotRepositionStableWindows()
+{
+    namespace pair = snowdesktop::popup_window_pair_z_order;
+    constexpr wchar_t className[] = L"SnowDesktop.PairRefreshProbe";
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = PairRefreshProbeProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = className;
+    Check(RegisterClassW(&wc) != 0, "pair refresh probe class registers");
+    // Hidden, isolated HWNDs exercise the production User32 path. Count real
+    // positioning messages: unchanged final bounds alone missed redundant
+    // backdrop transactions during Dock focus/animation policy refreshes.
+    const auto create = [&] {
+        return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            className, L"", WS_POPUP, 0, 0, 32, 32,
+            nullptr, nullptr, wc.hInstance, nullptr);
+    };
+    HWND content = create(), backdrop = create(), anchor = create();
+    Check(content && backdrop && anchor, "pair refresh probe windows created");
+    unsigned operations = 0;
+    if (content && backdrop && anchor)
+    {
+        SetWindowLongPtrW(content, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&operations));
+        SetWindowLongPtrW(backdrop, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&operations));
+        Check(pair::Apply(content, backdrop, HWND_TOPMOST, true, {0, 0}, {32, 32}),
+            "prepare a topmost pair for repeated policy refresh");
+        operations = 0;
+        Check(pair::Apply(content, backdrop, HWND_TOPMOST, true, {0, 0}, {32, 32}) && operations == 0,
+            "stable topmost pair refresh must not issue window positioning transactions");
+        Check(SetWindowPos(anchor, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE,
+            "place a protected window above the pair");
+        operations = 0;
+        Check(pair::Apply(content, backdrop, HWND_NOTOPMOST, false, {0, 0}, {32, 32}, anchor) &&
+                operations == 0 && pair::IsAbove(anchor, content) && pair::IsTopmost(content),
+            "protected stable pair must retain its actual band without positioning messages");
+        operations = 0;
+        Check(pair::Apply(content, backdrop, HWND_TOPMOST, true, {9, 11}, {47, 53}) && operations > 0,
+            "stable layer policy must still update changed backdrop geometry");
+        RECT actual{};
+        GetWindowRect(backdrop, &actual);
+        const RECT expected{9, 11, 56, 64};
+        Check(EqualRect(&actual, &expected), "backdrop geometry uses the requested screen rectangle");
+        Check(SetWindowPos(anchor, HWND_NOTOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE &&
+                pair::Apply(content, backdrop, anchor, false, {9, 11}, {47, 53}),
+            "demote the pair behind a concrete desktop anchor");
+        operations = 0;
+        Check(pair::Apply(content, backdrop, anchor, false, {9, 11}, {47, 53}) && operations == 0,
+            "stable desktop anchor refresh must not reposition either window");
+        Check(SetWindowPos(backdrop, anchor, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE && !pair::IsPaired(content, backdrop),
+            "deliberately separate the pair before repair");
+        Check(pair::Apply(content, backdrop, anchor, false, {9, 11}, {47, 53}) &&
+                pair::IsPaired(content, backdrop) && GetWindow(content, GW_HWNDPREV) == anchor,
+            "an unchanged requested rectangle must not suppress adjacency repair");
+    }
+    if (anchor) DestroyWindow(anchor);
+    if (backdrop) DestroyWindow(backdrop);
+    if (content) DestroyWindow(content);
+    UnregisterClassW(className, wc.hInstance);
+}
+
 void CheckPopupWindowPairZOrderTransitions()
 {
     constexpr DWORD extendedStyle =
@@ -576,6 +647,7 @@ void CheckAdaptiveRenameEditor()
 int main(int argc, char** argv)
 {
     CheckNativeDesktopCaptureReadiness();
+    CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();
     CheckAdaptiveRenameEditor();
     CheckMenuProtectedHostPositionChanges();
