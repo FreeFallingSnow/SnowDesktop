@@ -433,6 +433,12 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     }
     if (widgetEngine_) widgetEngine_->ResetGraphicsResources(d2dContext_.Get());
     InitializeDockWindowTransition();
+    // TDR can leave the surviving Explorer child behind a Shell surface even
+    // though its replacement DComp target presents successfully. Reapply the
+    // existing parent/style/Z-order transaction, including the backdrop pair;
+    // repaint alone does not restore pointer delivery to this child HWND.
+    if (hwnd_ && IsWindow(hwnd_) && customDesktopVisible_)
+        AttachWindowToDesktopHost(desktopWindows_.host);
     desktopBackdropFullCollectionPending_ = true;
     const auto repaint = [](HWND window) {
         if (window && IsWindow(window)) InvalidateRect(window, nullptr, FALSE);

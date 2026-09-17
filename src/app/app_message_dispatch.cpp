@@ -2,6 +2,7 @@
 #include "shell_change_notification.h"
 #include "../desktop_keyboard_rules.h"
 #include "../drag_input_rules.h"
+#include "../performance_trace.h"
 
 #include <imm.h>
 #include <shldisp.h>
@@ -316,6 +317,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_MOUSEMOVE:
     {
+        snowdesktop::performance::Scope pointerScope("desktop.input", "mouse.move");
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         // The guide owns its captured gesture, including moves outside its
         // bounds. Handle it before passive-hover filtering can discard them.
@@ -396,6 +398,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                 pointerOnContentWindow,
                                 pointerOnPairedBackdropWindow))
                     {
+                        snowdesktop::performance::Value("desktop.input", "hover.rejected", {}, 1);
                         if (lastMousePoint_.x != LONG_MIN ||
                             lastMousePoint_.y != LONG_MIN)
                         {
