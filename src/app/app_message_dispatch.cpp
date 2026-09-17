@@ -134,7 +134,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         POINT guidePoint{};
         if (GetCursorPos(&guidePoint) && ScreenToClient(hwnd_, &guidePoint) && IsPointInUsageGuide(guidePoint))
         {
-            SetCursor(LoadCursorW(nullptr, PtInRect(&usageGuideDragRect_, guidePoint) ? IDC_SIZEALL : IDC_ARROW));
+            SetCursor(LoadCursorW(nullptr, (PtInRect(&usageGuidePauseRect_, guidePoint) ||
+                PtInRect(&usageGuideSettingsRect_, guidePoint) ||
+                PtInRect(&usageGuideOpenSettingsRect_, guidePoint)) ? IDC_ARROW : IDC_SIZEALL));
             return TRUE;
         }
         POINT handlePoint{};

@@ -1715,7 +1715,6 @@
     "start.practiceShort": "桌面指引",
     "start.details": "查看步骤",
     "start.hideDetails": "收起步骤",
-    "start.dragPanel": "拖动顶部移动",
     "guide.setting.dockAppearance.title": "Dock 外观",
     "guide.setting.dockAppearance": "Dock 可跟随组件主题，也可独立选择浅色、深色、玻璃、亚克力或自定义外观。这里只调整外观；位置、唤起和空间预留属于 Dock 行为设置。",
     "start.categoryRules.title": "调整文件分类",

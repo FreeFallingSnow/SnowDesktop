@@ -68,7 +68,7 @@ snowdesktop::SettingsActionResult DesktopApp::StartUsageGuidePractice(snowdeskto
 void DesktopApp::RefreshUsageGuideReference()
 {
     usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
-    usageGuideFrame_ = usageGuideDragRect_ = usageGuideBodyRect_ = usageGuideScrollTrack_ = usageGuideScrollThumb_ = {};
+    usageGuideFrame_ = usageGuideBodyRect_ = usageGuideScrollTrack_ = usageGuideScrollThumb_ = {};
     usageGuidePressedButton_ = 0;
     usageGuidePlacement_.EndDrag();
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -80,15 +80,8 @@ bool DesktopApp::HandleUsageGuidePointerDown(POINT point)
         snowdesktop::modern_menu::IsActive()) return false;
     usageGuidePressedButton_ = PtInRect(&usageGuidePauseRect_, point) ? 1 :
         PtInRect(&usageGuideSettingsRect_, point) ? 2 :
-        PtInRect(&usageGuideScrollTrack_, point) ? 8 :
         PtInRect(&usageGuideOpenSettingsRect_, point) ? 5 :
-        PtInRect(&usageGuideDragRect_, point) ? 6 : 7;
-    if (usageGuidePressedButton_ == 8)
-    {
-        const int thumbHeight = usageGuideScrollThumb_.bottom - usageGuideScrollThumb_.top;
-        usageGuideScrollGrab_ = PtInRect(&usageGuideScrollThumb_, point) ? point.y - usageGuideScrollThumb_.top : thumbHeight / 2;
-        HandleUsageGuidePointerMove(point);
-    }
+        6;
     if (usageGuidePressedButton_ == 6)
     {
         ClientToScreen(hwnd_, &point);
@@ -103,14 +96,6 @@ bool DesktopApp::HandleUsageGuidePointerDown(POINT point)
 bool DesktopApp::HandleUsageGuidePointerMove(POINT point)
 {
     if (!usageGuidePressedButton_) return false;
-    if (usageGuidePressedButton_ == 8)
-    {
-        const int travel = usageGuideScrollTrack_.bottom - usageGuideScrollTrack_.top -
-            (usageGuideScrollThumb_.bottom - usageGuideScrollThumb_.top);
-        if (travel > 0) usageGuideScroll_.ToFraction(
-            static_cast<double>(point.y - usageGuideScrollTrack_.top - usageGuideScrollGrab_) / travel);
-        InvalidateRect(hwnd_, &usageGuideFrame_, FALSE);
-    }
     if (usageGuidePlacement_.dragOffset)
     {
         ClientToScreen(hwnd_, &point);

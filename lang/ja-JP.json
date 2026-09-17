@@ -1715,7 +1715,6 @@
     "start.practiceShort": "デスクトップで表示",
     "start.details": "手順を見る",
     "start.hideDetails": "手順を閉じる",
-    "start.dragPanel": "上部をドラッグして移動",
     "guide.setting.dockAppearance.title": "Dock の外観",
     "guide.setting.dockAppearance": "ウィジェットのテーマに従うか、明色、暗色、ガラス、アクリル、独自の外観を選べます。位置、呼び出し、領域の確保は別の動作設定です。",
     "start.categoryRules.title": "ファイル分類の調整",

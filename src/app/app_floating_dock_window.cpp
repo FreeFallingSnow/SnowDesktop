@@ -625,6 +625,12 @@ std::vector<RECT> DesktopApp::GetDockWindowTransitionOcclusionRects() const
         ((!customDesktopVisible_ || desktopIconsHidden_) &&
             !dockSettings_.keepWhenDesktopHidden))
         return result;
+    if (IsUsageGuideVisible() && !IsRectEmpty(&usageGuideFrame_))
+    {
+        RECT guide = usageGuideFrame_;
+        MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&guide), 2);
+        result.push_back(guide);
+    }
     const auto& appearance = CurrentDockAppearance();
     const float borderWidth = appearance.widgetEdgeHighlightEnabled
         ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)
@@ -735,6 +741,8 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         UpdatePersistentDockHostVisibility(host);
         return;
     }
+    const RECT guideOcclusion = IsUsageGuideVisible() ? usageGuideFrame_ : RECT{};
+    const bool guideRegionChanged = !EqualRect(&host.guideOcclusionRect, &guideOcclusion);
     const bool dockGeometryChanged =
         !EqualRect(&nextDockRect,
             &floatingDockRect_);
@@ -750,6 +758,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !EqualRect(&previousSourceRect,
             &floatingDockSourceRect_);
     if (!dockGeometryChanged &&
+        !guideRegionChanged &&
         !animationRegionChanged &&
         !popupRegionChanged &&
         !titleRegionChanged &&
@@ -759,6 +768,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         InvalidateFloatingDockWindow(host);
         return;
     }
+    host.guideOcclusionRect = guideOcclusion;
     floatingDockRect_ = nextDockRect;
     host.animationVisualRect = nextAnimationVisualRect;
     floatingDockPopupRect_ = nextPopupRect;
@@ -788,6 +798,19 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     HRGN windowRegion = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
         floatingDockRect_, host.animationVisualRect, floatingDockPopupRect_,
         floatingDockTooltipRect_, floatingDockSourceRect_, radius, dockBorderWidth);
+    RECT guideLocal = guideOcclusion;
+    if (!IsRectEmpty(&guideLocal))
+        OffsetRect(&guideLocal, -floatingDockSourceRect_.left, -floatingDockSourceRect_.top);
+    if (windowRegion && !IsRectEmpty(&guideLocal))
+    {
+        HRGN excluded = CreateRectRgnIndirect(&guideLocal);
+        if (excluded)
+        {
+            CombineRgn(windowRegion, windowRegion, excluded, RGN_DIFF);
+            DeleteObject(excluded);
+        }
+    }
+    host.backdrop.SetOcclusionRect(guideLocal);
     if (windowRegion &&
         !SetWindowRgn(
             dockHostHwnd, windowRegion, FALSE))

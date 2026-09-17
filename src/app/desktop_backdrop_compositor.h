@@ -129,6 +129,9 @@ public:
     /** @brief 销毁合成目标和辅助窗口。 */
     void Reset();
 
+    // Internal host-local exclusion for a desktop guide above a Dock HWND.
+    void SetOcclusionRect(const RECT& bounds);
+
     bool IsAvailable() const;
     /** @brief 判断窗口是否为该实例创建的 backdrop 辅助窗口。 */
     bool IsBackdropWindow(HWND window) const;

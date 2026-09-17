@@ -821,7 +821,7 @@ snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(boo
     usageGuideTopic_.reset();
     usageGuidePlacement_.EndDrag();
     usageGuidePressedButton_ = 0;
-    usageGuideFrame_ = usageGuideDragRect_ = {};
+    usageGuideFrame_ = {};
     usageGuideWaitingForDesktop_ = false;
     usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
     usageGuideScroll_ = {};

@@ -143,6 +143,31 @@ int RunDesktopBackdropCompositorTests()
         ++token;
     }
 
+    // A guide above an independent Dock must remove the glass HWND's pixels
+    // in the overlap, then restore them when the guide moves or closes.
+    const HWND guideHelper = GetWindow(content.handle, GW_HWNDNEXT);
+    const auto contains = [&](int x, int y) {
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        const bool result = region && GetWindowRgn(guideHelper, region) != ERROR &&
+            PtInRegion(region, x, y);
+        if (region) DeleteObject(region);
+        return result;
+    };
+    check(contains(40, 40), "unoccluded Dock glass covers the future guide overlap");
+    glass.SetOcclusionRect({20, 20, 80, 80});
+    check(!contains(40, 40) && contains(120, 120),
+        "guide overlap excludes glass without removing unrelated Dock pixels");
+    glass.BeginFrame(true);
+    glass.AddPanel({0, 0, 240, 180}, 18, 24, 1);
+    glass.EndFrame();
+    check(!contains(40, 40), "a Dock repaint preserves guide occlusion");
+    glass.SetOcclusionRect({100, 100, 150, 150});
+    check(contains(40, 40) && !contains(120, 120),
+        "moving the guide restores its old overlap and masks its new overlap");
+    glass.SetOcclusionRect({});
+    check(contains(40, 40) && contains(120, 120),
+        "closing the guide restores the complete Dock glass region");
+
     glass.Reset();
     check(otherGlass.SetVisualOpacity(0.5f),
         "closing one popup preserves another popup's shared controller");

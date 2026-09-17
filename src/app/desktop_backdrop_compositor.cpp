@@ -362,6 +362,7 @@ struct DesktopBackdropCompositor::Impl
     bool popupTopmost = false;
     bool visible = true;
     bool animationPathRegionExpanded = false;
+    RECT occlusionRect{};
 
     void SetError(const wchar_t* stage, HRESULT hr)
     {
@@ -576,6 +577,13 @@ struct DesktopBackdropCompositor::Impl
             }
         }
 
+        if (!IsRectEmpty(&occlusionRect))
+        {
+            HRGN excluded = CreateRectRgnIndirect(&occlusionRect);
+            const bool ok = excluded && CombineRgn(panelRegion, panelRegion, excluded, RGN_DIFF) != ERROR;
+            if (excluded) DeleteObject(excluded);
+            if (!ok) { DeleteObject(panelRegion); return false; }
+        }
         HRGN currentRegion = CreateRectRgn(0, 0, 0, 0);
         const int currentRegionType = currentRegion
             ? GetWindowRgn(backdropWindow, currentRegion)
@@ -611,7 +619,7 @@ struct DesktopBackdropCompositor::Impl
             !IsWindow(backdropWindow) ||
             animationPathRegionExpanded == expanded)
             return;
-        if (expanded)
+        if (expanded && IsRectEmpty(&occlusionRect))
         {
             if (SetWindowRgn(backdropWindow, nullptr, FALSE))
                 animationPathRegionExpanded = true;
@@ -1755,4 +1763,11 @@ std::size_t DesktopBackdropCompositor::BlurFactoryCount() const
 const std::wstring& DesktopBackdropCompositor::LastError() const
 {
     return impl_->lastError;
+}
+
+void DesktopBackdropCompositor::SetOcclusionRect(const RECT& bounds)
+{
+    if (!impl_ || EqualRect(&impl_->occlusionRect, &bounds)) return;
+    impl_->occlusionRect = bounds;
+    impl_->SyncPanelWindowRegion();
 }

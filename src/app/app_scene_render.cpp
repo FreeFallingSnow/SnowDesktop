@@ -221,6 +221,11 @@ void DesktopApp::DrawDesktopForeground(
     if (showWidgetAddedHint_ && !IsUsageGuideVisible())
         DrawWidgetAddedHintOverlay(ctx);
     DrawUsageGuideHintOverlay(ctx);
+    // Independent Dock content and backdrop HWNDs must expose the guide's
+    // desktop hit area as well as its pixels. Native menus stay above both.
+    for (const auto& host : persistentDockHosts_)
+        if (host && !EqualRect(&host->guideOcclusionRect, &usageGuideFrame_))
+            UpdateFloatingDockWindowBounds(*host, false, true);
     if (dockWindowTransition_ && dockWindowTransition_->GetPresentationWindow())
         dockWindowTransition_->RefreshOcclusion();
 }

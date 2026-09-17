@@ -726,6 +726,7 @@ private:
         RECT animationVisualRect{};
         RECT popupRect{};
         RECT tooltipRect{};
+        RECT guideOcclusionRect{};
         bool active = false;
         // Promotion is per monitor. Selection only identifies the Host that
         // currently owns pointer/keyboard-associated actions.
@@ -3534,13 +3535,12 @@ private:
     bool usageGuideWelcomeQueued_ = false;
     std::optional<snowdesktop::usage_guide::Topic> usageGuideTopic_;
     snowdesktop::usage_guide::PanelPlacement usageGuidePlacement_;
-    RECT usageGuideFrame_{}, usageGuideDragRect_{};
+    RECT usageGuideFrame_{};
     bool usageGuideWaitingForDesktop_ = false;
     RECT usageGuidePauseRect_{}, usageGuideSettingsRect_{}, usageGuideOpenSettingsRect_{};
     int usageGuidePressedButton_ = 0;
     snowdesktop::usage_guide::PanelScroll usageGuideScroll_;
     RECT usageGuideBodyRect_{}, usageGuideScrollTrack_{}, usageGuideScrollThumb_{};
-    int usageGuideScrollGrab_ = 0;
     void ScrollUsageGuide(int delta);
     void RefreshUsageGuideReference();
     bool IsUsageGuideVisible() const;

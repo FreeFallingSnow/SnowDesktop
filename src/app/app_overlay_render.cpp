@@ -7,11 +7,10 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
 {
     using namespace snowdesktop::usage_guide;
     usageGuidePauseRect_ = usageGuideSettingsRect_ = usageGuideOpenSettingsRect_ = {};
-    usageGuideFrame_ = usageGuideDragRect_ = usageGuideBodyRect_ = usageGuideScrollTrack_ = usageGuideScrollThumb_ = {};
+    usageGuideFrame_ = usageGuideBodyRect_ = usageGuideScrollTrack_ = usageGuideScrollThumb_ = {};
     if (!ctx || !IsUsageGuideVisible()) return;
     const auto& lesson = *Find(*usageGuideTopic_);
     const bool showSettings = HasSettings(lesson);
-    const std::wstring caption = std::wstring(_LW(SectionTitle(lesson.section))) + L" · " + _LW("start.dragPanel");
     const std::wstring title = _LW(lesson.title);
     const std::wstring hint = _LW(lesson.instructions);
     const std::wstring pauseText = _LW("start.pause"), settingsText = _LW("start.returnSettings"),
@@ -57,14 +56,13 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
             style, static_cast<float>(availableWidth), 100000, &layout))) layout->GetMetrics(&metrics);
         return static_cast<int>(std::ceil(metrics.height));
     };
-    const int captionHeight = measure(caption, smallFormat.Get(), textWidth);
     const int titleHeight = measure(title, titleFormat.Get(), textWidth);
     const int openHeight = showSettings ? std::max(px(36), measure(openText, format.Get(), textWidth - px(16)) + px(12)) : 0;
     const int halfWidth = (textWidth - px(8)) / 2;
     const int secondaryHeight = std::max(px(36), std::max(
         measure(settingsText, smallFormat.Get(), halfWidth - px(12)),
         measure(pauseText, smallFormat.Get(), halfWidth - px(12))) + px(12));
-    const int fixedHeight = padding * 2 + captionHeight + px(4) + titleHeight + px(12) +
+    const int fixedHeight = padding * 2 + titleHeight + px(12) +
         px(12) + secondaryHeight + (showSettings ? openHeight + px(8) : 0);
     const int bodyLimit = static_cast<int>(area.bottom - area.top) - margin * 2 - fixedHeight;
     if (bodyLimit < px(24)) return;
@@ -76,8 +74,6 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
     RECT frame = usageGuidePlacement_.Arrange(area, width, height, margin);
     MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&frame), 2);
     usageGuideFrame_ = frame;
-    usageGuideDragRect_ = {frame.left, frame.top, frame.right,
-        frame.top + padding + captionHeight + px(4) + titleHeight + px(6)};
     POINT clientCursor = cursor;
     ScreenToClient(hwnd_, &clientCursor);
     // This floating panel stays in the desktop foreground. Context menus use
@@ -100,7 +96,6 @@ void DesktopApp::DrawUsageGuideHintOverlay(ID2D1DeviceContext* ctx)
         RECT bounds{frame.left + padding, y, frame.right - padding, y + h};
         DrawD2DText(ctx, value, bounds, style, color); y += h;
     };
-    drawLine(caption, captionHeight, smallFormat.Get(), secondary); y += px(4);
     drawLine(title, titleHeight, titleFormat.Get(), foreground); y += px(12);
     usageGuideBodyRect_ = {frame.left + padding, y, frame.right - padding - px(16), y + textHeight};
     RECT textBounds = usageGuideBodyRect_;
