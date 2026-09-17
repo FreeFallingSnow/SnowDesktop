@@ -84,6 +84,7 @@ bool DesktopApp::QueueWidgetMarqueeComposition(
 
 bool DesktopApp::FlushPendingWidgetMarqueeComposition()
 {
+    if (graphicsDeviceRecovery_.Pending()) return false;
     if (pendingWidgetMarqueeCompositions_.empty())
         return true;
     if (!dcompDevice_)

@@ -28,6 +28,7 @@ struct DesktopWidgetSurfaceFailure
 bool DesktopApp::QueueDesktopWidgetComposition(
     const std::wstring& widgetId)
 {
+    if (graphicsDeviceRecovery_.Pending()) return false;
     snowdesktop::performance::Scope performanceScope(
         "widget.composition", "queue", widgetId);
     const auto fail = [&]() {
@@ -136,6 +137,7 @@ bool DesktopApp::QueueDesktopWidgetComposition(
 
 bool DesktopApp::FlushPendingDesktopWidgetComposition()
 {
+    if (graphicsDeviceRecovery_.Pending()) return false;
     if (pendingDesktopWidgetCompositions_.empty())
     {
         if (SyncDesktopWidgetCompositionZOrder())

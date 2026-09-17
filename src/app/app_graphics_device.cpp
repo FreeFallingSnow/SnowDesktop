@@ -244,6 +244,8 @@ void DesktopApp::RecoverCompositionRenderFailure(const wchar_t* stage, HRESULT h
 
 HRESULT DesktopApp::CreateOrResizeCompositionSurface()
     {
+        if (!dcompDevice_ || !dcompVisual_ || !hwnd_ || !IsWindow(hwnd_))
+            return E_UNEXPECTED;
         RECT client{};
         GetClientRect(hwnd_, &client);
         const UINT width = static_cast<UINT>(std::max<LONG>(1, client.right - client.left));
@@ -379,7 +381,7 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
 
 void DesktopApp::ProcessGraphicsDeviceRecovery()
 {
-    if (!startupInitializationComplete_ || !hwnd_ || !IsWindow(hwnd_))
+    if (!startupInitializationComplete_ || exitRequested_)
         return;
     if (!graphicsDeviceRecovery_.Pending())
     {
@@ -406,11 +408,16 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
 
     ReleaseGraphicsDeviceResources();
     HRESULT hr = InitGraphicsDevices();
-    if (SUCCEEDED(hr))
+    // Explorer recovery may temporarily remove the desktop HWND. Rebuild the
+    // device even then: CreateDesktopOverlayWindow otherwise keeps retrying
+    // target creation on the lost device and can never restore that HWND.
+    if (SUCCEEDED(hr) && hwnd_ && IsWindow(hwnd_))
+    {
         hr = dcompDevice_->CreateTargetForHwnd(hwnd_, FALSE, &dcompTarget_);
-    if (SUCCEEDED(hr)) hr = dcompDevice_->CreateVisual(&dcompVisual_);
-    if (SUCCEEDED(hr)) hr = dcompTarget_->SetRoot(dcompVisual_.Get());
-    if (SUCCEEDED(hr)) hr = CreateOrResizeCompositionSurface();
+        if (SUCCEEDED(hr)) hr = dcompDevice_->CreateVisual(&dcompVisual_);
+        if (SUCCEEDED(hr)) hr = dcompTarget_->SetRoot(dcompVisual_.Get());
+        if (SUCCEEDED(hr)) hr = CreateOrResizeCompositionSurface();
+    }
     graphicsDeviceRecovery_.Complete(GetTickCount64(), SUCCEEDED(hr));
     if (FAILED(hr))
     {
@@ -433,5 +440,5 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
     repaint(quickNavigationHwnd_);
     repaint(dragPreviewHwnd_);
     EnsureUiAnimationFrame();
-    WriteDiagnosticLogEntry(L"Graphics devices and desktop composition recreated; full repaint requested");
+    WriteDiagnosticLogEntry(L"Graphics devices recreated; surface repaints requested");
 }
