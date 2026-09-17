@@ -1653,6 +1653,7 @@
     "start.choose": "Choose a lesson",
     "start.openSettings": "Open related settings",
     "start.returnSettings": "Return to guide",
+    "start.closeReturnBanner": "Dismiss the return-to-guide banner",
     "start.requires.dock": "Enable Dock in its settings first.",
     "start.error.savePreference": "Could not save the panel preference. The previous choice has been restored.",
     "start.startup.title": "Start with Windows",

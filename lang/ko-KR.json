@@ -1653,6 +1653,7 @@
     "start.choose": "안내 선택",
     "start.openSettings": "관련 설정 열기",
     "start.returnSettings": "안내로 돌아가기",
+    "start.closeReturnBanner": "가이드로 돌아가기 배너 닫기",
     "start.requires.dock": "먼저 설정에서 Dock을 켜세요.",
     "start.error.savePreference": "패널 설정을 저장하지 못했습니다. 이전 선택으로 복원했습니다.",
     "start.startup.title": "Windows와 함께 시작",

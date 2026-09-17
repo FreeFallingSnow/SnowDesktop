@@ -1653,6 +1653,7 @@
     "start.choose": "Anleitung auswählen",
     "start.openSettings": "Zugehörige Einstellungen",
     "start.returnSettings": "Zur Anleitung",
+    "start.closeReturnBanner": "Banner zur Rückkehr zum Leitfaden schließen",
     "start.requires.dock": "Aktivieren Sie Dock zuerst in den Einstellungen.",
     "start.error.savePreference": "Die Auswahl konnte nicht gespeichert werden. Die vorherige Einstellung wurde wiederhergestellt.",
     "start.startup.title": "Mit Windows starten",

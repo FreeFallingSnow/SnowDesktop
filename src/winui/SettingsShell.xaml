@@ -9,6 +9,10 @@
     mc:Ignorable="d">
 
     <UserControl.Resources>
+        <Style x:Key="SettingsShellGuideButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
         <Style x:Key="SettingsShellCardButtonStyle" TargetType="Button">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -203,29 +207,48 @@
                          IsOpen="False"
                          IsClosable="True" />
 
-                <Button x:Name="GuideReturnButton"
+                <Border x:Name="GuideReturnBanner"
                         Grid.Row="1"
+                        Width="{Binding ActualWidth, ElementName=PageSurface}"
+                        HorizontalAlignment="Center"
+                        Margin="0,8,0,0"
                         Visibility="Collapsed"
-                        Margin="24,4,24,8"
-                        Padding="16,10"
-                        MinHeight="44"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Stretch"
+                        Padding="4"
+                        CornerRadius="8"
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
-                    <Grid ColumnSpacing="12">
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <Grid ColumnSpacing="4">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Glyph="&#xE72B;" FontSize="16" />
-                        <TextBlock x:Name="GuideReturnText" Grid.Column="1" TextWrapping="Wrap" />
+                        <Button x:Name="GuideReturnButton"
+                                Style="{StaticResource SettingsShellGuideButtonStyle}"
+                                Padding="12,8" MinHeight="40"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Glyph="&#xE72B;" FontSize="16" />
+                                <TextBlock x:Name="GuideReturnText" Grid.Column="1"
+                                           TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </Grid>
+                        </Button>
+                        <Button x:Name="GuideReturnCloseButton" Grid.Column="1"
+                                Style="{StaticResource SettingsShellGuideButtonStyle}"
+                                Width="40" Height="40" Padding="0"
+                                VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE711;" FontSize="12" />
+                        </Button>
                     </Grid>
-                </Button>
+                </Border>
 
                 <Grid Grid.Row="2">
                     <ScrollViewer x:Name="PageScrollViewer"
-                                  MaxWidth="1200"
                                   HorizontalAlignment="Stretch"
                                   HorizontalContentAlignment="Stretch"
                                   HorizontalScrollBarVisibility="Disabled"
@@ -268,9 +291,9 @@
                                 <StackPanel x:Name="PageCards" Spacing="8" />
                             </StackPanel>
                             <Canvas x:Name="FocusHighlightLayer" IsHitTestVisible="False" Visibility="Collapsed">
-                                <Grid x:Name="FocusHighlight">
-                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="6" />
-                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="6" />
+                                <Grid x:Name="FocusHighlight" Opacity="0">
+                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="8" />
+                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" />
                                 </Grid>
                             </Canvas>
                             </Grid>

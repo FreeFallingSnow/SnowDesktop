@@ -1653,6 +1653,7 @@
     "start.choose": "選擇教學",
     "start.openSettings": "開啟相關設定",
     "start.returnSettings": "返回指南",
+    "start.closeReturnBanner": "關閉返回指南橫幅",
     "start.requires.dock": "先在 Dock 設定中啟用 Dock。",
     "start.error.savePreference": "無法儲存面板摺疊狀態，已還原先前的選擇。",
     "start.startup.title": "開機自啟",

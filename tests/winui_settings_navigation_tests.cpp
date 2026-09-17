@@ -157,6 +157,55 @@ void TestInvalidRoutes()
         "an unknown settings page is rejected");
 }
 
+void TestNavigationFeedbackLifetime()
+{
+    // Production shell publications can repeat the same route after edits or
+    // relayout. Those refreshes must not replay the locator or restore a banner
+    // the user dismissed. This state is shared by the real shell entry points.
+    SettingsShellNavigationFeedback feedback;
+    auto theme = SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.theme");
+    theme.guideTopic = "theme";
+    Check(feedback.UpdateRoute(theme, 4) && feedback.ShowGuideReturn() &&
+        feedback.ConsumeHighlight(), "a guide destination offers one card locator and a return banner");
+    Check(!feedback.ConsumeHighlight(), "repeated layout cannot restart the running or completed locator");
+    Check(!feedback.UpdateRoute(theme, 4) && !feedback.ConsumeHighlight(),
+        "an ordinary settings refresh cannot replay a completed locator");
+
+    feedback.DismissGuideReturn();
+    Check(!feedback.ShowGuideReturn() && !feedback.UpdateRoute(theme, 4) &&
+        !feedback.ShowGuideReturn() && !feedback.ConsumeHighlight(),
+        "dismissal survives a same-route refresh and cancels any pending locator");
+
+    auto startup = SettingsRoute::ForPage(SettingsPage::General, "general.autoStart");
+    startup.guideTopic = "startup";
+    Check(feedback.UpdateRoute(startup, 4) && !feedback.ShowGuideReturn() &&
+        feedback.ConsumeHighlight(), "General locates its setting without a redundant return banner");
+
+    Check(feedback.UpdateRoute(theme, 4) && feedback.ShowGuideReturn() && feedback.ConsumeHighlight(),
+        "returning through the guide starts fresh feedback after leaving the destination");
+    feedback.DismissGuideReturn();
+    feedback.Restart();
+    Check(feedback.ShowGuideReturn() && feedback.ConsumeHighlight() && !feedback.ConsumeHighlight(),
+        "an explicit repeated navigation rearms one locator and the return banner");
+
+    Check(feedback.UpdateRoute(theme, 5) && feedback.ShowGuideReturn() && feedback.ConsumeHighlight(),
+        "a new window session discards only ephemeral feedback state");
+    auto dock = SettingsRoute::ForPage(SettingsPage::Dock, "dock.enable");
+    feedback.UpdateRoute(dock, 5);
+    Check(!feedback.ShowGuideReturn() && feedback.ConsumeHighlight(),
+        "a normal search route gets a locator without guide chrome");
+    feedback.UpdateRoute(SettingsRoute::ForPage(SettingsPage::Dock), 5);
+    Check(!feedback.ConsumeHighlight(), "opening a page without a setting never starts a locator");
+
+    feedback.UpdateRoute(theme, 5);
+    feedback.CancelHighlight();
+    Check(!feedback.UpdateRoute(theme, 5) && !feedback.ConsumeHighlight() && feedback.ShowGuideReturn(),
+        "hiding settings cancels pending highlights without dismissing the return banner");
+    feedback.UpdateRoute(dock, 5);
+    feedback.DismissGuideReturn();
+    Check(!feedback.ConsumeHighlight(), "dismissal also prevents a queued first locator from starting");
+}
+
 }
 
 int main()
@@ -167,6 +216,7 @@ int main()
     TestControllerCommittedBackNavigation();
     TestInvalidRoutes();
     TestLargeIconParentNavigation();
+    TestNavigationFeedbackLifetime();
     if (failures != 0)
     {
         std::cerr << failures << " WinUI settings navigation check(s) failed\n";

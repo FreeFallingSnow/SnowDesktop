@@ -1653,6 +1653,7 @@
     "start.choose": "Elegir una guía",
     "start.openSettings": "Abrir ajustes relacionados",
     "start.returnSettings": "Volver a la guía",
+    "start.closeReturnBanner": "Cerrar el aviso para volver a la guía",
     "start.requires.dock": "Primero activa el Dock en la configuración.",
     "start.error.savePreference": "No se pudo guardar la preferencia del panel. Se ha restaurado la selección anterior.",
     "start.startup.title": "Iniciar con Windows",

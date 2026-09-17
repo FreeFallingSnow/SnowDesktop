@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
@@ -457,6 +458,7 @@ void SettingsShell::Close() noexcept
         return;
     closed_ = true;
     focusSearchWhenPaneOpens_ = false;
+    StopFocusHighlight();
     try
     {
         UnhookEvents();
@@ -1162,6 +1164,9 @@ void SettingsShell::SuspendInteraction() noexcept
 {
     if (closed_)
         return;
+    navigationFeedback_.CancelHighlight();
+    focusPendingLayout_ = false;
+    StopFocusHighlight();
     try
     {
         if (generalPage_)
@@ -1262,6 +1267,7 @@ bool SettingsShell::Navigate(
     {
         const SettingsRoute canonicalRoute =
             CanonicalizeSettingsRoute(route);
+        const bool repeatedRoute = navigation_.Route() == canonicalRoute;
         if (notifyHost && routeRequested_)
         {
             // The host synchronously validates and commits the route before
@@ -1270,7 +1276,15 @@ bool SettingsShell::Navigate(
             // before the presenter becomes active.
             routeRequested_(canonicalRoute);
             if (navigation_.Route() == canonicalRoute)
+            {
+                if (repeatedRoute)
+                {
+                    navigationFeedback_.Restart();
+                    StopFocusHighlight();
+                    RenderRoute();
+                }
                 return true;
+            }
             RenderRoute();
             return false;
         }
@@ -1280,7 +1294,11 @@ bool SettingsShell::Navigate(
             RenderRoute();
         else if (navigation_.IsRouteAvailable(canonicalRoute) &&
                  navigation_.Route() == canonicalRoute)
-            ScheduleFocus();
+        {
+            navigationFeedback_.Restart();
+            StopFocusHighlight();
+            RenderRoute();
+        }
         else
             return false;
 
@@ -1571,6 +1589,14 @@ void SettingsShell::HookEvents()
         if (const auto route = snowdesktop::usage_guide::ReturnDestination(navigation_.Route()))
             RequestRoute(*route);
     });
+    guideReturnCloseToken_ = GuideReturnCloseButton().Click([this](auto&&, auto&&) {
+        if (closed_) return;
+        navigationFeedback_.DismissGuideReturn();
+        focusPendingLayout_ = false;
+        StopFocusHighlight();
+        GuideReturnBanner().Visibility(mux::Visibility::Collapsed);
+        (void)PageScrollViewer().Focus(mux::FocusState::Programmatic);
+    });
     focusLayoutToken_ = PageContentGrid().LayoutUpdated([this](auto&&, auto&&) {
         if (closed_) return;
         if (focusPendingLayout_) FocusPendingTarget();
@@ -1750,6 +1776,7 @@ void SettingsShell::UnhookEvents() noexcept
     try
     {
         if (guideReturnToken_.value) GuideReturnButton().Click(guideReturnToken_);
+        if (guideReturnCloseToken_.value) GuideReturnCloseButton().Click(guideReturnCloseToken_);
         if (focusLayoutToken_.value) PageContentGrid().LayoutUpdated(focusLayoutToken_);
         if (shellPointerPressedHandler_)
         {
@@ -1793,7 +1820,7 @@ void SettingsShell::UnhookEvents() noexcept
     {
     }
     actualThemeChangedToken_ = {};
-    guideReturnToken_ = {}; focusLayoutToken_ = {};
+    guideReturnToken_ = {}; guideReturnCloseToken_ = {}; focusLayoutToken_ = {};
     backKeyboardAcceleratorToken_ = {};
     searchKeyboardAcceleratorToken_ = {};
     compactSearchButtonClickToken_ = {};
@@ -1816,11 +1843,12 @@ void SettingsShell::RenderRoute(
 {
     RenderNavigationSelection();
     const auto route = navigation_.Route();
-    highlightTarget_ = {};
-    FocusHighlightLayer().Visibility(mux::Visibility::Collapsed);
+    if (navigationFeedback_.UpdateRoute(route, navigation_.Generation()) || forcePageCards)
+        StopFocusHighlight();
     focusPendingLayout_ = false;
     const auto guideTopic = snowdesktop::usage_guide::ParseTopic(route.guideTopic);
-    GuideReturnButton().Visibility(guideTopic ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    GuideReturnBanner().Visibility(guideTopic && navigationFeedback_.ShowGuideReturn()
+        ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     if (guideTopic)
     {
         const auto* lesson = snowdesktop::usage_guide::Find(*guideTopic);
@@ -1828,6 +1856,9 @@ void SettingsShell::RenderRoute(
         GuideReturnText().Text(text);
         muxa::AutomationProperties::SetName(GuideReturnButton(), text);
     }
+    const auto closeReturnLabel = Localize("start.closeReturnBanner");
+    muxa::AutomationProperties::SetName(GuideReturnCloseButton(), closeReturnLabel);
+    muxc::ToolTipService::SetToolTip(GuideReturnCloseButton(), winrt::box_value(closeReturnLabel));
     if (renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::AppearanceDesktopIcons && route.page == SettingsPage::LargeIcon)
     {
         largeIconParentOffset_ = PageScrollViewer().VerticalOffset();
@@ -2604,29 +2635,78 @@ void SettingsShell::FocusPendingTarget()
 
 void SettingsShell::HighlightSetting(const mux::FrameworkElement& target)
 {
-    // Editors stay focusable, but the visual locator includes their label and
-    // help. Ignore the Borders inside a ToggleSwitch/ComboBox template.
+    // A snapshot/layout refresh must not replay a locator the user has already
+    // seen or dismissed. Explicit navigation rearms it, including the same route.
+    if (!navigationFeedback_.ConsumeHighlight()) return;
+    StopFocusHighlight();
+    // Locate the outer setting card, ignoring labeled rows, nested expanders
+    // and Borders inside editor templates. Never fall back to a single control.
     const auto cardStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>();
     const auto buttonStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>();
     mux::FrameworkElement region{nullptr};
+    mux::FrameworkElement expander{nullptr};
     auto node = target.as<mux::DependencyObject>();
     while (node && node != PageCards())
     {
         if (auto element = node.try_as<mux::FrameworkElement>())
         {
-            const auto marker = element.Tag().try_as<winrt::Windows::Foundation::IPropertyValue>();
-            const bool row = marker && marker.Type() == winrt::Windows::Foundation::PropertyType::String &&
-                marker.GetString() == L"SnowDesktop.SettingRow";
-            if (row || element.Style() == cardStyle || element.Style() == buttonStyle || node.try_as<muxc::Expander>())
-            { region = element; break; }
+            if (element.Style() == cardStyle || element.Style() == buttonStyle)
+                region = element;
+            if (node.try_as<muxc::Expander>()) expander = element;
         }
         node = muxm::VisualTreeHelper::GetParent(node);
     }
-    highlightTarget_ = region ? winrt::make_weak(region) : winrt::weak_ref<mux::FrameworkElement>{};
+    if (!region) region = expander;
     mux::BringIntoViewOptions options;
     options.AnimationDesired(false);
     (region ? region : target).StartBringIntoView(options);
+    if (!region) return;
+    highlightTarget_ = winrt::make_weak(region);
     UpdateFocusHighlight();
+
+    namespace animation = winrt::Microsoft::UI::Xaml::Media::Animation;
+    animation::DoubleAnimation pulse;
+    pulse.From(0.0);
+    pulse.To(1.0);
+    pulse.Duration(mux::DurationHelper::FromTimeSpan(std::chrono::milliseconds(400)));
+    pulse.AutoReverse(true);
+    pulse.RepeatBehavior(animation::RepeatBehaviorHelper::FromCount(3));
+    pulse.FillBehavior(animation::FillBehavior::Stop);
+    animation::Storyboard::SetTarget(pulse, FocusHighlight());
+    animation::Storyboard::SetTargetProperty(pulse, L"Opacity");
+    focusAnimation_ = animation::Storyboard{};
+    focusAnimation_.Children().Append(pulse);
+    const auto serial = focusAnimationSerial_;
+    focusAnimationCompletedToken_ = focusAnimation_.Completed(
+        [weak = get_weak(), serial](auto&&, auto&&) {
+            if (const auto self = weak.get(); self && !self->closed_ &&
+                self->focusAnimationSerial_ == serial)
+                self->StopFocusHighlight();
+        });
+    focusAnimation_.Begin();
+}
+
+void SettingsShell::StopFocusHighlight() noexcept
+{
+    // Clear the target before layout runs again; a late completion from an old
+    // route must not clear a newer card's animation.
+    ++focusAnimationSerial_;
+    highlightTarget_ = {};
+    auto animation = std::exchange(focusAnimation_, nullptr);
+    const auto completed = std::exchange(focusAnimationCompletedToken_, {});
+    try
+    {
+        if (animation)
+        {
+            if (completed.value) animation.Completed(completed);
+            animation.Stop();
+        }
+        FocusHighlightLayer().Visibility(mux::Visibility::Collapsed);
+        FocusHighlight().Opacity(0);
+    }
+    catch (...)
+    {
+    }
 }
 
 void SettingsShell::UpdateFocusHighlight()
@@ -2634,7 +2714,7 @@ void SettingsShell::UpdateFocusHighlight()
     const auto target = highlightTarget_.get();
     if (!target || !target.IsLoaded() || target.Visibility() != mux::Visibility::Visible)
     {
-        FocusHighlightLayer().Visibility(mux::Visibility::Collapsed);
+        if (target || focusAnimation_) StopFocusHighlight();
         return;
     }
     const auto bounds = target.TransformToVisual(PageContentGrid()).TransformBounds(

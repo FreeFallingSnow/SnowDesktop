@@ -23,6 +23,25 @@ struct SettingsShellPageVisibility
         const SettingsShellPageVisibility&) = default;
 };
 
+/** Ephemeral route feedback, independent of settings snapshot revisions. */
+class SettingsShellNavigationFeedback final
+{
+public:
+    /** Returns true only when entering a different route or window session. */
+    bool UpdateRoute(const SettingsRoute& route, std::uint64_t generation);
+    void Restart() noexcept;
+    [[nodiscard]] bool ConsumeHighlight() noexcept;
+    [[nodiscard]] bool ShowGuideReturn() const noexcept;
+    void DismissGuideReturn() noexcept;
+    void CancelHighlight() noexcept;
+
+private:
+    std::optional<SettingsRoute> route_;
+    std::uint64_t generation_ = 0;
+    bool highlightConsumed_ = false;
+    bool returnDismissed_ = false;
+};
+
 /**
  * Toolkit-independent navigation/history and stale-update gate for the XAML
  * settings shell.  Keeping this state outside WinUI makes the navigation

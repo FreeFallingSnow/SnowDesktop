@@ -1653,6 +1653,7 @@
     "start.choose": "ガイドを選択",
     "start.openSettings": "関連設定を開く",
     "start.returnSettings": "ガイドに戻る",
+    "start.closeReturnBanner": "ガイドに戻るバナーを閉じる",
     "start.requires.dock": "先に設定で Dock を有効にしてください。",
     "start.error.savePreference": "パネルの設定を保存できませんでした。以前の選択に戻しました。",
     "start.startup.title": "Windows と一緒に起動",

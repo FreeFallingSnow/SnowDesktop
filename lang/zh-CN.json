@@ -1653,6 +1653,7 @@
     "start.choose": "选择教程",
     "start.openSettings": "打开相关设置",
     "start.returnSettings": "返回指南",
+    "start.closeReturnBanner": "关闭返回指南条幅",
     "start.requires.dock": "先在 Dock 设置中开启 Dock。",
     "start.error.savePreference": "无法保存面板折叠状态，已恢复之前的选择。",
     "start.startup.title": "开机自启",
