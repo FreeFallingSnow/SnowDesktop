@@ -80,33 +80,16 @@ int main()
     Expect(Annotate("2024-02-11", "2024-02-11", display, "zh-CN")[0].secondary == "初二", "ordinary lunar date uses traditional day name");
     Expect(Annotate("2024-03-01", "2024-03-01", display, "zh-CN")[0].secondary == "廿一", "lunar day twenty one is compact");
     Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].secondary == "正月", "lunar new year caption is month only");
-    display.holidaysEnabled = true;
-    Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].holidays == std::vector<std::string>{"春节"}, "Chinese holiday uses translated name");
-    Expect(Annotate("2020-01-24", "2020-01-24", display, "zh-CN")[0].holidays.empty(), "transferred rest day excluded even when provider ignores observed flag");
-    auto regions = snowdesktop::calendar::HolidayRegions("zh-CN");
-    for (const auto& option : regions)
-    {
-        if (option.id == "CN") Expect(option.label == L"中国大陆", "mainland region label");
-        if (option.id == "HK") Expect(option.label == L"香港特别行政区", "Hong Kong region label");
-        if (option.id == "TW") Expect(option.label == L"台湾", "Taiwan region label");
-    }
+    display.holidaysEnabled = true; display.region = "CN";
+    const auto formerHoliday = Annotate("2024-10-01", "2024-10-01", display, "zh-CN");
+    Expect(formerHoliday.size() == 1 && formerHoliday[0].calendarAvailable && formerHoliday[0].holidays.empty() && !formerHoliday[0].holidaysAvailable,
+        "legacy holiday preferences cannot restore removed holiday display");
     display.calendar = "persian";
     auto persian = Annotate("2024-03-20", "2024-03-20", display, "en-US");
     Expect(persian.size() == 1 && persian[0].year == 1403 && persian[0].month == 1 && persian[0].day == 1, "Persian New Year conversion");
-    display.enabled = false; display.holidaysEnabled = true; display.region = "US";
-    auto holiday = Annotate("2024-07-04", "2024-07-04", display, "en-US");
-    Expect(holiday.size() == 1 && holiday[0].holidaysAvailable && holiday[0].holidays == std::vector<std::string>{"Independence Day"} && holiday[0].secondary.empty(), "US holiday works independently of secondary calendar");
-    display.region = "JP";
-    holiday = Annotate("2024-07-04", "2024-07-04", display, "en-US");
-    Expect(holiday.size() == 1 && holiday[0].holidays.empty(), "region selection excludes another region's holidays");
-    display.region = "US";
-    holiday = Annotate("2021-07-05", "2021-07-05", display, "en-US");
-    Expect(holiday.size() == 1 && holiday[0].holidays.empty(), "substitute holiday is excluded");
-    holiday = Annotate("2036-07-04", "2036-07-04", display, "en-US");
-    Expect(holiday.size() == 1 && !holiday[0].holidaysAvailable && holiday[0].holidays.empty(), "outside snapshot is unavailable, not authoritative empty");
-    display.holidaysEnabled = false;
-    holiday = Annotate("2024-07-04", "2024-07-04", display, "en-US");
-    Expect(holiday.size() == 1 && !holiday[0].holidaysAvailable && holiday[0].holidays.empty(), "holiday off switch removes annotations");
+    display.enabled = false;
+    auto disabled = Annotate("2024-10-01", "2024-10-01", display, "zh-CN");
+    Expect(disabled.size() == 1 && !disabled[0].calendarAvailable && disabled[0].secondary.empty() && disabled[0].holidays.empty(), "disabled extra calendar leaves no annotations");
     Expect(Annotate("2024-02-30", "2024-03-01", display, "en-US").empty() &&
         Annotate("2024-03-01", "2024-02-01", display, "en-US").empty() &&
         Annotate("2024-01-01", "2024-04-01", display, "en-US").empty(), "annotation input and work limits are enforced");

@@ -233,12 +233,11 @@ end
 local function annotations(model)
     if not widget.hasFeature("calendar.annotations") then return {} end
     local preferences = calendar.preferences()
-    if not preferences.enabled and not preferences.holidaysEnabled then return {} end
+    if not preferences.enabled then return {} end
     local first = calendar.addDays(monthDate(model.viewYear, model.viewMonth), -6)
     local last = calendar.addDays(monthDate(model.viewYear, model.viewMonth), 47)
     local key = tostring(first) .. tostring(last) .. l10n.language() ..
-        tostring(preferences.enabled) .. preferences.calendar ..
-        tostring(preferences.holidaysEnabled) .. preferences.region
+        tostring(preferences.enabled) .. preferences.calendar
     if model.annotationKey ~= key then
         model.annotationKey = key
         model.annotations = {}
@@ -251,14 +250,13 @@ end
 
 local function annotationText(item)
     if not item then return "" end
-    return (item.holidays or {})[1] or item.secondary or ""
+    return item.secondary or ""
 end
 
 local function dateDescription(date, item)
     if not item then return date end
     local parts = { date }
     if item.fullDate and item.fullDate ~= "" then parts[#parts + 1] = item.fullDate end
-    for _, name in ipairs(item.holidays or {}) do parts[#parts + 1] = name end
     return table.concat(parts, "\n")
 end
 

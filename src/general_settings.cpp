@@ -161,8 +161,6 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     ReadBoolField(text, "animationOnBattery", settings.animationOnBattery);
     if (const auto* v = appearanceDocument.Find("calendarEnabled"); v && v->IsBoolean()) settings.calendarDisplay.enabled = v->boolean;
     if (const auto* v = appearanceDocument.Find("calendarType"); v && v->IsString()) settings.calendarDisplay.calendar = v->string;
-    if (const auto* v = appearanceDocument.Find("holidaysEnabled"); v && v->IsBoolean()) settings.calendarDisplay.holidaysEnabled = v->boolean;
-    if (const auto* v = appearanceDocument.Find("holidayRegion"); v && v->IsString()) settings.calendarDisplay.region = v->string;
     snowdesktop::calendar::Normalize(settings.calendarDisplay);
     NormalizeGeneralAnimationSettings(settings);
     return true;
@@ -180,8 +178,6 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     file << "{\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
-    file << "  \"holidaysEnabled\": " << (calendar.holidaysEnabled ? "true" : "false") << ",\n";
-    file << "  \"holidayRegion\": \"" << calendar.region << "\",\n";
     file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";
     file << "  \"collectionPopupAppearance\": " << popupAppearance << ",\n";
     file << "  \"animationMode\": " << snowdesktop::animation::NormalizeMode(settings.animationMode) << ",\n";

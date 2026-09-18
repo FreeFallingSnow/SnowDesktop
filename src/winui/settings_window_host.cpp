@@ -258,7 +258,6 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
     {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
-    {SettingsPage::Calendar, "calendar.region", "settings.calendar.region", "settings.calendar.description"},
     {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
     {SettingsPage::General, "general.language",
         "settings.general.language",

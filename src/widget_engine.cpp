@@ -9670,8 +9670,8 @@ static int lua_CalendarPreferences(lua_State* L)
     lua_pushstring(L, p.calendar.c_str()); lua_setfield(L, -2, "calendar");
     lua_pushboolean(L, p.holidaysEnabled); lua_setfield(L, -2, "holidaysEnabled");
     lua_pushstring(L, p.region.c_str()); lua_setfield(L, -2, "region");
-    lua_pushinteger(L, 2020); lua_setfield(L, -2, "holidayFirstYear");
-    lua_pushinteger(L, 2035); lua_setfield(L, -2, "holidayLastYear");
+    lua_pushinteger(L, 0); lua_setfield(L, -2, "holidayFirstYear");
+    lua_pushinteger(L, 0); lua_setfield(L, -2, "holidayLastYear");
     return 1;
 }
 static int lua_CalendarDisplayOptions(lua_State* L)
@@ -9692,7 +9692,7 @@ static int lua_CalendarDisplayOptions(lua_State* L)
         lua_setfield(L, -2, field);
     };
     push(snowdesktop::calendar::CalendarOptions(Locale::Instance().GetEffectiveLanguage()), "calendars");
-    push(snowdesktop::calendar::HolidayRegions(Locale::Instance().GetEffectiveLanguage()), "regions");
+    push(std::vector<snowdesktop::calendar::DisplayOption>{}, "regions");
     return 1;
 }
 static int lua_CalendarAnnotations(lua_State* L)

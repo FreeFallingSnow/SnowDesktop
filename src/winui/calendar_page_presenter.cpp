@@ -17,10 +17,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     CalendarPageActions actions;
     muxc::StackPanel root, preferences, editor;
     muxc::Border editorCard{nullptr};
-    muxc::ToggleSwitch calendarToggle, holidayToggle, allDay;
-    muxc::ComboBox calendarChoice, regionChoice;
-    SettingRow calendarEnabledRow, calendarRow, holidayEnabledRow, regionRow;
-    muxc::TextBlock description, listHeading, error;
+    muxc::ToggleSwitch calendarToggle, allDay;
+    muxc::ComboBox calendarChoice;
+    SettingRow calendarEnabledRow, calendarRow;
+    muxc::TextBlock listHeading, error;
     muxc::ListView list;
     muxc::TextBox title, notes;
     muxc::CalendarDatePicker date;
@@ -29,7 +29,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     static constexpr std::array<int, 7> reminderValues = {-1, 0, 5, 15, 30, 60, 1440};
     muxc::Button add, save, remove, cancel, refresh;
     muxc::ContentDialog dialog{nullptr};
-    std::vector<calendar::DisplayOption> calendars, regions;
+    std::vector<calendar::DisplayOption> calendars;
     std::vector<calendar::CalendarEvent> events;
     calendar::CalendarEvent editing;
     calendar::DisplayPreferences prefs;
@@ -63,16 +63,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         preferences = Card(style);
         calendarEnabledRow.Initialize(calendarToggle);
         calendarRow.Initialize(calendarChoice);
-        holidayEnabledRow.Initialize(holidayToggle);
-        regionRow.Initialize(regionChoice);
         calendarEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         calendarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        holidayEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        regionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        for (const auto& row : {calendarEnabledRow.root, calendarRow.root, holidayEnabledRow.root, regionRow.root})
+        for (const auto& row : {calendarEnabledRow.root, calendarRow.root})
             preferences.Children().Append(row);
-        description.TextWrapping(mux::TextWrapping::Wrap);
-        preferences.Children().Append(description);
         auto schedules = Card(style);
         listHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         schedules.Children().Append(listHeading);
@@ -99,9 +93,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         editorCard.Visibility(mux::Visibility::Collapsed);
         auto ctoken = calendarToggle.Toggled([this](const auto&, const auto&) { Commit(); });
         revoke.push_back([c = calendarToggle, ctoken] { c.Toggled(ctoken); });
-        auto htoken = holidayToggle.Toggled([this](const auto&, const auto&) { Commit(); });
-        revoke.push_back([c = holidayToggle, htoken] { c.Toggled(htoken); });
-        for (auto choice : {calendarChoice, regionChoice})
+        for (auto choice : {calendarChoice})
         {
             auto token = choice.SelectionChanged([this](const auto&, const auto&) { Commit(); });
             revoke.push_back([choice, token] { choice.SelectionChanged(token); });
@@ -130,30 +122,25 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void Commit()
     {
-        calendarChoice.IsEnabled(calendarToggle.IsOn()); regionChoice.IsEnabled(holidayToggle.IsOn());
+        calendarChoice.IsEnabled(calendarToggle.IsOn());
         if (updating || closed || !active || !hasSnapshot || !actions.commitGeneral) return;
         auto p = prefs;
-        p.enabled = calendarToggle.IsOn(); p.holidaysEnabled = holidayToggle.IsOn();
-        const auto c = calendarChoice.SelectedIndex(), r = regionChoice.SelectedIndex();
+        p.enabled = calendarToggle.IsOn();
+        const auto c = calendarChoice.SelectedIndex();
         if (c >= 0 && static_cast<size_t>(c) < calendars.size()) p.calendar = calendars[c].id;
-        if (r >= 0 && static_cast<size_t>(r) < regions.size()) p.region = regions[r].id;
         actions.commitGeneral(generation, [p](GeneralSettings& settings) { settings.calendarDisplay = p; });
     }
     void Select()
     {
-        calendarToggle.IsOn(prefs.enabled); holidayToggle.IsOn(prefs.holidaysEnabled);
+        calendarToggle.IsOn(prefs.enabled);
         for (size_t i = 0; i < calendars.size(); ++i) if (calendars[i].id == prefs.calendar) calendarChoice.SelectedIndex(static_cast<int>(i));
-        for (size_t i = 0; i < regions.size(); ++i) if (regions[i].id == prefs.region) regionChoice.SelectedIndex(static_cast<int>(i));
-        calendarChoice.IsEnabled(prefs.enabled); regionChoice.IsEnabled(prefs.holidaysEnabled);
+        calendarChoice.IsEnabled(prefs.enabled);
     }
     void Localize()
     {
         updating = true;
         calendarEnabledRow.SetText(L("settings.calendar.showSecondary"));
         calendarRow.SetText(L("settings.calendar.type"));
-        holidayEnabledRow.SetText(L("settings.calendar.showHolidays"));
-        regionRow.SetText(L("settings.calendar.region"));
-        description.Text(L("settings.calendar.description"));
         listHeading.Text(L("settings.calendar.events"));
         title.Header(winrt::box_value(L("settings.calendar.title")));
         date.Header(winrt::box_value(L("settings.calendar.date")));
@@ -176,10 +163,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         cancel.Content(winrt::box_value(L("app.settings.cancel")));
         remove.Content(winrt::box_value(L("app.settings.delete")));
         calendars = calendar::CalendarOptions(Locale::Instance().GetEffectiveLanguage());
-        regions = calendar::HolidayRegions(Locale::Instance().GetEffectiveLanguage());
-        calendarChoice.Items().Clear(); regionChoice.Items().Clear();
+        calendarChoice.Items().Clear();
         for (auto& option : calendars) calendarChoice.Items().Append(winrt::box_value(option.label));
-        for (auto& option : regions) regionChoice.Items().Append(winrt::box_value(option.label));
         Select(); updating = false;
     }
     void Refresh(bool explicitRefresh)
@@ -330,7 +315,6 @@ void CalendarPagePresenter::Close() { if (impl_) impl_->Close(); }
 void CalendarPagePresenter::RegisterFocusTargets(const FocusRegistrar& registrar) const
 {
     registrar("calendar.secondary", impl_->calendarToggle);
-    registrar("calendar.region", impl_->regionChoice);
     registrar("calendar.events", impl_->list);
 }
 }

@@ -2978,36 +2978,27 @@ identify early builds that lack it. Existing `dateInfo/addDays/selectDate` keep
 their Gregorian meaning. No new permission, apiVersion or minimum host version
 is required when a component supports the Gregorian fallback.
 
-- `calendar.preferences()` returns `{enabled, calendar, holidaysEnabled, region,
-  holidayFirstYear=2020, holidayLastYear=2035}`. Preferences are owned by the host's
-  Calendar & agenda page, not component storage.
-- `calendar.displayOptions()` returns `{calendars, regions}` arrays of `{id,label}`.
+- `calendar.preferences()` returns `enabled` and `calendar`. Preferences are owned
+  by the host's Calendar & agenda page, not component storage.
+- `calendar.displayOptions()` returns a `calendars` array of `{id,label}`.
 - `calendar.annotations(fromDate,toDate)` returns an inclusive array, at most 62
-  Gregorian civil dates; invalid/reversed/oversized ranges return nil. Each entry
-  has `date`, localized `secondary/fullDate`, ICU `year` (extended year), `month`
-  (native month index + 1, not an ordinal across leap months), `day`, `era`,
-  `leapMonth`, `calendarAvailable`, `holidaysAvailable`, and `holidays` (name array).
-  Date-only conversion uses UTC noon to avoid machine-zone day shifts. ICU names
-  and conversion data follow the installed Windows ICU version.
+  Gregorian civil dates; invalid/reversed/oversized ranges return nil. Entries have
+  `date`, `secondary`, `fullDate`, ICU `year` (extended year), `month` (native index
+  plus one, not an ordinal across leap months), `day`, `era`, `leapMonth` and
+  `calendarAvailable`. Conversion uses UTC noon and installed Windows ICU data.
 - Lifecycle event `{kind="calendar.preferences"}` tells declaring components to
-  invalidate cached annotations after global preferences change. Language changes
-  continue to use `environment`. Read preferences on first load as well.
-
-Display strings follow the effective UI language, including when the user selects
-the system language. Region IDs remain stable; CN/HK/TW labels explicitly identify
-Mainland China, Hong Kong Special Administrative Region and Taiwan. Region labels
-are presentation text and must not be used as identifiers.
+  invalidate cached annotations. Language changes use `environment`. Read current
+  preferences on first load as well. Names follow the effective UI language.
 
 For the Chinese calendar, `secondary` uses traditional Chinese day notation
-(初二, 廿一, etc.); day one shows the month name instead, including the leap-month
-prefix. `fullDate` retains the complete ICU-localized date. This is a presentation
-change in the 1.0.7.0 development line; numeric fields and API version are unchanged.
+(初二, 廿一, etc.); day one shows the month name, including any leap-month prefix.
+`fullDate` retains the complete ICU-localized date. Numeric fields are unchanged.
 
-Holiday names are an offline holidays 0.95 PUBLIC snapshot for 2020–2035, selected
-region scope only (no subdivisions), observed=False. Transferred rest-day entries
-are additionally filtered using the source's localized substitution template.
-Real multi-day holidays and upstream estimated labels
-are retained. It is not a workday/leave API or a complete cultural festival list.
-Names use the matching supported locale/base language, then English, then a source
-language. Out-of-range availability is false, not proof of no holiday. Disabling
-annotations never changes events. Older hosts should show only Gregorian dates.
+Holiday display was removed during 1.0.7.0 development. No holiday dataset,
+region setting, provider or network request remains. For compatibility with
+earlier components, preferences still return `holidaysEnabled=false`, `region=""`,
+`holidayFirstYear=0`, `holidayLastYear=0`; displayOptions returns `regions={}`;
+annotations retain `holidays={}` and `holidaysAvailable=false`. These legacy
+fields cannot enable holiday display and must not be treated as data coverage.
+Old stored holiday choices are ignored. The built-in month-calendar consumes
+only secondary dates. Disabling annotations never changes events.
