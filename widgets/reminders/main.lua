@@ -339,12 +339,24 @@ local function render(context, model)
     end
     local addCx = addX + addSize / 2
     local addCy = addY + addSize / 2
-    draw.line(addCx - addSize * 0.27, addCy,
-        addCx + addSize * 0.27, addCy, px(3), palette.add,
-        addEnabled and 1.0 or 0.28)
-    draw.line(addCx, addCy - addSize * 0.27,
-        addCx, addCy + addSize * 0.27, px(3), palette.add,
-        addEnabled and 1.0 or 0.28)
+    local arm = addSize * 0.27
+    local halfStroke = px(3) / 2
+    -- Fill one outline so the disabled alpha is applied only once at the center.
+    draw.path({
+        { op = "move", x = addCx - halfStroke, y = addCy - arm },
+        { op = "line", x = addCx + halfStroke, y = addCy - arm },
+        { op = "line", x = addCx + halfStroke, y = addCy - halfStroke },
+        { op = "line", x = addCx + arm, y = addCy - halfStroke },
+        { op = "line", x = addCx + arm, y = addCy + halfStroke },
+        { op = "line", x = addCx + halfStroke, y = addCy + halfStroke },
+        { op = "line", x = addCx + halfStroke, y = addCy + arm },
+        { op = "line", x = addCx - halfStroke, y = addCy + arm },
+        { op = "line", x = addCx - halfStroke, y = addCy + halfStroke },
+        { op = "line", x = addCx - arm, y = addCy + halfStroke },
+        { op = "line", x = addCx - arm, y = addCy - halfStroke },
+        { op = "line", x = addCx - halfStroke, y = addCy - halfStroke },
+        { op = "close" },
+    }, { fillColor = palette.add, alpha = addEnabled and 1.0 or 0.28 })
     registerRegion(addKey, {
         type = "circle", x = addCx, y = addCy, radius = addSize / 2,
     }, "hand", { click = { id = "task.add" } }, {
