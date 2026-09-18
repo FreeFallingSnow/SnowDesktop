@@ -151,8 +151,11 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         reminder.Header(winrt::box_value(L("settings.calendar.reminder")));
         const auto reminderSelection = reminder.SelectedIndex();
         reminder.Items().Clear();
-        for (int value : reminderValues)
-            reminder.Items().Append(winrt::box_value(L("settings.calendar.reminder." + std::to_string(value))));
+        for (const auto& label : {L("settings.calendar.reminder.-1"),
+                L("settings.calendar.reminder.0"), L("settings.calendar.reminder.5"),
+                L("settings.calendar.reminder.15"), L("settings.calendar.reminder.30"),
+                L("settings.calendar.reminder.60"), L("settings.calendar.reminder.1440")})
+            reminder.Items().Append(winrt::box_value(label));
         reminder.SelectedIndex(reminderSelection >= 0 ? reminderSelection : 0);
         notes.Header(winrt::box_value(L("settings.calendar.notes")));
         allDay.Header(winrt::box_value(L("settings.calendar.allDay")));
