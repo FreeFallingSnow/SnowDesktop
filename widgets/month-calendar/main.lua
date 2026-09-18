@@ -476,7 +476,7 @@ local function render(context, model)
     end
 
     local weekStart = effectiveWeekStart()
-    local captionSize = math.min(metrics.captionFontSize * 0.78 * textScale, cellWidth * 0.22)
+    local captionSize = math.min(metrics.captionFontSize * 0.78 * textScale, cellWidth * 0.38)
     local hasAnnotations = next(extra) ~= nil
     local shortHeight = cellHeight < fontSize + metrics.spacingXs * 2 +
         (hasAnnotations and captionSize or 0)
@@ -526,8 +526,8 @@ local function render(context, model)
             annotationLabel(subtitle, x + unit, dayTop + dayHeight,
                 cellWidth - unit * 2, captionHeight, captionSize, colors.text, 0.78)
             if counts[date] then
-                draw.circle(centerX,
-                    weekTop + weekHeight - metrics.spacingXs,
+                draw.circle(subtitle ~= "" and (x + cellWidth * 0.90) or centerX,
+                    subtitle ~= "" and centerY or (weekTop + weekHeight - metrics.spacingXs),
                     px(1.5), colors.text,
                     0.86)
             end
@@ -596,8 +596,8 @@ local function render(context, model)
                     captionSize, colors.text, cell.currentMonth and 0.78 or 0.34)
             end
             if counts[cell.date] then
-                draw.circle(centerX,
-                    y + cellHeight - metrics.spacingXs,
+                draw.circle(showSubtitle and (x + cellWidth * 0.90) or centerX,
+                    showSubtitle and centerY or (y + cellHeight - metrics.spacingXs),
                     math.min(px(2), math.max(px(1.4),
                         cellWidth * 0.035)),
                     colors.text,
