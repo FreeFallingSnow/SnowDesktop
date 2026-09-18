@@ -437,6 +437,7 @@ struct DockPagePresenter::Impl
     winrt::event_token keepWhenDesktopHiddenToken{};
     winrt::event_token allowDesktopContentOverlapToken{};
     winrt::event_token showOnlyWhenSummonedToken{};
+    winrt::event_token taskbarSettingsToken{};
     winrt::event_token restartExplorerToken{};
     winrt::event_token taskbarThemeToken{};
     winrt::event_token taskbarContentThemeToken{};
@@ -578,8 +579,6 @@ struct DockPagePresenter::Impl
 
         InitializeCard(taskbarCard, cardStyle, taskbarRoot);
         taskbarSettingsLink = muxc::HyperlinkButton{};
-        taskbarSettingsLink.NavigateUri(
-            winrt::Windows::Foundation::Uri{L"ms-settings:taskbar"});
         taskbarSettingsLink.UseSystemFocusVisuals(true);
         taskbarSettingsRow.Initialize(taskbarSettingsLink);
         taskbarSettingsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -1120,6 +1119,11 @@ struct DockPagePresenter::Impl
                     [value](PersonalizationSettings& appearance) {
                         appearance.acrylicEnabled = value;
                     });
+            });
+        taskbarSettingsToken = taskbarSettingsLink.Click(
+            [this](const auto&, const auto&) {
+                if (!closed && active && hasSnapshot && actions.openTaskbarSettings)
+                    actions.openTaskbarSettings(generation);
             });
         restartExplorerToken = restartExplorerButton.Click(
             [this](const auto&, const auto&) {
@@ -2511,6 +2515,7 @@ struct DockPagePresenter::Impl
             allowDesktopContentOverlapToggle.Toggled(
                 allowDesktopContentOverlapToken);
             showOnlyWhenSummonedToggle.Toggled(showOnlyWhenSummonedToken);
+            taskbarSettingsLink.Click(taskbarSettingsToken);
             windowsSystemThemeChoices.SelectionChanged(
                 windowsSystemThemeToken);
             restartExplorerButton.Click(restartExplorerToken);
