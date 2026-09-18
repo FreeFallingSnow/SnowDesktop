@@ -354,8 +354,11 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
 
     const DragSourceList& sourceList =
         dragSession_.SourceList();
+    // External OLE sessions deliberately have no internal source bindings.
+    const bool externalDrag =
+        dragDropController_.IsExternalDragActive();
     if (!dragSession_.IsActive() ||
-        !(sourceList.hasDesktopIcons ||
+        !(externalDrag || sourceList.hasDesktopIcons ||
           sourceList.hasFolderEntries ||
           sourceList.hasExternalFiles) ||
         sourceList.hasCollectionGroupEntries ||
@@ -383,7 +386,7 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
         std::wstring id;
         if (auto* group =
                 dynamic_cast<CollectionGroup*>(it->get());
-            group && sourceList.hasDesktopIcons)
+            group && (externalDrag || sourceList.hasDesktopIcons))
         {
             id = group->CategoryIdAtPoint(point);
             if (id.empty() ||

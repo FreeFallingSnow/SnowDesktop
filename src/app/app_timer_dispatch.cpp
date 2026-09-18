@@ -615,7 +615,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
 
         if (TryActivateCollectionGroupTab(GetTickCount()))
         {
-            OnMouseMoveAt(0, lastMousePoint_);
+            RefreshDwellDragTarget(lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }

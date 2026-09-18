@@ -292,6 +292,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     }
     UpdateCollectionPopupDwell(client);
+    UpdateCollectionGroupTabDwell(client);
 
     if (HitTestLuaFileDropTarget(client) < widgets_.size())
     {
@@ -414,6 +415,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         return S_OK;
     }
     UpdateCollectionPopupDwell(client);
+    UpdateCollectionGroupTabDwell(client);
 
     if (HitTestLuaFileDropTarget(client) < widgets_.size())
     {
