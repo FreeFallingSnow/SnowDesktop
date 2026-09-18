@@ -10,8 +10,10 @@ The effective UI language is used even in system-language mode. Chinese lunar
 captions use traditional day names and show the month only on day one, including
 leap months. Gregorian event keys and navigation stay unchanged.
 
-The built-in month-calendar fits small secondary text without ellipsis in both
-month and compact-week layouts. Full dates remain in accessible labels/tooltips.
+The built-in month-calendar shows extra-calendar dates in hover tooltips in both
+month and compact-week layouts, leaving cells for Gregorian dates and event dots.
+Full extra-calendar dates also remain in accessible labels. Immediate-mode host
+rendering must paint interaction-region tooltips after component content and clips.
 The toggle defaults off; switching it off preserves the selected calendar and
 all events. No holiday label is consumed, even when using an earlier host.
 

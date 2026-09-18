@@ -19880,6 +19880,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             DrawHostViewInteractionOverlays(*found,
                 found->interactionRegions,
                 found->viewKeyboardFocusKey, true);
+            DrawWidgetViewTooltip(d2dState_, found->interactionRegions);
             (void)ScheduleAnimationFrame(*found);
             return;
         }
@@ -20474,6 +20475,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         DrawHostViewInteractionOverlays(current,
             current.interactionRegions,
             current.viewKeyboardFocusKey, true);
+        // Immediate-mode regions carry the same tooltip contract as view nodes.
+        // Paint after the component's clips and cached content have been restored.
+        DrawWidgetViewTooltip(d2dState_, current.interactionRegions);
     }
     lua_pop(state, 1);
 }
