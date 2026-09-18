@@ -248,9 +248,12 @@ local function annotations(model)
     return model.annotations or {}
 end
 
-local function annotationText(item)
-    if not item then return "" end
-    return item.secondary or ""
+local function annotationTooltip(date, item)
+    if not item or not widget.hasFeature("interaction.tooltip") then return nil end
+    local text = item.fullDate or ""
+    if text == "" then text = item.secondary or "" end
+    if text == "" then return nil end
+    return { title = date, text = text }
 end
 
 local function dateDescription(date, item)
@@ -278,19 +281,6 @@ local function centeredText(text, x, y, width, height,
         y + math.max(0, (height - measured.height) / 2),
         text, size, color, math.max(1, width), bold, true, 0,
         alpha or 1.0)
-end
-
--- Fit the full annotation to its own line; maxWidth=0 avoids host ellipsis.
-local function annotationLabel(text, x, y, width, height, size, color, alpha)
-    if text == "" then return end
-    local measured = draw.measureText(text, size, 0, false)
-    local scale = math.min(1, width / math.max(1, measured.width),
-        height / math.max(1, measured.height))
-    size = size * scale
-    measured = draw.measureText(text, size, 0, false)
-    draw.text(x + math.max(0, (width - measured.width) / 2),
-        y + math.max(0, (height - measured.height) / 2),
-        text, size, color, 0, false, true, 0, alpha)
 end
 
 local function submitButton(id, label, shape, metrics)
@@ -474,10 +464,7 @@ local function render(context, model)
     end
 
     local weekStart = effectiveWeekStart()
-    local captionSize = math.min(metrics.captionFontSize * 0.78 * textScale, cellWidth * 0.38)
-    local hasAnnotations = next(extra) ~= nil
-    local shortHeight = cellHeight < fontSize + metrics.spacingXs * 2 +
-        (hasAnnotations and captionSize or 0)
+    local shortHeight = cellHeight < fontSize + metrics.spacingXs * 2
     if shortHeight then
         local weekTop = bodyTop
         local weekHeight = math.max(unit,
@@ -500,9 +487,6 @@ local function render(context, model)
             local dayTop = weekTop + smallFont + metrics.spacingXs
             local dayHeight = math.max(unit,
                 weekHeight - smallFont - metrics.spacingXs)
-            local subtitle = annotationText(extra[date])
-            local captionHeight = subtitle ~= "" and math.min(dayHeight * 0.3, captionSize * 1.5) or 0
-            dayHeight = dayHeight - captionHeight
             local diameter = math.min(cellWidth * 0.82, dayHeight * 0.88)
             local centerX = x + cellWidth / 2
             local centerY = dayTop + dayHeight / 2
@@ -521,11 +505,9 @@ local function render(context, model)
                 cellWidth, dayHeight, fontSize,
                 isSelected and colors.inverse or colors.text,
                 isToday or isSelected, 1.0)
-            annotationLabel(subtitle, x + unit, dayTop + dayHeight,
-                cellWidth - unit * 2, captionHeight, captionSize, colors.text, 0.78)
             if counts[date] then
-                draw.circle(subtitle ~= "" and (x + cellWidth * 0.90) or centerX,
-                    subtitle ~= "" and centerY or (weekTop + weekHeight - metrics.spacingXs),
+                draw.circle(centerX,
+                    weekTop + weekHeight - metrics.spacingXs,
                     px(1.5), colors.text,
                     0.86)
             end
@@ -540,7 +522,7 @@ local function render(context, model)
                     contextMenu = { id = "calendar.menu",
                         scope = "component" },
                 },
-                tooltip = widget.hasFeature("interaction.tooltip") and dateDescription(date, extra[date]) or nil,
+                tooltip = annotationTooltip(date, extra[date]),
                 accessibility = { role = "button", label = dateDescription(date, extra[date]) },
             })
         end
@@ -565,9 +547,7 @@ local function render(context, model)
             local key = "calendar.date." .. cell.date
             local isSelected = cell.date == selected
             local isToday = cell.date == today
-            local subtitle = annotationText(extra[cell.date])
-            local showSubtitle = subtitle ~= ""
-            local dayHeight = showSubtitle and (cellHeight - captionSize - metrics.spacingXs * 2) or cellHeight
+            local dayHeight = cellHeight
             local diameter = math.min(cellWidth, dayHeight) * 0.82
             local centerX = x + cellWidth / 2
             local centerY = y + dayHeight * 0.44
@@ -588,14 +568,9 @@ local function render(context, model)
                 isSelected and colors.inverse or colors.text,
                 isToday or isSelected,
                 cell.currentMonth and 1.0 or 0.38)
-            if showSubtitle then
-                annotationLabel(subtitle, x + metrics.spacingXs * 0.5, y + dayHeight,
-                    cellWidth - metrics.spacingXs, captionSize + metrics.spacingXs,
-                    captionSize, colors.text, cell.currentMonth and 0.78 or 0.34)
-            end
             if counts[cell.date] then
-                draw.circle(showSubtitle and (x + cellWidth * 0.90) or centerX,
-                    showSubtitle and centerY or (y + cellHeight - metrics.spacingXs),
+                draw.circle(centerX,
+                    y + cellHeight - metrics.spacingXs,
                     math.min(px(2), math.max(px(1.4),
                         cellWidth * 0.035)),
                     colors.text,
@@ -603,7 +578,7 @@ local function render(context, model)
             end
             interaction.region({
                 key = key,
-                tooltip = widget.hasFeature("interaction.tooltip") and dateDescription(cell.date, extra[cell.date]) or nil,
+                tooltip = annotationTooltip(cell.date, extra[cell.date]),
                 shape = {
                     type = "rect", x = x, y = y,
                     width = cellWidth, height = cellHeight,
