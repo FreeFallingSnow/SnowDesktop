@@ -2,7 +2,6 @@
 #include "calendar_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "../l10n.h"
-#include <cmath>
 #include <cstdio>
 
 namespace snowdesktop::winui
@@ -79,8 +78,6 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         title.MaxLength(512); date.MaxLength(10); start.MaxLength(5); end.MaxLength(5); notes.MaxLength(8192);
         date.PlaceholderText(L"YYYY-MM-DD"); start.PlaceholderText(L"HH:mm"); end.PlaceholderText(L"HH:mm");
         notes.AcceptsReturn(true); notes.TextWrapping(mux::TextWrapping::Wrap); notes.MaxHeight(180);
-        for (int value : reminderValues) reminder.Items().Append(winrt::box_value(std::to_wstring(value)));
-        reminder.SelectedIndex(0);
         editor.Children().Append(title); editor.Children().Append(date); editor.Children().Append(allDay);
         editor.Children().Append(start); editor.Children().Append(end); editor.Children().Append(reminder);
         editor.Children().Append(notes);
@@ -152,6 +149,11 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         start.Header(winrt::box_value(L("settings.calendar.start")));
         end.Header(winrt::box_value(L("settings.calendar.end")));
         reminder.Header(winrt::box_value(L("settings.calendar.reminder")));
+        const auto reminderSelection = reminder.SelectedIndex();
+        reminder.Items().Clear();
+        for (int value : reminderValues)
+            reminder.Items().Append(winrt::box_value(L("settings.calendar.reminder." + std::to_string(value))));
+        reminder.SelectedIndex(reminderSelection >= 0 ? reminderSelection : 0);
         notes.Header(winrt::box_value(L("settings.calendar.notes")));
         allDay.Header(winrt::box_value(L("settings.calendar.allDay")));
         add.Content(winrt::box_value(L("settings.calendar.add")));
@@ -223,7 +225,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         event.endMinutes = event.allDay ? 0 : Minutes(end.Text());
         const int reminderIndex = reminder.SelectedIndex();
         const int minutes = reminderIndex >= 0 && static_cast<size_t>(reminderIndex) < reminderValues.size() ? reminderValues[reminderIndex] : -2;
-        if (!std::isfinite(minutes) || std::floor(minutes) != minutes || minutes < -1 || minutes > 10080 ||
+        if (minutes < -1 ||
             event.title.empty() || !calendar::CalendarService::GetDateInfo(event.date) ||
             event.startMinutes < 0 || event.endMinutes < event.startMinutes)
         { error.Text(L("settings.calendar.invalid")); return; }

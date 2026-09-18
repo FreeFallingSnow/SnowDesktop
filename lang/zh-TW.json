@@ -1788,7 +1788,7 @@
     "settings.calendar.date": "日期（公曆）",
     "settings.calendar.start": "開始時間",
     "settings.calendar.end": "結束時間",
-    "settings.calendar.reminder": "提前提醒分鐘數（-1 表示關閉）",
+    "settings.calendar.reminder": "提醒",
     "settings.calendar.notes": "備註",
     "settings.calendar.allDay": "全天",
     "settings.calendar.add": "新增行程",
@@ -1797,5 +1797,12 @@
     "settings.calendar.confirmDelete": "刪除此行程？",
     "settings.calendar.failed": "操作失敗，變更未儲存。",
     "settings.calendar.invalid": "請檢查標題、日期、時間及提醒值。",
-    "settings.calendar.conflict": "此行程已變更，請重新選取以載入最新版本後再編輯。"
+    "settings.calendar.conflict": "此行程已變更，請重新選取以載入最新版本後再編輯。",
+    "settings.calendar.reminder.-1": "不提醒",
+    "settings.calendar.reminder.0": "行程開始時",
+    "settings.calendar.reminder.5": "提前 5 分鐘",
+    "settings.calendar.reminder.15": "提前 15 分鐘",
+    "settings.calendar.reminder.30": "提前 30 分鐘",
+    "settings.calendar.reminder.60": "提前 1 小時",
+    "settings.calendar.reminder.1440": "提前 1 天"
 }

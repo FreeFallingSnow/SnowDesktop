@@ -1788,7 +1788,7 @@
     "settings.calendar.date": "Fecha (gregoriana)",
     "settings.calendar.start": "Hora de inicio",
     "settings.calendar.end": "Hora de fin",
-    "settings.calendar.reminder": "Recordatorio (minutos antes; -1 desactiva)",
+    "settings.calendar.reminder": "Recordatorio",
     "settings.calendar.notes": "Notas",
     "settings.calendar.allDay": "Todo el día",
     "settings.calendar.add": "Nuevo evento",
@@ -1797,5 +1797,12 @@
     "settings.calendar.confirmDelete": "¿Eliminar este evento?",
     "settings.calendar.failed": "La operación falló. No se guardaron los cambios.",
     "settings.calendar.invalid": "Revisa el título, la fecha, las horas y el recordatorio.",
-    "settings.calendar.conflict": "Este evento cambió. Vuelve a seleccionarlo para cargar la versión más reciente antes de editarlo."
+    "settings.calendar.conflict": "Este evento cambió. Vuelve a seleccionarlo para cargar la versión más reciente antes de editarlo.",
+    "settings.calendar.reminder.-1": "Sin recordatorio",
+    "settings.calendar.reminder.0": "Al comenzar",
+    "settings.calendar.reminder.5": "5 minutos antes",
+    "settings.calendar.reminder.15": "15 minutos antes",
+    "settings.calendar.reminder.30": "30 minutos antes",
+    "settings.calendar.reminder.60": "1 hora antes",
+    "settings.calendar.reminder.1440": "1 día antes"
 }

@@ -1788,7 +1788,7 @@
     "settings.calendar.date": "日期（公历）",
     "settings.calendar.start": "开始时间",
     "settings.calendar.end": "结束时间",
-    "settings.calendar.reminder": "提前提醒分钟数（-1 表示关闭）",
+    "settings.calendar.reminder": "提醒",
     "settings.calendar.notes": "备注",
     "settings.calendar.allDay": "全天",
     "settings.calendar.add": "新建日程",
@@ -1797,5 +1797,12 @@
     "settings.calendar.confirmDelete": "删除此日程？",
     "settings.calendar.failed": "操作失败，修改未保存。",
     "settings.calendar.invalid": "请检查标题、日期、时间及提醒值。",
-    "settings.calendar.conflict": "此日程已发生变化，请重新选择以加载最新版本后再编辑。"
+    "settings.calendar.conflict": "此日程已发生变化，请重新选择以加载最新版本后再编辑。",
+    "settings.calendar.reminder.-1": "不提醒",
+    "settings.calendar.reminder.0": "日程开始时",
+    "settings.calendar.reminder.5": "提前 5 分钟",
+    "settings.calendar.reminder.15": "提前 15 分钟",
+    "settings.calendar.reminder.30": "提前 30 分钟",
+    "settings.calendar.reminder.60": "提前 1 小时",
+    "settings.calendar.reminder.1440": "提前 1 天"
 }

@@ -1788,7 +1788,7 @@
     "settings.calendar.date": "日付（グレゴリオ暦）",
     "settings.calendar.start": "開始時刻",
     "settings.calendar.end": "終了時刻",
-    "settings.calendar.reminder": "通知する分数（開始前、-1 で無効）",
+    "settings.calendar.reminder": "通知",
     "settings.calendar.notes": "メモ",
     "settings.calendar.allDay": "終日",
     "settings.calendar.add": "予定を追加",
@@ -1797,5 +1797,12 @@
     "settings.calendar.confirmDelete": "この予定を削除しますか？",
     "settings.calendar.failed": "操作に失敗しました。変更は保存されていません。",
     "settings.calendar.invalid": "タイトル、日付、時刻、通知の値を確認してください。",
-    "settings.calendar.conflict": "予定が変更されています。選び直して最新の内容を読み込んでから編集してください。"
+    "settings.calendar.conflict": "予定が変更されています。選び直して最新の内容を読み込んでから編集してください。",
+    "settings.calendar.reminder.-1": "通知しない",
+    "settings.calendar.reminder.0": "開始時刻",
+    "settings.calendar.reminder.5": "5 分前",
+    "settings.calendar.reminder.15": "15 分前",
+    "settings.calendar.reminder.30": "30 分前",
+    "settings.calendar.reminder.60": "1 時間前",
+    "settings.calendar.reminder.1440": "1 日前"
 }

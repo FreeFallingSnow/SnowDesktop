@@ -1788,7 +1788,7 @@
     "settings.calendar.date": "Datum (gregorianisch)",
     "settings.calendar.start": "Beginn",
     "settings.calendar.end": "Ende",
-    "settings.calendar.reminder": "Erinnerung (Minuten vorher; -1 deaktiviert)",
+    "settings.calendar.reminder": "Erinnerung",
     "settings.calendar.notes": "Notizen",
     "settings.calendar.allDay": "Ganztägig",
     "settings.calendar.add": "Neuer Termin",
@@ -1797,5 +1797,12 @@
     "settings.calendar.confirmDelete": "Diesen Termin löschen?",
     "settings.calendar.failed": "Der Vorgang ist fehlgeschlagen. Änderungen wurden nicht gespeichert.",
     "settings.calendar.invalid": "Titel, Datum, Uhrzeiten und Erinnerungswert prüfen.",
-    "settings.calendar.conflict": "Dieser Termin wurde geändert. Zum Laden der aktuellen Version erneut auswählen und dann bearbeiten."
+    "settings.calendar.conflict": "Dieser Termin wurde geändert. Zum Laden der aktuellen Version erneut auswählen und dann bearbeiten.",
+    "settings.calendar.reminder.-1": "Keine Erinnerung",
+    "settings.calendar.reminder.0": "Zu Beginn",
+    "settings.calendar.reminder.5": "5 Minuten vorher",
+    "settings.calendar.reminder.15": "15 Minuten vorher",
+    "settings.calendar.reminder.30": "30 Minuten vorher",
+    "settings.calendar.reminder.60": "1 Stunde vorher",
+    "settings.calendar.reminder.1440": "1 Tag vorher"
 }

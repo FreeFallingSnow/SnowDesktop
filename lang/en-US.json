@@ -1788,7 +1788,7 @@
     "settings.calendar.date": "Date (Gregorian)",
     "settings.calendar.start": "Start time",
     "settings.calendar.end": "End time",
-    "settings.calendar.reminder": "Reminder (minutes before; -1 disables)",
+    "settings.calendar.reminder": "Reminder",
     "settings.calendar.notes": "Notes",
     "settings.calendar.allDay": "All day",
     "settings.calendar.add": "New event",
@@ -1797,5 +1797,12 @@
     "settings.calendar.confirmDelete": "Delete this event?",
     "settings.calendar.failed": "The operation failed. Your changes were not saved.",
     "settings.calendar.invalid": "Check the title, date, times and reminder value.",
-    "settings.calendar.conflict": "This event has changed. Select it again to load the latest version before editing."
+    "settings.calendar.conflict": "This event has changed. Select it again to load the latest version before editing.",
+    "settings.calendar.reminder.-1": "No reminder",
+    "settings.calendar.reminder.0": "At start time",
+    "settings.calendar.reminder.5": "5 minutes before",
+    "settings.calendar.reminder.15": "15 minutes before",
+    "settings.calendar.reminder.30": "30 minutes before",
+    "settings.calendar.reminder.60": "1 hour before",
+    "settings.calendar.reminder.1440": "1 day before"
 }
