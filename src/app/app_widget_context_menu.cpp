@@ -1345,9 +1345,7 @@ void DesktopApp::ShowWidgetContextMenu(
                      DesktopWidgetType::FileCategories)
         {
             wchar_t desktopPath[MAX_PATH]{};
-            if (SHGetSpecialFolderPathW(
-                    nullptr, desktopPath,
-                    CSIDL_DESKTOPDIRECTORY, FALSE))
+            if (snowdesktop::desktop_source::CopyDirectory(desktopPath))
             {
                 ShowNewMenuAndInvoke(
                     screenPoint, desktopPath, false,

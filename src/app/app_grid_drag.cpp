@@ -17,6 +17,8 @@ void DesktopApp::InitializeGridFromWindows()
     // Opening the page respects the saved panel preference and starts no practice.
     usageGuideWelcomePending_ = usageGuideWelcomeQueued_ = true;
 
+    if (snowdesktop::debug_profile::Enabled()) return;
+
     namespace native = snowdesktop::windows_desktop_layout;
     const auto snapshot = native::Capture();
     if (!snapshot.Available())

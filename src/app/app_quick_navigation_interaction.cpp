@@ -722,7 +722,7 @@ bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayNa
         return false;
 
     wchar_t desktopPath[MAX_PATH]{};
-    if (!SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+    if (!snowdesktop::desktop_source::CopyDirectory(desktopPath))
         return false;
 
     std::wstring stem = SanitizeShortcutFileStem(displayName);

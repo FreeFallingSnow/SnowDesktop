@@ -432,13 +432,21 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
  */
 void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
+    ComPtr<IShellFolder> backgroundFolder = desktopFolder_;
+    if (snowdesktop::debug_profile::Enabled())
+    {
+        PIDLIST_ABSOLUTE raw = nullptr;
+        if (FAILED(SHParseDisplayName(snowdesktop::desktop_source::Directory().c_str(), nullptr, &raw, 0, nullptr))) return;
+        Pidl folderId(raw);
+        if (FAILED(desktopFolder_->BindToObject(raw, nullptr, IID_PPV_ARGS(&backgroundFolder)))) return;
+    }
     const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(desktopFolder_.Get(), menuOwner);
+    menuSite.Initialize(backgroundFolder.Get(), menuOwner);
     HWND shellOwner = menuSite.HostWindow()
         ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = desktopFolder_->CreateViewObject(shellOwner, IID_IContextMenu,
+    HRESULT hr = backgroundFolder->CreateViewObject(shellOwner, IID_IContextMenu,
         reinterpret_cast<void**>(contextMenu.GetAddressOf()));
     if (FAILED(hr) || !contextMenu)
         return;

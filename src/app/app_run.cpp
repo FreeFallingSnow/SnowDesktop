@@ -576,6 +576,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     controlHwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         kControlWindowClassName, L"SnowDesktopControl", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, instance, this);
+    SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
+        reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
     systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(
         L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
@@ -811,7 +813,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         return generalSettings_.widgetDeveloperToolsEnabled;
     };
     settingsHostOptions.debugVisible = [this]() {
-        return !initializationExperimentDirectory_.empty();
+        return snowdesktop::debug_profile::Enabled() || !initializationExperimentDirectory_.empty();
     };
     settingsHostOptions.ensureWidgetSettingsInstance = [this](
         std::wstring_view instanceId) {

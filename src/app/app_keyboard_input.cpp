@@ -398,8 +398,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 {
                     if (target < widgets_.size()) desktopFilesWidgetId = widgets_[target].id;
                     wchar_t desktopPath[MAX_PATH]{};
-                    if (SHGetSpecialFolderPathW(nullptr, desktopPath,
-                            CSIDL_DESKTOPDIRECTORY, FALSE)) directory = desktopPath;
+                    if (snowdesktop::desktop_source::CopyDirectory(desktopPath)) directory = desktopPath;
                 }
             }
             if (!directory.empty())

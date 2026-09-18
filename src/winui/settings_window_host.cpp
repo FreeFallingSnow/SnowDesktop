@@ -628,6 +628,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DeveloperTools, "developer.runtime",
         "app.settings.widgets_runtime_diagnostics",
         "settings.developer.tools.description"},
+    {SettingsPage::Debug, "debug.profile", "settings.debug.profile.enabled", "settings.debug.profile.description"},
+    {SettingsPage::Debug, "debug.desktop", "settings.debug.profile.desktop", "settings.debug.profile.chooseHint"},
+    {SettingsPage::Debug, "debug.clearProfile", "settings.debug.profile.clear", "settings.debug.profile.clearHint"},
     {SettingsPage::Debug, "debug.demo_mode", "app.settings.demo_mode",
         "app.settings.demo_mode_hint"},
     {SettingsPage::Debug, "debug.initialization", "settings.debug.initialization",
@@ -2396,6 +2399,50 @@ struct SettingsWindowHost::Impl
             const SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
+        };
+        const auto invokeDebugProfile = [weak](std::uint64_t generation,
+            SettingsHostActions::Action action, bool enabled, std::wstring value) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller || !state->owner->DebugPageVisible() ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            SettingsHostActions::Request request;
+            request.action = action;
+            request.boolValue = enabled;
+            request.value = std::move(value);
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
+            state->owner->ShowActionError(result);
+            if (state->owner->shell) state->owner->shell->RefreshRuntimeState();
+        };
+        homeAbout.setDebugProfileEnabled = [invokeDebugProfile](std::uint64_t generation, bool enabled) {
+            invokeDebugProfile(generation, SettingsHostActions::Action::SetDebugProfileEnabled, enabled, {});
+        };
+        homeAbout.chooseDebugDesktop = [weak, invokeDebugProfile](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->DebugPageVisible() || !state->owner->controller->IsGenerationCurrent(generation)) return;
+            const auto selected = ShowOpenPathDialog(state->owner->window,
+                state->owner->L("settings.debug.profile.desktop"), {}, true);
+            if (selected) invokeDebugProfile(generation,
+                SettingsHostActions::Action::SetDebugDesktopDirectory, false, selected->wstring());
+        };
+        homeAbout.clearDebugProfile = [weak, invokeDebugProfile](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->DebugPageVisible() || !state->owner->controller->IsGenerationCurrent(generation)) return;
+            auto& owner = *state->owner;
+            if (!owner.options.homeAboutStatus) return;
+            const auto status = owner.options.homeAboutStatus(generation, owner.controller->Snapshot()->revision);
+            if (!status.debugDataDirectory || status.debugDataDirectory->empty()) return;
+            const auto root = std::filesystem::path(*status.debugDataDirectory).parent_path();
+            const auto detail = owner.L("settings.debug.profile.clearConfirm") + L"\n\n" +
+                *status.debugDataDirectory + L"\n" + (root / L"FullBackups").wstring() +
+                L"\n" + (root / L"TempState").wstring() + L"\n" + (root / L"PrivateState").wstring();
+            owner.ShowGenerationConfirmation(generation, owner.L("settings.debug.profile.clear"), detail,
+                [invokeDebugProfile, generation](bool confirmed) {
+                    if (confirmed) invokeDebugProfile(generation, SettingsHostActions::Action::ClearDebugProfile, false, {});
+                }, true, owner.L("settings.debug.profile.clear"));
         };
         homeAbout.setTemporaryInitialization = [weak](std::uint64_t generation, bool enabled) {
             const auto state = weak.lock();

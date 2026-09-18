@@ -18,6 +18,7 @@
 #include "application_crash_watchdog.h"
 #include "application_restart_policy.h"
 #include "data_paths.h"
+#include "debug_profile.h"
 #include "deployment_context.h"
 #include "general_settings.h"
 #include "l10n.h"
@@ -507,6 +508,29 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         snowdesktop::single_instance::AcquireResult::Primary)
     {
         return 0;
+    }
+
+    std::string profileError;
+    if (!InitializeDebugProfile(profileError))
+    {
+        InitializeStartupLocale();
+        const std::wstring message = std::wstring(_LW("settings.debug.profile.recover")) +
+            L"\n\n" + Utf8ToWide(profileError);
+        if (MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_YESNO | MB_ICONERROR) != IDYES)
+            return ERROR_INVALID_DATA;
+        const auto paths = snowdesktop::debug_profile::ResolvePaths(GetDataDirectoryPath());
+        snowdesktop::debug_profile::Configuration config;
+        std::string recoveryError;
+        if (!snowdesktop::debug_profile::Read(paths, config, recoveryError))
+            config.desktop = paths.defaultDesktop;
+        config.enabled = false;
+        config.pendingReset = false;
+        if (!snowdesktop::debug_profile::Write(paths, config, recoveryError) ||
+            !InitializeDebugProfile(recoveryError))
+        {
+            MessageBoxW(nullptr, _LW("settings.debug.profile.recoveryFailed"), L"SnowDesktop", MB_OK | MB_ICONERROR);
+            return ERROR_WRITE_FAULT;
+        }
     }
 
     // The stable launcher owns runtime retirement. At this point this process

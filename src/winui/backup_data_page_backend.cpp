@@ -320,7 +320,7 @@ BackendPaths ResolvePaths(const BackupDataPageBackendOptions& options)
     if (paths.stateRoot.empty())
     {
         paths.stateRoot =
-            snowdesktop::deployment::GetPackageLocalStatePath();
+            options.dataDirectory.empty() ? std::filesystem::path(GetDataStateRootPath()) : paths.dataDirectory.parent_path();
         if (paths.stateRoot.empty())
             paths.stateRoot = paths.dataDirectory.parent_path();
     }

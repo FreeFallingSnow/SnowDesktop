@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../single_instance.h"
 #include "../atomic_file.h"
 #include "../auto_start_manager.h"
 #include "../deployment_context.h"
@@ -570,6 +571,15 @@ snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::u
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
     patch.temporaryInitializationEnabled = !initializationExperimentDirectory_.empty();
+    const auto& profile = snowdesktop::debug_profile::Current();
+    snowdesktop::debug_profile::Configuration configuration;
+    std::string profileError;
+    if (!snowdesktop::debug_profile::Read(profile.paths, configuration, profileError))
+        configuration = profile.configuration;
+    patch.debugProfileEnabled = snowdesktop::debug_profile::Enabled();
+    patch.debugDataDirectory = profile.paths.data.wstring();
+    patch.debugDesktopDirectory = configuration.desktop.wstring();
+
     patch.animationDiagnosticsStatus =
         BuildAnimationDiagnosticsStatus();
     return patch;
@@ -765,9 +775,76 @@ snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings
     return SettingsActionResult::Success();
 }
 
+snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(
+    const snowdesktop::SettingsHostActions::Request& request)
+{
+    namespace profile = snowdesktop::debug_profile;
+    using Action = snowdesktop::SettingsHostActions::Action;
+    using Result = snowdesktop::SettingsActionResult;
+    const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
+    if (!snapshot || !snapshot->sessionActive || exitRequested_ || reloading_ ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        snowdesktop::winui::HasPendingBackupDataWork() || snapshot->externalReplacementPending)
+        return Result::Failure(_LW("settings.backup.restoreLayout.busy"));
+    if (!initializationExperimentDirectory_.empty())
+        return Result::Failure(_LW("settings.debug.profile.exclusive"));
+    const auto flushed = settingsController_->FlushAll();
+    if (!flushed.Succeeded()) return flushed;
+    if (!SaveLayoutSlots()) return Result::Failure(_LW("settings.debug.profile.failed"));
+    const auto& paths = profile::Current().paths;
+    profile::Configuration previous;
+    std::string error;
+    const auto failure = [&]() {
+        return Result::Failure(std::wstring(_LW("settings.debug.profile.failed")) + L"\n" + Utf8ToWide(error));
+    };
+    if (!profile::Read(paths, previous, error)) return failure();
+    auto next = previous;
+    if (request.action == Action::SetDebugProfileEnabled)
+    {
+        next.enabled = request.boolValue;
+        if (next.enabled == profile::Enabled()) return Result::Success();
+        if (next.enabled && !profile::Prepare(paths, next, snowdesktop::desktop_source::SystemDesktops(), error))
+            return failure();
+    }
+    else if (request.action == Action::SetDebugDesktopDirectory)
+    {
+        if (!profile::ValidateDesktop(paths, request.value, snowdesktop::desktop_source::SystemDesktops(), error))
+            return failure();
+        if (snowdesktop::single_instance::DataDirectoriesMatch(previous.desktop.wstring(), request.value))
+            return Result::Success();
+        next.desktop = request.value;
+        next.pendingDesktopChange = true;
+    }
+    else if (request.action == Action::ClearDebugProfile)
+    {
+        next.pendingReset = true;
+        if (!profile::Write(paths, next, error)) return failure();
+        if (!profile::Enabled())
+        {
+            if (!profile::Clear(paths, error)) return failure();
+            next.pendingReset = false;
+            next.pendingDesktopChange = false;
+            if (!profile::Write(paths, next, error)) return failure();
+            PublishHomeAboutStatus();
+            return Result::Success();
+        }
+    }
+    if (!profile::Write(paths, next, error)) return failure();
+    if (!RequestRestart())
+    {
+        std::string rollbackError;
+        if (!profile::Write(paths, previous, rollbackError)) error += " " + rollbackError;
+        return failure();
+    }
+    return Result::Success();
+}
+
 snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(bool enabled)
 {
     using snowdesktop::SettingsActionResult;
+    if (enabled && snowdesktop::debug_profile::Enabled())
+        return SettingsActionResult::Failure(_LW("settings.debug.profile.exclusive"));
     if (enabled == !initializationExperimentDirectory_.empty())
         return SettingsActionResult::Success();
     const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
@@ -1269,6 +1346,10 @@ public:
                 request.boolValue);
             app_.PublishHomeAboutStatus();
             break;
+        case Action::SetDebugProfileEnabled:
+        case Action::SetDebugDesktopDirectory:
+        case Action::ClearDebugProfile:
+            return app_.ChangeDebugProfile(request);
         case Action::SetTemporaryGridInitialization:
             return app_.SetTemporaryGridInitialization(request.boolValue);
         case Action::StartUsageGuidePractice:

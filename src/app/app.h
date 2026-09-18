@@ -157,6 +157,8 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include <unordered_set>
 #include <vector>
 
+#include "../desktop_source.h"
+
 using Microsoft::WRL::ComPtr;
 
 namespace snowdesktop::widget_runtime
@@ -1387,6 +1389,7 @@ private:
         snowdesktop::winui::LayoutRestorePayload payload);
     snowdesktop::SettingsActionResult ReloadLayoutAndSynchronizeSettings();
     snowdesktop::SettingsActionResult SetTemporaryGridInitialization(bool enabled);
+    snowdesktop::SettingsActionResult ChangeDebugProfile(const snowdesktop::SettingsHostActions::Request& request);
     std::wstring GetActiveWidgetStoragePath() const;
     [[nodiscard]] snowdesktop::AutoStartQueryResult QueryAutoStartState()
         const noexcept;

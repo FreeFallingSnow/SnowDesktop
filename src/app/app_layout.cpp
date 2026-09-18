@@ -278,6 +278,11 @@ void DesktopApp::LoadLayoutSlots()
 
     for (const auto& item : document.items)
     {
+        if (snowdesktop::debug_profile::Enabled() &&
+            snowdesktop::debug_profile::Current().configuration.pendingDesktopChange &&
+            std::filesystem::path(Utf8ToWide(item.key)).is_absolute() &&
+            (!item.page || Utf8ToWide(*item.page) != kDockPageId)) continue;
+
         LayoutRecord record;
         record.largeIcon = item.largeIcon;
         if (item.page && item.column && item.row)
@@ -824,7 +829,7 @@ bool DesktopApp::SaveLayoutSlots()
     if (std::any_of(items_.begin(), items_.end(), [](const auto& item) { return item.largeIcon.has_value(); }))
     {
         const std::filesystem::path data = GetDataDirectoryPath();
-        auto state = std::filesystem::path(snowdesktop::deployment::GetPackageLocalStatePath());
+        auto state = std::filesystem::path(GetDataStateRootPath());
         if (state.empty()) state = data.parent_path();
         const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 2);
         if (!result.ok)
@@ -1127,13 +1132,22 @@ bool DesktopApp::SaveLayoutSlots()
     }
     file << "]\n}\n";
     std::string saveError;
-    if (!snowdesktop::layout_storage::SaveDocument(
-            GetLayoutPath(), file.str(), &saveError))
+    const bool changedDesktop = snowdesktop::debug_profile::Enabled() &&
+        snowdesktop::debug_profile::Current().configuration.pendingDesktopChange;
+    const bool saved = changedDesktop
+        ? snowdesktop::layout_storage::SaveClearedDocument(GetLayoutPath(), file.str(), &saveError)
+        : snowdesktop::layout_storage::SaveDocument(GetLayoutPath(), file.str(), &saveError);
+    if (!saved)
     {
         const std::wstring message = L"Layout save failed: " +
             Utf8ToWide(saveError);
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Error);
+        return false;
+    }
+    if (!snowdesktop::debug_profile::AcknowledgeDesktopChange(saveError))
+    {
+        WriteDiagnosticLogEntry(Utf8ToWide(saveError).c_str(), DiagnosticLogLevel::Error);
         return false;
     }
     return true;

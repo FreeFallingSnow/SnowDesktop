@@ -2516,7 +2516,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(homeAboutPage_->DebugContent());
             for (const std::string_view focusId : {
-                     "debug.demo_mode", "debug.animation",
+                     "debug.profile", "debug.desktop", "debug.clearProfile",
+                     "debug.initialization", "debug.resetUnlock", "debug.demo_mode", "debug.animation",
                      "debug.crash"})
             {
                 RegisterFocusTarget(std::string(focusId),

@@ -39,7 +39,14 @@ void TestCodec()
     snowdesktop::winui::HomeAboutStatusPatch guide;
     guide.generation = 71; guide.revision = 9;
     guide.usageGuideExpanded = false;
+    guide.debugProfileEnabled = true;
+    guide.debugDataDirectory = L"D:\\data.debug\\data";
+    guide.debugDesktopDirectory = L"D:\\模拟桌面";
     const auto restoredGuide = Unpack<snowdesktop::winui::HomeAboutStatusPatch>(Pack(guide));
+    Check(restoredGuide.debugProfileEnabled == guide.debugProfileEnabled &&
+        restoredGuide.debugDataDirectory == guide.debugDataDirectory &&
+        restoredGuide.debugDesktopDirectory == guide.debugDesktopDirectory,
+        "debug profile status crosses the process boundary without losing paths or mode");
     Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");

@@ -14,7 +14,7 @@ template<> struct Fields<winui::HomeAboutStatusPatch>
         return std::tie(v.generation, v.revision, v.applicationVersion, v.installedWidgetCount,
             v.packaged, v.backupState, v.backupCount, v.backupDetail, v.animationDiagnosticsEnabled,
             v.animationDiagnosticsStatus, v.temporaryInitializationEnabled,
-            v.usageGuideExpanded);
+            v.usageGuideExpanded, v.debugProfileEnabled, v.debugDataDirectory, v.debugDesktopDirectory);
     }
 };
 }

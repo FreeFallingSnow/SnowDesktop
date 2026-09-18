@@ -15,9 +15,7 @@ using DirectoryPathSet = std::unordered_set<std::wstring>;
 std::wstring UserDesktopDirectory()
 {
     wchar_t desktopPath[MAX_PATH]{};
-    if (!SHGetSpecialFolderPathW(
-            nullptr, desktopPath,
-            CSIDL_DESKTOPDIRECTORY, FALSE))
+    if (!snowdesktop::desktop_source::CopyDirectory(desktopPath))
         return {};
     return TrimTrailingPathSeparators(desktopPath);
 }

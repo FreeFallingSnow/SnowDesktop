@@ -290,6 +290,7 @@ set(SNOWDESKTOP_SOURCES
     src/full_data_backup.cpp
     src/portable_data_migration.cpp
     src/single_instance.cpp
+    src/debug_profile.cpp
     src/deployment_context.cpp
     src/shortcut_icon_resource.cpp
     src/shortcut_icon_resource.h
@@ -1052,6 +1053,7 @@ if (BUILD_TESTING)
             src/widget_permission_state.cpp
             src/portable_data_migration.cpp
             src/single_instance.cpp
+            src/debug_profile.cpp
             src/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt ole32 shell32 user32 version
@@ -1062,7 +1064,9 @@ if (BUILD_TESTING)
         single_instance
         SOURCES
             tests/single_instance_tests.cpp
+            src/atomic_file.cpp
             src/single_instance.cpp
+            src/debug_profile.cpp
             src/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 user32 version

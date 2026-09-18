@@ -116,7 +116,7 @@ void DesktopApp::RegisterShellChangeNotifications()
         SHChangeNotifyDeregister(shellChangeRegId_);
         shellChangeRegId_ = 0;
     }
-    SHChangeNotifyEntry entries[2]{};
+    SHChangeNotifyEntry entries[3]{};
     entries[0].pidl = desktopPidl_.get();
     entries[0].fRecursive = FALSE;
     if (!recycleBinPidl_.get())
@@ -131,6 +131,17 @@ void DesktopApp::RegisterShellChangeNotifications()
         entries[1].pidl = recycleBinPidl_.get();
         entries[1].fRecursive = TRUE;
         entryCount = 2;
+    }
+    Pidl simulatedDirectory;
+    if (snowdesktop::debug_profile::Enabled())
+    {
+        PIDLIST_ABSOLUTE raw = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(snowdesktop::desktop_source::Directory().c_str(), nullptr, &raw, 0, nullptr)))
+        {
+            simulatedDirectory.reset(raw);
+            entries[entryCount].pidl = raw;
+            entries[entryCount++].fRecursive = FALSE;
+        }
     }
     shellChangeRegId_ = SHChangeNotifyRegister(hwnd_,
         SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,

@@ -3,10 +3,12 @@
 
 // Shell desktop enumeration and display-topology refresh.
 
-bool snowdesktop::shell_refresh::ReadDesktop(
+static bool ReadDesktopSource(
     const std::unordered_map<std::wstring, bool>& visibility,
-    bool showHiddenItems, std::vector<DesktopItem>& items, MetadataCache* cache)
+    bool showHiddenItems, std::vector<DesktopItem>& items,
+    snowdesktop::shell_refresh::MetadataCache* cache, bool simulated)
 {
+    using namespace snowdesktop::shell_refresh;
     ComPtr<IShellFolder> desktopFolder;
     HRESULT hr = SHGetDesktopFolder(&desktopFolder);
     if (FAILED(hr) || !desktopFolder) return false;
@@ -14,6 +16,18 @@ bool snowdesktop::shell_refresh::ReadDesktop(
     hr = SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &raw);
     if (FAILED(hr) || !raw) return false;
     Pidl desktopPidl(raw);
+    if (simulated)
+    {
+        PIDLIST_ABSOLUTE folderId = nullptr;
+        hr = SHParseDisplayName(snowdesktop::desktop_source::Directory().c_str(), nullptr, &folderId, 0, nullptr);
+        if (FAILED(hr)) return false;
+        desktopPidl.reset(folderId);
+        ComPtr<IShellFolder> folder;
+        hr = desktopFolder->BindToObject(folderId, nullptr, IID_PPV_ARGS(&folder));
+        if (FAILED(hr)) return false;
+        desktopFolder = std::move(folder);
+    }
+
     wchar_t userDesktopPath[MAX_PATH]{};
     wchar_t commonDesktopPath[MAX_PATH]{};
     wchar_t userProfilePath[MAX_PATH]{};
@@ -76,7 +90,10 @@ bool snowdesktop::shell_refresh::ReadDesktop(
                     namespaceRegistrations,
                     &registeredNamespaceVisibleByDefault);
         }
+        if (simulated) clsid.clear();
         bool isDesktopIcon = !clsid.empty();
+        if (snowdesktop::debug_profile::Enabled() && !simulated && !isDesktopIcon)
+        { ILFree(absolute); ILFree(child); continue; }
 
         // Standard desktop icons use the Explorer visibility registry. Other
         // entries, including third-party namespace aliases, still obey their
@@ -100,7 +117,7 @@ bool snowdesktop::shell_refresh::ReadDesktop(
         { ILFree(absolute); ILFree(child); continue; }
 
         // Non-desktop-icon: must be physically on desktop
-        if (!isDesktopIcon && !itemPathStr.empty())
+        if (!simulated && !isDesktopIcon && !itemPathStr.empty())
         {
             bool underUser = itemPathStr.size() > userDesktopLen &&
                 _wcsnicmp(itemPathStr.c_str(), userDesktopPath, userDesktopLen) == 0 &&
@@ -170,6 +187,9 @@ bool snowdesktop::shell_refresh::ReadDesktop(
             ? item.desktopIconClsid : !itemPathStr.empty()
                 ? itemPathStr : item.parsingName);
 
+        if (simulated)
+            item.childPidl.reset(ILCloneFull(item.absolutePidl.get()));
+
         if (!seenKeys.insert(item.layoutKey).second)
             continue; // The local item owns both PIDLs, including duplicates.
         items.push_back(std::move(item));
@@ -179,6 +199,15 @@ bool snowdesktop::shell_refresh::ReadDesktop(
             return !seenMetadata.contains(entry.first);
         });
     return SUCCEEDED(next);
+}
+
+bool snowdesktop::shell_refresh::ReadDesktop(
+    const std::unordered_map<std::wstring, bool>& visibility,
+    bool showHiddenItems, std::vector<DesktopItem>& items, MetadataCache* cache)
+{
+    if (!ReadDesktopSource(visibility, showHiddenItems, items, cache, false)) return false;
+    return !snowdesktop::debug_profile::Enabled() ||
+        ReadDesktopSource(visibility, showHiddenItems, items, nullptr, true);
 }
 
 void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot)

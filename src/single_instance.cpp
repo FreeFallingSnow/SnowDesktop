@@ -1,3 +1,4 @@
+#include "debug_profile.h"
 #include "single_instance.h"
 
 #include "constants.h"
@@ -194,6 +195,16 @@ InstanceInfo DescribeProcess(
     info.packaged = !packageFamilyName.empty();
     info.dataDirectory = ResolveInstanceDataDirectory(
         info.executablePath, packageFamilyName);
+    if (!info.dataDirectory.empty())
+    {
+        const auto paths = debug_profile::ResolvePaths(info.dataDirectory);
+        const auto marker = window ? GetPropW(window, L"SnowDesktop.DebugProfile") : nullptr;
+        debug_profile::Configuration configuration;
+        std::string error;
+        const bool debug = window ? marker == reinterpret_cast<HANDLE>(1) :
+            debug_profile::Read(paths, configuration, error) && configuration.enabled;
+        if (debug) info.dataDirectory = paths.data.wstring();
+    }
     info.version = knownVersion.empty()
         ? ReadExecutableVersion(info.executablePath)
         : std::wstring(knownVersion);

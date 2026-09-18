@@ -1,3 +1,5 @@
+#include "debug_profile.h"
+#include "desktop_source.h"
 #include "full_data_backup.h"
 #include "large_icon_backup.h"
 #include "layout_storage.h"
@@ -427,6 +429,94 @@ void TestLayoutReset(const std::filesystem::path& root)
 }
 }
 
+// Exercise the production profile lifecycle with isolated normal/demo folders.
+// These sentinels detect data routing and destructive-reset regressions.
+void TestDebugProfile(const std::filesystem::path& fixture)
+{
+    namespace profile = snowdesktop::debug_profile;
+    const auto root = fixture / L"debug-profile-test";
+    const auto paths = profile::ResolvePaths(root / L"normal");
+    const auto realDesktop = root / L"real-desktop";
+    Write(paths.normalData / L"normal.txt", "normal-state");
+    Write(realDesktop / L"original.txt", "real-desktop");
+    std::string error;
+    profile::Configuration config;
+    Expect(profile::Read(paths, config, error) && !config.enabled && config.desktop == paths.defaultDesktop,
+        "missing control configuration starts in normal mode with a separate default desktop");
+    Expect(profile::Initialize(paths.normalData, {realDesktop}, error) && !profile::Enabled(),
+        "normal startup leaves debug environment inactive");
+    config.enabled = true;
+    Expect(profile::Prepare(paths, config, {realDesktop}, error), "prepare creates only the default demo directory and data");
+    Expect(!std::filesystem::exists(paths.data / L"normal.txt"), "first debug startup never clones normal state");
+    Write(config.desktop / L"demo.txt", "demo-file");
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) && profile::Enabled(),
+        "enabled profile survives process initialization");
+    Expect(snowdesktop::desktop_source::Directory() == config.desktop.wstring(),
+        "production desktop destination resolves to the simulated directory");
+    wchar_t desktop[MAX_PATH]{};
+    Expect(snowdesktop::desktop_source::CopyDirectory(desktop) && desktop == config.desktop.wstring(),
+        "legacy Shell destination adapter uses the simulated directory");
+    Write(std::filesystem::path(desktop) / L"created.txt", "new-demo-file");
+    Expect(!std::filesystem::exists(realDesktop / L"created.txt"), "desktop creation destination does not target the real desktop");
+    Write(paths.data / L"debug.txt", "saved-debug");
+    Expect(profile::Initialize(paths.normalData, {realDesktop}, error) && Read(paths.data / L"debug.txt") == "saved-debug",
+        "repeated debug initialization preserves state");
+    config.enabled = false;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) && !profile::Enabled() &&
+        Read(paths.data / L"debug.txt") == "saved-debug", "leaving debug mode preserves its data");
+    for (const auto& invalid : {realDesktop, realDesktop / L"child", paths.normalData, paths.data, paths.root, root})
+    {
+        std::filesystem::create_directories(invalid);
+        Expect(!profile::ValidateDesktop(paths, invalid, {realDesktop}, error),
+            "real desktop, managed data, descendants and ancestors cannot be selected");
+    }
+    Expect(!profile::ValidateDesktop(paths, L"relative-folder", {realDesktop}, error), "relative demo directories are rejected");
+    const auto otherDesktop = root / L"other-demo";
+    Write(otherDesktop / L"keep.txt", "keep-demo");
+    Expect(profile::ValidateDesktop(paths, otherDesktop, {realDesktop}, error), "an independent existing folder is accepted");
+    config.desktop = otherDesktop;
+    config.pendingDesktopChange = true;
+    config.enabled = true;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) &&
+        profile::Current().configuration.pendingDesktopChange && snowdesktop::desktop_source::Directory() == otherDesktop.wstring(),
+        "a folder change survives restart and requests removal of stale placement records");
+    Expect(profile::AcknowledgeDesktopChange(error) && profile::Read(paths, config, error) && !config.pendingDesktopChange,
+        "successful layout persistence acknowledges the directory change");
+    Write(paths.root / L"FullBackups" / L"backup.txt", "backup");
+    Write(paths.root / L"TempState" / L"pending.txt", "restore");
+    Write(paths.root / L"PrivateState" / L"secrets.txt", "secret");
+    Write(paths.root / L"unmanaged.txt", "unmanaged");
+    const auto junction = paths.data / L"outside-link";
+    const std::wstring junctionCommand = L"cmd.exe /d /c mklink /J \"" + junction.wstring() +
+        L"\" \"" + otherDesktop.wstring() + L"\" >nul 2>&1";
+    Expect(_wsystem(junctionCommand.c_str()) == 0, "create isolated junction for reset boundary regression");
+    if (GetFileAttributesW(junction.c_str()) != INVALID_FILE_ATTRIBUTES)
+    {
+        Expect(!profile::Clear(paths, error) && Read(paths.data / L"debug.txt") == "saved-debug" &&
+            Read(otherDesktop / L"keep.txt") == "keep-demo",
+            "reset rejects a junction before deleting any managed data or its external target");
+        Expect(!profile::ValidateDesktop(paths, junction, {otherDesktop}, error),
+            "directory aliases cannot bypass real desktop overlap validation");
+        Expect(RemoveDirectoryW(junction.c_str()) != FALSE, "remove only the fixture junction, not its target");
+    }
+    config.pendingReset = true;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error),
+        "active profile reset completes at the startup boundary");
+    Expect(!std::filesystem::exists(paths.data / L"debug.txt") && !std::filesystem::exists(paths.root / L"FullBackups") &&
+        !std::filesystem::exists(paths.root / L"TempState") && !std::filesystem::exists(paths.root / L"PrivateState"), "reset removes debug state, backups and staged restores");
+    Expect(Read(otherDesktop / L"keep.txt") == "keep-demo" && Read(paths.defaultDesktop / L"demo.txt") == "demo-file" &&
+        Read(paths.normalData / L"normal.txt") == "normal-state" && Read(realDesktop / L"original.txt") == "real-desktop" &&
+        Read(paths.root / L"unmanaged.txt") == "unmanaged", "reset preserves both desktops, normal data and unmanaged profile files");
+    Expect(profile::Read(paths, config, error) && config.enabled && !config.pendingReset && config.desktop == otherDesktop,
+        "reset preserves the active mode and selected directory");
+    config.desktop = root / L"missing-custom-folder";
+    Expect(profile::Write(paths, config, error) && !profile::Initialize(paths.normalData, {realDesktop}, error),
+        "missing custom folder fails startup rather than falling back to the real desktop");
+    Write(paths.control, "{broken");
+    Expect(!profile::Read(paths, config, error), "malformed control data must not silently activate normal mode");
+    profile::runtimeSession = {};
+}
+
 int main()
 {
     // PIDs are reused across runs, and a previous interrupted cleanup can
@@ -450,6 +540,7 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestDebugProfile(root);
     TestDockLayoutBackup(root);
     TestLayoutReset(root);
     TestInitializationExperiment(root);
