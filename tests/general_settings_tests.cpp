@@ -31,6 +31,19 @@ void Check(bool condition, const char* message)
 int main()
 {
     {
+        const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopCalendarPreferences-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings settings;
+        settings.calendarDisplay = {true, "hebrew", true, "IL"};
+        Check(SaveGeneralSettings(path.c_str(), settings), "save host calendar preferences");
+        GeneralSettings loaded;
+        Check(LoadGeneralSettings(path.c_str(), loaded) && loaded.calendarDisplay == settings.calendarDisplay, "calendar preferences survive restart");
+        settings.calendarDisplay.enabled = false; settings.calendarDisplay.holidaysEnabled = false;
+        Check(SaveGeneralSettings(path.c_str(), settings) && LoadGeneralSettings(path.c_str(), loaded) && loaded.calendarDisplay == settings.calendarDisplay, "off switches preserve the selected calendar and region");
+        settings.calendarDisplay = {true, "invalid", true, "invalid"};
+        Check(SaveGeneralSettings(path.c_str(), settings) && LoadGeneralSettings(path.c_str(), loaded) && !loaded.calendarDisplay.enabled && !loaded.calendarDisplay.holidaysEnabled, "unknown preferences safely disable annotations");
+        std::error_code error; std::filesystem::remove(path, error);
+    }
+    {
         // A gradient must survive restart independently in every taskbar rule,
         // including its inactive colors after switching back to solid fill.
         DockSettings saved;

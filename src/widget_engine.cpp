@@ -9659,6 +9659,73 @@ static int lua_CalendarSelectDate(lua_State* L)
     return 1;
 }
 
+static int lua_CalendarPreferences(lua_State* L)
+{
+    if (lua_gettop(L) != 0) return luaL_error(L, "calendar.preferences: expected no arguments");
+    auto* state = GetD2D(L);
+    const auto p = state && state->engine ? state->engine->CalendarDisplayPreferences()
+        : snowdesktop::calendar::DisplayPreferences{};
+    lua_createtable(L, 0, 6);
+    lua_pushboolean(L, p.enabled); lua_setfield(L, -2, "enabled");
+    lua_pushstring(L, p.calendar.c_str()); lua_setfield(L, -2, "calendar");
+    lua_pushboolean(L, p.holidaysEnabled); lua_setfield(L, -2, "holidaysEnabled");
+    lua_pushstring(L, p.region.c_str()); lua_setfield(L, -2, "region");
+    lua_pushinteger(L, 2020); lua_setfield(L, -2, "holidayFirstYear");
+    lua_pushinteger(L, 2035); lua_setfield(L, -2, "holidayLastYear");
+    return 1;
+}
+static int lua_CalendarDisplayOptions(lua_State* L)
+{
+    if (lua_gettop(L) != 0) return luaL_error(L, "calendar.displayOptions: expected no arguments");
+    lua_createtable(L, 0, 2);
+    const auto push = [&](const auto& options, const char* field) {
+        lua_createtable(L, static_cast<int>(options.size()), 0);
+        int index = 1;
+        for (const auto& option : options)
+        {
+            lua_createtable(L, 0, 2);
+            lua_pushstring(L, option.id.c_str()); lua_setfield(L, -2, "id");
+            const auto label = WidgetWideToUtf8(option.label);
+            lua_pushlstring(L, label.data(), label.size()); lua_setfield(L, -2, "label");
+            lua_rawseti(L, -2, index++);
+        }
+        lua_setfield(L, -2, field);
+    };
+    push(snowdesktop::calendar::CalendarOptions(Locale::Instance().GetLanguage()), "calendars");
+    push(snowdesktop::calendar::HolidayRegions(Locale::Instance().GetLanguage()), "regions");
+    return 1;
+}
+static int lua_CalendarAnnotations(lua_State* L)
+{
+    if (lua_gettop(L) != 2) return luaL_error(L, "calendar.annotations: expected fromDate and toDate");
+    size_t fromSize = 0, toSize = 0;
+    const char* from = luaL_checklstring(L, 1, &fromSize);
+    const char* to = luaL_checklstring(L, 2, &toSize);
+    auto* state = GetD2D(L);
+    if (!state || !state->engine || fromSize != 10 || toSize != 10)
+    { lua_pushnil(L); return 1; }
+    const auto& days = state->engine->RuntimeCalendarAnnotations(std::string(from, fromSize), std::string(to, toSize));
+    if (days.empty()) { lua_pushnil(L); return 1; }
+    lua_createtable(L, static_cast<int>(days.size()), 0);
+    int index = 1;
+    for (const auto& item : days)
+    {
+        lua_createtable(L, 0, 12);
+        const auto text = [&](const char* key, const std::string& value) { lua_pushlstring(L, value.data(), value.size()); lua_setfield(L, -2, key); };
+        const auto number = [&](const char* key, int value) { lua_pushinteger(L, value); lua_setfield(L, -2, key); };
+        const auto flag = [&](const char* key, bool value) { lua_pushboolean(L, value); lua_setfield(L, -2, key); };
+        text("date", item.date); text("secondary", item.secondary); text("fullDate", item.fullDate);
+        number("year", item.year); number("month", item.month); number("day", item.day); number("era", item.era);
+        flag("leapMonth", item.leapMonth); flag("calendarAvailable", item.calendarAvailable); flag("holidaysAvailable", item.holidaysAvailable);
+        lua_createtable(L, static_cast<int>(item.holidays.size()), 0);
+        int holidayIndex = 1;
+        for (const auto& name : item.holidays) { lua_pushlstring(L, name.data(), name.size()); lua_rawseti(L, -2, holidayIndex++); }
+        lua_setfield(L, -2, "holidays");
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+}
+
 static int lua_CalendarDateInfo(lua_State* L)
 {
     if (lua_gettop(L) != 1)
@@ -25930,6 +25997,30 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId,
     }
     if (!preview) RescheduleNamedTimer(widgets_[index]);
     return true;
+}
+
+void WidgetEngine::SetCalendarDisplayPreferences(snowdesktop::calendar::DisplayPreferences preferences)
+{
+    snowdesktop::calendar::Normalize(preferences);
+    if (calendarDisplay_ == preferences) return;
+    calendarDisplay_ = std::move(preferences);
+    calendarAnnotationCacheKey_.clear();
+    for (auto& widget : widgets_)
+        if (widget.state && WidgetDeclaresFeature(widget, "calendar.annotations"))
+            InvokeLifecycleEvent(widget, "calendar.preferences", [](lua_State*) {});
+    RuntimeInvalidateHost();
+}
+
+const std::vector<snowdesktop::calendar::DayAnnotation>& WidgetEngine::RuntimeCalendarAnnotations(const std::string& from, const std::string& to)
+{
+    const std::string language = Locale::Instance().GetLanguage();
+    const std::string key = from + ":" + to + ":" + language;
+    if (key != calendarAnnotationCacheKey_)
+    {
+        calendarAnnotationCache_ = snowdesktop::calendar::Annotate(from, to, calendarDisplay_, language);
+        calendarAnnotationCacheKey_ = key;
+    }
+    return calendarAnnotationCache_;
 }
 
 std::string WidgetEngine::RuntimeCalendarSelectedDate() const

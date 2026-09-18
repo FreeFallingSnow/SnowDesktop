@@ -1,4 +1,5 @@
 #include "calendar_service.h"
+#include "calendar_display.h"
 
 #include <windows.h>
 
@@ -65,6 +66,42 @@ int main()
             "2025-12-31", 1) ==
             std::optional<std::string>("2026-01-01"),
         "date shifting crosses year");
+
+    // Independent civil dates protect real conversion, holiday selection and off-state semantics.
+    using snowdesktop::calendar::Annotate;
+    snowdesktop::calendar::DisplayPreferences display;
+    display.enabled = true;
+    auto lunar = Annotate("2024-02-10", "2024-02-10", display, "zh-CN");
+    Expect(lunar.size() == 1 && lunar[0].calendarAvailable && lunar[0].month == 1 && lunar[0].day == 1 && !lunar[0].leapMonth,
+        "Chinese New Year maps to month one day one");
+    lunar = Annotate("2023-03-22", "2023-03-22", display, "zh-CN");
+    Expect(lunar.size() == 1 && lunar[0].month == 2 && lunar[0].day == 1 && lunar[0].leapMonth, "Chinese leap month is preserved");
+    display.calendar = "persian";
+    auto persian = Annotate("2024-03-20", "2024-03-20", display, "en-US");
+    Expect(persian.size() == 1 && persian[0].year == 1403 && persian[0].month == 1 && persian[0].day == 1, "Persian New Year conversion");
+    display.enabled = false; display.holidaysEnabled = true; display.region = "US";
+    auto holiday = Annotate("2024-07-04", "2024-07-04", display, "en-US");
+    Expect(holiday.size() == 1 && holiday[0].holidaysAvailable && holiday[0].holidays == std::vector<std::string>{"Independence Day"} && holiday[0].secondary.empty(), "US holiday works independently of secondary calendar");
+    display.region = "JP";
+    holiday = Annotate("2024-07-04", "2024-07-04", display, "en-US");
+    Expect(holiday.size() == 1 && holiday[0].holidays.empty(), "region selection excludes another region's holidays");
+    display.region = "US";
+    holiday = Annotate("2021-07-05", "2021-07-05", display, "en-US");
+    Expect(holiday.size() == 1 && holiday[0].holidays.empty(), "substitute holiday is excluded");
+    holiday = Annotate("2036-07-04", "2036-07-04", display, "en-US");
+    Expect(holiday.size() == 1 && !holiday[0].holidaysAvailable && holiday[0].holidays.empty(), "outside snapshot is unavailable, not authoritative empty");
+    display.holidaysEnabled = false;
+    holiday = Annotate("2024-07-04", "2024-07-04", display, "en-US");
+    Expect(holiday.size() == 1 && !holiday[0].holidaysAvailable && holiday[0].holidays.empty(), "holiday off switch removes annotations");
+    Expect(Annotate("2024-02-30", "2024-03-01", display, "en-US").empty() &&
+        Annotate("2024-03-01", "2024-02-01", display, "en-US").empty() &&
+        Annotate("2024-01-01", "2024-04-01", display, "en-US").empty(), "annotation input and work limits are enforced");
+    for (const auto& option : snowdesktop::calendar::CalendarOptions("en-US"))
+    {
+        display.enabled = true; display.calendar = option.id;
+        const auto sample = Annotate("2024-02-10", "2024-02-10", display, "en-US");
+        Expect(!option.label.empty() && sample.size() == 1 && sample[0].calendarAvailable, "advertised calendar converts with installed ICU");
+    }
 
     CalendarNow now{ "2026-07-30", 9 * 60 + 40 };
     const auto path = root / L"SnowDesktop.calendar.json";

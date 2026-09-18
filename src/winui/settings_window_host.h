@@ -5,6 +5,7 @@
 #include "../settings_search_index.h"
 #include "backup_data_page_backend.h"
 #include "general_page_presenter.h"
+#include "calendar_page_presenter.h"
 #include "home_about_page_model.h"
 #include "page_layout_page_presenter.h"
 #include "widgets_page_backend.h"
@@ -62,6 +63,7 @@ struct SettingsWindowHostOptions
     WidgetsPageBackendOptions widgetsPage;
     BackupDataPageBackendOptions backupDataPage;
     PageLayoutPageActions pageLayoutPage;
+    CalendarPageActions calendarPage;
     LargeIconSettingsAction largeIconSettings;
 
     // The settings child supplies IPC adapters; the application supplies the

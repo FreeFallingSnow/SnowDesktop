@@ -1200,6 +1200,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetEverythingSearchProvider([this](const std::string& query, int maxResults) {
             return BuildLuaEverythingSearch(query, maxResults);
         });
+        widgetEngine_->SetCalendarDisplayPreferences(generalSettings_.calendarDisplay);
         widgetEngine_->SetWidgetTitleCallback([this](const std::wstring& widgetId, const std::wstring& title) {
             LuaSetWidgetTitle(widgetId, title);
         });

@@ -304,6 +304,7 @@ void SettingsController::UpdateGeneral(
 {
     if (externalReplacementPending_) return;
     NormalizeGeneralAnimationSettings(settings);
+    calendar::Normalize(settings.calendarDisplay);
     values_.general = std::move(settings);
     MarkChanged(SettingsDomain::General, mode);
 }

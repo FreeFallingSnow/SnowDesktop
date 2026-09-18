@@ -181,6 +181,7 @@
                 <NavigationViewItem x:Name="DockItem" Tag="dock" />
                 <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
+                <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
                 <NavigationViewItemHeader x:Name="DataHeader" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
             </NavigationView.MenuItems>

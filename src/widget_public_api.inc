@@ -128,6 +128,9 @@ SNOW_WIDGET_PUBLIC_FUNCTION("control", "focus", lua_ControlFocus, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("control", "blur", lua_ControlBlur, 2, nullptr, 0)
 
 SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "selectDate", lua_CalendarSelectDate, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "preferences", lua_CalendarPreferences, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "annotations", lua_CalendarAnnotations, 2, nullptr, 0)
+SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "displayOptions", lua_CalendarDisplayOptions, 2, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "dateInfo", lua_CalendarDateInfo, 1, nullptr, 0)
 SNOW_WIDGET_PUBLIC_FUNCTION("calendar", "addDays", lua_CalendarAddDays, 1, nullptr, 0)
 

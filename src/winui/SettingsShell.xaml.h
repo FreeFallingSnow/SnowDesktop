@@ -9,6 +9,7 @@
 #include "desktop_page_presenter.h"
 #include "dock_page_presenter.h"
 #include "general_page_presenter.h"
+#include "calendar_page_presenter.h"
 #include "home_about_page_presenter.h"
 #include "page_layout_page_presenter.h"
 #include "large_icon_page_presenter.h"
@@ -106,6 +107,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetRouteRequestedCallback(RouteRequestedCallback callback);
     void SetSearchRequestedCallback(SearchRequestedCallback callback);
     void SetCancelOperationCallback(CancelOperationCallback callback);
+    void SetCalendarPageActions(snowdesktop::winui::CalendarPageActions actions);
     void SetGeneralPageActions(
         snowdesktop::winui::GeneralPageActions actions);
     void SetPersonalizationPageActions(
@@ -282,6 +284,8 @@ private:
     CancelOperationCallback cancelOperation_;
     ActualThemeChangedCallback actualThemeChanged_;
     snowdesktop::winui::GeneralPageActions generalPageActions_;
+    snowdesktop::winui::CalendarPageActions calendarPageActions_;
+    std::unique_ptr<snowdesktop::winui::CalendarPagePresenter> calendarPage_;
     snowdesktop::winui::PersonalizationPageActions
         personalizationPageActions_;
     snowdesktop::winui::DesktopPageActions desktopPageActions_;

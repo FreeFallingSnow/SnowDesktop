@@ -216,6 +216,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::DesktopPages:
     case SettingsPage::AnimationPerformance:
     case SettingsPage::LargeIcon:
+    case SettingsPage::Calendar:
         break;
     default:
         return false;
@@ -256,6 +257,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::DesktopPages: return "desktop-pages";
     case SettingsPage::AnimationPerformance: return "animation-performance";
     case SettingsPage::LargeIcon: return "large-icon";
+    case SettingsPage::Calendar: return "calendar";
     }
     return "home";
 }

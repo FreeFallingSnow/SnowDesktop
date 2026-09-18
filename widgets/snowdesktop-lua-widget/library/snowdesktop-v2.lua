@@ -1986,6 +1986,38 @@ calendar = {}
 ---@return SnowCalendarDateInfo?
 function calendar.dateInfo(date) end
 
+---@class SnowCalendarDisplayPreferences
+---@field enabled boolean
+---@field calendar string ICU calendar ID; Gregorian storage is unchanged.
+---@field holidaysEnabled boolean
+---@field region string ISO region ID, independent of UI language.
+---@field holidayFirstYear integer
+---@field holidayLastYear integer
+---@class SnowCalendarAnnotation
+---@field date string Gregorian YYYY-MM-DD.
+---@field secondary string Localized compact secondary date (empty when disabled/unavailable).
+---@field fullDate string Localized complete secondary date.
+---@field year integer ICU extended year, not necessarily display year/era year.
+---@field month integer One-based native ICU month index; calendars may have gaps.
+---@field day integer
+---@field era integer Native ICU era index.
+---@field leapMonth boolean
+---@field calendarAvailable boolean
+---@field holidaysAvailable boolean False when disabled or outside snapshot coverage.
+---@field holidays string[] Source holiday names; translations may fall back.
+---Requires optional feature calendar.annotations. No calendar permission required.
+---@return SnowCalendarDisplayPreferences
+function calendar.preferences() end
+---Inclusive Gregorian range, at most 62 days; nil for invalid ranges.
+---@param fromDate string
+---@param toDate string
+---@return SnowCalendarAnnotation[]?
+function calendar.annotations(fromDate, toDate) end
+---Localized host-supported calendars and national holiday regions.
+---@return table {calendars: {id:string,label:string}[], regions: {id:string,label:string}[]}
+function calendar.displayOptions() end
+
+
 ---Add a bounded number of Gregorian days without reading user calendar data.
 ---@param date string ISO YYYY-MM-DD.
 ---@param offset integer From -366000 through 366000.

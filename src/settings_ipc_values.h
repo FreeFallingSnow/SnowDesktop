@@ -39,12 +39,13 @@ SD_IPC_FIELDS(DockSettings,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode);
+SD_IPC_FIELDS(calendar::DisplayPreferences, v.enabled, v.calendar, v.holidaysEnabled, v.region);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
     v.pageNavigationPreviousModifiers, v.pageNavigationPreviousVirtualKey, v.pageNavigationNextModifiers, v.pageNavigationNextVirtualKey,
     v.quickNavTheme, v.collectionPopupTheme, v.dockEnabled, v.widgetDeveloperToolsEnabled,
-    v.language, v.animationMode, v.popupAnimationEffect, v.animationSpeed,
+    v.calendarDisplay, v.language, v.animationMode, v.popupAnimationEffect, v.animationSpeed,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
     v.quickNavigationAppearance, v.collectionPopupAppearance);
 SD_IPC_FIELDS(CategoryRule,

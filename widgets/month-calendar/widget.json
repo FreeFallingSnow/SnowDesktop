@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "Month Calendar",
   "nameKey": "lua_widget.month_calendar.name",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "description": "A local month calendar linked with SnowDesktop schedules.",
   "descriptionKey": "lua_widget.month_calendar.description",
   "locales": {
@@ -376,5 +376,5 @@
     "time.basic",
     "ui.semanticMetrics.rowUnit"
   ],
-  "optionalFeatures": []
+  "optionalFeatures": ["calendar.annotations", "interaction.tooltip"]
 }

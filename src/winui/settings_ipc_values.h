@@ -13,6 +13,8 @@ namespace snowdesktop::settings_ipc
         template<class Value> static auto Tie(Value& v) { return std::tie(__VA_ARGS__); } \
     }
 
+SD_IPC_FIELDS(calendar::CalendarEvent, v.id, v.revision, v.title, v.date, v.allDay, v.startMinutes, v.endMinutes, v.notes, v.reminderMinutes, v.notifiedTrigger);
+SD_IPC_FIELDS(calendar::MutationResult, v.ok, v.id, v.revision, v.error);
 SD_IPC_FIELDS(winui::WidgetPermissionSnapshot,
     v.id, v.labelKey, v.label, v.description,
     v.risk, v.required, v.requiresConsent, v.granted);

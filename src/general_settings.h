@@ -11,6 +11,7 @@
 
 #include <string>
 #include "animation_settings.h"
+#include "calendar_display.h"
 #include "dock_layout_settings.h"
 #include "surface_theme.h"
 
@@ -45,6 +46,7 @@ struct GeneralSettings
     int animationFrameLimit = 0;
     bool animationEnergySaver = true;
     bool animationOnBattery = false;
+    snowdesktop::calendar::DisplayPreferences calendarDisplay;
     char language[85] = "system";
 };
 

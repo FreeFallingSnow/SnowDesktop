@@ -287,6 +287,7 @@ set(SNOWDESKTOP_SOURCES
     src/steam_entitlement.cpp
     src/steam_entitlement.h
     src/calendar_service.cpp
+    src/calendar_display.cpp
     src/full_data_backup.cpp
     src/portable_data_migration.cpp
     src/single_instance.cpp
@@ -321,6 +322,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.cpp
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
+    src/winui/calendar_page_presenter.cpp
+    src/winui/calendar_page_presenter.h
     src/winui/animation_performance_page_presenter.cpp
     src/winui/animation_performance_page_presenter.h
     src/winui/dock_page_presenter.h
@@ -1366,6 +1369,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/calendar_service_tests.cpp
             src/calendar_service.cpp
+    src/calendar_display.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
         LABELS service)

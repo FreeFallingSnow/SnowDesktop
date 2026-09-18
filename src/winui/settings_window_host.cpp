@@ -257,6 +257,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Desktop, "desktop.softwareDesktop",
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
+    {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
+    {SettingsPage::Calendar, "calendar.region", "settings.calendar.region", "settings.calendar.description"},
+    {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
     {SettingsPage::General, "general.language",
         "settings.general.language",
         "settings.general.language.description"},
@@ -2127,6 +2130,9 @@ struct SettingsWindowHost::Impl
             }
             return std::vector<StaticSettingSearchDescriptor>{};
         };
+        auto calendar = options.calendarPage;
+        calendar.commitGeneral = general.commitGeneral;
+        shell->SetCalendarPageActions(std::move(calendar));
         shell->SetGeneralPageActions(std::move(general));
 
         PageLayoutPageActions pageLayout = options.pageLayoutPage;

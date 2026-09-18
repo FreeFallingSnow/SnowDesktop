@@ -78,6 +78,7 @@ bool SettingsShellPageVisibility::Allows(SettingsPage page) const noexcept
     case SettingsPage::DesktopPages:
     case SettingsPage::AnimationPerformance:
     case SettingsPage::LargeIcon:
+    case SettingsPage::Calendar:
         return true;
     default:
         return false;

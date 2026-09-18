@@ -2968,3 +2968,34 @@ cursor, hit-test, grant helper or automated component tests.
 Existing components without this binding keep their behavior. API version remains 2; a
 version number alone does not establish support in early 1.0.6.0 builds. Release the host
 capability before dependent community widgets; unsupported hosts reject required features.
+
+
+### Calendar display annotations (`calendar.annotations`)
+
+Optional API v2 feature added in the 1.0.7.0 development line. Detect with
+`widget.hasFeature("calendar.annotations")`; the version number alone does not
+identify early builds that lack it. Existing `dateInfo/addDays/selectDate` keep
+their Gregorian meaning. No new permission, apiVersion or minimum host version
+is required when a component supports the Gregorian fallback.
+
+- `calendar.preferences()` returns `{enabled, calendar, holidaysEnabled, region,
+  holidayFirstYear=2020, holidayLastYear=2035}`. Preferences are owned by the host's
+  Calendar & agenda page, not component storage.
+- `calendar.displayOptions()` returns `{calendars, regions}` arrays of `{id,label}`.
+- `calendar.annotations(fromDate,toDate)` returns an inclusive array, at most 62
+  Gregorian civil dates; invalid/reversed/oversized ranges return nil. Each entry
+  has `date`, localized `secondary/fullDate`, ICU `year` (extended year), `month`
+  (native month index + 1, not an ordinal across leap months), `day`, `era`,
+  `leapMonth`, `calendarAvailable`, `holidaysAvailable`, and `holidays` (name array).
+  Date-only conversion uses UTC noon to avoid machine-zone day shifts. ICU names
+  and conversion data follow the installed Windows ICU version.
+- Lifecycle event `{kind="calendar.preferences"}` tells declaring components to
+  invalidate cached annotations after global preferences change. Language changes
+  continue to use `environment`. Read preferences on first load as well.
+
+Holiday names are an offline holidays 0.95 PUBLIC snapshot for 2020–2035, national
+scope only, observed=False. Real multi-day holidays and upstream estimated labels
+are retained. It is not a workday/leave API or a complete cultural festival list.
+Names use the matching supported locale/base language, then English, then a source
+language. Out-of-range availability is false, not proof of no holiday. Disabling
+annotations never changes events. Older hosts should show only Gregorian dates.

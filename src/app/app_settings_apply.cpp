@@ -947,6 +947,8 @@ public:
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
@@ -974,6 +976,8 @@ public:
             app_.ApplyPersistentDockHostAppearance();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.dockSettings_.systemTaskbarAutoHide =
                 committedTaskbarAutoHide;
             app_.dockSettings_.systemTaskbarAlignment =
@@ -1096,6 +1100,8 @@ public:
             app_.dockSettings_ = requestedDockSettings;
             app_.ApplyPersistentDockHostAppearance();
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -1119,6 +1125,8 @@ public:
             app_.generalSettings_ = snapshot.values.general;
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
             app_.ApplyDesktopPassthroughHotkey();
@@ -1883,6 +1891,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    if (widgetEngine_) widgetEngine_->SetCalendarDisplayPreferences(generalSettings_.calendarDisplay);
     ApplyAnimationPreferences();
     generalSettings_.autoStartEnabled = autoStartEnabled;
     if (std::strcmp(generalSettings_.language, "system") != 0 &&

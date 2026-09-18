@@ -1,6 +1,7 @@
 #include "settings_ipc_backends.h"
 #include "settings_ipc_values.h"
 #include "../l10n.h"
+#include "../widget_engine.h"
 
 #include <shellapi.h>
 #include <unordered_map>
@@ -316,6 +317,25 @@ struct BackendServer::Impl
         channel.Bind<bool>("options.resetAdvancedFeatures", [this] {
             return options.resetAdvancedFeatures && options.resetAdvancedFeatures();
         });
+        channel.Bind<std::optional<std::vector<calendar::CalendarEvent>>, Token>("calendar.events", [this](Token generation) -> std::optional<std::vector<calendar::CalendarEvent>> {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return std::nullopt;
+            return engine->RuntimeCalendarEvents("0001-01-01", "9999-12-31");
+        });
+        channel.Bind<calendar::MutationResult, Token, calendar::CalendarEvent, bool>("calendar.mutate", [this](Token generation, calendar::CalendarEvent event, bool remove) -> calendar::MutationResult {
+            const auto current = controller.Snapshot();
+            if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
+            if (remove)
+            {
+                const auto events = engine->RuntimeCalendarEvents("0001-01-01", "9999-12-31");
+                const auto found = std::find_if(events.begin(), events.end(), [&](const auto& item) { return item.id == event.id; });
+                if (found == events.end()) return {false, event.id, 0, "not_found"};
+                if (found->revision != event.revision) return {false, event.id, found->revision, "conflict"};
+                return engine->RuntimeCalendarRemove(event.id);
+            }
+            if (event.id.empty()) return engine->RuntimeCalendarCreate(std::move(event));
+            return engine->RuntimeCalendarUpdate(event.id, event.revision, event);
+        });
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};
         });
@@ -451,6 +471,8 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
         const auto [succeeded, message] = channel.Call<std::pair<bool, std::wstring>>("options.openGuideWorkshop");
         return winui::WidgetsPageHostOperationResult{succeeded, false, message};
     };
+    options.calendarPage.events = [&channel](Token generation) { return channel.Call<std::optional<std::vector<calendar::CalendarEvent>>>("calendar.events", generation); };
+    options.calendarPage.mutate = [&channel](Token generation, calendar::CalendarEvent event, bool remove) { return channel.Call<calendar::MutationResult>("calendar.mutate", generation, event, remove); };
     options.pageLayoutPage.capture = [&channel] { return channel.Call<PageLayoutSnapshot>("pages.capture"); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
