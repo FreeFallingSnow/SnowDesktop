@@ -32,12 +32,18 @@ std::string Utf8(const UChar* value, int length)
 }
 using CalendarPtr = std::unique_ptr<UCalendar, decltype(&ucal_close)>;
 using FormatPtr = std::unique_ptr<UDateFormat, decltype(&udat_close)>;
-std::string Format(UDateFormat* format, UDate date)
+std::string Format(UDateFormat* format, UDate date, bool separateWeekday = false)
 {
     if (!format) return {};
     UErrorCode status = U_ZERO_ERROR;
     UChar text[256]{};
-    const int count = udat_format(format, date, text, 256, nullptr, &status);
+    UFieldPosition weekday{UDAT_DAY_OF_WEEK_FIELD, 0, 0};
+    const int count = udat_format(format, date, text, 256,
+        separateWeekday ? &weekday : nullptr, &status);
+    if (U_SUCCESS(status) && separateWeekday && weekday.beginIndex > 0 &&
+        weekday.beginIndex < count && !u_isUWhiteSpace(text[weekday.beginIndex - 1]))
+        return Utf8(text, weekday.beginIndex) + " " +
+            Utf8(text + weekday.beginIndex, count - weekday.beginIndex);
     return U_SUCCESS(status) ? Utf8(text, count) : std::string{};
 }
 }
@@ -107,7 +113,7 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
                             (traditional && item.month == 12 ? "臘月" : months[item.month]) // l10n-allow: intrinsic Chinese lunar notation
                         : lunarDays[item.day];
             }
-            item.fullDate = Format(fullFormat.get(), instant);
+            item.fullDate = Format(fullFormat.get(), instant, true);
             item.calendarAvailable = U_SUCCESS(status) && !item.secondary.empty();
         }
         result.push_back(std::move(item));

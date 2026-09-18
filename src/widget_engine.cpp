@@ -18987,9 +18987,6 @@ static void DrawWidgetViewTooltip(D2DState* state,
     if (!state || !state->ctx || !state->dwrite) return;
     const auto* region = regions.Find(regions.HoveredKey());
     if (!region || region->tooltip.empty()) return;
-    float pointerX = 0.0f;
-    float pointerY = 0.0f;
-    if (!regions.LastPointer(pointerX, pointerY)) return;
 
     const float surfaceWidth = std::max(
         0.0f, state->widgetRect.right - state->widgetRect.left);
@@ -19038,12 +19035,25 @@ static void DrawWidgetViewTooltip(D2DState* state,
             16.0f));
     const float height = std::min(maximumHeight,
         std::max(24.0f, std::ceil(metrics.height) + 12.0f));
-    float x = pointerX + 12.0f;
-    float y = pointerY + 16.0f;
-    if (x + width > surfaceWidth - 4.0f)
-        x = pointerX - width - 12.0f;
+    const auto& shape = region->shape;
+    const bool circle = shape.type ==
+        snowdesktop::widget_runtime::InteractionShapeType::Circle;
+    float left = circle ? shape.x - shape.radius : shape.x;
+    float top = circle ? shape.y - shape.radius : shape.y;
+    float right = circle ? shape.x + shape.radius : shape.x + shape.width;
+    float bottom = circle ? shape.y + shape.radius : shape.y + shape.height;
+    if (region->clip)
+    {
+        left = std::max(left, region->clip->x);
+        top = std::max(top, region->clip->y);
+        right = std::min(right, region->clip->x + region->clip->width);
+        bottom = std::min(bottom, region->clip->y + region->clip->height);
+    }
+    // Anchor to the visible region, independent of where the pointer entered it.
+    float x = (left + right - width) * 0.5f;
+    float y = bottom + 6.0f;
     if (y + height > surfaceHeight - 4.0f)
-        y = pointerY - height - 12.0f;
+        y = top - height - 6.0f;
     x = std::clamp(x, 4.0f, std::max(4.0f, surfaceWidth - width - 4.0f));
     y = std::clamp(y, 4.0f, std::max(4.0f, surfaceHeight - height - 4.0f));
     DrawHostRect(state, x, y, width, height,

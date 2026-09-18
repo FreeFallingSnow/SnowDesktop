@@ -918,9 +918,12 @@ return widget.define({
     };
     const auto outside = render(L"tooltip-outside.png", 180, 100);
     const auto hovered = render(L"tooltip-hovered.png", 20, 20);
-    Check(PixelAt(outside, 36, 48)[2] > 240,
+    const auto otherEntry = render(L"tooltip-other-entry.png", 45, 40);
+    Check(hovered.pixels == otherEntry.pixels,
+        "tooltip stays anchored to the date region regardless of pointer entry");
+    Check(PixelAt(outside, 8, 68)[2] > 240,
         "outside the date region no tooltip covers the blue background");
-    const auto bubble = PixelAt(hovered, 36, 48);
+    const auto bubble = PixelAt(hovered, 8, 68);
     Check(bubble[0] < 100 && bubble[1] < 100 && bubble[2] < 100,
         "hovering an immediate date region paints the tooltip over its content");
 }

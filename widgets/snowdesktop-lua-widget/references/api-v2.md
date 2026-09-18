@@ -1474,7 +1474,9 @@ shape 首版支持 `rect`、`roundedRect` 和 `circle`；cursor 支持 `default`
 
 探测 `interaction.tooltip` 后，region 可声明最多 4096 UTF-8 字节的字符串 `tooltip`；探测
 `interaction.tooltip.rich` 后也可使用与声明式节点相同的 `{title?, text}`。两者都由宿主在命中区域内
-显示，不是任意 markup 或窗口。探测 `interaction.keyboard` 后，region 可声明
+触发显示，不是任意 markup 或窗口。气泡锚定区域可见边界，在下方居中；底部空间不足时翻到上方，
+并限制在组件范围内。同一区域内的鼠标位置不改变气泡锚点；声明式节点的 tooltip 使用相同定位规则。
+探测 `interaction.keyboard` 后，region 可声明
 `focusable`、`tabIndex=-1..32767` 及 `events.keyDown/keyUp`。默认仍从受控类型、click 或文本输入
 role 推导焦点；显式 `focusable=false` 会退出焦点，key 观察目标必须可聚焦。按键事件与声明式
 版本使用相同负载和按下/释放配对，`interaction.isFocused(key)` 可用于绘制焦点状态；这些事件

@@ -79,6 +79,8 @@ int main()
     Expect(lunar[0].secondary == "闰二月", "first lunar day displays leap month name");
     Expect(Annotate("2024-02-11", "2024-02-11", display, "zh-CN")[0].secondary == "初二", "ordinary lunar date uses traditional day name");
     Expect(Annotate("2024-03-01", "2024-03-01", display, "zh-CN")[0].secondary == "廿一", "lunar day twenty one is compact");
+    Expect(Annotate("2026-10-01", "2026-10-01", display, "zh-CN")[0].fullDate.find(" 星期四") != std::string::npos,
+        "full lunar date separates the weekday with a space");
     Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].secondary == "正月", "lunar new year caption is month only");
     display.holidaysEnabled = true; display.region = "CN";
     const auto formerHoliday = Annotate("2024-10-01", "2024-10-01", display, "zh-CN");
