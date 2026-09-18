@@ -123,7 +123,7 @@ bool Read(const Paths& paths, Configuration& config, std::string& error)
     config.enabled = enabled->boolean;
     config.pendingReset = reset->boolean;
     config.pendingDesktopChange = changed->boolean;
-    try { config.desktop = std::filesystem::u8path(desktop->string); }
+    try { config.desktop = std::filesystem::path(std::u8string(desktop->string.begin(), desktop->string.end())); }
     catch (const std::exception&) { error = "Invalid desktop path encoding."; return false; }
     return true;
 }
