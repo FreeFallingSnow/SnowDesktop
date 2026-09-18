@@ -28,3 +28,30 @@ Public component contract: widgets/snowdesktop-lua-widget/references/api-v2.md.
 Validation: automated date conversion, region isolation, disabled flags, snapshot
 bounds, persistence and existing integration suites. Calendar/agenda page and
 desktop visuals require real-user acceptance; no desktop-host automation is used.
+
+## Validation record (2026-09-18)
+
+Candidate: `0b0237b7` (Release, Windows SDK 10.0.26100.0, VS 18 MSBuild).
+`scripts/build.bat` passed and generated `.build/Release/SnowDesktop.exe`.
+`scripts/test.bat full` passed 118/118 (CTest 72.75 s, exit 0), excluding manual
+diagnostics as defined by the repository policy. Report:
+`.build/Testing/test-run-d4f3d154f346444dbeabe199ad7d6ab6.xml`.
+Local build/test transcripts are in `.codex-probes/calendar-build-keys.log` and
+`.codex-probes/calendar-tests-keys.log`.
+
+The preceding candidate failed localization checking because a composed key
+prefix was interpreted as a literal key; explicit keys resolved that failure.
+An isolated leap-month mutation failed at the expected assertion; the same
+calendar-service test with production code passed. Existing generated WinRT
+`GetCurrentTime` C4002 and unused-localization warnings remain.
+
+`snowwidget lint`, `validate` and `pack` passed for month-calendar. Lint retains
+the existing missing package-preview warning. `snowwidget test` reports no test
+directory; this is not counted as a pass. Chinese light and English dark 4x4
+offscreen previews were inspected with annotations disabled. Source/output
+month-calendar Lua and manifest hashes matched after the standard build.
+
+Pending user acceptance: toggle both annotations independently, switch calendars
+and holiday regions, inspect smaller month-calendar sizes and hover details,
+create/edit/delete events and confirm persistence and reminder behavior. These
+settings interactions and enabled desktop visuals are not claimed as verified.
