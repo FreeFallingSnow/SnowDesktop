@@ -879,6 +879,52 @@ return widget.define({
 }
 }
 
+// Regression: immediate-mode regions accepted tooltip metadata but never drew it.
+void TestImmediateTooltip(const std::filesystem::path& host,
+    const std::filesystem::path& root)
+{
+    const auto source = CreateImmediateRoundedImageFixture(root);
+    Write(source / L"main.lua", R"lua(
+return widget.define({
+    render = function()
+        draw.rect(0, 0, 192, 116, 0x0000FF)
+        interaction.region({ key = "date",
+            shape = { type = "rect", x = 0, y = 0, width = 50, height = 50 },
+            tooltip = { title = "2026-10-01", text = "Lunar date" } })
+    end,
+})
+)lua");
+    // Reuse package scaffolding, explicitly declaring the interaction contract.
+    Write(source / L"widget.json", R"json({
+        "schemaVersion":2,"apiVersion":2,"dataVersion":1,
+        "id":"4da4497b-2508-4b74-bc73-c82e34e18145",
+        "slug":"preview-tooltip-fixture","version":"1.0.0",
+        "entry":"main.lua","minHostVersion":"1.0.5.0",
+        "name":"Tooltip regression","description":"Hover pixel regression",
+        "author":"SnowDesktop","license":"MIT",
+        "defaultSize":{"columns":2,"rows":1},
+        "requiredFeatures":["draw.immediate","interaction.region","interaction.tooltip"]
+    })json");
+    const auto render = [&](const wchar_t* name, int x, int y) {
+        const auto png = root / name;
+        const auto [exit, output] = Run(host, {
+            L"--widget-author-preview", source.wstring(), png.wstring(),
+            L"2", L"1", L"96", (root / L"hover-result.json").wstring(),
+            L"en-US", L"dark", L"dark", L"ready", L"",
+            L"@preview.contentOnly=1", L"@preview.hoverX=" + std::to_wstring(x),
+            L"@preview.hoverY=" + std::to_wstring(y) });
+        Check(exit == 0, "tooltip fixture renders through the offscreen host");
+        return ReadPng(png);
+    };
+    const auto outside = render(L"tooltip-outside.png", 180, 100);
+    const auto hovered = render(L"tooltip-hovered.png", 20, 20);
+    Check(PixelAt(outside, 36, 48)[2] > 240,
+        "outside the date region no tooltip covers the blue background");
+    const auto bubble = PixelAt(hovered, 36, 48);
+    Check(bubble[0] < 100 && bubble[1] < 100 && bubble[2] < 100,
+        "hovering an immediate date region paints the tooltip over its content");
+}
+
 int wmain(int argc, wchar_t** argv) try
 {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
@@ -900,6 +946,9 @@ int wmain(int argc, wchar_t** argv) try
         "SnowDesktop preview host exists");
 
     TemporaryDirectory temporary;
+    const auto tooltipRoot = temporary.path / L"tooltip";
+    std::filesystem::create_directory(tooltipRoot);
+    TestImmediateTooltip(host, tooltipRoot);
     const auto background = temporary.path / L"author-background.bmp";
     WriteSolidBmp(background, 18, 126, 214);
 

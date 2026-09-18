@@ -22,6 +22,9 @@ struct PreviewRenderRequest
     int canvasSize = 0;
     int padding = 0;
     bool contentOnly = false;
+    // Private host preview input in component-local pixels; -1 disables hover.
+    int hoverX = -1;
+    int hoverY = -1;
     std::unordered_map<std::string, std::string> storage;
 };
 

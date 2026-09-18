@@ -816,6 +816,14 @@ PreviewRenderResult RenderWidgetPreview(
     // the independently resolved custom material/foreground preview settings.
     engine.SetWidgetTheme(kPreviewWidgetId, resolvedStyle.theme);
     context->BeginDraw();
+    if (request.hoverX >= 0 && request.hoverY >= 0)
+    {
+        // Register the real regions before routing pointer input through the host.
+        engine.RenderWidget(kPreviewWidgetId, L"", context.Get(), componentBounds,
+            request.columns, request.rows);
+        engine.UpdateInteractionHover(kPreviewWidgetId,
+            request.hoverX, request.hoverY);
+    }
     context->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
     if (request.canvasSize == 0 && !request.contentOnly)
     {
@@ -1046,6 +1054,22 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
             releaseArguments();
             return 2;
         }
+        if (pair.substr(0, equals) == L"@preview.hoverX" ||
+            pair.substr(0, equals) == L"@preview.hoverY")
+        {
+            int& coordinate = pair.substr(0, equals) == L"@preview.hoverX"
+                ? request.hoverX : request.hoverY;
+            if (!ParsePositiveInteger(pair.substr(equals + 1), 0, 8192, coordinate))
+            {
+                result.stage = "request.hover";
+                result.error = "preview hover coordinate is outside the supported range";
+                result.outputPng = request.outputPng;
+                WriteResultFile(resultPath, result);
+                releaseArguments();
+                return 2;
+            }
+            continue;
+        }
         if (pair.substr(0, equals) == L"@preview.canvasSize")
         {
             if (!ParsePositiveInteger(pair.substr(equals + 1),
@@ -1092,6 +1116,15 @@ int TryRunWidgetAuthorPreviewHostCommand(bool& handled)
         }
         request.storage[WideToUtf8(pair.substr(0, equals))] =
             WideToUtf8(pair.substr(equals + 1));
+    }
+    if ((request.hoverX >= 0) != (request.hoverY >= 0))
+    {
+        result.stage = "request.hover";
+        result.error = "preview hover requires both coordinates";
+        result.outputPng = request.outputPng;
+        WriteResultFile(resultPath, result);
+        releaseArguments();
+        return 2;
     }
     result = RenderWidgetPreview(request);
     WriteResultFile(resultPath, result);
