@@ -1781,7 +1781,7 @@
     "settings.calendar.type": "보조 달력",
     "settings.calendar.showHolidays": "공휴일 이름 표시",
     "settings.calendar.region": "공휴일 지역",
-    "settings.calendar.description": "2020~2035년 전국 공휴일을 제공합니다. 근무일 및 대체 휴일 표시는 없습니다. 미래 날짜는 변경될 수 있으며 번역이 없는 이름은 영어 또는 현지 언어로 표시됩니다.",
+    "settings.calendar.description": "선택한 지역의 공휴일(2020~2035년)입니다. 조정 휴무일, 보충 근무일 및 대체 휴일은 제외됩니다. 미래 날짜는 변경될 수 있으며 번역이 없는 이름은 영어 또는 현지 언어로 표시됩니다.",
     "settings.calendar.events": "로컬 일정",
     "settings.calendar.empty": "로컬 일정 없음",
     "settings.calendar.title": "제목",

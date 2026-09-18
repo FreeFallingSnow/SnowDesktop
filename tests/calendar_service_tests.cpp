@@ -76,6 +76,20 @@ int main()
         "Chinese New Year maps to month one day one");
     lunar = Annotate("2023-03-22", "2023-03-22", display, "zh-CN");
     Expect(lunar.size() == 1 && lunar[0].month == 2 && lunar[0].day == 1 && lunar[0].leapMonth, "Chinese leap month is preserved");
+    Expect(lunar[0].secondary == "闰二月", "first lunar day displays leap month name");
+    Expect(Annotate("2024-02-11", "2024-02-11", display, "zh-CN")[0].secondary == "初二", "ordinary lunar date uses traditional day name");
+    Expect(Annotate("2024-03-01", "2024-03-01", display, "zh-CN")[0].secondary == "廿一", "lunar day twenty one is compact");
+    Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].secondary == "正月", "lunar new year caption is month only");
+    display.holidaysEnabled = true;
+    Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].holidays == std::vector<std::string>{"春节"}, "Chinese holiday uses translated name");
+    Expect(Annotate("2020-01-24", "2020-01-24", display, "zh-CN")[0].holidays.empty(), "transferred rest day excluded even when provider ignores observed flag");
+    auto regions = snowdesktop::calendar::HolidayRegions("zh-CN");
+    for (const auto& option : regions)
+    {
+        if (option.id == "CN") Expect(option.label == L"中国大陆", "mainland region label");
+        if (option.id == "HK") Expect(option.label == L"香港特别行政区", "Hong Kong region label");
+        if (option.id == "TW") Expect(option.label == L"台湾", "Taiwan region label");
+    }
     display.calendar = "persian";
     auto persian = Annotate("2024-03-20", "2024-03-20", display, "en-US");
     Expect(persian.size() == 1 && persian[0].year == 1403 && persian[0].month == 1 && persian[0].day == 1, "Persian New Year conversion");

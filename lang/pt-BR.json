@@ -1781,7 +1781,7 @@
     "settings.calendar.type": "Calendário adicional",
     "settings.calendar.showHolidays": "Mostrar nomes dos feriados",
     "settings.calendar.region": "Região dos feriados",
-    "settings.calendar.description": "Feriados nacionais de 2020 a 2035, sem indicadores de dias de trabalho ou folgas compensatórias. As datas futuras podem mudar; nomes sem tradução aparecem em inglês ou no idioma local.",
+    "settings.calendar.description": "Feriados da região selecionada, 2020–2035. Folgas transferidas, dias de trabalho compensatório e folgas substitutivas são excluídos. Datas futuras podem mudar; nomes sem tradução aparecem em inglês ou no idioma local.",
     "settings.calendar.events": "Eventos locais",
     "settings.calendar.empty": "Nenhum evento local",
     "settings.calendar.title": "Título",

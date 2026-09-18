@@ -3,6 +3,7 @@
 #include "settings_presenter_controls.h"
 #include "../l10n.h"
 #include <cstdio>
+#include <winrt/Windows.Globalization.h>
 
 namespace snowdesktop::winui
 {
@@ -15,12 +16,15 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LocalizeCallback localize;
     CalendarPageActions actions;
     muxc::StackPanel root, preferences, editor;
+    muxc::Border editorCard{nullptr};
     muxc::ToggleSwitch calendarToggle, holidayToggle, allDay;
     muxc::ComboBox calendarChoice, regionChoice;
     SettingRow calendarEnabledRow, calendarRow, holidayEnabledRow, regionRow;
     muxc::TextBlock description, listHeading, error;
     muxc::ListView list;
-    muxc::TextBox title, date, start, end, notes;
+    muxc::TextBox title, notes;
+    muxc::CalendarDatePicker date;
+    muxc::TimePicker start, end;
     muxc::ComboBox reminder;
     static constexpr std::array<int, 7> reminderValues = {-1, 0, 5, 15, 30, 60, 1440};
     muxc::Button add, save, remove, cancel, refresh;
@@ -35,7 +39,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     bool active = false, closed = false, updating = false, hasSnapshot = false;
 
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
-    muxc::StackPanel Card(const mux::Style& style)
+    muxc::StackPanel Card(const mux::Style& style, muxc::Border* outer = nullptr)
     {
         muxc::Border border;
         border.Style(style);
@@ -43,6 +47,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         content.Spacing(12);
         border.Child(content);
         root.Children().Append(border);
+        if (outer) *outer = border;
         return content;
     }
     template<class F> void Click(muxc::Button button, F callback)
@@ -60,6 +65,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         calendarRow.Initialize(calendarChoice);
         holidayEnabledRow.Initialize(holidayToggle);
         regionRow.Initialize(regionChoice);
+        calendarEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        calendarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        holidayEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        regionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         for (const auto& row : {calendarEnabledRow.root, calendarRow.root, holidayEnabledRow.root, regionRow.root})
             preferences.Children().Append(row);
         description.TextWrapping(mux::TextWrapping::Wrap);
@@ -74,9 +83,11 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         list.MaxHeight(320);
         list.SelectionMode(muxc::ListViewSelectionMode::Single);
         schedules.Children().Append(list);
-        editor = Card(style);
-        title.MaxLength(512); date.MaxLength(10); start.MaxLength(5); end.MaxLength(5); notes.MaxLength(8192);
-        date.PlaceholderText(L"YYYY-MM-DD"); start.PlaceholderText(L"HH:mm"); end.PlaceholderText(L"HH:mm");
+        editor = Card(style, &editorCard);
+        title.MaxLength(512); notes.MaxLength(8192);
+        date.CalendarIdentifier(L"GregorianCalendar");
+        date.DateFormat(L"{year.full}-{month.integer(2)}-{day.integer(2)}");
+        start.MinuteIncrement(1); end.MinuteIncrement(1);
         notes.AcceptsReturn(true); notes.TextWrapping(mux::TextWrapping::Wrap); notes.MaxHeight(180);
         editor.Children().Append(title); editor.Children().Append(date); editor.Children().Append(allDay);
         editor.Children().Append(start); editor.Children().Append(end); editor.Children().Append(reminder);
@@ -85,7 +96,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         buttons.Children().Append(save); buttons.Children().Append(cancel); buttons.Children().Append(remove);
         editor.Children().Append(buttons);
         error.TextWrapping(mux::TextWrapping::Wrap); root.Children().Append(error);
-        editor.Visibility(mux::Visibility::Collapsed);
+        editorCard.Visibility(mux::Visibility::Collapsed);
         auto ctoken = calendarToggle.Toggled([this](const auto&, const auto&) { Commit(); });
         revoke.push_back([c = calendarToggle, ctoken] { c.Toggled(ctoken); });
         auto htoken = holidayToggle.Toggled([this](const auto&, const auto&) { Commit(); });
@@ -95,7 +106,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             auto token = choice.SelectionChanged([this](const auto&, const auto&) { Commit(); });
             revoke.push_back([choice, token] { choice.SelectionChanged(token); });
         }
-        auto token = allDay.Toggled([this](const auto&, const auto&) { start.IsEnabled(!allDay.IsOn()); end.IsEnabled(!allDay.IsOn()); });
+        auto token = allDay.Toggled([this](const auto&, const auto&) { UpdateTimeVisibility(); });
         revoke.push_back([c = allDay, token] { c.Toggled(token); });
         auto selection = list.SelectionChanged([this](const auto&, const auto&) {
             if (updating || closed || !active) return;
@@ -109,7 +120,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             event.allDay = true; Edit(event);
         });
         Click(refresh, [this] { Refresh(true); });
-        Click(cancel, [this] { editor.Visibility(mux::Visibility::Collapsed); editing = {}; list.SelectedIndex(-1); });
+        Click(cancel, [this] { editorCard.Visibility(mux::Visibility::Collapsed); editing = {}; list.SelectedIndex(-1); });
         Click(save, [this] { Save(); });
         Click(remove, [this] { ConfirmDelete(); });
         timer.Interval(std::chrono::seconds(3));
@@ -164,8 +175,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         save.Content(winrt::box_value(L("settings.calendar.save")));
         cancel.Content(winrt::box_value(L("app.settings.cancel")));
         remove.Content(winrt::box_value(L("app.settings.delete")));
-        calendars = calendar::CalendarOptions(Locale::Instance().GetLanguage());
-        regions = calendar::HolidayRegions(Locale::Instance().GetLanguage());
+        calendars = calendar::CalendarOptions(Locale::Instance().GetEffectiveLanguage());
+        regions = calendar::HolidayRegions(Locale::Instance().GetEffectiveLanguage());
         calendarChoice.Items().Clear(); regionChoice.Items().Clear();
         for (auto& option : calendars) calendarChoice.Items().Append(winrt::box_value(option.label));
         for (auto& option : regions) regionChoice.Items().Append(winrt::box_value(option.label));
@@ -201,31 +212,55 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         catch (...) { updating = false; error.Text(L("settings.calendar.failed")); }
     }
-    static std::wstring Time(int minutes)
-    { wchar_t value[6]{}; swprintf_s(value, L"%02d:%02d", minutes / 60, minutes % 60); return value; }
-    static int Minutes(const winrt::hstring& text)
+    void UpdateTimeVisibility()
     {
-        if (text.size() != 5 || text[2] != L':' || text[0] < L'0' || text[0] > L'9' || text[1] < L'0' || text[1] > L'9' || text[3] < L'0' || text[3] > L'9' || text[4] < L'0' || text[4] > L'9') return -1;
-        const int h = (text[0] - L'0') * 10 + text[1] - L'0', m = (text[3] - L'0') * 10 + text[4] - L'0';
-        return h < 24 && m < 60 ? h * 60 + m : -1;
+        const auto visibility = allDay.IsOn() ? mux::Visibility::Collapsed : mux::Visibility::Visible;
+        start.Visibility(visibility); end.Visibility(visibility);
+    }
+    static winrt::Windows::Foundation::DateTime PickerDate(const std::string& value)
+    {
+        const auto info = *calendar::CalendarService::GetDateInfo(value);
+        winrt::Windows::Globalization::Calendar local;
+        local.ChangeCalendarSystem(L"GregorianCalendar");
+        local.Day(1); local.Year(info.year); local.Month(info.month); local.Day(info.day);
+        local.Hour(12); local.Minute(0); local.Second(0); local.Nanosecond(0);
+        return local.GetDateTime();
+    }
+    std::string SelectedDate() const
+    {
+        if (!date.Date()) return {};
+        winrt::Windows::Globalization::Calendar local;
+        local.ChangeCalendarSystem(L"GregorianCalendar"); local.SetDateTime(date.Date().Value());
+        char value[16]{};
+        std::snprintf(value, sizeof(value), "%04d-%02d-%02d", local.Year(), local.Month(), local.Day());
+        return value;
+    }
+    static int Minutes(const muxc::TimePicker& picker)
+    {
+        return picker.SelectedTime() ? static_cast<int>(std::chrono::duration_cast<std::chrono::minutes>(picker.SelectedTime().Value()).count()) : -1;
     }
     void Edit(const calendar::CalendarEvent& event)
     {
         editing = event;
-        title.Text(winrt::to_hstring(event.title)); date.Text(winrt::to_hstring(event.date));
-        allDay.IsOn(event.allDay); start.Text(Time(event.startMinutes)); end.Text(Time(event.endMinutes));
-        start.IsEnabled(!event.allDay); end.IsEnabled(!event.allDay);
+        title.Text(winrt::to_hstring(event.title));
+        const auto selectedDate = PickerDate(event.date);
+        if (selectedDate < date.MinDate()) date.MinDate(selectedDate);
+        if (selectedDate > date.MaxDate()) date.MaxDate(selectedDate);
+        date.Date(winrt::box_value(selectedDate).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
+        allDay.IsOn(event.allDay);
+        start.Time(std::chrono::minutes(event.startMinutes)); end.Time(std::chrono::minutes(event.endMinutes));
+        UpdateTimeVisibility();
         notes.Text(winrt::to_hstring(event.notes)); for (size_t i = 0; i < reminderValues.size(); ++i) if (reminderValues[i] == event.reminderMinutes) reminder.SelectedIndex(static_cast<int>(i));
-        remove.IsEnabled(!event.id.empty()); error.Text(L""); editor.Visibility(mux::Visibility::Visible);
+        remove.IsEnabled(!event.id.empty()); error.Text(L""); editorCard.Visibility(mux::Visibility::Visible);
     }
     void Save()
     {
         if (!actions.mutate) return;
         auto event = editing;
-        event.title = winrt::to_string(title.Text()); event.date = winrt::to_string(date.Text());
+        event.title = winrt::to_string(title.Text()); event.date = SelectedDate();
         event.notes = winrt::to_string(notes.Text()); event.allDay = allDay.IsOn();
-        event.startMinutes = event.allDay ? 0 : Minutes(start.Text());
-        event.endMinutes = event.allDay ? 0 : Minutes(end.Text());
+        event.startMinutes = event.allDay ? 0 : Minutes(start);
+        event.endMinutes = event.allDay ? 0 : Minutes(end);
         const int reminderIndex = reminder.SelectedIndex();
         const int minutes = reminderIndex >= 0 && static_cast<size_t>(reminderIndex) < reminderValues.size() ? reminderValues[reminderIndex] : -2;
         if (minutes < -1 ||
@@ -237,7 +272,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             const auto result = actions.mutate(generation, event, false);
             if (!result.ok) { error.Text(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); return; }
-            editing = {}; editor.Visibility(mux::Visibility::Collapsed); Refresh(true);
+            editing = {}; editorCard.Visibility(mux::Visibility::Collapsed); Refresh(true);
         }
         catch (...) { error.Text(L("settings.calendar.failed")); }
     }
@@ -260,7 +295,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (closed || !active || generation != session || answer != muxc::ContentDialogResult::Primary || !actions.mutate) co_return;
             const auto result = actions.mutate(session, target, true);
             if (!result.ok) { error.Text(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); co_return; }
-            editing = {}; editor.Visibility(mux::Visibility::Collapsed); Refresh(true);
+            editing = {}; editorCard.Visibility(mux::Visibility::Collapsed); Refresh(true);
         }
         catch (...) { dialog = nullptr; if (!closed) error.Text(L("settings.calendar.failed")); }
     }
@@ -282,7 +317,7 @@ void CalendarPagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
 {
     if (impl_->closed) return;
     if (impl_->generation != snapshot.generation)
-    { impl_->editing = {}; impl_->editor.Visibility(mux::Visibility::Collapsed); }
+    { impl_->editing = {}; impl_->editorCard.Visibility(mux::Visibility::Collapsed); }
     impl_->generation = snapshot.generation; impl_->hasSnapshot = snapshot.initialized;
     impl_->prefs = snapshot.values.general.calendarDisplay;
     impl_->updating = true; impl_->Select(); impl_->updating = false;

@@ -1781,7 +1781,7 @@
     "settings.calendar.type": "額外曆法",
     "settings.calendar.showHolidays": "顯示節日名稱",
     "settings.calendar.region": "節假日地區",
-    "settings.calendar.description": "提供 2020—2035 年全國性公眾假期，不標示休班及補休日。未來日期可能調整；名稱缺少翻譯時使用英文或當地語言。",
+    "settings.calendar.description": "所選地區的節假日（2020—2035 年），不顯示調休、補班及補休。未來日期可能調整；名稱缺少翻譯時使用英文或當地語言。",
     "settings.calendar.events": "本機行程",
     "settings.calendar.empty": "尚無本機行程",
     "settings.calendar.title": "標題",

@@ -1781,7 +1781,7 @@
     "settings.calendar.type": "Calendario adicional",
     "settings.calendar.showHolidays": "Mostrar nombres de festivos",
     "settings.calendar.region": "Región de festivos",
-    "settings.calendar.description": "Festivos nacionales de 2020 a 2035, sin indicadores de jornadas laborales ni días compensatorios. Las fechas futuras pueden cambiar; los nombres sin traducir se muestran en inglés o en el idioma local.",
+    "settings.calendar.description": "Festivos de la región seleccionada, 2020–2035. Se excluyen los descansos trasladados, los días de trabajo compensatorio y los días sustitutorios. Las fechas futuras pueden cambiar; los nombres sin traducción aparecen en inglés o en el idioma local.",
     "settings.calendar.events": "Eventos locales",
     "settings.calendar.empty": "No hay eventos locales",
     "settings.calendar.title": "Título",

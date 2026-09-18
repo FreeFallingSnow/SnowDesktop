@@ -1781,7 +1781,7 @@
     "settings.calendar.type": "Zusätzlicher Kalender",
     "settings.calendar.showHolidays": "Feiertagsnamen anzeigen",
     "settings.calendar.region": "Feiertagsregion",
-    "settings.calendar.description": "Landesweite Feiertage 2020–2035. Keine Arbeits- oder Ersatzruhetagsmarkierungen. Künftige Daten können sich ändern; Namen erscheinen ersatzweise auf Englisch oder in der Landessprache.",
+    "settings.calendar.description": "Feiertage der ausgewählten Region, 2020–2035. Verlegte Ruhetage, Nachholarbeitstage und Ersatzruhetage werden nicht angezeigt. Künftige Daten können sich ändern; Namen erscheinen ersatzweise auf Englisch oder in der lokalen Sprache.",
     "settings.calendar.events": "Lokale Termine",
     "settings.calendar.empty": "Keine lokalen Termine",
     "settings.calendar.title": "Titel",

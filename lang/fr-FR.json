@@ -1781,7 +1781,7 @@
     "settings.calendar.type": "Calendrier supplémentaire",
     "settings.calendar.showHolidays": "Afficher les noms des jours fériés",
     "settings.calendar.region": "Région des jours fériés",
-    "settings.calendar.description": "Jours fériés nationaux de 2020 à 2035, sans indication des jours travaillés ou de remplacement. Les dates futures peuvent changer ; les noms non traduits sont affichés en anglais ou dans la langue locale.",
+    "settings.calendar.description": "Jours fériés de la région sélectionnée, de 2020 à 2035. Les jours de repos déplacés, de travail compensatoire et de remplacement sont exclus. Les dates futures peuvent changer ; les noms non traduits apparaissent en anglais ou dans la langue locale.",
     "settings.calendar.events": "Événements locaux",
     "settings.calendar.empty": "Aucun événement local",
     "settings.calendar.title": "Titre",

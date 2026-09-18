@@ -9691,8 +9691,8 @@ static int lua_CalendarDisplayOptions(lua_State* L)
         }
         lua_setfield(L, -2, field);
     };
-    push(snowdesktop::calendar::CalendarOptions(Locale::Instance().GetLanguage()), "calendars");
-    push(snowdesktop::calendar::HolidayRegions(Locale::Instance().GetLanguage()), "regions");
+    push(snowdesktop::calendar::CalendarOptions(Locale::Instance().GetEffectiveLanguage()), "calendars");
+    push(snowdesktop::calendar::HolidayRegions(Locale::Instance().GetEffectiveLanguage()), "regions");
     return 1;
 }
 static int lua_CalendarAnnotations(lua_State* L)
@@ -26013,7 +26013,7 @@ void WidgetEngine::SetCalendarDisplayPreferences(snowdesktop::calendar::DisplayP
 
 const std::vector<snowdesktop::calendar::DayAnnotation>& WidgetEngine::RuntimeCalendarAnnotations(const std::string& from, const std::string& to)
 {
-    const std::string language = Locale::Instance().GetLanguage();
+    const std::string language = Locale::Instance().GetEffectiveLanguage();
     const std::string key = from + ":" + to + ":" + language;
     if (key != calendarAnnotationCacheKey_)
     {
