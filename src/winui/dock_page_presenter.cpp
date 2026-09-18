@@ -651,6 +651,8 @@ struct DockPagePresenter::Impl
         restartExplorerButton.VerticalAlignment(
             mux::VerticalAlignment::Center);
         windowsSystemThemeRow.Initialize(windowsSystemThemeChoices);
+        windowsSystemThemeRow.SetControlAlignment(
+            mux::HorizontalAlignment::Right);
         restartExplorerRow.Initialize(restartExplorerButton);
         restartExplorerRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
@@ -671,13 +673,17 @@ struct DockPagePresenter::Impl
     muxc::RadioButtons NewInlineChoices()
     {
         muxc::RadioButtons choices{};
-        choices.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        choices.HorizontalAlignment(mux::HorizontalAlignment::Right);
         choices.MaxColumns(2);
         // Keep application-owned RadioButton instances stable. Rebuilding a
         // string Items collection while the control is unloaded can leave
         // RadioButtons.SelectedIndex set but no generated container checked.
-        choices.Items().Append(muxc::RadioButton{});
-        choices.Items().Append(muxc::RadioButton{});
+        for (int index = 0; index < 2; ++index)
+        {
+            muxc::RadioButton choice{};
+            choice.MinWidth(0.0);
+            choices.Items().Append(choice);
+        }
         return choices;
     }
 
