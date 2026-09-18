@@ -358,8 +358,7 @@ struct DockPagePresenter::Impl
     ContinuousControl thicknessScale;
     ContinuousControl frequentItemCount;
 
-    muxc::ToggleSwitch taskbarAutoHideToggle{nullptr};
-    muxc::RadioButtons taskbarAlignmentChoices{nullptr};
+    muxc::HyperlinkButton taskbarSettingsLink{nullptr};
     muxc::Button restartExplorerButton{nullptr};
     muxc::ComboBox taskbarThemeCombo{nullptr};
     muxc::ComboBox taskbarContentThemeCombo{nullptr};
@@ -387,8 +386,7 @@ struct DockPagePresenter::Impl
     SettingRow showFrequentItemsRow;
     SettingRow allowDesktopContentOverlapRow;
     SettingRow showOnlyWhenSummonedRow;
-    SettingRow taskbarAutoHideRow;
-    SettingRow taskbarAlignmentRow;
+    SettingRow taskbarSettingsRow;
     SettingRow windowsSystemThemeRow;
     SettingRow restartExplorerRow;
     SettingRow taskbarThemeRow;
@@ -415,15 +413,12 @@ struct DockPagePresenter::Impl
     std::uint64_t generation = 0;
     std::uint64_t generalRevision = 0;
     std::uint64_t dockRevision = 0;
-    std::uint64_t systemTaskbarRevision = 0;
     bool hasSnapshot = false;
     bool updatingControls = false;
     bool synchronizingPair = false;
     bool taskbarContentThemeCustomItems = false;
     bool taskbarHookRequired = false;
     bool taskbarInputReady = false;
-    bool taskbarAutoHideValue = false;
-    int taskbarAlignmentValue = 1;
     int windowsSystemThemeValue = 0;
     int taskbarContentThemeValue = -1;
     int taskbarAppearanceContentThemeValue = 0;
@@ -442,8 +437,6 @@ struct DockPagePresenter::Impl
     winrt::event_token keepWhenDesktopHiddenToken{};
     winrt::event_token allowDesktopContentOverlapToken{};
     winrt::event_token showOnlyWhenSummonedToken{};
-    winrt::event_token taskbarAutoHideToken{};
-    winrt::event_token taskbarAlignmentToken{};
     winrt::event_token restartExplorerToken{};
     winrt::event_token taskbarThemeToken{};
     winrt::event_token taskbarContentThemeToken{};
@@ -584,16 +577,13 @@ struct DockPagePresenter::Impl
         // remains outside the 1:1 legacy surface.
 
         InitializeCard(taskbarCard, cardStyle, taskbarRoot);
-        taskbarAutoHideToggle = muxc::ToggleSwitch{};
-        taskbarAutoHideToggle.HorizontalAlignment(
-            mux::HorizontalAlignment::Right);
-        taskbarAlignmentChoices = NewInlineChoices();
-        taskbarAutoHideRow.Initialize(taskbarAutoHideToggle);
-        taskbarAutoHideRow.SetControlAlignment(
-            mux::HorizontalAlignment::Right);
-        taskbarAlignmentRow.Initialize(taskbarAlignmentChoices);
-        taskbarCard.content.Children().Append(taskbarAutoHideRow.root);
-        taskbarCard.content.Children().Append(taskbarAlignmentRow.root);
+        taskbarSettingsLink = muxc::HyperlinkButton{};
+        taskbarSettingsLink.NavigateUri(
+            winrt::Windows::Foundation::Uri{L"ms-settings:taskbar"});
+        taskbarSettingsLink.UseSystemFocusVisuals(true);
+        taskbarSettingsRow.Initialize(taskbarSettingsLink);
+        taskbarSettingsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
         InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
         taskbarThemeCombo = NewCombo();
@@ -1063,32 +1053,6 @@ struct DockPagePresenter::Impl
                 EmitDock(SettingsUpdateMode::PreviewAndCommit,
                     [value](DockSettings& settings) {
                         settings.showOnlyWhenSummoned = value;
-                    });
-            });
-        taskbarAutoHideToken = taskbarAutoHideToggle.Toggled(
-            [this](const auto&, const auto&) {
-                if (!taskbarInputReady)
-                    return;
-                const bool value = taskbarAutoHideToggle.IsOn();
-                if (!updatingControls)
-                    taskbarAutoHideValue = value;
-                EmitDock(SettingsUpdateMode::PreviewAndCommit,
-                    [value](DockSettings& settings) {
-                        settings.systemTaskbarAutoHide = value;
-                    });
-            });
-        taskbarAlignmentToken = taskbarAlignmentChoices.SelectionChanged(
-            [this](const auto&, const auto&) {
-                if (!taskbarInputReady)
-                    return;
-                const int value = taskbarAlignmentChoices.SelectedIndex();
-                if (value < 0) return;
-                if (!updatingControls)
-                    taskbarAlignmentValue = std::clamp(value, 0, 1);
-                EmitDock(SettingsUpdateMode::PreviewAndCommit,
-                    [value](DockSettings& settings) {
-                        settings.systemTaskbarAlignment =
-                            std::clamp(value, 0, 1);
                     });
             });
         windowsSystemThemeToken = windowsSystemThemeChoices.SelectionChanged(
@@ -1561,15 +1525,6 @@ struct DockPagePresenter::Impl
         control.acrylic.IsOn(rule.appearance.acrylicEnabled);
     }
 
-    void PatchSystemTaskbarControls(const DockSettings& settings)
-    {
-        taskbarAutoHideValue = settings.systemTaskbarAutoHide;
-        taskbarAlignmentValue = std::clamp(
-            settings.systemTaskbarAlignment, 0, 1);
-        taskbarAutoHideToggle.IsOn(taskbarAutoHideValue);
-        SelectChoice(taskbarAlignmentChoices, taskbarAlignmentValue);
-    }
-
     void PatchDock(const DockSettings& settings)
     {
         PatchGradient(taskbarGradient, settings.systemTaskbarAppearance.panelGradient);
@@ -1594,7 +1549,6 @@ struct DockPagePresenter::Impl
                     settings.showOnlyWhenSummoned,
                     settings.allowDesktopContentOverlap));
         showOnlyWhenSummonedToggle.IsOn(settings.showOnlyWhenSummoned);
-        PatchSystemTaskbarControls(settings);
         windowsSystemThemeValue =
             IsWindowsSystemLightThemeEnabled() ? 0 : 1;
         SelectChoice(windowsSystemThemeChoices, windowsSystemThemeValue);
@@ -1783,8 +1737,6 @@ struct DockPagePresenter::Impl
         updatingControls = true;
         try
         {
-            taskbarAutoHideToggle.IsOn(taskbarAutoHideValue);
-            SelectChoice(taskbarAlignmentChoices, taskbarAlignmentValue);
             windowsSystemThemeValue =
                 IsWindowsSystemLightThemeEnabled() ? 0 : 1;
             SelectChoice(
@@ -2142,10 +2094,8 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetHelpText(
             taskbarRulesCard.root, taskbarRulesHint.Text());
         muxa::AutomationProperties::SetHelpText(taskbarCard.root,
-            L("settings.taskbar.autoHide.description",
-                L"Control Windows taskbar auto-hide.") + L" " +
-            L("settings.taskbar.alignment.description",
-                L"Align taskbar items to the left or center."));
+            L("settings.taskbar.systemSettings.description",
+                L"Manage taskbar behavior in Windows Settings."));
         muxa::AutomationProperties::SetHelpText(taskbarAppearanceCard.root,
             rulesDescription);
         const std::wstring systemPanelHelp =
@@ -2229,22 +2179,17 @@ struct DockPagePresenter::Impl
             "app.settings.show_count", L"Frequent Item Count");
         SetUnit(frequentItemCount, ExtractNumericUnit(
             L("app.settings.items_unit", L"%d items")));
-        taskbarAutoHideRow.SetText(
-            L("settings.taskbar.autoHide", L"Automatically hide taskbar"),
-            L("settings.taskbar.autoHide.description",
-                L"Control Windows taskbar auto-hide."));
-        taskbarAlignmentRow.SetText(
-            L("settings.taskbar.alignment", L"Taskbar alignment"),
-            L("settings.taskbar.alignment.description",
-                L"Align taskbar items to the left or center."));
+        taskbarSettingsRow.SetText(
+            L("settings.taskbar.systemSettings", L"Windows taskbar settings"),
+            L("settings.taskbar.systemSettings.description",
+                L"Manage taskbar behavior in Windows Settings."));
+        taskbarSettingsLink.Content(winrt::box_value(L(
+            "settings.taskbar.systemSettings.open", L"Open settings")));
         muxa::AutomationProperties::SetName(
-            taskbarAutoHideToggle, taskbarAutoHideRow.label.Text());
-        muxa::AutomationProperties::SetName(
-            taskbarAlignmentChoices, taskbarAlignmentRow.label.Text());
-        ReplaceChoiceItems(taskbarAlignmentChoices, {
-            {"app.settings.taskbar_left", L"Left"},
-            {"app.settings.taskbar_center", L"Center"},
-        }, taskbarAlignmentValue);
+            taskbarSettingsLink, taskbarSettingsRow.label.Text());
+        muxa::AutomationProperties::SetHelpText(taskbarSettingsLink,
+            L("settings.taskbar.systemSettings.description",
+                L"Manage taskbar behavior in Windows Settings."));
         windowsSystemThemeRow.SetText(
             L("app.settings.appearance", L"Appearance"), systemPanelHelp);
         windowsSystemThemeValue =
@@ -2385,15 +2330,6 @@ struct DockPagePresenter::Impl
         {
             PatchDock(snapshot.values.dock);
             dockRevision = snapshot.domainRevisions.dock;
-            systemTaskbarRevision =
-                snapshot.domainRevisions.systemTaskbar;
-        }
-        else if (snapshot.domainRevisions.systemTaskbar !=
-            systemTaskbarRevision)
-        {
-            PatchSystemTaskbarControls(snapshot.values.dock);
-            systemTaskbarRevision =
-                snapshot.domainRevisions.systemTaskbar;
         }
         if (newGeneration)
         {
@@ -2438,8 +2374,8 @@ struct DockPagePresenter::Impl
             return allowDesktopContentOverlapToggle;
         if (id == "dock.showOnlyWhenSummoned" || id == "dock.autoHide")
             return showOnlyWhenSummonedToggle;
-        if (id == "taskbar.autoHide") return taskbarAutoHideToggle;
-        if (id == "taskbar.alignment") return taskbarAlignmentChoices;
+        if (id == "taskbar.systemSettings" || id == "taskbar.autoHide" ||
+            id == "taskbar.alignment") return taskbarSettingsLink;
         if (id == "taskbar.systemTheme" || id == "taskbar.systemPanel")
             return windowsSystemThemeChoices;
         if (id == "taskbar.theme" || id == "taskbar.backdrop" ||
@@ -2575,8 +2511,6 @@ struct DockPagePresenter::Impl
             allowDesktopContentOverlapToggle.Toggled(
                 allowDesktopContentOverlapToken);
             showOnlyWhenSummonedToggle.Toggled(showOnlyWhenSummonedToken);
-            taskbarAutoHideToggle.Toggled(taskbarAutoHideToken);
-            taskbarAlignmentChoices.SelectionChanged(taskbarAlignmentToken);
             windowsSystemThemeChoices.SelectionChanged(
                 windowsSystemThemeToken);
             restartExplorerButton.Click(restartExplorerToken);

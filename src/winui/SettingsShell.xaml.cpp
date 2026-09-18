@@ -2440,7 +2440,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             dockPage_->ActivateTaskbar();
             PageCards().Children().Append(dockPage_->TaskbarContent());
             registerDockFocus({
-                "taskbar.autoHide", "taskbar.alignment",
+                "taskbar.systemSettings", "taskbar.autoHide", "taskbar.alignment",
                 "taskbar.systemTheme", "taskbar.theme",
                 "taskbar.contentTheme", "taskbar.backgroundColor",
                 "taskbar.borderColor", "taskbar.backgroundOpacity",
