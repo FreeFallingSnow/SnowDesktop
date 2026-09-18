@@ -471,7 +471,7 @@ void TestDebugProfile(const std::filesystem::path& fixture)
             "real desktop, managed data, descendants and ancestors cannot be selected");
     }
     Expect(!profile::ValidateDesktop(paths, L"relative-folder", {realDesktop}, error), "relative demo directories are rejected");
-    const auto otherDesktop = root / L"other-demo";
+    const auto otherDesktop = root / L"other-demo-模拟桌面";
     Write(otherDesktop / L"keep.txt", "keep-demo");
     Expect(profile::ValidateDesktop(paths, otherDesktop, {realDesktop}, error), "an independent existing folder is accepted");
     config.desktop = otherDesktop;
