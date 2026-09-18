@@ -26,3 +26,14 @@
 - 设置页浅色、深色、高对比度、键盘访问及长路径显示。新增文本同步提供全部界面语言的翻译。
 
 桌面宿主不使用自动桌面控制工具验收；上述交互由用户实机反馈确认。
+
+## 2026-09-18 自动验证记录
+
+- 宿主实现提交：`87572a79`、`12a61c07`；中文目录回归提交：`0f41ef58`。均位于 `release/v1.0.7.0`，未推送。
+- `scripts/build.bat` 标准 Release 构建通过，生成 `.build/Release/SnowDesktop.exe`。新增 UTF-8 路径弃用警告已消除；此前重编译可见既有 `GetCurrentTime` 宏警告和未修改源文件中的变量遮蔽警告。
+- `scripts/test.bat name "^(application_data_lifecycle|single_instance|settings_controller|localization_contract|winui_backup_data_page_backend|winui_settings_navigation|winui_settings_window_host)$"`：本次 7/7 通过，退出码 0；定向编译 49.71 秒，测试 5.30 秒。
+- `scripts/test.bat full`：本次 118/118 通过，退出码 0，无跳过；配置 1.58 秒，聚合构建 83.27 秒，测试 86.22 秒。按规则排除手动诊断，不代表 `shell_file_operation_worker` 手动条目已执行。
+- 清空负向对照：隔离目录中真实 `Clear` 入口通过；隔离源码副本故意把默认模拟桌面加入删除集合后，以“演示文件被删”的断言失败退出 1。该对照覆盖清空边界，不证明宿主交互。
+- 环境：Windows x64、Release、MSVC 14.50、Windows SDK 10.0.26100.0。全量聚合构建按现有流程重新整理运行目录，测试完成时宿主 SHA-256 为 `97E4D63D569084993DE15932D4154AFE138C6C77284ABF5639B0E212F831C623`。
+- 本地日志：`.codex-probes/debug-profile-build-final.log`、`.codex-probes/debug-profile-targeted-final.log`、`.codex-probes/debug-profile-full.log`；完整 CTest 报告：`.build/Testing/test-run-87105ec60dff41c7815d026195295aa5.xml`。
+- 未运行：上节列出的桌面实机及设置页视觉验收。当前代码提交仍为 `try`，没有把自动测试通过记为桌面功能验收通过。
