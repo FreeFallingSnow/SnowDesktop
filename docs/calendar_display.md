@@ -32,3 +32,19 @@ of holiday annotations even when callers pass legacy enabled preferences.
 Obsolete holiday-accuracy and region-label tests were replaced by these removal
 and compatibility checks. Settings/desktop interactions require user acceptance;
 offscreen fixtures demonstrate layout only, not live settings propagation.
+
+## Removal validation (2026-09-18)
+
+Candidate `4a417bef`: `scripts/build.bat --reload-shell` passed and generated the
+Release executable; existing generated WinRT warnings remain. `scripts/test.bat
+full` passed 118/118, exit 0, CTest 67.81 s. Report:
+`.build/Testing/test-run-4cea7a366139472ea2872a29a3c8e12c.xml`.
+Local transcripts: `.codex-probes/calendar-only-build.log` and
+`.codex-probes/calendar-only-tests.log`.
+
+The isolated service/settings checks passed. A controlled reintroduction of
+holiday output failed both removal assertions. Package lint/validation passed
+(existing missing-preview warning). Source/output Lua SHA256 values matched.
+An October 2026 offscreen fixture deliberately supplied older-host holiday data;
+the updated widget rendered lunar dates only. Settings and desktop interactions
+remain pending user acceptance. No desktop-host automation was used.
