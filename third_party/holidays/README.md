@@ -7,6 +7,9 @@ Python and these packages are build-time tools, not application dependencies.
 
 Run `scripts/generate_calendar_holidays.py` to reproduce `src/calendar_holidays.inc`.
 It fixes regions, languages, PUBLIC category, observed=False and years 2020–2035.
+The source can emit transferred rest days even with observed=False; those entries
+are removed by matching its translated `substituted_label` template. Filtering is
+per name so a genuine holiday sharing the date is preserved.
 No subdivisions or WORKDAY/bank/school categories are included. Multi-day public
 holidays are preserved. This is not a comprehensive cultural festival catalog.
 Source-provided estimated labels are retained. Future dates are predictions,

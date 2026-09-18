@@ -2993,8 +2993,20 @@ is required when a component supports the Gregorian fallback.
   invalidate cached annotations after global preferences change. Language changes
   continue to use `environment`. Read preferences on first load as well.
 
-Holiday names are an offline holidays 0.95 PUBLIC snapshot for 2020–2035, national
-scope only, observed=False. Real multi-day holidays and upstream estimated labels
+Display strings follow the effective UI language, including when the user selects
+the system language. Region IDs remain stable; CN/HK/TW labels explicitly identify
+Mainland China, Hong Kong Special Administrative Region and Taiwan. Region labels
+are presentation text and must not be used as identifiers.
+
+For the Chinese calendar, `secondary` uses traditional Chinese day notation
+(初二, 廿一, etc.); day one shows the month name instead, including the leap-month
+prefix. `fullDate` retains the complete ICU-localized date. This is a presentation
+change in the 1.0.7.0 development line; numeric fields and API version are unchanged.
+
+Holiday names are an offline holidays 0.95 PUBLIC snapshot for 2020–2035, selected
+region scope only (no subdivisions), observed=False. Transferred rest-day entries
+are additionally filtered using the source's localized substitution template.
+Real multi-day holidays and upstream estimated labels
 are retained. It is not a workday/leave API or a complete cultural festival list.
 Names use the matching supported locale/base language, then English, then a source
 language. Out-of-range availability is false, not proof of no holiday. Disabling

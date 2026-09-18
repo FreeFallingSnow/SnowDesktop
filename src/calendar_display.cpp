@@ -65,10 +65,10 @@ std::vector<DisplayOption> HolidayRegions(std::string_view language)
     // Product region labels are independent of ICU's country naming conventions.
     struct Names { std::string_view language; const wchar_t *mainland, *hongKong, *taiwan; };
     static constexpr Names names[] = {
-        {"zh-CN", L"中国大陆", L"香港特别行政区", L"台湾"},
-        {"zh-TW", L"中國大陸", L"香港特別行政區", L"台灣"},
+        {"zh-CN", L"中国大陆", L"香港特别行政区", L"台湾"}, // l10n-allow: locale-specific region table or intrinsic Chinese lunar notation
+        {"zh-TW", L"中國大陸", L"香港特別行政區", L"台灣"}, // l10n-allow: locale-specific region table or intrinsic Chinese lunar notation
         {"en-US", L"Mainland China", L"Hong Kong Special Administrative Region", L"Taiwan"},
-        {"ja-JP", L"中国本土", L"香港特別行政区", L"台湾"},
+        {"ja-JP", L"中国本土", L"香港特別行政区", L"台湾"}, // l10n-allow: locale-specific region table or intrinsic Chinese lunar notation
         {"ko-KR", L"중국 본토", L"홍콩 특별행정구", L"대만"},
         {"de-DE", L"Festlandchina", L"Sonderverwaltungsregion Hongkong", L"Taiwan"},
         {"fr-FR", L"Chine continentale", L"Région administrative spéciale de Hong Kong", L"Taïwan"},
@@ -146,13 +146,13 @@ std::vector<DayAnnotation> Annotate(const std::string& from, const std::string& 
             item.secondary = Format(shortFormat.get(), instant);
             if (p.calendar == "chinese")
             {
-                static constexpr const char* lunarDays[] = {"", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"};
-                static constexpr const char* months[] = {"", "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"};
+                static constexpr const char* lunarDays[] = {"", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十", "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十", "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"}; // l10n-allow: locale-specific region table or intrinsic Chinese lunar notation
+                static constexpr const char* months[] = {"", "正月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "冬月", "腊月"}; // l10n-allow: locale-specific region table or intrinsic Chinese lunar notation
                 const bool traditional = language == "zh-TW" || language == "zh-HK";
                 if (item.day >= 1 && item.day <= 30 && item.month >= 1 && item.month <= 12)
                     item.secondary = item.day == 1
-                        ? std::string(item.leapMonth ? (traditional ? "閏" : "闰") : "") +
-                            (traditional && item.month == 12 ? "臘月" : months[item.month])
+                        ? std::string(item.leapMonth ? (traditional ? "閏" : "闰") : "") + // l10n-allow: locale-specific region table or intrinsic Chinese lunar notation
+                            (traditional && item.month == 12 ? "臘月" : months[item.month]) // l10n-allow: locale-specific region table or intrinsic Chinese lunar notation
                         : lunarDays[item.day];
             }
             item.fullDate = Format(fullFormat.get(), instant);
