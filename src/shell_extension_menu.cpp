@@ -397,14 +397,15 @@ struct Host
             return {};
         auto native = std::make_unique<Native>();
         native->directory = directory;
-        // Initialize the shared Shell image cache outside extension DLL loading.
-        // Some installed handlers create Shell controls in their loader entry;
-        // a cold cache there waits for a worker blocked by the DLL loader lock.
-        progress("initialize system icon cache");
-        SHFILEINFOW iconInfo{};
-        SHGetFileInfoW(directory.c_str(), 0, &iconInfo, sizeof(iconInfo), SHGFI_ICON | SHGFI_SMALLICON);
-        if (iconInfo.hIcon)
-            DestroyIcon(iconInfo.hIcon);
+        // Warm the Shell item-handler cache through a documented library bind.
+        // Some handlers create library-aware Shell controls during DLL loading;
+        // their first bind can wait for a worker blocked by the DLL loader lock.
+        progress("initialize library handler cache");
+        ComPtr<IShellItem> library;
+        ComPtr<IShellFolder> libraryFolder;
+        if (SUCCEEDED(SHGetKnownFolderItem(FOLDERID_DocumentsLibrary, KF_FLAG_DEFAULT, nullptr,
+                                           IID_PPV_ARGS(&library))))
+            library->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&libraryFolder));
         // The real Shell aggregate decides what exists and applies system
         // filtering. Never instantiate registrations to bypass that decision.
         if (request.background)
