@@ -5,6 +5,33 @@ assets. These notices apply only to the named components. The SnowDesktop core
 is licensed under the GNU General Public License v3.0; the separate Steam bridge
 under `steam_bridge/` is licensed under the MIT License.
 
+## Corresponding source / 对应源码
+
+SnowDesktop's corresponding source, including its modifications to third-party
+code and the scripts needed to build the application, is maintained in the
+official repository and can be obtained free of charge:
+
+<https://github.com/FreeFallingSnow/SnowDesktop>
+
+Build instructions and pinned dependency versions are provided in `README.md`,
+`README.en.md`, `CMakeLists.txt`, `CMakePresets.json`, and `scripts/README.md`
+in that repository.
+
+SnowDesktop 的对应源码（包括对第三方代码的修改及构建应用所需的脚本）可从上述官方
+仓库免费获取。构建说明和固定依赖版本见仓库中的 `README.md`、`README.en.md`、
+`CMakeLists.txt`、`CMakePresets.json` 和 `scripts/README.md`。
+
+The upstream project links below identify third-party origins. SnowDesktop's
+changes to those components are included in the corresponding source above.
+The separately obtained Steamworks SDK remains subject to Valve's terms, as
+described under "Optional Steamworks dependency" below.
+
+下列上游项目链接用于说明第三方来源；SnowDesktop 对相关代码的修改包含在上述对应
+源码中。另行获取的 Steamworks SDK 仍受 Valve 的条款约束，详见下文
+“Optional Steamworks dependency”。
+
+## Third-party components
+
 | Component | Version | License | Copyright / source |
 | --- | --- | --- | --- |
 | Microsoft Windows App SDK | 2.4.0 NuGet package | Microsoft Software License Terms | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/WindowsAppSDK> |
