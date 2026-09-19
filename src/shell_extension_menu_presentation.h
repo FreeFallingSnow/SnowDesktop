@@ -33,9 +33,8 @@ class Presentation
   public:
     static constexpr UINT FirstCommand = 0x71000000;
     static constexpr UINT LoadingCommand = FirstCommand - 1;
-    Presentation(const Request &source, Preferences prefs, std::wstring loading, std::wstring failed,
-                 std::wstring fallback)
-        : prefs_(std::move(prefs)), source_(source), failed_(std::move(failed)), fallback_(std::move(fallback))
+    Presentation(const Request &source, Preferences prefs, std::wstring loading, std::wstring failed)
+        : prefs_(std::move(prefs)), source_(source), failed_(std::move(failed))
     {
         if (source.paths.empty())
             return;
@@ -115,8 +114,6 @@ class Presentation
             item.checked = e.checked;
             item.separator = e.separator;
             item.children = Convert(e.children);
-            if (e.native && e.children.empty())
-                item.label += L" (" + fallback_ + L")";
             if (e.width > 0 && e.height > 0 && e.width <= 128 && e.height <= 128 &&
                 e.pixels.size() == static_cast<size_t>(e.width * e.height * 4))
             {
@@ -144,7 +141,7 @@ class Presentation
     }
     Preferences prefs_;
     Request source_;
-    std::wstring loading_, failed_, fallback_;
+    std::wstring loading_, failed_;
     std::unique_ptr<Session> session_;
     std::optional<Reply> ready_;
     std::vector<HBITMAP> images_;

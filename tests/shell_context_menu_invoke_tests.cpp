@@ -321,29 +321,41 @@ void TestExtensionSessions()
         ~RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",nullptr);}
     } realMode;
     TestSystemPolicy(wait, directory.path);
-    // The reported 7-Zip icon lives in hbmpUnchecked, not hbmpItem.
-    // Query the installed handler in its real child session; never invoke it.
+    // Exercise the same four default queries as the settings tabs, including
+    // real installed handler images. Report every scope before failing so one
+    // incompatible DLL cannot hide the remaining scope results.
     HKEY sevenZip = nullptr;
-    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, L"*\\shellex\\ContextMenuHandlers\\7-Zip", 0, KEY_READ, &sevenZip) == ERROR_SUCCESS)
+    const bool installed = RegOpenKeyExW(HKEY_CLASSES_ROOT,
+        L"*\\shellex\\ContextMenuHandlers\\7-Zip", 0, KEY_READ, &sevenZip) == ERROR_SUCCESS;
+    if (sevenZip) RegCloseKey(sevenZip);
+    bool scopesPassed = true;
+    for (const auto context : {ext::Context::File, ext::Context::Folder,
+                              ext::Context::FolderBackground, ext::Context::Desktop})
     {
-        RegCloseKey(sevenZip);
-        request.background = false;
-
-        ext::Session archiveSession(request);
-        const auto archiveReply = wait(archiveSession);
-        if (!archiveReply.ok) std::cerr << "7-Zip query: " << archiveReply.error << '\n';
-        Expect(archiveReply.ok && !archiveReply.entries.empty(), "installed 7-Zip handler returns its actual menu");
-        const auto archiveItems = ext::VisibleEntries({}, archiveReply.entries, request);
-        const auto actualArchive = std::find_if(archiveItems.begin(), archiveItems.end(), [](const auto& entry) {
+        ext::Request sample; sample.catalogueOnly = true; sample.context = context;
+        ext::Session actual(sample);
+        const auto reply = wait(actual);
+        std::cout << "System scope " << static_cast<int>(context) << ": "
+                  << (reply.ok ? "queried" : "FAILED") << ", entries=" << reply.entries.size()
+                  << ", " << reply.error << std::endl;
+        scopesPassed &= reply.ok;
+        if (!reply.ok || !installed || (context != ext::Context::File && context != ext::Context::Folder))
+            continue;
+        const auto archive = std::find_if(reply.entries.begin(), reply.entries.end(), [](const auto &entry) {
             return entry.label == L"7-Zip";
         });
-        Expect(actualArchive != archiveItems.end() && !actualArchive->children.empty(), "7-Zip keeps its native command submenu");
-        std::cout << "7-Zip menu image: " << actualArchive->width << "x" << actualArchive->height
-                  << ", " << actualArchive->pixels.size() << " bytes\n";
-        Expect(actualArchive->width > 0 && actualArchive->height > 0 && !actualArchive->pixels.empty(),
-            "real 7-Zip submenu retains the icon stored in the checkmark bitmap slot");
+        const bool found = archive != reply.entries.end() && !archive->children.empty();
+        scopesPassed &= found;
+        if (found)
+        {
+            std::cout << "7-Zip menu image: " << archive->width << "x" << archive->height
+                      << ", " << archive->pixels.size() << " bytes" << std::endl;
+            scopesPassed &= archive->width > 0 && archive->height > 0 && !archive->pixels.empty();
+        }
+        else std::cerr << "FAILED: 7-Zip root or native children missing" << std::endl;
     }
-    else std::cout << "7-Zip integration not run: handler is not installed\n";
+    Expect(scopesPassed, "all four real settings scopes query successfully and preserve installed 7-Zip icons");
+
 }
 
 int wmain()
