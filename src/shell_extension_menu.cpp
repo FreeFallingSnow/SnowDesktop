@@ -184,6 +184,7 @@ struct Host
     Native *tracking = nullptr;
     bool invoked = false;
     size_t count = 0;
+    std::function<void(const std::string &)> progress = [](const auto &) {};
     static LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         auto *self = reinterpret_cast<Host *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -289,12 +290,15 @@ struct Host
             for (size_t i = 3; i < entry.pixels.size(); i += 4)
                 entry.pixels[i] = 255;
     }
-    std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0)
+    std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
+                            const std::wstring &title = L"root")
     {
         std::vector<Entry> entries;
         if (depth > 8)
             return entries;
+        progress("initialize popup: " + Utf8(title));
         InitPopup(source, menu);
+        progress("read popup: " + Utf8(title));
         for (int i = 0; i < GetMenuItemCount(menu) && count < kMaximumEntries; ++i)
         {
             ++count;
@@ -323,7 +327,7 @@ struct Host
                 commands[entry.token] = {&source, 0, true};
             }
             else if (item.hSubMenu)
-                entry.children = Read(source, item.hSubMenu, provider, depth + 1);
+                entry.children = Read(source, item.hSubMenu, provider, depth + 1, entry.label);
             else if (item.wID >= 1 && item.wID <= 0x7fff)
             {
                 entry.token = next++;
@@ -358,6 +362,7 @@ struct Host
     }
     Reply Query(const Request &request)
     {
+        progress("validate paths");
         if (request.paths.empty() || request.paths.size() > 256)
             return {};
         for (const auto &path : request.paths)
@@ -370,6 +375,7 @@ struct Host
         std::vector<PCIDLIST_ABSOLUTE> raw;
         for (const auto &path : request.paths)
         {
+            progress("parse selection");
             auto id = std::make_unique<Pidl>();
             if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &id->value, 0, nullptr)))
                 return {};
@@ -382,6 +388,7 @@ struct Host
         Pidl folderId;
         ComPtr<IShellItem> folderItem;
         ComPtr<IShellFolder> folder;
+        progress("bind folder");
         if (FAILED(SHParseDisplayName(directory.c_str(), nullptr, &folderId.value, 0, nullptr)) ||
             FAILED(SHCreateItemFromIDList(folderId.value, IID_PPV_ARGS(&folderItem))) ||
             FAILED(folderItem->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&folder))))
@@ -392,6 +399,7 @@ struct Host
         // filtering. Never instantiate registrations to bypass that decision.
         if (request.background)
         {
+            progress("bind background menu");
             if (ResolveContext(request) == Context::Desktop)
             {
                 PWSTR desktopPath = nullptr;
@@ -407,6 +415,7 @@ struct Host
         }
         else
         {
+            progress("bind selection menu");
             ComPtr<IShellItemArray> selection;
             if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
                 FAILED(selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&native->context))))
@@ -414,6 +423,7 @@ struct Host
         }
         native->site.Initialize(folder.Get(), window);
         native->site.Attach(native->context.Get());
+        progress("query context menu");
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
                                                      CMF_NORMAL | CMF_SYNCCASCADEMENU |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
@@ -506,6 +516,7 @@ struct Session::Impl
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
+    std::string stage = "start helper";
     std::filesystem::path sampleDirectory;
     ULONGLONG started = GetTickCount64();
     DWORD timeout = 8000;
@@ -540,7 +551,14 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
         throw;
     }
     impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
-    impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) { p->reply = std::move(result); });
+    impl_->channel.Bind<void, std::string>("menu.progress", [p = impl_.get()](std::string stage) {
+        p->stage = std::move(stage);
+    });
+    impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) {
+        if (!result.ok && result.error.empty())
+            result.error = "query failed at " + p->stage;
+        p->reply = std::move(result);
+    });
     auto query = request;
     PrepareSample(query, impl_->sampleDirectory);
     impl_->process->Start(impl_->channel, L"--shell-menu-helper");
@@ -554,7 +572,7 @@ std::optional<Reply> Session::Poll()
     if (!impl_->reply && (!impl_->process->Running() || GetTickCount64() - impl_->started > impl_->timeout))
     {
         impl_->process->Stop();
-        impl_->reply = Reply{};
+        impl_->reply = Reply{false, {}, "helper stopped or timed out at " + impl_->stage};
     }
     if (!impl_->reply)
         return {};
@@ -589,6 +607,7 @@ std::optional<int> TryRunHelper(QueryExecutor query)
         settings_ipc::Channel channel;
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
         Host host;
+        host.progress = [&](const auto &stage) { channel.Notify("menu.progress", stage); };
         bool queried = false, invocationQueued = false;
         ULONGLONG invokedAt = 0, dispatchedAt = 0;
         channel.SetDisconnected([&] {

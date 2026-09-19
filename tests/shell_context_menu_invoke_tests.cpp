@@ -331,6 +331,7 @@ void TestExtensionSessions()
 
         ext::Session archiveSession(request);
         const auto archiveReply = wait(archiveSession);
+        if (!archiveReply.ok) std::cerr << "7-Zip query: " << archiveReply.error << '\n';
         Expect(archiveReply.ok && !archiveReply.entries.empty(), "installed 7-Zip handler returns its actual menu");
         const auto archiveItems = ext::VisibleEntries({}, archiveReply.entries, request);
         const auto actualArchive = std::find_if(archiveItems.begin(), archiveItems.end(), [](const auto& entry) {

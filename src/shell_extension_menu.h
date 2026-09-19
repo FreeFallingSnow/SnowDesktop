@@ -30,6 +30,7 @@ struct Reply
 {
     bool ok = false;
     std::vector<Entry> entries;
+    std::string error;
 };
 
 // One COM/menu session in a supervised child. Query is asynchronous; all
@@ -77,7 +78,7 @@ template <> struct Fields<shell_extensions::Reply>
 {
     template <class T> static auto Tie(T &v)
     {
-        return std::tie(v.ok, v.entries);
+        return std::tie(v.ok, v.entries, v.error);
     }
 };
 } // namespace snowdesktop::settings_ipc
