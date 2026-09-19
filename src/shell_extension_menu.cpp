@@ -397,6 +397,13 @@ struct Host
             return {};
         auto native = std::make_unique<Native>();
         native->directory = directory;
+        // Initialize the shared Shell image cache outside extension DLL loading.
+        // Some installed handlers create Shell controls in their loader entry;
+        // a cold cache there waits for a worker blocked by the DLL loader lock.
+        progress("initialize system icon cache");
+        SHFILEINFOW iconInfo{};
+        SHGetFileInfoW(L"folder", FILE_ATTRIBUTE_DIRECTORY, &iconInfo, sizeof(iconInfo),
+                       SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
         // The real Shell aggregate decides what exists and applies system
         // filtering. Never instantiate registrations to bypass that decision.
         if (request.background)
