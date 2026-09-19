@@ -1218,6 +1218,10 @@ int wmain()
         };
         SetTimer(owner,kDriveTimer,10,nullptr);SetTimer(owner,kWatchdogTimer,3000,nullptr);
         const auto result=snowdesktop::modern_menu::Show({group},options);KillTimer(owner,kWatchdogTimer);
+        if (!observedCascade || !refreshed || gWatchdogFired || result.command != 8202)
+            std::cerr << "cascade: observed=" << observedCascade << " refreshed=" << refreshed
+                      << " watchdog=" << gWatchdogFired << " command=" << result.command
+                      << " input=" << gInputPosted << '\n';
         Expect(observedCascade&&refreshed&&!gWatchdogFired&&result.command==8202,
             "extension deadlines are serviced during an open cascade and additions wait for its closure");
     }
