@@ -157,6 +157,36 @@ struct Pidl
         CoTaskMemFree(value);
     }
 };
+struct TemporaryMenuFile
+{
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    std::wstring path;
+    TemporaryMenuFile()
+    {
+        GUID id{};
+        if (FAILED(CoCreateGuid(&id))) return;
+        wchar_t guid[40]{};
+        StringFromGUID2(id, guid, 40);
+        path = (std::filesystem::temp_directory_path() /
+                (std::wstring(L"SnowDesktop-MenuInit-") + guid + L".txt")).wstring();
+        handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
+                             FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    }
+    ~TemporaryMenuFile()
+    {
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
+};
+std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullptr)
+{
+    wchar_t value[32768]{};
+    DWORD bytes = sizeof(value);
+    if (RegGetValueW(HKEY_CLASSES_ROOT, key.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+                     nullptr, value, &bytes) != ERROR_SUCCESS)
+        return {};
+    return value;
+}
 struct Native
 {
     ComPtr<IContextMenu> context;
@@ -360,6 +390,61 @@ struct Host
             entry.pixels = std::move(black);
         }
     }
+    void RegisteredBitmap(Entry &entry, const Request &request)
+    {
+        if (!entry.pixels.empty() || entry.separator || entry.label.empty()) return;
+        std::vector<std::wstring> roots;
+        const auto scope = ResolveContext(request);
+        if (scope == Context::File) roots = {L"*", L"AllFilesystemObjects"};
+        else if (scope == Context::Folder) roots = {L"Directory", L"Folder", L"AllFilesystemObjects"};
+        else if (scope == Context::FolderBackground) roots = {L"Directory\\Background"};
+        else roots = {L"DesktopBackground", L"Directory\\Background"};
+        for (const auto &root : roots)
+        {
+            const auto handlers = root + L"\\shellex\\ContextMenuHandlers";
+            HKEY key = nullptr;
+            if (RegOpenKeyExW(HKEY_CLASSES_ROOT, handlers.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) continue;
+            std::wstring modulePath;
+            for (DWORD index = 0; index < 512; ++index)
+            {
+                wchar_t name[256]{};
+                DWORD length = static_cast<DWORD>(std::size(name));
+                if (RegEnumKeyExW(key, index, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+                // Metadata only: this never creates or enables an extension.
+                // Exact registered/display-name matching avoids guessing a brand
+                // from unrelated command text (e.g. a filename containing it).
+                auto clsid = RegistryString(handlers + L"\\" + name);
+                if (clsid.empty()) clsid = name;
+                const auto classKey = L"CLSID\\" + clsid;
+                if (Lower(name) != Lower(entry.label) && Lower(RegistryString(classKey)) != Lower(entry.label)) continue;
+                modulePath = RegistryString(classKey + L"\\InprocServer32");
+                if (!modulePath.empty()) break;
+            }
+            RegCloseKey(key);
+            if (modulePath.empty()) continue;
+            if (modulePath.front() == L'"' && modulePath.back() == L'"')
+                modulePath = modulePath.substr(1, modulePath.size() - 2);
+            // LOAD_LIBRARY_AS_DATAFILE reads original resources without running
+            // DllMain, including when the provider omits menu icons by default.
+            HMODULE module = LoadLibraryExW(modulePath.c_str(), nullptr,
+                                             LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+            if (!module) continue;
+            struct Search { Host *host; Entry *entry; } search{this, &entry};
+            EnumResourceNamesW(module, RT_BITMAP,
+                [](HMODULE source, LPCWSTR, LPWSTR resource, LONG_PTR context) -> BOOL {
+                    auto &search = *reinterpret_cast<Search *>(context);
+                    HBITMAP bitmap = static_cast<HBITMAP>(LoadImageW(source, resource, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+                    BITMAP info{};
+                    if (bitmap && GetObjectW(bitmap, sizeof(info), &info) && info.bmWidth == info.bmHeight &&
+                        info.bmWidth >= 16 && info.bmWidth <= 64)
+                        search.host->Bitmap(*search.entry, bitmap);
+                    if (bitmap) DeleteObject(bitmap);
+                    return search.entry->pixels.empty();
+                }, reinterpret_cast<LONG_PTR>(&search));
+            FreeLibrary(module);
+            if (!entry.pixels.empty()) return;
+        }
+    }
     std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
                             const std::wstring &title = L"root")
     {
@@ -486,6 +571,23 @@ struct Host
             return {};
         auto native = std::make_unique<Native>();
         native->directory = directory;
+        std::unique_ptr<TemporaryMenuFile> warmFile;
+        std::unique_ptr<Native> warmMenu;
+        if (ResolveContext(request) == Context::Folder)
+        {
+            // File-menu initialization primes Shell association handlers before
+            // folder-only extensions create windows from their DLL entry point.
+            // The sample is private, never invoked, and deleted by the kernel
+            // even if this supervised process is terminated on timeout.
+            progress("initialize file associations");
+            warmFile = std::make_unique<TemporaryMenuFile>();
+            ComPtr<IShellItem> item;
+            warmMenu = std::make_unique<Native>();
+            if (warmFile->handle != INVALID_HANDLE_VALUE &&
+                SUCCEEDED(SHCreateItemFromParsingName(warmFile->path.c_str(), nullptr, IID_PPV_ARGS(&item))) &&
+                SUCCEEDED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&warmMenu->context))))
+                warmMenu->context->QueryContextMenu(warmMenu->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU);
+        }
         // The real Shell aggregate decides what exists and applies system
         // filtering. Never instantiate registrations to bypass that decision.
         if (request.background)
@@ -539,6 +641,8 @@ struct Host
             return {};
         Reply reply;
         reply.entries = Read(*native, native->menu, "");
+        for (auto &entry : reply.entries)
+            RegisteredBitmap(entry, request);
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
