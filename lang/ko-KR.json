@@ -377,6 +377,8 @@
   "app.settings.context_menu_system_dark_blur": "다크",
   "app.settings.context_menu_opaque_light": "라이트(불투명)",
   "app.settings.context_menu_opaque_dark": "다크(불투명)",
+  "app.settings.context_menu_win10_light": "Win10 라이트",
+  "app.settings.context_menu_win10_dark": "Win10 다크",
   "app.settings.layout_spacing": "레이아웃 간격",
   "app.settings.layout_spacing_hint": "바탕 화면 아이콘, 위젯 프레임 및 위젯 항목의 간격을 함께 조정합니다. 아이콘과 제목이 완전히 보이도록 실제 간격이 자동으로 제한됩니다.",
   "app.settings.icon_size": "아이콘 크기",

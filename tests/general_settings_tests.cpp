@@ -346,6 +346,19 @@ int main()
             !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
             loadedAppearance.gradientEndA == savedAppearance.gradientEndA,
         "appearance and Lua widget row height round trip independently");
+    // Persist through a non-custom theme as well: applying a preset must not
+    // discard the independent context-menu selection.
+    for (int style = 0; style <= 6; ++style)
+    {
+        auto menuAppearance = PersonalizationSettings::LightPreset();
+        menuAppearance.contextMenuStyle = style;
+        Check(SavePersonalization(personalizationPath.c_str(), menuAppearance) &&
+                LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance.contextMenuStyle == style,
+            "all existing and Win10 menu styles survive save/load with a theme preset");
+    }
+    Check(SavePersonalization(personalizationPath.c_str(), savedAppearance),
+        "restore the valid gradient fixture before testing rejected writes");
     auto invalidAppearance = savedAppearance;
     invalidAppearance.panelGradient.stops[1].position = 1;
     Check(!SavePersonalization(personalizationPath.c_str(), invalidAppearance) &&

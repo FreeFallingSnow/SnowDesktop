@@ -377,6 +377,8 @@
   "app.settings.context_menu_system_dark_blur": "Escuro",
   "app.settings.context_menu_opaque_light": "Claro (opaco)",
   "app.settings.context_menu_opaque_dark": "Escuro (opaco)",
+  "app.settings.context_menu_win10_light": "Win10 claro",
+  "app.settings.context_menu_win10_dark": "Win10 escuro",
   "app.settings.layout_spacing": "Espaçamento do layout",
   "app.settings.layout_spacing_hint": "Ajusta em conjunto os ícones da área de trabalho, as molduras dos widgets e seus itens. O espaçamento efetivo é limitado para manter ícones e títulos totalmente visíveis.",
   "app.settings.icon_size": "Tamanho dos ícones",

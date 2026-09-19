@@ -27,7 +27,9 @@ enum class DriveMode
     RebuiltRootSubmenu,
     TextInput,
     Nested,
+    Script,
 };
+std::function<void(HWND)> gMenuScript;
 DriveMode gDriveMode = DriveMode::Cascade;
 int gDrivePhase = 0;
 bool gInputPosted = false;
@@ -165,7 +167,13 @@ LRESULT CALLBACK OwnerWindowProc(
         MenuWindows menus;
         EnumThreadWindows(GetCurrentThreadId(),
             FindMenuWindows, reinterpret_cast<LPARAM>(&menus));
-        if (gDriveMode == DriveMode::Cascade && menus.root &&
+        if (gDriveMode == DriveMode::Script && menus.root)
+        {
+            gInputPosted = true;
+            KillTimer(hwnd, kDriveTimer);
+            gMenuScript(menus.root);
+        }
+        else if (gDriveMode == DriveMode::Cascade && menus.root &&
             gDrivePhase == 0)
         {
             // Select the cascade row, open it, then activate its first item.
@@ -413,6 +421,18 @@ int wmain()
             Appearance::OpaqueDark, false, 10, 22621) ==
             Appearance::OpaqueDark,
         "an explicitly selected opaque theme remains available on Windows 11");
+    for (const auto appearance : {Appearance::Win10Light, Appearance::Win10Dark})
+    {
+        for (const unsigned long build : {19045UL, 22621UL})
+            Expect(ResolveForWindows(appearance, true, 10, build) == appearance,
+                "Win10 styles are available only by explicit selection on either OS");
+        for (const bool systemLight : {false, true})
+            Expect(snowdesktop::modern_menu::appearance_rules::IsLightTheme(
+                    appearance, systemLight) == (appearance == Appearance::Win10Light),
+                "explicit Win10 colors are independent of the system theme");
+        Expect(!snowdesktop::modern_menu::appearance_rules::UsesSystemBlur(appearance),
+            "Win10 styles always render opaque panels");
+    }
 
     WNDCLASSEXW windowClass{ sizeof(windowClass) };
     windowClass.lpfnWndProc = OwnerWindowProc;
@@ -1019,6 +1039,125 @@ int wmain()
         "caret insertion, delete, spaces, and backspace update search in place");
     Expect(textInputResult.command == 82,
         "search input stays outside keyboard result navigation");
+
+    // Drive the real popup on the isolated desktop. Commands and returned row
+    // bounds catch accidental promotion of quick actions and stale hit geometry.
+    const auto runScript = [&](const std::vector<Item>& scriptItems,
+                               snowdesktop::modern_menu::Options scriptOptions,
+                               std::function<void(HWND)> script) {
+        gDriveMode = DriveMode::Script;
+        gMenuScript = std::move(script);
+        gInputPosted = false;
+        gWatchdogFired = false;
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto selected = snowdesktop::modern_menu::Show(scriptItems, scriptOptions);
+        KillTimer(owner, kWatchdogTimer);
+        gMenuScript = {};
+        Expect(gInputPosted && !gWatchdogFired,
+            "compact-menu input reaches the real popup without timing out");
+        return selected;
+    };
+    for (const auto appearance : {Appearance::Win10Light, Appearance::Win10Dark})
+    {
+        for (const UINT dpi : {96U, 120U, 144U, 192U})
+        {
+            snowdesktop::modern_menu::Options compact;
+            compact.owner = owner;
+            compact.anchor = {80, 80};
+            compact.appearance = appearance;
+            compact.dpi = dpi;
+            std::vector<Item> compactItems{
+                {101, L"普通命令", L"", true},
+                {102, L"复制一个较长名称的项目\tCtrl+C", L"C", true},
+                {103, L"不可用的剪切", L"X", false},
+                {104, L"已选中", L"", true, true},
+                {0, L"子菜单", L"", true, false, false,
+                    {{106, L"子菜单命令", L"", true}}},
+            };
+            compactItems[1].quickAction = true;
+            compactItems[2].quickAction = true;
+            const int rowHeight = MulDiv(24, dpi, 96);
+            const auto first = runScript(compactItems, compact, [](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(first.command == 101,
+                "Win10 keyboard navigation preserves source order instead of promoting quick actions");
+
+            snowdesktop::modern_menu::HoverInfo hover;
+            compact.onHover = [&](const auto& info) { hover = info; };
+            RECT rootBounds{};
+            const auto pointer = runScript(compactItems, compact, [&](HWND root) {
+                GetWindowRect(root, &rootBounds);
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                Expect(hover.command == 102, "compact quick actions remain selectable rows");
+                const RECT copyBounds = hover.itemScreenRect;
+                SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                Expect(hover.command == 104,
+                    "compact keyboard navigation skips disabled quick actions");
+                POINT point{copyBounds.left + 4, copyBounds.bottom + rowHeight / 2};
+                ScreenToClient(root, &point);
+                SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+                Expect(snowdesktop::modern_menu::IsActive(),
+                    "clicking a disabled compact row cannot activate a command");
+                point = {(copyBounds.left + copyBounds.right) / 2,
+                    (copyBounds.top + copyBounds.bottom) / 2};
+                ScreenToClient(root, &point);
+                SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+            });
+            Expect(pointer.command == 102 &&
+                    pointer.itemScreenRect.bottom - pointer.itemScreenRect.top == rowHeight &&
+                    pointer.itemScreenRect.right - pointer.itemScreenRect.left ==
+                        rootBounds.right - rootBounds.left - 2 * MulDiv(12, dpi, 96),
+                "Win10 quick actions use full-width compact hit targets at every DPI");
+            const auto child = runScript(compactItems, compact, [&](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                const RECT parentRow = hover.itemScreenRect;
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                MenuWindows cascade;
+                EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows,
+                    reinterpret_cast<LPARAM>(&cascade));
+                Expect(cascade.child != nullptr, "compact submenu opens from the keyboard");
+                RECT childBounds{};
+                GetWindowRect(cascade.child, &childBounds);
+                Expect(childBounds.top + MulDiv(12, dpi, 96) ==
+                        parentRow.top - MulDiv(3, dpi, 96),
+                    "compact submenus align using the same panel padding as their parent");
+                SendMessageW(cascade.child, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(cascade.child, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(child.command == 106 &&
+                    child.itemScreenRect.bottom - child.itemScreenRect.top == rowHeight,
+                "child popups inherit compact metrics and dispatch their command");
+
+            std::vector<Item> longMenu;
+            for (UINT i = 0; i < 100; ++i)
+                longMenu.push_back({200 + i, L"滚动菜单项", L"", true});
+            compact.anchor = {monitorInfo.rcWork.right - 2, monitorInfo.rcWork.bottom - 2};
+            const auto scrolled = runScript(longMenu, compact, [](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(scrolled.command == 299 &&
+                    scrolled.itemScreenRect.bottom <= monitorInfo.rcWork.bottom &&
+                    scrolled.itemScreenRect.right <= monitorInfo.rcWork.right,
+                "compact menus scroll to the last command within the monitor work area");
+
+            compact.anchor = {80, 80};
+            compact.onTextChanged = options.onTextChanged;
+            textChangeCount = 0;
+            observedSearch.clear();
+            const auto search = runScript(textInputItems, compact, [](HWND root) {
+                SendMessageW(root, WM_CHAR, L'a', 0);
+                SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(search.command == 82 && observedSearch == L"a" && textChangeCount == 1,
+                "compact search rows accept input and retain keyboard result navigation");
+        }
+    }
 
     gCaptureRootRect = false;
     gDriveMode = DriveMode::Nested;

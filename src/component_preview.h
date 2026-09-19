@@ -249,6 +249,7 @@ private:
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool lightTheme_ = true;
     bool blurEnabled_ = true;
+    int menuPanelPaddingDip_ = modern_menu::kSubmenuPanelPaddingDip;
     bool pointerTracking_ = false;
     bool componentHovered_ = false;
     ApplyHandler onApply_;

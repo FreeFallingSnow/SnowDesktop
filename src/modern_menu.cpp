@@ -128,13 +128,16 @@ public:
           blurEnabled_(appearance_rules::UsesSystemBlur(
               effectiveAppearance_)),
           palette_(menu_icon::ResolvePalette(lightTheme_)),
-          metrics_(menu_icon::ResolveMetrics(options.dpi)),
+          metrics_(menu_icon::ResolveMetrics(options.dpi,
+              appearance_rules::IsWin10Style(effectiveAppearance_))),
           // Acrylic is composed for the complete HWND and does not respect an
           // inset alpha-only shadow margin.  Its window must therefore match
           // the panel bounds exactly; DWM supplies the material shadow.
           shadowSize_(blurEnabled_ ? 0 : Scale(12, options.dpi)),
-          panelPadding_(Scale(kSubmenuPanelPaddingDip, options.dpi)),
-          panelRadius_(Scale(8, options.dpi))
+          panelPadding_(Scale(appearance_rules::PanelPaddingDip(
+              effectiveAppearance_), options.dpi)),
+          panelRadius_(Scale(appearance_rules::PanelRadiusDip(
+              effectiveAppearance_), options.dpi))
     {
         const int textHeight = -metrics_.textFontHeight;
         const int iconHeight = -metrics_.iconFontHeight;
@@ -537,7 +540,7 @@ public:
                 menu_icon::DrawTextInput(memoryDc, textFont_, iconFont,
                     view, inputView, row, palette_, metrics_);
             }
-            else if (popup.depth == 0 && item.quickAction && !item.inlineAction)
+            else if (UsesQuickActionStrip(popup, item))
             {
                 HFONT quickIconFont =
                     item.iconFont == IconFont::FontAwesomeSolid
@@ -715,6 +718,13 @@ private:
         return true;
     }
 
+    bool UsesQuickActionStrip(const Popup& popup, const Item& item) const
+    {
+        return !appearance_rules::IsWin10Style(effectiveAppearance_) &&
+            popup.depth == 0 && item.quickAction && !item.separator &&
+            !item.inlineAction;
+    }
+
     void CalculateLayout(Popup& popup)
     {
         HDC screenDc = GetDC(nullptr);
@@ -726,8 +736,7 @@ private:
         for (size_t i = 0; i < popup.items->size(); ++i)
         {
             const Item& item = (*popup.items)[i];
-            if (popup.depth == 0 && item.quickAction && !item.separator &&
-                !item.inlineAction)
+            if (UsesQuickActionStrip(popup, item))
             {
                 quickIndices.push_back(static_cast<int>(i));
                 continue;

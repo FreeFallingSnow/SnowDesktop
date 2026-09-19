@@ -377,6 +377,8 @@
   "app.settings.context_menu_system_dark_blur": "深色",
   "app.settings.context_menu_opaque_light": "淺色（不透明）",
   "app.settings.context_menu_opaque_dark": "深色（不透明）",
+  "app.settings.context_menu_win10_light": "Win10 淺色",
+  "app.settings.context_menu_win10_dark": "Win10 深色",
   "app.settings.layout_spacing": "版面間距",
   "app.settings.layout_spacing_hint": "同時調整桌面圖示、元件外框與元件內項目間距；實際間距會在確保圖示與標題完整顯示的範圍內自動限制。",
   "app.settings.icon_size": "圖示大小",

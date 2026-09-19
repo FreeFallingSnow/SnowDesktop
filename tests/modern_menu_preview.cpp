@@ -1,4 +1,5 @@
 #include "modern_menu.h"
+#include "modern_menu_appearance_rules.h"
 #include "resource.h"
 
 #include <windows.h>
@@ -33,6 +34,10 @@ const wchar_t* AppearanceName(
         return L"浅色（不透明）";
     case Appearance::OpaqueDark:
         return L"深色（不透明）";
+    case Appearance::Win10Light:
+        return L"Win10 浅色";
+    case Appearance::Win10Dark:
+        return L"Win10 深色";
     default:
         return L"跟随系统";
     }
@@ -88,9 +93,8 @@ void OpenPreviewMenu(HWND hwnd)
     // Keep the default preview at 96 DPI so low-resolution rasterization can
     // be inspected even when the development monitor uses display scaling.
     options.dpi = gPreviewDpi;
-    options.lightTheme = gAppearance !=
-            snowdesktop::modern_menu::Appearance::SystemDarkBlur &&
-        gAppearance != snowdesktop::modern_menu::Appearance::OpaqueDark;
+    options.lightTheme = snowdesktop::modern_menu::appearance_rules::
+        IsLightTheme(gAppearance, true);
     options.appearance = gAppearance;
     const auto items = BuildPreviewItems();
     gLastCommand = snowdesktop::modern_menu::Show(items, options).command;
@@ -123,6 +127,8 @@ LRESULT CALLBACK WindowProc(
             Appearance::SystemDarkBlur,
             Appearance::OpaqueLight,
             Appearance::OpaqueDark,
+            Appearance::Win10Light,
+            Appearance::Win10Dark,
         };
         const auto current = std::find(
             std::begin(previewAppearances), std::end(previewAppearances),

@@ -377,6 +377,8 @@
   "app.settings.context_menu_system_dark_blur": "Foncé",
   "app.settings.context_menu_opaque_light": "Clair (opaque)",
   "app.settings.context_menu_opaque_dark": "Foncé (opaque)",
+  "app.settings.context_menu_win10_light": "Win10 clair",
+  "app.settings.context_menu_win10_dark": "Win10 sombre",
   "app.settings.layout_spacing": "Espacement de la disposition",
   "app.settings.layout_spacing_hint": "Ajuste ensemble les icônes du bureau, les cadres des composants et leurs éléments. L’espacement effectif est limité afin que les icônes et les titres restent entièrement visibles.",
   "app.settings.icon_size": "Taille des icônes",

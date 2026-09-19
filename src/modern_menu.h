@@ -36,6 +36,8 @@ enum class Appearance
     SystemDarkBlur = 2,
     OpaqueLight = 3,
     OpaqueDark = 4,
+    Win10Light = 5,
+    Win10Dark = 6,
 };
 
 enum class IconFont

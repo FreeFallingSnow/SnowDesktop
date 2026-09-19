@@ -622,6 +622,19 @@ int wmain()
         "the preview accepts an opaque menu appearance");
     Expect(!window.BlurEnabledForTesting(),
         "an opaque menu also disables blur on its companion preview");
+    for (const auto appearance : {
+            snowdesktop::modern_menu::Appearance::Win10Light,
+            snowdesktop::modern_menu::Appearance::Win10Dark})
+    {
+        Expect(window.ScheduleShow(replacementModel, menuBounds, nullptr, 96,
+                false, {}, itemBounds, appearance),
+            "an already visible companion preview accepts Win10 menu styles");
+        RECT compactBounds{};
+        GetWindowRect(window.Handle(), &compactBounds);
+        Expect(compactBounds.top == itemBounds.top - 3 &&
+                !window.BlurEnabledForTesting(),
+            "Win10 companion previews stay opaque and use the compact submenu anchor");
+    }
     Expect(window.Show(replacementModel, menuBounds, nullptr, 96,
             true, {}, itemBounds,
             snowdesktop::modern_menu::Appearance::SystemLightBlur),

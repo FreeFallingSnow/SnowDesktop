@@ -7,6 +7,22 @@ namespace snowdesktop::modern_menu::appearance_rules
 
 inline constexpr unsigned long kWindows11MinimumBuild = 22000;
 
+inline constexpr bool IsWin10Style(Appearance appearance)
+{
+    return appearance == Appearance::Win10Light ||
+        appearance == Appearance::Win10Dark;
+}
+
+inline constexpr int PanelPaddingDip(Appearance appearance)
+{
+    return IsWin10Style(appearance) ? 3 : kSubmenuPanelPaddingDip;
+}
+
+inline constexpr int PanelRadiusDip(Appearance appearance)
+{
+    return IsWin10Style(appearance) ? 2 : 8;
+}
+
 inline constexpr bool IsWindows11OrGreater(
     unsigned long majorVersion, unsigned long buildNumber)
 {
@@ -58,12 +74,14 @@ inline constexpr bool IsLightTheme(
     Appearance appearance, bool followSystemLightTheme)
 {
     if (appearance == Appearance::SystemLightBlur ||
-        appearance == Appearance::OpaqueLight)
+        appearance == Appearance::OpaqueLight ||
+        appearance == Appearance::Win10Light)
     {
         return true;
     }
     if (appearance == Appearance::SystemDarkBlur ||
-        appearance == Appearance::OpaqueDark)
+        appearance == Appearance::OpaqueDark ||
+        appearance == Appearance::Win10Dark)
     {
         return false;
     }

@@ -666,7 +666,7 @@ struct PersonalizationPagePresenter::Impl
                     return;
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [value](PersonalizationSettings& settings) {
-                        settings.contextMenuStyle = std::clamp(value, 0, 4);
+                        settings.contextMenuStyle = std::clamp(value, 0, 6);
                     });
             });
         for (ContinuousControl* control : continuousControls)
@@ -838,7 +838,7 @@ struct PersonalizationPagePresenter::Impl
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
-            std::clamp(settings.contextMenuStyle, 0, 4));
+            std::clamp(settings.contextMenuStyle, 0, 6));
         UpdateDependentStates();
     }
 
@@ -1070,6 +1070,8 @@ struct PersonalizationPagePresenter::Impl
             {"app.settings.context_menu_system_dark_blur", L"Dark"},
             {"app.settings.context_menu_opaque_light", L"Light (Opaque)"},
             {"app.settings.context_menu_opaque_dark", L"Dark (Opaque)"},
+            {"app.settings.context_menu_win10_light", L"Win10 Light"},
+            {"app.settings.context_menu_win10_dark", L"Win10 Dark"},
         });
 
         SetContinuousText(cornerRadius,

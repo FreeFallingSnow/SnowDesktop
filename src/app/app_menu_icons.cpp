@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../menu_icon_render.h"
 #include "../modern_menu.h"
+#include "../modern_menu_appearance_rules.h"
 #include "../widget_package_image_cache.h"
 #include "popup_window_pair_z_order.h"
 
@@ -323,21 +324,10 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     menuIconDpi_ = dpi;
     const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
-        appearance.contextMenuStyle, 0, 4);
-    switch (menuAppearanceStyle_)
-    {
-    case 1:
-    case 3:
-        menuLightTheme_ = true;
-        break;
-    case 2:
-    case 4:
-        menuLightTheme_ = false;
-        break;
-    default:
-        menuLightTheme_ = IsWindowsAppLightThemeEnabled();
-        break;
-    }
+        appearance.contextMenuStyle, 0, 6);
+    menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightTheme(
+        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_),
+        IsWindowsAppLightThemeEnabled());
 }
 
 void DesktopApp::SetMenuItemIcon(
@@ -413,9 +403,11 @@ void DesktopApp::SetMenuItemImage(HMENU menu, UINT_PTR command,
         source.pixels.data(), source.pixels.size(), source.width,
         source.height, source.stride,
     };
+    const auto metrics = snowdesktop::menu_icon::ResolveMetrics(menuIconDpi_,
+        snowdesktop::modern_menu::appearance_rules::IsWin10Style(
+            static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_)));
     HBITMAP bitmap = snowdesktop::menu_icon::CreateImageBitmap(
-        sourceView, std::max(1, MulDiv(18,
-            static_cast<int>(menuIconDpi_), USER_DEFAULT_SCREEN_DPI)));
+        sourceView, metrics.iconFontHeight);
     if (!bitmap) return;
 
     const int count = GetMenuItemCount(menu);

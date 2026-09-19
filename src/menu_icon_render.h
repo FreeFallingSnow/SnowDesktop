@@ -43,6 +43,8 @@ struct Metrics
     int quickActionTextFontHeight = 12;
     int iconFontHeight = 18;
     int quickActionFontHeight = 18;
+    // Zero preserves the existing image bounds; compact menus cap package art.
+    int maximumImageSize = 0;
 };
 
 struct ItemView
@@ -81,7 +83,7 @@ struct TextInputView
 Palette ResolvePalette(bool lightTheme);
 
 /** @brief 返回按显示器 DPI 缩放的菜单尺寸。 */
-Metrics ResolveMetrics(UINT dpi);
+Metrics ResolveMetrics(UINT dpi, bool win10Style = false);
 
 /** Build a bounded square premultiplied bitmap for a menu image. */
 HBITMAP CreateImageBitmap(const ImageSourceView& source, int pixelSize);

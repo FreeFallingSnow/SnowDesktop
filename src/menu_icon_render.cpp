@@ -521,7 +521,7 @@ bool DrawOpticallyWeightedFluentGlyph(HDC dc, const wchar_t* glyph,
 }
 
 bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
-    bool disabled)
+    bool disabled, int maximumImageSize)
 {
     if (!dc || !image || bounds.right <= bounds.left ||
         bounds.bottom <= bounds.top)
@@ -544,8 +544,10 @@ bool DrawImageLayer(HDC dc, HBITMAP image, const RECT& bounds,
     HGDIOBJ oldBitmap = SelectObject(sourceDc, image);
     const int boundsWidth = static_cast<int>(bounds.right - bounds.left);
     const int boundsHeight = static_cast<int>(bounds.bottom - bounds.top);
-    const int maximum = std::max(1,
+    int maximum = std::max(1,
         std::min(boundsWidth, boundsHeight));
+    if (maximumImageSize > 0)
+        maximum = std::min(maximum, maximumImageSize);
     const int width = std::max(1,
         std::min(maximum, static_cast<int>(bitmap.bmWidth)));
     const int height = std::max(1,
@@ -742,10 +744,10 @@ Palette ResolvePalette(bool lightTheme)
     };
 }
 
-Metrics ResolveMetrics(UINT dpi)
+Metrics ResolveMetrics(UINT dpi, bool win10Style)
 {
     const UINT effectiveDpi = dpi > 0 ? dpi : USER_DEFAULT_SCREEN_DPI;
-    return {
+    Metrics metrics{
         Scale(32, effectiveDpi),
         Scale(8, effectiveDpi),
         Scale(192, effectiveDpi),
@@ -768,6 +770,21 @@ Metrics ResolveMetrics(UINT dpi)
         Scale(18, effectiveDpi),
         Scale(18, effectiveDpi),
     };
+    if (win10Style)
+    {
+        metrics.rowHeight = Scale(24, effectiveDpi);
+        metrics.separatorHeight = Scale(6, effectiveDpi);
+        metrics.outerInset = Scale(2, effectiveDpi);
+        metrics.selectionInsetY = Scale(1, effectiveDpi);
+        metrics.selectionRadius = Scale(1, effectiveDpi);
+        metrics.leftPadding = Scale(6, effectiveDpi);
+        metrics.iconColumnWidth = Scale(18, effectiveDpi);
+        metrics.textGap = Scale(5, effectiveDpi);
+        metrics.rightPadding = Scale(8, effectiveDpi);
+        metrics.iconFontHeight = Scale(16, effectiveDpi);
+        metrics.maximumImageSize = Scale(16, effectiveDpi);
+    }
+    return metrics;
 }
 
 HBITMAP CreateImageBitmap(const ImageSourceView& source, int pixelSize)
@@ -941,7 +958,8 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         iconBounds.right = iconBounds.left + metrics.iconColumnWidth;
         iconBounds.top += metrics.outerInset;
         iconBounds.bottom -= metrics.outerInset;
-        DrawImageLayer(dc, item.image, iconBounds, disabled);
+        DrawImageLayer(dc, item.image, iconBounds, disabled,
+            metrics.maximumImageSize);
     }
     else if (item.glyph && *item.glyph)
     {
@@ -1044,7 +1062,8 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     HGDIOBJ oldFont = nullptr;
     if (item.image)
     {
-        DrawImageLayer(dc, item.image, iconBounds, disabled);
+        DrawImageLayer(dc, item.image, iconBounds, disabled,
+            metrics.maximumImageSize);
     }
     else
     {
@@ -1125,7 +1144,8 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
         }
         imageBounds.top += metrics.outerInset;
         imageBounds.bottom -= metrics.outerInset;
-        DrawImageLayer(dc, item.image, imageBounds, disabled);
+        DrawImageLayer(dc, item.image, imageBounds, disabled,
+            metrics.maximumImageSize);
     }
     else if (hasGlyph)
     {

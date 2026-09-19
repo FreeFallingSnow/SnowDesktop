@@ -637,6 +637,8 @@ bool Window::Show(const Model& model, const RECT& menuBounds,
         effectiveAppearance, lightTheme);
     blurEnabled_ = modern_menu::appearance_rules::UsesSystemBlur(
         effectiveAppearance);
+    menuPanelPaddingDip_ = modern_menu::appearance_rules::PanelPaddingDip(
+        effectiveAppearance);
     onApply_ = std::move(onApply);
     componentHovered_ = false;
     waitingForWallpaperEngineFrame_ = false;
@@ -691,7 +693,9 @@ bool Window::ScheduleShow(const Model& model, const RECT& menuBounds,
             modern_menu::appearance_rules::UsesSystemBlur(
                 effectiveAppearance);
         if (resolvedLightTheme != lightTheme_ ||
-            resolvedBlur != blurEnabled_)
+            resolvedBlur != blurEnabled_ ||
+            modern_menu::appearance_rules::PanelPaddingDip(effectiveAppearance) !=
+                menuPanelPaddingDip_)
         {
             return Show(model, menuBounds, owner, dpi, lightTheme,
                 std::move(onApply), itemBounds, appearance);
@@ -1642,8 +1646,7 @@ void Window::ApplyWindowAppearance()
 POINT Window::ResolvePosition(const RECT& menuBounds, UINT dpi) const
 {
     const int overlap = Scale(modern_menu::kSubmenuOverlapDip, dpi);
-    const int panelPadding = Scale(
-        modern_menu::kSubmenuPanelPaddingDip, dpi);
+    const int panelPadding = Scale(menuPanelPaddingDip_, dpi);
     const POINT monitorPoint{
         (menuBounds.left + menuBounds.right) / 2,
         (menuBounds.top + menuBounds.bottom) / 2,

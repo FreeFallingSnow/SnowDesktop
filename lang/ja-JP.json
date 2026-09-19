@@ -377,6 +377,8 @@
   "app.settings.context_menu_system_dark_blur": "ダーク",
   "app.settings.context_menu_opaque_light": "ライト(不透明)",
   "app.settings.context_menu_opaque_dark": "ダーク(不透明)",
+  "app.settings.context_menu_win10_light": "Win10 ライト",
+  "app.settings.context_menu_win10_dark": "Win10 ダーク",
   "app.settings.layout_spacing": "レイアウトの間隔",
   "app.settings.layout_spacing_hint": "デスクトップアイコン、ウィジェット枠、ウィジェット内項目の間隔をまとめて調整します。アイコンとタイトルが完全に表示される範囲で実際の間隔を自動的に制限します。",
   "app.settings.icon_size": "アイコンサイズ",

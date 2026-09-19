@@ -115,6 +115,15 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    for (const int style : {5, 6})
+    {
+        auto menuSettings = settings;
+        menuSettings.values.personalization.contextMenuStyle = style;
+        const auto menuRestored =
+            Unpack<snowdesktop::SettingsSnapshot>(Pack(menuSettings));
+        Check(menuRestored.values.personalization.contextMenuStyle == style,
+            "Win10 menu selection reaches the independent settings process intact");
+    }
     Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&
         restored.values.general.collectionPopupAppearance == settings.values.general.collectionPopupAppearance,
         "independent surface modes and custom gradients reach the settings process intact");
