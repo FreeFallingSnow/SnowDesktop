@@ -444,7 +444,7 @@ struct Host
                     HBITMAP bitmap = static_cast<HBITMAP>(LoadImageW(source, resource, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
                     BITMAP info{};
                     if (bitmap && GetObjectW(bitmap, sizeof(info), &info) && info.bmWidth == info.bmHeight &&
-                        info.bmWidth >= 16 && info.bmWidth <= 64)
+                        info.bmWidth >= 8 && info.bmWidth <= 64)
                         search.host->Bitmap(*search.entry, bitmap);
                     if (bitmap) DeleteObject(bitmap);
                     return search.entry->pixels.empty();
