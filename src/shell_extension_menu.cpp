@@ -402,8 +402,9 @@ struct Host
         // a cold cache there waits for a worker blocked by the DLL loader lock.
         progress("initialize system icon cache");
         SHFILEINFOW iconInfo{};
-        SHGetFileInfoW(L"folder", FILE_ATTRIBUTE_DIRECTORY, &iconInfo, sizeof(iconInfo),
-                       SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
+        SHGetFileInfoW(directory.c_str(), 0, &iconInfo, sizeof(iconInfo), SHGFI_ICON | SHGFI_SMALLICON);
+        if (iconInfo.hIcon)
+            DestroyIcon(iconInfo.hIcon);
         // The real Shell aggregate decides what exists and applies system
         // filtering. Never instantiate registrations to bypass that decision.
         if (request.background)
