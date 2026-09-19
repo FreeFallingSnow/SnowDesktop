@@ -26,6 +26,7 @@ struct Entry
     std::vector<Entry> children;
     int width = 0, height = 0;
     std::vector<unsigned char> pixels;
+    wchar_t accessKey = 0;
 };
 struct Reply
 {
@@ -78,7 +79,7 @@ template <> struct Fields<shell_extensions::Entry>
     template <class T> static auto Tie(T &v)
     {
         return std::tie(v.provider, v.key, v.label, v.token, v.enabled, v.checked, v.separator, v.native, v.children,
-                        v.width, v.height, v.pixels);
+                        v.width, v.height, v.pixels, v.accessKey);
     }
 };
 template <> struct Fields<shell_extensions::Reply>

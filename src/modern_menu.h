@@ -74,6 +74,8 @@ struct Item
     std::wstring inputText;
     /** Non-owning image kept alive by the caller for the synchronous menu. */
     HBITMAP image = nullptr;
+    /** Native menu access key, separate from literal display text. */
+    wchar_t accessKey = 0;
 };
 
 struct HoverInfo
@@ -116,6 +118,7 @@ inline void UpdateItemStates(std::vector<Item>& items, const std::vector<Item>& 
         items[i].label = values[i].label;
         items[i].enabled = values[i].enabled;
         items[i].checked = values[i].checked;
+        items[i].accessKey = values[i].accessKey;
         UpdateItemStates(items[i].children, values[i].children);
     }
 }

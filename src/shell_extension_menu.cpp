@@ -1,4 +1,5 @@
 #include "shell_extension_menu.h"
+#include "menu_label.h"
 #include "settings_process.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_context_menu_site.h"
@@ -113,22 +114,6 @@ std::wstring Lower(std::wstring text)
     for (auto &c : text)
         c = towlower(c);
     return text;
-}
-std::wstring Display(const std::wstring &text)
-{
-    std::wstring result;
-    for (size_t i = 0; i < text.size(); ++i)
-    {
-        if (text[i] == L'&')
-        {
-            if (i + 1 < text.size() && text[i + 1] == L'&')
-                ++i;
-            else
-                continue;
-        }
-        result += text[i];
-    }
-    return result;
 }
 bool OwnedVerb(std::wstring verb)
 {
@@ -577,7 +562,9 @@ struct Host
                 continue;
             Entry entry;
             entry.provider = provider;
-            entry.label = Display(label);
+            auto text = DecodeMenuLabel(label);
+            entry.label = std::move(text.text);
+            entry.accessKey = text.accessKey;
             entry.separator = (item.fType & MFT_SEPARATOR) != 0;
             entry.enabled = (item.fState & (MFS_DISABLED | MFS_GRAYED)) == 0;
             entry.checked = (item.fState & MFS_CHECKED) != 0;

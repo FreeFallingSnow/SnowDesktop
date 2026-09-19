@@ -110,6 +110,7 @@ class Presentation
             modern_menu::Item item;
             item.command = e.token ? FirstCommand + e.token : 0;
             item.label = e.label;
+            item.accessKey = e.accessKey;
             item.enabled = e.enabled;
             item.checked = e.checked;
             item.separator = e.separator;

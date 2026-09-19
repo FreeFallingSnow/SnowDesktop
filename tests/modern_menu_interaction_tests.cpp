@@ -1,6 +1,7 @@
 #include "modern_menu.h"
 #include "modern_menu_appearance_rules.h"
 #include "shell_extension_menu_presentation.h"
+#include "menu_label.h"
 
 #include <windows.h>
 
@@ -1077,6 +1078,19 @@ int wmain()
             "compact-menu input reaches the real popup without timing out");
         return selected;
     };
+    {
+        auto nativeLabel = snowdesktop::DecodeMenuLabel(L"打开(&O)\tCtrl+O");
+        Item open; open.command = 9101; open.label = nativeLabel.text; open.accessKey = nativeLabel.accessKey;
+        auto keyOptions = options;
+        keyOptions.onTextChanged = {}; keyOptions.onHover = {}; keyOptions.onCommand = {};
+        const auto selected = runScript({open}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            // Deterministic negative control: absent key handling returns Cancel,
+            // rather than failing only because the test's watchdog times out.
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(selected.command == 9101, "the displayed native access key executes its unique matching command");
+    }
     for (const auto appearance : {Appearance::Win10Light, Appearance::Win10Dark})
     {
         for (const UINT dpi : {96U, 120U, 144U, 192U})

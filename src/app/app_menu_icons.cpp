@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../shell_extension_menu_presentation.h"
 #include "../menu_icon_render.h"
+#include "../menu_label.h"
 #include "../modern_menu.h"
 #include "../modern_menu_appearance_rules.h"
 #include "../widget_package_image_cache.h"
@@ -601,7 +602,9 @@ UINT DesktopApp::ShowModernMenu(
 
             snowdesktop::modern_menu::Item item;
             item.command = probe.wID;
-            item.label = label.data();
+            auto menuLabel = snowdesktop::DecodeMenuLabel(label.data());
+            item.label = std::move(menuLabel.text);
+            item.accessKey = menuLabel.accessKey;
             item.enabled =
                 (probe.fState & (MFS_DISABLED | MFS_GRAYED)) == 0;
             item.checked = (probe.fState & MFS_CHECKED) != 0;

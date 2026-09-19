@@ -1,6 +1,7 @@
 #include "shell_context_menu_invoke.h"
 #include "shell_extension_menu.h"
 #include "shell_extension_catalogue_cache.h"
+#include "menu_label.h"
 #include "shell_new_item_capture.h"
 
 #include <cstdlib>
@@ -373,6 +374,15 @@ void TestExtensionSessions()
 void TestCatalogueCache()
 {
     namespace ext = snowdesktop::shell_extensions;
+    const auto escaped=snowdesktop::DecodeMenuLabel(L"研发 && 工具(&T)\tCtrl+T");
+    Expect(escaped.text==L"研发 & 工具(T)\tCtrl+T" && escaped.accessKey==L't',
+        "native text preserves escaped ampersands and records the marked access key");
+    Expect(snowdesktop::DecodeMenuLabel(L"file(A) && B\tCtrl+&C").accessKey==0,
+        "literal names and shortcut-column text never invent access keys");
+    ext::Entry transport; transport.accessKey=L'a';
+    const auto packed=snowdesktop::settings_ipc::Pack(transport);
+    Expect(snowdesktop::settings_ipc::Unpack<ext::Entry>(packed).accessKey==L'a',
+        "native access keys survive the real Shell IPC codec");
     ext::CatalogueCache cache;
     ext::Request file; file.catalogueOnly=true; file.context=ext::Context::File;
     ext::Request folder=file; folder.context=ext::Context::Folder;
