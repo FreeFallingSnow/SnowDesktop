@@ -2,6 +2,7 @@
 
 #include "context_menu_page_presenter.h"
 #include "../shell_extension_menu.h"
+#include "../shell_extension_catalogue_cache.h"
 #include <array>
 #include <cwctype>
 #include <shobjidl.h>
@@ -50,6 +51,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     ext::Request request;
     std::vector<ext::Entry> entries;
     std::unique_ptr<ext::Session> session;
+    ext::CatalogueCache catalogue;
+    std::uint64_t queryGeneration = 0;
     std::uint64_t generation = 0;
     bool active = false, closed = false, updating = false, initialized = false;
 
@@ -123,7 +126,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         revoke.push_back([c = search, filter] { c.TextChanged(filter); });
         auto reload = refresh.Click([this](auto &&, auto &&) {
             if (active && !closed)
+            {
+                catalogue.Clear();
+                ext::InvalidateMenuCache();
                 Reload();
+            }
         });
         revoke.push_back([c = refresh, reload] { c.Click(reload); });
         auto pick = chooseObject.Click([this](auto &&, auto &&) {
@@ -156,11 +163,19 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Cancel();
         if (!active || closed)
             return;
+        auto query = request;
+        query.catalogueOnly = true;
+        queryGeneration = ext::MenuCacheGeneration();
+        if (const auto cached = catalogue.Find(query, queryGeneration, GetTickCount64()))
+        {
+            entries = cached->entries;
+            status.Text(entries.empty() ? L("settings.contextMenu.empty") : L"");
+            BuildRows();
+            return;
+        }
         entries.clear();
         BuildRows();
         status.Text(L("settings.contextMenu.loading"));
-        auto query = request;
-        query.catalogueOnly = true;
         try
         {
             session = std::make_unique<ext::Session>(query);
@@ -181,6 +196,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         timer.Stop();
         if (reply->ok)
         {
+            auto query = request;
+            query.catalogueOnly = true;
+            catalogue.Store(query, *reply, queryGeneration, GetTickCount64());
             entries = std::move(reply->entries);
             status.Text(entries.empty() ? L("settings.contextMenu.empty") : L"");
             BuildRows();

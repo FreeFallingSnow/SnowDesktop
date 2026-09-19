@@ -4,6 +4,7 @@
 #include "shell_context_menu_site.h"
 #include <algorithm>
 #include <atomic>
+#include <array>
 #include <cwctype>
 #include <filesystem>
 #include <functional>
@@ -21,6 +22,72 @@ namespace
 {
 constexpr size_t kMaximumEntries = 2048;
 std::atomic<unsigned> sessions{0};
+constexpr ULONGLONG kWorkerLifetimeMs = 120000;
+// Event probes are constant-time. No registry tree scan occurs on each click.
+// Watch the nearest existing ancestor too, so creating a Blocked key invalidates
+// a worker even when that key did not exist when it was first acquired.
+struct RegistryWatch
+{
+    HKEY root = nullptr, key = nullptr;
+    HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    std::wstring path;
+    bool armed = false;
+    RegistryWatch(HKEY hive, const wchar_t *subkey) : root(hive), path(subkey) { Arm(); }
+    ~RegistryWatch()
+    {
+        if (key) RegCloseKey(key);
+        if (event) CloseHandle(event);
+    }
+    void Arm()
+    {
+        armed = false;
+        if (key) { RegCloseKey(key); key = nullptr; }
+        if (!event) return;
+        auto existing = path;
+        while (RegOpenKeyExW(root, existing.c_str(), 0, KEY_NOTIFY, &key) != ERROR_SUCCESS)
+        {
+            const auto slash = existing.rfind(L'\\');
+            if (slash == std::wstring::npos) return;
+            existing.resize(slash);
+        }
+        ResetEvent(event);
+        armed = RegNotifyChangeKeyValue(key, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET |
+            REG_NOTIFY_THREAD_AGNOSTIC, event, TRUE) == ERROR_SUCCESS;
+    }
+    bool Changed()
+    {
+        if (armed && WaitForSingleObject(event, 0) == WAIT_TIMEOUT) return false;
+        Arm();
+        return true; // Failure is conservative: do not reuse stale state.
+    }
+};
+struct CacheState
+{
+    std::uint64_t generation = 1;
+    std::vector<std::unique_ptr<RegistryWatch>> watches;
+    CacheState()
+    {
+        for (auto root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+            for (auto path : {L"Software\\Classes",
+                              L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions",
+                              L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"})
+                watches.push_back(std::make_unique<RegistryWatch>(root, path));
+        watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"));
+    }
+    std::uint64_t Poll()
+    {
+        bool changed = false;
+        for (auto &watch : watches) changed |= watch->Changed();
+        if (changed) ++generation;
+        return generation;
+    }
+};
+CacheState &Caches()
+{
+    thread_local CacheState state;
+    return state;
+}
 std::string Utf8(const std::wstring &s)
 {
     if (s.empty())
@@ -224,6 +291,15 @@ struct Host
     Native *tracking = nullptr;
     bool invoked = false;
     size_t count = 0;
+    bool fileAssociationsReady = false;
+    struct RegisteredIcon { std::wstring name, friendlyName, module; };
+    std::map<Context, std::vector<RegisteredIcon>> registeredIcons;
+    struct ResourceIcon
+    {
+        WIN32_FILE_ATTRIBUTE_DATA stamp{};
+        Entry image;
+    };
+    std::map<std::wstring, ResourceIcon> resourceIcons;
     std::function<void(const std::string &)> progress = [](const auto &) {};
     static LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
@@ -400,11 +476,11 @@ struct Host
             entry.pixels = std::move(black);
         }
     }
-    void RegisteredBitmap(Entry &entry, const Request &request)
+    const std::vector<RegisteredIcon> &RegisteredIcons(Context scope)
     {
-        if (!entry.pixels.empty() || entry.separator || entry.label.empty()) return;
+        if (const auto found = registeredIcons.find(scope); found != registeredIcons.end()) return found->second;
+        std::vector<RegisteredIcon> icons;
         std::vector<std::wstring> roots;
-        const auto scope = ResolveContext(request);
         if (scope == Context::File) roots = {L"*", L"AllFilesystemObjects"};
         else if (scope == Context::Folder) roots = {L"Directory", L"Folder", L"AllFilesystemObjects"};
         else if (scope == Context::FolderBackground) roots = {L"Directory\\Background"};
@@ -414,44 +490,63 @@ struct Host
             const auto handlers = root + L"\\shellex\\ContextMenuHandlers";
             HKEY key = nullptr;
             if (RegOpenKeyExW(HKEY_CLASSES_ROOT, handlers.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) continue;
-            std::wstring modulePath;
             for (DWORD index = 0; index < 512; ++index)
             {
                 wchar_t name[256]{};
                 DWORD length = static_cast<DWORD>(std::size(name));
                 if (RegEnumKeyExW(key, index, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
-                // Metadata only: this never creates or enables an extension.
-                // Exact registered/display-name matching avoids guessing a brand
-                // from unrelated command text (e.g. a filename containing it).
                 auto clsid = RegistryString(handlers + L"\\" + name);
                 if (clsid.empty()) clsid = name;
                 const auto classKey = L"CLSID\\" + clsid;
-                if (Lower(name) != Lower(entry.label) && Lower(RegistryString(classKey)) != Lower(entry.label)) continue;
-                modulePath = RegistryString(classKey + L"\\InprocServer32");
-                if (!modulePath.empty()) break;
+                auto module = RegistryString(classKey + L"\\InprocServer32");
+                if (module.size() >= 2 && module.front() == L'"' && module.back() == L'"')
+                    module = module.substr(1, module.size() - 2);
+                if (!module.empty()) icons.push_back({Lower(name), Lower(RegistryString(classKey)), std::move(module)});
             }
             RegCloseKey(key);
-            if (modulePath.empty()) continue;
-            if (modulePath.front() == L'"' && modulePath.back() == L'"')
-                modulePath = modulePath.substr(1, modulePath.size() - 2);
-            // LOAD_LIBRARY_AS_DATAFILE reads original resources without running
-            // DllMain, including when the provider omits menu icons by default.
-            HMODULE module = LoadLibraryExW(modulePath.c_str(), nullptr,
-                                             LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
-            if (!module) continue;
-            struct Search { Host *host; Entry *entry; } search{this, &entry};
-            EnumResourceNamesW(module, RT_BITMAP,
-                [](HMODULE source, LPCWSTR, LPWSTR resource, LONG_PTR context) -> BOOL {
-                    auto &search = *reinterpret_cast<Search *>(context);
-                    HBITMAP bitmap = static_cast<HBITMAP>(LoadImageW(source, resource, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
-                    BITMAP info{};
-                    if (bitmap && GetObjectW(bitmap, sizeof(info), &info) && info.bmWidth == info.bmHeight &&
-                        info.bmWidth >= 8 && info.bmWidth <= 64)
-                        search.host->Bitmap(*search.entry, bitmap);
-                    if (bitmap) DeleteObject(bitmap);
-                    return search.entry->pixels.empty();
-                }, reinterpret_cast<LONG_PTR>(&search));
-            FreeLibrary(module);
+        }
+        return registeredIcons.emplace(scope, std::move(icons)).first->second;
+    }
+    void RegisteredBitmap(Entry &entry, const Request &request)
+    {
+        if (!entry.pixels.empty() || entry.separator || entry.label.empty()) return;
+        const auto label = Lower(entry.label);
+        for (const auto &icon : RegisteredIcons(ResolveContext(request)))
+        {
+            // Metadata only, matched to an item the actual Shell already returned.
+            if (label != icon.name && label != icon.friendlyName) continue;
+            WIN32_FILE_ATTRIBUTE_DATA stamp{};
+            if (!GetFileAttributesExW(icon.module.c_str(), GetFileExInfoStandard, &stamp)) continue;
+            auto found = resourceIcons.find(icon.module);
+            if (found == resourceIcons.end() ||
+                CompareFileTime(&stamp.ftLastWriteTime, &found->second.stamp.ftLastWriteTime) != 0 ||
+                stamp.nFileSizeHigh != found->second.stamp.nFileSizeHigh ||
+                stamp.nFileSizeLow != found->second.stamp.nFileSizeLow)
+            {
+                ResourceIcon resource;
+                resource.stamp = stamp;
+                HMODULE module = LoadLibraryExW(icon.module.c_str(), nullptr,
+                    LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+                if (!module) continue;
+                struct Search { Host *host; Entry *entry; } search{this, &resource.image};
+                EnumResourceNamesW(module, RT_BITMAP,
+                    [](HMODULE source, LPCWSTR, LPWSTR name, LONG_PTR context) -> BOOL {
+                        auto &search = *reinterpret_cast<Search *>(context);
+                        HBITMAP bitmap = static_cast<HBITMAP>(LoadImageW(source, name, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
+                        BITMAP info{};
+                        if (bitmap && GetObjectW(bitmap, sizeof(info), &info) && info.bmWidth == info.bmHeight &&
+                            info.bmWidth >= 8 && info.bmWidth <= 64)
+                            search.host->Bitmap(*search.entry, bitmap);
+                        if (bitmap) DeleteObject(bitmap);
+                        return search.entry->pixels.empty();
+                    }, reinterpret_cast<LONG_PTR>(&search));
+                FreeLibrary(module);
+                if (resourceIcons.size() >= 64) resourceIcons.clear();
+                found = resourceIcons.insert_or_assign(icon.module, std::move(resource)).first;
+            }
+            entry.width = found->second.image.width;
+            entry.height = found->second.image.height;
+            entry.pixels = found->second.image.pixels;
             if (!entry.pixels.empty()) return;
         }
     }
@@ -548,6 +643,12 @@ struct Host
     }
     Reply Query(const Request &request)
     {
+        progress("release previous menu");
+        commands.clear();
+        menus.clear();
+        next = 1;
+        count = 0;
+        invoked = false;
         progress("validate paths");
         if (request.paths.empty() || request.paths.size() > 256)
             return {};
@@ -583,7 +684,7 @@ struct Host
         native->directory = directory;
         std::unique_ptr<TemporaryMenuFile> warmFile;
         std::unique_ptr<Native> warmMenu;
-        if (ResolveContext(request) == Context::Folder)
+        if (!fileAssociationsReady && ResolveContext(request) == Context::Folder)
         {
             // File-menu initialization primes Shell association handlers before
             // folder-only extensions create windows from their DLL entry point.
@@ -596,7 +697,8 @@ struct Host
             if (warmFile->handle != INVALID_HANDLE_VALUE &&
                 SUCCEEDED(SHCreateItemFromParsingName(warmFile->path.c_str(), nullptr, IID_PPV_ARGS(&item))) &&
                 SUCCEEDED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&warmMenu->context))))
-                warmMenu->context->QueryContextMenu(warmMenu->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU);
+                fileAssociationsReady = SUCCEEDED(warmMenu->context->QueryContextMenu(
+                    warmMenu->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU));
         }
         // The real Shell aggregate decides what exists and applies system
         // filtering. Never instantiate registrations to bypass that decision.
@@ -650,6 +752,7 @@ struct Host
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
         Reply reply;
+        if (!request.background && ResolveContext(request) == Context::File) fileAssociationsReady = true;
         reply.entries = Read(*native, native->menu, "");
         for (auto &entry : reply.entries)
             RegisteredBitmap(entry, request);
@@ -737,29 +840,39 @@ struct Host
 };
 } // namespace
 
+std::uint64_t MenuCacheGeneration() { return Caches().Poll(); }
+void InvalidateMenuCache() { ++Caches().generation; }
+
 struct Session::Impl
 {
+    // One idle worker per UI thread, never shared across active sessions.
+    static thread_local std::unique_ptr<Impl> idle;
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
-    std::string stage = "start helper";
+    std::string stage;
     std::filesystem::path sampleDirectory;
-    ULONGLONG started = GetTickCount64();
+    ULONGLONG born = GetTickCount64(), started = 0;
+    std::uint64_t generation = 0;
     DWORD timeout = 8000;
-    bool delivered = false, detached = false;
-    ~Impl()
+    bool delivered = false, detached = false, succeeded = false;
+    void RemoveSample()
     {
-        channel.Close();
-        if (!detached)
-            process->Stop();
         if (!sampleDirectory.empty())
         {
             std::error_code ignored;
             std::filesystem::remove_all(sampleDirectory, ignored);
+            sampleDirectory.clear();
         }
-        sessions.fetch_sub(1);
+    }
+    ~Impl()
+    {
+        channel.Close();
+        if (!detached) process->Stop();
+        RemoveSample();
     }
 };
+thread_local std::unique_ptr<Session::Impl> Session::Impl::idle;
 Session::Session(const Request &request, DWORD queryTimeoutMs)
 {
     if (sessions.fetch_add(1) >= 8)
@@ -769,28 +882,48 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
     }
     try
     {
-        impl_ = std::make_unique<Impl>();
+        const auto generation = MenuCacheGeneration();
+        auto &idle = Impl::idle;
+        if (idle && (idle->generation != generation || !idle->process->Running() ||
+                     GetTickCount64() - idle->born >= kWorkerLifetimeMs)) idle.reset();
+        impl_ = idle ? std::move(idle) : std::make_unique<Impl>();
+        impl_->generation = generation;
+        impl_->started = GetTickCount64();
+        impl_->delivered = impl_->succeeded = false;
+        impl_->reply.reset();
+        impl_->stage = "start helper";
+        impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
+        impl_->channel.Bind<void, std::string>("menu.progress", [p = impl_.get()](std::string stage) {
+            p->stage = std::move(stage);
+        });
+        impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) {
+            if (!result.ok && result.error.empty()) result.error = "query failed at " + p->stage;
+            p->reply = std::move(result);
+        });
+        auto query = request;
+        PrepareSample(query, impl_->sampleDirectory);
+        if (!impl_->process->Running()) impl_->process->Start(impl_->channel, L"--shell-menu-helper");
+        impl_->channel.Notify("menu.query", query);
     }
     catch (...)
     {
+        impl_.reset();
         sessions.fetch_sub(1);
         throw;
     }
-    impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
-    impl_->channel.Bind<void, std::string>("menu.progress", [p = impl_.get()](std::string stage) {
-        p->stage = std::move(stage);
-    });
-    impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) {
-        if (!result.ok && result.error.empty())
-            result.error = "query failed at " + p->stage;
-        p->reply = std::move(result);
-    });
-    auto query = request;
-    PrepareSample(query, impl_->sampleDirectory);
-    impl_->process->Start(impl_->channel, L"--shell-menu-helper");
-    impl_->channel.Notify("menu.query", query);
 }
-Session::~Session() = default;
+Session::~Session()
+{
+    if (impl_ && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
+        impl_->generation == Caches().generation)
+    {
+        impl_->reply.reset();
+        impl_->RemoveSample();
+        Impl::idle = std::move(impl_);
+    }
+    sessions.fetch_sub(1);
+}
+DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }
 std::optional<Reply> Session::Poll()
 {
     if (impl_->delivered)
@@ -803,6 +936,7 @@ std::optional<Reply> Session::Poll()
     if (!impl_->reply)
         return {};
     impl_->delivered = true;
+    impl_->succeeded = impl_->reply->ok;
     return std::move(impl_->reply);
 }
 void Session::Invoke(UINT token, POINT position)
@@ -834,16 +968,16 @@ std::optional<int> TryRunHelper(QueryExecutor query)
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
         Host host;
         host.progress = [&](const auto &stage) { channel.Notify("menu.progress", stage); };
-        bool queried = false, invocationQueued = false;
+        bool invocationQueued = false;
+        ULONGLONG lastQuery = GetTickCount64();
         ULONGLONG invokedAt = 0, dispatchedAt = 0;
         channel.SetDisconnected([&] {
             if (!invocationQueued)
                 PostQuitMessage(0);
         });
         channel.Bind<void, Request>("menu.query", [&](Request request) {
-            if (queried)
-                return;
-            queried = true;
+            if (invocationQueued) return;
+            lastQuery = GetTickCount64();
             channel.Notify("menu.reply", query ? query(request) : host.Query(request));
         });
         channel.Bind<void, UINT, LONG, LONG>("menu.invoke", [&](UINT token, LONG x, LONG y) {
@@ -858,7 +992,8 @@ std::optional<int> TryRunHelper(QueryExecutor query)
         });
         MSG msg{};
         bool running = true;
-        while (running && (!dispatchedAt || GetTickCount64() - dispatchedAt < 120000))
+        while (running && (dispatchedAt ? GetTickCount64() - dispatchedAt < 120000
+                                       : GetTickCount64() - lastQuery < kWorkerLifetimeMs))
         {
             MsgWaitForMultipleObjectsEx(0, nullptr, 100, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))

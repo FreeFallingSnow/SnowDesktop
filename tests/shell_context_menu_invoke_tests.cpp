@@ -1,5 +1,6 @@
 #include "shell_context_menu_invoke.h"
 #include "shell_extension_menu.h"
+#include "shell_extension_catalogue_cache.h"
 #include "shell_new_item_capture.h"
 
 #include <cstdlib>
@@ -263,6 +264,7 @@ void TestSystemPolicy(Wait wait, const std::filesystem::path &directory)
 void TestExtensionSessions()
 {
     namespace ext = snowdesktop::shell_extensions;
+    ext::InvalidateMenuCache();
     ext::Entry archive;
     archive.provider = "verb:sevenzip";
     archive.key = "SevenZip";
@@ -303,9 +305,22 @@ void TestExtensionSessions()
         Expect(reply.has_value(),"isolated query has a bounded completion");return *reply;
     };
     ext::Request request;request.paths={L"synthetic-success"};
-    {ext::Session session(request,2500);auto reply=wait(session);
+    DWORD firstProcess = 0;
+    {ext::Session session(request,2500);auto reply=wait(session); firstProcess = session.ProcessId();
         Expect(reply.ok&&reply.entries.size()==1&&reply.entries[0].label==L"压缩"&&reply.entries[0].checked&&!reply.entries[0].enabled,
             "isolated query transports Unicode labels and actual menu states");}
+    request.paths={L"synthetic-second"};
+    {ext::Session session(request,2500);auto reply=wait(session);
+        Expect(session.ProcessId()==firstProcess && reply.ok && reply.entries[0].key=="second",
+            "a warm worker is reused but queries the new selection instead of reusing old commands");}
+    {
+        ext::Session first(request,2500); Expect(wait(first).ok,"first concurrent query");
+        ext::Session second(request,2500); Expect(wait(second).ok,"second concurrent query");
+        Expect(first.ProcessId()!=second.ProcessId(),"active menu sessions never share a worker or command map");
+    }
+    ext::InvalidateMenuCache();
+    {ext::Session session(request,2500);auto reply=wait(session);
+        Expect(session.ProcessId()!=firstProcess && reply.ok,"explicit refresh discards the previous cached worker");}
     request.paths={L"synthetic-hang"};const auto start=GetTickCount64();
     {ext::Session session(request,250);auto reply=wait(session);Expect(!reply.ok&&GetTickCount64()-start<3000,"hung query is terminated without blocking the parent");}
     request.paths={L"synthetic-success"};
@@ -317,8 +332,8 @@ void TestExtensionSessions()
     request.paths={directory.path.wstring()};request.background=false;
     struct RealQueryMode
     {
-        RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",L"1");}
-        ~RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",nullptr);}
+        RealQueryMode(){ext::InvalidateMenuCache(); SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",L"1");}
+        ~RealQueryMode(){ext::InvalidateMenuCache(); SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",nullptr);}
     } realMode;
     TestSystemPolicy(wait, directory.path);
     // Exercise the same four default queries as the settings tabs, including
@@ -355,6 +370,29 @@ void TestExtensionSessions()
 
 }
 
+void TestCatalogueCache()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::CatalogueCache cache;
+    ext::Request file; file.catalogueOnly=true; file.context=ext::Context::File;
+    ext::Request folder=file; folder.context=ext::Context::Folder;
+    ext::Reply reply; reply.ok=true;
+    ext::Entry entry; entry.label=L"7-Zip"; entry.token=12;
+    ext::Entry child; child.token=13; entry.children={child}; reply.entries={entry};
+    cache.Store(file,reply,1,100);
+    const auto hit=cache.Find(file,1,101);
+    Expect(hit && hit->entries[0].label==L"7-Zip" && !hit->entries[0].token && !hit->entries[0].children[0].token,
+        "settings cache preserves display data but strips session command tokens recursively");
+    Expect(!cache.Find(folder,1,101),"settings contexts have independent cached lists");
+    Expect(!cache.Find(file,1,100+ext::CatalogueCache::LifetimeMs),"expired catalogues query the current system");
+    cache.Store(file,reply,1,200);
+    Expect(!cache.Find(file,2,201),"registry invalidation rejects stale catalogue data");
+    cache.Store(file,reply,2,300); cache.Clear();
+    Expect(!cache.Find(file,2,301),"manual Refresh bypasses all settings snapshots");
+    file.paths={L"specific-object"}; cache.Store(file,reply,2,400);
+    Expect(!cache.Find(file,2,401),"specific inspected objects are never substituted by cached generic samples");
+}
+
 // Opt-in measurements use the real Session path and private files only. They
 // do not invoke extensions or add machine-dependent latency assertions.
 void BenchmarkMenus()
@@ -364,6 +402,7 @@ void BenchmarkMenus()
     const auto file = directory.path / L"sample.txt";
     { std::ofstream output(file); output << "menu timing sample"; }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    ext::InvalidateMenuCache();
     for (const bool folder : {false, true})
     {
         ext::Request request;
@@ -386,11 +425,13 @@ void BenchmarkMenus()
             std::cout << "menu_benchmark scope=" << (folder ? "folder" : "file")
                       << " iteration=" << iteration << " start_ms=" << launched - start
                       << " ready_ms=" << elapsed << " ok=" << (reply && reply->ok)
+                      << " worker=" << session.ProcessId()
                       << " entries=" << (reply ? reply->entries.size() : 0) << std::endl;
             Expect(reply && reply->ok, "benchmark real menu query succeeds");
         }
     }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
+    ext::InvalidateMenuCache();
 }
 
 int wmain(int argc, wchar_t **argv)
@@ -401,6 +442,7 @@ int wmain(int argc, wchar_t **argv)
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
+        entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
         reply.entries.push_back(entry);return reply;
     };
     if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(std::move(query))) return *helper;
@@ -410,7 +452,7 @@ int wmain(int argc, wchar_t **argv)
     try
     {
         if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
-        else { RunTests(); TestExtensionSessions(); }
+        else { RunTests(); TestCatalogueCache(); TestExtensionSessions(); }
     }
     catch (const std::exception& error)
     {

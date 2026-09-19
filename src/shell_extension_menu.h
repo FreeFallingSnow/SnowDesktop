@@ -15,6 +15,7 @@ struct Request
     bool catalogueOnly = false;
     bool extended = false;
     Context context = Context::Automatic;
+    friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
 {
@@ -33,8 +34,9 @@ struct Reply
     std::string error;
 };
 
-// One COM/menu session in a supervised child. Query is asynchronous; all
-// methods run on the owning UI thread. Tokens expire when this object closes.
+// One fresh COM/menu session in a supervised child. Successful, uninvoked
+// sessions may return the child to the owning UI thread's bounded warm pool.
+// Tokens still expire when this object closes; they are never cached.
 class Session
 {
   public:
@@ -43,6 +45,7 @@ class Session
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
     std::optional<Reply> Poll();
+    DWORD ProcessId() const noexcept;
     // Transfers ownership to a bounded invocation monitor; modeless dialogs
     // remain alive after the custom popup closes.
     void Invoke(UINT token, POINT position);
@@ -51,6 +54,10 @@ class Session
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+// Internal host/settings cache boundary, not a component API. Registry change
+// notifications invalidate the warm worker and settings catalogue generation.
+std::uint64_t MenuCacheGeneration();
+void InvalidateMenuCache();
 using QueryExecutor = std::function<Reply(const Request &)>;
 std::optional<int> TryRunHelper(QueryExecutor query = {});
 Context ResolveContext(const Request &);
