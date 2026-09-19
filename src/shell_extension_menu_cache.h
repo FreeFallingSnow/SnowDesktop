@@ -15,7 +15,10 @@ class MenuSnapshotCache
         std::wstring epoch;
         Request request;
         unsigned slot = 0;
-        explicit operator bool() const { return !identity.empty(); }
+        explicit operator bool() const
+        {
+            return !identity.empty();
+        }
     };
     static constexpr std::uint64_t LifetimeMs = 24 * 60 * 60 * 1000;
     static constexpr unsigned Slots = 36;
@@ -26,7 +29,10 @@ class MenuSnapshotCache
     void Invalidate();
     std::wstring Epoch() const;
     static std::uint64_t Now();
-    const std::filesystem::path &Directory() const { return directory_; }
+    const std::filesystem::path &Directory() const
+    {
+        return directory_;
+    }
 
   private:
     struct MemoryRow

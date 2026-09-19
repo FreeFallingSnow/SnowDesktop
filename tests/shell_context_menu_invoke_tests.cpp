@@ -5,6 +5,7 @@
 #include "shell_new_item_capture.h"
 
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -421,7 +422,7 @@ void TestCatalogueCache()
     // A separate helper process reads the settings-written file directly. Only
     // its query boundary is replaced, not serialization or the disk reader.
     ext::Request crossProcess;crossProcess.paths={L"read-disk-cache",writer.Directory().wstring(),path.wstring()};
-    { 
+    {
         ext::Session helper(crossProcess);
         std::optional<ext::Reply> remote;
         const auto deadline=GetTickCount64()+10000;
@@ -576,10 +577,11 @@ void BenchmarkMenus()
         for (int iteration = 0; iteration < 4; ++iteration)
         {
             const auto start = GetTickCount64();
+            const auto diskStart=std::chrono::steady_clock::now();
             ext::MenuSnapshotCache disk(ext::SharedMenuCache().Directory());
             const auto ticket=disk.Capture(request);
             const auto snapshot=disk.Find(ticket);
-            const auto displayed=GetTickCount64();
+            const auto diskMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-diskStart).count();
             ext::Session session(request);
             const auto launched = GetTickCount64();
             std::optional<ext::Reply> reply;
@@ -593,7 +595,7 @@ void BenchmarkMenus()
             }
             const auto elapsed = GetTickCount64() - start;
             std::cout << "menu_benchmark scope=" << (folder ? "folder" : "file")
-                      << " iteration=" << iteration << " snapshot=" << bool(snapshot) << " disk_ms=" << displayed-start
+                      << " iteration=" << iteration << " snapshot=" << bool(snapshot) << " disk_ms=" << diskMs
                       << " start_ms=" << launched - start
                       << " ready_ms=" << elapsed << " ok=" << (reply && reply->ok)
                       << " worker=" << session.ProcessId()

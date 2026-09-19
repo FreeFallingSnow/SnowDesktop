@@ -36,12 +36,19 @@ class Presentation
     Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring)
         : prefs_(std::move(prefs)), source_(source)
     {
-        if (source.paths.empty()) return;
+        if (source.paths.empty())
+            return;
         generation_ = MenuCacheGeneration();
         ticket_ = SharedMenuCache().Capture(source);
         cached_ = SharedMenuCache().Find(ticket_);
-        try { session_ = std::make_unique<Session>(source); }
-        catch (...) { cached_.reset(); }
+        try
+        {
+            session_ = std::make_unique<Session>(source);
+        }
+        catch (...)
+        {
+            cached_.reset();
+        }
     }
     ~Presentation()
     {
@@ -49,22 +56,28 @@ class Presentation
         // objects are released as soon as this bounded background query ends.
         if (session_ && !ready_)
             FinishQueryInBackground(std::move(session_), std::move(ticket_), generation_);
-        for (auto image : images_) DeleteObject(image);
+        for (auto image : images_)
+            DeleteObject(image);
     }
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
-        if (!session_) return;
+        if (!session_)
+            return;
         if (cached_)
             Insert(items, Convert(VisibleEntries(prefs_, cached_->entries, source_)), moreCommand);
-        options.pollItems = [this, moreCommand](const std::vector<modern_menu::Item> &current,
-                                   bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
-            if (!session_) return {};
+        options.pollItems = [this,
+                             moreCommand](const std::vector<modern_menu::Item> &current,
+                                          bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
+            if (!session_)
+                return {};
             if (!ready_)
             {
                 ready_ = session_->Poll();
-                if (ready_ && generation_ == MenuCacheGeneration()) SharedMenuCache().Store(ticket_, *ready_);
+                if (ready_ && generation_ == MenuCacheGeneration())
+                    SharedMenuCache().Store(ticket_, *ready_);
             }
-            if (!ready_ || !canApply) return {};
+            if (!ready_ || !canApply)
+                return {};
             auto result = current;
             std::erase_if(result, [](const auto &item) { return IsOurCommand(item.command); });
             if (ready_->ok && generation_ == MenuCacheGeneration())
@@ -75,29 +88,40 @@ class Presentation
     bool Invoke(UINT command, POINT point)
     {
         const auto found = commands_.find(command);
-        if (found == commands_.end() || !session_ || generation_ != MenuCacheGeneration()) return false;
+        if (found == commands_.end() || !session_ || generation_ != MenuCacheGeneration())
+            return false;
         try
         {
-            if (!ready_) ready_ = session_->Poll();
+            if (!ready_)
+                ready_ = session_->Poll();
             if (!ready_)
                 return InvokeWhenReady(std::move(session_), found->second, point, generation_);
             SharedMenuCache().Store(ticket_, *ready_);
             const auto token = ResolveCommand(*ready_, found->second);
-            if (!token) return false;
+            if (!token)
+                return false;
             session_->Invoke(token, point);
             return true;
         }
-        catch (...) { return false; }
+        catch (...)
+        {
+            return false;
+        }
     }
 
   private:
-    static bool IsOurCommand(UINT command) { return command >= FirstCommand && command < FirstCommand + 65536; }
+    static bool IsOurCommand(UINT command)
+    {
+        return command >= FirstCommand && command < FirstCommand + 65536;
+    }
     static void Insert(std::vector<modern_menu::Item> &items, const std::vector<modern_menu::Item> &additions,
                        UINT moreCommand)
     {
-        if (additions.empty()) return;
+        if (additions.empty())
+            return;
         if (!items.empty() && !items.back().separator &&
-            std::none_of(items.begin(), items.end(), [=](const auto &item) { return moreCommand && item.command == moreCommand; }))
+            std::none_of(items.begin(), items.end(),
+                         [=](const auto &item) { return moreCommand && item.command == moreCommand; }))
         {
             modern_menu::Item divider;
             divider.separator = true;
@@ -106,9 +130,11 @@ class Presentation
         }
         InsertBeforeMore(items, additions, moreCommand, false);
     }
-    std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries, const CommandReference &parent = {})
+    std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries,
+                                           const CommandReference &parent = {})
     {
-        if (parent.empty()) converting_.clear();
+        if (parent.empty())
+            converting_.clear();
         std::vector<modern_menu::Item> result;
         for (const auto &e : entries)
         {
