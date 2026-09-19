@@ -3,7 +3,7 @@
 设置 → 右键菜单保留菜单样式选择，并以“文件 / 文件夹 / 文件夹空白处 / 桌面”
 四个场景展示系统实际返回的菜单。每行只有原始图标、名称和显示开关。
 优先使用系统提供的图标；缺图且名称精确匹配扩展注册项时，只读加载原模块的小图标资源，
-仍无资源时使用通用图标。系统已禁用或当前对象不适用的项目不会被自行加入。
+仍无资源时设置列表使用通用图标。系统已禁用或当前对象不适用的项目不会被自行加入。
 
 默认跟随系统，不再要求手动勾选扩展组或指定放置位置。原始菜单项直接接入自绘
 右键菜单，保留第三方自身的级联关系；例如根菜单直接显示“7-Zip”，不增加
@@ -56,6 +56,7 @@ enabled / selections 字段为兼容回存而保留，运行时不再用它们�
 [Nilesoft Shell](https://nilesoft.org/docs/configuration/modify-items)。
 7-Zip 图标兼容根据其
 [公开实现](https://github.com/ip7z/7zip/blob/main/CPP/7zip/UI/Explorer/ContextMenu.cpp)
+及[默认图标选项](https://github.com/ip7z/7zip/blob/main/CPP/7zip/UI/Common/ZipRegistry.cpp)
 核对，未复制项目代码。
 
 自动化使用隔离目录和独立菜单窗口；真实 7-Zip 查询不执行其命令。系统禁用回归只创建
