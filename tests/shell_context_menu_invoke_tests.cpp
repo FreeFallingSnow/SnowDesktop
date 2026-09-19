@@ -197,6 +197,10 @@ void TestExtensionSessions()
     Expect(ext::ResolvePlacement(prefs,renamed)==ext::Placement::Root,"display labels never identify persisted commands");
     renamed.provider="handler:different";
     Expect(ext::ResolvePlacement(prefs,renamed)==ext::Placement::Hidden,"matching verbs from a different provider stay hidden");
+    prefs.selections={{first.provider,"extract","Extract",ext::Placement::Root},{first.provider,"compress","Compress",ext::Placement::Root}};
+    const auto ordered=ext::SelectEntries(prefs,{group},ext::Placement::Root);
+    Expect(ordered.size()==2&&ordered[0].key=="extract"&&!ordered[0].enabled&&ordered[1].key=="compress",
+        "saved order controls pinned commands without enabling disabled items");
     prefs.enabled=false;Expect(ext::SelectEntries(prefs,{group},ext::Placement::Root).empty(),"off switch suppresses all extensions");
     auto wait=[](ext::Session& session) {
         const auto end=GetTickCount64()+4000;std::optional<ext::Reply> reply;

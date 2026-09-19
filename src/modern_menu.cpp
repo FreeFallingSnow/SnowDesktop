@@ -237,9 +237,15 @@ public:
             {
                 if (auto updated = options_.pollItems(rootItems_))
                 {
+                    const int selected = popups_.front()->keyboardItem;
+                    const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
+                        ? rootItems_[selected].command : 0;
                     rootItems_ = std::move(*updated);
-                    popups_.front()->hoveredItem = -1;
-                    RefreshPopup(*popups_.front());
+                    RefreshPopup(*popups_.front(), true);
+                    if (selectedCommand)
+                        for (size_t i = 0; i < rootItems_.size(); ++i)
+                            if (rootItems_[i].command == selectedCommand) { SetHoveredItem(*popups_.front(), static_cast<int>(i), true); break; }
+                    options_.pollItems = {};
                 }
             }
             const HANDLE scheduledWork =
@@ -1870,13 +1876,14 @@ private:
         ImmReleaseContext(focusWindow, context);
     }
 
-    void RefreshPopup(Popup& popup)
+    void RefreshPopup(Popup& popup, bool reanchor = false)
     {
         CloseFromDepth(popup.depth + 1);
         popup.hoveredItem = -1;
         popup.keyboardItem = -1;
         popup.scrollOffset = 0;
         CalculateLayout(popup);
+        if (reanchor) PlacePopup(popup, options_.anchor, nullptr);
         if (popup.hwnd && IsWindow(popup.hwnd))
         {
             SetWindowPos(popup.hwnd, nullptr,

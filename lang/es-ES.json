@@ -1,4 +1,6 @@
 {
+  "settings.contextMenu.moveUp": "Subir",
+  "settings.contextMenu.moveDown": "Bajar",
   "settings.contextMenu.page": "Menú contextual",
   "settings.contextMenu.description": "Elige el aspecto y las extensiones del Shell de los menús de SnowDesktop.",
   "settings.contextMenu.enabled": "Mostrar extensiones del Shell",

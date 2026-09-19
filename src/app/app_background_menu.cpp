@@ -1989,9 +1989,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         return true;
     };
     snowdesktop::shell_extensions::Request shellRequest;
-    PWSTR desktopPath = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktopPath)))
-    { shellRequest.paths.emplace_back(desktopPath); CoTaskMemFree(desktopPath); }
+    const auto extensionDirectory = snowdesktop::desktop_source::Directory();
+    if (!extensionDirectory.empty()) shellRequest.paths.push_back(extensionDirectory);
     shellRequest.background = true;
     shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,

@@ -860,8 +860,17 @@ void DesktopApp::ShowWidgetContextMenu(
             reinterpret_cast<UINT_PTR>(demoCategoryMenu), L"\uF18B");
 
     SetForegroundWindow(hwnd_);
+    snowdesktop::shell_extensions::Request shellRequest;
+    if (effectiveSourceIndex < widgets_.size() &&
+        widgets_[effectiveSourceIndex].type == DesktopWidgetType::FolderMapping &&
+        !widgets_[effectiveSourceIndex].sourceFolderPath.empty())
+    {
+        shellRequest.paths.push_back(widgets_[effectiveSourceIndex].sourceFolderPath);
+        shellRequest.background = true;
+        shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    }
     UINT command = ShowModernMenu(
-        menu, screenPoint, hwnd_, dockRenameAnchor.has_value());
+        menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
 

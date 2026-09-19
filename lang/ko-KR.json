@@ -1,4 +1,6 @@
 {
+  "settings.contextMenu.moveUp": "위로 이동",
+  "settings.contextMenu.moveDown": "아래로 이동",
   "settings.contextMenu.page": "상황에 맞는 메뉴",
   "settings.contextMenu.description": "SnowDesktop 메뉴의 모양과 셸 확장을 선택합니다.",
   "settings.contextMenu.enabled": "셸 확장 표시",

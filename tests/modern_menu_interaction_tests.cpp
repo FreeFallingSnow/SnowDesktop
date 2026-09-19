@@ -1160,6 +1160,44 @@ int wmain()
     }
 
     gCaptureRootRect = false;
+    // An asynchronous Shell reply can grow a tiny popup at a screen edge.
+    // Exercise actual placement and keyboard scrolling, not layout arithmetic.
+    for (UINT dpi : {96u, 120u, 144u, 192u})
+    {
+        MONITORINFO monitor{sizeof(monitor)};
+        GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor);
+        options.anchor = {monitor.rcWork.right - 8, monitor.rcWork.bottom - 8};
+        options.rootPlacement = snowdesktop::modern_menu::RootPlacement::Default;
+        options.dpi = dpi;
+        options.appearance = snowdesktop::modern_menu::Appearance::Win10Light;
+        options.onCommand = {}; options.onTextChanged = {}; options.onHover = {};
+        bool populated = false; RECT expanded{};
+        const auto readyAt = GetTickCount64() + 30;
+        options.pollItems = [&](const auto&) -> std::optional<std::vector<snowdesktop::modern_menu::Item>> {
+            if (populated || GetTickCount64() < readyAt) return {};
+            populated = true;
+            std::vector<snowdesktop::modern_menu::Item> expandedItems(100);
+            for (UINT i=0;i<100;++i)
+            {expandedItems[i].command=8100+i;expandedItems[i].label=L"扩展命令 / long extension command " + std::to_wstring(i);}
+            expandedItems[1].enabled=false;expandedItems[2].checked=true;
+            return expandedItems;
+        };
+        gDriveMode = DriveMode::Script; gInputPosted = false; gWatchdogFired = false;
+        gMenuScript = [&](HWND menu) {
+            GetWindowRect(menu,&expanded);
+            SendMessageW(menu,WM_KEYDOWN,VK_END,0);
+            SendMessageW(menu,WM_KEYDOWN,VK_RETURN,0);
+        };
+        SetTimer(owner,kDriveTimer,120,nullptr);SetTimer(owner,kWatchdogTimer,3000,nullptr);
+        snowdesktop::modern_menu::Item loading;loading.label=L"Loading";loading.enabled=false;
+        const auto result=snowdesktop::modern_menu::Show({loading},options);
+        KillTimer(owner,kWatchdogTimer);
+        Expect(populated&&!gWatchdogFired&&result.command==8199,"asynchronous extension commands support keyboard scrolling at every DPI");
+        Expect(expanded.bottom<=monitor.rcWork.bottom+16&&expanded.right<=monitor.rcWork.right+16,
+            "asynchronous menu growth stays within the monitor work area at every DPI");
+    }
+    options.pollItems = {}; gMenuScript = {};
+
     gDriveMode = DriveMode::Nested;
     gDrivePhase = 0;
     gInputPosted = false;

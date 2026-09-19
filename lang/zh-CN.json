@@ -1,4 +1,6 @@
 {
+  "settings.contextMenu.moveUp": "上移",
+  "settings.contextMenu.moveDown": "下移",
   "settings.contextMenu.page": "右键菜单",
   "settings.contextMenu.description": "选择 SnowDesktop 右键菜单的外观和 Shell 扩展。",
   "settings.contextMenu.enabled": "显示 Shell 扩展",
