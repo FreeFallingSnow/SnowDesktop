@@ -1090,6 +1090,48 @@ int wmain()
             PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
         });
         Expect(selected.command == 9101, "the displayed native access key executes its unique matching command");
+
+        Item disabled = open; disabled.command = 9102; disabled.enabled = false;
+        const auto alt = runScript({disabled, open}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_SYSCHAR, L'O', 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(alt.command == 9101, "Alt access keys are case insensitive and ignore disabled matches");
+
+        Item duplicate = open; duplicate.command = 9103;
+        const auto cycled = runScript({disabled, open, duplicate}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            SendMessageW(root, WM_CHAR, L'O', 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(cycled.command == 9103, "duplicate access keys cycle without prematurely executing the first command");
+
+        Item cascade; cascade.label = L"归档(Z)"; cascade.accessKey = L'z'; cascade.children = {open};
+        const auto childKey = runScript({cascade}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'z', 0);
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(childKey.command == 9101, "access keys open cascades and route the next key to the active child");
+
+        Item literal; literal.command = 9104; literal.label = L"name(O) & data";
+        const auto unmatched = runScript({disabled, literal}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(unmatched.command == 0, "disabled keys and unmarked parentheses cannot execute a command");
+
+        Item input; input.command = 9105; input.textInput = true; input.label = L"搜索";
+        std::wstring entered;
+        keyOptions.onTextChanged = [&](UINT, const std::wstring& value, auto&) { entered = value; };
+        const auto searched = runScript({input, open}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        });
+        Expect(searched.command == 9101 && entered == L"o", "focused search input takes precedence over bare access keys");
     }
     for (const auto appearance : {Appearance::Win10Light, Appearance::Win10Dark})
     {

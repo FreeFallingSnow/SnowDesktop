@@ -386,8 +386,12 @@ public:
                 HandleKey(wParam);
             return 0;
         case WM_CHAR:
-            if (!HandleTextInputCharacter(static_cast<wchar_t>(wParam)))
+            if (!HandleTextInputCharacter(static_cast<wchar_t>(wParam)) &&
+                !SelectByAccessKey(static_cast<wchar_t>(wParam)))
                 SelectByCharacter(static_cast<wchar_t>(wParam));
+            return 0;
+        case WM_SYSCHAR:
+            SelectByAccessKey(static_cast<wchar_t>(wParam));
             return 0;
         case WM_TIMER:
             if (wParam == kTextCaretTimer)
@@ -1381,6 +1385,33 @@ private:
                 return;
             }
         }
+    }
+
+    bool SelectByAccessKey(wchar_t character)
+    {
+        Popup* popup = ActivePopup();
+        if (!popup || character < L' ')
+            return false;
+        const auto target = std::towlower(character);
+        std::vector<int> matches;
+        for (const int index : popup->navigationOrder)
+        {
+            const auto& item = (*popup->items)[index];
+            if (IsSelectable(item) && item.accessKey && std::towlower(item.accessKey) == target)
+                matches.push_back(index);
+        }
+        if (matches.empty())
+            return false;
+        const auto current = std::find(matches.begin(), matches.end(), CurrentItem(*popup));
+        const int index = current == matches.end() || std::next(current) == matches.end()
+            ? matches.front() : *std::next(current);
+        EnsureVisible(*popup, index);
+        // Duplicate access keys only cycle selection. Do not open a submenu or
+        // execute a command until the user presses Enter to resolve ambiguity.
+        SetHoveredItem(*popup, index, true, false);
+        if (matches.size() == 1)
+            ActivateItem(*popup, index, true);
+        return true;
     }
 
     void SelectByCharacter(wchar_t character)
