@@ -182,9 +182,17 @@ std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullp
 {
     wchar_t value[32768]{};
     DWORD bytes = sizeof(value);
-    if (RegGetValueW(HKEY_CLASSES_ROOT, key.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
-                     nullptr, value, &bytes) != ERROR_SUCCESS)
+    DWORD type = 0;
+    if (RegGetValueW(HKEY_CLASSES_ROOT, key.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+                     &type, value, &bytes) != ERROR_SUCCESS)
         return {};
+    if (type == REG_EXPAND_SZ)
+    {
+        wchar_t expanded[32768]{};
+        const auto count = ExpandEnvironmentStringsW(value, expanded, static_cast<DWORD>(std::size(expanded)));
+        if (!count || count > std::size(expanded)) return {};
+        return expanded;
+    }
     return value;
 }
 struct Native
