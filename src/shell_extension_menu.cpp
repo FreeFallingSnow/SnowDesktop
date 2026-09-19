@@ -365,18 +365,6 @@ struct Host
     }
     Reply Query(const Request &request)
     {
-        // Third-party hidden windows can ask the Shell for this process's icon
-        // from their DLL initialization. Resolve executable icon metadata first,
-        // while the loader lock is free, through the ordinary Shell API.
-        progress("initialize process icon");
-        wchar_t executable[32768]{};
-        if (GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))))
-        {
-            SHFILEINFOW icon{};
-            SHGetFileInfoW(executable, 0, &icon, sizeof(icon), SHGFI_ICON | SHGFI_SMALLICON);
-            if (icon.hIcon)
-                DestroyIcon(icon.hIcon);
-        }
         progress("validate paths");
         if (request.paths.empty() || request.paths.size() > 256)
             return {};
@@ -431,10 +419,26 @@ struct Host
         else
         {
             progress("bind selection menu");
-            ComPtr<IShellItemArray> selection;
-            if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
-                FAILED(selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&native->context))))
-                return {};
+            const bool sameFolder = std::all_of(request.paths.begin(), request.paths.end(), [&](const auto &path) {
+                return Lower(std::filesystem::path(path).parent_path().wstring()) == Lower(directory);
+            });
+            if (sameFolder)
+            {
+                std::vector<PCUITEMID_CHILD> children;
+                for (auto id : raw)
+                    children.push_back(ILFindLastID(id));
+                if (FAILED(folder->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
+                                                 IID_IContextMenu, nullptr,
+                                                 reinterpret_cast<void **>(native->context.GetAddressOf()))))
+                    return {};
+            }
+            else
+            {
+                ComPtr<IShellItemArray> selection;
+                if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
+                    FAILED(selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&native->context))))
+                    return {};
+            }
         }
         // A Shell view is needed for invoking view-dependent verbs, not for
         // enumerating the aggregate. Creating it before loading extensions can
@@ -442,7 +446,7 @@ struct Host
         native->folder = folder;
         progress("query context menu");
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
-                                                     CMF_NORMAL |
+                                                     CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
         Reply reply;
