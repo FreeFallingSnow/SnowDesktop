@@ -286,7 +286,9 @@ struct Host
     }
     void Bitmap(Entry &entry, HBITMAP bitmap)
     {
-        if (!bitmap || reinterpret_cast<INT_PTR>(bitmap) <= 16)
+        // GDI handles can be sign-extended on 64-bit Windows. Only the
+        // documented menu bitmap sentinels are special, not negative handles.
+        if (!bitmap || bitmap == HBMMENU_CALLBACK || reinterpret_cast<UINT_PTR>(bitmap) <= 16)
             return;
         BITMAP info{};
         if (!GetObjectW(bitmap, sizeof(info), &info) || info.bmWidth <= 0 || info.bmHeight <= 0 || info.bmWidth > 128 ||
