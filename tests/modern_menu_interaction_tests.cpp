@@ -1106,6 +1106,13 @@ int wmain()
             PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
         });
         Expect(cycled.command == 9103, "duplicate access keys cycle without prematurely executing the first command");
+        const auto posted = runScript({disabled, open, duplicate}, keyOptions, [](HWND root) {
+            PostMessageW(root, WM_KEYDOWN, 'O', 1);
+            PostMessageW(root, WM_KEYDOWN, 'O', 1);
+            PostMessageW(root, WM_KEYDOWN, VK_RETURN, 1);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 1);
+        });
+        Expect(posted.command == 9103, "the real message loop handles letter keys before translation without duplicate character actions");
 
         Item cascade; cascade.label = L"归档(Z)"; cascade.accessKey = L'z'; cascade.children = {open};
         const auto childKey = runScript({cascade}, keyOptions, [](HWND root) {

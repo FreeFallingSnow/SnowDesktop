@@ -282,8 +282,11 @@ public:
                     quitReceived = true;
                     break;
                 }
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
+                if (!HandleAccessKeyMessage(message))
+                {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
                 TraceOwnedPopupZOrder(
                     L"after-dispatch", &message, false);
                 RestoreOwnedPopupZOrder();
@@ -1385,6 +1388,24 @@ private:
                 return;
             }
         }
+    }
+
+    bool HandleAccessKeyMessage(const MSG& message)
+    {
+        if ((message.message != WM_KEYDOWN && message.message != WM_SYSKEYDOWN) ||
+            !IsPopupWindow(message.hwnd) || (GetKeyState(VK_CONTROL) & 0x8000))
+            return false;
+        Popup* popup = ActivePopup();
+        if (!popup || (FindFocusedTextInput(*popup) && message.message != WM_SYSKEYDOWN))
+            return false;
+        // An active IME replaces the original key with VK_PROCESSKEY. Windows
+        // only exposes that original key before TranslateMessage is called.
+        const auto key = message.wParam == VK_PROCESSKEY
+            ? ImmGetVirtualKey(message.hwnd) : static_cast<UINT>(message.wParam);
+        if ((key >= 'A' && key <= 'Z') ||
+            (key >= '0' && key <= '9' && !(GetKeyState(VK_SHIFT) & 0x8000)))
+            return SelectByAccessKey(static_cast<wchar_t>(key));
+        return false;
     }
 
     bool SelectByAccessKey(wchar_t character)

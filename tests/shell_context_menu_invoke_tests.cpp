@@ -322,6 +322,24 @@ void TestExtensionSessions()
     ext::InvalidateMenuCache();
     {ext::Session session(request,2500);auto reply=wait(session);
         Expect(session.ProcessId()!=firstProcess && reply.ok,"explicit refresh discards the previous cached worker");}
+    {
+        ext::Request sample; sample.catalogueOnly=true; sample.context=ext::Context::File;
+        std::wstring samplePath;
+        DWORD sampleWorker=0;
+        {
+            ext::Session session(sample,2500); auto reply=wait(session);
+            Expect(reply.ok,"owned catalogue sample query completes");
+            samplePath=reply.entries[0].label; sampleWorker=session.ProcessId();
+            Expect(GetFileAttributesW(samplePath.c_str())!=INVALID_FILE_ATTRIBUTES,"sample lives through its menu session");
+        }
+        // Reacquire immediately to exercise a release acknowledgement arriving
+        // after the next request; it must not remove the current sample.
+        ext::Session next(sample,2500); auto reply=wait(next);
+        Expect(next.ProcessId()==sampleWorker && reply.ok &&
+            GetFileAttributesW(samplePath.c_str())==INVALID_FILE_ATTRIBUTES &&
+            GetFileAttributesW(reply.entries[0].label.c_str())!=INVALID_FILE_ATTRIBUTES,
+            "release acknowledgements remove retired samples while preserving the next session's object");
+    }
     request.paths={L"synthetic-hang"};const auto start=GetTickCount64();
     {ext::Session session(request,250);auto reply=wait(session);Expect(!reply.ok&&GetTickCount64()-start<3000,"hung query is terminated without blocking the parent");}
     request.paths={L"synthetic-success"};
@@ -453,6 +471,7 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
+        if (request.catalogueOnly) entry.label=request.paths.front();
         reply.entries.push_back(entry);return reply;
     };
     if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(std::move(query))) return *helper;

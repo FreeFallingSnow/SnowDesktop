@@ -628,7 +628,7 @@ struct Host
         clear(entries);
         return entries;
     }
-    Reply Query(const Request &request)
+    void ReleaseMenu()
     {
         progress("release previous menu");
         commands.clear();
@@ -636,6 +636,10 @@ struct Host
         next = 1;
         count = 0;
         invoked = false;
+    }
+    Reply Query(const Request &request)
+    {
+        ReleaseMenu();
         progress("validate paths");
         if (request.paths.empty() || request.paths.size() > 256)
             return {};
@@ -839,10 +843,20 @@ struct Session::Impl
     std::optional<Reply> reply;
     std::string stage;
     std::filesystem::path sampleDirectory;
+    std::vector<std::filesystem::path> retiredSamples;
     ULONGLONG born = GetTickCount64(), started = 0;
     std::uint64_t generation = 0;
     DWORD timeout = 8000;
     bool delivered = false, detached = false, succeeded = false;
+    void RemoveRetiredSamples()
+    {
+        for (const auto &directory : retiredSamples)
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all(directory, ignored);
+        }
+        retiredSamples.clear();
+    }
     void RemoveSample()
     {
         if (!sampleDirectory.empty())
@@ -857,6 +871,7 @@ struct Session::Impl
         channel.Close();
         if (!detached) process->Stop();
         RemoveSample();
+        RemoveRetiredSamples();
     }
 };
 thread_local std::unique_ptr<Session::Impl> Session::Impl::idle;
@@ -887,6 +902,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
             if (!result.ok && result.error.empty()) result.error = "query failed at " + p->stage;
             p->reply = std::move(result);
         });
+        impl_->channel.Bind<void>("menu.released", [p = impl_.get()] { p->RemoveRetiredSamples(); });
         auto query = request;
         PrepareSample(query, impl_->sampleDirectory);
         if (!impl_->process->Running()) impl_->process->Start(impl_->channel, L"--shell-menu-helper");
@@ -904,9 +920,21 @@ Session::~Session()
     if (impl_ && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
         impl_->generation == Caches().generation)
     {
-        impl_->reply.reset();
-        impl_->RemoveSample();
-        Impl::idle = std::move(impl_);
+        try
+        {
+            impl_->reply.reset();
+            if (!impl_->sampleDirectory.empty())
+            {
+                impl_->retiredSamples.push_back(std::move(impl_->sampleDirectory));
+                impl_->sampleDirectory.clear();
+            }
+            // Keep loaded modules, not menus/COM objects that may hold a file.
+            // The ordered release acknowledgement retires only prior samples,
+            // even if the next query has already acquired this worker.
+            impl_->channel.Notify("menu.release");
+            Impl::idle = std::move(impl_);
+        }
+        catch (...) { /* A disconnected worker is destroyed instead of pooled. */ }
     }
     sessions.fetch_sub(1);
 }
@@ -966,6 +994,11 @@ std::optional<int> TryRunHelper(QueryExecutor query)
             if (invocationQueued) return;
             lastQuery = GetTickCount64();
             channel.Notify("menu.reply", query ? query(request) : host.Query(request));
+        });
+        channel.Bind<void>("menu.release", [&] {
+            if (invocationQueued) return;
+            host.ReleaseMenu();
+            channel.Notify("menu.released");
         });
         channel.Bind<void, UINT, LONG, LONG>("menu.invoke", [&](UINT token, LONG x, LONG y) {
             if (invocationQueued)
