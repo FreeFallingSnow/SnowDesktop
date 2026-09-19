@@ -64,3 +64,34 @@ enabled / selections 字段为兼容回存而保留，运行时不再用它们�
 不修改现有文件关联、第三方注册项或用户文件。桌面宿主不通过自动化操作。
 首版仍以经典 Shell 菜单为范围，Windows 11 仅新式注册项不保证提供。
 设置列表视觉、实际桌面/Dock/文件夹映射菜单及第三方操作需用户实机验收。
+
+## 本轮候选验证（2026-09-19）
+
+分支 `release/v1.0.7.0`，版本保持 `1.0.7.0`。运行输入对应 `55d2155e`，
+之后仅将 Shell 测试局部变量 `archive` 改名为 `archiveEntry` 清理重名警告，
+未改变生产代码、测试条件、资源或宿主构建输入；该条目已重新编译并单独复测。
+
+| 本次执行 | 结果与范围 |
+| --- | --- |
+| 菜单、设置、配置、导航与本地化定向测试 | 6/6 通过，退出码 0 |
+| `scripts/test.bat` | 自动集合 118/118 通过，退出码 0；配置 2.07 秒，编译 45.06 秒，测试 92.74 秒 |
+| `scripts/test.bat name "^shell_context_menu_invoke$"` | 清理测试警告后 1/1 通过，退出码 0，测试 8.55 秒 |
+| `scripts/build.bat` | 标准 Release 构建通过，退出码 0，总计 34.31 秒；预检无占用，无需重载 Shell |
+
+全量报告为 `.build/Testing/test-run-d06485af99eb4dcaa469152a0bcd5623.xml`，
+最后定向报告为 `.build/Testing/test-run-4d0e47f7971149978ca75b8495f57d06.xml`。
+本地详细日志及时间记录位于 `.codex-probes/shell-extension-redesign/` 的
+`full-final.log`、`targeted-warning-cleanup.log`、`build-final.log` 和对应 `*-result.json`。
+全量日志中的 WinUI `GetCurrentTime` C4002 是已有警告；测试 C4456 已清理，
+最后定向编译和标准增量构建均未输出新增警告。
+
+环境为 MSVC `19.50.35730.0`、Windows SDK `10.0.26100.0`、CMake `4.3.1`。
+本机四类实际系统菜单查询通过，文件和文件夹的 7-Zip 根项目各返回 `13 × 13`、
+`676` 字节图标数据；未执行第三方命令。相同输入此前因空图标失败，
+`bea3bc29` 调整 GDI 句柄判断后通过，形成实际负向对照。
+已有菜单数据、开关场景隔离、系统禁用、无额外包装和“更多选项”上方同组位置均有回归覆盖。
+
+交付产物 `.build/Release/SnowDesktop.exe` 的 SHA-256：
+`872C629B3F26C8B6F9563F65201ADBF52A13262A1946510D6C29F938CE727F78`。
+手动诊断条目未运行。设置页浅深色与缩放显示、桌面/Dock/映射目录的真实右键交互、
+7-Zip 等第三方命令执行及系统变更后的刷新仍待用户实机验收；本轮仅作为 `try` 候选交付。

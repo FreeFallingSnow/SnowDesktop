@@ -337,17 +337,17 @@ void TestExtensionSessions()
         scopesPassed &= reply.ok;
         if (!reply.ok || (context != ext::Context::File && context != ext::Context::Folder))
             continue;
-        const auto archive = std::find_if(reply.entries.begin(), reply.entries.end(), [](const auto &entry) {
+        const auto archiveEntry = std::find_if(reply.entries.begin(), reply.entries.end(), [](const auto &entry) {
             return entry.label == L"7-Zip";
         });
         // Registration alone does not imply system visibility: 7-Zip may be
         // disabled. The isolated verb above independently checks visibility.
-        if (archive != reply.entries.end())
+        if (archiveEntry != reply.entries.end())
         {
-            std::cout << "7-Zip menu image: " << archive->width << "x" << archive->height
-                      << ", " << archive->pixels.size() << " bytes" << std::endl;
-            scopesPassed &= !archive->children.empty() && archive->width > 0 && archive->height > 0 &&
-                            !archive->pixels.empty();
+            std::cout << "7-Zip menu image: " << archiveEntry->width << "x" << archiveEntry->height
+                      << ", " << archiveEntry->pixels.size() << " bytes" << std::endl;
+            scopesPassed &= !archiveEntry->children.empty() && archiveEntry->width > 0 && archiveEntry->height > 0 &&
+                            !archiveEntry->pixels.empty();
         }
         else std::cout << "7-Zip is not present in this system menu; icon check not applicable" << std::endl;
     }
