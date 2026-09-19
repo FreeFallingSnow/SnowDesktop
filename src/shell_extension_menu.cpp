@@ -160,6 +160,7 @@ struct Pidl
 struct Native
 {
     ComPtr<IContextMenu> context;
+    ComPtr<IShellFolder> folder;
     ShellContextMenuSite site;
     HMENU menu = CreatePopupMenu();
     std::wstring directory;
@@ -397,15 +398,6 @@ struct Host
             return {};
         auto native = std::make_unique<Native>();
         native->directory = directory;
-        // Warm the Shell item-handler cache through a documented library bind.
-        // Some handlers create library-aware Shell controls during DLL loading;
-        // their first bind can wait for a worker blocked by the DLL loader lock.
-        progress("initialize library handler cache");
-        ComPtr<IShellItem> library;
-        ComPtr<IShellFolder> libraryFolder;
-        if (SUCCEEDED(SHGetKnownFolderItem(FOLDERID_DocumentsLibrary, KF_FLAG_DEFAULT, nullptr,
-                                           IID_PPV_ARGS(&library))))
-            library->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&libraryFolder));
         // The real Shell aggregate decides what exists and applies system
         // filtering. Never instantiate registrations to bypass that decision.
         if (request.background)
@@ -432,8 +424,10 @@ struct Host
                 FAILED(selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&native->context))))
                 return {};
         }
-        native->site.Initialize(folder.Get(), window);
-        native->site.Attach(native->context.Get());
+        // A Shell view is needed for invoking view-dependent verbs, not for
+        // enumerating the aggregate. Creating it before loading extensions can
+        // make Shell window hooks re-enter item binding from a handler's DllMain.
+        native->folder = folder;
         progress("query context menu");
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
                                                      CMF_NORMAL |
@@ -472,6 +466,8 @@ struct Host
         invoked = true;
         auto command = found->second;
         auto &source = *command.source;
+        source.site.Initialize(source.folder.Get(), window);
+        source.site.Attach(source.context.Get());
         if (command.native)
         {
             const auto popup = command.nativeMenu ? command.nativeMenu : source.menu;
