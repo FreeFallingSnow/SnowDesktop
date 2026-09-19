@@ -51,13 +51,13 @@ class Presentation
         loading.enabled = false;
         loading.label = failedStart_ ? failed_ : loading_;
         items.push_back(loading);
-        options.pollItems = [this](const std::vector<modern_menu::Item> &current)
+        options.pollItems = [this](const std::vector<modern_menu::Item> &current, bool canApply)
             -> std::optional<std::vector<modern_menu::Item>> {
             if (!session_)
                 return {};
-            auto reply = session_->Poll();
-            if (!reply)
-                return {};
+            if (!ready_) ready_ = session_->Poll();
+            if (!ready_ || !canApply) return {};
+            auto reply = std::move(ready_);
             auto result = current;
             std::erase_if(result, [](const auto &item) { return item.command == LoadingCommand; });
             if (!reply->ok)
@@ -139,6 +139,7 @@ class Presentation
     Preferences prefs_;
     std::wstring heading_, loading_, failed_, fallback_;
     std::unique_ptr<Session> session_;
+    std::optional<Reply> ready_;
     std::vector<modern_menu::Item> base_;
     std::vector<HBITMAP> images_;
     bool failedStart_ = false;

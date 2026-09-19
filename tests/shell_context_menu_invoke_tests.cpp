@@ -220,16 +220,40 @@ void TestExtensionSessions()
     request.paths={L"synthetic-success"};
     {ext::Session session(request,2500);Expect(wait(session).ok,"a timed-out extension does not poison the next menu session");}
     for(int i=0;i<3;++i){ext::Session cancelled(request);}
+    // Exercise the production COM adapter against Windows' real New handler,
+    // on an isolated directory and without invoking a file operation.
+    TemporaryDirectory directory;
+    wchar_t clsid[40]{};StringFromGUID2(CLSID_NewMenu,clsid,40);
+    std::wstring id=clsid;for(auto& c:id)c=towlower(c);
+    request.paths={directory.path.wstring()};request.background=true;
+    request.providers={"handler:"+std::string(id.begin(),id.end())};
+    struct RealQueryMode
+    {
+        RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",L"1");}
+        ~RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",nullptr);}
+    } realMode;
+    ext::Session realSession(request);
+    const auto realReply=wait(realSession);
+    Expect(realReply.ok&&!realReply.entries.empty(),"registered Windows New handler crosses the production isolated query path");
+    bool newFolder=false;
+    std::function<void(const std::vector<ext::Entry>&)> inspect=[&](const auto& entries){for(const auto& entry:entries){
+        auto key=entry.key;std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c){return static_cast<char>(tolower(c));});
+        if(key=="newfolder"&&entry.enabled&&entry.token)newFolder=true;inspect(entry.children);}};
+    inspect(realReply.entries);
+    Expect(newFolder,"production conversion retains the real NewFolder command and invocation token");
 }
 
 int wmain()
 {
-    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper([](const auto& request) {
+    snowdesktop::shell_extensions::QueryExecutor query;
+    wchar_t realMode[4]{};
+    if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         reply.entries.push_back(entry);return reply;
-    })) return *helper;
+    };
+    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(std::move(query))) return *helper;
 
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized)) return 1;

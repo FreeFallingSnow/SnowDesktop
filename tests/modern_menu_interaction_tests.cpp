@@ -1173,8 +1173,8 @@ int wmain()
         options.onCommand = {}; options.onTextChanged = {}; options.onHover = {};
         bool populated = false; RECT expanded{};
         const auto readyAt = GetTickCount64() + 30;
-        options.pollItems = [&](const auto&) -> std::optional<std::vector<snowdesktop::modern_menu::Item>> {
-            if (populated || GetTickCount64() < readyAt) return {};
+        options.pollItems = [&](const auto&, bool canApply) -> std::optional<std::vector<snowdesktop::modern_menu::Item>> {
+            if (!canApply || populated || GetTickCount64() < readyAt) return {};
             populated = true;
             std::vector<snowdesktop::modern_menu::Item> expandedItems(100);
             for (UINT i=0;i<100;++i)
@@ -1195,6 +1195,31 @@ int wmain()
         Expect(populated&&!gWatchdogFired&&result.command==8199,"asynchronous extension commands support keyboard scrolling at every DPI");
         Expect(expanded.bottom<=monitor.rcWork.bottom+16&&expanded.right<=monitor.rcWork.right+16,
             "asynchronous menu growth stays within the monitor work area at every DPI");
+    }
+    // Polling must continue while a cascade is open so an extension deadline
+    // cannot be postponed indefinitely by keyboard navigation.
+    {
+        bool observedCascade = false, refreshed = false;
+        snowdesktop::modern_menu::Item group; group.command=8200;group.label=L"Group";
+        snowdesktop::modern_menu::Item leaf;leaf.command=8201;leaf.label=L"Child";group.children={leaf};
+        gDriveMode=DriveMode::Script;gInputPosted=false;gWatchdogFired=false;
+        gMenuScript=[](HWND root){SendMessageW(root,WM_KEYDOWN,VK_HOME,0);SendMessageW(root,WM_KEYDOWN,VK_RIGHT,0);};
+        options.pollItems=[&](const auto& current,bool canApply)->std::optional<std::vector<snowdesktop::modern_menu::Item>> {
+            if(!canApply)
+            {
+                observedCascade=true;MenuWindows windows;EnumThreadWindows(GetCurrentThreadId(),FindMenuWindows,reinterpret_cast<LPARAM>(&windows));
+                if(windows.child)PostMessageW(windows.child,WM_KEYDOWN,VK_ESCAPE,0);
+                return {};
+            }
+            if(!observedCascade||refreshed)return {};
+            refreshed=true;auto updated=current;snowdesktop::modern_menu::Item command;command.command=8202;command.label=L"Loaded";updated.push_back(command);
+            const auto root=snowdesktop::modern_menu::ActiveRootWindow();PostMessageW(root,WM_KEYDOWN,VK_END,0);PostMessageW(root,WM_KEYDOWN,VK_RETURN,0);
+            return updated;
+        };
+        SetTimer(owner,kDriveTimer,10,nullptr);SetTimer(owner,kWatchdogTimer,3000,nullptr);
+        const auto result=snowdesktop::modern_menu::Show({group},options);KillTimer(owner,kWatchdogTimer);
+        Expect(observedCascade&&refreshed&&!gWatchdogFired&&result.command==8202,
+            "extension deadlines are serviced during an open cascade and additions wait for its closure");
     }
     options.pollItems = {}; gMenuScript = {};
 

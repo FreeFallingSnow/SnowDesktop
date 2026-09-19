@@ -233,9 +233,9 @@ public:
         bool quitReceived = false;
         while (!done_ && !quitReceived)
         {
-            if (options_.pollItems && popups_.size() == 1)
+            if (options_.pollItems)
             {
-                if (auto updated = options_.pollItems(rootItems_))
+                if (auto updated = options_.pollItems(rootItems_, popups_.size() == 1); updated && popups_.size() == 1)
                 {
                     const int selected = popups_.front()->keyboardItem;
                     const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
