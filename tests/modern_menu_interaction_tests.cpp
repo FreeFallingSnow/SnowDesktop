@@ -1,5 +1,6 @@
 #include "modern_menu.h"
 #include "modern_menu_appearance_rules.h"
+#include "shell_extension_menu_presentation.h"
 
 #include <windows.h>
 
@@ -396,6 +397,24 @@ struct IsolatedMenuDesktop
 
 int wmain()
 {
+    // Regression: asynchronous Shell entries belong immediately above More,
+    // preserving its separator and any host commands that follow that group.
+    {
+        using snowdesktop::modern_menu::Item;
+        Item open; open.command = 1;
+        Item separator; separator.separator = true;
+        Item more; more.command = 2;
+        Item after; after.command = 3;
+        Item archive; archive.label = L"7-Zip";
+        Item compress; compress.command = 4;
+        archive.children = {compress};
+        std::vector<Item> items{open, separator, more, separator, after};
+        snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
+        Expect(items.size() == 6 && items[1].separator && items[2].label == L"7-Zip" &&
+                   items[2].children.front().command == 4 && items[3].command == 2 &&
+                   items[4].separator && items[5].command == 3,
+               "Shell entries appear above More in the same group, without a synthetic wrapper");
+    }
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.
     IsolatedMenuDesktop isolatedDesktop;

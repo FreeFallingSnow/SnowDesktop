@@ -753,7 +753,7 @@ UINT DesktopApp::ShowModernMenu(
         extensions = std::make_unique<snowdesktop::shell_extensions::Presentation>(*shellRequest, generalSettings_.shellExtensions,
             _LW("settings.contextMenu.loading"),
             _LW("settings.contextMenu.failed"), _LW("settings.contextMenu.native"));
-        extensions->Attach(items, options);
+        extensions->Attach(items, options, kContextMoreCommand);
     }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);

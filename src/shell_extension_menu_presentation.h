@@ -1,9 +1,32 @@
 #pragma once
 #include "modern_menu.h"
 #include "shell_extension_menu.h"
+#include <algorithm>
 
 namespace snowdesktop::shell_extensions
 {
+inline void InsertBeforeMore(std::vector<modern_menu::Item> &items,
+                             const std::vector<modern_menu::Item> &additions, UINT moreCommand,
+                             bool separateFallback = true)
+{
+    if (additions.empty())
+        return;
+    const auto anchor = std::find_if(items.begin(), items.end(), [moreCommand](const auto &item) {
+        return moreCommand && item.command == moreCommand;
+    });
+    if (anchor != items.end())
+        items.insert(anchor, additions.begin(), additions.end());
+    else
+    {
+        if (separateFallback && !items.empty() && !items.back().separator)
+        {
+            modern_menu::Item divider;
+            divider.separator = true;
+            items.push_back(divider);
+        }
+        items.insert(items.end(), additions.begin(), additions.end());
+    }
+}
 // Caller owns this bridge for the entire synchronous custom menu.
 class Presentation
 {
@@ -31,7 +54,7 @@ class Presentation
         for (auto image : images_)
             DeleteObject(image);
     }
-    void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options)
+    void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
         if (!session_ && !failedStart_)
             return;
@@ -39,8 +62,8 @@ class Presentation
         loading.command = LoadingCommand;
         loading.enabled = false;
         loading.label = failedStart_ ? failed_ : loading_;
-        items.push_back(loading);
-        options.pollItems = [this](const std::vector<modern_menu::Item> &current,
+        InsertBeforeMore(items, {loading}, moreCommand, false);
+        options.pollItems = [this, moreCommand](const std::vector<modern_menu::Item> &current,
                                    bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
             if (!session_)
                 return {};
@@ -56,20 +79,11 @@ class Presentation
                 modern_menu::Item failed;
                 failed.label = failed_;
                 failed.enabled = false;
-                result.push_back(std::move(failed));
+                InsertBeforeMore(result, {failed}, moreCommand, false);
                 return result;
             }
             auto additions = Convert(VisibleEntries(prefs_, reply->entries, source_));
-            if (!additions.empty())
-            {
-                if (!result.empty() && !result.back().separator)
-                {
-                    modern_menu::Item divider;
-                    divider.separator = true;
-                    result.push_back(divider);
-                }
-                result.insert(result.end(), additions.begin(), additions.end());
-            }
+            InsertBeforeMore(result, additions, moreCommand);
             return result;
         };
     }
