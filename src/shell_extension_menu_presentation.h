@@ -45,7 +45,6 @@ class Presentation
     {
         if (!session_ && !failedStart_)
             return;
-        base_ = items;
         modern_menu::Item loading;
         loading.command = LoadingCommand;
         loading.enabled = false;
@@ -55,8 +54,10 @@ class Presentation
             -> std::optional<std::vector<modern_menu::Item>> {
             if (!session_)
                 return {};
-            if (!ready_) ready_ = session_->Poll();
-            if (!ready_ || !canApply) return {};
+            if (!ready_)
+                ready_ = session_->Poll();
+            if (!ready_ || !canApply)
+                return {};
             auto reply = std::move(ready_);
             auto result = current;
             std::erase_if(result, [](const auto &item) { return item.command == LoadingCommand; });
@@ -140,7 +141,6 @@ class Presentation
     std::wstring heading_, loading_, failed_, fallback_;
     std::unique_ptr<Session> session_;
     std::optional<Reply> ready_;
-    std::vector<modern_menu::Item> base_;
     std::vector<HBITMAP> images_;
     bool failedStart_ = false;
 };

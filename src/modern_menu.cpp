@@ -244,7 +244,14 @@ public:
                     RefreshPopup(*popups_.front(), true);
                     if (selectedCommand)
                         for (size_t i = 0; i < rootItems_.size(); ++i)
-                            if (rootItems_[i].command == selectedCommand) { SetHoveredItem(*popups_.front(), static_cast<int>(i), true); break; }
+                            if (rootItems_[i].command == selectedCommand)
+                            {
+                                // Restoring a highlight must not reopen a cascade
+                                // the user just dismissed while the query ran.
+                                EnsureVisible(*popups_.front(), static_cast<int>(i));
+                                SetHoveredItem(*popups_.front(), static_cast<int>(i), true, false);
+                                break;
+                            }
                     options_.pollItems = {};
                 }
             }
@@ -1118,7 +1125,7 @@ private:
         return -1;
     }
 
-    void SetHoveredItem(Popup& popup, int index, bool keyboard)
+    void SetHoveredItem(Popup& popup, int index, bool keyboard, bool updateChildren = true)
     {
         if (index >= 0 &&
             static_cast<size_t>(index) < popup.items->size() &&
@@ -1172,7 +1179,7 @@ private:
             }
             options_.onHover(info);
         }
-        if (index >= 0 &&
+        if (updateChildren && index >= 0 &&
             static_cast<size_t>(index) < popup.items->size() &&
             !(*popup.items)[index].children.empty() &&
             (*popup.items)[index].enabled)
@@ -1183,7 +1190,7 @@ private:
                 SetTimer(popup.hwnd, kSubmenuOpenTimer,
                     kSubmenuOpenDelayMs, nullptr);
         }
-        else if (HasOpenChild(popup))
+        else if (updateChildren && HasOpenChild(popup))
         {
             if (keyboard)
                 CloseFromDepth(popup.depth + 1);

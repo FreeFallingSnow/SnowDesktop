@@ -1190,9 +1190,9 @@ int wmain()
         };
         SetTimer(owner,kDriveTimer,120,nullptr);SetTimer(owner,kWatchdogTimer,3000,nullptr);
         snowdesktop::modern_menu::Item loading;loading.label=L"Loading";loading.enabled=false;
-        const auto result=snowdesktop::modern_menu::Show({loading},options);
+        const auto asyncResult=snowdesktop::modern_menu::Show({loading},options);
         KillTimer(owner,kWatchdogTimer);
-        Expect(populated&&!gWatchdogFired&&result.command==8199,"asynchronous extension commands support keyboard scrolling at every DPI");
+        Expect(populated&&!gWatchdogFired&&asyncResult.command==8199,"asynchronous extension commands support keyboard scrolling at every DPI");
         Expect(expanded.bottom<=monitor.rcWork.bottom+16&&expanded.right<=monitor.rcWork.right+16,
             "asynchronous menu growth stays within the monitor work area at every DPI");
     }
@@ -1217,12 +1217,12 @@ int wmain()
             return updated;
         };
         SetTimer(owner,kDriveTimer,10,nullptr);SetTimer(owner,kWatchdogTimer,3000,nullptr);
-        const auto result=snowdesktop::modern_menu::Show({group},options);KillTimer(owner,kWatchdogTimer);
-        if (!observedCascade || !refreshed || gWatchdogFired || result.command != 8202)
+        const auto cascadeResult=snowdesktop::modern_menu::Show({group},options);KillTimer(owner,kWatchdogTimer);
+        if (!observedCascade || !refreshed || gWatchdogFired || cascadeResult.command != 8202)
             std::cerr << "cascade: observed=" << observedCascade << " refreshed=" << refreshed
-                      << " watchdog=" << gWatchdogFired << " command=" << result.command
+                      << " watchdog=" << gWatchdogFired << " command=" << cascadeResult.command
                       << " input=" << gInputPosted << '\n';
-        Expect(observedCascade&&refreshed&&!gWatchdogFired&&result.command==8202,
+        Expect(observedCascade&&refreshed&&!gWatchdogFired&&cascadeResult.command==8202,
             "extension deadlines are serviced during an open cascade and additions wait for its closure");
     }
     options.pollItems = {}; gMenuScript = {};

@@ -225,8 +225,10 @@ void TestExtensionSessions()
     TemporaryDirectory directory;
     wchar_t clsid[40]{};StringFromGUID2(CLSID_NewMenu,clsid,40);
     std::wstring id=clsid;for(auto& c:id)c=towlower(c);
+    char utf8Clsid[80]{};
+    WideCharToMultiByte(CP_UTF8, 0, id.c_str(), -1, utf8Clsid, sizeof(utf8Clsid), nullptr, nullptr);
     request.paths={directory.path.wstring()};request.background=true;
-    request.providers={"handler:"+std::string(id.begin(),id.end())};
+    request.providers={"handler:"+std::string(utf8Clsid)};
     struct RealQueryMode
     {
         RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",L"1");}
