@@ -355,7 +355,45 @@ void TestExtensionSessions()
 
 }
 
-int wmain()
+// Opt-in measurements use the real Session path and private files only. They
+// do not invoke extensions or add machine-dependent latency assertions.
+void BenchmarkMenus()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto file = directory.path / L"sample.txt";
+    { std::ofstream output(file); output << "menu timing sample"; }
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    for (const bool folder : {false, true})
+    {
+        ext::Request request;
+        request.paths = {(folder ? directory.path : file).wstring()};
+        for (int iteration = 0; iteration < 4; ++iteration)
+        {
+            const auto start = GetTickCount64();
+            ext::Session session(request);
+            const auto launched = GetTickCount64();
+            std::optional<ext::Reply> reply;
+            while (!reply && GetTickCount64() - start < 10000)
+            {
+                MSG message{};
+                while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                { TranslateMessage(&message); DispatchMessageW(&message); }
+                reply = session.Poll();
+                if (!reply) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            }
+            const auto elapsed = GetTickCount64() - start;
+            std::cout << "menu_benchmark scope=" << (folder ? "folder" : "file")
+                      << " iteration=" << iteration << " start_ms=" << launched - start
+                      << " ready_ms=" << elapsed << " ok=" << (reply && reply->ok)
+                      << " entries=" << (reply ? reply->entries.size() : 0) << std::endl;
+            Expect(reply && reply->ok, "benchmark real menu query succeeds");
+        }
+    }
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
+}
+
+int wmain(int argc, wchar_t **argv)
 {
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
@@ -369,7 +407,11 @@ int wmain()
 
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized)) return 1;
-    try { RunTests(); TestExtensionSessions(); }
+    try
+    {
+        if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
+        else { RunTests(); TestExtensionSessions(); }
+    }
     catch (const std::exception& error)
     {
         std::cerr << "FAILED: " << error.what() << '\n';
