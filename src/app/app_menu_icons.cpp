@@ -751,7 +751,7 @@ UINT DesktopApp::ShowModernMenu(
     if (shellRequest)
     {
         extensions = std::make_unique<snowdesktop::shell_extensions::Presentation>(*shellRequest, generalSettings_.shellExtensions,
-            _LW("settings.contextMenu.extensions"), _LW("settings.contextMenu.loading"),
+            _LW("settings.contextMenu.loading"),
             _LW("settings.contextMenu.failed"), _LW("settings.contextMenu.native"));
         extensions->Attach(items, options);
     }

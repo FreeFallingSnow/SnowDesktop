@@ -1,7 +1,6 @@
 #pragma once
 #include "modern_menu.h"
 #include "shell_extension_menu.h"
-#include <set>
 
 namespace snowdesktop::shell_extensions
 {
@@ -11,24 +10,15 @@ class Presentation
   public:
     static constexpr UINT FirstCommand = 0x71000000;
     static constexpr UINT LoadingCommand = FirstCommand - 1;
-    Presentation(const Request &source, Preferences prefs, std::wstring heading, std::wstring loading,
-                 std::wstring failed, std::wstring fallback)
-        : prefs_(std::move(prefs)), heading_(std::move(heading)), failed_(std::move(failed)),
-          fallback_(std::move(fallback))
+    Presentation(const Request &source, Preferences prefs, std::wstring loading, std::wstring failed,
+                 std::wstring fallback)
+        : prefs_(std::move(prefs)), source_(source), failed_(std::move(failed)), fallback_(std::move(fallback))
     {
-        if (!prefs_.enabled || source.paths.empty())
+        if (source.paths.empty())
             return;
-        auto request = source;
-        std::set<std::string> providers;
-        for (const auto &s : prefs_.selections)
-            if (s.placement != Placement::Hidden)
-                providers.insert(s.provider);
-        if (providers.empty())
-            return;
-        request.providers.assign(providers.begin(), providers.end());
         try
         {
-            session_ = std::make_unique<Session>(request);
+            session_ = std::make_unique<Session>(source);
         }
         catch (...)
         {
@@ -50,8 +40,8 @@ class Presentation
         loading.enabled = false;
         loading.label = failedStart_ ? failed_ : loading_;
         items.push_back(loading);
-        options.pollItems = [this](const std::vector<modern_menu::Item> &current, bool canApply)
-            -> std::optional<std::vector<modern_menu::Item>> {
+        options.pollItems = [this](const std::vector<modern_menu::Item> &current,
+                                   bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
             if (!session_)
                 return {};
             if (!ready_)
@@ -69,15 +59,16 @@ class Presentation
                 result.push_back(std::move(failed));
                 return result;
             }
-            auto root = Convert(SelectEntries(prefs_, reply->entries, Placement::Root));
-            result.insert(result.end(), root.begin(), root.end());
-            auto nested = Convert(SelectEntries(prefs_, reply->entries, Placement::Submenu));
-            if (!nested.empty())
+            auto additions = Convert(VisibleEntries(prefs_, reply->entries, source_));
+            if (!additions.empty())
             {
-                modern_menu::Item group;
-                group.label = heading_;
-                group.children = std::move(nested);
-                result.push_back(std::move(group));
+                if (!result.empty() && !result.back().separator)
+                {
+                    modern_menu::Item divider;
+                    divider.separator = true;
+                    result.push_back(divider);
+                }
+                result.insert(result.end(), additions.begin(), additions.end());
             }
             return result;
         };
@@ -138,7 +129,8 @@ class Presentation
         return result;
     }
     Preferences prefs_;
-    std::wstring heading_, loading_, failed_, fallback_;
+    Request source_;
+    std::wstring loading_, failed_, fallback_;
     std::unique_ptr<Session> session_;
     std::optional<Reply> ready_;
     std::vector<HBITMAP> images_;

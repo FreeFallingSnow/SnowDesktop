@@ -37,14 +37,17 @@ int main()
         saved.shellExtensions = {true, {{"handler:{provider}", "", "压缩软件", Placement::Submenu},
             {"handler:{provider}", "compress", "压缩 \"文件\"", Placement::Root},
             {"handler:{provider}", "extract", "解压", Placement::Hidden}}};
+        saved.shellExtensions.hidden = {{"verb:sevenzip", Context::File}, {"verb:sevenzip", Context::Desktop},
+            {"menu:特殊\"项目", Context::FolderBackground}};
         Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.shellExtensions == saved.shellExtensions,
-            "Shell group, explicit exclusion and pinned command survive restart including escaped Unicode labels");
+            "scoped exclusions and legacy preferences survive restart including escaped Unicode identities");
         saved.shellExtensions.enabled = false;
         Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.shellExtensions == saved.shellExtensions,
-            "disabling integration retains command choices");
+            "legacy selector data remains preserved alongside the active scoped exclusions");
         { std::ofstream legacy(path); legacy << "{}"; }
         Check(LoadGeneralSettings(path.c_str(), loaded) && !loaded.shellExtensions.enabled && loaded.shellExtensions.selections.empty(),
-            "old configuration leaves extension loading off");
+            "old configuration has no local exclusions while retaining legacy fields for compatibility");
+        Check(loaded.shellExtensions.hidden.empty(), "missing preferences follow system menus without additional hiding");
         std::error_code error; std::filesystem::remove(path, error);
     }
 

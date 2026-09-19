@@ -1992,6 +1992,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     const auto extensionDirectory = snowdesktop::desktop_source::Directory();
     if (!extensionDirectory.empty()) shellRequest.paths.push_back(extensionDirectory);
     shellRequest.background = true;
+    shellRequest.context = snowdesktop::shell_extensions::Context::Desktop;
     shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,

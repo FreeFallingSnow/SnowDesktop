@@ -38,8 +38,10 @@ void TestCodec()
 {
     GeneralSettings extensions;
     extensions.shellExtensions = {true, {{"handler:{test}", "compress", "压缩", snowdesktop::shell_extensions::Placement::Root}}};
+    extensions.shellExtensions.hidden = {{"verb:sevenzip", snowdesktop::shell_extensions::Context::Folder},
+        {"verb:editor", snowdesktop::shell_extensions::Context::Desktop}};
     Check(Unpack<GeneralSettings>(Pack(extensions)).shellExtensions == extensions.shellExtensions,
-        "extension choices cross the settings IPC without losing identity or placement");
+        "scoped exclusions cross the settings IPC without losing identity or context");
     snowdesktop::winui::HomeAboutStatusPatch guide;
     guide.generation = 71; guide.revision = 9;
     guide.usageGuideExpanded = false;

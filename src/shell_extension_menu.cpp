@@ -25,8 +25,7 @@ std::string Utf8(const std::wstring &s)
 {
     if (s.empty())
         return {};
-    int n =
-        WideCharToMultiByte(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0, nullptr, nullptr);
+    int n = WideCharToMultiByte(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0, nullptr, nullptr);
     std::string result(n, 0);
     WideCharToMultiByte(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), result.data(), n, nullptr, nullptr);
     return result;
@@ -39,88 +38,18 @@ std::wstring Wide(const std::string &s)
         MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), static_cast<int>(s.size()), nullptr, 0);
     std::wstring result(size, 0);
     if (size)
-        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), static_cast<int>(s.size()),
-                            result.data(), size);
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), static_cast<int>(s.size()), result.data(), size);
     return result;
 }
-bool Blocked(const wchar_t *clsid)
+std::wstring Lower(std::wstring text)
 {
-    for (auto hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
-    {
-        HKEY key = nullptr;
-        if (RegOpenKeyExW(hive, L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked", 0,
-                          KEY_READ, &key) != ERROR_SUCCESS)
-            continue;
-        DWORD size = 0;
-        const auto status = RegQueryValueExW(key, clsid, nullptr, nullptr, nullptr, &size);
-        RegCloseKey(key);
-        if (status == ERROR_SUCCESS)
-            return true;
-    }
-    return false;
-}
-std::wstring Lower(std::wstring s)
-{
-    for (auto &c : s)
+    for (auto &c : text)
         c = towlower(c);
-    return s;
-}
-struct Reg
-{
-    HKEY key = nullptr;
-    explicit Reg(const std::wstring &path)
-    {
-        RegOpenKeyExW(HKEY_CLASSES_ROOT, path.c_str(), 0, KEY_READ, &key);
-    }
-    ~Reg()
-    {
-        if (key)
-            RegCloseKey(key);
-    }
-    Reg(const Reg &) = delete;
-};
-std::wstring Value(HKEY key, const wchar_t *name = nullptr)
-{
-    wchar_t text[32768]{};
-    DWORD bytes = sizeof(text), type = 0;
-    if (!key ||
-        RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE *>(text), &bytes) !=
-            ERROR_SUCCESS ||
-        (type != REG_SZ && type != REG_EXPAND_SZ) || bytes > sizeof(text) || bytes % sizeof(wchar_t))
-        return {};
-    text[std::size(text) - 1] = 0;
     return text;
 }
-bool Exists(HKEY key, const wchar_t *value)
+std::wstring Display(const std::wstring &text)
 {
-    DWORD bytes = 0;
-    return key && RegQueryValueExW(key, value, nullptr, nullptr, nullptr, &bytes) == ERROR_SUCCESS;
-}
-std::vector<std::wstring> Keys(const std::wstring &path)
-{
-    Reg key(path);
-    std::vector<std::wstring> result;
-    if (!key.key)
-        return result;
-    for (DWORD i = 0; i < 4096; ++i)
-    {
-        wchar_t name[512]{};
-        DWORD n = std::size(name);
-        if (RegEnumKeyExW(key.key, i, name, &n, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
-            break;
-        result.emplace_back(name, n);
-    }
-    return result;
-}
-std::wstring Display(std::wstring text)
-{
-    if (text.starts_with(L"@"))
-    {
-        wchar_t result[1024]{};
-        if (SUCCEEDED(SHLoadIndirectString(text.c_str(), result, std::size(result), nullptr)))
-            text = result;
-    }
-    std::wstring out;
+    std::wstring result;
     for (size_t i = 0; i < text.size(); ++i)
     {
         if (text[i] == L'&')
@@ -130,119 +59,95 @@ std::wstring Display(std::wstring text)
             else
                 continue;
         }
-        out += text[i];
+        result += text[i];
     }
-    return out;
+    return result;
 }
-bool OwnedVerb(std::wstring name)
+bool OwnedVerb(std::wstring verb)
 {
-    name = Lower(std::move(name));
-    return name == L"open" || name == L"explore" || name == L"opennewwindow" || name == L"cut" ||
-           name == L"copy" || name == L"paste" || name == L"pastelink" || name == L"delete" ||
-           name == L"rename" || name == L"properties";
+    verb = Lower(std::move(verb));
+    return verb == L"open" || verb == L"explore" || verb == L"opennewwindow" || verb == L"cut" || verb == L"copy" ||
+           verb == L"paste" || verb == L"pastelink" || verb == L"delete" || verb == L"rename" ||
+           verb == L"properties" || verb == L"runas" || verb == L"copyaspath" || verb == L"opencontaining" ||
+           verb == L"view" || verb == L"arrange" || verb == L"refresh" || verb == L"new" || verb == L"newfolder";
 }
-struct Registration
+void PrepareSample(Request &request, std::filesystem::path &ownedDirectory)
 {
-    std::string id;
-    std::wstring root, name, verb, clsid;
-};
-std::vector<Registration> Registrations(const Request &request)
-{
-    std::set<std::wstring> roots;
-    if (request.background)
+    if (!request.catalogueOnly || !request.paths.empty())
+        return;
+    if (request.context == Context::Desktop)
     {
-        roots.insert(L"Directory\\Background");
         PWSTR desktop = nullptr;
-        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop)))
-        {
-            if (Lower(desktop) == Lower(request.paths.front()))
-                roots.insert(L"DesktopBackground");
-            CoTaskMemFree(desktop);
-        }
+        if (FAILED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop)))
+            throw settings_ipc::ProtocolError("desktop unavailable");
+        request.paths = {desktop};
+        CoTaskMemFree(desktop);
+        request.background = true;
+        return;
+    }
+    GUID id{};
+    if (FAILED(CoCreateGuid(&id)))
+        throw settings_ipc::ProtocolError("sample identifier unavailable");
+    wchar_t guid[40]{};
+    StringFromGUID2(id, guid, 40);
+    auto directory = std::filesystem::temp_directory_path() / (std::wstring(L"SnowDesktop-MenuPreview-") + guid);
+    if (!std::filesystem::create_directory(directory))
+        throw settings_ipc::ProtocolError("sample directory unavailable");
+    ownedDirectory = directory; // Only this newly-created directory is owned.
+    request.background = request.context == Context::FolderBackground;
+    if (request.context == Context::File || request.context == Context::Automatic)
+    {
+        const auto file = directory / L"Sample.txt";
+        HANDLE handle = CreateFileW(file.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+            throw settings_ipc::ProtocolError("sample file unavailable");
+        CloseHandle(handle);
+        request.paths = {file.wstring()};
     }
     else
+        request.paths = {directory.wstring()};
+}
+void IdentifyEntries(std::vector<Entry> &entries)
+{
+    std::map<std::string, unsigned> counts;
+    for (const auto &entry : entries)
+        if (!entry.key.empty())
+            ++counts[Utf8(Lower(Wide(entry.key)))];
+    for (auto &entry : entries)
     {
-        roots.insert(L"AllFilesystemObjects");
-        bool allFolders = true, allFiles = true;
-        std::wstring extension;
-        for (const auto &path : request.paths)
+        if (entry.separator)
+            continue;
+        const auto verb = Utf8(Lower(Wide(entry.key)));
+        if (!verb.empty() && counts[verb] == 1)
+            entry.provider = "verb:" + verb;
+        else
         {
-            const bool folder = (GetFileAttributesW(path.c_str()) & FILE_ATTRIBUTE_DIRECTORY) != 0;
-            allFolders &= folder;
-            allFiles &= !folder;
-            auto ext = Lower(std::filesystem::path(path).extension().wstring());
-            if (extension.empty())
-                extension = ext;
-            else if (extension != ext)
-                extension = L"!mixed";
-        }
-        if (allFolders)
-        {
-            roots.insert(L"Folder");
-            roots.insert(L"Directory");
-        }
-        if (allFiles)
-            roots.insert(L"*");
-        if (allFiles && !extension.empty() && extension != L"!mixed")
-        {
-            roots.insert(extension);
-            roots.insert(L"SystemFileAssociations\\" + extension);
-            Reg ext(extension);
-            auto prog = Value(ext.key);
-            if (!prog.empty())
-                roots.insert(prog);
-            auto perceived = Value(ext.key, L"PerceivedType");
-            if (!perceived.empty())
-                roots.insert(L"SystemFileAssociations\\" + perceived);
+            // Prefer canonical verbs; unidentified commands use their visible
+            // label and submenu verb signature, scoped to the selected context.
+            std::set<std::string> verbs;
+            std::function<void(const std::vector<Entry> &)> collect = [&](const auto &items) {
+                for (const auto &item : items)
+                {
+                    if (!item.key.empty())
+                        verbs.insert(Utf8(Lower(Wide(item.key))));
+                    collect(item.children);
+                }
+            };
+            collect(entry.children);
+            std::uint64_t signature = 14695981039346656037ull;
+            for (const auto &key : verbs)
+            {
+                for (unsigned char c : key)
+                {
+                    signature ^= c;
+                    signature *= 1099511628211ull;
+                }
+                signature *= 1099511628211ull;
+            }
+            entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(signature);
         }
     }
-    std::vector<Registration> result;
-    std::set<std::string> seen;
-    for (const auto &root : roots)
-    {
-        for (const auto &name : Keys(root + L"\\shell"))
-        {
-            if (OwnedVerb(name))
-                continue;
-            Reg key(root + L"\\shell\\" + name);
-            if (Exists(key.key, L"LegacyDisable") || Exists(key.key, L"ProgrammaticAccessOnly") ||
-                (!request.extended && Exists(key.key, L"Extended")))
-                continue;
-            auto label = Value(key.key, L"MUIVerb");
-            if (label.empty())
-                label = Value(key.key);
-            if (label.empty())
-                label = name;
-            auto id = "verb:" + Utf8(Lower(root + L"\\shell\\" + name));
-            result.push_back({id, root, Display(label), name, {}});
-        }
-        for (const auto &name : Keys(root + L"\\shellex\\ContextMenuHandlers"))
-        {
-            Reg key(root + L"\\shellex\\ContextMenuHandlers\\" + name);
-            auto clsid = Value(key.key);
-            if (clsid.empty())
-                clsid = name;
-            CLSID parsed{};
-            if (FAILED(CLSIDFromString(clsid.c_str(), &parsed)))
-                continue;
-            wchar_t canonical[40]{};
-            StringFromGUID2(parsed, canonical, 40);
-            if (Blocked(canonical))
-                continue;
-            auto id = "handler:" + Utf8(Lower(canonical));
-            if (!seen.insert(id).second)
-                continue;
-            // Canonical CLSID identifies a handler across applicable registry roots.
-            Reg description(L"CLSID\\" + clsid);
-            auto label = Value(description.key);
-            if (label.empty())
-                label = name;
-            result.push_back({id, root, Display(label), {}, clsid});
-        }
-    }
-    if (result.size() > 512)
-        result.resize(512);
-    return result;
 }
 struct Pidl
 {
@@ -292,8 +197,7 @@ struct Host
         {
             ComPtr<IContextMenu3> c3;
             LRESULT result = 0;
-            if (SUCCEEDED(self->tracking->context.As(&c3)) &&
-                SUCCEEDED(c3->HandleMenuMsg2(msg, wp, lp, &result)))
+            if (SUCCEEDED(self->tracking->context.As(&c3)) && SUCCEEDED(c3->HandleMenuMsg2(msg, wp, lp, &result)))
             {
                 if (msg == WM_INITMENUPOPUP)
                     self->DisableOwned(*self->tracking, reinterpret_cast<HMENU>(wp));
@@ -316,8 +220,8 @@ struct Host
         cls.hInstance = GetModuleHandleW(nullptr);
         cls.lpszClassName = L"SnowDesktopShellExtensionOwner";
         RegisterClassW(&cls);
-        window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"SnowDesktop", WS_POPUP, 0, 0, 0, 0,
-                                 nullptr, nullptr, cls.hInstance, this);
+        window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"SnowDesktop", WS_POPUP, 0, 0, 0, 0, nullptr,
+                                 nullptr, cls.hInstance, this);
     }
     ~Host()
     {
@@ -330,8 +234,8 @@ struct Host
         if (id < 1 || id > 0x7fff)
             return {};
         wchar_t verb[1024]{};
-        if (SUCCEEDED(source.context->GetCommandString(id - 1, GCS_VERBW, nullptr,
-                                                       reinterpret_cast<LPSTR>(verb), std::size(verb))))
+        if (SUCCEEDED(source.context->GetCommandString(id - 1, GCS_VERBW, nullptr, reinterpret_cast<LPSTR>(verb),
+                                                       std::size(verb))))
             return verb;
         char ansi[1024]{};
         if (FAILED(source.context->GetCommandString(id - 1, GCS_VERBA, nullptr, ansi, std::size(ansi))))
@@ -357,8 +261,8 @@ struct Host
         if (!bitmap || reinterpret_cast<INT_PTR>(bitmap) <= 16)
             return;
         BITMAP info{};
-        if (!GetObjectW(bitmap, sizeof(info), &info) || info.bmWidth <= 0 || info.bmHeight <= 0 ||
-            info.bmWidth > 128 || info.bmHeight > 128)
+        if (!GetObjectW(bitmap, sizeof(info), &info) || info.bmWidth <= 0 || info.bmHeight <= 0 || info.bmWidth > 128 ||
+            info.bmHeight > 128)
             return;
         BITMAPINFO dib{};
         dib.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -369,8 +273,7 @@ struct Host
         dib.bmiHeader.biCompression = BI_RGB;
         entry.pixels.resize(info.bmWidth * info.bmHeight * 4);
         HDC dc = GetDC(nullptr);
-        const bool ok =
-            GetDIBits(dc, bitmap, 0, info.bmHeight, entry.pixels.data(), &dib, DIB_RGB_COLORS) != 0;
+        const bool ok = GetDIBits(dc, bitmap, 0, info.bmHeight, entry.pixels.data(), &dib, DIB_RGB_COLORS) != 0;
         ReleaseDC(nullptr, dc);
         if (!ok)
         {
@@ -397,7 +300,7 @@ struct Host
             ++count;
             wchar_t label[2048]{};
             MENUITEMINFOW item{sizeof(item)};
-            item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP;
+            item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP | MIIM_CHECKMARKS;
             item.dwTypeData = label;
             item.cch = std::size(label);
             if (!GetMenuItemInfoW(menu, i, TRUE, &item))
@@ -427,6 +330,8 @@ struct Host
                 commands[entry.token] = {&source, item.wID - 1, false};
             }
             Bitmap(entry, item.hbmpItem);
+            if (entry.pixels.empty())
+                Bitmap(entry, entry.checked && item.hbmpChecked ? item.hbmpChecked : item.hbmpUnchecked);
             entries.push_back(std::move(entry));
         }
         // Duplicate or absent verbs cannot be persisted as individual commands.
@@ -453,137 +358,73 @@ struct Host
     }
     Reply Query(const Request &request)
     {
-        if (request.paths.empty() || request.paths.size() > 256 || request.providers.size() > 512)
+        if (request.paths.empty() || request.paths.size() > 256)
             return {};
-        for (const auto &p : request.paths)
-            if (p.empty() || p.size() > 32767 || p.find(L'\0') != std::wstring::npos ||
-                GetFileAttributesW(p.c_str()) == INVALID_FILE_ATTRIBUTES)
+        for (const auto &path : request.paths)
+            if (path.empty() || path.size() > 32767 || path.find(L'\0') != std::wstring::npos ||
+                GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES)
                 return {};
         if (request.background && request.paths.size() != 1)
             return {};
-        const auto registry = Registrations(request);
-        Reply reply;
-        reply.ok = true;
-        if (request.catalogueOnly)
-        {
-            for (const auto &r : registry)
-            {
-                Entry e;
-                e.provider = r.id;
-                e.label = r.name;
-                reply.entries.push_back(std::move(e));
-            }
-            return reply;
-        }
         std::vector<std::unique_ptr<Pidl>> pidls;
         std::vector<PCIDLIST_ABSOLUTE> raw;
-        for (const auto &p : request.paths)
+        for (const auto &path : request.paths)
         {
             auto id = std::make_unique<Pidl>();
-            if (FAILED(SHParseDisplayName(p.c_str(), nullptr, &id->value, 0, nullptr)))
+            if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &id->value, 0, nullptr)))
                 return {};
             raw.push_back(id->value);
             pidls.push_back(std::move(id));
         }
-        ComPtr<IShellItemArray> selection;
-        ComPtr<IDataObject> data;
-        if (!request.background)
-        {
-            if (FAILED(
-                    SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)))
-                return {};
-            selection->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data));
-        }
-        ComPtr<IShellFolder> folder;
-        Pidl directory;
-        const std::wstring dir = request.background
-                                     ? request.paths.front()
-                                     : std::filesystem::path(request.paths.front()).parent_path().wstring();
-        if (FAILED(SHParseDisplayName(dir.c_str(), nullptr, &directory.value, 0, nullptr)))
-            return {};
+        const std::wstring directory = request.background
+                                           ? request.paths.front()
+                                           : std::filesystem::path(request.paths.front()).parent_path().wstring();
+        Pidl folderId;
         ComPtr<IShellItem> folderItem;
-        if (FAILED(SHCreateItemFromIDList(directory.value, IID_PPV_ARGS(&folderItem))) ||
+        ComPtr<IShellFolder> folder;
+        if (FAILED(SHParseDisplayName(directory.c_str(), nullptr, &folderId.value, 0, nullptr)) ||
+            FAILED(SHCreateItemFromIDList(folderId.value, IID_PPV_ARGS(&folderItem))) ||
             FAILED(folderItem->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&folder))))
             return {};
-        for (const auto &r : registry)
+        auto native = std::make_unique<Native>();
+        native->directory = directory;
+        // The real Shell aggregate decides what exists and applies system
+        // filtering. Never instantiate registrations to bypass that decision.
+        if (request.background)
         {
-            if (std::find(request.providers.begin(), request.providers.end(), r.id) ==
-                request.providers.end())
-                continue;
-            auto native = std::make_unique<Native>();
-            native->directory = dir;
-            native->site.Initialize(folder.Get(), window);
-            if (!r.clsid.empty())
+            if (ResolveContext(request) == Context::Desktop)
             {
-                CLSID id{};
-                CLSIDFromString(r.clsid.c_str(), &id);
-                if (FAILED(
-                        CoCreateInstance(id, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context))))
-                    continue;
-                ComPtr<IShellExtInit> init;
-                if (FAILED(native->context.As(&init)))
-                    continue;
-                Reg classKey(r.root);
-                if (FAILED(init->Initialize(directory.value, request.background ? nullptr : data.Get(),
-                                            classKey.key)))
-                    continue;
-            }
-            else
-            {
-                ComPtr<IContextMenu> combined;
-                if (!combined)
+                PWSTR desktopPath = nullptr;
+                if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktopPath)))
                 {
-                    if (request.background)
-                        folder->CreateViewObject(window, IID_PPV_ARGS(&combined));
-                    else
-                        selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&combined));
+                    if (Lower(directory) == Lower(desktopPath))
+                        SHGetDesktopFolder(folder.ReleaseAndGetAddressOf());
+                    CoTaskMemFree(desktopPath);
                 }
-                native->context = combined;
-                if (!native->context)
-                    continue;
             }
-            native->site.Attach(native->context.Get());
-            if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
-                                                         CMF_NORMAL | CMF_SYNCCASCADEMENU |
-                                                             (request.extended ? CMF_EXTENDEDVERBS : 0))))
-                continue;
-            auto entries = Read(*native, native->menu, r.id);
-            if (count >= kMaximumEntries)
+            if (!folder || FAILED(folder->CreateViewObject(window, IID_PPV_ARGS(&native->context))))
                 return {};
-            if (!r.verb.empty())
-            {
-                std::vector<Entry> matching;
-                std::function<void(const std::vector<Entry> &)> find = [&](const auto &list) {
-                    for (const auto &e : list)
-                    {
-                        if (Lower(Wide(e.key)) == Lower(r.verb))
-                            matching.push_back(e);
-                        find(e.children);
-                    }
-                };
-                find(entries);
-                if (matching.size() != 1)
-                {
-                    for (auto it = commands.begin(); it != commands.end();)
-                        if (it->second.source == native.get())
-                            it = commands.erase(it);
-                        else
-                            ++it;
-                    continue;
-                }
-                entries = std::move(matching);
-            }
-            Entry group;
-            group.provider = r.id;
-            group.label = r.name;
-            group.children = std::move(entries);
-            group.token = next++;
-            group.native = true;
-            commands[group.token] = {native.get(), 0, true};
-            // Empty handlers remain available through their native menu.
-            reply.entries.push_back(std::move(group));
-            menus.push_back(std::move(native));
         }
+        else
+        {
+            ComPtr<IShellItemArray> selection;
+            if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
+                FAILED(selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&native->context))))
+                return {};
+        }
+        native->site.Initialize(folder.Get(), window);
+        native->site.Attach(native->context.Get());
+        if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
+                                                     CMF_NORMAL | CMF_SYNCCASCADEMENU |
+                                                         (request.extended ? CMF_EXTENDEDVERBS : 0))))
+            return {};
+        Reply reply;
+        reply.entries = Read(*native, native->menu, "");
+        if (count >= kMaximumEntries)
+            return {};
+        IdentifyEntries(reply.entries);
+        reply.ok = true;
+        menus.push_back(std::move(native));
         return reply;
     }
     void DisableOwned(Native &source, HMENU menu, int depth = 0)
@@ -615,8 +456,8 @@ struct Host
             DisableOwned(source, source.menu);
             tracking = &source;
             SetForegroundWindow(window);
-            const UINT chosen = TrackPopupMenuEx(source.menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x,
-                                                 point.y, window, nullptr);
+            const UINT chosen =
+                TrackPopupMenuEx(source.menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, window, nullptr);
             tracking = nullptr;
             if (!chosen)
                 return;
@@ -663,9 +504,9 @@ struct Host
 struct Session::Impl
 {
     settings_ipc::Channel channel;
-    std::shared_ptr<settings_ipc::SettingsProcess> process =
-        std::make_shared<settings_ipc::SettingsProcess>();
+    std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
+    std::filesystem::path sampleDirectory;
     ULONGLONG started = GetTickCount64();
     DWORD timeout = 8000;
     bool delivered = false, detached = false;
@@ -674,6 +515,11 @@ struct Session::Impl
         channel.Close();
         if (!detached)
             process->Stop();
+        if (!sampleDirectory.empty())
+        {
+            std::error_code ignored;
+            std::filesystem::remove_all(sampleDirectory, ignored);
+        }
         sessions.fetch_sub(1);
     }
 };
@@ -694,10 +540,11 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
         throw;
     }
     impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
-    impl_->channel.Bind<void, Reply>("menu.reply",
-                                     [p = impl_.get()](Reply result) { p->reply = std::move(result); });
+    impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) { p->reply = std::move(result); });
+    auto query = request;
+    PrepareSample(query, impl_->sampleDirectory);
     impl_->process->Start(impl_->channel, L"--shell-menu-helper");
-    impl_->channel.Notify("menu.query", request);
+    impl_->channel.Notify("menu.query", query);
 }
 Session::~Session() = default;
 std::optional<Reply> Session::Poll()
@@ -805,51 +652,44 @@ std::optional<int> TryRunHelper(QueryExecutor query)
     OleUninitialize();
     return result;
 }
-Placement ResolvePlacement(const Preferences &prefs, const Entry &entry)
+Context ResolveContext(const Request &request)
 {
-    if (!prefs.enabled)
-        return Placement::Hidden;
-    for (const auto &s : prefs.selections)
-        if (s.provider == entry.provider && !entry.key.empty() && s.command == entry.key)
-            return s.placement;
-    for (const auto &s : prefs.selections)
-        if (s.provider == entry.provider && s.command.empty())
-            return s.placement;
-    return Placement::Hidden;
-}
-std::vector<Entry> SelectEntries(const Preferences &prefs, const std::vector<Entry> &entries, Placement place)
-{
-    std::vector<Entry> result;
-    for (const auto &e : entries)
+    if (request.context >= Context::File && request.context <= Context::Desktop)
+        return request.context;
+    if (request.background)
+        return Context::FolderBackground;
+    bool allFolders = !request.paths.empty();
+    for (const auto &path : request.paths)
     {
-        if (e.separator)
-            continue;
-        auto children = SelectEntries(prefs, e.children, place);
-        if (!children.empty())
-        {
-            if (place == Placement::Root && ResolvePlacement(prefs, e) != Placement::Root)
-                result.insert(result.end(), children.begin(), children.end());
-            else
-            {
-                auto copy = e;
-                copy.children = std::move(children);
-                result.push_back(std::move(copy));
-            }
-        }
-        else if (e.children.empty() && ResolvePlacement(prefs, e) == place)
-            result.push_back(e);
+        const auto attributes = GetFileAttributesW(path.c_str());
+        allFolders &= attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
-    const auto rank = [&](const Entry &entry) {
-        for (size_t i = 0; i < prefs.selections.size(); ++i)
-            if (prefs.selections[i].provider == entry.provider && prefs.selections[i].command == entry.key)
-                return i;
-        for (size_t i = 0; i < prefs.selections.size(); ++i)
-            if (prefs.selections[i].provider == entry.provider && prefs.selections[i].command.empty())
-                return i;
-        return prefs.selections.size();
-    };
-    std::stable_sort(result.begin(), result.end(),
-                     [&](const auto &a, const auto &b) { return rank(a) < rank(b); });
+    return allFolders ? Context::Folder : Context::File;
+}
+std::vector<Entry> VisibleEntries(const Preferences &prefs, const std::vector<Entry> &entries, const Request &request)
+{
+    const auto context = ResolveContext(request);
+    bool mixed = false;
+    if (context == Context::File && request.context == Context::Automatic)
+        for (const auto &path : request.paths)
+        {
+            const auto attributes = GetFileAttributesW(path.c_str());
+            mixed |= attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        }
+    std::vector<Entry> result;
+    for (const auto &entry : entries)
+    {
+        if (entry.separator)
+        {
+            if (!result.empty() && !result.back().separator)
+                result.push_back(entry);
+        }
+        else if (!IsHidden(prefs, entry.provider, context) &&
+                 !(mixed && IsHidden(prefs, entry.provider, Context::Folder)))
+            result.push_back(entry);
+    }
+    while (!result.empty() && result.back().separator)
+        result.pop_back();
     return result;
 }
 } // namespace snowdesktop::shell_extensions

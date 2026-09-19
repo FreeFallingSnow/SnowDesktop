@@ -1,179 +1,165 @@
 #include "context_menu_page_presenter.h"
-#include "../shell_extension_menu_presentation.h"
+#include "../shell_extension_menu.h"
 #include "pch.h"
-#include "settings_presenter_controls.h"
-#include <set>
+#include <array>
+#include <cwctype>
 #include <shobjidl.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <wrl/client.h>
 
 namespace snowdesktop::winui
 {
 namespace mux = winrt::Microsoft::UI::Xaml;
-namespace muxc = winrt::Microsoft::UI::Xaml::Controls;
+namespace muxc = mux::Controls;
 namespace ext = snowdesktop::shell_extensions;
-using presenter_controls::SettingRow;
 struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
 {
+    struct Tab
+    {
+        ext::Context context;
+        const char *label;
+        muxc::SelectorBarItem item;
+    };
+    struct Row
+    {
+        std::string id;
+        muxc::ToggleSwitch toggle;
+    };
     LocalizeCallback localize;
     PersonalizationPageActions actions;
-    muxc::StackPanel root, rows;
-    muxc::ToggleSwitch enabled, background;
-    muxc::TextBox sample, search;
-    muxc::TextBlock status, hint;
-    muxc::CommandBar toolbar;
-    muxc::AppBarButton file, folder, refresh, preview;
-    SettingRow enabledRow, backgroundRow;
+    muxc::StackPanel root;
+    muxc::SelectorBar tabs;
+    muxc::ScrollViewer tabsScroll;
+    muxc::Grid toolbar;
+    muxc::TextBox search;
+    muxc::Button refresh;
+    muxc::HyperlinkButton chooseObject;
+    muxc::TextBlock description, status;
+    muxc::ListView list;
     mux::DispatcherTimer timer;
+    std::array<Tab, 4> scopes{{
+        {ext::Context::File, "settings.contextMenu.files"},
+        {ext::Context::Folder, "settings.contextMenu.folders"},
+        {ext::Context::FolderBackground, "settings.contextMenu.folderBackground"},
+        {ext::Context::Desktop, "settings.contextMenu.desktop"},
+    }};
     std::vector<std::function<void()>> revoke, rowRevoke;
+    std::vector<Row> rows;
     ext::Preferences prefs;
     ext::Request request;
-    std::vector<ext::Entry> catalogue;
-    std::map<std::string, std::vector<ext::Entry>> commands;
+    std::vector<ext::Entry> entries;
     std::unique_ptr<ext::Session> session;
-    std::string pendingProvider;
     std::uint64_t generation = 0;
-    int appearance = 0;
     bool active = false, closed = false, updating = false, initialized = false;
+
     std::wstring L(std::string_view key) const
     {
         return localize ? localize(key) : std::wstring{};
     }
-    Impl(LocalizeCallback l, const mux::Style &card) : localize(std::move(l))
+    static void Column(muxc::Grid grid, double width, mux::GridUnitType unit)
     {
-        root.Spacing(8);
-        rows.Spacing(6);
-        muxc::Border preferences;
-        preferences.Style(card);
-        muxc::StackPanel controls;
-        controls.Spacing(8);
-        enabledRow.Initialize(enabled);
-        backgroundRow.Initialize(background);
-        controls.Children().Append(enabledRow.root);
-        controls.Children().Append(backgroundRow.root);
-        preferences.Child(controls);
-        root.Children().Append(preferences);
-        sample.IsReadOnly(true);
-        sample.TextWrapping(mux::TextWrapping::Wrap);
-        root.Children().Append(sample);
-        toolbar.DefaultLabelPosition(muxc::CommandBarDefaultLabelPosition::Right);
-        for (auto b : {file, folder, refresh, preview})
-            toolbar.PrimaryCommands().Append(b);
+        muxc::ColumnDefinition column;
+        column.Width({width, unit});
+        grid.ColumnDefinitions().Append(column);
+    }
+    explicit Impl(LocalizeCallback l) : localize(std::move(l))
+    {
+        root.Spacing(12);
+        description.TextWrapping(mux::TextWrapping::Wrap);
+        root.Children().Append(description);
+        tabsScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
+        tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Hidden);
+        tabsScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
+        tabsScroll.VerticalScrollBarVisibility(muxc::ScrollBarVisibility::Disabled);
+        tabsScroll.Content(tabs);
+        root.Children().Append(tabsScroll);
+        for (auto &scope : scopes)
+            tabs.Items().Append(scope.item);
+        tabs.SelectedItem(scopes.front().item);
+        request.context = ext::Context::File;
+        Column(toolbar, 1, mux::GridUnitType::Star);
+        Column(toolbar, 1, mux::GridUnitType::Auto);
+        search.Margin({0, 0, 8, 0});
+        toolbar.Children().Append(search);
+        muxc::Grid::SetColumn(refresh, 1);
+        toolbar.Children().Append(refresh);
         root.Children().Append(toolbar);
-        root.Children().Append(search);
-        root.Children().Append(hint);
-        root.Children().Append(status);
-        root.Children().Append(rows);
-        hint.TextWrapping(mux::TextWrapping::Wrap);
         status.TextWrapping(mux::TextWrapping::Wrap);
+        root.Children().Append(status);
+        list.SelectionMode(muxc::ListViewSelectionMode::None);
+        list.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        list.ItemContainerStyle(mux::Markup::XamlReader::Load(LR"(<Style
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ListViewItem">
+ <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+ <Setter Property="Padding" Value="12,6"/>
+ </Style>)")
+                                    .as<mux::Style>());
+        root.Children().Append(list);
+        // Optional inspection of a file type or a contextual folder, never a
+        // prerequisite for using the four ordinary context lists.
+        chooseObject.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        root.Children().Append(chooseObject);
         timer.Interval(std::chrono::milliseconds(100));
-        auto tick = timer.Tick([this](const auto &, const auto &) { Poll(); });
+        auto tick = timer.Tick([this](auto &&, auto &&) { Poll(); });
         revoke.push_back([t = timer, tick] { t.Tick(tick); });
-        auto toggle = enabled.Toggled([this](const auto &, const auto &) {
-            if (updating || !active || !initialized || !actions.updateGeneral)
+        auto changed = tabs.SelectionChanged([this](auto &&, auto &&) {
+            if (closed || updating)
                 return;
-            const bool value = enabled.IsOn();
-            actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit,
-                                  [value](auto &s) { s.shellExtensions.enabled = value; });
+            for (const auto &scope : scopes)
+                if (scope.item == tabs.SelectedItem())
+                    request.context = scope.context;
+            request.paths.clear();
+            request.background =
+                request.context == ext::Context::Desktop || request.context == ext::Context::FolderBackground;
+            Text();
+            Reload();
         });
-        revoke.push_back([c = enabled, toggle] { c.Toggled(toggle); });
-        auto bg = background.Toggled([this](const auto &, const auto &) {
-            if (!updating && active)
-            {
-                request.background = background.IsOn();
-                Reload();
-            }
-        });
-        revoke.push_back([c = background, bg] { c.Toggled(bg); });
-        auto filter = search.TextChanged([this](const auto &, const auto &) {
+        revoke.push_back([t = tabs, changed] { t.SelectionChanged(changed); });
+        auto filter = search.TextChanged([this](auto &&, auto &&) {
             if (!closed)
                 BuildRows();
         });
         revoke.push_back([c = search, filter] { c.TextChanged(filter); });
-        Click(file, [this] { Pick(false); });
-        Click(folder, [this] { Pick(true); });
-        Click(refresh, [this] { Reload(); });
-        Click(preview, [this] { Preview(); });
-        PWSTR desktop = nullptr;
-        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop)))
-        {
-            request.paths.emplace_back(desktop);
-            CoTaskMemFree(desktop);
-        }
-        request.background = true;
-        updating = true;
-        background.IsOn(true);
-        updating = false;
-        Text();
-    }
-    template <class F> void Click(muxc::AppBarButton b, F f)
-    {
-        auto token = b.Click([this, f](const auto &, const auto &) {
+        auto reload = refresh.Click([this](auto &&, auto &&) {
             if (active && !closed)
-                f();
+                Reload();
         });
-        revoke.push_back([b, token] { b.Click(token); });
+        revoke.push_back([c = refresh, reload] { c.Click(reload); });
+        auto pick = chooseObject.Click([this](auto &&, auto &&) {
+            if (active && !closed)
+                Pick();
+        });
+        revoke.push_back([c = chooseObject, pick] { c.Click(pick); });
+        Text();
     }
     void Text()
     {
-        enabledRow.SetText(L("settings.contextMenu.enabled"), L("settings.contextMenu.enabledDescription"));
-        backgroundRow.SetText(L("settings.contextMenu.background"),
-                              L("settings.contextMenu.backgroundDescription"));
-        file.Label(L("settings.contextMenu.file"));
-        folder.Label(L("settings.contextMenu.folder"));
-        refresh.Label(L("settings.contextMenu.refresh"));
-        preview.Label(L("settings.contextMenu.preview"));
+        description.Text(L("settings.contextMenu.syncDescription"));
+        for (auto &scope : scopes)
+            scope.item.Text(L(scope.label));
         search.PlaceholderText(L("settings.contextMenu.search"));
-        sample.Header(winrt::box_value(L("settings.contextMenu.sample")));
-        hint.Text(L("settings.contextMenu.hint"));
-        BuildRows();
-    }
-    void Pick(bool folders)
-    {
-        const auto lifetime = shared_from_this();
-        Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
-        if (FAILED(
-                CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
-            return;
-        DWORD options = 0;
-        dialog->GetOptions(&options);
-        dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST |
-                           (folders ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST));
-        if (FAILED(dialog->Show(GetActiveWindow())) || closed || !active)
-            return;
-        Microsoft::WRL::ComPtr<IShellItem> selected;
-        PWSTR path = nullptr;
-        if (SUCCEEDED(dialog->GetResult(&selected)) &&
-            SUCCEEDED(selected->GetDisplayName(SIGDN_FILESYSPATH, &path)))
-        {
-            request.paths = {path};
-            CoTaskMemFree(path);
-            if (!folders)
-            {
-                updating = true;
-                background.IsOn(false);
-                updating = false;
-                request.background = false;
-            }
-            Reload();
-        }
+        refresh.Content(winrt::box_value(L("settings.contextMenu.refresh")));
+        chooseObject.Content(
+            winrt::box_value(L(request.context == ext::Context::File ? "settings.contextMenu.inspectFile"
+                                                                     : "settings.contextMenu.inspectFolder")));
+        chooseObject.Visibility(request.context == ext::Context::Desktop ? mux::Visibility::Collapsed
+                                                                         : mux::Visibility::Visible);
     }
     void Cancel()
     {
         timer.Stop();
         session.reset();
-        pendingProvider.clear();
     }
-    void Query(std::string provider)
+    void Reload()
     {
         Cancel();
-        if (!active || closed || request.paths.empty())
+        if (!active || closed)
             return;
-        auto query = request;
-        query.catalogueOnly = provider.empty();
-        if (!provider.empty())
-            query.providers = {provider};
-        pendingProvider = std::move(provider);
+        entries.clear();
+        BuildRows();
         status.Text(L("settings.contextMenu.loading"));
+        auto query = request;
+        query.catalogueOnly = true;
         try
         {
             session = std::make_unique<ext::Session>(query);
@@ -184,257 +170,137 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             status.Text(L("settings.contextMenu.failed"));
         }
     }
-    void Reload()
-    {
-        catalogue.clear();
-        commands.clear();
-        BuildRows();
-        sample.Text(request.paths.empty() ? L"" : request.paths.front());
-        Query({});
-    }
     void Poll()
     {
         if (!session)
             return;
-        auto result = session->Poll();
-        if (!result)
+        auto reply = session->Poll();
+        if (!reply)
             return;
         timer.Stop();
-        if (!result->ok)
+        if (reply->ok)
         {
-            status.Text(L("settings.contextMenu.failed"));
-            session.reset();
-            return;
+            entries = std::move(reply->entries);
+            status.Text(entries.empty() ? L("settings.contextMenu.empty") : L"");
+            BuildRows();
         }
-        if (pendingProvider.empty())
-            catalogue = std::move(result->entries);
         else
-        {
-            auto &list = commands[pendingProvider];
-            list.clear();
-            for (auto &group : result->entries)
-                list.insert(list.end(), group.children.begin(), group.children.end());
-        }
-        status.Text(catalogue.empty() ? L("settings.contextMenu.empty") : L"");
+            status.Text(L("settings.contextMenu.failed"));
         session.reset();
-        pendingProvider.clear();
-        BuildRows();
     }
-    void Save(const ext::Entry &entry, int index, bool individual)
+    void Pick()
     {
-        if (updating || !active || !initialized || !actions.updateGeneral || index < 0)
+        const auto lifetime = shared_from_this();
+        const auto context = request.context;
+        Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
             return;
-        ext::Selection selection{entry.provider, individual ? entry.key : "", winrt::to_string(entry.label),
-                                 static_cast<ext::Placement>(individual ? index - 1 : index)};
-        const bool inherit = individual && index == 0;
-        actions.updateGeneral(
-            generation, SettingsUpdateMode::PreviewAndCommit, [selection, inherit](auto &s) {
-                auto &values = s.shellExtensions.selections;
-                std::erase_if(values, [&](const auto &old) {
-                    return old.provider == selection.provider && old.command == selection.command;
-                });
-                if (!inherit)
-                    values.push_back(selection);
-                ext::Normalize(s.shellExtensions);
-            });
-    }
-    void Move(const ext::Entry &entry, bool individual, int direction)
-    {
-        if (!active || !initialized || !actions.updateGeneral)
+        DWORD options = 0;
+        dialog->GetOptions(&options);
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST |
+                           (context == ext::Context::File ? FOS_FILEMUSTEXIST : FOS_PICKFOLDERS));
+        if (FAILED(dialog->Show(GetActiveWindow())) || closed || !active || request.context != context)
             return;
-        const auto key = individual ? entry.key : std::string{};
-        actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit,
-                              [provider = entry.provider, key, direction](auto &settings) {
-                                  auto &list = settings.shellExtensions.selections;
-                                  const auto found =
-                                      std::find_if(list.begin(), list.end(), [&](const auto &s) {
-                                          return s.provider == provider && s.command == key;
-                                      });
-                                  if (found == list.end())
-                                      return;
-                                  const auto index = std::distance(list.begin(), found);
-                                  const auto target = index + direction;
-                                  if (target >= 0 && target < static_cast<decltype(target)>(list.size()))
-                                      std::iter_swap(found, list.begin() + target);
-                              });
-    }
-    void Row(muxc::StackPanel parent, const ext::Entry &entry, bool individual)
-    {
-        muxc::ComboBox choice;
-        if (individual)
-            choice.Items().Append(winrt::box_value(L("settings.contextMenu.inherit")));
-        for (const char *key :
-             {"settings.contextMenu.hidden", "settings.contextMenu.submenu", "settings.contextMenu.root"})
-            choice.Items().Append(winrt::box_value(L(key)));
-        int index = 0;
-        for (const auto &s : prefs.selections)
-            if (s.provider == entry.provider && s.command == (individual ? entry.key : ""))
-                index = static_cast<int>(s.placement) + (individual ? 1 : 0);
-        choice.SelectedIndex(index);
-        choice.MinWidth(150);
-        muxc::StackPanel choices;
-        choices.Orientation(muxc::Orientation::Horizontal);
-        choices.Spacing(4);
-        choices.Children().Append(choice);
-        if (index > (individual ? 1 : 0))
+        Microsoft::WRL::ComPtr<IShellItem> item;
+        PWSTR path = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item)) && SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)))
         {
-            for (int direction : {-1, 1})
-            {
-                muxc::Button move;
-                move.Width(32);
-                move.MinWidth(32);
-                move.Padding({0, 0, 0, 0});
-                muxc::FontIcon icon;
-                icon.Glyph(direction < 0 ? L"\xE70E" : L"\xE70D");
-                icon.FontSize(12);
-                move.Content(icon);
-                const auto name =
-                    L(direction < 0 ? "settings.contextMenu.moveUp" : "settings.contextMenu.moveDown");
-                muxc::ToolTipService::SetToolTip(move, winrt::box_value(name));
-                mux::Automation::AutomationProperties::SetName(move, name);
-                auto token = move.Click([this, entry, individual, direction](const auto &, const auto &) {
-                    Move(entry, individual, direction);
-                });
-                rowRevoke.push_back([move, token] { move.Click(token); });
-                choices.Children().Append(move);
-            }
+            request.paths = {path};
+            CoTaskMemFree(path);
+            Reload();
         }
-        auto row = std::make_shared<SettingRow>();
-        row->Initialize(choices);
-        row->SetText(entry.label, individual ? L"" : L("settings.contextMenu.group"));
-        row->SetControlAlignment(mux::HorizontalAlignment::Right);
-        parent.Children().Append(row->root);
-        auto token =
-            choice.SelectionChanged([this, entry, individual, choice, row](const auto &, const auto &) {
-                Save(entry, choice.SelectedIndex(), individual);
-            });
-        rowRevoke.push_back([choice, token, row] { choice.SelectionChanged(token); });
     }
-    void Children(muxc::StackPanel parent, const std::vector<ext::Entry> &list,
-                  const std::wstring &prefix = L"")
+    mux::UIElement Icon(const ext::Entry &entry)
     {
-        for (auto entry : list)
+        if (entry.width > 0 && entry.height > 0 && entry.width <= 128 && entry.height <= 128 &&
+            entry.pixels.size() == static_cast<size_t>(entry.width * entry.height * 4))
         {
-            if (entry.separator)
-                continue;
-            entry.label = prefix + entry.label;
-            if (!entry.children.empty())
-            {
-                Children(parent, entry.children, entry.label + L" / ");
-                continue;
-            }
-            if (entry.key.empty() || entry.native)
-            {
-                muxc::TextBlock text;
-                text.Text(entry.label + L" · " + L("settings.contextMenu.groupOnly"));
-                text.TextWrapping(mux::TextWrapping::Wrap);
-                parent.Children().Append(text);
-            }
-            else
-                Row(parent, entry, true);
+            mux::Media::Imaging::WriteableBitmap bitmap(entry.width, entry.height);
+            memcpy(bitmap.PixelBuffer().data(), entry.pixels.data(), entry.pixels.size());
+            bitmap.Invalidate();
+            muxc::Image image;
+            image.Width(20);
+            image.Height(20);
+            image.Source(bitmap);
+            return image;
         }
+        muxc::FontIcon icon;
+        icon.Glyph(L"\xE8A7");
+        icon.FontSize(18);
+        return icon;
     }
     void BuildRows()
     {
         for (auto &r : rowRevoke)
             r();
         rowRevoke.clear();
-        rows.Children().Clear();
-        const auto filter = winrt::to_string(search.Text());
-        std::vector<ext::Entry> visible = catalogue;
-        std::set<std::string> known;
-        for (const auto &p : catalogue)
-            known.insert(p.provider);
-        // Preserve choices for uninstalled or context-dependent providers and
-        // allow users to remove them even when the current sample lacks them.
-        for (const auto &s : prefs.selections)
-            if (known.insert(s.provider).second)
-            {
-                ext::Entry missing;
-                missing.provider = s.provider;
-                missing.label = winrt::to_hstring(s.label);
-                missing.label += L" · " + L("settings.contextMenu.unavailable");
-                visible.push_back(std::move(missing));
-            }
-        for (const auto &entry : visible)
+        rows.clear();
+        list.Items().Clear();
+        auto filter = std::wstring(search.Text());
+        for (auto &c : filter)
+            c = towlower(c);
+        for (const auto &entry : entries)
         {
-            if (!filter.empty())
-            {
-                auto label = entry.label;
-                auto query = std::wstring(search.Text());
-                for (auto &c : label)
-                    c = towlower(c);
-                for (auto &c : query)
-                    c = towlower(c);
-                if (label.find(query) == std::wstring::npos)
-                    continue;
-            }
-            muxc::Expander expander;
-            expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-            expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-            muxc::StackPanel header;
-            Row(header, entry, false);
-            expander.Header(header);
-            muxc::StackPanel details;
-            details.Spacing(6);
-            const auto found = commands.find(entry.provider);
-            if (found != commands.end())
-            {
-                Children(details, found->second);
-                if (found->second.empty())
-                {
-                    muxc::TextBlock unavailable;
-                    unavailable.Text(L("settings.contextMenu.unavailable"));
-                    details.Children().Append(unavailable);
-                }
-                expander.IsExpanded(true);
-            }
-            else
-            {
-                muxc::Button inspect;
-                inspect.Content(winrt::box_value(L("settings.contextMenu.inspect")));
-                details.Children().Append(inspect);
-                auto token =
-                    inspect.Click([this, id = entry.provider](const auto &, const auto &) { Query(id); });
-                rowRevoke.push_back([inspect, token] { inspect.Click(token); });
-            }
-            if (std::none_of(catalogue.begin(), catalogue.end(),
-                             [&](const auto &p) { return p.provider == entry.provider; }))
-            {
-                for (const auto &saved : prefs.selections)
-                    if (saved.provider == entry.provider && !saved.command.empty())
-                    {
-                        ext::Entry old;
-                        old.provider = saved.provider;
-                        old.key = saved.command;
-                        old.label = winrt::to_hstring(saved.label);
-                        Row(details, old, true);
-                    }
-            }
-            expander.Content(details);
-            rows.Children().Append(expander);
+            if (entry.separator)
+                continue;
+            auto label = entry.label;
+            for (auto &c : label)
+                c = towlower(c);
+            if (!filter.empty() && label.find(filter) == std::wstring::npos)
+                continue;
+            muxc::Grid layout;
+            Column(layout, 32, mux::GridUnitType::Pixel);
+            Column(layout, 1, mux::GridUnitType::Star);
+            Column(layout, 1, mux::GridUnitType::Auto);
+            layout.Children().Append(Icon(entry));
+            muxc::TextBlock title;
+            title.Text(entry.label);
+            title.VerticalAlignment(mux::VerticalAlignment::Center);
+            title.TextWrapping(mux::TextWrapping::Wrap);
+            title.Margin({0, 0, 16, 0});
+            muxc::Grid::SetColumn(title, 1);
+            layout.Children().Append(title);
+            Row row;
+            row.id = entry.provider;
+            row.toggle.OnContent(winrt::box_value(L""));
+            row.toggle.OffContent(winrt::box_value(L""));
+            row.toggle.MinWidth(44);
+            row.toggle.VerticalAlignment(mux::VerticalAlignment::Center);
+            row.toggle.IsOn(!ext::IsHidden(prefs, row.id, request.context));
+            mux::Automation::AutomationProperties::SetName(row.toggle, entry.label);
+            muxc::ToolTipService::SetToolTip(row.toggle, winrt::box_value(L("settings.contextMenu.toggleHint")));
+            muxc::Grid::SetColumn(row.toggle, 2);
+            layout.Children().Append(row.toggle);
+            auto token = row.toggle.Toggled(
+                [this, id = row.id, toggle = row.toggle, context = request.context](auto &&, auto &&) {
+                    if (closed || updating || !active || !initialized || !actions.updateGeneral)
+                        return;
+                    const bool hidden = !toggle.IsOn();
+                    actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit,
+                                          [id, context, hidden](auto &settings) {
+                                              ext::SetHidden(settings.shellExtensions, id, context, hidden);
+                                          });
+                });
+            rowRevoke.push_back([toggle = row.toggle, token] { toggle.Toggled(token); });
+            rows.push_back(std::move(row));
+            list.Items().Append(layout);
         }
     }
-    void Preview()
+    void Apply(const SettingsSnapshot &snapshot)
     {
-        const auto lifetime = shared_from_this();
-        Cancel();
-        if (request.paths.empty())
+        if (closed)
             return;
-        ext::Presentation presentation(request, prefs, L("settings.contextMenu.extensions"),
-                                       L("settings.contextMenu.loading"), L("settings.contextMenu.failed"),
-                                       L("settings.contextMenu.native"));
-        modern_menu::Item title;
-        title.label = L("settings.contextMenu.previewHint");
-        title.enabled = false;
-        std::vector<modern_menu::Item> items{title};
-        modern_menu::Options options;
-        options.owner = GetActiveWindow();
-        GetCursorPos(&options.anchor);
-        options.dpi = GetDpiForWindow(options.owner);
-        options.appearance = static_cast<modern_menu::Appearance>(appearance);
-        presentation.Attach(items, options);
-        modern_menu::Show(items, options);
+        if (generation != snapshot.generation)
+            Cancel();
+        generation = snapshot.generation;
+        initialized = snapshot.initialized;
+        prefs = snapshot.values.general.shellExtensions;
+        updating = true;
+        for (auto &row : rows)
+            row.toggle.IsOn(!ext::IsHidden(prefs, row.id, request.context));
+        updating = false;
+        if (!snapshot.sessionActive)
+            Deactivate();
     }
     void Deactivate()
     {
@@ -456,40 +322,25 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         actions = {};
     }
 };
-ContextMenuPagePresenter::ContextMenuPagePresenter(LocalizeCallback l, const mux::Style &s)
-    : impl_(std::make_shared<Impl>(std::move(l), s))
+ContextMenuPagePresenter::ContextMenuPagePresenter(LocalizeCallback callback, const mux::Style &)
+    : impl_(std::make_shared<Impl>(std::move(callback)))
 {
 }
 ContextMenuPagePresenter::~ContextMenuPagePresenter()
 {
     Close();
 }
-void ContextMenuPagePresenter::SetActions(PersonalizationPageActions a)
+void ContextMenuPagePresenter::SetActions(PersonalizationPageActions actions)
 {
-    impl_->actions = std::move(a);
+    impl_->actions = std::move(actions);
 }
 mux::UIElement ContextMenuPagePresenter::Content() const
 {
     return impl_->root;
 }
-void ContextMenuPagePresenter::ApplySnapshot(const SettingsSnapshot &s)
+void ContextMenuPagePresenter::ApplySnapshot(const SettingsSnapshot &snapshot)
 {
-    if (impl_->closed)
-        return;
-    if (impl_->generation != s.generation)
-        impl_->Cancel();
-    impl_->generation = s.generation;
-    impl_->initialized = s.initialized;
-    const bool changed = impl_->prefs != s.values.general.shellExtensions;
-    impl_->prefs = s.values.general.shellExtensions;
-    impl_->appearance = s.values.personalization.contextMenuStyle;
-    impl_->updating = true;
-    impl_->enabled.IsOn(impl_->prefs.enabled);
-    impl_->updating = false;
-    if (changed)
-        impl_->BuildRows();
-    if (!s.sessionActive)
-        impl_->Deactivate();
+    impl_->Apply(snapshot);
 }
 void ContextMenuPagePresenter::RefreshLocalizedText()
 {
@@ -499,9 +350,9 @@ void ContextMenuPagePresenter::Activate()
 {
     if (impl_->closed)
         return;
-    const bool was = impl_->active;
+    const bool wasActive = impl_->active;
     impl_->active = true;
-    if (!was && impl_->catalogue.empty())
+    if (!wasActive)
         impl_->Reload();
 }
 void ContextMenuPagePresenter::Deactivate()
@@ -513,9 +364,9 @@ void ContextMenuPagePresenter::Close()
     if (impl_)
         impl_->Close();
 }
-void ContextMenuPagePresenter::RegisterFocusTargets(const FocusRegistrar &r) const
+void ContextMenuPagePresenter::RegisterFocusTargets(const FocusRegistrar &registerFocus) const
 {
-    r("contextMenu.extensions", impl_->enabled);
-    r("contextMenu.items", impl_->search);
+    registerFocus("contextMenu.extensions", impl_->tabs);
+    registerFocus("contextMenu.items", impl_->search);
 }
 } // namespace snowdesktop::winui

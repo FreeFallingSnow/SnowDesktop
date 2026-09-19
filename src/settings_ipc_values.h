@@ -41,7 +41,8 @@ SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode);
 SD_IPC_FIELDS(calendar::DisplayPreferences, v.enabled, v.calendar, v.holidaysEnabled, v.region);
 SD_IPC_FIELDS(shell_extensions::Selection, v.provider, v.command, v.label, v.placement);
-SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections);
+SD_IPC_FIELDS(shell_extensions::HiddenItem, v.id, v.context);
+SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections, v.hidden);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,

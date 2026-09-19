@@ -14,7 +14,7 @@ struct Request
     bool background = false;
     bool catalogueOnly = false;
     bool extended = false;
-    std::vector<std::string> providers;
+    Context context = Context::Automatic;
 };
 struct Entry
 {
@@ -52,8 +52,8 @@ class Session
 };
 using QueryExecutor = std::function<Reply(const Request &)>;
 std::optional<int> TryRunHelper(QueryExecutor query = {});
-Placement ResolvePlacement(const Preferences &, const Entry &);
-std::vector<Entry> SelectEntries(const Preferences &, const std::vector<Entry> &, Placement);
+Context ResolveContext(const Request &);
+std::vector<Entry> VisibleEntries(const Preferences &, const std::vector<Entry> &, const Request &);
 } // namespace snowdesktop::shell_extensions
 
 namespace snowdesktop::settings_ipc
@@ -62,15 +62,15 @@ template <> struct Fields<shell_extensions::Request>
 {
     template <class T> static auto Tie(T &v)
     {
-        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.providers);
+        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context);
     }
 };
 template <> struct Fields<shell_extensions::Entry>
 {
     template <class T> static auto Tie(T &v)
     {
-        return std::tie(v.provider, v.key, v.label, v.token, v.enabled, v.checked, v.separator, v.native,
-                        v.children, v.width, v.height, v.pixels);
+        return std::tie(v.provider, v.key, v.label, v.token, v.enabled, v.checked, v.separator, v.native, v.children,
+                        v.width, v.height, v.pixels);
     }
 };
 template <> struct Fields<shell_extensions::Reply>

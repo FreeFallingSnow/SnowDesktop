@@ -6,6 +6,20 @@
 
 namespace snowdesktop::shell_extensions
 {
+enum class Context : int
+{
+    Automatic = -1,
+    File,
+    Folder,
+    FolderBackground,
+    Desktop
+};
+struct HiddenItem
+{
+    std::string id;
+    Context context = Context::File;
+    friend bool operator==(const HiddenItem &, const HiddenItem &) = default;
+};
 enum class Placement : int
 {
     Hidden,
@@ -22,8 +36,11 @@ struct Selection
 };
 struct Preferences
 {
+    // Retained only for round-trip compatibility with the first experimental
+    // selector. Runtime menus now follow the Shell and use scoped exclusions.
     bool enabled = false;
     std::vector<Selection> selections;
+    std::vector<HiddenItem> hidden;
     friend bool operator==(const Preferences &, const Preferences &) = default;
 };
 inline void Normalize(Preferences &value)
@@ -34,9 +51,8 @@ inline void Normalize(Preferences &value)
         if (kept.size() >= 512)
             break;
         if (item.provider.empty() || item.provider.size() > 2048 || item.command.size() > 2048 ||
-            item.label.size() > 4096 || item.placement < Placement::Hidden ||
-            item.placement > Placement::Root || item.provider.find('\0') != std::string::npos ||
-            item.command.find('\0') != std::string::npos)
+            item.label.size() > 4096 || item.placement < Placement::Hidden || item.placement > Placement::Root ||
+            item.provider.find('\0') != std::string::npos || item.command.find('\0') != std::string::npos)
             continue;
         auto found = std::find_if(kept.begin(), kept.end(), [&](const auto &old) {
             return old.provider == item.provider && old.command == item.command;
@@ -47,6 +63,18 @@ inline void Normalize(Preferences &value)
             *found = std::move(item);
     }
     value.selections = std::move(kept);
+    std::vector<HiddenItem> exclusions;
+    for (const auto &item : value.hidden)
+    {
+        if (exclusions.size() >= 2048)
+            break;
+        if (item.id.empty() || item.id.size() > 4096 || item.id.find('\0') != std::string::npos ||
+            item.context < Context::File || item.context > Context::Desktop)
+            continue;
+        if (std::find(exclusions.begin(), exclusions.end(), item) == exclusions.end())
+            exclusions.push_back(item);
+    }
+    value.hidden = std::move(exclusions);
 }
 inline Preferences ReadPreferences(const JsonValue *json)
 {
@@ -69,6 +97,16 @@ inline Preferences ReadPreferences(const JsonValue *json)
             result.selections.push_back({provider->string, command->string,
                                          label && label->IsString() ? label->string : "",
                                          static_cast<Placement>(static_cast<int>(place->number))});
+        }
+    if (const auto *rows = json->Find("hidden"); rows && rows->IsArray())
+        for (const auto &row : rows->array)
+        {
+            const auto *id = row.Find("id");
+            const auto *context = row.Find("context");
+            if (!id || !id->IsString() || !context || !context->IsNumber() || context->number < 0 ||
+                context->number > 3 || context->number != static_cast<int>(context->number))
+                continue;
+            result.hidden.push_back({id->string, static_cast<Context>(static_cast<int>(context->number))});
         }
     Normalize(result);
     return result;
@@ -106,9 +144,29 @@ inline std::string WritePreferences(Preferences value)
             out += ',';
         first = false;
         out += "{\"provider\":" + Quote(row.provider) + ",\"command\":" + Quote(row.command) +
-               ",\"label\":" + Quote(row.label) +
-               ",\"placement\":" + std::to_string(static_cast<int>(row.placement)) + '}';
+               ",\"label\":" + Quote(row.label) + ",\"placement\":" + std::to_string(static_cast<int>(row.placement)) +
+               '}';
+    }
+    out += "],\"hidden\":[";
+    first = true;
+    for (const auto &row : value.hidden)
+    {
+        if (!first)
+            out += ',';
+        first = false;
+        out += "{\"id\":" + Quote(row.id) + ",\"context\":" + std::to_string(static_cast<int>(row.context)) + '}';
     }
     return out + "]}";
+}
+inline bool IsHidden(const Preferences &prefs, const std::string &id, Context context)
+{
+    return std::find(prefs.hidden.begin(), prefs.hidden.end(), HiddenItem{id, context}) != prefs.hidden.end();
+}
+inline void SetHidden(Preferences &prefs, const std::string &id, Context context, bool hidden)
+{
+    std::erase(prefs.hidden, HiddenItem{id, context});
+    if (hidden)
+        prefs.hidden.push_back({id, context});
+    Normalize(prefs);
 }
 } // namespace snowdesktop::shell_extensions

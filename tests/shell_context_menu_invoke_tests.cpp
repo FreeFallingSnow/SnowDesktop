@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <stdexcept>
@@ -178,32 +179,122 @@ void RunTests()
 }
 } // namespace
 
+// Own uniquely named HKCU file-type keys only; never modify real handlers.
+struct TemporaryVerb
+{
+    std::wstring extension, progId;
+    HKEY verb = nullptr;
+    std::vector<std::wstring> owned;
+    void Clear() noexcept
+    {
+        if (verb) { RegCloseKey(verb); verb=nullptr; }
+        for (const auto &path : owned) RegDeleteTreeW(HKEY_CURRENT_USER,path.c_str());
+        owned.clear();
+    }
+    static void Value(HKEY key, const wchar_t *name, const std::wstring &text)
+    {
+        Expect(RegSetValueExW(key,name,0,REG_SZ,reinterpret_cast<const BYTE*>(text.c_str()),
+            static_cast<DWORD>((text.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS,"write owned test metadata");
+    }
+    TemporaryVerb()
+    {
+        GUID guid{}; Expect(SUCCEEDED(CoCreateGuid(&guid)),"unique association ID");
+        wchar_t id[40]{}; StringFromGUID2(guid,id,40);
+        extension=std::wstring(L".snowmenu-")+id; progId=std::wstring(L"SnowDesktop.MenuTest.")+id;
+        try
+        {
+            for (const auto &name : {extension,progId})
+            {
+                const auto path=L"Software\\Classes\\"+name;
+                HKEY key=nullptr; DWORD disposition=0;
+                Expect(RegCreateKeyExW(HKEY_CURRENT_USER,path.c_str(),0,nullptr,0,KEY_READ|KEY_WRITE,nullptr,
+                    &key,&disposition)==ERROR_SUCCESS,"create private association");
+                RegCloseKey(key);
+                Expect(disposition==REG_CREATED_NEW_KEY,"never replace an existing association");
+                owned.push_back(path);
+            }
+            HKEY key=nullptr;
+            Expect(RegOpenKeyExW(HKEY_CURRENT_USER,owned[0].c_str(),0,KEY_SET_VALUE,&key)==ERROR_SUCCESS,"open owned extension");
+            const auto status=RegSetValueExW(key,nullptr,0,REG_SZ,reinterpret_cast<const BYTE*>(progId.c_str()),
+                static_cast<DWORD>((progId.size()+1)*sizeof(wchar_t)));
+            RegCloseKey(key); Expect(status==ERROR_SUCCESS,"associate test file");
+            const auto path=owned[1]+L"\\shell\\SnowDesktopProbe";
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER,path.c_str(),0,nullptr,0,KEY_READ|KEY_WRITE,nullptr,
+                &verb,nullptr)==ERROR_SUCCESS,"create private verb");
+            Value(verb,nullptr,L"SnowDesktop isolated policy probe");
+            HKEY command=nullptr;
+            Expect(RegCreateKeyExW(verb,L"command",0,nullptr,0,KEY_SET_VALUE,nullptr,&command,nullptr)==ERROR_SUCCESS,
+                "create private command metadata");
+            constexpr wchar_t executable[]=L"notepad.exe \"%1\""; // Never invoked.
+            const auto written=RegSetValueExW(command,nullptr,0,REG_SZ,reinterpret_cast<const BYTE*>(executable),sizeof(executable));
+            RegCloseKey(command); Expect(written==ERROR_SUCCESS,"write private command metadata");
+        }
+        catch (...) { Clear(); throw; }
+    }
+    ~TemporaryVerb() { Clear(); }
+    void Disable() { Value(verb,L"LegacyDisable",L""); }
+};
+template<class Wait>
+void TestSystemPolicy(Wait wait, const std::filesystem::path &directory)
+{
+    namespace ext=snowdesktop::shell_extensions;
+    TemporaryVerb registration;
+    const auto file=directory/(L"sample"+registration.extension);
+    { std::ofstream output(file); output<<"isolated Shell policy sample"; }
+    ext::Request request; request.paths={file.wstring()};
+    const auto probe=[](const auto &list) {
+        return std::find_if(list.begin(),list.end(),[](const auto &e){return e.label==L"SnowDesktop isolated policy probe";});
+    };
+    {
+        ext::Session visible(request); const auto reply=wait(visible);
+        Expect(reply.ok&&probe(reply.entries)!=reply.entries.end(),
+            "system-enabled private verb appears through the actual Shell aggregate");
+    }
+    registration.Disable();
+    {
+        ext::Session disabled(request); const auto reply=wait(disabled);
+        const auto shown=ext::VisibleEntries({},reply.entries,request);
+        Expect(reply.ok&&probe(shown)==shown.end(),
+            "following the Shell never restores a system-disabled command");
+    }
+}
 // Real inherited pipes and process supervision; only the third-party query is
 // substituted, so a hung extension cannot be mistaken for a passing UI mock.
 void TestExtensionSessions()
 {
     namespace ext = snowdesktop::shell_extensions;
-    ext::Entry first; first.provider="handler:sample"; first.key="compress"; first.label=L"压缩"; first.token=31;
-    ext::Entry second=first;second.key="extract";second.token=32;second.enabled=false;
-    ext::Entry group;group.provider=first.provider;group.label=L"Sample";group.children={first,second};
-    ext::Preferences prefs{true,{{first.provider,"","Sample",ext::Placement::Submenu},
-        {first.provider,"compress","压缩",ext::Placement::Root}, {first.provider,"extract","解压",ext::Placement::Hidden}}};
-    const auto pinned=ext::SelectEntries(prefs,{group},ext::Placement::Root);
-    Expect(pinned.size()==1&&pinned.front().key=="compress"&&pinned.front().token==31,
-        "pinning a stable command promotes that command and preserves its invocation token");
-    Expect(ext::SelectEntries(prefs,{group},ext::Placement::Submenu).empty(),
-        "explicit per-command choices override a whole-group selection without exposing excluded commands");
-    auto renamed=first;renamed.label=L"Renamed after language change";
-    Expect(ext::ResolvePlacement(prefs,renamed)==ext::Placement::Root,"display labels never identify persisted commands");
-    renamed.provider="handler:different";
-    Expect(ext::ResolvePlacement(prefs,renamed)==ext::Placement::Hidden,"matching verbs from a different provider stay hidden");
-    prefs.selections={{first.provider,"extract","Extract",ext::Placement::Root},{first.provider,"compress","Compress",ext::Placement::Root}};
-    const auto ordered=ext::SelectEntries(prefs,{group},ext::Placement::Root);
-    Expect(ordered.size()==2&&ordered[0].key=="extract"&&!ordered[0].enabled&&ordered[1].key=="compress",
-        "saved order controls pinned commands without enabling disabled items");
-    prefs.enabled=false;Expect(ext::SelectEntries(prefs,{group},ext::Placement::Root).empty(),"off switch suppresses all extensions");
+    ext::Entry archive;
+    archive.provider = "verb:sevenzip";
+    archive.key = "SevenZip";
+    archive.label = L"7-Zip";
+    ext::Entry command; command.key="compress"; command.label=L"压缩"; command.token=31;
+    command.checked=true; command.enabled=false;
+    archive.children={command};
+    ext::Entry other; other.provider="verb:editor"; other.label=L"Editor"; other.token=32;
+    ext::Preferences prefs;
+    ext::Request target; target.context=ext::Context::File;
+    const auto direct=ext::VisibleEntries(prefs,{archive,other},target);
+    Expect(direct.size()==2&&direct[0].label==L"7-Zip"&&direct[0].children.size()==1&&
+        direct[0].children[0].token==31&&direct[0].children[0].checked&&!direct[0].children[0].enabled,
+        "default system menus retain original roots, submenus and states without synthetic wrappers");
+    for (auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
+    {
+        prefs.hidden.clear(); ext::SetHidden(prefs, archive.provider, context, true);
+        for (auto current : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
+        {
+            target.context=current;
+            const auto shown=ext::VisibleEntries(prefs,{archive,other},target);
+            Expect(shown.size()==(current==context?1u:2u), "secondary hiding is independent across all four contexts");
+        }
+        ext::SetHidden(prefs,archive.provider,context,false);
+        Expect(ext::VisibleEntries(prefs,{archive},target).size()==1, "restoring visibility removes only the local exclusion");
+    }
+    Expect(ext::VisibleEntries(prefs,{},target).empty(), "local preferences never resurrect an item absent from the Shell");
+    ext::SetHidden(prefs,archive.provider,ext::Context::File,true);
+    archive.label=L"Localized title"; target.context=ext::Context::File;
+    Expect(ext::VisibleEntries(prefs,{archive},target).empty(), "canonical identities survive display-name changes");
     auto wait=[](ext::Session& session) {
-        const auto end=GetTickCount64()+4000;std::optional<ext::Reply> reply;
+        const auto end=GetTickCount64()+10000;std::optional<ext::Reply> reply;
         while(GetTickCount64()<end&&!reply)
         {
             MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
@@ -220,29 +311,16 @@ void TestExtensionSessions()
     request.paths={L"synthetic-success"};
     {ext::Session session(request,2500);Expect(wait(session).ok,"a timed-out extension does not poison the next menu session");}
     for(int i=0;i<3;++i){ext::Session cancelled(request);}
-    // Exercise the production COM adapter against Windows' real New handler,
+    // Exercise the production aggregate against the installed system menus,
     // on an isolated directory and without invoking a file operation.
     TemporaryDirectory directory;
-    wchar_t clsid[40]{};StringFromGUID2(CLSID_NewMenu,clsid,40);
-    std::wstring id=clsid;for(auto& c:id)c=towlower(c);
-    char utf8Clsid[80]{};
-    WideCharToMultiByte(CP_UTF8, 0, id.c_str(), -1, utf8Clsid, sizeof(utf8Clsid), nullptr, nullptr);
-    request.paths={directory.path.wstring()};request.background=true;
-    request.providers={"handler:"+std::string(utf8Clsid)};
+    request.paths={directory.path.wstring()};request.background=false;
     struct RealQueryMode
     {
         RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",L"1");}
         ~RealQueryMode(){SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",nullptr);}
     } realMode;
-    ext::Session realSession(request);
-    const auto realReply=wait(realSession);
-    Expect(realReply.ok&&!realReply.entries.empty(),"registered Windows New handler crosses the production isolated query path");
-    bool newFolder=false;
-    std::function<void(const std::vector<ext::Entry>&)> inspect=[&](const auto& entries){for(const auto& entry:entries){
-        auto key=entry.key;std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c){return static_cast<char>(tolower(c));});
-        if(key=="newfolder"&&entry.enabled&&entry.token)newFolder=true;inspect(entry.children);}};
-    inspect(realReply.entries);
-    Expect(newFolder,"production conversion retains the real NewFolder command and invocation token");
+    TestSystemPolicy(wait, directory.path);
     // The reported 7-Zip icon lives in hbmpUnchecked, not hbmpItem.
     // Query the installed handler in its real child session; never invoke it.
     HKEY sevenZip = nullptr;
@@ -250,18 +328,18 @@ void TestExtensionSessions()
     {
         RegCloseKey(sevenZip);
         request.background = false;
-        request.providers = {"handler:{23170f69-40c1-278a-1000-000100020000}"};
+
         ext::Session archiveSession(request);
         const auto archiveReply = wait(archiveSession);
         Expect(archiveReply.ok && !archiveReply.entries.empty(), "installed 7-Zip handler returns its actual menu");
-        const auto& archiveItems = archiveReply.entries.front().children;
-        const auto archive = std::find_if(archiveItems.begin(), archiveItems.end(), [](const auto& entry) {
+        const auto archiveItems = ext::VisibleEntries({}, archiveReply.entries, request);
+        const auto actualArchive = std::find_if(archiveItems.begin(), archiveItems.end(), [](const auto& entry) {
             return entry.label == L"7-Zip";
         });
-        Expect(archive != archiveItems.end() && !archive->children.empty(), "7-Zip keeps its native command submenu");
-        std::cout << "7-Zip menu image: " << archive->width << "x" << archive->height
-                  << ", " << archive->pixels.size() << " bytes\n";
-        Expect(archive->width > 0 && archive->height > 0 && !archive->pixels.empty(),
+        Expect(actualArchive != archiveItems.end() && !actualArchive->children.empty(), "7-Zip keeps its native command submenu");
+        std::cout << "7-Zip menu image: " << actualArchive->width << "x" << actualArchive->height
+                  << ", " << actualArchive->pixels.size() << " bytes\n";
+        Expect(actualArchive->width > 0 && actualArchive->height > 0 && !actualArchive->pixels.empty(),
             "real 7-Zip submenu retains the icon stored in the checkmark bitmap slot");
     }
     else std::cout << "7-Zip integration not run: handler is not installed\n";
