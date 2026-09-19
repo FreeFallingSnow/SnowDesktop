@@ -174,6 +174,7 @@ struct Command
     Native *source = nullptr;
     UINT offset = 0;
     bool native = false;
+    HMENU nativeMenu = nullptr;
 };
 struct Host
 {
@@ -244,19 +245,6 @@ struct Host
         MultiByteToWideChar(CP_ACP, 0, ansi, -1, verb, std::size(verb));
         return verb;
     }
-    void InitPopup(Native &source, HMENU menu)
-    {
-        ComPtr<IContextMenu3> c3;
-        LRESULT ignored = 0;
-        if (SUCCEEDED(source.context.As(&c3)))
-            c3->HandleMenuMsg2(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(menu), 0, &ignored);
-        else
-        {
-            ComPtr<IContextMenu2> c2;
-            if (SUCCEEDED(source.context.As(&c2)))
-                c2->HandleMenuMsg(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(menu), 0);
-        }
-    }
     void Bitmap(Entry &entry, HBITMAP bitmap)
     {
         if (!bitmap || reinterpret_cast<INT_PTR>(bitmap) <= 16)
@@ -296,8 +284,9 @@ struct Host
         std::vector<Entry> entries;
         if (depth > 8)
             return entries;
-        progress("initialize popup: " + Utf8(title));
-        InitPopup(source, menu);
+        // Read only materialized entries. Initializing every Shell cascade here
+        // can synchronously enumerate network/cloud providers before the user
+        // ever opens them. Deferred popups retain their native menu session.
         progress("read popup: " + Utf8(title));
         for (int i = 0; i < GetMenuItemCount(menu) && count < kMaximumEntries; ++i)
         {
@@ -324,10 +313,23 @@ struct Host
                 entry.native = true;
                 entry.label = entry.label.empty() ? L"…" : entry.label;
                 entry.token = next++;
-                commands[entry.token] = {&source, 0, true};
+                commands[entry.token] = {&source, 0, true, item.hSubMenu ? item.hSubMenu : menu};
             }
             else if (item.hSubMenu)
+            {
                 entry.children = Read(source, item.hSubMenu, provider, depth + 1, entry.label);
+                const bool placeholder = entry.children.empty() ||
+                    std::all_of(entry.children.begin(), entry.children.end(), [](const auto &child) {
+                        return child.separator || (!child.token && child.children.empty());
+                    });
+                if (placeholder)
+                {
+                    entry.children.clear();
+                    entry.native = true;
+                    entry.token = next++;
+                    commands[entry.token] = {&source, 0, true, item.hSubMenu};
+                }
+            }
             else if (item.wID >= 1 && item.wID <= 0x7fff)
             {
                 entry.token = next++;
@@ -425,7 +427,7 @@ struct Host
         native->site.Attach(native->context.Get());
         progress("query context menu");
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
-                                                     CMF_NORMAL | CMF_SYNCCASCADEMENU |
+                                                     CMF_NORMAL |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
         Reply reply;
@@ -463,11 +465,12 @@ struct Host
         auto &source = *command.source;
         if (command.native)
         {
-            DisableOwned(source, source.menu);
+            const auto popup = command.nativeMenu ? command.nativeMenu : source.menu;
+            DisableOwned(source, popup);
             tracking = &source;
             SetForegroundWindow(window);
             const UINT chosen =
-                TrackPopupMenuEx(source.menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, window, nullptr);
+                TrackPopupMenuEx(popup, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, window, nullptr);
             tracking = nullptr;
             if (!chosen)
                 return;

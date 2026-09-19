@@ -1,6 +1,7 @@
+#include "pch.h"
+
 #include "context_menu_page_presenter.h"
 #include "../shell_extension_menu.h"
-#include "pch.h"
 #include <array>
 #include <cwctype>
 #include <shobjidl.h>
