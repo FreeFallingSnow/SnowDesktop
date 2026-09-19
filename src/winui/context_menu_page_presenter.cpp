@@ -195,10 +195,14 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!reply)
             return;
         timer.Stop();
+        if (queryGeneration != ext::MenuCacheGeneration())
+        {
+            Reload();
+            return;
+        }
         if (reply->ok)
         {
-            if (queryGeneration == ext::MenuCacheGeneration())
-                ext::SharedMenuCache().Store(cacheTicket, *reply);
+            ext::SharedMenuCache().Store(cacheTicket, *reply);
             entries = std::move(reply->entries);
             status.Text(entries.empty() ? L("settings.contextMenu.empty") : L"");
             BuildRows();

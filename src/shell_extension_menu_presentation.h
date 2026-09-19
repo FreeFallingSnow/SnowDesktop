@@ -2,6 +2,7 @@
 #include "modern_menu.h"
 #include "shell_extension_menu_cache.h"
 #include <algorithm>
+#include <set>
 
 namespace snowdesktop::shell_extensions
 {
@@ -107,13 +108,18 @@ class Presentation
     }
     std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries, const CommandReference &parent = {})
     {
+        if (parent.empty()) converting_.clear();
         std::vector<modern_menu::Item> result;
         for (const auto &e : entries)
         {
             modern_menu::Item item;
-            item.command = ++nextCommand_;
             const auto reference = AppendReference(parent, e);
-            if (!e.separator && e.children.empty()) commands_[item.command] = reference;
+            const auto existing = std::find_if(commands_.begin(), commands_.end(), [&](const auto &command) {
+                return command.second == reference && !converting_.contains(command.first);
+            });
+            item.command = existing == commands_.end() ? ++nextCommand_ : existing->first;
+            commands_[item.command] = reference;
+            converting_.insert(item.command);
             item.label = e.label;
             item.accessKey = e.accessKey;
             item.enabled = e.enabled;
@@ -151,6 +157,7 @@ class Presentation
     std::uint64_t generation_ = 0;
     UINT nextCommand_ = FirstCommand;
     std::map<UINT, CommandReference> commands_;
+    std::set<UINT> converting_;
     std::optional<Reply> cached_;
     std::unique_ptr<Session> session_;
     std::optional<Reply> ready_;

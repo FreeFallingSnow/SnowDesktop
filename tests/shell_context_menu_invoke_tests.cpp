@@ -418,6 +418,22 @@ void TestCatalogueCache()
     file.catalogueOnly=false; // The host reads a settings-written exact-object snapshot.
     const auto hostTicket=reader.Capture(file);
     const auto hit=reader.Find(hostTicket,101);
+    // A separate helper process reads the settings-written file directly. Only
+    // its query boundary is replaced, not serialization or the disk reader.
+    ext::Request crossProcess;crossProcess.paths={L"read-disk-cache",writer.Directory().wstring(),path.wstring()};
+    { 
+        ext::Session helper(crossProcess);
+        std::optional<ext::Reply> remote;
+        const auto deadline=GetTickCount64()+10000;
+        while(!remote&&GetTickCount64()<deadline)
+        {
+            MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}
+            remote=helper.Poll();
+            if(!remote) MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+        }
+        Expect(remote&&remote->ok&&remote->entries.size()==1&&remote->entries[0].pixels==entry.pixels&&
+            !remote->entries[0].token,"another process reads the same disk snapshot and icons without native tokens");
+    }
     Expect(hit && hit->entries[0].label==L"7-Zip" && !hit->entries[0].token && !hit->entries[0].children[0].token &&
         hit->entries[0].pixels==entry.pixels,"disk reload shares text, hierarchy and icons but never Shell tokens");
     const auto reference=ext::AppendReference(ext::AppendReference({},entry),child);
@@ -497,15 +513,18 @@ void TestSnapshotPresentation()
         ext::Presentation presentation(request,{},L"loading",L"failed");
         std::vector<menu::Item> items={more};menu::Options options;
         presentation.Attach(items,options,7);
-        Expect(items.size()==2&&items[0].label==L"缓存项"&&items[0].image&&items[1].command==7,
+        Expect(items.size()==3&&items[0].label==L"缓存项"&&items[0].image&&items[2].command==7,
             "cached icon and entry are present above More before the first poll");
+        const auto stableCommand=items[1].command;
         bool applied=false;
         PumpUntil([&]{
             if(!applied) if(auto update=options.pollItems(items,true)){items=std::move(*update);applied=true;}
             return applied;
         },"fresh menu replaces the cached view");
-        Expect(items.size()==2&&items[0].label==L"压缩"&&items[1].command==7,
+        Expect(items.size()==3&&items[0].label==L"压缩"&&items[2].command==7,
             "refresh replaces stale entries without duplicate wrappers or loading rows");
+        Expect(items[1].label==L"保持选中"&&items[1].command==stableCommand,
+            "unchanged entries retain command IDs so refresh preserves keyboard selection");
     }
 }
 // Only query data and the final third-party InvokeCommand boundary are replaced.
@@ -557,6 +576,10 @@ void BenchmarkMenus()
         for (int iteration = 0; iteration < 4; ++iteration)
         {
             const auto start = GetTickCount64();
+            ext::MenuSnapshotCache disk(ext::SharedMenuCache().Directory());
+            const auto ticket=disk.Capture(request);
+            const auto snapshot=disk.Find(ticket);
+            const auto displayed=GetTickCount64();
             ext::Session session(request);
             const auto launched = GetTickCount64();
             std::optional<ext::Reply> reply;
@@ -570,11 +593,13 @@ void BenchmarkMenus()
             }
             const auto elapsed = GetTickCount64() - start;
             std::cout << "menu_benchmark scope=" << (folder ? "folder" : "file")
-                      << " iteration=" << iteration << " start_ms=" << launched - start
+                      << " iteration=" << iteration << " snapshot=" << bool(snapshot) << " disk_ms=" << displayed-start
+                      << " start_ms=" << launched - start
                       << " ready_ms=" << elapsed << " ok=" << (reply && reply->ok)
                       << " worker=" << session.ProcessId()
                       << " entries=" << (reply ? reply->entries.size() : 0) << std::endl;
             Expect(reply && reply->ok, "benchmark real menu query succeeds");
+            Expect(disk.Store(ticket,*reply),"benchmark stores the fresh display snapshot");
         }
     }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
@@ -587,11 +612,22 @@ int wmain(int argc, wchar_t **argv)
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
+        if(request.paths.size()==3&&request.paths[0]==L"read-disk-cache")
+        {
+            snowdesktop::shell_extensions::MenuSnapshotCache cache(request.paths[1]);
+            snowdesktop::shell_extensions::Request file;file.paths={request.paths[2]};
+            return cache.Find(cache.Capture(file),101).value_or(snowdesktop::shell_extensions::Reply{});
+        }
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
         if (request.catalogueOnly) entry.label=request.paths.front();
-        reply.entries.push_back(entry);return reply;
+        reply.entries.push_back(entry);
+        if(std::filesystem::path(request.paths.front()).filename()==L"presentation.txt")
+        {
+            entry.label=L"保持选中";entry.key="stable";reply.entries.push_back(entry);
+        }
+        return reply;
     };
     wchar_t invocationPath[32768]{};
     const bool record=GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",invocationPath,32768)!=0;

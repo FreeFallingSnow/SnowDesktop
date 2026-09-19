@@ -288,6 +288,10 @@ bool InvokeWhenReady(std::unique_ptr<Session> session, CommandReference referenc
 }
 void FinishQueryInBackground(std::unique_ptr<Session> session, MenuSnapshotCache::Ticket ticket, std::uint64_t generation)
 {
-    if (session) PendingQueries::Current().Add({std::move(session), {}, {}, generation, &SharedMenuCache(), std::move(ticket)});
+    try
+    {
+        if (session) PendingQueries::Current().Add({std::move(session), {}, {}, generation, &SharedMenuCache(), std::move(ticket)});
+    }
+    catch (...) { /* This is also called during popup destruction. */ }
 }
 } // namespace snowdesktop::shell_extensions
