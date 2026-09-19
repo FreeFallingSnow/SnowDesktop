@@ -142,6 +142,7 @@ struct PersonalizationPagePresenter::Impl
     PersonalizationPageActions actions;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel themeRoot{nullptr};
+    muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
 
     SettingsCard themeCard;
@@ -377,7 +378,7 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
-        InitializeCard(contextMenuCard, cardStyle, themeRoot);
+        InitializeCard(contextMenuCard, cardStyle, menuRoot);
         contextMenuCombo = muxc::ComboBox{};
         contextMenuCombo.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
@@ -1333,6 +1334,9 @@ void PersonalizationPagePresenter::SetLayoutSpacingContent(
     const auto children = impl_->layoutCard.content.Children();
     if (!children.IndexOf(content, index)) children.InsertAt(0, content);
 }
+
+mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept
+{ return impl_ ? impl_->menuRoot : nullptr; }
 
 mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 {

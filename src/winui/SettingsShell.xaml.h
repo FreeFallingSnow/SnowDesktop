@@ -10,6 +10,7 @@
 #include "dock_page_presenter.h"
 #include "general_page_presenter.h"
 #include "calendar_page_presenter.h"
+#include "context_menu_page_presenter.h"
 #include "home_about_page_presenter.h"
 #include "page_layout_page_presenter.h"
 #include "large_icon_page_presenter.h"
@@ -286,6 +287,7 @@ private:
     snowdesktop::winui::GeneralPageActions generalPageActions_;
     snowdesktop::winui::CalendarPageActions calendarPageActions_;
     std::unique_ptr<snowdesktop::winui::CalendarPagePresenter> calendarPage_;
+    std::unique_ptr<snowdesktop::winui::ContextMenuPagePresenter> contextMenuPage_;
     snowdesktop::winui::PersonalizationPageActions
         personalizationPageActions_;
     snowdesktop::winui::DesktopPageActions desktopPageActions_;

@@ -162,6 +162,7 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
     if (const auto* v = appearanceDocument.Find("calendarEnabled"); v && v->IsBoolean()) settings.calendarDisplay.enabled = v->boolean;
     if (const auto* v = appearanceDocument.Find("calendarType"); v && v->IsString()) settings.calendarDisplay.calendar = v->string;
     snowdesktop::calendar::Normalize(settings.calendarDisplay);
+    settings.shellExtensions = snowdesktop::shell_extensions::ReadPreferences(appearanceDocument.Find("shellExtensions"));
     NormalizeGeneralAnimationSettings(settings);
     return true;
 }
@@ -176,6 +177,7 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
     file << "{\n";
+    file << "  \"shellExtensions\": " << snowdesktop::shell_extensions::WritePreferences(settings.shellExtensions) << ",\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
     file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";

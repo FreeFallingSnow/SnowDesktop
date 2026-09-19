@@ -233,13 +233,22 @@ public:
         bool quitReceived = false;
         while (!done_ && !quitReceived)
         {
+            if (options_.pollItems && popups_.size() == 1)
+            {
+                if (auto updated = options_.pollItems(rootItems_))
+                {
+                    rootItems_ = std::move(*updated);
+                    popups_.front()->hoveredItem = -1;
+                    RefreshPopup(*popups_.front());
+                }
+            }
             const HANDLE scheduledWork =
                 options_.eventPump.scheduledWorkHandle;
             const DWORD handleCount = scheduledWork ? 1U : 0U;
             const DWORD waitResult = MsgWaitForMultipleObjectsEx(
                 handleCount,
                 scheduledWork ? &scheduledWork : nullptr,
-                INFINITE,
+                options_.pollItems ? 50 : INFINITE,
                 QS_ALLINPUT,
                 MWMO_INPUTAVAILABLE);
             if (waitResult == WAIT_FAILED)

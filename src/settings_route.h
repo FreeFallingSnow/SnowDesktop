@@ -37,6 +37,7 @@ enum class SettingsPage : std::uint8_t
     AnimationPerformance,
     LargeIcon,
     Calendar,
+    ContextMenu,
 };
 
 /**

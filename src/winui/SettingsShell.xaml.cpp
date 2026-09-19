@@ -407,6 +407,14 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::Desktop:
         ensureGeneral();
         break;
+    case SettingsPage::ContextMenu:
+        ensurePersonalization();
+        if (!contextMenuPage_)
+        {
+            contextMenuPage_ = std::make_unique<snowdesktop::winui::ContextMenuPagePresenter>(localize, cardStyle());
+            contextMenuPage_->SetActions(personalizationPageActions_);
+        }
+        break;
     case SettingsPage::Calendar:
         ensureCalendar();
         break;
@@ -539,6 +547,8 @@ void SettingsShell::Close() noexcept
     actualThemeChanged_ = {};
     if (calendarPage_) calendarPage_->Close();
     calendarPage_.reset();
+    if (contextMenuPage_) contextMenuPage_->Close();
+    contextMenuPage_.reset();
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
@@ -642,6 +652,8 @@ void SettingsShell::ReleaseSessionResources() noexcept
     activeDialog_ = nullptr;
     if (calendarPage_) calendarPage_->Close();
     calendarPage_.reset();
+    if (contextMenuPage_) contextMenuPage_->Close();
+    contextMenuPage_.reset();
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
@@ -673,6 +685,7 @@ void SettingsShell::RefreshLocalizedText()
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     AnimationItem().Content(winrt::box_value(Localize("settings.nav.animation")));
     CalendarItem().Content(winrt::box_value(Localize("settings.calendar.page")));
+    ContextMenuItem().Content(winrt::box_value(Localize("settings.contextMenu.page")));
     PersonalizationItem().Content(
         winrt::box_value(Localize("app.settings.appearance")));
     AppearanceThemeItem().Content(
@@ -721,6 +734,7 @@ void SettingsShell::RefreshLocalizedText()
     if (generalPage_)
         generalPage_->RefreshLocalizedText();
     if (calendarPage_) calendarPage_->RefreshLocalizedText();
+    if (contextMenuPage_) contextMenuPage_->RefreshLocalizedText();
     if (personalizationPage_)
         personalizationPage_->RefreshLocalizedText();
     if (desktopPage_)
@@ -893,6 +907,7 @@ void SettingsShell::SetPersonalizationPageActions(
     personalizationPageActions_ = std::move(actions);
     if (personalizationPage_)
         personalizationPage_->SetActions(personalizationPageActions_);
+    if (contextMenuPage_) contextMenuPage_->SetActions(personalizationPageActions_);
 }
 
 void SettingsShell::SetDesktopPageActions(
@@ -1205,6 +1220,7 @@ void SettingsShell::SuspendInteraction() noexcept
         if (animationPage_)
             animationPage_->Deactivate();
         if (calendarPage_) calendarPage_->Deactivate();
+        if (contextMenuPage_) contextMenuPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
         if (pageLayoutPage_)
@@ -1258,6 +1274,7 @@ bool SettingsShell::ApplySnapshot(
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
         if (calendarPage_) calendarPage_->ApplySnapshot(snapshot);
+        if (contextMenuPage_) contextMenuPage_->ApplySnapshot(snapshot);
         if (personalizationPage_)
             personalizationPage_->ApplySnapshot(snapshot);
         if (desktopPage_)
@@ -1732,7 +1749,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::Desktop, SettingsPage::DesktopPages,
                      SettingsPage::DesktopCategories,
                      SettingsPage::Dock, SettingsPage::Taskbar,
-                     SettingsPage::Widgets, SettingsPage::Calendar,
+                     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
                      SettingsPage::BackupAndData, SettingsPage::About,
                      SettingsPage::DeveloperTools, SettingsPage::Debug})
             {
@@ -1986,6 +2003,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/dock.svg", L"\xEBC8"},
         IconDescriptor{TaskbarItem(),
             L"ms-appx:///Assets/Settings/Icons/taskbar.svg", L"\xEBC8"},
+        IconDescriptor{ContextMenuItem(), L"ms-appx:///Assets/Settings/Icons/context-menu.svg", L"\xE700"},
         IconDescriptor{CalendarItem(), L"ms-appx:///Assets/Settings/Icons/calendar.svg", L"\xE787"},
         IconDescriptor{WidgetsItem(),
             L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
@@ -2107,7 +2125,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
             page == SettingsPage::AppearanceTheme ||
-            page == SettingsPage::AppearanceWidgets;
+            page == SettingsPage::AppearanceWidgets || page == SettingsPage::ContextMenu;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
         return page == SettingsPage::AppearanceWidgets ||
@@ -2144,6 +2162,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::AnimationPerformance)
         animationPage_->Deactivate();
     if (calendarPage_ && pageRoute.page != SettingsPage::Calendar) calendarPage_->Deactivate();
+    if (contextMenuPage_ && pageRoute.page != SettingsPage::ContextMenu) contextMenuPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
             renderedPageRoute_->page == SettingsPage::About ||
@@ -2218,6 +2237,20 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     };
     switch (navigation_.Route().page)
     {
+    case SettingsPage::ContextMenu:
+        if (personalizationPage_)
+        {
+            PageCards().Children().Append(personalizationPage_->MenuContent());
+            registerPersonalizationFocus({"personalization.contextMenu"});
+            personalizationPage_->Activate();
+        }
+        if (contextMenuPage_)
+        {
+            PageCards().Children().Append(contextMenuPage_->Content());
+            contextMenuPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) { RegisterFocusTarget(std::move(id), element); });
+            contextMenuPage_->Activate();
+        }
+        break;
     case SettingsPage::Calendar:
         if (calendarPage_)
         {
@@ -2825,6 +2858,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
         return Localize("settings.nav.pages");
     case SettingsPage::DesktopCategories:
         return Localize("settings.nav.categories");
+    case SettingsPage::ContextMenu: return Localize("settings.contextMenu.page");
     case SettingsPage::Calendar: return Localize("settings.calendar.page");
     case SettingsPage::AnimationPerformance: return Localize("settings.nav.animation");
     case SettingsPage::Dock: return Localize("settings.nav.dock");
@@ -2846,6 +2880,7 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
 {
     switch (page)
     {
+    case SettingsPage::ContextMenu: return Localize("settings.contextMenu.description");
     case SettingsPage::Calendar: return Localize("settings.calendar.pageDescription");
     case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
     case SettingsPage::Home: return Localize("settings.page.home.description");
@@ -2895,6 +2930,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     {
     case SettingsPage::Home: return GeneralItem();
     case SettingsPage::General: return GeneralItem();
+    case SettingsPage::ContextMenu: return ContextMenuItem();
     case SettingsPage::Calendar: return CalendarItem();
     case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:

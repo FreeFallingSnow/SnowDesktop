@@ -587,12 +587,15 @@ void DesktopApp::ShowItemContextMenu(
         });
         return true;
     };
+    snowdesktop::shell_extensions::Request shellRequest;
+    if (canCopyPath) shellRequest.paths = selectedFilePaths;
+    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = 0;
     {
         LargeIconMenuScope titleScope(*this,
             largeIconMenu && items_[itemIndex].largeIcon ? largeIconKey : std::wstring{});
         command = ShowModernMenu(
-            menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon);
+            menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon, {}, {}, &shellRequest);
     }
     DestroyMenu(menu);
     ClearMenuIcons();

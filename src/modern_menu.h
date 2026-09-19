@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -144,6 +145,8 @@ struct Options
         onTextChanged;
     /** 鼠标或键盘高亮项变化；command=0 表示当前没有可预览项。 */
     std::function<void(const HoverInfo&)> onHover;
+    /** Asynchronous additions, applied only while no child popup is open. */
+    std::function<std::optional<std::vector<Item>>(const std::vector<Item>&)> pollItems;
     /** Optional application event pump used by the nested modal loop. */
     EventPump eventPump;
 };

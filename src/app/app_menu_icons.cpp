@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../shell_extension_menu_presentation.h"
 #include "../menu_icon_render.h"
 #include "../modern_menu.h"
 #include "../modern_menu_appearance_rules.h"
@@ -566,7 +567,8 @@ UINT DesktopApp::ShowModernMenu(
     std::function<void(const snowdesktop::modern_menu::HoverInfo&)>
         onHover,
     std::function<void(UINT, const std::wstring&,
-        std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged)
+        std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged,
+    const snowdesktop::shell_extensions::Request* shellRequest)
 {
     if (!rootMenu)
         return 0;
@@ -635,7 +637,7 @@ UINT DesktopApp::ShowModernMenu(
         return result;
     };
 
-    const std::vector<snowdesktop::modern_menu::Item> items =
+    std::vector<snowdesktop::modern_menu::Item> items =
         buildItems(rootMenu);
     snowdesktop::modern_menu::Options options;
     options.owner = owner;
@@ -745,8 +747,17 @@ UINT DesktopApp::ShowModernMenu(
              << L" pid=" << GetCurrentProcessId();
         WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
     }
+    std::unique_ptr<snowdesktop::shell_extensions::Presentation> extensions;
+    if (shellRequest)
+    {
+        extensions = std::make_unique<snowdesktop::shell_extensions::Presentation>(*shellRequest, generalSettings_.shellExtensions,
+            _LW("settings.contextMenu.extensions"), _LW("settings.contextMenu.loading"),
+            _LW("settings.contextMenu.failed"), _LW("settings.contextMenu.native"));
+        extensions->Attach(items, options);
+    }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
+    if (extensions && extensions->Invoke(result.command, screenPoint)) return 0;
 
     return result.command;
 }

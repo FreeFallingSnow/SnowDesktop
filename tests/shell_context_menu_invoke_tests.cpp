@@ -1,4 +1,5 @@
 #include "shell_context_menu_invoke.h"
+#include "shell_extension_menu.h"
 #include "shell_new_item_capture.h"
 
 #include <cstdlib>
@@ -177,11 +178,58 @@ void RunTests()
 }
 } // namespace
 
+// Real inherited pipes and process supervision; only the third-party query is
+// substituted, so a hung extension cannot be mistaken for a passing UI mock.
+void TestExtensionSessions()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Entry first; first.provider="handler:sample"; first.key="compress"; first.label=L"压缩"; first.token=31;
+    ext::Entry second=first;second.key="extract";second.token=32;second.enabled=false;
+    ext::Entry group;group.provider=first.provider;group.label=L"Sample";group.children={first,second};
+    ext::Preferences prefs{true,{{first.provider,"","Sample",ext::Placement::Submenu},
+        {first.provider,"compress","压缩",ext::Placement::Root}, {first.provider,"extract","解压",ext::Placement::Hidden}}};
+    const auto pinned=ext::SelectEntries(prefs,{group},ext::Placement::Root);
+    Expect(pinned.size()==1&&pinned.front().key=="compress"&&pinned.front().token==31,
+        "pinning a stable command promotes that command and preserves its invocation token");
+    Expect(ext::SelectEntries(prefs,{group},ext::Placement::Submenu).empty(),
+        "explicit per-command choices override a whole-group selection without exposing excluded commands");
+    auto renamed=first;renamed.label=L"Renamed after language change";
+    Expect(ext::ResolvePlacement(prefs,renamed)==ext::Placement::Root,"display labels never identify persisted commands");
+    renamed.provider="handler:different";
+    Expect(ext::ResolvePlacement(prefs,renamed)==ext::Placement::Hidden,"matching verbs from a different provider stay hidden");
+    prefs.enabled=false;Expect(ext::SelectEntries(prefs,{group},ext::Placement::Root).empty(),"off switch suppresses all extensions");
+    auto wait=[](ext::Session& session) {
+        const auto end=GetTickCount64()+4000;std::optional<ext::Reply> reply;
+        while(GetTickCount64()<end&&!reply)
+        {
+            MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+            reply=session.Poll();if(!reply)MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+        }
+        Expect(reply.has_value(),"isolated query has a bounded completion");return *reply;
+    };
+    ext::Request request;request.paths={L"synthetic-success"};
+    {ext::Session session(request,2500);auto reply=wait(session);
+        Expect(reply.ok&&reply.entries.size()==1&&reply.entries[0].label==L"压缩"&&reply.entries[0].checked&&!reply.entries[0].enabled,
+            "isolated query transports Unicode labels and actual menu states");}
+    request.paths={L"synthetic-hang"};const auto start=GetTickCount64();
+    {ext::Session session(request,250);auto reply=wait(session);Expect(!reply.ok&&GetTickCount64()-start<3000,"hung query is terminated without blocking the parent");}
+    request.paths={L"synthetic-success"};
+    {ext::Session session(request,2500);Expect(wait(session).ok,"a timed-out extension does not poison the next menu session");}
+    for(int i=0;i<3;++i){ext::Session cancelled(request);}
+}
+
 int wmain()
 {
+    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper([](const auto& request) {
+        if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
+        snowdesktop::shell_extensions::Reply reply; reply.ok = true;
+        snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
+        reply.entries.push_back(entry);return reply;
+    })) return *helper;
+
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized)) return 1;
-    try { RunTests(); }
+    try { RunTests(); TestExtensionSessions(); }
     catch (const std::exception& error)
     {
         std::cerr << "FAILED: " << error.what() << '\n';

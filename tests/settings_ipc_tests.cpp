@@ -36,6 +36,10 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    GeneralSettings extensions;
+    extensions.shellExtensions = {true, {{"handler:{test}", "compress", "压缩", snowdesktop::shell_extensions::Placement::Root}}};
+    Check(Unpack<GeneralSettings>(Pack(extensions)).shellExtensions == extensions.shellExtensions,
+        "extension choices cross the settings IPC without losing identity or placement");
     snowdesktop::winui::HomeAboutStatusPatch guide;
     guide.generation = 71; guide.revision = 9;
     guide.usageGuideExpanded = false;

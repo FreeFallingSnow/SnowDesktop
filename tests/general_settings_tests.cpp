@@ -31,6 +31,24 @@ void Check(bool condition, const char* message)
 int main()
 {
     {
+        using namespace snowdesktop::shell_extensions;
+        const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopMenuPreferences-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings saved, loaded;
+        saved.shellExtensions = {true, {{"handler:{provider}", "", "压缩软件", Placement::Submenu},
+            {"handler:{provider}", "compress", "压缩 \"文件\"", Placement::Root},
+            {"handler:{provider}", "extract", "解压", Placement::Hidden}}};
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.shellExtensions == saved.shellExtensions,
+            "Shell group, explicit exclusion and pinned command survive restart including escaped Unicode labels");
+        saved.shellExtensions.enabled = false;
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.shellExtensions == saved.shellExtensions,
+            "disabling integration retains command choices");
+        { std::ofstream legacy(path); legacy << "{}"; }
+        Check(LoadGeneralSettings(path.c_str(), loaded) && !loaded.shellExtensions.enabled && loaded.shellExtensions.selections.empty(),
+            "old configuration leaves extension loading off");
+        std::error_code error; std::filesystem::remove(path, error);
+    }
+
+    {
         const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopCalendarPreferences-" + std::to_wstring(GetCurrentProcessId()) + L".json");
         GeneralSettings settings;
         settings.calendarDisplay = {true, "hebrew", false, ""};

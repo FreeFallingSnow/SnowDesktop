@@ -134,8 +134,11 @@ void DesktopApp::ShowFolderEntryContextMenu(
     SetMenuItemQuickAction(menu, kContextDeleteCommand);
 
     SetForegroundWindow(menuOwner);
+    snowdesktop::shell_extensions::Request shellRequest;
+    shellRequest.paths = selectedPaths;
+    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = ShowModernMenu(
-        menu, screenPoint, menuOwner);
+        menu, screenPoint, menuOwner, false, false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
     bool inlineEditorStarted = false;

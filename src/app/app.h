@@ -41,6 +41,7 @@
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "shell_extension_menu.h"
 #include "display_topology_refresh.h"
 #include "dock_settings.h"
 #include "dock_drop_rules.h"
@@ -1987,7 +1988,8 @@ private:
             onHover = {},
         std::function<void(UINT, const std::wstring&,
             std::vector<snowdesktop::modern_menu::Item>&)>
-            onTextChanged = {});
+            onTextChanged = {},
+        const snowdesktop::shell_extensions::Request* shellRequest = nullptr);
     void ConfigureModernMenuEventPump(
         snowdesktop::modern_menu::Options& options);
     BOOL InvokeShellMenuCommand(IContextMenu* menu,

@@ -207,6 +207,7 @@ set(SNOWDESKTOP_SOURCES
     src/windows_desktop_layout.cpp
     src/shell_launch_worker.cpp
     src/shell_launch_process.cpp
+    src/shell_extension_menu.cpp
     src/shell_file_operation_worker.cpp
     src/app/app_navigation_render.cpp
     src/app/app_ole_drop_routing.cpp
@@ -324,6 +325,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/dock_page_presenter.cpp
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
+    src/winui/context_menu_page_presenter.cpp
+    src/winui/context_menu_page_presenter.h
     src/winui/animation_performance_page_presenter.cpp
     src/winui/animation_performance_page_presenter.h
     src/winui/dock_page_presenter.h
@@ -2071,8 +2074,12 @@ if (BUILD_TESTING)
         SnowDesktopShellContextMenuInvokeTests
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
+            src/shell_extension_menu.cpp
+            src/shell_context_menu_site.cpp
+            src/settings_process.cpp
+            src/settings_ipc_channel.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 uuid
+        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid
         LABELS integration contract shell)
 
     snowdesktop_add_test(

@@ -305,6 +305,7 @@ void SettingsController::UpdateGeneral(
     if (externalReplacementPending_) return;
     NormalizeGeneralAnimationSettings(settings);
     calendar::Normalize(settings.calendarDisplay);
+    shell_extensions::Normalize(settings.shellExtensions);
     values_.general = std::move(settings);
     MarkChanged(SettingsDomain::General, mode);
 }

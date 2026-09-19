@@ -67,6 +67,8 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
+        route.focusId == "personalization.contextMenu") route.page = SettingsPage::ContextMenu;
     if (route.page == SettingsPage::Home)
     {
         route.page = SettingsPage::General;
@@ -217,6 +219,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::AnimationPerformance:
     case SettingsPage::LargeIcon:
     case SettingsPage::Calendar:
+    case SettingsPage::ContextMenu:
         break;
     default:
         return false;
@@ -258,6 +261,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::AnimationPerformance: return "animation-performance";
     case SettingsPage::LargeIcon: return "large-icon";
     case SettingsPage::Calendar: return "calendar";
+    case SettingsPage::ContextMenu: return "context-menu";
     }
     return "home";
 }

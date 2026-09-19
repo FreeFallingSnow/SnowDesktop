@@ -269,7 +269,7 @@ void TestRoutes()
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.showCounts"));
     Check(legacyAppearance.page == SettingsPage::AppearanceTheme &&
-            legacyTheme.page == SettingsPage::AppearanceTheme &&
+            legacyTheme.page == SettingsPage::ContextMenu &&
             legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
             edgeHighlight.page == SettingsPage::AppearanceTheme &&
             legacyTabHeight.page == SettingsPage::AppearanceWidgets &&
