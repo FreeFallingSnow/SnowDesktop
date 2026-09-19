@@ -781,6 +781,7 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
         metrics.iconColumnWidth = Scale(18, effectiveDpi);
         metrics.textGap = Scale(5, effectiveDpi);
         metrics.rightPadding = Scale(8, effectiveDpi);
+        metrics.textFontHeight = Scale(12, effectiveDpi);
         metrics.iconFontHeight = Scale(16, effectiveDpi);
         metrics.maximumImageSize = Scale(16, effectiveDpi);
     }

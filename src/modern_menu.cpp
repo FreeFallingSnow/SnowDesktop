@@ -133,7 +133,9 @@ public:
           // Acrylic is composed for the complete HWND and does not respect an
           // inset alpha-only shadow margin.  Its window must therefore match
           // the panel bounds exactly; DWM supplies the material shadow.
-          shadowSize_(blurEnabled_ ? 0 : Scale(12, options.dpi)),
+          shadowSize_(blurEnabled_ ? 0 : Scale(
+              appearance_rules::IsWin10Style(effectiveAppearance_) ? 6 : 12,
+              options.dpi)),
           panelPadding_(Scale(appearance_rules::PanelPaddingDip(
               effectiveAppearance_), options.dpi)),
           panelRadius_(Scale(appearance_rules::PanelRadiusDip(
@@ -2302,7 +2304,8 @@ private:
         const float blurPanelAlpha = lightTheme_ ? 70.0f : 76.0f;
         constexpr float blurHoverAlpha = 146.0f;
         constexpr float blurContentAlpha = 246.0f;
-        constexpr float shadowAlpha = 34.0f;
+        const float shadowAlpha =
+            appearance_rules::IsWin10Style(effectiveAppearance_) ? 14.0f : 34.0f;
         const COLORREF borderColor = lightTheme_
             ? RGB(215, 215, 215) : RGB(73, 73, 73);
         const unsigned borderBlue = GetBValue(borderColor);

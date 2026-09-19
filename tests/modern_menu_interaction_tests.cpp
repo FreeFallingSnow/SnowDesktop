@@ -1110,7 +1110,7 @@ int wmain()
             Expect(pointer.command == 102 &&
                     pointer.itemScreenRect.bottom - pointer.itemScreenRect.top == rowHeight &&
                     pointer.itemScreenRect.right - pointer.itemScreenRect.left ==
-                        rootBounds.right - rootBounds.left - 2 * MulDiv(12, dpi, 96),
+                        rootBounds.right - rootBounds.left - 2 * MulDiv(6, dpi, 96),
                 "Win10 quick actions use full-width compact hit targets at every DPI");
             const auto child = runScript(compactItems, compact, [&](HWND root) {
                 SendMessageW(root, WM_KEYDOWN, VK_END, 0);
@@ -1122,7 +1122,7 @@ int wmain()
                 Expect(cascade.child != nullptr, "compact submenu opens from the keyboard");
                 RECT childBounds{};
                 GetWindowRect(cascade.child, &childBounds);
-                Expect(childBounds.top + MulDiv(12, dpi, 96) ==
+                Expect(childBounds.top + MulDiv(6, dpi, 96) ==
                         parentRow.top - MulDiv(3, dpi, 96),
                     "compact submenus align using the same panel padding as their parent");
                 SendMessageW(cascade.child, WM_KEYDOWN, VK_HOME, 0);
