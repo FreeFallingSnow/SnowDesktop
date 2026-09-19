@@ -1,6 +1,6 @@
 #pragma once
 #include "modern_menu.h"
-#include "shell_extension_menu.h"
+#include "shell_extension_menu_cache.h"
 #include <algorithm>
 
 namespace snowdesktop::shell_extensions
@@ -32,89 +32,94 @@ class Presentation
 {
   public:
     static constexpr UINT FirstCommand = 0x71000000;
-    static constexpr UINT LoadingCommand = FirstCommand - 1;
-    Presentation(const Request &source, Preferences prefs, std::wstring loading, std::wstring failed)
-        : prefs_(std::move(prefs)), source_(source), failed_(std::move(failed))
+    Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring)
+        : prefs_(std::move(prefs)), source_(source)
     {
-        if (source.paths.empty())
-            return;
-        try
-        {
-            session_ = std::make_unique<Session>(source);
-        }
-        catch (...)
-        {
-            failedStart_ = true;
-        }
-        loading_ = std::move(loading);
+        if (source.paths.empty()) return;
+        generation_ = MenuCacheGeneration();
+        ticket_ = SharedMenuCache().Capture(source);
+        cached_ = SharedMenuCache().Find(ticket_);
+        try { session_ = std::make_unique<Session>(source); }
+        catch (...) { cached_.reset(); }
     }
     ~Presentation()
     {
-        for (auto image : images_)
-            DeleteObject(image);
+        // A quick dismissal must still warm the next right-click. Native menu
+        // objects are released as soon as this bounded background query ends.
+        if (session_ && !ready_)
+            FinishQueryInBackground(std::move(session_), std::move(ticket_), generation_);
+        for (auto image : images_) DeleteObject(image);
     }
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
-        if (!session_ && !failedStart_)
-            return;
-        modern_menu::Item loading;
-        loading.command = LoadingCommand;
-        loading.enabled = false;
-        loading.label = failedStart_ ? failed_ : loading_;
-        InsertBeforeMore(items, {loading}, moreCommand, false);
+        if (!session_) return;
+        if (cached_)
+            Insert(items, Convert(VisibleEntries(prefs_, cached_->entries, source_)), moreCommand);
         options.pollItems = [this, moreCommand](const std::vector<modern_menu::Item> &current,
                                    bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
-            if (!session_)
-                return {};
+            if (!session_) return {};
             if (!ready_)
-                ready_ = session_->Poll();
-            if (!ready_ || !canApply)
-                return {};
-            auto reply = std::move(ready_);
-            auto result = current;
-            std::erase_if(result, [](const auto &item) { return item.command == LoadingCommand; });
-            if (!reply->ok)
             {
-                modern_menu::Item failed;
-                failed.label = failed_;
-                failed.enabled = false;
-                InsertBeforeMore(result, {failed}, moreCommand, false);
-                return result;
+                ready_ = session_->Poll();
+                if (ready_ && generation_ == MenuCacheGeneration()) SharedMenuCache().Store(ticket_, *ready_);
             }
-            auto additions = Convert(VisibleEntries(prefs_, reply->entries, source_));
-            InsertBeforeMore(result, additions, moreCommand);
+            if (!ready_ || !canApply) return {};
+            auto result = current;
+            std::erase_if(result, [](const auto &item) { return IsOurCommand(item.command); });
+            if (ready_->ok && generation_ == MenuCacheGeneration())
+                Insert(result, Convert(VisibleEntries(prefs_, ready_->entries, source_)), moreCommand);
             return result;
         };
     }
     bool Invoke(UINT command, POINT point)
     {
-        if (command <= FirstCommand || command >= FirstCommand + 65536 || !session_)
-            return false;
+        const auto found = commands_.find(command);
+        if (found == commands_.end() || !session_ || generation_ != MenuCacheGeneration()) return false;
         try
         {
-            session_->Invoke(command - FirstCommand, point);
+            if (!ready_) ready_ = session_->Poll();
+            if (!ready_)
+                return InvokeWhenReady(std::move(session_), found->second, point, generation_);
+            SharedMenuCache().Store(ticket_, *ready_);
+            const auto token = ResolveCommand(*ready_, found->second);
+            if (!token) return false;
+            session_->Invoke(token, point);
+            return true;
         }
-        catch (...)
-        {
-            return false;
-        }
-        return true;
+        catch (...) { return false; }
     }
 
   private:
-    std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries)
+    static bool IsOurCommand(UINT command) { return command >= FirstCommand && command < FirstCommand + 65536; }
+    static void Insert(std::vector<modern_menu::Item> &items, const std::vector<modern_menu::Item> &additions,
+                       UINT moreCommand)
+    {
+        if (additions.empty()) return;
+        if (!items.empty() && !items.back().separator &&
+            std::none_of(items.begin(), items.end(), [=](const auto &item) { return moreCommand && item.command == moreCommand; }))
+        {
+            modern_menu::Item divider;
+            divider.separator = true;
+            divider.command = FirstCommand;
+            items.push_back(divider);
+        }
+        InsertBeforeMore(items, additions, moreCommand, false);
+    }
+    std::vector<modern_menu::Item> Convert(const std::vector<Entry> &entries, const CommandReference &parent = {})
     {
         std::vector<modern_menu::Item> result;
         for (const auto &e : entries)
         {
             modern_menu::Item item;
-            item.command = e.token ? FirstCommand + e.token : 0;
+            item.command = ++nextCommand_;
+            const auto reference = AppendReference(parent, e);
+            if (!e.separator && e.children.empty()) commands_[item.command] = reference;
             item.label = e.label;
             item.accessKey = e.accessKey;
             item.enabled = e.enabled;
             item.checked = e.checked;
             item.separator = e.separator;
-            item.children = Convert(e.children);
+            item.children = Convert(e.children, reference);
             if (e.width > 0 && e.height > 0 && e.width <= 128 && e.height <= 128 &&
                 e.pixels.size() == static_cast<size_t>(e.width * e.height * 4))
             {
@@ -142,10 +147,13 @@ class Presentation
     }
     Preferences prefs_;
     Request source_;
-    std::wstring loading_, failed_;
+    MenuSnapshotCache::Ticket ticket_;
+    std::uint64_t generation_ = 0;
+    UINT nextCommand_ = FirstCommand;
+    std::map<UINT, CommandReference> commands_;
+    std::optional<Reply> cached_;
     std::unique_ptr<Session> session_;
     std::optional<Reply> ready_;
     std::vector<HBITMAP> images_;
-    bool failedStart_ = false;
 };
 } // namespace snowdesktop::shell_extensions

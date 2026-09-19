@@ -1,4 +1,5 @@
 #include "shell_extension_menu.h"
+#include "shell_extension_menu_cache.h"
 #include "menu_label.h"
 #include "settings_process.h"
 #include "shell_context_menu_invoke.h"
@@ -65,6 +66,7 @@ struct RegistryWatch
 struct CacheState
 {
     std::uint64_t generation = 1;
+    std::wstring epoch = SharedMenuCache().Epoch();
     std::vector<std::unique_ptr<RegistryWatch>> watches;
     CacheState()
     {
@@ -80,7 +82,10 @@ struct CacheState
     {
         bool changed = false;
         for (auto &watch : watches) changed |= watch->Changed();
-        if (changed) ++generation;
+        if (changed) SharedMenuCache().Invalidate();
+        const auto sharedEpoch = SharedMenuCache().Epoch();
+        if (changed || sharedEpoch != epoch) ++generation;
+        epoch = sharedEpoch;
         return generation;
     }
 };
@@ -832,7 +837,13 @@ struct Host
 } // namespace
 
 std::uint64_t MenuCacheGeneration() { return Caches().Poll(); }
-void InvalidateMenuCache() { ++Caches().generation; }
+void InvalidateMenuCache()
+{
+    SharedMenuCache().Invalidate();
+    auto &cache = Caches();
+    cache.epoch = SharedMenuCache().Epoch();
+    ++cache.generation;
+}
 
 struct Session::Impl
 {
@@ -970,7 +981,7 @@ void Session::Invoke(UINT token, POINT position)
         process->Stop();
     }).detach();
 }
-std::optional<int> TryRunHelper(QueryExecutor query)
+std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke)
 {
     if (!settings_ipc::IsSettingsProcessCommand(L"--shell-menu-helper"))
         return {};
@@ -1006,7 +1017,8 @@ std::optional<int> TryRunHelper(QueryExecutor query)
             invocationQueued = true;
             dispatchedAt = GetTickCount64();
             channel.Post([&, token, x, y] {
-                host.Invoke(token, {x, y});
+                if (invoke) invoke(token, {x, y});
+                else host.Invoke(token, {x, y});
                 invokedAt = GetTickCount64();
             });
         });

@@ -60,7 +60,8 @@ class Session
 std::uint64_t MenuCacheGeneration();
 void InvalidateMenuCache();
 using QueryExecutor = std::function<Reply(const Request &)>;
-std::optional<int> TryRunHelper(QueryExecutor query = {});
+using InvokeExecutor = std::function<void(UINT, POINT)>;
+std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {});
 Context ResolveContext(const Request &);
 std::vector<Entry> VisibleEntries(const Preferences &, const std::vector<Entry> &, const Request &);
 } // namespace snowdesktop::shell_extensions

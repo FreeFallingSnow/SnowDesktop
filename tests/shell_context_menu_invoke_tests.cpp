@@ -1,6 +1,6 @@
 #include "shell_context_menu_invoke.h"
 #include "shell_extension_menu.h"
-#include "shell_extension_catalogue_cache.h"
+#include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
 #include "shell_new_item_capture.h"
 
@@ -401,24 +401,143 @@ void TestCatalogueCache()
     const auto packed=snowdesktop::settings_ipc::Pack(transport);
     Expect(snowdesktop::settings_ipc::Unpack<ext::Entry>(packed).accessKey==L'a',
         "native access keys survive the real Shell IPC codec");
-    ext::CatalogueCache cache;
+    TemporaryDirectory directory;
+    ext::MenuSnapshotCache writer(directory.path / L"cache");
     ext::Request file; file.catalogueOnly=true; file.context=ext::Context::File;
-    ext::Request folder=file; folder.context=ext::Context::Folder;
+    const auto path = directory.path / L"sample.txt";
+    { std::ofstream output(path); output << "sample"; }
+    file.paths = {path.wstring()};
     ext::Reply reply; reply.ok=true;
-    ext::Entry entry; entry.label=L"7-Zip"; entry.token=12;
-    ext::Entry child; child.token=13; entry.children={child}; reply.entries={entry};
-    cache.Store(file,reply,1,100);
-    const auto hit=cache.Find(file,1,101);
-    Expect(hit && hit->entries[0].label==L"7-Zip" && !hit->entries[0].token && !hit->entries[0].children[0].token,
-        "settings cache preserves display data but strips session command tokens recursively");
-    Expect(!cache.Find(folder,1,101),"settings contexts have independent cached lists");
-    Expect(!cache.Find(file,1,100+ext::CatalogueCache::LifetimeMs),"expired catalogues query the current system");
-    cache.Store(file,reply,1,200);
-    Expect(!cache.Find(file,2,201),"registry invalidation rejects stale catalogue data");
-    cache.Store(file,reply,2,300); cache.Clear();
-    Expect(!cache.Find(file,2,301),"manual Refresh bypasses all settings snapshots");
-    file.paths={L"specific-object"}; cache.Store(file,reply,2,400);
-    Expect(!cache.Find(file,2,401),"specific inspected objects are never substituted by cached generic samples");
+    ext::Entry entry; entry.label=L"7-Zip"; entry.provider="archive"; entry.token=12;
+    entry.width=1;entry.height=1;entry.pixels={12,24,36,255};
+    ext::Entry child; child.token=13;child.key="compress";child.label=L"压缩";
+    entry.children={child}; reply.entries={entry};
+    const auto ticket=writer.Capture(file);
+    Expect(writer.Store(ticket,reply,100),"write display snapshot to private disk cache");
+    ext::MenuSnapshotCache reader(directory.path / L"cache");
+    file.catalogueOnly=false; // The host reads a settings-written exact-object snapshot.
+    const auto hostTicket=reader.Capture(file);
+    const auto hit=reader.Find(hostTicket,101);
+    Expect(hit && hit->entries[0].label==L"7-Zip" && !hit->entries[0].token && !hit->entries[0].children[0].token &&
+        hit->entries[0].pixels==entry.pixels,"disk reload shares text, hierarchy and icons but never Shell tokens");
+    const auto reference=ext::AppendReference(ext::AppendReference({},entry),child);
+    reply.entries[0].children[0].token=72;
+    Expect(ext::ResolveCommand(reply,reference)==72,"cached selection resolves the fresh command token, not the saved token");
+    reply.entries[0].children[0].enabled=false;
+    Expect(!ext::ResolveCommand(reply,reference),"disabled fresh commands cannot execute through a cache hit");
+    reply.entries[0].children[0].enabled=true;reply.entries[0].enabled=false;
+    Expect(!ext::ResolveCommand(reply,reference),"disabled ancestor blocks cached child invocation");
+    reply.entries[0].enabled=true;reply.entries.push_back(reply.entries[0]);
+    Expect(!ext::ResolveCommand(reply,reference),"ambiguous menu identities cannot select a command by position");
+    reply.entries.resize(1);reply.entries[0].children[0].key="different";
+    Expect(!ext::ResolveCommand(reply,reference),"a reused position with another verb cannot execute the old selection");
+    const auto other = directory.path / L"other.txt";
+    { std::ofstream output(other); output << "sample"; }
+    auto different=file;different.paths={other.wstring()};
+    Expect(!reader.Find(reader.Capture(different),101),"same-extension files never share contextual command trees");
+    different=file;different.extended=true;
+    Expect(!reader.Find(reader.Capture(different),101),"Shift extended menus have their own snapshots");
+    auto sample=file;sample.paths.clear();sample.catalogueOnly=true;
+    Expect(!reader.Find(reader.Capture(sample),101),"settings samples do not replace exact-object menus");
+    Expect(writer.Store(writer.Capture(sample),reply,100),"sample catalogue uses the same bounded disk store");
+    sample.context=ext::Context::Folder;
+    Expect(!reader.Find(reader.Capture(sample),101),"settings scopes have independent sample catalogues");
+    Expect(!reader.Find(hostTicket,100+ext::MenuSnapshotCache::LifetimeMs),"expired disk snapshots are not presented");
+    Expect(!reader.Find(hostTicket,99),"clock rollback rejects snapshots from the future");
+    writer.Invalidate();
+    Expect(!reader.Find(hostTicket,101)&&!reader.Find(reader.Capture(file),101),"another process invalidates disk and memory views");
+    Expect(!writer.Store(ticket,reply,102),"an old in-flight query cannot restore invalidated cache data");
+    const auto changedTicket=writer.Capture(file);
+    { std::ofstream output(path,std::ios::app); output << "changed"; }
+    Expect(!writer.Store(changedTicket,reply,102),"target changes during a query invalidate its pending snapshot");
+    const auto current=writer.Capture(file);
+    Expect(writer.Store(current,reply,103),"write current target snapshot");
+    { std::ofstream output(directory.path / L"cache" / (std::to_wstring(current.slot)+L".bin"),std::ios::binary);output<<"truncated"; }
+    ext::MenuSnapshotCache afterRestart(directory.path / L"cache");
+    Expect(!afterRestart.Find(current,104),"corrupt disk cache falls back to a live query");
+
+}
+
+template<class Condition>
+void PumpUntil(Condition condition, const char *message)
+{
+    const auto deadline=GetTickCount64()+10000;
+    while (!condition() && GetTickCount64()<deadline)
+    {
+        MSG msg{};
+        while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&msg);DispatchMessageW(&msg); }
+        if (!condition()) MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+    }
+    Expect(condition(),message);
+}
+void TestSnapshotPresentation()
+{
+    namespace ext=snowdesktop::shell_extensions;
+    namespace menu=snowdesktop::modern_menu;
+    TemporaryDirectory directory;
+    ext::InvalidateMenuCache();
+    const auto path=directory.path/L"presentation.txt";
+    {std::ofstream output(path);output<<"private presentation sample";}
+    ext::Request request;request.paths={path.wstring()};
+    menu::Item more;more.label=L"更多";more.command=7;
+    {
+        ext::Presentation presentation(request,{},L"loading",L"failed");
+        std::vector<menu::Item> items={more};menu::Options options;
+        presentation.Attach(items,options,7);
+        Expect(items.size()==1&&items[0].command==7,"cold menu has no loading placeholder");
+        // Close before Poll; the real STA timer/session must finish the query.
+    }
+    const auto ticket=ext::SharedMenuCache().Capture(request);
+    PumpUntil([&]{return ext::SharedMenuCache().Find(ticket).has_value();},"dismissal still warms the next menu");
+    auto snapshot=ext::SharedMenuCache().Find(ticket);
+    snapshot->entries[0].label=L"缓存项";
+    snapshot->entries[0].width=1;snapshot->entries[0].height=1;snapshot->entries[0].pixels={0,0,0,255};
+    Expect(ext::SharedMenuCache().Store(ticket,*snapshot),"seed cached menu with a distinct visible label");
+    {
+        ext::Presentation presentation(request,{},L"loading",L"failed");
+        std::vector<menu::Item> items={more};menu::Options options;
+        presentation.Attach(items,options,7);
+        Expect(items.size()==2&&items[0].label==L"缓存项"&&items[0].image&&items[1].command==7,
+            "cached icon and entry are present above More before the first poll");
+        bool applied=false;
+        PumpUntil([&]{
+            if(!applied) if(auto update=options.pollItems(items,true)){items=std::move(*update);applied=true;}
+            return applied;
+        },"fresh menu replaces the cached view");
+        Expect(items.size()==2&&items[0].label==L"压缩"&&items[1].command==7,
+            "refresh replaces stale entries without duplicate wrappers or loading rows");
+    }
+}
+// Only query data and the final third-party InvokeCommand boundary are replaced.
+// The pending-click timer, original STA, child process, pipe and command routing
+// are production paths. The child records the token it actually received.
+void TestPendingCachedClick()
+{
+    namespace ext=snowdesktop::shell_extensions;
+    namespace menu=snowdesktop::modern_menu;
+    TemporaryDirectory directory;
+    const auto path=directory.path/L"pending.txt";
+    const auto output=directory.path/L"invoked.txt";
+    {std::ofstream file(path);file<<"private command target";}
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",output.c_str());
+    ext::InvalidateMenuCache(); // A new child inherits the private output path.
+    ext::Request request;request.paths={path.wstring()};
+    ext::Reply cached;cached.ok=true;
+    ext::Entry entry;entry.label=L"Cached command";entry.key="cached";entry.token=999;
+    cached.entries={entry};
+    Expect(ext::SharedMenuCache().Store(ext::SharedMenuCache().Capture(request),cached),"seed pending invocation snapshot");
+    {
+        ext::Presentation presentation(request,{},L"loading",L"failed");
+        std::vector<menu::Item> items;menu::Options options;
+        presentation.Attach(items,options,0);
+        Expect(items.size()==1,"pending click uses the snapshot immediately");
+        Expect(presentation.Invoke(items[0].command,{0,0}),"explicit cached click transfers the pending session");
+    }
+    PumpUntil([&]{return std::filesystem::exists(output);},"pending cached click reaches the child invocation handler");
+    UINT token=0;{std::ifstream file(output);file>>token;}
+    Expect(token==72,"pending click uses the freshly queried command, never the cached token 999");
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",nullptr);
+    ext::InvalidateMenuCache();
 }
 
 // Opt-in measurements use the real Session path and private files only. They
@@ -474,14 +593,28 @@ int wmain(int argc, wchar_t **argv)
         if (request.catalogueOnly) entry.label=request.paths.front();
         reply.entries.push_back(entry);return reply;
     };
-    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(std::move(query))) return *helper;
+    wchar_t invocationPath[32768]{};
+    const bool record=GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",invocationPath,32768)!=0;
+    snowdesktop::shell_extensions::InvokeExecutor invoke;
+    if(record)
+    {
+        query=[](const auto &) {
+            snowdesktop::shell_extensions::Reply reply;reply.ok=true;
+            snowdesktop::shell_extensions::Entry entry;entry.label=L"Cached command";entry.key="cached";entry.token=72;
+            reply.entries={entry};return reply;
+        };
+        invoke=[path=std::filesystem::path(invocationPath)](UINT token,POINT){std::ofstream file(path);file<<token;};
+    }
+    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(std::move(query),std::move(invoke))) return *helper;
 
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized)) return 1;
     try
     {
+        TemporaryDirectory cacheDirectory;
+        snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
         if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
-        else { RunTests(); TestCatalogueCache(); TestExtensionSessions(); }
+        else { RunTests(); TestCatalogueCache(); TestExtensionSessions(); TestSnapshotPresentation(); TestPendingCachedClick(); }
     }
     catch (const std::exception& error)
     {
