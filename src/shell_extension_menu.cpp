@@ -279,12 +279,98 @@ struct Host
             for (size_t i = 3; i < entry.pixels.size(); i += 4)
                 entry.pixels[i] = 255;
     }
+    bool MenuMessage(Native &source, UINT message, WPARAM wp, LPARAM lp)
+    {
+        ComPtr<IContextMenu3> c3;
+        LRESULT result = 0;
+        if (SUCCEEDED(source.context.As(&c3)))
+            return SUCCEEDED(c3->HandleMenuMsg2(message, wp, lp, &result));
+        ComPtr<IContextMenu2> c2;
+        return SUCCEEDED(source.context.As(&c2)) && SUCCEEDED(c2->HandleMenuMsg(message, wp, lp));
+    }
+    void CallbackBitmap(Entry &entry, Native &source, HMENU menu, const MENUITEMINFOW &item)
+    {
+        if (item.hbmpItem != HBMMENU_CALLBACK && item.hbmpUnchecked != HBMMENU_CALLBACK &&
+            item.hbmpChecked != HBMMENU_CALLBACK)
+            return;
+        MEASUREITEMSTRUCT measure{};
+        measure.CtlType = ODT_MENU;
+        measure.itemID = item.wID;
+        measure.itemData = item.dwItemData;
+        measure.itemWidth = GetSystemMetrics(SM_CXSMICON);
+        measure.itemHeight = GetSystemMetrics(SM_CYSMICON);
+        MenuMessage(source, WM_MEASUREITEM, 0, reinterpret_cast<LPARAM>(&measure));
+        const int width = static_cast<int>(measure.itemWidth), height = static_cast<int>(measure.itemHeight);
+        if (width <= 0 || height <= 0 || width > 128 || height > 128)
+            return;
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        void *bits = nullptr;
+        HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+        HDC dc = CreateCompatibleDC(nullptr);
+        if (!bitmap || !dc)
+        {
+            if (bitmap) DeleteObject(bitmap);
+            if (dc) DeleteDC(dc);
+            return;
+        }
+        const auto previous = SelectObject(dc, bitmap);
+        const size_t size = static_cast<size_t>(width) * height * 4;
+        std::vector<unsigned char> black(size);
+        DRAWITEMSTRUCT draw{};
+        draw.CtlType = ODT_MENU;
+        draw.itemID = item.wID;
+        draw.itemAction = ODA_DRAWENTIRE;
+        draw.itemState = entry.enabled ? 0 : ODS_DISABLED;
+        draw.hwndItem = reinterpret_cast<HWND>(menu);
+        draw.hDC = dc;
+        draw.rcItem = {0, 0, width, height};
+        draw.itemData = item.dwItemData;
+        // GDI callbacks may omit alpha. Rendering onto black and white recovers
+        // premultiplied alpha without adding a black rectangle to light menus.
+        memset(bits, 0, size);
+        bool ok = MenuMessage(source, WM_DRAWITEM, 0, reinterpret_cast<LPARAM>(&draw));
+        GdiFlush();
+        memcpy(black.data(), bits, size);
+        memset(bits, 255, size);
+        ok &= MenuMessage(source, WM_DRAWITEM, 0, reinterpret_cast<LPARAM>(&draw));
+        GdiFlush();
+        bool visible = false;
+        const auto white = static_cast<const unsigned char *>(bits);
+        if (ok)
+            for (size_t i = 0; i < size; i += 4)
+            {
+                int difference = 0;
+                for (size_t c = 0; c < 3; ++c)
+                    difference = std::max(difference, static_cast<int>(white[i + c]) - black[i + c]);
+                black[i + 3] = static_cast<unsigned char>(255 - difference);
+                visible |= black[i + 3] != 0;
+            }
+        SelectObject(dc, previous);
+        DeleteDC(dc);
+        DeleteObject(bitmap);
+        if (ok && visible)
+        {
+            entry.width = width;
+            entry.height = height;
+            entry.pixels = std::move(black);
+        }
+    }
     std::vector<Entry> Read(Native &source, HMENU menu, const std::string &provider, int depth = 0,
                             const std::wstring &title = L"root")
     {
         std::vector<Entry> entries;
         if (depth > 8)
             return entries;
+        if (depth == 0)
+        {
+            progress("initialize root menu");
+            MenuMessage(source, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(menu), 0);
+        }
         // Read only materialized entries. Initializing every Shell cascade here
         // can synchronously enumerate network/cloud providers before the user
         // ever opens them. Deferred popups retain their native menu session.
@@ -294,7 +380,7 @@ struct Host
             ++count;
             wchar_t label[2048]{};
             MENUITEMINFOW item{sizeof(item)};
-            item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP | MIIM_CHECKMARKS;
+            item.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_BITMAP | MIIM_CHECKMARKS | MIIM_DATA;
             item.dwTypeData = label;
             item.cch = std::size(label);
             if (!GetMenuItemInfoW(menu, i, TRUE, &item))
@@ -339,6 +425,8 @@ struct Host
             Bitmap(entry, item.hbmpItem);
             if (entry.pixels.empty())
                 Bitmap(entry, entry.checked && item.hbmpChecked ? item.hbmpChecked : item.hbmpUnchecked);
+            if (entry.pixels.empty() && !(item.fType & MFT_OWNERDRAW))
+                CallbackBitmap(entry, source, menu, item);
             entries.push_back(std::move(entry));
         }
         // Duplicate or absent verbs cannot be persisted as individual commands.
