@@ -243,6 +243,28 @@ void TestExtensionSessions()
         if(key=="newfolder"&&entry.enabled&&entry.token)newFolder=true;inspect(entry.children);}};
     inspect(realReply.entries);
     Expect(newFolder,"production conversion retains the real NewFolder command and invocation token");
+    // The reported 7-Zip icon lives in hbmpUnchecked, not hbmpItem.
+    // Query the installed handler in its real child session; never invoke it.
+    HKEY sevenZip = nullptr;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, L"*\\shellex\\ContextMenuHandlers\\7-Zip", 0, KEY_READ, &sevenZip) == ERROR_SUCCESS)
+    {
+        RegCloseKey(sevenZip);
+        request.background = false;
+        request.providers = {"handler:{23170f69-40c1-278a-1000-000100020000}"};
+        ext::Session archiveSession(request);
+        const auto archiveReply = wait(archiveSession);
+        Expect(archiveReply.ok && !archiveReply.entries.empty(), "installed 7-Zip handler returns its actual menu");
+        const auto& archiveItems = archiveReply.entries.front().children;
+        const auto archive = std::find_if(archiveItems.begin(), archiveItems.end(), [](const auto& entry) {
+            return entry.label == L"7-Zip";
+        });
+        Expect(archive != archiveItems.end() && !archive->children.empty(), "7-Zip keeps its native command submenu");
+        std::cout << "7-Zip menu image: " << archive->width << "x" << archive->height
+                  << ", " << archive->pixels.size() << " bytes\n";
+        Expect(archive->width > 0 && archive->height > 0 && !archive->pixels.empty(),
+            "real 7-Zip submenu retains the icon stored in the checkmark bitmap slot");
+    }
+    else std::cout << "7-Zip integration not run: handler is not installed\n";
 }
 
 int wmain()
