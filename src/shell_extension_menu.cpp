@@ -365,6 +365,18 @@ struct Host
     }
     Reply Query(const Request &request)
     {
+        // Third-party hidden windows can ask the Shell for this process's icon
+        // from their DLL initialization. Resolve executable icon metadata first,
+        // while the loader lock is free, through the ordinary Shell API.
+        progress("initialize process icon");
+        wchar_t executable[32768]{};
+        if (GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))))
+        {
+            SHFILEINFOW icon{};
+            SHGetFileInfoW(executable, 0, &icon, sizeof(icon), SHGFI_ICON | SHGFI_SMALLICON);
+            if (icon.hIcon)
+                DestroyIcon(icon.hIcon);
+        }
         progress("validate paths");
         if (request.paths.empty() || request.paths.size() > 256)
             return {};
