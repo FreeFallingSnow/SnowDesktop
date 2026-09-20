@@ -106,3 +106,32 @@ scripts/test.bat name "^(shell_context_menu_invoke|general_settings|settings_con
 标准构建出现既有 WinUI GetCurrentTime C4002，重载脚本非交互 timeout 输出输入重定向提示，
 均未阻止构建完成；没有观察到新增编译警告。手动诊断未运行。
 设置实际响应、专属类型补充、桌面首次补齐及第三方执行仍待用户实机验证。
+
+### 最终跟进候选
+
+代码候选 `e94b7444` 进一步保留后台解析中的桌面选择，避免“检查桌面菜单”返回旧文件而跳错分类；
+主动刷新重新查询四个基础场景，不受自动查询的新鲜缓存节流影响。语言与指南候选为 `7f957476`，
+本轮主要设置与菜单调整为 `dc7da2f2`。版本号仍为 1.0.7.0。
+
+| 最终输入验证 | 本次执行结果 |
+| --- | --- |
+| 三项受影响定向回归 | 3/3 通过，退出码 0，CTest 15.08 秒 |
+| `scripts/build.bat` | 退出码 0，35.08 秒，预检无宿主或 Hook 占用，标准 Release 产物已生成 |
+| `scripts/test.bat` | 119/119 通过，退出码 0，配置 1.76 秒、编译 21.22 秒、CTest 77.63 秒 |
+
+隔离对照保留真实服务调度、缓存、投影和 IPC 打包，仅替换 Shell 查询边界。
+正确副本通过；三个故障副本均正常编译，并分别以退出码 1 命中以下确定断言，未使用超时或重试代替失败信号：
+
+- 返回原始注册目录：`only the two actionable observed identities reach settings`。
+- 忽略主动刷新标记：`explicit settings refresh queries all four locations despite the fresh-cache throttle`。
+- 桌面路径未解析时返回旧文件：`desktop inspection never routes settings back to the previous file while resolving its path`。
+
+对照日志为 `.codex-probes/menu-settings-useful/negative-*.log`，结果为 `negative-results.json`；
+最终构建与全量日志为同目录的 `build-final.log`、`full-final.log`，附有起止时间与退出码 JSON。
+全量报告为 `.build/Testing/test-run-c8159329c4ae4dfb880f4c5218a3af3e.xml`。
+Release、MSBuild 18.5.4、Windows SDK 10.0.26100.0；最后增量构建和完整回归无新增编译警告。
+`final-inputs.json` 记录 991 个源码、测试、传递依赖、资源和构建输入；结束时全部哈希一致。
+最终宿主 SHA256：`C085E689E260731A422BCD680DF55B3ED0D00B3774A1DECB317AF7B9F75BADF8`。
+
+手动诊断未运行；设置页实际打开耗时、卡片视觉、首次菜单补齐的鼠标交互以及第三方命令执行
+仍待用户实机验收。本轮只记录编译及自动化通过，未创建声称实机通过的 verify。
