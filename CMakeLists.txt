@@ -1589,8 +1589,17 @@ if (BUILD_TESTING)
         SnowDesktopAutoStartRulesTests
         auto_start_rules
         SOURCES tests/auto_start_rules_tests.cpp
+            tests/auto_start_manager_tests.cpp
+            src/auto_start_manager.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32
         LABELS contract rules settings startup)
+
+    add_test(NAME auto_start_scheduler
+        COMMAND $<TARGET_FILE:SnowDesktopAutoStartRulesTests> --scheduler)
+    set_tests_properties(auto_start_scheduler PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopAutoStartRulesTests>"
+        LABELS "integration;settings;startup")
 
     add_test(NAME winui_widget_settings_presenter
         COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>

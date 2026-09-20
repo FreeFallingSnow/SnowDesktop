@@ -477,59 +477,47 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     using snowdesktop::AutoStartApplyResult;
     using snowdesktop::AutoStartApplyStatus;
 
-    const auto finish = [this](AutoStartApplyStatus status,
-                            std::wstring message = {})
+    // A user request directly writes a complete definition. Do not run legacy
+    // reconciliation before/after it: a stale task or failed migration must
+    // not prevent Windows from accepting this explicit choice.
+    AutoStartApplyResult result;
+    std::wstring error;
+    const bool applied = snowdesktop::auto_start::Configure(
+        snowdesktop::auto_start::CurrentDeploymentTarget(), enabled, &error);
+    const auto task = snowdesktop::auto_start::Query();
+    result.state.packaged = snowdesktop::deployment::IsPackaged();
+    result.state.stateKnown = task.status == snowdesktop::UnifiedAutoStartTaskState::Enabled ||
+        task.status == snowdesktop::UnifiedAutoStartTaskState::Disabled;
+    result.state.taskStatus = task.status;
+    result.state.taskOwner = task.target.owner;
+    result.state.taskOwnedByCurrentDeployment = result.state.stateKnown &&
+        snowdesktop::auto_start::IsCurrentDeploymentTarget(task.target);
+    result.state.enabled = result.state.taskOwnedByCurrentDeployment &&
+        task.status == snowdesktop::UnifiedAutoStartTaskState::Enabled;
+    result.state.ownerCommand = task.target.executable;
+    if (applied && result.state.stateKnown && result.state.enabled == enabled &&
+        result.state.taskOwnedByCurrentDeployment)
     {
-        AutoStartApplyResult result;
-        result.status = status;
-        result.state = QueryAutoStartState();
-        result.message = std::move(message);
+        result.status = AutoStartApplyStatus::Applied;
         return result;
-    };
-
-    const snowdesktop::AutoStartQueryResult before = QueryAutoStartState();
-    const bool explicitlyEnableMissing =
-        snowdesktop::CanExplicitlyEnableMissingAutoStart(
-            enabled, before.stateKnown, before.taskStatus);
-    if (!before.stateKnown && !explicitlyEnableMissing)
-    {
-        return finish(AutoStartApplyStatus::StateUnavailable,
-            _LW(enabled
-                ? "app.settings.auto_start_enable_failed"
-                : "app.settings.auto_start_disable_failed"));
     }
-
-    bool applied = false;
-    if (enabled)
+    result.status = AutoStartApplyStatus::Failed;
+    if (!task.error.empty())
     {
-        applied = snowdesktop::auto_start::Configure(
-            snowdesktop::auto_start::CurrentDeploymentTarget(), true);
+        if (!error.empty() && error != task.error) error += L"\n" + task.error;
+        else if (error.empty()) error = task.error;
     }
-    else if (!before.taskOwnedByCurrentDeployment)
-    {
-        applied = true;
-    }
-    else
-    {
-        applied = snowdesktop::auto_start::SetEnabled(false);
-    }
-    if (!applied)
-    {
-        return finish(AutoStartApplyStatus::Failed,
-            _LW(enabled
-                ? "app.settings.auto_start_enable_failed"
-                : "app.settings.auto_start_disable_failed"));
-    }
-    const snowdesktop::AutoStartQueryResult after = QueryAutoStartState();
-    if (after.stateKnown && after.enabled == enabled &&
-        (!enabled || after.taskOwnedByCurrentDeployment))
-        return finish(AutoStartApplyStatus::Applied);
-    return finish(
-        after.stateKnown ? AutoStartApplyStatus::Failed
-                         : AutoStartApplyStatus::StateUnavailable,
-        _LW(enabled
-            ? "app.settings.auto_start_enable_failed"
-            : "app.settings.auto_start_disable_failed"));
+    if (error.empty())
+        error = L"AutoStart.VerifyRequestedState (0x8007000D): " +
+            std::wstring(L"expected enabled=") + (enabled ? L"true" : L"false") +
+            L", actual enabled=" + (result.state.enabled ? L"true" : L"false") +
+            L", owner=" + task.target.executable;
+    result.message = _LW(enabled
+        ? "app.settings.auto_start_enable_failed"
+        : "app.settings.auto_start_disable_failed");
+    result.message += L"\n" + error;
+    WriteDiagnosticLogEntry(result.message.c_str(), DiagnosticLogLevel::Error);
+    return result;
 }
 
 snowdesktop::SettingsActionResult DesktopApp::OpenStoreUpdates()
