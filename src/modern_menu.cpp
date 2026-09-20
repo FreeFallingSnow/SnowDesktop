@@ -1962,8 +1962,11 @@ private:
             if (GetMonitorInfoW(MonitorFromPoint(popup.panelScreenOrigin, MONITOR_DEFAULTTONEAREST),
                                 &monitor))
             {
-                popup.panelHeight = std::min(
-                    popup.panelHeight, static_cast<int>(monitor.rcWork.bottom - popup.panelScreenOrigin.y));
+                const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
+                                        ? std::min(monitor.rcWork.bottom, options_.anchorRect.top)
+                                        : monitor.rcWork.bottom;
+                popup.panelHeight =
+                    std::min(popup.panelHeight, static_cast<int>(bottom - popup.panelScreenOrigin.y));
                 popup.viewportHeight = std::max(1, popup.panelHeight - panelPadding_ * 2);
                 popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
             }

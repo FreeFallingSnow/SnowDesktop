@@ -1244,45 +1244,67 @@ int wmain()
     gCaptureRootRect = false;
     // An asynchronous Shell reply can grow a tiny popup at a screen edge.
     // Exercise actual placement and keyboard scrolling, not layout arithmetic.
-    for (UINT dpi : {96u, 120u, 144u, 192u})
-    {
-        MONITORINFO monitor{sizeof(monitor)};
-        GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor);
-        options.anchor = {monitor.rcWork.right - 8, monitor.rcWork.bottom - 8};
-        options.rootPlacement = snowdesktop::modern_menu::RootPlacement::Default;
-        options.dpi = dpi;
-        options.appearance = snowdesktop::modern_menu::Appearance::Win10Light;
-        options.onCommand = {}; options.onTextChanged = {}; options.onHover = {};
-        bool populated = false;
-        RECT expanded{}, initial{};
-        const auto readyAt = GetTickCount64() + 30;
-        options.pollItems = [&](const auto&, bool canApply) -> std::optional<std::vector<snowdesktop::modern_menu::Item>> {
-            if (!canApply || populated || GetTickCount64() < readyAt) return {};
-            populated = true;
-            GetWindowRect(snowdesktop::modern_menu::ActiveRootWindow(), &initial);
-            std::vector<snowdesktop::modern_menu::Item> expandedItems(100);
-            for (UINT i=0;i<100;++i)
-            {expandedItems[i].command=8100+i;expandedItems[i].label=L"扩展命令 / long extension command " + std::to_wstring(i);}
-            expandedItems[1].enabled=false;expandedItems[2].checked=true;
-            return expandedItems;
-        };
-        gDriveMode = DriveMode::Script; gInputPosted = false; gWatchdogFired = false;
-        gMenuScript = [&](HWND menu) {
-            GetWindowRect(menu,&expanded);
-            SendMessageW(menu,WM_KEYDOWN,VK_END,0);
-            SendMessageW(menu,WM_KEYDOWN,VK_RETURN,0);
-        };
-        SetTimer(owner,kDriveTimer,120,nullptr);SetTimer(owner,kWatchdogTimer,3000,nullptr);
-        snowdesktop::modern_menu::Item loading;loading.label=L"Loading";loading.enabled=false;
-        const auto asyncResult=snowdesktop::modern_menu::Show({loading},options);
-        KillTimer(owner,kWatchdogTimer);
-        Expect(populated&&!gWatchdogFired&&asyncResult.command==8199,"asynchronous extension commands support keyboard scrolling at every DPI");
-        Expect(expanded.bottom<=monitor.rcWork.bottom+16&&expanded.right<=monitor.rcWork.right+16,
-            "asynchronous menu growth stays within the monitor work area at every DPI");
-        Expect(expanded.top == initial.top && expanded.left == initial.left &&
-                   expanded.right == initial.right,
-               "asynchronous growth preserves the visible origin and width at every DPI");
-    }
+    for (const bool aboveDock : {false, true})
+        for (UINT dpi : {96u, 120u, 144u, 192u})
+        {
+            MONITORINFO monitor{sizeof(monitor)};
+            GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor);
+            options.anchor = {monitor.rcWork.right - 8, monitor.rcWork.bottom - 8};
+            options.rootPlacement = aboveDock ? snowdesktop::modern_menu::RootPlacement::AboveAnchorRect
+                                              : snowdesktop::modern_menu::RootPlacement::Default;
+            options.anchorRect = {monitor.rcWork.right - 300, monitor.rcWork.bottom - 64,
+                                  monitor.rcWork.right - 8, monitor.rcWork.bottom};
+            options.dpi = dpi;
+            options.appearance = snowdesktop::modern_menu::Appearance::Win10Light;
+            options.onCommand = {};
+            options.onTextChanged = {};
+            options.onHover = {};
+            bool populated = false;
+            RECT expanded{}, initial{};
+            const auto readyAt = GetTickCount64() + 30;
+            options.pollItems =
+                [&](const auto &,
+                    bool canApply) -> std::optional<std::vector<snowdesktop::modern_menu::Item>> {
+                if (!canApply || populated || GetTickCount64() < readyAt)
+                    return {};
+                populated = true;
+                GetWindowRect(snowdesktop::modern_menu::ActiveRootWindow(), &initial);
+                std::vector<snowdesktop::modern_menu::Item> expandedItems(100);
+                for (UINT i = 0; i < 100; ++i)
+                {
+                    expandedItems[i].command = 8100 + i;
+                    expandedItems[i].label = L"扩展命令 / long extension command " + std::to_wstring(i);
+                }
+                expandedItems[1].enabled = false;
+                expandedItems[2].checked = true;
+                return expandedItems;
+            };
+            gDriveMode = DriveMode::Script;
+            gInputPosted = false;
+            gWatchdogFired = false;
+            gMenuScript = [&](HWND menu) {
+                GetWindowRect(menu, &expanded);
+                SendMessageW(menu, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(menu, WM_KEYDOWN, VK_RETURN, 0);
+            };
+            SetTimer(owner, kDriveTimer, 120, nullptr);
+            SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            snowdesktop::modern_menu::Item loading;
+            loading.label = L"Loading";
+            loading.enabled = false;
+            const auto asyncResult = snowdesktop::modern_menu::Show({loading}, options);
+            KillTimer(owner, kWatchdogTimer);
+            Expect(populated && !gWatchdogFired && asyncResult.command == 8199,
+                   "asynchronous extension commands support keyboard scrolling at every DPI");
+            Expect(expanded.bottom <= monitor.rcWork.bottom + 16 &&
+                       expanded.right <= monitor.rcWork.right + 16,
+                   "asynchronous menu growth stays within the monitor work area at every DPI");
+            Expect(expanded.top == initial.top && expanded.left == initial.left &&
+                       expanded.right == initial.right,
+                   "asynchronous growth preserves the visible origin and width at every DPI");
+            Expect(!aboveDock || expanded.bottom <= options.anchorRect.top + 16,
+                   "growing a menu above the Dock keeps the Dock clear and scrolls additional rows");
+        }
     // Mouse input and async replacement share the real controller. A result
     // must wait while the user is pointing at or pressing the old More row.
     for (const bool pressed : {false, true})
@@ -1296,6 +1318,15 @@ int wmain()
             {
                 ++phase;
                 SendMessageW(root, pressed ? WM_LBUTTONDOWN : WM_MOUSEMOVE, 0, MAKELPARAM(20, 20));
+                // The private test desktop's real cursor is outside this window.
+                // Cancel OS leave tracking so the synthetic hover lasts until
+                // the explicit leave below, just like a stationary real pointer.
+                TRACKMOUSEEVENT tracking{sizeof(tracking), TME_CANCEL | TME_LEAVE, root, 0};
+                TrackMouseEvent(&tracking);
+                MSG leave{};
+                while (PeekMessageW(&leave, root, WM_MOUSELEAVE, WM_MOUSELEAVE, PM_REMOVE))
+                {
+                }
                 return {};
             }
             if (phase == 1)

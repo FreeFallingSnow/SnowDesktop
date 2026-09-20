@@ -105,6 +105,8 @@ class Presentation
             }
             if (!ready_ || !canApply)
                 return {};
+            if (!ready_->ok && generation_ == MenuCacheGeneration())
+                return current; // A failed refresh must not erase a valid display snapshot.
             auto result = current;
             std::erase_if(result, [](const auto &item) { return IsOurCommand(item.command); });
             if (ready_->ok && generation_ == MenuCacheGeneration())
@@ -123,6 +125,14 @@ class Presentation
                 ready_ = session_->Poll();
             if (!ready_)
                 return InvokeWhenReady(std::move(session_), found->second, point, generation_);
+            if (!ready_->ok)
+            {
+                // Retry only an explicit cached click, always against fresh
+                // command identities. A retained snapshot never executes tokens.
+                session_.reset();
+                session_ = std::make_unique<Session>(source_);
+                return InvokeWhenReady(std::move(session_), found->second, point, generation_);
+            }
             SharedMenuCache().Store(ticket_, *ready_);
             const auto token = ResolveCommand(*ready_, found->second);
             if (!token)

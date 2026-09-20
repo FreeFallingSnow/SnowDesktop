@@ -434,6 +434,35 @@ void TestExtensionSessions()
     }
     Expect(scopesPassed, "all four real settings scopes query successfully and preserve installed 7-Zip icons");
 
+    // Windows' packaged Terminal registration was missing only from the first
+    // aggregate in each helper. Compare the same unchanged desktop across a
+    // cold and warm request; never invoke Terminal or depend on its local title.
+    for (int coldStart = 0; coldStart < 2; ++coldStart)
+    {
+        ext::InvalidateMenuCache();
+        ext::Request desktop;
+        desktop.catalogueOnly = true;
+        desktop.context = ext::Context::Desktop;
+        ext::Reply first, second;
+        {
+            ext::Session cold(desktop);
+            first = wait(cold);
+        }
+        {
+            ext::Session warm(desktop);
+            second = wait(warm);
+        }
+        Expect(first.ok && second.ok, "cold and warm desktop queries complete");
+        const auto terminal = [](const auto &entries) {
+            return std::any_of(entries.begin(), entries.end(), [](const auto &entry) {
+                return entry.provider == "verb:{9f156763-7844-4dc4-b2b1-901f640f5155}";
+            });
+        };
+        std::cout << "Cold desktop Terminal: first=" << terminal(first.entries)
+                  << ", warm=" << terminal(second.entries) << std::endl;
+        Expect(!terminal(second.entries) || terminal(first.entries),
+               "Terminal available in the system must already appear in the first cold desktop query");
+    }
 }
 
 void TestCatalogueCache()
@@ -519,6 +548,42 @@ void TestCatalogueCache()
     ext::MenuSnapshotCache afterRestart(directory.path / L"cache");
     Expect(!afterRestart.Find(current,104),"corrupt disk cache falls back to a live query");
 
+    ext::Request desktop;
+    desktop.paths = {directory.path.wstring()};
+    desktop.background = true;
+    desktop.context = ext::Context::Desktop;
+    const auto desktopTicket = writer.Capture(desktop);
+    Expect(writer.Store(desktopTicket, reply, 200), "seed a desktop display snapshot");
+    {
+        std::ofstream childFile(directory.path / L"new-child.txt");
+        childFile << "desktop content changed";
+    }
+    // Force a different directory write time so the regression cannot depend
+    // on filesystem timestamp granularity or a fixed sleep.
+    const auto oldTime = std::filesystem::last_write_time(directory.path);
+    std::filesystem::last_write_time(directory.path, oldTime + std::chrono::seconds(2));
+    Expect(reader.Find(reader.Capture(desktop), 201).has_value(),
+           "adding desktop files does not discard its display snapshot");
+    for (int i = 0; i < 96; ++i)
+    {
+        const auto sibling = directory.path / (L"cache-collision-" + std::to_wstring(i) + L".txt");
+        {
+            std::ofstream output(sibling);
+            output << i;
+        }
+        ext::Request object;
+        object.paths = {sibling.wstring()};
+        Expect(writer.Store(writer.Capture(object), reply, 200), "fill unrelated selection snapshots");
+    }
+    auto extendedDesktop = desktop;
+    extendedDesktop.extended = true;
+    auto extendedReply = reply;
+    extendedReply.entries[0].label = L"Shift desktop";
+    Expect(writer.Store(writer.Capture(extendedDesktop), extendedReply, 200),
+           "seed extended desktop snapshot");
+    const auto retained = reader.Find(reader.Capture(desktop), 201);
+    Expect(retained && retained->entries[0].label == reply.entries[0].label,
+           "unrelated selections and Shift menus cannot evict the ordinary desktop snapshot");
 }
 
 template<class Condition>
@@ -620,6 +685,47 @@ void TestPendingCachedClick()
     PumpUntil([&]{return std::filesystem::exists(output);},"pending cached click reaches the child invocation handler");
     UINT token=0;{std::ifstream file(output);file>>token;}
     Expect(token==72,"pending click uses the freshly queried command, never the cached token 999");
+    // A transient refresh failure keeps the visible snapshot. A subsequent
+    // explicit click must re-query and resolve, rather than use saved tokens.
+    std::filesystem::remove(output);
+    const auto retryPath = directory.path / L"retry.txt";
+    {
+        std::ofstream file(retryPath);
+        file << "retry sample";
+    }
+    request.paths = {retryPath.wstring()};
+    Expect(ext::SharedMenuCache().Store(ext::SharedMenuCache().Capture(request), cached),
+           "seed display snapshot before a transient query failure");
+    {
+        ext::Presentation presentation(request, prefs, L"loading", L"failed");
+        std::vector<menu::Item> items;
+        menu::Options options;
+        presentation.Attach(items, options, 0);
+        const auto original = items.front().command;
+        bool applied = false;
+        PumpUntil(
+            [&] {
+                if (!applied)
+                    if (auto updated = options.pollItems(items, true))
+                    {
+                        items = std::move(*updated);
+                        applied = true;
+                    }
+                return applied;
+            },
+            "failed refresh completes");
+        Expect(items.size() == 1 && items.front().command == original,
+               "a failed background query must not erase a valid cached menu");
+        Expect(presentation.Invoke(original, {0, 0}), "a cached click after failure starts fresh validation");
+    }
+    PumpUntil(
+        [&] {
+            UINT actual = 0;
+            std::ifstream file(output);
+            file >> actual;
+            return actual == 72;
+        },
+        "retry invokes the newly validated token after an explicit cached click");
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",nullptr);
     ext::InvalidateMenuCache();
 }
@@ -704,14 +810,21 @@ int wmain(int argc, wchar_t **argv)
     snowdesktop::shell_extensions::InvokeExecutor invoke;
     if(record)
     {
-        query=[](const auto &) {
-            snowdesktop::shell_extensions::Reply reply;reply.ok=true;
+        query = [failed = false](const auto &request) mutable {
+            if (std::filesystem::path(request.paths.front()).filename() == L"retry.txt" && !failed)
+            {
+                failed = true;
+                return snowdesktop::shell_extensions::Reply{false, {}, "transient query failure"};
+            }
+            snowdesktop::shell_extensions::Reply reply;
+            reply.ok = true;
             snowdesktop::shell_extensions::Entry entry;
             entry.label = L"Cached command";
             entry.key = "cached";
             entry.provider = "verb:cached";
             entry.token = 72;
-            reply.entries={entry};return reply;
+            reply.entries={entry};
+            return reply;
         };
         invoke=[path=std::filesystem::path(invocationPath)](UINT token,POINT){std::ofstream file(path);file<<token;};
     }

@@ -644,7 +644,24 @@ struct Host
         count = 0;
         invoked = false;
     }
+    bool catalogueInitialized = false;
     Reply Query(const Request &request)
+    {
+        auto reply = QueryOnce(request);
+        if (!catalogueInitialized && reply.ok)
+        {
+            // The first aggregate primes Windows' packaged extension catalogue.
+            // On a cold process it can return success before Terminal and other
+            // IExplorerCommand registrations become visible. Rebind once before
+            // publishing that first menu; all tokens belong to this final query.
+            // This stays inside the same supervised deadline, without sleeps or
+            // eagerly expanding third-party cascades. Warm requests query once.
+            reply = QueryOnce(request);
+            catalogueInitialized = reply.ok;
+        }
+        return reply;
+    }
+    Reply QueryOnce(const Request &request)
     {
         ReleaseMenu();
         progress("validate paths");

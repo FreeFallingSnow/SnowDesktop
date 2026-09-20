@@ -258,8 +258,14 @@ MenuSnapshotCache::Ticket MenuSnapshotCache::Capture(const Request &source) cons
             WIN32_FILE_ATTRIBUTE_DATA data{};
             if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data))
                 return {};
-            stamps.emplace_back(data.dwFileAttributes, data.nFileSizeHigh, data.nFileSizeLow,
-                                data.ftLastWriteTime.dwHighDateTime, data.ftLastWriteTime.dwLowDateTime);
+            // Directory timestamps change whenever a child is created/removed.
+            // Keep its display snapshot stable; invocation still resolves the
+            // command from a fresh query of this exact directory and selection.
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                stamps.emplace_back(data.dwFileAttributes, 0, 0, 0, 0);
+            else
+                stamps.emplace_back(data.dwFileAttributes, data.nFileSizeHigh, data.nFileSizeLow,
+                                    data.ftLastWriteTime.dwHighDateTime, data.ftLastWriteTime.dwLowDateTime);
         }
         request.context = ResolveContext(request);
         wchar_t executable[32768]{};
@@ -269,8 +275,11 @@ MenuSnapshotCache::Ticket MenuSnapshotCache::Capture(const Request &source) cons
         ticket.identity =
             settings_ipc::Pack(request, stamps, FileStamp(executable), GetUserDefaultUILanguage());
         ticket.epoch = Epoch();
-        ticket.slot = sample ? static_cast<unsigned>(request.context)
-                             : 4 + static_cast<unsigned>(Hash(ticket.identity) % (Slots - 4));
+        // The frequently-used desktop cannot be evicted by an unrelated file
+        // hashing into its slot. Normal and Shift menus remain independent.
+        ticket.slot = request.context == Context::Desktop ? (request.extended ? 4 : 3)
+                      : sample                            ? static_cast<unsigned>(request.context)
+                               : 5 + static_cast<unsigned>(Hash(ticket.identity) % (Slots - 5));
         if (ticket.slot >= Slots)
             return {};
         return ticket;
