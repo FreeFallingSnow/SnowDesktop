@@ -111,6 +111,10 @@ struct MenuService::Impl
     std::mutex mutex;
     std::map<Key, Row> rows;
     Catalogue catalogue;
+    Catalogue available;
+    Key availableSignature;
+    std::vector<Request> discovery;
+    bool discoverRequested = false;
     Preferences preferences;
     Request management;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false;
@@ -174,6 +178,46 @@ struct MenuService::Impl
             bytes -= victim->second.bytes; rows.erase(victim);
         }
     }
+    void RebuildAvailable()
+    {
+        // Settings receive actual, actionable menu roots, never the raw registry
+        // inventory. Keep children/tokens out of this small management payload.
+        std::map<std::string, Registration> merged;
+        for (const auto &[key, row] : rows)
+        {
+            if (!row.view.snapshot || row.expires <= MenuSnapshotCache::Now()) continue;
+            for (const auto &entry : row.view.snapshot->entries)
+            {
+                if (entry.separator || !entry.enabled || entry.provider.empty() || entry.label.empty() ||
+                    entry.label == L"…" || entry.label == L"...") continue;
+                const auto known = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == entry.registration; });
+                if (known != catalogue.rows.end() && !known->systemEnabled) continue;
+                const auto id = entry.registration.empty() ? entry.provider : entry.registration;
+                auto [it, inserted] = merged.try_emplace(id);
+                auto &item = it->second;
+                if (inserted)
+                {
+                    if (known != catalogue.rows.end()) item = *known;
+                    else { item.id = id; item.kind = RegistrationKind::Observed; }
+                    item.display = {};
+                    item.display.provider = entry.provider; item.display.registration = entry.registration;
+                    item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
+                    item.display.width = entry.width; item.display.height = entry.height; item.display.pixels = entry.pixels;
+                    item.linked = true; item.contexts = 0;
+                }
+                item.contexts |= row.view.contexts;
+            }
+        }
+        std::vector<Registration> result;
+        for (auto &[id, item] : merged) result.push_back(std::move(item));
+        auto signature = settings_ipc::Pack(result, catalogue.associations);
+        if (signature != availableSignature)
+        {
+            availableSignature = std::move(signature);
+            available.rows = std::move(result); available.associations = catalogue.associations;
+            ++available.revision;
+        }
+    }
     void Publish(const Key &key, Reply reply, unsigned contexts, std::uint64_t written = MenuSnapshotCache::Now())
     {
         auto &row = rows.at(key);
@@ -184,6 +228,7 @@ struct MenuService::Impl
         row.expires = written + MenuSnapshotCache::LifetimeMs;
         row.view.snapshot = std::move(reply); row.view.contexts = contexts; ++row.view.revision;
         row.used = ++clock;
+        RebuildAvailable();
     }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
     {
@@ -289,6 +334,7 @@ struct MenuService::Impl
             }
             {
                 std::lock_guard lock(mutex);
+                const bool initial = !catalogue.revision;
                 std::vector<Registration> changed;
                 for (const auto &old : catalogue.rows)
                     if (std::none_of(value.rows.begin(), value.rows.end(), [&](const auto &r) { return r.id == old.id && r.revision == old.revision; })) changed.push_back(old);
@@ -298,11 +344,20 @@ struct MenuService::Impl
                     if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                 catalogue = std::move(value); scanning = false; catalogueDirty = true;
                 for (auto &[key, row] : rows)
-                    if (std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
+                    if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
                     {
                         row.invalid = true; ++row.dependency; row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
                         affected.push_back(row.request);
+                        if (std::any_of(discovery.begin(), discovery.end(), [&](const auto &r) { return SelectionKey(r) == key; })) Queue(row.request, QueryPriority::Inspect, true);
                     }
+                for (auto &[key, row] : rows)
+                    if (row.view.snapshot)
+                    {
+                        auto resolved = row.request;
+                        resolved.context = row.request.background ? (row.request.context == Context::Desktop ? Context::Desktop : Context::FolderBackground) : row.view.contexts == 2 ? Context::Folder : Context::File;
+                        Associate(catalogue, resolved, *row.view.snapshot);
+                    }
+                RebuildAvailable();
                 MenuTrace("catalogue", changed.empty() ? "unchanged" : "dependencies_changed", 0, static_cast<unsigned>(affected.size()));
             }
             for (const auto &request : affected) cache.Erase(request);
@@ -343,6 +398,29 @@ struct MenuService::Impl
         for (;;)
         {
             { std::lock_guard lock(mutex); if (stop) break; }
+            bool discover = false;
+            { std::lock_guard lock(mutex); discover = discoverRequested; }
+            if (discover)
+            {
+                std::vector<Request> targets;
+                wchar_t executable[32768]{};
+                if (GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable))))
+                {
+                    Request file; file.paths = {executable}; targets.push_back(file);
+                    Request folder; folder.paths = {std::filesystem::path(executable).parent_path().wstring()}; targets.push_back(folder);
+                    folder.background = true; folder.context = Context::FolderBackground; targets.push_back(folder);
+                }
+                PWSTR desktop = nullptr;
+                if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, KF_FLAG_DONT_VERIFY, nullptr, &desktop)))
+                {
+                    Request background; background.paths = {desktop}; background.background = true; background.context = Context::Desktop;
+                    targets.push_back(background); CoTaskMemFree(desktop);
+                }
+                std::erase_if(targets, [](const auto &request) { return !Local(request); });
+                std::lock_guard lock(mutex);
+                discovery = std::move(targets); discoverRequested = false;
+                for (const auto &request : discovery) Queue(request, QueryPriority::Inspect, false);
+            }
             bool warmDesktop = false, inspectDesktop = false;
             { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false); inspectDesktop = desktopInspection; }
             if (warmDesktop || inspectDesktop)
@@ -421,6 +499,7 @@ struct MenuService::Impl
                 if (row.view.snapshot && row.identity != ticket.identity)
                 {
                     row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
+                    RebuildAvailable();
                     Queue(request, QueryPriority::Menu, true);
                 }
             }
@@ -479,13 +558,20 @@ void MenuService::Manage(const Request &request)
 CatalogueView MenuService::Inspect(const Request &request, bool refresh)
 {
     std::lock_guard lock(impl_->mutex);
-    if (refresh || !impl_->inspected) impl_->scanRequested = true;
+    if (refresh || !impl_->inspected) { impl_->scanRequested = true; impl_->discoverRequested = true; }
     impl_->inspected = true;
     if (request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
     const auto selection = request.paths.empty() ? impl_->management : request;
     if (!selection.paths.empty()) impl_->Queue(selection, QueryPriority::Inspect, refresh);
-    CatalogueView result; result.catalogue = impl_->catalogue; result.selection = selection; result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection;
-    if (const auto it = impl_->rows.find(SelectionKey(selection)); it != impl_->rows.end()) result.menu = it->second.view;
+    CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
+    result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested;
+    for (const auto &target : impl_->discovery)
+        if (const auto it = impl_->rows.find(SelectionKey(target)); it != impl_->rows.end()) result.scanning |= it->second.view.pending;
+    if (const auto it = impl_->rows.find(SelectionKey(selection)); it != impl_->rows.end())
+    {
+        result.menu.pending = it->second.view.pending; result.menu.revision = it->second.view.revision;
+        result.menu.contexts = it->second.view.contexts; result.menu.error = it->second.view.error;
+    }
     SetEvent(impl_->wake); return result;
 }
 void MenuService::Execute(const Request &request, CommandReference reference, POINT point, std::function<void(bool)> completed)
@@ -499,6 +585,7 @@ void MenuService::Invalidate(const Request &request)
     std::lock_guard lock(impl_->mutex);
     auto &row = impl_->rows[SelectionKey(request)]; row.request = request; row.invalid = true; ++row.dependency;
     row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
+    impl_->RebuildAvailable();
     if (!row.view.pending) impl_->Queue(request, QueryPriority::Menu, true);
 }
 }

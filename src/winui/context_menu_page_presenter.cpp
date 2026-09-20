@@ -32,7 +32,10 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::Button refresh;
     muxc::HyperlinkButton chooseObject, chooseFolder, chooseDesktop;
     muxc::TextBlock heading, status;
-    mux::DispatcherTimer timer;
+    mux::DispatcherTimer timer, rowTimer;
+    std::vector<ext::Registration> pendingRows;
+    std::map<int, muxc::StackPanel> sections;
+    size_t nextRow = 0;
     std::vector<std::function<void()>> revoke, rowRevoke;
     std::vector<Row> rows;
     ext::Preferences prefs;
@@ -62,6 +65,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         status.TextWrapping(mux::TextWrapping::Wrap); status.Visibility(mux::Visibility::Collapsed); content.Children().Append(status);
         card.Child(content); root.Children().Append(card); root.Children().Append(groups);
         timer.Interval(std::chrono::milliseconds(300));
+        rowTimer.Interval(std::chrono::milliseconds(16));
+        auto append = rowTimer.Tick([this](auto &&, auto &&) { AppendRows(); });
+        revoke.push_back([t = rowTimer, append] { t.Tick(append); });
         auto tick = timer.Tick([this](auto &&, auto &&) { Poll(); }); revoke.push_back([t = timer, tick] { t.Tick(tick); });
         auto changed = tabs.SelectionChanged([this](auto &&, auto &&) {
             if (closed || updating) return;
@@ -92,7 +98,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         chooseDesktop.Visibility(category == ext::Category::Background ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         chooseObject.Visibility(category == ext::Category::Objects ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     }
-    void Cancel() { timer.Stop(); }
+    void Cancel() { timer.Stop(); rowTimer.Stop(); }
     void Status(const std::wstring &text) { status.Text(text); status.Visibility(text.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible); }
     void Reload(bool refreshCatalogue = false)
     {
@@ -170,36 +176,59 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         icon.FontSize(18);
         return icon;
     }
+    int Group(const ext::Registration &entry) const
+    {
+        const unsigned mask = category == ext::Category::Objects ? 3 : 12;
+        const bool typed = !entry.types.empty() && std::find(entry.types.begin(), entry.types.end(), L"*") == entry.types.end();
+        return typed ? 3 : (entry.contexts & mask) == mask ? 0 : (entry.contexts & (category == ext::Category::Objects ? 1 : 4)) ? 1 : 2;
+    }
     void BuildRows()
     {
-        for (auto &r : rowRevoke) r(); rowRevoke.clear(); rows.clear(); groups.Children().Clear();
+        rowTimer.Stop();
+        for (auto &r : rowRevoke) r(); rowRevoke.clear(); rows.clear(); groups.Children().Clear(); sections.clear();
+        pendingRows.clear(); nextRow = 0;
         auto filter = std::wstring(search.Text()); for (auto &c : filter) c = towlower(c);
-        std::vector<ext::Registration> entries = view.catalogue.rows;
-        if (view.menu.snapshot)
-            for (const auto &entry : view.menu.snapshot->entries)
-                if (!entry.separator && entry.registration.empty())
-                {
-                    ext::Registration row; row.id = entry.provider; row.kind = ext::RegistrationKind::Observed; row.display = entry;
-                    row.linked = true; row.contexts = view.menu.contexts; entries.push_back(std::move(row));
-                }
-        std::map<int, muxc::StackPanel> sections;
         const unsigned mask = category == ext::Category::Objects ? 3 : 12;
-        std::stable_sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) { return a.display.label < b.display.label; });
-        for (const auto &entry : entries)
+        for (const auto &entry : view.catalogue.rows)
         {
-            if (!entry.systemEnabled || !(entry.contexts & mask)) continue;
+            if (!entry.systemEnabled || !entry.linked || !(entry.contexts & mask)) continue;
             auto name = entry.display.label; for (auto &c : name) c = towlower(c);
+            for (const auto &type : entry.types) name += L" " + type;
+            if (!filter.empty() && name.find(filter) == std::wstring::npos) continue;
+            pendingRows.push_back(entry);
+        }
+        std::stable_sort(pendingRows.begin(), pendingRows.end(), [this](const auto &a, const auto &b) {
+            const auto x = Group(a), y = Group(b); return x != y ? x < y : a.display.label < b.display.label;
+        });
+        AppendRows();
+        if (nextRow < pendingRows.size()) rowTimer.Start();
+        if (pendingRows.empty() && !view.scanning) Status(L("settings.contextMenu.empty"));
+    }
+    void AppendRows()
+    {
+        if (closed || !active) { rowTimer.Stop(); return; }
+        const auto started = GetTickCount64();
+        for (unsigned added = 0; nextRow < pendingRows.size() && added < 8; ++added)
+        {
+            const auto &entry = pendingRows[nextRow++];
+            const auto group = Group(entry);
             auto types = std::wstring{}; for (const auto &type : entry.types) if (type != L"*") types += type + L" ";
-            if (!filter.empty() && name.find(filter) == std::wstring::npos && types.find(filter) == std::wstring::npos) continue;
-            const bool specificType = !entry.types.empty() && std::find(entry.types.begin(), entry.types.end(), L"*") == entry.types.end();
-            const int group = entry.kind == ext::RegistrationKind::Observed ? 4 : specificType ? 3 : (entry.contexts & mask) == mask ? 0 : (entry.contexts & (category == ext::Category::Objects ? 1 : 4)) ? 1 : 2;
-            if (!sections.contains(group)) sections.emplace(group, muxc::StackPanel{});
-            auto section = sections.at(group); section.Spacing(4);
+            if (!sections.contains(group))
+            {
+                muxc::StackPanel section; section.Spacing(4);
+                const char *key = group == 0 ? "settings.contextMenu.common" : group == 3 ? "settings.contextMenu.types" :
+                    category == ext::Category::Objects ? (group == 1 ? "settings.contextMenu.files" : "settings.contextMenu.folders") :
+                    (group == 1 ? "settings.contextMenu.folderBackground" : "settings.contextMenu.desktop");
+                muxc::TextBlock label; label.Text(L(key)); label.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); label.Margin({0, 0, 0, 8});
+                section.Children().Append(label);
+                muxc::Border groupCard; if (cardStyle) groupCard.Style(cardStyle); groupCard.Child(section); groups.Children().Append(groupCard);
+                sections.emplace(group, section);
+            }
+            auto section = sections.at(group);
             muxc::Grid layout; Column(layout, 32, mux::GridUnitType::Pixel); Column(layout, 1, mux::GridUnitType::Star); Column(layout, 1, mux::GridUnitType::Auto);
             layout.HorizontalAlignment(mux::HorizontalAlignment::Stretch); layout.Children().Append(Icon(entry.display));
             muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center);
             muxc::TextBlock title; title.Text(entry.display.label); title.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(title);
-            if (!entry.linked) { muxc::TextBlock pending; pending.Text(L("settings.contextMenu.pending")); pending.FontSize(12); pending.Opacity(0.65); names.Children().Append(pending); }
             names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
             Row row; row.id = entry.id; row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(44);
             row.toggle.VerticalAlignment(mux::VerticalAlignment::Center); row.toggle.IsEnabled(entry.linked);
@@ -216,19 +245,34 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             muxc::Expander expander; expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch); expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
             expander.Header(layout); muxc::ToolTipService::SetToolTip(expander, winrt::box_value(L("settings.contextMenu.locations")));
             mux::Automation::AutomationProperties::SetName(expander, entry.display.label + L" — " + L("settings.contextMenu.locations"));
+            const auto expanding = expander.Expanding([this, expander, id = row.id, contexts = entry.contexts, types](auto &&, auto &&) {
+                if (!closed && active && !expander.Content()) PopulatePositions(expander, id, contexts, types);
+            });
+            rowRevoke.push_back([expander, expanding] { expander.Expanding(expanding); });
+            section.Children().Append(expander); rows.push_back(std::move(row));
+            if (GetTickCount64() - started >= 6) break;
+        }
+        if (nextRow >= pendingRows.size()) rowTimer.Stop();
+    }
+    void PopulatePositions(muxc::Expander expander, const std::string &id, unsigned contexts, const std::wstring &types)
+    {
+        const auto found = std::find_if(rows.begin(), rows.end(), [&](const auto &r) { return r.id == id; });
+        if (found == rows.end()) return;
+        auto &row = *found;
+        const auto name = std::wstring(mux::Automation::AutomationProperties::GetName(row.toggle));
             muxc::StackPanel positions; positions.Spacing(8);
             if (!types.empty()) { muxc::TextBlock typeText; typeText.Text(types); typeText.TextWrapping(mux::TextWrapping::Wrap); positions.Children().Append(typeText); }
             for (int i = category == ext::Category::Objects ? 0 : 2; i < (category == ext::Category::Objects ? 2 : 4); ++i)
             {
-                if (!(entry.contexts & (1u << i))) continue;
+                if (!(contexts & (1u << i))) continue;
                 const auto context = static_cast<ext::Context>(i);
                 muxc::Grid position; Column(position, 1, mux::GridUnitType::Star); Column(position, 1, mux::GridUnitType::Auto);
                 muxc::TextBlock label; const char *keys[] = {"settings.contextMenu.files", "settings.contextMenu.folders", "settings.contextMenu.folderBackground", "settings.contextMenu.desktop"};
                 label.Text(L(keys[i])); label.VerticalAlignment(mux::VerticalAlignment::Center); position.Children().Append(label);
                 muxc::ComboBox choice;
                 for (const auto *key : {"settings.contextMenu.inherit", "settings.contextMenu.show", "settings.contextMenu.hide"}) choice.Items().Append(winrt::box_value(L(key)));
-                choice.SelectedIndex(static_cast<int>(ext::OverrideOf(prefs, row.id, context))); choice.IsEnabled(entry.linked);
-                mux::Automation::AutomationProperties::SetName(choice, entry.display.label + L" " + L(keys[i]));
+                choice.SelectedIndex(static_cast<int>(ext::OverrideOf(prefs, row.id, context)));
+                mux::Automation::AutomationProperties::SetName(choice, name + L" " + L(keys[i]));
                 muxc::Grid::SetColumn(choice, 1); position.Children().Append(choice); positions.Children().Append(position);
                 const auto changed = choice.SelectionChanged([this, id = row.id, context, choice](auto &&, auto &&) {
                     if (closed || updating || !active || !initialized || !actions.updateGeneral || choice.SelectedIndex() < 0) return;
@@ -238,18 +282,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                     });
                 }); rowRevoke.push_back([choice, changed] { choice.SelectionChanged(changed); }); row.positions.emplace_back(context, choice);
             }
-            expander.Content(positions); section.Children().Append(expander); rows.push_back(std::move(row));
-        }
-        for (auto &[group, section] : sections)
-        {
-            const char *key = group == 0 ? "settings.contextMenu.common" : group == 3 ? "settings.contextMenu.types" : group == 4 ? "settings.contextMenu.currentSelection" :
-                category == ext::Category::Objects ? (group == 1 ? "settings.contextMenu.files" : "settings.contextMenu.folders") :
-                (group == 1 ? "settings.contextMenu.folderBackground" : "settings.contextMenu.desktop");
-            muxc::TextBlock label; label.Text(L(key)); label.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); label.Margin({0, 0, 0, 8});
-            section.Children().InsertAt(0, label);
-            muxc::Border groupCard; if (cardStyle) groupCard.Style(cardStyle); groupCard.Child(section); groups.Children().Append(groupCard);
-        }
-        if (rows.empty() && !view.scanning) Status(L("settings.contextMenu.empty"));
+        expander.Content(positions);
     }
     void Apply(const SettingsSnapshot &snapshot)
     {

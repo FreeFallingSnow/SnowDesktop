@@ -98,10 +98,24 @@ class Presentation
         // the service completes valid in-flight work for the next opening.
         for (auto image : images_) DeleteObject(image);
     }
-    void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &, UINT moreCommand)
+    void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
         MoveMoreToBottom(items, moreCommand);
         if (cached_) Insert(items, Convert(VisibleSnapshot(prefs_, *cached_, contexts_)), moreCommand);
+        else if (!source_.paths.empty() && HasOptIns(prefs_))
+            options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
+                if (!canApply) return {};
+                auto view = service_.View(source_);
+                if (!view.snapshot && view.pending) return {};
+                auto updated = current;
+                if (view.snapshot)
+                {
+                    cached_ = std::move(view.snapshot); contexts_ = view.contexts;
+                    Insert(updated, Convert(VisibleSnapshot(prefs_, *cached_, contexts_)), moreCommand);
+                }
+                // A completed empty/failed query also ends the one-shot poll.
+                return updated;
+            };
     }
     bool Invoke(UINT command, POINT point)
     {

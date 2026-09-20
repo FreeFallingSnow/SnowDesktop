@@ -719,7 +719,12 @@ void TestSnapshotPresentation()
         ext::Presentation cold(request, prefs, L"", L"", service);
         std::vector<menu::Item> items = {more}; menu::Options options;
         cold.Attach(items, options, 7);
-        Expect(items.size() == 1 && !options.pollItems, "cold menu freezes without a placeholder or async item replacement");
+        Expect(items.size() == 1 && options.pollItems, "cold popup starts with base commands and an asynchronous completion hook, without a placeholder");
+        PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "first uncached popup completes its real query");
+        Expect(!options.pollItems(items, false), "cold completion waits while the pointer or cascade prevents safe insertion");
+        const auto loaded = options.pollItems(items, true);
+        Expect(loaded && loaded->size() == 2 && loaded->front().label == L"压缩" && loaded->back().command == 7,
+               "first uncached popup inserts enabled commands above More when the renderer permits it");
     }
     PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "closing a popup leaves the host query alive to warm the next popup");
     const auto first = service.View(request);
@@ -733,6 +738,11 @@ void TestSnapshotPresentation()
         PumpUntil([&] { return service.View(request).revision > first.revision; }, "background refresh finishes");
         Expect(items.size() == 2 && !options.pollItems, "completed refresh cannot alter the open menu or its hit regions");
     }
+    const auto otherPath = directory.path / L"quick-close.txt";
+    { std::ofstream file(otherPath); file << "private target"; }
+    auto other = request; other.paths = {otherPath.wstring()};
+    { ext::Presentation closed(other, prefs, L"", L"", service); }
+    PumpUntil([&] { return service.View(other).snapshot.has_value(); }, "closing an uncached popup keeps its shared query alive");
 }
 void TestPendingCachedClick()
 {
@@ -908,6 +918,93 @@ void TestCatalogueDependencies()
     mode = 2; service.Inspect({}, true);
     PumpUntil([&] { return scanNumber >= 3 && !service.Inspect().scanning; }, "relevant registration scan completes");
     Expect(!service.View(request).snapshot, "a relevant registration change invalidates its dependent snapshot");
+}
+
+void TestUsefulManagementItems()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    std::atomic<bool> release = false;
+    std::atomic<int> queries = 0;
+    auto registry = [] {
+        ext::Catalogue catalogue; catalogue.revision = 1;
+        for (int i = 0; i < 3000; ++i)
+        {
+            ext::Registration row; row.id = "reg:unused-" + std::to_string(i); row.contexts = 15;
+            row.display.label = L"Duplicate registry label"; catalogue.rows.push_back(row);
+        }
+        return catalogue;
+    };
+    ext::MenuService service(temp.path / L"cache", [&](const auto &) {
+        ++queries;
+        return ext::QueryWork{[&]() -> std::optional<ext::Reply> {
+            if (!release) return {};
+            ext::Reply reply; reply.ok = true;
+            ext::Entry first; first.provider = "menu:archive:one"; first.label = L"Archive";
+            first.width = first.height = 1; first.pixels = {20, 40, 60, 255};
+            ext::Entry child; child.label = L"Compress"; child.key = "compress"; child.token = 17;
+            first.children = {child};
+            auto second = first; second.provider = "menu:archive:two";
+            auto disabled = first; disabled.provider = "disabled"; disabled.enabled = false;
+            auto placeholder = first; placeholder.provider = "placeholder"; placeholder.label = L"…";
+            reply.entries = {first, second, disabled, placeholder};
+            return reply;
+        }, [](UINT, POINT) {}};
+    }, registry);
+    const auto cold = service.Inspect();
+    Expect(cold.catalogue.rows.empty() && cold.scanning, "uncached settings return immediately and start background discovery");
+    PumpUntil([&] { return queries >= 2; }, "uncached settings actively query real baseline objects without requiring opt-ins");
+    const auto pending = service.Inspect();
+    Expect(pending.catalogue.rows.empty(), "three thousand unassociated registry records never become disabled settings controls");
+    release = true;
+    PumpUntil([&] { const auto view = service.Inspect(); return !view.scanning; }, "settings dynamically receive useful Shell roots on first access");
+    const auto loaded = service.Inspect();
+    Expect(loaded.catalogue.rows.size() == 2, "only the two actionable observed identities reach settings");
+    Expect(queries == 4, "default discovery is bounded to four real object/context queries");
+    Expect(loaded.catalogue.rows[0].id != loaded.catalogue.rows[1].id, "same-name actual providers are not merged by label");
+    for (const auto &row : loaded.catalogue.rows)
+    {
+        Expect(row.linked && row.systemEnabled && row.contexts == 15, "same identity merges observed scopes into an actionable switch");
+        Expect(row.display.children.empty() && !row.display.token && row.display.pixels.size() == 4, "settings carry only root labels and icons, not every dynamic child or token");
+        ext::Preferences prefs; ext::SetCommon(prefs, row.id, ext::Category::Objects, true);
+        ext::Reply actual; actual.ok = true; actual.entries = {row.display};
+        Expect(ext::VisibleSnapshot(prefs, actual, 3).size() == 1, "a displayed unassociated provider switch controls the production visibility path");
+    }
+    Expect(snowdesktop::settings_ipc::Pack(loaded).size() < 8192, "settings IPC payload does not scale with the raw registry inventory");
+    std::cout << "Management projection: registry=3000, rows=" << loaded.catalogue.rows.size()
+              << ", bytes=" << snowdesktop::settings_ipc::Pack(loaded).size() << '\n';
+}
+
+void BenchmarkManagement()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    ext::MenuService service(temp.path / L"cache");
+    const auto started = std::chrono::steady_clock::now();
+    const auto cold = service.Inspect();
+    std::cout << "management first_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()
+              << " rows=" << cold.catalogue.rows.size() << std::endl;
+    const auto deadline = GetTickCount64() + 30000;
+    ext::CatalogueView ready;
+    do
+    {
+        ready = service.Inspect();
+        if (!ready.scanning) break;
+        MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+    } while (GetTickCount64() < deadline);
+    Expect(!ready.scanning && !ready.catalogue.rows.empty(), "real settings discovery produces actionable rows");
+    std::cout << "management complete_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()
+              << " rows=" << ready.catalogue.rows.size() << " bytes=" << snowdesktop::settings_ipc::Pack(ready).size() << std::endl;
+    for (int i = 0; i < 30; ++i)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const auto view = service.Inspect();
+        std::cout << "management warm_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
+                  << " rows=" << view.catalogue.rows.size() << std::endl;
+    }
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
 }
 
 // Opt-in measurements use the real Session path and private files only. They
@@ -1088,7 +1185,8 @@ int wmain(int argc, wchar_t **argv)
     {
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
-        if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
+        if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else
         {
             RunTests();
@@ -1101,6 +1199,7 @@ int wmain(int argc, wchar_t **argv)
             TestQueryScheduler();
             TestSelectionScopes();
             TestCatalogueDependencies();
+            TestUsefulManagementItems();
         }
     }
     catch (const std::exception& error)
