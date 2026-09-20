@@ -973,6 +973,21 @@ void TestUsefulManagementItems()
     Expect(snowdesktop::settings_ipc::Pack(loaded).size() < 8192, "settings IPC payload does not scale with the raw registry inventory");
     std::cout << "Management projection: registry=3000, rows=" << loaded.catalogue.rows.size()
               << ", bytes=" << snowdesktop::settings_ipc::Pack(loaded).size() << '\n';
+
+    service.Inspect({}, true);
+    PumpUntil([&] { return !service.Inspect().scanning; }, "explicit refresh completes baseline discovery");
+    Expect(queries == 8, "explicit settings refresh queries all four locations despite the fresh-cache throttle");
+
+    ext::Request previous; previous.paths = {(temp.path / L"previous.txt").wstring()};
+    service.Manage(previous);
+    ext::Request desktop; desktop.context = ext::Context::Desktop; desktop.background = true;
+    const auto switching = service.Inspect(desktop);
+    Expect(switching.selection.context == ext::Context::Desktop,
+           "desktop inspection never routes settings back to the previous file while resolving its path");
+    PumpUntil([&] {
+        const auto selected = service.Inspect(desktop).selection;
+        return selected.context == ext::Context::Desktop && !selected.paths.empty();
+    }, "desktop inspection resolves its real path in the background");
 }
 
 void BenchmarkManagement()

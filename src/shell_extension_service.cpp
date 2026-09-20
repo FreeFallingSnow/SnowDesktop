@@ -114,7 +114,7 @@ struct MenuService::Impl
     Catalogue available;
     Key availableSignature;
     std::vector<Request> discovery;
-    bool discoverRequested = false;
+    bool discoverRequested = false, discoverForce = false;
     Preferences preferences;
     Request management;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false;
@@ -419,7 +419,8 @@ struct MenuService::Impl
                 std::erase_if(targets, [](const auto &request) { return !Local(request); });
                 std::lock_guard lock(mutex);
                 discovery = std::move(targets); discoverRequested = false;
-                for (const auto &request : discovery) Queue(request, QueryPriority::Inspect, false);
+                const bool force = std::exchange(discoverForce, false);
+                for (const auto &request : discovery) Queue(request, QueryPriority::Inspect, force);
             }
             bool warmDesktop = false, inspectDesktop = false;
             { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false); inspectDesktop = desktopInspection; }
@@ -558,10 +559,17 @@ void MenuService::Manage(const Request &request)
 CatalogueView MenuService::Inspect(const Request &request, bool refresh)
 {
     std::lock_guard lock(impl_->mutex);
-    if (refresh || !impl_->inspected) { impl_->scanRequested = true; impl_->discoverRequested = true; }
+    if (refresh || !impl_->inspected)
+    {
+        impl_->scanRequested = true; impl_->discoverRequested = true;
+        impl_->discoverForce |= refresh;
+    }
     impl_->inspected = true;
     if (request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
-    const auto selection = request.paths.empty() ? impl_->management : request;
+    // Keep an explicit desktop inspection selected while its path is resolved
+    // on the worker; returning the previous file here reroutes the settings UI.
+    const auto selection = request.context == Context::Desktop && request.paths.empty() && impl_->desktopInspection
+        ? request : request.paths.empty() ? impl_->management : request;
     if (!selection.paths.empty()) impl_->Queue(selection, QueryPriority::Inspect, refresh);
     CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
     result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested;
