@@ -773,8 +773,9 @@ void BenchmarkMenus()
     {
         ext::Request request;
         request.paths = {(folder ? directory.path : file).wstring()};
-        for (int iteration = 0; iteration < 4; ++iteration)
+        for (int iteration = 0; iteration < 35; ++iteration)
         {
+            if (iteration < 5) ext::Session::ReleaseIdleWorker();
             const auto start = GetTickCount64();
             const auto diskStart=std::chrono::steady_clock::now();
             ext::MenuSnapshotCache disk(ext::SharedMenuCache().Directory());
@@ -794,6 +795,7 @@ void BenchmarkMenus()
             }
             const auto elapsed = GetTickCount64() - start;
             std::cout << "menu_benchmark scope=" << (folder ? "folder" : "file")
+                      << " mode=" << (iteration < 5 ? "cold" : "warm")
                       << " iteration=" << iteration << " snapshot=" << bool(snapshot) << " disk_ms=" << diskMs
                       << " start_ms=" << launched - start
                       << " ready_ms=" << elapsed << " ok=" << (reply && reply->ok)

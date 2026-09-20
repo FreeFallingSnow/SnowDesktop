@@ -1,4 +1,5 @@
 #include "shell_extension_menu_cache.h"
+#include "shell_extension_diagnostics.h"
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -212,6 +213,7 @@ std::wstring MenuSnapshotCache::Epoch() const
 }
 void MenuSnapshotCache::Invalidate()
 {
+    MenuTrace("cache", "invalidate");
     rows_.clear();
     if (directory_.empty())
         return;
@@ -318,6 +320,7 @@ std::optional<Reply> MenuSnapshotCache::Find(const Ticket &ticket, std::uint64_t
         }
         if (now < row->second.written || now - row->second.written >= LifetimeMs)
             return {};
+        MenuTrace("cache", "hit", 0, static_cast<unsigned>(row->second.reply.entries.size()));
         return row->second.reply;
     }
     catch (...)

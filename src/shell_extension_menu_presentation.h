@@ -1,5 +1,6 @@
 #pragma once
 #include "modern_menu.h"
+#include "shell_extension_diagnostics.h"
 #include "shell_extension_menu_cache.h"
 #include <algorithm>
 #include <set>
@@ -84,6 +85,7 @@ class Presentation
     Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring)
         : prefs_(std::move(prefs)), source_(source)
     {
+        MenuTiming timing("first_screen");
         const auto context = ResolveContext(source);
         if (source.paths.empty() || std::none_of(prefs_.shown.begin(), prefs_.shown.end(),
                                                  [=](const auto &item) { return item.context == context; }))
@@ -91,6 +93,7 @@ class Presentation
         generation_ = MenuCacheGeneration();
         ticket_ = SharedMenuCache().Capture(source);
         cached_ = SharedMenuCache().Find(ticket_);
+        timing.Record(cached_ ? "snapshot" : "miss");
         try
         {
             session_ = std::make_unique<Session>(source);

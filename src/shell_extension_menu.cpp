@@ -1,4 +1,5 @@
 #include "shell_extension_menu.h"
+#include "shell_extension_diagnostics.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_cache.h"
 #include "menu_label.h"
@@ -907,6 +908,7 @@ struct Session::Impl
 thread_local std::unique_ptr<Session::Impl> Session::Impl::idle;
 Session::Session(const Request &request, DWORD queryTimeoutMs)
 {
+    MenuTiming timing("helper_start");
     if (sessions.fetch_add(1) >= 8)
     {
         sessions.fetch_sub(1);
@@ -918,6 +920,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
         auto &idle = Impl::idle;
         if (idle && (idle->generation != generation || !idle->process->Running() ||
                      GetTickCount64() - idle->born >= kWorkerLifetimeMs)) idle.reset();
+        const bool reused = bool(idle);
         impl_ = idle ? std::move(idle) : std::make_unique<Impl>();
         impl_->generation = generation;
         impl_->started = GetTickCount64();
@@ -937,6 +940,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
         PrepareSample(query, impl_->sampleDirectory);
         if (!impl_->process->Running()) impl_->process->Start(impl_->channel, L"--shell-menu-helper");
         impl_->channel.Notify("menu.query", query);
+        timing.Record(reused ? "reused" : "cold");
     }
     catch (...)
     {
@@ -968,6 +972,7 @@ Session::~Session()
     }
     sessions.fetch_sub(1);
 }
+void Session::ReleaseIdleWorker() { Impl::idle.reset(); }
 DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }
 std::optional<Reply> Session::Poll()
 {
@@ -982,16 +987,19 @@ std::optional<Reply> Session::Poll()
         return {};
     impl_->delivered = true;
     impl_->succeeded = impl_->reply->ok;
+    MenuTrace("query", impl_->succeeded ? "success" : "failure", double(GetTickCount64() - impl_->started), static_cast<unsigned>(impl_->reply->entries.size()));
     return std::move(impl_->reply);
 }
 void Session::Invoke(UINT token, POINT position)
 {
     if (!impl_->delivered || !impl_->process->Running())
         return;
+    MenuTiming timing("invoke_ack");
     AllowSetForegroundWindow(impl_->process->ProcessId());
     // Request acknowledgement only queues the invocation; arbitrary extension
     // code is dispatched afterwards, so this does not wait for a dialog.
     impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y);
+    timing.Record("acknowledged");
     auto process = impl_->process;
     impl_->detached = true;
     std::thread([process] {

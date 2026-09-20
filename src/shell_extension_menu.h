@@ -47,6 +47,7 @@ class Session
     Session &operator=(const Session &) = delete;
     std::optional<Reply> Poll();
     DWORD ProcessId() const noexcept;
+    static void ReleaseIdleWorker();
     // Transfers ownership to a bounded invocation monitor; modeless dialogs
     // remain alive after the custom popup closes.
     void Invoke(UINT token, POINT position);
