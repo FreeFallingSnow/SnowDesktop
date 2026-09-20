@@ -26,6 +26,7 @@
   "settings.contextMenu.loading": "Leyendo el menú del sistema…",
   "settings.contextMenu.failed": "No se pudo cargar el menú del sistema. Inténtalo de nuevo.",
   "settings.contextMenu.empty": "El sistema no ofrece otras opciones de menú.",
+  "settings.contextMenu.mixed": "Algunos tipos de archivo tienen ajustes distintos",
   "settings.contextMenu.search": "Buscar opciones del menú",
   "settings.contextMenu.refresh": "Actualizar",
   "settings.contextMenu.files": "Archivos",

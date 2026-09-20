@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "context_menu_page_presenter.h"
 #include "../shell_extension_service.h"
+#include "../shell_extension_management.h"
 #include <array>
 #include <cwctype>
 #include <shobjidl.h>
@@ -16,9 +17,16 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
 {
     struct Row
     {
-        std::string id;
+        ext::ManagementRow model;
+        muxc::Expander expander;
+        muxc::Border icon;
+        muxc::TextBlock title, scope, mixed;
         muxc::ToggleSwitch toggle;
-        std::vector<std::pair<ext::Context, muxc::ComboBox>> positions;
+        muxc::StackPanel positionsPanel;
+        struct Position { ext::Context context; muxc::Grid layout; muxc::ComboBox choice; std::function<void()> revoke; };
+        std::vector<Position> positions;
+        std::vector<std::function<void()>> revoke;
+        int group = -1;
     };
     LocalizeCallback localize;
     PersonalizationPageActions actions;
@@ -33,15 +41,17 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::HyperlinkButton chooseObject, chooseFolder, chooseDesktop;
     muxc::TextBlock heading, status;
     mux::DispatcherTimer timer, rowTimer;
-    std::vector<ext::Registration> pendingRows;
+    std::vector<ext::ManagementRow> pendingRows;
     std::map<int, muxc::StackPanel> sections;
     size_t nextRow = 0;
-    std::vector<std::function<void()>> revoke, rowRevoke;
+    std::vector<std::function<void()>> revoke;
     std::vector<Row> rows;
     ext::Preferences prefs;
     ext::Request request;
     ext::CatalogueView view;
     ext::Category category = ext::Category::Objects;
+    ext::Category rowCategory = ext::Category::Objects;
+    bool hasVisibleRows = false;
     std::uint64_t generation = 0;
     bool active = false, closed = false, updating = false, initialized = false, routed = false;
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
@@ -114,7 +124,6 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 routed = true; Text();
             }
             ext::MigrateAssociations(prefs, view.catalogue);
-            Status(view.scanning && view.catalogue.rows.empty() ? L("settings.contextMenu.loading") : L"");
             BuildRows();
             if (view.scanning || view.menu.pending) timer.Start(); else timer.Stop();
         }
@@ -126,11 +135,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         try
         {
             auto next = actions.contextMenu(request, false);
-            const bool changed = next.catalogue.revision != view.catalogue.revision || next.catalogue.associations.size() != view.catalogue.associations.size() || next.menu.revision != view.menu.revision;
+            const bool changed = next.catalogue.revision != view.catalogue.revision;
             if (request.paths.empty() && next.selection.context == ext::Context::Desktop && !next.selection.paths.empty()) request = next.selection;
             view = std::move(next);
             if (changed) { ext::MigrateAssociations(prefs, view.catalogue); BuildRows(); }
-            if (!view.scanning && !view.menu.pending) { timer.Stop(); Status(view.menu.error.empty() ? L"" : L("settings.contextMenu.failed")); }
+            UpdateStatus();
+            if (!view.scanning && !view.menu.pending) timer.Stop();
         }
         catch (...) { Status(L("settings.contextMenu.failed")); timer.Stop(); }
     }
@@ -176,33 +186,75 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         icon.FontSize(18);
         return icon;
     }
-    int Group(const ext::Registration &entry) const
+    void UpdateStatus()
     {
-        const unsigned mask = category == ext::Category::Objects ? 3 : 12;
-        const bool typed = !entry.types.empty() && std::find(entry.types.begin(), entry.types.end(), L"*") == entry.types.end();
-        return typed ? 3 : (entry.contexts & mask) == mask ? 0 : (entry.contexts & (category == ext::Category::Objects ? 1 : 4)) ? 1 : 2;
+        if (hasVisibleRows) Status(L"");
+        else if (view.scanning || view.menu.pending) Status(L("settings.contextMenu.loading"));
+        else Status(L(view.menu.error.empty() ? "settings.contextMenu.empty" : "settings.contextMenu.failed"));
+    }
+    Row *FindRow(const std::string &id)
+    {
+        const auto it = std::find_if(rows.begin(), rows.end(), [&](const auto &row) { return row.model.id == id; });
+        return it == rows.end() ? nullptr : &*it;
+    }
+    static void RemoveChild(muxc::Panel panel, mux::UIElement child)
+    {
+        uint32_t index = 0;
+        if (panel.Children().IndexOf(child, index)) panel.Children().RemoveAt(index);
+    }
+    void RemoveRow(Row &row)
+    {
+        for (auto &r : row.revoke) r();
+        for (auto &p : row.positions) p.revoke();
+        if (sections.contains(row.group)) RemoveChild(sections.at(row.group), row.expander);
+    }
+    void ClearRows()
+    {
+        rowTimer.Stop();
+        for (auto &row : rows) RemoveRow(row);
+        rows.clear(); groups.Children().Clear(); sections.clear(); pendingRows.clear(); nextRow = 0;
     }
     void BuildRows()
     {
         rowTimer.Stop();
-        for (auto &r : rowRevoke) r(); rowRevoke.clear(); rows.clear(); groups.Children().Clear(); sections.clear();
-        pendingRows.clear(); nextRow = 0;
-        auto filter = std::wstring(search.Text()); for (auto &c : filter) c = towlower(c);
-        const unsigned mask = category == ext::Category::Objects ? 3 : 12;
-        for (const auto &entry : view.catalogue.rows)
-        {
-            if (!entry.systemEnabled || !entry.linked || !(entry.contexts & mask)) continue;
-            auto name = entry.display.label; for (auto &c : name) c = towlower(c);
-            for (const auto &type : entry.types) name += L" " + type;
-            if (!filter.empty() && name.find(filter) == std::wstring::npos) continue;
-            pendingRows.push_back(entry);
-        }
-        std::stable_sort(pendingRows.begin(), pendingRows.end(), [this](const auto &a, const auto &b) {
-            const auto x = Group(a), y = Group(b); return x != y ? x < y : a.display.label < b.display.label;
-        });
+        // Only explicit category/localization changes reset the list. Polling,
+        // refresh and search reconcile identities and preserve surviving rows.
+        if (rowCategory != category) { ClearRows(); rowCategory = category; }
+        const auto desired = ext::ManagementRows(view.catalogue, category, std::wstring(search.Text()));
+        hasVisibleRows = !desired.empty();
+        pendingRows = ext::PlanManagementUpdates(rows, desired, [this](auto &row) { RemoveRow(row); });
+        nextRow = 0;
+        UpdateChoices();
         AppendRows();
         if (nextRow < pendingRows.size()) rowTimer.Start();
-        if (pendingRows.empty() && !view.scanning) Status(L("settings.contextMenu.empty"));
+        UpdateStatus();
+    }
+    muxc::StackPanel Section(int group)
+    {
+        if (!sections.contains(group))
+        {
+            muxc::StackPanel section; section.Spacing(4);
+            const char *key = group == 0 ? "settings.contextMenu.common" : group == 3 ? "settings.contextMenu.types" :
+                category == ext::Category::Objects ? (group == 1 ? "settings.contextMenu.files" : "settings.contextMenu.folders") :
+                (group == 1 ? "settings.contextMenu.folderBackground" : "settings.contextMenu.desktop");
+            muxc::TextBlock label; label.Text(L(key)); label.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); label.Margin({0, 0, 0, 8});
+            section.Children().Append(label);
+            muxc::Border groupCard; if (cardStyle) groupCard.Style(cardStyle); groupCard.Child(section);
+            // New cards append while discovery is active; existing rows do not
+            // jump because an earlier alphabetical group has just arrived.
+            groups.Children().Append(groupCard); sections.emplace(group, section);
+        }
+        return sections.at(group);
+    }
+    void RemoveEmptySections()
+    {
+        for (auto it = sections.begin(); it != sections.end();)
+            if (it->second.Children().Size() == 1)
+            {
+                RemoveChild(groups, it->second.Parent().as<mux::UIElement>());
+                it = sections.erase(it);
+            }
+            else ++it;
     }
     void AppendRows()
     {
@@ -211,95 +263,118 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (unsigned added = 0; nextRow < pendingRows.size() && added < 8; ++added)
         {
             const auto &entry = pendingRows[nextRow++];
-            const auto group = Group(entry);
-            auto types = std::wstring{}; for (const auto &type : entry.types) if (type != L"*") types += type + L" ";
-            if (!sections.contains(group))
+            if (auto *existing = FindRow(entry.id)) UpdateRow(*existing, entry);
+            else
             {
-                muxc::StackPanel section; section.Spacing(4);
-                const char *key = group == 0 ? "settings.contextMenu.common" : group == 3 ? "settings.contextMenu.types" :
-                    category == ext::Category::Objects ? (group == 1 ? "settings.contextMenu.files" : "settings.contextMenu.folders") :
-                    (group == 1 ? "settings.contextMenu.folderBackground" : "settings.contextMenu.desktop");
-                muxc::TextBlock label; label.Text(L(key)); label.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); label.Margin({0, 0, 0, 8});
-                section.Children().Append(label);
-                muxc::Border groupCard; if (cardStyle) groupCard.Style(cardStyle); groupCard.Child(section); groups.Children().Append(groupCard);
-                sections.emplace(group, section);
-            }
-            auto section = sections.at(group);
-            muxc::Grid layout; Column(layout, 32, mux::GridUnitType::Pixel); Column(layout, 1, mux::GridUnitType::Star); Column(layout, 1, mux::GridUnitType::Auto);
-            layout.HorizontalAlignment(mux::HorizontalAlignment::Stretch); layout.Children().Append(Icon(entry.display));
-            muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center);
-            muxc::TextBlock title; title.Text(entry.display.label); title.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(title);
-            if (group == 3 && !types.empty())
-            {
-                muxc::TextBlock scope; scope.Text(types); scope.FontSize(12); scope.Opacity(0.7);
-                scope.TextTrimming(mux::TextTrimming::CharacterEllipsis); names.Children().Append(scope);
-            }
-            names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
-            Row row; row.id = entry.id; row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(44);
-            row.toggle.VerticalAlignment(mux::VerticalAlignment::Center); row.toggle.IsEnabled(entry.linked);
-            row.toggle.IsOn(ext::CommonShown(prefs, row.id, category)); mux::Automation::AutomationProperties::SetName(row.toggle, entry.display.label);
-            muxc::Grid::SetColumn(row.toggle, 2); layout.Children().Append(row.toggle);
-            auto token = row.toggle.Toggled([this, id = row.id, toggle = row.toggle, scope = category](auto &&, auto &&) {
-                if (closed || updating || !active || !initialized || !actions.updateGeneral) return;
-                const bool shown = toggle.IsOn(); const auto catalogue = view.catalogue;
-                actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [id, scope, shown, catalogue](auto &settings) {
-                    ext::MigrateAssociations(settings.shellExtensions, catalogue);
-                    ext::SetCommon(settings.shellExtensions, id, scope, shown);
+                Row row; row.model = entry;
+                muxc::Grid layout; Column(layout, 32, mux::GridUnitType::Pixel); Column(layout, 1, mux::GridUnitType::Star); Column(layout, 1, mux::GridUnitType::Auto);
+                layout.HorizontalAlignment(mux::HorizontalAlignment::Stretch); layout.Children().Append(row.icon);
+                muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center);
+                row.title.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(row.title);
+                row.scope.FontSize(12); row.scope.Opacity(0.7); row.scope.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(row.scope);
+                row.mixed.FontSize(12); row.mixed.Opacity(0.7); row.mixed.Text(L("settings.contextMenu.mixed")); names.Children().Append(row.mixed);
+                names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
+                row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(44);
+                row.toggle.VerticalAlignment(mux::VerticalAlignment::Center);
+                muxc::Grid::SetColumn(row.toggle, 2); layout.Children().Append(row.toggle);
+                auto token = row.toggle.Toggled([this, id = entry.id](auto &&, auto &&) {
+                    if (closed || updating || !active || !initialized || !actions.updateGeneral) return;
+                    const auto *current = FindRow(id); if (!current) return;
+                    const auto model = current->model; const bool shown = current->toggle.IsOn(); const auto catalogue = view.catalogue;
+                    actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [model, scope = category, shown, catalogue](auto &settings) {
+                        ext::MigrateAssociations(settings.shellExtensions, catalogue);
+                        ext::SetManagementCommon(settings.shellExtensions, model, scope, shown);
+                    });
+                }); row.revoke.push_back([toggle = row.toggle, token] { toggle.Toggled(token); });
+                row.expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch); row.expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+                row.expander.Header(layout); muxc::ToolTipService::SetToolTip(row.expander, winrt::box_value(L("settings.contextMenu.locations")));
+                row.positionsPanel.Spacing(8);
+                const auto expanding = row.expander.Expanding([this, id = entry.id](auto &&, auto &&) {
+                    if (closed || !active) return;
+                    if (auto *current = FindRow(id)) PopulatePositions(*current);
                 });
-            }); rowRevoke.push_back([toggle = row.toggle, token] { toggle.Toggled(token); });
-            muxc::Expander expander; expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch); expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-            expander.Header(layout); muxc::ToolTipService::SetToolTip(expander, winrt::box_value(L("settings.contextMenu.locations")));
-            mux::Automation::AutomationProperties::SetName(expander, entry.display.label + L" — " + L("settings.contextMenu.locations"));
-            const auto expanding = expander.Expanding([this, expander, id = row.id, contexts = entry.contexts](auto &&, auto &&) {
-                if (!closed && active && !expander.Content()) PopulatePositions(expander, id, contexts);
-            });
-            rowRevoke.push_back([expander, expanding] { expander.Expanding(expanding); });
-            section.Children().Append(expander); rows.push_back(std::move(row));
+                row.revoke.push_back([expander = row.expander, expanding] { expander.Expanding(expanding); });
+                rows.push_back(std::move(row)); UpdateRow(rows.back(), entry);
+            }
             if (GetTickCount64() - started >= 6) break;
         }
-        if (nextRow >= pendingRows.size()) rowTimer.Stop();
+        if (nextRow >= pendingRows.size()) { rowTimer.Stop(); RemoveEmptySections(); }
     }
-    void PopulatePositions(muxc::Expander expander, const std::string &id, unsigned contexts)
+    void UpdateRow(Row &row, const ext::ManagementRow &entry)
     {
-        const auto found = std::find_if(rows.begin(), rows.end(), [&](const auto &r) { return r.id == id; });
-        if (found == rows.end()) return;
-        auto &row = *found;
-        const auto name = std::wstring(mux::Automation::AutomationProperties::GetName(row.toggle));
-            muxc::StackPanel positions; positions.Spacing(8);
-            for (int i = category == ext::Category::Objects ? 0 : 2; i < (category == ext::Category::Objects ? 2 : 4); ++i)
-            {
-                if (!(contexts & (1u << i))) continue;
-                const auto context = static_cast<ext::Context>(i);
-                muxc::Grid position; Column(position, 1, mux::GridUnitType::Star); Column(position, 1, mux::GridUnitType::Auto);
-                muxc::TextBlock label; const char *keys[] = {"settings.contextMenu.files", "settings.contextMenu.folders", "settings.contextMenu.folderBackground", "settings.contextMenu.desktop"};
-                label.Text(L(keys[i])); label.VerticalAlignment(mux::VerticalAlignment::Center); position.Children().Append(label);
-                muxc::ComboBox choice;
-                for (const auto *key : {"settings.contextMenu.inherit", "settings.contextMenu.show", "settings.contextMenu.hide"}) choice.Items().Append(winrt::box_value(L(key)));
-                choice.SelectedIndex(static_cast<int>(ext::OverrideOf(prefs, row.id, context)));
-                mux::Automation::AutomationProperties::SetName(choice, name + L" " + L(keys[i]));
-                muxc::Grid::SetColumn(choice, 1); position.Children().Append(choice); positions.Children().Append(position);
-                const auto changed = choice.SelectionChanged([this, id = row.id, context, choice](auto &&, auto &&) {
-                    if (closed || updating || !active || !initialized || !actions.updateGeneral || choice.SelectedIndex() < 0) return;
-                    const auto visibility = static_cast<ext::Visibility>(choice.SelectedIndex()); const auto catalogue = view.catalogue;
-                    actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [id, context, visibility, catalogue](auto &settings) {
-                        ext::MigrateAssociations(settings.shellExtensions, catalogue); ext::SetOverride(settings.shellExtensions, id, context, visibility);
-                    });
-                }); rowRevoke.push_back([choice, changed] { choice.SelectionChanged(changed); }); row.positions.emplace_back(context, choice);
-            }
-        expander.Content(positions);
+        const auto group = ext::ManagementGroup(entry, category);
+        if (row.group != group)
+        {
+            if (sections.contains(row.group)) RemoveChild(sections.at(row.group), row.expander);
+            Section(group).Children().Append(row.expander); row.group = group;
+        }
+        // Replace only the changed row's display; the Expander and toggle retain
+        // identity, focus and expansion state throughout incremental discovery.
+        row.model = entry; row.title.Text(entry.display.label);
+        row.icon.Child(Icon(entry.display));
+        std::wstring types;
+        for (const auto &type : entry.types) if (type != L"*") { if (!types.empty()) types += L", "; types += type; }
+        row.scope.Text(types); row.scope.Visibility(group == 3 && !types.empty() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        mux::Automation::AutomationProperties::SetName(row.toggle, entry.display.label);
+        mux::Automation::AutomationProperties::SetName(row.expander, entry.display.label + L" — " + L("settings.contextMenu.locations"));
+        if (row.expander.Content()) PopulatePositions(row);
+        UpdateChoices(row);
     }
+    void PopulatePositions(Row &row)
+    {
+        std::erase_if(row.positions, [&](auto &position) {
+            if (row.model.contexts & ext::ContextBit(position.context)) return false;
+            position.revoke(); RemoveChild(row.positionsPanel, position.layout); return true;
+        });
+        for (int i = category == ext::Category::Objects ? 0 : 2; i < (category == ext::Category::Objects ? 2 : 4); ++i)
+        {
+            if (!(row.model.contexts & (1u << i))) continue;
+            const auto context = static_cast<ext::Context>(i);
+            if (std::any_of(row.positions.begin(), row.positions.end(), [&](const auto &p) { return p.context == context; })) continue;
+            Row::Position position; position.context = context;
+            Column(position.layout, 1, mux::GridUnitType::Star); Column(position.layout, 1, mux::GridUnitType::Auto);
+            muxc::TextBlock label; const char *keys[] = {"settings.contextMenu.files", "settings.contextMenu.folders", "settings.contextMenu.folderBackground", "settings.contextMenu.desktop"};
+            label.Text(L(keys[i])); label.VerticalAlignment(mux::VerticalAlignment::Center); position.layout.Children().Append(label);
+            auto choice = position.choice;
+            for (const auto *key : {"settings.contextMenu.inherit", "settings.contextMenu.show", "settings.contextMenu.hide"}) choice.Items().Append(winrt::box_value(L(key)));
+            choice.PlaceholderText(L("settings.contextMenu.mixed"));
+            mux::Automation::AutomationProperties::SetName(choice, row.model.display.label + L" " + L(keys[i]));
+            muxc::Grid::SetColumn(choice, 1); position.layout.Children().Append(choice); row.positionsPanel.Children().Append(position.layout);
+            const auto changed = choice.SelectionChanged([this, id = row.model.id, context, choice](auto &&, auto &&) {
+                if (closed || updating || !active || !initialized || !actions.updateGeneral || choice.SelectedIndex() < 0) return;
+                const auto *current = FindRow(id); if (!current) return;
+                const auto model = current->model;
+                const auto visibility = static_cast<ext::Visibility>(choice.SelectedIndex()); const auto catalogue = view.catalogue;
+                actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [model, context, visibility, catalogue](auto &settings) {
+                    ext::MigrateAssociations(settings.shellExtensions, catalogue);
+                    ext::SetManagementOverride(settings.shellExtensions, model, context, visibility);
+                });
+            }); position.revoke = [choice, changed] { choice.SelectionChanged(changed); };
+            row.positions.push_back(std::move(position));
+        }
+        if (!row.expander.Content()) row.expander.Content(row.positionsPanel);
+        UpdateChoices(row);
+    }
+    void UpdateChoices(Row &row)
+    {
+        const bool wasUpdating = std::exchange(updating, true);
+        const auto common = ext::ManagementCommon(prefs, row.model, category);
+        row.toggle.IsOn(common.value_or(false));
+        row.mixed.Visibility(common ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        for (auto &position : row.positions)
+        {
+            const auto value = ext::ManagementOverride(prefs, row.model, position.context);
+            position.choice.SelectedIndex(value ? static_cast<int>(*value) : -1);
+        }
+        updating = wasUpdating;
+    }
+    void UpdateChoices() { for (auto &row : rows) UpdateChoices(row); }
     void Apply(const SettingsSnapshot &snapshot)
     {
         if (closed) return;
         generation = snapshot.generation; initialized = snapshot.initialized; prefs = snapshot.values.general.shellExtensions;
         ext::MigrateAssociations(prefs, view.catalogue);
-        updating = true;
-        for (auto &row : rows)
-        {
-            row.toggle.IsOn(ext::CommonShown(prefs, row.id, category));
-            for (auto &[context, choice] : row.positions) choice.SelectedIndex(static_cast<int>(ext::OverrideOf(prefs, row.id, context)));
-        }
-        updating = false;
+        UpdateChoices();
         if (!snapshot.sessionActive) Deactivate();
     }
     void Deactivate() { active = false; Cancel(); }
@@ -307,7 +382,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         if (closed) return;
         closed = true; Deactivate();
-        for (auto &r : rowRevoke) r(); rowRevoke.clear();
+        ClearRows();
         for (auto &r : revoke) r(); revoke.clear(); actions = {};
     }
 };
@@ -334,6 +409,8 @@ void ContextMenuPagePresenter::ApplySnapshot(const SettingsSnapshot &snapshot)
 void ContextMenuPagePresenter::RefreshLocalizedText()
 {
     impl_->Text();
+    impl_->ClearRows();
+    if (impl_->active) impl_->BuildRows();
 }
 void ContextMenuPagePresenter::Activate()
 {

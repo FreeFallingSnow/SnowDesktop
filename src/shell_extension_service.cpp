@@ -123,6 +123,7 @@ struct MenuService::Impl
     bool typesRequested = false, typesPreparing = false, typesForce = false, typeBatchForce = false;
     Preferences preferences;
     Request management;
+    Key inspectedSelection;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false;
     std::uint64_t clock = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -215,6 +216,7 @@ struct MenuService::Impl
                     else { item.id = id; item.kind = RegistrationKind::Observed; }
                     item.linked = true; item.contexts = 0;
                 }
+                if (known != registered.end()) item.commandIdentity = known->second->commandIdentity;
                 item.display = {};
                 item.display.provider = entry.provider; item.display.registration = entry.registration;
                 item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
@@ -258,7 +260,7 @@ struct MenuService::Impl
         { std::lock_guard lock(mutex); if (!observedDirty) return; value = available.rows; observedDirty = false; }
         try
         {
-            const auto bytes = settings_ipc::Pack(std::uint32_t(1), value);
+            const auto bytes = settings_ipc::Pack(std::uint32_t(2), value);
             std::error_code error; std::filesystem::create_directories(cache.Directory(), error);
             const auto temporary = cache.Directory() / L"observed.tmp";
             std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
@@ -276,7 +278,7 @@ struct MenuService::Impl
             settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
             if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
             auto [schema, value] = settings_ipc::Unpack<std::tuple<std::uint32_t, std::vector<Registration>>>(bytes);
-            if (schema != 1 || value.size() > 1024) return;
+            if (schema != 2 || value.size() > 1024) return;
             std::lock_guard lock(mutex);
             for (auto &entry : value)
                 if (!entry.id.empty() && entry.linked && entry.systemEnabled && !entry.display.provider.empty())
@@ -368,7 +370,7 @@ struct MenuService::Impl
         { std::lock_guard lock(mutex); if (!catalogueDirty) return; value = catalogue; catalogueDirty = false; }
         try
         {
-            const auto bytes = settings_ipc::Pack(std::uint32_t(2), value);
+            const auto bytes = settings_ipc::Pack(std::uint32_t(3), value);
             if (bytes.size() > 32 * 1024 * 1024) return;
             std::error_code ignored; std::filesystem::create_directories(cache.Directory(), ignored);
             const auto temporary = cache.Directory() / L"catalogue.tmp";
@@ -387,7 +389,7 @@ struct MenuService::Impl
             settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
             if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
             auto [schema, value] = settings_ipc::Unpack<std::tuple<std::uint32_t, Catalogue>>(bytes);
-            if (schema != 2) return;
+            if (schema != 3) return;
             std::lock_guard lock(mutex); catalogue = std::move(value);
         }
         catch (...) {}
@@ -666,7 +668,7 @@ void MenuService::Configure(Preferences preferences)
 }
 void MenuService::Manage(const Request &request)
 {
-    std::lock_guard lock(impl_->mutex); impl_->management = request;
+    std::lock_guard lock(impl_->mutex); impl_->management = request; impl_->inspectedSelection.clear();
 }
 CatalogueView MenuService::Inspect(const Request &request, bool refresh)
 {
@@ -683,7 +685,14 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     // on the worker; returning the previous file here reroutes the settings UI.
     const auto selection = request.context == Context::Desktop && request.paths.empty() && impl_->desktopInspection
         ? request : request.paths.empty() ? impl_->management : request;
-    if (!selection.paths.empty()) impl_->Queue(selection, QueryPriority::Inspect, refresh);
+    const auto selectionKey = SelectionKey(selection);
+    // Polling observes the current discovery, never starts it over after the
+    // ordinary query freshness window expires (or after cache eviction).
+    if (!selection.paths.empty() && (refresh || selectionKey != impl_->inspectedSelection))
+    {
+        impl_->inspectedSelection = selectionKey;
+        impl_->Queue(selection, QueryPriority::Inspect, refresh);
+    }
     CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
     result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested ||
         impl_->typesRequested || impl_->typesPreparing || impl_->nextType < impl_->typeDiscovery.size();

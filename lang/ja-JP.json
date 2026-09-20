@@ -26,6 +26,7 @@
   "settings.contextMenu.loading": "システムメニューを読み込み中…",
   "settings.contextMenu.failed": "システムメニューを読み込めませんでした。再試行してください。",
   "settings.contextMenu.empty": "システムに追加のメニュー項目はありません。",
+  "settings.contextMenu.mixed": "ファイルの種類によって設定が異なります",
   "settings.contextMenu.search": "メニュー項目を検索",
   "settings.contextMenu.refresh": "更新",
   "settings.contextMenu.files": "ファイル",

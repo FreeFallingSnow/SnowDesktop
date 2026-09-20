@@ -26,6 +26,7 @@
   "settings.contextMenu.loading": "正在讀取系統選單…",
   "settings.contextMenu.failed": "無法載入系統選單，請重試。",
   "settings.contextMenu.empty": "系統未提供其他選單項目。",
+  "settings.contextMenu.mixed": "部分類型設定不同",
   "settings.contextMenu.search": "搜尋選單項目",
   "settings.contextMenu.refresh": "重新整理",
   "settings.contextMenu.files": "檔案",

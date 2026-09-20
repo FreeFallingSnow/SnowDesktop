@@ -49,12 +49,14 @@ void TestCodec()
     SetOverride(extensions.shellExtensions, "clsid:test", Context::Desktop, Visibility::Hide);
     CatalogueView menuView;
     menuView.selection.paths = {L"C:\\测试.pdf", L"C:\\other.png"}; menuView.selection.extended = true;
-    Registration registration; registration.id = "reg:test"; registration.contexts = 3; registration.linked = false;
+      Registration registration; registration.id = "reg:test"; registration.contexts = 3; registration.linked = false;
     registration.display.label = L"Type command"; registration.sources = {L".pdf\\shell\\test"};
+    registration.commandIdentity = std::string("command\0arguments", 17);
     menuView.catalogue.rows = {registration};
     const auto menuRestored = Unpack<CatalogueView>(Pack(menuView));
     Check(menuRestored.selection == menuView.selection && menuRestored.catalogue.rows.size() == 1 &&
-          menuRestored.catalogue.rows[0].id == registration.id && !menuRestored.catalogue.rows[0].linked,
+          menuRestored.catalogue.rows[0].id == registration.id && !menuRestored.catalogue.rows[0].linked &&
+          menuRestored.catalogue.rows[0].commandIdentity == registration.commandIdentity,
           "private menu IPC retains mixed selection, Shift and pending registration identity");
     Check(Unpack<GeneralSettings>(Pack(extensions)).shellExtensions == extensions.shellExtensions,
           "explicit visibility and legacy exclusions cross settings IPC without losing identity or context");

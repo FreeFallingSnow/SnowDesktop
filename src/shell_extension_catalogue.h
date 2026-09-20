@@ -15,6 +15,9 @@ struct Registration
     unsigned contexts = 0;
     bool systemEnabled = true, linked = false;
     std::uint64_t revision = 0;
+    // Exact execution identity for grouping equivalent static registrations in
+    // settings. Original IDs remain the persisted visibility/command authority.
+    std::string commandIdentity;
 };
 struct Association
 {
@@ -38,7 +41,7 @@ namespace snowdesktop::settings_ipc
 {
 template <> struct Fields<shell_extensions::Registration>
 {
-    template<class T> static auto Tie(T &v) { return std::tie(v.id, v.kind, v.display, v.sources, v.types, v.verbs, v.contexts, v.systemEnabled, v.linked, v.revision); }
+    template<class T> static auto Tie(T &v) { return std::tie(v.id, v.kind, v.display, v.sources, v.types, v.verbs, v.contexts, v.systemEnabled, v.linked, v.revision, v.commandIdentity); }
 };
 template <> struct Fields<shell_extensions::Association>
 {

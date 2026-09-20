@@ -26,6 +26,7 @@
   "settings.contextMenu.loading": "Reading the system menu…",
   "settings.contextMenu.failed": "Could not load the system menu. Please retry.",
   "settings.contextMenu.empty": "The system provides no additional menu items.",
+  "settings.contextMenu.mixed": "Some file types have different settings",
   "settings.contextMenu.search": "Search menu items",
   "settings.contextMenu.refresh": "Refresh",
   "settings.contextMenu.files": "Files",

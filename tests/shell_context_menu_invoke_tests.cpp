@@ -1,6 +1,7 @@
 #include "shell_context_menu_invoke.h"
 #include "shell_extension_menu.h"
 #include "shell_extension_catalogue.h"
+#include "shell_extension_management.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
@@ -349,6 +350,82 @@ void TestRegistryCatalogue()
     ext::SetOverride(prefs, "both", ext::Context::Folder, ext::Visibility::Inherit);
     Expect(!ext::IsHidden(prefs, "both", ext::Context::Folder), "restore inheritance removes the exception");
     JsonValue saved; Expect(ParseJson(ext::WritePreferences(prefs), saved) && ext::ReadPreferences(&saved) == prefs, "rules and retained legacy records round trip");
+    // Same action registered per image type must produce one management row,
+    // while distinct executables/arguments and unresolved captions stay apart.
+    for (const auto *type : {L".png", L".jpg", L".jpeg"})
+    {
+        const auto root = std::wstring(type) + L"\\shell\\wallpaper";
+        put(root.c_str(), L"MUIVerb", L"Set wallpaper");
+        put((root + L"\\command").c_str(), nullptr, L"\"C:\\PhotoTool.exe\" /wallpaper \"%1\"");
+    }
+    put(L".bmp\\shell\\wallpaper", L"MUIVerb", L"Set wallpaper");
+    put(L".bmp\\shell\\wallpaper\\command", nullptr, L"\"C:\\OtherTool.exe\" /wallpaper \"%1\"");
+    put(L".gif\\shell\\wallpaper", L"MUIVerb", L"Set wallpaper");
+    put(L".gif\\shell\\wallpaper\\command", nullptr, L"\"C:\\PhotoTool.exe\" /preview \"%1\"");
+    put(L".tif\\shell\\wallpaper", L"MUIVerb", L"Set wallpaper");
+    auto typed = ext::ReadCatalogue(registry.key, false);
+    std::erase_if(typed.rows, [](const auto &r) { return r.id.find("wallpaper") == std::string::npos; });
+    for (auto &row : typed.rows) row.linked = true;
+    auto grouped = ext::ManagementRows(typed, ext::Category::Objects);
+    Expect(grouped.size() == 4, "equivalent image commands merge but different executable, arguments and unresolved commands do not");
+    const auto merged = std::find_if(grouped.begin(), grouped.end(), [](const auto &r) { return r.members.size() == 3; });
+    Expect(merged != grouped.end() && merged->types == std::vector<std::wstring>{L".jpeg", L".jpg", L".png"},
+        "one switch retains all three file-type identities and displays unique extensions");
+    ext::Preferences original;
+    ext::SetCommon(original, merged->members.front().id, ext::Category::Objects, true);
+    const auto savedOriginal = original;
+    Expect(!ext::ManagementCommon(original, *merged, ext::Category::Objects).has_value() && original == savedOriginal,
+        "mixed existing rules are reported without rewriting or broadening them");
+    ext::SetManagementCommon(original, *merged, ext::Category::Objects, true);
+    for (const auto &member : merged->members)
+    {
+        ext::Reply menu; menu.ok = true; ext::Entry item; item.provider = "wallpaper"; item.registration = member.id; menu.entries = {item};
+        Expect(ext::VisibleSnapshot(original, menu, 1).size() == 1, "one grouped toggle enables every original registration in the actual visibility path");
+    }
+    ext::SetManagementOverride(original, *merged, ext::Context::File, ext::Visibility::Hide);
+    for (const auto &member : merged->members) Expect(ext::IsHidden(original, member.id, ext::Context::File), "grouped location exception controls all applicable type members");
+    Expect(ext::ManagementRows(typed, ext::Category::Objects, L".JPG").size() == 1, "type search retains the complete merged action");
+    typed.rows.front().systemEnabled = false;
+    grouped = ext::ManagementRows(typed, ext::Category::Objects);
+    Expect(std::none_of(grouped.begin(), grouped.end(), [&](const auto &r) { return std::any_of(r.members.begin(), r.members.end(), [&](const auto &m) { return m.id == typed.rows.front().id; }); }),
+        "system-disabled registrations cannot be enabled by a grouped switch");
+
+}
+
+// The real presenter reconciliation planner drives a minimal control adapter;
+// only WinUI widgets are replaced. A clear/recreate regression loses identity.
+void TestManagementUpdates()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    struct Control { ext::ManagementRow model; int identity = 0; bool expanded = false; };
+    std::vector<Control> controls;
+    int created = 0, removed = 0;
+    auto apply = [&](const std::vector<ext::ManagementRow> &desired) {
+        const auto updates = ext::PlanManagementUpdates(controls, desired, [&](auto &) { ++removed; });
+        for (const auto &model : updates)
+        {
+            const auto old = std::find_if(controls.begin(), controls.end(), [&](const auto &r) { return r.model.id == model.id; });
+            if (old == controls.end()) controls.push_back({model, ++created, false});
+            else old->model = model;
+        }
+        return updates.size();
+    };
+    ext::ManagementRow first; first.id = "first"; first.display.label = L"First"; first.contexts = 1;
+    first.members = {{"reg:png", 1}}; first.types = {L".png"};
+    Expect(apply({first}) == 1 && created == 1, "initial discovery creates one row");
+    controls.front().expanded = true;
+    auto irrelevant = first; irrelevant.display.token = 37; irrelevant.display.key = "later-session";
+    Expect(apply({irrelevant}) == 0, "query tokens and ownership metadata never rebuild an unchanged settings control");
+    auto second = first; second.id = "second"; second.display.label = L"Second";
+    Expect(apply({first, second}) == 1 && created == 2 && removed == 0 && controls.front().identity == 1 && controls.front().expanded,
+        "incremental discovery preserves existing control identity and expansion");
+    first.types.push_back(L".jpg"); first.members.push_back({"reg:jpg", 1});
+    Expect(apply({first, second}) == 1 && created == 2 && removed == 0 && controls.front().expanded,
+        "new file-type membership updates its row in place");
+    first.display.width = first.display.height = 1; first.display.pixels = {0, 0, 0, 255};
+    Expect(apply({first, second}) == 1 && created == 2, "a newly available icon changes only its surviving row");
+    Expect(apply({first}) == 0 && removed == 1 && controls.front().expanded,
+        "removal retires only the missing identity, keeping expansion and focus targets of survivors");
 }
 
 void TestExtensionSessions()
@@ -1055,6 +1132,7 @@ void TestFileTypeDiscovery()
                 "system-disabled type registrations do not create discovery jobs");
             imageRequest = *std::find_if(queried.begin(), queried.end(), [](const auto &r) { return std::filesystem::path(r.paths.front()).extension() == L".png"; });
         }
+        service.Inspect(imageRequest); // Start once; subsequent settings polls are read-only.
         std::vector<ext::Request> extra;
         for (int i = 0; i < 70; ++i)
         {
@@ -1063,6 +1141,8 @@ void TestFileTypeDiscovery()
         }
         PumpUntil([&] { return std::all_of(extra.begin(), extra.end(), [&](const auto &r) { return !service.View(r).pending; }) && !service.View(imageRequest).snapshot; },
             "exact image snapshot is evicted by later selections");
+        Expect(!service.Inspect(imageRequest).menu.pending, "settings polling never requeues an already inspected selection after eviction");
+        Expect(service.Inspect(imageRequest, true).menu.pending, "explicit refresh still queries the inspected selection after eviction");
         const auto retained = service.Inspect().catalogue.rows;
         Expect(std::any_of(retained.begin(), retained.end(), [](const auto &r) { return r.id == "reg:image"; }),
             "cache eviction never removes a discovered type-specific settings switch");
@@ -1117,6 +1197,8 @@ void BenchmarkManagement()
     Expect(!ready.scanning && !ready.catalogue.rows.empty(), "real settings discovery produces actionable rows");
     std::cout << "management complete_ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()
               << " rows=" << ready.catalogue.rows.size() << " bytes=" << snowdesktop::settings_ipc::Pack(ready).size() << std::endl;
+    const auto grouped = ext::ManagementRows(ready.catalogue, ext::Category::Objects);
+    std::cout << "management object_rows=" << grouped.size() << " merged_groups=" << std::count_if(grouped.begin(), grouped.end(), [](const auto &r) { return r.members.size() > 1; }) << std::endl;
     for (int i = 0; i < 30; ++i)
     {
         const auto start = std::chrono::steady_clock::now();
@@ -1313,6 +1395,7 @@ int wmain(int argc, wchar_t **argv)
             TestDeferredPopups();
             TestCatalogueCache();
             TestRegistryCatalogue();
+            TestManagementUpdates();
             TestExtensionSessions();
             TestSnapshotPresentation();
             TestPendingCachedClick();

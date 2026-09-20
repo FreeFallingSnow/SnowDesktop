@@ -26,6 +26,7 @@
   "settings.contextMenu.loading": "Lecture du menu système…",
   "settings.contextMenu.failed": "Impossible de charger le menu système. Réessayez.",
   "settings.contextMenu.empty": "Le système ne propose aucun autre élément de menu.",
+  "settings.contextMenu.mixed": "Certains types de fichiers ont des réglages différents",
   "settings.contextMenu.search": "Rechercher un élément",
   "settings.contextMenu.refresh": "Actualiser",
   "settings.contextMenu.files": "Fichiers",

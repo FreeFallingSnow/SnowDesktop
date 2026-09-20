@@ -182,11 +182,21 @@ struct Scanner
             if (label.empty()) label = Read(classes, path);
             if (label.empty()) label = verb;
             row.display.label = DecodeMenuLabel(Localized(label)).text;
+            const auto command = Read(classes, path + L"\\command");
+            const auto delegate = Read(classes, path + L"\\command", L"DelegateExecute");
+            // Never infer equivalence from the caption, verb alone, or a bare
+            // SubCommands list. Keep arguments case-sensitive and compare the
+            // complete payload rather than a collision-prone display hash.
+            if (!command.empty() || !handler.empty() || !delegate.empty())
+            {
+                const auto identity = settings_ipc::Pack(Lower(verb), command, Lower(handler), Lower(delegate),
+                    Read(classes, path, L"SubCommands"), Read(classes, path, L"ExtendedSubCommandsKey"));
+                row.commandIdentity.assign(reinterpret_cast<const char *>(identity.data()), identity.size());
+            }
             auto icon = Read(classes, path, L"Icon");
             if (icon.empty() && !handler.empty()) icon = Read(classes, L"CLSID\\" + handler + L"\\InprocServer32");
             if (icon.empty())
             {
-                auto command = Read(classes, path + L"\\command");
                 if (!command.empty()) { wchar_t exe[32768]{}; wcsncpy_s(exe, command.c_str(), _TRUNCATE); PathRemoveArgsW(exe); PathUnquoteSpacesW(exe); icon = exe; }
             }
             // Include values that affect applicability, not volatile registry write times.
@@ -309,7 +319,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
                     associations.push_back(Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + type + L"\\UserChoice", L"ProgId"));
             }
         row.revision = Hash(settings_ipc::Pack(row.revision, associations));
-        row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels));
+        row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity));
     }
     std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));

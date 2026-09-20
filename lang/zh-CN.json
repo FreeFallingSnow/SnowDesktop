@@ -26,6 +26,7 @@
   "settings.contextMenu.loading": "正在读取系统菜单…",
   "settings.contextMenu.failed": "系统菜单未能加载，请重试。",
   "settings.contextMenu.empty": "系统未提供其他菜单项目。",
+  "settings.contextMenu.mixed": "部分类型设置不同",
   "settings.contextMenu.search": "搜索菜单项目",
   "settings.contextMenu.refresh": "刷新",
   "settings.contextMenu.files": "文件",

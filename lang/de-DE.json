@@ -26,6 +26,7 @@
   "settings.contextMenu.loading": "Systemmenü wird gelesen…",
   "settings.contextMenu.failed": "Systemmenü konnte nicht geladen werden. Bitte erneut versuchen.",
   "settings.contextMenu.empty": "Das System stellt keine weiteren Menüeinträge bereit.",
+  "settings.contextMenu.mixed": "Einige Dateitypen haben unterschiedliche Einstellungen",
   "settings.contextMenu.search": "Menüeinträge suchen",
   "settings.contextMenu.refresh": "Aktualisieren",
   "settings.contextMenu.files": "Dateien",
