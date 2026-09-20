@@ -342,6 +342,35 @@ void TestExtensionSessions()
         }
         Expect(reply.has_value(),"isolated query has a bounded completion");return *reply;
     };
+    {
+        // Exercise the real process launcher while the caller owns a redirected
+        // stdout pipe. Third-party query code must be unable to retain/write it.
+        struct OutputPipe
+        {
+            HANDLE original = GetStdHandle(STD_OUTPUT_HANDLE), read = nullptr, write = nullptr;
+            ~OutputPipe()
+            {
+                SetStdHandle(STD_OUTPUT_HANDLE, original);
+                if (read)
+                    CloseHandle(read);
+                if (write)
+                    CloseHandle(write);
+            }
+        } output;
+        SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+        Expect(CreatePipe(&output.read, &output.write, &security, 0) != FALSE, "private stdout probe pipe");
+        Expect(SetStdHandle(STD_OUTPUT_HANDLE, output.write) != FALSE,
+               "redirect only the probe caller's stdout");
+        ext::Request probe;
+        probe.paths = {L"synthetic-stdio"};
+        ext::Session session(probe, 2500);
+        SetStdHandle(STD_OUTPUT_HANDLE, output.original);
+        const auto reply = wait(session);
+        DWORD available = 0;
+        Expect(PeekNamedPipe(output.read, nullptr, 0, nullptr, &available, nullptr) != FALSE &&
+                   available == 0 && reply.ok && reply.entries.front().key == "isolated-stdio",
+               "Shell helpers cannot inherit or write the caller's redirected output stream");
+    }
     ext::Request request;request.paths={L"synthetic-success"};
     DWORD firstProcess = 0;
     {ext::Session session(request,2500);auto reply=wait(session); firstProcess = session.ProcessId();
@@ -793,6 +822,15 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
+        if (request.paths.front() == L"synthetic-stdio")
+        {
+            DWORD written = 0;
+            const bool isolated = GetFileType(GetStdHandle(STD_INPUT_HANDLE)) == FILE_TYPE_CHAR &&
+                                  GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) == FILE_TYPE_CHAR &&
+                                  GetFileType(GetStdHandle(STD_ERROR_HANDLE)) == FILE_TYPE_CHAR;
+            WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), "x", 1, &written, nullptr);
+            entry.key = isolated && written == 1 ? "isolated-stdio" : "inherited-stdio";
+        }
         if (request.catalogueOnly) entry.label=request.paths.front();
         entry.provider = "verb:" + entry.key;
         reply.entries.push_back(entry);
