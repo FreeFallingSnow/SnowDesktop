@@ -560,7 +560,8 @@ void DesktopApp::LoadLayoutSlots()
                     std::move(preservedIt->second.entries);
                 preservedFolderEntries.erase(preservedIt);
             }
-            EnumerateFolderMappingEntries(widgets_.back());
+            if (!initialShellReadPending_)
+                EnumerateFolderMappingEntries(widgets_.back());
         }
     }
 

@@ -689,6 +689,13 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     snowdesktop::shell_refresh::Snapshot* snapshot)
 {
+    if (initialShellReadPending_ && !snapshot)
+    {
+        shellReloadLayoutFromDiskPending_ |= reloadLayoutFromDisk;
+        RequestShellRefresh();
+        StartInitialShellRead();
+        return;
+    }
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     const bool deferForDrag =
         snowdesktop::drag_input_rules::ShouldDeferModelReload(
@@ -711,7 +718,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         return;
     }
     if (reloading_) return;
-    shellRefreshRevision_.Invalidate();
+    const bool incremental = snapshot && snapshot->desktopIncremental;
+    if (!incremental) shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
     ClearPopupDragTarget();
     if (hwnd_ && IsWindow(hwnd_))
@@ -754,13 +762,13 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
                         ToUpperInvariant(widget.sourceFolderPath));
                     folder != snapshot->folders.end())
                     EnumerateFolderMappingEntries(widget, true, &folder->second);
-                else
+                else if (!incremental)
                     RequestShellRefresh(); // The mapping changed during the read.
             }
         }
     }
     LoadDesktopItems(snapshot);
-    if (!desktopItemsReady_)
+    if (!desktopItemsReady_ && !incremental)
     {
         // A failed initial read is not an empty desktop. Preserve the loaded
         // placement records and let the existing Shell refresh path retry.
@@ -780,6 +788,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     // that are confirmed missing on disk: hidden files and temporarily
     // unenumerated Shell items must remain pinned.
     std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
+        if (snapshot && snapshot->desktopIncremental) return false;
         if (entry.type != DockEntryType::DesktopItem)
             return false;
         if (IsRecycleBinDockEntry(entry))
@@ -802,16 +811,20 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
             error == ERROR_INVALID_NAME;
     });
-    NormalizeDockRecycleBinPosition();
+    if (!incremental) NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
-    if (!generalSettings_.dockEnabled && !dockEntries_.empty())
+    if (!incremental && !generalSettings_.dockEnabled && !dockEntries_.empty())
         RestoreDockEntriesToDesktop();
-    ApplyAutoCollectFileCategoryWidgets();
+    if (!incremental) ApplyAutoCollectFileCategoryWidgets();
     if (snapshot) snapshot->modelMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
 
     // Mark widgets as used
     std::unordered_set<std::wstring> usedSlots;
+    if (incremental)
+        for (const auto& [key, record] : layoutRecords_)
+            if (record.hasGrid && FindItemIndexByKey(key) == static_cast<size_t>(-1))
+                MarkGridArea(usedSlots, record.cell, record.span);
     for (const auto& w : widgets_)
         if (!IsGroupedWidget(w))
             MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
@@ -997,6 +1010,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             allKeys.insert(ToUpperInvariant(item.layoutKey));
     for (auto& w : widgets_)
     {
+        if (incremental) break; // Unobserved keys remain valid until a complete read.
         if (w.type == DesktopWidgetType::FolderMapping)
             continue;
         auto it = std::remove_if(w.itemKeys.begin(), w.itemKeys.end(),

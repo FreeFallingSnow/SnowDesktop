@@ -17,6 +17,7 @@
 #include "app/rename_notification_tracker.h"
 #include "app/rename_model_update.h"
 #include "app/shell_refresh_snapshot.h"
+#include "app/startup_shell_read.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
 #include "app/tray_notification_window.h"
@@ -32,6 +33,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -2477,6 +2479,8 @@ void TestShellRefreshRejectsStaleSnapshots()
     Check(initial.has_value() && !revision.Begin().has_value(),
         "a burst of file notifications cannot queue concurrent reads");
     revision.Invalidate(); // A create/delete/rename arrives during the read.
+    Check(!revision.IsCurrent(*initial),
+        "incremental startup items from an invalidated read must also be rejected");
     Check(!revision.Finish(*initial) && !revision.Running(),
         "an older directory snapshot must not resurrect a deleted or renamed file");
     const auto latest = revision.Begin();
@@ -2487,6 +2491,118 @@ void TestShellRefreshRejectsStaleSnapshots()
     revision.Invalidate(); // A manual/settings reload has newer UI state.
     Check(!revision.Finish(*beforeManualReload),
         "a manual model reload invalidates an already running background read");
+}
+
+void TestStartupShellReadDoesNotGateReadyIcons()
+{
+    using namespace snowdesktop::shell_refresh;
+    using namespace std::chrono_literals;
+    struct Gate
+    {
+        HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        std::atomic<DWORD> thread = 0;
+        std::atomic<bool> sta = false;
+        ~Gate() { CloseHandle(entered); CloseHandle(release); CloseHandle(returned); }
+    };
+    auto gate = std::make_shared<Gate>();
+    const DWORD uiThread = GetCurrentThreadId();
+    // Replace only the unbounded Shell/RPC edge. Exercise the real STA worker,
+    // mailbox, bounded wait and incremental publication used by startup.
+    StartupRead slow([gate](const Request& request, Snapshot& snapshot) {
+        gate->thread = GetCurrentThreadId();
+        APTTYPE apartment{};
+        APTTYPEQUALIFIER qualifier{};
+        gate->sta = SUCCEEDED(CoGetApartmentType(&apartment, &qualifier)) &&
+            (apartment == APTTYPE_STA || apartment == APTTYPE_MAINSTA);
+        DesktopItem item;
+        item.layoutKey = L"READY-BEFORE-NETWORK";
+        item.name = L"ready";
+        request.publishDesktopItem(item);
+        snapshot.desktopItems.push_back(std::move(item));
+        SetEvent(gate->entered);
+        const bool released = WaitForSingleObject(gate->release, 5000) == WAIT_OBJECT_0;
+        SetEvent(gate->returned);
+        return released;
+    });
+    Check(slow.Start({}), "startup starts its background desktop read");
+    Check(WaitForSingleObject(gate->entered, 2000) == WAIT_OBJECT_0,
+        "controlled Shell read reaches the blocked-next-item boundary");
+    Check(gate->thread != uiThread && gate->sta,
+        "Shell enumeration executes in its own initialized STA, outside the UI thread");
+    const auto before = std::chrono::steady_clock::now();
+    Check(!slow.TakeReady(20ms) && slow.Pending(),
+        "a startup timeout preserves pending work without publishing an empty completed desktop");
+    Check(std::chrono::steady_clock::now() - before < 500ms,
+        "startup bounded wait returns while the network provider is still blocked");
+    Check(!slow.Start({}), "timeouts cannot accumulate duplicate blocked startup workers");
+    auto progress = slow.TakeProgress();
+    Check(progress.size() == 1 && progress[0].layoutKey == L"READY-BEFORE-NETWORK" &&
+            slow.TakeProgress().empty(),
+        "completed icons can be consumed once while the next Shell item is blocked");
+
+    StartupRead local([](const Request& request, Snapshot&) {
+        DesktopItem item;
+        item.layoutKey = L"LOCAL-ICON";
+        request.publishDesktopItem(item);
+        return true;
+    });
+    Check(local.Start({}), "physical desktop files have an independent reader");
+    auto localReady = local.TakeReady(2000ms);
+    Check(localReady && localReady->desktopComplete && slow.Pending(),
+        "a blocked Shell desktop source does not gate completion of the local source");
+    SetEvent(gate->release);
+    auto ready = slow.TakeReady(2000ms);
+    Check(ready && ready->desktopComplete && ready->desktopItems.size() == 1 && !slow.Pending(),
+        "the original delayed read remains consumable after its provider recovers");
+
+    auto stoppingGate = std::make_shared<Gate>();
+    StartupRead stopping([stoppingGate](const Request&, Snapshot&) {
+        SetEvent(stoppingGate->entered);
+        WaitForSingleObject(stoppingGate->release, 5000);
+        SetEvent(stoppingGate->returned);
+        return true;
+    });
+    Check(stopping.Start({}) &&
+            WaitForSingleObject(stoppingGate->entered, 2000) == WAIT_OBJECT_0,
+        "shutdown fixture reaches the uninterruptible provider call");
+    const auto stopStarted = std::chrono::steady_clock::now();
+    stopping.Stop();
+    Check(std::chrono::steady_clock::now() - stopStarted < 500ms &&
+            !stopping.Pending() && !stopping.Start({}),
+        "shutdown retires the mailbox without joining Shell or accepting another read");
+    SetEvent(stoppingGate->release);
+    Check(WaitForSingleObject(stoppingGate->returned, 2000) == WAIT_OBJECT_0 &&
+            !stopping.TakeReady() && stopping.TakeProgress().empty(),
+        "a late completion cannot publish to a stopped or destroyed host");
+
+    StartupRead failed([](const Request&, Snapshot& snapshot) {
+        snapshot.desktopItems.emplace_back();
+        return false;
+    });
+    Check(failed.Start({}), "partial-failure fixture starts");
+    auto failure = failed.TakeReady(2000ms);
+    Check(failure && !failure->desktopComplete,
+        "a failed enumeration with some items must not authorize deletion of unobserved items");
+}
+
+void TestIncrementalDesktopPreservesUnobservedItems()
+{
+    using namespace snowdesktop::shell_refresh;
+    std::vector<DesktopItem> current(1), previous(2);
+    current[0].layoutKey = L"FAST";
+    current[0].name = L"current name";
+    previous[0].layoutKey = L"FAST";
+    previous[0].name = L"old name";
+    previous[1].layoutKey = L"SLOW";
+    previous[1].gridCell = {L"saved-page", 4, 3};
+    previous[1].selected = true;
+    AppendUnobservedItems(current, previous);
+    Check(current.size() == 2 && current[0].name == L"current name" &&
+            current[1].layoutKey == L"SLOW" && current[1].gridCell.column == 4 &&
+            current[1].gridCell.row == 3 && current[1].selected,
+        "incremental publication preserves unobserved icons and their live position/selection without duplicating ready icons");
 }
 
 void TestShellMetadataCacheRejectsChangedFiles()
@@ -2952,6 +3068,8 @@ int wmain(int argc, wchar_t** argv)
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
     TestShellRefreshRejectsStaleSnapshots();
+    TestStartupShellReadDoesNotGateReadyIcons();
+    TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();
     TestRenameNotificationsPreserveUnrelatedChanges();

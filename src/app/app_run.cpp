@@ -376,6 +376,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
 
     instance_ = instance;
+    initialShellReadPending_ = true;
 
     // Resolve the persisted desktop mode before touching Explorer's icon layer.
     LoadGeneralSettingsAndApply();
@@ -600,12 +601,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
-    ReloadItems(false);
+    StartInitialShellRead();
+    PollInitialShellRead(std::chrono::milliseconds(1500));
+    if (!desktopItemsReady_)
+    {
+        // Show the saved widgets/layout while Shell is still reading. Do not
+        // feed an empty snapshot into placement, pruning or persistence.
+        LayoutItems();
+        WriteDiagnosticLogEntry(
+            L"Startup Shell read pending; saved widgets shown, desktop items deferred");
+    }
     StartIconLoader();
-    WriteDiagnosticLogEntry(L"LoadDesktopItems ok");
-    WriteDiagnosticLogEntry(L"Layout done");
-    WriteDiagnosticLogEntry(L"RebuildContainersAndItems ok");
-    logStartupStage(L"desktop items ready");
+    logStartupStage(desktopItemsReady_
+        ? L"desktop items ready" : L"desktop items deferred");
 
     // App icon
     if (HICON appIcon = LoadAppIcon())

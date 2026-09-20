@@ -482,6 +482,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {
+        PollInitialShellRead();
         // Restore the Explorer-owned desktop host first. Hook injection can
         // take time while the new taskbar XAML tree is still starting up.
         WatchDesktopHost();

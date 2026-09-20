@@ -104,6 +104,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "../rename_edit_layout.h"
 #include "rename_notification_tracker.h"
 #include "shell_refresh_snapshot.h"
+#include "startup_shell_read.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
 #include "widget_notification_presenter.h"
@@ -1049,6 +1050,9 @@ private:
         snowdesktop::shell_refresh::Snapshot* snapshot = nullptr);
     void RequestShellRefresh();
     void RefreshShellItemsAsync();
+    snowdesktop::shell_refresh::Request BuildShellRefreshRequest() const;
+    void StartInitialShellRead();
+    void PollInitialShellRead(std::chrono::milliseconds budget = {});
     /** @brief 根据可用显示器信息更新布局工作区域。 */
     bool UpdateLayoutWorkArea(bool preserveActiveDimensions = true);
     /** @brief 用当前设置（行列数）配置指定网格页面。 @param page 网格页面引用 */
@@ -3693,6 +3697,17 @@ private:
     snowdesktop::shell_refresh::Revision shellRefreshRevision_;
     snowdesktop::shell_refresh::MetadataCache shellMetadataCache_;
     std::shared_ptr<snowdesktop::shell_refresh::Snapshot> readyShellRefresh_;
+    snowdesktop::shell_refresh::StartupRead initialShellRead_{snowdesktop::shell_refresh::Read};
+    snowdesktop::shell_refresh::StartupRead initialLocalReads_[2]{
+        snowdesktop::shell_refresh::StartupRead([](const auto& request, auto& snapshot) {
+            return snowdesktop::shell_refresh::ReadLocalDesktop(request, snapshot, false);
+        }),
+        snowdesktop::shell_refresh::StartupRead([](const auto& request, auto& snapshot) {
+            return snowdesktop::shell_refresh::ReadLocalDesktop(request, snapshot, true);
+        })};
+    bool initialShellReadPending_ = false;
+    std::uint64_t initialShellReadRevision_ = 0;
+    std::uint64_t initialLocalReadRevisions_[2]{};
     bool shellDockFolderPopupRefreshPending_ = false;
     // Persistent top-level Hosts own every Dock visual in both desktop and
     // floating Z-order bands.

@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <functional>
 
 namespace snowdesktop::shell_refresh
 {
@@ -24,11 +25,13 @@ struct Request
     std::unordered_map<std::wstring, bool> iconVisibility;
     std::vector<std::wstring> folders;
     std::vector<std::wstring> dockPaths;
+    std::function<void(const DesktopItem&)> publishDesktopItem;
 };
 
 struct Snapshot
 {
     bool desktopComplete = false;
+    bool desktopIncremental = false;
     std::vector<DesktopItem> desktopItems;
     std::unordered_map<std::wstring, FolderSnapshot> folders;
     std::unordered_set<std::wstring> missingDockPaths;
@@ -39,9 +42,39 @@ struct Snapshot
 };
 
 bool ReadDesktop(const std::unordered_map<std::wstring, bool>& visibility,
-    bool showHidden, std::vector<DesktopItem>& items, MetadataCache* cache = nullptr);
+    bool showHidden, std::vector<DesktopItem>& items, MetadataCache* cache = nullptr,
+    const std::function<void(const DesktopItem&)>& publish = {});
 FolderSnapshot ReadFolder(const std::wstring& path, bool showHidden, MetadataCache* cache = nullptr);
 bool Read(const Request& request, Snapshot& snapshot);
+bool ReadLocalDesktop(const Request& request, Snapshot& snapshot, bool common);
+
+// Only enumeration value data crosses this boundary. Never copy UI bitmaps,
+// selection or layout state back from a worker.
+inline DesktopItem CloneReadItem(const DesktopItem& source)
+{
+    DesktopItem item;
+    item.name = source.name;
+    item.parsingName = source.parsingName;
+    item.layoutKey = source.layoutKey;
+    item.desktopIconClsid = source.desktopIconClsid;
+    item.typeName = source.typeName;
+    item.modifiedTime = source.modifiedTime;
+    item.fileSize = source.fileSize;
+    item.sysIconIndex = source.sysIconIndex;
+    item.absolutePidl.reset(ILCloneFull(source.absolutePidl.get()));
+    item.childPidl.reset(ILCloneFull(source.childPidl.get()));
+    return item;
+}
+
+inline void AppendUnobservedItems(std::vector<DesktopItem>& items,
+    std::vector<DesktopItem>& previous)
+{
+    std::unordered_set<std::wstring> present;
+    for (const auto& item : items) present.insert(item.layoutKey);
+    for (auto& item : previous)
+        if (present.insert(item.layoutKey).second)
+            items.push_back(std::move(item));
+}
 
 // Coalesce notifications and reject a read superseded by later filesystem or
 // model changes. At most one read can be queued/running at a time.
@@ -65,6 +98,8 @@ public:
         return revision == revision_;
     }
     bool Running() const { return running_; }
+    std::uint64_t Current() const { return revision_; }
+    bool IsCurrent(std::uint64_t revision) const { return revision == revision_; }
 private:
     std::uint64_t revision_ = 0;
     std::uint64_t active_ = 0;

@@ -6,7 +6,9 @@
 static bool ReadDesktopSource(
     const std::unordered_map<std::wstring, bool>& visibility,
     bool showHiddenItems, std::vector<DesktopItem>& items,
-    snowdesktop::shell_refresh::MetadataCache* cache, bool simulated)
+    snowdesktop::shell_refresh::MetadataCache* cache, bool simulated,
+    const std::function<void(const DesktopItem&)>& publish = {},
+    const std::wstring& directory = {})
 {
     using namespace snowdesktop::shell_refresh;
     ComPtr<IShellFolder> desktopFolder;
@@ -16,10 +18,13 @@ static bool ReadDesktopSource(
     hr = SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &raw);
     if (FAILED(hr) || !raw) return false;
     Pidl desktopPidl(raw);
-    if (simulated)
+    const bool fileSystemSource = simulated || !directory.empty();
+    const bool basicMetadata = !directory.empty();
+    if (fileSystemSource)
     {
         PIDLIST_ABSOLUTE folderId = nullptr;
-        hr = SHParseDisplayName(snowdesktop::desktop_source::Directory().c_str(), nullptr, &folderId, 0, nullptr);
+        const auto source = simulated ? snowdesktop::desktop_source::Directory() : directory;
+        hr = SHParseDisplayName(source.c_str(), nullptr, &folderId, 0, nullptr);
         if (FAILED(hr)) return false;
         desktopPidl.reset(folderId);
         ComPtr<IShellFolder> folder;
@@ -36,8 +41,9 @@ static bool ReadDesktopSource(
     SHGetSpecialFolderPathW(nullptr, userProfilePath, CSIDL_PROFILE, FALSE);
     size_t userDesktopLen = wcslen(userDesktopPath);
     size_t commonDesktopLen = wcslen(commonDesktopPath);
-    const auto namespaceRegistrations =
-        snowdesktop::LoadDesktopNamespaceRegistrations();
+    const auto namespaceRegistrations = fileSystemSource
+        ? std::vector<snowdesktop::DesktopNamespaceRegistration>{}
+        : snowdesktop::LoadDesktopNamespaceRegistrations();
 
     SHCONTF enumFlags = SHCONTF_FOLDERS | SHCONTF_NONFOLDERS;
     if (showHiddenItems)
@@ -98,7 +104,13 @@ static bool ReadDesktopSource(
         // Standard desktop icons use the Explorer visibility registry. Other
         // entries, including third-party namespace aliases, still obey their
         // Shell hidden/non-enumerated attributes.
-        if (!snowdesktop::IsStandardDesktopIconClsid(clsid))
+        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
+        const bool hasAttributes = !parsingName.empty() &&
+            GetFileAttributesExW(parsingName.c_str(), GetFileExInfoStandard, &fileAttributes);
+        if (basicMetadata && hasAttributes && !showHiddenItems &&
+            (fileAttributes.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN))
+        { ILFree(absolute); ILFree(child); continue; }
+        if (!basicMetadata && !snowdesktop::IsStandardDesktopIconClsid(clsid))
         {
             SFGAOF attrs = SFGAO_HIDDEN | SFGAO_NONENUMERATED;
             LPCITEMIDLIST childConst = child;
@@ -131,14 +143,21 @@ static bool ReadDesktopSource(
 
         // Enumerate membership every time, but do not repeatedly ask Shell
         // extensions to resolve unchanged shortcut icons and display metadata.
-        WIN32_FILE_ATTRIBUTE_DATA fileAttributes{};
-        const bool hasAttributes = !parsingName.empty() &&
-            GetFileAttributesExW(parsingName.c_str(), GetFileExInfoStandard, &fileAttributes);
         const auto stamp = FileStamp::From(fileAttributes);
         const auto metadataKey = ToUpperInvariant(parsingName);
         SHFILEINFOW info{};
         const auto cached = cache ? cache->desktop.find(metadataKey) : MetadataMap::iterator{};
-        if (cache && hasAttributes && cached != cache->desktop.end() &&
+        if (basicMetadata)
+        {
+            // Do not resolve a shortcut target or invoke a per-file icon
+            // handler before publishing ordinary desktop membership. The
+            // independent full read supplies Explorer metadata when ready.
+            SHGetFileInfoW(parsingName.c_str(), hasAttributes
+                    ? fileAttributes.dwFileAttributes : FILE_ATTRIBUTE_NORMAL,
+                &info, sizeof(info), SHGFI_USEFILEATTRIBUTES | SHGFI_SYSICONINDEX |
+                    SHGFI_TYPENAME);
+        }
+        else if (cache && hasAttributes && cached != cache->desktop.end() &&
             cached->second.Matches(parsingName, stamp))
         {
             info = cached->second.info;
@@ -166,7 +185,8 @@ static bool ReadDesktopSource(
         item.childPidl.reset(reinterpret_cast<PIDLIST_ABSOLUTE>(child));
         item.parsingName = std::move(parsingName);
         item.desktopIconClsid = std::move(clsid);
-        item.name = info.szDisplayName[0] ? info.szDisplayName
+        item.name = basicMetadata ? std::filesystem::path(item.parsingName).filename().wstring()
+            : info.szDisplayName[0] ? info.szDisplayName
             : StrRetToString(desktopFolder.Get(), reinterpret_cast<PCUITEMID_CHILD>(item.childPidl.get()), SHGDN_NORMAL);
         item.typeName = info.szTypeName;
         if (hasAttributes)
@@ -187,11 +207,12 @@ static bool ReadDesktopSource(
             ? item.desktopIconClsid : !itemPathStr.empty()
                 ? itemPathStr : item.parsingName);
 
-        if (simulated)
+        if (fileSystemSource)
             item.childPidl.reset(ILCloneFull(item.absolutePidl.get()));
 
         if (!seenKeys.insert(item.layoutKey).second)
             continue; // The local item owns both PIDLs, including duplicates.
+        if (publish) publish(item);
         items.push_back(std::move(item));
     }
     if (cache && SUCCEEDED(next))
@@ -203,15 +224,39 @@ static bool ReadDesktopSource(
 
 bool snowdesktop::shell_refresh::ReadDesktop(
     const std::unordered_map<std::wstring, bool>& visibility,
-    bool showHiddenItems, std::vector<DesktopItem>& items, MetadataCache* cache)
+    bool showHiddenItems, std::vector<DesktopItem>& items, MetadataCache* cache,
+    const std::function<void(const DesktopItem&)>& publish)
 {
-    if (!ReadDesktopSource(visibility, showHiddenItems, items, cache, false)) return false;
+    if (!ReadDesktopSource(visibility, showHiddenItems, items, cache, false, publish)) return false;
     return !snowdesktop::debug_profile::Enabled() ||
-        ReadDesktopSource(visibility, showHiddenItems, items, nullptr, true);
+        ReadDesktopSource(visibility, showHiddenItems, items, nullptr, true, publish);
+}
+
+bool snowdesktop::shell_refresh::ReadLocalDesktop(
+    const Request& request, Snapshot& snapshot, bool common)
+{
+    // Bypass the root Desktop enumerator: it can stall in NetUseEnum while
+    // obtaining the next virtual/network item. Physical desktop folders are
+    // independent sources, and publish each completed item immediately.
+    const bool showHidden = AreExplorerHiddenItemsVisible();
+    if (snowdesktop::debug_profile::Enabled())
+    {
+        return common || ReadDesktopSource(request.iconVisibility, showHidden,
+            snapshot.desktopItems, nullptr, true, request.publishDesktopItem,
+            snowdesktop::desktop_source::Directory());
+    }
+    wchar_t directory[MAX_PATH]{};
+    if (!SHGetSpecialFolderPathW(nullptr, directory,
+            common ? CSIDL_COMMON_DESKTOPDIRECTORY : CSIDL_DESKTOPDIRECTORY, FALSE))
+        return false;
+    return ReadDesktopSource(request.iconVisibility, showHidden,
+        snapshot.desktopItems, nullptr, false, request.publishDesktopItem, directory);
 }
 
 void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot)
 {
+    if (snapshot && !snapshot->desktopComplete && !snapshot->desktopIncremental)
+        return; // Partial/failed reads must never become an authoritative empty model.
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     // Menu COM interfaces belong to the UI STA and are never shared with reads.
     if (!desktopFolder_ && FAILED(SHGetDesktopFolder(&desktopFolder_)))
@@ -283,11 +328,13 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
             EnqueueIconLoad(std::move(task));
         }
     }
+    if (snapshot && snapshot->desktopIncremental)
+        snowdesktop::shell_refresh::AppendUnobservedItems(items_, previous);
     for (const auto& oldItem : previous)
         if (oldItem.iconBitmap)
             EraseD2DIconCacheForBitmap(oldItem.iconBitmap);
     RefreshDesktopItemIndexCache();
-    desktopItemsReady_ = true;
+    desktopItemsReady_ = !snapshot || snapshot->desktopComplete;
 }
 
 /**

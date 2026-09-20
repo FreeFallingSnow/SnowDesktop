@@ -405,6 +405,8 @@ void DesktopApp::OnShellFileOperationCompleted(LPARAM lParam)
 
 void DesktopApp::StopShellFileOperationWorker()
 {
+    initialShellRead_.Stop();
+    for (auto& reader : initialLocalReads_) reader.Stop();
     externalSlotReadStopSource_.request_stop();
     externalSlotReadWorker_.Stop();
     shellRefreshWorker_.Stop();
@@ -438,7 +440,8 @@ bool snowdesktop::shell_refresh::Read(const Request& request, Snapshot& snapshot
     const bool showHidden = AreExplorerHiddenItemsVisible();
     snapshot.metadata.hits = snapshot.metadata.queries = 0;
     snapshot.desktopComplete = ReadDesktop(
-        request.iconVisibility, showHidden, snapshot.desktopItems, &snapshot.metadata);
+        request.iconVisibility, showHidden, snapshot.desktopItems, &snapshot.metadata,
+        request.publishDesktopItem);
     snapshot.desktopReadMs = GetTickCount64() - started;
     const ULONGLONG foldersStarted = GetTickCount64();
     for (const auto& path : request.folders)
@@ -485,6 +488,11 @@ void DesktopApp::RequestShellRefresh()
 
 void DesktopApp::RefreshShellItemsAsync()
 {
+    if (initialShellReadPending_)
+    {
+        StartInitialShellRead();
+        return;
+    }
     if (readyShellRefresh_)
     {
         auto snapshot = std::exchange(readyShellRefresh_, {});
@@ -529,17 +537,7 @@ void DesktopApp::RefreshShellItemsAsync()
         return;
     const HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
-    snowdesktop::shell_refresh::Request request;
-    request.iconVisibility = settingsIconVisibility_;
-    for (const auto& widget : widgets_)
-        if (widget.type == DesktopWidgetType::FolderMapping)
-            request.folders.push_back(widget.sourceFolderPath);
-    if (dockFolderPopupOpen_)
-        request.folders.push_back(dockFolderPopupWidget_.sourceFolderPath);
-    for (const auto& entry : dockEntries_)
-        if (entry.type == DockEntryType::DesktopItem &&
-            std::filesystem::path(entry.reference).is_absolute())
-            request.dockPaths.push_back(entry.reference);
+    auto request = BuildShellRefreshRequest();
 
     auto snapshot = std::make_shared<snowdesktop::shell_refresh::Snapshot>();
     // Copy value metadata/PIDLs; the worker never observes mutable UI storage.
@@ -580,4 +578,120 @@ void DesktopApp::RefreshShellItemsAsync()
         return;
     }
     shellReloadPending_ = true;
+}
+
+snowdesktop::shell_refresh::Request DesktopApp::BuildShellRefreshRequest() const
+{
+    snowdesktop::shell_refresh::Request request;
+    request.iconVisibility = settingsIconVisibility_;
+    for (const auto& widget : widgets_)
+        if (widget.type == DesktopWidgetType::FolderMapping)
+            request.folders.push_back(widget.sourceFolderPath);
+    if (dockFolderPopupOpen_)
+        request.folders.push_back(dockFolderPopupWidget_.sourceFolderPath);
+    for (const auto& entry : dockEntries_)
+        if (entry.type == DockEntryType::DesktopItem &&
+            std::filesystem::path(entry.reference).is_absolute())
+            request.dockPaths.push_back(entry.reference);
+
+    return request;
+}
+
+void DesktopApp::StartInitialShellRead()
+{
+    if (exitRequested_ || !initialShellReadPending_ || initialShellRead_.Pending())
+        return;
+    if (shellReloadLayoutFromDiskPending_)
+    {
+        LoadLayoutSlots();
+        RecreateItemTextFormat();
+        RecreateComponentListTextFormat();
+        UpdateLayoutWorkArea(false);
+        if (widgetEngine_) widgetEngine_->ReloadStorage();
+        shellReloadLayoutFromDiskPending_ = false;
+    }
+    const auto revision = shellRefreshRevision_.Begin();
+    if (!revision) return;
+    initialShellReadRevision_ = *revision;
+    for (size_t i = 0; i < std::size(initialLocalReads_); ++i)
+    {
+        if (initialLocalReads_[i].Pending()) continue;
+        initialLocalReadRevisions_[i] = *revision;
+        initialLocalReads_[i].Start(BuildShellRefreshRequest());
+    }
+    if (!initialShellRead_.Start(BuildShellRefreshRequest()))
+    {
+        shellRefreshRevision_.Finish(*revision);
+        WriteDiagnosticLogEntry(L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);
+    }
+}
+
+void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
+{
+    // Commit on the UI thread only, using the same revision/interaction fences
+    // as normal refresh. The worker must not overwrite edits made after timeout.
+    if (exitRequested_ || !initialShellReadPending_ || reloading_ ||
+        compositionPaintInProgress_ || mouseDown_ || renameEdit_ ||
+        HasActiveContextMenuSession() || shellFileOperationInFlight_ > 0 ||
+        !pendingRenames_.empty() || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive())
+        return;
+    auto snapshot = initialShellRead_.TakeReady(budget);
+    snowdesktop::shell_refresh::Snapshot progress;
+    progress.desktopIncremental = true;
+    std::unordered_set<std::wstring> seen;
+    const auto append = [&](std::vector<DesktopItem> items) {
+        for (auto& item : items)
+            if (seen.insert(ToUpperInvariant(item.layoutKey)).second)
+                progress.desktopItems.push_back(std::move(item));
+    };
+    for (size_t i = 0; i < std::size(initialLocalReads_); ++i)
+    {
+        auto& reader = initialLocalReads_[i];
+        auto local = reader.TakeReady();
+        auto items = local ? std::move(local->desktopItems) : reader.TakeProgress();
+        if (shellRefreshRevision_.IsCurrent(initialLocalReadRevisions_[i]))
+            append(std::move(items));
+        else if (!reader.Pending())
+        {
+            // Local changes can still refresh while the virtual namespace is
+            // blocked. Never wait for that older root read to retire first.
+            initialLocalReadRevisions_[i] = shellRefreshRevision_.Current();
+            reader.Start(BuildShellRefreshRequest());
+        }
+    }
+    auto shellItems = initialShellRead_.TakeProgress();
+    if (shellRefreshRevision_.IsCurrent(initialShellReadRevision_))
+    {
+        append(std::move(shellItems));
+        if (snapshot && !snapshot->desktopComplete)
+            append(std::move(snapshot->desktopItems));
+    }
+    if ((!snapshot || !snapshot->desktopComplete ||
+            !shellRefreshRevision_.IsCurrent(initialShellReadRevision_)) &&
+        !progress.desktopItems.empty())
+        ReloadItems(false, &progress);
+    if (!snapshot) return;
+    if (!shellRefreshRevision_.Finish(initialShellReadRevision_))
+    {
+        StartInitialShellRead();
+        return;
+    }
+    if (!snapshot->desktopComplete)
+    {
+        shellReloadPending_ = false;
+        WriteDiagnosticLogEntry(
+            L"Startup Shell read failed; saved layout retained, retry on next refresh",
+            DiagnosticLogLevel::Warning);
+        return;
+    }
+    shellMetadataCache_ = std::move(snapshot->metadata);
+    ReloadItems(false, snapshot.get());
+    if (desktopItemsReady_)
+    {
+        initialShellReadPending_ = false;
+        for (auto& reader : initialLocalReads_) reader.Stop();
+        RefreshDockRunningWindows(false);
+        WriteDiagnosticLogEntry(L"Startup Shell snapshot applied");
+    }
 }
