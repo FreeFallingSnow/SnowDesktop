@@ -76,6 +76,8 @@ struct Item
     HBITMAP image = nullptr;
     /** Native menu access key, separate from literal display text. */
     wchar_t accessKey = 0;
+    /** 为行内按钮组按文字和图标预留宽度，避免短操作的翻译被截断。 */
+    bool measureInlineAction = false;
 };
 
 struct HoverInfo

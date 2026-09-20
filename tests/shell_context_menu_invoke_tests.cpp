@@ -810,10 +810,15 @@ int wmain(int argc, wchar_t **argv)
     snowdesktop::shell_extensions::InvokeExecutor invoke;
     if(record)
     {
-        query = [failed = false](const auto &request) mutable {
-            if (std::filesystem::path(request.paths.front()).filename() == L"retry.txt" && !failed)
+        query = [](const auto &request) {
+            const auto path = std::filesystem::path(request.paths.front());
+            const auto failureMarker = path.parent_path() / L"retry-failed-once";
+            // Failed helpers are deliberately discarded. Keep the one-shot
+            // fault in this test's private directory so a new helper can retry.
+            if (path.filename() == L"retry.txt" && !std::filesystem::exists(failureMarker))
             {
-                failed = true;
+                std::ofstream marker(failureMarker);
+                marker << "failed once";
                 return snowdesktop::shell_extensions::Reply{false, {}, "transient query failure"};
             }
             snowdesktop::shell_extensions::Reply reply;

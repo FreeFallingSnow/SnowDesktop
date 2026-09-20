@@ -6,6 +6,25 @@
 
 namespace snowdesktop::shell_extensions
 {
+inline void AddMoreManagementAction(std::vector<modern_menu::Item> &items, UINT moreCommand,
+                                    UINT manageCommand, std::wstring label)
+{
+    const auto more = std::find_if(items.begin(), items.end(),
+                                   [=](const auto &item) { return item.command == moreCommand; });
+    if (more == items.end())
+        return;
+    more->inlineAction = true;
+    more->inlineGroup = moreCommand;
+    more->measureInlineAction = true;
+    modern_menu::Item manage;
+    manage.command = manageCommand;
+    manage.label = std::move(label);
+    manage.inlineAction = true;
+    manage.inlineGroup = moreCommand;
+    manage.compactInlineAction = true;
+    manage.measureInlineAction = true;
+    items.insert(std::next(more), std::move(manage));
+}
 inline void MoveMoreToBottom(std::vector<modern_menu::Item> &items, UINT moreCommand)
 {
     const auto anchor = std::find_if(items.begin(), items.end(), [=](const auto &item) {
@@ -13,8 +32,12 @@ inline void MoveMoreToBottom(std::vector<modern_menu::Item> &items, UINT moreCom
     });
     if (anchor == items.end())
         return;
-    auto more = std::move(*anchor);
-    items.erase(anchor);
+    auto end = std::next(anchor);
+    if (anchor->inlineAction && anchor->inlineGroup)
+        while (end != items.end() && end->inlineAction && end->inlineGroup == anchor->inlineGroup)
+            ++end;
+    std::vector<modern_menu::Item> footer(std::make_move_iterator(anchor), std::make_move_iterator(end));
+    items.erase(anchor, end);
     // Removing More may leave its old group empty. Preserve other groups.
     std::vector<modern_menu::Item> ordered;
     for (auto &item : items)
@@ -26,7 +49,8 @@ inline void MoveMoreToBottom(std::vector<modern_menu::Item> &items, UINT moreCom
         divider.separator = true;
         ordered.push_back(divider);
     }
-    ordered.push_back(std::move(more));
+    ordered.insert(ordered.end(), std::make_move_iterator(footer.begin()),
+                   std::make_move_iterator(footer.end()));
     items = std::move(ordered);
 }
 inline void InsertBeforeMore(std::vector<modern_menu::Item> &items,

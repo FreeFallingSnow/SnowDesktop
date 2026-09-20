@@ -643,6 +643,7 @@
     "app.menu.new": "新建",
     "app.menu.refresh": "刷新",
     "app.menu.more_options": "展开更多选项",
+    "app.menu.manage_context_menu": "管理",
     "app.menu.sort_by": "排序方式",
     "app.menu.sort_name": "名称",
     "app.menu.sort_type": "类型",

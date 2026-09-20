@@ -813,6 +813,22 @@ private:
                         static_cast<int>(labelSize.cx) +
                             metrics_.outerInset * 4);
                 }
+                else if (item.measureInlineAction && screenDc)
+                {
+                    HGDIOBJ oldFont = SelectObject(screenDc, textFont_);
+                    SIZE labelSize{};
+                    GetTextExtentPoint32W(screenDc, item.label.c_str(), static_cast<int>(item.label.size()),
+                                          &labelSize);
+                    if (oldFont)
+                        SelectObject(screenDc, oldFont);
+                    const int leading =
+                        !item.glyph.empty() || item.image
+                            ? metrics_.leftPadding + metrics_.iconColumnWidth + metrics_.textGap
+                            : metrics_.outerInset * 2;
+                    inlineWidths[i] =
+                        std::max(metrics_.rowHeight * (item.compactInlineAction ? 2 : 1),
+                                 static_cast<int>(labelSize.cx) + leading + metrics_.outerInset * 2);
+                }
                 continue;
             }
             const menu_icon::ItemView view{
@@ -823,6 +839,21 @@ private:
             const SIZE measured = menu_icon::MeasureItem(
                 screenDc, textFont_, view, metrics_);
             width = std::max(width, static_cast<int>(measured.cx));
+        }
+        for (size_t position = 0; position < regularIndices.size(); ++position)
+        {
+            const auto &item = (*popup.items)[regularIndices[position]];
+            if (!item.measureInlineAction || !item.inlineAction)
+                continue;
+            int groupWidth = inlineWidths[regularIndices[position]];
+            while (position + 1 < regularIndices.size())
+            {
+                const auto &next = (*popup.items)[regularIndices[position + 1]];
+                if (!next.inlineAction || !next.measureInlineAction || next.inlineGroup != item.inlineGroup)
+                    break;
+                groupWidth += inlineWidths[regularIndices[++position]];
+            }
+            width = std::max(width, groupWidth);
         }
         if (!quickIndices.empty())
         {
@@ -952,7 +983,9 @@ private:
                     if (action.label.empty())
                         fixedWidth += narrowWidth;
                     else if (action.compactInlineAction)
-                        fixedWidth += compactWidth;
+                        fixedWidth += action.measureInlineAction
+                                          ? std::max(compactWidth, inlineWidths[regularIndices[i]])
+                                          : compactWidth;
                     else
                         ++flexibleCount;
                 }
@@ -967,10 +1000,13 @@ private:
                     const Item& action = (*popup.items)[actionIndex];
                     const bool flexible = !action.label.empty() &&
                         !action.compactInlineAction;
-                    const int requestedWidth = action.label.empty()
-                        ? narrowWidth
-                        : (action.compactInlineAction
-                            ? compactWidth : flexibleWidth);
+                    const int requestedWidth =
+                        action.label.empty() ? narrowWidth
+                                             : (action.compactInlineAction
+                                                    ? (action.measureInlineAction
+                                                           ? std::max(compactWidth, inlineWidths[actionIndex])
+                                                           : compactWidth)
+                                                    : flexibleWidth);
                     const int actionWidth = i == runEnd
                         ? shadowSize_ + width - left
                         : (flexible ? flexibleWidth : requestedWidth);

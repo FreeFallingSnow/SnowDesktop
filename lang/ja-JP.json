@@ -643,6 +643,7 @@
   "app.menu.new": "新規作成",
   "app.menu.refresh": "更新",
   "app.menu.more_options": "その他のオプション",
+  "app.menu.manage_context_menu": "管理",
   "app.menu.sort_by": "並べ替え基準",
   "app.menu.sort_name": "名前",
   "app.menu.sort_type": "種類",

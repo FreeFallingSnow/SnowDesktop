@@ -643,6 +643,7 @@
     "app.menu.new": "New",
     "app.menu.refresh": "Refresh",
     "app.menu.more_options": "More Options",
+    "app.menu.manage_context_menu": "Manage",
     "app.menu.sort_by": "Sort By",
     "app.menu.sort_name": "Name",
     "app.menu.sort_type": "Type",

@@ -415,6 +415,13 @@ int wmain()
                    items[3].separator && items[4].label == L"7-Zip" &&
                    items[4].children.front().command == 4 && items[5].command == 2,
                "Shell entries and More form the bottom group after every host action");
+        items = {open, separator, more, separator, after};
+        snowdesktop::shell_extensions::AddMoreManagementAction(items, 2, 5, L"管理");
+        snowdesktop::shell_extensions::MoveMoreToBottom(items, 2);
+        snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
+        Expect(items.size() == 7 && items[4].label == L"7-Zip" && items[5].command == 2 &&
+                   items[6].command == 5 && items[5].inlineGroup == items[6].inlineGroup,
+               "management stays beside More after the real attachment and insertion sequence");
     }
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.
@@ -1140,6 +1147,45 @@ int wmain()
         });
         Expect(searched.command == 9101 && entered == L"o", "focused search input takes precedence over bare access keys");
     }
+    // The footer's two actions must remain independently clickable and keyboard
+    // reachable with compact and regular metrics, including a longer translation.
+    for (const auto appearance : {Appearance::OpaqueLight, Appearance::Win10Light, Appearance::Win10Dark})
+        for (const UINT dpi : {96U, 120U, 144U, 192U})
+        {
+            snowdesktop::modern_menu::Options footerOptions;
+            footerOptions.owner = owner;
+            footerOptions.anchor = {80, 80};
+            footerOptions.appearance = appearance;
+            footerOptions.dpi = dpi;
+            std::vector<Item> footerItems{{9201, L"Weitere Optionen anzeigen", L"+", true}};
+            snowdesktop::shell_extensions::AddMoreManagementAction(footerItems, 9201, 9202, L"Verwalten");
+            snowdesktop::modern_menu::HoverInfo hover;
+            footerOptions.onHover = [&](const auto &info) { hover = info; };
+            RECT moreBounds{}, manageBounds{};
+            const auto manageResult = runScript(footerItems, footerOptions, [&](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                moreBounds = hover.itemScreenRect;
+                Expect(hover.command == 9201, "More remains the primary footer action");
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                manageBounds = hover.itemScreenRect;
+                Expect(hover.command == 9202, "management is reachable from keyboard navigation");
+                POINT point{(manageBounds.left + manageBounds.right) / 2,
+                            (manageBounds.top + manageBounds.bottom) / 2};
+                ScreenToClient(root, &point);
+                SendMessageW(root, WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
+                SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+            });
+            Expect(manageResult.command == 9202 && moreBounds.right == manageBounds.left &&
+                       moreBounds.top == manageBounds.top && moreBounds.bottom == manageBounds.bottom,
+                   "right-hand management click has its own hit target in the same footer row");
+            Expect(manageBounds.right - manageBounds.left > MulDiv(48, dpi, 96),
+                   "the longer management translation receives content width even with Win10 metrics");
+            const auto moreResult = runScript(footerItems, footerOptions, [&](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(moreResult.command == 9201, "the original More command remains independently executable");
+        }
     for (const auto appearance : {Appearance::Win10Light, Appearance::Win10Dark})
     {
         for (const UINT dpi : {96U, 120U, 144U, 192U})

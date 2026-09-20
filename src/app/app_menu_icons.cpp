@@ -750,6 +750,8 @@ UINT DesktopApp::ShowModernMenu(
              << L" pid=" << GetCurrentProcessId();
         WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
     }
+    snowdesktop::shell_extensions::AddMoreManagementAction(
+        items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"));
     snowdesktop::shell_extensions::MoveMoreToBottom(items, kContextMoreCommand);
     std::unique_ptr<snowdesktop::shell_extensions::Presentation> extensions;
     if (shellRequest)
@@ -761,6 +763,16 @@ UINT DesktopApp::ShowModernMenu(
     }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
+    if (result.command == kContextManageMenuCommand)
+    {
+        // Let the caller finish restoring its popup/desktop focus before the
+        // settings window opens. Reuse the existing pending-route dispatcher.
+        settingsWindowOpenRequest_.Request(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::ContextMenu, "contextMenu.extensions"));
+        if (!controlHwnd_ || !SetTimer(controlHwnd_, kSettingsWindowRetryTimerId, 1, nullptr))
+            TryShowPendingSettingsWindow();
+        return 0;
+    }
     if (extensions && extensions->Invoke(result.command, screenPoint)) return 0;
 
     return result.command;

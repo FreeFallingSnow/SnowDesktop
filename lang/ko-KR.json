@@ -643,6 +643,7 @@
   "app.menu.new": "새로 만들기",
   "app.menu.refresh": "새로 고침",
   "app.menu.more_options": "추가 옵션",
+  "app.menu.manage_context_menu": "관리",
   "app.menu.sort_by": "정렬 기준",
   "app.menu.sort_name": "이름",
   "app.menu.sort_type": "유형",
