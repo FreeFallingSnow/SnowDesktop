@@ -421,6 +421,12 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
+    if (menuUnavailable && msg == menuUnavailable)
+    {
+        ShowBalloonNotification(_LW("settings.contextMenu.page"), _LW("settings.contextMenu.commandUnavailable"));
+        return 0;
+    }
     if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
     {
         return snowdesktop::performance::HandleControlMessage(

@@ -99,6 +99,8 @@ struct Popup
     int hoveredItem = -1;
     int keyboardItem = -1;
     int scrollOffset = 0;
+    int scrollBand = 0;
+    int scrollHover = 0;
     int horizontalScrollOffset = 0;
     int horizontalScrollContentWidth = 0;
     RECT horizontalScrollRect{};
@@ -347,10 +349,15 @@ public:
             TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, hwnd, 0 };
             TrackMouseEvent(&tracking);
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            const int hover = ScrollHintDirection(popup, point);
+            const bool changed = popup.scrollHover != hover;
+            popup.scrollHover = hover;
             SetHoveredItem(popup, HitTest(popup, point), false);
+            if (changed) Render(popup);
             return 0;
         }
         case WM_MOUSELEAVE:
+            if (popup.scrollHover) { popup.scrollHover = 0; Render(popup); }
             if (popup.depth == ActiveDepth() &&
                 popup.hoveredItem >= 0 &&
                 !HasOpenChild(popup))
@@ -364,6 +371,8 @@ public:
         {
             pointerPressed_ = false;
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            const int direction = ScrollHintDirection(popup, point);
+            if (direction) { Scroll(popup, direction); return 0; }
             const int index = HitTest(popup, point);
             if (index >= 0 &&
                 (*popup.items)[index].textInput)
@@ -520,9 +529,9 @@ public:
 
         const RECT viewport{
             panel.left,
-            panel.top + panelPadding_,
+            panel.top + panelPadding_ + popup.scrollBand,
             panel.right,
-            panel.bottom - panelPadding_,
+            panel.bottom - panelPadding_ - popup.scrollBand,
         };
         const int savedDc = SaveDC(memoryDc);
         IntersectClipRect(memoryDc, viewport.left, viewport.top,
@@ -643,10 +652,11 @@ public:
         }
         RestoreDC(memoryDc, savedDc);
 
-        if (popup.scrollOffset > 0)
+        if (popup.scrollBand)
+        {
             DrawScrollIndicator(memoryDc, popup, true);
-        if (popup.scrollOffset < MaxScroll(popup))
             DrawScrollIndicator(memoryDc, popup, false);
+        }
 
         ApplyAlphaMask(popup, pixels, panel);
 
@@ -898,6 +908,7 @@ private:
         popup.quickActionRight = 0;
         if (quickIndices.empty())
             popup.quickActionCellWidth = 0;
+        popup.scrollBand = 0;
         int contentTop = shadowSize_ + panelPadding_;
         if (!quickIndices.empty())
         {
@@ -1076,7 +1087,7 @@ private:
         popup.panelHeight = std::min(
             popup.contentHeight + panelPadding_ * 2,
             maxPanelHeight);
-        popup.viewportHeight = popup.panelHeight - panelPadding_ * 2;
+        SetScrollViewport(popup);
         popup.windowWidth = popup.panelWidth + shadowSize_ * 2;
         popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
     }
@@ -1151,13 +1162,45 @@ private:
         popup.panelScreenOrigin = { left, top };
     }
 
+    // Both end bands reserve space for the lifetime of a scrollable popup.
+    // Reaching an end changes only the arrow state, never the row coordinates.
+    void SetScrollViewport(Popup &popup)
+    {
+        const int available = std::max(1, popup.panelHeight - panelPadding_ * 2);
+        const int band = popup.contentHeight > available
+            ? std::max(1, std::min(Scale(18, options_.dpi), (available - Scale(12, options_.dpi)) / 2)) : 0;
+        const int shift = band - popup.scrollBand;
+        if (shift)
+        {
+            for (auto &rect : popup.itemRects) OffsetRect(&rect, 0, shift);
+            OffsetRect(&popup.quickSeparatorRect, 0, shift);
+            OffsetRect(&popup.horizontalScrollRect, 0, shift);
+        }
+        popup.scrollBand = band;
+        popup.viewportHeight = std::max(1, available - 2 * band);
+    }
+    RECT ScrollHintRect(const Popup &popup, bool top) const
+    {
+        const int y = top ? shadowSize_ + panelPadding_ : shadowSize_ + popup.panelHeight - panelPadding_ - popup.scrollBand;
+        return {shadowSize_ + Scale(2, options_.dpi), y,
+                shadowSize_ + popup.panelWidth - Scale(2, options_.dpi), y + popup.scrollBand};
+    }
+    int ScrollHintDirection(const Popup &popup, POINT point) const
+    {
+        if (!popup.scrollBand) return 0;
+        const auto top = ScrollHintRect(popup, true), bottom = ScrollHintRect(popup, false);
+        if (popup.scrollOffset > 0 && PtInRect(&top, point)) return -1;
+        if (popup.scrollOffset < MaxScroll(popup) && PtInRect(&bottom, point)) return 1;
+        return 0;
+    }
+
     int HitTest(const Popup& popup, POINT point) const
     {
         const RECT viewport{
             shadowSize_,
-            shadowSize_ + panelPadding_,
+            shadowSize_ + panelPadding_ + popup.scrollBand,
             shadowSize_ + popup.panelWidth,
-            shadowSize_ + popup.panelHeight - panelPadding_,
+            shadowSize_ + popup.panelHeight - panelPadding_ - popup.scrollBand,
         };
         if (!PtInRect(&viewport, point))
             return -1;
@@ -2003,7 +2046,7 @@ private:
                                         : monitor.rcWork.bottom;
                 popup.panelHeight =
                     std::min(popup.panelHeight, static_cast<int>(bottom - popup.panelScreenOrigin.y));
-                popup.viewportHeight = std::max(1, popup.panelHeight - panelPadding_ * 2);
+                SetScrollViewport(popup);
                 popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
             }
             popup.scrollOffset =
@@ -2088,7 +2131,7 @@ private:
     void EnsureVisible(Popup& popup, int index)
     {
         const RECT row = popup.itemRects[index];
-        const int viewportTop = shadowSize_ + panelPadding_;
+        const int viewportTop = shadowSize_ + panelPadding_ + popup.scrollBand;
         const int viewportBottom = viewportTop + popup.viewportHeight;
         if (row.top - popup.scrollOffset < viewportTop)
             popup.scrollOffset = row.top - viewportTop;
@@ -2119,6 +2162,7 @@ private:
         if (popup.scrollOffset != oldOffset)
         {
             CloseFromDepth(popup.depth + 1);
+            popup.hoveredItem = popup.keyboardItem = -1;
             Render(popup);
         }
     }
@@ -2376,22 +2420,29 @@ private:
 
     void DrawScrollIndicator(HDC dc, const Popup& popup, bool top)
     {
-        const int centerX = shadowSize_ + popup.panelWidth / 2;
-        const int centerY = top
-            ? shadowSize_ + Scale(5, options_.dpi)
-            : shadowSize_ + popup.panelHeight - Scale(5, options_.dpi);
-        HPEN pen = CreatePen(PS_SOLID, 1,
-            lightTheme_ ? RGB(95, 95, 95) : RGB(190, 190, 190));
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        const int half = Scale(3, options_.dpi);
-        MoveToEx(dc, centerX - half,
-            centerY + (top ? half / 2 : -half / 2), nullptr);
-        LineTo(dc, centerX,
-            centerY + (top ? -half / 2 : half / 2));
-        LineTo(dc, centerX + half,
-            centerY + (top ? half / 2 : -half / 2));
-        SelectObject(dc, oldPen);
-        DeleteObject(pen);
+        const RECT band = ScrollHintRect(popup, top);
+        const bool enabled = top ? popup.scrollOffset > 0 : popup.scrollOffset < MaxScroll(popup);
+        const bool hovered = enabled && popup.scrollHover == (top ? -1 : 1);
+        HBRUSH background = CreateSolidBrush(hovered ? palette_.hoverBackground : palette_.background);
+        FillRect(dc, &band, background); DeleteObject(background);
+        // A short separator makes the scrolling affordance distinct from a row.
+        HPEN separator = CreatePen(PS_SOLID, Scale(1, options_.dpi), palette_.separator);
+        HGDIOBJ oldPen = SelectObject(dc, separator);
+        const int edge = top ? band.bottom - 1 : band.top;
+        MoveToEx(dc, band.left + Scale(6, options_.dpi), edge, nullptr);
+        LineTo(dc, band.right - Scale(6, options_.dpi), edge);
+        SelectObject(dc, oldPen); DeleteObject(separator);
+        const int centerX = (band.left + band.right) / 2;
+        const int centerY = (band.top + band.bottom) / 2;
+        const COLORREF color = enabled ? (lightTheme_ ? RGB(38, 38, 38) : RGB(238, 238, 238))
+                                      : (lightTheme_ ? RGB(165, 165, 165) : RGB(105, 105, 105));
+        HPEN pen = CreatePen(PS_SOLID, Scale(2, options_.dpi), color);
+        oldPen = SelectObject(dc, pen);
+        const int half = Scale(4, options_.dpi), rise = Scale(2, options_.dpi);
+        MoveToEx(dc, centerX - half, centerY + (top ? rise : -rise), nullptr);
+        LineTo(dc, centerX, centerY + (top ? -rise : rise));
+        LineTo(dc, centerX + half, centerY + (top ? rise : -rise));
+        SelectObject(dc, oldPen); DeleteObject(pen);
     }
 
     void DrawHorizontalScrollIndicator(

@@ -1264,14 +1264,19 @@ int wmain()
             for (UINT i = 0; i < 100; ++i)
                 longMenu.push_back({200 + i, L"滚动菜单项", L"", true});
             compact.anchor = {monitorInfo.rcWork.right - 2, monitorInfo.rcWork.bottom - 2};
-            const auto scrolled = runScript(longMenu, compact, [](HWND root) {
+            const auto scrolled = runScript(longMenu, compact, [dpi](HWND root) {
+                RECT client{}; GetClientRect(root, &client);
+                const auto hint = MAKELPARAM(client.right / 2, client.bottom - MulDiv(18, dpi, 96));
+                SendMessageW(root, WM_MOUSEMOVE, 0, hint);
+                SendMessageW(root, WM_LBUTTONDOWN, 0, hint);
+                SendMessageW(root, WM_LBUTTONUP, 0, hint);
                 SendMessageW(root, WM_KEYDOWN, VK_END, 0);
                 SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
             });
             Expect(scrolled.command == 299 &&
-                    scrolled.itemScreenRect.bottom <= monitorInfo.rcWork.bottom &&
+                    scrolled.itemScreenRect.bottom <= monitorInfo.rcWork.bottom - MulDiv(18, dpi, 96) &&
                     scrolled.itemScreenRect.right <= monitorInfo.rcWork.right,
-                "compact menus scroll to the last command within the monitor work area");
+                "scroll hint click never activates a row and the last command stays above the reserved end band");
 
             compact.anchor = {80, 80};
             compact.onTextChanged = options.onTextChanged;

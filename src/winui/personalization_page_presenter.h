@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "../shell_extension_service.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -16,6 +17,7 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Personalization settings presenter. */
 struct PersonalizationPageActions
 {
+    std::function<shell_extensions::CatalogueView(const shell_extensions::Request&, bool)> contextMenu;
     using Edit = std::function<void(PersonalizationSettings&)>;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;

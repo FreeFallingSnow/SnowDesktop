@@ -758,13 +758,17 @@ UINT DesktopApp::ShowModernMenu(
     {
         extensions = std::make_unique<snowdesktop::shell_extensions::Presentation>(*shellRequest, generalSettings_.shellExtensions,
             _LW("settings.contextMenu.loading"),
-            _LW("settings.contextMenu.failed"));
+            _LW("settings.contextMenu.failed"), snowdesktop::shell_extensions::SharedMenuService(),
+            [owner = controlHwnd_](bool succeeded) {
+                if (!succeeded && owner) PostMessageW(owner, RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable"), 0, 0);
+            });
         extensions->Attach(items, options, kContextMoreCommand);
     }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
     if (result.command == kContextManageMenuCommand)
     {
+        if (shellRequest) snowdesktop::shell_extensions::SharedMenuService().Manage(*shellRequest);
         // Let the caller finish restoring its popup/desktop focus before the
         // settings window opens. Reuse the existing pending-route dispatcher.
         settingsWindowOpenRequest_.Request(snowdesktop::SettingsRoute::ForPage(

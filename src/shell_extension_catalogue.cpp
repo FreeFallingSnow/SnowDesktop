@@ -5,6 +5,7 @@
 #include <cwctype>
 #include <map>
 #include <set>
+#include <mutex>
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <msxml6.h>
@@ -40,6 +41,18 @@ std::vector<std::wstring> Children(HKEY root, const std::wstring &path)
         wchar_t name[1024]{}; DWORD count = 1024;
         if (RegEnumKeyExW(key.value, i, name, &count, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
         result.emplace_back(name, count);
+    }
+    return result;
+}
+std::vector<std::wstring> Values(HKEY root, const std::wstring &path)
+{
+    Key key(root, path); std::vector<std::wstring> result;
+    if (!key.value) return result;
+    for (DWORD i = 0; i < 65536; ++i)
+    {
+        wchar_t name[1024]{}; DWORD length = 1024;
+        if (RegEnumValueW(key.value, i, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+        result.emplace_back(name, length);
     }
     return result;
 }
@@ -79,6 +92,17 @@ void LoadIcon(Entry &entry, std::wstring location)
     wchar_t path[32768]{};
     wcsncpy_s(path, location.c_str(), _TRUNCATE);
     const auto index = PathParseIconLocationW(path);
+    struct IconRow { std::uint64_t stamp; Entry image; };
+    static std::mutex iconMutex;
+    static std::map<std::wstring, IconRow> icons;
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &data)) return;
+    const auto stamp = (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+    {
+        std::lock_guard lock(iconMutex);
+        if (const auto found = icons.find(location); found != icons.end() && found->second.stamp == stamp)
+        { entry.width = found->second.image.width; entry.height = found->second.image.height; entry.pixels = found->second.image.pixels; return; }
+    }
     HICON icon = nullptr;
     if (FAILED(SHDefExtractIconW(path, index, 0, nullptr, &icon, MAKELONG(20, 20))) || !icon) return;
     BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth = 20;
@@ -100,6 +124,13 @@ void LoadIcon(Entry &entry, std::wstring location)
     if (bitmap) DeleteObject(bitmap);
     if (dc) DeleteDC(dc);
     DestroyIcon(icon);
+    if (!entry.pixels.empty())
+    {
+        std::lock_guard lock(iconMutex);
+        if (icons.size() >= 512) icons.erase(icons.begin());
+        Entry image; image.width = entry.width; image.height = entry.height; image.pixels = entry.pixels;
+        icons[location] = {stamp, std::move(image)};
+    }
 }
 template<class T> void Unique(std::vector<T> &items) { std::sort(items.begin(), items.end()); items.erase(std::unique(items.begin(), items.end()), items.end()); }
 struct Scanner
@@ -240,7 +271,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
             const auto perceived = Read(classes, name, L"PerceivedType");
             if (!perceived.empty()) types[L"systemfileassociations\\" + Lower(perceived)].push_back(Lower(name));
             types[L"systemfileassociations\\" + Lower(name)].push_back(Lower(name));
-            for (const auto &progId : Children(classes, name + L"\\OpenWithProgids")) types[Lower(progId)].push_back(Lower(name));
+            for (const auto &progId : Values(classes, name + L"\\OpenWithProgids")) types[Lower(progId)].push_back(Lower(name));
             if (classes == HKEY_CLASSES_ROOT)
             {
                 const auto choice = Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
@@ -279,20 +310,21 @@ bool Applies(const Registration &row, const Request &request)
 void Associate(Catalogue &catalogue, const Request &request, Reply &reply)
 {
     if (!reply.ok) return;
+    auto selection = request; selection.context = ResolveContext(request);
     for (auto &entry : reply.entries)
     {
         if (entry.separator) continue;
         Registration *match = nullptr;
         auto key = entry.key; std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
         for (auto &row : catalogue.rows)
-            if (row.systemEnabled && Applies(row, request) && !key.empty() && std::find(row.verbs.begin(), row.verbs.end(), key) != row.verbs.end())
+            if (row.systemEnabled && Applies(row, selection) && !key.empty() && std::find(row.verbs.begin(), row.verbs.end(), key) != row.verbs.end())
             {
                 if (match) { match = nullptr; break; }
                 match = &row;
             }
         if (!match) continue; // Labels and submenu contents never establish ownership.
         match->linked = true;
-        const Association association{entry.provider, match->id, ResolveContext(request)};
+        const Association association{entry.provider, match->id, selection.context};
         if (std::none_of(catalogue.associations.begin(), catalogue.associations.end(), [&](const auto &a) { return a.provider == association.provider && a.registration == association.registration && a.context == association.context; })) catalogue.associations.push_back(association);
         entry.registration = match->id;
     }

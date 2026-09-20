@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "../shell_extension_service.h"
 #include "../large_icon_settings.h"
 #include "../settings_search_index.h"
 #include "backup_data_page_backend.h"
@@ -42,6 +43,7 @@ struct SettingsWindowHostOptions
         std::uint64_t generation,
         std::uint64_t revision)>;
 
+    std::function<shell_extensions::CatalogueView(const shell_extensions::Request&, bool)> contextMenu;
     LocalizeCallback localize;
     LanguageCatalogProvider languageCatalog;
     SearchInputProvider searchInput;

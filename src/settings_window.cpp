@@ -119,6 +119,10 @@ bool SettingsWindow::Init(HINSTANCE instance, snowdesktop::SettingsController& c
     impl_->instance = instance;
     impl_->controller = &controller;
     impl_->widgetSettingsService = service;
+    options.contextMenu = [&controller](const auto &request, bool refresh) {
+        if (const auto snapshot = controller.Snapshot()) snowdesktop::shell_extensions::SharedMenuService().Configure(snapshot->values.general.shellExtensions);
+        return snowdesktop::shell_extensions::SharedMenuService().Inspect(request, refresh);
+    };
     impl_->options = std::move(options);
     impl_->lastError.clear();
     return true;

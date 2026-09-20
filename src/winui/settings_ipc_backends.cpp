@@ -273,6 +273,9 @@ struct BackendServer::Impl
         WidgetEngine* engineValue, SettingsWindowHostOptions configured)
         : channel(channelValue), controller(controllerValue), engine(engineValue), options(std::move(configured))
     {
+        channel.Bind<shell_extensions::CatalogueView, shell_extensions::Request, bool>("menu.inspect", [this](auto request, bool refresh) {
+            return options.contextMenu ? options.contextMenu(request, refresh) : shell_extensions::CatalogueView{};
+        });
 #define SD_OPTION(Name, Return) \
         channel.Bind<Return>("options." #Name, [this] { return options.Name ? options.Name() : Return{}; });
         SD_OPTION(searchInput, SettingsSearchIndexInput)
@@ -450,6 +453,9 @@ void BackendServer::ClosePages() noexcept { impl_->ClosePages(); }
 SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
 {
     SettingsWindowHostOptions options;
+    options.contextMenu = [&channel](const shell_extensions::Request &request, bool refresh) {
+        return channel.Call<shell_extensions::CatalogueView>("menu.inspect", request, refresh);
+    };
     options.windowTitle = channel.Call<std::wstring>("options.title");
     options.localize = [](std::string_view key) { return std::wstring(Locale::Instance().TrW(std::string(key).c_str())); };
     options.languageCatalog = [&channel] { return channel.Call<std::vector<std::pair<std::string, std::wstring>>>("options.languageCatalog"); };

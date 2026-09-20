@@ -41,6 +41,28 @@ bool Local(const Request &request)
     }
     return !request.paths.empty();
 }
+bool DependsOn(const Registration &row, const Request &request, unsigned contexts)
+{
+    if (!(row.contexts & contexts)) return false;
+    if (row.types.empty() || std::find(row.types.begin(), row.types.end(), L"*") != row.types.end()) return true;
+    return std::any_of(request.paths.begin(), request.paths.end(), [&](const auto &path) {
+        auto extension = std::filesystem::path(path).extension().wstring();
+        for (auto &c : extension) c = towlower(c);
+        return std::find(row.types.begin(), row.types.end(), extension) != row.types.end();
+    });
+}
+std::uint64_t Dependency(const Catalogue &catalogue, const Request &request, unsigned contexts)
+{
+    if (!catalogue.revision) return 0;
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const auto &row : catalogue.rows)
+        if (DependsOn(row, request, contexts))
+        {
+            for (unsigned char c : row.id) { hash ^= c; hash *= 1099511628211ull; }
+            hash ^= row.revision; hash *= 1099511628211ull;
+        }
+    return hash;
+}
 bool Configured(const Preferences &prefs, const std::string &id, Context context)
 {
     return std::any_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return r.id == id && r.category == CategoryOf(context); }) ||
@@ -76,6 +98,7 @@ struct MenuService::Impl
         QueryPriority priority = QueryPriority::Inspect;
         std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
         unsigned failures = 0;
+        Key identity; std::uint64_t expires = 0; bool checkRequested = false;
         bool queued = false, force = false, invalid = false;
         std::vector<Click> clicks;
     };
@@ -90,7 +113,7 @@ struct MenuService::Impl
     Catalogue catalogue;
     Preferences preferences;
     Request management;
-    bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false;
+    bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false;
     std::uint64_t clock = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker;
@@ -129,6 +152,8 @@ struct MenuService::Impl
             if (priority == QueryPriority::Execute) row.due = now;
             MenuTrace("schedule", "joined"); return;
         }
+        row.checkRequested = true;
+        SetEvent(wake);
         if (!force && (now < row.retryAt || (row.completed && now - row.completed < 10000 && !row.invalid))) return;
         row.priority = priority; row.force = force; row.due = now + delay; row.queued = true;
         row.view.pending = true; ++row.sequence;
@@ -149,25 +174,33 @@ struct MenuService::Impl
             bytes -= victim->second.bytes; rows.erase(victim);
         }
     }
-    void Publish(const Key &key, Reply reply, unsigned contexts)
+    void Publish(const Key &key, Reply reply, unsigned contexts, std::uint64_t written = MenuSnapshotCache::Now())
     {
         auto &row = rows.at(key);
         std::function<void(std::vector<Entry>&)> sanitize = [&](auto &entries) { for (auto &e : entries) { e.token = 0; sanitize(e.children); } };
         sanitize(reply.entries);
         row.bytes = settings_ipc::Pack(reply).size();
         if (row.bytes > 2 * 1024 * 1024) { row.bytes = 0; return; }
+        row.expires = written + MenuSnapshotCache::LifetimeMs;
         row.view.snapshot = std::move(reply); row.view.contexts = contexts; ++row.view.revision;
         row.used = ++clock;
     }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
     {
-        Request request; std::vector<Click> clicks; bool current = false;
+        Request request;
+        { std::lock_guard lock(mutex); const auto it = rows.find(job.key); if (it == rows.end()) return; request = it->second.request; }
+        const auto contexts = Contexts(request);
+        auto resolved = request; resolved.context = ResolveContext(request);
+        const bool targetCurrent = !job.ticket || cache.Capture(request).identity == job.ticket.identity;
+        std::vector<Click> clicks; bool current = false;
+        Preferences latestPreferences; bool enforcePreferences = false;
         {
             std::lock_guard lock(mutex);
             const auto it = rows.find(job.key);
             if (it == rows.end()) return;
             auto &row = it->second; request = row.request;
-            current = row.sequence == job.sequence && row.dependency == job.dependency;
+            latestPreferences = preferences; enforcePreferences = configured;
+            current = targetCurrent && row.sequence == job.sequence && row.dependency == job.dependency;
             clicks = std::move(row.clicks);
             if (!current)
             {
@@ -180,7 +213,7 @@ struct MenuService::Impl
                 row.view.error = reply.error;
                 if (reply.ok)
                 {
-                    Associate(catalogue, request, reply);
+                    Associate(catalogue, resolved, reply);
                     row.failures = 0; row.retryAt = 0; row.completed = GetTickCount64(); row.invalid = false;
                 }
                 else
@@ -194,15 +227,16 @@ struct MenuService::Impl
         if (current && reply.ok)
         {
             cache.Store(job.ticket, reply);
-            const auto contexts = Contexts(request);
             std::lock_guard lock(mutex);
             if (auto it = rows.find(job.key); it != rows.end() && it->second.sequence == job.sequence && it->second.dependency == job.dependency) Publish(job.key, reply, contexts);
         }
+        auto executable = reply;
+        if (enforcePreferences) executable.entries = VisibleSnapshot(latestPreferences, reply, contexts);
         bool invoked = false;
         for (auto &click : clicks)
         {
             bool succeeded = false;
-            const auto token = current && reply.ok && !invoked ? ResolveCommand(reply, click.reference) : 0;
+            const auto token = current && reply.ok && !invoked ? ResolveCommand(executable, click.reference) : 0;
             if (token)
             {
                 try { job.work.invoke(token, click.point); succeeded = invoked = true; } catch (...) {}
@@ -261,7 +295,7 @@ struct MenuService::Impl
                     if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                 catalogue = std::move(value); scanning = false;
                 for (auto &[key, row] : rows)
-                    if (std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return Applies(r, row.request); }))
+                    if (std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
                     {
                         row.invalid = true; ++row.dependency; row.view.snapshot.reset(); row.bytes = 0; ++row.view.revision;
                         affected.push_back(row.request);
@@ -294,16 +328,18 @@ struct MenuService::Impl
         for (auto &[request, reply] : cache.Warm())
         {
             const auto contexts = Contexts(request);
+            const auto ticket = cache.Capture(request);
             std::lock_guard lock(mutex); const auto key = SelectionKey(request);
             auto &row = rows[key]; row.request = request;
-            Publish(key, std::move(reply), contexts);
+            row.identity = ticket.identity;
+            Publish(key, std::move(reply), contexts, cache.Written(ticket));
         }
         for (;;)
         {
             { std::lock_guard lock(mutex); if (stop) break; }
-            bool warmDesktop = false;
-            { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false); }
-            if (warmDesktop)
+            bool warmDesktop = false, inspectDesktop = false;
+            { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false); inspectDesktop = std::exchange(desktopInspection, false); }
+            if (warmDesktop || inspectDesktop)
             {
                 PWSTR path = nullptr;
                 if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, KF_FLAG_DONT_VERIFY, nullptr, &path)))
@@ -311,8 +347,9 @@ struct MenuService::Impl
                     Request request; request.paths = {path}; request.background = true; request.context = Context::Desktop; CoTaskMemFree(path);
                     if (Local(request))
                     {
-                        std::lock_guard lock(mutex); Queue(request, QueryPriority::Prewarm, false);
-                        request.extended = true; Queue(request, QueryPriority::Prewarm, false);
+                        std::lock_guard lock(mutex);
+                        if (inspectDesktop) { management = request; Queue(request, QueryPriority::Inspect, true); }
+                        if (warmDesktop) { Queue(request, QueryPriority::Prewarm, false); request.extended = true; Queue(request, QueryPriority::Prewarm, false); }
                     }
                 }
             }
@@ -345,19 +382,41 @@ struct MenuService::Impl
                     std::lock_guard lock(mutex); rows[key].view.pending = false; continue;
                 }
                 auto ticket = cache.Capture(request);
+                const auto contexts = Contexts(request);
+                {
+                    std::lock_guard lock(mutex);
+                    ticket.dependency = Dependency(catalogue, request, contexts);
+                    rows[key].identity = ticket.identity; rows[key].checkRequested = false;
+                }
                 if (invalid) cache.Erase(request);
                 if (auto disk = cache.Find(ticket))
                 {
-                    const auto contexts = Contexts(request);
                     std::lock_guard lock(mutex);
                     auto &row = rows[key];
-                    if (!row.view.snapshot && row.dependency == dependency) Publish(key, *disk, contexts);
+                    if (!row.view.snapshot && row.dependency == dependency) Publish(key, *disk, contexts, cache.Written(ticket));
                 }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64()};
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
-            { std::lock_guard lock(mutex); Trim(); }
+            std::vector<std::pair<Key, Request>> checks;
+            {
+                std::lock_guard lock(mutex);
+                for (auto &[key, row] : rows) if (row.checkRequested && !row.view.pending) { row.checkRequested = false; checks.emplace_back(key, row.request); }
+                Trim();
+            }
+            for (const auto &[key, request] : checks)
+            {
+                const auto ticket = cache.Capture(request);
+                std::lock_guard lock(mutex);
+                const auto found = rows.find(key); if (found == rows.end()) continue;
+                auto &row = found->second;
+                if (row.view.snapshot && row.identity != ticket.identity)
+                {
+                    row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
+                    Queue(request, QueryPriority::Menu, true);
+                }
+            }
             MsgWaitForMultipleObjectsEx(1, &wake, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
@@ -377,6 +436,7 @@ MenuView MenuService::View(const Request &request)
     const auto it = impl_->rows.find(SelectionKey(request));
     if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     it->second.used = ++impl_->clock;
+    if (it->second.expires && MenuSnapshotCache::Now() >= it->second.expires) { it->second.view.snapshot.reset(); it->second.bytes = 0; }
     timing.Record(it->second.view.snapshot ? "memory_hit" : "memory_miss");
     return it->second.view;
 }
@@ -412,10 +472,12 @@ void MenuService::Manage(const Request &request)
 CatalogueView MenuService::Inspect(const Request &request, bool refresh)
 {
     std::lock_guard lock(impl_->mutex);
-    if (refresh || impl_->catalogue.rows.empty()) impl_->scanRequested = true;
+    if (refresh || !impl_->inspected) impl_->scanRequested = true;
+    impl_->inspected = true;
+    if (request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
     const auto selection = request.paths.empty() ? impl_->management : request;
     if (!selection.paths.empty()) impl_->Queue(selection, QueryPriority::Inspect, refresh);
-    CatalogueView result; result.catalogue = impl_->catalogue; result.selection = selection; result.scanning = impl_->scanning || impl_->scanRequested;
+    CatalogueView result; result.catalogue = impl_->catalogue; result.selection = selection; result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection;
     if (const auto it = impl_->rows.find(SelectionKey(selection)); it != impl_->rows.end()) result.menu = it->second.view;
     SetEvent(impl_->wake); return result;
 }

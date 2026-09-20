@@ -258,6 +258,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
     {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.background", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.items", "settings.contextMenu.inspect", "settings.contextMenu.hint"},
     {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
     {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
@@ -2174,6 +2176,7 @@ struct SettingsWindowHost::Impl
         });
 
         PersonalizationPageActions personalization;
+        personalization.contextMenu = options.contextMenu;
         personalization.update = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,

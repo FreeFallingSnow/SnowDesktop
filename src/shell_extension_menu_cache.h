@@ -15,7 +15,7 @@ class MenuSnapshotCache
         std::wstring epoch;
         Request request;
         std::wstring file;
-        std::uint64_t sequence = 0;
+        std::uint64_t sequence = 0, dependency = 0;
         explicit operator bool() const
         {
             return !identity.empty();
@@ -30,6 +30,7 @@ class MenuSnapshotCache
     void Erase(const Request &request);
     std::vector<std::pair<Request, Reply>> Warm();
     void TrimDisk();
+    std::uint64_t Written(const Ticket &ticket) const;
     std::optional<Reply> Find(const Ticket &ticket, std::uint64_t now = Now());
     bool Store(const Ticket &ticket, const Reply &reply, std::uint64_t now = Now());
     void Invalidate();
@@ -45,7 +46,7 @@ class MenuSnapshotCache
     {
         settings_ipc::Bytes identity;
         std::wstring epoch;
-        std::uint64_t written = 0, fileStamp = 0, used = 0, bytes = 0;
+        std::uint64_t written = 0, fileStamp = 0, used = 0, bytes = 0, dependency = 0;
         bool desktop = false;
         Reply reply;
     };
@@ -59,7 +60,7 @@ MenuSnapshotCache &SharedMenuCache();
 
 // Labels and canonical verbs identify a path through the fresh menu. Tokens
 // and positional indices deliberately do not participate in this identity.
-using CommandReference = std::vector<std::tuple<std::string, std::string, std::wstring, bool>>;
+using CommandReference = std::vector<std::tuple<std::string, std::string, std::wstring, bool, std::string>>;
 CommandReference AppendReference(CommandReference path, const Entry &entry);
 UINT ResolveCommand(const Reply &reply, const CommandReference &reference);
 // Keeps a pending query on its original STA until it finishes. Called only

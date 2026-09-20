@@ -1,3 +1,4 @@
+#include "../shell_extension_service.h"
 #include "app.h"
 #include "../single_instance.h"
 #include "../atomic_file.h"
@@ -1027,6 +1028,7 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             app_.ApplyDesktopPassthroughHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
         }
@@ -1111,6 +1113,7 @@ public:
                 app_.generalSettings_.language,
                 snapshot.values.general.language) != 0;
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
@@ -1568,6 +1571,7 @@ void DesktopApp::InitializeSettingsController()
         dockSettings_ = snapshot->values.dock;
         navigationSettings_ = snapshot->values.navigation;
         generalSettings_ = snapshot->values.general;
+        snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
         ApplyAnimationPreferences();
         categorySettings_ = snapshot->values.category;
         generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
@@ -1879,6 +1883,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
     if (widgetEngine_) widgetEngine_->SetCalendarDisplayPreferences(generalSettings_.calendarDisplay);
     ApplyAnimationPreferences();
     generalSettings_.autoStartEnabled = autoStartEnabled;

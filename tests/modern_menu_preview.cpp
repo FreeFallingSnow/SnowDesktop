@@ -19,6 +19,7 @@ HANDLE gFluentFontHandle = nullptr;
 snowdesktop::modern_menu::Appearance gAppearance =
     snowdesktop::modern_menu::Appearance::SystemDarkBlur;
 UINT gPreviewDpi = USER_DEFAULT_SCREEN_DPI;
+bool gLongMenu = false;
 
 const wchar_t* AppearanceName(
     snowdesktop::modern_menu::Appearance appearance)
@@ -80,6 +81,8 @@ std::vector<snowdesktop::modern_menu::Item> BuildPreviewItems()
     items[4].quickIcon = snowdesktop::MenuQuickIcon::Edit;
     items[5].quickAction = true;
     items[5].quickIcon = snowdesktop::MenuQuickIcon::Delete;
+    if (gLongMenu)
+        for (UINT i = 0; i < 80; ++i) items.push_back({100 + i, L"滚动项目 / Scroll item " + std::to_wstring(i), L"", true});
     return items;
 }
 
@@ -142,6 +145,9 @@ LRESULT CALLBACK WindowProc(
         OpenPreviewMenu(hwnd);
         return 0;
     }
+    case WM_KEYDOWN:
+        if (wParam == 'L') { gLongMenu = !gLongMenu; OpenPreviewMenu(hwnd); return 0; }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
     case WM_MBUTTONUP:
     {
         constexpr UINT previewDpis[] = { 96, 120, 144, 192 };
@@ -182,7 +188,7 @@ LRESULT CALLBACK WindowProc(
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 255, 255));
         std::wstring displayText =
-            L"单击重开，右键切换主题，中键切换 DPI\n当前主题：";
+            L"单击重开，右键切换主题，中键切换 DPI，L 切换长菜单\n当前主题：";
         displayText += AppearanceName(gAppearance);
         displayText += L"  当前 DPI：";
         displayText += std::to_wstring(gPreviewDpi);

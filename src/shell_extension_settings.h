@@ -72,8 +72,8 @@ struct Preferences
 inline void Normalize(Preferences &value)
 {
     auto validId = [](const auto &item) { return !item.id.empty() && item.id.size() <= 4096 && item.id.find('\0') == std::string::npos; };
-    std::erase_if(value.rules, [&](const auto &r) { return !validId(r) || r.category < Category::Objects || r.category > Category::Background; });
-    std::erase_if(value.overrides, [&](const auto &r) { return !validId(r) || r.context < Context::File || r.context > Context::Desktop || r.visibility < Visibility::Inherit || r.visibility > Visibility::Hide; });
+    std::erase_if(value.rules, [&](const Rule &r) { return !validId(r) || r.category < Category::Objects || r.category > Category::Background; });
+    std::erase_if(value.overrides, [&](const LocationOverride &r) { return !validId(r) || r.context < Context::File || r.context > Context::Desktop || r.visibility < Visibility::Inherit || r.visibility > Visibility::Hide; });
     if (value.rules.size() > 8192) value.rules.resize(8192);
     if (value.overrides.size() > 16384) value.overrides.resize(16384);
 
