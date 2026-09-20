@@ -229,14 +229,21 @@ Application ModuleApplication(const std::wstring &module)
                         swprintf_s(query, L"\\StringFileInfo\\%04x%04x\\%s", translations[i].language, translations[i].codepage, field);
                         wchar_t *value = nullptr; UINT characters = 0;
                         if (!VerQueryValueW(bytes.data(), query, reinterpret_cast<void **>(&value), &characters) || !value || characters <= 1 || characters > 512) return std::wstring{};
-                        return std::wstring(value, characters - 1);
+                        std::wstring label(value, characters - 1);
+                        const auto first = label.find_first_not_of(L" \t\r\n");
+                        if (first == std::wstring::npos) return std::wstring{};
+                        label = label.substr(first, label.find_last_not_of(L" \t\r\n") - first + 1);
+                        // Unedited version-resource templates are not application names.
+                        if (Lower(label).starts_with(L"todo:") || (label.front() == L'<' && label.back() == L'>')) return std::wstring{};
+                        return label;
                     };
                     const auto product = text(L"ProductName"), company = text(L"CompanyName");
-                    if (product.empty()) continue;
-                    result.name = product;
+                    const auto name = product.empty() ? text(L"FileDescription") : product;
+                    if (name.empty()) continue;
+                    result.name = name;
                     // Product+company unifies one application's EXE and Shell
                     // DLL. It is display metadata, never command authority.
-                    if (!company.empty()) result.id = "product:" + Utf8(Lower(company + L"\n" + product));
+                    if (!product.empty() && !company.empty()) result.id = "product:" + Utf8(Lower(company + L"\n" + product));
                     break;
                 }
         }
