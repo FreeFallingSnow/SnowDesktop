@@ -302,10 +302,10 @@ void ContextMenuPagePresenter::Activate()
 {
     if (impl_->closed)
         return;
-    const bool wasActive = impl_->active;
     impl_->active = true;
-    if (!wasActive)
-        impl_->Reload();
+    impl_->request = {};
+    impl_->routed = false;
+    impl_->Reload();
 }
 void ContextMenuPagePresenter::Deactivate()
 {

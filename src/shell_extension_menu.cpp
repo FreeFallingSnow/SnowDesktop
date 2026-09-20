@@ -81,6 +81,8 @@ struct CacheState
                 watches.push_back(std::make_unique<RegistryWatch>(root, path));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
             L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"));
+        watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts"));
     }
     std::uint64_t Poll()
     {
@@ -994,7 +996,7 @@ std::optional<Reply> Session::Poll()
 void Session::Invoke(UINT token, POINT position)
 {
     if (!impl_->delivered || !impl_->process->Running())
-        return;
+        throw settings_ipc::ProtocolError("Shell command session is no longer available");
     MenuTiming timing("invoke_ack");
     AllowSetForegroundWindow(impl_->process->ProcessId());
     // Request acknowledgement only queues the invocation; arbitrary extension

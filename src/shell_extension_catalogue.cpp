@@ -70,9 +70,16 @@ bool Has(HKEY root, const std::wstring &path, const wchar_t *name)
 bool Blocked(const std::wstring &clsid)
 {
     if (clsid.empty()) return false;
+    bool enforceApproved = false, approved = false;
     for (auto hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+    {
         if (Has(hive, L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Blocked", clsid.c_str())) return true;
-    return false;
+        DWORD enforce = 0, bytes = sizeof(enforce);
+        if (RegGetValueW(hive, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", L"EnforceShellExtensionSecurity", RRF_RT_REG_DWORD, nullptr, &enforce, &bytes) == ERROR_SUCCESS)
+            enforceApproved |= enforce != 0;
+        approved |= Has(hive, L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved", clsid.c_str());
+    }
+    return enforceApproved && !approved;
 }
 std::wstring Localized(std::wstring text)
 {
@@ -92,6 +99,7 @@ void LoadIcon(Entry &entry, std::wstring location)
     wchar_t path[32768]{};
     wcsncpy_s(path, location.c_str(), _TRUNCATE);
     const auto index = PathParseIconLocationW(path);
+    if (PathIsNetworkPathW(path) || GetDriveTypeW(std::filesystem::path(path).root_path().c_str()) == DRIVE_REMOTE) return;
     struct IconRow { std::uint64_t stamp; Entry image; };
     static std::mutex iconMutex;
     static std::map<std::wstring, IconRow> icons;
@@ -292,6 +300,15 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     for (auto &row : scanner.result.rows)
     {
         Unique(row.sources); Unique(row.types); Unique(row.verbs);
+        std::vector<std::wstring> associations;
+        for (const auto &type : row.types)
+            if (!type.empty() && type.front() == L'.')
+            {
+                associations.push_back(Read(classes, type));
+                if (classes == HKEY_CLASSES_ROOT)
+                    associations.push_back(Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + type + L"\\UserChoice", L"ProgId"));
+            }
+        row.revision = Hash(settings_ipc::Pack(row.revision, associations));
         row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels));
     }
     std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
@@ -324,6 +341,11 @@ void Associate(Catalogue &catalogue, const Request &request, Reply &reply)
             }
         if (!match) continue; // Labels and submenu contents never establish ownership.
         match->linked = true;
+        if (match->display.pixels.empty() && !entry.pixels.empty())
+        {
+            match->display.width = entry.width; match->display.height = entry.height;
+            match->display.pixels = entry.pixels;
+        }
         const Association association{entry.provider, match->id, selection.context};
         if (std::none_of(catalogue.associations.begin(), catalogue.associations.end(), [&](const auto &a) { return a.provider == association.provider && a.registration == association.registration && a.context == association.context; })) catalogue.associations.push_back(association);
         entry.registration = match->id;
