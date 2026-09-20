@@ -199,7 +199,6 @@ struct MenuService::Impl
             const auto it = rows.find(job.key);
             if (it == rows.end()) return;
             auto &row = it->second; request = row.request;
-            latestPreferences = preferences; enforcePreferences = configured;
             current = targetCurrent && row.sequence == job.sequence && row.dependency == job.dependency;
             clicks = std::move(row.clicks);
             if (!current)
@@ -234,6 +233,7 @@ struct MenuService::Impl
             cache.Store(job.ticket, reply);
         }
         auto executable = reply;
+        { std::lock_guard lock(mutex); latestPreferences = preferences; enforcePreferences = configured; }
         if (enforcePreferences) executable.entries = VisibleSnapshot(latestPreferences, reply, contexts);
         bool invoked = false;
         for (auto &click : clicks)
@@ -331,11 +331,14 @@ struct MenuService::Impl
         for (auto &[request, reply] : cache.Warm())
         {
             const auto contexts = Contexts(request);
-            const auto ticket = cache.Capture(request);
+            auto ticket = cache.Capture(request);
+            ticket.dependency = Dependency(catalogue, request, contexts);
+            auto current = cache.Find(ticket);
+            if (!current) continue;
             std::lock_guard lock(mutex); const auto key = SelectionKey(request);
             auto &row = rows[key]; row.request = request;
             row.identity = ticket.identity;
-            Publish(key, std::move(reply), contexts, cache.Written(ticket));
+            Publish(key, std::move(*current), contexts, cache.Written(ticket));
         }
         for (;;)
         {

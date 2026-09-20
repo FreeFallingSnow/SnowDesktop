@@ -634,6 +634,11 @@ void TestCatalogueCache()
     Expect(!writer.Store(changedTicket,reply,102),"target changes during a query invalidate its pending snapshot");
     const auto current=writer.Capture(file);
     Expect(writer.Store(current,reply,103),"write current target snapshot");
+    auto older = writer.Begin(current), newer = writer.Begin(current);
+    newer.dependency = 37;
+    Expect(writer.Store(newer, reply, 103) && !writer.Store(older, reply, 103), "older completion cannot overwrite a newer request sequence");
+    auto differentDependency = current; differentDependency.dependency = 38;
+    Expect(!reader.Find(differentDependency, 104), "disk snapshots from another registration dependency are misses");
     { std::ofstream output(directory.path / L"cache" / current.file,std::ios::binary);output<<"truncated"; }
     ext::MenuSnapshotCache afterRestart(directory.path / L"cache");
     Expect(!afterRestart.Find(current,104),"corrupt disk cache falls back to a live query");
@@ -654,7 +659,7 @@ void TestCatalogueCache()
     std::filesystem::last_write_time(directory.path, oldTime + std::chrono::seconds(2));
     Expect(reader.Find(reader.Capture(desktop), 201).has_value(),
            "adding desktop files does not discard its display snapshot");
-    for (int i = 0; i < 96; ++i)
+    for (int i = 0; i < 270; ++i)
     {
         const auto sibling = directory.path / (L"cache-collision-" + std::to_wstring(i) + L".txt");
         {
@@ -674,6 +679,10 @@ void TestCatalogueCache()
     const auto retained = reader.Find(reader.Capture(desktop), 201);
     Expect(retained && retained->entries[0].label == reply.entries[0].label,
            "unrelated selections and Shift menus cannot evict the ordinary desktop snapshot");
+    size_t snapshots = 0;
+    for (const auto &file : std::filesystem::directory_iterator(writer.Directory()))
+        if (file.path().extension() == L".bin" && file.path().filename() != L"epoch.bin") ++snapshots;
+    Expect(snapshots <= ext::MenuSnapshotCache::DiskEntries, "full-key disk cache evicts past its 256-entry budget");
 }
 
 template<class Condition>
@@ -822,8 +831,83 @@ void TestQueryScheduler()
     }
     PumpUntil([&] { return service.View(requests[0]).snapshot && service.View(requests[1]).snapshot; }, "completed workers drain the queue");
     PumpUntil([&] { std::lock_guard lock(mutex); for (auto &gate : gates) gate->ready = true; return service.View(requests[2]).snapshot.has_value(); }, "queued third query completes");
+    std::atomic<bool> rejected = false;
+    ext::Entry clicked; clicked.provider = "verb:test"; clicked.key = "test"; clicked.label = L"Test";
+    service.Execute(requests[2], ext::AppendReference({}, clicked), {}, [&](bool ok) { rejected = !ok; });
+    PumpUntil([&] { std::lock_guard lock(mutex); return !gates.back()->ready; }, "explicit click starts a fresh command query");
+    service.Configure({}); // User hides extensions while the execution query is pending.
+    { std::lock_guard lock(mutex); gates.back()->ready = true; }
+    PumpUntil([&] { return rejected.load(); }, "latest visibility rules reject a pending click after disable");
+    Expect(invokes == 0, "disabled pending command is never invoked");
     service.Shutdown();
     Expect(maximum <= 2, "scheduler never runs more than two query workers");
+}
+
+void TestSelectionScopes()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto a = temp.path / L"a.txt", b = temp.path / L"b.txt", c = temp.path / L"c.png";
+    const auto d = temp.path / L"folder1", e = temp.path / L"folder2";
+    for (const auto &path : {a, b, c}) { std::ofstream out(path); out << "fixture"; }
+    std::filesystem::create_directory(d); std::filesystem::create_directory(e);
+    const std::vector<std::vector<std::wstring>> selections = {
+        {a.wstring()}, {a.wstring(), b.wstring()}, {a.wstring(), c.wstring()},
+        {d.wstring()}, {d.wstring(), e.wstring()}, {a.wstring(), d.wstring()}};
+    const unsigned expectedContexts[] = {1, 1, 1, 2, 2, 3};
+    std::vector<ext::Request> requests;
+    for (bool shift : {false, true}) for (const auto &paths : selections)
+    { ext::Request request; request.paths = paths; request.extended = shift; requests.push_back(request); }
+    std::atomic<int> starts = 0;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &request) {
+        ++starts;
+        const auto found = std::find_if(requests.begin(), requests.end(), [&](const auto &r) { return r.paths == request.paths && r.extended == request.extended; });
+        Expect(found != requests.end(), "query boundary receives the complete selection and Shift state");
+        ext::Reply reply; reply.ok = true; ext::Entry entry; entry.provider = "provider"; entry.key = "action";
+        entry.label = std::to_wstring(std::distance(requests.begin(), found)); entry.token = 17; reply.entries = {entry};
+        return ext::QueryWork{[reply] { return reply; }, [](UINT, POINT) {}};
+    });
+    for (const auto &request : requests) service.Query(request);
+    PumpUntil([&] { return std::all_of(requests.begin(), requests.end(), [&](const auto &r) { return service.View(r).snapshot.has_value(); }); }, "all single and mixed selections publish independently");
+    ext::Preferences preferences; ext::SetCommon(preferences, "provider", ext::Category::Objects, true);
+    ext::SetOverride(preferences, "provider", ext::Context::Folder, ext::Visibility::Hide);
+    for (size_t i = 0; i < requests.size(); ++i)
+    {
+        const auto view = service.View(requests[i]);
+        Expect(view.contexts == expectedContexts[i % 6] && view.snapshot->entries.front().label == std::to_wstring(i), "different selections and Shift never borrow a snapshot");
+        Expect(ext::VisibleSnapshot(preferences, *view.snapshot, view.contexts).empty() == (i % 6 >= 3), "folder hiding wins for folder-only and mixed file-folder selections");
+        service.Query(requests[i], ext::QueryPriority::Inspect);
+    }
+    Expect(starts == 12, "fresh settings and popup access reuse all twelve exact snapshots");
+}
+
+void TestCatalogueDependencies()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto path = temp.path / L"a.txt"; { std::ofstream out(path); out << "fixture"; }
+    ext::Request request; request.paths = {path.wstring()};
+    std::atomic<int> scanNumber = 0, mode = 0;
+    auto reader = [&] {
+        ext::Catalogue catalogue; catalogue.revision = 10 + mode.load();
+        ext::Registration text; text.id = "text"; text.contexts = 1; text.types = {L".txt"}; text.revision = mode == 2 ? 2 : 1;
+        ext::Registration image; image.id = "image"; image.contexts = 1; image.types = {L".png"}; image.revision = mode >= 1 ? 2 : 1;
+        catalogue.rows = {text, image}; ++scanNumber; return catalogue;
+    };
+    ext::MenuService service(temp.path / L"cache", [](const auto &) {
+        ext::Reply reply; reply.ok = true; return ext::QueryWork{[reply] { return reply; }, [](UINT, POINT) {}};
+    }, reader);
+    service.Inspect({}, true);
+    PumpUntil([&] { return scanNumber >= 1 && !service.Inspect().scanning; }, "initial dependency catalogue is ready");
+    service.Query(request);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "seed an exact text selection");
+    const auto revision = service.View(request).revision;
+    mode = 1; service.Inspect({}, true);
+    PumpUntil([&] { return scanNumber >= 2 && !service.Inspect().scanning; }, "unrelated registration scan completes");
+    Expect(service.View(request).snapshot && service.View(request).revision == revision, "an image-only registry change retains the text snapshot");
+    mode = 2; service.Inspect({}, true);
+    PumpUntil([&] { return scanNumber >= 3 && !service.Inspect().scanning; }, "relevant registration scan completes");
+    Expect(!service.View(request).snapshot, "a relevant registration change invalidates its dependent snapshot");
 }
 
 // Opt-in measurements use the real Session path and private files only. They
@@ -1015,6 +1099,8 @@ int wmain(int argc, wchar_t **argv)
             TestSnapshotPresentation();
             TestPendingCachedClick();
             TestQueryScheduler();
+            TestSelectionScopes();
+            TestCatalogueDependencies();
         }
     }
     catch (const std::exception& error)
