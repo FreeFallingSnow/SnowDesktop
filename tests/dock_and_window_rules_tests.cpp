@@ -86,6 +86,40 @@ void Check(bool condition, const char* message)
     std::cerr << "FAILED: " << message << '\n';
 }
 
+void CheckClipboardPasteEffects()
+{
+    // PasteClipboardToFolderPath uses this production rule before scheduling
+    // desktop/mapped-folder file operations. A copied file offering COPY | LINK
+    // must remain a file copy; choosing Link would materialize a .lnk instead.
+    struct Case
+    {
+        DWORD effect;
+        DropAction expected;
+        const char* message;
+    };
+    const Case cases[] = {
+        { DROPEFFECT_NONE, DropAction::Copy,
+          "clipboard without an effect defaults to copying" },
+        { DROPEFFECT_COPY, DropAction::Copy,
+          "clipboard copy retains file-copy semantics" },
+        { DROPEFFECT_MOVE, DropAction::Move,
+          "clipboard cut retains file-move semantics" },
+        { DROPEFFECT_LINK, DropAction::Link,
+          "clipboard link-only preference retains shortcut semantics" },
+        { DROPEFFECT_COPY | DROPEFFECT_LINK, DropAction::Copy,
+          "clipboard COPY | LINK must copy the file instead of creating a shortcut" },
+        { DROPEFFECT_MOVE | DROPEFFECT_LINK, DropAction::Move,
+          "clipboard move remains preferred over an offered link" },
+        { DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, DropAction::Move,
+          "clipboard combined effects preserve existing cut precedence" },
+        { DROPEFFECT_SCROLL | DROPEFFECT_COPY | DROPEFFECT_LINK, DropAction::Copy,
+          "clipboard non-transfer bits must not turn a copy into a shortcut" },
+    };
+    for (const auto& test : cases)
+        Check(DropActionFromClipboardEffect(test.effect) == test.expected,
+            test.message);
+}
+
 void CheckTaskbarAutoHideTraceTransport()
 {
     using namespace snowdesktop::taskbar_hook;
@@ -800,6 +834,7 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    CheckClipboardPasteEffects();
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarActivationRevealDispatch();
     CheckNativeDesktopCaptureReadiness();

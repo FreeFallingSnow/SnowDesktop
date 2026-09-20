@@ -46,6 +46,17 @@ enum class DropAction
     Link,
 };
 
+// Clipboard sources can offer COPY | LINK for an ordinary file copy. Keep
+// cut/move intent first, but never turn an offered copy into a shortcut just
+// because LINK is also present. Missing/empty preferences default to copying.
+inline DropAction DropActionFromClipboardEffect(DWORD preferredEffect) noexcept
+{
+    if (preferredEffect & DROPEFFECT_MOVE) return DropAction::Move;
+    if (preferredEffect & DROPEFFECT_COPY) return DropAction::Copy;
+    if (preferredEffect & DROPEFFECT_LINK) return DropAction::Link;
+    return DropAction::Copy;
+}
+
 /**
  * @brief 根据键盘修饰键推导拖放操作类型
  * @param mods            键盘修饰键标志位（Windows MK_* 常量组合）

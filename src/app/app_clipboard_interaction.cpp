@@ -317,10 +317,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
         DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
         if (pEffect)
         {
-            if (*pEffect & DROPEFFECT_MOVE)
-                action = DropAction::Move;
-            else if (*pEffect & DROPEFFECT_LINK)
-                action = DropAction::Link;
+            action = DropActionFromClipboardEffect(*pEffect);
             GlobalUnlock(medPref.hGlobal);
         }
         ReleaseStgMedium(&medPref);
