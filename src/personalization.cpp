@@ -418,6 +418,9 @@ bool LoadPersonalization(
     bool b3 = false;
     if (ReadBoolField(text, "showCategoryTabCounts", b3))
         s.showCategoryTabCounts = b3;
+    s.showGroupTabCounts = false;
+    if (ReadBoolField(text, "showGroupTabCounts", b3))
+        s.showGroupTabCounts = b3;
     // Legacy releases tied edge reflection to glass and used border alpha as
     // its intensity. New edge-highlight fields take priority when present.
     if (!edgeHighlightEnabledLoaded)
@@ -455,6 +458,7 @@ bool LoadPersonalization(
             s.luaWidgetContentRowHeight;
         const bool showCategoryTabCounts =
             s.showCategoryTabCounts;
+        const bool showGroupTabCounts = s.showGroupTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
         s = MakeAppearancePreset(s.backgroundPreset);
         s.cornerRadius = cornerRadius;
@@ -464,6 +468,7 @@ bool LoadPersonalization(
         s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
         s.showCategoryTabCounts =
             showCategoryTabCounts;
+        s.showGroupTabCounts = showGroupTabCounts;
         s.contextMenuStyle = contextMenuStyle;
         if (borderWidthLoaded)
             s.widgetBorderWidth = explicitBorderWidth;
@@ -534,6 +539,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << ",\n";
     file << "  \"showCategoryTabCounts\": "
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
+    file << "  \"showGroupTabCounts\": "
+         << (s.showGroupTabCounts ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"contextMenuStyle\": "

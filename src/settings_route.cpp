@@ -30,7 +30,8 @@ bool IsCustomThemeFocus(std::string_view focusId) noexcept
 bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
 {
     return focusId == "personalization.cornerRadius" ||
-        focusId == "personalization.barHeight";
+        focusId == "personalization.barHeight" ||
+        focusId == "personalization.showGroupTabCounts";
 }
 
 bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept

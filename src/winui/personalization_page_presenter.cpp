@@ -185,6 +185,8 @@ struct PersonalizationPagePresenter::Impl
     ContinuousControl barHeight;
     ContinuousControl categorizedTabHeight;
     ContinuousControl luaWidgetContentRowHeight;
+    muxc::ToggleSwitch showGroupTabCounts{nullptr};
+    SettingRow showGroupTabCountsRow;
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -233,6 +235,7 @@ struct PersonalizationPagePresenter::Impl
     winrt::event_token acrylicToken{};
     winrt::event_token contentThemeToken{};
     winrt::event_token contextMenuToken{};
+    winrt::event_token showGroupTabCountsToken{};
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
@@ -456,6 +459,11 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(luaWidgetContentRowHeight, L"cu");
         layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
+        showGroupTabCounts = muxc::ToggleSwitch{};
+        showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        showGroupTabCountsRow.Initialize(showGroupTabCounts);
+        showGroupTabCountsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(showGroupTabCountsRow.root);
     }
 
     void InitializeColorControl(
@@ -584,6 +592,7 @@ struct PersonalizationPagePresenter::Impl
                         const float luaWidgetContentRowHeight =
                             settings.luaWidgetContentRowHeight;
                         const bool counts = settings.showCategoryTabCounts;
+                        const bool groupCounts = settings.showGroupTabCounts;
                         const int menu = settings.contextMenuStyle;
                         settings = MakeAppearancePreset(preset);
                         settings.cornerRadius = corner;
@@ -592,6 +601,7 @@ struct PersonalizationPagePresenter::Impl
                         settings.luaWidgetContentRowHeight =
                             luaWidgetContentRowHeight;
                         settings.showCategoryTabCounts = counts;
+                        settings.showGroupTabCounts = groupCounts;
                         settings.contextMenuStyle = menu;
                     });
             });
@@ -668,6 +678,14 @@ struct PersonalizationPagePresenter::Impl
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [value](PersonalizationSettings& settings) {
                         settings.contextMenuStyle = std::clamp(value, 0, 6);
+                    });
+            });
+        showGroupTabCountsToken = showGroupTabCounts.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = showGroupTabCounts.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.showGroupTabCounts = enabled;
                     });
             });
         for (ContinuousControl* control : continuousControls)
@@ -836,6 +854,7 @@ struct PersonalizationPagePresenter::Impl
         glassToggle.IsOn(settings.glassEnabled);
         acrylicToggle.IsOn(settings.acrylicEnabled);
         edgeHighlightToggle.IsOn(settings.widgetEdgeHighlightEnabled);
+        showGroupTabCounts.IsOn(settings.showGroupTabCounts);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
@@ -1084,6 +1103,12 @@ struct PersonalizationPagePresenter::Impl
         SetContinuousText(luaWidgetContentRowHeight,
             "app.settings.lua_widget_row_height",
             L"Lua Widget Row Height");
+        showGroupTabCountsRow.SetText(
+            L("app.settings.group_show_count", L"Show file counts on group tabs"),
+            L("app.settings.group_show_count_hint",
+                L"Applies to collection group and file group tabs."));
+        muxa::AutomationProperties::SetName(
+            showGroupTabCounts, showGroupTabCountsRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1205,6 +1230,8 @@ struct PersonalizationPagePresenter::Impl
             return contextMenuCombo;
         if (id == "personalization.cornerRadius")
             return cornerRadius.slider;
+        if (id == "personalization.showGroupTabCounts")
+            return showGroupTabCounts;
         if (id == "personalization.barHeight")
             return barHeight.slider;
         if (id == "personalization.luaWidgetRowHeight")
@@ -1293,6 +1320,7 @@ struct PersonalizationPagePresenter::Impl
             acrylicToggle.Toggled(acrylicToken);
             contentThemeCombo.SelectionChanged(contentThemeToken);
             contextMenuCombo.SelectionChanged(contextMenuToken);
+            showGroupTabCounts.Toggled(showGroupTabCountsToken);
         }
         catch (...)
         {
@@ -1332,7 +1360,8 @@ void PersonalizationPagePresenter::SetLayoutSpacingContent(
     if (!impl_ || !content) return;
     uint32_t index = 0;
     const auto children = impl_->layoutCard.content.Children();
-    if (!children.IndexOf(content, index)) children.InsertAt(0, content);
+    // The card title remains first; spacing is the first setting below it.
+    if (!children.IndexOf(content, index)) children.InsertAt(1, content);
 }
 
 mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept

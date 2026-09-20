@@ -1,4 +1,6 @@
 {
+    "app.settings.group_show_count": "群組標籤顯示檔案數量",
+    "app.settings.group_show_count_hint": "適用於集合組和檔案群組的標籤。",
   "start.contextMenu.title": "右鍵選單設定",
   "start.contextMenu.description": "選擇選單外觀和要顯示的擴充功能項目。",
   "start.contextMenu.instructions": "在「右鍵選單」中選擇外觀，或分別管理檔案、資料夾、資料夾空白處和桌面的擴充功能項目。\n\n擴充功能項目預設隱藏。開啟所需項目的開關後，它會顯示在右鍵選單底部、「顯示更多選項」上方；關閉僅影響 SnowDesktop，不會修改系統設定。\n\n清單僅提供系統目前可用的項目。找不到某類檔案的項目時，可選擇特定檔案查看，或按一下「重新整理」。",

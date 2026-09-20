@@ -2326,6 +2326,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "personalization.cornerRadius",
                 "personalization.barHeight",
                 "personalization.luaWidgetRowHeight",
+                "personalization.showGroupTabCounts",
                 "desktop.categoryLayout",
                 "desktop.tabHeight",
                 "personalization.tabHeight"});

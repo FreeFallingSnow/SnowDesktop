@@ -1,4 +1,6 @@
 {
+    "app.settings.group_show_count": "Show file counts on group tabs",
+    "app.settings.group_show_count_hint": "Applies to collection group and file group tabs.",
   "start.contextMenu.title": "Context menu settings",
   "start.contextMenu.description": "Choose the menu appearance and which extension items to show.",
   "start.contextMenu.instructions": "Open Context menus to choose an appearance and manage extension items separately for files, folders, folder backgrounds, and the desktop.\n\nExtension items are hidden by default. Turn on the items you need to show them at the bottom of the context menu, above Show more options. Turning an item off affects only SnowDesktop and does not change Windows settings.\n\nThe list contains items currently available in the system menu. To find items for a particular file type, inspect a specific file or refresh the list.",

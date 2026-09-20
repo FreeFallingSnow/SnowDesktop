@@ -1,4 +1,6 @@
 {
+    "app.settings.group_show_count": "Dateianzahl auf Gruppen-Tabs anzeigen",
+    "app.settings.group_show_count_hint": "Gilt für Tabs von Sammlungsgruppen und Dateigruppen.",
   "start.contextMenu.title": "Kontextmenüs einrichten",
   "start.contextMenu.description": "Menüdesign und sichtbare Erweiterungseinträge auswählen.",
   "start.contextMenu.instructions": "Unter Kontextmenüs können Sie das Design wählen und Erweiterungseinträge für Dateien, Ordner, Ordnerhintergründe und den Desktop getrennt verwalten.\n\nErweiterungseinträge sind standardmäßig ausgeblendet. Aktivieren Sie gewünschte Einträge, damit sie unten im Kontextmenü oberhalb von Weitere Optionen anzeigen erscheinen. Das Ausschalten betrifft nur SnowDesktop und ändert keine Windows-Einstellungen.\n\nDie Liste enthält aktuell im Systemmenü verfügbare Einträge. Um Einträge für einen bestimmten Dateityp zu finden, prüfen Sie eine entsprechende Datei oder aktualisieren Sie die Liste.",

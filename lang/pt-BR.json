@@ -1,4 +1,6 @@
 {
+    "app.settings.group_show_count": "Mostrar a quantidade de arquivos nas abas dos grupos",
+    "app.settings.group_show_count_hint": "Aplica-se às abas dos grupos de coleções e de arquivos.",
   "start.contextMenu.title": "Configurar o menu de contexto",
   "start.contextMenu.description": "Escolha a aparência do menu e os itens das extensões que serão exibidos.",
   "start.contextMenu.instructions": "Em Menus de contexto, escolha a aparência e gerencie separadamente as extensões de arquivos, pastas, do fundo das pastas e da área de trabalho.\n\nOs itens das extensões ficam ocultos por padrão. Ative os itens desejados para exibi-los no fim do menu, acima de Mostrar mais opções. Desativar um item afeta apenas o SnowDesktop e não altera as configurações do Windows.\n\nA lista contém os itens disponíveis no menu do sistema. Para encontrar itens de um tipo específico de arquivo, examine um arquivo desse tipo ou atualize a lista.",

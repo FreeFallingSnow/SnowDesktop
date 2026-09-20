@@ -1,4 +1,6 @@
 {
+    "app.settings.group_show_count": "Mostrar el número de archivos en las pestañas de grupo",
+    "app.settings.group_show_count_hint": "Se aplica a las pestañas de grupos de colecciones y grupos de archivos.",
   "start.contextMenu.title": "Configurar el menú contextual",
   "start.contextMenu.description": "Elige el aspecto del menú y las opciones de las extensiones que se mostrarán.",
   "start.contextMenu.instructions": "En Menús contextuales, elige el aspecto y gestiona por separado las extensiones de archivos, carpetas, el fondo de las carpetas y el escritorio.\n\nLas opciones de las extensiones están ocultas de forma predeterminada. Activa las que necesites para mostrarlas al final del menú, encima de Mostrar más opciones. Desactivar una opción solo afecta a SnowDesktop y no cambia la configuración de Windows.\n\nLa lista contiene las opciones disponibles en el menú del sistema. Para encontrar las de un tipo de archivo concreto, examina un archivo de ese tipo o actualiza la lista.",

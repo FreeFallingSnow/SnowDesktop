@@ -1,4 +1,6 @@
 {
+    "app.settings.group_show_count": "组标签显示文件数量",
+    "app.settings.group_show_count_hint": "适用于集合组和文件组的标签。",
   "start.contextMenu.title": "右键菜单设置",
   "start.contextMenu.description": "选择菜单外观和要显示的扩展项目。",
   "start.contextMenu.instructions": "在“右键菜单”中选择外观，或分别管理文件、文件夹、文件夹空白处和桌面的扩展项目。\n\n扩展项目默认隐藏。打开所需项目的开关后，它会显示在右键菜单底部、“展开更多选项”上方；关闭只影响 SnowDesktop，不修改系统设置。\n\n列表仅提供系统当前可用的项目。找不到某类文件的项目时，可选择具体文件查看，或点击“刷新”。",

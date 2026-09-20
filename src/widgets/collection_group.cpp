@@ -108,7 +108,15 @@ std::wstring CollectionGroupTabTitle(
 std::wstring CollectionGroupTabDisplayText(
     CollectionGroup* widget, size_t tabIndex)
 {
-    return CollectionGroupTabTitle(widget, tabIndex);
+    std::wstring label = CollectionGroupTabTitle(widget, tabIndex);
+    if (!widget || !widget->ShowGroupTabItemCounts())
+        return label;
+    const auto& children = widget->GetVisibleCollectionIds();
+    if (tabIndex >= children.size()) return label;
+    const DesktopWidget* child = FindCollectionWidget(widget, children[tabIndex]);
+    if (child)
+        label += L" " + std::to_wstring(child->itemKeys.size());
+    return label;
 }
 
 std::vector<int> CollectionGroupTabWidths(

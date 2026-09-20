@@ -1,4 +1,6 @@
 {
+    "app.settings.group_show_count": "그룹 탭에 파일 수 표시",
+    "app.settings.group_show_count_hint": "컬렉션 그룹과 파일 그룹의 탭에 적용됩니다.",
   "start.contextMenu.title": "오른쪽 클릭 메뉴 설정",
   "start.contextMenu.description": "메뉴 모양과 표시할 확장 항목을 선택합니다.",
   "start.contextMenu.instructions": "오른쪽 클릭 메뉴에서 모양을 선택하고 파일, 폴더, 폴더 빈 공간, 바탕 화면의 확장 항목을 각각 관리할 수 있습니다.\n\n확장 항목은 기본적으로 모두 숨겨져 있습니다. 필요한 항목의 스위치를 켜면 메뉴 맨 아래의 추가 옵션 표시 위에 나타납니다. 항목을 끄면 SnowDesktop에서만 숨겨지며 Windows 설정은 변경되지 않습니다.\n\n목록에는 현재 시스템 메뉴에서 사용할 수 있는 항목이 표시됩니다. 특정 파일 형식의 항목이 보이지 않으면 해당 파일을 선택하여 확인하거나 목록을 새로 고치세요.",

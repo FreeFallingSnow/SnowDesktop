@@ -375,6 +375,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceWidgets, "desktop.categoryLayout",
         "app.settings.tab_height",
         "settings.personalization.widgets.description"},
+    {SettingsPage::AppearanceWidgets, "personalization.showGroupTabCounts",
+        "app.settings.group_show_count", "app.settings.group_show_count_hint"},
     {SettingsPage::DesktopCategories,
         "desktop.categoryCounts",
         "app.settings.category_show_count",

@@ -377,6 +377,8 @@ public:
     float GetCategorizedSearchBoxHeight() const;
     /** @brief 分类标签（桌面文件/映射文件夹）是否显示文件数量。 */
     bool ShowCategoryTabItemCounts() const;
+    /** @brief 集合组和文件组的来源标签是否显示文件数量。 */
+    bool ShowGroupTabItemCounts() const;
     /** @brief 按共同字号测量并分配标签宽度。 */
     std::vector<int> BuildCategorizedTabWidths(
         const std::vector<std::wstring>& labels,

@@ -277,6 +277,12 @@ void TestRoutes()
             legacyCounts.page == SettingsPage::DesktopCategories &&
             legacyCounts.focusId == "desktop.categoryCounts",
         "legacy Personalization routes resolve to their owned Appearance or Categories leaf");
+    const auto groupCounts = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.showGroupTabCounts"));
+    Check(groupCounts.page == SettingsPage::AppearanceWidgets &&
+            groupCounts.focusId == "personalization.showGroupTabCounts",
+        "group count links reach Widgets & layout without redirecting to desktop categories");
 
     const SettingsRoute desktopIcons = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(

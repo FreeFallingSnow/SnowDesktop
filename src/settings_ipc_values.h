@@ -23,7 +23,7 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBorderG, v.widgetBorderB, v.widgetAlpha, v.widgetBorderAlpha,
     v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength,
     v.gradientEndA, v.barHeight, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
-    v.showCategoryTabCounts, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
+    v.showCategoryTabCounts, v.showGroupTabCounts, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,

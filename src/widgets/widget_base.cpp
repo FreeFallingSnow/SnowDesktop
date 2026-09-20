@@ -784,6 +784,11 @@ bool ScrollingItemWidget::
     return true;
 }
 
+bool ScrollingItemWidget::ShowGroupTabItemCounts() const
+{
+    return app_ && app_->CurrentPersonalization().showGroupTabCounts;
+}
+
 std::vector<int>
 ScrollingItemWidget::BuildCategorizedTabWidths(
     const std::vector<std::wstring>& labels,

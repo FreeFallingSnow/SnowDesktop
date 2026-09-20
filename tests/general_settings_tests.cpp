@@ -357,6 +357,10 @@ int main()
     savedAppearance.widgetEdgeHighlightWidth = 2.5f;
     savedAppearance.widgetEdgeHighlightStrength = 0.42f;
     savedAppearance.luaWidgetContentRowHeight = 34.0f;
+    Check(!savedAppearance.showGroupTabCounts,
+        "group tab file counts are opt-in for a new profile");
+    savedAppearance.showGroupTabCounts = true;
+    savedAppearance.showCategoryTabCounts = false;
     savedAppearance.panelGradient.enabled = true;
     savedAppearance.panelGradient.angle = 45;
     savedAppearance.panelGradient.start = .1;
@@ -374,9 +378,28 @@ int main()
             std::abs(loadedAppearance.widgetEdgeHighlightStrength -
                 0.42f) < 0.0001f &&
             loadedAppearance.luaWidgetContentRowHeight == 34.0f &&
+            loadedAppearance.showGroupTabCounts &&
+            !loadedAppearance.showCategoryTabCounts &&
             !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
             loadedAppearance.gradientEndA == savedAppearance.gradientEndA,
         "appearance and Lua widget row height round trip independently");
+    // Group counts must survive the acrylic preset refresh on load and must
+    // remain independent from category counts, including an explicit off.
+    for (const int preset : {kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight})
+    {
+        for (const bool enabled : {true, false})
+        {
+            auto appearance = MakeAppearancePreset(preset);
+            appearance.showGroupTabCounts = enabled;
+            appearance.showCategoryTabCounts = !enabled;
+            loadedAppearance.showGroupTabCounts = !enabled;
+            Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
+                    LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                    loadedAppearance.showGroupTabCounts == enabled &&
+                    loadedAppearance.showCategoryTabCounts == !enabled,
+                "group count preference survives acrylic preset refresh independently from category counts");
+        }
+    }
     // Persist through a non-custom theme as well: applying a preset must not
     // discard the independent context-menu selection.
     for (int style = 0; style <= 6; ++style)
@@ -415,8 +438,10 @@ int main()
                        "}\n";
     }
     PersonalizationSettings migratedGlass;
+    migratedGlass.showGroupTabCounts = true;
     migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
+            !migratedGlass.showGroupTabCounts &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
                 kDefaultEdgeHighlightWidth &&
