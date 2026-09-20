@@ -216,7 +216,11 @@ struct MenuService::Impl
                     else { item.id = id; item.kind = RegistrationKind::Observed; }
                     item.linked = true; item.contexts = 0;
                 }
-                if (known != registered.end()) item.commandIdentity = known->second->commandIdentity;
+                if (known != registered.end())
+                {
+                    item.commandIdentity = known->second->commandIdentity;
+                    item.application = known->second->application;
+                }
                 item.display = {};
                 item.display.provider = entry.provider; item.display.registration = entry.registration;
                 item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
@@ -260,7 +264,7 @@ struct MenuService::Impl
         { std::lock_guard lock(mutex); if (!observedDirty) return; value = available.rows; observedDirty = false; }
         try
         {
-            const auto bytes = settings_ipc::Pack(std::uint32_t(2), value);
+            const auto bytes = settings_ipc::Pack(std::uint32_t(3), value);
             std::error_code error; std::filesystem::create_directories(cache.Directory(), error);
             const auto temporary = cache.Directory() / L"observed.tmp";
             std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
@@ -278,7 +282,7 @@ struct MenuService::Impl
             settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
             if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
             auto [schema, value] = settings_ipc::Unpack<std::tuple<std::uint32_t, std::vector<Registration>>>(bytes);
-            if (schema != 2 || value.size() > 1024) return;
+            if (schema != 3 || value.size() > 1024) return;
             std::lock_guard lock(mutex);
             for (auto &entry : value)
                 if (!entry.id.empty() && entry.linked && entry.systemEnabled && !entry.display.provider.empty())
@@ -370,7 +374,7 @@ struct MenuService::Impl
         { std::lock_guard lock(mutex); if (!catalogueDirty) return; value = catalogue; catalogueDirty = false; }
         try
         {
-            const auto bytes = settings_ipc::Pack(std::uint32_t(3), value);
+            const auto bytes = settings_ipc::Pack(std::uint32_t(4), value);
             if (bytes.size() > 32 * 1024 * 1024) return;
             std::error_code ignored; std::filesystem::create_directories(cache.Directory(), ignored);
             const auto temporary = cache.Directory() / L"catalogue.tmp";
@@ -389,7 +393,7 @@ struct MenuService::Impl
             settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
             if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
             auto [schema, value] = settings_ipc::Unpack<std::tuple<std::uint32_t, Catalogue>>(bytes);
-            if (schema != 3) return;
+            if (schema != 4) return;
             std::lock_guard lock(mutex); catalogue = std::move(value);
         }
         catch (...) {}

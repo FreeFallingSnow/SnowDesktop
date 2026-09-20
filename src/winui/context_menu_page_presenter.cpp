@@ -4,6 +4,7 @@
 #include "../shell_extension_management.h"
 #include <array>
 #include <cwctype>
+#include <set>
 #include <shobjidl.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <wrl/client.h>
@@ -38,6 +39,17 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::Grid toolbar;
     muxc::TextBox search;
     muxc::Button refresh;
+    muxc::ComboBox applicationFilter, extensionFilter;
+    muxc::Grid filters, resultBar;
+    muxc::Button bulk;
+    muxc::MenuFlyoutItem showResults, hideResults;
+    muxc::HyperlinkButton clearFilters;
+    muxc::TextBlock resultCount;
+    std::vector<std::pair<std::string, std::wstring>> applicationOptions;
+    std::vector<std::pair<std::wstring, std::wstring>> extensionOptions;
+    std::string selectedApplication;
+    std::wstring selectedExtension;
+    std::vector<ext::ManagementRow> filteredRows;
     muxc::HyperlinkButton chooseObject, chooseFolder, chooseDesktop;
     muxc::TextBlock heading, status;
     mux::DispatcherTimer timer, rowTimer;
@@ -52,6 +64,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     ext::Category category = ext::Category::Objects;
     ext::Category rowCategory = ext::Category::Objects;
     bool hasVisibleRows = false;
+    bool extensionFocus = false;
     std::uint64_t generation = 0;
     bool active = false, closed = false, updating = false, initialized = false, routed = false;
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
@@ -70,6 +83,15 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Column(toolbar, 1, mux::GridUnitType::Star); Column(toolbar, 1, mux::GridUnitType::Auto);
         search.Margin({0, 0, 8, 0}); toolbar.Children().Append(search);
         muxc::Grid::SetColumn(refresh, 1); toolbar.Children().Append(refresh); content.Children().Append(toolbar);
+        Column(filters, 1, mux::GridUnitType::Star); Column(filters, 1, mux::GridUnitType::Star);
+        applicationFilter.HorizontalAlignment(mux::HorizontalAlignment::Stretch); applicationFilter.Margin({0, 0, 8, 0});
+        extensionFilter.HorizontalAlignment(mux::HorizontalAlignment::Stretch); muxc::Grid::SetColumn(extensionFilter, 1);
+        filters.Children().Append(applicationFilter); filters.Children().Append(extensionFilter); content.Children().Append(filters);
+        Column(resultBar, 1, mux::GridUnitType::Star); Column(resultBar, 1, mux::GridUnitType::Auto); Column(resultBar, 1, mux::GridUnitType::Auto);
+        resultCount.VerticalAlignment(mux::VerticalAlignment::Center); resultCount.TextWrapping(mux::TextWrapping::Wrap);
+        resultBar.Children().Append(resultCount); muxc::Grid::SetColumn(clearFilters, 1); resultBar.Children().Append(clearFilters);
+        muxc::Grid::SetColumn(bulk, 2); resultBar.Children().Append(bulk); content.Children().Append(resultBar);
+        muxc::MenuFlyout batchMenu; batchMenu.Items().Append(showResults); batchMenu.Items().Append(hideResults); bulk.Flyout(batchMenu);
         muxc::StackPanel pickers; pickers.Orientation(muxc::Orientation::Horizontal); pickers.Spacing(8);
         pickers.Children().Append(chooseObject); pickers.Children().Append(chooseFolder); pickers.Children().Append(chooseDesktop); content.Children().Append(pickers);
         status.TextWrapping(mux::TextWrapping::Wrap); status.Visibility(mux::Visibility::Collapsed); content.Children().Append(status);
@@ -84,8 +106,28 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             category = tabs.SelectedItem() == backgroundTab ? ext::Category::Background : ext::Category::Objects;
             Text(); BuildRows();
         }); revoke.push_back([t = tabs, changed] { t.SelectionChanged(changed); });
-        auto filter = search.TextChanged([this](auto &&, auto &&) { if (!closed) BuildRows(); });
+        auto filter = search.TextChanged([this](auto &&, auto &&) { if (!closed && !updating) BuildRows(); });
         revoke.push_back([c = search, filter] { c.TextChanged(filter); });
+        const auto appChanged = applicationFilter.SelectionChanged([this](auto &&, auto &&) {
+            if (closed || updating || applicationFilter.SelectedIndex() < 0) return;
+            selectedApplication = applicationOptions.at(applicationFilter.SelectedIndex()).first; BuildRows();
+        }); revoke.push_back([c = applicationFilter, appChanged] { c.SelectionChanged(appChanged); });
+        const auto extensionChanged = extensionFilter.SelectionChanged([this](auto &&, auto &&) {
+            if (closed || updating || extensionFilter.SelectedIndex() < 0) return;
+            selectedExtension = extensionOptions.at(extensionFilter.SelectedIndex()).first; BuildRows();
+        }); revoke.push_back([c = extensionFilter, extensionChanged] { c.SelectionChanged(extensionChanged); });
+        for (const auto &choice : {applicationFilter, extensionFilter})
+        {
+            const auto closedList = choice.DropDownClosed([this](auto &&, auto &&) { if (!closed && active) BuildRows(); });
+            revoke.push_back([choice, closedList] { choice.DropDownClosed(closedList); });
+        }
+        const auto clear = clearFilters.Click([this](auto &&, auto &&) {
+            updating = true; selectedApplication.clear(); selectedExtension.clear(); search.Text(L""); updating = false; BuildRows();
+        }); revoke.push_back([c = clearFilters, clear] { c.Click(clear); });
+        const auto show = showResults.Click([this](auto &&, auto &&) { SetResults(true); });
+        revoke.push_back([c = showResults, show] { c.Click(show); });
+        const auto hide = hideResults.Click([this](auto &&, auto &&) { SetResults(false); });
+        revoke.push_back([c = hideResults, hide] { c.Click(hide); });
         auto reload = refresh.Click([this](auto &&, auto &&) { if (active && !closed) Reload(true); });
         revoke.push_back([c = refresh, reload] { c.Click(reload); });
         auto pick = chooseObject.Click([this](auto &&, auto &&) { if (active && !closed) Pick(false); });
@@ -102,6 +144,14 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         heading.Text(L("settings.contextMenu.extensions"));
         objectsTab.Text(L("settings.contextMenu.objects")); backgroundTab.Text(L("settings.contextMenu.background"));
         search.PlaceholderText(L("settings.contextMenu.search")); refresh.Content(winrt::box_value(L("settings.contextMenu.refresh")));
+        applicationFilter.Header(winrt::box_value(L("settings.contextMenu.application")));
+        extensionFilter.Header(winrt::box_value(L("settings.contextMenu.extension")));
+        extensionFilter.Visibility(category == ext::Category::Objects ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        muxc::Grid::SetColumnSpan(applicationFilter, category == ext::Category::Objects ? 1 : 2);
+        bulk.Content(winrt::box_value(L("settings.contextMenu.batch")));
+        showResults.Text(L("settings.contextMenu.showResults")); hideResults.Text(L("settings.contextMenu.hideResults"));
+        clearFilters.Content(winrt::box_value(L("settings.contextMenu.clearFilters")));
+        muxc::ToolTipService::SetToolTip(bulk, winrt::box_value(L("settings.contextMenu.batchHint")));
         chooseObject.Content(winrt::box_value(L("settings.contextMenu.inspectFiles")));
         chooseFolder.Content(winrt::box_value(L("settings.contextMenu.inspectFolders")));
         chooseDesktop.Content(winrt::box_value(L("settings.contextMenu.inspectDesktop")));
@@ -119,7 +169,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (!routed && !view.selection.paths.empty())
             {
                 request = view.selection;
-                category = request.background || request.context == ext::Context::Desktop ? ext::Category::Background : ext::Category::Objects;
+                category = !extensionFocus && (request.background || request.context == ext::Context::Desktop) ? ext::Category::Background : ext::Category::Objects;
                 updating = true; tabs.SelectedItem(category == ext::Category::Objects ? objectsTab : backgroundTab); updating = false;
                 routed = true; Text();
             }
@@ -189,8 +239,70 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void UpdateStatus()
     {
         if (hasVisibleRows) Status(L"");
+        else if (HasFilters()) Status(L("settings.contextMenu.noMatches"));
         else if (view.scanning || view.menu.pending) Status(L("settings.contextMenu.loading"));
         else Status(L(view.menu.error.empty() ? "settings.contextMenu.empty" : "settings.contextMenu.failed"));
+    }
+    bool HasFilters() const
+    {
+        return !selectedApplication.empty() || (category == ext::Category::Objects && !selectedExtension.empty()) || !search.Text().empty();
+    }
+    template<class Key>
+    void SyncOptions(muxc::ComboBox choice, std::vector<std::pair<Key, std::wstring>> &current,
+        std::vector<std::pair<Key, std::wstring>> desired, const Key &selected)
+    {
+        if (choice.IsDropDownOpen()) return;
+        // Keep a selected filter if its last item disappears. Resetting it would
+        // silently broaden a subsequent bulk operation to unrelated items.
+        if (const auto old = std::find_if(current.begin(), current.end(), [&](const auto &item) { return item.first == selected; });
+            old != current.end() && std::none_of(desired.begin(), desired.end(), [&](const auto &item) { return item.first == selected; })) desired.push_back(*old);
+        const bool wasUpdating = std::exchange(updating, true);
+        if (current != desired)
+        {
+            current = std::move(desired); choice.Items().Clear();
+            for (const auto &item : current) choice.Items().Append(winrt::box_value(item.second));
+        }
+        const auto selectedItem = std::find_if(current.begin(), current.end(), [&](const auto &item) { return item.first == selected; });
+        choice.SelectedIndex(selectedItem == current.end() ? -1 : static_cast<int>(std::distance(current.begin(), selectedItem)));
+        updating = wasUpdating;
+    }
+    void FilterOptions()
+    {
+        const auto all = ext::ManagementRows(view.catalogue, category);
+        std::map<std::string, std::wstring> applications;
+        std::set<std::wstring> extensions;
+        for (const auto &row : all)
+        {
+            for (const auto &app : row.applications)
+                applications[app.id.empty() ? "@unknown" : app.id] = app.id.empty() ? L("settings.contextMenu.unknownApplication") : app.name;
+            if (row.contexts & ext::ContextBit(ext::Context::File))
+            {
+                if (row.types.empty()) extensions.insert(L"*");
+                for (const auto &type : row.types) if (type == L"*" || (!type.empty() && type.front() == L'.')) extensions.insert(type);
+            }
+        }
+        std::vector<std::pair<std::string, std::wstring>> apps(applications.begin(), applications.end());
+        std::stable_sort(apps.begin(), apps.end(), [](const auto &a, const auto &b) { return a.second < b.second; });
+        apps.insert(apps.begin(), {"", L("settings.contextMenu.allApplications")});
+        SyncOptions(applicationFilter, applicationOptions, std::move(apps), selectedApplication);
+        std::vector<std::pair<std::wstring, std::wstring>> types{{L"", L("settings.contextMenu.allExtensions")}};
+        for (const auto &extension : extensions) types.emplace_back(extension, extension == L"*" ? L("settings.contextMenu.anyExtension") : extension);
+        SyncOptions(extensionFilter, extensionOptions, std::move(types), selectedExtension);
+    }
+    void FilterActions()
+    {
+        auto text = L("settings.contextMenu.resultCount");
+        if (const auto at = text.find(L"{count}"); at != std::wstring::npos) text.replace(at, 7, std::to_wstring(filteredRows.size()));
+        resultCount.Text(text); bulk.IsEnabled(active && initialized && !filteredRows.empty()); clearFilters.IsEnabled(HasFilters());
+    }
+    void SetResults(bool shown)
+    {
+        if (closed || !active || !initialized || filteredRows.empty() || !actions.updateGeneral) return;
+        const auto targets = filteredRows; const auto catalogue = view.catalogue;
+        actions.updateGeneral(generation, SettingsUpdateMode::PreviewAndCommit, [targets, catalogue, scope = category, shown](auto &settings) {
+            ext::MigrateAssociations(settings.shellExtensions, catalogue);
+            ext::SetManagementResults(settings.shellExtensions, targets, scope, shown);
+        });
     }
     Row *FindRow(const std::string &id)
     {
@@ -220,9 +332,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         // Only explicit category/localization changes reset the list. Polling,
         // refresh and search reconcile identities and preserve surviving rows.
         if (rowCategory != category) { ClearRows(); rowCategory = category; }
-        const auto desired = ext::ManagementRows(view.catalogue, category, std::wstring(search.Text()));
-        hasVisibleRows = !desired.empty();
-        pendingRows = ext::PlanManagementUpdates(rows, desired, [this](auto &row) { RemoveRow(row); });
+        FilterOptions();
+        filteredRows = ext::ManagementRows(view.catalogue, category, std::wstring(search.Text()), selectedApplication,
+            category == ext::Category::Objects ? selectedExtension : L"");
+        hasVisibleRows = !filteredRows.empty();
+        pendingRows = ext::PlanManagementUpdates(rows, filteredRows, [this](auto &row) { RemoveRow(row); });
+        FilterActions();
         nextRow = 0;
         UpdateChoices();
         AppendRows();
@@ -313,8 +428,19 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         row.model = entry; row.title.Text(entry.display.label);
         row.icon.Child(Icon(entry.display));
         std::wstring types;
-        for (const auto &type : entry.types) if (type != L"*") { if (!types.empty()) types += L", "; types += type; }
-        row.scope.Text(types); row.scope.Visibility(group == 3 && !types.empty() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        for (const auto &app : entry.applications)
+        {
+            if (!types.empty()) types += L", ";
+            types += app.id.empty() ? L("settings.contextMenu.unknownApplication") : app.name;
+        }
+        if (category == ext::Category::Objects && (entry.contexts & ext::ContextBit(ext::Context::File)))
+        {
+            std::wstring extensions;
+            for (const auto &type : entry.types) if (!type.empty() && type.front() == L'.') { if (!extensions.empty()) extensions += L", "; extensions += type; }
+            if (entry.types.empty() || std::find(entry.types.begin(), entry.types.end(), L"*") != entry.types.end()) extensions = L("settings.contextMenu.anyExtension");
+            if (!extensions.empty()) { if (!types.empty()) types += L" · "; types += extensions; }
+        }
+        row.scope.Text(types); row.scope.Visibility(types.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         mux::Automation::AutomationProperties::SetName(row.toggle, entry.display.label);
         mux::Automation::AutomationProperties::SetName(row.expander, entry.display.label + L" — " + L("settings.contextMenu.locations"));
         if (row.expander.Content()) PopulatePositions(row);
@@ -373,8 +499,10 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         if (closed) return;
         generation = snapshot.generation; initialized = snapshot.initialized; prefs = snapshot.values.general.shellExtensions;
+        extensionFocus = snapshot.route.focusId == "contextMenu.extension";
         ext::MigrateAssociations(prefs, view.catalogue);
         UpdateChoices();
+        FilterActions();
         if (!snapshot.sessionActive) Deactivate();
     }
     void Deactivate() { active = false; Cancel(); }
@@ -434,5 +562,8 @@ void ContextMenuPagePresenter::RegisterFocusTargets(const FocusRegistrar &regist
 {
     registerFocus("contextMenu.extensions", impl_->tabs);
     registerFocus("contextMenu.items", impl_->search);
+    registerFocus("contextMenu.application", impl_->applicationFilter);
+    registerFocus("contextMenu.extension", impl_->extensionFilter);
+    registerFocus("contextMenu.batch", impl_->bulk);
 }
 } // namespace snowdesktop::winui

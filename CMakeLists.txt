@@ -2094,7 +2094,7 @@ if (BUILD_TESTING)
             src/settings_process.cpp
             src/settings_ipc_channel.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid
+        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version
         LABELS integration contract shell)
 
     snowdesktop_add_test(

@@ -16,6 +16,7 @@ struct ManagementRow
     Entry display;
     std::vector<std::wstring> types;
     std::vector<ManagementMember> members;
+    std::vector<Application> applications;
     unsigned contexts = 0;
 };
 inline int ManagementGroup(const ManagementRow &row, Category category)
@@ -24,7 +25,22 @@ inline int ManagementGroup(const ManagementRow &row, Category category)
     const bool typed = !row.types.empty() && std::find(row.types.begin(), row.types.end(), L"*") == row.types.end();
     return typed ? 3 : (row.contexts & mask) == mask ? 0 : (row.contexts & (category == Category::Objects ? 1 : 4)) ? 1 : 2;
 }
-inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Category category, std::wstring filter = {})
+inline bool MatchesManagementFilters(const ManagementRow &row, const std::string &application, std::wstring extension)
+{
+    if (!application.empty() && std::none_of(row.applications.begin(), row.applications.end(), [&](const auto &app) {
+        return application == "@unknown" ? app.id.empty() : app.id == application;
+    })) return false;
+    if (extension.empty()) return true;
+    if (!(row.contexts & ContextBit(Context::File))) return false;
+    for (auto &c : extension) c = towlower(c);
+    if (extension != L"*" && extension.front() != L'.') extension.insert(extension.begin(), L'.');
+    const bool common = row.types.empty() || std::find(row.types.begin(), row.types.end(), L"*") != row.types.end();
+    return common || std::any_of(row.types.begin(), row.types.end(), [&](auto type) {
+        for (auto &c : type) c = towlower(c); return type == extension;
+    });
+}
+inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Category category, std::wstring filter = {},
+    const std::string &application = {}, const std::wstring &extension = {})
 {
     std::map<std::string, ManagementRow> grouped;
     const unsigned mask = category == Category::Objects ? 3 : 12;
@@ -38,6 +54,7 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
         else if (row.display.pixels.empty() && !entry.display.pixels.empty()) row.display = entry.display;
         row.members.push_back({entry.id, entry.contexts});
         row.contexts |= entry.contexts;
+        if (std::find(row.applications.begin(), row.applications.end(), entry.application) == row.applications.end()) row.applications.push_back(entry.application);
         row.types.insert(row.types.end(), entry.types.begin(), entry.types.end());
     }
     for (auto &c : filter) c = towlower(c);
@@ -46,11 +63,13 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
     {
         std::sort(row.members.begin(), row.members.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
         std::sort(row.types.begin(), row.types.end());
+        std::sort(row.applications.begin(), row.applications.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
         row.types.erase(std::unique(row.types.begin(), row.types.end()), row.types.end());
         auto text = row.display.label;
         for (const auto &type : row.types) text += L" " + type;
+        for (const auto &app : row.applications) text += L" " + app.name;
         for (auto &c : text) c = towlower(c);
-        if (filter.empty() || text.find(filter) != std::wstring::npos) result.push_back(std::move(row));
+        if ((filter.empty() || text.find(filter) != std::wstring::npos) && MatchesManagementFilters(row, application, extension)) result.push_back(std::move(row));
     }
     std::stable_sort(result.begin(), result.end(), [category](const auto &a, const auto &b) {
         const auto x = ManagementGroup(a, category), y = ManagementGroup(b, category);
@@ -60,7 +79,7 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
 }
 inline bool SameManagementRow(const ManagementRow &a, const ManagementRow &b)
 {
-    return a.id == b.id && a.contexts == b.contexts && a.types == b.types && a.members == b.members &&
+    return a.id == b.id && a.contexts == b.contexts && a.types == b.types && a.members == b.members && a.applications == b.applications &&
         a.display.label == b.display.label && a.display.width == b.display.width &&
         a.display.height == b.display.height && a.display.pixels == b.display.pixels;
 }
@@ -106,6 +125,12 @@ inline std::optional<Visibility> ManagementOverride(const Preferences &prefs, co
 inline void SetManagementCommon(Preferences &prefs, const ManagementRow &row, Category category, bool shown)
 {
     for (const auto &member : row.members) SetCommon(prefs, member.id, category, shown);
+}
+inline void SetManagementResults(Preferences &prefs, const std::vector<ManagementRow> &results, Category category, bool shown)
+{
+    // Capture the displayed result set at the click. Never expand a batch to
+    // future discovery results, another category, or a hidden registry record.
+    for (const auto &row : results) SetManagementCommon(prefs, row, category, shown);
 }
 inline void SetManagementOverride(Preferences &prefs, const ManagementRow &row, Context context, Visibility value)
 {

@@ -390,6 +390,76 @@ void TestRegistryCatalogue()
     Expect(std::none_of(grouped.begin(), grouped.end(), [&](const auto &r) { return std::any_of(r.members.begin(), r.members.end(), [&](const auto &m) { return m.id == typed.rows.front().id; }); }),
         "system-disabled registrations cannot be enabled by a grouped switch");
 
+    // Private, non-executable fixture files prove attribution comes from the
+    // registered module rather than captions. No fixture command is invoked.
+    const auto program = temp.path / L"Provider Tool.exe", module = temp.path / L"Provider Shell.dll";
+    std::ofstream(program) << "metadata fixture"; std::ofstream(module) << "metadata fixture";
+    const auto command = L"\"" + program.wstring() + L"\" \"%1\"";
+    put(L"*\\shell\\provided", L"MUIVerb", L"Unrelated caption");
+    put(L"*\\shell\\provided\\command", nullptr, command.c_str());
+    put(L"*\\shell\\second\\command", nullptr, (command + L" /other-action").c_str());
+    put(L"*\\shell\\unknown", L"MUIVerb", L"Provider Tool.exe");
+    put(L"*\\shell\\script\\command", nullptr, (L"cmd.exe /c " + command).c_str());
+    put(L"*\\shell\\library\\command", nullptr, (L"rundll32.exe \"" + module.wstring() + L"\",Entry %1").c_str());
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}\\InprocServer32", nullptr, module.c_str());
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    const auto app = find("reg:*\\shell\\provided").application;
+    Expect(app.name == L"Provider Tool.exe" && !app.id.empty(), "application metadata comes from a quoted registered executable, not the menu caption");
+    Expect(find("reg:*\\shell\\second").application == app, "different commands from the same executable share an application filter");
+    Expect(find("reg:*\\shell\\unknown").application.id.empty() && find("reg:*\\shell\\script").application.id.empty(),
+        "unknown captions and interpreter payloads are not guessed as an application");
+    Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell.dll" &&
+        find("reg:*\\shell\\library").application.name == L"Provider Shell.dll", "CLSID and rundll32 registrations identify the providing DLL rather than its generic host");
+
+}
+
+void TestManagementFilters()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Catalogue catalogue;
+    auto add = [&](const char *id, unsigned contexts, std::vector<std::wstring> types, ext::Application app, const char *command = "") {
+        ext::Registration row; row.id = id; row.display.label = L"Action"; row.contexts = contexts;
+        row.types = std::move(types); row.application = std::move(app); row.commandIdentity = command;
+        row.linked = true; catalogue.rows.push_back(std::move(row));
+    };
+    const ext::Application editor{"app:editor", L"Editor"}, other{"app:other", L"Editor"};
+    add("png", 1, {L".png"}, editor, "image-command");
+    add("jpg", 1, {L".jpg"}, editor, "image-command");
+    add("similar-suffix", 1, {L".pngx"}, editor);
+    add("common", 3, {L"*"}, editor);
+    add("other", 1, {L".png"}, other);
+    add("unknown", 1, {L".png"}, {});
+    add("folders", 2, {L"*"}, editor);
+    add("background", 12, {L"*"}, editor);
+    auto disabled = catalogue.rows.front(); disabled.id = "disabled"; disabled.systemEnabled = false; catalogue.rows.push_back(disabled);
+    const auto filtered = ext::ManagementRows(catalogue, ext::Category::Objects, L"", editor.id, L"PNG");
+    Expect(filtered.size() == 2, "application and exact case-insensitive suffix filters intersect, include generic file actions, and exclude folder-only actions");
+    Expect(std::any_of(filtered.begin(), filtered.end(), [](const auto &r) { return r.members.size() == 2 && r.types == std::vector<std::wstring>{L".jpg", L".png"}; }),
+        "suffix filtering keeps an existing merged action's complete switch scope visible");
+    const auto unidentified = ext::ManagementRows(catalogue, ext::Category::Objects, L"", "@unknown", L".png");
+    Expect(unidentified.size() == 1 && unidentified.front().id == "unknown", "unidentified application is an explicit filter, not a guessed caption match");
+    Expect(ext::ManagementRows(catalogue, ext::Category::Objects, L"edITOR", other.id, L".png").size() == 1,
+        "application names are searchable but equal names do not merge different provider identities");
+    Expect(ext::ManagementRows(catalogue, ext::Category::Objects, L"absent", editor.id, L".png").empty(), "name search intersects the selected application and extension");
+    Expect(ext::ManagementRows(catalogue, ext::Category::Objects, L"", editor.id, L"*").size() == 1, "generic-type filter selects only common file actions");
+    Expect(ext::ManagementRows(catalogue, ext::Category::Background, L"", editor.id).size() == 1, "background filtering stays within its category");
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "common", ext::Category::Background, true);
+    ext::SetOverride(prefs, "common", ext::Context::Folder, ext::Visibility::Hide);
+    add("arrived-later", 1, {L".png"}, editor);
+    ext::SetManagementResults(prefs, filtered, ext::Category::Objects, true);
+    for (const auto *id : {"png", "jpg", "common"}) Expect(ext::CommonShown(prefs, id, ext::Category::Objects), "batch show updates each member of the captured filtered actions");
+    for (const auto *id : {"other", "unknown", "similar-suffix", "folders", "disabled", "arrived-later"})
+        Expect(ext::IsHidden(prefs, id, ext::Context::File), "batch show never expands to unmatched, disabled or newly discovered registrations");
+    Expect(ext::OverrideOf(prefs, "common", ext::Context::Folder) == ext::Visibility::Hide && ext::CommonShown(prefs, "common", ext::Category::Background),
+        "batch changes preserve location exceptions and the other category");
+    ext::Reply menu; menu.ok = true;
+    for (const auto *id : {"png", "other", "arrived-later"}) { ext::Entry entry; entry.provider = id; entry.registration = id; menu.entries.push_back(entry); }
+    Expect(ext::VisibleSnapshot(prefs, menu, 1).size() == 1, "batch-enabled preferences control the real popup visibility path");
+    ext::SetManagementResults(prefs, filtered, ext::Category::Objects, false);
+    Expect(ext::VisibleSnapshot(prefs, menu, 1).empty() && ext::CommonShown(prefs, "common", ext::Category::Background), "batch hide removes the filtered actions without changing background rules");
+    const auto before = prefs; ext::SetManagementResults(prefs, {}, ext::Category::Objects, true);
+    Expect(prefs == before, "empty filtered results never modify preferences");
 }
 
 // The real presenter reconciliation planner drives a minimal control adapter;
@@ -424,6 +494,8 @@ void TestManagementUpdates()
         "new file-type membership updates its row in place");
     first.display.width = first.display.height = 1; first.display.pixels = {0, 0, 0, 255};
     Expect(apply({first, second}) == 1 && created == 2, "a newly available icon changes only its surviving row");
+    first.applications = {{"app:provided", L"Providing app"}};
+    Expect(apply({first, second}) == 1 && created == 2 && controls.front().expanded, "late application metadata updates the row without resetting its expansion");
     Expect(apply({first}) == 0 && removed == 1 && controls.front().expanded,
         "removal retires only the missing identity, keeping expansion and focus targets of survivors");
 }
@@ -1080,6 +1152,7 @@ void TestFileTypeDiscovery()
     auto registry = [&] {
         ext::Catalogue value; value.revision = imageEnabled ? 1 : 2;
         ext::Registration image; image.id = "reg:image"; image.contexts = 1;
+        image.application = {"app:image", L"Image provider"};
         image.types = {L".png"}; image.verbs = {"image-action"}; image.revision = imageEnabled ? 1 : 2;
         image.systemEnabled = imageEnabled;
         ext::Registration document; document.id = "reg:document"; document.contexts = 1;
@@ -1166,6 +1239,8 @@ void TestFileTypeDiscovery()
         Expect(std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:image"; }) &&
             std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:document"; }),
             "image and document switches restore independently of exact snapshots and helper success");
+        Expect(std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:image" && r.application.id == "app:image" && r.application.name == L"Image provider"; }),
+            "providing application metadata restores from the shared management cache while Shell is unavailable");
         for (const auto &item : items)
             Expect(!item.display.token && item.display.children.empty(), "durable inventory contains only root display metadata");
         imageEnabled = false;
@@ -1399,6 +1474,7 @@ int wmain(int argc, wchar_t **argv)
             TestCatalogueCache();
             TestRegistryCatalogue();
             TestManagementUpdates();
+            TestManagementFilters();
             TestExtensionSessions();
             TestSnapshotPresentation();
             TestPendingCachedClick();

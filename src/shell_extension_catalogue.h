@@ -5,6 +5,12 @@
 namespace snowdesktop::shell_extensions
 {
 enum class RegistrationKind : int { Verb, Handler, Packaged, Observed };
+struct Application
+{
+    std::string id;
+    std::wstring name;
+    friend bool operator==(const Application &, const Application &) = default;
+};
 struct Registration
 {
     std::string id;
@@ -18,6 +24,7 @@ struct Registration
     // Exact execution identity for grouping equivalent static registrations in
     // settings. Original IDs remain the persisted visibility/command authority.
     std::string commandIdentity;
+    Application application;
 };
 struct Association
 {
@@ -39,9 +46,13 @@ bool Applies(const Registration &row, const Request &request);
 }
 namespace snowdesktop::settings_ipc
 {
+template <> struct Fields<shell_extensions::Application>
+{
+    template<class T> static auto Tie(T &v) { return std::tie(v.id, v.name); }
+};
 template <> struct Fields<shell_extensions::Registration>
 {
-    template<class T> static auto Tie(T &v) { return std::tie(v.id, v.kind, v.display, v.sources, v.types, v.verbs, v.contexts, v.systemEnabled, v.linked, v.revision, v.commandIdentity); }
+    template<class T> static auto Tie(T &v) { return std::tie(v.id, v.kind, v.display, v.sources, v.types, v.verbs, v.contexts, v.systemEnabled, v.linked, v.revision, v.commandIdentity, v.application); }
 };
 template <> struct Fields<shell_extensions::Association>
 {

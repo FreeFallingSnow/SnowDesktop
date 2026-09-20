@@ -8,6 +8,8 @@
 #include <mutex>
 #include <shlwapi.h>
 #include <shlobj.h>
+#include <shellapi.h>
+#include <winver.h>
 #include <msxml6.h>
 #include <wrl/client.h>
 
@@ -141,11 +143,122 @@ void LoadIcon(Entry &entry, std::wstring location)
     }
 }
 template<class T> void Unique(std::vector<T> &items) { std::sort(items.begin(), items.end()); items.erase(std::unique(items.begin(), items.end()), items.end()); }
+std::wstring LocalModule(std::wstring path)
+{
+    if (path.empty() || path.size() >= 32768) return {};
+    wchar_t expanded[32768]{};
+    const auto size = ExpandEnvironmentStringsW(path.c_str(), expanded, static_cast<DWORD>(std::size(expanded)));
+    if (!size || size > std::size(expanded)) return {};
+    PathUnquoteSpacesW(expanded);
+    path = expanded;
+    if (!std::filesystem::path(path).is_absolute())
+    {
+        if (path.find_first_of(L"\\/") != std::wstring::npos) return {};
+        // A bare registered executable can use App Paths or the system folder.
+        // Do not resolve relative to the host's current working directory.
+        std::wstring registered;
+        for (const auto hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+            if (registered.empty()) registered = Read(hive, L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" + path);
+        if (!registered.empty())
+        {
+            wchar_t value[32768]{}; wcsncpy_s(value, registered.c_str(), _TRUNCATE); PathUnquoteSpacesW(value);
+            path = value;
+        }
+        else
+        {
+            wchar_t system[32768]{};
+            if (!GetSystemDirectoryW(system, static_cast<UINT>(std::size(system)))) return {};
+            path = (std::filesystem::path(system) / path).wstring();
+        }
+    }
+    const std::filesystem::path file(path);
+    if (!file.is_absolute() || PathIsNetworkPathW(path.c_str()) || GetDriveTypeW(file.root_path().c_str()) == DRIVE_REMOTE) return {};
+    const auto attributes = GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return {};
+    return file.lexically_normal().wstring();
+}
+std::wstring CommandModule(const std::wstring &command)
+{
+    if (command.empty()) return {};
+    int count = 0;
+    auto args = CommandLineToArgvW(command.c_str(), &count);
+    if (!args) return {};
+    auto module = count ? LocalModule(args[0]) : std::wstring{};
+    const auto name = Lower(std::filesystem::path(module).filename().wstring());
+    if (name == L"rundll32.exe")
+    {
+        std::wstring library = count > 1 ? args[1] : L"";
+        if (const auto comma = library.find(L','); comma != std::wstring::npos) library.resize(comma);
+        module = LocalModule(std::move(library));
+    }
+    else if (name == L"cmd.exe" || name == L"powershell.exe" || name == L"pwsh.exe" ||
+        name == L"wscript.exe" || name == L"cscript.exe" || name == L"mshta.exe" || name == L"dllhost.exe")
+        module.clear(); // A command interpreter does not identify its script's application.
+    LocalFree(args);
+    return module;
+}
+Application ModuleApplication(const std::wstring &module)
+{
+    if (module.empty()) return {};
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExW(module.c_str(), GetFileExInfoStandard, &data)) return {};
+    const auto stamp = (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+    struct Cached { std::uint64_t stamp; Application value; };
+    static std::mutex mutex;
+    static std::map<std::wstring, Cached> cache;
+    const auto key = Lower(module);
+    {
+        std::lock_guard lock(mutex);
+        if (const auto found = cache.find(key); found != cache.end() && found->second.stamp == stamp) return found->second.value;
+    }
+    Application result{"file:" + Utf8(key), std::filesystem::path(module).filename().wstring()};
+    DWORD unused = 0;
+    const DWORD size = GetFileVersionInfoSizeW(module.c_str(), &unused);
+    if (size && size <= 4 * 1024 * 1024)
+    {
+        std::vector<unsigned char> bytes(size);
+        if (GetFileVersionInfoW(module.c_str(), 0, size, bytes.data()))
+        {
+            struct Translation { WORD language, codepage; };
+            Translation *translations = nullptr; UINT length = 0;
+            if (VerQueryValueW(bytes.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void **>(&translations), &length))
+                for (size_t i = 0; i < length / sizeof(Translation); ++i)
+                {
+                    auto text = [&](const wchar_t *field) {
+                        wchar_t query[128]{};
+                        swprintf_s(query, L"\\StringFileInfo\\%04x%04x\\%s", translations[i].language, translations[i].codepage, field);
+                        wchar_t *value = nullptr; UINT characters = 0;
+                        if (!VerQueryValueW(bytes.data(), query, reinterpret_cast<void **>(&value), &characters) || !value || characters <= 1 || characters > 512) return std::wstring{};
+                        return std::wstring(value, characters - 1);
+                    };
+                    const auto product = text(L"ProductName"), company = text(L"CompanyName");
+                    if (product.empty()) continue;
+                    result.name = product;
+                    // Product+company unifies one application's EXE and Shell
+                    // DLL. It is display metadata, never command authority.
+                    if (!company.empty()) result.id = "product:" + Utf8(Lower(company + L"\n" + product));
+                    break;
+                }
+        }
+    }
+    std::lock_guard lock(mutex);
+    if (cache.size() >= 1024) cache.clear();
+    cache[key] = {stamp, result};
+    return result;
+}
 struct Scanner
 {
     HKEY classes;
     Catalogue result;
     std::map<std::string, size_t> ids;
+    Application HandlerApplication(const std::wstring &clsid)
+    {
+        if (clsid.empty()) return {};
+        const auto root = L"CLSID\\" + clsid;
+        auto module = LocalModule(Read(classes, root + L"\\InprocServer32"));
+        if (module.empty()) module = CommandModule(Read(classes, root + L"\\LocalServer32"));
+        return ModuleApplication(module);
+    }
     void Add(Registration row, const std::wstring &icon)
     {
         if (row.types.empty()) row.types.push_back(L"*");
@@ -184,6 +297,8 @@ struct Scanner
             row.display.label = DecodeMenuLabel(Localized(label)).text;
             const auto command = Read(classes, path + L"\\command");
             const auto delegate = Read(classes, path + L"\\command", L"DelegateExecute");
+            row.application = !handler.empty() ? HandlerApplication(handler) :
+                !delegate.empty() ? HandlerApplication(delegate) : ModuleApplication(CommandModule(command));
             // Never infer equivalence from the caption, verb alone, or a bare
             // SubCommands list. Keep arguments case-sensitive and compare the
             // complete payload rather than a collision-prone display hash.
@@ -217,6 +332,7 @@ struct Scanner
             auto label = Read(classes, L"CLSID\\" + clsid);
             row.display.label = Localized(label.empty() ? name : label);
             const auto module = Read(classes, L"CLSID\\" + clsid + L"\\InprocServer32");
+            row.application = HandlerApplication(clsid);
             row.revision = Hash(settings_ipc::Pack(module));
             auto icon = Read(classes, L"CLSID\\" + clsid + L"\\DefaultIcon");
             Add(std::move(row), icon.empty() ? module : icon);
@@ -259,6 +375,7 @@ struct Scanner
                 const auto family = first != std::wstring::npos && last > first ? package.substr(0, first) + package.substr(last) : package;
                 Registration row; row.kind = RegistrationKind::Packaged;
                 row.id = "package:" + Utf8(Lower(family + L":" + clsid));
+                row.application = {"package:" + Utf8(Lower(family)), family.substr(0, family.find(L'_'))};
                 row.sources = {L"package:" + package + L":" + id}; row.verbs = {Utf8(Lower(clsid))};
                 row.contexts = type == L"Directory" ? ContextBit(Context::Folder) : type == L"Directory\\Background" ? ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop) : ContextBit(Context::File);
                 if (type != L"*" && type != L"Directory" && type != L"Directory\\Background") row.types = {Lower(type)};
@@ -319,7 +436,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
                     associations.push_back(Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + type + L"\\UserChoice", L"ProgId"));
             }
         row.revision = Hash(settings_ipc::Pack(row.revision, associations));
-        row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity));
+        row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity, row.application));
     }
     std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
