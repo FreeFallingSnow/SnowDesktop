@@ -235,7 +235,11 @@ public:
         {
             if (options_.pollItems)
             {
-                if (auto updated = options_.pollItems(rootItems_, popups_.size() == 1); updated && popups_.size() == 1)
+                const bool canApply = popups_.size() == 1 && popups_.front()->hoveredItem < 0 &&
+                                      !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
+                                      !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
+                                      !(GetAsyncKeyState(VK_RBUTTON) & 0x8000);
+                if (auto updated = options_.pollItems(rootItems_, canApply); updated && canApply)
                 {
                     const int selected = popups_.front()->keyboardItem;
                     const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
@@ -353,8 +357,12 @@ public:
                 SetHoveredItem(popup, -1, false);
             return 0;
 
+        case WM_LBUTTONDOWN:
+            pointerPressed_ = true;
+            return 0;
         case WM_LBUTTONUP:
         {
+            pointerPressed_ = false;
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             const int index = HitTest(popup, point);
             if (index >= 0 &&
@@ -756,7 +764,7 @@ private:
             !item.inlineAction;
     }
 
-    void CalculateLayout(Popup& popup)
+    void CalculateLayout(Popup &popup, bool preserveWidth = false)
     {
         HDC screenDc = GetDC(nullptr);
         int width = metrics_.minimumWidth;
@@ -849,6 +857,8 @@ private:
         if (screenDc)
             ReleaseDC(nullptr, screenDc);
 
+        if (preserveWidth)
+            width = popup.panelWidth;
         popup.itemRects.assign(popup.items->size(), RECT{});
         popup.navigationOrder.clear();
         popup.quickSeparatorRect = {};
@@ -1935,14 +1945,31 @@ private:
         ImmReleaseContext(focusWindow, context);
     }
 
-    void RefreshPopup(Popup& popup, bool reanchor = false)
+    void RefreshPopup(Popup &popup, bool preservePosition = false)
     {
         CloseFromDepth(popup.depth + 1);
         popup.hoveredItem = -1;
         popup.keyboardItem = -1;
+        const int previousOffset = popup.scrollOffset;
         popup.scrollOffset = 0;
-        CalculateLayout(popup);
-        if (reanchor) PlacePopup(popup, options_.anchor, nullptr);
+        CalculateLayout(popup, preservePosition);
+        if (preservePosition)
+        {
+            // Async additions must not move existing actions under the cursor.
+            // Grow downward from the visible origin; use the existing scrolling
+            // viewport when the remaining work area cannot fit the new rows.
+            MONITORINFO monitor{sizeof(monitor)};
+            if (GetMonitorInfoW(MonitorFromPoint(popup.panelScreenOrigin, MONITOR_DEFAULTTONEAREST),
+                                &monitor))
+            {
+                popup.panelHeight = std::min(
+                    popup.panelHeight, static_cast<int>(monitor.rcWork.bottom - popup.panelScreenOrigin.y));
+                popup.viewportHeight = std::max(1, popup.panelHeight - panelPadding_ * 2);
+                popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
+            }
+            popup.scrollOffset =
+                std::clamp(previousOffset, 0, std::max(0, popup.contentHeight - popup.viewportHeight));
+        }
         if (popup.hwnd && IsWindow(popup.hwnd))
         {
             SetWindowPos(popup.hwnd, nullptr,
@@ -2591,6 +2618,7 @@ private:
     size_t textInputCompositionCursor_ = 0;
     bool textCaretVisible_ = true;
     bool done_ = false;
+    bool pointerPressed_ = false;
     bool closing_ = false;
     bool superseded_ = false;
     bool hasTracedZOrderSnapshot_ = false;

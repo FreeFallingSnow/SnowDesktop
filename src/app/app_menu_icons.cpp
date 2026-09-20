@@ -750,6 +750,7 @@ UINT DesktopApp::ShowModernMenu(
              << L" pid=" << GetCurrentProcessId();
         WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
     }
+    snowdesktop::shell_extensions::MoveMoreToBottom(items, kContextMoreCommand);
     std::unique_ptr<snowdesktop::shell_extensions::Presentation> extensions;
     if (shellRequest)
     {

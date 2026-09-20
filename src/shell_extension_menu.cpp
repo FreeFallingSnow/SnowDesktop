@@ -1,4 +1,5 @@
 #include "shell_extension_menu.h"
+#include "shell_extension_menu_items.h"
 #include "shell_extension_menu_cache.h"
 #include "menu_label.h"
 #include "settings_process.h"
@@ -586,7 +587,8 @@ struct Host
             }
             else if (item.hSubMenu)
             {
-                entry.children = Read(source, item.hSubMenu, provider, depth + 1, entry.label);
+                if (!RequiresNativePopup(item.hSubMenu))
+                    entry.children = Read(source, item.hSubMenu, provider, depth + 1, entry.label);
                 const bool placeholder = entry.children.empty() ||
                     std::all_of(entry.children.begin(), entry.children.end(), [](const auto &child) {
                         return child.separator || (!child.token && child.children.empty());

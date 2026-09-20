@@ -399,7 +399,7 @@ struct IsolatedMenuDesktop
 int wmain()
 {
     // Regression: asynchronous Shell entries belong immediately above More,
-    // preserving its separator and any host commands that follow that group.
+    // in a final group after all ordinary host actions.
     {
         using snowdesktop::modern_menu::Item;
         Item open; open.command = 1;
@@ -411,10 +411,10 @@ int wmain()
         archive.children = {compress};
         std::vector<Item> items{open, separator, more, separator, after};
         snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
-        Expect(items.size() == 6 && items[1].separator && items[2].label == L"7-Zip" &&
-                   items[2].children.front().command == 4 && items[3].command == 2 &&
-                   items[4].separator && items[5].command == 3,
-               "Shell entries appear above More in the same group, without a synthetic wrapper");
+        Expect(items.size() == 6 && items[0].command == 1 && items[1].separator && items[2].command == 3 &&
+                   items[3].separator && items[4].label == L"7-Zip" &&
+                   items[4].children.front().command == 4 && items[5].command == 2,
+               "Shell entries and More form the bottom group after every host action");
     }
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.
@@ -1253,11 +1253,13 @@ int wmain()
         options.dpi = dpi;
         options.appearance = snowdesktop::modern_menu::Appearance::Win10Light;
         options.onCommand = {}; options.onTextChanged = {}; options.onHover = {};
-        bool populated = false; RECT expanded{};
+        bool populated = false;
+        RECT expanded{}, initial{};
         const auto readyAt = GetTickCount64() + 30;
         options.pollItems = [&](const auto&, bool canApply) -> std::optional<std::vector<snowdesktop::modern_menu::Item>> {
             if (!canApply || populated || GetTickCount64() < readyAt) return {};
             populated = true;
+            GetWindowRect(snowdesktop::modern_menu::ActiveRootWindow(), &initial);
             std::vector<snowdesktop::modern_menu::Item> expandedItems(100);
             for (UINT i=0;i<100;++i)
             {expandedItems[i].command=8100+i;expandedItems[i].label=L"扩展命令 / long extension command " + std::to_wstring(i);}
@@ -1277,6 +1279,53 @@ int wmain()
         Expect(populated&&!gWatchdogFired&&asyncResult.command==8199,"asynchronous extension commands support keyboard scrolling at every DPI");
         Expect(expanded.bottom<=monitor.rcWork.bottom+16&&expanded.right<=monitor.rcWork.right+16,
             "asynchronous menu growth stays within the monitor work area at every DPI");
+        Expect(expanded.top == initial.top && expanded.left == initial.left &&
+                   expanded.right == initial.right,
+               "asynchronous growth preserves the visible origin and width at every DPI");
+    }
+    // Mouse input and async replacement share the real controller. A result
+    // must wait while the user is pointing at or pressing the old More row.
+    for (const bool pressed : {false, true})
+    {
+        int phase = 0;
+        bool deferred = false;
+        options.dpi = 96;
+        options.pollItems = [&](const auto &current, bool canApply) -> std::optional<std::vector<Item>> {
+            const auto root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (!phase)
+            {
+                ++phase;
+                SendMessageW(root, pressed ? WM_LBUTTONDOWN : WM_MOUSEMOVE, 0, MAKELPARAM(20, 20));
+                return {};
+            }
+            if (phase == 1)
+            {
+                deferred = !canApply;
+                ++phase;
+                // Release over the shadow, where no action is selected.
+                SendMessageW(root, pressed ? WM_LBUTTONUP : WM_MOUSELEAVE, 0, 0);
+                return {};
+            }
+            if (!canApply)
+                return {};
+            auto updated = current;
+            Item loaded;
+            loaded.command = 8251;
+            loaded.label = L"Loaded";
+            updated.push_back(loaded);
+            PostMessageW(root, WM_KEYDOWN, VK_END, 0);
+            PostMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            return updated;
+        };
+        Item more;
+        more.command = 8250;
+        more.label = L"More";
+        gWatchdogFired = false;
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto pointerResult = snowdesktop::modern_menu::Show({more}, options);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(deferred && !gWatchdogFired && pointerResult.command == 8251,
+               "async replacement waits for mouse hover or button press to finish");
     }
     // Polling must continue while a cascade is open so an extension deadline
     // cannot be postponed indefinitely by keyboard navigation.

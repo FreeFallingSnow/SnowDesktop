@@ -39,15 +39,25 @@ int main()
             {"handler:{provider}", "extract", "解压", Placement::Hidden}}};
         saved.shellExtensions.hidden = {{"verb:sevenzip", Context::File}, {"verb:sevenzip", Context::Desktop},
             {"menu:特殊\"项目", Context::FolderBackground}};
-        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.shellExtensions == saved.shellExtensions,
-            "scoped exclusions and legacy preferences survive restart including escaped Unicode identities");
+        saved.shellExtensions.shown = {{"verb:sevenzip", Context::Folder},
+                                       {"menu:特殊\"项目", Context::Desktop}};
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) &&
+                  loaded.shellExtensions == saved.shellExtensions,
+              "explicit visibility and legacy preferences survive restart including escaped Unicode "
+              "identities");
         saved.shellExtensions.enabled = false;
         Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.shellExtensions == saved.shellExtensions,
             "legacy selector data remains preserved alongside the active scoped exclusions");
         { std::ofstream legacy(path); legacy << "{}"; }
         Check(LoadGeneralSettings(path.c_str(), loaded) && !loaded.shellExtensions.enabled && loaded.shellExtensions.selections.empty(),
             "old configuration has no local exclusions while retaining legacy fields for compatibility");
-        Check(loaded.shellExtensions.hidden.empty(), "missing preferences follow system menus without additional hiding");
+        Check(loaded.shellExtensions.shown.empty() &&
+                  IsHidden(loaded.shellExtensions, "verb:sevenzip", Context::File),
+              "missing preferences hide every third-party menu item by default");
+        JsonValue legacy;
+        Check(ParseJson(R"({"enabled":true,"hidden":[{"id":"verb:editor","context":0}]})", legacy) &&
+                  ReadPreferences(&legacy).shown.empty(),
+              "exclusion-only settings never opt other extensions in");
         std::error_code error; std::filesystem::remove(path, error);
     }
 

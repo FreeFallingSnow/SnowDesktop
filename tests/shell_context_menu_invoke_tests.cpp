@@ -1,5 +1,6 @@
 #include "shell_context_menu_invoke.h"
 #include "shell_extension_menu.h"
+#include "shell_extension_menu_items.h"
 #include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
 #include "shell_new_item_capture.h"
@@ -263,6 +264,32 @@ void TestSystemPolicy(Wait wait, const std::filesystem::path &directory)
 }
 // Real inherited pipes and process supervision; only the third-party query is
 // substituted, so a hung extension cannot be mistaken for a passing UI mock.
+void TestDeferredPopups()
+{
+    // Actual HMENU dummy rows reproduce the Shell placeholder shape, including
+    // a command ID which the old reader incorrectly treated as executable.
+    using snowdesktop::shell_extensions::RequiresNativePopup;
+    HMENU menu = CreatePopupMenu();
+    Expect(menu != nullptr, "create isolated native submenu");
+    struct Cleanup
+    {
+        HMENU menu;
+        ~Cleanup()
+        {
+            DestroyMenu(menu);
+        }
+    } cleanup{menu};
+    AppendMenuW(menu, MF_STRING, 41, L"");
+    Expect(RequiresNativePopup(menu),
+           "an unnamed dummy command defers the parent popup, not an ellipsis child");
+    ModifyMenuW(menu, 0, MF_BYPOSITION | MF_STRING, 41, L"...");
+    Expect(RequiresNativePopup(menu), "a lazy ellipsis row opens the native parent directly");
+    ModifyMenuW(menu, 0, MF_BYPOSITION | MF_STRING, 41, L"Open PowerShell here");
+    Expect(!RequiresNativePopup(menu), "materialized submenu commands retain custom rendering");
+    AppendMenuW(menu, MF_OWNERDRAW, 42, nullptr);
+    Expect(RequiresNativePopup(menu), "unlabelled owner-drawn children keep their native parent renderer");
+}
+
 void TestExtensionSessions()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -277,26 +304,35 @@ void TestExtensionSessions()
     ext::Entry other; other.provider="verb:editor"; other.label=L"Editor"; other.token=32;
     ext::Preferences prefs;
     ext::Request target; target.context=ext::Context::File;
-    const auto direct=ext::VisibleEntries(prefs,{archive,other},target);
-    Expect(direct.size()==2&&direct[0].label==L"7-Zip"&&direct[0].children.size()==1&&
-        direct[0].children[0].token==31&&direct[0].children[0].checked&&!direct[0].children[0].enabled,
-        "default system menus retain original roots, submenus and states without synthetic wrappers");
+    Expect(ext::VisibleEntries(prefs, {archive, other}, target).empty(),
+           "fresh settings hide all extension items");
     for (auto context : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
     {
-        prefs.hidden.clear(); ext::SetHidden(prefs, archive.provider, context, true);
+        prefs.shown.clear();
+        ext::SetHidden(prefs, archive.provider, context, false);
         for (auto current : {ext::Context::File, ext::Context::Folder, ext::Context::FolderBackground, ext::Context::Desktop})
         {
             target.context=current;
             const auto shown=ext::VisibleEntries(prefs,{archive,other},target);
-            Expect(shown.size()==(current==context?1u:2u), "secondary hiding is independent across all four contexts");
+            Expect(shown.size() == (current == context ? 1u : 0u),
+                   "explicit visibility is independent across all four contexts");
         }
-        ext::SetHidden(prefs,archive.provider,context,false);
-        Expect(ext::VisibleEntries(prefs,{archive},target).size()==1, "restoring visibility removes only the local exclusion");
+        target.context = context;
+        const auto direct = ext::VisibleEntries(prefs, {archive, other}, target);
+        Expect(direct.size() == 1 && direct[0].label == L"7-Zip" && direct[0].children.size() == 1 &&
+                   direct[0].children[0].token == 31 && direct[0].children[0].checked &&
+                   !direct[0].children[0].enabled,
+               "enabled system items retain roots, submenus and disabled states without wrappers");
+        archive.label = L"Localized title";
+        Expect(ext::VisibleEntries(prefs, {archive}, target).size() == 1,
+               "canonical visibility survives a display-name change");
+        archive.label = L"7-Zip";
+        ext::SetHidden(prefs, archive.provider, context, true);
+        Expect(ext::VisibleEntries(prefs, {archive}, target).empty(), "turning an item off hides it again");
     }
-    Expect(ext::VisibleEntries(prefs,{},target).empty(), "local preferences never resurrect an item absent from the Shell");
-    ext::SetHidden(prefs,archive.provider,ext::Context::File,true);
-    archive.label=L"Localized title"; target.context=ext::Context::File;
-    Expect(ext::VisibleEntries(prefs,{archive},target).empty(), "canonical identities survive display-name changes");
+    ext::SetHidden(prefs, archive.provider, target.context, false);
+    Expect(ext::VisibleEntries(prefs, {}, target).empty(),
+           "an opt-in never resurrects an item absent from the Shell");
     auto wait=[](ext::Session& session) {
         const auto end=GetTickCount64()+10000;std::optional<ext::Reply> reply;
         while(GetTickCount64()<end&&!reply)
@@ -370,6 +406,16 @@ void TestExtensionSessions()
                   << (reply.ok ? "queried" : "FAILED") << ", entries=" << reply.entries.size()
                   << ", " << reply.error << std::endl;
         scopesPassed &= reply.ok;
+        for (const auto &entry : reply.entries)
+            if (entry.label.find(L"PowerShell") != std::wstring::npos)
+            {
+                std::cout << "PowerShell cascade: native=" << entry.native
+                          << ", children=" << entry.children.size() << std::endl;
+                scopesPassed &=
+                    std::none_of(entry.children.begin(), entry.children.end(), [](const auto &child) {
+                        return child.label.empty() || child.label == L"…" || child.label == L"...";
+                    });
+            }
         if (!reply.ok || (context != ext::Context::File && context != ext::Context::Folder))
             continue;
         const auto archiveEntry = std::find_if(reply.entries.begin(), reply.entries.end(), [](const auto &entry) {
@@ -497,8 +543,20 @@ void TestSnapshotPresentation()
     {std::ofstream output(path);output<<"private presentation sample";}
     ext::Request request;request.paths={path.wstring()};
     menu::Item more;more.label=L"更多";more.command=7;
+    ext::Preferences prefs;
+    ext::SetHidden(prefs, "verb:first", ext::Context::File, false);
+    ext::SetHidden(prefs, "verb:stable", ext::Context::File, false);
     {
-        ext::Presentation presentation(request,{},L"loading",L"failed");
+        ext::Presentation hidden(request, {}, L"loading", L"failed");
+        std::vector<menu::Item> items{more};
+        menu::Options options;
+        hidden.Attach(items, options, 7);
+        Expect(items.size() == 1 && !options.pollItems &&
+                   !ext::SharedMenuCache().Find(ext::SharedMenuCache().Capture(request)),
+               "default-hidden menus neither query extensions nor install an asynchronous refresh");
+    }
+    {
+        ext::Presentation presentation(request, prefs, L"loading", L"failed");
         std::vector<menu::Item> items={more};menu::Options options;
         presentation.Attach(items,options,7);
         Expect(items.size()==1&&items[0].command==7,"cold menu has no loading placeholder");
@@ -511,7 +569,7 @@ void TestSnapshotPresentation()
     snapshot->entries[0].width=1;snapshot->entries[0].height=1;snapshot->entries[0].pixels={0,0,0,255};
     Expect(ext::SharedMenuCache().Store(ticket,*snapshot),"seed cached menu with a distinct visible label");
     {
-        ext::Presentation presentation(request,{},L"loading",L"failed");
+        ext::Presentation presentation(request, prefs, L"loading", L"failed");
         std::vector<menu::Item> items={more};menu::Options options;
         presentation.Attach(items,options,7);
         Expect(items.size()==3&&items[0].label==L"缓存项"&&items[0].image&&items[2].command==7,
@@ -542,12 +600,18 @@ void TestPendingCachedClick()
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",output.c_str());
     ext::InvalidateMenuCache(); // A new child inherits the private output path.
     ext::Request request;request.paths={path.wstring()};
+    ext::Preferences prefs;
+    ext::SetHidden(prefs, "verb:cached", ext::Context::File, false);
     ext::Reply cached;cached.ok=true;
-    ext::Entry entry;entry.label=L"Cached command";entry.key="cached";entry.token=999;
+    ext::Entry entry;
+    entry.label = L"Cached command";
+    entry.key = "cached";
+    entry.provider = "verb:cached";
+    entry.token = 999;
     cached.entries={entry};
     Expect(ext::SharedMenuCache().Store(ext::SharedMenuCache().Capture(request),cached),"seed pending invocation snapshot");
     {
-        ext::Presentation presentation(request,{},L"loading",L"failed");
+        ext::Presentation presentation(request, prefs, L"loading", L"failed");
         std::vector<menu::Item> items;menu::Options options;
         presentation.Attach(items,options,0);
         Expect(items.size()==1,"pending click uses the snapshot immediately");
@@ -624,10 +688,14 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
         if (request.catalogueOnly) entry.label=request.paths.front();
+        entry.provider = "verb:" + entry.key;
         reply.entries.push_back(entry);
         if(std::filesystem::path(request.paths.front()).filename()==L"presentation.txt")
         {
-            entry.label=L"保持选中";entry.key="stable";reply.entries.push_back(entry);
+            entry.label = L"保持选中";
+            entry.key = "stable";
+            entry.provider = "verb:stable";
+            reply.entries.push_back(entry);
         }
         return reply;
     };
@@ -638,7 +706,11 @@ int wmain(int argc, wchar_t **argv)
     {
         query=[](const auto &) {
             snowdesktop::shell_extensions::Reply reply;reply.ok=true;
-            snowdesktop::shell_extensions::Entry entry;entry.label=L"Cached command";entry.key="cached";entry.token=72;
+            snowdesktop::shell_extensions::Entry entry;
+            entry.label = L"Cached command";
+            entry.key = "cached";
+            entry.provider = "verb:cached";
+            entry.token = 72;
             reply.entries={entry};return reply;
         };
         invoke=[path=std::filesystem::path(invocationPath)](UINT token,POINT){std::ofstream file(path);file<<token;};
@@ -652,7 +724,15 @@ int wmain(int argc, wchar_t **argv)
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
         if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
-        else { RunTests(); TestCatalogueCache(); TestExtensionSessions(); TestSnapshotPresentation(); TestPendingCachedClick(); }
+        else
+        {
+            RunTests();
+            TestDeferredPopups();
+            TestCatalogueCache();
+            TestExtensionSessions();
+            TestSnapshotPresentation();
+            TestPendingCachedClick();
+        }
     }
     catch (const std::exception& error)
     {

@@ -196,6 +196,9 @@ struct StartPagePresenter::Impl
             case Topic::Navigation: asset = L"search.svg"; break;
             case Topic::Beautify: asset = L"appearance-icon-beautification.svg"; break;
             case Topic::Theme: asset = L"appearance-theme.svg"; break;
+            case Topic::ContextMenu:
+                asset = L"context-menu.svg";
+                break;
             case Topic::Backup: asset = L"backup.svg"; break;
             default: break;
             }

@@ -6,10 +6,34 @@
 
 namespace snowdesktop::shell_extensions
 {
+inline void MoveMoreToBottom(std::vector<modern_menu::Item> &items, UINT moreCommand)
+{
+    const auto anchor = std::find_if(items.begin(), items.end(), [=](const auto &item) {
+        return moreCommand && item.command == moreCommand;
+    });
+    if (anchor == items.end())
+        return;
+    auto more = std::move(*anchor);
+    items.erase(anchor);
+    // Removing More may leave its old group empty. Preserve other groups.
+    std::vector<modern_menu::Item> ordered;
+    for (auto &item : items)
+        if (!item.separator || (!ordered.empty() && !ordered.back().separator))
+            ordered.push_back(std::move(item));
+    if (!ordered.empty() && !ordered.back().separator)
+    {
+        modern_menu::Item divider;
+        divider.separator = true;
+        ordered.push_back(divider);
+    }
+    ordered.push_back(std::move(more));
+    items = std::move(ordered);
+}
 inline void InsertBeforeMore(std::vector<modern_menu::Item> &items,
                              const std::vector<modern_menu::Item> &additions, UINT moreCommand,
                              bool separateFallback = true)
 {
+    MoveMoreToBottom(items, moreCommand);
     if (additions.empty())
         return;
     const auto anchor = std::find_if(items.begin(), items.end(), [moreCommand](const auto &item) {
@@ -36,7 +60,9 @@ class Presentation
     Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring)
         : prefs_(std::move(prefs)), source_(source)
     {
-        if (source.paths.empty())
+        const auto context = ResolveContext(source);
+        if (source.paths.empty() || std::none_of(prefs_.shown.begin(), prefs_.shown.end(),
+                                                 [=](const auto &item) { return item.context == context; }))
             return;
         generation_ = MenuCacheGeneration();
         ticket_ = SharedMenuCache().Capture(source);
@@ -61,6 +87,7 @@ class Presentation
     }
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
+        MoveMoreToBottom(items, moreCommand);
         if (!session_)
             return;
         if (cached_)

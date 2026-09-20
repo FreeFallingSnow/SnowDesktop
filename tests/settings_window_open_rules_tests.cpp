@@ -109,6 +109,16 @@ void CheckUsageGuide()
     entry.focusId = "widgets.developer";
     Check(IsLessonVisible(*Find(Topic::Develop), {entry}), "development help is discoverable before opting into developer tools");
     Check(IsLessonVisible(*Find(Topic::Move), {}), "basic component guidance does not depend on settings search availability");
+    entry.focusId = "contextMenu.extensions";
+    const auto &menuLesson = *Find(Topic::ContextMenu);
+    const auto menuRoute = SettingsDestination(menuLesson);
+    Check(menuLesson.section == Section::Basics && !menuLesson.practice &&
+              IsLessonVisible(menuLesson, {entry}) &&
+              menuRoute.page == snowdesktop::SettingsPage::ContextMenu &&
+              menuRoute.focusId == "contextMenu.extensions" &&
+              ReturnDestination(menuRoute) == snowdesktop::SettingsRoute::ForPage(
+                                                  snowdesktop::SettingsPage::General, "start.contextMenu"),
+          "Basics links to context-menu settings and returns to the same guide entry");
     for (const auto& lesson : kLessons)
     {
         Check(ParseTopic(lesson.key) == lesson.topic, "every visible lesson can be requested through the host");

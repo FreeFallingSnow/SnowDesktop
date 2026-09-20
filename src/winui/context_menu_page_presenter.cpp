@@ -30,13 +30,15 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LocalizeCallback localize;
     PersonalizationPageActions actions;
     muxc::StackPanel root;
+    muxc::Border card;
+    muxc::StackPanel content;
     muxc::SelectorBar tabs;
     muxc::ScrollViewer tabsScroll;
     muxc::Grid toolbar;
     muxc::TextBox search;
     muxc::Button refresh;
     muxc::HyperlinkButton chooseObject;
-    muxc::TextBlock description, status;
+    muxc::TextBlock heading, status;
     muxc::ListView list;
     mux::DispatcherTimer timer;
     std::array<Tab, 4> scopes{{
@@ -66,17 +68,23 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         column.Width({width, unit});
         grid.ColumnDefinitions().Append(column);
     }
-    explicit Impl(LocalizeCallback l) : localize(std::move(l))
+    explicit Impl(LocalizeCallback l, const mux::Style &cardStyle) : localize(std::move(l))
     {
         root.Spacing(12);
-        description.TextWrapping(mux::TextWrapping::Wrap);
-        root.Children().Append(description);
+        if (cardStyle)
+            card.Style(cardStyle);
+        content.Spacing(12);
+        heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        heading.TextWrapping(mux::TextWrapping::Wrap);
+        content.Children().Append(heading);
+        card.Child(content);
+        root.Children().Append(card);
         tabsScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
         tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Hidden);
         tabsScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
         tabsScroll.VerticalScrollBarVisibility(muxc::ScrollBarVisibility::Disabled);
         tabsScroll.Content(tabs);
-        root.Children().Append(tabsScroll);
+        content.Children().Append(tabsScroll);
         for (auto &scope : scopes)
             tabs.Items().Append(scope.item);
         tabs.SelectedItem(scopes.front().item);
@@ -87,9 +95,10 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         toolbar.Children().Append(search);
         muxc::Grid::SetColumn(refresh, 1);
         toolbar.Children().Append(refresh);
-        root.Children().Append(toolbar);
+        content.Children().Append(toolbar);
         status.TextWrapping(mux::TextWrapping::Wrap);
-        root.Children().Append(status);
+        status.Visibility(mux::Visibility::Collapsed);
+        content.Children().Append(status);
         list.SelectionMode(muxc::ListViewSelectionMode::None);
         list.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         list.ItemContainerStyle(mux::Markup::XamlReader::Load(LR"(<Style
@@ -98,11 +107,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
  <Setter Property="Padding" Value="12,6"/>
  </Style>)")
                                     .as<mux::Style>());
-        root.Children().Append(list);
+        content.Children().Append(list);
         // Optional inspection of a file type or a contextual folder, never a
         // prerequisite for using the four ordinary context lists.
         chooseObject.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        root.Children().Append(chooseObject);
+        content.Children().Append(chooseObject);
         timer.Interval(std::chrono::milliseconds(100));
         auto tick = timer.Tick([this](auto &&, auto &&) { Poll(); });
         revoke.push_back([t = timer, tick] { t.Tick(tick); });
@@ -141,7 +150,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void Text()
     {
-        description.Text(L("settings.contextMenu.syncDescription"));
+        heading.Text(L("settings.contextMenu.extensions"));
         for (auto &scope : scopes)
             scope.item.Text(L(scope.label));
         search.PlaceholderText(L("settings.contextMenu.search"));
@@ -157,6 +166,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         timer.Stop();
         session.reset();
     }
+    void Status(const std::wstring &text)
+    {
+        status.Text(text);
+        status.Visibility(text.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+    }
     void Reload()
     {
         Cancel();
@@ -169,12 +183,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (auto cached = ext::SharedMenuCache().Find(cacheTicket))
         {
             entries = std::move(cached->entries);
-            status.Text(entries.empty() ? L("settings.contextMenu.empty") : L"");
+            Status(entries.empty() ? L("settings.contextMenu.empty") : L"");
         }
         else
         {
             entries.clear();
-            status.Text(L("settings.contextMenu.loading"));
+            Status(L("settings.contextMenu.loading"));
         }
         BuildRows();
         try
@@ -184,7 +198,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         catch (...)
         {
-            status.Text(L("settings.contextMenu.failed"));
+            Status(L("settings.contextMenu.failed"));
         }
     }
     void Poll()
@@ -204,11 +218,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             ext::SharedMenuCache().Store(cacheTicket, *reply);
             entries = std::move(reply->entries);
-            status.Text(entries.empty() ? L("settings.contextMenu.empty") : L"");
+            Status(entries.empty() ? L("settings.contextMenu.empty") : L"");
             BuildRows();
         }
         else
-            status.Text(L("settings.contextMenu.failed"));
+            Status(L("settings.contextMenu.failed"));
         session.reset();
     }
     void Pick()
@@ -291,7 +305,6 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             row.toggle.VerticalAlignment(mux::VerticalAlignment::Center);
             row.toggle.IsOn(!ext::IsHidden(prefs, row.id, request.context));
             mux::Automation::AutomationProperties::SetName(row.toggle, entry.label);
-            muxc::ToolTipService::SetToolTip(row.toggle, winrt::box_value(L("settings.contextMenu.toggleHint")));
             muxc::Grid::SetColumn(row.toggle, 2);
             layout.Children().Append(row.toggle);
             auto token = row.toggle.Toggled(
@@ -345,8 +358,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         actions = {};
     }
 };
-ContextMenuPagePresenter::ContextMenuPagePresenter(LocalizeCallback callback, const mux::Style &)
-    : impl_(std::make_shared<Impl>(std::move(callback)))
+ContextMenuPagePresenter::ContextMenuPagePresenter(LocalizeCallback callback, const mux::Style &cardStyle)
+    : impl_(std::make_shared<Impl>(std::move(callback), cardStyle))
 {
 }
 ContextMenuPagePresenter::~ContextMenuPagePresenter()
