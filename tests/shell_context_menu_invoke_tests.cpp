@@ -988,6 +988,7 @@ void TestCatalogueDependencies()
     PumpUntil([&] { return scanNumber >= 1 && !service.Inspect().scanning; }, "initial dependency catalogue is ready");
     service.Query(request);
     PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "seed an exact text selection");
+    service.Inspect(request);
     const auto revision = service.View(request).revision;
     mode = 1; service.Inspect({}, true);
     PumpUntil([&] { return scanNumber >= 2 && !service.Inspect().scanning; }, "unrelated registration scan completes");
@@ -995,6 +996,8 @@ void TestCatalogueDependencies()
     mode = 2; service.Inspect({}, true);
     PumpUntil([&] { return scanNumber >= 3 && !service.Inspect().scanning; }, "relevant registration scan completes");
     Expect(!service.View(request).snapshot, "a relevant registration change invalidates its dependent snapshot");
+    Expect(service.Inspect(request).menu.pending, "a relevant dependency invalidation still refreshes the inspected selection");
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "the invalidated current selection publishes a fresh snapshot");
 }
 
 void TestUsefulManagementItems()

@@ -686,9 +686,11 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     const auto selection = request.context == Context::Desktop && request.paths.empty() && impl_->desktopInspection
         ? request : request.paths.empty() ? impl_->management : request;
     const auto selectionKey = SelectionKey(selection);
+    const auto previous = impl_->rows.find(selectionKey);
+    const bool invalidated = previous != impl_->rows.end() && previous->second.invalid;
     // Polling observes the current discovery, never starts it over after the
     // ordinary query freshness window expires (or after cache eviction).
-    if (!selection.paths.empty() && (refresh || selectionKey != impl_->inspectedSelection))
+    if (!selection.paths.empty() && (refresh || selectionKey != impl_->inspectedSelection || invalidated))
     {
         impl_->inspectedSelection = selectionKey;
         impl_->Queue(selection, QueryPriority::Inspect, refresh);

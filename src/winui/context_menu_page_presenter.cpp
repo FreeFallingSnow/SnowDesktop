@@ -272,7 +272,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center);
                 row.title.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(row.title);
                 row.scope.FontSize(12); row.scope.Opacity(0.7); row.scope.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(row.scope);
-                row.mixed.FontSize(12); row.mixed.Opacity(0.7); row.mixed.Text(L("settings.contextMenu.mixed")); names.Children().Append(row.mixed);
+                row.mixed.FontSize(12); row.mixed.Opacity(0.7); row.mixed.TextWrapping(mux::TextWrapping::Wrap); row.mixed.Text(L("settings.contextMenu.mixed")); names.Children().Append(row.mixed);
                 names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
                 row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(44);
                 row.toggle.VerticalAlignment(mux::VerticalAlignment::Center);
