@@ -1,5 +1,6 @@
 #include "shell_context_menu_invoke.h"
 #include "shell_extension_menu.h"
+#include "shell_extension_catalogue.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
@@ -288,6 +289,61 @@ void TestDeferredPopups()
     Expect(!RequiresNativePopup(menu), "materialized submenu commands retain custom rendering");
     AppendMenuW(menu, MF_OWNERDRAW, 42, nullptr);
     Expect(RequiresNativePopup(menu), "unlabelled owner-drawn children keep their native parent renderer");
+}
+
+void TestRegistryCatalogue()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto path = L"Software\\SnowDesktopCatalogueTests\\" + temp.path.filename().wstring();
+    struct RegistryFixture
+    {
+        HKEY key = nullptr; std::wstring path;
+        ~RegistryFixture() { if (key) RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{nullptr, path};
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &registry.key, nullptr) == ERROR_SUCCESS, "private registry fixture");
+    auto put = [&](const wchar_t *key, const wchar_t *name, const wchar_t *value) {
+        HKEY created = nullptr;
+        Expect(RegCreateKeyExW(registry.key, key, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &created, nullptr) == ERROR_SUCCESS, "create fixture registration");
+        const auto status = RegSetValueExW(created, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value), static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+        RegCloseKey(created); Expect(status == ERROR_SUCCESS, "write fixture registration");
+    };
+    put(L".snowtest", nullptr, L"SnowTest.Document");
+    put(L"SnowTest.Document\\shell\\inspect", L"MUIVerb", L"Same name");
+    put(L"SnowTest.Document\\shell\\inspect\\command", nullptr, L"unused.exe %1");
+    put(L"*\\shell\\other", L"MUIVerb", L"Same name");
+    put(L"*\\shell\\hidden", L"LegacyDisable", L"");
+    put(L"*\\shellex\\ContextMenuHandlers\\one", nullptr, L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}");
+    put(L"Directory\\shellex\\ContextMenuHandlers\\two", nullptr, L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}");
+    auto catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(catalogue.rows.size() == 4, "registry catalogue finds type-specific verbs and merges a handler by CLSID");
+    auto find = [&](const std::string &id) -> ext::Registration& {
+        auto row = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == id; });
+        Expect(row != catalogue.rows.end(), "expected registration exists"); return *row;
+    };
+    auto &handler = find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}");
+    Expect(handler.sources.size() == 2 && handler.contexts == 3 && !handler.linked, "one handler preserves both scopes without claiming a runtime association");
+    Expect(!find("reg:*\\shell\\hidden").systemEnabled, "system-disabled registration is excluded from available settings");
+    ext::Request request; request.paths = {L"C:\\fixture.snowtest"}; request.context = ext::Context::File;
+    ext::Reply reply; reply.ok = true;
+    ext::Entry actual; actual.key = "inspect"; actual.provider = "verb:inspect"; actual.label = L"Same name";
+    reply.entries = {actual}; ext::Associate(catalogue, request, reply);
+    Expect(reply.entries[0].registration == "reg:snowtest.document\\shell\\inspect", "unique canonical verb associates the actual type-specific command");
+    reply.entries[0].key.clear(); reply.entries[0].registration.clear(); ext::Associate(catalogue, request, reply);
+    Expect(reply.entries[0].registration.empty(), "a matching display name never establishes ownership");
+    JsonValue legacy;
+    Expect(ParseJson(R"({"shown":[{"id":"verb:inspect","context":0},{"id":"both","context":0},{"id":"both","context":1}]})", legacy), "legacy fixture parses");
+    auto prefs = ext::ReadPreferences(&legacy);
+    Expect(prefs.rulesVersion == 2 && !ext::IsHidden(prefs, "verb:inspect", ext::Context::File) && ext::IsHidden(prefs, "verb:inspect", ext::Context::Folder), "migration preserves different old scopes without broadening visibility");
+    Expect(ext::CommonShown(prefs, "both", ext::Category::Objects), "matching old states merge into common rule");
+    ext::MigrateAssociations(prefs, catalogue);
+    Expect(!ext::IsHidden(prefs, "reg:snowtest.document\\shell\\inspect", ext::Context::File) && ext::IsHidden(prefs, "reg:snowtest.document\\shell\\inspect", ext::Context::Folder), "identity migration preserves the exact old enabled scope");
+    ext::SetCommon(prefs, "both", ext::Category::Objects, true);
+    ext::SetOverride(prefs, "both", ext::Context::Folder, ext::Visibility::Hide);
+    Expect(ext::IsHidden(prefs, "both", ext::Context::Folder), "location hiding takes precedence over common visibility");
+    ext::SetOverride(prefs, "both", ext::Context::Folder, ext::Visibility::Inherit);
+    Expect(!ext::IsHidden(prefs, "both", ext::Context::Folder), "restore inheritance removes the exception");
+    JsonValue saved; Expect(ParseJson(ext::WritePreferences(prefs), saved) && ext::ReadPreferences(&saved) == prefs, "rules and retained legacy records round trip");
 }
 
 void TestExtensionSessions()
@@ -887,6 +943,7 @@ int wmain(int argc, wchar_t **argv)
             RunTests();
             TestDeferredPopups();
             TestCatalogueCache();
+            TestRegistryCatalogue();
             TestExtensionSessions();
             TestSnapshotPresentation();
             TestPendingCachedClick();

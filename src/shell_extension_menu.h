@@ -20,6 +20,7 @@ struct Request
 struct Entry
 {
     std::string provider, key;
+    std::string registration; // Proven registration identity; empty when ownership is unknown.
     std::wstring label;
     UINT token = 0;
     bool enabled = true, checked = false, separator = false, native = false;
@@ -81,7 +82,7 @@ template <> struct Fields<shell_extensions::Entry>
     template <class T> static auto Tie(T &v)
     {
         return std::tie(v.provider, v.key, v.label, v.token, v.enabled, v.checked, v.separator, v.native, v.children,
-                        v.width, v.height, v.pixels, v.accessKey);
+                        v.width, v.height, v.pixels, v.accessKey, v.registration);
     }
 };
 template <> struct Fields<shell_extensions::Reply>
