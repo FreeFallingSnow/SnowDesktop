@@ -26,7 +26,7 @@ namespace
 {
 constexpr size_t kMaximumEntries = 2048;
 std::atomic<unsigned> sessions{0};
-constexpr ULONGLONG kWorkerLifetimeMs = 120000;
+constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 // Event probes are constant-time. No registry tree scan occurs on each click.
 // Watch the nearest existing ancestor too, so creating a Blocked key invalidates
 // a worker even when that key did not exist when it was first acquired.
@@ -60,6 +60,7 @@ struct RegistryWatch
     }
     bool Changed()
     {
+        if (!armed) { Arm(); return false; }
         if (armed && WaitForSingleObject(event, 0) == WAIT_TIMEOUT) return false;
         Arm();
         return true; // Failure is conservative: do not reuse stale state.
@@ -68,6 +69,7 @@ struct RegistryWatch
 struct CacheState
 {
     std::uint64_t generation = 1;
+    bool dirty = false;
     std::wstring epoch = SharedMenuCache().Epoch();
     std::vector<std::unique_ptr<RegistryWatch>> watches;
     CacheState()
@@ -84,10 +86,7 @@ struct CacheState
     {
         bool changed = false;
         for (auto &watch : watches) changed |= watch->Changed();
-        if (changed) SharedMenuCache().Invalidate();
-        const auto sharedEpoch = SharedMenuCache().Epoch();
-        if (changed || sharedEpoch != epoch) ++generation;
-        epoch = sharedEpoch;
+        dirty |= changed;
         return generation;
     }
 };
@@ -856,7 +855,8 @@ struct Host
 };
 } // namespace
 
-std::uint64_t MenuCacheGeneration() { return Caches().Poll(); }
+std::uint64_t MenuCacheGeneration() { return Caches().generation; }
+bool TakeMenuRegistryChanges() { auto &state = Caches(); state.Poll(); return std::exchange(state.dirty, false); }
 void InvalidateMenuCache()
 {
     SharedMenuCache().Invalidate();
@@ -868,7 +868,7 @@ void InvalidateMenuCache()
 struct Session::Impl
 {
     // One idle worker per UI thread, never shared across active sessions.
-    static thread_local std::unique_ptr<Impl> idle;
+    static thread_local std::vector<std::unique_ptr<Impl>> idle;
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
@@ -905,11 +905,11 @@ struct Session::Impl
         RemoveRetiredSamples();
     }
 };
-thread_local std::unique_ptr<Session::Impl> Session::Impl::idle;
+thread_local std::vector<std::unique_ptr<Session::Impl>> Session::Impl::idle;
 Session::Session(const Request &request, DWORD queryTimeoutMs)
 {
     MenuTiming timing("helper_start");
-    if (sessions.fetch_add(1) >= 8)
+    if (sessions.fetch_add(1) >= 2)
     {
         sessions.fetch_sub(1);
         throw settings_ipc::ProtocolError("too many Shell menus");
@@ -918,10 +918,10 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
     {
         const auto generation = MenuCacheGeneration();
         auto &idle = Impl::idle;
-        if (idle && (idle->generation != generation || !idle->process->Running() ||
-                     GetTickCount64() - idle->born >= kWorkerLifetimeMs)) idle.reset();
-        const bool reused = bool(idle);
-        impl_ = idle ? std::move(idle) : std::make_unique<Impl>();
+        std::erase_if(idle, [=](const auto &worker) { return worker->generation != generation || !worker->process->Running() || GetTickCount64() - worker->born >= kWorkerLifetimeMs; });
+        const bool reused = !idle.empty();
+        if (reused) { impl_ = std::move(idle.back()); idle.pop_back(); }
+        else impl_ = std::make_unique<Impl>();
         impl_->generation = generation;
         impl_->started = GetTickCount64();
         impl_->delivered = impl_->succeeded = false;
@@ -966,13 +966,14 @@ Session::~Session()
             // The ordered release acknowledgement retires only prior samples,
             // even if the next query has already acquired this worker.
             impl_->channel.Notify("menu.release");
-            Impl::idle = std::move(impl_);
+            impl_->born = GetTickCount64();
+            if (Impl::idle.size() < 2) Impl::idle.push_back(std::move(impl_));
         }
         catch (...) { /* A disconnected worker is destroyed instead of pooled. */ }
     }
     sessions.fetch_sub(1);
 }
-void Session::ReleaseIdleWorker() { Impl::idle.reset(); }
+void Session::ReleaseIdleWorker() { Impl::idle.clear(); }
 DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }
 std::optional<Reply> Session::Poll()
 {

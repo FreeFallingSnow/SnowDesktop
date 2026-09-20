@@ -8,6 +8,8 @@
 
 #include <cstdlib>
 #include <chrono>
+#include <atomic>
+#include <mutex>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -629,7 +631,7 @@ void TestCatalogueCache()
     Expect(!writer.Store(changedTicket,reply,102),"target changes during a query invalidate its pending snapshot");
     const auto current=writer.Capture(file);
     Expect(writer.Store(current,reply,103),"write current target snapshot");
-    { std::ofstream output(directory.path / L"cache" / (std::to_wstring(current.slot)+L".bin"),std::ios::binary);output<<"truncated"; }
+    { std::ofstream output(directory.path / L"cache" / current.file,std::ios::binary);output<<"truncated"; }
     ext::MenuSnapshotCache afterRestart(directory.path / L"cache");
     Expect(!afterRestart.Find(current,104),"corrupt disk cache falls back to a live query");
 
@@ -685,134 +687,140 @@ void PumpUntil(Condition condition, const char *message)
 }
 void TestSnapshotPresentation()
 {
-    namespace ext=snowdesktop::shell_extensions;
-    namespace menu=snowdesktop::modern_menu;
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory directory;
-    ext::InvalidateMenuCache();
-    const auto path=directory.path/L"presentation.txt";
-    {std::ofstream output(path);output<<"private presentation sample";}
-    ext::Request request;request.paths={path.wstring()};
-    menu::Item more;more.label=L"更多";more.command=7;
+    const auto path = directory.path / L"presentation.txt";
+    { std::ofstream file(path); file << "private target"; }
+    ext::Request request; request.paths = {path.wstring()};
+    ext::MenuService service(directory.path / L"cache");
     ext::Preferences prefs;
-    ext::SetHidden(prefs, "verb:first", ext::Context::File, false);
-    ext::SetHidden(prefs, "verb:stable", ext::Context::File, false);
+    menu::Item more; more.label = L"More"; more.command = 7;
     {
-        ext::Presentation hidden(request, {}, L"loading", L"failed");
-        std::vector<menu::Item> items{more};
-        menu::Options options;
+        ext::Presentation hidden(request, prefs, L"", L"", service);
+        std::vector<menu::Item> items = {more}; menu::Options options;
         hidden.Attach(items, options, 7);
-        Expect(items.size() == 1 && !options.pollItems &&
-                   !ext::SharedMenuCache().Find(ext::SharedMenuCache().Capture(request)),
-               "default-hidden menus neither query extensions nor install an asynchronous refresh");
+        Expect(items.size() == 1 && !options.pollItems && !service.View(request).pending, "default-hidden popup starts no Shell query");
     }
+    ext::SetHidden(prefs, "verb:first", ext::Context::File, false);
     {
-        ext::Presentation presentation(request, prefs, L"loading", L"failed");
-        std::vector<menu::Item> items={more};menu::Options options;
-        presentation.Attach(items,options,7);
-        Expect(items.size()==1&&items[0].command==7,"cold menu has no loading placeholder");
-        // Close before Poll; the real STA timer/session must finish the query.
+        ext::Presentation cold(request, prefs, L"", L"", service);
+        std::vector<menu::Item> items = {more}; menu::Options options;
+        cold.Attach(items, options, 7);
+        Expect(items.size() == 1 && !options.pollItems, "cold menu freezes without a placeholder or async item replacement");
     }
-    const auto ticket=ext::SharedMenuCache().Capture(request);
-    PumpUntil([&]{return ext::SharedMenuCache().Find(ticket).has_value();},"dismissal still warms the next menu");
-    auto snapshot=ext::SharedMenuCache().Find(ticket);
-    snapshot->entries[0].label=L"缓存项";
-    snapshot->entries[0].width=1;snapshot->entries[0].height=1;snapshot->entries[0].pixels={0,0,0,255};
-    Expect(ext::SharedMenuCache().Store(ticket,*snapshot),"seed cached menu with a distinct visible label");
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "closing a popup leaves the host query alive to warm the next popup");
+    const auto first = service.View(request);
     {
-        ext::Presentation presentation(request, prefs, L"loading", L"failed");
-        std::vector<menu::Item> items={more};menu::Options options;
-        presentation.Attach(items,options,7);
-        Expect(items.size()==3&&items[0].label==L"缓存项"&&items[0].image&&items[2].command==7,
-            "cached icon and entry are present above More before the first poll");
-        const auto stableCommand=items[1].command;
-        bool applied=false;
-        PumpUntil([&]{
-            if(!applied) if(auto update=options.pollItems(items,true)){items=std::move(*update);applied=true;}
-            return applied;
-        },"fresh menu replaces the cached view");
-        Expect(items.size()==3&&items[0].label==L"压缩"&&items[2].command==7,
-            "refresh replaces stale entries without duplicate wrappers or loading rows");
-        Expect(items[1].label==L"保持选中"&&items[1].command==stableCommand,
-            "unchanged entries retain command IDs so refresh preserves keyboard selection");
+        ext::Presentation warm(request, prefs, L"", L"", service);
+        std::vector<menu::Item> items = {more}; menu::Options options;
+        warm.Attach(items, options, 7);
+        Expect(items.size() == 2 && items.front().label == L"压缩" && items.back().command == 7 && !options.pollItems,
+               "warm popup reads immutable memory snapshot above the bottom footer");
+        service.Query(request, ext::QueryPriority::Menu, true);
+        PumpUntil([&] { return service.View(request).revision > first.revision; }, "background refresh finishes");
+        Expect(items.size() == 2 && !options.pollItems, "completed refresh cannot alter the open menu or its hit regions");
     }
 }
-// Only query data and the final third-party InvokeCommand boundary are replaced.
-// The pending-click timer, original STA, child process, pipe and command routing
-// are production paths. The child records the token it actually received.
 void TestPendingCachedClick()
 {
-    namespace ext=snowdesktop::shell_extensions;
-    namespace menu=snowdesktop::modern_menu;
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
     TemporaryDirectory directory;
-    const auto path=directory.path/L"pending.txt";
-    const auto output=directory.path/L"invoked.txt";
-    {std::ofstream file(path);file<<"private command target";}
-    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",output.c_str());
-    ext::InvalidateMenuCache(); // A new child inherits the private output path.
-    ext::Request request;request.paths={path.wstring()};
-    ext::Preferences prefs;
-    ext::SetHidden(prefs, "verb:cached", ext::Context::File, false);
-    ext::Reply cached;cached.ok=true;
-    ext::Entry entry;
-    entry.label = L"Cached command";
-    entry.key = "cached";
-    entry.provider = "verb:cached";
-    entry.token = 999;
-    cached.entries={entry};
-    Expect(ext::SharedMenuCache().Store(ext::SharedMenuCache().Capture(request),cached),"seed pending invocation snapshot");
+    const auto path = directory.path / L"retry.txt", output = directory.path / L"invoked.txt";
+    { std::ofstream file(path); file << "private target"; }
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE", output.c_str());
+    ext::Request request; request.paths = {path.wstring()};
+    ext::Reply cached; cached.ok = true;
+    ext::Entry entry; entry.label = L"Cached command"; entry.key = "cached"; entry.provider = "verb:cached"; entry.token = 999;
+    cached.entries = {entry};
+    const auto cachePath = directory.path / L"cache";
+    ext::MenuSnapshotCache cache(cachePath);
+    Expect(cache.Store(cache.Capture(request), cached), "seed a private disk snapshot");
     {
-        ext::Presentation presentation(request, prefs, L"loading", L"failed");
-        std::vector<menu::Item> items;menu::Options options;
-        presentation.Attach(items,options,0);
-        Expect(items.size()==1,"pending click uses the snapshot immediately");
-        Expect(presentation.Invoke(items[0].command,{0,0}),"explicit cached click transfers the pending session");
+        ext::MenuService service(cachePath);
+        PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "startup restores the exact selection from disk on the service worker");
+        ext::Preferences prefs; ext::SetHidden(prefs, "verb:cached", ext::Context::File, false);
+        ext::Presentation presentation(request, prefs, L"", L"", service);
+        std::vector<menu::Item> items; menu::Options options; presentation.Attach(items, options, 0);
+        Expect(items.size() == 1, "disk-restored snapshot is immediately available to popup");
+        PumpUntil([&] { return !service.View(request).error.empty(); }, "controlled failed refresh completes");
+        Expect(service.View(request).snapshot.has_value() && !options.pollItems, "failed query preserves both snapshot and frozen popup");
+        Expect(presentation.Invoke(items.front().command, {0, 0}), "explicit cached click bypasses automatic backoff once");
+        PumpUntil([&] { return std::filesystem::exists(output); }, "click reaches the supervised child's real invocation transport");
+        UINT token = 0; { std::ifstream file(output); file >> token; }
+        Expect(token == 72, "execute only the fresh session's token, never cached token 999");
     }
-    PumpUntil([&]{return std::filesystem::exists(output);},"pending cached click reaches the child invocation handler");
-    UINT token=0;{std::ifstream file(output);file>>token;}
-    Expect(token==72,"pending click uses the freshly queried command, never the cached token 999");
-    // A transient refresh failure keeps the visible snapshot. A subsequent
-    // explicit click must re-query and resolve, rather than use saved tokens.
-    std::filesystem::remove(output);
-    const auto retryPath = directory.path / L"retry.txt";
+    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE", nullptr);
+}
+void TestQueryScheduler()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    struct Gate { std::atomic<bool> ready = false; ext::Reply reply; };
+    std::mutex mutex;
+    std::vector<std::shared_ptr<Gate>> gates;
+    std::atomic<int> active = 0, maximum = 0, starts = 0, invokes = 0;
+    std::atomic<bool> failStart = false;
+    auto factory = [&](const ext::Request &) -> ext::QueryWork {
+        ++starts;
+        if (failStart) throw std::runtime_error("controlled startup failure");
+        auto gate = std::make_shared<Gate>();
+        auto lease = std::shared_ptr<int>(new int, [&](int *p) { --active; delete p; });
+        const auto count = ++active; maximum.store(std::max(maximum.load(), count));
+        gate->reply.ok = true; ext::Entry entry; entry.provider = "verb:test"; entry.key = "test"; entry.label = L"Test"; entry.token = 42;
+        gate->reply.entries = {entry};
+        { std::lock_guard lock(mutex); gates.push_back(gate); }
+        return {[gate, lease]() -> std::optional<ext::Reply> { if (!gate->ready) return {}; return gate->reply; }, [&](UINT token, POINT) { if (token == 42) ++invokes; }};
+    };
+    ext::MenuService service(directory.path / L"cache", factory, [] { ext::Catalogue c; c.revision = 1; return c; });
+    const auto path = directory.path / L"a.txt"; { std::ofstream f(path); f << "a"; }
+    ext::Request request; request.paths = {path.wstring()};
+    service.Query(request); service.Query(request, ext::QueryPriority::Inspect);
+    PumpUntil([&] { return starts == 1; }, "one real selection creates one shared task");
+    std::shared_ptr<Gate> first;
+    { std::lock_guard lock(mutex); first = gates.front(); }
+    first->ready = true;
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "publish complete successful query");
+    const auto snapshot = service.View(request).snapshot;
+    Expect(snapshot->entries.front().token == 0, "published snapshots never contain executable tokens");
+    failStart = true;
+    service.Query(request, ext::QueryPriority::Menu, true);
+    PumpUntil([&] { return !service.View(request).error.empty(); }, "controlled launch failure reaches the scheduler");
+    Expect(service.View(request).snapshot.has_value(), "launch failure does not clear a valid memory snapshot");
+    const int failedStarts = starts;
+    for (int i = 0; i < 20; ++i) service.Query(request);
+    Expect(starts == failedStarts && !service.View(request).pending, "automatic failures back off without spawning repeated helpers");
+    failStart = false;
+    service.Query(request, ext::QueryPriority::Menu, true);
+    PumpUntil([&] { return starts > failedStarts; }, "explicit refresh can bypass backoff");
+    std::shared_ptr<Gate> stale;
+    { std::lock_guard lock(mutex); stale = gates.back(); }
+    service.Invalidate(request);
+    stale->reply.entries.front().label = L"stale"; stale->ready = true;
+    PumpUntil([&] { return starts > failedStarts + 1; }, "invalidated completion schedules a newer dependency query");
+    Expect(!service.View(request).snapshot, "late result from an old dependency cannot restore invalidated menu");
+    std::shared_ptr<Gate> newest;
+    { std::lock_guard lock(mutex); newest = gates.back(); }
+    newest->reply.entries.clear(); newest->ready = true;
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "a successful empty result is publishable");
+    Expect(service.View(request).snapshot->entries.empty(), "valid empty menu replaces an older nonempty menu");
+    // Hold two distinct requests and verify the third remains queued.
+    std::vector<ext::Request> requests;
+    for (int i = 0; i < 3; ++i)
     {
-        std::ofstream file(retryPath);
-        file << "retry sample";
+        auto r = request; r.paths = {(directory.path / (std::to_wstring(i) + L".txt")).wstring()};
+        { std::ofstream f(r.paths.front()); f << i; } requests.push_back(r); service.Query(r);
     }
-    request.paths = {retryPath.wstring()};
-    Expect(ext::SharedMenuCache().Store(ext::SharedMenuCache().Capture(request), cached),
-           "seed display snapshot before a transient query failure");
+    PumpUntil([&] { std::lock_guard lock(mutex); return std::count_if(gates.begin(), gates.end(), [](const auto &g) { return !g->ready; }) == 2; }, "two queries run concurrently");
     {
-        ext::Presentation presentation(request, prefs, L"loading", L"failed");
-        std::vector<menu::Item> items;
-        menu::Options options;
-        presentation.Attach(items, options, 0);
-        const auto original = items.front().command;
-        bool applied = false;
-        PumpUntil(
-            [&] {
-                if (!applied)
-                    if (auto updated = options.pollItems(items, true))
-                    {
-                        items = std::move(*updated);
-                        applied = true;
-                    }
-                return applied;
-            },
-            "failed refresh completes");
-        Expect(items.size() == 1 && items.front().command == original,
-               "a failed background query must not erase a valid cached menu");
-        Expect(presentation.Invoke(original, {0, 0}), "a cached click after failure starts fresh validation");
+        std::lock_guard lock(mutex);
+        for (auto &gate : gates) gate->ready = true;
     }
-    PumpUntil(
-        [&] {
-            UINT actual = 0;
-            std::ifstream file(output);
-            file >> actual;
-            return actual == 72;
-        },
-        "retry invokes the newly validated token after an explicit cached click");
-    SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE",nullptr);
-    ext::InvalidateMenuCache();
+    PumpUntil([&] { return service.View(requests[0]).snapshot && service.View(requests[1]).snapshot; }, "completed workers drain the queue");
+    PumpUntil([&] { std::lock_guard lock(mutex); for (auto &gate : gates) gate->ready = true; return service.View(requests[2]).snapshot.has_value(); }, "queued third query completes");
+    service.Shutdown();
+    Expect(maximum <= 2, "scheduler never runs more than two query workers");
 }
 
 // Opt-in measurements use the real Session path and private files only. They
@@ -947,6 +955,7 @@ int wmain(int argc, wchar_t **argv)
             TestExtensionSessions();
             TestSnapshotPresentation();
             TestPendingCachedClick();
+            TestQueryScheduler();
         }
     }
     catch (const std::exception& error)

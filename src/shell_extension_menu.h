@@ -61,6 +61,7 @@ class Session
 // notifications invalidate the warm worker and settings catalogue generation.
 std::uint64_t MenuCacheGeneration();
 void InvalidateMenuCache();
+bool TakeMenuRegistryChanges();
 using QueryExecutor = std::function<Reply(const Request &)>;
 using InvokeExecutor = std::function<void(UINT, POINT)>;
 std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {});

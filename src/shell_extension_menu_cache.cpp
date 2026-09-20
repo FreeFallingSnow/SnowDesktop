@@ -5,12 +5,14 @@
 #include <fstream>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt.lib")
 
 namespace snowdesktop::shell_extensions
 {
 namespace
 {
-constexpr std::uint32_t Schema = 1;
+constexpr std::uint32_t Schema = 2;
 constexpr std::uint64_t MaximumSnapshotBytes = 2 * 1024 * 1024;
 std::uint64_t Hash(std::span<const std::byte> bytes)
 {
@@ -101,11 +103,19 @@ std::filesystem::path DefaultDirectory()
         return {};
     // Different portable/install locations and test executables cannot borrow
     // one another's snapshots; the settings child uses the same executable.
-    return base / L"SnowDesktop" / L"Cache" / L"ShellMenus" /
+    return base / L"SnowDesktop" / L"Cache" / L"ShellMenus-v2" /
            std::to_wstring(Hash(settings_ipc::Pack(std::wstring(executable, length))));
 }
-using DiskRow = std::tuple<std::uint32_t, settings_ipc::Bytes, std::wstring, std::uint64_t, Reply>;
+using DiskRow = std::tuple<std::uint32_t, settings_ipc::Bytes, std::wstring, std::uint64_t, Request, Reply>;
 
+std::wstring CacheFile(const settings_ipc::Bytes &bytes)
+{
+    unsigned char digest[32]{};
+    if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<std::byte *>(bytes.data())), static_cast<ULONG>(bytes.size()), digest, 32) < 0) return {};
+    std::wstring text; constexpr wchar_t hex[] = L"0123456789abcdef";
+    for (const auto c : digest) { text += hex[c >> 4]; text += hex[c & 15]; }
+    return text + L".bin";
+}
 struct PendingQueries
 {
     struct Job
@@ -277,13 +287,9 @@ MenuSnapshotCache::Ticket MenuSnapshotCache::Capture(const Request &source) cons
         ticket.identity =
             settings_ipc::Pack(request, stamps, FileStamp(executable), GetUserDefaultUILanguage());
         ticket.epoch = Epoch();
-        // The frequently-used desktop cannot be evicted by an unrelated file
-        // hashing into its slot. Normal and Shift menus remain independent.
-        ticket.slot = request.context == Context::Desktop ? (request.extended ? 4 : 3)
-                      : sample                            ? static_cast<unsigned>(request.context)
-                               : 5 + static_cast<unsigned>(Hash(ticket.identity) % (Slots - 5));
-        if (ticket.slot >= Slots)
-            return {};
+        ticket.file = CacheFile(ticket.identity);
+        if (request.context == Context::Desktop) ticket.file = L"d-" + ticket.file;
+        if (ticket.file.empty()) return {};
         return ticket;
     }
     catch (...)
@@ -297,29 +303,34 @@ std::optional<Reply> MenuSnapshotCache::Find(const Ticket &ticket, std::uint64_t
     {
         if (!ticket || ticket.epoch != Epoch())
             return {};
-        const auto path = directory_ / (std::to_wstring(ticket.slot) + L".bin");
+        const auto path = directory_ / ticket.file;
         const auto stamp = FileStamp(path);
         if (!stamp)
             return {};
-        auto row = rows_.find(ticket.slot);
+        auto row = rows_.find(ticket.identity);
         if (row == rows_.end() || row->second.fileStamp != stamp || row->second.identity != ticket.identity ||
             row->second.epoch != ticket.epoch)
         {
             const auto data = Read(path, MaximumSnapshotBytes);
             if (!data)
                 return {};
-            auto [schema, identity, epoch, written, reply] = settings_ipc::Unpack<DiskRow>(*data);
+            auto [schema, identity, epoch, written, request, reply] = settings_ipc::Unpack<DiskRow>(*data);
             size_t count = 0;
             if (schema != Schema || identity != ticket.identity || epoch != ticket.epoch || !reply.ok ||
                 !Sanitize(reply.entries, count))
                 return {};
             row = rows_
-                      .insert_or_assign(ticket.slot, MemoryRow{std::move(identity), std::move(epoch), written,
-                                                               stamp, std::move(reply)})
+                      .insert_or_assign(ticket.identity, MemoryRow{identity, std::move(epoch), written,
+                                                               stamp, ++clock_, data->size(), request.context == Context::Desktop, std::move(reply)})
                       .first;
         }
         if (now < row->second.written || now - row->second.written >= LifetimeMs)
             return {};
+        row->second.used = ++clock_;
+        std::error_code touched;
+        std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now(), touched);
+        row->second.fileStamp = FileStamp(path);
+        TrimMemory();
         MenuTrace("cache", "hit", 0, static_cast<unsigned>(row->second.reply.entries.size()));
         return row->second.reply;
     }
@@ -332,7 +343,7 @@ bool MenuSnapshotCache::Store(const Ticket &ticket, const Reply &reply, std::uin
 {
     try
     {
-        if (!ticket || !reply.ok || ticket.epoch != Epoch() ||
+        if (!ticket || !reply.ok || (ticket.sequence && issued_[ticket.identity] != ticket.sequence) || ticket.epoch != Epoch() ||
             Capture(ticket.request).identity != ticket.identity)
             return false;
         auto snapshot = reply;
@@ -340,20 +351,89 @@ bool MenuSnapshotCache::Store(const Ticket &ticket, const Reply &reply, std::uin
         size_t count = 0;
         if (!Sanitize(snapshot.entries, count))
             return false;
-        const auto bytes = settings_ipc::Pack(DiskRow{Schema, ticket.identity, ticket.epoch, now, snapshot});
+        const auto bytes = settings_ipc::Pack(DiskRow{Schema, ticket.identity, ticket.epoch, now, ticket.request, snapshot});
         if (bytes.size() > MaximumSnapshotBytes)
             return false;
-        const auto path = directory_ / (std::to_wstring(ticket.slot) + L".bin");
+        const auto path = directory_ / ticket.file;
         if (!Write(path, bytes))
             return false;
         rows_.insert_or_assign(
-            ticket.slot, MemoryRow{ticket.identity, ticket.epoch, now, FileStamp(path), std::move(snapshot)});
+            ticket.identity, MemoryRow{ticket.identity, ticket.epoch, now, FileStamp(path), ++clock_, bytes.size(), ticket.request.context == Context::Desktop, std::move(snapshot)});
+        TrimMemory();
+        TrimDisk();
         return true;
     }
     catch (...)
     {
         return false;
     }
+}
+MenuSnapshotCache::Ticket MenuSnapshotCache::Begin(Ticket ticket)
+{
+    if (ticket) ticket.sequence = ++issued_[ticket.identity];
+    return ticket;
+}
+void MenuSnapshotCache::Erase(const Request &request)
+{
+    auto ticket = Capture(request);
+    if (!ticket) return;
+    rows_.erase(ticket.identity);
+    ++issued_[ticket.identity];
+    std::error_code ignored;
+    std::filesystem::remove(directory_ / ticket.file, ignored);
+}
+void MenuSnapshotCache::TrimMemory()
+{
+    std::uint64_t bytes = 0; for (const auto &[id, row] : rows_) bytes += row.bytes;
+    while (rows_.size() > MemoryEntries || bytes > MemoryBytes)
+    {
+        const auto victim = std::min_element(rows_.begin(), rows_.end(), [](const auto &a, const auto &b) { return std::tie(a.second.desktop, a.second.used) < std::tie(b.second.desktop, b.second.used); });
+        if (victim == rows_.end()) break;
+        bytes -= victim->second.bytes; rows_.erase(victim);
+    }
+}
+void MenuSnapshotCache::TrimDisk()
+{
+    struct File { std::filesystem::path path; std::uint64_t bytes, stamp; bool desktop; };
+    std::vector<File> files; std::uint64_t total = 0;
+    std::error_code error;
+    for (const auto &file : std::filesystem::directory_iterator(directory_, error))
+    {
+        if (file.path().extension() != L".bin" || file.path().filename() == L"epoch.bin" || file.path().filename() == L"catalogue.bin") continue;
+        const auto bytes = file.file_size(error); if (error) { error.clear(); continue; }
+        const bool desktop = file.path().filename().wstring().starts_with(L"d-");
+        files.push_back({file.path(), bytes, FileStamp(file.path()), desktop}); total += bytes;
+    }
+    std::sort(files.begin(), files.end(), [](const auto &a, const auto &b) { return std::tie(a.desktop, a.stamp) < std::tie(b.desktop, b.stamp); });
+    size_t count = files.size();
+    for (const auto &file : files)
+    {
+        if (count <= DiskEntries && total <= DiskBytes) break;
+        if (std::filesystem::remove(file.path, error)) { --count; total -= file.bytes; }
+    }
+}
+std::vector<std::pair<Request, Reply>> MenuSnapshotCache::Warm()
+{
+    std::vector<std::pair<Request, Reply>> result;
+    std::vector<std::filesystem::path> paths;
+    std::error_code error;
+    for (const auto &file : std::filesystem::directory_iterator(directory_, error))
+        if ((file.path().filename().wstring().size() == 68 || file.path().filename().wstring().size() == 70) && file.path().extension() == L".bin") paths.push_back(file.path());
+    std::sort(paths.begin(), paths.end(), [](const auto &a, const auto &b) { return FileStamp(a) > FileStamp(b); });
+    for (const auto &path : paths)
+    {
+        if (result.size() >= MemoryEntries) break;
+        try
+        {
+            const auto bytes = Read(path, MaximumSnapshotBytes); if (!bytes) continue;
+            const auto disk = settings_ipc::Unpack<DiskRow>(*bytes);
+            const auto &request = std::get<4>(disk);
+            const auto ticket = Capture(request);
+            if (auto reply = Find(ticket)) result.emplace_back(request, std::move(*reply));
+        }
+        catch (...) {}
+    }
+    return result;
 }
 CommandReference AppendReference(CommandReference path, const Entry &entry)
 {

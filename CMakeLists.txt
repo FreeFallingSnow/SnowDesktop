@@ -210,6 +210,7 @@ set(SNOWDESKTOP_SOURCES
     src/shell_extension_menu.cpp
     src/shell_extension_menu_cache.cpp
     src/shell_extension_catalogue.cpp
+    src/shell_extension_service.cpp
     src/shell_file_operation_worker.cpp
     src/app/app_navigation_render.cpp
     src/app/app_ole_drop_routing.cpp
@@ -2088,6 +2089,7 @@ if (BUILD_TESTING)
             src/shell_extension_menu.cpp
             src/shell_extension_menu_cache.cpp
     src/shell_extension_catalogue.cpp
+    src/shell_extension_service.cpp
             src/shell_context_menu_site.cpp
             src/settings_process.cpp
             src/settings_ipc_channel.cpp

@@ -14,16 +14,22 @@ class MenuSnapshotCache
         settings_ipc::Bytes identity;
         std::wstring epoch;
         Request request;
-        unsigned slot = 0;
+        std::wstring file;
+        std::uint64_t sequence = 0;
         explicit operator bool() const
         {
             return !identity.empty();
         }
     };
     static constexpr std::uint64_t LifetimeMs = 24 * 60 * 60 * 1000;
-    static constexpr unsigned Slots = 36;
+    static constexpr unsigned MemoryEntries = 64, DiskEntries = 256;
+    static constexpr std::uint64_t MemoryBytes = 16 * 1024 * 1024, DiskBytes = 64 * 1024 * 1024;
     explicit MenuSnapshotCache(std::filesystem::path directory);
     Ticket Capture(const Request &request) const;
+    Ticket Begin(Ticket ticket);
+    void Erase(const Request &request);
+    std::vector<std::pair<Request, Reply>> Warm();
+    void TrimDisk();
     std::optional<Reply> Find(const Ticket &ticket, std::uint64_t now = Now());
     bool Store(const Ticket &ticket, const Reply &reply, std::uint64_t now = Now());
     void Invalidate();
@@ -39,11 +45,15 @@ class MenuSnapshotCache
     {
         settings_ipc::Bytes identity;
         std::wstring epoch;
-        std::uint64_t written = 0, fileStamp = 0;
+        std::uint64_t written = 0, fileStamp = 0, used = 0, bytes = 0;
+        bool desktop = false;
         Reply reply;
     };
     std::filesystem::path directory_;
-    std::map<unsigned, MemoryRow> rows_;
+    std::map<settings_ipc::Bytes, MemoryRow> rows_;
+    std::map<settings_ipc::Bytes, std::uint64_t> issued_;
+    std::uint64_t clock_ = 0;
+    void TrimMemory();
 };
 MenuSnapshotCache &SharedMenuCache();
 

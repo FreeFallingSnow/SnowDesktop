@@ -1,7 +1,7 @@
 #pragma once
 #include "modern_menu.h"
 #include "shell_extension_diagnostics.h"
-#include "shell_extension_menu_cache.h"
+#include "shell_extension_service.h"
 #include <algorithm>
 #include <set>
 
@@ -82,95 +82,33 @@ class Presentation
 {
   public:
     static constexpr UINT FirstCommand = 0x71000000;
-    Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring)
-        : prefs_(std::move(prefs)), source_(source)
+    Presentation(const Request &source, Preferences prefs, std::wstring, std::wstring,
+                 MenuService &service = SharedMenuService(), std::function<void(bool)> completed = {})
+        : prefs_(std::move(prefs)), source_(source), service_(service), completed_(std::move(completed))
     {
-        MenuTiming timing("first_screen");
-        const auto context = ResolveContext(source);
-        if (source.paths.empty() || std::none_of(prefs_.shown.begin(), prefs_.shown.end(),
-                                                 [=](const auto &item) { return item.context == context; }))
-            return;
-        generation_ = MenuCacheGeneration();
-        ticket_ = SharedMenuCache().Capture(source);
-        cached_ = SharedMenuCache().Find(ticket_);
-        timing.Record(cached_ ? "snapshot" : "miss");
-        try
-        {
-            session_ = std::make_unique<Session>(source);
-        }
-        catch (...)
-        {
-            cached_.reset();
-        }
+        if (source.paths.empty() || !HasOptIns(prefs_)) return;
+        auto view = service_.View(source_);
+        cached_ = std::move(view.snapshot);
+        contexts_ = view.contexts;
+        service_.Query(source_);
     }
     ~Presentation()
     {
-        // A quick dismissal must still warm the next right-click. Native menu
-        // objects are released as soon as this bounded background query ends.
-        if (session_ && !ready_)
-            FinishQueryInBackground(std::move(session_), std::move(ticket_), generation_);
-        for (auto image : images_)
-            DeleteObject(image);
+        // No query is owned by a popup. Closing only drops this immutable view;
+        // the service completes valid in-flight work for the next opening.
+        for (auto image : images_) DeleteObject(image);
     }
-    void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
+    void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &, UINT moreCommand)
     {
         MoveMoreToBottom(items, moreCommand);
-        if (!session_)
-            return;
-        if (cached_)
-            Insert(items, Convert(VisibleEntries(prefs_, cached_->entries, source_)), moreCommand);
-        options.pollItems = [this,
-                             moreCommand](const std::vector<modern_menu::Item> &current,
-                                          bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
-            if (!session_)
-                return {};
-            if (!ready_)
-            {
-                ready_ = session_->Poll();
-                if (ready_ && generation_ == MenuCacheGeneration())
-                    SharedMenuCache().Store(ticket_, *ready_);
-            }
-            if (!ready_ || !canApply)
-                return {};
-            if (!ready_->ok && generation_ == MenuCacheGeneration())
-                return current; // A failed refresh must not erase a valid display snapshot.
-            auto result = current;
-            std::erase_if(result, [](const auto &item) { return IsOurCommand(item.command); });
-            if (ready_->ok && generation_ == MenuCacheGeneration())
-                Insert(result, Convert(VisibleEntries(prefs_, ready_->entries, source_)), moreCommand);
-            return result;
-        };
+        if (cached_) Insert(items, Convert(VisibleSnapshot(prefs_, *cached_, contexts_)), moreCommand);
     }
     bool Invoke(UINT command, POINT point)
     {
         const auto found = commands_.find(command);
-        if (found == commands_.end() || !session_ || generation_ != MenuCacheGeneration())
-            return false;
-        try
-        {
-            if (!ready_)
-                ready_ = session_->Poll();
-            if (!ready_)
-                return InvokeWhenReady(std::move(session_), found->second, point, generation_);
-            if (!ready_->ok)
-            {
-                // Retry only an explicit cached click, always against fresh
-                // command identities. A retained snapshot never executes tokens.
-                session_.reset();
-                session_ = std::make_unique<Session>(source_);
-                return InvokeWhenReady(std::move(session_), found->second, point, generation_);
-            }
-            SharedMenuCache().Store(ticket_, *ready_);
-            const auto token = ResolveCommand(*ready_, found->second);
-            if (!token)
-                return false;
-            session_->Invoke(token, point);
-            return true;
-        }
-        catch (...)
-        {
-            return false;
-        }
+        if (found == commands_.end()) return false;
+        service_.Execute(source_, found->second, point, completed_);
+        return true;
     }
 
   private:
@@ -243,14 +181,13 @@ class Presentation
     }
     Preferences prefs_;
     Request source_;
-    MenuSnapshotCache::Ticket ticket_;
-    std::uint64_t generation_ = 0;
+    MenuService &service_;
+    std::function<void(bool)> completed_;
+    unsigned contexts_ = 0;
     UINT nextCommand_ = FirstCommand;
     std::map<UINT, CommandReference> commands_;
     std::set<UINT> converting_;
     std::optional<Reply> cached_;
-    std::unique_ptr<Session> session_;
-    std::optional<Reply> ready_;
     std::vector<HBITMAP> images_;
 };
 } // namespace snowdesktop::shell_extensions
