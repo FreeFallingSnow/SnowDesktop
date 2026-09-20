@@ -1191,6 +1191,17 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     DrawSearchBox(context);
 
+    if (!preview && app_->initialShellReadPending_ && categoryIds.empty() &&
+        !data_->itemKeys.empty())
+    {
+        const RECT bounds = GetBodyRect();
+        app_->DrawPlaceholderIcon(context, -1,
+            snowdesktop::ResolveCenteredIconRect(bounds,
+                std::min(Cu(40.0f), static_cast<int>(std::min(
+                    bounds.right - bounds.left, bounds.bottom - bounds.top)))), 1.0f);
+        return;
+    }
+
     if (searching)
     {
         const auto& keys = GetSearchResultKeys();

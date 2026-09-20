@@ -670,7 +670,16 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
     if ((!snapshot || !snapshot->desktopComplete ||
             !shellRefreshRevision_.IsCurrent(initialShellReadRevision_)) &&
         !progress.desktopItems.empty())
+    {
+        const size_t count = progress.desktopItems.size();
         ReloadItems(false, &progress);
+        wchar_t timing[320]{};
+        swprintf_s(timing, L"Startup Shell partial: items=%zu modelMs=%llu layoutMs=%llu "
+            L"saveMs=%llu rebuildMs=%llu notifyMs=%llu", count,
+            progress.modelMs, progress.layoutMs, progress.saveMs,
+            progress.rebuildMs, progress.notifyMs);
+        WriteDiagnosticLogEntry(timing);
+    }
     if (!snapshot) return;
     if (!shellRefreshRevision_.Finish(initialShellReadRevision_))
     {
@@ -691,6 +700,8 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
     {
         initialShellReadPending_ = false;
         for (auto& reader : initialLocalReads_) reader.Stop();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        InvalidateFloatingDockWindow(false);
         RefreshDockRunningWindows(false);
         WriteDiagnosticLogEntry(L"Startup Shell snapshot applied");
     }

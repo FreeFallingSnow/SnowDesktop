@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../icon_loading_placeholder.h"
 #include "../demo_mode_rules.h"
 #include "../demo_collection_rules.h"
 #include <commoncontrols.h>
@@ -568,13 +569,21 @@ void DesktopApp::DrawPrivacyFaIcon(
 void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     RECT iconRect, float alpha, bool allowBeautify)
 {
-    if (!ctx || sysIconIndex < 0) return;
+    if (!ctx) return;
+    const auto loading = [&] {
+        snowdesktop::icon_loading_placeholder::Draw(ctx, iconRect, alpha);
+    };
+    if (sysIconIndex < 0 || initialShellReadPending_)
+    {
+        loading();
+        return;
+    }
 
     // 快捷导航改走 DComp 后，ctx 必为 ID2D1DeviceContext（与桌面同源 d2dDevice_）。
     // 非 device-context 路径已废弃，直接返回以避免在错误设备上创建位图。
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
-        return;
+    { loading(); return; }
     auto& cache = placeholderIconCache_;
     const bool beautify = allowBeautify && iconBeautifySettings_.enabled;
     const int targetSize = std::max(
@@ -607,30 +616,31 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
                 reinterpret_cast<void**>(imageList.GetAddressOf()));
         }
         if (FAILED(hr) || !imageList)
-            return;
+        { loading(); return; }
 
         HICON icon = nullptr;
         if (FAILED(imageList->GetIcon(sysIconIndex,
                 ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
-            return;
+        { loading(); return; }
 
         SIZE bitmapSize{};
         HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
             icon, sourceSize, sourceSize, bitmapSize);
         DestroyIcon(icon);
         if (!alphaBitmap)
-            return;
+        { loading(); return; }
 
         ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(alphaBitmap, beautify);
         DeleteObject(alphaBitmap);
         if (!iconBitmap)
         {
+            loading();
             return;
         }
 
         ComPtr<ID2D1Bitmap> bitmap;
         if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
-            return;
+        { loading(); return; }
 
         cached = cache.emplace(cacheKey, std::move(bitmap)).first;
     }

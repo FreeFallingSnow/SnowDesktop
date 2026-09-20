@@ -178,7 +178,12 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     if (entry.type == DockEntryType::DesktopItem)
     {
         size_t index = FindItemIndexByKey(entry.reference);
-        if (index >= items_.size()) return;
+        if (index >= items_.size())
+        {
+            if (initialShellReadPending_)
+                DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f);
+            return;
+        }
         const float launchOffset =
             GetDockLaunchBounceOffset(index, iconSize);
         const float launchScale = GetDockLaunchPulseScale(index);
@@ -343,7 +348,6 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
     {
         size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
-        if (itemIndex >= items_.size()) continue;
         int col = static_cast<int>(i % 2);
         int row = static_cast<int>(i / 2);
         const RECT cell =
@@ -351,7 +355,10 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 CellRect(
                     collectionLayout,
                     col, row);
-        drawDesktopItem(items_[itemIndex], cell, &widget);
+        if (itemIndex < items_.size())
+            drawDesktopItem(items_[itemIndex], cell, &widget);
+        else if (initialShellReadPending_)
+            DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
     }
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);

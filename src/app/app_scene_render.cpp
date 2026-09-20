@@ -43,6 +43,22 @@ void DesktopApp::DrawStaticBackground(
     if (popupOccludesPointer)
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
 
+    // Saved placement is already known even when Shell has not returned the
+    // item yet. These are visual marks only, never synthetic selectable files.
+    if (initialShellReadPending_ && !hiddenMode)
+        for (const auto& [key, record] : layoutRecords_)
+        {
+            if (!record.hasGrid || collectedKeysCache_.contains(ToUpperInvariant(key)) ||
+                FindItemIndexByKey(key) != static_cast<size_t>(-1))
+                continue;
+            if (const auto visibility = settingsIconVisibility_.find(ToUpperInvariant(key));
+                visibility != settingsIconVisibility_.end() && !visibility->second)
+                continue;
+            const RECT bounds = GetGridRect(gridPages_, record.cell, record.span);
+            if (!IsRectEmptyRect(bounds) && intersectsUpdate(bounds))
+                DrawPlaceholderIcon(ctx, -1, GetItemIconRect(bounds), 1.0f);
+        }
+
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
     {

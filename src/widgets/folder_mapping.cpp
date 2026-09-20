@@ -969,6 +969,14 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     {
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
+        if (!preview && app_->initialShellReadPending_)
+        {
+            app_->DrawPlaceholderIcon(context, -1,
+                snowdesktop::ResolveCenteredIconRect(empty,
+                    std::min(Cu(40.0f), static_cast<int>(std::min(
+                        empty.right - empty.left, empty.bottom - empty.top)))), 1.0f);
+            return;
+        }
         IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
         IDWriteTextFormat* lightCentered = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
         app_->DrawD2DText(context, _LW("widget.folder_mapping.empty"), empty,

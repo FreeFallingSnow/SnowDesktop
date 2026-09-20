@@ -507,7 +507,18 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
             DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-            if (!item) continue;
+            if (!item)
+            {
+                if (!preview && app_->initialShellReadPending_)
+                {
+                    if (data_->listMode)
+                        DrawListItem(context, cell, nullptr, -1, L"", false, false);
+                    else
+                        app_->DrawPlaceholderIcon(context, -1,
+                            app_->GetItemIconRect(cell), 1.0f);
+                }
+                continue;
+            }
             const DesktopItem& di = *item;
 
             if (!data_->listMode)
@@ -591,10 +602,20 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (!slots[i]) continue;
         auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
         DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-        if (!item) continue;
-        const DesktopItem& di = *item;
         RECT slotRect = slots[i]->GetBounds();
         if (IsRectEmptyRect(slotRect)) continue;
+        if (!item)
+        {
+            if (!preview && app_->initialShellReadPending_)
+            {
+                const RECT iconRect = compact ? slotRect : titlelessLargeFolder
+                    ? snowdesktop::ResolveCenteredIconRect(slotRect, titlelessIconSize)
+                    : app_->GetItemIconRect(slotRect);
+                app_->DrawPlaceholderIcon(context, -1, iconRect, 1.0f);
+            }
+            continue;
+        }
+        const DesktopItem& di = *item;
 
         if (compact)
         {
@@ -667,7 +688,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         RECT allRect = GetCollectionSlotRect(this, allSlot, body);
         if (!IsRectEmptyRect(allRect))
         {
-            bool hasRemainingIcon = false;
+            bool hasRemainingIcon = !preview && app_->initialShellReadPending_ &&
+                inlineCapacity < displayItemCount;
             for (size_t j = 0; j < 4; ++j)
             {
                 size_t keyIdx = inlineCapacity + j;
@@ -709,6 +731,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         else
                             DrawThumbnail(context, di, tile, di.selected);
                     }
+                    else if (!preview && app_->initialShellReadPending_)
+                        app_->DrawPlaceholderIcon(context, -1, tile, 1.0f);
                 }
                 else
                 {

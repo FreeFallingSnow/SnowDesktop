@@ -403,7 +403,22 @@ void DesktopApp::DrawCollectionPopup(
         else
         {
             size_t itemIndex = FindItemIndexByKey(popupKeys[i]);
-            if (itemIndex == static_cast<size_t>(-1)) continue;
+            if (itemIndex == static_cast<size_t>(-1))
+            {
+                if (initialShellReadPending_)
+                {
+                    if (fan)
+                        drawFanSlot(i, false, false, [&](auto* target, const RECT& bounds) {
+                            DrawPlaceholderIcon(target, -1, bounds, 1.0f);
+                        });
+                    else if (UsesCollectionPopupList(widget))
+                        popupListRenderer.DrawListItem(ctx, itemRect, nullptr, -1,
+                            L"", false, false, {}, nullptr, {}, collectionPopupLightTheme_);
+                    else
+                        DrawPlaceholderIcon(ctx, -1, GetItemIconRect(itemRect), 1.0f);
+                }
+                continue;
+            }
             if (fan)
             {
                 const auto& item = items_[itemIndex];
