@@ -424,7 +424,10 @@ std::vector<std::pair<Request, Reply>> MenuSnapshotCache::Warm()
     std::error_code error;
     for (const auto &file : std::filesystem::directory_iterator(directory_, error))
         if ((file.path().filename().wstring().size() == 68 || file.path().filename().wstring().size() == 70) && file.path().extension() == L".bin") paths.push_back(file.path());
-    std::sort(paths.begin(), paths.end(), [](const auto &a, const auto &b) { return FileStamp(a) > FileStamp(b); });
+    std::sort(paths.begin(), paths.end(), [](const auto &a, const auto &b) {
+        return std::pair{a.filename().wstring().starts_with(L"d-"), FileStamp(a)} >
+               std::pair{b.filename().wstring().starts_with(L"d-"), FileStamp(b)};
+    });
     for (const auto &path : paths)
     {
         if (result.size() >= MemoryEntries) break;

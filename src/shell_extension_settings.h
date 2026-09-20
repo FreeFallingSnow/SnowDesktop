@@ -286,6 +286,10 @@ inline void SetCommon(Preferences &prefs, const std::string &id, Category catego
 }
 inline void SetOverride(Preferences &prefs, const std::string &id, Context context, Visibility value)
 {
+    // Persist an explicit base when restoring inheritance, so retained legacy
+    // records cannot recreate a migrated exception on the next association pass.
+    if (value == Visibility::Inherit && std::none_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return r.id == id && r.category == CategoryOf(context); }))
+        SetCommon(prefs, id, CategoryOf(context), CommonShown(prefs, id, CategoryOf(context)));
     std::erase_if(prefs.overrides, [&](const auto &r) { return r.id == id && r.context == context; });
     if (value != Visibility::Inherit) prefs.overrides.push_back({id, context, value});
     Normalize(prefs);

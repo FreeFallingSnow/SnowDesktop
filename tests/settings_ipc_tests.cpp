@@ -146,9 +146,9 @@ void TestCodec()
     {
         auto menuSettings = settings;
         menuSettings.values.personalization.contextMenuStyle = style;
-        const auto menuRestored =
+        const auto styleRestored =
             Unpack<snowdesktop::SettingsSnapshot>(Pack(menuSettings));
-        Check(menuRestored.values.personalization.contextMenuStyle == style,
+        Check(styleRestored.values.personalization.contextMenuStyle == style,
             "Win10 menu selection reaches the independent settings process intact");
     }
     Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&

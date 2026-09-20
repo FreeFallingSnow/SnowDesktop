@@ -340,6 +340,9 @@ void TestRegistryCatalogue()
     Expect(ext::CommonShown(prefs, "both", ext::Category::Objects), "matching old states merge into common rule");
     ext::MigrateAssociations(prefs, catalogue);
     Expect(!ext::IsHidden(prefs, "reg:snowtest.document\\shell\\inspect", ext::Context::File) && ext::IsHidden(prefs, "reg:snowtest.document\\shell\\inspect", ext::Context::Folder), "identity migration preserves the exact old enabled scope");
+    ext::SetOverride(prefs, "reg:snowtest.document\\shell\\inspect", ext::Context::File, ext::Visibility::Inherit);
+    ext::MigrateAssociations(prefs, catalogue);
+    Expect(ext::OverrideOf(prefs, "reg:snowtest.document\\shell\\inspect", ext::Context::File) == ext::Visibility::Inherit && ext::IsHidden(prefs, "reg:snowtest.document\\shell\\inspect", ext::Context::File), "restored inheritance does not resurrect a retained legacy opt-in");
     ext::SetCommon(prefs, "both", ext::Category::Objects, true);
     ext::SetOverride(prefs, "both", ext::Context::Folder, ext::Visibility::Hide);
     Expect(ext::IsHidden(prefs, "both", ext::Context::Folder), "location hiding takes precedence over common visibility");
@@ -868,6 +871,62 @@ void BenchmarkMenus()
             Expect(reply && reply->ok, "benchmark real menu query succeeds");
             Expect(disk.Store(ticket,*reply),"benchmark stores the fresh display snapshot");
         }
+    }
+    for (const bool folder : {false, true})
+    {
+        ext::Request request; request.paths = {(folder ? directory.path : file).wstring()};
+        std::unique_ptr<ext::MenuService> service;
+        for (int iteration = 0; iteration < 35; ++iteration)
+        {
+            if (iteration < 5)
+                service = std::make_unique<ext::MenuService>(directory.path / (L"service-" + std::to_wstring(folder) + L"-" + std::to_wstring(iteration)));
+            const auto start = std::chrono::steady_clock::now();
+            const auto before = service->View(request);
+            const auto firstMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            service->Query(request, ext::QueryPriority::Menu, true);
+            PumpUntil([&] { const auto view = service->View(request); return !view.pending && view.snapshot && view.revision > before.revision; }, "shared service benchmark query completes");
+            const auto queryMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            const auto hot = std::chrono::steady_clock::now();
+            const auto snapshot = service->View(request);
+            const auto hitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - hot).count();
+            ext::Preferences visible;
+            for (const auto &entry : snapshot.snapshot->entries)
+                if (!entry.separator) ext::SetHidden(visible, entry.provider, folder ? ext::Context::Folder : ext::Context::File, false);
+            const auto prepare = std::chrono::steady_clock::now();
+            ext::Presentation popup(request, visible, L"", L"", *service);
+            snowdesktop::modern_menu::Item more; more.command = 7; more.label = L"More";
+            std::vector<snowdesktop::modern_menu::Item> items{more}; snowdesktop::modern_menu::Options options;
+            popup.Attach(items, options, 7);
+            const auto prepareMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - prepare).count();
+            std::cout << "service_benchmark scope=" << (folder ? "folder" : "file")
+                      << " mode=" << (iteration < 5 ? "cold" : "warm") << " iteration=" << iteration
+                      << " first_ms=" << firstMs << " memory_ms=" << hitMs << " prepare_ms=" << prepareMs << " query_ms=" << queryMs
+                      << " entries=" << snapshot.snapshot->entries.size() << std::endl;
+        }
+    }
+    const auto catalogueStart = std::chrono::steady_clock::now();
+    const auto catalogue = ext::ReadCatalogue();
+    std::cout << "catalogue_benchmark rows=" << catalogue.rows.size()
+              << " enabled=" << std::count_if(catalogue.rows.begin(), catalogue.rows.end(), [](const auto &r) { return r.systemEnabled; })
+              << " ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - catalogueStart).count() << std::endl;
+    // Measure the real scheduler/command resolver with a harmless boundary
+    // replacement. No installed third-party action is executed by this probe.
+    ext::Reply harmless; harmless.ok = true;
+    ext::Entry command; command.provider = "benchmark"; command.key = "noop"; command.label = L"No-op"; command.token = 42;
+    harmless.entries = {command};
+    ext::MenuService clickService(directory.path / L"click-benchmark", [harmless](const auto &) {
+        return ext::QueryWork{[harmless] { return harmless; }, [](UINT, POINT) {}};
+    });
+    ext::Request clickRequest; clickRequest.paths = {file.wstring()};
+    for (int i = 0; i < 30; ++i)
+    {
+        std::atomic<bool> completed = false, succeeded = false;
+        const auto start = std::chrono::steady_clock::now();
+        clickService.Execute(clickRequest, ext::AppendReference({}, command), {}, [&](bool ok) { succeeded = ok; completed = true; });
+        PumpUntil([&] { return completed.load(); }, "harmless click dispatch completes");
+        Expect(succeeded, "harmless click resolves the current command");
+        std::cout << "click_benchmark boundary=controlled iteration=" << i << " ms="
+                  << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() << std::endl;
     }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
     ext::InvalidateMenuCache();

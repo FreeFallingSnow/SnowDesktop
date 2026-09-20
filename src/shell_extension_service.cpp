@@ -113,7 +113,7 @@ struct MenuService::Impl
     Catalogue catalogue;
     Preferences preferences;
     Request management;
-    bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false;
+    bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false;
     std::uint64_t clock = 0;
     HANDLE wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     std::thread worker;
@@ -213,8 +213,13 @@ struct MenuService::Impl
                 row.view.error = reply.error;
                 if (reply.ok)
                 {
+                    const auto associations = catalogue.associations.size();
                     Associate(catalogue, resolved, reply);
+                    catalogueDirty |= associations != catalogue.associations.size();
                     row.failures = 0; row.retryAt = 0; row.completed = GetTickCount64(); row.invalid = false;
+                    // Completion and display publication are one observable state.
+                    // Settings must not stop polling before the snapshot appears.
+                    Publish(job.key, reply, contexts);
                 }
                 else
                 {
@@ -227,8 +232,6 @@ struct MenuService::Impl
         if (current && reply.ok)
         {
             cache.Store(job.ticket, reply);
-            std::lock_guard lock(mutex);
-            if (auto it = rows.find(job.key); it != rows.end() && it->second.sequence == job.sequence && it->second.dependency == job.dependency) Publish(job.key, reply, contexts);
         }
         auto executable = reply;
         if (enforcePreferences) executable.entries = VisibleSnapshot(latestPreferences, reply, contexts);
@@ -247,7 +250,7 @@ struct MenuService::Impl
     void SaveCatalogue(MenuSnapshotCache &cache)
     {
         Catalogue value;
-        { std::lock_guard lock(mutex); value = catalogue; }
+        { std::lock_guard lock(mutex); if (!catalogueDirty) return; value = catalogue; catalogueDirty = false; }
         try
         {
             const auto bytes = settings_ipc::Pack(std::uint32_t(2), value);
@@ -293,7 +296,7 @@ struct MenuService::Impl
                     if (std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == next.id && r.revision == next.revision; })) changed.push_back(next);
                 for (const auto &a : catalogue.associations)
                     if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
-                catalogue = std::move(value); scanning = false;
+                catalogue = std::move(value); scanning = false; catalogueDirty = true;
                 for (auto &[key, row] : rows)
                     if (std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
                     {
@@ -338,7 +341,7 @@ struct MenuService::Impl
         {
             { std::lock_guard lock(mutex); if (stop) break; }
             bool warmDesktop = false, inspectDesktop = false;
-            { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false); inspectDesktop = std::exchange(desktopInspection, false); }
+            { std::lock_guard lock(mutex); warmDesktop = std::exchange(startupWarm, false); inspectDesktop = desktopInspection; }
             if (warmDesktop || inspectDesktop)
             {
                 PWSTR path = nullptr;
@@ -352,6 +355,7 @@ struct MenuService::Impl
                         if (warmDesktop) { Queue(request, QueryPriority::Prewarm, false); request.extended = true; Queue(request, QueryPriority::Prewarm, false); }
                     }
                 }
+                if (inspectDesktop) { std::lock_guard lock(mutex); desktopInspection = false; }
             }
             if (TakeMenuRegistryChanges()) { std::lock_guard lock(mutex); if (configured || !catalogue.rows.empty()) scanRequested = true; }
             RefreshCatalogue(cache);
