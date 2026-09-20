@@ -680,8 +680,8 @@ void TestCatalogueCache()
     Expect(retained && retained->entries[0].label == reply.entries[0].label,
            "unrelated selections and Shift menus cannot evict the ordinary desktop snapshot");
     size_t snapshots = 0;
-    for (const auto &file : std::filesystem::directory_iterator(writer.Directory()))
-        if (file.path().extension() == L".bin" && file.path().filename() != L"epoch.bin") ++snapshots;
+    for (const auto &cacheFile : std::filesystem::directory_iterator(writer.Directory()))
+        if (cacheFile.path().extension() == L".bin" && cacheFile.path().filename() != L"epoch.bin") ++snapshots;
     Expect(snapshots <= ext::MenuSnapshotCache::DiskEntries, "full-key disk cache evicts past its 256-entry budget");
 }
 

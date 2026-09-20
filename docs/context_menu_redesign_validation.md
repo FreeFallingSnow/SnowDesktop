@@ -37,28 +37,32 @@ scripts/test.bat name "^(shell_context_menu_invoke|general_settings|settings_con
 | 缓存容量与损坏 | 270 个独立选择触发磁盘容量淘汰、桌面保留、损坏文件、过期、目标变化、请求序号与依赖校验 |
 | 滚动误点 | 独立菜单交互测试在 100%、125%、150%、200% 缩放点击提示条，再验证键盘末项与可视边界 |
 
-最后四项新增用例的最终执行结果在交付检查后更新；上述表格说明覆盖目的，不把未运行用例计为通过。
+最终检查：`scripts/test.bat` 在 `21cd7473` 对应生产输入上执行，119/119 通过，退出码 0，测试执行约 81 秒（日志 `full-final.log`）。随后只将测试局部变量 `file` 改名以清理 C4456；受影响的 `shell_context_menu_invoke` 再次通过 1/1（日志 `final-shell.log`），其余 118 项输入未改变。未运行仓库默认排除的手动诊断。
+
+最终标准 `scripts/build.bat` 通过，输出 `.build/Release/SnowDesktop.exe`；日志 `build-delivery.log`。单独编译 `SnowDesktopModernMenuPreview` 通过，输出 `.build/Release/tests/SnowDesktopModernMenuPreview.exe`；日志 `preview-build.log`。最终增量构建及警告清理后的定向测试没有新警告；较早完整编译出现过既有 WinUI 生成头 `GetCurrentTime` C4002 和既有 settings_controller C4456。
+
+环境：Release、Windows SDK 10.0.26100.0、目标系统 10.0.26200、MSBuild 18.5.4。宿主 SHA256：`1FAF576ED803CF4FD9C00BA4D353D3F13837FF4CA6D7D9BA2E770771987C6839`；预览 SHA256：`9607188DC89437DAB81AB9989D363FC6C0491189C7B04527B72D0FD9BBDFF5E3`。
 
 负向对照在 `.codex-probes/shell-menu-redesign/negative/` 隔离副本中进行：只在失败分支加入清除快照，未改正式生产文件。诊断程序编译成功，退出码 1，确定失败信息为 `launch failure does not clear a valid memory snapshot`；未通过超时或无条件重试判定。日志为同目录上级的 `negative-build.log` 和 `negative-run.log`。
 
 ## 同机性能对照
 
-每种对象分别执行 5 次冷查询与 30 次热访问；使用临时本地文件／文件夹，不执行安装的第三方命令。P95 采用最近秩法。基线为 `402bd673`，改造测量为 `6aac0a2c`；原始日志保存在 `.codex-probes/shell-menu-redesign/baseline.log`、`comparison.log`。
+每种对象分别执行 5 次冷查询与 30 次热访问；使用临时本地文件／文件夹，不执行安装的第三方命令。冷启动指隔离查询进程／查询服务，不是启动桌面宿主。P95 采用最近秩法。基线为 `402bd673`，最终测量使用 `21cd7473` 的生产输入及仅变量重命名后的测试；原始日志保存在 `.codex-probes/shell-menu-redesign/baseline.log`、`comparison-delivery.log`，汇总为 `metrics-delivery.json`。另保留中间候选 `6aac0a2c` 的 `comparison.log`，不与最终数据混用。
 
 | 测量（毫秒，P95） | 文件 | 文件夹 |
 | --- | ---: | ---: |
 | 原 Session 冷查询基线 | 1297 | 1219 |
 | 原 Session 热查询基线 | 219 | 188 |
-| 改造后同入口冷查询 | 1344 | 1250 |
-| 改造后同入口热查询 | 125 | 125 |
-| 统一服务完整冷查询 | 913.080 | 1236.900 |
-| 统一服务完整热查询 | 139.329 | 124.822 |
-| 内存快照读取（热） | 0.007 | 0.008 |
-| 内存命中菜单内容准备（热） | 0.430 | 0.432 |
+| 改造后同入口冷查询 | 1329 | 1968 |
+| 改造后同入口热查询 | 156 | 266 |
+| 统一服务完整冷查询 | 1106.070 | 1529.740 |
+| 统一服务完整热查询 | 185.765 | 279.663 |
+| 内存快照读取（热） | 0.031 | 0.011 |
+| 内存命中菜单内容准备（热） | 0.438 | 0.506 |
 
-“菜单内容准备”经过生产 Presentation 构造、过滤、图标转换和挂接入口，不包含窗口呈现和第三方查询。该样本达到 P95 ≤ 50 毫秒目标；不能由这些数据推断桌面实际显示延迟或所有第三方扩展的速度。
+“菜单内容准备”经过生产 Presentation 构造、过滤、图标转换和挂接入口，不包含窗口呈现和第三方查询。该样本达到 P95 ≤ 50 毫秒目标；不能由这些数据推断桌面实际显示延迟或所有第三方扩展的速度。第三方完整查询存在波动，最终文件夹查询高于基线，不能声称其冷查询本身已经提速；改造主要将这部分等待移出打开菜单的路径。
 
-无副作用的点击边界替身保留真实调度、重新查询、身份校对和回调流程，30 次 P95 为 16.342 毫秒；它不是实际第三方命令耗时。本机注册目录读到 2852 条记录，其中 2802 条未标记系统禁用，首轮读取约 3404.75 毫秒。Shell 最终适用性仍在查询时决定。
+无副作用的点击边界替身保留真实调度、重新查询、身份校对和回调流程，30 次 P95 为 16.672 毫秒；它不是实际第三方命令耗时。本机注册目录读到 2852 条记录，其中 2802 条未标记系统禁用，首轮读取约 3835.03 毫秒。Shell 最终适用性仍在查询时决定。
 
 ## 待实机验收
 
@@ -66,8 +70,8 @@ scripts/test.bat name "^(shell_context_menu_invoke|general_settings|settings_con
 - 设置页两分类、卡片、图标、搜索、位置例外、多选检查和管理按钮跳转。
 - 真实 7-Zip、终端及用户安装的其他扩展：冷启动、快速关闭再开、Shift、单选与混选、真实命令执行。
 - 目录中无法可靠归属的动态处理程序依然待关联；不以名称猜测关联，也不把这些注册行的开关表现为已生效。
-- 标准 Release 构建和完整测试的最终结果另行追加。桌面宿主不使用 UI 自动化验收；用户反馈后才记录 `verify`。
+- 标准 Release 构建与自动化结果见上文。桌面宿主不使用 UI 自动化验收；用户反馈后才记录 `verify`。
 
 ## 参考
 
-注册目录与状态读取参考 [ContextMenuManager ShellList](https://github.com/BluePointLilac/ContextMenuManager/blob/master/ContextMenuManager/Controls/ShellList.cs)；进程复用与失败处理思路参考 [TortoiseGit RemoteCacheLink](https://github.com/TortoiseGit/TortoiseGit/blob/master/src/TortoiseShell/RemoteCacheLink.cpp)。实现沿用本项目隔离辅助进程与 IPC，没有复制其业务缓存或超时数值。
+注册目录与状态读取参考 [ContextMenuManager ShellList](https://github.com/BluePointLilac/ContextMenuManager/blob/master/ContextMenuManager/Controls/ShellList.cs)；进程复用与失败处理思路参考 [TortoiseGit RemoteCacheLink](https://github.com/TortoiseGit/TortoiseGit/blob/master/src/TortoiseShell/RemoteCacheLink.cpp)。扩展批准策略参见 [Microsoft 的 Shell 注册文档](https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts)。实现沿用本项目隔离辅助进程与 IPC，没有复制其业务缓存或超时数值。
