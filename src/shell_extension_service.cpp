@@ -1,5 +1,6 @@
 #include "shell_extension_service.h"
 #include "shell_extension_diagnostics.h"
+#include "shell_extension_discovery.h"
 #include <condition_variable>
 #include <fstream>
 #include <future>
@@ -112,9 +113,14 @@ struct MenuService::Impl
     std::map<Key, Row> rows;
     Catalogue catalogue;
     Catalogue available;
+    std::map<std::string, Registration> observed;
+    bool observedDirty = false;
     Key availableSignature;
     std::vector<Request> discovery;
     bool discoverRequested = false, discoverForce = false;
+    std::vector<Request> typeDiscovery;
+    size_t nextType = 0;
+    bool typesRequested = false, typesPreparing = false, typesForce = false, typeBatchForce = false;
     Preferences preferences;
     Request management;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false;
@@ -180,9 +186,10 @@ struct MenuService::Impl
     }
     void RebuildAvailable()
     {
-        // Settings receive actual, actionable menu roots, never the raw registry
-        // inventory. Keep children/tokens out of this small management payload.
-        std::map<std::string, Registration> merged;
+        // Observed management identities outlive exact-selection cache eviction.
+        // Only root metadata is retained: no user paths, children or command tokens.
+        std::map<std::string, const Registration *> registered;
+        for (const auto &item : catalogue.rows) registered.emplace(item.id, &item);
         for (const auto &[key, row] : rows)
         {
             if (!row.view.snapshot || row.expires <= MenuSnapshotCache::Now()) continue;
@@ -190,33 +197,96 @@ struct MenuService::Impl
             {
                 if (entry.separator || !entry.enabled || entry.provider.empty() || entry.label.empty() ||
                     entry.label == L"…" || entry.label == L"...") continue;
-                const auto known = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == entry.registration; });
-                if (known != catalogue.rows.end() && !known->systemEnabled) continue;
+                const auto known = registered.find(entry.registration);
+                if (known != registered.end() && !known->second->systemEnabled) continue;
                 const auto id = entry.registration.empty() ? entry.provider : entry.registration;
-                auto [it, inserted] = merged.try_emplace(id);
+                if (!observed.contains(id) && observed.size() >= 1024) continue;
+                if (!entry.registration.empty() && entry.registration != entry.provider)
+                    if (auto legacy = observed.find(entry.provider); legacy != observed.end())
+                    {
+                        legacy->second.contexts &= ~row.view.contexts;
+                        if (!legacy->second.contexts) observed.erase(legacy);
+                    }
+                auto [it, inserted] = observed.try_emplace(id);
                 auto &item = it->second;
                 if (inserted)
                 {
-                    if (known != catalogue.rows.end()) item = *known;
+                    if (known != registered.end()) item = *known->second;
                     else { item.id = id; item.kind = RegistrationKind::Observed; }
-                    item.display = {};
-                    item.display.provider = entry.provider; item.display.registration = entry.registration;
-                    item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
-                    item.display.width = entry.width; item.display.height = entry.height; item.display.pixels = entry.pixels;
                     item.linked = true; item.contexts = 0;
                 }
+                item.display = {};
+                item.display.provider = entry.provider; item.display.registration = entry.registration;
+                item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
+                item.display.width = entry.width; item.display.height = entry.height; item.display.pixels = entry.pixels;
                 item.contexts |= row.view.contexts;
+                if (known == registered.end())
+                {
+                    if (item.contexts & ~ContextBit(Context::File)) item.types = {L"*"};
+                    else for (const auto &path : row.request.paths)
+                    {
+                        auto type = std::filesystem::path(path).extension().wstring();
+                        for (auto &c : type) c = towlower(c);
+                        if (!type.empty() && std::find(item.types.begin(), item.types.end(), type) == item.types.end()) item.types.push_back(std::move(type));
+                    }
+                }
             }
         }
         std::vector<Registration> result;
-        for (auto &[id, item] : merged) result.push_back(std::move(item));
+        size_t bytes = 0;
+        for (auto it = observed.begin(); it != observed.end();)
+        {
+            const auto known = registered.find(it->first);
+            bytes += settings_ipc::Pack(it->second).size();
+            if (bytes > 8 * 1024 * 1024 || (catalogue.revision && !it->second.display.registration.empty() &&
+                (known == registered.end() || !known->second->systemEnabled)))
+            { it = observed.erase(it); continue; }
+            result.push_back(it->second); ++it;
+        }
         auto signature = settings_ipc::Pack(result, catalogue.associations);
         if (signature != availableSignature)
         {
             availableSignature = std::move(signature);
             available.rows = std::move(result); available.associations = catalogue.associations;
             ++available.revision;
+            observedDirty = true;
         }
+    }
+    void SaveObserved(MenuSnapshotCache &cache)
+    {
+        std::vector<Registration> value;
+        { std::lock_guard lock(mutex); if (!observedDirty) return; value = available.rows; observedDirty = false; }
+        try
+        {
+            const auto bytes = settings_ipc::Pack(std::uint32_t(1), value);
+            std::error_code error; std::filesystem::create_directories(cache.Directory(), error);
+            const auto temporary = cache.Directory() / L"observed.tmp";
+            std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char *>(bytes.data()), bytes.size()); out.close();
+            if (out) MoveFileExW(temporary.c_str(), (cache.Directory() / L"observed.dat").c_str(), MOVEFILE_REPLACE_EXISTING);
+        }
+        catch (...) {}
+    }
+    void LoadObserved(MenuSnapshotCache &cache)
+    {
+        try
+        {
+            const auto file = cache.Directory() / L"observed.dat"; std::error_code error;
+            const auto size = std::filesystem::file_size(file, error); if (error || size > 8 * 1024 * 1024 + 16) return;
+            settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
+            if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
+            auto [schema, value] = settings_ipc::Unpack<std::tuple<std::uint32_t, std::vector<Registration>>>(bytes);
+            if (schema != 1 || value.size() > 1024) return;
+            std::lock_guard lock(mutex);
+            for (auto &entry : value)
+                if (!entry.id.empty() && entry.linked && entry.systemEnabled && !entry.display.provider.empty())
+                {
+                    entry.display.children.clear(); entry.display.token = 0;
+                    observed.emplace(entry.id, std::move(entry));
+                }
+            RebuildAvailable();
+        }
+        catch (...) {}
     }
     void Publish(const Key &key, Reply reply, unsigned contexts, std::uint64_t written = MenuSnapshotCache::Now())
     {
@@ -329,7 +399,7 @@ struct MenuService::Impl
             auto value = scan.get(); std::vector<Request> affected;
             if (!value.revision)
             {
-                std::lock_guard lock(mutex); scanning = false;
+                std::lock_guard lock(mutex); scanning = false; typesRequested = false;
                 return; // An unsuccessful scan cannot masquerade as an empty registry.
             }
             {
@@ -343,6 +413,21 @@ struct MenuService::Impl
                 for (const auto &a : catalogue.associations)
                     if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                 catalogue = std::move(value); scanning = false; catalogueDirty = true;
+                if (!initial && !changed.empty())
+                {
+                    // Unknown providers also retain observed type/scope evidence,
+                    // so an affected registration change retires stale switches.
+                    std::erase_if(observed, [&](const auto &pair) {
+                        const auto &item = pair.second;
+                        return std::any_of(changed.begin(), changed.end(), [&](const auto &r) {
+                            if (!(r.contexts & item.contexts)) return false;
+                            const auto all = [](const auto &types) { return types.empty() || std::find(types.begin(), types.end(), L"*") != types.end(); };
+                            return r.id == item.id || all(r.types) || all(item.types) ||
+                                std::any_of(item.types.begin(), item.types.end(), [&](const auto &t) { return std::find(r.types.begin(), r.types.end(), t) != r.types.end(); });
+                        });
+                    });
+                    if (inspected) typesRequested = true;
+                }
                 for (auto &[key, row] : rows)
                     if (!initial && std::any_of(changed.begin(), changed.end(), [&](const auto &r) { return DependsOn(r, row.request, row.view.contexts ? row.view.contexts : (row.request.background ? 12u : 3u)); }))
                     {
@@ -383,6 +468,7 @@ struct MenuService::Impl
         if (FAILED(ole)) return;
         MenuSnapshotCache cache(directory.empty() ? SharedMenuCache().Directory() : directory);
         LoadCatalogue(cache);
+        LoadObserved(cache);
         for (auto &[request, reply] : cache.Warm())
         {
             const auto contexts = Contexts(request);
@@ -441,6 +527,23 @@ struct MenuService::Impl
             }
             if (TakeMenuRegistryChanges()) { std::lock_guard lock(mutex); if (configured || !catalogue.rows.empty()) scanRequested = true; }
             RefreshCatalogue(cache);
+            Catalogue typeCatalogue; bool discoverTypes = false;
+            {
+                std::lock_guard lock(mutex);
+                if (typesRequested && !scanning && !scanRequested && catalogue.revision)
+                {
+                    typesRequested = false; typesPreparing = true; discoverTypes = true;
+                    typeCatalogue = catalogue; typeBatchForce = std::exchange(typesForce, false);
+                }
+            }
+            if (discoverTypes)
+            {
+                auto targets = DiscoverFileTypes(typeCatalogue, cache.Directory());
+                std::lock_guard lock(mutex);
+                typeDiscovery = std::move(targets); nextType = 0; typesPreparing = false;
+                // Keep the polling set bounded across repeated refreshes.
+                std::erase_if(discovery, [&](const auto &r) { return !r.paths.empty() && std::filesystem::path(r.paths.front()).parent_path() == cache.Directory() / L"discovery-samples-v1"; });
+            }
             for (size_t i = 0; i < running.size();)
             {
                 auto &job = running[i]; std::optional<Reply> reply;
@@ -456,6 +559,14 @@ struct MenuService::Impl
                 Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
+                    // Dispatch only one background sample at a time into the
+                    // shared scheduler; interactive queries keep their priority.
+                    if (nextType < typeDiscovery.size())
+                    {
+                        const auto &target = typeDiscovery[nextType++];
+                        Queue(target, QueryPriority::Inspect, typeBatchForce);
+                        discovery.push_back(target);
+                    }
                     auto best = rows.end(); const auto now = GetTickCount64();
                     for (auto it = rows.begin(); it != rows.end(); ++it)
                         if (it->second.queued && it->second.due <= now && (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
@@ -504,6 +615,7 @@ struct MenuService::Impl
                     Queue(request, QueryPriority::Menu, true);
                 }
             }
+            SaveObserved(cache);
             MsgWaitForMultipleObjectsEx(1, &wake, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
@@ -563,6 +675,7 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     {
         impl_->scanRequested = true; impl_->discoverRequested = true;
         impl_->discoverForce |= refresh;
+        impl_->typesRequested = true; impl_->typesForce |= refresh;
     }
     impl_->inspected = true;
     if (request.context == Context::Desktop && request.paths.empty() && impl_->management.context != Context::Desktop) impl_->desktopInspection = true;
@@ -572,7 +685,8 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
         ? request : request.paths.empty() ? impl_->management : request;
     if (!selection.paths.empty()) impl_->Queue(selection, QueryPriority::Inspect, refresh);
     CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
-    result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested;
+    result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested ||
+        impl_->typesRequested || impl_->typesPreparing || impl_->nextType < impl_->typeDiscovery.size();
     for (const auto &target : impl_->discovery)
         if (const auto it = impl_->rows.find(SelectionKey(target)); it != impl_->rows.end()) result.scanning |= it->second.view.pending;
     if (const auto it = impl_->rows.find(SelectionKey(selection)); it != impl_->rows.end())

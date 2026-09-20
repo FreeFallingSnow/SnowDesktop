@@ -229,6 +229,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             layout.HorizontalAlignment(mux::HorizontalAlignment::Stretch); layout.Children().Append(Icon(entry.display));
             muxc::StackPanel names; names.VerticalAlignment(mux::VerticalAlignment::Center);
             muxc::TextBlock title; title.Text(entry.display.label); title.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(title);
+            if (group == 3 && !types.empty())
+            {
+                muxc::TextBlock scope; scope.Text(types); scope.FontSize(12); scope.Opacity(0.7);
+                scope.TextTrimming(mux::TextTrimming::CharacterEllipsis); names.Children().Append(scope);
+            }
             names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
             Row row; row.id = entry.id; row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(44);
             row.toggle.VerticalAlignment(mux::VerticalAlignment::Center); row.toggle.IsEnabled(entry.linked);
@@ -245,8 +250,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             muxc::Expander expander; expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch); expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
             expander.Header(layout); muxc::ToolTipService::SetToolTip(expander, winrt::box_value(L("settings.contextMenu.locations")));
             mux::Automation::AutomationProperties::SetName(expander, entry.display.label + L" — " + L("settings.contextMenu.locations"));
-            const auto expanding = expander.Expanding([this, expander, id = row.id, contexts = entry.contexts, types](auto &&, auto &&) {
-                if (!closed && active && !expander.Content()) PopulatePositions(expander, id, contexts, types);
+            const auto expanding = expander.Expanding([this, expander, id = row.id, contexts = entry.contexts](auto &&, auto &&) {
+                if (!closed && active && !expander.Content()) PopulatePositions(expander, id, contexts);
             });
             rowRevoke.push_back([expander, expanding] { expander.Expanding(expanding); });
             section.Children().Append(expander); rows.push_back(std::move(row));
@@ -254,14 +259,13 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         if (nextRow >= pendingRows.size()) rowTimer.Stop();
     }
-    void PopulatePositions(muxc::Expander expander, const std::string &id, unsigned contexts, const std::wstring &types)
+    void PopulatePositions(muxc::Expander expander, const std::string &id, unsigned contexts)
     {
         const auto found = std::find_if(rows.begin(), rows.end(), [&](const auto &r) { return r.id == id; });
         if (found == rows.end()) return;
         auto &row = *found;
         const auto name = std::wstring(mux::Automation::AutomationProperties::GetName(row.toggle));
             muxc::StackPanel positions; positions.Spacing(8);
-            if (!types.empty()) { muxc::TextBlock typeText; typeText.Text(types); typeText.TextWrapping(mux::TextWrapping::Wrap); positions.Children().Append(typeText); }
             for (int i = category == ext::Category::Objects ? 0 : 2; i < (category == ext::Category::Objects ? 2 : 4); ++i)
             {
                 if (!(contexts & (1u << i))) continue;

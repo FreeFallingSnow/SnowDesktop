@@ -776,12 +776,12 @@ Metrics ResolveMetrics(UINT dpi, bool win10Style)
         metrics.separatorHeight = Scale(6, effectiveDpi);
         metrics.outerInset = Scale(2, effectiveDpi);
         metrics.selectionInsetY = Scale(1, effectiveDpi);
-        metrics.selectionRadius = Scale(1, effectiveDpi);
-        metrics.leftPadding = Scale(6, effectiveDpi);
-        metrics.iconColumnWidth = Scale(18, effectiveDpi);
-        metrics.textGap = Scale(5, effectiveDpi);
+        metrics.selectionRadius = Scale(2, effectiveDpi);
+        metrics.leftPadding = Scale(8, effectiveDpi);
+        metrics.iconColumnWidth = Scale(20, effectiveDpi);
+        metrics.textGap = Scale(6, effectiveDpi);
         metrics.rightPadding = Scale(8, effectiveDpi);
-        metrics.textFontHeight = Scale(12, effectiveDpi);
+        metrics.textFontHeight = Scale(11, effectiveDpi);
         metrics.iconFontHeight = Scale(16, effectiveDpi);
         metrics.maximumImageSize = Scale(16, effectiveDpi);
     }

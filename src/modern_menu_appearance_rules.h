@@ -20,7 +20,7 @@ inline constexpr int PanelPaddingDip(Appearance appearance)
 
 inline constexpr int PanelRadiusDip(Appearance appearance)
 {
-    return IsWin10Style(appearance) ? 2 : 8;
+    return IsWin10Style(appearance) ? 4 : 8;
 }
 
 inline constexpr bool IsWindows11OrGreater(

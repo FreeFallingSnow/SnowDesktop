@@ -2,6 +2,7 @@
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
+#include "modern_menu_scroll_hint.h"
 
 #include <dwmapi.h>
 #include <imm.h>
@@ -1163,7 +1164,7 @@ private:
     }
 
     // Both end bands reserve space for the lifetime of a scrollable popup.
-    // Reaching an end changes only the arrow state, never the row coordinates.
+    // Reaching an end hides that hint, without changing row coordinates.
     void SetScrollViewport(Popup &popup)
     {
         const int available = std::max(1, popup.panelHeight - panelPadding_ * 2);
@@ -2420,29 +2421,10 @@ private:
 
     void DrawScrollIndicator(HDC dc, const Popup& popup, bool top)
     {
-        const RECT band = ScrollHintRect(popup, top);
-        const bool enabled = top ? popup.scrollOffset > 0 : popup.scrollOffset < MaxScroll(popup);
-        const bool hovered = enabled && popup.scrollHover == (top ? -1 : 1);
-        HBRUSH background = CreateSolidBrush(hovered ? palette_.hoverBackground : palette_.background);
-        FillRect(dc, &band, background); DeleteObject(background);
-        // A short separator makes the scrolling affordance distinct from a row.
-        HPEN separator = CreatePen(PS_SOLID, Scale(1, options_.dpi), palette_.separator);
-        HGDIOBJ oldPen = SelectObject(dc, separator);
-        const int edge = top ? band.bottom - 1 : band.top;
-        MoveToEx(dc, band.left + Scale(6, options_.dpi), edge, nullptr);
-        LineTo(dc, band.right - Scale(6, options_.dpi), edge);
-        SelectObject(dc, oldPen); DeleteObject(separator);
-        const int centerX = (band.left + band.right) / 2;
-        const int centerY = (band.top + band.bottom) / 2;
-        const COLORREF color = enabled ? (lightTheme_ ? RGB(38, 38, 38) : RGB(238, 238, 238))
-                                      : (lightTheme_ ? RGB(165, 165, 165) : RGB(105, 105, 105));
-        HPEN pen = CreatePen(PS_SOLID, Scale(2, options_.dpi), color);
-        oldPen = SelectObject(dc, pen);
-        const int half = Scale(4, options_.dpi), rise = Scale(2, options_.dpi);
-        MoveToEx(dc, centerX - half, centerY + (top ? rise : -rise), nullptr);
-        LineTo(dc, centerX, centerY + (top ? -rise : rise));
-        LineTo(dc, centerX + half, centerY + (top ? rise : -rise));
-        SelectObject(dc, oldPen); DeleteObject(pen);
+        scroll_hint::Draw(dc, ScrollHintRect(popup, top), top,
+            popup.scrollOffset, MaxScroll(popup), popup.scrollHover == (top ? -1 : 1),
+            options_.dpi, palette_.background, palette_.hoverBackground,
+            palette_.separator, lightTheme_ ? RGB(38, 38, 38) : RGB(238, 238, 238));
     }
 
     void DrawHorizontalScrollIndicator(

@@ -16,7 +16,7 @@
     "app.settings.group_show_count_hint": "適用於集合組和檔案群組的標籤。",
   "start.contextMenu.title": "右鍵選單設定",
   "start.contextMenu.description": "選擇選單外觀和要顯示的擴充功能項目。",
-  "start.contextMenu.instructions": "按「檔案與資料夾」或「空白處」管理實際可用的系統選單。首次進入會在背景讀取並逐步補齊；檢查檔案或資料夾可補充專屬項目，支援多選。\n\n擴充項目預設隱藏，開關只影響 SnowDesktop。同類位置共用開關；展開項目可依位置選擇跟隨通用、顯示或隱藏。\n\n擴充項目位於底部「顯示更多選項」上方，「管理」可查看目前選取內容。首次沒有快取時先顯示基本選單，再於滑鼠移開、按鍵釋放且子選單關閉後補齊已開啟的擴充項目；已有快取時立即顯示。",
+  "start.contextMenu.instructions": "按「檔案與資料夾」或「空白處」管理實際可用的系統選單。首次進入會在背景探索常見圖片、PDF、Office 文件等類型的選單，並儲存已探索項目。檢查實際檔案或資料夾可補充特殊項目，支援多選。\n\n擴充項目預設隱藏，開關只影響 SnowDesktop。同類位置共用開關；展開項目可依位置選擇跟隨通用、顯示或隱藏。\n\n擴充項目位於底部「顯示更多選項」上方，「管理」可查看目前選取內容。首次沒有快取時先顯示基本選單，再於滑鼠移開、按鍵釋放且子選單關閉後補齊已開啟的擴充項目；已有快取時立即顯示。",
   "settings.contextMenu.page": "右鍵選單",
   "settings.contextMenu.description": "選擇選單外觀和要顯示的擴充功能項目。",
   "settings.contextMenu.extensions": "擴充功能選單項目",

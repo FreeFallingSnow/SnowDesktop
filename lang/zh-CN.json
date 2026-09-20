@@ -16,7 +16,7 @@
     "app.settings.group_show_count_hint": "适用于集合组和文件组的标签。",
   "start.contextMenu.title": "右键菜单设置",
   "start.contextMenu.description": "选择菜单外观和要显示的扩展项目。",
-  "start.contextMenu.instructions": "按“文件与文件夹”或“空白处”管理实际可用的系统菜单。首次进入会后台读取并逐步补齐；检查文件或文件夹可补充专属项目，支持多选。\n\n扩展默认隐藏，开关只影响 SnowDesktop。同类位置共用开关；展开项目可按位置选择跟随通用、显示或隐藏。\n\n扩展位于底部“展开更多选项”上方，“管理”可查看当前选择。首次没有缓存时先显示基础菜单，再于鼠标移开、按键释放且子菜单关闭后补齐已开启的扩展；已有缓存时立即显示。",
+  "start.contextMenu.instructions": "按“文件与文件夹”或“空白处”管理实际可用的系统菜单。首次进入会在后台发现常见图片、PDF、Office 文档等类型的菜单，并保存已发现项目。检查实际文件或文件夹可补充特殊项目，支持多选。\n\n扩展默认隐藏，开关只影响 SnowDesktop。同类位置共用开关；展开项目可按位置选择跟随通用、显示或隐藏。\n\n扩展位于底部“展开更多选项”上方，“管理”可查看当前选择。首次没有缓存时先显示基础菜单，再于鼠标移开、按键释放且子菜单关闭后补齐已开启的扩展；已有缓存时立即显示。",
   "settings.contextMenu.page": "右键菜单",
   "settings.contextMenu.description": "选择菜单外观和要显示的扩展项目。",
   "settings.contextMenu.extensions": "扩展菜单项",

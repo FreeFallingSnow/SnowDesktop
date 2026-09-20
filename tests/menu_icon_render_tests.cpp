@@ -1,4 +1,5 @@
 #include "menu_icon_render.h"
+#include "modern_menu_scroll_hint.h"
 #include "menu_fluent_glyphs.h"
 #include "resource.h"
 
@@ -214,6 +215,19 @@ void CheckCompactRendering()
         for (const bool light : {true, false})
         {
             const auto palette = ResolvePalette(light);
+            // The actual hint renderer must leave a reached edge completely
+            // blank, including its separator. Middle positions keep both hints.
+            const RECT band{0, 0, 200, MulDiv(18, dpis[i], 96)};
+            for (const int offset : {0, 50, 100}) for (const bool top : {true, false})
+            {
+                std::fill_n(pixels, width * height, PixelColor(palette.background));
+                snowdesktop::modern_menu::scroll_hint::Draw(dc, band, top, offset, 100, false,
+                    dpis[i], palette.background, palette.hoverBackground, palette.separator, palette.text);
+                GdiFlush();
+                const auto ink = CountPixelsDifferentFromColorInRect(pixels, width, height, band, palette.background);
+                Expect((ink > 0) == (top ? offset != 0 : offset != 100),
+                    "only directions with remaining content paint a scroll hint at every DPI and theme");
+            }
             ItemView item{L"复制一个较长名称的项目\tCtrl+C", L"\uF32B"};
             const auto measured = MeasureItem(dc, textFont, item, metrics);
             Expect(measured.cy == rowHeights[i] && measured.cx < width,

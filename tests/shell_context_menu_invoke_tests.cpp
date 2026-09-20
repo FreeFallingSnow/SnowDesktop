@@ -990,6 +990,111 @@ void TestUsefulManagementItems()
     }, "desktop inspection resolves its real path in the background");
 }
 
+// Real service/registry association, persistence and discovery scheduling remain
+// under test; only the external Shell boundary supplies deterministic commands.
+void TestFileTypeDiscovery()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    std::atomic<bool> imageEnabled = true;
+    auto registry = [&] {
+        ext::Catalogue value; value.revision = imageEnabled ? 1 : 2;
+        ext::Registration image; image.id = "reg:image"; image.contexts = 1;
+        image.types = {L".png"}; image.verbs = {"image-action"}; image.revision = imageEnabled ? 1 : 2;
+        image.systemEnabled = imageEnabled;
+        ext::Registration document; document.id = "reg:document"; document.contexts = 1;
+        document.types = {L".docx"}; document.verbs = {"document-action"}; document.revision = 1;
+        auto disabled = document; disabled.id = "reg:disabled"; disabled.types = {L".pdf"}; disabled.systemEnabled = false;
+        value.rows = {image, document, disabled}; return value;
+    };
+    std::mutex requestsMutex;
+    std::vector<ext::Request> queried;
+    auto query = [&](const ext::Request &request) {
+        { std::lock_guard lock(requestsMutex); queried.push_back(request); }
+        ext::Reply reply; reply.ok = true;
+        ext::Entry common; common.provider = "menu:common"; common.label = L"Common extension";
+        reply.entries = {common};
+        const auto extension = std::filesystem::path(request.paths.front()).extension().wstring();
+        if (extension == L".png" || extension == L".docx")
+        {
+            std::ifstream file(std::filesystem::path(request.paths.front()), std::ios::binary); char magic[4]{}; file.read(magic, 4);
+            Expect(extension == L".png" ? static_cast<unsigned char>(magic[0]) == 0x89 && magic[1] == 'P' : magic[0] == 'P' && magic[1] == 'K',
+                "automatic image/document inspection supplies actual format data, not renamed empty files");
+            auto item = common;
+            item.provider = extension == L".png" ? "menu:image" : "menu:document";
+            item.key = extension == L".png" ? "image-action" : "document-action";
+            item.label = extension == L".png" ? L"Image action" : L"Document action";
+            item.token = 88;
+            reply.entries.push_back(item);
+            if (extension == L".png" && request.paths.size() == 2)
+            { item.provider = "menu:image-batch"; item.key.clear(); item.label = L"Batch images"; reply.entries.push_back(item); }
+            if (extension == L".png" && request.extended)
+            { item.provider = "menu:image-shift"; item.key.clear(); item.label = L"Advanced image command"; reply.entries.push_back(item); }
+        }
+        return ext::QueryWork{[reply] { return reply; }, [](UINT, POINT) { Expect(false, "discovery never invokes an extension"); }};
+    };
+    const auto cachePath = temp.path / L"cache";
+    ext::Request imageRequest;
+    {
+        ext::MenuService service(cachePath, query, registry);
+        service.Inspect();
+        PumpUntil([&] { return !service.Inspect().scanning; }, "type discovery completes without user-picked files or opt-ins");
+        const auto available = service.Inspect().catalogue;
+        const auto contains = [&](const char *id) { return std::any_of(available.rows.begin(), available.rows.end(), [&](const auto &r) { return r.id == id; }); };
+        Expect(contains("reg:image") && contains("reg:document") && contains("menu:image-batch") && contains("menu:image-shift"),
+            "settings discover type-specific, multi-select and Shift-only actionable entries");
+        Expect(std::count_if(available.rows.begin(), available.rows.end(), [](const auto &r) { return r.id == "menu:common"; }) == 1,
+            "a common extension across file types and selection shapes remains one settings switch");
+        {
+            std::lock_guard lock(requestsMutex);
+            for (const auto *type : {L".png", L".docx"}) for (bool multi : {false, true}) for (bool shift : {false, true})
+                Expect(std::any_of(queried.begin(), queried.end(), [&](const auto &r) {
+                    return std::filesystem::path(r.paths.front()).extension() == type && r.paths.size() == (multi ? 2u : 1u) && r.extended == shift;
+                }), "normal and Shift discovery cover both single and same-type multiple selections");
+            Expect(std::none_of(queried.begin(), queried.end(), [](const auto &r) { return std::filesystem::path(r.paths.front()).extension() == L".pdf"; }),
+                "system-disabled type registrations do not create discovery jobs");
+            imageRequest = *std::find_if(queried.begin(), queried.end(), [](const auto &r) { return std::filesystem::path(r.paths.front()).extension() == L".png"; });
+        }
+        std::vector<ext::Request> extra;
+        for (int i = 0; i < 70; ++i)
+        {
+            const auto file = temp.path / (std::to_wstring(i) + L".txt"); std::ofstream(file) << "fixture";
+            ext::Request request; request.paths = {file.wstring()}; extra.push_back(request); service.Query(request);
+        }
+        PumpUntil([&] { return std::all_of(extra.begin(), extra.end(), [&](const auto &r) { return !service.View(r).pending; }) && !service.View(imageRequest).snapshot; },
+            "exact image snapshot is evicted by later selections");
+        const auto retained = service.Inspect().catalogue.rows;
+        Expect(std::any_of(retained.begin(), retained.end(), [](const auto &r) { return r.id == "reg:image"; }),
+            "cache eviction never removes a discovered type-specific settings switch");
+        service.Shutdown();
+    }
+    // Remove only exact snapshots in this test's private cache. The durable
+    // management inventory must survive without them, even while Shell is down.
+    for (const auto &file : std::filesystem::directory_iterator(cachePath))
+        if (const auto name = file.path().filename().wstring(); (name.size() == 68 || name.size() == 70) && file.path().extension() == L".bin")
+            std::filesystem::remove(file.path());
+    {
+        ext::MenuService restored(cachePath, [](const auto &) {
+            return ext::QueryWork{[] { return ext::Reply{false, {}, "controlled offline helper"}; }, [](UINT, POINT) {}};
+        }, registry);
+        restored.Inspect();
+        PumpUntil([&] { return !restored.Inspect().scanning; }, "restored management inventory remains available through failed fresh queries");
+        auto items = restored.Inspect().catalogue.rows;
+        Expect(std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:image"; }) &&
+            std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:document"; }),
+            "image and document switches restore independently of exact snapshots and helper success");
+        for (const auto &item : items)
+            Expect(!item.display.token && item.display.children.empty(), "durable inventory contains only root display metadata");
+        imageEnabled = false;
+        restored.Inspect({}, true);
+        PumpUntil([&] { return !restored.Inspect().scanning; }, "system-disable refresh completes");
+        items = restored.Inspect().catalogue.rows;
+        Expect(std::none_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:image" || r.id == "menu:image-batch" || r.id == "menu:image-shift"; }) &&
+            std::any_of(items.begin(), items.end(), [](const auto &r) { return r.id == "reg:document"; }),
+            "related system changes retire persisted image entries without dropping unrelated document entries");
+    }
+}
+
 void BenchmarkManagement()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1215,6 +1320,7 @@ int wmain(int argc, wchar_t **argv)
             TestSelectionScopes();
             TestCatalogueDependencies();
             TestUsefulManagementItems();
+            TestFileTypeDiscovery();
         }
     }
     catch (const std::exception& error)
