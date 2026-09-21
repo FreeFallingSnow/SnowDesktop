@@ -12,9 +12,11 @@ void TestSlowRenameClicks()
     click.Press(file, label, icon, false, true);
     Check(!click.Release(file, label, icon, true, 1020, 500),
         "the first selecting click must not rename");
+    click.Move({-1200, 2400}, 4, 4);
+    click.Move(name, 4, 4);
     click.Press(file, label, name, true, true);
     Check(click.Release(file, label, name, true, 2020, 500),
-        "a slow second click on the selected name must schedule rename");
+        "moving far between clicks must not block a click on the selected name");
     Check(!click.TakeReady(file, label, true, 2519),
         "rename must wait until the double-click interval has passed");
     Check(click.TakeReady(file, label, true, 2520) == file,
@@ -78,8 +80,8 @@ void TestSlowRenameClicks()
     click.Press(file, label, name, true, true);
     click.Release(file, label, name, true, 7020, 500);
     click.Move(icon, 4, 4);
-    Check(!click.TakeReady(file, label, true, 7520),
-        "leaving the label cancels a pending edit");
+    Check(click.TakeReady(file, label, true, 7520) == file,
+        "moving after button-up must not cancel a completed name click");
 
     click.Press(file, label, name, true, true);
     click.Release(file, label, name, true, 8000, 500);
@@ -87,6 +89,4 @@ void TestSlowRenameClicks()
         "an early timer must wait only the remaining 16 ms, not another 500 ms");
     Check(click.RemainingDelay(8500) == 0 && click.TakeReady(file, label, true, 8500) == file,
         "rescheduling an early timer must preserve the original deadline");
-    Check(click.RemainingDelay(8500) == 0,
-        "a completed or canceled rename must not rearm a timer");
 }

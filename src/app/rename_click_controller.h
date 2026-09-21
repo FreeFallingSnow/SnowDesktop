@@ -39,8 +39,8 @@ public:
                 point_.x - point.x > dragX || point.y - point_.y > dragY ||
                 point_.y - point.y > dragY))
             pressed_.reset();
-        if (pending_ && !PtInRect(&label_, point))
-            pending_.reset();
+        // After button-up the name click is complete. Pointer motion alone
+        // must not cancel it while waiting for a possible double-click.
     }
 
     bool Release(const RenameClickTarget& target, RECT label, POINT point,
