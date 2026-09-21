@@ -101,7 +101,7 @@ struct MenuService::Impl
         QueryPriority priority = QueryPriority::Inspect;
         std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
         unsigned failures = 0;
-        Key identity; std::uint64_t expires = 0; bool checkRequested = false;
+        Key identity; std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
         bool queued = false, force = false, invalid = false, inspection = false;
         std::vector<Click> clicks;
     };
@@ -209,6 +209,7 @@ struct MenuService::Impl
             MenuTrace("schedule", "joined"); return;
         }
         row.checkRequested = true;
+        row.checkInspection |= priority == QueryPriority::Inspect;
         SetEvent(wake);
         if (!force && (now < row.retryAt || (row.view.snapshot && !row.invalid && row.expires > MenuSnapshotCache::Now())))
         {
@@ -718,7 +719,7 @@ struct MenuService::Impl
                         MenuTrace("schedule", "no_enabled_items"); continue;
                     }
                     ticket.dependency = Dependency(catalogue, request, contexts);
-                    rows[key].identity = ticket.identity; rows[key].checkRequested = false;
+                    rows[key].identity = ticket.identity; rows[key].checkRequested = rows[key].checkInspection = false;
                 }
                 if (invalid) cache.Erase(request);
                 if (auto disk = cache.Find(ticket))
@@ -743,13 +744,17 @@ struct MenuService::Impl
                     try { job->work = factory(job->request); sourceJob = std::move(job); }
                     catch (...) { std::lock_guard lock(mutex); failedSources.insert(job->source.id); MenuTrace("attribution", "start_failed"); }
                 }
-            std::vector<std::pair<Key, Request>> checks;
+            std::vector<std::tuple<Key, Request, bool>> checks;
             {
                 std::lock_guard lock(mutex);
-                for (auto &[key, row] : rows) if (row.checkRequested && !row.view.pending) { row.checkRequested = false; checks.emplace_back(key, row.request); }
+                for (auto &[key, row] : rows) if (row.checkRequested && !row.view.pending)
+                {
+                    checks.emplace_back(key, row.request, row.checkInspection);
+                    row.checkRequested = row.checkInspection = false;
+                }
                 Trim();
             }
-            for (const auto &[key, request] : checks)
+            for (const auto &[key, request, inspection] : checks)
             {
                 const auto ticket = cache.Capture(request);
                 std::lock_guard lock(mutex);
@@ -759,7 +764,7 @@ struct MenuService::Impl
                 {
                     row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
                     RebuildAvailable();
-                    Queue(request, QueryPriority::Menu, true);
+                    Queue(request, inspection ? QueryPriority::Inspect : QueryPriority::Menu, true);
                 }
             }
             SaveObserved(cache);
@@ -811,9 +816,10 @@ bool MenuService::MenuEnabled(const Request &request, const Preferences &fallbac
 }
 MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fallback)
 {
+    MenuTiming timing("first_screen");
     std::lock_guard lock(impl_->mutex);
     const auto it = impl_->rows.find(SelectionKey(request));
-    if (it == impl_->rows.end()) return {};
+    if (it == impl_->rows.end()) { timing.Record("memory_miss"); return {}; }
     auto &row = it->second; row.used = ++impl_->clock;
     auto view = row.view;
     if (row.expires <= MenuSnapshotCache::Now()) view.snapshot.reset();
@@ -837,6 +843,7 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
         }
         view.snapshot->entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, *view.snapshot, view.contexts);
     }
+    timing.Record(view.snapshot ? "memory_hit" : "memory_miss");
     return view;
 }
 void MenuService::Prewarm(const Request &request)
@@ -845,7 +852,7 @@ void MenuService::Prewarm(const Request &request)
     if (!impl_->AnyEnabled()) return;
     // Only the latest still-queued selection survives the stability window.
     for (auto &[key, row] : impl_->rows)
-        if (row.queued && row.priority == QueryPriority::Prewarm) row.queued = row.view.pending = false;
+        if (row.queued && row.priority == QueryPriority::Prewarm && !row.inspection) row.queued = row.view.pending = false;
     impl_->Queue(request, QueryPriority::Prewarm, false, 150);
 }
 void MenuService::Configure(Preferences preferences)

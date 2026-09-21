@@ -1319,6 +1319,10 @@ void TestVisibilityScheduling()
     std::ofstream(file, std::ios::app) << "changed target";
     service.Query(request);
     PumpUntil([&] { std::lock_guard lock(mutex); return launched.size() == 3 && !service.View(request).pending; }, "target changes still trigger a background requery");
+    service.Configure({});
+    std::ofstream(file, std::ios::app) << "changed during management";
+    service.Query(request, ext::QueryPriority::Inspect);
+    PumpUntil([&] { std::lock_guard lock(mutex); return launched.size() == 4 && service.View(request).snapshot.has_value() && !service.View(request).pending; }, "an explicit cached inspection can requery changed objects with all switches off");
 }
 
 void TestDisabledQueuedQueries()
@@ -1347,6 +1351,17 @@ void TestDisabledQueuedQueries()
     release = true;
     PumpUntil([&] { return service.View(requests[3]).snapshot.has_value(); }, "explicit inspection drains after disable");
     Expect(starts == 3 && !service.View(requests[2]).snapshot, "cancelled popup request never reaches the child process boundary");
+    service.Configure(prefs); release = false;
+    service.Query(requests[0], ext::QueryPriority::Menu, true);
+    service.Query(requests[1], ext::QueryPriority::Menu, true);
+    PumpUntil([&] { return starts == 5; }, "hold both slots while a prewarm gains an inspection subscriber");
+    service.Prewarm(requests[2]); service.Query(requests[2], ext::QueryPriority::Inspect);
+    const auto nextFile = temp.path / L"next.txt"; std::ofstream(nextFile) << "fixture";
+    ext::Request next; next.paths = {nextFile.wstring()}; service.Prewarm(next);
+    Expect(service.View(requests[2]).pending, "changing selection cannot cancel a prewarm shared with explicit inspection");
+    service.Configure({}); release = true;
+    PumpUntil([&] { return service.View(requests[2]).snapshot.has_value(); }, "shared inspection completes after ordinary prewarm is disabled");
+    Expect(starts == 6 && !service.View(next).snapshot, "only the subscribed inspection survives the replacement prewarm");
 }
 
 void TestKnownScopeQueryPolicy()
