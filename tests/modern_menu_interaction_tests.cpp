@@ -1288,6 +1288,9 @@ int wmain()
                 SendMessageW(root, WM_LBUTTONDOWN, 0, point); SendMessageW(root, WM_LBUTTONUP, 0, point);
                 if (snowdesktop::modern_menu::IsActive()) SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
             });
+            if (topEdge.command != 200 || topEdge.itemScreenRect.top != longBounds.top + MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96))
+                std::cerr << "top boundary: dpi=" << dpi << " command=" << topEdge.command
+                          << " rowTop=" << topEdge.itemScreenRect.top << " windowTop=" << longBounds.top << '\n';
             Expect(topEdge.command == 200 && topEdge.itemScreenRect.top == longBounds.top + MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96),
                 "returning to the top reclaims its band and the first visible row receives pointer clicks at every DPI");
 
