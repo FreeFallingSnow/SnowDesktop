@@ -101,6 +101,7 @@ struct Popup
     int keyboardItem = -1;
     int scrollOffset = 0;
     int scrollBand = 0;
+    int scrollTopBand = 0, scrollBottomBand = 0;
     int scrollHover = 0;
     int horizontalScrollOffset = 0;
     int horizontalScrollContentWidth = 0;
@@ -530,9 +531,9 @@ public:
 
         const RECT viewport{
             panel.left,
-            panel.top + panelPadding_ + popup.scrollBand,
+            panel.top + panelPadding_ + popup.scrollTopBand,
             panel.right,
-            panel.bottom - panelPadding_ - popup.scrollBand,
+            panel.bottom - panelPadding_ - popup.scrollBottomBand,
         };
         const int savedDc = SaveDC(memoryDc);
         IntersectClipRect(memoryDc, viewport.left, viewport.top,
@@ -910,6 +911,7 @@ private:
         if (quickIndices.empty())
             popup.quickActionCellWidth = 0;
         popup.scrollBand = 0;
+        popup.scrollTopBand = popup.scrollBottomBand = 0;
         int contentTop = shadowSize_ + panelPadding_;
         if (!quickIndices.empty())
         {
@@ -1163,14 +1165,18 @@ private:
         popup.panelScreenOrigin = { left, top };
     }
 
-    // Both end bands reserve space for the lifetime of a scrollable popup.
-    // Reaching an end hides that hint, without changing row coordinates.
+    // Only actionable directions occupy space. The terminal offset uses one
+    // band so the final row reaches the panel padding when the bottom collapses.
     void SetScrollViewport(Popup &popup)
     {
         const int available = std::max(1, popup.panelHeight - panelPadding_ * 2);
         const int band = popup.contentHeight > available
             ? std::max(1, std::min(Scale(18, options_.dpi), (available - Scale(12, options_.dpi)) / 2)) : 0;
-        const int shift = band - popup.scrollBand;
+        const int maximum = std::max(0, popup.contentHeight - available + band);
+        popup.scrollOffset = std::clamp(popup.scrollOffset, 0, maximum);
+        const int top = popup.scrollOffset > 0 ? band : 0;
+        const int bottom = popup.scrollOffset < maximum ? band : 0;
+        const int shift = top - popup.scrollTopBand;
         if (shift)
         {
             for (auto &rect : popup.itemRects) OffsetRect(&rect, 0, shift);
@@ -1178,13 +1184,15 @@ private:
             OffsetRect(&popup.horizontalScrollRect, 0, shift);
         }
         popup.scrollBand = band;
-        popup.viewportHeight = std::max(1, available - 2 * band);
+        popup.scrollTopBand = top; popup.scrollBottomBand = bottom;
+        popup.viewportHeight = std::max(1, available - top - bottom);
     }
     RECT ScrollHintRect(const Popup &popup, bool top) const
     {
-        const int y = top ? shadowSize_ + panelPadding_ : shadowSize_ + popup.panelHeight - panelPadding_ - popup.scrollBand;
+        const int height = top ? popup.scrollTopBand : popup.scrollBottomBand;
+        const int y = top ? shadowSize_ + panelPadding_ : shadowSize_ + popup.panelHeight - panelPadding_ - height;
         return {shadowSize_ + Scale(2, options_.dpi), y,
-                shadowSize_ + popup.panelWidth - Scale(2, options_.dpi), y + popup.scrollBand};
+                shadowSize_ + popup.panelWidth - Scale(2, options_.dpi), y + height};
     }
     int ScrollHintDirection(const Popup &popup, POINT point) const
     {
@@ -1199,9 +1207,9 @@ private:
     {
         const RECT viewport{
             shadowSize_,
-            shadowSize_ + panelPadding_ + popup.scrollBand,
+            shadowSize_ + panelPadding_ + popup.scrollTopBand,
             shadowSize_ + popup.panelWidth,
-            shadowSize_ + popup.panelHeight - panelPadding_ - popup.scrollBand,
+            shadowSize_ + popup.panelHeight - panelPadding_ - popup.scrollBottomBand,
         };
         if (!PtInRect(&viewport, point))
             return -1;
@@ -2051,7 +2059,8 @@ private:
                 popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
             }
             popup.scrollOffset =
-                std::clamp(previousOffset, 0, std::max(0, popup.contentHeight - popup.viewportHeight));
+                std::clamp(previousOffset, 0, MaxScroll(popup));
+            SetScrollViewport(popup);
         }
         if (popup.hwnd && IsWindow(popup.hwnd))
         {
@@ -2116,6 +2125,7 @@ private:
             auto& popup = *current;
             CalculateLayout(popup);
             popup.scrollOffset = std::clamp(popup.scrollOffset, 0, MaxScroll(popup));
+            SetScrollViewport(popup);
             const auto validSelection = [&](int index) {
                 return index >= 0 && static_cast<size_t>(index) < popup.items->size() && IsSelectable((*popup.items)[index]);
             };
@@ -2132,7 +2142,7 @@ private:
     void EnsureVisible(Popup& popup, int index)
     {
         const RECT row = popup.itemRects[index];
-        const int viewportTop = shadowSize_ + panelPadding_ + popup.scrollBand;
+        const int viewportTop = shadowSize_ + panelPadding_ + popup.scrollTopBand;
         const int viewportBottom = viewportTop + popup.viewportHeight;
         if (row.top - popup.scrollOffset < viewportTop)
             popup.scrollOffset = row.top - viewportTop;
@@ -2140,6 +2150,7 @@ private:
             popup.scrollOffset = row.bottom - viewportBottom;
         popup.scrollOffset = std::clamp(
             popup.scrollOffset, 0, MaxScroll(popup));
+        SetScrollViewport(popup);
         if ((*popup.items)[index].horizontalScrollAction)
         {
             const int viewportLeft = popup.horizontalScrollRect.left;
@@ -2162,6 +2173,7 @@ private:
             0, MaxScroll(popup));
         if (popup.scrollOffset != oldOffset)
         {
+            SetScrollViewport(popup);
             CloseFromDepth(popup.depth + 1);
             popup.hoveredItem = popup.keyboardItem = -1;
             Render(popup);
@@ -2170,7 +2182,7 @@ private:
 
     int MaxScroll(const Popup& popup) const
     {
-        return std::max(0, popup.contentHeight - popup.viewportHeight);
+        return std::max(0, popup.contentHeight - std::max(1, popup.panelHeight - 2 * panelPadding_) + popup.scrollBand);
     }
 
     void ScrollHorizontal(Popup& popup, int direction)

@@ -4,8 +4,8 @@
 
 namespace snowdesktop::modern_menu::scroll_hint
 {
-// The reserved viewport bands stay put. A reached edge has no affordance:
-// neither a disabled arrow nor the separator that would still suggest scrolling.
+// The layout removes a reached edge's band; drawing likewise omits its arrow
+// and separator instead of suggesting a direction with no remaining content.
 inline void Draw(HDC dc, RECT band, bool top, int offset, int maximum, bool hovered,
                  UINT dpi, COLORREF background, COLORREF hoverBackground,
                  COLORREF separatorColor, COLORREF arrowColor)

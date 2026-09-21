@@ -1264,7 +1264,9 @@ int wmain()
             for (UINT i = 0; i < 100; ++i)
                 longMenu.push_back({200 + i, L"滚动菜单项", L"", true});
             compact.anchor = {monitorInfo.rcWork.right - 2, monitorInfo.rcWork.bottom - 2};
-            const auto scrolled = runScript(longMenu, compact, [dpi](HWND root) {
+            RECT longBounds{};
+            const auto scrolled = runScript(longMenu, compact, [dpi, &longBounds](HWND root) {
+                GetWindowRect(root, &longBounds);
                 RECT client{}; GetClientRect(root, &client);
                 const auto hint = MAKELPARAM(client.right / 2, client.bottom - MulDiv(18, dpi, 96));
                 SendMessageW(root, WM_MOUSEMOVE, 0, hint);
@@ -1274,9 +1276,20 @@ int wmain()
                 SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
             });
             Expect(scrolled.command == 299 &&
-                    scrolled.itemScreenRect.bottom <= monitorInfo.rcWork.bottom - MulDiv(18, dpi, 96) &&
+                    scrolled.itemScreenRect.bottom == longBounds.bottom - MulDiv(6, dpi, 96) - MulDiv(3, dpi, 96) &&
                     scrolled.itemScreenRect.right <= monitorInfo.rcWork.right,
-                "scroll hint click never activates a row and the last command stays above the reserved end band");
+                "scroll hint click never activates a row and the reached bottom has no reserved blank band");
+            const auto topEdge = runScript(longMenu, compact, [dpi, &longBounds](HWND root) {
+                GetWindowRect(root, &longBounds);
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                RECT client{}; GetClientRect(root, &client);
+                const auto point = MAKELPARAM(client.right / 2, MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96) + MulDiv(10, dpi, 96));
+                SendMessageW(root, WM_LBUTTONDOWN, 0, point); SendMessageW(root, WM_LBUTTONUP, 0, point);
+                if (snowdesktop::modern_menu::IsActive()) SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            });
+            Expect(topEdge.command == 200 && topEdge.itemScreenRect.top == longBounds.top + MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96),
+                "returning to the top reclaims its band and the first visible row receives pointer clicks at every DPI");
 
             compact.anchor = {80, 80};
             compact.onTextChanged = options.onTextChanged;

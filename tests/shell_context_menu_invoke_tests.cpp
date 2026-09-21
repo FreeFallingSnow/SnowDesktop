@@ -495,6 +495,27 @@ void TestManagementFilters()
     Expect(ext::VisibleSnapshot(prefs, menu, 1).empty() && ext::CommonShown(prefs, "common", ext::Category::Background), "batch hide removes the filtered actions without changing background rules");
     const auto before = prefs; ext::SetManagementResults(prefs, {}, ext::Category::Objects, true);
     Expect(prefs == before, "empty filtered results never modify preferences");
+
+    const auto base = ext::ManagementRows(catalogue, ext::Category::Objects);
+    const auto applications = ext::ManagementCards(base, ext::Category::Objects, ext::ManagementView::Applications);
+    Expect(applications.size() == 3 && applications.back().id == "app:@unknown", "application cards keep same-named providers separate and unidentified items in their own card");
+    const auto types = ext::ManagementCards(base, ext::Category::Objects, ext::ManagementView::Extensions);
+    const auto png = std::find_if(types.begin(), types.end(), [](const auto &card) { return card.title == L".png"; });
+    const auto jpg = std::find_if(types.begin(), types.end(), [](const auto &card) { return card.title == L".jpg"; });
+    Expect(png != types.end() && jpg != types.end() && jpg->rows.size() == 1, "type views include merged actions in each supported suffix card");
+    Expect(std::none_of(png->rows.begin(), png->rows.end(), [](const auto &row) {
+        return std::any_of(row.members.begin(), row.members.end(), [](const auto &member) { return member.id == "common" || member.id == "folders"; });
+    }), "common and folder actions have dedicated cards instead of repeating under every suffix");
+    ext::Preferences cardPreferences;
+    ext::SetOverride(cardPreferences, "png", ext::Context::File, ext::Visibility::Hide);
+    ext::SetManagementResults(cardPreferences, png->rows, ext::Category::Objects, true);
+    Expect(ext::ManagementCardState(cardPreferences, *jpg, ext::Category::Objects) == true &&
+        ext::OverrideOf(cardPreferences, "png", ext::Context::File) == ext::Visibility::Hide, "group toggles share original state across type cards and retain location exceptions");
+    const auto application = std::find_if(applications.begin(), applications.end(), [&](const auto &card) { return card.id == "app:" + editor.id; });
+    Expect(application != applications.end() && !ext::ManagementCardState(cardPreferences, *application, ext::Category::Objects), "partly shown application cards report mixed state");
+    ext::SetManagementResults(cardPreferences, application->rows, ext::Category::Objects, true);
+    Expect(ext::ManagementCardState(cardPreferences, *application, ext::Category::Objects) == true &&
+        std::none_of(cardPreferences.rules.begin(), cardPreferences.rules.end(), [](const auto &rule) { return rule.id.find('\n') != std::string::npos; }), "card identities never replace persisted action IDs");
 }
 
 // The real presenter reconciliation planner drives a minimal control adapter;

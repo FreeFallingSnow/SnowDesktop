@@ -136,4 +136,74 @@ inline void SetManagementOverride(Preferences &prefs, const ManagementRow &row, 
 {
     for (const auto &member : row.members) if (member.contexts & ContextBit(context)) SetOverride(prefs, member.id, context, value);
 }
+enum class ManagementView { Objects, Applications, Extensions };
+struct ManagementCard
+{
+    std::string id, titleKey;
+    std::wstring title;
+    std::vector<ManagementRow> rows;
+};
+inline std::vector<ManagementCard> ManagementCards(const std::vector<ManagementRow> &rows, Category category, ManagementView view)
+{
+    std::map<std::string, ManagementCard> cards;
+    auto add = [&](std::string id, std::wstring title, std::string titleKey, const ManagementRow &row) {
+        auto &card = cards[id]; card.id = id; card.title = std::move(title); card.titleKey = std::move(titleKey);
+        auto display = row;
+        // Only the UI instance identity changes; every view writes the same
+        // original member IDs, so duplicated type cards cannot diverge.
+        display.id = id + "\n" + row.id;
+        if (std::none_of(card.rows.begin(), card.rows.end(), [&](const auto &existing) { return existing.id == display.id; })) card.rows.push_back(std::move(display));
+    };
+    for (const auto &row : rows)
+        if (view == ManagementView::Applications)
+        {
+            if (row.applications.empty()) add("app:@unknown", {}, "settings.contextMenu.unknownApplication", row);
+            for (const auto &app : row.applications)
+                add("app:" + (app.id.empty() ? "@unknown" : app.id), app.name,
+                    app.id.empty() ? "settings.contextMenu.unknownApplication" : "", row);
+        }
+        else if (view == ManagementView::Extensions && category == Category::Objects)
+        {
+            if (!(row.contexts & ContextBit(Context::File))) add("type:folder", {}, "settings.contextMenu.folders", row);
+            else if (row.types.empty() || std::find(row.types.begin(), row.types.end(), L"*") != row.types.end())
+                add("type:*", {}, "settings.contextMenu.anyExtension", row);
+            else
+            {
+                bool added = false;
+                for (auto type : row.types) if (!type.empty() && type.front() == L'.')
+                {
+                    for (auto &c : type) c = towlower(c);
+                    const auto encoded = settings_ipc::Pack(type);
+                    add("type:" + std::string(reinterpret_cast<const char *>(encoded.data()), encoded.size()), type, {}, row); added = true;
+                }
+                if (!added) add("type:other", {}, "settings.contextMenu.types", row);
+            }
+        }
+        else
+        {
+            const auto group = ManagementGroup(row, category);
+            const char *key = group == 0 ? "settings.contextMenu.common" : group == 3 ? "settings.contextMenu.types" :
+                category == Category::Objects ? (group == 1 ? "settings.contextMenu.files" : "settings.contextMenu.folders") :
+                (group == 1 ? "settings.contextMenu.folderBackground" : "settings.contextMenu.desktop");
+            add("object:" + std::to_string(group), {}, key, row);
+        }
+    std::vector<ManagementCard> result;
+    for (auto &[id, card] : cards) result.push_back(std::move(card));
+    std::stable_sort(result.begin(), result.end(), [](const auto &a, const auto &b) {
+        if (a.id == "app:@unknown" || b.id == "app:@unknown") return b.id == "app:@unknown" && a.id != b.id;
+        return a.title < b.title;
+    });
+    return result;
+}
+inline std::optional<bool> ManagementCardState(const Preferences &prefs, const ManagementCard &card, Category category)
+{
+    std::optional<bool> state;
+    for (const auto &row : card.rows)
+    {
+        const auto current = ManagementCommon(prefs, row, category);
+        if (!current || (state && *state != *current)) return {};
+        state = current;
+    }
+    return state.value_or(false);
+}
 } // namespace snowdesktop::shell_extensions

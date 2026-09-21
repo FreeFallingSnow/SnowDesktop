@@ -121,6 +121,7 @@ struct MenuService::Impl
     };
     std::unique_ptr<SourceJob> sourceJob;
     std::set<Key> sourceAttempts, sourceSelections;
+    std::set<std::string> failedSources;
     bool sourcePending = false;
     std::mutex mutex;
     std::map<Key, Row> rows;
@@ -345,14 +346,19 @@ struct MenuService::Impl
             for (const auto &source : catalogue.rows)
             {
                 if ((source.kind != RegistrationKind::Handler && source.kind != RegistrationKind::Packaged) || !source.systemEnabled || source.application.id.empty() ||
-                    source.verbs.empty() || !DependsOn(source, row.request, row.view.contexts)) continue;
-                const auto attempt = settings_ipc::Pack(key, source.id, source.revision);
-                if (sourceAttempts.contains(attempt)) continue;
+                    source.verbs.empty() || failedSources.contains(source.id) || !DependsOn(source, row.request, row.view.contexts)) continue;
+                // Repeated file suffixes share many already-inspected root
+                // actions. Probe again only when this source sees a new action
+                // identity in this location, not once per sample path or Shift.
+                std::vector<Key> attempts;
+                for (const auto &entry : row.view.snapshot->entries) if (!entry.separator && !entry.provider.empty())
+                    attempts.push_back(settings_ipc::Pack(entry.provider, row.view.contexts, source.id, source.revision));
+                if (std::all_of(attempts.begin(), attempts.end(), [&](const auto &attempt) { return sourceAttempts.contains(attempt); })) continue;
                 std::wstring typeKey;
                 for (const auto &path : source.sources)
                     if (const auto at = path.find(L"\\shellex\\ContextMenuHandlers\\"); at != std::wstring::npos) { typeKey = path.substr(0, at); break; }
                 if (typeKey.empty() && source.kind != RegistrationKind::Packaged) continue;
-                sourceAttempts.insert(attempt);
+                sourceAttempts.insert(attempts.begin(), attempts.end());
                 auto job = std::make_unique<SourceJob>();
                 job->key = key; job->request = row.request; job->source = source; job->actual = *row.view.snapshot;
                 job->request.sourceClsid.assign(source.verbs.front().begin(), source.verbs.front().end());
@@ -367,6 +373,9 @@ struct MenuService::Impl
     void CompleteSource(SourceJob &job, const Reply &reply)
     {
         std::lock_guard lock(mutex);
+        MenuTrace("attribution", reply.ok ? "completed" : "failed", double(GetTickCount64() - job.started),
+            static_cast<unsigned>(reply.entries.size()));
+        if (!reply.ok && !reply.error.empty()) failedSources.insert(job.source.id);
         const auto current = rows.find(job.key);
         if (!reply.ok || catalogue.revision != job.revision || current == rows.end() || current->second.invalid ||
             current->second.view.revision != job.menuRevision) return;
@@ -489,7 +498,7 @@ struct MenuService::Impl
                     if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                 catalogue = std::move(value); scanning = false; catalogueDirty = true;
                 sourcePending |= inspected;
-                if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); }
+                if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); failedSources.clear(); }
                 if (!initial && !changed.empty())
                 {
                     // Unknown providers also retain observed type/scope evidence,
@@ -685,7 +694,7 @@ struct MenuService::Impl
                 {
                     job->started = GetTickCount64();
                     try { job->work = factory(job->request); sourceJob = std::move(job); }
-                    catch (...) { MenuTrace("attribution", "start_failed"); }
+                    catch (...) { std::lock_guard lock(mutex); failedSources.insert(job->source.id); MenuTrace("attribution", "start_failed"); }
                 }
             std::vector<std::pair<Key, Request>> checks;
             {
@@ -765,7 +774,7 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     if (refresh || !impl_->inspected)
     {
         impl_->sourcePending = true;
-        if (refresh) { impl_->sourceAttempts.clear(); impl_->sourceSelections.clear(); }
+        if (refresh) { impl_->sourceAttempts.clear(); impl_->sourceSelections.clear(); impl_->failedSources.clear(); }
         impl_->scanRequested = true; impl_->discoverRequested = true;
         impl_->discoverForce |= refresh;
         impl_->typesRequested = true; impl_->typesForce |= refresh;
