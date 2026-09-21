@@ -262,6 +262,8 @@ ToGeneralAdvancedFeatureStatus(
     target.bridgeAvailable = source.bridgeAvailable;
     target.registered = source.registered;
     target.validUntil = source.validUntil;
+    target.connectionProblem = source.connectionProblem;
+    target.errorDetail = Utf8ToWide(source.errorDetail);
     target.cardVisible = source.registered || source.bridgeAvailable ||
         deploymentKind == snowdesktop::deployment::RuntimeDeploymentKind::Portable;
     target.offerSteamStore = !source.registered && !source.bridgeAvailable &&
@@ -310,6 +312,9 @@ ToGeneralAdvancedFeatureStatus(
 
 void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
 {
+    WriteDiagnosticLogEntry(revalidateRegistered
+        ? L"[SteamActivation] entry=startup revalidation"
+        : L"[SteamActivation] entry=manual registration");
     if (!steamEntitlementService_)
         return;
     const HWND notificationWindow = controlHwnd_;

@@ -47,6 +47,13 @@ int wmain(int argc, wchar_t** argv)
             << (steamworks ? "true" : "false") << "}\n";
         return 0;
     }
+    if (executable.find(L"client-unavailable") != std::wstring::npos)
+    {
+        std::cerr << "{\"ok\":false,\"error\":{"
+                     "\"code\":\"steam_init_failed\",\"steamInitResult\":2,"
+                     "\"message\":\"cannot connect 76561198000000001\\nSDK detail\"}}\n";
+        return 4;
+    }
     if (executable.find(L"offline") != std::wstring::npos)
     {
         std::cerr << "{\"ok\":false,\"error\":{"

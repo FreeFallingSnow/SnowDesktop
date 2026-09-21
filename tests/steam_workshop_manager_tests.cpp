@@ -223,13 +223,31 @@ void TestSteamIdentity()
     Check(SteamCommunityItemClientUrl(1234567890) ==
         "steam://url/CommunityFilePage/1234567890",
         "Workshop item links use Valve's Steam client protocol");
-    Check(SuggestOpeningSteamClient({ kSteamInitializationFailed,
-              "steam_initialization_failed", "IPC unavailable" }) &&
-            !SuggestOpeningSteamClient({ kSteamInitializationFailed,
-              "steam_app_id_mismatch", "wrong app" }) &&
-            !SuggestOpeningSteamClient({ kSteamOperationFailed,
-              "query_failed", "request failed" }),
-        "only a missing Steam client initialization exposes launch recovery");
+    // A running but offline client needs network/sign-in guidance. Unrelated
+    // operation errors must not be replaced by this recovery banner.
+    using Problem = SteamConnectionProblem;
+    const auto offline = ClassifySteamConnectionProblem("steam_not_logged_on");
+    Check(offline == Problem::Offline &&
+            std::string_view(ConnectionFeedback(offline).key) ==
+                "workshop_manager.steam_offline_hint" &&
+            ConnectionFeedback(offline).offerOpenSteam,
+        "an offline account gets sign-in guidance, not a stopped-client claim");
+    Check(ClassifySteamConnectionProblem("steam_initialization_failed", 2) ==
+            Problem::ClientUnavailable &&
+            ClassifySteamConnectionProblem("steam_initialization_failed", 3) ==
+                Problem::ClientOutdated,
+        "native manager distinguishes an unreachable client from an outdated client");
+    Check(ClassifySteamConnectionProblem("steam_initialization_failed") ==
+            Problem::InitializationFailed &&
+            ClassifySteamConnectionProblem("steam_initialization_failed", 99) ==
+                Problem::InitializationFailed,
+        "unspecified and future initialization failures retain neutral guidance");
+    Check(!ConnectionFeedback(ClassifySteamConnectionProblem(
+                "steam_app_id_mismatch")).offerOpenSteam &&
+            !ConnectionFeedback(ClassifySteamConnectionProblem(
+                "steamworks_unavailable")).offerOpenSteam &&
+            ClassifySteamConnectionProblem("query_failed") == Problem::None,
+        "installation and operation failures do not misleadingly offer client startup");
     const std::string mismatch = SteamAppIdMismatchMessage(480u);
     Check(mismatch.find("5080330") != std::string::npos &&
         mismatch.find("480") != std::string::npos,

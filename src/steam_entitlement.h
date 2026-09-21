@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../steam_bridge/src/steam_connection_feedback.h"
+
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -60,6 +62,9 @@ struct Snapshot
 {
     State state = State::BridgeUnavailable;
     Failure failure = Failure::None;
+    steam_bridge::SteamConnectionProblem connectionProblem =
+        steam_bridge::SteamConnectionProblem::None;
+    std::string errorDetail;
     bool bridgeAvailable = false;
     /** An unexpired last-known ownership result remains usable while offline. */
     bool registered = false;
@@ -81,6 +86,10 @@ struct BridgeResponse
     BridgeOutcome outcome = BridgeOutcome::Failed;
     std::uint64_t steamId = 0;
     std::string errorCode;
+    steam_bridge::SteamConnectionProblem connectionProblem =
+        steam_bridge::SteamConnectionProblem::None;
+    std::string errorDetail;
+    std::optional<std::uint32_t> steamInitResult;
 };
 
 /** Parse the final JSON object returned by `entitlement status`. */
@@ -106,7 +115,7 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
 
-    [[nodiscard]] Snapshot Current() const noexcept;
+    [[nodiscard]] Snapshot Current() const;
     [[nodiscard]] bool IsRegistered() const noexcept;
 
     /** Start one asynchronous Bridge check when not already registered/busy. */
