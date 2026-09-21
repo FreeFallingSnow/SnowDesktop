@@ -134,8 +134,17 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
             AppendMenuW(iconMenu, MF_STRING, s.cmd, label.c_str());
         }
 
-        namespaceRegistrations =
-            snowdesktop::LoadDesktopNamespaceRegistrations();
+        // The menu only needs value metadata; PIDLs stay with the read cache.
+        for (const auto& source : trayNamespaceRegistrations_)
+        {
+            snowdesktop::DesktopNamespaceRegistration entry;
+            entry.clsid = source.clsid;
+            entry.displayName = source.displayName;
+            entry.targetPath = source.targetPath;
+            entry.userScoped = source.userScoped;
+            namespaceRegistrations.push_back(std::move(entry));
+        }
+        RefreshTrayNamespaceRegistrations();
         nonSystemIconMenu = CreatePopupMenu();
         for (size_t index = 0;
              nonSystemIconMenu &&
@@ -311,4 +320,13 @@ void DesktopApp::ShowTrayMenu(POINT screenPoint)
         }
         break;
     }
+}
+
+void DesktopApp::RefreshTrayNamespaceRegistrations()
+{
+    shellModelWork_.Submit(L"tray-namespaces", [] {
+        return snowdesktop::LoadDesktopNamespaceRegistrations();
+    }, [this](auto registrations) {
+        trayNamespaceRegistrations_ = std::move(registrations);
+    }, hwnd_, kBackgroundShellReadyMessage);
 }

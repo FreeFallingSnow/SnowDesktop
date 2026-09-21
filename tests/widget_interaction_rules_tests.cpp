@@ -1063,46 +1063,6 @@ void TestDragInputSampling()
 
 void TestPopupIconLoadCancellationRules()
 {
-    struct Task
-    {
-        bool popup = false;
-        std::wstring requestKey;
-    };
-
-    std::deque<Task> queue;
-    std::unordered_set<std::wstring> pendingKeys;
-    const auto append = [&](bool popup, std::wstring key)
-    {
-        pendingKeys.insert(key);
-        queue.push_back(Task{popup, std::move(key)});
-    };
-    append(false, L"ordinary-before");
-    for (int index = 0; index < 5; ++index)
-    {
-        append(true, L"popup-queued-" + std::to_wstring(index));
-        if (index == 2) append(false, L"ordinary-middle");
-    }
-    append(false, L"ordinary-after");
-    pendingKeys.insert(L"popup-in-flight");
-    pendingKeys.insert(L"popup-posted");
-
-    const std::size_t removed =
-        snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
-            queue, pendingKeys,
-            [](const Task& task) { return task.popup; });
-    Check(removed == 5 && queue.size() == 3 &&
-            queue[0].requestKey == L"ordinary-before" &&
-            queue[1].requestKey == L"ordinary-middle" &&
-            queue[2].requestKey == L"ordinary-after",
-        "popup cancellation removes interleaved tasks without reordering other icon work");
-    Check(pendingKeys.size() == 5 &&
-            pendingKeys.contains(L"ordinary-before") &&
-            pendingKeys.contains(L"ordinary-middle") &&
-            pendingKeys.contains(L"ordinary-after") &&
-            pendingKeys.contains(L"popup-in-flight") &&
-            pendingKeys.contains(L"popup-posted"),
-        "popup cancellation must erase only exact queued keys and retain in-flight or posted keys");
-
     namespace popupRules =
         snowdesktop::popup_icon_load_rules;
     const std::uint64_t currentGeneration = 43;

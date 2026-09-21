@@ -17,6 +17,8 @@
  */
 #pragma once
 #include "../graphics_device_recovery.h"
+#include "../background_work.h"
+#include "../desktop_namespace_registry.h"
 #include "item.h"
 #include "slot.h"
 #include "container.h"
@@ -222,6 +224,7 @@ std::wstring DockItemWindowKey(const DesktopItem& item);
 enum class IconLoadPhase { Phase1, Phase2 };
 
 struct IconLoadTask {
+    std::wstring sourceStamp;
     uint64_t serial = 0;
     uint64_t popupGeneration = 0;
     std::wstring requestKey;
@@ -332,6 +335,8 @@ struct DockRunningAppInfo
 };
 
 struct IconLoadResult {
+    int sysIconIndex = -1;
+    std::wstring typeName;
     uint64_t serial = 0;
     uint64_t popupGeneration = 0;
     std::wstring requestKey;
@@ -1310,6 +1315,9 @@ private:
     bool HandleDockClickRelease(POINT point);
     void ToggleWindowsStartMenu();
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
+    static DockAppIdentity ReadDockAppIdentity(const std::wstring& path);
+    std::wstring GetDockWindowAppUserModelIdAsync(HWND window);
+    std::unordered_map<HWND, std::pair<DWORD, std::wstring>> dockWindowAppIds_;
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockForegroundState();
     void RefreshDockRunningWindows(bool invalidateChanged = true,
@@ -2740,6 +2748,7 @@ private:
 
     // ── Async Icon Loading ──────────────────────────────────
     void StartIconLoader();
+    void QueueSystemIconBitmap(int index, int size, bool beautify, std::uint64_t key, bool quick);
     void StopIconLoader();
     void BeginIconLoadGeneration();
     void CancelDockFolderPopupIconLoads();
@@ -3640,7 +3649,6 @@ private:
     snowdesktop::ShellLaunchWorker shellElevationWorker_{
         &snowdesktop::ShellLaunchWorker::ExecuteRunAsAdministrator };
     snowdesktop::ShellFileOperationWorker shellFileOperationWorker_;
-    snowdesktop::ShellFileOperationWorker shellRefreshWorker_;
     snowdesktop::ShellFileOperationWorker externalSlotReadWorker_;
     std::stop_source externalSlotReadStopSource_;
     snowdesktop::UrlDropDownloadWorker urlDropDownloadWorker_;
@@ -4276,7 +4284,7 @@ private:
     std::vector<QuickNavigationAppEntry> quickNavigationAppEntries_;
     bool quickNavigationAppsIndexed_ = false;
     std::atomic<bool> quickNavigationAppIndexing_{false};
-    std::thread quickNavigationAppIndexThread_;
+
     uint64_t quickNavigationAppIndexSerial_ = 0;
     bool quickNavigationAppsExpanded_ = false;
     QuickNavigationKeyboardTargetKind quickNavigationKeyboardTargetKind_ =
@@ -4361,12 +4369,22 @@ private:
 
     /** @name 异步图标加载 */
     /** @{ */
-    std::thread iconLoaderThread_;
+    snowdesktop::BackgroundWork iconWork_{4};
+    mutable snowdesktop::BackgroundWork shellVisualWork_{4};
+    snowdesktop::BackgroundWork shellModelWork_{4};
+    snowdesktop::BackgroundWork appIndexWork_{1};
+    snowdesktop::BackgroundWork folderReadWork_{4};
+    snowdesktop::BackgroundWork clipboardReadWork_{1};
+    std::vector<snowdesktop::DesktopNamespaceRegistration> trayNamespaceRegistrations_;
+    void RefreshTrayNamespaceRegistrations();
+    std::unordered_map<std::wstring, std::uint64_t> folderReadVersions_;
+    std::unordered_set<std::wstring> folderReadsPending_;
+    void QueueFolderRead(const std::wstring& path);
+    void QueueDockPathChecks(const std::vector<std::wstring>& paths);
+    void QueueIconTask(IconLoadTask task);
+    void DrainBackgroundShellWork();
     std::mutex iconLoaderMutex_;
-    std::condition_variable iconLoaderCv_;
-    std::deque<IconLoadTask> iconLoaderQueue_;
     std::unordered_set<std::wstring> iconLoaderPendingKeys_;
-    std::atomic<bool> iconLoaderRunning_{false};
     uint64_t iconLoadSerial_ = 0;
     uint64_t dockFolderPopupIconGeneration_ = 1;
 

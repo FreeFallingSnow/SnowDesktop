@@ -1574,7 +1574,8 @@ void DesktopApp::InitializeSettingsController()
         snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
         ApplyAnimationPreferences();
         categorySettings_ = snapshot->values.category;
-        generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
+        // External task state is refreshed when settings are opened. Startup
+        // must not wait for Task Scheduler RPC or migrate legacy tasks here.
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
     }
     if (!result.Succeeded())

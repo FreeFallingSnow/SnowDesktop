@@ -1,3 +1,4 @@
+#include "background_work.h"
 /**
  * @file widget_engine.cpp
  * @brief WidgetEngine 类的实现，管理 Lua 小部件的完整生命周期
@@ -615,116 +616,41 @@ static bool EndsWithLastError(const std::string& key)
 class AsyncShellIconLoader
 {
 public:
-    struct Result
-    {
-        std::wstring path;
-        HBITMAP bitmap = nullptr;
-    };
-
+    struct Result { std::wstring path; HBITMAP bitmap = nullptr; };
     using ReadyCallback = std::function<void(const std::wstring&)>;
-
-    explicit AsyncShellIconLoader(ReadyCallback readyCallback)
-        : readyCallback_(std::move(readyCallback)),
-          worker_([this](std::stop_token stopToken) {
-              Run(stopToken);
-          })
-    {
-    }
-
+    explicit AsyncShellIconLoader(ReadyCallback readyCallback) : ready_(std::move(readyCallback)) {}
     ~AsyncShellIconLoader()
     {
-        worker_.request_stop();
-        condition_.notify_all();
-        if (worker_.joinable())
-            worker_.join();
-        for (auto& result : completed_)
-            if (result.bitmap)
-                DeleteObject(result.bitmap);
+        work_.Stop();
+        for (auto& result : completed_) if (result.bitmap) DeleteObject(result.bitmap);
     }
-
     void Request(const std::wstring& path, const std::wstring& widgetId)
     {
         if (path.empty()) return;
-        {
-            std::scoped_lock lock(mutex_);
-            if (pending_.contains(path) || requests_.size() >= 128)
-                return;
-            pending_.insert(path);
-            requests_.push_back({ path, widgetId });
-        }
-        condition_.notify_one();
-    }
-
-    std::vector<Result> Drain()
-    {
-        std::vector<Result> results;
-        std::scoped_lock lock(mutex_);
-        results.reserve(completed_.size());
-        while (!completed_.empty())
-        {
-            pending_.erase(completed_.front().path);
-            results.push_back(std::move(completed_.front()));
-            completed_.pop_front();
-        }
-        return results;
-    }
-
-private:
-    struct RequestEntry
-    {
-        std::wstring path;
-        std::wstring widgetId;
-    };
-
-    void Run(std::stop_token stopToken)
-    {
-        const HRESULT comResult = CoInitializeEx(
-            nullptr, COINIT_APARTMENTTHREADED);
-        while (!stopToken.stop_requested())
-        {
-            RequestEntry request;
-            {
-                std::unique_lock lock(mutex_);
-                condition_.wait(lock, [&] {
-                    return stopToken.stop_requested() ||
-                        !requests_.empty();
-                });
-                if (stopToken.stop_requested())
-                    break;
-                request = std::move(requests_.back());
-                requests_.pop_back();
-            }
-
-            HBITMAP bitmap = nullptr;
+        work_.Submit(path, [path] {
+            auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (SUCCEEDED(SHParseDisplayName(
-                request.path.c_str(), nullptr, &pidl, 0, nullptr)) &&
-                pidl)
+            if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
             {
-                SIZE bitmapSize{};
-                bitmap = GetHighResolutionShellIconBitmap(
-                    pidl, 0, bitmapSize);
+                result->bitmap = GetHighResolutionShellIconBitmap(pidl, -1, result->size);
                 CoTaskMemFree(pidl);
             }
-
-            {
-                std::scoped_lock lock(mutex_);
-                completed_.push_back({ request.path, bitmap });
-            }
-            if (readyCallback_)
-                readyCallback_(request.widgetId);
-        }
-        if (SUCCEEDED(comResult))
-            CoUninitialize();
+            return result;
+        }, [this, path, widgetId](auto result) {
+            completed_.push_back({path, result ? std::exchange(result->bitmap, nullptr) : nullptr});
+            if (ready_) ready_(widgetId); // UI only; never inspect widgets on the worker.
+        }, nullptr, 0);
     }
-
-    ReadyCallback readyCallback_;
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    std::deque<RequestEntry> requests_;
-    std::deque<Result> completed_;
-    std::unordered_set<std::wstring> pending_;
-    std::jthread worker_;
+    void Pump() { work_.Drain(); }
+    std::vector<Result> Drain()
+    {
+        Pump();
+        return std::exchange(completed_, {});
+    }
+private:
+    snowdesktop::BackgroundWork work_{2, 128};
+    ReadyCallback ready_;
+    std::vector<Result> completed_;
 };
 
 struct PrivateFontResource
@@ -21001,6 +20927,8 @@ void WidgetEngine::OnTaskWake()
 
 void WidgetEngine::TickRuntime()
 {
+    if (d2dState_ && d2dState_->shellIconLoader)
+        d2dState_->shellIconLoader->Pump();
     const auto healthNow = snowdesktop::widget_runtime::
         RuntimeHealth::Clock::now();
     std::vector<std::wstring> recoveryTargets;

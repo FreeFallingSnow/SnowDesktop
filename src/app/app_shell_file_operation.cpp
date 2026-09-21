@@ -410,7 +410,6 @@ void DesktopApp::StopShellFileOperationWorker()
     for (auto& reader : initialLocalReads_) reader.Stop();
     externalSlotReadStopSource_.request_stop();
     externalSlotReadWorker_.Stop();
-    shellRefreshWorker_.Stop();
     shellFileOperationWorker_.Stop();
     readyShellRefresh_.reset();
 
@@ -474,18 +473,64 @@ void DesktopApp::RequestShellRefresh()
 
 void DesktopApp::RequestFolderRefresh(const std::vector<std::wstring>& paths)
 {
-    if (exitRequested_ || paths.empty()) return;
-    if (initialShellReadPending_)
+    if (exitRequested_) return;
+    for (const auto& path : paths)
     {
-        RequestShellRefresh();
-        return;
+        if (snowdesktop::debug_profile::Enabled() &&
+            snowdesktop::shell_refresh::FolderKey(path) ==
+                snowdesktop::shell_refresh::FolderKey(snowdesktop::desktop_source::Directory()))
+        {
+            RequestShellRefresh();
+            continue;
+        }
+        ++folderReadVersions_[snowdesktop::shell_refresh::FolderKey(path)];
+        QueueFolderRead(path);
     }
-    shellRefreshScope_.Add(paths, shellReloadPending_);
-    shellRefreshRevision_.Invalidate();
-    readyShellRefresh_.reset();
-    const bool alreadyPending = std::exchange(shellReloadPending_, true);
-    if (!alreadyPending && hwnd_ && IsWindow(hwnd_))
-        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+}
+
+void DesktopApp::QueueFolderRead(const std::wstring& path)
+{
+    if (exitRequested_ || path.empty()) return;
+    const auto key = snowdesktop::shell_refresh::FolderKey(path);
+    if (!folderReadsPending_.insert(key).second) return;
+    const auto version = folderReadVersions_[key];
+    const bool hidden = AreExplorerHiddenItemsVisible();
+    if (!folderReadWork_.Submit(L"folder:" + key, [path, hidden] {
+        auto snapshot = std::make_shared<snowdesktop::shell_refresh::Snapshot>();
+        snapshot->foldersOnly = snapshot->desktopComplete = true;
+        const auto started = GetTickCount64();
+        snapshot->folders.emplace(snowdesktop::shell_refresh::FolderKey(path),
+            snowdesktop::shell_refresh::ReadFolder(path, hidden, &snapshot->metadata));
+        snapshot->readMs = GetTickCount64() - started;
+        return snapshot;
+    }, [this, key, path, version](auto snapshot) {
+        folderReadsPending_.erase(key);
+        if (folderReadVersions_[key] != version) { QueueFolderRead(path); return; }
+        if (snapshot) ApplyFolderRefresh(*snapshot);
+    }, hwnd_, kBackgroundShellReadyMessage)) folderReadsPending_.erase(key);
+}
+
+void DesktopApp::QueueDockPathChecks(const std::vector<std::wstring>& paths)
+{
+    for (const auto& path : paths)
+    {
+        const auto revision = shellRefreshRevision_.Current();
+        folderReadWork_.Submit(L"dock-exists:" + ToUpperInvariant(path), [path] {
+            if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return false;
+            const auto error = GetLastError();
+            return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND || error == ERROR_INVALID_NAME;
+        }, [this, path, revision](bool missing) {
+            if (!missing || !shellRefreshRevision_.IsCurrent(revision)) return;
+            const auto erased = std::erase_if(dockEntries_, [&](const auto& entry) {
+                return entry.type == DockEntryType::DesktopItem && entry.reference == path;
+            });
+            if (!erased) return;
+            InvalidateDockContainers();
+            UpdateFloatingDockWindowBounds(false);
+            SaveLayoutSlots();
+            InvalidateDockRects();
+        }, hwnd_, kBackgroundShellReadyMessage);
+    }
 }
 
 void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapshot)
@@ -493,8 +538,6 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     // The common timer has fenced drags, menus, edits and file operations.
     // Only replace the affected folder models; leave desktop placement and
     // unrelated containers untouched.
-    shellReloadPending_ = false;
-    shellRefreshScope_.Full();
     reloading_ = true;
     ClearPopupDragTarget();
     ClearPopupMouseDownItem();
@@ -585,7 +628,7 @@ void DesktopApp::RefreshShellItemsAsync()
         const size_t metadataHits = snapshot->metadata.hits;
         const size_t metadataQueries = snapshot->metadata.queries;
         shellMetadataCache_ = std::move(snapshot->metadata);
-        ReloadItems(false, snapshot.get());
+        ReloadItems(shellReloadLayoutFromDiskPending_, snapshot.get());
         if (dockFolderPopupOpen_)
         {
             const auto folder = snapshot->folders.find(
@@ -593,7 +636,7 @@ void DesktopApp::RefreshShellItemsAsync()
             if (folder != snapshot->folders.end())
                 RefreshDockFolderPopup(&folder->second);
             else
-                RequestShellRefresh();
+                QueueFolderRead(dockFolderPopupWidget_.sourceFolderPath);
         }
         InvalidateFloatingPopupWindow(false);
         InvalidateQuickNavigationWindow();
@@ -632,36 +675,20 @@ void DesktopApp::RefreshShellItemsAsync()
     }
     else
         snapshot->metadata = shellMetadataCache_;
-    auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
-        false, [this, snapshot, revision = *revision](bool succeeded) {
-            if (shellRefreshRevision_.Finish(revision))
-            {
-                snapshot->desktopComplete &= succeeded;
-                readyShellRefresh_ = snapshot;
-                shellReloadPending_ = true;
-            }
-        }, false };
-    if (!completion || !completionWindow || !IsWindow(completionWindow))
-    {
-        delete completion;
-        shellRefreshRevision_.Finish(*revision);
-        shellReloadPending_ = false;
-        return;
-    }
-    const bool queued = shellRefreshWorker_.Enqueue(
-        snowdesktop::ShellReadRequest{
-            [request = std::move(request), snapshot] {
-                return snowdesktop::shell_refresh::Read(request, *snapshot);
-            } },
-        [completionWindow, completion](bool succeeded) {
-            completion->succeeded = succeeded;
-            if (!PostMessageW(completionWindow, kShellFileOperationCompletedMessage,
-                    0, reinterpret_cast<LPARAM>(completion)))
-                delete completion;
-        });
+    RequestFolderRefresh(request.folders);
+    QueueDockPathChecks(request.dockPaths);
+    request.folders.clear();
+    request.dockPaths.clear();
+    const bool queued = shellModelWork_.Submit(L"desktop-read", [request = std::move(request), snapshot] {
+        snapshot->desktopComplete = snowdesktop::shell_refresh::Read(request, *snapshot);
+        return snapshot;
+    }, [this, revision = *revision](auto result) {
+        if (shellRefreshRevision_.Finish(revision) && result) readyShellRefresh_ = std::move(result);
+        shellReloadPending_ = true;
+        if (hwnd_) SetTimer(hwnd_, kShellChangeTimerId, 1, nullptr);
+    }, completionWindow, kBackgroundShellReadyMessage);
     if (!queued)
     {
-        delete completion;
         shellRefreshRevision_.Finish(*revision);
         shellReloadPending_ = false;
         return;
@@ -708,7 +735,12 @@ void DesktopApp::StartInitialShellRead()
         initialLocalReadRevisions_[i] = *revision;
         initialLocalReads_[i].Start(BuildShellRefreshRequest());
     }
-    if (!initialShellRead_.Start(BuildShellRefreshRequest()))
+    auto request = BuildShellRefreshRequest();
+    RequestFolderRefresh(request.folders);
+    QueueDockPathChecks(request.dockPaths);
+    request.folders.clear();
+    request.dockPaths.clear();
+    if (!initialShellRead_.Start(std::move(request)))
     {
         shellRefreshRevision_.Finish(*revision);
         WriteDiagnosticLogEntry(L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);

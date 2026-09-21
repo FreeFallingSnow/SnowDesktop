@@ -1,4 +1,5 @@
 #include "app.h"
+#include "shell_icon_request.h"
 #include "dock_platform_helpers.h"
 #include "animation_settings.h"
 
@@ -275,22 +276,41 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
     if (key.empty() || item.parsingName.empty() || !item.desktopIconClsid.empty())
         return {};
 
-    if (const auto cached = dockAppIdentityCache_.find(key);
+    const auto cacheKey = key + snowdesktop::shell_icon_request::Stamp(item);
+    if (const auto cached = dockAppIdentityCache_.find(cacheKey);
         cached != dockAppIdentityCache_.end() &&
         cached->second.sourceParsingName == item.parsingName)
         return cached->second;
 
+    const auto path = item.parsingName;
+    const auto serial = iconLoadSerial_;
+    shellVisualWork_.Submit(L"dock-identity:" + cacheKey + L"\n" + path + std::to_wstring(serial),
+        [path] { return ReadDockAppIdentity(path); },
+        [this, key, cacheKey, path, serial](DockAppIdentity identity) {
+            if (serial != iconLoadSerial_) return;
+            const auto current = std::find_if(items_.begin(), items_.end(), [&](const auto& item) {
+                return DockItemWindowKey(item) == key && item.parsingName == path;
+            });
+            if (current == items_.end() || !snowdesktop::shell_icon_request::Matches(cacheKey, *current)) return;
+            dockAppIdentityCache_[cacheKey] = std::move(identity);
+            dockRunningWindowsRefreshTick_ = 0;
+        }, hwnd_, kBackgroundShellReadyMessage);
+    return {};
+}
+
+DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
+{
     DockAppIdentity identity;
-    identity.sourceParsingName = item.parsingName;
-    const wchar_t* extension = PathFindExtensionW(item.parsingName.c_str());
+    identity.sourceParsingName = path;
+    const wchar_t* extension = PathFindExtensionW(path.c_str());
     if (extension && _wcsicmp(extension, L".exe") == 0)
     {
         identity.kind = DockAppIdentityKind::Executable;
-        identity.executablePath = NormalizeDockExecutablePath(item.parsingName);
+        identity.executablePath = NormalizeDockExecutablePath(path);
     }
     else if (extension && _wcsicmp(extension, L".url") == 0)
     {
-        identity.steamAppId = ParseDockSteamAppId(item.parsingName);
+        identity.steamAppId = ParseDockSteamAppId(path);
         if (!identity.steamAppId.empty())
         {
             identity.kind = DockAppIdentityKind::Steam;
@@ -307,7 +327,7 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
         {
             ComPtr<IPersistFile> persistFile;
             if (SUCCEEDED(shellLink.As(&persistFile)) &&
-                SUCCEEDED(persistFile->Load(item.parsingName.c_str(), STGM_READ)))
+                SUCCEEDED(persistFile->Load(path.c_str(), STGM_READ)))
             {
                 wchar_t target[32768]{};
                 if (SUCCEEDED(shellLink->GetPath(target,
@@ -335,10 +355,10 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
                     }
                     if (identity.appUserModelId.empty())
                         identity.appUserModelId = ToUpperInvariant(ReadDockShellItemStringProperty(
-                            item.parsingName, PKEY_AppUserModel_ID));
+                            path, PKEY_AppUserModel_ID));
                     if (targetParsingPath.empty())
                         targetParsingPath = ReadDockShellItemStringProperty(
-                            item.parsingName, PKEY_Link_TargetParsingPath);
+                            path, PKEY_Link_TargetParsingPath);
 
                     const bool looksLikeAppUserModelId = !targetParsingPath.empty() &&
                         targetParsingPath.find(L'\\') == std::wstring::npos &&
@@ -370,7 +390,7 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
                                     appsFolder + std::wstring(L"APPSFOLDER\\").size()));
                             }
                             else if (IsApplicationsShellLinkTarget(
-                                    shellLink.Get(), item.parsingName))
+                                    shellLink.Get(), path))
                             {
                                 identity.kind = DockAppIdentityKind::Applications;
                                 if (identity.appUserModelId.empty())
@@ -385,6 +405,5 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
         }
     }
 
-    dockAppIdentityCache_[key] = identity;
     return identity;
 }

@@ -539,7 +539,7 @@ void DesktopApp::RefreshDockRunningWindows(
                         processId,
                         *context->processParents);
             }
-            const std::wstring appUserModelId = QueryDockWindowAppUserModelId(window);
+            const std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(window);
 
             DWORD cloaked = 0;
             const bool isCloaked = SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
@@ -728,9 +728,36 @@ void DesktopApp::RefreshDockRunningWindows(
         if (!info.iconBitmap)
         {
             info.iconRequestedSize = requiredIconSize;
-            info.iconBitmap = CreateDockWindowIconBitmap(
-                info.window, info.executablePath, info.appUserModelId,
-                info.iconBitmapSize, requiredIconSize);
+            const auto key = info.identityKey;
+            const auto path = info.executablePath;
+            const auto appId = info.appUserModelId;
+            const auto window = info.window;
+            DWORD process = 0;
+            GetWindowThreadProcessId(window, &process);
+            shellVisualWork_.Submit(L"dock-running:" + key + L"\n" +
+                std::to_wstring(requiredIconSize), [window, process, path, appId, requiredIconSize] {
+                auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+                DWORD current = 0;
+                GetWindowThreadProcessId(window, &current);
+                if (current == process)
+                    result->bitmap = CreateDockWindowIconBitmap(window, path, appId,
+                        result->size, requiredIconSize);
+                return result;
+            }, [this, key, path, appId, requiredIconSize](auto result) {
+                if (!result || !result->bitmap) return;
+                for (auto& app : dockUnpinnedRunningApps_)
+                {
+                    if (app.identityKey != key || app.executablePath != path ||
+                        app.appUserModelId != appId || app.iconRequestedSize > requiredIconSize) continue;
+                    if (app.iconBitmap) { EraseD2DIconCacheForBitmap(app.iconBitmap); DeleteObject(app.iconBitmap); }
+                    app.iconBitmap = std::exchange(result->bitmap, nullptr);
+                    app.iconBitmapSize = result->size;
+                    app.iconRequestedSize = requiredIconSize;
+                    InvalidateDragStaticScene();
+                    InvalidateDockRects();
+                    break;
+                }
+            }, hwnd_, kBackgroundShellReadyMessage);
         }
         runningApps.push_back(std::move(info));
     }
@@ -1331,4 +1358,28 @@ void DesktopApp::UpdateDockWindowActivationState(
         }
     }
     InvalidateDockRects();
+}
+
+std::wstring DesktopApp::GetDockWindowAppUserModelIdAsync(HWND window)
+{
+    DWORD process = 0;
+    GetWindowThreadProcessId(window, &process);
+    std::wstring cached;
+    if (const auto found = dockWindowAppIds_.find(window);
+        found != dockWindowAppIds_.end() && found->second.first == process)
+        cached = found->second.second;
+    shellVisualWork_.Submit(L"window-appid:" + std::to_wstring(reinterpret_cast<UINT_PTR>(window)) +
+        L":" + std::to_wstring(process), [window, process] {
+            DWORD current = 0;
+            GetWindowThreadProcessId(window, &current);
+            return current == process ? QueryDockWindowAppUserModelId(window) : std::wstring{};
+        }, [this, window, process](std::wstring id) {
+            DWORD current = 0;
+            GetWindowThreadProcessId(window, &current);
+            if (current != process) return;
+            std::erase_if(dockWindowAppIds_, [](const auto& entry) { return !IsWindow(entry.first); });
+            dockWindowAppIds_[window] = {process, std::move(id)};
+            dockRunningWindowsRefreshTick_ = 0;
+        }, hwnd_, kBackgroundShellReadyMessage);
+    return cached;
 }

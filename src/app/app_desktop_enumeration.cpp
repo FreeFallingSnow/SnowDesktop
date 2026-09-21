@@ -1,4 +1,5 @@
 #include "app.h"
+#include "shell_icon_request.h"
 #include "../desktop_namespace_registry.h"
 
 // Shell desktop enumeration and display-topology refresh.
@@ -268,19 +269,8 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
             return;
         desktopPidl_.reset(raw);
     }
-    std::vector<DesktopItem> fresh;
-    if (snapshot)
-        fresh = std::move(snapshot->desktopItems);
-    else
-    {
-        shellMetadataCache_.desktop.clear(); // Explicit refresh invalidates metadata too.
-        if (!snowdesktop::shell_refresh::ReadDesktop(settingsIconVisibility_,
-                AreExplorerHiddenItemsVisible(), fresh, &shellMetadataCache_))
-        {
-            WriteDiagnosticLogEntry(L"Desktop enumeration failed; retaining current items");
-            return;
-        }
-    }
+    if (!snapshot) { RequestShellRefresh(); return; }
+    auto fresh = std::move(snapshot->desktopItems);
     auto previous = std::exchange(items_, std::move(fresh));
     std::unordered_map<std::wstring, size_t> previousByKey;
     for (size_t i = 0; i < previous.size(); ++i)
@@ -317,6 +307,7 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
         if (!item.iconBitmap || item.iconState != IconState::FullQuality)
         {
             IconLoadTask task;
+            task.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
             task.serial = iconLoadSerial_;
             task.layoutKey = item.layoutKey;
             task.absolutePidl.reset(ILCloneFull(item.absolutePidl.get()));

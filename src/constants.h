@@ -233,6 +233,7 @@ constexpr UINT kContextDockCreateMapping = 41818;
 constexpr UINT kShellChangeMessage = WM_APP + 2;
 constexpr UINT kFolderChangeMessage = WM_APP + 23;
 constexpr UINT kFolderSubscriptionReadyMessage = WM_APP + 24;
+constexpr UINT kBackgroundShellReadyMessage = WM_APP + 25;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;
 constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT kCommitRenameMessage = WM_APP + 5;

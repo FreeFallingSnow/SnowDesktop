@@ -327,7 +327,10 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
  */
 void DesktopApp::UpdateCutState()
 {
-    snowdesktop::startup_diagnostics::Scope startup(L"UpdateCutState");
+    const auto sequence = GetClipboardSequenceNumber();
+    clipboardReadWork_.Submit(L"cut-state", [] {
+        const auto initialized = OleInitialize(nullptr);
+        struct OleScope { HRESULT hr; ~OleScope() { if (SUCCEEDED(hr)) OleUninitialize(); } } ole{initialized};
     std::unordered_set<std::wstring> clipCutPaths;
 
     ComPtr<IDataObject> clipObj;
@@ -375,16 +378,14 @@ void DesktopApp::UpdateCutState()
         }
     }
 
+        return clipCutPaths;
+    }, [this, sequence](auto clipCutPaths) {
+        if (GetClipboardSequenceNumber() != sequence) { UpdateCutState(); return; }
     for (auto& item : items_)
     {
         item.isCut = false;
         if (item.desktopIconClsid.empty() == false) continue;
-        wchar_t path[MAX_PATH]{};
-        if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-        {
-            if (clipCutPaths.contains(ToUpperInvariant(path)))
-                item.isCut = true;
-        }
+        item.isCut = clipCutPaths.contains(ToUpperInvariant(item.parsingName));
     }
 
     for (auto& widget : widgets_)
@@ -413,6 +414,11 @@ void DesktopApp::UpdateCutState()
                 entry.isCut = true;
         }
     }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateDockRects();
+        InvalidateFloatingPopupWindow(false);
+        InvalidateQuickNavigationWindow();
+    }, hwnd_, kBackgroundShellReadyMessage);
 }
 
 // ── Shell 变更通知 ──────────────────────────────────────────

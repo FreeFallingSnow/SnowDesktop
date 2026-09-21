@@ -350,7 +350,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
 
     LoadUsageGuidePreferences();
-    InitializeSettingsController();
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -373,6 +372,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         ~OleUninitializeOnExit() noexcept { OleUninitialize(); }
     };
     const OleUninitializeOnExit oleUninitializeOnExit;
+    InitializeSettingsController();
 
     if (!uiAnimationScheduler_.Initialize())
     {
@@ -611,7 +611,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snowdesktop::startup_diagnostics::Scope startup(L"InitialDesktopLoad", true);
         snowdesktop::startup_diagnostics::Call(L"StartInitialShellRead", [&] { StartInitialShellRead(); });
         snowdesktop::startup_diagnostics::Call(L"PollInitialShellRead", [&] {
-            PollInitialShellRead(std::chrono::milliseconds(1500));
+            PollInitialShellRead();
         });
         if (!desktopItemsReady_)
         {
@@ -1500,19 +1500,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // are configured. Activation requests received during startup remain
     // pending until this point, including when native initialization is retried.
     startupInitializationComplete_ = true;
+    RefreshTrayNamespaceRegistrations();
     logStartupStage(L"services ready");
     if (customDesktopVisible_)
     {
         // Consume only already-completed icon work, without pumping unrelated
         // commands or waiting for slow Shell providers. Bound the batch even if
         // phase-two results arrive while phase-one completions are applied.
-        MSG iconMessage{};
-        for (unsigned count = 0; count < 256 &&
-            PeekMessageW(&iconMessage, hwnd_, kIconLoadedMessage,
-                kIconLoadedMessage, PM_REMOVE); ++count)
-        {
-            OnIconLoaded(iconMessage.wParam, iconMessage.lParam);
-        }
+        PollInitialShellRead();
+        iconWork_.Drain();
         FinishWidgetGroupTransitions();
         if (!OnPaint() || !FlushPendingCompositionCommit())
         {

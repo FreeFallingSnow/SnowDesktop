@@ -1,4 +1,5 @@
 #include "app.h"
+#include "shell_icon_request.h"
 #include "../json_value.h"
 #include "dock_platform_helpers.h"
 
@@ -31,58 +32,42 @@ bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
 snowdesktop::item_location::FolderTarget
 DesktopApp::ResolveDockFolderTarget(const DockEntry& entry) const
 {
-    std::wstring sourcePath;
-    if (entry.type == DockEntryType::FolderMapping)
+    using namespace snowdesktop::item_location;
+    std::wstring path, stamp;
+    const bool mapping = entry.type == DockEntryType::FolderMapping;
+    if (mapping)
     {
-        std::wstring cacheKey =
-            L"M:" + ToUpperInvariant(entry.reference);
-        if (const auto cached = dockFolderTargetCache_.find(cacheKey);
-            cached != dockFolderTargetCache_.end())
-            return cached->second;
-
-        const size_t widgetIndex = FindWidgetIndexById(entry.reference);
-        if (widgetIndex >= widgets_.size() ||
-            widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping)
-            return {};
-        sourcePath = widgets_[widgetIndex].sourceFolderPath;
-        auto target =
-            snowdesktop::item_location::ResolveFolderTarget(
-                sourcePath);
-        if (target.kind ==
-                snowdesktop::item_location::
-                    FolderTargetKind::None &&
-            !sourcePath.empty())
-        {
-            target.path = sourcePath;
-            target.kind =
-                snowdesktop::item_location::
-                    FolderTargetKind::Directory;
-            target.available = false;
-        }
-        dockFolderTargetCache_.insert_or_assign(
-            std::move(cacheKey), target);
-        return target;
+        const auto index = FindWidgetIndexById(entry.reference);
+        if (index >= widgets_.size()) return {};
+        path = widgets_[index].sourceFolderPath;
     }
-    if (entry.type != DockEntryType::DesktopItem ||
-        IsRecycleBinDockEntry(entry))
-        return {};
-
-    std::wstring cacheKey =
-        L"I:" + ToUpperInvariant(entry.reference);
-    if (const auto cached = dockFolderTargetCache_.find(cacheKey);
-        cached != dockFolderTargetCache_.end())
-        return cached->second;
-
-    const size_t itemIndex = FindItemIndexByKey(entry.reference);
-    const std::wstring& path = itemIndex < items_.size() &&
-            !items_[itemIndex].parsingName.empty()
-        ? items_[itemIndex].parsingName
-        : entry.reference;
-    auto target =
-        snowdesktop::item_location::ResolveFolderTarget(path);
-    dockFolderTargetCache_.insert_or_assign(
-        std::move(cacheKey), target);
-    return target;
+    else
+    {
+        if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) return {};
+        const auto index = FindItemIndexByKey(entry.reference);
+        path = index < items_.size() ? items_[index].parsingName : entry.reference;
+        if (index < items_.size()) stamp = snowdesktop::shell_icon_request::Stamp(items_[index]);
+    }
+    const auto key = (mapping ? L"M:" : L"I:") +
+        ToUpperInvariant(entry.reference + L"\n" + path) + stamp;
+    if (const auto found = dockFolderTargetCache_.find(key); found != dockFolderTargetCache_.end())
+        return found->second;
+    auto* owner = const_cast<DesktopApp*>(this);
+    shellVisualWork_.Submit(L"dock-target:" + key, [path, mapping] {
+        auto target = ResolveFolderTarget(path);
+        if (mapping && target.kind == FolderTargetKind::None && !path.empty())
+            target = {path, FolderTargetKind::Directory, false};
+        return target;
+    }, [owner, key](FolderTarget target) {
+        owner->dockFolderTargetCache_[key] = std::move(target);
+        owner->InvalidateDockContainers();
+        owner->InvalidateDragStaticScene();
+        owner->UpdateFloatingDockWindowBounds(false);
+        owner->InvalidateDockRects();
+    }, hwnd_, kBackgroundShellReadyMessage);
+    FolderTarget pending;
+    if (mapping) { pending.kind = FolderTargetKind::Directory; pending.path = path; }
+    return pending;
 }
 
 bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const

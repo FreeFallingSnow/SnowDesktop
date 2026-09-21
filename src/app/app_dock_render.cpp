@@ -309,7 +309,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     {
         int sysIconIndex = -1;
         const std::wstring iconCacheKey =
-            ToUpperInvariant(entry.reference);
+            ToUpperInvariant(entry.reference + L"\n" + widget.sourceFolderPath);
         if (const auto cached =
                 dockFolderIconIndexCache_.find(
                     iconCacheKey);
@@ -320,15 +320,17 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         }
         else
         {
-            SHFILEINFOW info{};
-            if (!widget.sourceFolderPath.empty() &&
-                snowdesktop::startup_diagnostics::Call(L"Dock.FolderIcon.SHGetFileInfo", [&] {
-                    return SHGetFileInfoW(widget.sourceFolderPath.c_str(), 0,
-                        &info, sizeof(info), SHGFI_SYSICONINDEX);
-                }) != 0)
-                sysIconIndex = info.iIcon;
-            dockFolderIconIndexCache_.emplace(
-                iconCacheKey, sysIconIndex);
+            shellVisualWork_.Submit(L"dock-folder:" + iconCacheKey,
+                [path = widget.sourceFolderPath, startup = initialShellReadPending_] {
+                    snowdesktop::startup_diagnostics::Scope probe(L"Dock.FolderIcon.Async", startup);
+                    SHFILEINFOW info{};
+                    return SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info),
+                        SHGFI_SYSICONINDEX) ? info.iIcon : -1;
+                }, [this, iconCacheKey](int index) {
+                    dockFolderIconIndexCache_[iconCacheKey] = index;
+                    InvalidateDockRects();
+                }, hwnd_, kBackgroundShellReadyMessage);
+
         }
         DrawPlaceholderIcon(
             ctx, sysIconIndex, iconRect, 1.0f, true);

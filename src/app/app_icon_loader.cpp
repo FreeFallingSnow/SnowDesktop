@@ -1,4 +1,5 @@
 #include "app.h"
+#include "shell_icon_request.h"
 #include "../popup_icon_load_rules.h"
 #include "../shortcut_application_rules.h"
 
@@ -237,30 +238,52 @@ void DesktopApp::OnDemoIconDecoded(LPARAM lParam)
         InvalidateQuickNavigationWindow();
 }
 
-void DesktopApp::StartIconLoader()
-{
-    iconLoaderRunning_ = true;
-    iconLoaderThread_ = std::thread([this]() {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        MSG msg;
-        PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE);
-        while (true) {
-            IconLoadTask task;
-            {
-                std::unique_lock<std::mutex> lock(iconLoaderMutex_);
-                iconLoaderCv_.wait(lock, [this] { return !iconLoaderQueue_.empty() || !iconLoaderRunning_; });
-                if (!iconLoaderRunning_) break;
-                if (iconLoaderQueue_.empty()) continue;
-                task = std::move(iconLoaderQueue_.front());
-                iconLoaderQueue_.pop_front();
-            }
-            if (task.absolutePidl.get() == nullptr)
-            {
-                std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-                iconLoaderPendingKeys_.erase(task.requestKey);
-                continue;
-            }
+void DesktopApp::StartIconLoader() {}
 
+void DesktopApp::DrainBackgroundShellWork()
+{
+    if (exitRequested_ || compositionPaintInProgress_ || reloading_ ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        HasActiveContextMenuSession() || mouseDown_ || renameEdit_ ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
+        return; // The maintenance timer retries after the interaction fence.
+    iconWork_.Drain();
+    shellVisualWork_.Drain();
+    shellModelWork_.Drain();
+    appIndexWork_.Drain();
+    folderReadWork_.Drain();
+    clipboardReadWork_.Drain();
+}
+
+void DesktopApp::QueueIconTask(IconLoadTask value)
+{
+    auto input = std::make_shared<IconLoadTask>(std::move(value));
+    const auto key = input->requestKey;
+    if (!iconWork_.Submit(key, [input] {
+        auto& task = *input;
+        auto result = std::shared_ptr<IconLoadResult>(new IconLoadResult,
+            [](IconLoadResult* value) {
+                if (value->bitmap) DeleteObject(value->bitmap);
+                delete value;
+            });
+        if (task.sysIconIndex < 0)
+        {
+            SHFILEINFOW info{};
+            const auto& path = task.parsingName.empty() ? task.folderPath : task.parsingName;
+            if (SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info), SHGFI_SYSICONINDEX | SHGFI_TYPENAME))
+            {
+                task.sysIconIndex = info.iIcon;
+                result->typeName = info.szTypeName;
+            }
+        }
+        result->sysIconIndex = task.sysIconIndex;
+        if (!task.absolutePidl.get())
+        {
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            const auto& path = task.parsingName.empty() ? task.folderPath : task.parsingName;
+            if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)))
+                task.absolutePidl.reset(pidl);
+        }
             SIZE bitmapSize{};
             const std::wstring_view representationName =
                 !task.parsingName.empty()
@@ -295,11 +318,11 @@ void DesktopApp::StartIconLoader()
                 snowdesktop::shortcut_application_rules::HasExtension(
                     representationName, L".url");
             bool iconIsThumbnail = false;
-            HBITMAP bitmap = GetHighResolutionShellIconBitmap(
+            HBITMAP bitmap = task.absolutePidl.get() ? GetHighResolutionShellIconBitmap(
                 task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
                 allowThumbnail, task.requestedSize,
                 preferDirectIconExtraction,
-                forShortcut, representationName, &iconIsThumbnail);
+                forShortcut, representationName, &iconIsThumbnail) : nullptr;
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
 
@@ -361,9 +384,6 @@ void DesktopApp::StartIconLoader()
                 }
             }
 
-            if (bitmap || task.phase == IconLoadPhase::Phase2)
-            {
-                auto* result = new IconLoadResult();
                 result->serial = task.serial;
                 result->popupGeneration = task.popupGeneration;
                 result->requestKey = std::move(task.requestKey);
@@ -380,24 +400,15 @@ void DesktopApp::StartIconLoader()
                 result->phase = task.phase;
                 result->isDesktopItem = task.isDesktopItem;
                 result->folderPath = std::move(task.folderPath);
-                if (!PostMessageW(hwnd_, kIconLoadedMessage, 0, reinterpret_cast<LPARAM>(result)))
-                {
-                    {
-                        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-                        iconLoaderPendingKeys_.erase(result->requestKey);
-                    }
-                    if (result->bitmap) DeleteObject(result->bitmap);
-                    delete result;
-                }
-            }
-            else
-            {
-                std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-                iconLoaderPendingKeys_.erase(task.requestKey);
-            }
-        }
-        CoUninitialize();
-    });
+
+        return result;
+    }, [this, key](std::shared_ptr<IconLoadResult> result) {
+        if (!result) { iconLoaderPendingKeys_.erase(key); return; }
+        auto delivered = new IconLoadResult(*result);
+        result->bitmap = nullptr;
+        OnIconLoaded(0, reinterpret_cast<LPARAM>(delivered));
+    }, hwnd_, kBackgroundShellReadyMessage))
+        iconLoaderPendingKeys_.erase(key);
 }
 
 int DesktopApp::GetShellIconBitmapSizeForPage(
@@ -437,20 +448,21 @@ void DesktopApp::RefreshIconBitmapResolution()
     const int desktopRequired = GetMaximumShellIconBitmapSize();
     for (auto& item : items_)
     {
-        if (item.iconState == IconState::Loading ||
+        if (item.iconState == IconState::FullQuality &&
             snowdesktop::icon_render_rules::SourceLongEdgeCoversTarget(
                 item.iconBitmapSize.cx, item.iconBitmapSize.cy,
-                desktopRequired) || !item.absolutePidl.get())
+                desktopRequired))
             continue;
 
         IconLoadTask task;
+        task.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
         task.serial = iconLoadSerial_;
         task.layoutKey = item.layoutKey;
         task.absolutePidl.reset(ILClone(item.absolutePidl.get()));
         task.sysIconIndex = item.sysIconIndex;
         task.parsingName = item.parsingName;
         task.isDesktopItem = true;
-        task.phase = IconLoadPhase::Phase2;
+        task.phase = item.iconState == IconState::Loading ? IconLoadPhase::Phase1 : IconLoadPhase::Phase2;
         task.requestedSize = desktopRequired;
         EnqueueIconLoad(std::move(task));
     }
@@ -463,25 +475,21 @@ void DesktopApp::RefreshIconBitmapResolution()
         const int required = GetShellIconBitmapSizeForPage(pageId);
         for (auto& entry : widget.folderEntries)
         {
-            if (entry.iconState == IconState::Loading ||
+            if (entry.iconState == IconState::FullQuality &&
                 snowdesktop::icon_render_rules::SourceLongEdgeCoversTarget(
                     entry.iconBitmapSize.cx, entry.iconBitmapSize.cy,
                     required))
                 continue;
 
-            PIDLIST_ABSOLUTE pidl = nullptr;
-            if (FAILED(SHParseDisplayName(entry.fullPath.c_str(), nullptr,
-                    &pidl, 0, nullptr)) || !pidl)
-                continue;
-
             IconLoadTask task;
+            task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
             task.serial = iconLoadSerial_;
             task.widgetId = widget.id;
             task.folderPath = entry.fullPath;
-            task.absolutePidl.reset(pidl);
             task.sysIconIndex = entry.sysIconIndex;
             task.isDesktopItem = false;
-            task.phase = IconLoadPhase::Phase2;
+            task.phase = entry.iconState == IconState::Loading ? IconLoadPhase::Phase1 : IconLoadPhase::Phase2;
+            task.parsingName = entry.fullPath;
             task.requestedSize = required;
             EnqueueIconLoad(std::move(task));
         }
@@ -497,50 +505,28 @@ void DesktopApp::RefreshIconBitmapResolution()
 
 void DesktopApp::StopIconLoader()
 {
-    {
-        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-        iconLoaderRunning_ = false;
-        iconLoaderQueue_.clear();
-        iconLoaderPendingKeys_.clear();
-    }
-    iconLoaderCv_.notify_all();
-    if (iconLoaderThread_.joinable())
-        iconLoaderThread_.join();
-    if (hwnd_)
-    {
-        MSG msg{};
-        while (PeekMessageW(&msg, hwnd_, kIconLoadedMessage, kIconLoadedMessage, PM_REMOVE))
-        {
-            auto* result = reinterpret_cast<IconLoadResult*>(msg.lParam);
-            if (result)
-            {
-                if (result->bitmap) DeleteObject(result->bitmap);
-                delete result;
-            }
-        }
-    }
+    iconWork_.Stop();
+    shellVisualWork_.Stop();
+    shellModelWork_.Stop();
+    folderReadWork_.Stop();
+    clipboardReadWork_.Stop();
+    iconLoaderPendingKeys_.clear();
 }
 
 void DesktopApp::BeginIconLoadGeneration()
 {
-    std::lock_guard<std::mutex> lock(iconLoaderMutex_);
     ++iconLoadSerial_;
-    iconLoaderQueue_.clear();
+    iconWork_.Cancel();
     iconLoaderPendingKeys_.clear();
 }
 
 void DesktopApp::CancelDockFolderPopupIconLoads()
 {
-    std::lock_guard<std::mutex> lock(iconLoaderMutex_);
     dockFolderPopupIconGeneration_ =
-        snowdesktop::popup_icon_load_rules::NextGeneration(
-            dockFolderPopupIconGeneration_);
-    snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
-        iconLoaderQueue_, iconLoaderPendingKeys_,
-        [](const IconLoadTask& task) {
-            return !task.isDesktopItem &&
-                task.widgetId == kDockFolderPopupWidgetId;
-        });
+        snowdesktop::popup_icon_load_rules::NextGeneration(dockFolderPopupIconGeneration_);
+    const auto prefix = std::to_wstring(iconLoadSerial_) + L"\nF\n" + kDockFolderPopupWidgetId + L"\n";
+    iconWork_.Cancel(prefix);
+    std::erase_if(iconLoaderPendingKeys_, [&](const auto& key) { return key.starts_with(prefix); });
 }
 
 void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)

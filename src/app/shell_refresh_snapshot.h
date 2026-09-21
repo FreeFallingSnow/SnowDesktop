@@ -198,8 +198,10 @@ inline void PreserveRuntime(FolderEntry& item, FolderEntry& previous)
 {
     item.selected = previous.selected;
     item.isCut = previous.isCut;
-    if (item.sysIconIndex == previous.sysIconIndex)
+    if (item.sysIconIndex < 0 || item.sysIconIndex == previous.sysIconIndex)
     {
+        item.sysIconIndex = previous.sysIconIndex;
+        if (item.typeName.empty()) item.typeName = previous.typeName;
         TransferIcon(item, previous);
         if (item.fileSize != previous.fileSize ||
             CompareFileTime(&item.lastWriteTime, &previous.lastWriteTime) != 0)

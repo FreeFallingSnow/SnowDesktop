@@ -1,4 +1,5 @@
 #include "app.h"
+#include "shell_icon_request.h"
 #include "startup_diagnostics.h"
 #include "../performance_capture.h"
 #include "../performance_trace.h"
@@ -133,17 +134,6 @@ void DesktopApp::RegisterShellChangeNotifications()
         entries[1].fRecursive = TRUE;
         entryCount = 2;
     }
-    Pidl simulatedDirectory;
-    if (snowdesktop::debug_profile::Enabled())
-    {
-        PIDLIST_ABSOLUTE raw = nullptr;
-        if (SUCCEEDED(SHParseDisplayName(snowdesktop::desktop_source::Directory().c_str(), nullptr, &raw, 0, nullptr)))
-        {
-            simulatedDirectory.reset(raw);
-            entries[entryCount].pidl = raw;
-            entries[entryCount++].fRecursive = FALSE;
-        }
-    }
     shellChangeRegId_ = SHChangeNotifyRegister(hwnd_,
         SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
         SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
@@ -160,6 +150,8 @@ void DesktopApp::SyncFolderChangeNotifications()
 {
     if (exitRequested_) return;
     std::vector<std::wstring> paths;
+    if (snowdesktop::debug_profile::Enabled())
+        paths.push_back(snowdesktop::desktop_source::Directory());
     for (const auto& widget : widgets_)
         if (widget.type == DesktopWidgetType::FolderMapping)
             paths.push_back(widget.sourceFolderPath);
@@ -566,6 +558,9 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case kBackgroundShellReadyMessage:
+        DrainBackgroundShellWork();
+        return 0;
     case kLargeIconAssetsReadyMessage:
         ProcessLargeIconAssets();
         return 0;
@@ -718,11 +713,20 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     snowdesktop::shell_refresh::Snapshot* snapshot)
 {
-    if (initialShellReadPending_ && !snapshot)
+    if (!snapshot)
     {
+        if (!initialShellReadPending_)
+        {
+            BeginIconLoadGeneration();
+            shellMetadataCache_ = {};
+            dockAppIdentityCache_.clear();
+            for (auto& item : items_) item.iconState = IconState::Loading;
+            for (auto& widget : widgets_)
+                for (auto& entry : widget.folderEntries) entry.iconState = IconState::Loading;
+        }
         shellReloadLayoutFromDiskPending_ |= reloadLayoutFromDisk;
         RequestShellRefresh();
-        StartInitialShellRead();
+        if (initialShellReadPending_) StartInitialShellRead();
         return;
     }
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
@@ -798,7 +802,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
                     folder != snapshot->folders.end())
                     EnumerateFolderMappingEntries(widget, true, &folder->second);
                 else if (!incremental)
-                    RequestShellRefresh(); // The mapping changed during the read.
+                    QueueFolderRead(widget.sourceFolderPath);
             }
         }
     }
@@ -1128,11 +1132,34 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
                 std::to_wstring(task.requestedSize) + L"\n" +
                 std::to_wstring(task.popupGeneration);
         }
+        // Bulk enumeration supplies stamps directly. Rare producers such as
+        // rename completion can resolve against the already-updated UI model.
+        if (task.sourceStamp.empty())
+        {
+            if (task.isDesktopItem)
+            {
+                for (const auto& item : items_)
+                    if (item.layoutKey == task.layoutKey)
+                        { task.sourceStamp = snowdesktop::shell_icon_request::Stamp(item); break; }
+            }
+            else
+            {
+                const auto stamp = [&](const DesktopWidget& widget) {
+                    if (widget.id != task.widgetId) return;
+                    for (const auto& entry : widget.folderEntries)
+                        if (entry.fullPath == task.folderPath)
+                            { task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry); break; }
+                };
+                if (dockFolderPopupTask) stamp(dockFolderPopupWidget_);
+                else for (const auto& widget : widgets_) stamp(widget);
+            }
+        }
+        task.requestKey += task.sourceStamp;
         if (!iconLoaderPendingKeys_.insert(task.requestKey).second)
             return;
-        iconLoaderQueue_.push_back(std::move(task));
+
     }
-    iconLoaderCv_.notify_one();
+    QueueIconTask(std::move(task));
 }
 
 void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
@@ -1167,7 +1194,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
     {
         for (auto& item : items_)
         {
-            if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey))
+            if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
+                snowdesktop::shell_icon_request::Matches(result->requestKey, item))
             {
                 if (result->bitmap)
                 {
@@ -1179,6 +1207,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     result->bitmap = nullptr;
                 }
                 matched = true;
+                item.sysIconIndex = result->sysIconIndex;
+                if (!result->typeName.empty()) item.typeName = result->typeName;
                 if (result->phase == IconLoadPhase::Phase1)
                 {
                     item.iconState = IconState::IconReady;
@@ -1186,6 +1216,7 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     item.isShortcut = result->isShortcut;
                     item.isApplicationShortcut = result->isApplicationShortcut;
                     IconLoadTask phase2;
+                    phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
                     phase2.serial = result->serial;
                     phase2.layoutKey = item.layoutKey;
                     phase2.absolutePidl.reset(ILClone(item.absolutePidl.get()));
@@ -1217,7 +1248,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 return false;
             for (auto& entry : widget.folderEntries)
             {
-                if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath))
+                if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath) &&
+                    snowdesktop::shell_icon_request::Matches(result->requestKey, entry))
                 {
                     if (result->bitmap)
                     {
@@ -1229,6 +1261,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         result->bitmap = nullptr;
                     }
                     matched = true;
+                    entry.sysIconIndex = result->sysIconIndex;
+                    if (!result->typeName.empty()) entry.typeName = result->typeName;
                     if (result->phase == IconLoadPhase::Phase1)
                     {
                         entry.iconState = IconState::IconReady;
@@ -1236,18 +1270,14 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         entry.isShortcut = result->isShortcut;
                         entry.isApplicationShortcut = result->isApplicationShortcut;
                         IconLoadTask phase2;
+                        phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
                         phase2.serial = result->serial;
                         phase2.widgetId = widget.id;
                         phase2.folderPath = entry.fullPath;
                         phase2.sysIconIndex = entry.sysIconIndex;
                         phase2.isDesktopItem = false;
                         phase2.phase = IconLoadPhase::Phase2;
-                        PIDLIST_ABSOLUTE pidl = nullptr;
-                        if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
-                        {
-                            phase2.absolutePidl.reset(pidl);
-                            EnqueueIconLoad(std::move(phase2));
-                        }
+                        EnqueueIconLoad(std::move(phase2));
                     }
                     else
                     {
