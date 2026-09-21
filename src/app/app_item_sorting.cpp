@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 
 // Desktop and widget sorting plus clipboard cut-state updates.
 
@@ -326,17 +327,22 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
  */
 void DesktopApp::UpdateCutState()
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"UpdateCutState");
     std::unordered_set<std::wstring> clipCutPaths;
 
     ComPtr<IDataObject> clipObj;
-    if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
+    if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.OleGetClipboard", [&] {
+            return OleGetClipboard(&clipObj);
+        })) && clipObj)
     {
         CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
         FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
         STGMEDIUM medPref{};
         bool isMove = false;
 
-        if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
+        if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.DropEffect", [&] {
+                return clipObj->GetData(&fmtPref, &medPref);
+            })) && medPref.hGlobal)
         {
             DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
             if (pEffect)
@@ -352,7 +358,9 @@ void DesktopApp::UpdateCutState()
         {
             FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
             STGMEDIUM medDrop{};
-            if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
+            if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.FileList", [&] {
+                    return clipObj->GetData(&fmtDrop, &medDrop);
+                })) && medDrop.hGlobal)
             {
                 HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
                 UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);

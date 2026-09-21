@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "../performance_trace.h"
 #include "native_menu_presentation_rules.h"
 
@@ -300,7 +301,9 @@ bool DesktopApp::FlushPendingCompositionCommit()
     }
     const double commitStart =
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    const HRESULT hr = dcompDevice_->Commit();
+    const HRESULT hr = snowdesktop::startup_diagnostics::Call(L"Composition.Commit", [&] {
+        return dcompDevice_->Commit();
+    });
     if (SUCCEEDED(hr))
         compositionCommitPending_ = false;
     RecordShellHoverTrace(

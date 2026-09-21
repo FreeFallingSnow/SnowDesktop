@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 
 // Dock controls, entries and running-application rendering.
 
@@ -321,10 +322,10 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         {
             SHFILEINFOW info{};
             if (!widget.sourceFolderPath.empty() &&
-                SHGetFileInfoW(
-                    widget.sourceFolderPath.c_str(), 0,
-                    &info, sizeof(info),
-                    SHGFI_SYSICONINDEX) != 0)
+                snowdesktop::startup_diagnostics::Call(L"Dock.FolderIcon.SHGetFileInfo", [&] {
+                    return SHGetFileInfoW(widget.sourceFolderPath.c_str(), 0,
+                        &info, sizeof(info), SHGFI_SYSICONINDEX);
+                }) != 0)
                 sysIconIndex = info.iIcon;
             dockFolderIconIndexCache_.emplace(
                 iconCacheKey, sysIconIndex);

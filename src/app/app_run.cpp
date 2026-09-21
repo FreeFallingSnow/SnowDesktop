@@ -1,6 +1,7 @@
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
+#include "startup_diagnostics.h"
 #include "../data_paths.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
@@ -601,17 +602,22 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
-    StartInitialShellRead();
-    PollInitialShellRead(std::chrono::milliseconds(1500));
-    if (!desktopItemsReady_)
     {
-        // Show the saved widgets/layout while Shell is still reading. Do not
-        // feed an empty snapshot into placement, pruning or persistence.
-        LayoutItems();
-        WriteDiagnosticLogEntry(
-            L"Startup Shell read pending; saved widgets shown, desktop items deferred");
+        snowdesktop::startup_diagnostics::Scope startup(L"InitialDesktopLoad", true);
+        snowdesktop::startup_diagnostics::Call(L"StartInitialShellRead", [&] { StartInitialShellRead(); });
+        snowdesktop::startup_diagnostics::Call(L"PollInitialShellRead", [&] {
+            PollInitialShellRead(std::chrono::milliseconds(1500));
+        });
+        if (!desktopItemsReady_)
+        {
+            // Show the saved widgets/layout while Shell is still reading. Do not
+            // feed an empty snapshot into placement, pruning or persistence.
+            LayoutItems();
+            WriteDiagnosticLogEntry(
+                L"Startup Shell read pending; saved widgets shown, desktop items deferred");
+        }
+        snowdesktop::startup_diagnostics::Call(L"StartIconLoader", [&] { StartIconLoader(); });
     }
-    StartIconLoader();
     logStartupStage(desktopItemsReady_
         ? L"desktop items ready" : L"desktop items deferred");
 

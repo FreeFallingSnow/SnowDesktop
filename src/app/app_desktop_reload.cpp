@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "../performance_capture.h"
 #include "../performance_trace.h"
 #include "../drag_input_rules.h"
@@ -728,6 +729,10 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     }
     if (reloading_) return;
     const bool incremental = snapshot && snapshot->desktopIncremental;
+    snowdesktop::startup_diagnostics::Scope startup(
+        incremental ? L"ReloadItems.partial" : L"ReloadItems.complete",
+        initialShellReadPending_, snapshot ? snapshot->desktopItems.size() : items_.size());
+    snowdesktop::startup_diagnostics::Scope model(L"ReloadItems.model");
     if (!incremental) shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
     ClearPopupDragTarget();
@@ -776,7 +781,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             }
         }
     }
-    LoadDesktopItems(snapshot);
+    snowdesktop::startup_diagnostics::Call(L"LoadDesktopItems", [&] { LoadDesktopItems(snapshot); });
     if (!desktopItemsReady_ && !incremental)
     {
         // A failed initial read is not an empty desktop. Preserve the loaded
@@ -785,7 +790,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         RequestShellRefresh();
         return;
     }
-    InitializeGridFromWindows();
+    snowdesktop::startup_diagnostics::Call(L"InitializeGridFromWindows", [&] { InitializeGridFromWindows(); });
     // LoadLayoutSlots may normalize Dock entries before the freshly
     // enumerated desktop items are available. Discard those provisional
     // resolutions so paths and shortcut targets are classified from the new
@@ -826,7 +831,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         RestoreDockEntriesToDesktop();
     if (!incremental) ApplyAutoCollectFileCategoryWidgets();
     if (snapshot) snapshot->modelMs = GetTickCount64() - stageStarted;
+    model.Finish();
     stageStarted = GetTickCount64();
+    snowdesktop::startup_diagnostics::Scope placement(L"ReloadItems.assignSlots");
 
     // Mark widgets as used
     std::unordered_set<std::wstring> usedSlots;
@@ -1006,9 +1013,10 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     // Loading new files may add virtual overflow pages, while deleting files
     // may remove the last usable offset. Refresh the runtime page mapping in
     // this same reload pass instead of waiting for the next manual refresh.
-    ApplyPageMapping();
+    placement.Finish();
+    snowdesktop::startup_diagnostics::Call(L"ApplyPageMapping", [&] { ApplyPageMapping(); });
     LayoutItems();
-    ApplyPendingPlacement();
+    snowdesktop::startup_diagnostics::Call(L"ApplyPendingPlacement", [&] { ApplyPendingPlacement(); });
     UpdateCutState();
 
     // Prune desktop-backed widget itemKeys that no longer exist (file was deleted from outside).
@@ -1031,7 +1039,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
 
     if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
-    SaveLayoutSlots();
+    snowdesktop::startup_diagnostics::Call(L"SaveLayoutSlots", [&] { SaveLayoutSlots(); });
     if (snapshot) snapshot->saveMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
     RebuildContainersAndItems();
@@ -1041,7 +1049,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         RefreshDockRunningWindows(false);
     stageStarted = GetTickCount64();
     if (widgetEngine_)
-        widgetEngine_->NotifyDesktopChanged("reload");
+        snowdesktop::startup_diagnostics::Call(L"NotifyDesktopChanged", [&] {
+            widgetEngine_->NotifyDesktopChanged("reload");
+        });
     if (snapshot) snapshot->notifyMs = GetTickCount64() - stageStarted;
     InvalidateRect(hwnd_, nullptr, TRUE);
 }

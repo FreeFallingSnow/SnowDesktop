@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 
 #include <atomic>
 #include <new>
@@ -695,6 +696,8 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
         return;
     }
     shellMetadataCache_ = std::move(snapshot->metadata);
+    snowdesktop::startup_diagnostics::Scope startup(L"ApplyStartupSnapshot", true,
+        snapshot->desktopItems.size());
     ReloadItems(false, snapshot.get());
     if (desktopItemsReady_)
     {
@@ -702,7 +705,9 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
         for (auto& reader : initialLocalReads_) reader.Stop();
         InvalidateRect(hwnd_, nullptr, TRUE);
         InvalidateFloatingDockWindow(false);
-        RefreshDockRunningWindows(false);
+        snowdesktop::startup_diagnostics::Call(L"RefreshDockRunningWindows", [&] {
+            RefreshDockRunningWindows(false);
+        });
         WriteDiagnosticLogEntry(L"Startup Shell snapshot applied");
     }
 }

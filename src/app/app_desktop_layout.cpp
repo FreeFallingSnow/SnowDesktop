@@ -1,10 +1,12 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "../widgets/lua_logical_slot.h"
 
 // Desktop-item layout and container rebuild.
 
 void DesktopApp::LayoutItems()
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"LayoutItems");
     // Guide is a temporary empty-page placeholder. Do not mutate the model
     // during a live drag preview; the committed layout pass removes it once
     // another visible item or standalone widget actually occupies the page.
@@ -114,6 +116,7 @@ void DesktopApp::LayoutItems()
  */
 void DesktopApp::RebuildContainersAndItems()
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"RebuildContainersAndItems");
     // Cover direct rebuild callers as well as LayoutItems. A nested paint must
     // not publish the temporary single-member group while its caller unwinds.
     if (std::any_of(widgets_.begin(), widgets_.end(),

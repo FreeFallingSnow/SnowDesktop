@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "../performance_trace.h"
 #include "../drag_input_rules.h"
 
@@ -7,6 +8,7 @@
 bool DesktopApp::RenderFloatingDockCompositionFrame(
     PersistentDockHost& host)
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"Dock.RenderFrame");
     snowdesktop::performance::Scope performanceScope("dock", "floating.paint");
     if (graphicsDeviceRecovery_.Pending())
         return false;
@@ -34,9 +36,9 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         host.frameReady && host.dcompSurface &&
         host.dcompVisual;
     ComPtr<IDCompositionSurface> frameSurface;
-    HRESULT hr =
-        CreateOrResizeFloatingDockCompositionSurface(
-            host, frameSurface);
+    HRESULT hr = snowdesktop::startup_diagnostics::Call(L"Dock.CreateOrResizeSurface", [&] {
+        return CreateOrResizeFloatingDockCompositionSurface(host, frameSurface);
+    });
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
@@ -52,10 +54,10 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     // IDCompositionSurface rejects partial BeginDraw rectangles on this
     // HWND-backed path with E_INVALIDARG. Redraw the complete compact surface;
     // a resized replacement remains detached until this frame is finished.
-    hr = frameSurface->BeginDraw(
-        nullptr, __uuidof(ID2D1DeviceContext),
-        reinterpret_cast<void**>(&rawContext),
-        &updateOffset);
+    hr = snowdesktop::startup_diagnostics::Call(L"Dock.BeginDraw", [&] {
+        return frameSurface->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
+            reinterpret_cast<void**>(&rawContext), &updateOffset);
+    });
     if (FAILED(hr) || !rawContext)
     {
         RecoverFloatingDockCompositionFailure(
@@ -88,10 +90,12 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     host.backdrop.BeginFrame(true);
     if (host.container)
     {
-        host.container->DrawChrome(
-            context.Get(), lastMousePoint_);
-        host.container->DrawContents(
-            context.Get());
+        snowdesktop::startup_diagnostics::Call(L"Dock.DrawChrome", [&] {
+            host.container->DrawChrome(context.Get(), lastMousePoint_);
+        });
+        snowdesktop::startup_diagnostics::Call(L"Dock.DrawContents", [&] {
+            host.container->DrawContents(context.Get());
+        });
     }
     DrawDynamicOverlays(context.Get());
     host.backdrop.EndFrame();
@@ -103,7 +107,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 
-    hr = frameSurface->EndDraw();
+    hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return frameSurface->EndDraw(); });
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(

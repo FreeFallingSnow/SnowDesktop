@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "popup_window_pair_z_order.h"
 
 // Floating-Dock window, composition surface and bounds management.
@@ -6,6 +7,7 @@
 bool DesktopApp::CreateFloatingDockWindow(
     PersistentDockHost& host)
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"Dock.CreateWindow");
     if (host.hwnd && IsWindow(host.hwnd))
         return true;
 
@@ -264,6 +266,7 @@ void DesktopApp::DestroyPersistentDockHost(
 
 bool DesktopApp::SyncPersistentDockHosts()
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"Dock.SyncHosts");
     // Window creation can trigger an early layout pass before InitGraphics.
     // Defer the first top-level DockHost allocation until both rendering
     // devices exist, so startup never creates, hides, and then recovers a
@@ -687,6 +690,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     bool immediatePresent,
     bool forceRegionRefresh)
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"Dock.UpdateBounds");
     if (!host.active || !host.hwnd ||
         !IsWindow(host.hwnd) ||
         !host.container)

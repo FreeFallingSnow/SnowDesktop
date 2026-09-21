@@ -308,16 +308,22 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
 /// @{
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * @brief 绘制单个桌面项的缩略图
- *
- * 在指定的矩形区域内绘制项的图标（Icon），若项处于选中状态则先绘制蓝色高亮背景。
- * 图标居中绘制，大小自适应（限制在 16px 到区域尺寸之间）。
- * @param context  Direct2D 设备上下文
- * @param item     要绘制的桌面项
- * @param rect     绘制区域矩形
- * @param selected 是否处于选中状态
- */
+// Compact slots and the All-button mosaic share their icon inset in both
+// the saved-key placeholder path and the resolved-item thumbnail path.
+RECT Collection::GetThumbnailIconRect(RECT rect) const
+{
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    const int available = std::max(1,
+        std::min(width - Cu(6.0f), height - Cu(4.0f)));
+    const int iconSize = std::min(
+        std::max(Cu(16.0f), available),
+        std::max(1, std::min(width, height)));
+    const int iconX = rect.left + (width - iconSize) / 2;
+    const int iconY = rect.top + (height - iconSize) / 2;
+    return {iconX, iconY, iconX + iconSize, iconY + iconSize};
+}
+
 void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     const DesktopItem& item, RECT rect, bool selected) const
 {
@@ -329,19 +335,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.24f),
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f));
     }
-
-    const int width = rect.right - rect.left;
-    const int height = rect.bottom - rect.top;
-    const int available = std::max(1,
-        std::min(width - Cu(6.0f), height - Cu(4.0f)));
-    const int iconSize = std::min(
-        std::max(Cu(16.0f), available),
-        std::max(1, std::min(width, height)));
-    const int iconX = rect.left + (width - iconSize) / 2;
-    const int iconY = rect.top + (height - iconSize) / 2;
-    const RECT iconRect = {
-        iconX, iconY, iconX + iconSize, iconY + iconSize
-    };
+    const RECT iconRect = GetThumbnailIconRect(rect);
     const bool useDemoIdentity =
         app_->ShouldUseDemoCollectionIdentity(data_);
     const std::wstring_view demoIdentity = item.layoutKey.empty()
@@ -364,8 +358,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
             app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconX), static_cast<float>(iconY),
-                static_cast<float>(iconX + iconSize), static_cast<float>(iconY + iconSize));
+            D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
+                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
             context->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
         }
         else
@@ -608,7 +602,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         {
             if (!preview && app_->initialShellReadPending_)
             {
-                const RECT iconRect = compact ? slotRect : titlelessLargeFolder
+                const RECT iconRect = compact ? GetThumbnailIconRect(slotRect) : titlelessLargeFolder
                     ? snowdesktop::ResolveCenteredIconRect(slotRect, titlelessIconSize)
                     : app_->GetItemIconRect(slotRect);
                 app_->DrawPlaceholderIcon(context, -1, iconRect, 1.0f);
@@ -732,7 +726,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                             DrawThumbnail(context, di, tile, di.selected);
                     }
                     else if (!preview && app_->initialShellReadPending_)
-                        app_->DrawPlaceholderIcon(context, -1, tile, 1.0f);
+                        app_->DrawPlaceholderIcon(context, -1, GetThumbnailIconRect(tile), 1.0f);
                 }
                 else
                 {

@@ -1,9 +1,22 @@
 #include "application_crash_watchdog.h"
 #include "application_restart_policy.h"
 #include "app/startup_cancellation.h"
+#include "app/startup_diagnostics.h"
 
 #include <iostream>
 #include <string>
+#include <thread>
+#include <vector>
+
+namespace { std::vector<std::wstring> startupMessages; }
+
+// Replace only the disk sink. The production scopes and call wrapper still
+// execute, including before-return logging and restoration of Win32 errors.
+void WriteDiagnosticLogEntry(const wchar_t* message, DiagnosticLogLevel)
+{
+    startupMessages.emplace_back(message);
+    SetLastError(ERROR_ACCESS_DENIED);
+}
 
 namespace
 {
@@ -15,6 +28,58 @@ void Expect(bool condition, const char* message)
         return;
     std::cerr << "FAILED: " << message << '\n';
     ++failures;
+}
+
+void TestStartupDiagnostics()
+{
+    using snowdesktop::startup_diagnostics::Call;
+    using snowdesktop::startup_diagnostics::Scope;
+    Call(L"ordinary paint", [] {});
+    Expect(startupMessages.empty(), "runtime calls stay silent outside startup");
+    {
+        SetLastError(ERROR_FILE_NOT_FOUND);
+        Scope startup(L"ReloadItems.partial", true, 22);
+        Expect(GetLastError() == ERROR_FILE_NOT_FOUND, "begin logging preserves Win32 errors");
+        Expect(startupMessages.size() == 1 &&
+            startupMessages[0].find(L"begin:") != std::wstring::npos &&
+            startupMessages[0].find(L"items=22") != std::wstring::npos,
+            "startup records its batch before entering any blocking operation");
+        std::thread unrelated([] { Call(L"unrelated thread", [] {}); });
+        unrelated.join();
+        Expect(startupMessages.size() == 1, "startup logging is scoped to its calling thread");
+        const HRESULT result = Call(L"Clipboard.GetData", [] {
+            Expect(startupMessages.size() == 2 &&
+                startupMessages.back().find(L"begin:") != std::wstring::npos &&
+                startupMessages.back().find(L"step=Clipboard.GetData") != std::wstring::npos,
+                "an unfinished call already has a diagnostic identifying the blocked operation");
+            SetLastError(ERROR_NOT_READY);
+            return E_PENDING;
+        });
+        Expect(result == E_PENDING && GetLastError() == ERROR_NOT_READY,
+            "call instrumentation preserves results and errors");
+        Expect(startupMessages.size() == 3 &&
+            startupMessages.back().find(L"end:") != std::wstring::npos &&
+            startupMessages.back().find(L"elapsed_ms=") != std::wstring::npos,
+            "completed operations append their duration");
+        const auto field = [](const std::wstring& line, const wchar_t* key) {
+            const auto pos = line.find(key);
+            return pos == std::wstring::npos ? std::wstring{} :
+                line.substr(pos, line.find(L' ', pos) - pos);
+        };
+        Expect(field(startupMessages[1], L"call=") == field(startupMessages[2], L"call=") &&
+            field(startupMessages[0], L"call=") != field(startupMessages[1], L"call=") &&
+            field(startupMessages[0], L"pass=") == field(startupMessages[1], L"pass=") &&
+            field(startupMessages[0], L"run=") == field(startupMessages[1], L"run="),
+            "nested calls retain the run and pass while begin/end pairs have distinct call IDs");
+        try { Call(L"failed step", [] { throw 1; }); }
+        catch (int) {}
+        Expect(startupMessages.size() == 5 && startupMessages.back().find(L"end:") != std::wstring::npos,
+            "exceptions close their diagnostic scope");
+    }
+    const size_t finishedCount = startupMessages.size();
+    Call(L"later paint", [] {});
+    Expect(finishedCount == 6 && startupMessages.size() == finishedCount,
+        "finishing startup also disables subsequent runtime probes");
 }
 
 HANDLE StartChild(std::wstring_view argument)
@@ -105,6 +170,7 @@ int wmain(int argc, wchar_t* argv[])
     }
 
     using namespace snowdesktop::application_restart_policy;
+    TestStartupDiagnostics();
     if (!AllowsCrashRestart(kFlags))
     {
         std::cerr << "FAILED: application restart must remain enabled for crashes\n";

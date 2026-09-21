@@ -571,7 +571,9 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
 {
     if (!ctx) return;
     const auto loading = [&] {
-        snowdesktop::icon_loading_placeholder::Draw(ctx, iconRect, alpha);
+        snowdesktop::icon_loading_placeholder::Draw(ctx, iconRect, alpha,
+            allowBeautify && iconBeautifySettings_.enabled
+                ? iconBeautifySettings_.shape : snowdesktop::IconBeautifyShape::LegacyRounded);
     };
     if (sysIconIndex < 0 || initialShellReadPending_)
     {
