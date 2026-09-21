@@ -498,6 +498,9 @@ void DesktopApp::RefreshDisplayTopologyIfChanged()
         return;
     }
 
+    // The escape edges belong to the previous monitor geometry. Leave the
+    // temporary mode before rebuilding windows for a changed display layout.
+    EndDesktopPassthrough();
     bool recreateExpandedOverlay = false;
     if (topologyChanged)
     {

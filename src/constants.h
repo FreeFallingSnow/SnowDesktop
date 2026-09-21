@@ -244,6 +244,7 @@ constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
 constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
 constexpr UINT kWidgetTaskWakeMessage = WM_APP + 21;
+constexpr UINT kDesktopPassthroughExitMessage = WM_APP + 22;
 constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
 constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
 constexpr UINT kUrlDropDownloadCompletedMessage = WM_APP + 18;
@@ -305,8 +306,6 @@ constexpr int kQuickNavigationHotkeyId = 101;
 constexpr int kFloatingDockHotkeyId = 102;
 constexpr int kDesktopPassthroughHotkeyId = 103;
 constexpr int kSettingsHotkeyProbeId = 104;
-constexpr UINT_PTR kDesktopPassthroughHoldTimerId = 20;
-constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
 // DoDragDrop owns a nested message loop, so the waitable animation timer in
 // the outer application pump needs a WM_TIMER bridge while a local drag is
 // visiting another process.

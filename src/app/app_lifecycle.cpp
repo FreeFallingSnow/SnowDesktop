@@ -33,7 +33,7 @@ DesktopApp::~DesktopApp()
     StopUrlDropDownloadWorker();
     StopWebsiteIconWorker();
     StopSteamWorkshopWatcher();
-    EndDesktopPassthroughHold(false);
+    EndDesktopPassthrough(false);
     UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
         ResolveSystemTaskbarAppearance(dockSettings_));
@@ -176,7 +176,7 @@ void DesktopApp::ResetDesktopWindowResources()
 {
     if (widgetAccessibilityProvider_ && hwnd_)
         widgetAccessibilityProvider_->DetachWindow(hwnd_);
-    EndDesktopPassthroughHold(false);
+    EndDesktopPassthrough(false);
     UnregisterDesktopPassthroughHotkey();
     desktopBackdropCompositor_.Reset();
     if (dockWindowTransition_)
@@ -873,6 +873,8 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     // The independent control timer will retry as soon as this frame unwinds.
     if (compositionPaintInProgress_)
         return;
+
+    EndDesktopPassthrough();
 
     // These resources belong to the Explorer shell rather than to the custom
     // desktop window. Restore the tray icon even when the native desktop is

@@ -25,6 +25,7 @@
 #include "dock_settings.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
+#include "app/desktop_passthrough_indicator.h"
 #include "app/native_menu_presentation_rules.h"
 #include "app/popup_window_pair_z_order.h"
 #include "desktop_window_discovery_rules.h"
@@ -84,6 +85,50 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void CheckDesktopPassthrough()
+{
+    // Exercise the production visibility rule used by every DockHost refresh.
+    // A promoted/retained Dock must not cover the wallpaper during passthrough.
+    namespace dock = snowdesktop::floating_dock_rules;
+    for (bool promoted : {false, true})
+        for (bool summonOnly : {false, true})
+            for (bool desktopVisible : {false, true})
+                for (bool iconsHidden : {false, true})
+                    for (bool keep : {false, true})
+                        Check(!dock::ShouldShowPersistentDockHost(
+                            true, promoted, summonOnly, desktopVisible,
+                            iconsHidden, keep, true),
+                            "passthrough must hide all active Dock modes");
+    Check(dock::ShouldShowPersistentDockHost(true, false, false, true, false, false, false),
+        "leaving passthrough must restore the ordinary desktop Dock");
+    Check(dock::ShouldShowPersistentDockHost(true, false, false, true, true, true, false),
+        "leaving passthrough must retain the keep-when-hidden preference");
+    Check(!dock::ShouldShowPersistentDockHost(true, false, true, true, false, false, false) &&
+        !dock::ShouldShowPersistentDockHost(false, false, false, true, false, false, false),
+        "leaving passthrough must not reveal an idle summon-only or disabled Dock");
+
+    // Exact independent bounds protect wallpaper hit testing at monitor seams
+    // and on scaled monitors to the left/above the primary display.
+    const auto primary = snowdesktop::desktop_passthrough_rules::EdgeBounds(
+        RECT{0, 0, 1920, 1080}, 96);
+    const RECT expectedPrimary[] = {{0, 0, 1920, 4}, {0, 1076, 1920, 1080},
+        {0, 4, 4, 1076}, {1916, 4, 1920, 1076}};
+    const auto scaled = snowdesktop::desktop_passthrough_rules::EdgeBounds(
+        RECT{-1920, -120, 0, 960}, 144);
+    const RECT expectedScaled[] = {{-1920, -120, 0, -114}, {-1920, 954, 0, 960},
+        {-1920, -114, -1914, 954}, {-6, -114, 0, 954}};
+    for (size_t i = 0; i < primary.size(); ++i)
+    {
+        Check(EqualRect(&primary[i], &expectedPrimary[i]) != FALSE,
+            "primary escape edges must occupy only the four outer bands");
+        Check(EqualRect(&scaled[i], &expectedScaled[i]) != FALSE,
+            "scaled escape edges must retain their own monitor origin and DPI");
+        Check(!PtInRect(&primary[i], POINT{960, 540}) &&
+            !PtInRect(&scaled[i], POINT{-960, 420}),
+            "escape surfaces must leave wallpaper interiors available for input");
+    }
 }
 
 void CheckClipboardPasteEffects()
@@ -834,6 +879,7 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    CheckDesktopPassthrough();
     CheckClipboardPasteEffects();
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarActivationRevealDispatch();

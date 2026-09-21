@@ -25,6 +25,8 @@ struct GeneralSettings
     bool softwareDesktopEnabled = true;
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
+    // The shortcut toggles temporary desktop/Dock passthrough; only this
+    // shortcut preference is persisted, never the active passthrough state.
     bool desktopPassthroughHotkeyEnabled = false;
     UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;

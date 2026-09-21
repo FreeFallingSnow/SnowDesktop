@@ -41,6 +41,7 @@
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "desktop_passthrough_indicator.h"
 #include "shell_extension_menu.h"
 #include "display_topology_refresh.h"
 #include "dock_settings.h"
@@ -1411,19 +1412,17 @@ private:
     void LoadNavigationSettingsAndApply();
     /** @brief 加载通用设置。 */
     void LoadGeneralSettingsAndApply();
-    /** @brief 按通用设置注册“按住隐藏桌面”全局快捷键。 */
+    /** @brief 按通用设置注册“切换桌面穿透”全局快捷键。 */
     void ApplyDesktopPassthroughHotkey();
-    /** @brief 注销“按住隐藏桌面”全局快捷键并停止释放检测。 */
+    /** @brief 注销穿透快捷键并退出穿透状态。 */
     void UnregisterDesktopPassthroughHotkey();
-    /** @brief 快捷键按下后临时隐藏软件桌面，使输入交给动态壁纸。 */
-    void BeginDesktopPassthroughHold();
+    /** @brief 切换桌面及 Dock 的穿透状态，使输入交给动态壁纸。 */
+    void ToggleDesktopPassthrough();
     /**
      * @brief 结束临时隐藏状态。
      * @param restoreDesktop 是否重新显示软件桌面窗口
      */
-    void EndDesktopPassthroughHold(bool restoreDesktop = true);
-    /** @brief 判断当前配置的快捷键所有组成键是否仍按下。 */
-    bool IsDesktopPassthroughHotkeyDown() const;
+    void EndDesktopPassthrough(bool restoreDesktop = true);
     /** @brief 判断任一鼠标按钮是否仍按下。 */
     bool IsDesktopPassthroughPointerDown() const;
     /** @brief 应用软件桌面启用状态，并可选择持久化到通用设置。 */
@@ -3812,7 +3811,8 @@ private:
         settingsWindowOpenRequest_;
     bool customDesktopVisible_ = true;
     bool desktopPassthroughHotkeyRegistered_ = false;
-    bool desktopPassthroughHoldActive_ = false;
+    bool desktopPassthroughActive_ = false;
+    snowdesktop::DesktopPassthroughIndicator desktopPassthroughIndicator_;
     bool updatingDisplayTopology_ = false;
     bool displayTopologyWindowSyncPending_ = false;
     std::wstring displayTopologySignature_;

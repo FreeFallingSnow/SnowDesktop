@@ -250,6 +250,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_scroll_interaction.cpp
     src/app/app_selection_interaction.cpp
     src/app/app_settings_apply.cpp
+    src/app/desktop_passthrough_indicator.cpp
     src/app/app_text_render.cpp
     src/app/app_taskbar_integration.cpp
     src/app/app_steam_workshop.cpp

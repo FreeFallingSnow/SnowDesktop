@@ -118,12 +118,15 @@ bool DesktopApp::ShouldShowPersistentDockHost(
             dockSettings_.showOnlyWhenSummoned,
             customDesktopVisible_,
             desktopIconsHidden_,
-            dockSettings_.keepWhenDesktopHidden);
+            dockSettings_.keepWhenDesktopHidden,
+            desktopPassthroughActive_);
 }
 
 bool DesktopApp::IsDockContainerInteractionVisible(
     const DockContainer* container) const
 {
+    if (desktopPassthroughActive_)
+        return false;
     const PersistentDockHost* host =
         FindPersistentDockHost(container);
     // Before graphics initialization, or after a Host creation failure, the

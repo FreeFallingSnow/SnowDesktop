@@ -62,9 +62,10 @@ inline bool ShouldShowPersistentDockHost(
     bool summonOnlyEnabled,
     bool customDesktopVisible,
     bool desktopIconsHidden,
-    bool keepWhenDesktopHidden)
+    bool keepWhenDesktopHidden,
+    bool desktopPassthroughActive = false)
 {
-    return active &&
+    return active && !desktopPassthroughActive &&
         (effectivelyPromoted ||
             (!summonOnlyEnabled && customDesktopVisible &&
                 (!desktopIconsHidden ||

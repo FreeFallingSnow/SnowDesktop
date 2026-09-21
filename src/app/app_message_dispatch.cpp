@@ -989,6 +989,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (!OnKeyDown(static_cast<WPARAM>(key), repeated)) break;
         return 0;
     }
+    case kDesktopPassthroughExitMessage:
+        if (desktopPassthroughIndicator_.OwnsWindow(reinterpret_cast<HWND>(wp)))
+            EndDesktopPassthrough();
+        return 0;
     case WM_HOTKEY:
         if (settingsWindow_ &&
             settingsWindow_->IsHotkeyCaptureActive())
@@ -1011,7 +1015,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (static_cast<int>(wp) ==
             kDesktopPassthroughHotkeyId)
         {
-            BeginDesktopPassthroughHold();
+            ToggleDesktopPassthrough();
             return 0;
         }
         break;

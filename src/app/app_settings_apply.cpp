@@ -1708,29 +1708,6 @@ void DesktopApp::LoadNavigationSettingsAndApply()
     ApplyNavigationHotkey();
 }
 
-bool DesktopApp::IsDesktopPassthroughHotkeyDown() const
-{
-    const auto keyDown = [](int virtualKey) {
-        return (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
-    };
-    if (!keyDown(static_cast<int>(
-            generalSettings_.desktopPassthroughHotkeyVirtualKey)))
-        return false;
-
-    const UINT modifiers =
-        generalSettings_.desktopPassthroughHotkeyModifiers;
-    if ((modifiers & MOD_CONTROL) != 0 && !keyDown(VK_CONTROL))
-        return false;
-    if ((modifiers & MOD_ALT) != 0 && !keyDown(VK_MENU))
-        return false;
-    if ((modifiers & MOD_SHIFT) != 0 && !keyDown(VK_SHIFT))
-        return false;
-    if ((modifiers & MOD_WIN) != 0 &&
-        !keyDown(VK_LWIN) && !keyDown(VK_RWIN))
-        return false;
-    return true;
-}
-
 bool DesktopApp::IsDesktopPassthroughPointerDown() const
 {
     constexpr int pointerKeys[] = {
@@ -1745,25 +1722,24 @@ bool DesktopApp::IsDesktopPassthroughPointerDown() const
     return false;
 }
 
-void DesktopApp::EndDesktopPassthroughHold(
+void DesktopApp::EndDesktopPassthrough(
     bool restoreDesktop)
 {
-    if (desktopPassthroughHotkeyHwnd_ &&
-        IsWindow(desktopPassthroughHotkeyHwnd_))
-    {
-        KillTimer(desktopPassthroughHotkeyHwnd_,
-            kDesktopPassthroughHoldTimerId);
-    }
-
-    if (!desktopPassthroughHoldActive_)
+    desktopPassthroughIndicator_.Hide();
+    if (!desktopPassthroughActive_)
         return;
-    desktopPassthroughHoldActive_ = false;
+    desktopPassthroughActive_ = false;
 
-    if (!restoreDesktop || !customDesktopVisible_ ||
+    if (!restoreDesktop)
+        return;
+    UpdatePersistentDockHostVisibility();
+    if (!customDesktopVisible_ ||
         !hwnd_ || !IsWindow(hwnd_))
         return;
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        ShowWindow(inputHwnd_, SW_SHOWNA);
     desktopBackdropCompositor_.SetVisible(true);
     ReconcileDesktopHoverState(
         snowdesktop::desktop_hover_rules::
@@ -1772,10 +1748,17 @@ void DesktopApp::EndDesktopPassthroughHold(
     UpdateWindow(hwnd_);
 }
 
-void DesktopApp::BeginDesktopPassthroughHold()
+void DesktopApp::ToggleDesktopPassthrough()
 {
-    if (desktopPassthroughHoldActive_ ||
-        !desktopPassthroughHotkeyRegistered_ ||
+    // Do not interrupt an in-flight wallpaper gesture when toggling back.
+    if (IsDesktopPassthroughPointerDown())
+        return;
+    if (desktopPassthroughActive_)
+    {
+        EndDesktopPassthrough();
+        return;
+    }
+    if (!desktopPassthroughHotkeyRegistered_ ||
         !generalSettings_.desktopPassthroughHotkeyEnabled ||
         !customDesktopVisible_ ||
         !hwnd_ || !IsWindow(hwnd_) ||
@@ -1786,19 +1769,22 @@ void DesktopApp::BeginDesktopPassthroughHold()
     // Hiding in the middle of a desktop drag would prevent SnowDesktop from
     // receiving the matching button-up event and leave its interaction state
     // latched. The shortcut can be pressed again after the current gesture.
-    if (IsDesktopPassthroughPointerDown() ||
-        mouseDown_ || marqueeActive_ ||
+    if (mouseDown_ || marqueeActive_ ||
         dragSession_.IsActive() ||
         dragDropController_.IsTransportActive() ||
         GetCapture() != nullptr)
         return;
 
-    if (SetTimer(desktopPassthroughHotkeyHwnd_,
-            kDesktopPassthroughHoldTimerId,
-            kDesktopPassthroughHoldIntervalMs,
-            nullptr) == 0)
+    // Never hide the desktop if its visible mouse escape surface failed.
+    if (!desktopPassthroughIndicator_.Show(instance_,
+            desktopPassthroughHotkeyHwnd_, kDesktopPassthroughExitMessage,
+            _LW("app.desktop_passthrough.exit_hint")))
+    {
+        WriteDiagnosticLogEntry(L"Desktop passthrough edge indicator creation failed");
         return;
+    }
 
+    desktopPassthroughActive_ = true;
     if (quickNavigationOpen_)
     {
         CloseQuickNavigation();
@@ -1806,25 +1792,23 @@ void DesktopApp::BeginDesktopPassthroughHold()
     }
     HideDockWindowPreview();
     HideDragHintWindow();
-
-    desktopPassthroughHoldActive_ = true;
-    CloseAllFloatingDocksThen(
-        [this]() {
-            // The hotkey may have been released while the compositor hand-off
-            // was pending. In that case the desktop must remain visible.
-            if (!desktopPassthroughHoldActive_ ||
-                !hwnd_ || !IsWindow(hwnd_))
-                return;
-            if (widgetEngine_)
-                widgetEngine_->SetAllWidgetDesktopVisible(false);
-            desktopBackdropCompositor_.SetVisible(false);
-            ShowWindow(hwnd_, SW_HIDE);
-        });
+    pendingCollectionPopupOpen_.reset();
+    CloseCollectionPopup(false);
+    FinalizeCloseCollectionPopup();
+    CloseAllFloatingDocks();
+    // CloseAllFloatingDocks also hides every independent content/backdrop
+    // pair through the shared visibility rule, including idle desktop Docks.
+    if (widgetEngine_)
+        widgetEngine_->SetAllWidgetDesktopVisible(false);
+    desktopBackdropCompositor_.SetVisible(false);
+    ShowWindow(hwnd_, SW_HIDE);
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        ShowWindow(inputHwnd_, SW_HIDE);
 }
 
 void DesktopApp::UnregisterDesktopPassthroughHotkey()
 {
-    EndDesktopPassthroughHold();
+    EndDesktopPassthrough();
     if (desktopPassthroughHotkeyRegistered_ &&
         desktopPassthroughHotkeyHwnd_)
     {
@@ -1862,12 +1846,12 @@ void DesktopApp::ApplyDesktopPassthroughHotkey()
     {
         desktopPassthroughHotkeyHwnd_ = target;
         WriteDiagnosticLogEntry(
-            L"Desktop passthrough hold hotkey registered");
+            L"Desktop passthrough toggle hotkey registered");
     }
     else
     {
         WriteDiagnosticLogEntry(
-            L"Desktop passthrough hold hotkey registration failed");
+            L"Desktop passthrough toggle hotkey registration failed");
     }
 }
 

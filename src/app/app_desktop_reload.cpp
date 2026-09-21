@@ -631,6 +631,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_TIMER:
         OnTimer(wp);
         return 0;
+    case kDesktopPassthroughExitMessage:
+        if (desktopPassthroughIndicator_.OwnsWindow(reinterpret_cast<HWND>(wp)))
+            EndDesktopPassthrough();
+        return 0;
     case WM_HOTKEY:
         if (settingsWindow_ &&
             settingsWindow_->IsHotkeyCaptureActive())
@@ -653,7 +657,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (static_cast<int>(wp) ==
             kDesktopPassthroughHotkeyId)
         {
-            BeginDesktopPassthroughHold();
+            ToggleDesktopPassthrough();
             return 0;
         }
         break;
@@ -671,10 +675,9 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         }
         if (desktopPassthroughHotkeyHwnd_ == hwnd)
         {
-            KillTimer(hwnd, kDesktopPassthroughHoldTimerId);
+            EndDesktopPassthrough(false);
             desktopPassthroughHotkeyHwnd_ = nullptr;
             desktopPassthroughHotkeyRegistered_ = false;
-            desktopPassthroughHoldActive_ = false;
         }
         if (floatingDockEdgeSwipeHwnd_ == hwnd)
         {

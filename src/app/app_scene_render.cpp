@@ -154,6 +154,7 @@ void DesktopApp::DrawStaticBackground(
                 interactionRetained,
                 PtInRect(&widgetFrame, lastMousePoint_) != FALSE);
         const bool desktopSurfaceVisible =
+            !desktopPassthroughActive_ &&
             snowdesktop::widget_visibility_rules::IsDesktopSurfaceVisible(
                 hiddenMode, widgetData.keepWhenDesktopHidden,
                 hasDesktopBounds, interactionVisible);

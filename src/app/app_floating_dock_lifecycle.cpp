@@ -198,7 +198,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
 bool DesktopApp::UpdatePassiveDragRevealHosts(
     POINT cursorScreen)
 {
-    if (!generalSettings_.dockEnabled ||
+    if (desktopPassthroughActive_ || !generalSettings_.dockEnabled ||
         !dockSettings_.showOnlyWhenSummoned)
     {
         return false;
@@ -386,6 +386,12 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
+    if (desktopPassthroughActive_)
+    {
+        floatingDockEdgeSwipeDetector_.Reset();
+        floatingDockPointerButtonsDown_ = 0;
+        return;
+    }
     constexpr UINT leftButtonBit = 1u << 0;
     constexpr UINT rightButtonBit = 1u << 1;
     constexpr UINT middleButtonBit = 1u << 2;

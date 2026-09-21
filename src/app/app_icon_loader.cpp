@@ -547,7 +547,7 @@ void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
 {
     const bool wasEnabled = customDesktopVisible_;
     if (!enabled)
-        EndDesktopPassthroughHold(false);
+        EndDesktopPassthrough(false);
     customDesktopVisible_ = enabled;
     generalSettings_.softwareDesktopEnabled = enabled;
     if (persist)

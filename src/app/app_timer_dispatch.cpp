@@ -392,25 +392,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
         return;
     }
 
-    if (timerId == kDesktopPassthroughHoldTimerId)
-    {
-        if (!desktopPassthroughHoldActive_)
-        {
-            if (desktopPassthroughHotkeyHwnd_ &&
-                IsWindow(desktopPassthroughHotkeyHwnd_))
-            {
-                KillTimer(desktopPassthroughHotkeyHwnd_,
-                    kDesktopPassthroughHoldTimerId);
-            }
-        }
-        else if (!IsDesktopPassthroughHotkeyDown() &&
-            !IsDesktopPassthroughPointerDown())
-        {
-            EndDesktopPassthroughHold();
-        }
-        return;
-    }
-
     if (timerId == kDisplayTopologyRefreshTimerId)
     {
         if (controlHwnd_ && IsWindow(controlHwnd_))
