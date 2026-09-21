@@ -124,7 +124,7 @@ void DesktopApp::BeginRenameClick(WPARAM modifiers, POINT point)
     const auto hit = HitTestRenameClick(point);
     renameClickController_.Press(hit.target, hit.label, point,
         hit.selected && HasSingleRenameClickSelection(),
-        RenameClickUnmodified(modifiers), GetTickCount64(), GetDoubleClickTime());
+        RenameClickUnmodified(modifiers));
 }
 
 void DesktopApp::CompleteRenameClick(WPARAM modifiers, POINT point)
@@ -133,15 +133,16 @@ void DesktopApp::CompleteRenameClick(WPARAM modifiers, POINT point)
     renameClickController_.Move(point, GetSystemMetrics(SM_CXDRAG),
         GetSystemMetrics(SM_CYDRAG));
     const auto hit = HitTestRenameClick(point);
+    const UINT delay = GetDoubleClickTime();
     if (!renameClickController_.Release(hit.target, hit.label, point,
             mouseDown_ && !marqueeActive_ && !dragSession_.IsActive() &&
             !dragDropController_.IsTransportActive() && hit.selected &&
             HasSingleRenameClickSelection() && RenameClickUnmodified(modifiers),
-            GetTickCount64(), GetDoubleClickTime()))
+            GetTickCount64(), delay))
         return;
     renameClickPoint_ = point;
     renameClickForeground_ = GetForegroundWindow();
-    if (!SetTimer(hwnd_, kRenameClickTimerId, GetDoubleClickTime(), nullptr))
+    if (!SetTimer(hwnd_, kRenameClickTimerId, delay, nullptr))
         CancelRenameClick();
 }
 
@@ -154,8 +155,14 @@ void DesktopApp::CancelRenameClick()
 void DesktopApp::OnRenameClickTimer()
 {
     const ULONGLONG now = GetTickCount64();
-    if (renameClickController_.Waiting(now)) return;
     KillTimer(hwnd_, kRenameClickTimerId);
+    if (const UINT remaining = renameClickController_.RemainingDelay(now))
+    {
+        // An early/previously queued WM_TIMER must not add a full extra interval.
+        if (!SetTimer(hwnd_, kRenameClickTimerId, remaining, nullptr))
+            CancelRenameClick();
+        return;
+    }
     const auto hit = HitTestRenameClick(renameClickPoint_);
     const bool eligible = !mouseDown_ && widgetAction_ == WidgetAction::None &&
         !middleButtonWidgetMove_ && !dragSession_.IsActive() &&

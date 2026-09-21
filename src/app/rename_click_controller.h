@@ -19,16 +19,14 @@ class RenameClickController
 {
 public:
     void Press(const RenameClickTarget& target, RECT label, POINT point,
-        bool singleSelected, bool unmodified, ULONGLONG now, UINT doubleClickTime)
+        bool singleSelected, bool unmodified)
     {
         pressed_.reset();
         pending_.reset();
-        const bool fastRepeat = target == lastTarget_ &&
-            now - lastPressTime_ <= doubleClickTime;
-        lastTarget_ = target;
-        lastPressTime_ = now;
+        // Only ordinary WM_LBUTTONDOWN reaches this path. Windows classifies
+        // double-clicks using time AND position; WM_LBUTTONDBLCLK cancels us.
         if (target.kind == RenameTargetKind::None || !singleSelected ||
-            !unmodified || fastRepeat || !PtInRect(&label, point))
+            !unmodified || !PtInRect(&label, point))
             return;
         pressed_ = target;
         label_ = label;
@@ -58,13 +56,16 @@ public:
         return true;
     }
 
-    bool Waiting(ULONGLONG now) const { return pending_ && now < deadline_; }
+    UINT RemainingDelay(ULONGLONG now) const
+    {
+        return pending_ && now < deadline_ ? static_cast<UINT>(deadline_ - now) : 0;
+    }
     bool Active() const { return pressed_.has_value() || pending_.has_value(); }
 
     std::optional<RenameClickTarget> TakeReady(const RenameClickTarget& target,
         RECT label, bool eligible, ULONGLONG now)
     {
-        if (Waiting(now)) return std::nullopt;
+        if (RemainingDelay(now) != 0) return std::nullopt;
         const auto result = pending_ && *pending_ == target && eligible &&
             EqualRect(&label_, &label) ? pending_ : std::nullopt;
         Cancel();
@@ -75,15 +76,11 @@ public:
     {
         pressed_.reset();
         pending_.reset();
-        lastTarget_ = {};
-        lastPressTime_ = 0;
     }
 
 private:
     std::optional<RenameClickTarget> pressed_;
     std::optional<RenameClickTarget> pending_;
-    RenameClickTarget lastTarget_;
-    ULONGLONG lastPressTime_ = 0;
     ULONGLONG deadline_ = 0;
     RECT label_{};
     POINT point_{};

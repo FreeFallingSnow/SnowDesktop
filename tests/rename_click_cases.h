@@ -9,10 +9,10 @@ void TestSlowRenameClicks()
     const RenameClickTarget file{RenameTargetKind::DesktopItem, L"file-a", L"desktop"};
     const RenameClickTarget other{RenameTargetKind::DesktopItem, L"file-b", L"desktop"};
     RenameClickController click;
-    click.Press(file, label, icon, false, true, 1000, 500);
+    click.Press(file, label, icon, false, true);
     Check(!click.Release(file, label, icon, true, 1020, 500),
         "the first selecting click must not rename");
-    click.Press(file, label, name, true, true, 2000, 500);
+    click.Press(file, label, name, true, true);
     Check(click.Release(file, label, name, true, 2020, 500),
         "a slow second click on the selected name must schedule rename");
     Check(!click.TakeReady(file, label, true, 2519),
@@ -22,17 +22,28 @@ void TestSlowRenameClicks()
     Check(!click.TakeReady(file, label, true, 3000),
         "a timer must not open the same editor twice");
 
-    click.Press(file, label, name, false, true, 4000, 500);
+    // Windows can deliver another ordinary down within 500 ms (for example,
+    // outside its double-click rectangle or on a different input HWND).
+    click.Press(file, label, name, false, true);
     click.Release(file, label, name, true, 4020, 500);
-    click.Press(file, label, name, true, true, 4100, 500);
-    Check(!click.Release(file, label, name, true, 4120, 500),
-        "fast repeated clicks across HWNDs must not become rename");
+    click.Press(file, label, name, true, true);
+    Check(click.Release(file, label, name, true, 4120, 500),
+        "ordinary name clicks must not be rejected by a duplicate time-only gate");
+    Check(click.TakeReady(file, label, true, 4620) == file,
+        "a click not classified as WM_LBUTTONDBLCLK must allow rename");
+
+    click.Press(file, label, name, true, true);
+    click.Release(file, label, name, true, 4700, 500);
+    click.Cancel(); // WM_LBUTTONDBLCLK replaces, rather than follows, the next down.
+    Check(!click.Release(file, label, name, true, 4800, 500) &&
+            !click.TakeReady(file, label, true, 5300),
+        "a real double-click must cancel rename including its final button-up");
 
     for (int scenario = 0; scenario < 5; ++scenario)
     {
         click.Cancel();
         click.Press(file, label, scenario == 0 ? icon : name,
-            scenario != 1, scenario != 2, 5000, 500);
+            scenario != 1, scenario != 2);
         if (scenario == 3)
         {
             click.Move({40, 80}, 4, 4);
@@ -50,7 +61,7 @@ void TestSlowRenameClicks()
         for (int scenario = 0; scenario < 6; ++scenario)
         {
             click.Cancel();
-            click.Press(target, label, name, true, true, 6000, 500);
+            click.Press(target, label, name, true, true);
             Check(click.Release(target, label, name, true, 6020, 500),
                 "every supported file surface uses the same delayed trigger");
             auto current = target;
@@ -59,14 +70,23 @@ void TestSlowRenameClicks()
             if (scenario == 1) current.surface = L"different-popup";
             if (scenario == 2) currentLabel.top += 2;
             if (scenario == 4) click.Cancel(); // double-click, key, menu, focus/capture loss
-            if (scenario == 5) click.Press(other, label, name, false, true, 6200, 500);
+            if (scenario == 5) click.Press(other, label, name, false, true);
             Check(!click.TakeReady(current, currentLabel, scenario != 3, 6520),
                 "timer revalidates identity, surface, geometry, selection and cancellation");
         }
     }
-    click.Press(file, label, name, true, true, 7000, 500);
+    click.Press(file, label, name, true, true);
     click.Release(file, label, name, true, 7020, 500);
     click.Move(icon, 4, 4);
     Check(!click.TakeReady(file, label, true, 7520),
         "leaving the label cancels a pending edit");
+
+    click.Press(file, label, name, true, true);
+    click.Release(file, label, name, true, 8000, 500);
+    Check(click.RemainingDelay(8484) == 16 && !click.TakeReady(file, label, true, 8484),
+        "an early timer must wait only the remaining 16 ms, not another 500 ms");
+    Check(click.RemainingDelay(8500) == 0 && click.TakeReady(file, label, true, 8500) == file,
+        "rescheduling an early timer must preserve the original deadline");
+    Check(click.RemainingDelay(8500) == 0,
+        "a completed or canceled rename must not rearm a timer");
 }

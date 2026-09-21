@@ -2,7 +2,7 @@
 
 ## 改动范围
 
-在桌面普通图标、集合文件、文件夹映射和 Dock 文件夹弹窗中，单独选中一个文件后，间隔超过系统双击时间，再单击名称区域，松开后等待一个系统双击时间进入现有重命名编辑框。
+在桌面普通图标、集合文件、文件夹映射和 Dock 文件夹弹窗中，单独选中一个文件后，再以普通单击点击名称区域，松开后等待一个系统双击时间进入现有重命名编辑框。是否为双击由 Windows 的消息分类决定，不额外按两次按下的间隔拒绝普通单击。
 
 第二次点击图标图像、多选、Ctrl/Shift/Alt、拖动、快速双击、键盘命令、右键、滚动、取消捕获、窗口失焦、关闭弹窗和重建项目会阻止或取消触发。计时器再次核对稳定文件身份、所属界面、名称位置及单选状态，避免对刷新后同一索引上的其他文件启动编辑。
 
@@ -52,7 +52,25 @@
 | 立即排队松开 | 16 ms | 516 ms | 500 ms |
 | 按住约 120 ms 再松开 | 141 ms | 641 ms | 500 ms |
 
-本版采用相同的“第二次松开后等待系统双击时间”规则。证据仅验证本机原生 ListView 的时序，不能替代资源管理器或 SnowDesktop 的实机交互验收。最初未聚焦探针未触发编辑，属于无效测量；上表仅使用显式设置控件焦点后收到编辑通知的两次有效结果。原始日志为 `native-zero-hold-3.log` 和 `native-held-click-3.log`。
+采用“第二次松开后等待系统双击时间”规则的依据仅为上述 ListView 测量；它没有验证旧版额外的按下时间门槛，也不能证明资源管理器或 SnowDesktop 的完整交互一致。最初未聚焦探针未触发编辑，属于无效测量；上表仅使用显式设置控件焦点后收到编辑通知的两次有效结果。原始日志为 `native-zero-hold-3.log` 和 `native-held-click-3.log`。
+
+## 等待偏长反馈后的调整
+
+用户反馈当前重命名需要的延时明显偏长，质疑未被识别成双击的点击为什么还不能重命名；`ed2096a0` 记录对前两个候选的交互验收未通过。未采集用户当时的 EXE 哈希和精确点击时序，不把以下代码问题直接认定为该现场的完整根因。
+
+- 去掉 `Press` 中对相同目标、两次按下时间间隔的额外拦截。Windows 使用时间及位置识别双击，`WM_LBUTTONDBLCLK` 替代第二个按下消息；主窗口、浮动 Dock 和弹窗均启用了 `CS_DBLCLKS`，双击仍通过现有路径取消等待并打开文件。依据：[About Mouse Input — Double-Click Messages](https://learn.microsoft.com/en-us/windows/win32/inputdev/about-mouse-input#double-click-messages)。
+- 保留松开后等待系统双击时间，以兼容已选中文件上的快速双击。计时器若提前或以旧排队消息到达，先停止原定时器，再按剩余时间重设，避免追加一个完整周期。该条件风险来自代码审查，尚无用户现场的计时日志。
+- 回归覆盖系统交付的普通按下不被二次判定拒绝、真实双击取消后最终松开不启动编辑，以及距离期限仅剩 16 ms 时只请求剩余时间。旧实现使用新的普通单击断言，在隔离探针中退出码 1，两个业务断言失败；日志 `duplicate-gate-negative.log`。
+- 调整后的生产状态机探针退出码 0；将剩余时间错误替换成完整 500 ms 的隔离版本退出码 1，提前计时器断言失败。均以 `/W4 /WX` 编译通过；日志 `system-click-probe-build.log`、`system-click-probe-positive.log` 和 `system-click-probe-full-interval.log`。探针直接执行生产状态机，但不执行宿主 `WM_TIMER` 分发。
+- 本轮变更仅涉及重命名状态机、其宿主接线和现有测试用例；没有变更命中区域、选择、拖放、窗口消息路由或重命名提交逻辑。受影响自动化入口为 `slot_runtime_contract`，其他交互规则沿用此前全量检查点；本轮按普通交互调校运行定向回归，不能称为再次全量通过。
+
+本次执行（2026-09-21，Release / MSVC 18 / Windows SDK 10.0.26100.0）：
+
+- `scripts/build.bat --reload-shell`：退出码 0，413.61 秒；标准 Release 产物已生成，无编译/链接警告，日志 `build-system-click.log`。重载阶段原有 `timeout /t 2` 在非交互输入下报告不支持输入重定向，属于编译前的等待命令诊断；后续构建完成，Explorer 进程确认于本次重载时重新启动。
+- `scripts/test.bat name "^slot_runtime_contract$"`：退出码 0，1/1 通过；含配置/构建 11.04 秒，CTest 执行 1.46 秒，无编译/链接警告。日志 `test-system-click.log`，报告 `.build/Testing/test-run-471ae65b0eab4f89938f0450a2ed2598.xml`。
+- 1,070 个输入与上一全量清单比较，仅 `app_rename_target.cpp`、`rename_click_controller.h`、`rename_click_cases.h` 改变；本次构建及测试前后文件集合和内容保持一致。本次清单 `system-click-input-sha256.txt` 的 SHA256 为 `C26335AA3EB919CC32BCF41F8080D13E3BE4A2E8E8E82188B2A50AA2524170BA`。
+- EXE SHA256：`E53406796F5AB7F85F607813BC07360C5926ADC3B58D564E5E446E705F91A2E4`。
+- 本候选的实际点击手感、宿主计时器分发及编辑框验收待用户实机验证；未把原生 ListView 的独立测量写成 Explorer 完整行为一致。
 
 ## 实机验收清单（待执行）
 
