@@ -38,6 +38,9 @@ class MenuService
     // All public methods are memory-only. The worker owns all disk I/O, target
     // checks, Shell sessions and the immutable snapshot publication boundary.
     MenuView View(const Request &request);
+    // The raw cache is shared; visibility is always projected from current host rules.
+    MenuView MenuDisplay(const Request &request, const Preferences &fallback);
+    bool MenuEnabled(const Request &request, const Preferences &fallback);
     void Query(const Request &request, QueryPriority priority = QueryPriority::Menu, bool force = false);
     void Prewarm(const Request &request);
     void Configure(Preferences preferences);

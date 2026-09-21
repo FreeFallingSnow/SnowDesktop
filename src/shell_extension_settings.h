@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <string>
 #include <string_view>
+#include <map>
+#include <set>
 #include <vector>
 
 namespace snowdesktop::shell_extensions
@@ -294,10 +296,25 @@ inline void SetOverride(Preferences &prefs, const std::string &id, Context conte
     if (value != Visibility::Inherit) prefs.overrides.push_back({id, context, value});
     Normalize(prefs);
 }
-inline bool HasOptIns(const Preferences &prefs)
+inline std::set<std::string> EffectiveShownIds(const Preferences &prefs, Context context)
 {
-    return !prefs.shown.empty() || std::any_of(prefs.rules.begin(), prefs.rules.end(), [](const auto &r) { return r.shown; }) ||
-        std::any_of(prefs.overrides.begin(), prefs.overrides.end(), [](const auto &r) { return r.visibility == Visibility::Show; });
+    std::map<std::string, bool> states;
+    for (const auto &row : prefs.shown) if (row.context == context) states[row.id] = true;
+    // Match IsHidden's first-record precedence, including retained legacy data.
+    for (auto row = prefs.rules.rbegin(); row != prefs.rules.rend(); ++row)
+        if (row->category == CategoryOf(context)) states[row->id] = row->shown;
+    for (auto row = prefs.overrides.rbegin(); row != prefs.overrides.rend(); ++row)
+        if (row->context == context && row->visibility != Visibility::Inherit)
+            states[row->id] = row->visibility == Visibility::Show;
+    std::set<std::string> result;
+    for (const auto &[id, shown] : states) if (shown && !id.empty()) result.insert(id);
+    return result;
+}
+inline bool HasOptIns(const Preferences &prefs, Context context = Context::Automatic)
+{
+    if (context != Context::Automatic) return !EffectiveShownIds(prefs, context).empty();
+    for (int i = 0; i < 4; ++i) if (!EffectiveShownIds(prefs, static_cast<Context>(i)).empty()) return true;
+    return false;
 }
 inline void SetHidden(Preferences &prefs, const std::string &id, Context context, bool hidden)
 {

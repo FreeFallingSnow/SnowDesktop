@@ -124,7 +124,14 @@ inline std::optional<Visibility> ManagementOverride(const Preferences &prefs, co
 }
 inline void SetManagementCommon(Preferences &prefs, const ManagementRow &row, Category category, bool shown)
 {
-    for (const auto &member : row.members) SetCommon(prefs, member.id, category, shown);
+    for (const auto &member : row.members)
+    {
+        // The primary switch is an explicit show/hide action. Old migrated
+        // location opt-ins must not silently defeat it. Location controls can
+        // add new exceptions afterwards; the other category is untouched.
+        std::erase_if(prefs.overrides, [&](const auto &r) { return r.id == member.id && CategoryOf(r.context) == category; });
+        SetCommon(prefs, member.id, category, shown);
+    }
 }
 inline void SetManagementResults(Preferences &prefs, const std::vector<ManagementRow> &results, Category category, bool shown)
 {

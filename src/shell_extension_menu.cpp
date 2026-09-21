@@ -33,7 +33,8 @@ constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 struct RegistryWatch
 {
     HKEY root = nullptr, key = nullptr;
-    HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    // Waiting must not consume the notification before Changed() rearms it.
+    HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::wstring path;
     bool armed = false;
     RegistryWatch(HKEY hive, const wchar_t *subkey) : root(hive), path(subkey) { Arm(); }
@@ -894,6 +895,15 @@ struct Host
 
 std::uint64_t MenuCacheGeneration() { return Caches().generation; }
 bool TakeMenuRegistryChanges() { auto &state = Caches(); state.Poll(); return std::exchange(state.dirty, false); }
+std::vector<HANDLE> MenuRegistryWaitHandles(bool &complete)
+{
+    std::vector<HANDLE> handles;
+    complete = true;
+    for (const auto &watch : Caches().watches)
+        if (watch->armed && watch->event) handles.push_back(watch->event);
+        else complete = false;
+    return handles;
+}
 void InvalidateMenuCache()
 {
     SharedMenuCache().Invalidate();

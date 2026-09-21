@@ -64,6 +64,8 @@ class Session
 std::uint64_t MenuCacheGeneration();
 void InvalidateMenuCache();
 bool TakeMenuRegistryChanges();
+// Non-owning notification handles on the calling STA; never close them.
+std::vector<HANDLE> MenuRegistryWaitHandles(bool &complete);
 using QueryExecutor = std::function<Reply(const Request &)>;
 using InvokeExecutor = std::function<void(UINT, POINT)>;
 std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {});

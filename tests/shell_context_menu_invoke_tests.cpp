@@ -469,6 +469,13 @@ void TestRegistryCatalogue()
     }
     ext::SetManagementOverride(original, *merged, ext::Context::File, ext::Visibility::Hide);
     for (const auto &member : merged->members) Expect(ext::IsHidden(original, member.id, ext::Context::File), "grouped location exception controls all applicable type members");
+    ext::SetManagementCommon(original, *merged, ext::Category::Objects, true);
+    for (const auto &member : merged->members) Expect(!ext::IsHidden(original, member.id, ext::Context::File), "primary show switch overrides an earlier location hide");
+    ext::SetManagementOverride(original, *merged, ext::Context::File, ext::Visibility::Show);
+    ext::SetOverride(original, merged->members.front().id, ext::Context::Desktop, ext::Visibility::Show);
+    ext::SetManagementCommon(original, *merged, ext::Category::Objects, false);
+    for (const auto &member : merged->members) Expect(ext::IsHidden(original, member.id, ext::Context::File), "primary hide switch overrides retained migrated opt-ins");
+    Expect(!ext::IsHidden(original, merged->members.front().id, ext::Context::Desktop), "object switch leaves background exceptions intact");
     Expect(ext::ManagementRows(typed, ext::Category::Objects, L".JPG").size() == 1, "type search retains the complete merged action");
     typed.rows.front().systemEnabled = false;
     grouped = ext::ManagementRows(typed, ext::Category::Objects);
@@ -1055,6 +1062,7 @@ void TestPendingCachedClick()
         ext::Presentation presentation(request, prefs, L"", L"", service);
         std::vector<menu::Item> items; menu::Options options; presentation.Attach(items, options, 0);
         Expect(items.size() == 1, "disk-restored snapshot is immediately available to popup");
+        service.Query(request, ext::QueryPriority::Menu, true);
         PumpUntil([&] { return !service.View(request).error.empty(); }, "controlled failed refresh completes");
         Expect(service.View(request).snapshot.has_value() && !options.pollItems, "failed query preserves both snapshot and frozen popup");
         Expect(presentation.Invoke(items.front().command, {0, 0}), "explicit cached click bypasses automatic backoff once");
@@ -1240,6 +1248,105 @@ void TestQueryScheduler()
     Expect(invokes == 0, "disabled pending command is never invoked");
     service.Shutdown();
     Expect(maximum <= 2, "scheduler never runs more than two query workers");
+}
+
+void TestVisibilityScheduling()
+{
+    // Exercise production configuration, popup projection and scheduler. Only
+    // the child process boundary is replaced; no desktop interaction is used.
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    const auto file = temp.path / L"cached.txt", folder = temp.path / L"folder";
+    std::ofstream(file) << "private"; std::filesystem::create_directory(folder);
+    ext::Request request; request.paths = {file.wstring()};
+    ext::Reply reply; reply.ok = true;
+    for (const auto *id : {"a", "b"})
+    {
+        ext::Entry entry; entry.provider = id; entry.key = id; entry.label = std::wstring(1, static_cast<wchar_t>(*id));
+        entry.token = 71; reply.entries.push_back(entry);
+    }
+    const auto cachePath = temp.path / L"cache";
+    ext::MenuSnapshotCache cache(cachePath);
+    Expect(cache.Store(cache.Capture(request), reply, ext::MenuSnapshotCache::Now() - 60000), "seed an older valid display snapshot");
+    std::mutex mutex;
+    std::vector<ext::Request> launched;
+    auto factory = [&](const ext::Request &target) {
+        { std::lock_guard lock(mutex); launched.push_back(target); }
+        return ext::QueryWork{[reply] { return reply; }, [](UINT, POINT) {}};
+    };
+    ext::MenuService service(cachePath, factory, [] { ext::Catalogue c; c.revision = 1; return c; });
+    service.Configure({});
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "restore raw cached commands while all switches are off");
+    ext::Preferences prefs; ext::SetCommon(prefs, "a", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Preferences stale; ext::SetCommon(stale, "b", ext::Category::Objects, true);
+    for (int i = 0; i < 30; ++i)
+    {
+        ext::Presentation popup(request, stale, L"", L"", service);
+        std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+        Expect(items.size() == 1 && items[0].label == L"a" && !options.pollItems, "every cache hit uses current host visibility rather than captured popup settings");
+    }
+    service.Configure(stale);
+    ext::Presentation changed(request, prefs, L"", L"", service);
+    std::vector<menu::Item> changedItems; menu::Options changedOptions; changed.Attach(changedItems, changedOptions, 0);
+    Expect(changedItems.size() == 1 && changedItems[0].label == L"b", "switch edits immediately change cached menu projection");
+    Expect(service.View(request).snapshot->entries.size() == 2, "visibility edits preserve reusable unfiltered content");
+    service.Configure({});
+    service.Query(request); service.Prewarm(request);
+    Expect(!service.MenuEnabled(request, prefs) && service.MenuDisplay(request, prefs).snapshot->entries.empty(), "all-off host rules override stale enabled popup settings");
+    // An Inspect barrier runs after any accidentally queued Menu work, giving
+    // the no-query assertion a deterministic observation point.
+    auto barrier = request; barrier.paths = {folder.wstring()};
+    service.Query(barrier, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return service.View(barrier).snapshot.has_value(); }, "explicit management inspection remains available with all switches off");
+    { std::lock_guard lock(mutex); Expect(launched.size() == 1 && launched[0].paths == barrier.paths, "thirty cached opens and disabled prewarm never launch a helper"); }
+    prefs.shown.push_back({"legacy", ext::Context::File});
+    ext::SetCommon(prefs, "legacy", ext::Category::Objects, false);
+    ext::SetOverride(prefs, "a", ext::Context::File, ext::Visibility::Hide);
+    ext::SetOverride(prefs, "a", ext::Context::Folder, ext::Visibility::Hide);
+    Expect(!ext::HasOptIns(prefs), "false common rules and explicit hides suppress retained legacy opt-ins");
+    ext::SetOverride(prefs, "a", ext::Context::File, ext::Visibility::Show);
+    service.Configure(prefs);
+    auto mixed = request; mixed.paths.push_back(folder.wstring());
+    service.Query(mixed);
+    auto background = request; background.paths = {folder.wstring()}; background.background = true; background.context = ext::Context::FolderBackground;
+    service.Query(background);
+    service.Query(barrier, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return !service.View(barrier).pending && !service.View(mixed).pending; }, "resolve object scopes before dispatching a mixed selection");
+    { std::lock_guard lock(mutex); Expect(launched.size() == 2, "mixed-location hide and unrelated background scope skip Shell enumeration"); }
+    // A changed local target must still invalidate a valid display snapshot.
+    std::ofstream(file, std::ios::app) << "changed target";
+    service.Query(request);
+    PumpUntil([&] { std::lock_guard lock(mutex); return launched.size() == 3 && !service.View(request).pending; }, "target changes still trigger a background requery");
+}
+
+void TestDisabledQueuedQueries()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    std::atomic<bool> release = false;
+    std::atomic<int> starts = 0;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &) {
+        ++starts;
+        return ext::QueryWork{[&]() -> std::optional<ext::Reply> {
+            if (!release) return {}; ext::Reply r; r.ok = true; return r;
+        }, {}};
+    }, [] { ext::Catalogue c; c.revision = 1; return c; });
+    ext::Preferences prefs; ext::SetCommon(prefs, "a", ext::Category::Objects, true); service.Configure(prefs);
+    std::vector<ext::Request> requests;
+    for (int i = 0; i < 4; ++i)
+    {
+        const auto path = temp.path / (std::to_wstring(i) + L".txt"); std::ofstream(path) << "fixture";
+        ext::Request r; r.paths = {path.wstring()}; requests.push_back(r); service.Query(r);
+    }
+    PumpUntil([&] { return starts == 2; }, "hold two supervised queries before disabling queued work");
+    service.Query(requests[3], ext::QueryPriority::Inspect);
+    service.Configure({});
+    Expect(!service.View(requests[2]).pending && service.View(requests[3]).pending, "disable cancels queued popup work while preserving a joined inspection");
+    release = true;
+    PumpUntil([&] { return service.View(requests[3]).snapshot.has_value(); }, "explicit inspection drains after disable");
+    Expect(starts == 3 && !service.View(requests[2]).snapshot, "cancelled popup request never reaches the child process boundary");
 }
 
 void TestSelectionScopes()
@@ -1707,6 +1814,12 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
         if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
+        {
+            TestVisibilityScheduling();
+            TestDisabledQueuedQueries();
+            TestRegistryCatalogue();
+        }
         else
         {
             RunTests();
@@ -1720,6 +1833,8 @@ int wmain(int argc, wchar_t **argv)
             TestSnapshotPresentation();
             TestPendingCachedClick();
             TestQueryScheduler();
+            TestVisibilityScheduling();
+            TestDisabledQueuedQueries();
             TestSourceScheduler();
             TestSourceDeduplication();
             TestSelectionScopes();

@@ -86,8 +86,8 @@ class Presentation
                  MenuService &service = SharedMenuService(), std::function<void(bool)> completed = {})
         : prefs_(std::move(prefs)), source_(source), service_(service), completed_(std::move(completed))
     {
-        if (source.paths.empty() || !HasOptIns(prefs_)) return;
-        auto view = service_.View(source_);
+        if (source.paths.empty() || !service_.MenuEnabled(source_, prefs_)) return;
+        auto view = service_.MenuDisplay(source_, prefs_);
         cached_ = std::move(view.snapshot);
         contexts_ = view.contexts;
         service_.Query(source_);
@@ -101,17 +101,17 @@ class Presentation
     void Attach(std::vector<modern_menu::Item> &items, modern_menu::Options &options, UINT moreCommand)
     {
         MoveMoreToBottom(items, moreCommand);
-        if (cached_) Insert(items, Convert(VisibleSnapshot(prefs_, *cached_, contexts_)), moreCommand);
-        else if (!source_.paths.empty() && HasOptIns(prefs_))
+        if (cached_) Insert(items, Convert(cached_->entries), moreCommand);
+        else if (!source_.paths.empty() && service_.MenuEnabled(source_, prefs_))
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
                 if (!canApply) return {};
-                auto view = service_.View(source_);
+                auto view = service_.MenuDisplay(source_, prefs_);
                 if (!view.snapshot && view.pending) return {};
                 auto updated = current;
                 if (view.snapshot)
                 {
                     cached_ = std::move(view.snapshot); contexts_ = view.contexts;
-                    Insert(updated, Convert(VisibleSnapshot(prefs_, *cached_, contexts_)), moreCommand);
+                    Insert(updated, Convert(cached_->entries), moreCommand);
                 }
                 // A completed empty/failed query also ends the one-shot poll.
                 return updated;
