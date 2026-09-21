@@ -1,5 +1,7 @@
 #pragma once
 
+#include "windows_compat.h"
+
 #include "../settings_controller.h"
 #include "../shell_extension_service.h"
 #include "../large_icon_settings.h"
@@ -10,8 +12,6 @@
 #include "home_about_page_model.h"
 #include "page_layout_page_presenter.h"
 #include "widgets_page_backend.h"
-
-#include <windows.h>
 
 #include <functional>
 #include <memory>

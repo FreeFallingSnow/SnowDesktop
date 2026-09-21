@@ -12769,10 +12769,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         action.id, false, "providerUnavailable");
                     continue;
                 }
-                std::vector<LuaDesktopItemInfo> snapshot;
+                std::vector<LuaDesktopItemInfo> desktopItems;
                 try
                 {
-                    snapshot = RuntimeDesktopItems();
+                    desktopItems = RuntimeDesktopItems();
                 }
                 catch (...)
                 {
@@ -12780,11 +12780,11 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         action.id, false, "providerFailed");
                     continue;
                 }
-                if (snapshot.size() > 2048) snapshot.resize(2048);
+                if (desktopItems.size() > 2048) desktopItems.resize(2048);
                 std::vector<snowdesktop::widget_runtime::
                     WidgetAppCatalogEntry> catalog;
-                catalog.reserve(snapshot.size());
-                for (const auto& item : snapshot)
+                catalog.reserve(desktopItems.size());
+                for (const auto& item : desktopItems)
                 {
                     if (item.title.empty() || item.path.empty()) continue;
                     snowdesktop::widget_runtime::WidgetAppCatalogEntry entry;

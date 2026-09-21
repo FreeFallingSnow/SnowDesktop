@@ -1,10 +1,6 @@
 #pragma once
 
-#include <windows.h>
-
-#ifdef GetCurrentTime
-#undef GetCurrentTime
-#endif
+#include "windows_compat.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
