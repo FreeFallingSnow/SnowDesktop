@@ -7,6 +7,7 @@
 #include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
 #include "shell_new_item_capture.h"
+#include "shell_popup_menu_tracker.h"
 
 #include <cstdlib>
 #include <chrono>
@@ -122,8 +123,91 @@ void TestRealNewFolderCapture()
         "released New handler retires its completed capture");
 }
 
+void TestNativeCascadeOwnerThread()
+{
+    // WinRAR's deferred cascade needs the menu loop on the context menu's STA.
+    // Keep the real production tracker/window/message loop; replace only the
+    // extension callback with a deterministic lazy popup requiring that STA.
+    struct LazyCascade
+    {
+        std::atomic<HWND> tracker{ nullptr };
+        std::atomic<bool> cancelled{ false };
+        HMENU menu = CreatePopupMenu();
+        HWND window = nullptr;
+        bool initializedOnOwnerThread = false;
+        bool displayed = false;
+        unsigned initializationCount = 0;
+        ~LazyCascade()
+        {
+            if (window) DestroyWindow(window);
+            if (menu) DestroyMenu(menu);
+        }
+        static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+        {
+            auto* self = reinterpret_cast<LazyCascade*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+            if (message == WM_NCCREATE)
+            {
+                self = static_cast<LazyCascade*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+                SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+            }
+            if (self && message == WM_INITMENUPOPUP && reinterpret_cast<HMENU>(wp) == self->menu)
+            {
+                ++self->initializationCount;
+                DeleteMenu(self->menu, 0, MF_BYPOSITION);
+                self->initializedOnOwnerThread =
+                    GetWindowThreadProcessId(self->tracker.load(), nullptr) == GetCurrentThreadId();
+                if (self->initializedOnOwnerThread)
+                {
+                    AppendMenuW(self->menu, MF_STRING, 71, L"Deferred archive command");
+                    AppendMenuW(self->menu, MF_STRING, 72, L"Second archive command");
+                }
+                return 0;
+            }
+            if (self && message == WM_TIMER && wp == 1)
+            {
+                RECT bounds{};
+                self->displayed = GetMenuItemRect(self->tracker.load(), self->menu, 0, &bounds) &&
+                    !IsRectEmpty(&bounds);
+                // Cancel on the tracker's thread, including in the negative
+                // control that restores the old cross-thread implementation.
+                PostMessageW(self->tracker.load(), WM_CANCELMODE, 0, 0);
+                KillTimer(window, 1);
+                return 0;
+            }
+            return DefWindowProcW(window, message, wp, lp);
+        }
+    } cascade;
+    Expect(cascade.menu != nullptr, "create isolated deferred popup");
+    AppendMenuW(cascade.menu, MF_STRING, 70, L"");
+    WNDCLASSW cls{};
+    cls.lpfnWndProc = LazyCascade::Proc;
+    cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = L"SnowDesktopCascadeOwnerTest";
+    Expect(RegisterClassW(&cls) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS,
+        "register isolated cascade owner");
+    cascade.window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"Cascade owner test",
+        WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, &cascade);
+    Expect(cascade.window != nullptr, "create isolated cascade owner");
+    Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the native popup lifetime");
+    const auto selected = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
+        cascade.tracker, cascade.cancelled);
+    Expect(cascade.initializedOnOwnerThread && GetMenuItemCount(cascade.menu) == 2,
+        "deferred cascade initializes on the menu-tracking STA and keeps its commands");
+    Expect(cascade.displayed, "initialized deferred commands have visible native menu bounds");
+    Expect(selected == 0 && cascade.tracker.load() == nullptr,
+        "cancellation invokes no command and releases the transient owner");
+    cascade.cancelled.store(true);
+    const auto before = cascade.initializationCount;
+    Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+        TPM_RETURNCMD, {100, 100}, cascade.window, false, cascade.tracker, cascade.cancelled) == 0 &&
+        cascade.initializationCount == before && cascade.tracker.load() == nullptr,
+        "early cancellation never opens or initializes the native menu");
+}
+
 void RunTests()
 {
+    TestNativeCascadeOwnerThread();
     const std::wstring currentDirectory =
         std::filesystem::current_path().wstring();
     Expect(snowdesktop::ShellInvocationDirectoryForItem(

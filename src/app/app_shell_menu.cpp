@@ -4,57 +4,9 @@
 #include "../shell_context_menu_invoke.h"
 #include "../shell_context_menu_site.h"
 #include "../shell_new_item_capture.h"
+#include "../shell_popup_menu_tracker.h"
 
 // Shell New menu, desktop host restoration and protected-icon handling.
-
-namespace
-{
-struct ShellMenuTrackerWindowContext
-{
-    HWND forwardingOwner = nullptr;
-    WNDPROC originalProcedure = nullptr;
-};
-
-bool IsShellMenuOwnerMessage(UINT message)
-{
-    return message == WM_INITMENUPOPUP ||
-        message == WM_DRAWITEM ||
-        message == WM_MEASUREITEM ||
-        message == WM_MENUCHAR;
-}
-
-LRESULT CALLBACK ShellMenuTrackerWindowProc(
-    HWND hwnd,
-    UINT message,
-    WPARAM wParam,
-    LPARAM lParam)
-{
-    auto* context = reinterpret_cast<ShellMenuTrackerWindowContext*>(
-        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    if (context &&
-        IsShellMenuOwnerMessage(message) &&
-        context->forwardingOwner &&
-        IsWindow(context->forwardingOwner))
-    {
-        return SendMessageW(
-            context->forwardingOwner,
-            message,
-            wParam,
-            lParam);
-    }
-
-    if (context && context->originalProcedure)
-    {
-        return CallWindowProcW(
-            context->originalProcedure,
-            hwnd,
-            message,
-            wParam,
-            lParam);
-    }
-    return DefWindowProcW(hwnd, message, wParam, lParam);
-}
-}
 
 DesktopApp::ShellPopupMenuLayerGuard::
 ShellPopupMenuLayerGuard(DesktopApp& app)
@@ -81,214 +33,23 @@ UINT DesktopApp::TrackShellPopupMenuWithDesktopPump(
     if (!menu || !owner || !IsWindow(owner))
         return 0;
 
-    HANDLE completedEvent = CreateEventW(
-        nullptr, TRUE, FALSE, nullptr);
-    if (!completedEvent)
-    {
-        WriteDiagnosticLogEntry(
-            L"Native menu tracker event unavailable; menu was not opened");
-        return 0;
-    }
-
-    std::atomic<UINT> selectedCommand{ 0 };
-    const bool topmost =
-        ShouldKeepFloatingPopupTopmostForShellMenu();
-    shellPopupTrackerCancelRequested_.store(
-        false, std::memory_order_release);
-    std::thread tracker;
-    try
-    {
-        tracker = std::thread([this,
-            menu, flags, screenPoint, owner, topmost,
-            completedEvent, &selectedCommand]() {
-            const HRESULT comResult = CoInitializeEx(
-                nullptr, COINIT_APARTMENTTHREADED);
-
-            ShellMenuTrackerWindowContext windowContext{};
-            windowContext.forwardingOwner = owner;
-            HWND trackerOwner = CreateWindowExW(
-                WS_EX_TOOLWINDOW |
-                    (topmost ? WS_EX_TOPMOST : 0),
-                L"STATIC",
-                L"SnowDesktop Shell Menu Tracker",
-                WS_POPUP,
-                -32000,
-                -32000,
-                1,
-                1,
-                nullptr,
-                nullptr,
-                GetModuleHandleW(nullptr),
-                nullptr);
-            if (trackerOwner)
-            {
-                SetWindowLongPtrW(
-                    trackerOwner,
-                    GWLP_USERDATA,
-                    reinterpret_cast<LONG_PTR>(&windowContext));
-                SetLastError(ERROR_SUCCESS);
-                const LONG_PTR originalProcedure = SetWindowLongPtrW(
-                    trackerOwner,
-                    GWLP_WNDPROC,
-                    reinterpret_cast<LONG_PTR>(
-                        ShellMenuTrackerWindowProc));
-                if (originalProcedure ||
-                    GetLastError() == ERROR_SUCCESS)
-                {
-                    windowContext.originalProcedure =
-                        reinterpret_cast<WNDPROC>(originalProcedure);
-                }
-                else
-                {
-                    SetWindowLongPtrW(
-                        trackerOwner,
-                        GWLP_USERDATA,
-                        0);
-                    DestroyWindow(trackerOwner);
-                    trackerOwner = nullptr;
-                }
-            }
-
-            UINT command = 0;
-            if (trackerOwner)
-            {
-                shellPopupTrackerOwnerHwnd_.store(
-                    trackerOwner, std::memory_order_release);
-                ShowWindow(trackerOwner, SW_SHOWNA);
-                SetForegroundWindow(trackerOwner);
-                if (!shellPopupTrackerCancelRequested_.load(
-                        std::memory_order_acquire))
-                {
-                    command = TrackPopupMenuEx(
-                        menu, flags,
-                        screenPoint.x, screenPoint.y,
-                        trackerOwner, nullptr);
-                }
-                shellPopupTrackerOwnerHwnd_.store(
-                    nullptr, std::memory_order_release);
-                DestroyWindow(trackerOwner);
-            }
-            else
-            {
-                WriteDiagnosticLogEntry(
-                    L"Native menu tracker owner window unavailable; menu was not opened");
-            }
-            selectedCommand.store(
-                command, std::memory_order_release);
-            SetEvent(completedEvent);
-            if (SUCCEEDED(comResult))
-                CoUninitialize();
+    // The native menu loop must share the Shell context menu's STA. Keep
+    // widget and composition deadlines running through the existing modal
+    // animation pump instead of moving TrackPopupMenuEx to another thread.
+    snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+        uiAnimationScheduler_, [this]() {
+            FlushPendingCompositionCommit();
+            FlushPendingQuickNavigationCompositionCommit();
         });
-    }
-    catch (...)
-    {
-        CloseHandle(completedEvent);
-        WriteDiagnosticLogEntry(
-            L"Native menu tracker thread unavailable; menu was not opened");
-        return 0;
-    }
+    if (!pump.IsAvailable())
+        WriteDiagnosticLogEntry(L"Shell menu animation pump unavailable");
 
-    bool quitPending = false;
-    WPARAM quitCode = 0;
-    bool waitFailed = false;
-    while (WaitForSingleObject(completedEvent, 0) !=
-        WAIT_OBJECT_0)
-    {
-        HANDLE waitHandles[2]{ completedEvent, nullptr };
-        DWORD handleCount = 1;
-        HANDLE animationWait =
-            uiAnimationScheduler_.WaitHandle();
-        if (animationWait)
-            waitHandles[handleCount++] = animationWait;
-
-        const DWORD waitResult = MsgWaitForMultipleObjectsEx(
-            handleCount,
-            waitHandles,
-            INFINITE,
-            QS_ALLINPUT,
-            MWMO_INPUTAVAILABLE);
-        if (waitResult == WAIT_FAILED)
-        {
-            waitFailed = true;
-            shellPopupTrackerCancelRequested_.store(
-                true, std::memory_order_release);
-            const HWND trackerOwner =
-                shellPopupTrackerOwnerHwnd_.load(
-                    std::memory_order_acquire);
-            if (trackerOwner && IsWindow(trackerOwner))
-                SendMessageW(trackerOwner, WM_CANCELMODE, 0, 0);
-            break;
-        }
-        if (waitResult == WAIT_OBJECT_0)
-            break;
-
-        const bool animationWasReady =
-            animationWait &&
-            waitResult == WAIT_OBJECT_0 + 1;
-        MSG message{};
-        unsigned processedMessages = 0;
-        while (processedMessages < 64 &&
-            PeekMessageW(
-                &message, nullptr, 0, 0, PM_REMOVE))
-        {
-            if (message.message == WM_QUIT)
-            {
-                quitPending = true;
-                quitCode = message.wParam;
-                shellPopupTrackerCancelRequested_.store(
-                    true, std::memory_order_release);
-                const HWND trackerOwner =
-                    shellPopupTrackerOwnerHwnd_.load(
-                        std::memory_order_acquire);
-                if (trackerOwner && IsWindow(trackerOwner))
-                {
-                    SendMessageW(
-                        trackerOwner, WM_CANCELMODE, 0, 0);
-                }
-                ++processedMessages;
-                continue;
-            }
-            const bool settingsMessageHandled =
-                settingsWindow_ &&
-                (settingsWindow_->PreTranslateMessage(&message) ||
-                    settingsWindow_->ProcessTabNavigation(&message));
-            if (!settingsMessageHandled)
-            {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
-            FlushPendingCompositionCommit();
-            FlushPendingQuickNavigationCompositionCommit();
-            ++processedMessages;
-        }
-
-        if (animationWait &&
-            (animationWasReady ||
-                WaitForSingleObject(animationWait, 0) ==
-                    WAIT_OBJECT_0))
-        {
-            uiAnimationScheduler_.DispatchDue();
-            FlushPendingCompositionCommit();
-            FlushPendingQuickNavigationCompositionCommit();
-        }
-    }
-
-    if (waitFailed &&
-        WaitForSingleObject(completedEvent, 1000) !=
-            WAIT_OBJECT_0)
-    {
-        WriteDiagnosticLogEntry(
-            L"Native menu tracker did not stop after wait failure");
-    }
-    tracker.join();
-    const UINT command = selectedCommand.load(
-        std::memory_order_acquire);
-    shellPopupTrackerCancelRequested_.store(
-        false, std::memory_order_release);
-    CloseHandle(completedEvent);
-    PostMessageW(owner, WM_NULL, 0, 0);
-    if (quitPending)
-        PostQuitMessage(static_cast<int>(quitCode));
+    shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
+    const UINT command = snowdesktop::shell_popup_menu_tracker::Track(
+        menu, flags, screenPoint, owner,
+        ShouldKeepFloatingPopupTopmostForShellMenu(),
+        shellPopupTrackerOwnerHwnd_, shellPopupTrackerCancelRequested_);
+    shellPopupTrackerCancelRequested_.store(false, std::memory_order_release);
     return command;
 }
 
