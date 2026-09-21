@@ -1094,7 +1094,7 @@
   "workshop_manager.steam_disconnected": "Steam 연결 안 됨",
   "workshop_manager.steam_unavailable_hint": "Steam 클라이언트에 연결할 수 없습니다. Steam을 실행하세요. 이미 실행 중이라면 두 앱이 같은 Windows 사용자 및 권한으로 실행되는지 확인한 후 다시 시도하세요.",
   "workshop_manager.steam_offline_hint": "Steam이 오프라인 상태이거나 계정에 로그인하지 않았습니다. 네트워크 연결을 복구하고 Steam에 로그인한 뒤 클라이언트에 연결 끊김이 표시되지 않으면 다시 시도하세요.",
-  "workshop_manager.steam_outdated_hint": "Steam 클라이언트 버전이 호환되지 않습니다. Steam을 업데이트하고 다시 시작한 후 재시도하세요.",
+  "workshop_manager.steam_outdated_hint": "Steam 클라이언트 버전이 호환되지 않아 필요한 인터페이스를 사용할 수 없습니다. Steam 메뉴에서 클라이언트 업데이트를 확인하고, 업데이트 후 Steam을 완전히 종료한 다음 다시 여세요. 라이브러리에서 SnowDesktop을 실행하고 다시 시도하세요. 문제가 계속되면 도움말 → Steam 정보에 표시된 클라이언트 버전과 빌드 날짜, 아래 오류 세부 정보를 보내 주세요.",
   "workshop_manager.steam_interface_hint": "Steam 인터페이스를 사용할 수 없습니다. Steam을 업데이트하고 다시 시작하세요. 문제가 계속되면 SnowDesktop 파일 무결성을 검사하세요.",
   "workshop_manager.steam_app_mismatch_hint": "Steam 앱 식별 정보가 일치하지 않습니다. Steam 라이브러리에서 SnowDesktop을 실행하고 파일 무결성을 검사하세요.",
   "workshop_manager.steam_bridge_unavailable_hint": "현재 Steam Bridge는 Steam 기능을 지원하지 않습니다. Steam에서 SnowDesktop 파일 무결성을 검사하세요.",

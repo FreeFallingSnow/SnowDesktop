@@ -1094,7 +1094,7 @@
   "workshop_manager.steam_disconnected": "Steam desconectado",
   "workshop_manager.steam_unavailable_hint": "Não foi possível conectar ao cliente Steam. Abra o Steam. Se ele já estiver aberto, confira se os dois aplicativos usam o mesmo usuário do Windows e o mesmo nível de permissões e tente novamente.",
   "workshop_manager.steam_offline_hint": "O Steam está offline ou a conta não está conectada. Restabeleça a conexão e entre no Steam. Tente novamente quando o cliente não mostrar mais “Sem conexão”.",
-  "workshop_manager.steam_outdated_hint": "A versão do cliente Steam é incompatível. Atualize e reinicie o Steam e tente novamente.",
+  "workshop_manager.steam_outdated_hint": "A versão do cliente Steam é incompatível e não oferece uma interface necessária. Procure atualizações do cliente no menu Steam. Após atualizar, encerre completamente o Steam e abra-o novamente. Inicie o SnowDesktop pela biblioteca e tente novamente. Se o problema persistir, informe a versão do cliente e a data de compilação em Ajuda → Sobre o Steam, junto com os detalhes do erro abaixo.",
   "workshop_manager.steam_interface_hint": "As interfaces do Steam estão indisponíveis. Atualize e reinicie o Steam. Se o problema persistir, verifique a integridade dos arquivos do SnowDesktop.",
   "workshop_manager.steam_app_mismatch_hint": "A identidade do aplicativo Steam não corresponde. Inicie o SnowDesktop pela biblioteca do Steam e verifique a integridade dos arquivos.",
   "workshop_manager.steam_bridge_unavailable_hint": "Este Steam Bridge não oferece suporte aos recursos do Steam. Verifique a integridade dos arquivos do SnowDesktop no Steam.",

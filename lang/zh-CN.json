@@ -1094,7 +1094,7 @@
     "workshop_manager.steam_disconnected": "Steam 未连接",
   "workshop_manager.steam_unavailable_hint": "无法连接 Steam 客户端。请启动 Steam；若已打开，请确认两者使用同一 Windows 用户和相同权限，再重试。",
   "workshop_manager.steam_offline_hint": "Steam 当前离线或账户尚未登录。请恢复网络并登录 Steam，确认客户端不再显示“无连接”后重试。",
-  "workshop_manager.steam_outdated_hint": "Steam 客户端版本不兼容。请更新并重启 Steam 后重试。",
+  "workshop_manager.steam_outdated_hint": "Steam 客户端版本不兼容，缺少所需接口。请在 Steam 菜单中检查客户端更新，更新后完全退出并重新打开 Steam，再从库中启动 SnowDesktop 重试。若仍失败，请提供“帮助 → 关于 Steam”中的客户端版本、构建日期及下方错误详情。",
   "workshop_manager.steam_interface_hint": "Steam 接口不可用。请更新并重启 Steam；若仍失败，请验证 SnowDesktop 文件完整性。",
   "workshop_manager.steam_app_mismatch_hint": "Steam 应用身份不匹配。请从 Steam 库启动 SnowDesktop，并验证文件完整性。",
   "workshop_manager.steam_bridge_unavailable_hint": "当前 Steam Bridge 不支持 Steam 功能。请在 Steam 中验证 SnowDesktop 文件完整性。",

@@ -180,7 +180,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.general.advancedFeatures.notOwned", L"The current Steam account does not own SnowDesktop."},
     LocalizedFallback{"workshop_manager.steam_unavailable_hint", L"Cannot connect to the Steam client. Start Steam; if it is already open, make sure both apps use the same Windows user and privilege level, then retry."},
     LocalizedFallback{"workshop_manager.steam_offline_hint", L"Steam is offline or the account is not signed in. Restore the connection and sign in to Steam, then retry once the client no longer shows No Connection."},
-    LocalizedFallback{"workshop_manager.steam_outdated_hint", L"The Steam client version is incompatible. Update and restart Steam, then retry."},
+    LocalizedFallback{"workshop_manager.steam_outdated_hint", L"The Steam client version is incompatible and lacks a required interface. Check for client updates in the Steam menu, then fully exit and reopen Steam. Launch SnowDesktop from your library and retry. If it still fails, share the client version and build date from Help → About Steam, along with the error details below."},
     LocalizedFallback{"workshop_manager.steam_interface_hint", L"Steam interfaces are unavailable. Update and restart Steam; if the problem persists, verify the integrity of SnowDesktop files."},
     LocalizedFallback{"workshop_manager.steam_app_mismatch_hint", L"The Steam app identity does not match. Launch SnowDesktop from your Steam library and verify its file integrity."},
     LocalizedFallback{"workshop_manager.steam_bridge_unavailable_hint", L"This Steam Bridge does not support Steam features. Verify the integrity of SnowDesktop files in Steam."},

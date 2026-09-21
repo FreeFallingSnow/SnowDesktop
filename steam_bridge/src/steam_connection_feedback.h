@@ -64,8 +64,8 @@ inline SteamConnectionFeedback ConnectionFeedback(SteamConnectionProblem problem
             "Steam is offline or the account is not signed in. Restore the connection and sign in to Steam, then retry once the client no longer shows No Connection.", true};
     case SteamConnectionProblem::ClientOutdated:
         return {"workshop_manager.steam_outdated_hint",
-            "Steam 客户端版本不兼容。请更新并重启 Steam 后重试。",
-            "The Steam client version is incompatible. Update and restart Steam, then retry.", true};
+            "Steam 客户端版本不兼容，缺少所需接口。请在 Steam 菜单中检查客户端更新，更新后完全退出并重新打开 Steam，再从库中启动 SnowDesktop 重试。若仍失败，请提供“帮助 → 关于 Steam”中的客户端版本、构建日期及下方错误详情。",
+            "The Steam client version is incompatible and lacks a required interface. Check for client updates in the Steam menu, then fully exit and reopen Steam. Launch SnowDesktop from your library and retry. If it still fails, share the client version and build date from Help → About Steam, along with the error details below.", true};
     case SteamConnectionProblem::InterfaceUnavailable:
         return {"workshop_manager.steam_interface_hint",
             "Steam 接口不可用。请更新并重启 Steam；若仍失败，请验证 SnowDesktop 文件完整性。",
