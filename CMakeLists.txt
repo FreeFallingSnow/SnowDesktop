@@ -133,6 +133,8 @@ set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/auto_start_manager.cpp
     src/auto_start_manager.h
+    src/auto_start_elevation.cpp
+    src/auto_start_elevation.h
     src/auto_start_rules.h
     src/application_crash_watchdog.cpp
     src/desktop_namespace_registry.cpp
@@ -1601,6 +1603,7 @@ if (BUILD_TESTING)
         SOURCES tests/auto_start_rules_tests.cpp
             tests/auto_start_manager_tests.cpp
             src/auto_start_manager.cpp
+            src/auto_start_elevation.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32
         LABELS contract rules settings startup)

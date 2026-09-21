@@ -1,4 +1,5 @@
 #include "auto_start_manager.h"
+#include "auto_start_elevation.h"
 #include "deployment_context.h"
 #include "diagnostic_log.h"
 
@@ -61,11 +62,11 @@ std::wstring FormatError(std::wstring_view operation, HRESULT result)
     return message;
 }
 
-struct TaskFailure { std::wstring message; };
+struct TaskFailure { std::wstring message; HRESULT result = E_FAIL; };
 
 void Check(HRESULT result, std::wstring_view operation)
 {
-    if (FAILED(result)) throw TaskFailure{FormatError(operation, result)};
+    if (FAILED(result)) throw TaskFailure{FormatError(operation, result), result};
 }
 
 std::wstring ExceptionMessage()
@@ -304,9 +305,10 @@ State QueryRegisteredTask(IRegisteredTask* task, const std::wstring& folder)
 }
 
 void ConfigureDefinition(ITaskDefinition* definition, const Target& target,
-    bool enabled, std::wstring_view description, const std::wstring& folder)
+    bool enabled, std::wstring_view description, const std::wstring& folder,
+    const std::wstring& userSid)
 {
-    const ScopedBstr sid(CurrentUserSid());
+    const ScopedBstr sid(userSid.empty() ? CurrentUserSid() : userSid);
     const ScopedBstr author(kTaskAuthor);
     const ScopedBstr text(description);
     const ScopedBstr uri(folder + L"\\Startup");
@@ -381,6 +383,10 @@ std::wstring RegistryOperation(const wchar_t* operation,
 
 namespace snowdesktop::auto_start
 {
+std::wstring DescribeError(std::wstring_view operation, std::int32_t code)
+{
+    return FormatError(operation, code);
+}
 State RunStore::Query() const noexcept
 {
     State state;
@@ -530,8 +536,19 @@ bool LoginStore::Configure(const Target& target, bool enabled, std::wstring* err
         target.owner == UnifiedAutoStartOwner::Unknown)
         return ReportFailure(FormatError(L"AutoStart.Target", E_INVALIDARG), error);
     std::wstring taskError;
-    if (task_.Configure(target, enabled, kTaskDescription, &taskError))
+    std::int32_t failureCode = S_OK;
+    if (task_.Configure(target, enabled, kTaskDescription, &taskError, &failureCode))
         return run_.Delete(error);
+
+    if (elevate_ && (failureCode == E_ACCESSDENIED ||
+        failureCode == HRESULT_FROM_WIN32(ERROR_PRIVILEGE_NOT_HELD) ||
+        failureCode == HRESULT_FROM_WIN32(ERROR_ELEVATION_REQUIRED)))
+    {
+        std::wstring elevationError;
+        if (elevate_(target, enabled, &elevationError)) return run_.Delete(error);
+        if (elevationError.empty()) elevationError = FormatError(L"AutoStart.ElevatedRetry", E_FAIL);
+        AppendError(taskError, elevationError);
+    }
 
     // Establish the replacement before disabling an old task. A failed enable
     // must not remove a working registration. Disable requests still attempt
@@ -634,9 +651,10 @@ State TaskStore::Query() const noexcept
 }
 
 bool TaskStore::Configure(const Target& target, bool enabled,
-    std::wstring_view description, std::wstring* error) const noexcept
+    std::wstring_view description, std::wstring* error, std::int32_t* failureCode) const noexcept
 {
     if (error) error->clear();
+    if (failureCode) *failureCode = S_OK;
     try
     {
         if (!target.error.empty()) throw TaskFailure{target.error};
@@ -648,13 +666,21 @@ bool TaskStore::Configure(const Target& target, bool enabled,
         const auto folder = EnsureTaskFolder(service.Get(), folder_);
         ComPtr<ITaskDefinition> definition;
         Check(service->NewTask(0, &definition), L"ITaskService::NewTask");
-        ConfigureDefinition(definition.Get(), target, enabled, description, folder_);
+        ConfigureDefinition(definition.Get(), target, enabled, description, folder_, userSid_);
         const ScopedBstr name(kTaskName);
         VARIANT empty{};
+        const ScopedBstr taskSecurity(userSid_.empty() ? L"" :
+            L"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;" + userSid_ + L")");
+        VARIANT security{};
+        if (!userSid_.empty())
+        {
+            security.vt = VT_BSTR;
+            security.bstrVal = taskSecurity.get();
+        }
         ComPtr<IRegisteredTask> registered;
         Check(folder->RegisterTaskDefinition(name.get(), definition.Get(),
             TASK_CREATE_OR_UPDATE, empty, empty, TASK_LOGON_INTERACTIVE_TOKEN,
-            empty, &registered), L"ITaskFolder::RegisterTaskDefinition(" + folder_ + L"\\Startup)");
+            security, &registered), L"ITaskFolder::RegisterTaskDefinition(" + folder_ + L"\\Startup)");
         const State after = QueryRegisteredTask(registered.Get(), folder_);
         if (!after.error.empty()) throw TaskFailure{after.error};
         const auto expected = enabled ? UnifiedAutoStartTaskState::Enabled : UnifiedAutoStartTaskState::Disabled;
@@ -666,7 +692,16 @@ bool TaskStore::Configure(const Target& target, bool enabled,
             ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA), L"AutoStart.VerifyRegisteredTask");
         return true;
     }
-    catch (...) { return ReportFailure(ExceptionMessage(), error); }
+    catch (const TaskFailure& failure)
+    {
+        if (failureCode) *failureCode = failure.result;
+        return ReportFailure(failure.message, error);
+    }
+    catch (...)
+    {
+        if (failureCode) *failureCode = E_UNEXPECTED;
+        return ReportFailure(ExceptionMessage(), error);
+    }
 }
 
 bool TaskStore::SetEnabled(bool enabled, std::wstring* error) const noexcept
@@ -709,7 +744,7 @@ bool TaskStore::Delete(std::wstring* error) const noexcept
 State Query() noexcept { return LoginStore{}.Query(); }
 bool Apply(const Target& target, bool enabled, std::wstring* error) noexcept
 {
-    return LoginStore{}.Configure(target, enabled, error);
+    return LoginStore(TaskStore{}, RunStore{}, ConfigureElevated).Configure(target, enabled, error);
 }
 bool Configure(const Target& target, bool enabled, std::wstring* error) noexcept
 {

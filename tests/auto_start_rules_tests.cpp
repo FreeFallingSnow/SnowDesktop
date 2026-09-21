@@ -1,4 +1,5 @@
 #include "auto_start_rules.h"
+#include "auto_start_elevation.h"
 #include "deployment_context.h"
 
 #include <cstdlib>
@@ -21,6 +22,7 @@ void Check(bool condition, const char* message)
 
 int main(int argc, char** argv)
 {
+    if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
     if (argc > 1 && std::string_view(argv[1]) == "--scheduler")
         return RunAutoStartManagerTests();
     // A test task must remain harmless if a logon happens during the test.

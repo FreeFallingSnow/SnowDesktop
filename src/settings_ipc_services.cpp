@@ -57,7 +57,11 @@ public:
     bool RetryPending() override { return Action("FlushAll").Succeeded(); }
     SettingsActionResult InvokeHostAction(const SettingsHostActions::Request& request) override
     {
-        return Action("InvokeHostAction", request);
+        // The startup action may be waiting for the user's UAC consent. Keep
+        // the response tied to that action instead of disconnecting after 30s;
+        // peer exit/disconnection still ends the wait in Channel::Request.
+        return ActionWithTimeout(request.action == SettingsHostActions::Action::SetAutoStartEnabled
+            ? INFINITE : 30000, "InvokeHostAction", request);
     }
     void SetSnapshotChangedCallback(SnapshotChangedCallback callback) override { changed_ = std::move(callback); }
     void SetPendingWorkCallback(PendingWorkCallback callback) override { pending_ = std::move(callback); }
@@ -105,10 +109,14 @@ private:
     }
     template<class... A> SettingsActionResult Action(const char* name, const A&... arguments)
     {
+        return ActionWithTimeout(30000, name, arguments...);
+    }
+    template<class... A> SettingsActionResult ActionWithTimeout(DWORD timeout, const char* name, const A&... arguments)
+    {
         try
         {
-            auto result = channel_.Call<std::pair<SettingsActionResult, SnapshotPtr>>(
-                std::string("controller.") + name, arguments...);
+            auto result = channel_.CallWithTimeout<std::pair<SettingsActionResult, SnapshotPtr>>(
+                timeout, std::string("controller.") + name, arguments...);
             Accept(std::move(result.second));
             return result.first;
         }

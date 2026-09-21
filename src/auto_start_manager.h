@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <functional>
 
 namespace snowdesktop::auto_start
 {
@@ -36,17 +37,19 @@ struct State
 class TaskStore
 {
 public:
-    explicit TaskStore(std::wstring folder = L"\\SnowDesktop")
-        : folder_(std::move(folder)) {}
+    explicit TaskStore(std::wstring folder = L"\\SnowDesktop", std::wstring userSid = {})
+        : folder_(std::move(folder)), userSid_(std::move(userSid)) {}
     [[nodiscard]] State Query() const noexcept;
     [[nodiscard]] bool Configure(const Target& target, bool enabled,
-        std::wstring_view description, std::wstring* error = nullptr) const noexcept;
+        std::wstring_view description, std::wstring* error = nullptr,
+        std::int32_t* failureCode = nullptr) const noexcept;
     [[nodiscard]] bool SetEnabled(bool enabled,
         std::wstring* error = nullptr) const noexcept;
     [[nodiscard]] bool Delete(std::wstring* error = nullptr) const noexcept;
 
 private:
     std::wstring folder_;
+    std::wstring userSid_;
 };
 
 // Separate from the legacy SnowDesktop value consumed by migration. Paths are
@@ -71,15 +74,20 @@ private:
 class LoginStore
 {
 public:
-    LoginStore(TaskStore task = TaskStore{}, RunStore run = RunStore{})
-        : task_(std::move(task)), run_(std::move(run)) {}
+    using ElevationRetry = std::function<bool(const Target&, bool, std::wstring*)>;
+    LoginStore(TaskStore task = TaskStore{}, RunStore run = RunStore{}, ElevationRetry elevate = {})
+        : task_(std::move(task)), run_(std::move(run)), elevate_(std::move(elevate)) {}
     [[nodiscard]] State Query() const noexcept;
     [[nodiscard]] bool Configure(const Target& target, bool enabled,
         std::wstring* error = nullptr) const noexcept;
 private:
     TaskStore task_;
     RunStore run_;
+    ElevationRetry elevate_;
 };
+
+// Shared native diagnostics; these are private host implementation interfaces.
+[[nodiscard]] std::wstring DescribeError(std::wstring_view operation, std::int32_t code);
 
 /** Return the scheduled-task target for the running deployment. */
 [[nodiscard]] Target CurrentDeploymentTarget() noexcept;

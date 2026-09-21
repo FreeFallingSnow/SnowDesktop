@@ -164,6 +164,10 @@ struct DenyTaskCreation
         SysFreeString(original);
         if (FAILED(restored)) std::terminate();
     }
+    void Restore()
+    {
+        Require(SUCCEEDED(folder->SetSecurityDescriptor(original, 0)), "restore fixture write access");
+    }
 };
 
 struct DenyRegistryWrites
@@ -275,6 +279,12 @@ int RunAutoStartManagerTests()
 
         const RunStore run(fixture.registryRoot + L"\\Run", fixture.registryRoot + L"\\Approval");
         const LoginStore login(store, run);
+        int elevationRequests = 0;
+        const LoginStore cancelledElevation(store, run, [&](const Target&, bool, std::wstring* detail) {
+            ++elevationRequests;
+            *detail = DescribeError(L"ShellExecuteExW(runas startup)", HRESULT_FROM_WIN32(ERROR_CANCELLED));
+            return false;
+        });
         Target steam = target;
         steam.owner = snowdesktop::UnifiedAutoStartOwner::Steam;
         steam.arguments = L"--snowdesktop-autostart-owner=steam";
@@ -301,11 +311,16 @@ int RunAutoStartManagerTests()
             Require(login.Configure(steam, false, &error) &&
                 LoginStore(store, run).Query().status == UnifiedAutoStartTaskState::Disabled,
                 "disable succeeds while scheduler registration remains denied");
+            Require(cancelledElevation.Configure(steam, true, &error) && elevationRequests == 1 &&
+                run.Query().status == UnifiedAutoStartTaskState::Enabled,
+                "permission denial asks for elevation once, then falls back after cancellation");
+            Require(login.Configure(steam, false, &error), "restore disabled fallback for failed write check");
             {
             DenyRegistryWrites deniedRun(fixture.registryRoot + L"\\Run");
-            Require(!login.Configure(steam, true, &error) &&
+            Require(!cancelledElevation.Configure(steam, true, &error) && elevationRequests == 2 &&
                 error.find(L"RegisterTaskDefinition") != std::wstring::npos &&
                 error.find(L"0x80070005") != std::wstring::npos &&
+                error.find(L"0x800704C7") != std::wstring::npos &&
                 error.find(L"RegSetValueExW(HKCU\\") != std::wstring::npos,
                 "both failed mechanisms retain their concrete operation and error");
             Require(run.Query().status == UnifiedAutoStartTaskState::Disabled,
@@ -328,6 +343,45 @@ int RunAutoStartManagerTests()
         tooLong.executable = L"C:\\" + std::wstring(260, L'x') + L".exe";
         Require(!run.Configure(tooLong, true, &error) && error.find(L"0x800700CE") != std::wstring::npos &&
             run.Query().status == UnifiedAutoStartTaskState::Missing, "long Run commands fail explicitly without truncation");
+
+        Require(store.Delete(&error) && run.Configure(steam, false, &error), "prepare successful elevation boundary");
+        {
+            DenyTaskCreation denied(fixture);
+            int requests = 0;
+            const LoginStore elevated(store, run, [&](const Target& requested, bool enabled, std::wstring* detail) {
+                ++requests;
+                Require(run.Query().status == UnifiedAutoStartTaskState::Disabled,
+                    "try elevation before writing the fallback");
+                denied.Restore(); // Substitute only the UAC/privilege boundary.
+                return store.Configure(requested, enabled, L"test", detail);
+            });
+            Require(elevated.Configure(steam, true, &error) && requests == 1 &&
+                store.Query().status == UnifiedAutoStartTaskState::Enabled &&
+                run.Query().status == UnifiedAutoStartTaskState::Missing,
+                "successful elevated registration is verified and removes fallback");
+            Require(elevated.Configure(steam, false, &error) && requests == 1,
+                "normal successful writes never prompt for elevation");
+            Require(!elevated.Configure(Target{}, true, &error) && requests == 1,
+                "invalid targets do not prompt for elevation");
+        }
+
+        // Exercise the actual helper entry point without displaying UAC or
+        // creating a production task: malformed/missing IPC is always terminal.
+        for (const auto suffix : {L"", L"invalid/path", L"1.{00000000-0000-0000-0000-000000000000}"})
+        {
+            std::wstring command = L"\"" + target.executable + L"\" --snowdesktop-startup-elevated=" + suffix;
+            STARTUPINFOW startup{sizeof(startup)};
+            PROCESS_INFORMATION child{};
+            Require(CreateProcessW(target.executable.c_str(), command.data(), nullptr, nullptr, FALSE,
+                CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child), "launch isolated malformed helper");
+            CloseHandle(child.hThread);
+            const auto waited = WaitForSingleObject(child.hProcess, 10000);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(child.hProcess, &exitCode);
+            CloseHandle(child.hProcess);
+            Require(waited == WAIT_OBJECT_0 && exitCode == ERROR_INVALID_DATA,
+                "malformed helper requests exit with error instead of starting the app");
+        }
         std::cout << "Auto-start scheduler integration checks passed\n";
         return 0;
     }
