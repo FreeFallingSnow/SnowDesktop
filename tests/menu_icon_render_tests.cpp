@@ -341,7 +341,6 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
         { BuiltinIcon::Display, 15.25, 3.5 },
         { BuiltinIcon::Display, 8.75, 15 },
         { BuiltinIcon::Paste, 20.25, 15 },
-        { BuiltinIcon::Pin, 17.5, 5.25 },
         { BuiltinIcon::Settings, 12, 9 },
         { BuiltinIcon::Sort, 17.25, 10 },
         { BuiltinIcon::Sort, 14.25, 16.25 },
@@ -351,6 +350,8 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
         { BuiltinIcon::Display, 3, 6.25 },
         { BuiltinIcon::Paste, 3.75, 10 },
         { BuiltinIcon::Pin, 5, 19 },
+        { BuiltinIcon::Pin, 17.5, 5.25 },
+        { BuiltinIcon::AddPage, 12, 12 },
         { BuiltinIcon::Sort, 6.75, 12 },
         { BuiltinIcon::Sort, 3.75, 7.75 },
         { BuiltinIcon::Sort, 9.75, 7.75 },
@@ -386,7 +387,7 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
                     "requested contours and complete down arrow use the theme blue");
             for (const auto& point : neutral) if (point.icon == icon)
                 Expect(matches(sample(point), light ? RGB(48, 52, 59) : RGB(228, 230, 234)),
-                    "up arrow, clipboard back, pin needle and rails stay neutral");
+                    "up arrow, clipboard back, entire pin, add-page plus and rails stay neutral");
             DeleteObject(image);
         }
         for (const bool compact : { false, true })

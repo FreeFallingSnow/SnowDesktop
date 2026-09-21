@@ -41,27 +41,27 @@
     },
     {
       "file": "pin-native-light",
-      "metadata": "Microsoft Fluent System Icons Pin 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; original Regular pin outline recolored on the full head; needle excluded at its official attachment line. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "c4c72ef0c6814a3a3dbdf397547db5d640caacbb9d434a370e4cb241b346fe2e",
-      "pngSha256": "1d8359d346118f90c53191697e430cd836fc15a1d9a444e5a7d98f2fd0162e84"
+      "metadata": "Microsoft Fluent System Icons Pin 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral outline throughout, with no blue accent per user review. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "0c8aa641b52bcaf7a27e1aecea07ce4763a4cf8cf989973b7ce2d91e5fc9f104",
+      "pngSha256": "a085cc7f3f43ef578364fe6a93c136c9112163924f65c6453cc7d8633ef389c0"
     },
     {
       "file": "pin-native-dark",
-      "metadata": "Microsoft Fluent System Icons Pin 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; original Regular pin outline recolored on the full head; needle excluded at its official attachment line. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "5d68072c2c44c3600a15847f844bbfc6fc2aed96edbd9d690f394f9f1e3fb9ca",
-      "pngSha256": "73ad62d5b4da95b66630b163c721f12a32821bd314c5667fdb6339bd2e88eb8f"
+      "metadata": "Microsoft Fluent System Icons Pin 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral outline throughout, with no blue accent per user review. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "86f58bd652acab236979d615c572d6780704b8a87c11c8598c55d1d9a8b1acbe",
+      "pngSha256": "4992fc8a22737440c3d96bf24798b66c269cbc24dd2ef30a82af83c5f6612af0"
     },
     {
       "file": "add-page-native-light",
-      "metadata": "Microsoft Fluent System Icons Add 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "38739000ec6f932057e2d376e8770dad8f6f12acae04cea7b01e877f4ffe2f37",
-      "pngSha256": "c5c388130c670bbf620ce58d62bf4708c5fdc5471687e65281d001fb2580319a"
+      "metadata": "Microsoft Fluent System Icons Add 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral outline throughout, with no blue accent per user review. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "37527ee92fcd236fd9e124b921e547b741996374ae1731c04aa767fa9e55ba4c",
+      "pngSha256": "c79019621f5cd0f4e0d03ae6132e291d8883953f22680a721d60945472d5f1c8"
     },
     {
       "file": "add-page-native-dark",
-      "metadata": "Microsoft Fluent System Icons Add 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
-      "svgSha256": "24de47304b3e2fb53079963cb8cd1fc4e59c4fb54d6c498b25f8d3be9e44bea6",
-      "pngSha256": "21409434b159706b12271f70680f4a75a4c19ab83ac773a017c53c88e6904f10"
+      "metadata": "Microsoft Fluent System Icons Add 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral outline throughout, with no blue accent per user review. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "9a9358279ee74933f495865cddfd9cace0a27589dbb0201b4feeeb12f6c5908b",
+      "pngSha256": "c5e65a7ed81aed90e62f0ef55e2281a1039afac88f89ed530d7f1a0198b4d5a9"
     },
     {
       "file": "settings-native-light",

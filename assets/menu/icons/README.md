@@ -3,7 +3,7 @@
 Approved menu preview 06 (2026-09-21), promoted to the desktop background menu
 and the built-in entries of its add-widget submenu. The settings resources are
 independent. These are project-colored Fluent icons, not artwork exported from
-Windows.
+Windows. A subsequent review removes the blue accents from Pin and Add Page.
 
 All geometry comes from Microsoft Fluent System Icons revision
 `21d5d02f724be2aaf586564775fff73a18a76eb6`, matching the embedded Regular font.
@@ -16,8 +16,8 @@ attribution. No deprecated Color variants or Filled font are distributed.
 | sort-native-* | Arrow Sort Regular | Entire right down arrow blue; up arrow neutral |
 | display-native-* | Options Regular | Both circular outlines blue; hollow centers and neutral rails |
 | widgets-native-* | Apps Add In Regular | Complete plus blue |
-| pin-native-* | Pin Regular | Non-needle head outline blue; hollow interior and neutral needle |
-| add-page-native-* | Add Regular | Complete plus blue |
+| pin-native-* | Pin Regular | Neutral head and needle; hollow interior |
+| add-page-native-* | Add Regular | Neutral plus |
 | settings-native-* | Settings Regular | Inner ring blue; hollow center and neutral outer gear |
 | paste-native-* | Clipboard Paste Regular | Lower-right rectangle outline blue; hollow interior |
 | new-item-native-* | Add Circle Regular | Plus blue; circle neutral |
