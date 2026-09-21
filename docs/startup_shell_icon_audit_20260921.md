@@ -132,7 +132,29 @@ Microsoft 明确建议在后台调用
   确定断言失败，测试进程均正常返回 1。没有修改生产文件，也未用编译失败充当缺陷复现。
 - 第一轮标准构建因托盘命名空间的不可复制 PIDL 发生编译错误；改为只复制菜单值字段。
   文件戳探针首次链接缺少 Shell32，修正探针链接输入后通过。这两次失败均不计为通过。
-- 标准构建、仓库定向/全量测试及真实启动日志的最终结果在交付时补录。
+- `scripts/build.bat`：标准 Release 构建退出码 0，生成 `.build/Release/SnowDesktop.exe`，
+  完整日志 `.codex-probes/startup-async-build-2.log` 无编译/链接警告。
+- `scripts/test.bat name "^slot_runtime_contract$"`：1/1 通过，CTest 1.49 秒，退出码 0。
+- `scripts/test.bat full`：120/120 通过，CTest 86.61 秒，退出码 0；包含 24 项 integration，
+  未运行默认排除的 `shell_file_operation_worker` 手动诊断。两次测试构建均无编译/链接警告。
+  日志分别为 `.codex-probes/startup-async-targeted.log`、`.codex-probes/startup-async-full.log`；
+  全量 CTest XML 为 `.build/Testing/test-run-0d7c2967a0604c41bd27c4b9db31e692.xml`。
+- 自动回归及运行证据绑定尝试提交 `ddd7ae74d1f2ba60216e35b55f67478367a0bdf5`，
+  被测源码哈希见 `.codex-probes/startup-async-source-inputs.json`。
+  配置为 Release，MSVC 14.50.35717，Windows SDK 10.0.26100.0。
+- 22:01:21 启动该提交的标准构建，仅读取启动日志和进程状态，没有操作或捕获桌面界面。
+  PID 为 47220，主线程为 36916；首帧 953 ms，桌面交接 1234 ms，
+  118 项完整桌面快照在 `22:01:24.890` 应用，距 `Run start` 约 3407 ms。
+  完整列表到达不等于全部高分辨率位图完成，图标仍按各自请求后台补齐。
+- Dock 文件夹图标查询在 63352、37336、28588 等独立线程执行，首次两项耗时 31 ms、0 ms。
+  当前真实提供程序没有重现此前的 63844 ms 阻塞；阻塞隔离结论同时依赖上述受控回归，
+  不把这一次正常启动当作冷缓存对照基准或所有环境的启动时间承诺。
+- 启动可执行文件 SHA-256：
+  `E23B2F155684F74D1F0FDAF793B785E6331949496C3B98228FD5E5D86EBF5A98`。
+  本轮原始日志和元数据保存到 `.codex-probes/startup-async-runtime.log`、
+  `.codex-probes/startup-async-runtime.json`。此次未再出现 TaskScheduler `0x800401F0`。
+- 运行日志仍报告 `Floating Dock hotkey Ctrl + Alt + D registration failed`，
+  记录为独立的快捷键注册问题，尚未确定占用方；这不是已测得的启动阻塞点。
 
 这些检查不能证明所有第三方提供程序始终返回。工作线程和排队数量有限；若同一队列的工作线程
 全部被系统提供程序阻塞，其待加载内容会继续保留占位或旧内容，主线程和析构不会加入等待。
