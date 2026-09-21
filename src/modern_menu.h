@@ -137,6 +137,9 @@ struct Options
      * popup 稳定保持在其上方。
      */
     HWND zOrderOwner = nullptr;
+    /** Host-internal ordering floor, sampled throughout the menu session.
+     * Keeps menus above independent surfaces without giving them ownership. */
+    std::function<HWND()> zOrderFloor;
     POINT anchor{};
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool lightTheme = true;

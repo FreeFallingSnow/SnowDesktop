@@ -801,6 +801,21 @@ void DesktopApp::ConfigureModernMenuEventPump(
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Debug);
     };
+    options.zOrderFloor = [this]() -> HWND {
+        HWND floor = nullptr;
+        // All visible DockHosts participate, including desktop-band hosts
+        // temporarily raised by Show Desktop or a window transition. Sample
+        // again after dispatch/presentation so a later promotion is covered.
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (host && host->active && host->hwnd &&
+                IsWindowVisible(host->hwnd) &&
+                (!floor || snowdesktop::popup_window_pair_z_order::IsAbove(
+                    host->hwnd, floor)))
+                floor = host->hwnd;
+        }
+        return floor;
+    };
 }
 
 void DesktopApp::PreserveModernMenuHostZOrder(

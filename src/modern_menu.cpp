@@ -32,6 +32,15 @@ constexpr UINT kTextCaretBlinkMs = 530;
 constexpr UINT kCancelMessage = WM_APP + 0x311;
 std::atomic<HWND> gActiveRootMenu{ nullptr };
 
+bool IsWindowAbove(HWND upper, HWND lower)
+{
+    if (!upper || !lower) return false;
+    for (HWND current = upper; current;
+         current = GetWindow(current, GW_HWNDNEXT))
+        if (current == lower) return true;
+    return false;
+}
+
 int Scale(int value, UINT dpi)
 {
     return std::max(1, MulDiv(value, static_cast<int>(dpi),
@@ -212,6 +221,11 @@ public:
         if (rootItems_.empty() || !RegisterWindowClass())
             return {};
 
+        // A desktop Dock may temporarily be topmost during Show Desktop,
+        // despite not being summoned. Do not make it the menu's native owner:
+        // activation would then also reorder that independent desktop surface.
+        if (ResolveZOrderFloor())
+            options_.topmost = true;
         if (!OpenPopup(rootItems_, 0, -1, options_.anchor, nullptr))
             return {};
 
@@ -230,6 +244,7 @@ public:
             }
             SetForegroundWindow(rootWindow);
             SetFocus(rootWindow);
+            RestoreOwnedPopupZOrder();
             TraceOwnedPopupZOrder(
                 L"session-start", nullptr, true);
         }
@@ -2244,6 +2259,9 @@ private:
         LONG_PTR rootExStyle = 0;
         LONG_PTR ownerExStyle = 0;
         bool rootAboveOwner = false;
+        HWND floor = nullptr;
+        bool floorTopmost = false;
+        bool rootAboveFloor = false;
 
         bool operator==(const OwnedPopupZOrderSnapshot& other) const
         {
@@ -2257,9 +2275,18 @@ private:
                 ownerNext == other.ownerNext &&
                 rootExStyle == other.rootExStyle &&
                 ownerExStyle == other.ownerExStyle &&
-                rootAboveOwner == other.rootAboveOwner;
+                rootAboveOwner == other.rootAboveOwner &&
+                floor == other.floor &&
+                floorTopmost == other.floorTopmost &&
+                rootAboveFloor == other.rootAboveFloor;
         }
     };
+
+    HWND ResolveZOrderFloor() const
+    {
+        const HWND floor = options_.zOrderFloor ? options_.zOrderFloor() : nullptr;
+        return floor && IsWindow(floor) && IsWindowVisible(floor) ? floor : nullptr;
+    }
 
     OwnedPopupZOrderSnapshot CaptureOwnedPopupZOrder() const
     {
@@ -2280,6 +2307,10 @@ private:
         snapshot.rootNext = GetWindow(snapshot.root, GW_HWNDNEXT);
         snapshot.rootExStyle =
             GetWindowLongPtrW(snapshot.root, GWL_EXSTYLE);
+        snapshot.floor = ResolveZOrderFloor();
+        snapshot.floorTopmost = snapshot.floor &&
+            (GetWindowLongPtrW(snapshot.floor, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        snapshot.rootAboveFloor = IsWindowAbove(snapshot.root, snapshot.floor);
         if (snapshot.zOrderOwner &&
             IsWindow(snapshot.zOrderOwner))
         {
@@ -2340,14 +2371,15 @@ private:
              << L" rootNext=" << snapshot.rootNext
              << L" ownerPrev=" << snapshot.ownerPrevious
              << L" ownerNext=" << snapshot.ownerNext;
+        line << L" floor=" << snapshot.floor
+             << L" floorTopmost=" << snapshot.floorTopmost
+             << L" rootAboveFloor=" << snapshot.rootAboveFloor;
         options_.eventPump.traceDiagnostic(line.str());
     }
 
     void RestoreOwnedPopupZOrder()
     {
-        if (done_ || !options_.topmost ||
-            !options_.zOrderOwner ||
-            !IsWindow(options_.zOrderOwner) ||
+        if (done_ ||
             popups_.empty() ||
             !popups_.front()->hwnd ||
             !IsWindow(popups_.front()->hwnd) ||
@@ -2357,23 +2389,19 @@ private:
             return;
         }
 
-        bool needsRestore = false;
-        HWND precedingWindow = options_.zOrderOwner;
+        const HWND floor = ResolveZOrderFloor();
+        if (!options_.topmost && !floor)
+            return;
+        bool needsRestore = floor &&
+            !IsWindowAbove(popups_.front()->hwnd, floor);
+        HWND precedingWindow = IsWindow(options_.zOrderOwner)
+            ? options_.zOrderOwner : nullptr;
         for (const auto& popup : popups_)
         {
             if (!popup || !popup->hwnd || !IsWindowVisible(popup->hwnd))
                 continue;
-            bool abovePrecedingWindow = false;
-            for (HWND current = popup->hwnd; current;
-                 current = GetWindow(current, GW_HWNDNEXT))
-            {
-                if (current == precedingWindow)
-                {
-                    abovePrecedingWindow = true;
-                    break;
-                }
-            }
-            needsRestore = needsRestore || !abovePrecedingWindow ||
+            needsRestore = needsRestore ||
+                (precedingWindow && !IsWindowAbove(popup->hwnd, precedingWindow)) ||
                 (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
                     WS_EX_TOPMOST) == 0;
             precedingWindow = popup->hwnd;

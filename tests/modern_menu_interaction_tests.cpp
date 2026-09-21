@@ -786,6 +786,108 @@ int wmain()
     gZOrderOwnerProbe = nullptr;
     DestroyWindow(zOrderOwner);
 
+    // Real independent HWNDs model a desktop Dock: unlike a floating menu
+    // owner, it can enter TOPMOST during Show Desktop without being summoned.
+    // Exercise the production menu loop, including post-presentation restacks.
+    const auto checkIndependentDock = [&](bool initiallyTopmost,
+        bool initiallyHidden, bool promoteDuringPresentation, bool cascade) {
+        constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER;
+        HWND dock = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"STATIC", L"", WS_POPUP, 2, 2, 1, 1,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND secondDock = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"STATIC", L"", WS_POPUP, 3, 3, 1, 1,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(dock && secondDock, "independent desktop Dock windows are created");
+        if (!initiallyHidden) ShowWindow(dock, SW_SHOWNOACTIVATE);
+        if (initiallyTopmost) SetWindowPos(dock, HWND_TOPMOST, 0, 0, 0, 0, flags);
+        options.topmost = false;
+        options.zOrderFloor = [&]() -> HWND {
+            if (IsWindowVisible(secondDock) &&
+                (!IsWindowVisible(dock) || IsWindowAbove(secondDock, dock)))
+                return secondDock;
+            return dock; // The production menu must ignore a hidden floor.
+        };
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMessageReorderObserved = false;
+        gMessageOrderRestored = false;
+        gPresentationSawWrongOrder = false;
+        gReorderCascade = cascade;
+        bool presentationPromotionPending = false;
+        options.eventPump.flushPresentation = [&]() {
+            const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (root && gMessageReorderObserved &&
+                !IsWindowAbove(root, gZOrderOwnerProbe))
+                gPresentationSawWrongOrder = true;
+            if (presentationPromotionPending)
+            {
+                presentationPromotionPending = false;
+                SetWindowPos(secondDock, HWND_TOPMOST, 0, 0, 0, 0,
+                    flags | SWP_SHOWWINDOW);
+                gZOrderOwnerProbe = secondDock;
+                gMessageReorderObserved = !IsWindowAbove(root, secondDock);
+            }
+        };
+        gMenuScript = [&](HWND root) {
+            Expect(GetWindow(root, GW_OWNER) == owner,
+                "a desktop menu keeps its focus owner instead of owning the Dock");
+            Expect(((GetWindowLongPtrW(root, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) ==
+                    !initiallyHidden,
+                "visible Dock floors protect initial menu display; hidden floors do not promote it");
+            Expect(((GetWindowLongPtrW(dock, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) ==
+                    initiallyTopmost,
+                "opening a desktop menu does not promote or demote the Dock");
+            if (!initiallyHidden)
+                Expect(IsWindowAbove(root, dock),
+                    "a desktop menu starts above an independent Dock, including Show Desktop");
+            if (cascade)
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            }
+            gZOrderOwnerProbe = dock;
+            if (promoteDuringPresentation)
+                presentationPromotionPending = true;
+            else
+            {
+                SetWindowPos(secondDock, HWND_TOPMOST, 0, 0, 0, 0,
+                    flags | SWP_SHOWWINDOW);
+                gZOrderOwnerProbe = secondDock;
+                gMessageReorderObserved = !IsWindowAbove(root, secondDock);
+            }
+            PostMessageW(owner, kInspectMenuMessage, 0, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = snowdesktop::modern_menu::Show(
+            cascade ? cascadeZOrderItems : adjustmentItems, options);
+        KillTimer(owner, kDriveTimer);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(!gWatchdogFired && result.command == (cascade ? 23u : 21u),
+            "independent Dock regression completes through normal menu selection");
+        Expect(gMessageReorderObserved,
+            "the regression actually raises an independent Dock above the menu");
+        Expect(gMessageOrderRestored && !gPresentationSawWrongOrder,
+            "menu and cascades recover above a newly promoted Dock before queued input");
+        Expect(((GetWindowLongPtrW(dock, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) ==
+                initiallyTopmost,
+            "closing a desktop menu leaves the original Dock band unchanged");
+        options.zOrderFloor = {};
+        options.eventPump = {};
+        gMenuScript = {};
+        gReorderCascade = false;
+        gZOrderOwnerProbe = nullptr;
+        DestroyWindow(secondDock);
+        DestroyWindow(dock);
+    };
+    checkIndependentDock(true, false, false, false);
+    checkIndependentDock(false, false, true, true);
+    checkIndependentDock(false, true, false, true);
+    options.topmost = true;
+
     gDriveMode = DriveMode::Simple;
     gDrivePhase = 0;
     gInputPosted = false;

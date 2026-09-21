@@ -52,3 +52,25 @@
 ## 原设备验收
 
 更新待验证构建后，在原集合弹窗中打开同一项目菜单，检查初次显示、连续右键替换、鼠标移动和级联子菜单。若仍失败，需要同次复现的 `ModernMenuHostContext`、`ModernMenuHostGuard`、`FloatingPopupZOrder` 和 `ModernMenuZOrder` 记录，以区分保护未触发、另一路径重排或恢复调用失败。桌面宿主的视觉验收由用户实机完成；独立 Win32 测试不能代替该验收。
+
+## 桌面菜单被 Dock 遮挡（2026-09-21）
+
+本轮基线为 `release/v1.0.7.0` 的 `3aba7c64`。用户截图显示桌面右键主菜单底部被 Dock 遮挡，并指出没有前台应用时更容易发生。本机 `.build/Release/data/SnowDesktop.log` 在 20:37:21.648 和 20:38:00.451 记录 `System Show Desktop Dock layer guard started`；随后分别在 20:37:21.770 和 20:38:00.569 记录菜单 `rootTopmost=0`、`zOrderOwner=0`，同时记录桌面 Dock 未用作菜单 owner。
+
+当前调用链可以解释这组现象：`UpdateSystemShowDesktopDockLayerGuard()` 在系统最小化后回到桌面时保留 Dock 层级保护；`ApplyFloatingDockLayerPolicy()` 因该保护将未召回的 Dock 提入 TOPMOST。菜单 owner 的选择只识别逻辑上浮动的 Dock，普通桌面菜单因此仍在非置顶层。原菜单恢复又要求 `topmost` 和 `zOrderOwner` 均有效，无法恢复这类没有 Dock owner 的菜单。日志确认了对应状态组合；本轮尚未在用户原场景完成调整后的视觉验收。
+
+调整保留原生 owner 和焦点关系，通过宿主内部的 `Options::zOrderFloor` 回调提供菜单必须高于的独立窗口。宿主选取当前全部可见、活动 DockHost 中层级最高的窗口；菜单在首次显示、普通消息和调度回调后、画面提交后检查主菜单与级联子菜单的位置。隐藏窗口不参与，菜单打开后新出现或重新升层的 Dock 也参与。菜单不通过修改 Dock 的 owner、召回状态或保护条件来维持层级。该回调不属于 Lua 组件或第三方公共 API。
+
+`ModernMenuZOrder` 增加 `floor`、`floorTopmost`、`rootAboveFloor`，用于区分 Dock 自身状态与菜单的相对位置。测试复用 `modern_menu_interaction`，在隔离 Win32 桌面上运行真实菜单循环，覆盖：已置顶 Dock、普通 Dock、原先隐藏的 Dock、另一 Dock 后续升层、画面提交中升层和级联子菜单；同时断言开关菜单保留 owner 与原 Dock 的置顶状态。
+
+验证证据保存在 `.codex-probes/menu-dock-zorder/`（生成目录，不提交）：
+
+- `scripts/test.bat name modern_menu_interaction`：退出码 0，1/1 通过，测试运行 4.59 s，日志 `targeted.log`。
+- 将修改前的 `modern_menu.cpp` 与同一新测试放入隔离诊断工程：编译退出码 0，测试退出码 1，失败于可见 Dock 下菜单首次置顶断言；日志 `negative-build.log`、`negative-test.log`。
+- 在隔离诊断副本中仅移除运行期间的独立 Dock 层级检查：编译退出码 0，测试退出码 1，失败于新升层 Dock 上方的菜单恢复断言；日志 `negative-recovery-build.log`、`negative-recovery-test.log`。两项负向对照均未修改工作区生产源码。
+- `scripts/build.bat --reload-shell`：退出码 0，Release 主程序和辅助程序构建、运行目录整理通过，日志 `build.log`。
+- `scripts/test.bat full`：退出码 0，120/120 自动测试通过，测试运行 89.99 s，日志 `full.log`，CTest 报告 `.build/Testing/test-run-da48d968570e41139401921c75809eca.xml`；不包含 `manual` 诊断。
+- 本轮标准构建、定向测试、完整测试和两个隔离负向工程的完整编译日志未检出编译或链接警告。配置为 Release，Windows SDK 10.0.26100.0，MSBuild 18.5.4；测试使用本次提交的源码及测试，原有未提交的测试审计文档修改未参与本次提交。
+- 验收候选 `.build/Release/SnowDesktop.exe` 版本 `1.0.7.0`，SHA-256：`FB6F80E0151945F3189C7CEA63F95BA7DAFC4C683BAAEA6B018BFD14B3E6E2D2`。宿主标准构建后完整测试因相同输入重新链接主程序，哈希记录最终候选；没有改动桌面布局或用户组件数据。
+
+原场景验收：最小化所有前台应用或执行“显示桌面”，在 Dock 附近打开桌面空白处右键菜单，使主菜单及子菜单与 Dock 重叠；连续右键并移动鼠标，检查两层菜单均在 Dock 上方。另检查打开和关闭菜单不会意外召回 Dock 或改变普通应用与 Dock 的层级。桌面实测仍由用户完成。
