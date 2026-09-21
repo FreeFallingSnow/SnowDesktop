@@ -565,7 +565,7 @@ public:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
-                item.quickIcon, item.image,
+                item.quickIcon, item.image, item.builtinIcon,
             };
             UINT state = 0;
             if (!item.enabled)
@@ -856,7 +856,7 @@ private:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
-                MenuQuickIcon::FontGlyph, item.image,
+                MenuQuickIcon::FontGlyph, item.image, item.builtinIcon,
             };
             const SIZE measured = menu_icon::MeasureItem(
                 screenDc, textFont_, view, popup.rowMetrics);

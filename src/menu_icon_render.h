@@ -1,6 +1,7 @@
 #pragma once
 
 #include "menu_quick_icon.h"
+#include "menu_builtin_icon.h"
 
 #include <windows.h>
 
@@ -18,6 +19,8 @@ struct Palette
     COLORREF disabledText = RGB(118, 118, 118);
     COLORREF separator = RGB(225, 225, 225);
     COLORREF accent = RGB(0, 120, 212);
+    bool lightTheme = true;
+    bool colorIcons = true;
 };
 
 struct Metrics
@@ -58,6 +61,7 @@ struct ItemView
     MenuQuickIcon semanticIcon = MenuQuickIcon::FontGlyph;
     /** Optional non-owning premultiplied package image for the icon column. */
     HBITMAP image = nullptr;
+    BuiltinIcon builtinIcon = BuiltinIcon::None;
 };
 
 struct ImageSourceView

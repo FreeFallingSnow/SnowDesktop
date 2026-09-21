@@ -334,7 +334,7 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
 
 void DesktopApp::SetMenuItemIcon(
     HMENU menu, UINT_PTR command, const wchar_t* text,
-    MenuIconFont font)
+    MenuIconFont font, snowdesktop::menu_icon::BuiltinIcon builtinIcon)
 {
     if (!menu || !text || !*text)
         return;
@@ -370,6 +370,7 @@ void DesktopApp::SetMenuItemIcon(
         }
 
         entry->glyph.clear();
+        entry->builtinIcon = builtinIcon;
         if (entry->imageBitmap)
         {
             DeleteObject(entry->imageBitmap);
@@ -444,6 +445,7 @@ void DesktopApp::SetMenuItemImage(HMENU menu, UINT_PTR command,
         entry->glyph.clear();
         if (entry->imageBitmap) DeleteObject(entry->imageBitmap);
         entry->imageBitmap = bitmap;
+        entry->builtinIcon = snowdesktop::menu_icon::BuiltinIcon::None;
         return;
     }
     DeleteObject(bitmap);
@@ -619,6 +621,7 @@ UINT DesktopApp::ShowModernMenu(
                 {
                     item.glyph = icon->glyph;
                     item.image = icon->imageBitmap;
+                    item.builtinIcon = icon->builtinIcon;
                     item.iconFont = icon->fontAwesome
                         ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
                         : snowdesktop::modern_menu::IconFont::FluentRegular;

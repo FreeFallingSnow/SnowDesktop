@@ -77,6 +77,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "desktop_item_reference_migration.h"
 #include "category_settings.h"
 #include "../menu_quick_icon.h"
+#include "../menu_builtin_icon.h"
 #include "../modern_menu.h"
 #include "../component_preview.h"
 #include "../native_component_preview_export.h"
@@ -1968,7 +1969,9 @@ private:
     /** @brief 为菜单项设置自定义图标。 */
     void SetMenuItemIcon(HMENU menu, UINT_PTR command,
         const wchar_t* text,
-        MenuIconFont font = MenuIconFont::BuiltinFluentFromLegacy);
+        MenuIconFont font = MenuIconFont::BuiltinFluentFromLegacy,
+        snowdesktop::menu_icon::BuiltinIcon builtinIcon =
+            snowdesktop::menu_icon::BuiltinIcon::None);
     void SetMenuItemImage(HMENU menu, UINT_PTR command,
         const snowdesktop::widget_runtime::PackageImageSource& source);
     /** @brief 将根菜单项移到 Windows 11 风格的顶部快捷操作区。 */
@@ -3295,6 +3298,8 @@ private:
         UINT position = 0;
         std::wstring glyph;
         HBITMAP imageBitmap = nullptr;
+        snowdesktop::menu_icon::BuiltinIcon builtinIcon =
+            snowdesktop::menu_icon::BuiltinIcon::None;
         bool fontAwesome = false;
         bool quickAction = false;
         bool inlineAction = false;

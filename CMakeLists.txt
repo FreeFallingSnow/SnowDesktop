@@ -386,6 +386,7 @@ set(SNOWDESKTOP_SOURCES
     src/item_location.cpp
     src/layout_storage.cpp
     src/menu_icon_render.cpp
+    src/menu_builtin_icon.cpp
     src/modern_menu.cpp
     src/search_match.cpp
     src/everything_search.cpp
@@ -2176,9 +2177,10 @@ if (BUILD_TESTING)
         SOURCES
             tests/menu_icon_render_tests.cpp
             src/menu_icon_render.cpp
+            src/menu_builtin_icon.cpp
             src/resource.rc
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES gdi32 user32
+        LINK_LIBRARIES gdi32 ole32 user32 windowscodecs
         LABELS contract ui)
 
     snowdesktop_add_test(
@@ -2187,9 +2189,10 @@ if (BUILD_TESTING)
         SOURCES
             tests/modern_menu_interaction_tests.cpp
             src/menu_icon_render.cpp
+            src/menu_builtin_icon.cpp
             src/modern_menu.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES gdi32 imm32 user32
+        LINK_LIBRARIES gdi32 imm32 ole32 user32 windowscodecs
         LABELS integration ui)
 
     snowdesktop_add_test(
@@ -2202,6 +2205,7 @@ if (BUILD_TESTING)
             src/widget_background_cache.cpp
             src/component_preview.cpp
             src/menu_icon_render.cpp
+            src/menu_builtin_icon.cpp
             src/widget_preview_stage.cpp
             src/widget_preview_scene.cpp
             src/widget_preview_scene_model.cpp
@@ -2258,6 +2262,7 @@ if (BUILD_TESTING)
     add_executable(SnowDesktopModernMenuPreview WIN32 EXCLUDE_FROM_ALL
         tests/modern_menu_preview.cpp
         src/menu_icon_render.cpp
+        src/menu_builtin_icon.cpp
         src/modern_menu.cpp
         src/resource.rc)
     set_target_properties(SnowDesktopModernMenuPreview PROPERTIES
@@ -2269,7 +2274,7 @@ if (BUILD_TESTING)
     target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
     target_link_libraries(SnowDesktopModernMenuPreview PRIVATE
-        gdi32 imm32 user32)
+        gdi32 imm32 ole32 user32 windowscodecs)
     if (MSVC)
         set_property(TARGET SnowDesktopModernMenuPreview PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

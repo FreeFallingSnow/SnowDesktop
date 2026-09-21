@@ -1,0 +1,157 @@
+{
+  "revision": "21d5d02f724be2aaf586564775fff73a18a76eb6",
+  "license": "MIT",
+  "rasterSize": 128,
+  "icons": [
+    {
+      "file": "sort-native-light",
+      "metadata": "Microsoft Fluent System Icons Arrow Sort 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral up arrow plus complete official down-arrow subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "ac0e911658a345e396bef17450a077320df52ff826d7dc7c214bc64e9917f4cd",
+      "pngSha256": "2db08a3237ac467b36f7eb4761a9e23d10c0d75a99998c7a68bdcbf893ac3e72"
+    },
+    {
+      "file": "sort-native-dark",
+      "metadata": "Microsoft Fluent System Icons Arrow Sort 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral up arrow plus complete official down-arrow subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "09cadec98ad328cf284576d5ccdb7195b61904fafb39e3846c9c4444649a8f7f",
+      "pngSha256": "53062cdeabb4a0edb088ac858e891769643a531423661251cf0afe646854ba75"
+    },
+    {
+      "file": "display-native-light",
+      "metadata": "Microsoft Fluent System Icons Options 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; original Regular paths recolored only on the two complete circular knob outlines; interiors remain transparent. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "974ce1ff29bde507f31119f874ca9c5feee393b234d09e5603bf9565665d262f",
+      "pngSha256": "d0146cb690361d86c5e00c3dcdb817dcb3bdd1a682b12cc390f25943610d7722"
+    },
+    {
+      "file": "display-native-dark",
+      "metadata": "Microsoft Fluent System Icons Options 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; original Regular paths recolored only on the two complete circular knob outlines; interiors remain transparent. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "12e1433f350d009fd0d197f1e75417dd1267e9fdbd2c66b832613f67336f2549",
+      "pngSha256": "61d0987319f221fe01161d672bfe84ce6a4bb42ea43e0e4f55b1787d95b22b2b"
+    },
+    {
+      "file": "widgets-native-light",
+      "metadata": "Microsoft Fluent System Icons Apps Add In 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "b5564464e7642d569c04f9a617cf6b860927139b74c9cea8d237138acfc0dbd2",
+      "pngSha256": "2f7927a330aa8ca4fe2efdb76d9ee43e9875e8f8ff0943313257bace72701bca"
+    },
+    {
+      "file": "widgets-native-dark",
+      "metadata": "Microsoft Fluent System Icons Apps Add In 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "609e79709bef7ca5ebcced3f83d03714ceeefbd94162ff0d7f0714defe6b5845",
+      "pngSha256": "ad3c0c70a6e7132951899529841aa7db8edb52217641677ca0cae737bdae2fb6"
+    },
+    {
+      "file": "pin-native-light",
+      "metadata": "Microsoft Fluent System Icons Pin 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; original Regular pin outline recolored on the full head; needle excluded at its official attachment line. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "c4c72ef0c6814a3a3dbdf397547db5d640caacbb9d434a370e4cb241b346fe2e",
+      "pngSha256": "1d8359d346118f90c53191697e430cd836fc15a1d9a444e5a7d98f2fd0162e84"
+    },
+    {
+      "file": "pin-native-dark",
+      "metadata": "Microsoft Fluent System Icons Pin 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; original Regular pin outline recolored on the full head; needle excluded at its official attachment line. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "5d68072c2c44c3600a15847f844bbfc6fc2aed96edbd9d690f394f9f1e3fb9ca",
+      "pngSha256": "73ad62d5b4da95b66630b163c721f12a32821bd314c5667fdb6339bd2e88eb8f"
+    },
+    {
+      "file": "add-page-native-light",
+      "metadata": "Microsoft Fluent System Icons Add 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "38739000ec6f932057e2d376e8770dad8f6f12acae04cea7b01e877f4ffe2f37",
+      "pngSha256": "c5c388130c670bbf620ce58d62bf4708c5fdc5471687e65281d001fb2580319a"
+    },
+    {
+      "file": "add-page-native-dark",
+      "metadata": "Microsoft Fluent System Icons Add 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "24de47304b3e2fb53079963cb8cd1fc4e59c4fb54d6c498b25f8d3be9e44bea6",
+      "pngSha256": "21409434b159706b12271f70680f4a75a4c19ab83ac773a017c53c88e6904f10"
+    },
+    {
+      "file": "settings-native-light",
+      "metadata": "Microsoft Fluent System Icons Settings 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete official Regular outer and inner subpaths recolored together as a hollow outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "491d792c37913a5db0234af2d3f7447b0749630a007e163dc4b905a52e907e64",
+      "pngSha256": "1bacf01fab826fecc7915f1c0a99532f22da115fdd9fc11a0a9f246982d0ffe1"
+    },
+    {
+      "file": "settings-native-dark",
+      "metadata": "Microsoft Fluent System Icons Settings 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete official Regular outer and inner subpaths recolored together as a hollow outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "83ef1bcd7d6394bb04d562bc5a30b201a3d163633020eb1baeb612523b4402b7",
+      "pngSha256": "ffcc8c6e9c0a8838e18de2525e7380ba2de3fecb4d0137f6089500db7291df7d"
+    },
+    {
+      "file": "paste-native-light",
+      "metadata": "Microsoft Fluent System Icons Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete official Regular outer and inner subpaths recolored together as a hollow outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "7ec03ff35057168bdd570a0dc8a431adb676b19a247913c234483b84e077f40d",
+      "pngSha256": "7cf84014b9f9df809f2d6660681436e5e114c0f6a1b2078896c4b847134e7188"
+    },
+    {
+      "file": "paste-native-dark",
+      "metadata": "Microsoft Fluent System Icons Clipboard Paste 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; complete official Regular outer and inner subpaths recolored together as a hollow outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "25fdd3c49a8a778d31445161d0a75794c512fbb939bd28479bba59565cd1c72b",
+      "pngSha256": "3af595a2c3e54654e57d7a2f5ba138d573e860a6e7e9bd515190beef6b696b27"
+    },
+    {
+      "file": "new-item-native-light",
+      "metadata": "Microsoft Fluent System Icons Add Circle 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "12623e9c341c33c404b3590a303bd8368f320c746d543f9beb1c3114784936b2",
+      "pngSha256": "a52279b5e23c67c260effe1e8bd6f8aa5811845aafc98c390924eca372292a9f"
+    },
+    {
+      "file": "new-item-native-dark",
+      "metadata": "Microsoft Fluent System Icons Add Circle 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline plus complete official addition-symbol subpath in blue. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "7d833181e7956db755026fd504c905650660df5bc2168768b87274526e0fe12f",
+      "pngSha256": "4207d22501377bcda387689e001be30a37f00005f7d3c128828560eb1979b9f2"
+    },
+    {
+      "file": "refresh-native-light",
+      "metadata": "Microsoft Fluent System Icons Arrow Clockwise 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "bf5a6ba77a3ab055b69ca1049a76821bd215e36d7034a3b56bbb5d3a6be76064",
+      "pngSha256": "a7e5f3cb66ab030e875fa6b1e44e29fa14260d6729c5087c188acb6ff46878cc"
+    },
+    {
+      "file": "refresh-native-dark",
+      "metadata": "Microsoft Fluent System Icons Arrow Clockwise 24 Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6; neutral Regular outline. Original geometry and subpath coordinates preserved verbatim. Context-menu artwork.",
+      "svgSha256": "d1332231201d5cb2905d81473bde78413beeef4c80fdb7a2ca6a83f37564792b",
+      "pngSha256": "1d7246584e6ed63e9ea392e0688e4cef3a7f215860ee4c011c87be2792e027f7"
+    },
+    {
+      "file": "collection",
+      "metadata": "Composed from Microsoft Fluent System Icons App Folder 24 Filled and Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6. Preview candidate only; original paths unchanged.",
+      "svgSha256": "f53d82ebf82becbe83226d5bb9aa13c8e139c131ad66dd28ebfa0df91334a7cf",
+      "pngSha256": "3e705f1ba349f972f93e2ea5e247b17bec78c4af24e636d5a4aa36523578708c"
+    },
+    {
+      "file": "collection-group",
+      "metadata": "Composed from Microsoft Fluent System Icons Collections Empty 24 Filled and Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6. Preview candidate only; original paths unchanged.",
+      "svgSha256": "55a8e541c5a5054f669ca455199e9d2cf9a57bb0b02bd3f854ae2fbc6829de31",
+      "pngSha256": "2c322953f4f5e6852a716206ac462372e18258a991842c93f8f8a73f6314cd55"
+    },
+    {
+      "file": "file-group",
+      "metadata": "Composed from Microsoft Fluent System Icons Folder Multiple 24 Filled and Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6. Preview candidate only; original paths unchanged.",
+      "svgSha256": "fb777cb14d29a4d62cdff8f0cda4b6e94463bc627a9c1172e547cd1a92755896",
+      "pngSha256": "c05d2b01602b7b31224298754cd817261003c7e893dfe91e746e57a2109a3523"
+    },
+    {
+      "file": "desktop-files",
+      "metadata": "Composed from Microsoft Fluent System Icons Folder 24 Filled and Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6. Preview candidate only; original paths unchanged.",
+      "svgSha256": "0a4aa7bb86a748ae18f3a8457a5dc0172d06b64df6ca2e447d889ee7800f14c4",
+      "pngSha256": "acd16e85366fbc1396eeb830aafad4c9765c20d5fb31deeccf27eb363239c339"
+    },
+    {
+      "file": "folder-mapping",
+      "metadata": "Composed from Microsoft Fluent System Icons Folder Link 24 Filled and Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6. Preview candidate only; original paths unchanged.",
+      "svgSha256": "fefa5b273028576e1a9aed338ab3b06253b9955b84d9930bf779e3d8aa00d05b",
+      "pngSha256": "aa13d03658cee9879033e418ff44e17d940dce8144b0eb19c2e7150130a3c730"
+    },
+    {
+      "file": "search",
+      "metadata": "Composed from Microsoft Fluent System Icons Search 24 Filled and Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6.",
+      "svgSha256": "f4d5105b2293ae6f253d093220daa89c5dc1ad75590639a5ab11e06195c6051d",
+      "pngSha256": "643796f8afbeae87ed29cec5dbbd267909c2d7abdbb45d4797044b8385bba5c1"
+    },
+    {
+      "file": "workshop",
+      "metadata": "Composed from Microsoft Fluent System Icons Globe 24 Filled and Regular at 21d5d02f724be2aaf586564775fff73a18a76eb6. Preview candidate only; original paths unchanged.",
+      "svgSha256": "58e6c1307f3029444836f5fdae0b42f68fd8d49c0a662276232d4947a7538a4f",
+      "pngSha256": "3e5c3f571353b10b9daec69e014362bb90f63f4958a9da33ab44e284765b2149"
+    }
+  ]
+}

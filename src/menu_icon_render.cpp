@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -17,6 +18,34 @@ namespace snowdesktop::menu_icon
 {
 namespace
 {
+
+struct BitmapDeleter
+{
+    void operator()(HBITMAP bitmap) const { if (bitmap) DeleteObject(bitmap); }
+};
+
+HBITMAP ResolveItemImage(const ItemView& item, const Palette& palette,
+    const Metrics& metrics, bool quickAction = false)
+{
+    if (item.image) return item.image;
+    if (!palette.colorIcons || item.builtinIcon == BuiltinIcon::None)
+        return nullptr;
+    int size = quickAction ? metrics.quickActionFontHeight : metrics.iconFontHeight;
+    if (metrics.maximumImageSize > 0)
+        size = std::min(size, metrics.maximumImageSize);
+    using Bitmap = std::unique_ptr<std::remove_pointer_t<HBITMAP>, BitmapDeleter>;
+    using Key = std::tuple<BuiltinIcon, bool, int>;
+    // Only the current draw borrows the bitmap; no menu model owns cache entries.
+    // Bound GDI use when a session encounters many monitor scales.
+    thread_local std::map<Key, Bitmap> cache;
+    const Key key{ item.builtinIcon, palette.lightTheme, size };
+    auto found = cache.find(key);
+    if (found != cache.end()) return found->second.get();
+    Bitmap bitmap(CreateBuiltinIconBitmap(item.builtinIcon, palette.lightTheme, size));
+    if (!bitmap) return nullptr;
+    if (cache.size() >= 256) cache.clear();
+    return cache.emplace(key, std::move(bitmap)).first->second.get();
+}
 
 int Scale(int value, UINT dpi)
 {
@@ -729,6 +758,10 @@ void DrawSubmenuArrow(HDC dc, HFONT arrowFont, const RECT& bounds,
 
 Palette ResolvePalette(bool lightTheme)
 {
+    HIGHCONTRASTW highContrast{ sizeof(highContrast) };
+    const bool colorIcons = !(SystemParametersInfoW(SPI_GETHIGHCONTRAST,
+        sizeof(highContrast), &highContrast, 0) &&
+        (highContrast.dwFlags & HCF_HIGHCONTRASTON));
     if (lightTheme)
     {
         return {
@@ -737,7 +770,8 @@ Palette ResolvePalette(bool lightTheme)
             RGB(26, 26, 26),
             RGB(118, 118, 118),
             RGB(225, 225, 225),
-            RGB(0, 120, 212),
+            colorIcons ? RGB(0, 120, 212) : RGB(26, 26, 26),
+            true, colorIcons,
         };
     }
     return {
@@ -746,7 +780,8 @@ Palette ResolvePalette(bool lightTheme)
         RGB(255, 255, 255),
         RGB(158, 158, 158),
         RGB(68, 68, 68),
-        RGB(96, 205, 255),
+        colorIcons ? RGB(96, 205, 255) : RGB(255, 255, 255),
+        false, colorIcons,
     };
 }
 
@@ -920,6 +955,7 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 
+    const HBITMAP image = ResolveItemImage(item, palette, metrics);
     FillSolidRect(dc, bounds, palette.background);
     if (item.separator)
     {
@@ -957,14 +993,14 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     {
         DrawCheckmark(dc, bounds, metrics, foreground);
     }
-    else if (item.image)
+    else if (image)
     {
         RECT iconBounds = bounds;
         iconBounds.left += metrics.leftPadding;
         iconBounds.right = iconBounds.left + metrics.iconColumnWidth;
         iconBounds.top += metrics.outerInset;
         iconBounds.bottom -= metrics.outerInset;
-        DrawImageLayer(dc, item.image, iconBounds, disabled,
+        DrawImageLayer(dc, image, iconBounds, disabled,
             metrics.maximumImageSize);
     }
     else if (item.glyph && *item.glyph)
@@ -1040,6 +1076,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 
+    const HBITMAP image = ResolveItemImage(item, palette, metrics, true);
     FillSolidRect(dc, bounds, palette.background);
     const bool disabled =
         (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
@@ -1065,9 +1102,9 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     iconBounds.top += metrics.outerInset;
     iconBounds.bottom = iconBounds.top + metrics.quickActionIconHeight;
     HGDIOBJ oldFont = nullptr;
-    if (item.image)
+    if (image)
     {
-        DrawImageLayer(dc, item.image, iconBounds, disabled,
+        DrawImageLayer(dc, image, iconBounds, disabled,
             metrics.maximumImageSize);
     }
     else
@@ -1111,6 +1148,7 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 
+    const HBITMAP image = ResolveItemImage(item, palette, metrics);
     FillSolidRect(dc, bounds, palette.background);
     const bool disabled =
         (itemState & (ODS_DISABLED | ODS_GRAYED)) != 0;
@@ -1131,9 +1169,9 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
         : (item.checked ? palette.accent : palette.text);
     const int oldMode = SetBkMode(dc, TRANSPARENT);
     const COLORREF oldColor = SetTextColor(dc, foreground);
-    const bool hasGlyph = (item.glyph && *item.glyph) || item.image;
+    const bool hasGlyph = (item.glyph && *item.glyph) || image;
     const bool hasLabel = item.label && *item.label;
-    if (item.image)
+    if (image)
     {
         RECT imageBounds = bounds;
         if (hasLabel)
@@ -1149,7 +1187,7 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
         }
         imageBounds.top += metrics.outerInset;
         imageBounds.bottom -= metrics.outerInset;
-        DrawImageLayer(dc, item.image, imageBounds, disabled,
+        DrawImageLayer(dc, image, imageBounds, disabled,
             metrics.maximumImageSize);
     }
     else if (hasGlyph)
@@ -1202,6 +1240,7 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 
+    const HBITMAP image = ResolveItemImage(item, palette, metrics);
     FillSolidRect(dc, bounds, palette.background);
     RECT field = bounds;
     field.left += metrics.outerInset;
@@ -1232,8 +1271,10 @@ bool DrawTextInput(HDC dc, HFONT textFont, HFONT iconFont,
     HGDIOBJ oldFont = SelectObject(dc,
         iconFont ? static_cast<HGDIOBJ>(iconFont)
                  : GetStockObject(DEFAULT_GUI_FONT));
-    DrawGlyphLayer(dc, item.glyph, glyphBounds, palette.disabledText,
-        &field);
+    if (image)
+        DrawImageLayer(dc, image, glyphBounds, false, metrics.maximumImageSize);
+    else
+        DrawGlyphLayer(dc, item.glyph, glyphBounds, palette.disabledText, &field);
     if (oldFont) SelectObject(dc, oldFont);
 
     const std::wstring committed = input.text ? input.text : L"";

@@ -323,6 +323,126 @@ void CheckIconlessRows(HDC dc, std::uint32_t* pixels, int width, int height)
     }
 }
 
+// Real embedded resources and production WIC/GDI entry points: catches missing
+// packaging, wrong theme/down-arrow coloring, filled holes, and skipped draw paths.
+void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
+    std::uint32_t* pixels, int width, int height)
+{
+    using namespace snowdesktop::menu_icon;
+    struct Sample { BuiltinIcon icon; double x; double y; };
+    const Sample holes[] = {
+        { BuiltinIcon::Display, 8.75, 17.75 },
+        { BuiltinIcon::Display, 15.25, 6.25 },
+        { BuiltinIcon::Paste, 15.5, 15 },
+        { BuiltinIcon::Pin, 13.5, 9 },
+        { BuiltinIcon::Settings, 12, 12 },
+    };
+    const Sample blue[] = {
+        { BuiltinIcon::Display, 15.25, 3.5 },
+        { BuiltinIcon::Display, 8.75, 15 },
+        { BuiltinIcon::Paste, 20.25, 15 },
+        { BuiltinIcon::Pin, 17.5, 5.25 },
+        { BuiltinIcon::Settings, 12, 9 },
+        { BuiltinIcon::Sort, 17.25, 10 },
+        { BuiltinIcon::Sort, 14.25, 16.25 },
+        { BuiltinIcon::Sort, 20.25, 16.25 },
+    };
+    const Sample neutral[] = {
+        { BuiltinIcon::Display, 3, 6.25 },
+        { BuiltinIcon::Paste, 3.75, 10 },
+        { BuiltinIcon::Pin, 5, 19 },
+        { BuiltinIcon::Sort, 6.75, 12 },
+        { BuiltinIcon::Sort, 3.75, 7.75 },
+        { BuiltinIcon::Sort, 9.75, 7.75 },
+    };
+    for (const bool light : { true, false })
+    {
+        for (int value = static_cast<int>(BuiltinIcon::Sort);
+            value <= static_cast<int>(BuiltinIcon::Workshop); ++value)
+        {
+            const auto icon = static_cast<BuiltinIcon>(value);
+            HBITMAP image = CreateBuiltinIconBitmap(icon, light, 128);
+            BITMAP bitmap{};
+            Expect(image && GetObjectW(image, sizeof(bitmap), &bitmap) && bitmap.bmBits,
+                "all built-in menu artwork is embedded and decodes to a DIB");
+            const auto* art = static_cast<const std::uint32_t*>(bitmap.bmBits);
+            const auto sample = [&](const Sample& point) {
+                return art[static_cast<int>(point.y * 128 / 24) * 128 +
+                    static_cast<int>(point.x * 128 / 24)];
+            };
+            for (const auto& point : holes) if (point.icon == icon)
+                Expect((sample(point) >> 24) == 0,
+                    "approved display/paste/pin/settings interiors stay transparent");
+            const auto matches = [&](std::uint32_t pixel, COLORREF color) {
+                const auto expected = PixelColor(color);
+                if ((pixel >> 24) < 240) return false;
+                for (int shift : { 0, 8, 16 })
+                    if (std::abs(static_cast<int>((pixel >> shift) & 255) -
+                        static_cast<int>((expected >> shift) & 255)) > 2) return false;
+                return true;
+            };
+            for (const auto& point : blue) if (point.icon == icon)
+                Expect(matches(sample(point), light ? RGB(0, 120, 212) : RGB(96, 205, 255)),
+                    "requested contours and complete down arrow use the theme blue");
+            for (const auto& point : neutral) if (point.icon == icon)
+                Expect(matches(sample(point), light ? RGB(48, 52, 59) : RGB(228, 230, 234)),
+                    "up arrow, clipboard back, pin needle and rails stay neutral");
+            DeleteObject(image);
+        }
+        for (const bool compact : { false, true })
+        for (const UINT dpi : { 96u, 120u, 144u, 192u })
+        {
+            const auto metrics = ResolveMetrics(dpi, compact);
+            auto palette = ResolvePalette(light);
+            palette.colorIcons = true; // Deterministic, regardless of the test machine theme.
+            const RECT row{ 0, 0, width, metrics.rowHeight };
+            const RECT column{ metrics.leftPadding, 0,
+                metrics.leftPadding + metrics.iconColumnWidth, metrics.rowHeight };
+            ItemView item{ L"", snowdesktop::menu_fluent_glyphs::kSort };
+            item.builtinIcon = BuiltinIcon::Sort;
+            DrawItem(dc, font, iconFont, item, row, 0, palette, metrics);
+            GdiFlush();
+            const int enabledBlue = CountBlueAccentPixelsInRect(pixels, width, height, column);
+            Expect(enabledBlue > 0, "ordinary rows draw colored art at each supported DPI/style");
+            RECT leftHalf = column;
+            leftHalf.right = (column.left + column.right) / 2;
+            Expect(CountBlueAccentPixelsInRect(pixels, width, height, leftHalf) == 0,
+                "small sorting icon keeps the left up arrow neutral");
+            DrawItem(dc, font, iconFont, item, row, ODS_DISABLED, palette, metrics);
+            GdiFlush();
+            Expect(CountBlueAccentPixelsInRect(pixels, width, height, column) <= enabledBlue,
+                "disabled art uses the existing reduced-opacity path");
+            DrawItem(dc, font, iconFont, item, row, ODS_CHECKED, palette, metrics);
+            GdiFlush();
+            Expect(CountBlueAccentPixelsInRect(pixels, width, height, column) == 0,
+                "checked menu state takes precedence over colored art");
+            palette.colorIcons = false;
+            DrawItem(dc, font, iconFont, item, row, 0, palette, metrics);
+            GdiFlush();
+            Expect(CountBlueAccentPixelsInRect(pixels, width, height, column) == 0 &&
+                CountPixelsDifferentFromColorInRect(pixels, width, height, column, palette.background) > 0,
+                "high-contrast color suppression retains a visible Fluent fallback");
+            palette.colorIcons = true;
+            item.builtinIcon = BuiltinIcon::Paste;
+            const RECT quick{ 0, 0, metrics.quickActionMaximumWidth, metrics.quickActionHeight };
+            DrawQuickAction(dc, font, iconFont, snowdesktop::MenuQuickIcon::Paste,
+                item, quick, 0, palette, metrics);
+            GdiFlush();
+            Expect(CountBlueAccentPixelsInRect(pixels, width, height, quick) > 0,
+                "top paste button draws approved blue outline");
+            item.builtinIcon = BuiltinIcon::Search;
+            DrawInlineAction(dc, font, iconFont, item, row, 0, palette, metrics);
+            GdiFlush();
+            Expect(CountBlueAccentPixelsInRect(pixels, width, height, row) > 0,
+                "inline widget actions accept built-in colored art");
+            DrawTextInput(dc, font, iconFont, item, {}, row, palette, metrics);
+            GdiFlush();
+            Expect(CountBlueAccentPixelsInRect(pixels, width, height, row) > 0,
+                "widget search input draws colored artwork");
+        }
+    }
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv)
@@ -435,6 +555,7 @@ int wmain(int argc, wchar_t** argv)
         "test Fluent submenu chevron font is created");
 
     CheckIconlessRows(dc, pixels, kWidth, kHeight);
+    CheckBuiltinArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
 
     const snowdesktop::menu_icon::ItemView normal{
         L"Open", L"O", false, false, false,

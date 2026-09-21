@@ -1,6 +1,7 @@
 #pragma once
 
 #include "menu_quick_icon.h"
+#include "menu_builtin_icon.h"
 
 #include <windows.h>
 
@@ -78,6 +79,7 @@ struct Item
     wchar_t accessKey = 0;
     /** 为行内按钮组按文字和图标预留宽度，避免短操作的翻译被截断。 */
     bool measureInlineAction = false;
+    menu_icon::BuiltinIcon builtinIcon = menu_icon::BuiltinIcon::None;
 };
 
 struct HoverInfo
