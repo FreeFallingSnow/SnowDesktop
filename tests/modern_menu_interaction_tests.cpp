@@ -1286,7 +1286,9 @@ int wmain()
                 RECT client{}; GetClientRect(root, &client);
                 const auto point = MAKELPARAM(client.right / 2, MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96) + MulDiv(10, dpi, 96));
                 SendMessageW(root, WM_LBUTTONDOWN, 0, point); SendMessageW(root, WM_LBUTTONUP, 0, point);
-                if (snowdesktop::modern_menu::IsActive()) SendMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+                // A successful click finishes the nested loop after this callback returns.
+                // Queue cancellation only for a missed click; sending it here erases success.
+                PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
             });
             if (topEdge.command != 200 || topEdge.itemScreenRect.top != longBounds.top + MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96))
                 std::cerr << "top boundary: dpi=" << dpi << " command=" << topEdge.command

@@ -7,7 +7,7 @@
 - 注册目录后台读取 HKCR 通用位置、扩展名、ProgID、PerceivedType、OpenWithProgids、UserChoice 与打包应用清单。名称、图标、注册来源、适用范围和禁用状态独立于菜单快照保存。
 - 设置分为“文件与文件夹”“空白处”，通用规则与位置例外只写 SnowDesktop 配置。旧身份记录保留；设置只展示实际观察到的可用菜单根项，隐藏未关联的原始注册行。
 - 实际菜单仍由隔离 Shell 进程决定适用性。命中缓存时本次菜单保持固定；无快照时先显示应用菜单，查询完成后在安全时机动态补齐。保留底部“展开更多选项／管理”，没有加载行。
-- 设置进程通过私有 IPC 20 使用宿主服务；组件公共 API、apiVersion、minHostVersion 不变。
+- 设置进程通过私有 IPC 21 使用宿主服务；组件公共 API、apiVersion、minHostVersion 不变。
 - 具体选择、位置与 Shift 共同确定查询身份。宿主合并在途任务、最多运行两个查询进程，失败退避，成功进程空闲五分钟回收。
 - 显示快照采用完整键与最近使用淘汰，内存 64 条／16 MiB，磁盘 256 条／64 MiB，单条 2 MiB，24 小时有效期。目录资料单独持久化；执行令牌不写磁盘。
 - 点击会重新查询并校对名称、命令、父子路径、注册关联与禁用状态；不按菜单位置执行。合法空结果可以发布，失败不能覆盖有效快照。
@@ -73,6 +73,7 @@ scripts/test.bat name "^(shell_context_menu_invoke|general_settings|settings_con
 - 标准 Release 构建与自动化结果见上文。桌面宿主不使用 UI 自动化验收；用户反馈后才记录 `verify`。
 
 ## 参考
+
 
 注册目录与状态读取参考 [ContextMenuManager ShellList](https://github.com/BluePointLilac/ContextMenuManager/blob/master/ContextMenuManager/Controls/ShellList.cs)；进程复用与失败处理思路参考 [TortoiseGit RemoteCacheLink](https://github.com/TortoiseGit/TortoiseGit/blob/master/src/TortoiseShell/RemoteCacheLink.cpp)。扩展批准策略参见 [Microsoft 的 Shell 注册文档](https://learn.microsoft.com/en-us/windows/win32/shell/reg-shell-exts)。实现沿用本项目隔离辅助进程与 IPC，没有复制其业务缓存或超时数值。
 

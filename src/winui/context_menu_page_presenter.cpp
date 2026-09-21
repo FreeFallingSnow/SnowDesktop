@@ -57,6 +57,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     };
     std::map<std::string, Card> sections;
     std::map<std::string, ext::ManagementCard> cardModels;
+    std::vector<std::string> cardOrder;
     std::map<std::string, std::string> rowGroups;
     size_t nextRow = 0;
     std::vector<std::function<void()>> revoke;
@@ -286,9 +287,10 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         hasVisibleRows = !filteredRows.empty();
         auto cards = ext::ManagementCards(filteredRows, category, mode);
         std::vector<ext::ManagementRow> visible;
-        cardModels.clear(); rowGroups.clear();
+        cardModels.clear(); cardOrder.clear(); rowGroups.clear();
         for (auto &model : cards)
         {
+            cardOrder.push_back(model.id);
             for (const auto &row : model.rows) { rowGroups[row.id] = model.id; visible.push_back(row); }
             cardModels.emplace(model.id, std::move(model));
         }
@@ -317,7 +319,19 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 if (!updating && sections.contains(group)) SetCardResults(group, sections.at(group).toggle.IsOn());
             }); card.revoke = [toggle = card.toggle, changed] { toggle.Toggled(changed); };
             muxc::Border groupCard; if (cardStyle) groupCard.Style(cardStyle); groupCard.Child(card.panel);
-            groups.Children().Append(groupCard); sections.emplace(group, std::move(card));
+            // Discovery can identify an application after the unknown card is
+            // already visible. Insert the new card in view order without
+            // recreating the existing cards or their expanded rows.
+            uint32_t insertion = groups.Children().Size();
+            bool following = false;
+            for (const auto &id : cardOrder)
+            {
+                if (id == group) { following = true; continue; }
+                if (!following || !sections.contains(id)) continue;
+                const auto sibling = sections.at(id).panel.Parent().as<mux::UIElement>();
+                if (groups.Children().IndexOf(sibling, insertion)) break;
+            }
+            groups.Children().InsertAt(insertion, groupCard); sections.emplace(group, std::move(card));
             UpdateCardStates();
         }
         return sections.at(group).panel;
@@ -471,8 +485,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             {
                 mode = routeFocus == "contextMenu.application" ? ext::ManagementView::Applications : ext::ManagementView::Extensions;
                 const bool before = std::exchange(updating, true);
+                if (mode == ext::ManagementView::Extensions) { category = ext::Category::Objects; tabs.SelectedItem(objectsTab); }
                 views.SelectedItem(mode == ext::ManagementView::Applications ? byApplication : byExtension); updating = before;
-                ClearRows(); if (active) BuildRows();
+                Text(); ClearRows(); if (active) BuildRows();
             }
         }
         if (!snapshot.sessionActive) Deactivate();

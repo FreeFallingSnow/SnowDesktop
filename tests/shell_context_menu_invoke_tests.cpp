@@ -1040,6 +1040,46 @@ void TestSourceScheduler()
         }, "application proof survives restart when the next query cannot launch");
     }
 }
+void TestSourceDeduplication()
+{
+    // Repeating a common action on another file used to query every provider
+    // again, keeping first-run discovery busy for minutes.
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    ext::Registration handler; handler.id = "clsid:dedup"; handler.kind = ext::RegistrationKind::Handler;
+    handler.contexts = 1; handler.types = {L".snowattribution"}; handler.revision = 1;
+    handler.sources = {L"Test.Type\\shellex\\ContextMenuHandlers\\Provider"};
+    handler.verbs = {"{00000000-0000-0000-0000-000000000001}"}; handler.application = {"test-app", L"Test app"};
+    ext::Catalogue catalogue; catalogue.revision = 1; catalogue.rows = {handler};
+    std::atomic<int> probes = 0;
+    auto factory = [&](const ext::Request &target) -> ext::QueryWork {
+        ext::Reply reply; reply.ok = true;
+        if (!target.sourceClsid.empty())
+        {
+            ++probes;
+            if (probes > 1) { reply.ok = false; reply.error = "controlled source failure"; }
+        }
+        else if (!target.paths.empty() && std::filesystem::path(target.paths.front()).extension() == L".snowattribution")
+        {
+            const auto name = std::filesystem::path(target.paths.front()).stem().string();
+            ext::Entry item; item.provider = "verb:" + (name == "a" || name == "b" ? std::string("common") : name);
+            item.key = item.provider; item.label = L"Actual action"; reply.entries = {item};
+        }
+        return {[reply]() -> std::optional<ext::Reply> { return reply; }, {}};
+    };
+    ext::MenuService service(directory.path / L"cache", factory, [catalogue] { return catalogue; });
+    auto inspect = [&](const wchar_t *name, bool refresh = false) {
+        const auto file = directory.path / name; std::ofstream(file) << "private";
+        ext::Request request; request.paths = {file.wstring()}; service.Inspect(request, refresh);
+        PumpUntil([&] { const auto view = service.Inspect(request); return service.View(request).snapshot.has_value() && !view.scanning && !view.menu.pending; },
+            "source discovery finishes for the actual requested file");
+    };
+    inspect(L"a.snowattribution"); Expect(probes == 1, "first unknown action probes its registered source once");
+    inspect(L"b.snowattribution"); Expect(probes == 1, "same action on another file reuses the completed attribution attempt");
+    inspect(L"c.snowattribution"); Expect(probes == 2, "a new actual action permits another source check");
+    inspect(L"d.snowattribution"); Expect(probes == 2, "failed source is not relaunched for every remaining file");
+    inspect(L"d.snowattribution", true); Expect(probes > 2, "explicit refresh permits a failed source to be checked again");
+}
 void TestQueryScheduler()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1597,6 +1637,7 @@ int wmain(int argc, wchar_t **argv)
             TestPendingCachedClick();
             TestQueryScheduler();
             TestSourceScheduler();
+            TestSourceDeduplication();
             TestSelectionScopes();
             TestCatalogueDependencies();
             TestUsefulManagementItems();
