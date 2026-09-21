@@ -81,8 +81,13 @@ DesktopApp::RenameClickHit DesktopApp::HitTestRenameClick(POINT point) const
         }
     }
     if (const auto* icon = HitTestIcon(point))
+    {
+        // Large cards render effect-specific inner titles, not the ordinary
+        // grid label. Do not treat part of their artwork as a filename.
+        if (icon->GetDesktopItem()->largeIcon) return {};
         return desktopHit(*icon->GetDesktopItem(),
             GetItemTextRect(icon->GetBounds(), true), L"desktop");
+    }
     return {};
 }
 

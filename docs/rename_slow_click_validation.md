@@ -8,7 +8,7 @@
 
 列表名称命中和编辑框使用列表图标尺寸、缩放及名称列宽度。文件夹条目按实际槽中的对象查找位置，不把数据索引当作排序/过滤后的显示索引。
 
-范围不包括组件标题、快捷导航窗口和 Dock 启动图标；这些入口继续使用原有交互和重命名命令。未新增组件公共 API。
+范围不包括组件标题、快捷导航窗口、Dock 启动图标和使用特效内嵌标题的大图标卡片；这些入口继续使用原有交互和重命名命令。未新增组件公共 API。
 
 ## 自动化边界
 
@@ -28,10 +28,31 @@
 - `scripts/build.bat`：退出码 0，37 秒；标准 Release 产物已生成，无编译/链接警告。首次 `--reload-shell` 构建因三处 `GetSlots` 的 const 限定不匹配失败，调整调用后通过。
 - `scripts/test.bat name "^(slot_runtime_contract|dock_and_window_rules|widget_interaction_rules)$"`：退出码 0，3/3 通过；含构建共 33.05 秒，CTest 执行 2.11 秒。
 - 隔离状态机探针：生产版本退出码 0；禁用触发版本退出码 1（20 个失败断言）；跳过目标复核版本退出码 1（12 个失败断言）。探针以 `/W4 /WX` 编译通过。
-- `scripts/test.bat full`：执行中，尚不能计为通过。
+- 首次 `scripts/test.bat full`：构建阶段在链接 `SnowDesktop.exe` 时遭遇文件占用（LNK1104），退出码 1，未运行 CTest，不能计为通过。
 - 实机验收：未运行，待用户反馈。
 
-标准构建 EXE SHA256：`1376816836595A964FD136DBA585DF6CC429B7044198FE2B21D29E9FB885C4EA`。
+首个候选 `9569db52` 的 EXE SHA256：`1376816836595A964FD136DBA585DF6CC429B7044198FE2B21D29E9FB885C4EA`。
+
+排除大图标卡片图案误命中后的最终检查点：
+
+- `scripts/build.bat`：退出码 0，398.84 秒；标准 Release 构建通过，无编译/链接警告。日志 `build-card-guard.log`。
+- `scripts/test.bat full`：退出码 0，120/120 通过；含配置/构建共 112.79 秒，CTest 执行 87.54 秒。无编译/链接警告；默认排除 manual 诊断。日志 `full-final.log`，CTest 报告 `.build/Testing/test-run-ba0a52923c854596841b1fad61f0f4ae.xml`。
+- 最终 EXE SHA256：`8F965671394FA77DCEE125A94664528630D823CEBB43EEDD22A01F1CDDBC226C`。
+- 验证覆盖当时完整工作区输入，包含其他任务尚未提交的剪贴板/拖放及 Dock 修改；本任务仅提交重命名差异。1,070 个源码、测试、资源、脚本和构建输入的 SHA256 清单位于 `final-input-sha256.txt`，清单 SHA256 为 `ED975A284CF166CE538D5B4D75310D04D7CF6663A845686F332D483AEB40D04B`。测试前后内容核对一致；后续输入变化须重新判断证据有效性。
+- 桌面实机验收仍待用户反馈；全量自动测试和下述原生控件探针不算 SnowDesktop 桌面点击验收。
+
+## 原生控件时序对照
+
+微软文档说明，原生 ListView 点击已聚焦项的名称时会设置计时器，以避免与双击冲突；文档没有规定具体延时值：[Default List-View Message Processing](https://learn.microsoft.com/en-us/windows/win32/controls/listview-message-processing)。
+
+本机独立 Win32 ListView 探针（Common Controls v6，测试项 `sample.txt`，未操作真实文件或 SnowDesktop 桌面宿主）记录 `NM_CLICK` 和 `LVN_BEGINLABELEDITW`。保持本机原有 `GetDoubleClickTime() = 500 ms`，未改系统设置：
+
+| 输入 | 从按下到 NM_CLICK | 从按下到开始编辑 | 单击完成后等待 |
+| --- | --- | --- | --- |
+| 立即排队松开 | 16 ms | 516 ms | 500 ms |
+| 按住约 120 ms 再松开 | 141 ms | 641 ms | 500 ms |
+
+本版采用相同的“第二次松开后等待系统双击时间”规则。证据仅验证本机原生 ListView 的时序，不能替代资源管理器或 SnowDesktop 的实机交互验收。最初未聚焦探针未触发编辑，属于无效测量；上表仅使用显式设置控件焦点后收到编辑通知的两次有效结果。原始日志为 `native-zero-hold-3.log` 和 `native-held-click-3.log`。
 
 ## 实机验收清单（待执行）
 
