@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "컨텍스트 메뉴",
   "settings.contextMenu.description": "메뉴 모양과 표시할 확장 항목을 선택합니다.",
   "settings.contextMenu.extensions": "확장 메뉴 항목",
+  "settings.contextMenu.refreshing": "새로 고치는 중…",
   "settings.contextMenu.inspect": "메뉴 항목",
   "settings.contextMenu.hint": "항목은 파일 형식과 폴더 내용에 따라 달라집니다. 특정 항목의 메뉴도 확인할 수 있습니다.",
   "settings.contextMenu.native": "기본 메뉴",

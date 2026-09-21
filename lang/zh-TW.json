@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "右鍵選單",
   "settings.contextMenu.description": "選擇選單外觀和要顯示的擴充功能項目。",
   "settings.contextMenu.extensions": "擴充功能選單項目",
+  "settings.contextMenu.refreshing": "正在重新整理…",
   "settings.contextMenu.inspect": "選單項目",
   "settings.contextMenu.hint": "項目會依檔案類型和資料夾內容變化，可查看特定物件的選單。",
   "settings.contextMenu.native": "原生選單",

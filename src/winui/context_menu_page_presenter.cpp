@@ -45,7 +45,9 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     ext::ManagementView mode = ext::ManagementView::Objects;
     std::string routeFocus;
     std::vector<ext::ManagementRow> filteredRows;
-    muxc::TextBlock heading, status;
+    muxc::TextBlock heading, status, refreshStatus;
+    muxc::StackPanel refreshIndicator;
+    muxc::ProgressRing refreshRing;
     mux::DispatcherTimer timer, rowTimer;
     std::vector<ext::ManagementRow> pendingRows;
     struct Card
@@ -70,7 +72,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     bool hasVisibleRows = false;
     bool extensionFocus = false;
     std::uint64_t generation = 0;
-    bool active = false, closed = false, updating = false, initialized = false, routed = false;
+    bool active = false, closed = false, updating = false, initialized = false, routed = false, queryFailed = false;
     std::wstring L(std::string_view key) const { return localize ? localize(key) : std::wstring{}; }
     static void Column(muxc::Grid grid, double width, mux::GridUnitType unit)
     {
@@ -81,7 +83,17 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         root.Spacing(12); content.Spacing(12); groups.Spacing(12);
         if (cardStyle) managementCard.Style(cardStyle);
         heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        content.Children().Append(heading);
+        heading.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::StackPanel titleRow; titleRow.Orientation(muxc::Orientation::Horizontal); titleRow.Spacing(12);
+        titleRow.Children().Append(heading);
+        refreshIndicator.Orientation(muxc::Orientation::Horizontal); refreshIndicator.Spacing(6);
+        refreshIndicator.VerticalAlignment(mux::VerticalAlignment::Center);
+        refreshRing.Width(16); refreshRing.Height(16); refreshRing.MinWidth(0); refreshRing.MinHeight(0);
+        refreshRing.IsIndeterminate(true);
+        refreshStatus.FontSize(12); refreshStatus.Opacity(0.7); refreshStatus.VerticalAlignment(mux::VerticalAlignment::Center);
+        refreshIndicator.Children().Append(refreshRing); refreshIndicator.Children().Append(refreshStatus);
+        titleRow.Children().Append(refreshIndicator); content.Children().Append(titleRow);
+        SetRefreshing(false);
         tabs.Items().Append(objectsTab); tabs.Items().Append(backgroundTab); tabs.SelectedItem(objectsTab);
         content.Children().Append(tabs);
         views.Items().Append(byObject); views.Items().Append(byApplication); views.Items().Append(byExtension);
@@ -126,6 +138,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Text()
     {
         heading.Text(L("settings.contextMenu.extensions"));
+        refreshStatus.Text(L("settings.contextMenu.refreshing"));
+        mux::Automation::AutomationProperties::SetName(refreshRing, L("settings.contextMenu.refreshing"));
         objectsTab.Text(L("settings.contextMenu.objects")); backgroundTab.Text(L("settings.contextMenu.background"));
         search.PlaceholderText(L("settings.contextMenu.search")); refresh.Text(L("settings.contextMenu.refresh"));
         more.Content(winrt::box_value(L("settings.contextMenu.more")));
@@ -142,7 +156,12 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         chooseDesktop.Visibility(category == ext::Category::Background ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         chooseObject.Visibility(category == ext::Category::Objects ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     }
-    void Cancel() { timer.Stop(); rowTimer.Stop(); }
+    void SetRefreshing(bool busy)
+    {
+        refreshRing.IsActive(busy);
+        refreshIndicator.Visibility(busy ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    }
+    void Cancel() { timer.Stop(); rowTimer.Stop(); SetRefreshing(false); }
     void Status(const std::wstring &text) { status.Text(text); status.Visibility(text.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible); }
     void Reload(bool refreshCatalogue = false)
     {
@@ -150,6 +169,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         try
         {
             view = actions.contextMenu(request, refreshCatalogue);
+            queryFailed = false;
             if (!routed && !view.selection.paths.empty())
             {
                 request = view.selection;
@@ -161,7 +181,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             BuildRows();
             if (view.scanning || view.menu.pending) timer.Start(); else timer.Stop();
         }
-        catch (...) { Status(L("settings.contextMenu.failed")); timer.Stop(); }
+        catch (...) { queryFailed = true; SetRefreshing(false); Status(L("settings.contextMenu.failed")); timer.Stop(); }
     }
     void Poll()
     {
@@ -169,6 +189,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         try
         {
             auto next = actions.contextMenu(request, false);
+            queryFailed = false;
             const bool changed = next.catalogue.revision != view.catalogue.revision;
             if (request.paths.empty() && next.selection.context == ext::Context::Desktop && !next.selection.paths.empty()) request = next.selection;
             view = std::move(next);
@@ -176,7 +197,7 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             UpdateStatus();
             if (!view.scanning && !view.menu.pending) timer.Stop();
         }
-        catch (...) { Status(L("settings.contextMenu.failed")); timer.Stop(); }
+        catch (...) { queryFailed = true; SetRefreshing(false); Status(L("settings.contextMenu.failed")); timer.Stop(); }
     }
     void Pick(bool folders)
     {
@@ -222,9 +243,13 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void UpdateStatus()
     {
+        // Report actual service work, not incremental construction of cached rows.
+        const bool refreshing = active && !closed && !queryFailed && (view.scanning || view.menu.pending);
+        SetRefreshing(refreshing);
         if (hasVisibleRows) Status(L"");
+        else if (queryFailed) Status(L("settings.contextMenu.failed"));
         else if (HasFilters()) Status(L("settings.contextMenu.noMatches"));
-        else if (view.scanning || view.menu.pending) Status(L("settings.contextMenu.loading"));
+        else if (refreshing) Status(L"");
         else Status(L(view.menu.error.empty() ? "settings.contextMenu.empty" : "settings.contextMenu.failed"));
     }
     bool HasFilters() const { return !search.Text().empty(); }
@@ -311,9 +336,11 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
             card.title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); card.title.TextWrapping(mux::TextWrapping::Wrap);
             names.Children().Append(card.title); card.mixed.Text(L("settings.contextMenu.groupMixed")); card.mixed.FontSize(12);
             card.mixed.Opacity(0.7); names.Children().Append(card.mixed); header.Children().Append(names);
-            card.toggle.OnContent(winrt::box_value(L"")); card.toggle.OffContent(winrt::box_value(L"")); card.toggle.MinWidth(44);
+            card.toggle.OnContent(winrt::box_value(L"")); card.toggle.OffContent(winrt::box_value(L"")); card.toggle.MinWidth(0);
+            card.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
             card.toggle.VerticalAlignment(mux::VerticalAlignment::Center); muxc::Grid::SetColumn(card.toggle, 1);
-            header.Children().Append(card.toggle); header.Margin({12, 8, 48, 12}); card.panel.Children().Append(header);
+            // The native switch already includes a 12-DIP trailing content gap.
+            header.Children().Append(card.toggle); header.Margin({12, 8, 0, 12}); card.panel.Children().Append(header);
             muxc::ToolTipService::SetToolTip(card.toggle, winrt::box_value(L("settings.contextMenu.groupHint")));
             const auto changed = card.toggle.Toggled([this, group](auto &&, auto &&) {
                 if (!updating && sections.contains(group)) SetCardResults(group, sections.at(group).toggle.IsOn());
@@ -365,7 +392,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 row.scope.FontSize(12); row.scope.Opacity(0.7); row.scope.TextWrapping(mux::TextWrapping::Wrap); names.Children().Append(row.scope);
                 row.mixed.FontSize(12); row.mixed.Opacity(0.7); row.mixed.TextWrapping(mux::TextWrapping::Wrap); row.mixed.Text(L("settings.contextMenu.mixed")); names.Children().Append(row.mixed);
                 names.Margin({0, 0, 16, 0}); muxc::Grid::SetColumn(names, 1); layout.Children().Append(names);
-                row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(44);
+                row.toggle.OnContent(winrt::box_value(L"")); row.toggle.OffContent(winrt::box_value(L"")); row.toggle.MinWidth(0);
+                row.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
                 row.toggle.VerticalAlignment(mux::VerticalAlignment::Center);
                 muxc::Grid::SetColumn(row.toggle, 2); layout.Children().Append(row.toggle);
                 auto token = row.toggle.Toggled([this, id = entry.id](auto &&, auto &&) {
@@ -378,6 +406,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
                     });
                 }); row.revoke.push_back([toggle = row.toggle, token] { toggle.Toggled(token); });
                 row.expander.HorizontalAlignment(mux::HorizontalAlignment::Stretch); row.expander.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+                // Keep the native chevron hit area; only tighten its leading gap.
+                row.expander.Resources().Insert(winrt::box_value(L"ExpanderChevronMargin"), winrt::box_value(mux::Thickness{4, 0, 8, 0}));
                 row.expander.Header(layout); muxc::ToolTipService::SetToolTip(row.expander, winrt::box_value(L("settings.contextMenu.locations")));
                 row.positionsPanel.Spacing(8);
                 const auto expanding = row.expander.Expanding([this, id = entry.id](auto &&, auto &&) {

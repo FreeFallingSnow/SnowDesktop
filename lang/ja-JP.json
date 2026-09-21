@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "右クリックメニュー",
   "settings.contextMenu.description": "メニューの外観と表示する拡張項目を選びます。",
   "settings.contextMenu.extensions": "拡張メニュー項目",
+  "settings.contextMenu.refreshing": "更新中…",
   "settings.contextMenu.inspect": "メニュー項目",
   "settings.contextMenu.hint": "項目はファイルの種類やフォルダーの内容によって変わります。特定の対象も確認できます。",
   "settings.contextMenu.native": "標準メニュー",

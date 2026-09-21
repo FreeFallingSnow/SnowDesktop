@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "Menus de contexto",
   "settings.contextMenu.description": "Escolha a aparência do menu e os itens das extensões que serão exibidos.",
   "settings.contextMenu.extensions": "Itens das extensões",
+  "settings.contextMenu.refreshing": "Atualizando…",
   "settings.contextMenu.inspect": "Itens do menu",
   "settings.contextMenu.hint": "Os itens variam conforme o tipo de arquivo e o conteúdo da pasta. Você pode consultar um objeto específico.",
   "settings.contextMenu.native": "Menu nativo",

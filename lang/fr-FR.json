@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "Menus contextuels",
   "settings.contextMenu.description": "Choisissez l’apparence du menu et les éléments des extensions à afficher.",
   "settings.contextMenu.extensions": "Éléments des extensions",
+  "settings.contextMenu.refreshing": "Actualisation…",
   "settings.contextMenu.inspect": "Éléments du menu",
   "settings.contextMenu.hint": "Les éléments varient selon le type de fichier et le contenu du dossier. Vous pouvez consulter un objet précis.",
   "settings.contextMenu.native": "Menu natif",

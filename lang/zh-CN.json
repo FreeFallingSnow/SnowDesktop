@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "右键菜单",
   "settings.contextMenu.description": "选择菜单外观和要显示的扩展项目。",
   "settings.contextMenu.extensions": "扩展菜单项",
+  "settings.contextMenu.refreshing": "正在刷新…",
   "settings.contextMenu.inspect": "菜单项目",
   "settings.contextMenu.hint": "项目随文件类型和文件夹内容变化，可查看特定对象的菜单。",
   "settings.contextMenu.native": "原生菜单",

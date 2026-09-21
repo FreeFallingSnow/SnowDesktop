@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "Context menus",
   "settings.contextMenu.description": "Choose the menu appearance and which extension items to show.",
   "settings.contextMenu.extensions": "Extension menu items",
+  "settings.contextMenu.refreshing": "Refreshing…",
   "settings.contextMenu.inspect": "Menu items",
   "settings.contextMenu.hint": "Items vary by file type and folder contents. You can inspect a specific object.",
   "settings.contextMenu.native": "Native menu",

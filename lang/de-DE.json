@@ -20,6 +20,7 @@
   "settings.contextMenu.page": "Kontextmenüs",
   "settings.contextMenu.description": "Menüdesign und sichtbare Erweiterungseinträge auswählen.",
   "settings.contextMenu.extensions": "Erweiterte Menüeinträge",
+  "settings.contextMenu.refreshing": "Wird aktualisiert…",
   "settings.contextMenu.inspect": "Menüeinträge",
   "settings.contextMenu.hint": "Einträge hängen von Dateityp und Ordnerinhalt ab. Ein bestimmtes Objekt kann geprüft werden.",
   "settings.contextMenu.native": "Natives Menü",
