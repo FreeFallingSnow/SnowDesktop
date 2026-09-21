@@ -25,6 +25,9 @@ struct State
     Target target;
     bool migrationPending = false;
     bool enableAfterMigration = false;
+    // Preserve the Windows enabled bit even when old task metadata is invalid.
+    bool enabledKnown = false;
+    bool enabled = false;
     std::wstring error;
 };
 

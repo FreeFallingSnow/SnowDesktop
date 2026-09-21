@@ -267,6 +267,8 @@ State QueryRegisteredTask(IRegisteredTask* task, const std::wstring& folder)
     {
         VARIANT_BOOL enabled = VARIANT_FALSE;
         Check(task->get_Enabled(&enabled), L"IRegisteredTask::get_Enabled");
+        state.enabledKnown = true;
+        state.enabled = enabled != VARIANT_FALSE;
         ComPtr<ITaskDefinition> definition;
         Check(task->get_Definition(&definition), L"IRegisteredTask::get_Definition");
         ComPtr<IRegistrationInfo> registration;
@@ -427,6 +429,8 @@ State RunStore::Query() const noexcept
         }
         state.status = IsPortableAutoStartApprovalActive(approved)
             ? UnifiedAutoStartTaskState::Enabled : UnifiedAutoStartTaskState::Disabled;
+        state.enabledKnown = true;
+        state.enabled = state.status == UnifiedAutoStartTaskState::Enabled;
     }
     catch (...) { state.error = ExceptionMessage(); }
     return state;
@@ -513,7 +517,7 @@ State LoginStore::Query() const noexcept
     // because the fallback is disabled. An established fallback also supersedes
     // stale migration intent in an already-disabled task.
     if (task.status != UnifiedAutoStartTaskState::Missing &&
-        task.status != UnifiedAutoStartTaskState::Disabled) return task;
+        !(task.enabledKnown && !task.enabled)) return task;
     return run;
 }
 
@@ -535,8 +539,9 @@ bool LoginStore::Configure(const Target& target, bool enabled, std::wstring* err
     const bool configured = run_.Configure(target, enabled, &runError);
     const auto task = task_.Query();
     const bool inactive = disabled || task.status == UnifiedAutoStartTaskState::Missing ||
-        task.status == UnifiedAutoStartTaskState::Disabled;
-    if (configured && (inactive || (enabled && task.status == UnifiedAutoStartTaskState::Unavailable)))
+        (task.enabledKnown && !task.enabled);
+    if (configured && (inactive || (enabled && !task.enabledKnown &&
+        task.status == UnifiedAutoStartTaskState::Unavailable)))
         return true;
     AppendError(taskError, disableError);
     AppendError(taskError, runError);

@@ -3,12 +3,14 @@
 #include "diagnostic_log.h"
 
 #include <windows.h>
+#include <sddl.h>
 #include <taskschd.h>
 #include <wrl/client.h>
 
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 // Host identity/logging and the MSIX registry bridge are substituted. Scheduler
 // operations and the portable registry adapter use real Windows APIs; only GUID
@@ -48,7 +50,11 @@ std::uint32_t DeleteUnvirtualizedCurrentUserValue(const wchar_t* key, const wcha
 
 void WriteDiagnosticLogEntry(const wchar_t* message, DiagnosticLogLevel)
 {
-    std::wcerr << message << L'\n';
+    // Keep system-localized error text observable in captured test logs.
+    const int length = WideCharToMultiByte(CP_UTF8, 0, message, -1, nullptr, 0, nullptr, nullptr);
+    std::string utf8(static_cast<std::size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, message, -1, utf8.data(), length, nullptr, nullptr);
+    std::cerr << utf8.c_str() << '\n';
 }
 
 namespace
@@ -159,6 +165,43 @@ struct DenyTaskCreation
         if (FAILED(restored)) std::terminate();
     }
 };
+
+struct DenyRegistryWrites
+{
+    HKEY key = nullptr;
+    std::vector<BYTE> original;
+    explicit DenyRegistryWrites(const std::wstring& path)
+    {
+        Require(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0,
+            KEY_ALL_ACCESS, nullptr, &key, nullptr) == ERROR_SUCCESS, "create isolated denied registry key");
+        DWORD size = 0;
+        Require(RegGetKeySecurity(key, DACL_SECURITY_INFORMATION, nullptr, &size) == ERROR_INSUFFICIENT_BUFFER,
+            "size registry DACL");
+        original.resize(size);
+        Require(RegGetKeySecurity(key, DACL_SECURITY_INFORMATION, original.data(), &size) == ERROR_SUCCESS,
+            "save registry DACL");
+        LPWSTR sddl = nullptr;
+        Require(ConvertSecurityDescriptorToStringSecurityDescriptorW(original.data(), SDDL_REVISION_1,
+            DACL_SECURITY_INFORMATION, &sddl, nullptr), "convert registry DACL");
+        std::wstring denied(sddl);
+        LocalFree(sddl);
+        const auto firstAce = denied.find(L'(');
+        Require(firstAce != std::wstring::npos, "registry DACL has ACEs");
+        denied.insert(firstAce, L"(D;;0x2;;;WD)");
+        PSECURITY_DESCRIPTOR descriptor = nullptr;
+        Require(ConvertStringSecurityDescriptorToSecurityDescriptorW(denied.c_str(), SDDL_REVISION_1,
+            &descriptor, nullptr), "parse denied registry DACL");
+        const auto result = RegSetKeySecurity(key, DACL_SECURITY_INFORMATION, descriptor);
+        LocalFree(descriptor);
+        Require(result == ERROR_SUCCESS, "deny registry set-value access");
+    }
+    ~DenyRegistryWrites()
+    {
+        const auto result = RegSetKeySecurity(key, DACL_SECURITY_INFORMATION, original.data());
+        RegCloseKey(key);
+        if (result != ERROR_SUCCESS) std::terminate();
+    }
+};
 }
 
 int RunAutoStartManagerTests()
@@ -258,13 +301,20 @@ int RunAutoStartManagerTests()
             Require(login.Configure(steam, false, &error) &&
                 LoginStore(store, run).Query().status == UnifiedAutoStartTaskState::Disabled,
                 "disable succeeds while scheduler registration remains denied");
-            const RunStore invalidRun(fixture.registryRoot + L"\\" + std::wstring(256, L'x'),
-                fixture.registryRoot + L"\\Approval");
-            Require(!LoginStore(store, invalidRun).Configure(steam, true, &error) &&
+            {
+            DenyRegistryWrites deniedRun(fixture.registryRoot + L"\\Run");
+            Require(!login.Configure(steam, true, &error) &&
                 error.find(L"RegisterTaskDefinition") != std::wstring::npos &&
                 error.find(L"0x80070005") != std::wstring::npos &&
                 error.find(L"RegSetValueExW(HKCU\\") != std::wstring::npos,
                 "both failed mechanisms retain their concrete operation and error");
+            }
+            {
+            DenyRegistryWrites deniedApproval(fixture.registryRoot + L"\\Approval");
+            Require(!login.Configure(steam, false, &error) &&
+                run.Query().status == UnifiedAutoStartTaskState::Missing,
+                "failed approval disable still removes Run instead of leaving it active");
+            }
             Require(login.Configure(steam, true, &error), "restore enabled fallback before task recovery");
         }
         Require(login.Configure(steam, true, &error) && store.Query().status == UnifiedAutoStartTaskState::Enabled &&
