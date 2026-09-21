@@ -5055,6 +5055,24 @@ int main(int argc, char** argv)
 
     namespace launchAnimation =
         snowdesktop::dock_launch_animation;
+    // A first launch used to grow the whole Dock's HWND and replace its
+    // surface. Allocation must not depend on a bounce starting/stopping,
+    // while the actual animation-only clip must still retire after bounce.
+    for (const auto& sample : std::array<std::pair<int, int>, 3>{
+            std::pair{32, 14}, {76, 30}, {152, 59}})
+    {
+        for (const bool active : {false, true})
+        {
+            Check(launchAnimation::PaddingPixels(sample.first, true, active, true) ==
+                    sample.second,
+                "Dock host reserves the full launch envelope before and during bounce");
+            Check(launchAnimation::PaddingPixels(sample.first, true, active) ==
+                    (active ? sample.second : 0),
+                "only a running bounce expands the Dock visible region");
+            Check(launchAnimation::PaddingPixels(sample.first, false, active, true) == 0,
+                "disabled bounce and in-place pulse need no launch allocation padding");
+        }
+    }
     Check(launchAnimation::NormalizedOffset(0) == 0.0 &&
             launchAnimation::NormalizedOffset(
                 launchAnimation::kMaximumDurationMs) == 0.0,

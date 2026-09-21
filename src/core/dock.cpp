@@ -695,16 +695,16 @@ float DockContainer::GetMaximumMagnificationScale() const
         snowdesktop::animation::RuntimeAnimationsEnabled());
 }
 
-int DockContainer::GetLaunchAnimationPadding() const
+int DockContainer::GetLaunchAnimationPadding(bool reserveForLaunch) const
 {
-    if (!app_ || app_->dockSettings_.launchEffect != 1 ||
-        app_->dockLaunchBounces_.empty() ||
-        !snowdesktop::animation::RuntimeAnimationsEnabled())
+    if (!app_)
         return 0;
     const int iconSize = static_cast<int>(std::ceil(
         ItemIconSize() * GetMaximumMagnificationScale()));
-    return static_cast<int>(std::ceil(
-        snowdesktop::dock_launch_animation::MaximumOffsetPixels(iconSize))) + 1;
+    return snowdesktop::dock_launch_animation::PaddingPixels(
+        iconSize, app_->dockSettings_.launchEffect == 1 &&
+            snowdesktop::animation::RuntimeAnimationsEnabled(),
+        !app_->dockLaunchBounces_.empty(), reserveForLaunch);
 }
 
 RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
@@ -1263,10 +1263,10 @@ RECT DockContainer::GetInteractiveBounds() const
         GetMaximumMagnificationScale());
 }
 
-RECT DockContainer::GetAnimationVisualBounds() const
+RECT DockContainer::GetAnimationVisualBounds(bool reserveForLaunch) const
 {
     const RECT bounds = GetInteractiveBounds();
-    const int padding = GetLaunchAnimationPadding();
+    const int padding = GetLaunchAnimationPadding(reserveForLaunch);
     if (padding <= 0)
         return bounds;
     return snowdesktop::dock_magnification::ExpandPerpendicularBounds(

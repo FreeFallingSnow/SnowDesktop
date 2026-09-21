@@ -600,9 +600,11 @@ CalculateFloatingDockStableSourceRect(
     if (!host.container)
         return RECT{};
 
+    // Reserve before the first launch and after layout rebuilds. The active
+    // animation region still uses the unreserved bounds below, so idle
+    // reserve pixels never become visible or interactive.
     const RECT dockRect =
-        host.container->
-            GetAnimationVisualBounds();
+        host.container->GetAnimationVisualBounds(true);
     const PersonalizationSettings& appearance =
         IsPersistentDockHostEffectivelyFloating(host)
             ? floatingDockPersonalization_
@@ -884,10 +886,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockBackdropCompositor_.IsAvailable())
     {
         // The native backdrop helper is a sibling sized to the content HWND.
-        // Keep its window placement in sync after the host expands so glass
-        // panels are not clipped to the old host bounds.
-        floatingDockBackdropCompositor_.
-            SetPopupTopmost(floatingLayerTopmost);
+        // Geometry does not own the current Z band: Show Desktop and window
+        // transitions can raise an unsummoned Dock. Preserve that band here;
+        // UpdatePersistentDockHostVisibility applies the complete policy.
         floatingDockBackdropCompositor_.
             Reattach(dockHostHwnd);
     }

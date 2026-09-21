@@ -87,6 +87,17 @@ inline float MaximumOffsetPixels(int iconSize) noexcept
         std::max(6.0, static_cast<double>(iconSize) * 0.38));
 }
 
+inline int PaddingPixels(int iconSize, bool bounceEnabled,
+    bool bounceActive, bool reserveForLaunch = false) noexcept
+{
+    // Allocate the maximum envelope before launch; only the visible window
+    // region follows active bounces. Starting an animation must not resize
+    // the whole Dock HWND and replace its content/backdrop surfaces.
+    if (!bounceEnabled || (!bounceActive && !reserveForLaunch))
+        return 0;
+    return static_cast<int>(std::ceil(MaximumOffsetPixels(iconSize))) + 1;
+}
+
 inline float OffsetPixels(
     double elapsedMs, int iconSize) noexcept
 {

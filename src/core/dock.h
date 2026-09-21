@@ -127,7 +127,7 @@ public:
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
     RECT GetInteractiveBounds() const;
-    RECT GetAnimationVisualBounds() const;
+    RECT GetAnimationVisualBounds(bool reserveForLaunch = false) const;
     std::vector<RECT> GetOcclusionRects(POINT pointer) const;
     bool ContainsInteractivePoint(POINT pt) const;
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
@@ -151,7 +151,7 @@ private:
 
     bool IsMagnificationSuppressed() const;
     float GetMaximumMagnificationScale() const;
-    int GetLaunchAnimationPadding() const;
+    int GetLaunchAnimationPadding(bool reserveForLaunch = false) const;
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;
