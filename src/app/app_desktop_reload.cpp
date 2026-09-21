@@ -165,7 +165,8 @@ void DesktopApp::SyncFolderChangeNotifications()
             paths.push_back(widget.sourceFolderPath);
     if (dockFolderPopupOpen_)
         paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
-    const auto added = folderNotifications_.Sync(hwnd_, kFolderChangeMessage, paths);
+    const auto added = folderNotifications_.Sync(hwnd_, kFolderChangeMessage,
+        kFolderSubscriptionReadyMessage, paths);
     // Close the gap between the preceding enumeration and registration.
     if (!added.empty()) RequestFolderRefresh(added);
 }

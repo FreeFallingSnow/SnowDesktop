@@ -1091,6 +1091,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             ApplyPersistentDockHostAppearance();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+    case kFolderSubscriptionReadyMessage:
+        SyncFolderChangeNotifications();
+        return 0;
     case kFolderChangeMessage:
     {
         const auto change = ReadShellChangeNotification(wp, lp);

@@ -119,9 +119,32 @@ void TestFolderShellSubscriptions()
     Check(window != nullptr, "isolated Shell notification receiver is created");
     if (!window) { UnregisterClassW(className, windowClass.hInstance); return; }
     FolderNotifications subscriptions;
-    const auto added = subscriptions.Sync(window, message, {mapped, mapped + L"\\", dock});
+    constexpr UINT readyMessage = WM_APP + 102;
+    auto waitFor = [&](auto&& condition) {
+        const auto deadline = GetTickCount64() + 6000;
+        for (;;)
+        {
+            MSG received{};
+            while (PeekMessageW(&received, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&received);
+            if (condition()) return true;
+            const auto now = GetTickCount64();
+            if (now >= deadline) return false;
+            MsgWaitForMultipleObjectsEx(0, nullptr, static_cast<DWORD>(deadline - now),
+                QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+    };
+    std::vector<std::wstring> added;
+    auto syncUntil = [&](const std::vector<std::wstring>& paths, size_t count) {
+        added.clear();
+        return waitFor([&] {
+            auto current = subscriptions.Sync(window, message, readyMessage, paths);
+            added.insert(added.end(), current.begin(), current.end());
+            return subscriptions.Size() == count;
+        });
+    };
+    Check(syncUntil({mapped, mapped + L"\\", dock}, 2), "background directory resolution finishes");
     Check(subscriptions.Size() == 2 && added.size() == 2 &&
-            subscriptions.Sync(window, message, {mapped, dock}).empty(),
+            subscriptions.Sync(window, message, readyMessage, {mapped, dock}).empty(),
         "multiple mapped widgets and a Dock alias share their path registration without re-registering on rebuild");
     auto affected = subscriptions.Affected(ShellChangeNotification{
         SHCNE_RENAMEITEM, mapped + L"\\old.txt", dock + L"\\new.txt"});
@@ -161,11 +184,11 @@ void TestFolderShellSubscriptions()
     { std::ofstream(root / L"dock" / L"new.txt") << "Dock file"; }
     Check(waitForFolder(dock), "external file creation wakes the open ordinary Dock directory");
 
-    subscriptions.Sync(window, message, {mapped});
+    subscriptions.Sync(window, message, readyMessage, {mapped});
     Check(subscriptions.Size() == 1 && subscriptions.Affected(
             ShellChangeNotification{SHCNE_CREATE, dock + L"\\late.txt", {}}).empty(),
         "closing the Dock popup releases its registration and ignores queued events from that directory");
-    subscriptions.Sync(window, message, {next});
+    Check(syncUntil({next}, 1), "retargeted directory resolution finishes");
     Check(subscriptions.Size() == 1 && subscriptions.Affected(
             ShellChangeNotification{SHCNE_CREATE, mapped + L"\\late.txt", {}}).empty(),
         "removing or retargeting the last mapped widget releases its old directory");
@@ -173,9 +196,103 @@ void TestFolderShellSubscriptions()
         "an undecodable directory notification conservatively refreshes only active subscriptions");
     subscriptions.Clear();
     Check(subscriptions.Size() == 0, "host teardown deregisters every directory");
-    Check(subscriptions.Sync(window, message, {mapped}).size() == 1,
+    Check(syncUntil({mapped}, 1) && added.size() == 1,
         "host recovery can register the same mapped directory again");
     subscriptions.Clear();
+
+    // Hold only the Shell provider boundary. The production queue, Sync,
+    // registration, retirement and teardown still run without replacements.
+    struct Gate
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        int entered = 0;
+        int exited = 0;
+        int failedCalls = 0;
+        bool release = false;
+        bool timedOut = false;
+        DWORD resolverThread = 0;
+    };
+    const auto gate = std::make_shared<Gate>();
+    auto blocked = std::make_unique<FolderNotifications>([gate, mapped, next](const std::wstring& path) {
+        if (path == FolderKey(next))
+        {
+            std::lock_guard lock(gate->mutex);
+            ++gate->failedCalls;
+            gate->changed.notify_all();
+            return FolderNotifications::ResolvedFolder{};
+        }
+        if (path == FolderKey(mapped))
+        {
+            std::unique_lock lock(gate->mutex);
+            ++gate->entered;
+            gate->resolverThread = GetCurrentThreadId();
+            gate->changed.notify_all();
+            if (!gate->changed.wait_for(lock, std::chrono::seconds(6), [&] { return gate->release; }))
+                gate->timedOut = true;
+            ++gate->exited;
+            gate->changed.notify_all();
+        }
+        return FolderNotifications::Resolve(path);
+    });
+    Check(blocked->Sync(window, message, readyMessage, {mapped, dock}).empty(),
+        "Sync returns before a held Shell provider completes");
+    {
+        std::unique_lock lock(gate->mutex);
+        Check(gate->changed.wait_for(lock, std::chrono::seconds(2), [&] { return gate->entered == 1; }) &&
+                !gate->timedOut && gate->resolverThread != GetCurrentThreadId(),
+            "Shell path resolution runs off the caller thread while its provider is held");
+    }
+    Check(waitFor([&] {
+        blocked->Sync(window, message, readyMessage, {mapped, dock});
+        return blocked->Size() == 1;
+    }) && blocked->Affected(std::nullopt) == std::vector<std::wstring>{FolderKey(dock)},
+        "one stalled directory does not prevent another directory from subscribing");
+    blocked->Sync(window, message, readyMessage, {dock, next});
+    Check(waitFor([&] {
+        blocked->Sync(window, message, readyMessage, {dock, next});
+        std::lock_guard lock(gate->mutex);
+        return gate->failedCalls == 1;
+    }), "unavailable directory completes a failed background attempt");
+    for (int i = 0; i < 20; ++i) blocked->Sync(window, message, readyMessage, {dock, next});
+    {
+        std::lock_guard lock(gate->mutex);
+        Check(gate->failedCalls == 1 && gate->entered == 1 && !gate->timedOut,
+            "rebuilds do not duplicate blocked work or immediately retry failed paths");
+        gate->release = true;
+    }
+    gate->changed.notify_all();
+    {
+        std::unique_lock lock(gate->mutex);
+        Check(gate->changed.wait_for(lock, std::chrono::seconds(2), [&] { return gate->exited == 1; }),
+            "retired provider can return independently of its former subscription");
+    }
+    // Queue a fresh request for the same path while the obsolete one can still
+    // finish canonicalization; ids must distinguish both generations.
+    {
+        std::lock_guard lock(gate->mutex);
+        gate->release = false;
+    }
+    blocked->Sync(window, message, readyMessage, {mapped});
+    {
+        std::unique_lock lock(gate->mutex);
+        Check(gate->changed.wait_for(lock, std::chrono::seconds(2), [&] { return gate->entered == 2; }),
+            "re-added path receives a distinct background request");
+    }
+    blocked->Sync(window, message, readyMessage, {mapped});
+    Check(blocked->Size() == 0 && blocked->Affected(std::nullopt).empty(),
+        "a removed path's late result cannot register its re-added generation");
+    blocked->Clear();
+    blocked.reset();
+    {
+        std::unique_lock lock(gate->mutex);
+        Check(gate->exited == 1 && !gate->timedOut,
+            "Clear and destruction return while the provider is still held");
+        gate->release = true;
+        gate->changed.notify_all();
+        Check(gate->changed.wait_for(lock, std::chrono::seconds(2), [&] { return gate->exited == 2; }),
+            "a provider can finish safely after the subscription owner is destroyed");
+    }
     // Drain shared-memory notifications before destroying the receiver.
     MSG received{};
     while (PeekMessageW(&received, window, message, message, PM_REMOVE))
