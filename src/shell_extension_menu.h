@@ -15,6 +15,8 @@ struct Request
     bool catalogueOnly = false;
     bool extended = false;
     Context context = Context::Automatic;
+    // Private metadata query: never displayed or invoked as a menu session.
+    std::wstring sourceClsid, sourceKey;
     friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
@@ -75,7 +77,7 @@ template <> struct Fields<shell_extensions::Request>
 {
     template <class T> static auto Tie(T &v)
     {
-        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context);
+        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey);
     }
 };
 template <> struct Fields<shell_extensions::Entry>

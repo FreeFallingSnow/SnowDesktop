@@ -262,6 +262,7 @@ struct Native
     ShellContextMenuSite site;
     HMENU menu = CreatePopupMenu();
     std::wstring directory;
+    bool metadataOnly = false;
     ~Native()
     {
         if (menu)
@@ -650,7 +651,7 @@ struct Host
     Reply Query(const Request &request)
     {
         auto reply = QueryOnce(request);
-        if (!catalogueInitialized && reply.ok)
+        if (request.sourceClsid.empty() && !catalogueInitialized && reply.ok)
         {
             // The first aggregate primes Windows' packaged extension catalogue.
             // On a cold process it can return success before Terminal and other
@@ -701,7 +702,7 @@ struct Host
         native->directory = directory;
         std::unique_ptr<TemporaryMenuFile> warmFile;
         std::unique_ptr<Native> warmMenu;
-        if (!fileAssociationsReady && ResolveContext(request) == Context::Folder)
+        if (request.sourceClsid.empty() && !fileAssociationsReady && ResolveContext(request) == Context::Folder)
         {
             // File-menu initialization primes Shell association handlers before
             // folder-only extensions create windows from their DLL entry point.
@@ -717,9 +718,42 @@ struct Host
                 fileAssociationsReady = SUCCEEDED(warmMenu->context->QueryContextMenu(
                     warmMenu->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU));
         }
-        // The real Shell aggregate decides what exists and applies system
-        // filtering. Never instantiate registrations to bypass that decision.
-        if (request.background)
+        // Source probes only supply metadata for commands already returned by
+        // the real aggregate. They never contribute displayed/executable items.
+        if (!request.sourceClsid.empty())
+        {
+            native->metadataOnly = true;
+            CLSID clsid{};
+            if (FAILED(CLSIDFromString(request.sourceClsid.c_str(), &clsid))) return {};
+            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context))))
+            {
+                ComPtr<IExplorerCommand> command;
+                if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&command)))) return {};
+                ComPtr<IShellItemArray> selection;
+                if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection))) return {};
+                GUID canonical{}; PWSTR title = nullptr;
+                if (FAILED(command->GetCanonicalName(&canonical))) return {};
+                if (FAILED(command->GetTitle(selection.Get(), &title)) || !title) return {};
+                Entry entry; entry.label = DecodeMenuLabel(title).text; CoTaskMemFree(title);
+                wchar_t guid[40]{}; StringFromGUID2(canonical, guid, 40); entry.key = Utf8(guid);
+                Reply reply; reply.ok = true; reply.entries.push_back(std::move(entry)); return reply;
+            }
+            ComPtr<IDataObject> data;
+            if (!request.background)
+            {
+                ComPtr<IShellItemArray> selection;
+                if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
+                    FAILED(selection->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data)))) return {};
+            }
+            HKEY type = nullptr;
+            RegOpenKeyExW(HKEY_CLASSES_ROOT, request.sourceKey.c_str(), 0, KEY_READ, &type);
+            ComPtr<IShellExtInit> initialize;
+            const HRESULT initialized = SUCCEEDED(native->context.As(&initialize))
+                ? initialize->Initialize(request.background ? folderId.value : nullptr, data.Get(), type) : E_NOINTERFACE;
+            if (type) RegCloseKey(type);
+            if (FAILED(initialized)) return {};
+        }
+        else if (request.background)
         {
             progress("bind background menu");
             if (ResolveContext(request) == Context::Desktop)
@@ -771,8 +805,8 @@ struct Host
         Reply reply;
         if (!request.background && ResolveContext(request) == Context::File) fileAssociationsReady = true;
         reply.entries = Read(*native, native->menu, "");
-        for (auto &entry : reply.entries)
-            RegisteredBitmap(entry, request);
+        if (request.sourceClsid.empty())
+            for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
@@ -804,6 +838,7 @@ struct Host
         invoked = true;
         auto command = found->second;
         auto &source = *command.source;
+        if (source.metadataOnly) return;
         source.site.Initialize(source.folder.Get(), window);
         source.site.Attach(source.context.Get());
         if (command.native)

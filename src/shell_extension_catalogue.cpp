@@ -184,6 +184,15 @@ std::wstring CommandModule(const std::wstring &command)
     auto args = CommandLineToArgvW(command.c_str(), &count);
     if (!args) return {};
     auto module = count ? LocalModule(args[0]) : std::wstring{};
+    // Recover existing unquoted executable paths written by some installers.
+    // This only reads module metadata; it never runs the registered command.
+    if (module.empty() && command.front() != L'"')
+    {
+        const auto lower = Lower(command);
+        for (size_t at = lower.find(L".exe"); at != std::wstring::npos; at = lower.find(L".exe", at + 4))
+            if (at + 4 == command.size() || iswspace(command[at + 4]))
+                if (auto candidate = LocalModule(command.substr(0, at + 4)); !candidate.empty()) { module = std::move(candidate); break; }
+    }
     const auto name = Lower(std::filesystem::path(module).filename().wstring());
     if (name == L"rundll32.exe")
     {
@@ -375,7 +384,9 @@ struct Scanner
             for (long i = 0; i < count; ++i)
             {
                 ComPtr<IXMLDOMNode> verb, parent; nodes->get_item(i, &verb); verb->get_parentNode(&parent);
-                const auto clsid = Attribute(verb.Get(), L"Clsid"), id = Attribute(verb.Get(), L"Id");
+                auto clsid = Attribute(verb.Get(), L"Clsid");
+                const auto id = Attribute(verb.Get(), L"Id");
+                if (clsid.size() == 36) clsid = L"{" + clsid + L"}";
                 const auto type = Attribute(parent.Get(), L"Type");
                 if (clsid.empty() || type.empty()) continue;
                 const auto first = package.find(L'_'), last = package.rfind(L'_');

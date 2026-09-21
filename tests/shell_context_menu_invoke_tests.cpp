@@ -1,6 +1,7 @@
 #include "shell_context_menu_invoke.h"
 #include "shell_extension_menu.h"
 #include "shell_extension_catalogue.h"
+#include "shell_extension_attribution.h"
 #include "shell_extension_management.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_presentation.h"
@@ -398,6 +399,7 @@ void TestRegistryCatalogue()
     put(L"*\\shell\\provided", L"MUIVerb", L"Unrelated caption");
     put(L"*\\shell\\provided\\command", nullptr, command.c_str());
     put(L"*\\shell\\second\\command", nullptr, (command + L" /other-action").c_str());
+    put(L"*\\shell\\unquoted\\command", nullptr, (program.wstring() + L" \"%1\"").c_str());
     put(L"*\\shell\\unknown", L"MUIVerb", L"Provider Tool.exe");
     put(L"*\\shell\\script\\command", nullptr, (L"cmd.exe /c " + command).c_str());
     put(L"*\\shell\\library\\command", nullptr, (L"rundll32.exe \"" + module.wstring() + L"\",Entry %1").c_str());
@@ -406,6 +408,7 @@ void TestRegistryCatalogue()
     const auto app = find("reg:*\\shell\\provided").application;
     Expect(app.name == L"Provider Tool.exe" && !app.id.empty(), "application metadata comes from a quoted registered executable, not the menu caption");
     Expect(find("reg:*\\shell\\second").application == app, "different commands from the same executable share an application filter");
+    Expect(find("reg:*\\shell\\unquoted").application == app, "installer commands with unquoted executable spaces retain module attribution");
     Expect(find("reg:*\\shell\\unknown").application.id.empty() && find("reg:*\\shell\\script").application.id.empty(),
         "unknown captions and interpreter payloads are not guessed as an application");
     Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell.dll" &&
@@ -413,6 +416,38 @@ void TestRegistryCatalogue()
 
 }
 
+void TestSourceAttribution()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Entry entry; entry.provider = "menu:legacy"; entry.label = L"Legacy action";
+    ext::Reply actual{true, {entry}, {}}, probe = actual;
+    Expect(ext::MatchSourceCommands(actual, probe).empty(), "matching captions alone cannot attribute an application");
+    entry.width = entry.height = 1; entry.pixels = {10, 20, 30, 255};
+    actual.entries = probe.entries = {entry};
+    Expect(ext::MatchSourceCommands(actual, probe) == std::vector<std::string>{entry.provider}, "exact legacy bitmap and menu structure provide source evidence");
+    probe.entries.front().pixels[0] = 40;
+    Expect(ext::MatchSourceCommands(actual, probe).empty(), "same-caption different-icon applications are not confused");
+    probe = actual; actual.entries.push_back(entry);
+    Expect(ext::MatchSourceCommands(actual, probe).empty(), "indistinguishable actual commands remain unattributed");
+    actual.entries = {entry}; actual.entries.front().key = "CanonicalVerb";
+    probe.entries.front().key = "canonicalverb"; probe.entries.front().label = L"Provider title";
+    Expect(ext::MatchSourceCommands(actual, probe).size() == 1, "canonical provider command matches without relying on captions or casing");
+    probe.ok = false;
+    Expect(ext::MatchSourceCommands(actual, probe).empty(), "failed source query never contributes attribution");
+    ext::Registration source; source.id = "clsid:first"; source.application = {"product:first", L"First app"};
+    auto other = source; other.id = "clsid:other"; other.application = {"product:other", L"Other app"};
+    ext::Catalogue catalogue; catalogue.rows = {source, other}; ext::Registration observed; observed.id = entry.provider;
+    ext::RecordSourceApplication(observed, source, catalogue);
+    Expect(observed.application == source.application && observed.id == entry.provider && observed.commandIdentity.empty(), "source metadata preserves the individual action switch identity");
+    ext::RecordSourceApplication(observed, other, catalogue);
+    Expect(observed.application.id.empty(), "conflicting runtime source claims are not attributed to either application");
+    source.verbs = other.verbs = {"same"}; source.contexts = other.contexts = 1;
+    source.types = other.types = {L"*"}; other.application = source.application;
+    catalogue.rows = {source, other}; ext::Request request; request.context = ext::Context::File; entry.key = "SAME";
+    Expect(ext::RegisteredApplication(catalogue, request, entry) == source.application, "duplicate registrations may agree on application without merging their command identities");
+    catalogue.rows.back().application = {"different", L"Different"};
+    Expect(ext::RegisteredApplication(catalogue, request, entry).id.empty(), "duplicate verb registrations from different applications remain ambiguous");
+}
 void TestManagementFilters()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -923,6 +958,66 @@ void TestPendingCachedClick()
         Expect(token == 72, "execute only the fresh session's token, never cached token 999");
     }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE", nullptr);
+}
+void TestSourceScheduler()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto file = directory.path / L"source.snowattribution"; std::ofstream(file) << "private";
+    ext::Request request; request.paths = {file.wstring()};
+    ext::Registration handler; handler.id = "clsid:{00000000-0000-0000-0000-000000000001}";
+    handler.kind = ext::RegistrationKind::Handler; handler.contexts = 1; handler.types = {L".snowattribution"};
+    handler.sources = {L"Test.Type\\shellex\\ContextMenuHandlers\\Provider"};
+    handler.verbs = {"{00000000-0000-0000-0000-000000000001}"}; handler.application = {"test-app", L"Test app"};
+    handler.revision = 1;
+    ext::Catalogue catalogue; catalogue.revision = 1; catalogue.rows = {handler};
+    ext::Entry action; action.provider = "verb:runtime-only"; action.key = "runtime-only"; action.label = L"Runtime action"; action.token = 72;
+    std::atomic<int> probes = 0, invokes = 0, active = 0, maximum = 0;
+    std::atomic<bool> release = false;
+    auto factory = [&](const ext::Request &target) -> ext::QueryWork {
+        auto lease = std::shared_ptr<int>(new int, [&](int *p) { --active; delete p; });
+        const auto count = ++active; maximum.store(std::max(maximum.load(), count));
+        const bool source = !target.sourceClsid.empty();
+        if (source) ++probes;
+        ext::Reply reply; reply.ok = true;
+        if (target.paths == request.paths) reply.entries = {action};
+        if (source) { auto hidden = action; hidden.key = "probe-only"; hidden.provider = "verb:probe-only"; reply.entries.push_back(hidden); }
+        return {[&, lease, reply, source]() -> std::optional<ext::Reply> { if (source && !release) return {}; return reply; },
+            [&, source](UINT token, POINT) { Expect(!source && token == 72, "source sessions cannot become execution sessions"); ++invokes; }};
+    };
+    const auto cache = directory.path / L"cache";
+    {
+        ext::MenuService service(cache, factory, [catalogue] { return catalogue; });
+        service.Inspect(request);
+        PumpUntil([&] { return probes > 0; }, "unattributed actual item schedules a separate provider query");
+        const auto first = service.View(request);
+        Expect(first.snapshot && first.snapshot->entries.size() == 1 && !first.pending, "slow source discovery does not delay or add items to the actual menu");
+        bool completed = false;
+        service.Execute(request, ext::AppendReference({}, action), {}, [&](bool ok) { completed = ok; });
+        PumpUntil([&] { return completed; }, "explicit command executes while a metadata probe is held");
+        Expect(maximum <= 2 && invokes == 1, "metadata work shares the two-worker limit and never invokes a command");
+        // The first proof targets the previous snapshot revision; it must be
+        // rejected after the execution requery, not applied to a newer menu.
+        release = true;
+        PumpUntil([&] { return !service.Inspect(request).scanning; }, "source discovery finishes without polling restarting the query");
+        service.Inspect(request, true);
+        PumpUntil([&] {
+            const auto view = service.Inspect(request);
+            return !view.scanning && std::any_of(view.catalogue.rows.begin(), view.catalogue.rows.end(), [&](const auto &item) {
+                return item.id == action.provider && item.application == handler.application;
+            });
+        }, "fresh source proof updates the existing action metadata");
+        const auto ready = service.Inspect(request);
+        Expect(std::none_of(ready.catalogue.rows.begin(), ready.catalogue.rows.end(), [](const auto &item) { return item.id == "verb:probe-only"; }), "probe-only commands never enter the management catalogue");
+        Expect(service.View(request).snapshot->entries.size() == 1, "attribution leaves menu content unchanged");
+    }
+    {
+        ext::MenuService restored(cache, [](const auto &) -> ext::QueryWork { throw std::runtime_error("unavailable"); }, [catalogue] { return catalogue; });
+        PumpUntil([&] {
+            const auto view = restored.Inspect(request);
+            return std::any_of(view.catalogue.rows.begin(), view.catalogue.rows.end(), [&](const auto &item) { return item.id == action.provider && item.application == handler.application; });
+        }, "application proof survives restart when the next query cannot launch");
+    }
 }
 void TestQueryScheduler()
 {
@@ -1475,10 +1570,12 @@ int wmain(int argc, wchar_t **argv)
             TestRegistryCatalogue();
             TestManagementUpdates();
             TestManagementFilters();
+            TestSourceAttribution();
             TestExtensionSessions();
             TestSnapshotPresentation();
             TestPendingCachedClick();
             TestQueryScheduler();
+            TestSourceScheduler();
             TestSelectionScopes();
             TestCatalogueDependencies();
             TestUsefulManagementItems();

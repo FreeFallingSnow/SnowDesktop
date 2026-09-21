@@ -1,6 +1,7 @@
 #include "shell_extension_service.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_discovery.h"
+#include "shell_extension_attribution.h"
 #include <condition_variable>
 #include <fstream>
 #include <future>
@@ -109,6 +110,18 @@ struct MenuService::Impl
         MenuSnapshotCache::Ticket ticket; QueryWork work;
         std::uint64_t started;
     };
+    struct SourceJob
+    {
+        Key key;
+        Request request;
+        Registration source;
+        Reply actual;
+        QueryWork work;
+        std::uint64_t revision = 0, menuRevision = 0, started = 0;
+    };
+    std::unique_ptr<SourceJob> sourceJob;
+    std::set<Key> sourceAttempts, sourceSelections;
+    bool sourcePending = false;
     std::mutex mutex;
     std::map<Key, Row> rows;
     Catalogue catalogue;
@@ -221,6 +234,13 @@ struct MenuService::Impl
                     item.commandIdentity = known->second->commandIdentity;
                     item.application = known->second->application;
                 }
+                else if (item.application.id.empty())
+                {
+                    auto selection = row.request;
+                    selection.context = row.request.background ? (row.request.context == Context::Desktop ? Context::Desktop : Context::FolderBackground) :
+                        row.view.contexts == ContextBit(Context::Folder) ? Context::Folder : Context::File;
+                    item.application = RegisteredApplication(catalogue, selection, entry);
+                }
                 item.display = {};
                 item.display.provider = entry.provider; item.display.registration = entry.registration;
                 item.display.key = entry.key; item.display.label = entry.label; item.display.accessKey = entry.accessKey;
@@ -304,6 +324,55 @@ struct MenuService::Impl
         row.expires = written + MenuSnapshotCache::LifetimeMs;
         row.view.snapshot = std::move(reply); row.view.contexts = contexts; ++row.view.revision;
         row.used = ++clock;
+        RebuildAvailable();
+        sourcePending |= inspected;
+    }
+    std::unique_ptr<SourceJob> NextSource()
+    {
+        // Called only by the worker after ordinary menu/execute work has been
+        // dispatched. One metadata probe leaves the other process slot free.
+        std::lock_guard lock(mutex);
+        if (!inspected || !sourcePending || scanning || scanRequested || !catalogue.revision) return {};
+        for (const auto &[key, row] : rows)
+        {
+            if (!row.view.snapshot || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
+            const bool missing = std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
+                const auto found = observed.find(entry.registration.empty() ? entry.provider : entry.registration);
+                return found != observed.end() && found->second.application.id.empty();
+            });
+            if (missing) sourceSelections.insert(key);
+            if (!sourceSelections.contains(key)) continue;
+            for (const auto &source : catalogue.rows)
+            {
+                if ((source.kind != RegistrationKind::Handler && source.kind != RegistrationKind::Packaged) || !source.systemEnabled || source.application.id.empty() ||
+                    source.verbs.empty() || !DependsOn(source, row.request, row.view.contexts)) continue;
+                const auto attempt = settings_ipc::Pack(key, source.id, source.revision);
+                if (sourceAttempts.contains(attempt)) continue;
+                std::wstring typeKey;
+                for (const auto &path : source.sources)
+                    if (const auto at = path.find(L"\\shellex\\ContextMenuHandlers\\"); at != std::wstring::npos) { typeKey = path.substr(0, at); break; }
+                if (typeKey.empty() && source.kind != RegistrationKind::Packaged) continue;
+                sourceAttempts.insert(attempt);
+                auto job = std::make_unique<SourceJob>();
+                job->key = key; job->request = row.request; job->source = source; job->actual = *row.view.snapshot;
+                job->request.sourceClsid.assign(source.verbs.front().begin(), source.verbs.front().end());
+                job->request.sourceKey = std::move(typeKey);
+                job->revision = catalogue.revision; job->menuRevision = row.view.revision;
+                return job;
+            }
+        }
+        sourcePending = false;
+        return {};
+    }
+    void CompleteSource(SourceJob &job, const Reply &reply)
+    {
+        std::lock_guard lock(mutex);
+        const auto current = rows.find(job.key);
+        if (!reply.ok || catalogue.revision != job.revision || current == rows.end() || current->second.invalid ||
+            current->second.view.revision != job.menuRevision) return;
+        for (const auto &provider : MatchSourceCommands(job.actual, reply))
+            if (const auto found = observed.find(provider); found != observed.end() && found->second.kind == RegistrationKind::Observed)
+                RecordSourceApplication(found->second, job.source, catalogue);
         RebuildAvailable();
     }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
@@ -419,6 +488,8 @@ struct MenuService::Impl
                 for (const auto &a : catalogue.associations)
                     if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                 catalogue = std::move(value); scanning = false; catalogueDirty = true;
+                sourcePending |= inspected;
+                if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); }
                 if (!initial && !changed.empty())
                 {
                     // Unknown providers also retain observed type/scope evidence,
@@ -560,7 +631,14 @@ struct MenuService::Impl
                 running.erase(running.begin() + i);
                 SaveCatalogue(cache);
             }
-            while (running.size() < 2)
+            if (sourceJob)
+            {
+                std::optional<Reply> reply;
+                try { reply = sourceJob->work.poll(); } catch (...) { reply = Reply{false, {}, "source query exception"}; }
+                if (!reply && GetTickCount64() - sourceJob->started >= 8000) reply = Reply{false, {}, "source query timeout"};
+                if (reply) { CompleteSource(*sourceJob, *reply); sourceJob.reset(); }
+            }
+            while (running.size() + (sourceJob ? 1 : 0) < 2)
             {
                 Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
                 {
@@ -602,6 +680,13 @@ struct MenuService::Impl
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
+            if (!sourceJob && running.size() < 2)
+                if (auto job = NextSource())
+                {
+                    job->started = GetTickCount64();
+                    try { job->work = factory(job->request); sourceJob = std::move(job); }
+                    catch (...) { MenuTrace("attribution", "start_failed"); }
+                }
             std::vector<std::pair<Key, Request>> checks;
             {
                 std::lock_guard lock(mutex);
@@ -626,7 +711,7 @@ struct MenuService::Impl
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
         }
-        running.clear(); Session::ReleaseIdleWorker(); OleUninitialize();
+        sourceJob.reset(); running.clear(); Session::ReleaseIdleWorker(); OleUninitialize();
     }
 };
 MenuService::MenuService(std::filesystem::path directory, QueryFactory factory, CatalogueReader reader)
@@ -679,6 +764,8 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
     std::lock_guard lock(impl_->mutex);
     if (refresh || !impl_->inspected)
     {
+        impl_->sourcePending = true;
+        if (refresh) { impl_->sourceAttempts.clear(); impl_->sourceSelections.clear(); }
         impl_->scanRequested = true; impl_->discoverRequested = true;
         impl_->discoverForce |= refresh;
         impl_->typesRequested = true; impl_->typesForce |= refresh;
@@ -700,7 +787,7 @@ CatalogueView MenuService::Inspect(const Request &request, bool refresh)
         impl_->Queue(selection, QueryPriority::Inspect, refresh);
     }
     CatalogueView result; result.catalogue = impl_->available; result.selection = selection;
-    result.scanning = impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested ||
+    result.scanning = impl_->sourcePending || impl_->scanning || impl_->scanRequested || impl_->desktopInspection || impl_->discoverRequested ||
         impl_->typesRequested || impl_->typesPreparing || impl_->nextType < impl_->typeDiscovery.size();
     for (const auto &target : impl_->discovery)
         if (const auto it = impl_->rows.find(SelectionKey(target)); it != impl_->rows.end()) result.scanning |= it->second.view.pending;
