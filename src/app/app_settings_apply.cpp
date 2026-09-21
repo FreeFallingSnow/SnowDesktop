@@ -478,12 +478,12 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     using snowdesktop::AutoStartApplyResult;
     using snowdesktop::AutoStartApplyStatus;
 
-    // A user request directly writes a complete definition. Do not run legacy
+    // A user request writes the task or its current-user fallback. Do not run legacy
     // reconciliation before/after it: a stale task or failed migration must
     // not prevent Windows from accepting this explicit choice.
     AutoStartApplyResult result;
     std::wstring error;
-    const bool applied = snowdesktop::auto_start::Configure(
+    const bool applied = snowdesktop::auto_start::Apply(
         snowdesktop::auto_start::CurrentDeploymentTarget(), enabled, &error);
     const auto task = snowdesktop::auto_start::Query();
     result.state.packaged = snowdesktop::deployment::IsPackaged();

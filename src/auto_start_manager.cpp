@@ -10,6 +10,7 @@
 #include <wrl/client.h>
 
 #include <cwctype>
+#include <cstring>
 #include <filesystem>
 #include <new>
 #include <string_view>
@@ -356,10 +357,193 @@ bool SameTarget(const Target& left, const Target& right)
 {
     return left.owner == right.owner && SameExecutablePath(left.executable, right.executable);
 }
+
+void AppendError(std::wstring& errors, const std::wstring& next)
+{
+    if (next.empty()) return;
+    if (!errors.empty()) errors += L"\n";
+    errors += next;
+}
+
+bool MissingValue(DWORD result)
+{
+    return result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND;
+}
+
+std::wstring RegistryOperation(const wchar_t* operation,
+    const std::wstring& key, const std::wstring& name)
+{
+    return std::wstring(operation) + L"(HKCU\\" + key + L"\\" + name + L")";
+}
 } // namespace
 
 namespace snowdesktop::auto_start
 {
+State RunStore::Query() const noexcept
+{
+    State state;
+    try
+    {
+        const auto value = deployment::QueryUnvirtualizedCurrentUserValue(
+            runKey_.c_str(), valueName_.c_str());
+        if (MissingValue(value.win32Result))
+        {
+            state.status = UnifiedAutoStartTaskState::Missing;
+            return state;
+        }
+        Check(HRESULT_FROM_WIN32(value.win32Result),
+            RegistryOperation(L"RegQueryValueExW", runKey_, valueName_));
+        Check(value.type == REG_SZ && value.size >= sizeof(wchar_t) &&
+            value.size <= value.data.size() && value.size % sizeof(wchar_t) == 0
+            ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA), L"AutoStart.RunValue");
+        std::wstring command(value.size / sizeof(wchar_t), L'\0');
+        std::memcpy(command.data(), value.data.data(), value.size);
+        Check(command.back() == L'\0' ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA),
+            L"AutoStart.RunTerminator");
+        command.pop_back();
+        state.target.executable = ExecutablePathFromCommand(command);
+        const auto end = !command.empty() && command.front() == L'"'
+            ? command.find(L'"', 1) : command.find_first_of(L" \t");
+        if (end != std::wstring::npos) state.target.arguments = command.substr(end + 1);
+        while (!state.target.arguments.empty() && iswspace(state.target.arguments.front()))
+            state.target.arguments.erase(0, 1);
+        state.target.owner = OwnerFromArguments(state.target.arguments);
+        Check(!state.target.executable.empty() && state.target.owner != UnifiedAutoStartOwner::Unknown
+            ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA), L"AutoStart.RunTarget");
+        state.target.workingDirectory =
+            std::filesystem::path(state.target.executable).parent_path().wstring();
+        const auto approval = deployment::QueryUnvirtualizedCurrentUserValue(
+            approvalKey_.c_str(), valueName_.c_str());
+        auto approved = PortableAutoStartApprovalState::Missing;
+        if (!MissingValue(approval.win32Result))
+        {
+            Check(HRESULT_FROM_WIN32(approval.win32Result),
+                RegistryOperation(L"RegQueryValueExW", approvalKey_, valueName_));
+            Check(approval.type == REG_BINARY && approval.size == kPortableAutoStartApprovalPayloadSize
+                ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA), L"AutoStart.RunApproval");
+            approved = DecodePortableAutoStartApprovalState(approval.data[0]);
+            Check(approved != PortableAutoStartApprovalState::Error
+                ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA), L"AutoStart.RunApprovalState");
+        }
+        state.status = IsPortableAutoStartApprovalActive(approved)
+            ? UnifiedAutoStartTaskState::Enabled : UnifiedAutoStartTaskState::Disabled;
+    }
+    catch (...) { state.error = ExceptionMessage(); }
+    return state;
+}
+
+bool RunStore::Configure(const Target& target, bool enabled, std::wstring* error) const noexcept
+{
+    if (error) error->clear();
+    try
+    {
+        if (!target.error.empty()) throw TaskFailure{target.error};
+        Check(!target.executable.empty() && !target.arguments.empty() &&
+            target.owner != UnifiedAutoStartOwner::Unknown ? S_OK : E_INVALIDARG,
+            L"AutoStart.RunTarget");
+        const std::wstring command = L"\"" + target.executable + L"\" " + target.arguments;
+        // Run has a documented 260-character limit; never silently truncate it.
+        Check(command.size() <= 260 ? S_OK : HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE),
+            L"AutoStart.RunCommandLength=" + std::to_wstring(command.size()));
+        FILETIME now{};
+        GetSystemTimeAsFileTime(&now);
+        const auto approval = BuildPortableAutoStartApprovalPayload(enabled,
+            (static_cast<std::uint64_t>(now.dwHighDateTime) << 32) | now.dwLowDateTime);
+        std::wstring errors;
+        const auto write = [&](const std::wstring& key, DWORD type, const void* data, DWORD size) {
+            const auto result = deployment::SetUnvirtualizedCurrentUserValue(
+                key.c_str(), valueName_.c_str(), type, data, size);
+            if (result != ERROR_SUCCESS)
+                AppendError(errors, FormatError(RegistryOperation(L"RegSetValueExW", key, valueName_),
+                    HRESULT_FROM_WIN32(result)));
+        };
+        // Disable approval before replacing a retained command; enable approval
+        // after writing the new command so Windows cannot launch an old target.
+        if (!enabled) write(approvalKey_, REG_BINARY, approval.data(), static_cast<DWORD>(approval.size()));
+        if (enabled || errors.empty())
+            write(runKey_, REG_SZ, command.c_str(), static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+        else
+        {
+            const auto removed = deployment::DeleteUnvirtualizedCurrentUserValue(runKey_.c_str(), valueName_.c_str());
+            if (removed != ERROR_SUCCESS && !MissingValue(removed))
+                AppendError(errors, FormatError(RegistryOperation(L"RegDeleteValueW", runKey_, valueName_),
+                    HRESULT_FROM_WIN32(removed)));
+        }
+        if (enabled) write(approvalKey_, REG_BINARY, approval.data(), static_cast<DWORD>(approval.size()));
+        const State actual = Query();
+        AppendError(errors, actual.error);
+        if (actual.status != (enabled ? UnifiedAutoStartTaskState::Enabled : UnifiedAutoStartTaskState::Disabled) ||
+            !SameTarget(actual.target, target) || actual.target.arguments != target.arguments)
+            AppendError(errors, FormatError(L"AutoStart.VerifyRunState", HRESULT_FROM_WIN32(ERROR_INVALID_DATA)));
+        if (!errors.empty()) throw TaskFailure{errors};
+        return true;
+    }
+    catch (...) { return ReportFailure(ExceptionMessage(), error); }
+}
+
+bool RunStore::Delete(std::wstring* error) const noexcept
+{
+    if (error) error->clear();
+    try
+    {
+        // Keep a disabled approval marker if deleting Run fails: removing it
+        // would otherwise re-enable a registration disabled in Task Manager.
+        const auto result = deployment::DeleteUnvirtualizedCurrentUserValue(runKey_.c_str(), valueName_.c_str());
+        Check(result == ERROR_SUCCESS || MissingValue(result) ? S_OK : HRESULT_FROM_WIN32(result),
+            RegistryOperation(L"RegDeleteValueW", runKey_, valueName_));
+        const auto approval = deployment::DeleteUnvirtualizedCurrentUserValue(approvalKey_.c_str(), valueName_.c_str());
+        Check(approval == ERROR_SUCCESS || MissingValue(approval) ? S_OK : HRESULT_FROM_WIN32(approval),
+            RegistryOperation(L"RegDeleteValueW", approvalKey_, valueName_));
+        const auto actual = Query();
+        if (!actual.error.empty()) throw TaskFailure{actual.error};
+        Check(actual.status == UnifiedAutoStartTaskState::Missing ? S_OK : HRESULT_FROM_WIN32(ERROR_INVALID_DATA),
+            L"AutoStart.VerifyRunDeletion");
+        return true;
+    }
+    catch (...) { return ReportFailure(ExceptionMessage(), error); }
+}
+
+State LoginStore::Query() const noexcept
+{
+    auto run = run_.Query();
+    const auto task = task_.Query();
+    if (run.status == UnifiedAutoStartTaskState::Missing) return task;
+    if (run.status == UnifiedAutoStartTaskState::Enabled) return run;
+    // An enabled or unreadable task cannot be reported as fully disabled merely
+    // because the fallback is disabled. An established fallback also supersedes
+    // stale migration intent in an already-disabled task.
+    if (task.status != UnifiedAutoStartTaskState::Missing &&
+        task.status != UnifiedAutoStartTaskState::Disabled) return task;
+    return run;
+}
+
+bool LoginStore::Configure(const Target& target, bool enabled, std::wstring* error) const noexcept
+{
+    if (error) error->clear();
+    if (!target.error.empty()) return ReportFailure(target.error, error);
+    if (target.executable.empty() || target.arguments.empty() ||
+        target.owner == UnifiedAutoStartOwner::Unknown)
+        return ReportFailure(FormatError(L"AutoStart.Target", E_INVALIDARG), error);
+    std::wstring taskError;
+    if (task_.Configure(target, enabled, kTaskDescription, &taskError))
+        return run_.Delete(error);
+
+    // Even a read/disable failure must not stop the attempt to write the fallback.
+    // Report incomplete cleanup after trying both mechanisms.
+    std::wstring disableError, runError;
+    const bool disabled = task_.SetEnabled(false, &disableError);
+    const bool configured = run_.Configure(target, enabled, &runError);
+    const auto task = task_.Query();
+    const bool inactive = disabled || task.status == UnifiedAutoStartTaskState::Missing ||
+        task.status == UnifiedAutoStartTaskState::Disabled;
+    if (configured && (inactive || (enabled && task.status == UnifiedAutoStartTaskState::Unavailable)))
+        return true;
+    AppendError(taskError, disableError);
+    AppendError(taskError, runError);
+    AppendError(taskError, task.error);
+    return ReportFailure(std::move(taskError), error);
+}
+
 Target CurrentDeploymentTarget() noexcept
 {
     const auto& context = deployment::GetRuntimeDeploymentContext();
@@ -515,7 +699,11 @@ bool TaskStore::Delete(std::wstring* error) const noexcept
     catch (...) { return ReportFailure(ExceptionMessage(), error); }
 }
 
-State Query() noexcept { return TaskStore{}.Query(); }
+State Query() noexcept { return LoginStore{}.Query(); }
+bool Apply(const Target& target, bool enabled, std::wstring* error) noexcept
+{
+    return LoginStore{}.Configure(target, enabled, error);
+}
 bool Configure(const Target& target, bool enabled, std::wstring* error) noexcept
 {
     return TaskStore{}.Configure(target, enabled, kTaskDescription, error);

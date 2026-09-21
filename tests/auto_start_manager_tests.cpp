@@ -10,8 +10,9 @@
 #include <stdexcept>
 #include <thread>
 
-// Only host identity and the log sink are substituted. Task creation, reads,
-// replacement, verification and failures all go through the production COM path.
+// Host identity/logging and the MSIX registry bridge are substituted. Scheduler
+// operations and the portable registry adapter use real Windows APIs; only GUID
+// namespaces are mutated, never the user's actual login registrations.
 namespace snowdesktop::deployment
 {
 const RuntimeDeploymentContext& GetRuntimeDeploymentContext() noexcept
@@ -22,6 +23,26 @@ const RuntimeDeploymentContext& GetRuntimeDeploymentContext() noexcept
 bool CanOwnProductionAutoStart(RuntimeDeploymentKind kind) noexcept
 {
     return kind == RuntimeDeploymentKind::Portable;
+}
+UnvirtualizedRegistryValue QueryUnvirtualizedCurrentUserValue(
+    const wchar_t* key, const wchar_t* name) noexcept
+{
+    UnvirtualizedRegistryValue result;
+    DWORD type = 0, size = static_cast<DWORD>(result.data.size());
+    result.win32Result = RegGetValueW(HKEY_CURRENT_USER, key, name,
+        RRF_RT_ANY | RRF_NOEXPAND, &type, result.data.data(), &size);
+    result.type = type;
+    result.size = size;
+    return result;
+}
+std::uint32_t SetUnvirtualizedCurrentUserValue(const wchar_t* key,
+    const wchar_t* name, std::uint32_t type, const void* data, std::uint32_t size) noexcept
+{
+    return RegSetKeyValueW(HKEY_CURRENT_USER, key, name, type, data, size);
+}
+std::uint32_t DeleteUnvirtualizedCurrentUserValue(const wchar_t* key, const wchar_t* name) noexcept
+{
+    return RegDeleteKeyValueW(HKEY_CURRENT_USER, key, name);
 }
 }
 
@@ -52,6 +73,7 @@ struct Bstr
 struct Fixture
 {
     std::wstring path;
+    std::wstring registryRoot;
     ComPtr<ITaskService> service;
     Fixture()
     {
@@ -60,6 +82,7 @@ struct Fixture
         wchar_t text[40]{};
         StringFromGUID2(guid, text, 40);
         path = L"\\SnowDesktopAutoStartTest-" + std::wstring(text);
+        registryRoot = L"Software\\SnowDesktopAutoStartTest-" + std::wstring(text);
         Require(SUCCEEDED(CoCreateInstance(CLSID_TaskScheduler, nullptr,
             CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&service))), "activate scheduler");
         VARIANT empty{};
@@ -67,6 +90,9 @@ struct Fixture
     }
     void Cleanup()
     {
+        const auto registryDeleted = RegDeleteTreeW(HKEY_CURRENT_USER, registryRoot.c_str());
+        Require(registryDeleted == ERROR_SUCCESS || registryDeleted == ERROR_FILE_NOT_FOUND,
+            "clean isolated registry subtree");
         ComPtr<ITaskFolder> folder;
         if (SUCCEEDED(service->GetFolder(Bstr(path).value, &folder)))
         {
@@ -107,6 +133,30 @@ struct Fixture
         Require(SUCCEEDED(folder->RegisterTaskDefinition(Bstr(L"Startup").value,
             definition.Get(), TASK_UPDATE, empty, empty,
             TASK_LOGON_INTERACTIVE_TOKEN, empty, &updated)), "save stale fixture");
+    }
+};
+
+// Deny only task creation in our empty test folder. Preserve read, delete and
+// WRITE_DAC, and restore the original DACL before the fixture removes the folder.
+struct DenyTaskCreation
+{
+    ComPtr<ITaskFolder> folder;
+    BSTR original = nullptr;
+    explicit DenyTaskCreation(Fixture& fixture)
+    {
+        Require(SUCCEEDED(fixture.service->GetFolder(Bstr(fixture.path).value, &folder)), "open ACL fixture");
+        Require(SUCCEEDED(folder->GetSecurityDescriptor(DACL_SECURITY_INFORMATION, &original)), "save folder DACL");
+        std::wstring denied(original);
+        const auto firstAce = denied.find(L'(');
+        Require(firstAce != std::wstring::npos, "fixture DACL contains ACEs");
+        denied.insert(firstAce, L"(D;;0x2;;;WD)");
+        Require(SUCCEEDED(folder->SetSecurityDescriptor(Bstr(denied).value, 0)), "deny creation in isolated folder");
+    }
+    ~DenyTaskCreation()
+    {
+        const auto restored = folder->SetSecurityDescriptor(original, 0);
+        SysFreeString(original);
+        if (FAILED(restored)) std::terminate();
     }
 };
 }
@@ -179,6 +229,53 @@ int RunAutoStartManagerTests()
         Require(store.SetEnabled(false, &error) && error.empty(), "disabling a missing task is successful");
         Require(!store.SetEnabled(true, &error) && error.find(L"0x80070002") != std::wstring::npos,
             "missing task enable returns the concrete Windows error");
+
+        const RunStore run(fixture.registryRoot + L"\\Run", fixture.registryRoot + L"\\Approval");
+        const LoginStore login(store, run);
+        Target steam = target;
+        steam.owner = snowdesktop::UnifiedAutoStartOwner::Steam;
+        steam.arguments = L"--snowdesktop-autostart-owner=steam";
+        {
+            DenyTaskCreation denied(fixture);
+            Require(!store.Configure(steam, true, L"test", &error) &&
+                error.find(L"RegisterTaskDefinition") != std::wstring::npos &&
+                error.find(L"0x80070005") != std::wstring::npos,
+                "reproduce Steam registration access denied through real scheduler ACL");
+            Require(login.Configure(steam, true, &error) && error.empty(),
+                "explicit enable falls back after real scheduler access denial");
+            const auto restarted = LoginStore(store, run).Query();
+            Require(restarted.status == UnifiedAutoStartTaskState::Enabled &&
+                restarted.target.executable == steam.executable && restarted.target.arguments == steam.arguments &&
+                restarted.target.owner == steam.owner && !restarted.migrationPending,
+                "new query reconstructs active Steam fallback without migration");
+            const auto disabled = snowdesktop::BuildPortableAutoStartApprovalPayload(false, 1);
+            Require(RegSetKeyValueW(HKEY_CURRENT_USER, (fixture.registryRoot + L"\\Approval").c_str(),
+                L"SnowDesktopFallback", REG_BINARY, disabled.data(), static_cast<DWORD>(disabled.size())) == ERROR_SUCCESS,
+                "simulate Windows disabling fallback");
+            Require(login.Query().status == UnifiedAutoStartTaskState::Disabled, "read Windows disabled state");
+            Require(login.Configure(steam, true, &error) && login.Query().status == UnifiedAutoStartTaskState::Enabled,
+                "explicit re-enable repairs Windows disabled approval");
+            Require(login.Configure(steam, false, &error) &&
+                LoginStore(store, run).Query().status == UnifiedAutoStartTaskState::Disabled,
+                "disable succeeds while scheduler registration remains denied");
+            const RunStore invalidRun(fixture.registryRoot + L"\\" + std::wstring(256, L'x'),
+                fixture.registryRoot + L"\\Approval");
+            Require(!LoginStore(store, invalidRun).Configure(steam, true, &error) &&
+                error.find(L"RegisterTaskDefinition") != std::wstring::npos &&
+                error.find(L"0x80070005") != std::wstring::npos &&
+                error.find(L"RegSetValueExW(HKCU\\") != std::wstring::npos,
+                "both failed mechanisms retain their concrete operation and error");
+            Require(login.Configure(steam, true, &error), "restore enabled fallback before task recovery");
+        }
+        Require(login.Configure(steam, true, &error) && store.Query().status == UnifiedAutoStartTaskState::Enabled &&
+            run.Query().status == UnifiedAutoStartTaskState::Missing, "recovered scheduler removes duplicate fallback");
+        Require(run.Configure(steam, true, &error), "seed both mechanisms active");
+        Require(login.Configure(steam, false, &error) && store.Query().status == UnifiedAutoStartTaskState::Disabled &&
+            run.Query().status == UnifiedAutoStartTaskState::Missing, "disable clears both active mechanisms");
+        Target tooLong = steam;
+        tooLong.executable = L"C:\\" + std::wstring(260, L'x') + L".exe";
+        Require(!run.Configure(tooLong, true, &error) && error.find(L"0x800700CE") != std::wstring::npos &&
+            run.Query().status == UnifiedAutoStartTaskState::Missing, "long Run commands fail explicitly without truncation");
         std::cout << "Auto-start scheduler integration checks passed\n";
         return 0;
     }

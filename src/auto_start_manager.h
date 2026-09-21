@@ -46,6 +46,38 @@ private:
     std::wstring folder_;
 };
 
+// Separate from the legacy SnowDesktop value consumed by migration. Paths are
+// injectable so integration tests never modify the real login registrations.
+class RunStore
+{
+public:
+    explicit RunStore(
+        std::wstring runKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        std::wstring approvalKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run",
+        std::wstring valueName = L"SnowDesktopFallback")
+        : runKey_(std::move(runKey)), approvalKey_(std::move(approvalKey)),
+          valueName_(std::move(valueName)) {}
+    [[nodiscard]] State Query() const noexcept;
+    [[nodiscard]] bool Configure(const Target& target, bool enabled,
+        std::wstring* error = nullptr) const noexcept;
+    [[nodiscard]] bool Delete(std::wstring* error = nullptr) const noexcept;
+private:
+    std::wstring runKey_, approvalKey_, valueName_;
+};
+
+class LoginStore
+{
+public:
+    LoginStore(TaskStore task = TaskStore{}, RunStore run = RunStore{})
+        : task_(std::move(task)), run_(std::move(run)) {}
+    [[nodiscard]] State Query() const noexcept;
+    [[nodiscard]] bool Configure(const Target& target, bool enabled,
+        std::wstring* error = nullptr) const noexcept;
+private:
+    TaskStore task_;
+    RunStore run_;
+};
+
 /** Return the scheduled-task target for the running deployment. */
 [[nodiscard]] Target CurrentDeploymentTarget() noexcept;
 
@@ -56,8 +88,12 @@ private:
 [[nodiscard]] Target PortableTargetFromLegacyCommand(
     std::wstring_view command) noexcept;
 
-/** Query the one SnowDesktop-owned per-user logon task. */
+/** Query the scheduled task and current-user fallback registration. */
 [[nodiscard]] State Query() noexcept;
+
+/** Apply an explicit user choice, trying the current-user Run fallback. */
+[[nodiscard]] bool Apply(const Target& target, bool enabled,
+    std::wstring* error = nullptr) noexcept;
 
 /** Create or replace the SnowDesktop-owned task with the requested target. */
 [[nodiscard]] bool Configure(const Target& target, bool enabled,
