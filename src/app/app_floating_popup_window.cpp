@@ -1220,6 +1220,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
         ForgetLuaWidgetPanelCapture(hwnd);
         {
             const HWND currentCapture = GetCapture();

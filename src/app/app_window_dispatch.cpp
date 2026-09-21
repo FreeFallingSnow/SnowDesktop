@@ -425,6 +425,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        CancelRenameClick();
         if (widgetEngine_)
         {
             widgetEngine_->ClearHostViewKeyState();
@@ -433,6 +434,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
         ForgetLuaWidgetPanelCapture(hwnd);
         if (msg == WM_CANCELMODE ||
             !IsOwnedPointerCaptureWindow(

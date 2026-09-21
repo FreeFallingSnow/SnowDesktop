@@ -12,6 +12,7 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    CancelRenameClick();
     (void)wp;
     if (renameEdit_ != nullptr)
         CommitRename(false);
@@ -212,6 +213,8 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
+    renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
+        GetSystemMetrics(SM_CYDRAG));
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
     (void)wp;

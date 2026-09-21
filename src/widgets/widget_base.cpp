@@ -1954,6 +1954,17 @@ static std::wstring FormatListFileSize(
         : std::to_wstring(*value);
 }
 
+RECT ScrollingItemWidget::GetListItemTextRect(RECT cell) const
+{
+    if (IsDetailsVisible())
+        cell.right = std::min<LONG>(cell.right,
+            cell.left + GetDetailsColumns(cell.right - cell.left).nameWidth);
+    const RECT icon = snowdesktop::ResolveListItemIconRect(
+        cell, cell.left + Cu(4.0f), GetItemVisualMetrics());
+    return MakeRect(icon.right + Cu(6.0f), cell.top + Cu(2.0f),
+        cell.right - Cu(6.0f), cell.bottom - Cu(2.0f));
+}
+
 void ScrollingItemWidget::DrawListItemTitle(ID2D1DeviceContext* context,
     RECT cell, RECT iconRect, const std::wstring& title,
     bool lightTheme) const

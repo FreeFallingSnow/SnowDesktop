@@ -8,6 +8,7 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    BeginRenameClick(wp, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
     dockPressedClosedCollectionPopup_ = false;
     if (middleButtonWidgetMove_) return;
     // Popup/Dock hosts do not activate on clicks, so the EDIT may never

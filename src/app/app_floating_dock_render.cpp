@@ -354,6 +354,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
         if (msg == WM_CANCELMODE ||
             !IsOwnedPointerCaptureWindow(
                 reinterpret_cast<HWND>(lp)))

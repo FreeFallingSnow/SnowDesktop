@@ -304,6 +304,11 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kRenameClickTimerId)
+    {
+        OnRenameClickTimer();
+        return;
+    }
     if (timerId == kLargeIconRetryTimerId)
     {
         KillTimer(controlHwnd_, kLargeIconRetryTimerId);

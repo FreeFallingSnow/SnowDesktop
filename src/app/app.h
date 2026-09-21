@@ -105,6 +105,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "ole_drag_drop_adapter.h"
 #include "popup_dwell_controller.h"
 #include "rename_controller.h"
+#include "rename_click_controller.h"
 #include "../rename_edit_layout.h"
 #include "rename_notification_tracker.h"
 #include "shell_refresh_snapshot.h"
@@ -4039,6 +4040,21 @@ private:
     HFONT renameFont_ = nullptr;
     bool renameCommitPending_ = false;
     RenameController renameController_;
+    struct RenameClickHit
+    {
+        RenameClickTarget target;
+        RECT label{};
+        bool selected = false;
+    };
+    RenameClickController renameClickController_;
+    POINT renameClickPoint_{};
+    HWND renameClickForeground_ = nullptr;
+    RenameClickHit HitTestRenameClick(POINT point) const;
+    bool HasSingleRenameClickSelection() const;
+    void BeginRenameClick(WPARAM modifiers, POINT point);
+    void CompleteRenameClick(WPARAM modifiers, POINT point);
+    void CancelRenameClick();
+    void OnRenameClickTimer();
     snowdesktop::rename_edit_layout::EditorLayout renameEditLayout_;
     /** 右键菜单或内联编辑期间强制保持可见的组件 ID。 */
     std::wstring interactionPinnedWidgetId_;

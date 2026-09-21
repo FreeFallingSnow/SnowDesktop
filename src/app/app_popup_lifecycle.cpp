@@ -540,6 +540,7 @@ void DesktopApp::ClearDockFolderPopupEntries()
 void DesktopApp::CloseCollectionPopup(
     bool clearSelection)
 {
+    CancelRenameClick();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_)
         return;

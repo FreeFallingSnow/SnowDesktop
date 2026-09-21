@@ -576,6 +576,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_LBUTTONDBLCLK:
     {
+        CancelRenameClick();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (HandleUsageGuidePointerDown(pt)) return 0;
         const auto clearSelectionAfterAcceptedOpen =
@@ -1028,6 +1029,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        CancelRenameClick();
         if (widgetEngine_)
         {
             widgetEngine_->ClearHostViewKeyState();
@@ -1036,6 +1038,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
         if (usageGuidePressedButton_ &&
             (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
         {

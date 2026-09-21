@@ -329,6 +329,7 @@ constexpr UINT kExternalOleDragLeaveGraceMs = 80;
 // surface transition starves that captured stream before it reaches an opener.
 constexpr UINT_PTR kNativeDragHoverRecoveryTimerId = 25;
 constexpr UINT_PTR kLargeIconRetryTimerId = 26;
+constexpr UINT_PTR kRenameClickTimerId = 27;
 constexpr UINT kNativeDragHoverRecoveryIntervalMs = 50;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;

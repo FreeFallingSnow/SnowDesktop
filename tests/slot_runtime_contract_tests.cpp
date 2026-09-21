@@ -14,6 +14,7 @@
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
 #include "app/rename_controller.h"
+#include "app/rename_click_controller.h"
 #include "app/rename_notification_tracker.h"
 #include "app/rename_model_update.h"
 #include "app/shell_refresh_snapshot.h"
@@ -61,6 +62,7 @@ void Check(bool condition, const std::string& message)
 #include "shell_folder_refresh_cases.h"
 #include "background_work_cases.h"
 #include "shell_icon_request_cases.h"
+#include "rename_click_cases.h"
 
 class ContractContainer final : public Container
 {
@@ -3072,6 +3074,7 @@ int wmain(int argc, wchar_t** argv)
     TestTrayNotificationShortcutPreservesUserEntry();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
+    TestSlowRenameClicks();
     TestRenameControllerRejectsStaleFocusCommits();
     TestShellRefreshRejectsStaleSnapshots();
     TestFolderRefreshScopeAndReads();

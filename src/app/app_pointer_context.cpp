@@ -202,6 +202,7 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost)
 {
+    CancelRenameClick();
     if (renameEdit_ != nullptr)
         CommitRename(false);
     rightButtonDownDockHost_ = dockHost;

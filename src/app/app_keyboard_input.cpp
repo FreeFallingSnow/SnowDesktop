@@ -148,6 +148,7 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    CancelRenameClick();
     if (largeIconGesture_)
     {
         if (key == VK_ESCAPE) { CancelLargeIconGesture(); return true; }

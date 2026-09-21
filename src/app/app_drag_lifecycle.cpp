@@ -503,6 +503,7 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    CancelRenameClick();
     usageGuidePressedButton_ = 0;
     usageGuidePlacement_.EndDrag();
     const bool layoutNeedsSave =

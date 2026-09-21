@@ -298,6 +298,7 @@ public:
         std::optional<bool> lightTheme = std::nullopt) const;
 
     int GetListRowHeight() const;
+    RECT GetListItemTextRect(RECT cell) const;
     int GetDetailsHeaderHeight() const;
     bool IsDetailsVisible() const;
     RECT ApplyDetailsHeaderToViewport(RECT viewport) const;

@@ -116,6 +116,7 @@ void DesktopApp::LayoutItems()
  */
 void DesktopApp::RebuildContainersAndItems()
 {
+    CancelRenameClick();
     snowdesktop::startup_diagnostics::Scope startup(L"RebuildContainersAndItems");
     SyncFolderChangeNotifications();
     // Cover direct rebuild callers as well as LayoutItems. A nested paint must

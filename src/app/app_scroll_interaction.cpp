@@ -4,6 +4,7 @@
 
 void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 {
+    CancelRenameClick();
     if (renameController_.BlocksScrolling())
         return;
 

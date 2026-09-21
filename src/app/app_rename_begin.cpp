@@ -5,6 +5,7 @@
 void DesktopApp::BeginRenameSelected(
     std::optional<RECT> dockRenameAnchor)
 {
+    CancelRenameClick();
     if (renameEdit_ != nullptr) return;
     if (const auto* popup = GetOpenPopupWidget(); popup && UsesCollectionPopupFan(*popup))
         ShowAllCollectionPopupItems();
@@ -278,21 +279,41 @@ void DesktopApp::BeginRenameSelected(
         renameController_.Reset();
         return;
     }
-    const bool popupListRename =
+    const bool popupRename =
         !dockFolderPopupOpen_ &&
         popupWidgetIndex_ < widgets_.size() &&
-        IsCollectionPopupInteractive() &&
+        IsCollectionPopupInteractive();
+    bool singleLineRename = popupRename &&
         UsesCollectionPopupList(widgets_[popupWidgetIndex_]);
-    RECT textRect = popupListRename
+    RECT textRect = popupRename
         ? GetCollectionPopupItemTextRect(
             itemBounds)
         : GetItemTextRect(itemBounds, true);
+    if (!popupRename)
+    {
+        for (const auto& container : containers_)
+        {
+            auto* list = dynamic_cast<ScrollingItemWidget*>(container.get());
+            if (!list || !list->SingleColumn()) continue;
+            for (const auto& slot : list->GetSlots())
+            {
+                const auto* icon = dynamic_cast<const DesktopIcon*>(slot->GetItem());
+                if (icon && icon->GetDesktopItem() == &items_[selectedIndex])
+                {
+                    textRect = list->GetListItemTextRect(slot->GetBounds());
+                    singleLineRename = true;
+                    break;
+                }
+            }
+            if (singleLineRename) break;
+        }
+    }
     InflateRect(&textRect, 2, 2);
     RECT screenRect = textRect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
     const DWORD renameStyle =
-        snowdesktop::rename_edit_layout::EditStyle(popupListRename);
+        snowdesktop::rename_edit_layout::EditStyle(singleLineRename);
     renameEdit_ = CreateWindowExW(
         WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"EDIT",

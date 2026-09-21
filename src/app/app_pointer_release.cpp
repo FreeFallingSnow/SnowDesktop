@@ -1259,6 +1259,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
             pendingCtrlToggleWidgetItem_->SetSelected(!pendingCtrlToggleWidgetItem_->IsSelected());
             pendingCtrlToggleWidgetItem_ = nullptr;
         }
+        CompleteRenameClick(wp, upPoint);
         mouseDown_ = false;
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
@@ -1268,7 +1269,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         navAutoFlipDir_ = 0;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        // Popup wrappers still exist here; normal capture release must not
+        // cancel the rename delay through pointer-abort cleanup.
+        ++expectedCaptureReleaseDepth_;
         ReleaseCapture();
+        --expectedCaptureReleaseDepth_;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
