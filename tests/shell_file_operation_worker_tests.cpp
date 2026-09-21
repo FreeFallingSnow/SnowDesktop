@@ -4,6 +4,7 @@
 #include "app/shell_change_notification.h"
 #include "low_level_mouse_hook.h"
 #include "shell_network_preflight.h"
+#include "shell_clipboard_cases.h"
 
 #include <algorithm>
 #include <atomic>
@@ -514,6 +515,8 @@ int wmain(int argc, wchar_t** argv)
     Expect(SUCCEEDED(comResult),
         "COM initializes for copied folder-shortcut validation");
     const std::filesystem::path root = CreateTemporaryDirectory();
+    try { shell_clipboard_cases::Run(root); }
+    catch (const std::exception& error) { Expect(false, error.what()); }
     TestAsyncRenames(root);
     TestBackgroundReadsDoNotBlockFileOperations(root);
     TestMouseHookRemainsResponsiveWhileCallerWaits();

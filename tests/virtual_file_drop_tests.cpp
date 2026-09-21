@@ -103,6 +103,8 @@ public:
     bool asyncMode = false;
     HRESULT asyncModeResult = S_OK;
     bool offerFileDrop = false;
+    CLIPFORMAT offeredClipboardFormat = 0;
+    HRESULT clipboardFormatResult = S_OK;
     int wideRequests = 0;
     int ansiRequests = 0;
     int getDataCalls = 0;
@@ -267,6 +269,11 @@ public:
         ++queryGetDataCalls;
         if (!format)
             return E_POINTER;
+        if (offeredClipboardFormat != 0 &&
+            format->cfFormat == offeredClipboardFormat &&
+            format->dwAspect == DVASPECT_CONTENT && format->lindex == -1 &&
+            (format->tymed & TYMED_HGLOBAL) != 0)
+            return clipboardFormatResult;
         return offerFileDrop &&
             format->cfFormat == CF_HDROP &&
             format->dwAspect == DVASPECT_CONTENT &&
@@ -809,6 +816,43 @@ void TestAlbumAsyncAdmissionDoesNotRenderData()
     Check(!unsupported.available && source.getDataCalls == 0 && source.startOperationCalls == 0,
         "async virtual-only sources remain rejected without materializing content");
 }
+
+void TestClipboardFilesWithoutLocalPaths()
+{
+    using namespace snowdesktop::external_drop_content;
+    Check(ProbeClipboardFileSource(nullptr) == ClipboardFileSource::None,
+        "an unavailable clipboard disables file paste");
+    MockDataObject source;
+    Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::None,
+        "a clipboard without file formats disables file paste");
+    // Reproduces phone/namespace and virtual-file menu admission. The mock
+    // provides only advertised formats; requesting data here is a regression.
+    for (const auto* name : {L"Shell IDList Array", L"FileGroupDescriptorW",
+                            L"FileGroupDescriptor"})
+    {
+        source.offeredClipboardFormat = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name));
+        Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::ShellObjects,
+            "non-path Shell files enable paste through the Shell handoff");
+        source.clipboardFormatResult = S_FALSE;
+        Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::None,
+            "S_FALSE must not enable file paste");
+        source.clipboardFormatResult = S_OK;
+    }
+    source.offerFileDrop = true;
+    Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::FilePaths,
+        "ordinary file paths retain precedence over supplementary Shell formats");
+    source.offerFileDrop = false;
+    for (CLIPFORMAT format : {static_cast<CLIPFORMAT>(CF_UNICODETEXT),
+                             static_cast<CLIPFORMAT>(CF_DIB),
+                             static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileContents"))})
+    {
+        source.offeredClipboardFormat = format;
+        Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::None,
+            "text, preview images and contents without descriptors are not file paste");
+    }
+    Check(source.getDataCalls == 0 && source.startOperationCalls == 0,
+        "opening a paste menu never renders or starts a transfer from the phone");
+}
 } // namespace
 
 int main()
@@ -825,6 +869,7 @@ int main()
     TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound();
     TestAsyncSourceCapabilityMatrix();
     TestAlbumAsyncAdmissionDoesNotRenderData();
+    TestClipboardFilesWithoutLocalPaths();
 
     if (failures != 0)
     {

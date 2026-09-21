@@ -1,4 +1,5 @@
 #include "app.h"
+#include "external_drop_content.h"
 
 // Folder-entry clipboard, delete and paste operations.
 
@@ -7,10 +8,9 @@ bool DesktopApp::HasPasteableFileClipboardData() const
     ComPtr<IDataObject> clipboard;
     if (FAILED(OleGetClipboard(&clipboard)) || !clipboard)
         return false;
-    FORMATETC format{
-        CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL,
-    };
-    return SUCCEEDED(clipboard->QueryGetData(&format));
+    return snowdesktop::external_drop_content::ProbeClipboardFileSource(
+        clipboard.Get()) !=
+        snowdesktop::external_drop_content::ClipboardFileSource::None;
 }
 
 bool DesktopApp::SuppressDesktopWidgetDragTargets() const
@@ -307,38 +307,62 @@ bool DesktopApp::PasteClipboardToFolderPath(
     ComPtr<IDataObject> clipObj;
     if (FAILED(OleGetClipboard(&clipObj)) || !clipObj)
         return false;
+    const DWORD clipboardSequence = GetClipboardSequenceNumber();
+    const auto source = snowdesktop::external_drop_content::
+        ProbeClipboardFileSource(clipObj.Get());
+    if (source == snowdesktop::external_drop_content::ClipboardFileSource::None)
+        return false;
 
     DropAction action = DropAction::Copy;
     CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
     FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
     STGMEDIUM medPref{};
-    if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
+    if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)))
     {
-        DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
-        if (pEffect)
+        if (medPref.tymed == TYMED_HGLOBAL && medPref.hGlobal &&
+            GlobalSize(medPref.hGlobal) >= sizeof(DWORD))
         {
-            action = DropActionFromClipboardEffect(*pEffect);
-            GlobalUnlock(medPref.hGlobal);
+            const auto* effect = static_cast<const DWORD*>(GlobalLock(medPref.hGlobal));
+            if (effect)
+            {
+                action = DropActionFromClipboardEffect(*effect);
+                GlobalUnlock(medPref.hGlobal);
+            }
         }
         ReleaseStgMedium(&medPref);
     }
 
-    std::vector<std::wstring> paths;
-    FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-    STGMEDIUM medDrop{};
-    if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
-    {
-        HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
-        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
-        paths.reserve(count);
-        for (UINT i = 0; i < count; ++i)
+    auto operationCompletion = [this, action, clipboardSequence](bool succeeded) {
+        if (!succeeded)
+            return;
+        if (action == DropAction::Move &&
+            GetClipboardSequenceNumber() == clipboardSequence &&
+            OpenClipboard(hwnd_))
         {
-            wchar_t path[MAX_PATH]{};
-            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
-                paths.push_back(path);
+            // A later copy must survive completion of an earlier paste.
+            if (GetClipboardSequenceNumber() == clipboardSequence)
+            {
+                EmptyClipboard();
+                cutPaths_.clear();
+            }
+            CloseClipboard();
         }
-        ReleaseStgMedium(&medDrop);
+        RequestShellRefresh();
+    };
+
+    if (source == snowdesktop::external_drop_content::ClipboardFileSource::ShellObjects ||
+        snowdesktop::virtual_file_drop::UsesAsyncMode(clipObj.Get()))
+    {
+        // Keep namespace IDs and FileContents intact; a phone item cannot be
+        // reduced to a local path. Shell also owns virtual folder recursion.
+        const bool move = action == DropAction::Move;
+        const bool link = action == DropAction::Link;
+        return QueueAsyncShellDrop(clipObj.Get(), targetFolderPath,
+            move ? MK_SHIFT : link ? MK_CONTROL | MK_SHIFT : MK_CONTROL, {},
+            move ? DROPEFFECT_MOVE : link ? DROPEFFECT_LINK : DROPEFFECT_COPY,
+            std::move(operationCompletion), {}, true);
     }
+    const auto paths = snowdesktop::external_drop_content::ReadFilePaths(clipObj.Get());
     if (paths.empty()) return false;
 
     DragSourceList sourceList;
@@ -354,22 +378,6 @@ bool DesktopApp::PasteClipboardToFolderPath(
         sourceList.entries.push_back(std::move(entry));
     }
 
-    auto operationCompletion = [this, action](bool succeeded) {
-        if (!succeeded)
-            return;
-        if (action == DropAction::Move)
-        {
-            cutPaths_.clear();
-            if (OpenClipboard(hwnd_))
-            {
-                EmptyClipboard();
-                CloseClipboard();
-            }
-        }
-        RequestShellRefresh();
-
-    };
-
     return MaterializeFilesToFolder(
         sourceList, targetFolderPath,
         action, std::move(operationCompletion));
@@ -381,7 +389,10 @@ bool DesktopApp::PasteClipboardToDesktop()
     std::unordered_set<std::wstring> clipPaths;
 
     ComPtr<IDataObject> clipObj;
-    if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
+    if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj &&
+        snowdesktop::external_drop_content::ProbeClipboardFileSource(clipObj.Get()) ==
+            snowdesktop::external_drop_content::ClipboardFileSource::FilePaths &&
+        !snowdesktop::virtual_file_drop::UsesAsyncMode(clipObj.Get()))
     {
         CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(
             RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));

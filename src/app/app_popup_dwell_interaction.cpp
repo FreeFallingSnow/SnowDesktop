@@ -746,23 +746,8 @@ ShowDockFolderPopupContextMenu(
     }
     else
     {
-        ComPtr<IDataObject> clipObject;
-        bool canPaste = false;
-        if (dockFolderPopupAvailable_ &&
-            SUCCEEDED(
-                OleGetClipboard(
-                    &clipObject)) &&
-            clipObject)
-        {
-            FORMATETC format{
-                CF_HDROP, nullptr,
-                DVASPECT_CONTENT, -1,
-                TYMED_HGLOBAL
-            };
-            canPaste = SUCCEEDED(
-                clipObject->
-                    QueryGetData(&format));
-        }
+        const bool canPaste = dockFolderPopupAvailable_ &&
+            HasPasteableFileClipboardData();
         AppendMenuW(
             menu,
             canPaste

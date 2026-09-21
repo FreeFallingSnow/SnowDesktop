@@ -2435,7 +2435,8 @@ private:
         POINTL screenPoint,
         DWORD allowedEffects,
         FileOperationCompletion completion,
-        std::function<bool(IDataObject*)> dataObjectPreflight = {});
+        std::function<bool(IDataObject*)> dataObjectPreflight = {},
+        bool allowSynchronousClipboardSource = false);
     /** @brief 为路径型外部放置建立一次 OLE 异步完成通知。 */
     bool PrepareOleAsyncFileOperation(
         IDataObject* dataObject,

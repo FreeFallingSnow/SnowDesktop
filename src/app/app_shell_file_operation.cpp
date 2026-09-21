@@ -204,7 +204,8 @@ bool DesktopApp::QueueAsyncShellDrop(
     POINTL screenPoint,
     DWORD allowedEffects,
     FileOperationCompletion completion,
-    std::function<bool(IDataObject*)> dataObjectPreflight)
+    std::function<bool(IDataObject*)> dataObjectPreflight,
+    bool allowSynchronousClipboardSource)
 {
     HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_)
         ? controlHwnd_ : hwnd_;
@@ -220,9 +221,16 @@ bool DesktopApp::QueueAsyncShellDrop(
     if (FAILED(dataObject->QueryInterface(
             IID_PPV_ARGS(&asyncCapability))) ||
         !asyncCapability ||
-        FAILED(asyncCapability->GetAsyncMode(&asyncMode)) ||
+        asyncCapability->GetAsyncMode(&asyncMode) != S_OK ||
         !asyncMode)
-        return false;
+    {
+        // Unlike a live drag, paste retains the copied IDataObject through
+        // the marshal packet even when the source has no async protocol.
+        // Existing drag callers still require the Start/EndOperation pair.
+        if (!allowSynchronousClipboardSource)
+            return false;
+        asyncCapability.Reset();
+    }
 
     auto* result = new (std::nothrow)
         ShellFileOperationUiCompletion{
@@ -239,30 +247,33 @@ bool DesktopApp::QueueAsyncShellDrop(
         return false;
     }
     ComPtr<IStream> asyncStream;
-    marshalResult = CoMarshalInterThreadInterfaceInStream(
-        IID_IDataObjectAsyncCapability,
-        asyncCapability.Get(), &asyncStream);
-    if (FAILED(marshalResult) || !asyncStream)
+    if (asyncCapability)
     {
-        ComPtr<IDataObject> discarded;
-        CoGetInterfaceAndReleaseStream(
-            dataStream.Detach(), IID_PPV_ARGS(&discarded));
-        delete result;
-        return false;
-    }
+        marshalResult = CoMarshalInterThreadInterfaceInStream(
+            IID_IDataObjectAsyncCapability,
+            asyncCapability.Get(), &asyncStream);
+        if (FAILED(marshalResult) || !asyncStream)
+        {
+            ComPtr<IDataObject> discarded;
+            CoGetInterfaceAndReleaseStream(
+                dataStream.Detach(), IID_PPV_ARGS(&discarded));
+            delete result;
+            return false;
+        }
 
-    const HRESULT startResult =
-        asyncCapability->StartOperation(nullptr);
-    if (FAILED(startResult))
-    {
-        ComPtr<IDataObject> discardedData;
-        CoGetInterfaceAndReleaseStream(
-            dataStream.Detach(), IID_PPV_ARGS(&discardedData));
-        ComPtr<IDataObjectAsyncCapability> discardedAsync;
-        CoGetInterfaceAndReleaseStream(
-            asyncStream.Detach(), IID_PPV_ARGS(&discardedAsync));
-        delete result;
-        return false;
+        const HRESULT startResult =
+            asyncCapability->StartOperation(nullptr);
+        if (FAILED(startResult))
+        {
+            ComPtr<IDataObject> discardedData;
+            CoGetInterfaceAndReleaseStream(
+                dataStream.Detach(), IID_PPV_ARGS(&discardedData));
+            ComPtr<IDataObjectAsyncCapability> discardedAsync;
+            CoGetInterfaceAndReleaseStream(
+                asyncStream.Detach(), IID_PPV_ARGS(&discardedAsync));
+            delete result;
+            return false;
+        }
     }
 
     snowdesktop::ShellDropRequest request;
