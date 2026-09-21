@@ -146,6 +146,16 @@ void TestFolderShellSubscriptions()
     Check(subscriptions.Size() == 2 && added.size() == 2 &&
             subscriptions.Sync(window, message, readyMessage, {mapped, dock}).empty(),
         "multiple mapped widgets and a Dock alias share their path registration without re-registering on rebuild");
+    // Separate Shell subscription setup from the ordinary I/O being tested.
+    // Registration and the first write can otherwise share the same tick,
+    // before the interrupt watcher is ready. Flush preparation notifications
+    // and drain them so they cannot satisfy the subsequent file-write checks.
+    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW | SHCNF_FLUSH, mapped.c_str(), nullptr);
+    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW | SHCNF_FLUSH, dock.c_str(), nullptr);
+    MSG setupMessage{};
+    while (PeekMessageW(&setupMessage, window, message, message, PM_REMOVE))
+        DispatchMessageW(&setupMessage);
+    notifications.clear();
     auto affected = subscriptions.Affected(ShellChangeNotification{
         SHCNE_RENAMEITEM, mapped + L"\\old.txt", dock + L"\\new.txt"});
     Check(affected.size() == 2,
@@ -154,7 +164,7 @@ void TestFolderShellSubscriptions()
             SHCNE_UPDATEDIR, dock, {}}) == std::vector<std::wstring>{FolderKey(dock)},
         "a coalesced Dock update does not refresh an unrelated mapped widget");
 
-    // Ordinary Win32 writes, no synthetic SHChangeNotify: prove that the
+    // Ordinary Win32 writes, no synthetic file notification: prove that the
     // InterruptLevel subscription sees changes made outside Shell operations.
     auto waitForFolder = [&](const std::wstring& expected) {
         const auto deadline = GetTickCount64() + 6000;
