@@ -406,6 +406,10 @@ void CheckBuiltinArtwork(HDC dc, HFONT font, HFONT iconFont,
             Expect(enabledBlue > 0, "ordinary rows draw colored art at each supported DPI/style");
             RECT leftHalf = column;
             leftHalf.right = (column.left + column.right) / 2;
+            // The down arrow's left tip reaches x=12 of its 24px canvas;
+            // downsampling can put its blue edge just across the midpoint.
+            // Inspect the upper-left arrowhead, not that shared canvas border.
+            leftHalf.bottom = metrics.rowHeight / 2;
             Expect(CountBlueAccentPixelsInRect(pixels, width, height, leftHalf) == 0,
                 "small sorting icon keeps the left up arrow neutral");
             DrawItem(dc, font, iconFont, item, row, ODS_DISABLED, palette, metrics);
