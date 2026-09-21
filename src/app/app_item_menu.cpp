@@ -998,6 +998,7 @@ void DesktopApp::ShowShellContextMenu(
     }
     if (pidls.empty()) return;
 
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
     menuSite.Initialize(desktopFolder_.Get(), menuOwner);
@@ -1022,7 +1023,6 @@ void DesktopApp::ShowShellContextMenu(
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
-    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = 0;
     {
         const bool desktopLargeIcon = itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size() &&

@@ -193,6 +193,9 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
  */
 void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
+    // Shell initialization can pump desktop paints before TrackPopupMenuEx.
+    // Keep their content commits and hover state covered for the whole handoff.
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     ComPtr<IShellFolder> backgroundFolder = desktopFolder_;
     if (snowdesktop::debug_profile::Enabled())
     {
@@ -226,7 +229,6 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     contextMenu.As(&activeContextMenu3_);
 
     SetForegroundWindow(menuOwner);
-    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = TrackShellPopupMenuWithDesktopPump(
         menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint, menuOwner);
@@ -509,6 +511,7 @@ bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
  */
 void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
 {
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     PIDLIST_ABSOLUTE pidl = nullptr;
     if (FAILED(SHParseDisplayName(folderPath.c_str(), nullptr, &pidl, 0, nullptr)))
@@ -567,7 +570,6 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
     contextMenu.As(&activeContextMenu3_);
 
     SetForegroundWindow(menuOwner);
-    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT command = TrackShellPopupMenuWithDesktopPump(
         menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
         screenPoint, menuOwner);
@@ -604,6 +606,7 @@ ShowShellItemContextMenuForPath(
     const std::wstring& itemPath,
     POINT screenPoint)
 {
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     PIDLIST_ABSOLUTE pidl = nullptr;
     if (FAILED(SHParseDisplayName(
@@ -673,7 +676,6 @@ ShowShellItemContextMenuForPath(
     contextMenu.As(
         &activeContextMenu3_);
     SetForegroundWindow(menuOwner);
-    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const UINT command =
         TrackShellPopupMenuWithDesktopPump(
             menu,

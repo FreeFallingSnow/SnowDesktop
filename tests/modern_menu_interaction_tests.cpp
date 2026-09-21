@@ -32,6 +32,7 @@ enum class DriveMode
     Script,
 };
 std::function<void(HWND)> gMenuScript;
+std::function<void()> gOwnerFocusCallback;
 DriveMode gDriveMode = DriveMode::Cascade;
 int gDrivePhase = 0;
 bool gInputPosted = false;
@@ -97,6 +98,8 @@ BOOL CALLBACK FindMenuWindows(HWND hwnd, LPARAM parameter)
 LRESULT CALLBACK OwnerWindowProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == WM_SETFOCUS && gOwnerFocusCallback)
+        gOwnerFocusCallback();
     if (message == kReorderMenuMessage)
     {
         const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
@@ -531,6 +534,58 @@ int wmain()
         { 21, L"Add row", L"+", true },
         { 22, L"Remove row", L"-", true },
     };
+    // Run the real popup teardown/focus path. Only the host's composition
+    // submission is replaced: a focus-triggered repaint must be flushed before
+    // Show returns and its caller begins potentially slow Shell initialization.
+    for (const bool selectCommand : { true, false })
+    {
+        HWND closingMenu = nullptr;
+        bool focusRepaintObserved = false;
+        bool contentPending = false;
+        bool contentSubmittedAfterTeardown = false;
+        gOwnerFocusCallback = [&]() {
+            if (closingMenu &&
+                snowdesktop::modern_menu::ActiveRootWindow() == nullptr)
+            {
+                focusRepaintObserved = true;
+                contentPending = true;
+            }
+        };
+        auto closeOptions = options;
+        closeOptions.eventPump = {};
+        closeOptions.eventPump.flushPresentation = [&]() {
+            if (contentPending)
+            {
+                contentSubmittedAfterTeardown =
+                    snowdesktop::modern_menu::ActiveRootWindow() == nullptr &&
+                    !IsWindow(closingMenu) && GetFocus() == owner;
+                contentPending = false;
+            }
+        };
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            closingMenu = root;
+            SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(root, WM_KEYDOWN,
+                selectCommand ? VK_RETURN : VK_ESCAPE, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto closeResult =
+            snowdesktop::modern_menu::Show(adjustmentItems, closeOptions);
+        KillTimer(owner, kWatchdogTimer);
+        gOwnerFocusCallback = {};
+        gMenuScript = {};
+        Expect(!gWatchdogFired && gInputPosted &&
+                closeResult.command == (selectCommand ? 21U : 0U),
+            "teardown presentation covers command selection and cancellation");
+        Expect(focusRepaintObserved,
+            "restoring owner focus after popup destruction generates a host repaint");
+        Expect(contentSubmittedAfterTeardown && !contentPending,
+            "menu exit submits focus-triggered content before returning to the Shell caller");
+    }
     gDriveMode = DriveMode::Simple;
     gDrivePhase = 0;
     gInputPosted = false;

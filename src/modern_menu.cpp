@@ -339,6 +339,12 @@ public:
             SetForegroundWindow(options_.owner);
             SetFocus(options_.owner);
         }
+        // Destroying the popup and restoring focus can synchronously repaint
+        // a hover-only widget exposed beneath the pointer. Submit that content
+        // before the caller starts a Shell extension, whose initialization can
+        // otherwise leave only the independently committed glass visible.
+        if (options_.eventPump.flushPresentation)
+            options_.eventPump.flushPresentation();
         return result_;
     }
 
