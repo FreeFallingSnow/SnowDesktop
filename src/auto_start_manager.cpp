@@ -473,7 +473,8 @@ bool RunStore::Configure(const Target& target, bool enabled, std::wstring* error
                 AppendError(errors, FormatError(RegistryOperation(L"RegDeleteValueW", runKey_, valueName_),
                     HRESULT_FROM_WIN32(removed)));
         }
-        if (enabled) write(approvalKey_, REG_BINARY, approval.data(), static_cast<DWORD>(approval.size()));
+        if (enabled && errors.empty())
+            write(approvalKey_, REG_BINARY, approval.data(), static_cast<DWORD>(approval.size()));
         const State actual = Query();
         AppendError(errors, actual.error);
         if (actual.status != (enabled ? UnifiedAutoStartTaskState::Enabled : UnifiedAutoStartTaskState::Disabled) ||
@@ -532,11 +533,12 @@ bool LoginStore::Configure(const Target& target, bool enabled, std::wstring* err
     if (task_.Configure(target, enabled, kTaskDescription, &taskError))
         return run_.Delete(error);
 
-    // Even a read/disable failure must not stop the attempt to write the fallback.
-    // Report incomplete cleanup after trying both mechanisms.
+    // Establish the replacement before disabling an old task. A failed enable
+    // must not remove a working registration. Disable requests still attempt
+    // both mechanisms even if the first fails.
     std::wstring disableError, runError;
-    const bool disabled = task_.SetEnabled(false, &disableError);
     const bool configured = run_.Configure(target, enabled, &runError);
+    const bool disabled = (!enabled || configured) && task_.SetEnabled(false, &disableError);
     const auto task = task_.Query();
     const bool inactive = disabled || task.status == UnifiedAutoStartTaskState::Missing ||
         (task.enabledKnown && !task.enabled);

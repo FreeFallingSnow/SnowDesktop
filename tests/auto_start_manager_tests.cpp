@@ -308,6 +308,8 @@ int RunAutoStartManagerTests()
                 error.find(L"0x80070005") != std::wstring::npos &&
                 error.find(L"RegSetValueExW(HKCU\\") != std::wstring::npos,
                 "both failed mechanisms retain their concrete operation and error");
+            Require(run.Query().status == UnifiedAutoStartTaskState::Disabled,
+                "failed command write must not activate a retained disabled command");
             }
             {
             DenyRegistryWrites deniedApproval(fixture.registryRoot + L"\\Approval");
