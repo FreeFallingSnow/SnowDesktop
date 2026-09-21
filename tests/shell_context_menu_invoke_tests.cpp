@@ -577,8 +577,8 @@ void TestManagementFilters()
     for (const auto *id : {"png", "jpg", "common"}) Expect(ext::CommonShown(prefs, id, ext::Category::Objects), "batch show updates each member of the captured filtered actions");
     for (const auto *id : {"other", "unknown", "similar-suffix", "folders", "disabled", "arrived-later"})
         Expect(ext::IsHidden(prefs, id, ext::Context::File), "batch show never expands to unmatched, disabled or newly discovered registrations");
-    Expect(ext::OverrideOf(prefs, "common", ext::Context::Folder) == ext::Visibility::Hide && ext::CommonShown(prefs, "common", ext::Category::Background),
-        "batch changes preserve location exceptions and the other category");
+    Expect(ext::OverrideOf(prefs, "common", ext::Context::Folder) == ext::Visibility::Inherit && ext::CommonShown(prefs, "common", ext::Category::Background),
+        "explicit batch show restores location inheritance and preserves the other category");
     ext::Reply menu; menu.ok = true;
     for (const auto *id : {"png", "other", "arrived-later"}) { ext::Entry entry; entry.provider = id; entry.registration = id; menu.entries.push_back(entry); }
     Expect(ext::VisibleSnapshot(prefs, menu, 1).size() == 1, "batch-enabled preferences control the real popup visibility path");
@@ -601,7 +601,7 @@ void TestManagementFilters()
     ext::SetOverride(cardPreferences, "png", ext::Context::File, ext::Visibility::Hide);
     ext::SetManagementResults(cardPreferences, png->rows, ext::Category::Objects, true);
     Expect(ext::ManagementCardState(cardPreferences, *jpg, ext::Category::Objects) == true &&
-        ext::OverrideOf(cardPreferences, "png", ext::Context::File) == ext::Visibility::Hide, "group toggles share original state across type cards and retain location exceptions");
+        ext::OverrideOf(cardPreferences, "png", ext::Context::File) == ext::Visibility::Inherit, "group toggles share original state across type cards and restore location inheritance");
     const auto application = std::find_if(applications.begin(), applications.end(), [&](const auto &card) { return card.id == "app:" + editor.id; });
     Expect(application != applications.end() && !ext::ManagementCardState(cardPreferences, *application, ext::Category::Objects), "partly shown application cards report mixed state");
     ext::SetManagementResults(cardPreferences, application->rows, ext::Category::Objects, true);
@@ -1349,6 +1349,48 @@ void TestDisabledQueuedQueries()
     Expect(starts == 3 && !service.View(requests[2]).snapshot, "cancelled popup request never reaches the child process boundary");
 }
 
+void TestKnownScopeQueryPolicy()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    ext::Request image, text;
+    image.paths = {(temp.path / L"image.png").wstring()}; text.paths = {(temp.path / L"document.txt").wstring()};
+    std::ofstream(image.paths[0]) << "private"; std::ofstream(text.paths[0]) << "private";
+    ext::Catalogue catalogue; catalogue.revision = 1;
+    ext::Registration registration; registration.id = "image-action"; registration.contexts = 1;
+    registration.types = {L".png"}; registration.verbs = {"image"}; registration.revision = 1;
+    catalogue.rows.push_back(registration);
+    registration.id = "system-disabled"; registration.systemEnabled = false; registration.types = {L".txt"};
+    catalogue.rows.push_back(registration);
+    std::atomic<int> starts = 0;
+    std::atomic<bool> ready = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &) {
+        ++starts;
+        return ext::QueryWork{[&]() -> std::optional<ext::Reply> {
+            if (!ready) return {};
+            ext::Reply reply; reply.ok = true; ext::Entry e;
+            e.provider = "verb:image"; e.key = "image"; e.label = L"Image command"; reply.entries = {e}; return reply;
+        }, {}};
+    }, [catalogue] { return catalogue; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "image-action", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "system-disabled", ext::Category::Objects, true);
+    service.Configure(prefs);
+    PumpUntil([&] { return !service.MenuEnabled(text, prefs); }, "background catalogue excludes wrong-type and system-disabled registrations");
+    service.Query(text); service.Prewarm(text);
+    ext::Presentation popup(image, prefs, L"", L"", service);
+    std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+    PumpUntil([&] { return starts == 1; }, "eligible first uncached popup queries dynamically");
+    Expect(bool(options.pollItems) && items.empty(), "uncached query starts without a loading placeholder");
+    service.Configure({}); ready = true;
+    PumpUntil([&] { return service.View(image).snapshot.has_value(); }, "valid in-flight result can warm cache after disable");
+    const auto filled = options.pollItems(items, true);
+    Expect(filled && filled->empty() && starts == 1, "first-load completion uses new hidden settings and never queries unrelated text handlers");
+    service.Configure(prefs);
+    Expect(service.MenuDisplay(image, {}).snapshot->entries.size() == 1, "reenabling applies immediately to the raw warmed cache");
+}
+
 void TestSelectionScopes()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1818,6 +1860,7 @@ int wmain(int argc, wchar_t **argv)
         {
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
+            TestKnownScopeQueryPolicy();
             TestRegistryCatalogue();
         }
         else
@@ -1835,6 +1878,7 @@ int wmain(int argc, wchar_t **argv)
             TestQueryScheduler();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
+            TestKnownScopeQueryPolicy();
             TestSourceScheduler();
             TestSourceDeduplication();
             TestSelectionScopes();

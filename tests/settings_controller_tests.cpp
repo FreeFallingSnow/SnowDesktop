@@ -299,11 +299,11 @@ void TestRoutes()
     const SettingsRoute legacyCategoryLayout = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::DesktopCategories, "desktop.categoryLayout"));
-    for (const auto page : {SettingsPage::Desktop, SettingsPage::AppearanceDesktopIcons,
+    for (const auto sourcePage : {SettingsPage::Desktop, SettingsPage::AppearanceDesktopIcons,
              SettingsPage::AppearanceWidgets})
         for (const auto focus : {"desktop.spacing", "desktop.iconSpacing"})
         {
-            const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(page, focus));
+            const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(sourcePage, focus));
             Check(spacing.page == SettingsPage::AppearanceWidgets && spacing.focusId == focus,
                 "layout spacing links reach Widgets & layout while retaining their focus target");
         }

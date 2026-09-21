@@ -825,13 +825,15 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
         {
             std::string registration;
             bool ambiguous = false;
+            unsigned associatedContexts = 0;
             for (const auto &a : impl_->catalogue.associations)
                 if (a.provider == entry.provider && (ContextBit(a.context) & view.contexts))
                 {
                     if (!registration.empty() && registration != a.registration) ambiguous = true;
                     registration = a.registration;
+                    associatedContexts |= ContextBit(a.context);
                 }
-            if (!ambiguous) entry.registration = std::move(registration);
+            if (!ambiguous && associatedContexts == view.contexts) entry.registration = std::move(registration);
         }
         view.snapshot->entries = VisibleSnapshot(impl_->configured ? impl_->preferences : fallback, *view.snapshot, view.contexts);
     }
