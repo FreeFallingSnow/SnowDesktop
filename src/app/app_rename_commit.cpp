@@ -76,8 +76,9 @@ void DesktopApp::ApplyPendingRenames()
     for (const auto& result : pending)
     {
         shellMs += result->elapsedMs;
-        shellReloadPending_ |= renameNotifications_.Finish(
-            result->sourcePath, result->path, SUCCEEDED(result->status), GetTickCount64());
+        if (renameNotifications_.Finish(
+                result->sourcePath, result->path, SUCCEEDED(result->status), GetTickCount64()))
+            RequestShellRefresh();
         if (FAILED(result->status))
         {
             MessageBeep(MB_ICONWARNING);
@@ -87,7 +88,7 @@ void DesktopApp::ApplyPendingRenames()
         const auto changes = snowdesktop::rename_model_update::Apply(
             *result, ToUpperInvariant(result->path), items_, widgets_, dockEntries_,
             dockFolderPopupOpen_ ? &dockFolderPopupWidget_ : nullptr);
-        shellReloadPending_ |= changes.needsReload;
+        if (changes.needsReload) RequestShellRefresh();
         changed = changed || !result->path.empty();
         categoryChanged = categoryChanged ||
             (!changes.desktopItems.empty() &&

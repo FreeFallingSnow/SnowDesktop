@@ -243,6 +243,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     dockFolderPopupOpen_ = false;
+    SyncFolderChangeNotifications();
     dockFolderPopupAvailable_ = false;
     dockFolderPopupContainer_.reset();
     dockFolderPopupDragItems_.clear();

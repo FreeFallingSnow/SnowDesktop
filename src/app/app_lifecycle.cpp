@@ -232,6 +232,8 @@ void DesktopApp::ResetDesktopWindowResources()
     dockLaunchBounces_.clear();
     dropTargetRegistered_ = false;
 
+    folderNotifications_.Clear();
+
     if (shellChangeRegId_ != 0)
     {
         SHChangeNotifyDeregister(shellChangeRegId_);

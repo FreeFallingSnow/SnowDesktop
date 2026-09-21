@@ -362,6 +362,7 @@ void DesktopApp::OpenDockFolderPopupAt(
         dockPage = GetFirstPageGridPage();
     if (dockPage) popupPageId_ = dockPage->id;
 
+    SyncFolderChangeNotifications();
     RefreshDockFolderPopup();
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
@@ -483,6 +484,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     ClearPopupDragTarget();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     dockFolderPopupOpen_ = false;
+    SyncFolderChangeNotifications();
     dockFolderPopupAvailable_ = false;
     dockFolderPopupSourceId_.clear();
     dockFolderPopupMappingWidgetId_.clear();

@@ -1051,6 +1051,9 @@ private:
     void ReloadItems(bool reloadLayoutFromDisk = true,
         snowdesktop::shell_refresh::Snapshot* snapshot = nullptr);
     void RequestShellRefresh();
+    void RequestFolderRefresh(const std::vector<std::wstring>& paths);
+    void SyncFolderChangeNotifications();
+    void ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapshot);
     void RefreshShellItemsAsync();
     snowdesktop::shell_refresh::Request BuildShellRefreshRequest() const;
     void StartInitialShellRead();
@@ -3426,6 +3429,7 @@ private:
     Pidl recycleBinPidl_;
     DesktopWindows desktopWindows_{};
     ULONG shellChangeRegId_ = 0;
+    snowdesktop::shell_refresh::FolderNotifications folderNotifications_;
     bool reloading_ = false;
     /** @} */
 
@@ -3697,6 +3701,7 @@ private:
     // refresh. Never rebuild the complete desktop model while an operation is
     // still producing change notifications.
     bool shellReloadPending_ = false;
+    snowdesktop::shell_refresh::FolderRefreshScope shellRefreshScope_;
     bool shellReloadLayoutFromDiskPending_ = false;
     snowdesktop::shell_refresh::Revision shellRefreshRevision_;
     snowdesktop::shell_refresh::MetadataCache shellMetadataCache_;

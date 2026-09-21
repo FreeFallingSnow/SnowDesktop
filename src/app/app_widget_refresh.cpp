@@ -8,7 +8,7 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
 {
     FolderSnapshot result;
     result.path = path;
-    MetadataMap* metadata = cache ? &cache->folders[ToUpperInvariant(path)] : nullptr;
+    MetadataMap* metadata = cache ? &cache->folders[FolderKey(path)] : nullptr;
     std::unordered_set<std::wstring> seenMetadata;
     if (path.empty())
     {
@@ -96,8 +96,8 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
 void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     bool enqueueIconLoads, const snowdesktop::shell_refresh::FolderSnapshot* snapshot)
 {
-    if (snapshot && ToUpperInvariant(snapshot->path) !=
-            ToUpperInvariant(widget.sourceFolderPath))
+    if (snapshot && snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
+            snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath))
     {
         RequestShellRefresh();
         return;
@@ -106,7 +106,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     snowdesktop::shell_refresh::FolderSnapshot local;
     if (!snapshot)
     {
-        shellMetadataCache_.folders.erase(ToUpperInvariant(widget.sourceFolderPath));
+        shellMetadataCache_.folders.erase(snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath));
         local = snowdesktop::shell_refresh::ReadFolder(widget.sourceFolderPath,
             AreExplorerHiddenItemsVisible(), &shellMetadataCache_);
         snapshot = &local;

@@ -150,6 +150,24 @@ void DesktopApp::RegisterShellChangeNotifications()
         SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
         SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
         kShellChangeMessage, entryCount, entries);
+    folderNotifications_.Clear();
+    SyncFolderChangeNotifications();
+    if (shellReloadPending_)
+        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+}
+
+void DesktopApp::SyncFolderChangeNotifications()
+{
+    if (exitRequested_) return;
+    std::vector<std::wstring> paths;
+    for (const auto& widget : widgets_)
+        if (widget.type == DesktopWidgetType::FolderMapping)
+            paths.push_back(widget.sourceFolderPath);
+    if (dockFolderPopupOpen_)
+        paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
+    const auto added = folderNotifications_.Sync(hwnd_, kFolderChangeMessage, paths);
+    // Close the gap between the preceding enumeration and registration.
+    if (!added.empty()) RequestFolderRefresh(added);
 }
 
 /**
@@ -714,6 +732,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     if (shellFileOperationInFlight_ > 0 || deferForDrag || !pendingRenames_.empty())
     {
         shellReloadPending_ = true;
+        shellRefreshScope_.Full();
         shellReloadLayoutFromDiskPending_ =
             shellReloadLayoutFromDiskPending_ || reloadLayoutFromDisk;
         // OLE clears mouseDown_ before entering its nested loop, so the Shell
@@ -739,6 +758,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kShellChangeTimerId);
     shellReloadPending_ = false;
+    shellRefreshScope_.Full();
     shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
     ULONGLONG stageStarted = GetTickCount64();
@@ -773,7 +793,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
                 if (!snapshot)
                     EnumerateFolderMappingEntries(widget);
                 else if (const auto folder = snapshot->folders.find(
-                        ToUpperInvariant(widget.sourceFolderPath));
+                        snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath));
                     folder != snapshot->folders.end())
                     EnumerateFolderMappingEntries(widget, true, &folder->second);
                 else if (!incremental)

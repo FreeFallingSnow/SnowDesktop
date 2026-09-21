@@ -56,6 +56,8 @@ void Check(bool condition, const std::string& message)
     std::cerr << "FAILED: " << message << '\n';
 }
 
+#include "shell_folder_refresh_cases.h"
+
 class ContractContainer final : public Container
 {
 public:
@@ -3068,6 +3070,8 @@ int wmain(int argc, wchar_t** argv)
     TestRenameControllerKeepsTargetsExclusive();
     TestRenameControllerRejectsStaleFocusCommits();
     TestShellRefreshRejectsStaleSnapshots();
+    TestFolderRefreshScopeAndReads();
+    TestFolderShellSubscriptions();
     TestStartupShellReadDoesNotGateReadyIcons();
     TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();

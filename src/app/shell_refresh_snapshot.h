@@ -2,6 +2,7 @@
 
 #include "../types.h"
 #include "shell_metadata_cache.h"
+#include "shell_folder_notifications.h"
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -22,6 +23,7 @@ struct FolderSnapshot
 
 struct Request
 {
+    bool foldersOnly = false;
     std::unordered_map<std::wstring, bool> iconVisibility;
     std::vector<std::wstring> folders;
     std::vector<std::wstring> dockPaths;
@@ -30,6 +32,7 @@ struct Request
 
 struct Snapshot
 {
+    bool foldersOnly = false;
     bool desktopComplete = false;
     bool desktopIncremental = false;
     std::vector<DesktopItem> desktopItems;
@@ -40,6 +43,54 @@ struct Snapshot
     ULONGLONG modelMs = 0, layoutMs = 0, saveMs = 0, rebuildMs = 0, notifyMs = 0;
     MetadataCache metadata;
 };
+
+// The filesystem/Shell calls are the replaceable boundary. Production and
+// regression tests share scope selection, deduplication and snapshot assembly.
+template<class DesktopReader, class FolderReader, class MissingPath>
+bool ReadSources(const Request& request, Snapshot& snapshot,
+    DesktopReader readDesktop, FolderReader readFolder, MissingPath isMissing)
+{
+    const ULONGLONG started = GetTickCount64();
+    snapshot.foldersOnly = request.foldersOnly;
+    snapshot.metadata.hits = snapshot.metadata.queries = 0;
+    snapshot.desktopComplete = request.foldersOnly || readDesktop(request, snapshot);
+    snapshot.desktopReadMs = GetTickCount64() - started;
+    const ULONGLONG foldersStarted = GetTickCount64();
+    for (const auto& path : request.folders)
+    {
+        const auto [entry, inserted] = snapshot.folders.try_emplace(FolderKey(path));
+        if (inserted)
+            entry->second = readFolder(path, snapshot.metadata);
+    }
+    if (!request.foldersOnly)
+        std::erase_if(snapshot.metadata.folders, [&](const auto& entry) {
+            return !snapshot.folders.contains(entry.first);
+        });
+    snapshot.folderReadMs = GetTickCount64() - foldersStarted;
+    const ULONGLONG dockStarted = GetTickCount64();
+    if (!request.foldersOnly)
+    {
+        for (const auto& path : request.dockPaths)
+        {
+            if (!isMissing(path)) continue;
+            auto key = path; // Dock item keys retain the existing spelling rules.
+            CharUpperBuffW(key.data(), static_cast<DWORD>(key.size()));
+            snapshot.missingDockPaths.insert(std::move(key));
+        }
+    }
+    snapshot.readMs = GetTickCount64() - started;
+    snapshot.dockReadMs = GetTickCount64() - dockStarted;
+    return snapshot.desktopComplete;
+}
+
+inline void SelectFolders(Request& request, const FolderRefreshScope& scope)
+{
+    request.foldersOnly = scope.FoldersOnly();
+    if (!request.foldersOnly) return;
+    std::erase_if(request.folders, [&](const auto& path) { return !scope.Includes(path); });
+    request.dockPaths.clear();
+    request.iconVisibility.clear();
+}
 
 bool ReadDesktop(const std::unordered_map<std::wstring, bool>& visibility,
     bool showHidden, std::vector<DesktopItem>& items, MetadataCache* cache = nullptr,

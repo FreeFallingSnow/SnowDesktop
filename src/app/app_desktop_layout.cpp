@@ -117,6 +117,7 @@ void DesktopApp::LayoutItems()
 void DesktopApp::RebuildContainersAndItems()
 {
     snowdesktop::startup_diagnostics::Scope startup(L"RebuildContainersAndItems");
+    SyncFolderChangeNotifications();
     // Cover direct rebuild callers as well as LayoutItems. A nested paint must
     // not publish the temporary single-member group while its caller unwinds.
     if (std::any_of(widgets_.begin(), widgets_.end(),

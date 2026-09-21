@@ -1091,6 +1091,18 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             ApplyPersistentDockHostAppearance();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+    case kFolderChangeMessage:
+    {
+        const auto change = ReadShellChangeNotification(wp, lp);
+        if (change)
+        {
+            const bool descendants = (change->event & (SHCNE_RENAMEFOLDER | SHCNE_RMDIR)) != 0;
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->source), descendants);
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->target), descendants);
+        }
+        RequestFolderRefresh(folderNotifications_.Affected(change));
+        return 0;
+    }
     case kShellChangeMessage:
     {
         // Match our own rename by both paths; unrelated notifications must
