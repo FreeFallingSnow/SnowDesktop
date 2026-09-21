@@ -143,9 +143,8 @@ void DesktopApp::ApplyPendingRenames()
     if (changed)
     {
         RefreshDesktopItemIndexCache();
-        dockAppIdentityCache_.clear();
-        dockFolderTargetCache_.clear();
-        dockFolderIconIndexCache_.clear();
+        InvalidateDockShellMetadata();
+        PruneDockShellMetadata();
         if (categoryChanged)
         {
             ApplyAutoCollectFileCategoryWidgets();

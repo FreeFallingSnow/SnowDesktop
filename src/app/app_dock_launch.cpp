@@ -276,26 +276,23 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
     if (key.empty() || item.parsingName.empty() || !item.desktopIconClsid.empty())
         return {};
 
-    const auto cacheKey = key + snowdesktop::shell_icon_request::Stamp(item);
-    if (const auto cached = dockAppIdentityCache_.find(cacheKey);
-        cached != dockAppIdentityCache_.end() &&
-        cached->second.sourceParsingName == item.parsingName)
-        return cached->second;
-
     const auto path = item.parsingName;
-    const auto serial = iconLoadSerial_;
-    shellVisualWork_.Submit(L"dock-identity:" + cacheKey + L"\n" + path + std::to_wstring(serial),
+    const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
+    const auto stamp = snowdesktop::shell_icon_request::Stamp(item);
+    const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
+    if (cached.fresh) return cached.value.value_or(DockAppIdentity{});
+
+    shellVisualWork_.Submit(L"dock-identity:" + cacheKey + L"\n" + std::to_wstring(cached.ticket),
         [path] { return ReadDockAppIdentity(path); },
-        [this, key, cacheKey, path, serial](DockAppIdentity identity) {
-            if (serial != iconLoadSerial_) return;
+        [this, key, cacheKey, path, stamp, ticket = cached.ticket](DockAppIdentity identity) {
             const auto current = std::find_if(items_.begin(), items_.end(), [&](const auto& item) {
                 return DockItemWindowKey(item) == key && item.parsingName == path;
             });
-            if (current == items_.end() || !snowdesktop::shell_icon_request::Matches(cacheKey, *current)) return;
-            dockAppIdentityCache_[cacheKey] = std::move(identity);
+            if (current == items_.end() || snowdesktop::shell_icon_request::Stamp(*current) != stamp) return;
+            if (!dockAppIdentityCache_.Publish(cacheKey, ticket, std::move(identity))) return;
             dockRunningWindowsRefreshTick_ = 0;
         }, hwnd_, kBackgroundShellReadyMessage);
-    return {};
+    return cached.value.value_or(DockAppIdentity{});
 }
 
 DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)

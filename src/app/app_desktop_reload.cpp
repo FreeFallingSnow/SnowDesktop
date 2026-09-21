@@ -719,7 +719,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         {
             BeginIconLoadGeneration();
             shellMetadataCache_ = {};
-            dockAppIdentityCache_.clear();
+            InvalidateDockShellMetadata();
             for (auto& item : items_) item.iconState = IconState::Loading;
             for (auto& widget : widgets_)
                 for (auto& entry : widget.folderEntries) entry.iconState = IconState::Loading;
@@ -767,16 +767,6 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
     ULONGLONG stageStarted = GetTickCount64();
-    if (!snapshot)
-    {
-        shellMetadataCache_ = {};
-        dockAppIdentityCache_.clear();
-        dockRunningWindows_.clear();
-    }
-    dockFolderTargetCache_.clear();
-    dockFolderIconIndexCache_.clear();
-    if (!snapshot)
-        BeginIconLoadGeneration();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     if (reloadLayoutFromDisk)
     {
@@ -816,12 +806,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         return;
     }
     snowdesktop::startup_diagnostics::Call(L"InitializeGridFromWindows", [&] { InitializeGridFromWindows(); });
-    // LoadLayoutSlots may normalize Dock entries before the freshly
-    // enumerated desktop items are available. Discard those provisional
-    // resolutions so paths and shortcut targets are classified from the new
-    // item snapshot.
-    dockFolderTargetCache_.clear();
-    dockFolderIconIndexCache_.clear();
+    // Revalidate against the new snapshot without losing the last confirmed
+    // section/pinned identity while asynchronous Shell queries are pending.
+    if (!incremental) InvalidateDockShellMetadata();
     // A Shell delete removes the desktop item, but its persisted Dock mapping
     // otherwise survives and still consumes a slot.  Only prune references
     // that are confirmed missing on disk: hidden files and temporarily
@@ -850,6 +837,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
             error == ERROR_INVALID_NAME;
     });
+    PruneDockShellMetadata();
     if (!incremental) NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
     if (!incremental && !generalSettings_.dockEnabled && !dockEntries_.empty())

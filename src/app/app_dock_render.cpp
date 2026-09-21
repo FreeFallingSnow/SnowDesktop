@@ -310,24 +310,18 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         int sysIconIndex = -1;
         const std::wstring iconCacheKey =
             ToUpperInvariant(entry.reference + L"\n" + widget.sourceFolderPath);
-        if (const auto cached =
-                dockFolderIconIndexCache_.find(
-                    iconCacheKey);
-            cached !=
-                dockFolderIconIndexCache_.end())
+        const auto cached = dockFolderIconIndexCache_.Read(iconCacheKey);
+        sysIconIndex = cached.value.value_or(-1);
+        if (!cached.fresh)
         {
-            sysIconIndex = cached->second;
-        }
-        else
-        {
-            shellVisualWork_.Submit(L"dock-folder:" + iconCacheKey,
+            shellVisualWork_.Submit(L"dock-folder:" + iconCacheKey + L"\n" + std::to_wstring(cached.ticket),
                 [path = widget.sourceFolderPath, startup = initialShellReadPending_] {
                     snowdesktop::startup_diagnostics::Scope probe(L"Dock.FolderIcon.Async", startup);
                     SHFILEINFOW info{};
                     return SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info),
                         SHGFI_SYSICONINDEX) ? info.iIcon : -1;
-                }, [this, iconCacheKey](int index) {
-                    dockFolderIconIndexCache_[iconCacheKey] = index;
+                }, [this, iconCacheKey, ticket = cached.ticket](int index) {
+                    if (!dockFolderIconIndexCache_.Publish(iconCacheKey, ticket, index)) return;
                     InvalidateDockRects();
                 }, hwnd_, kBackgroundShellReadyMessage);
 

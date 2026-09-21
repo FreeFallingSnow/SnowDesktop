@@ -18,6 +18,7 @@
 #pragma once
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
+#include "../dock_refresh_cache.h"
 #include "../desktop_namespace_registry.h"
 #include "item.h"
 #include "slot.h"
@@ -1316,6 +1317,8 @@ private:
     bool HandleDockClickRelease(POINT point);
     void ToggleWindowsStartMenu();
     DockAppIdentity ResolveDockAppIdentity(size_t itemIndex);
+    void InvalidateDockShellMetadata();
+    void PruneDockShellMetadata();
     static DockAppIdentity ReadDockAppIdentity(const std::wstring& path);
     std::wstring GetDockWindowAppUserModelIdAsync(HWND window);
     std::unordered_map<HWND, std::pair<DWORD, std::wstring>> dockWindowAppIds_;
@@ -3454,16 +3457,15 @@ private:
     // painting. Resolving a .lnk uses Shell COM and querying a system folder
     // icon can touch the Shell namespace, so neither operation may run once
     // per frame.
-    mutable std::unordered_map<
-        std::wstring,
+    mutable snowdesktop::dock_refresh_cache::Cache<
         snowdesktop::item_location::FolderTarget>
         dockFolderTargetCache_;
-    mutable std::unordered_map<std::wstring, int>
+    mutable snowdesktop::dock_refresh_cache::Cache<int>
         dockFolderIconIndexCache_;
     snowdesktop::dock_drop_rules::MaterializedPathReservations
         pendingDesktopMaterializedPaths_;
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
-    std::unordered_map<std::wstring, DockAppIdentity> dockAppIdentityCache_;
+    snowdesktop::dock_refresh_cache::Cache<DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
     std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;

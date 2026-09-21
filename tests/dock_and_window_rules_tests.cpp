@@ -5,6 +5,8 @@
 #include "rename_edit_layout.h"
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
+#include "dock_refresh_cache.h"
+#include "item_location.h"
 #include "dock_collection_icon_rules.h"
 #include "collection_popup_layout.h"
 #include "folder_sort_rules.h"
@@ -86,6 +88,8 @@ void Check(bool condition, const char* message)
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
 }
+
+#include "dock_refresh_cache_cases.h"
 
 void CheckDesktopPassthrough()
 {
@@ -879,6 +883,7 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    CheckDockRefreshContinuity();
     CheckDesktopPassthrough();
     CheckClipboardPasteEffects();
     CheckTaskbarAutoHideTraceTransport();

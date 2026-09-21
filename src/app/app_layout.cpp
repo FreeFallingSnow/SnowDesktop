@@ -74,8 +74,7 @@ void DesktopApp::LoadLayoutSlots()
             message.c_str(), DiagnosticLogLevel::Warning);
     }
 
-    dockFolderTargetCache_.clear();
-    dockFolderIconIndexCache_.clear();
+    InvalidateDockShellMetadata();
     struct PreservedFolderEntries
     {
         std::wstring sourceFolderPath;
