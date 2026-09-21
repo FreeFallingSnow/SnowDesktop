@@ -232,7 +232,7 @@
   "app.settings.widgets_permission_system_display_read": "디스플레이 구성 읽기",
   "app.settings.widgets_permission_audio_output_read": "기본 오디오 출력 상태 및 음량 읽기",
   "app.settings.widgets_permission_app_discovery": "설치된 앱 검색",
-  "app.settings.widgets_permission_network_internet": "선언된 인터넷 출처에 접근",
+  "app.settings.widgets_permission_network_internet": "HTTP/HTTPS를 통해 인터넷, 이 컴퓨터 및 LAN 서비스에 접근",
   "app.settings.widgets_permission_notification_post": "시스템 알림 보내기",
   "app.settings.widgets_permission_network_local": "승인된 로컬 네트워크 서비스에 접근",
   "app.settings.widgets_permission_clipboard_read": "사용자 동작 후 클립보드 내용 읽기",

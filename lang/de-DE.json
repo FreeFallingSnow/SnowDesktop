@@ -232,7 +232,7 @@
   "app.settings.widgets_permission_system_display_read": "Anzeigekonfiguration lesen",
   "app.settings.widgets_permission_audio_output_read": "Status und Lautstärke der Standardaudioausgabe lesen",
   "app.settings.widgets_permission_app_discovery": "Installierte Anwendungen ermitteln",
-  "app.settings.widgets_permission_network_internet": "Auf deklarierte Internetquellen zugreifen",
+  "app.settings.widgets_permission_network_internet": "Über HTTP/HTTPS auf Dienste im Internet, auf diesem Computer und im lokalen Netzwerk zugreifen",
   "app.settings.widgets_permission_notification_post": "Systembenachrichtigungen senden",
   "app.settings.widgets_permission_network_local": "Auf genehmigte lokale Netzwerkdienste zugreifen",
   "app.settings.widgets_permission_clipboard_read": "Zwischenablage nach einer Benutzeraktion lesen",

@@ -1851,7 +1851,7 @@ function data.subscribe(topic, options) end
 ---@field revision integer New revision for create/update; zero for remove.
 
 ---@class SnowNetworkRequestArguments
----@field url string Public HTTPS URL; optional widget.json networkDomains narrows it to exact declared hostnames.
+---@field url string HTTP/HTTPS URL including local services; optional widget.json networkDomains narrows it to exact declared hostnames. Requires task.network.standardHttp for HTTP/local targets and system proxy support.
 ---@field method? 'GET'|'HEAD'|'POST'|'PUT'|'PATCH'|'DELETE' Defaults to GET.
 ---@field headers? table<string, string|SnowNetworkSecretDescriptor> Up to 32 single-line headers and 32 KiB after host injection.
 ---@field body? string|SnowNetworkSecretDescriptor Raw bytes up to 64 KiB; a descriptor injects one host-managed secret segment.

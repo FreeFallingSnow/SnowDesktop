@@ -232,7 +232,7 @@
   "app.settings.widgets_permission_system_display_read": "讀取顯示器設定",
   "app.settings.widgets_permission_audio_output_read": "讀取預設音訊輸出狀態和音量",
   "app.settings.widgets_permission_app_discovery": "探索已安裝的應用程式",
-  "app.settings.widgets_permission_network_internet": "存取已宣告的網際網路來源",
+  "app.settings.widgets_permission_network_internet": "透過 HTTP/HTTPS 存取網際網路、本機及區域網路服務",
   "app.settings.widgets_permission_notification_post": "傳送系統通知",
   "app.settings.widgets_permission_network_local": "存取已核准的區域網路服務",
   "app.settings.widgets_permission_clipboard_read": "在使用者操作後讀取剪貼簿內容",

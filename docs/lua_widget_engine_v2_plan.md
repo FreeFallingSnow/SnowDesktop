@@ -410,7 +410,7 @@ PreviewLoading -> PreviewActive -> Unloaded
 
 ### 9.1 API v2 权限拆分
 
-- `network.internet`：只访问清单声明的公网 HTTPS origin。
+- `network.internet`：通过 HTTP/HTTPS 访问公网、本机和局域网服务；可选 `networkDomains` 收窄目标主机，跟随 Windows 系统代理。
 - `network.local`：访问清单声明的 localhost、私有地址或本地 DNS origin。
 - API v2 不再提供语义含混的广域 `network.http`。
 
@@ -798,7 +798,7 @@ local taskId, err = task.start("media.toggle", { sessionId = session.id })
 `data.filesystem.watch` 和
 `task.desktop.refresh` feature，完整媒体
 控制动作、两个应用任务、实例作用域通知 ID 与 show/update/dismiss/schedule/cancel、
-本地日历 create/update/remove、公网 HTTPS 有界请求、
+本地日历 create/update/remove、HTTP/HTTPS 有界请求、
 可信手势外链、用户选择文件/目录、桌面/Everything 项目搜索及受控打开、定位和刷新任务。
 `WidgetTaskBroker` 生命周期内核负责任务描述符注册、全局/实例/
 任务类型并发上限、权限和可信手势门禁、preview 标记、显式取消、撤权取消、实例
@@ -922,7 +922,7 @@ API v2 不把 Win32、COM 或 WinRT 原样暴露给 Lua，而是固定为四个�
 
 | 任务/动作 | v2.0 契约 | 权限/手势 |
 |---|---|---|
-| `network.request` | 任意公网 HTTPS；可选精确域名收窄；逐跳重定向、DNS/连接地址复查、请求/响应额度和取消 | `network.internet` |
+| `network.request` | 公网、本机和局域网 HTTP/HTTPS；系统代理与 TUN；可选精确主机收窄；逐跳 URL/域名检查、含秘密请求同源限制、请求/响应额度和取消；新行为标记 `task.network.standardHttp` | `network.internet` |
 | `notification.show/update/dismiss/schedule/cancel` | 宿主生成 notification ID；文本、包资源图、有限按钮和进度；动作回传到实例，实例不存在时安全丢弃或进入宿主处理 | `notification.post`；频控，紧急/闹钟场景另行批准 |
 | `clipboard.read` | 只读明确请求的 text/image/file-reference 类型，限制大小，不枚举历史 | `clipboard.read` + 当前用户手势 |
 | `clipboard.write/clear` | 写入白名单格式和有限数据；来源可诊断 | `clipboard.write` + 当前用户手势；禁止后台循环覆盖 |

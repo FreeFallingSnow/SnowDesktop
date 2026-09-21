@@ -1093,6 +1093,12 @@ if (BUILD_TESTING)
         LINK_LIBRARIES shlwapi winhttp ws2_32
         LABELS core contract security)
 
+    add_test(NAME http_network_integration
+        COMMAND $<TARGET_FILE:SnowDesktopHttpSecurityTests> --network)
+    set_tests_properties(http_network_integration PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHttpSecurityTests>"
+        LABELS "integration;widget;network;security")
+
     snowdesktop_add_test(
         SnowDesktopLuaRuntimeTests
         lua_runtime

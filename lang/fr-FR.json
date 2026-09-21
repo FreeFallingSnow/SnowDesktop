@@ -232,7 +232,7 @@
   "app.settings.widgets_permission_system_display_read": "Lire la configuration des écrans",
   "app.settings.widgets_permission_audio_output_read": "Lire l’état et le volume de la sortie audio par défaut",
   "app.settings.widgets_permission_app_discovery": "Détecter les applications installées",
-  "app.settings.widgets_permission_network_internet": "Accéder aux origines Internet déclarées",
+  "app.settings.widgets_permission_network_internet": "Accéder aux services Internet, de cet ordinateur et du réseau local via HTTP/HTTPS",
   "app.settings.widgets_permission_notification_post": "Envoyer des notifications système",
   "app.settings.widgets_permission_network_local": "Accéder aux services de réseau local approuvés",
   "app.settings.widgets_permission_clipboard_read": "Lire le presse-papiers après une action de l’utilisateur",

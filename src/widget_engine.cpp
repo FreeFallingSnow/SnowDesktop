@@ -13028,8 +13028,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 static_cast<std::uint32_t>(maximumBytes);
             options.allowedDomains = owner->manifest.networkDomains;
             options.allowAnyHttpOrHttpsUrl = false;
-            options.allowAnyPublicHttpsUrl =
-                owner->manifest.networkDomains.empty();
+            options.allowHttpAndLocalTargets = true;
             options.sameOriginRedirectsOnly =
                 action.arguments.contains("usesSecret");
             wipe(headersUtf8);

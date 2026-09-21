@@ -1883,7 +1883,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，通知任务
 `notification.show/update/dismiss/schedule/cancel`，以及本地日历写入任务
-`calendar.create`、`calendar.update`、`calendar.remove`、公网读取
+`calendar.create`、`calendar.update`、`calendar.remove`、网络请求
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
 `system.openSettings`、有界剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
 范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
@@ -2289,13 +2289,19 @@ local updateId, err = task.start("calendar.update", {
 `invalid_time`、`invalid_reminder`、`event_limit`、`save_failed`、
 `permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
 
-`network.request` 要求 `network.internet`，支持公网 HTTPS 的 `GET/HEAD/POST/PUT/PATCH/DELETE`、
-有界自定义请求头和请求体，但仍不启用 WinHTTP Cookie 或系统认证。默认可访问任意公网 HTTPS 主机；如果组件功能固定依赖少数服务，
+`network.request` 要求 `network.internet`，支持 HTTP/HTTPS 的 `GET/HEAD/POST/PUT/PATCH/DELETE`、
+有界自定义请求头和请求体，但仍不启用 WinHTTP Cookie 或系统认证。默认可访问公网、本机和局域网服务，
+使用 Windows 系统及当前用户的代理设置，兼容 TUN 虚拟地址，不按 DNS 或连接 IP 的公网属性拦截。
+HTTPS 仍使用系统 TLS 证书校验。如果组件功能固定依赖少数服务，
 可以在 `networkDomains` 中逐项声明精确主机名，主动把自身网络范围收窄。域名限制不支持
-通配符或子域继承；无论是否收窄，localhost、局域网地址和指向非公网地址的解析或重定向
-都被拒绝。每实例该任务最多并发 2 个，参数只接受：
+通配符或子域继承，可使用 `nas.local` 等本地域名。`networkDomains` 清单仍只接受带点的 DNS 名称；
+直接请求 `localhost` 或 IP 地址时应省略此字段。URL 不接受内嵌用户名/密码。
+该行为通过 `task.network.standardHttp` 标记；旧宿主及同版本早期构建缺少该标记时仍可能只支持公网
+HTTPS 且不使用系统代理。组件依赖 HTTP、本地服务或代理时应声明该 required feature，或用
+`widget.hasFeature("task.network.standardHttp")` 检测后提供兼容提示；仅比较 `minHostVersion` 不足以区分同版本构建。
+无需提升 `apiVersion`；现有公网 HTTPS 调用参数和返回值不变。每实例该任务最多并发 2 个，参数只接受：
 
-- `url`：1–2048 字节有效 UTF-8 公网 HTTPS URL；清单声明了 `networkDomains` 时主机必须精确命中；
+- `url`：1–2048 字节有效 UTF-8 HTTP/HTTPS URL；清单声明了 `networkDomains` 时主机必须精确命中；
 - `method`：上述六个大写方法，默认 `GET`；
 - `headers`：最多 32 个 RFC token 名称；普通值必须是单行 UTF-8，也可以使用下述 secret descriptor；注入后合计不超过 32 KiB；
 - `body`：普通字符串字节或一个 secret descriptor，注入后不超过 64 KiB；
@@ -2339,7 +2345,7 @@ descriptor 的 prefix/suffix 只是原始拼接，不执行 JSON 或 URL 转义�
 `secretUnavailable`。对应 feature 为 `task.network.headers`、`task.network.requestBody` 和
 `task.network.secretReference`。
 
-重定向的每一跳都重新检查 HTTPS、可选的精确域名范围、DNS 解析地址和实际连接地址。响应在
+重定向的每一跳都重新检查 HTTP/HTTPS URL 和可选的精确主机范围；含 secret 的请求仍只允许同源重定向。响应在
 worker 中读取，超限立即失败，不会把慢网络 I/O 放进 UI/render 线程。稳定完成错误包括
 `requestRejected`、`networkError`、`redirectRejected`、`responseTooLarge`、
 `httpStatus`、`permissionRevoked` 和 `canceled`。预览返回确定性的最小 RSS mock，不发起

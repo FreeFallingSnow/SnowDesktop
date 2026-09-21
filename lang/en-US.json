@@ -232,7 +232,7 @@
     "app.settings.widgets_permission_system_display_read": "Read display configuration",
     "app.settings.widgets_permission_audio_output_read": "Read default audio output status and volume",
     "app.settings.widgets_permission_app_discovery": "Discover installed applications",
-    "app.settings.widgets_permission_network_internet": "Access declared internet origins",
+    "app.settings.widgets_permission_network_internet": "Access internet, local computer, and LAN services over HTTP/HTTPS",
     "app.settings.widgets_permission_notification_post": "Post system notifications",
     "app.settings.widgets_permission_network_local": "Access approved local-network services",
     "app.settings.widgets_permission_clipboard_read": "Read clipboard content after a user action",

@@ -25,7 +25,7 @@ bool IsAllowedHttpOrHttpsUrl(const std::wstring& url);
 bool IsAllowedUrlForDomains(const std::wstring& url,
     const std::vector<std::string>& domains,
     bool allowAnyHttpOrHttpsUrl = false,
-    bool allowAnyPublicHttpsUrl = false);
+    bool allowHttpAndLocalTargets = false);
 bool IsAllowedPublicHttpsUrl(const std::wstring& url);
 bool HaveSameOrigin(const std::wstring& left, const std::wstring& right);
 }
@@ -106,7 +106,7 @@ struct HttpRequestOptions
     std::uint32_t maximumResponseBytes = 1024 * 1024;
     std::vector<std::string> allowedDomains;
     bool allowAnyHttpOrHttpsUrl = false;
-    bool allowAnyPublicHttpsUrl = false;
+    bool allowHttpAndLocalTargets = false;
     bool sameOriginRedirectsOnly = false;
 };
 
