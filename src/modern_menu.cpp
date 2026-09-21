@@ -113,6 +113,7 @@ struct Popup
     int windowWidth = 0;
     int windowHeight = 0;
     POINT panelScreenOrigin{};
+    menu_icon::Metrics rowMetrics;
     std::vector<RECT> itemRects;
     std::vector<int> navigationOrder;
     RECT quickSeparatorRect{};
@@ -625,7 +626,7 @@ public:
             else
             {
                 menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
-                    row, state, palette_, metrics_, submenuArrowFont_);
+                    row, state, palette_, popup.rowMetrics, submenuArrowFont_);
             }
             RestoreDC(memoryDc, savedRowDc);
         }
@@ -778,6 +779,15 @@ private:
 
     void CalculateLayout(Popup &popup, bool preserveWidth = false)
     {
+        popup.rowMetrics = metrics_;
+        // Each cascade owns its gutter; icons in descendants or separators
+        // do not reserve space here. Search and inline controls keep their metrics.
+        if (popup.depth > 0 && std::ranges::none_of(*popup.items,
+                [](const Item& item) {
+                    return !item.separator && !item.textInput && !item.inlineAction &&
+                        (item.checked || item.image || !item.glyph.empty());
+                }))
+            popup.rowMetrics.iconColumnWidth = 0;
         HDC screenDc = GetDC(nullptr);
         int width = metrics_.minimumWidth;
         std::vector<int> quickIndices;
@@ -849,7 +859,7 @@ private:
                 MenuQuickIcon::FontGlyph, item.image,
             };
             const SIZE measured = menu_icon::MeasureItem(
-                screenDc, textFont_, view, metrics_);
+                screenDc, textFont_, view, popup.rowMetrics);
             width = std::max(width, static_cast<int>(measured.cx));
         }
         for (size_t position = 0; position < regularIndices.size(); ++position)

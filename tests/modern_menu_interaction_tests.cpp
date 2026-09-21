@@ -1085,6 +1085,56 @@ int wmain()
             "compact-menu input reaches the real popup without timing out");
         return selected;
     };
+    // Real cascade widths must follow their own contents, including disabled
+    // icons/checks. A decorated descendant must not force its parent's gutter.
+    {
+        using snowdesktop::modern_menu::Appearance;
+        const DWORD pixel = 0xff0078d4;
+        HBITMAP image = CreateBitmap(1, 1, 1, 32, &pixel);
+        Expect(image != nullptr, "cascade image fixture is available");
+        for (const auto appearance : {Appearance::OpaqueLight, Appearance::OpaqueDark,
+                 Appearance::Win10Light, Appearance::Win10Dark})
+            for (const UINT dpi : {96u, 120u, 144u, 192u})
+            {
+                snowdesktop::modern_menu::Options gutterOptions;
+                gutterOptions.owner = owner; gutterOptions.anchor = {80, 80};
+                gutterOptions.appearance = appearance; gutterOptions.dpi = dpi;
+                LONG plainWidth = 0, rootWidth = 0;
+                for (int decoration = 0; decoration < 4; ++decoration)
+                {
+                    Item leaf{9301, L"Long command with enough text to measure its full width\tCtrl+M", L""};
+                    Item marker{9302, L"Unavailable", L"", false};
+                    if (decoration == 1) marker.glyph = L"G";
+                    if (decoration == 2) marker.checked = true;
+                    if (decoration == 3) marker.image = image;
+                    Item nested{0, L"More", L"", true, false, false, {{9303, L"Nested icon", L"G"}}};
+                    Item separator{0, L"", L"ignored", false, true, true};
+                    Item parent{0, L"Parent", L"G", true, false, false, {leaf, marker, separator, nested}};
+                    LONG childWidth = 0, currentRootWidth = 0;
+                    const auto selected = runScript({parent}, gutterOptions, [&](HWND root) {
+                        RECT rootRect{}; GetWindowRect(root, &rootRect); currentRootWidth = rootRect.right - rootRect.left;
+                        SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                        SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                        MenuWindows cascade;
+                        EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows, reinterpret_cast<LPARAM>(&cascade));
+                        Expect(cascade.child != nullptr, "icon-gutter cascade opens");
+                        RECT childRect{}; GetWindowRect(cascade.child, &childRect); childWidth = childRect.right - childRect.left;
+                        SendMessageW(cascade.child, WM_KEYDOWN, VK_HOME, 0);
+                        SendMessageW(cascade.child, WM_KEYDOWN, VK_RETURN, 0);
+                    });
+                    Expect(selected.command == 9301, "iconless and decorated cascades dispatch the selected command");
+                    if (!decoration) { plainWidth = childWidth; rootWidth = currentRootWidth; }
+                    else
+                    {
+                        const bool compact = appearance == Appearance::Win10Light || appearance == Appearance::Win10Dark;
+                        const int expectedGutter = MulDiv(compact ? 20 : 22, dpi, 96) + MulDiv(compact ? 6 : 7, dpi, 96);
+                        Expect(childWidth - plainWidth == expectedGutter && rootWidth == currentRootWidth,
+                            "only a child-level glyph, image or check reserves the cascade gutter; root width is unchanged");
+                    }
+                }
+            }
+        DeleteObject(image);
+    }
     {
         auto nativeLabel = snowdesktop::DecodeMenuLabel(L"打开(&O)\tCtrl+O");
         Item open; open.command = 9101; open.label = nativeLabel.text; open.accessKey = nativeLabel.accessKey;

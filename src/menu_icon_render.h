@@ -29,6 +29,7 @@ struct Metrics
     int selectionInsetY = 2;
     int selectionRadius = 4;
     int leftPadding = 10;
+    // Zero collapses the ordinary-row icon gutter without changing shortcuts.
     int iconColumnWidth = 22;
     int textGap = 7;
     int rightPadding = 9;

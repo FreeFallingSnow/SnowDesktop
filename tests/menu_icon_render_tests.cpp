@@ -286,6 +286,43 @@ void CheckCompactRendering()
     DeleteObject(bitmap);
 }
 
+void CheckIconlessRows(HDC dc, std::uint32_t* pixels, int width, int height)
+{
+    using namespace snowdesktop::menu_icon;
+    for (const bool compact : {false, true}) for (const UINT dpi : {96u, 120u, 144u, 192u})
+    {
+        const auto withIcons = ResolveMetrics(dpi, compact);
+        auto withoutIcons = withIcons;
+        withoutIcons.iconColumnWidth = 0;
+        HFONT font = CreateFontW(-withIcons.textFontHeight, 0, 0, 0, FW_NORMAL,
+            FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        Expect(font != nullptr, "iconless row font is available");
+        const int gutter = withIcons.iconColumnWidth + withIcons.textGap;
+        ItemView item{L"A long menu command that exceeds the minimum menu width\tCtrl+Shift+M", L""};
+        const auto normal = MeasureItem(dc, font, item, withIcons);
+        const auto narrow = MeasureItem(dc, font, item, withoutIcons);
+        Expect(normal.cx - narrow.cx == gutter && normal.cy == narrow.cy,
+            "iconless measurement reclaims only the icon gutter, preserving shortcut spacing and row height");
+        item.label = L"Menu";
+        const RECT bounds{0, 0, width, withIcons.rowHeight};
+        for (const bool light : {true, false})
+        {
+            const auto palette = ResolvePalette(light);
+            DrawItem(dc, font, nullptr, item, bounds, 0, palette, withIcons);
+            GdiFlush();
+            const auto before = FindPixelsDifferentFromColorInRect(pixels, width, height, bounds, palette.background);
+            DrawItem(dc, font, nullptr, item, bounds, 0, palette, withoutIcons);
+            GdiFlush();
+            const auto after = FindPixelsDifferentFromColorInRect(pixels, width, height, bounds, palette.background);
+            Expect(before.right > before.left && after.right > after.left && before.left - after.left == gutter &&
+                    before.top == after.top && before.bottom == after.bottom,
+                "iconless text paints at the reclaimed inset at every DPI and theme");
+        }
+        DeleteObject(font);
+    }
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv)
@@ -396,6 +433,8 @@ int wmain(int argc, wchar_t** argv)
         DEFAULT_PITCH | FF_DONTCARE, L"FluentSystemIcons-Regular");
     Expect(submenuArrowFont != nullptr,
         "test Fluent submenu chevron font is created");
+
+    CheckIconlessRows(dc, pixels, kWidth, kHeight);
 
     const snowdesktop::menu_icon::ItemView normal{
         L"Open", L"O", false, false, false,

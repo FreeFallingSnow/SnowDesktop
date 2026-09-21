@@ -95,9 +95,14 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         titleRow.Children().Append(refreshIndicator); content.Children().Append(titleRow);
         SetRefreshing(false);
         tabs.Items().Append(objectsTab); tabs.Items().Append(backgroundTab); tabs.SelectedItem(objectsTab);
-        content.Children().Append(tabs);
         views.Items().Append(byObject); views.Items().Append(byApplication); views.Items().Append(byExtension);
-        views.SelectedItem(byObject); content.Children().Append(views);
+        views.SelectedItem(byObject);
+        muxc::Grid selectors; selectors.ColumnSpacing(16);
+        Column(selectors, 1, mux::GridUnitType::Auto); Column(selectors, 1, mux::GridUnitType::Star);
+        tabs.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        views.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        muxc::Grid::SetColumn(views, 1);
+        selectors.Children().Append(tabs); selectors.Children().Append(views); content.Children().Append(selectors);
         Column(toolbar, 1, mux::GridUnitType::Star); Column(toolbar, 1, mux::GridUnitType::Auto);
         search.Margin({0, 0, 8, 0}); toolbar.Children().Append(search);
         muxc::Grid::SetColumn(more, 1); toolbar.Children().Append(more); content.Children().Append(toolbar);

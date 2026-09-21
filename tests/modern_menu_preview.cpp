@@ -68,6 +68,20 @@ std::vector<snowdesktop::modern_menu::Item> BuildPreviewItems()
         { 12, L"隐藏桌面时保留\t关", L"\uE5F5", true },
         { 13, L"隐私模式\t开", L"\uE78F", true },
         { 14, L"删除组件", L"\uF34C", true },
+        { 0, L"无图标子菜单", L"", true, false, false,
+            {
+                { 201, L"普通项目", L"", true },
+                { 202, L"复制较长名称的项目\tCtrl+C", L"", true },
+                { 203, L"不可用项目", L"", false },
+                { 0, L"下一层有图标", L"", true, false, false,
+                    {{204, L"设置", L"\uF6A9", true}} },
+            } },
+        { 0, L"保留图标栏的子菜单", L"", true, false, false,
+            {
+                { 205, L"无图标项目", L"", true },
+                { 206, L"设置", L"\uF6A9", true },
+                { 207, L"已勾选", L"", true, true },
+            } },
     };
     items[0].quickAction = true;
     items[0].quickIcon = snowdesktop::MenuQuickIcon::Cut;

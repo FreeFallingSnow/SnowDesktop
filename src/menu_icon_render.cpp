@@ -24,6 +24,12 @@ int Scale(int value, UINT dpi)
         USER_DEFAULT_SCREEN_DPI));
 }
 
+int ItemTextInset(const Metrics& metrics)
+{
+    return metrics.leftPadding + (metrics.iconColumnWidth > 0
+        ? metrics.iconColumnWidth + metrics.textGap : 0);
+}
+
 void FillSolidRect(HDC dc, const RECT& bounds, COLORREF color)
 {
     HBRUSH brush = CreateSolidBrush(color);
@@ -899,8 +905,7 @@ SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,
 
     const int shortcutGap = shortcut.empty() ? 0 : metrics.textGap * 3;
     const int arrowWidth = item.hasSubmenu ? metrics.arrowColumnWidth : 0;
-    const int contentWidth = metrics.leftPadding +
-        metrics.iconColumnWidth + metrics.textGap + primarySize.cx +
+    const int contentWidth = ItemTextInset(metrics) + primarySize.cx +
         shortcutGap + shortcutSize.cx + arrowWidth + metrics.rightPadding;
     return {
         static_cast<LONG>(std::max(metrics.minimumWidth, contentWidth)),
@@ -990,8 +995,7 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         textFont ? static_cast<HGDIOBJ>(textFont)
                  : GetStockObject(DEFAULT_GUI_FONT));
     RECT textBounds = bounds;
-    textBounds.left += metrics.leftPadding +
-        metrics.iconColumnWidth + metrics.textGap;
+    textBounds.left += ItemTextInset(metrics);
     textBounds.right -= metrics.rightPadding +
         (item.hasSubmenu ? metrics.arrowColumnWidth : 0);
 
