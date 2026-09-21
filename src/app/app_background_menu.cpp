@@ -3,6 +3,7 @@
 #include "../modern_menu.h"
 #include "../search_match.h"
 #include "../widget_preview_stage.h"
+#include "../widget_menu_catalogue.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -16,12 +17,7 @@ using snowdesktop::menu_icon::BuiltinIcon;
 
 constexpr size_t kLuaWidgetMenuPageSize = 8;
 
-enum class LuaWidgetMenuSource
-{
-    Builtin,
-    Installed,
-    Development,
-};
+using LuaWidgetMenuSource = snowdesktop::widget_menu::Source;
 
 enum class LuaWidgetMenuFilter
 {
@@ -31,50 +27,11 @@ enum class LuaWidgetMenuFilter
     Development,
 };
 
-struct LuaWidgetMenuEntry
-{
-    std::wstring packageId;
-    std::wstring displayName;
-    std::wstring searchText;
-    LuaWidgetMenuSource source = LuaWidgetMenuSource::Installed;
-};
+using LuaWidgetMenuEntry = snowdesktop::widget_menu::Entry;
 
 std::vector<LuaWidgetMenuEntry> BuildLuaWidgetMenuEntries()
 {
-    const auto packages = WidgetEngine::ListWidgetPackages();
-    std::unordered_map<std::wstring, const snowdesktop::widget::InstalledPackage*>
-        packagesById;
-    for (const auto& package : packages)
-    {
-        if (!package.active || !package.enabled)
-            continue;
-        packagesById[Utf8ToWide(package.manifest.id)] = &package;
-    }
-
-    std::vector<LuaWidgetMenuEntry> entries;
-    for (const auto& packageId : WidgetEngine::ListAvailable())
-    {
-        LuaWidgetMenuEntry entry;
-        entry.packageId = packageId;
-        entry.displayName = WidgetEngine::GetWidgetDisplayName(packageId);
-        if (entry.displayName.empty()) entry.displayName = packageId;
-        entry.searchText = entry.displayName + L"\n" + packageId;
-        const LuaWidgetManifest manifest =
-            WidgetEngine::GetWidgetManifest(packageId);
-        entry.searchText += L"\n" + Utf8ToWide(manifest.description);
-        entry.searchText += L"\n" + Utf8ToWide(manifest.publisher);
-
-        if (const auto found = packagesById.find(packageId);
-            found != packagesById.end())
-        {
-            if (found->second->builtin)
-                entry.source = LuaWidgetMenuSource::Builtin;
-            else if (found->second->development)
-                entry.source = LuaWidgetMenuSource::Development;
-        }
-        entries.push_back(std::move(entry));
-    }
-    return entries;
+    return WidgetEngine::ListAvailableMenuEntries();
 }
 
 bool LuaWidgetMenuSourceMatches(

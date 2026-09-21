@@ -62,6 +62,8 @@
 #include "widget_storage_write_budget.h"
 #include "widget_secret_store.h"
 
+namespace snowdesktop::widget_menu { struct Entry; }
+
 namespace snowdesktop::widget_runtime
 {
 struct PackageImageSource;
@@ -1096,10 +1098,10 @@ public:
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
 
     /**
-     * @brief 枚举所有可用的小部件
-     * @return 可用小部件文件名列表
+     * @brief 枚举菜单可用组件，复用未变化清单的本地化元数据
+     * @return 按组件 ID 排序的名称、搜索文本及来源
      */
-    static std::vector<std::wstring> ListAvailable();
+    static std::vector<snowdesktop::widget_menu::Entry> ListAvailableMenuEntries();
 
     /**
      * @brief 获取小部件的显示名称

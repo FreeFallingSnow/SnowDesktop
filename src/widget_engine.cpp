@@ -11,6 +11,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_menu_catalogue.h"
 #include "widget_filesystem_drop.h"
 #include "widget_button_fill.h"
 #include "widget_date_picker_lua.h"
@@ -30200,23 +30201,24 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
     }
 }
 
-// ── List available widget scripts ────────────────────────────────
-std::vector<std::wstring> WidgetEngine::ListAvailable()
+// Menu metadata cache is separate from runtime manifest/permission loading.
+std::vector<snowdesktop::widget_menu::Entry> WidgetEngine::ListAvailableMenuEntries()
 {
-    std::vector<std::wstring> result;
-    for (const auto& package : GetWidgetPackageManager().ListPackages())
-    {
-        if (!package.active || !package.enabled) continue;
-        LuaWidgetManifest manifest =
-            GetWidgetManifest((package.root /
+    static thread_local snowdesktop::widget_menu::Catalogue catalogue;
+    const auto packages = GetWidgetPackageManager().ListPackages();
+    return catalogue.Build(packages, Locale::Instance().GetEffectiveLanguage(),
+        [](const snowdesktop::widget::InstalledPackage& package) {
+            const auto manifest = GetWidgetManifest((package.root /
                 Utf8ToWideLocal(package.manifest.entry)).wstring());
-        if (!manifest.minHostVersion.empty() &&
-            CompareVersions(SNOWDESKTOP_VERSION, manifest.minHostVersion) < 0)
-            continue;
-        result.push_back(Utf8ToWideLocal(package.manifest.id));
-    }
-    std::sort(result.begin(), result.end());
-    return result;
+            return snowdesktop::widget_menu::Metadata{
+                Utf8ToWideLocal(package.manifest.id),
+                Utf8ToWideLocal(manifest.name),
+                Utf8ToWideLocal(manifest.description),
+                Utf8ToWideLocal(manifest.publisher),
+                manifest.minHostVersion.empty() ||
+                    CompareVersions(SNOWDESKTOP_VERSION, manifest.minHostVersion) >= 0,
+                manifest.hasManifest};
+        });
 }
 
 void WidgetEngine::RuntimeOpenWidgetPanel(
