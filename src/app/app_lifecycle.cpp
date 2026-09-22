@@ -365,7 +365,13 @@ void DesktopApp::FocusDesktopInputWindow()
 {
     const HWND target = inputHwnd_ && IsWindow(inputHwnd_)
         ? inputHwnd_
-        : (hwnd_ && IsWindow(hwnd_) ? hwnd_ : nullptr);
+        : nullptr;
+    if (!target)
+    {
+        WriteDiagnosticLogEntry(L"Desktop input proxy unavailable; render child activation refused",
+            DiagnosticLogLevel::Warning);
+        return;
+    }
     (void)FocusKeyboardWindow(
         target, true, L"Desktop input proxy");
 }
@@ -431,8 +437,16 @@ bool DesktopApp::FocusKeyboardWindow(
         (void)SetFocus(target);
     };
 
-    requestFocus();
     FocusObservation observation = observeFocus();
+    if (observation.ready)
+    {
+        TraceDesktopInteraction(L"focus-already-ready", target);
+        return true;
+    }
+    TraceDesktopInteraction(L"focus-request", target);
+    requestFocus();
+    observation = observeFocus();
+    TraceDesktopInteraction(L"focus-result", target);
     if (observation.ready)
         return true;
 
@@ -452,11 +466,13 @@ bool DesktopApp::FocusKeyboardWindow(
             currentThread, attachedThread, TRUE) != FALSE;
     if (attached)
     {
+        TraceDesktopInteraction(L"focus-attached-retry", target);
         requestFocus();
         AttachThreadInput(
             currentThread, attachedThread, FALSE);
     }
     observation = observeFocus();
+    TraceDesktopInteraction(L"focus-retry-result", target);
     if (observation.ready)
         return true;
 

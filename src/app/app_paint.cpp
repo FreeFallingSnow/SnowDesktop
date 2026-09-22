@@ -6,6 +6,7 @@
 
 bool DesktopApp::OnPaint(const RECT* updateRect)
 {
+    TraceDesktopPresentation(L"paint-enter", S_OK, updateRect);
     // Shell enumeration and COM initialization can pump WM_PAINT before the
     // model and widget engine are complete. One prepared first frame replaces
     // those partial bootstrap frames; runtime paints keep their normal path.
@@ -187,5 +188,6 @@ bool DesktopApp::OnPaint(const RECT* updateRect)
         widgetAccessibilityProvider_->RefreshEvents();
     UpdateFloatingPopupWindowBounds(false);
     RecordShellHoverTrace(ShellHoverTraceEvent::PaintEnd);
+    TraceDesktopPresentation(L"paint-queued", S_OK, updateRect);
     return true;
 }

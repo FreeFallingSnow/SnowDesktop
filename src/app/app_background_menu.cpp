@@ -1346,7 +1346,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
             previewAnchor = hover;
     };
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = snowdesktop::modern_menu::Show(items, options).command;
     previewWindow.Close();
     ClearMenuIcons();
@@ -1802,7 +1802,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     snowdesktop::component_preview::Window previewWindow;
     bool wallpaperPrefetchStarted = false;
     UINT previewCacheCommand = 0;

@@ -200,6 +200,7 @@ public:
     ~MenuController()
     {
         CloseFromDepth(0);
+        TraceOwnedPopupZOrder(L"after-popup-destroy", nullptr, true);
         if (fontAwesomeIconFont_)
             DeleteObject(fontAwesomeIconFont_);
         if (submenuArrowFont_)
@@ -354,6 +355,7 @@ public:
             SetForegroundWindow(options_.owner);
             SetFocus(options_.owner);
         }
+        TraceOwnedPopupZOrder(L"after-focus-restore", nullptr, true);
         // Destroying the popup and restoring focus can synchronously repaint
         // a hover-only widget exposed beneath the pointer. Submit that content
         // before the caller starts a Shell extension, whose initialization can
@@ -2291,6 +2293,7 @@ private:
     OwnedPopupZOrderSnapshot CaptureOwnedPopupZOrder() const
     {
         OwnedPopupZOrderSnapshot snapshot;
+        snapshot.foreground = GetForegroundWindow();
         if (popups_.empty() || !popups_.front() ||
             !popups_.front()->hwnd ||
             !IsWindow(popups_.front()->hwnd))
@@ -2301,7 +2304,6 @@ private:
         snapshot.root = popups_.front()->hwnd;
         snapshot.zOrderOwner = options_.zOrderOwner;
         snapshot.rootOwner = GetWindow(snapshot.root, GW_OWNER);
-        snapshot.foreground = GetForegroundWindow();
         snapshot.rootPrevious =
             GetWindow(snapshot.root, GW_HWNDPREV);
         snapshot.rootNext = GetWindow(snapshot.root, GW_HWNDNEXT);
@@ -2358,6 +2360,9 @@ private:
                  << L" messageHwnd=" << message->hwnd;
         }
         line << L" root=" << snapshot.root
+             << L" focusOwner=" << options_.owner
+             << L" focusOwnerRoot=" << (options_.owner ? GetAncestor(options_.owner, GA_ROOT) : nullptr)
+             << L" active=" << GetActiveWindow() << L" focus=" << GetFocus()
              << L" zOrderOwner=" << snapshot.zOrderOwner
              << L" rootOwner=" << snapshot.rootOwner
              << L" foreground=" << snapshot.foreground

@@ -54,7 +54,7 @@ void DesktopApp::ShowCollectionGroupTabContextMenu(
     SetMenuItemIcon(
         menu, kContextWidgetRename, L"\U000F0A39",
         MenuIconFont::FluentRegular);
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -118,7 +118,7 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
     SetMenuItemIcon(
         menu, kContextWidgetRename, L"\U000F0A39",
         MenuIconFont::FluentRegular);
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -191,7 +191,7 @@ void DesktopApp::ShowLuaLogicalSlotItemContextMenu(
         snowdesktop::menu_fluent_glyphs::kChevronRight,
         MenuIconFont::FluentRegular);
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -859,7 +859,7 @@ void DesktopApp::ShowWidgetContextMenu(
         setFluentIcon(menu,
             reinterpret_cast<UINT_PTR>(demoCategoryMenu), L"\uF18B");
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     snowdesktop::shell_extensions::Request shellRequest;
     if (effectiveSourceIndex < widgets_.size() &&
         widgets_[effectiveSourceIndex].type == DesktopWidgetType::FolderMapping &&

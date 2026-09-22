@@ -76,7 +76,7 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -210,7 +210,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
         L"");
 
     DismissDockWindowPreviewUntilLeave();
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     DestroyMenu(menu);
     ClearMenuIcons();

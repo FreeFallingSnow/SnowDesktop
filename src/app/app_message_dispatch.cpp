@@ -110,20 +110,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // child window after a monitor is added at runtime.
         return HTCLIENT;
     case WM_MOUSEACTIVATE:
-    {
-        POINT point{};
-        if (GetCursorPos(&point))
-        {
-            ScreenToClient(hwnd_, &point);
-            if (IsPointInUsageGuide(point)) return MA_NOACTIVATE;
-            if (DockContainer* dock = GetDockContainerAtPoint(point))
-            {
-                if (dock->ContainsInteractivePoint(point))
-                    return MA_NOACTIVATE;
-            }
-        }
-        break;
-    }
+        // DefWindowProc forwards activation to the Explorer parent. Pointer
+        // handlers explicitly focus our independent input proxy when needed;
+        // keep delivering the click without activating the rendering child.
+        return MA_NOACTIVATE;
     case WM_SETCURSOR:
     {
         if (largeIconGesture_ && LOWORD(lp) == HTCLIENT)

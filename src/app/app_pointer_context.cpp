@@ -139,7 +139,7 @@ bool DesktopApp::ShowHostInputContextMenu(
     SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextSelectAllCommand);
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(
         menu, screenPoint, hwnd_);
     DestroyMenu(menu);

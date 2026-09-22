@@ -2,6 +2,7 @@
 #include "modern_menu_appearance_rules.h"
 #include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
+#include "desktop_input_activation.h"
 
 #include <windows.h>
 
@@ -59,6 +60,8 @@ bool gMessageReorderObserved = false;
 bool gMessageOrderRestored = false;
 bool gPresentationSawWrongOrder = false;
 bool gReorderCascade = false;
+HWND gDesktopParentProbe = nullptr;
+unsigned gDesktopParentActivations = 0;
 
 struct MenuWindows
 {
@@ -98,6 +101,9 @@ BOOL CALLBACK FindMenuWindows(HWND hwnd, LPARAM parameter)
 LRESULT CALLBACK OwnerWindowProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (hwnd == gDesktopParentProbe && message == WM_ACTIVATE &&
+        LOWORD(wParam) != WA_INACTIVE)
+        ++gDesktopParentActivations;
     if (message == WM_SETFOCUS && gOwnerFocusCallback)
         gOwnerFocusCallback();
     if (message == kReorderMenuMessage)
@@ -585,6 +591,87 @@ int wmain()
             "restoring owner focus after popup destruction generates a host repaint");
         Expect(contentSubmittedAfterTeardown && !contentPending,
             "menu exit submits focus-triggered content before returning to the Shell caller");
+    }
+    // Regression for the user's desktop-click flash investigation. Exercise
+    // the host's owner resolver and real menu activation/teardown on an
+    // isolated desktop; only Explorer and the render pixels are substituted.
+    // A child owner used to activate its parent and steal the input proxy's
+    // already-acquired focus when an outside click dismissed the menu.
+    {
+        HWND parent = CreateWindowExW(WS_EX_TOOLWINDOW, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, 0, 0, 800, 600,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND render = CreateWindowExW(0, kOwnerClass, L"", WS_CHILD | WS_VISIBLE,
+            0, 0, 800, 600, parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND floatingInput = CreateWindowExW(WS_EX_TOOLWINDOW, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, -32000, -32000, 1, 1,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(parent && render && floatingInput, "synthetic desktop and input proxy windows exist");
+        using snowdesktop::desktop_input_activation::ResolveMenuOwner;
+        Expect(ResolveMenuOwner(owner, render, floatingInput, nullptr, false) == owner,
+            "explicit non-desktop menu owners retain their keyboard target");
+        Expect(ResolveMenuOwner(render, render, nullptr, nullptr, false) == nullptr,
+            "missing input proxy must never fall back to the Explorer-owned child");
+        Expect(ResolveMenuOwner(render, render, owner, nullptr, true) == owner,
+            "missing floating proxy falls back to the desktop input proxy");
+        for (const bool floatingSession : { false, true })
+        {
+            for (const bool outsideClick : { false, true })
+            {
+                HWND expectedInput = floatingSession ? floatingInput : owner;
+                SetActiveWindow(expectedInput);
+                SetFocus(expectedInput);
+                gDesktopParentProbe = parent;
+                gDesktopParentActivations = 0;
+                gWatchdogFired = false;
+                HANDLE wake = CreateEventW(nullptr, FALSE, TRUE, nullptr);
+                Expect(wake != nullptr, "menu focus driver event exists");
+                auto focusOptions = options;
+                focusOptions.owner = ResolveMenuOwner(render, render, owner,
+                    floatingInput, floatingSession);
+                focusOptions.eventPump = {};
+                focusOptions.eventPump.scheduledWorkHandle = wake;
+                bool scriptRan = false;
+                bool nativeOwnerMatches = false;
+                bool proxyReadyBeforeExit = false;
+                focusOptions.eventPump.dispatchScheduledWork = [&]() {
+                    scriptRan = true;
+                    HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+                    nativeOwnerMatches = GetWindow(root, GW_OWNER) == expectedInput;
+                    if (outsideClick)
+                    {
+                        SetActiveWindow(expectedInput);
+                        SetFocus(expectedInput);
+                        proxyReadyBeforeExit = GetActiveWindow() == expectedInput &&
+                            GetFocus() == expectedInput;
+                        // The actual WM_ACTIVATE handler posts cancellation.
+                    }
+                    else
+                    {
+                        SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                        SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+                    }
+                };
+                SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+                const auto focusResult = snowdesktop::modern_menu::Show(adjustmentItems, focusOptions);
+                KillTimer(owner, kWatchdogTimer);
+                CloseHandle(wake);
+                Expect(scriptRan && !gWatchdogFired &&
+                        focusResult.command == (outsideClick ? 0U : 21U),
+                    "proxy-owned menus support outside dismissal and keyboard commands");
+                Expect(nativeOwnerMatches && gDesktopParentActivations == 0,
+                    "desktop menus must not own or activate the rendering child's parent");
+                Expect((!outsideClick || proxyReadyBeforeExit) &&
+                        GetActiveWindow() == expectedInput && GetFocus() == expectedInput,
+                    "menu teardown leaves focus on the selected input proxy");
+            }
+        }
+        gDesktopParentProbe = nullptr;
+        DestroyWindow(floatingInput);
+        DestroyWindow(render);
+        DestroyWindow(parent);
+        SetActiveWindow(owner);
+        SetFocus(owner);
     }
     gDriveMode = DriveMode::Simple;
     gDrivePhase = 0;

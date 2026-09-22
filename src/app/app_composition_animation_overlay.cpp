@@ -304,6 +304,7 @@ bool DesktopApp::FlushPendingCompositionCommit()
     const HRESULT hr = snowdesktop::startup_diagnostics::Call(L"Composition.Commit", [&] {
         return dcompDevice_->Commit();
     });
+    TraceDesktopPresentation(L"composition-commit", hr);
     if (SUCCEEDED(hr))
         compositionCommitPending_ = false;
     RecordShellHoverTrace(

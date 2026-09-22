@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../desktop_input_activation.h"
 #include "../shell_extension_menu_presentation.h"
 #include "../menu_icon_render.h"
 #include "../menu_label.h"
@@ -788,6 +789,11 @@ UINT DesktopApp::ShowModernMenu(
 void DesktopApp::ConfigureModernMenuEventPump(
     snowdesktop::modern_menu::Options& options)
 {
+    options.owner = snowdesktop::desktop_input_activation::ResolveMenuOwner(
+        options.owner, hwnd_, inputHwnd_, floatingDockInputHwnd_,
+        floatingDockKeyboardSessionActive_ && floatingDockVisible_);
+    BeginDesktopInteractionTrace(L"menu-configure");
+    TraceDesktopInteraction(L"menu-focus-owner", options.owner, 0, 0, 0, true);
     options.eventPump.scheduledWorkHandle =
         uiAnimationScheduler_.WaitHandle();
     options.eventPump.dispatchScheduledWork = [this]() {
@@ -797,9 +803,11 @@ void DesktopApp::ConfigureModernMenuEventPump(
         FlushPendingCompositionCommit();
         FlushPendingQuickNavigationCompositionCommit();
     };
-    options.eventPump.traceDiagnostic = [](const std::wstring& message) {
+    options.eventPump.traceDiagnostic = [this](const std::wstring& message) {
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Debug);
+        // Menu checkpoints share the click trace's window/composition state.
+        TraceDesktopInteraction(L"menu-checkpoint");
     };
     options.zOrderFloor = [this]() -> HWND {
         HWND floor = nullptr;

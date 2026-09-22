@@ -267,6 +267,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
  */
 void DesktopApp::RestoreDesktopWindowLayer()
 {
+    BeginDesktopInteractionTrace(L"restore-layer");
     ApplyFloatingDockLayerPolicy();
     ApplyFloatingPopupLayerPolicy();
     if (!hwnd_ || !IsWindow(hwnd_))
@@ -282,6 +283,7 @@ void DesktopApp::RestoreDesktopWindowLayer()
     {
         SetWindowPos(hwnd_, HWND_BOTTOM, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_, SWP_NOACTIVATE);
     }
+    TraceDesktopInteraction(L"restore-layer-done", hwnd_, 0, 0, 0, true);
 }
 
 void DesktopApp::ApplyFloatingDockLayerPolicy()

@@ -823,6 +823,13 @@ private:
     void AttachInputWindowToDesktopHost(HWND host);
     /** @brief 将键盘焦点交给独立输入窗口。 */
     void FocusDesktopInputWindow();
+    void BeginDesktopInteractionTrace(const wchar_t* reason);
+    void TraceDesktopInteraction(const wchar_t* event, HWND subject = nullptr,
+        UINT message = 0, WPARAM wp = 0, LPARAM lp = 0, bool force = false);
+    void TraceDesktopWindowMessage(HWND subject, UINT message, WPARAM wp, LPARAM lp,
+        bool afterDispatch);
+    void TraceDesktopPresentation(const wchar_t* event, HRESULT result,
+        const RECT* dirty = nullptr);
     /** @brief 让当前线程拥有指定键盘窗口的焦点，必要时短暂附加前台输入队列。 */
     bool FocusKeyboardWindow(
         HWND target, bool requestForeground,
@@ -3217,6 +3224,10 @@ private:
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
     bool compositionCommitPending_ = false;
+    ULONGLONG desktopInteractionTraceId_ = 0;
+    ULONGLONG desktopInteractionTraceUntil_ = 0;
+    unsigned desktopInteractionTraceEvents_ = 0;
+    unsigned desktopInteractionTraceFrames_ = 0;
     bool quickNavCompositionCommitPending_ = false;
     // 指针反馈同步提交的兜底：仅当当前 WM_PAINT/合成绘制重入时，才把帧交给
     // UiAnimationScheduler 补绘。常规指针路径必须直接 UpdateWindow，不能把

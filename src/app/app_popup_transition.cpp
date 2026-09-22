@@ -483,7 +483,7 @@ void DesktopApp::ShowDockFolderPopupSortMenu(
     SetMenuItemIcon(dateMenu, kContextWidgetSortByDateDesc,
         snowdesktop::menu_fluent_glyphs::kSortDateDescending,
         MenuIconFont::FluentRegular);
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
