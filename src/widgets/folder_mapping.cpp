@@ -146,13 +146,16 @@ static RECT FolderMappingTabsRect(FolderMapping* widget)
 /**
  * @brief 计算映射文件夹内容区域的矩形
  * @param widget FolderMapping 组件指针
- * @return 内容区域的 RECT，已向内缩进 4 像素（水平）和 8 像素（垂直）
+ * @return 内容区域矩形，水平缩进 4 CU、顶部缩进 8 CU，底边靠近底栏但不进入其命中区域
  */
 static RECT FolderMappingContentRect(FolderMapping* widget)
 {
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetMoveHandleRect().top));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FolderMappingTabsRect(widget);
     if (!IsRectEmptyRect(tabs))

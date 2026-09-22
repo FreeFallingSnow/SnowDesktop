@@ -580,6 +580,9 @@ static RECT FileCategoryContentRect(FileCategories* widget)
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetMoveHandleRect().top));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FileCategoryTabsRect(widget);
     RECT search = widget->GetSearchBoxRect();

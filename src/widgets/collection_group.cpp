@@ -68,6 +68,9 @@ RECT CollectionGroupContentRect(CollectionGroup* widget)
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetMoveHandleRect().top));
     RECT search = widget->GetSearchBoxRect();
     if (!IsRectEmptyRect(search))
         body.top = std::min<LONG>(

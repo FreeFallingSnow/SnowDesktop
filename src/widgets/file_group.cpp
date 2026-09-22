@@ -1405,6 +1405,9 @@ RECT FileGroup::GetContentViewportRect() const
         RECT body = GetBodyRect();
         InflateRect(
             &body, -Cu(4.0f), -Cu(8.0f));
+        body.bottom = std::max<LONG>(body.top,
+            std::min<LONG>(body.bottom + Cu(4.0f),
+                GetMoveHandleRect().top));
         RECT search = GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
             body.top = std::min<LONG>(
@@ -1418,6 +1421,9 @@ RECT FileGroup::GetContentViewportRect() const
         RECT body = GetBodyRect();
         InflateRect(
             &body, -Cu(4.0f), -Cu(8.0f));
+        body.bottom = std::max<LONG>(body.top,
+            std::min<LONG>(body.bottom + Cu(4.0f),
+                GetMoveHandleRect().top));
         RECT search = GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
             body.top = std::min<LONG>(

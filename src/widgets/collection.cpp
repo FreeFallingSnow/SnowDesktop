@@ -56,6 +56,10 @@ static RECT CollectionScrollContentRect(Collection* widget)
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    // Bring the fade closer to the bar without entering its pointer hit area.
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetMoveHandleRect().top));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
