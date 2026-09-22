@@ -21,7 +21,7 @@
 | --- | --- |
 | 分支 | `internal-dev` |
 | 分支说明 | SnowDesktop internal development builds |
-| 访问密码 | `SnowDestopDev0927` |
+| 访问密码 | `SnowDesktopDev0927` |
 
 1. 在 Steam 库中右键 SnowDesktop，打开“属性”，进入测试版设置。
 2. 输入上表中的访问密码并验证，然后选择 `internal-dev` 分支。
