@@ -3,6 +3,12 @@
 void TestStartupDesktopMetadataDeferral()
 {
     using namespace snowdesktop::shell_refresh;
+    Check(LocalDesktopDisplayName(L"C:\\Desktop\\My.App.LnK", false) == L"My.App" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\Website.URL", false) == L"Website" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\notes.txt", false) == L"notes.txt" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\folder.lnk", true) == L"folder.lnk" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\.lnk", false) == L".lnk",
+        "startup labels hide shortcut suffixes before Shell returns, without changing ordinary files or directory names");
     MetadataCache cache;
     std::unordered_set<std::wstring> seen;
     FileStamp stamp;
@@ -31,6 +37,85 @@ void TestStartupDesktopMetadataDeferral()
     ReadDesktopMetadata(false, L"C:\\app.lnk", L"C:\\APP.LNK",
         stamp, true, &cache, seen, shell);
     Check(queries == 2, "an overwritten shortcut queries fresh Shell metadata");
+}
+
+// Exercise the production startup mailbox with an actual private message-only
+// window. A completed read must wake the consumer without a 2-second UI timer.
+void TestStartupReadWakesConsumer()
+{
+    using namespace snowdesktop::shell_refresh;
+    struct Window
+    {
+        HWND value = CreateWindowExW(0, L"STATIC", L"StartupReadTest", 0,
+            0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        ~Window() { if (value) DestroyWindow(value); }
+    } window;
+    Check(window.value != nullptr, "startup wake fixture owns a private message-only window");
+    if (!window.value) return;
+    constexpr UINT wake = WM_APP + 199;
+    struct Gate
+    {
+        HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ~Gate() { CloseHandle(entered); CloseHandle(release); CloseHandle(returned); }
+    };
+    const auto takeMessage = [&] {
+        MSG message{};
+        return PeekMessageW(&message, window.value, wake, wake, PM_REMOVE) != FALSE;
+    };
+    const auto waitMessage = [&] {
+        const auto deadline = GetTickCount64() + 1000;
+        while (GetTickCount64() < deadline)
+        {
+            if (takeMessage()) return true;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_POSTMESSAGE, MWMO_INPUTAVAILABLE);
+        }
+        return false;
+    };
+    auto gate = std::make_shared<Gate>();
+    StartupRead reader([gate](const Request& request, Snapshot& snapshot) {
+        for (int i = 0; i < 32; ++i)
+        {
+            DesktopItem item;
+            item.layoutKey = std::to_wstring(i);
+            request.publishDesktopItem(item);
+            snapshot.desktopItems.push_back(std::move(item));
+        }
+        SetEvent(gate->entered);
+        WaitForSingleObject(gate->release, 5000);
+        SetEvent(gate->returned);
+        return true;
+    });
+    Check(reader.Start({}, window.value, wake) &&
+        WaitForSingleObject(gate->entered, 2000) == WAIT_OBJECT_0,
+        "startup publishes a batch before entering a blocked Shell call");
+    Check(waitMessage() && !takeMessage(),
+        "a burst of ready startup items coalesces into one consumer wake");
+    const auto progress = reader.TakeProgress();
+    Check(progress.size() == 32 && !reader.TakeReady(),
+        "the wake exposes incremental items while the remaining read is still blocked");
+    SetEvent(gate->release);
+    const bool notified = waitMessage();
+    auto result = reader.TakeReady(std::chrono::milliseconds(1000));
+    Check(notified && result && result->desktopComplete && result->desktopItems.size() == 32,
+        "final completion wakes the consumer again after it consumed the partial batch");
+
+    auto stoppedGate = std::make_shared<Gate>();
+    StartupRead stopped([stoppedGate](const Request&, Snapshot&) {
+        SetEvent(stoppedGate->entered);
+        WaitForSingleObject(stoppedGate->release, 5000);
+        SetEvent(stoppedGate->returned);
+        return true;
+    });
+    Check(stopped.Start({}, window.value, wake) &&
+        WaitForSingleObject(stoppedGate->entered, 2000) == WAIT_OBJECT_0,
+        "retirement fixture starts before its provider completes");
+    stopped.Stop();
+    SetEvent(stoppedGate->release);
+    Check(WaitForSingleObject(stoppedGate->returned, 2000) == WAIT_OBJECT_0 &&
+        !stopped.TakeReady() && !takeMessage(),
+        "a retired startup reader never delivers into its former consumer");
 }
 
 void TestStartupIconSurvivesMetadataArrival()

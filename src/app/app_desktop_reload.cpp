@@ -118,28 +118,14 @@ void DesktopApp::RegisterShellChangeNotifications()
         SHChangeNotifyDeregister(shellChangeRegId_);
         shellChangeRegId_ = 0;
     }
-    SHChangeNotifyEntry entries[3]{};
-    entries[0].pidl = desktopPidl_.get();
-    entries[0].fRecursive = FALSE;
     if (!recycleBinPidl_.get())
     {
         PIDLIST_ABSOLUTE rbPidl = nullptr;
         if (SUCCEEDED(SHGetSpecialFolderLocation(nullptr, CSIDL_BITBUCKET, &rbPidl)))
             recycleBinPidl_.reset(rbPidl);
     }
-    int entryCount = 1;
-    if (recycleBinPidl_.get())
-    {
-        entries[1].pidl = recycleBinPidl_.get();
-        entries[1].fRecursive = TRUE;
-        entryCount = 2;
-    }
-    shellChangeRegId_ = SHChangeNotifyRegister(hwnd_,
-        SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
-        SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
-        SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
-        SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
-        kShellChangeMessage, entryCount, entries);
+    shellChangeRegId_ = RegisterDesktopShellNotifications(hwnd_,
+        kShellChangeMessage, desktopPidl_.get(), recycleBinPidl_.get());
     folderNotifications_.Clear();
     SyncFolderChangeNotifications();
     if (shellReloadPending_)
@@ -559,6 +545,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     switch (msg)
     {
     case kBackgroundShellReadyMessage:
+        PollInitialShellRead();
         DrainBackgroundShellWork();
         return 0;
     case kLargeIconAssetsReadyMessage:

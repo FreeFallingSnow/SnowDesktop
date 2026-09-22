@@ -1085,6 +1085,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     case kBackgroundShellReadyMessage:
+        PollInitialShellRead();
         DrainBackgroundShellWork();
         return 0;
     case kFolderSubscriptionReadyMessage:

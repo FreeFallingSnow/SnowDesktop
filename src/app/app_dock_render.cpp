@@ -320,14 +320,27 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     SHFILEINFOW info{};
                     return SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info),
                         SHGFI_SYSICONINDEX) ? info.iIcon : -1;
-                }, [this, iconCacheKey, ticket = cached.ticket](int index) {
+                 }, [this, iconCacheKey, ticket = cached.ticket](int index) {
+                    if (index < 0)
+                    {
+                        if (dockFolderIconIndexCache_.PublishFailure(iconCacheKey, ticket,
+                                std::chrono::seconds(5)))
+                        {
+                            WriteDiagnosticLogEntry((L"Dock folder icon lookup failed; retry in 5s: " +
+                                iconCacheKey).c_str(), DiagnosticLogLevel::Warning);
+                            InvalidateDockRects();
+                        }
+                        return;
+                    }
                     if (!dockFolderIconIndexCache_.Publish(iconCacheKey, ticket, index)) return;
                     InvalidateDockRects();
                 }, hwnd_, kBackgroundShellReadyMessage);
 
         }
-        DrawPlaceholderIcon(
-            ctx, sysIconIndex, iconRect, 1.0f, true);
+        if (sysIconIndex < 0 && cached.fresh)
+            DrawPrivacyFaIcon(ctx, iconRect, true);
+        else
+            DrawPlaceholderIcon(ctx, sysIconIndex, iconRect, 1.0f, true);
         if (ShouldDrawShortcutArrow(true, false))
             DrawShortcutArrowOverlay(
                 ctx, iconRect, 1.0f);

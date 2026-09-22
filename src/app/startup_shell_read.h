@@ -11,7 +11,8 @@
 namespace snowdesktop::shell_refresh
 {
 // One startup read at a time. A Shell provider can block indefinitely, so the
-// worker owns only copied input and a mailbox, never DesktopApp or its HWNDs.
+// worker owns only copied input and a mailbox, never DesktopApp. Its notification
+// HWND is cleared under the mailbox lock when the UI owner retires the reader.
 // Destroying the mailbox owner must not join that uninterruptible call.
 class StartupRead final
 {
@@ -24,16 +25,22 @@ public:
 
     bool Pending() const noexcept { return state_ != nullptr; }
 
-    bool Start(Request request)
+    bool Start(Request request, HWND window = nullptr, UINT message = 0)
     {
         if (stopped_ || state_) return false;
         try
         {
             auto state = std::make_shared<State>();
+            state->window = window;
+            state->message = message;
             request.publishDesktopItem = [state](const DesktopItem& item) {
                 auto copy = CloneReadItem(item);
                 std::lock_guard lock(state->mutex);
-                if (!state->abandoned) state->progress.push_back(std::move(copy));
+                if (!state->abandoned)
+                {
+                    state->progress.push_back(std::move(copy));
+                    state->Notify();
+                }
             };
             std::thread([state, request = std::move(request), reader = reader_] {
                 std::shared_ptr<Snapshot> result;
@@ -55,6 +62,7 @@ public:
                     if (state->abandoned) return;
                     state->result = std::move(result);
                     state->ready = true;
+                    state->Notify();
                 }
                 state->completed.notify_one();
             }).detach();
@@ -82,6 +90,7 @@ public:
         const auto state = state_;
         if (!state) return {};
         std::lock_guard lock(state->mutex);
+        state->notificationPending = false;
         return std::exchange(state->progress, {});
     }
 
@@ -92,6 +101,7 @@ public:
         if (!state) return;
         std::lock_guard lock(state->mutex);
         state->abandoned = true;
+        state->window = nullptr;
         state->result.reset();
         state->progress.clear();
     }
@@ -102,6 +112,16 @@ private:
         std::mutex mutex;
         std::condition_variable completed;
         bool ready = false, abandoned = false;
+        HWND window = nullptr;
+        UINT message = 0;
+        bool notificationPending = false;
+        // Called with mutex held. Coalesce progress into one queued message;
+        // the existing interaction fence and maintenance timer remain in force.
+        void Notify()
+        {
+            if (!notificationPending && window && message)
+                notificationPending = PostMessageW(window, message, 0, 0) != FALSE;
+        }
         std::shared_ptr<Snapshot> result;
         std::vector<DesktopItem> progress;
     };

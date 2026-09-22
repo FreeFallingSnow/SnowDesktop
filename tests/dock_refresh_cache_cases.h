@@ -79,4 +79,31 @@ void CheckDockRefreshContinuity()
     icons.Invalidate();
     Check(icons.Read(folderKey).value == 42 && !icons.Read(folderKey).fresh,
         "folder revalidation keeps its icon instead of flashing a placeholder");
+
+    const Cache<int>::Clock::time_point now{};
+    const auto retryDelay = std::chrono::seconds(5);
+    Cache<int> failedIcons;
+    const auto request = failedIcons.Read(folderKey, {}, now);
+    Check(failedIcons.PublishFailure(folderKey, request.ticket, retryDelay, now),
+        "a failed mapped-folder icon lookup is recorded without caching index -1");
+    const auto waiting = failedIcons.Read(folderKey, {}, now + std::chrono::seconds(4));
+    Check(waiting.fresh && !waiting.value && waiting.ticket == request.ticket,
+        "failure enables a folder fallback and throttles redraw-driven retries");
+    const auto retry = failedIcons.Read(folderKey, {}, now + retryDelay);
+    Check(!retry.fresh && retry.ticket != request.ticket,
+        "the mapped-folder entry retries after failure instead of showing loading dots forever");
+    Check(!failedIcons.PublishFailure(folderKey, request.ticket, retryDelay, now),
+        "a late failure cannot postpone a newer mapped-folder icon request");
+    failedIcons.Publish(folderKey, retry.ticket, 7);
+    const auto recovered = failedIcons.Read(folderKey, {}, now + std::chrono::seconds(30));
+    Check(recovered.fresh && recovered.value == 7,
+        "a successful retry replaces fallback and clears the retry deadline");
+    failedIcons.Invalidate();
+    const auto refreshIcon = failedIcons.Read(folderKey, {}, now);
+    failedIcons.PublishFailure(folderKey, refreshIcon.ticket, retryDelay, now);
+    Check(failedIcons.Read(folderKey, {}, now).value == 7,
+        "a failed refresh retains the last working folder icon");
+    failedIcons.Retain([](const auto&) { return false; });
+    Check(!failedIcons.PublishFailure(folderKey, refreshIcon.ticket, retryDelay, now),
+        "a removed folder rejects its late failure");
 }

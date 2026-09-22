@@ -1,12 +1,26 @@
 #pragma once
 
 #include "../types.h"
+#include "../shortcut_application_rules.h"
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace snowdesktop::shell_refresh
 {
+// Membership-only startup labels cannot wait for Shell metadata. Hide shortcut
+// suffixes immediately, while keeping parsing names and layout identities intact.
+inline std::wstring LocalDesktopDisplayName(std::wstring_view path, bool directory)
+{
+    const auto separator = path.find_last_of(L"\\/");
+    auto name = separator == std::wstring_view::npos ? path : path.substr(separator + 1);
+    if (!directory && name.size() > 4 &&
+        (shortcut_application_rules::HasExtension(name, L".lnk") ||
+            shortcut_application_rules::HasExtension(name, L".url")))
+        name.remove_suffix(4);
+    return std::wstring(name);
+}
+
 // Access time is deliberately excluded: reading metadata can change it.
 struct FileStamp
 {

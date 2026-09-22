@@ -133,6 +133,34 @@ void TestFolderShellSubscriptions()
                 QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
     };
+    // Startup registers before desktopPidl_ exists. A null registration used to
+    // observe this application's own log writes and retire every completed read.
+    // Keep a wildcard control to prove that Shell really delivered the event.
+    std::vector<std::optional<ShellChangeNotification>> globalNotifications;
+    const HWND globalWindow = CreateWindowExW(0, className, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, windowClass.hInstance, &globalNotifications);
+    const SHChangeNotifyEntry globalEntry{nullptr, FALSE};
+    const auto globalId = SHChangeNotifyRegister(globalWindow,
+        SHCNRF_ShellLevel | SHCNRF_NewDelivery, SHCNE_UPDATEITEM,
+        message, 1, &globalEntry);
+    const auto desktopId = RegisterDesktopShellNotifications(window, message, nullptr, nullptr);
+    Check(globalWindow && globalId && desktopId, "startup notification scope fixtures register successfully");
+    const auto unrelatedLog = (root / L"SnowDesktop.log").wstring();
+    { std::ofstream(unrelatedLog) << "isolated application log"; }
+    const auto containsLog = [&](const auto& changes) {
+        return std::any_of(changes.begin(), changes.end(), [&](const auto& change) {
+            return change && FolderKey(change->source) == FolderKey(unrelatedLog);
+        });
+    };
+    SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSH, unrelatedLog.c_str(), nullptr);
+    Check(waitFor([&] { return containsLog(globalNotifications); }),
+        "wildcard control receives the unrelated log update");
+    Check(!containsLog(notifications),
+        "startup desktop subscription excludes unrelated log writes before its first snapshot");
+    if (desktopId) SHChangeNotifyDeregister(desktopId);
+    if (globalId) SHChangeNotifyDeregister(globalId);
+    if (globalWindow) DestroyWindow(globalWindow);
+    notifications.clear();
     std::vector<std::wstring> added;
     auto syncUntil = [&](const std::vector<std::wstring>& paths, size_t count) {
         added.clear();

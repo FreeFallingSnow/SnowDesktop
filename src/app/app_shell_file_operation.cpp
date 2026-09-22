@@ -741,18 +741,20 @@ void DesktopApp::StartInitialShellRead()
     const auto revision = shellRefreshRevision_.Begin();
     if (!revision) return;
     initialShellReadRevision_ = *revision;
+    const HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
     for (size_t i = 0; i < std::size(initialLocalReads_); ++i)
     {
         if (initialLocalReads_[i].Pending()) continue;
         initialLocalReadRevisions_[i] = *revision;
-        initialLocalReads_[i].Start(BuildShellRefreshRequest());
+        initialLocalReads_[i].Start(BuildShellRefreshRequest(), completionWindow,
+            kBackgroundShellReadyMessage);
     }
     auto request = BuildShellRefreshRequest();
     RequestFolderRefresh(request.folders);
     QueueDockPathChecks(request.dockPaths);
     request.folders.clear();
     request.dockPaths.clear();
-    if (!initialShellRead_.Start(std::move(request)))
+    if (!initialShellRead_.Start(std::move(request), completionWindow, kBackgroundShellReadyMessage))
     {
         shellRefreshRevision_.Finish(*revision);
         WriteDiagnosticLogEntry(L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);
@@ -790,7 +792,8 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
             // Local changes can still refresh while the virtual namespace is
             // blocked. Never wait for that older root read to retire first.
             initialLocalReadRevisions_[i] = shellRefreshRevision_.Current();
-            reader.Start(BuildShellRefreshRequest());
+            const HWND completionWindow = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
+            reader.Start(BuildShellRefreshRequest(), completionWindow, kBackgroundShellReadyMessage);
         }
     }
     auto shellItems = initialShellRead_.TakeProgress();
@@ -816,6 +819,11 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
     if (!snapshot) return;
     if (!shellRefreshRevision_.Finish(initialShellReadRevision_))
     {
+        const auto message = L"Startup Shell snapshot superseded: readRevision=" +
+            std::to_wstring(initialShellReadRevision_) + L" currentRevision=" +
+            std::to_wstring(shellRefreshRevision_.Current()) + L" items=" +
+            std::to_wstring(snapshot->desktopItems.size());
+        WriteDiagnosticLogEntry(message.c_str());
         StartInitialShellRead();
         return;
     }

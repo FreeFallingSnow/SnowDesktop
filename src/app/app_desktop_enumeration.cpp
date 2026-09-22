@@ -238,7 +238,8 @@ static bool ReadDesktopSource(
         item.childPidl.reset(reinterpret_cast<PIDLIST_ABSOLUTE>(child));
         item.parsingName = std::move(parsingName);
         item.desktopIconClsid = std::move(clsid);
-        item.name = basicMetadata ? std::filesystem::path(item.parsingName).filename().wstring()
+        item.name = basicMetadata ? LocalDesktopDisplayName(item.parsingName,
+                        hasAttributes && (fileAttributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
                     : info.szDisplayName[0]
                         ? info.szDisplayName
                         : shellCalls::Call(

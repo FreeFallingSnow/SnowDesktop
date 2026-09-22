@@ -374,11 +374,23 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         }
         return result;
     };
-    auto apply = [this, key](std::shared_ptr<IconLoadResult> result) {
+    auto apply = [this, key, queuedAt](std::shared_ptr<IconLoadResult> result) {
         if (!result) { iconLoaderPendingKeys_.erase(key); return false; }
         auto delivered = new IconLoadResult(*result);
         result->bitmap = nullptr;
-        return OnIconLoaded(0, reinterpret_cast<LPARAM>(delivered));
+        const auto beforeApply = GetTickCount64();
+        const bool accepted = OnIconLoaded(0, reinterpret_cast<LPARAM>(delivered));
+        if (!result->isDesktopItem && result->phase == IconLoadPhase::Phase1 &&
+            (beforeApply - queuedAt >= 250 || !accepted))
+        {
+            const auto message = L"Folder first icon delivery: totalMs=" +
+                std::to_wstring(beforeApply - queuedAt) + L" applyMs=" +
+                std::to_wstring(GetTickCount64() - beforeApply) + L" accepted=" +
+                std::to_wstring(accepted ? 1 : 0) + L" widget=" + result->widgetId +
+                L" path=" + result->folderPath;
+            WriteDiagnosticLogEntry(message.c_str());
+        }
+        return accepted;
     };
     bool submitted = false;
     if (input->phase == IconLoadPhase::Phase1)

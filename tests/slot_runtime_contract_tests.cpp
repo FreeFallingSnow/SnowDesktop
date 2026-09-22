@@ -3082,6 +3082,7 @@ int wmain(int argc, wchar_t** argv)
     TestFolderRefreshScopeAndReads();
     TestFolderShellSubscriptions();
     TestStartupShellReadDoesNotGateReadyIcons();
+    TestStartupReadWakesConsumer();
     TestStartupDesktopMetadataDeferral();
     TestStartupIconSurvivesMetadataArrival();
     TestFirstIconsDoNotWaitForDetails();

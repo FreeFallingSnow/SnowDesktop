@@ -12,6 +12,22 @@ struct ShellChangeNotification
     std::wstring target;
 };
 
+inline ULONG RegisterDesktopShellNotifications(HWND window, UINT message,
+    PCIDLIST_ABSOLUTE desktop, PCIDLIST_ABSOLUTE recycleBin)
+{
+    // A null PIDL subscribes to every path, not to the desktop. Startup can
+    // register before its first asynchronous desktop snapshot initializes it.
+    const ITEMIDLIST desktopRoot{};
+    const SHChangeNotifyEntry entries[] = {
+        {desktop ? desktop : &desktopRoot, FALSE}, {recycleBin, TRUE}};
+    return SHChangeNotifyRegister(window,
+        SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
+        SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
+            SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
+            SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
+        message, recycleBin ? 2 : 1, entries);
+}
+
 inline std::optional<ShellChangeNotification> ReadShellChangeNotification(
     WPARAM wp, LPARAM lp)
 {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -15,6 +16,7 @@ template<class Value>
 class Cache
 {
 public:
+    using Clock = std::chrono::steady_clock;
     struct Lookup
     {
         std::optional<Value> value;
@@ -23,15 +25,18 @@ public:
         bool sameSourceVersion = false;
     };
 
-    Lookup Read(const std::wstring& key, const std::wstring& version = {})
+    Lookup Read(const std::wstring& key, const std::wstring& version = {},
+        Clock::time_point now = Clock::now())
     {
         auto& entry = entries_[key];
-        if (entry.generation != generation_ || entry.requestVersion != version)
+        if (entry.generation != generation_ || entry.requestVersion != version ||
+            (entry.retryAt && now >= *entry.retryAt))
         {
             entry.generation = generation_;
             entry.requestVersion = version;
             entry.ticket = ++ticket_;
             entry.fresh = false;
+            entry.retryAt.reset();
         }
         return {entry.value, entry.ticket, entry.fresh,
             entry.value && entry.valueVersion == version};
@@ -47,6 +52,21 @@ public:
         entry.value = std::move(value);
         entry.valueVersion = entry.requestVersion;
         entry.fresh = true;
+        entry.retryAt.reset();
+        return true;
+    }
+
+    // Failed Shell queries are not durable metadata. Keep a previously valid
+    // icon while throttling retries, and reject failures from retired requests.
+    bool PublishFailure(const std::wstring& key, std::uint64_t ticket,
+        std::chrono::milliseconds delay, Clock::time_point now = Clock::now())
+    {
+        const auto found = entries_.find(key);
+        if (found == entries_.end() || found->second.generation != generation_ ||
+            found->second.ticket != ticket)
+            return false;
+        found->second.fresh = true;
+        found->second.retryAt = now + delay;
         return true;
     }
 
@@ -67,6 +87,7 @@ private:
         std::uint64_t generation = 0;
         std::uint64_t ticket = 0;
         bool fresh = false;
+        std::optional<Clock::time_point> retryAt;
     };
     std::unordered_map<std::wstring, Entry> entries_;
     std::uint64_t generation_ = 1;
