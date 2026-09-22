@@ -602,7 +602,7 @@
 ---@field storageKey string Persistent storage key, 1..128 UTF-8 bytes.
 ---@field shape SnowTextControlShape Positive logical bounds submitted during render.
 ---@field placeholder? string Up to 4096 UTF-8 bytes.
----@field fontSize? number 9..96 logical pixels.
+---@field fontSize? number Finite positive logical pixels; the host clamps rendering to 9..96. Defaults to 15.
 ---@field textColor? integer RGB color.
 ---@field placeholderColor? integer RGB color.
 ---@field backgroundColor? integer RGB color.

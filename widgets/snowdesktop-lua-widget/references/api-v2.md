@@ -1592,8 +1592,12 @@ local value = control.textArea({
 placeholderColor/backgroundColor/borderColor/focusedBorderColor/backgroundAlpha/
 focusedBackgroundAlpha/borderAlpha/focusedBorderAlpha/radius/padding/
 borderThickness/selectAll/liveUpdate/maxBytes`。shape 只接受正尺寸 `rect`；key 和
-storageKey 是 1–128 字节有效 UTF-8。颜色是 `0xRRGGBB`，alpha 是 0–1，字号范围
-9–96。单行 `maxBytes` 默认 4096，多行默认 65536，允许范围 1–65536；粘贴、普通
+storageKey 是 1–128 字节有效 UTF-8。颜色是 `0xRRGGBB`，alpha 是 0–1。`fontSize`
+省略时默认为 15；传入时必须是有限正数，宿主在渲染前统一限制到 9–96 逻辑像素。
+组件可直接传入按行高、页面和用户偏好缩放后的字号；低于 9 或高于 96 的有限正数
+不会使组件报错，0、负数、NaN、无穷及非数字仍会被拒绝。此行为从包含该调整的宿主
+构建起生效；旧宿主仍要求传入 9–96，不能仅凭同一个开发版本号判断是否支持。
+单行 `maxBytes` 默认 4096，多行默认 65536，允许范围 1–65536；粘贴、普通
 输入和 IME 提交按编辑后的最终 UTF-8 大小原子接受或拒绝，不会先删除选择再留下
 半次修改。旧存储若已经超限仍可删除内容，宿主不会静默截断。
 

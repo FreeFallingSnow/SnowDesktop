@@ -567,6 +567,90 @@ void Write(const std::filesystem::path& path, std::string_view text)
     Check(static_cast<bool>(output), "preview fixture is written");
 }
 
+// Exercise both public controls through the real Lua validator and renderer.
+// The 8.4 case reproduces 70% font scaling in sticky-note and reminders.
+void TestTextControlFontSizing(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root)
+{
+    const auto source = root / L"text-control-font-widget";
+    Check(std::filesystem::create_directory(source),
+        "text control font fixture directory is created");
+    Write(source / L"widget.json", R"json({
+        "schemaVersion":2,"apiVersion":2,"dataVersion":1,
+        "id":"11f80e20-5e87-4615-979c-406077f94489",
+        "slug":"text-control-font-fixture","version":"1.0.0",
+        "entry":"main.lua","minHostVersion":"1.0.5.0",
+        "name":"Text control font regression",
+        "description":"Exercises scaled font sizes through both editors.",
+        "author":"SnowDesktop","license":"MIT",
+        "defaultSize":{"columns":4,"rows":3},
+        "requiredFeatures":["draw.immediate","control.textInput","control.textArea"]
+    })json");
+    Write(source / L"main.lua", R"lua(
+return widget.define({
+    useCustomStyle = true,
+    followPersonalizationDefault = false,
+    bg = 0x20242C, alpha = 1, borderAlpha = 0,
+    glassEnabled = false,
+    render = function()
+        local function spec(key, y, size)
+            return {
+                key = key, storageKey = key,
+                shape = { type = "rect", x = 8, y = y, width = 350, height = 150 },
+                fontSize = size, textColor = 0xFFFFFF,
+                backgroundAlpha = 0, borderAlpha = 0,
+            }
+        end
+        local size = tonumber(storage.get("fontSize"))
+        assert(control.textInput(spec("single", 8, size)) == "Abc 123")
+        assert(control.textArea(spec("multi", 170, size)) == "Abc 123")
+        if storage.get("checkInvalid") == "1" then
+            for _, api in ipairs({control.textInput, control.textArea}) do
+                for _, invalid in ipairs({0, -1, math.huge, -math.huge, 0/0, "12", false, {}}) do
+                    local accepted, message = pcall(api, spec("invalid", 8, invalid))
+                    assert(not accepted and string.find(message, "fontSize", 1, true),
+                        "invalid fontSize must be rejected by the public control API")
+                end
+            end
+        end
+    end,
+})
+)lua");
+    const auto render = [&](const wchar_t* name, const wchar_t* size,
+                            bool checkInvalid = false) {
+        const auto output = root / name;
+        const auto [exit, json] = Run(snowwidget, {
+            L"preview", source.wstring(), output.wstring(),
+            L"--storage", std::wstring(L"fontSize=") + size,
+            L"--storage", L"single=Abc 123",
+            L"--storage", L"multi=Abc 123",
+            L"--storage", checkInvalid ? L"checkInvalid=1" : L"checkInvalid=0",
+            L"--host", host.wstring() });
+        if (exit != 0) std::cerr << json << '\n';
+        Check(exit == 0 && json.find("\"ok\":true") != std::string::npos,
+            "finite positive font sizes render through both public text controls");
+        return ReadPng(output);
+    };
+    const auto minimum = render(L"font-minimum.png", L"9", true);
+    const auto scaledSmall = render(L"font-scaled-small.png", L"8.4");
+    const auto tiny = render(L"font-tiny.png", L"1e-300");
+    Check(scaledSmall.pixels == minimum.pixels && tiny.pixels == minimum.pixels,
+        "both editors render positive sizes below nine exactly like size nine");
+    const auto maximum = render(L"font-maximum.png", L"96");
+    const auto large = render(L"font-scaled-large.png", L"120");
+    const auto huge = render(L"font-huge.png", L"1e300");
+    Check(large.pixels == maximum.pixels && huge.pixels == maximum.pixels,
+        "both editors clamp large finite doubles before float conversion");
+    const auto defaults = render(L"font-default.png", L"");
+    const auto fifteen = render(L"font-fifteen.png", L"15");
+    const auto normal = render(L"font-normal.png", L"24");
+    Check(defaults.pixels == fifteen.pixels,
+        "omitted editor font size preserves the default size fifteen");
+    Check(normal.pixels != minimum.pixels &&
+            normal.pixels != maximum.pixels && normal.pixels != fifteen.pixels,
+        "in-range editor font sizes retain their distinct rendered scale");
+}
+
 std::filesystem::path CreateEnvironmentFixture(
     const std::filesystem::path& root)
 {
@@ -949,6 +1033,7 @@ int wmain(int argc, wchar_t** argv) try
         "SnowDesktop preview host exists");
 
     TemporaryDirectory temporary;
+    TestTextControlFontSizing(snowwidget, host, temporary.path);
     const auto tooltipRoot = temporary.path / L"tooltip";
     std::filesystem::create_directory(tooltipRoot);
     TestImmediateTooltip(host, tooltipRoot);

@@ -7631,7 +7631,8 @@ static int lua_UiTextInput(lua_State* L)
     };
 
     const std::string placeholder = stringOption("placeholder", "");
-    const float fontSize = std::clamp(static_cast<float>(numberOption("fontSize", 15.0)), 9.0f, 96.0f);
+    const float fontSize = static_cast<float>(
+        std::clamp(numberOption("fontSize", 15.0), 9.0, 96.0));
     const int textColor = integerOption("textColor", 0xFFFFFF);
     const int placeholderColor = integerOption("placeholderColor", 0x94A3B8);
     const int backgroundColor = integerOption("backgroundColor", 0xFFFFFF);
@@ -7838,8 +7839,8 @@ static int lua_UiTextArea(lua_State* L)
     };
 
     const std::string placeholder = stringOption("placeholder", "");
-    const float fontSize = std::clamp(static_cast<float>(
-        numberOption("fontSize", 15.0)), 9.0f, 96.0f);
+    const float fontSize = static_cast<float>(
+        std::clamp(numberOption("fontSize", 15.0), 9.0, 96.0));
     const int textColor = integerOption("textColor", 0xFFFFFF);
     const int placeholderColor =
         integerOption("placeholderColor", 0x94A3B8);
@@ -8242,6 +8243,28 @@ static void ValidateOptionalControlNumber(lua_State* state, int table,
     }
 }
 
+static void ValidateOptionalControlFontSize(lua_State* state, int table,
+    const char* api)
+{
+    lua_getfield(state, lua_absindex(state, table), "fontSize");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return;
+    }
+    if (lua_type(state, -1) != LUA_TNUMBER)
+    {
+        luaL_error(state, "%s: fontSize must be a number", api);
+        return;
+    }
+    const double value = lua_tonumber(state, -1);
+    lua_pop(state, 1);
+    // Row, page, and user scaling can exceed the editor's rendering range.
+    // The editor clamps valid sizes before converting them to float.
+    if (!std::isfinite(value) || value <= 0.0)
+        luaL_error(state, "%s: fontSize must be finite and positive", api);
+}
+
 static int LuaControlText(lua_State* state, bool multiline)
 {
     const char* api = multiline
@@ -8307,8 +8330,7 @@ static int LuaControlText(lua_State* state, bool multiline)
 
     ValidateOptionalControlString(
         state, descriptor, "placeholder", 4096, api);
-    ValidateOptionalControlNumber(
-        state, descriptor, "fontSize", 9.0, 96.0, api);
+    ValidateOptionalControlFontSize(state, descriptor, api);
     for (const char* field : { "textColor", "placeholderColor",
         "backgroundColor", "borderColor", "focusedBorderColor" })
     {
