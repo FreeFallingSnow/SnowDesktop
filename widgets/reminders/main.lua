@@ -504,9 +504,6 @@ local function render(context, model)
         draw.rect(contentInset, cardY, cardW, cardH, palette.card,
             metrics.controlRadius,
             selected and 0.105 or (rowHovered and 0.08 or 0.055))
-        draw.rect(contentInset, cardY, metrics.spacingXs, cardH,
-            palette.priorities[task.priority], metrics.spacingXs / 2,
-            task.done and 0.45 or 1.0)
         if selected then
             local inset = px(1.2)
             draw.strokeRect(contentInset + inset, cardY + inset,
@@ -529,8 +526,8 @@ local function render(context, model)
         local checkboxKey = "task.toggle." .. task.id
         local checkboxHovered = interaction.isHovered(checkboxKey)
         draw.strokeRect(checkboxX, checkboxY, checkboxSize, checkboxSize,
-            palette.accent, checkboxSize / 2, px(1.5),
-            checkboxHovered and 1.0 or (task.done and 1.0 or 0.62))
+            palette.priorities[task.priority], checkboxSize / 2, px(1.5),
+            checkboxHovered and 1.0 or (task.done and 0.62 or 0.9))
         if task.done then
             local cx = checkboxX + checkboxSize / 2
             local cy = checkboxY + checkboxSize / 2
