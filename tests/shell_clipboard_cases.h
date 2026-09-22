@@ -125,6 +125,45 @@ inline void Run(const std::filesystem::path& root)
     std::filesystem::create_directories(source / L"folder");
     { std::ofstream(source / L"namespace.txt") << "namespace payload"; }
     { std::ofstream(source / L"folder" / L"child.txt") << "nested payload"; }
+    const auto pathTarget = fixture / L"path-target";
+    std::filesystem::create_directory(pathTarget);
+    for (size_t paste = 1; paste <= 2; ++paste)
+    {
+        ShellDropRequest request;
+        request.sources = {(source / L"namespace.txt").wstring(), (source / L"folder").wstring()};
+        request.targetParsingName = pathTarget.wstring();
+        request.allowedEffects = DROPEFFECT_COPY;
+        request.keyState = ClipboardShellDropKeyState(DROPEFFECT_COPY);
+        request.clipboardPaste = true;
+        HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        Check(finished != nullptr, "create local clipboard completion event");
+        struct Event { HANDLE handle; ~Event() { CloseHandle(handle); } } event{finished};
+        ShellFileOperationWorker worker;
+        std::atomic<bool> succeeded{false};
+        Check(worker.Enqueue(std::move(request), [&](bool ok) {
+            // Inspect at the actual worker completion, before another paste or
+            // any UI refresh can make a prematurely reported copy look correct.
+            size_t files = 0, folders = 0;
+            for (const auto& entry : std::filesystem::directory_iterator(pathTarget))
+            {
+                const auto file = entry.is_directory() ? entry.path() / L"child.txt" : entry.path();
+                std::ifstream input(file, std::ios::binary);
+                const std::string bytes(std::istreambuf_iterator<char>(input), {});
+                if (entry.is_directory() && bytes == "nested payload") ++folders;
+                if (!entry.is_directory() && bytes == "namespace payload") ++files;
+            }
+            succeeded = ok && files == paste && folders == paste &&
+                std::filesystem::exists(source / L"namespace.txt") &&
+                std::filesystem::exists(source / L"folder" / L"child.txt");
+            SetEvent(finished);
+        }), "queue local clipboard paste on the production worker");
+        DWORD index = 0;
+        const HRESULT waited = CoWaitForMultipleHandles(COWAIT_DISPATCH_CALLS | COWAIT_DISPATCH_WINDOW_MESSAGES,
+            15000, 1, &finished, &index);
+        Check(SUCCEEDED(waited) && succeeded,
+            "first paste finishes before completion; repeated paste preserves both batches without a conflict prompt");
+        worker.Stop();
+    }
     for (const bool virtualFiles : {false, true})
     {
         const auto target = fixture / (virtualFiles ? L"virtual-target" : L"namespace-target");

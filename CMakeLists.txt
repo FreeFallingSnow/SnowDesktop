@@ -2133,6 +2133,7 @@ if (BUILD_TESTING)
             tests/shell_file_operation_worker_tests.cpp
             src/item_location.cpp
             src/shell_file_operation_worker.cpp
+            src/external_drop_content.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32
         LABELS integration shell interaction)

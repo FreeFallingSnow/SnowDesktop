@@ -1,5 +1,6 @@
 #include "shell_file_operation_worker.h"
 #include "shell_file_operation_progress.h"
+#include "clipboard_file_operation.h"
 
 #include <objbase.h>
 #include <shellapi.h>
@@ -936,6 +937,23 @@ bool ShellFileOperationWorker::Execute(
         dataObject = CreateFileDataObject(request.sources);
     if (!dataObject)
         return finish(E_FAIL, DROPEFFECT_NONE);
+
+    if (request.clipboardPaste)
+    {
+        const auto copied = TryExecuteClipboardFileOperation(
+            dataObject.Get(), request.targetParsingName, allowedEffects,
+            [](const ShellFileOperationRequest& operation) {
+                return ShellFileOperationWorker::Execute(operation);
+            });
+        if (copied.has_value())
+        {
+            const DWORD performed = allowedEffects == DROPEFFECT_MOVE
+                ? DROPEFFECT_NONE : allowedEffects;
+            if (*copied)
+                ReportClipboardFileOperationEffect(dataObject.Get(), performed);
+            return finish(*copied ? S_OK : E_FAIL, performed);
+        }
+    }
 
     if ((allowedEffects & DROPEFFECT_COPY) != 0 &&
         request.dataObjectPreflight)

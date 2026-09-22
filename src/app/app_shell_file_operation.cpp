@@ -283,6 +283,7 @@ bool DesktopApp::QueueAsyncShellDrop(
     request.keyState = keyState;
     request.screenPoint = screenPoint;
     request.allowedEffects = effects;
+    request.clipboardPaste = allowSynchronousClipboardSource;
     request.dataObjectPreflight = std::move(dataObjectPreflight);
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),

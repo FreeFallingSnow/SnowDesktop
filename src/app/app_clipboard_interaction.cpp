@@ -332,7 +332,17 @@ bool DesktopApp::PasteClipboardToFolderPath(
         ReleaseStgMedium(&medPref);
     }
 
-    auto operationCompletion = [this, action, clipboardSequence](bool succeeded) {
+    const bool asynchronous = snowdesktop::virtual_file_drop::UsesAsyncMode(clipObj.Get());
+    const ULONGLONG pasteStarted = GetTickCount64();
+    wchar_t pasteMessage[224]{};
+    swprintf_s(pasteMessage, L"Clipboard paste begin: sequence=%lu source=%d async=%d action=%d",
+        clipboardSequence, static_cast<int>(source), asynchronous, static_cast<int>(action));
+    WriteDiagnosticLogEntry(pasteMessage);
+    auto operationCompletion = [this, action, clipboardSequence, pasteStarted](bool succeeded) {
+        wchar_t completionMessage[224]{};
+        swprintf_s(completionMessage, L"Clipboard paste completed: sequence=%lu success=%d elapsed_ms=%llu",
+            clipboardSequence, succeeded, GetTickCount64() - pasteStarted);
+        WriteDiagnosticLogEntry(completionMessage);
         if (!succeeded)
             return;
         if (action == DropAction::Move &&
@@ -351,7 +361,7 @@ bool DesktopApp::PasteClipboardToFolderPath(
     };
 
     if (source == snowdesktop::external_drop_content::ClipboardFileSource::ShellObjects ||
-        snowdesktop::virtual_file_drop::UsesAsyncMode(clipObj.Get()))
+        asynchronous)
     {
         // Keep namespace IDs and FileContents intact; a phone item cannot be
         // reduced to a local path. Shell also owns virtual folder recursion.
