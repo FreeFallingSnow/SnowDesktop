@@ -194,7 +194,9 @@ local function render()
         shape = shape,
         placeholder = l10n.tr("lua_widget.sticky_note.empty_hint"),
         placeholderWhenWhitespace = true,
-        fontSize = metrics.bodyFontSize * fontScale(),
+        -- Apply the editor's 9-96 limit after row and user scaling, including
+        -- legacy fontSize preferences and page/accessibility scaling.
+        fontSize = math.max(9, math.min(96, metrics.bodyFontSize * fontScale())),
         textColor = color,
         placeholderColor = color,
         backgroundColor = color,
