@@ -5936,7 +5936,7 @@ int main(int argc, char** argv)
              "void DesktopApp::ClearDockFolderPopupEntries()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow(",
               "RenderFloatingDockCompositionFrame(", "floatingDockBackdropCompositor_", "floatingDockHwnd_"}},
-            {"src/app/app_popup_transition.cpp", "void DesktopApp::RefreshDockFolderPopupGeometry()",
+            {"src/app/app_popup_transition.cpp", "void DesktopApp::RefreshDockFolderPopupGeometry(",
              "CommitDockFolderPopupStateToSource()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow("}},
             {"src/app/dock_platform_helpers.h", "", "", {"swThumbnailWnd", "PROME-TASKBAR"}},
