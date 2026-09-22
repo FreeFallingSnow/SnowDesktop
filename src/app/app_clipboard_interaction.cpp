@@ -357,9 +357,10 @@ bool DesktopApp::PasteClipboardToFolderPath(
         // reduced to a local path. Shell also owns virtual folder recursion.
         const bool move = action == DropAction::Move;
         const bool link = action == DropAction::Link;
+        const DWORD effect = move ? DROPEFFECT_MOVE :
+            link ? DROPEFFECT_LINK : DROPEFFECT_COPY;
         return QueueAsyncShellDrop(clipObj.Get(), targetFolderPath,
-            move ? MK_SHIFT : link ? MK_CONTROL | MK_SHIFT : MK_CONTROL, {},
-            move ? DROPEFFECT_MOVE : link ? DROPEFFECT_LINK : DROPEFFECT_COPY,
+            snowdesktop::ClipboardShellDropKeyState(effect), {}, effect,
             std::move(operationCompletion), {}, true);
     }
     const auto paths = snowdesktop::external_drop_content::ReadFilePaths(clipObj.Get());

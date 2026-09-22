@@ -11,6 +11,7 @@
 #include "collection_popup_layout.h"
 #include "folder_sort_rules.h"
 #include "shell_item_visibility.h"
+#include "shell_file_operation_worker.h"
 #include "popup_drag_rules.h"
 #include "item_layout_rules.h"
 #include "item_render_layer_rules.h"
@@ -167,6 +168,19 @@ void CheckClipboardPasteEffects()
     for (const auto& test : cases)
         Check(DropActionFromClipboardEffect(test.effect) == test.expected,
             test.message);
+}
+
+void CheckClipboardShellDropKeys()
+{
+    // Production paste uses these states for its Shell handoff. A left-button
+    // gesture avoids the extra action menu; modifiers retain copy/cut/link intent.
+    using snowdesktop::ClipboardShellDropKeyState;
+    Check(ClipboardShellDropKeyState(DROPEFFECT_COPY) == (MK_LBUTTON | MK_CONTROL),
+        "Shell clipboard copy must request a left-button copy without an action menu");
+    Check(ClipboardShellDropKeyState(DROPEFFECT_MOVE) == (MK_LBUTTON | MK_SHIFT),
+        "Shell clipboard cut must request a left-button move without an action menu");
+    Check(ClipboardShellDropKeyState(DROPEFFECT_LINK) == (MK_LBUTTON | MK_CONTROL | MK_SHIFT),
+        "Shell clipboard link must request a left-button link without an action menu");
 }
 
 void CheckTaskbarAutoHideTraceTransport()
@@ -886,6 +900,7 @@ int main(int argc, char** argv)
     CheckDockRefreshContinuity();
     CheckDesktopPassthrough();
     CheckClipboardPasteEffects();
+    CheckClipboardShellDropKeys();
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarActivationRevealDispatch();
     CheckNativeDesktopCaptureReadiness();

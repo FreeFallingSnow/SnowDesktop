@@ -154,7 +154,7 @@ inline void Run(const std::filesystem::path& root)
         Check(SUCCEEDED(CoMarshalInterThreadInterfaceInStream(IID_IDataObject, data.Get(),
             &request.marshaledDataObject)), "retain original clipboard object across apartments");
         request.targetParsingName = target.wstring();
-        request.keyState = MK_CONTROL;
+        request.keyState = ClipboardShellDropKeyState(DROPEFFECT_COPY);
         request.allowedEffects = DROPEFFECT_COPY;
         HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         Check(finished != nullptr, "create clipboard completion event");
