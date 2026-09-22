@@ -372,7 +372,9 @@ std::wstring ReadLibraryIcon(const std::wstring& path)
                 collecting = !reader->IsEmptyElement();
             }
         }
-        else if (node == XmlNodeType_EndElement && depth == 1)
+        // XmlLite reports EndElement depth before popping the closing element,
+        // one greater than the matching start node's depth.
+        else if (node == XmlNodeType_EndElement && depth == 2)
             collecting = false;
         else if (collecting && (node == XmlNodeType_Text || node == XmlNodeType_CDATA ||
             node == XmlNodeType_Whitespace))

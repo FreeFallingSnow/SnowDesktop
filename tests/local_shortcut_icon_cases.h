@@ -257,9 +257,16 @@ void CheckLocalFolderAndDocumentIcons()
         }
         void Set(const std::wstring& subkey, const std::wstring& value)
         {
-            Check(RegSetKeyValueW(root, subkey.c_str(), nullptr, REG_SZ, value.c_str(),
+            HKEY child = nullptr;
+            const auto created = RegCreateKeyExW(root, subkey.c_str(), 0, nullptr,
+                REG_OPTION_VOLATILE, KEY_SET_VALUE, nullptr, &child, nullptr);
+            Check(created == ERROR_SUCCESS, "isolated volatile registry child is created");
+            if (created != ERROR_SUCCESS) return;
+            Check(RegSetValueExW(child, nullptr, 0, REG_SZ,
+                reinterpret_cast<const BYTE*>(value.c_str()),
                 static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS,
                 "isolated registry icon fixture writes successfully");
+            RegCloseKey(child);
         }
     } registry;
     Check(registry.active, "static association test uses a private process registry view");
