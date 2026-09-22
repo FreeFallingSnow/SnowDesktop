@@ -868,7 +868,7 @@ target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
+    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
     version wbemuuid taskschd
 )
 
@@ -1987,7 +1987,7 @@ if (BUILD_TESTING)
             src/atomic_file.cpp
             src/preview_png_writer.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs winhttp ws2_32
+        LINK_LIBRARIES advapi32 ole32 shell32 shlwapi uuid windowscodecs winhttp ws2_32 xmllite
         LABELS rules shell)
 
     snowdesktop_add_test(
@@ -2011,7 +2011,7 @@ if (BUILD_TESTING)
             src/preview_png_writer.cpp
             src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
         LABELS rules shell ui)
 
     add_test(NAME large_icon_shell_assets

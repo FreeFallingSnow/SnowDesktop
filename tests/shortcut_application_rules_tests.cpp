@@ -101,6 +101,7 @@ int wmain(int argc, wchar_t** argv)
 {
     if (argc == 4 && std::wstring_view(argv[1]) == L"--website-probe") return RunWebsiteIconProbe(argv[2], argv[3]);
     CheckLocalShortcutIcons();
+    CheckLocalFolderAndDocumentIcons();
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     failures += RunWebsiteIconTests();
     if (SUCCEEDED(initialized)) CoUninitialize();

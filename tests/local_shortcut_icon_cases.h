@@ -164,3 +164,121 @@ void CheckLocalShortcutIcons()
     Check(resources::ReadLocalIconResources(url.wstring()).size() == 1,
         "Internet shortcut explicit icons also use the local path");
 }
+
+// Production cold-start failures: Downloads is a directory link; Pictures and
+// Documents target library files. First resources must not require Shell COM.
+void CheckLocalFolderAndDocumentIcons()
+{
+    namespace resources = snowdesktop::shortcut_icon_resource;
+    TemporaryDirectory temporary;
+    if (temporary.Path().empty()) { Check(false, "local folder fixture exists"); return; }
+    const auto folder = temporary.Path() / L"folder";
+    std::filesystem::create_directory(folder);
+    const auto icon = folder / L"folder.ico";
+    const auto ini = folder / L"desktop.ini";
+    WriteLinkFixture(icon, {0});
+    WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", L"folder.ico,-17", ini.c_str());
+    SetFileAttributesW(folder.c_str(), FILE_ATTRIBUTE_READONLY);
+    const auto matches = [](const auto& found, const auto& path, int index) {
+        return !found.empty() && found.front().path == path.wstring() && found.front().index == index;
+    };
+    Check(matches(resources::ReadLocalIconResources(folder.wstring()), icon, -17),
+        "a customized directory reads its relative IconResource before the generic folder icon");
+    const auto link = temporary.Path() / L"directory.lnk";
+    auto bytes = LinkHeader(0x88);
+    LinkString(bytes, L"folder", true);
+    bytes.insert(bytes.end(), 4, 0);
+    WriteLinkFixture(link, bytes);
+    Check(matches(resources::ReadLocalIconResources(link.wstring()), icon, -17),
+        "a raw directory link obtains its target icon without loading a Shell link");
+    WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", nullptr, ini.c_str());
+    WritePrivateProfileStringW(L".ShellClassInfo", L"IconFile", L"folder.ico", ini.c_str());
+    WritePrivateProfileStringW(L".ShellClassInfo", L"IconIndex", L"-9", ini.c_str());
+    Check(matches(resources::ReadLocalIconResources(folder.wstring()), icon, -9),
+        "legacy folder IconFile and IconIndex preserve a signed resource ID");
+
+    const auto library = temporary.Path() / L"pictures.library-ms";
+    const auto writeXml = [&](std::wstring_view xml) {
+        LinkFixture raw{0xff, 0xfe};
+        LinkString(raw, xml, true, false);
+        raw.resize(raw.size() - 2); // XML is length-delimited, not NUL-terminated.
+        WriteLinkFixture(library, raw);
+        return resources::ReadLocalIconResources(library.wstring());
+    };
+    const std::wstring start = L"<l:libraryDescription xmlns:l=\"http://schemas.microsoft.com/windows/2009/library\">";
+    const std::wstring reference = L"<l:iconReference>" + icon.wstring() + L",-23</l:iconReference>";
+    const std::wstring end = L"</l:libraryDescription>";
+    Check(matches(writeXml(start + reference +
+        L"<l:searchConnectorDescriptionList><l:url>\\\\unavailable.invalid\\share</l:url></l:searchConnectorDescriptionList>" + end), icon, -23),
+        "a namespaced UTF-16 library selects its icon without following remote library locations");
+    bytes = LinkHeader(0x88);
+    LinkString(bytes, L"pictures.library-ms", true);
+    bytes.insert(bytes.end(), 4, 0);
+    WriteLinkFixture(link, bytes);
+    Check(matches(resources::ReadLocalIconResources(link.wstring()), icon, -23),
+        "the production raw link reader reaches a library's declared first image");
+    const std::string utf8 = "<libraryDescription xmlns=\"http://schemas.microsoft.com/windows/2009/library\">"
+        "<iconReference>imageres.dll,-1003</iconReference></libraryDescription>";
+    WriteLinkFixture(library, LinkFixture(utf8.begin(), utf8.end()));
+    wchar_t system[MAX_PATH]{};
+    GetSystemDirectoryW(system, MAX_PATH);
+    const auto systemIcon = std::filesystem::path(system) / L"imageres.dll";
+    Check(matches(resources::ReadLocalIconResources(library.wstring()), systemIcon, -1003),
+        "a bare system library resource resolves only inside System32");
+    Check(writeXml(start + reference + reference + end).empty() &&
+        writeXml(start + reference).empty() &&
+        writeXml(L"<!DOCTYPE l:libraryDescription [<!ENTITY x SYSTEM 'file:///unavailable'>]>" +
+            start + L"<l:iconReference>&x;</l:iconReference>" + end).empty() &&
+        writeXml(L"<libraryDescription>" + reference + L"</libraryDescription>").empty() &&
+        writeXml(start + L"<l:iconReference>\\\\unavailable.invalid\\icon.ico,0</l:iconReference>" + end).empty(),
+        "ambiguous, truncated, foreign-namespace, DTD and remote library icons safely miss the local lane");
+    WriteLinkFixture(library, LinkFixture(1024 * 1024 + 1, ' '));
+    Check(resources::ReadLocalIconResources(library.wstring()).empty(),
+        "oversized library files are rejected before XML parsing");
+
+    // Per-process HKCR override keeps association fixtures away from real file
+    // associations. Only this unique volatile test key is written and removed.
+    struct RegistryFixture
+    {
+        std::wstring key = L"Software\\SnowDesktopIconTest_" + std::to_wstring(GetCurrentProcessId()) +
+            L"_" + std::to_wstring(GetTickCount64());
+        HKEY root = nullptr;
+        bool active = false;
+        RegistryFixture()
+        {
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, nullptr, REG_OPTION_VOLATILE,
+                KEY_ALL_ACCESS, nullptr, &root, nullptr) == ERROR_SUCCESS)
+                active = RegOverridePredefKey(HKEY_CLASSES_ROOT, root) == ERROR_SUCCESS;
+        }
+        ~RegistryFixture()
+        {
+            if (active) RegOverridePredefKey(HKEY_CLASSES_ROOT, nullptr);
+            if (root) { RegCloseKey(root); RegDeleteTreeW(HKEY_CURRENT_USER, key.c_str()); }
+        }
+        void Set(const std::wstring& subkey, const std::wstring& value)
+        {
+            Check(RegSetKeyValueW(root, subkey.c_str(), nullptr, REG_SZ, value.c_str(),
+                static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS,
+                "isolated registry icon fixture writes successfully");
+        }
+    } registry;
+    Check(registry.active, "static association test uses a private process registry view");
+    if (!registry.active) return;
+    const auto extension = L".sdicon" + std::to_wstring(GetCurrentProcessId());
+    const auto document = temporary.Path() / (L"document" + extension);
+    WriteLinkFixture(document, {0});
+    registry.Set(extension, L"SnowDesktop.TestDocument");
+    registry.Set(L"SnowDesktop.TestDocument\\DefaultIcon", icon.wstring() + L",-31");
+    Check(matches(resources::ReadLocalIconResources(document.wstring()), icon, -31),
+        "an ordinary document gets its static type icon without an association provider");
+    registry.Set(L"SnowDesktop.TestDocument\\DefaultIcon", L"%1");
+    Check(resources::ReadLocalIconResources(document.wstring()).empty(),
+        "a per-file dynamic icon is not interpreted as a static resource");
+    registry.Set(L"SnowDesktop.TestDocument\\DefaultIcon", L"\\\\unavailable.invalid\\icon.ico,0");
+    Check(resources::ReadLocalIconResources(document.wstring()).empty(),
+        "a remote type icon never enters resource extraction on the local lane");
+    registry.Set(L"Folder\\DefaultIcon", icon.wstring() + L",-5");
+    SetFileAttributesW(folder.c_str(), FILE_ATTRIBUTE_NORMAL);
+    Check(matches(resources::ReadLocalIconResources(folder.wstring()), icon, -5),
+        "an ordinary directory uses its registered first icon and ignores inactive desktop.ini customization");
+}

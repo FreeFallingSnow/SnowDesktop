@@ -4,6 +4,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
+#include <xmllite.h>
 #include "shortcut_application_rules.h"
 
 #include <climits>
@@ -239,7 +240,7 @@ bool ParseLocalLink(LinkBytes bytes, LocalLinkHints& hints)
 // Reject network drives, device/ADS paths and reparse/offline ancestors before
 // opening a file. This is a conservative performance filter, not a security
 // boundary against concurrent filesystem changes or slow local filter drivers.
-std::wstring LocalFile(std::wstring path)
+std::wstring LocalFile(std::wstring path, DWORD* attributes = nullptr)
 {
     if (path.size() < 3 || path[1] != L':' || (path[2] != L'\\' && path[2] != L'/') ||
         path.find(L':', 2) != std::wstring::npos || path.find(L'\0') != std::wstring::npos)
@@ -259,12 +260,17 @@ std::wstring LocalFile(std::wstring path)
         if (attrs == INVALID_FILE_ATTRIBUTES ||
             (attrs & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
                 FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS))) return {};
-        if (end == path.size() && (attrs & FILE_ATTRIBUTE_DIRECTORY)) return {};
+        if (end == path.size())
+        {
+            if (attributes) *attributes = attrs;
+            else if (attrs & FILE_ATTRIBUTE_DIRECTORY) return {};
+        }
     }
     return path;
 }
 
-std::vector<std::uint8_t> ReadLinkFile(const std::wstring& path)
+std::vector<std::uint8_t> ReadLocalBytes(const std::wstring& path,
+    DWORD minimum = 1, DWORD maximum = 1024 * 1024)
 {
     struct File
     {
@@ -278,13 +284,159 @@ std::vector<std::uint8_t> ReadLinkFile(const std::wstring& path)
     if (!GetFileInformationByHandle(file.handle, &info) ||
         (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
             FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)) ||
-        info.nFileSizeHigh || info.nFileSizeLow < 0x4c || info.nFileSizeLow > 1024 * 1024)
+        info.nFileSizeHigh || info.nFileSizeLow < minimum || info.nFileSizeLow > maximum)
         return {};
     std::vector<std::uint8_t> bytes(info.nFileSizeLow);
     DWORD read = 0;
     if (!ReadFile(file.handle, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) ||
         read != bytes.size()) return {};
     return bytes;
+}
+
+std::wstring RegistryText(HKEY root, const std::wstring& key, const wchar_t* value = nullptr)
+{
+    std::array<wchar_t, 32768> text{};
+    DWORD bytes = static_cast<DWORD>(text.size() * sizeof(wchar_t));
+    if (RegGetValueW(root, key.c_str(), value, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ |
+            RRF_NOEXPAND, nullptr, text.data(), &bytes) != ERROR_SUCCESS) return {};
+    return text.data();
+}
+
+void AddLocalResource(std::vector<IconResourceLocation>& result,
+    const std::wstring& source, std::wstring value, int index, bool systemName = false)
+{
+    value = ExpandIconPath(value);
+    // Library iconReference commonly names imageres.dll without a directory.
+    // Look only in System32, never search the current directory or PATH.
+    if (systemName && value.find_first_of(L"\\/:") == std::wstring::npos)
+    {
+        std::array<wchar_t, MAX_PATH> system{};
+        const auto length = GetSystemDirectoryW(system.data(), static_cast<UINT>(system.size()));
+        if (!length || length >= system.size()) return;
+        value = std::wstring(system.data()) + L"\\" + value;
+    }
+    value = LocalFile(ResolveRelativeIconPath(source, std::move(value)));
+    if (!value.empty()) result.push_back({std::move(value), index});
+}
+
+void AddIconReference(std::vector<IconResourceLocation>& result,
+    const std::wstring& source, std::wstring value, bool systemName = false)
+{
+    if (value.empty()) return;
+    const int index = PathParseIconLocationW(value.data());
+    value.resize(std::wcslen(value.c_str()));
+    AddLocalResource(result, source, std::move(value), index, systemName);
+}
+
+std::wstring ReadLibraryIcon(const std::wstring& path)
+{
+    const auto bytes = ReadLocalBytes(path);
+    if (bytes.empty()) return {};
+    Microsoft::WRL::ComPtr<IStream> stream;
+    stream.Attach(SHCreateMemStream(bytes.data(), static_cast<UINT>(bytes.size())));
+    Microsoft::WRL::ComPtr<IXmlReader> reader;
+    if (!stream || FAILED(CreateXmlReader(IID_PPV_ARGS(&reader), nullptr)) ||
+        FAILED(reader->SetProperty(XmlReaderProperty_DtdProcessing, DtdProcessing_Prohibit)) ||
+        FAILED(reader->SetProperty(XmlReaderProperty_MaxElementDepth, 32)) ||
+        FAILED(reader->SetInput(stream.Get()))) return {};
+    // Parse bounded in-memory XML only. Never bind a library or follow its
+    // searchConnectorDescription / knownfolder / network locations.
+    constexpr std::wstring_view libraryNamespace =
+        L"http://schemas.microsoft.com/windows/2009/library";
+    bool root = false, collecting = false, found = false;
+    std::wstring icon;
+    XmlNodeType node{};
+    HRESULT hr = S_OK;
+    while ((hr = reader->Read(&node)) == S_OK)
+    {
+        UINT depth = 0;
+        if (FAILED(reader->GetDepth(&depth))) return {};
+        if (node == XmlNodeType_Element)
+        {
+            if (collecting) return {};
+            const wchar_t* name = nullptr;
+            const wchar_t* space = nullptr;
+            if (FAILED(reader->GetLocalName(&name, nullptr)) ||
+                FAILED(reader->GetNamespaceUri(&space, nullptr))) return {};
+            if (depth == 0)
+            {
+                if (root || std::wstring_view(name) != L"libraryDescription" ||
+                    std::wstring_view(space) != libraryNamespace) return {};
+                root = true;
+            }
+            else if (depth == 1 && std::wstring_view(name) == L"iconReference" &&
+                std::wstring_view(space) == libraryNamespace)
+            {
+                if (found) return {};
+                found = true;
+                collecting = !reader->IsEmptyElement();
+            }
+        }
+        else if (node == XmlNodeType_EndElement && depth == 1)
+            collecting = false;
+        else if (collecting && (node == XmlNodeType_Text || node == XmlNodeType_CDATA ||
+            node == XmlNodeType_Whitespace))
+        {
+            const wchar_t* value = nullptr;
+            UINT count = 0;
+            if (FAILED(reader->GetValue(&value, &count)) || icon.size() + count > 32767) return {};
+            icon.append(value, count);
+        }
+    }
+    return hr == S_FALSE && root && !collecting ? std::wstring(Trim(icon)) : std::wstring{};
+}
+
+void AddLocalTargetResources(std::vector<IconResourceLocation>& result,
+    const std::wstring& source, std::wstring target)
+{
+    namespace rules = shortcut_application_rules;
+    DWORD attributes = 0;
+    target = LocalFile(ResolveRelativeIconPath(source, ExpandIconPath(target)), &attributes);
+    if (target.empty()) return;
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY)
+    {
+        const auto ini = LocalFile(target + L"\\desktop.ini");
+        if ((attributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM)) &&
+            !ini.empty() && !ReadLocalBytes(ini, 1, 65536).empty())
+        {
+            std::array<wchar_t, 32768> value{};
+            GetPrivateProfileStringW(L".ShellClassInfo", L"IconResource", L"",
+                value.data(), static_cast<DWORD>(value.size()), ini.c_str());
+            AddIconReference(result, ini, value.data());
+            if (result.empty())
+            {
+                GetPrivateProfileStringW(L".ShellClassInfo", L"IconFile", L"",
+                    value.data(), static_cast<DWORD>(value.size()), ini.c_str());
+                std::array<wchar_t, 64> index{};
+                GetPrivateProfileStringW(L".ShellClassInfo", L"IconIndex", L"0",
+                    index.data(), static_cast<DWORD>(index.size()), ini.c_str());
+                if (value[0]) AddLocalResource(result, ini, value.data(), ParseIconIndex(index.data()));
+            }
+        }
+        AddIconReference(result, target, RegistryText(HKEY_CLASSES_ROOT, L"Folder\\DefaultIcon"), true);
+    }
+    else if (rules::HasExtension(target, L".exe") || rules::HasExtension(target, L".ico"))
+        result.push_back({std::move(target), 0});
+    else if (rules::HasExtension(target, L".library-ms"))
+        AddIconReference(result, target, ReadLibraryIcon(target), true);
+    else
+    {
+        // Static per-type first image, without association APIs, icon handlers or
+        // opening the document. Dynamic %1 resources stay on the Shell lane.
+        const auto dot = target.find_last_of(L'.');
+        const auto slash = target.find_last_of(L"\\/");
+        if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash)) return;
+        const auto extension = target.substr(dot);
+        if (extension.size() > 64 || rules::HasExtension(target, L".lnk") ||
+            rules::HasExtension(target, L".url")) return;
+        auto progId = RegistryText(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" +
+                extension + L"\\UserChoice", L"ProgId");
+        if (progId.empty()) progId = RegistryText(HKEY_CLASSES_ROOT, extension);
+        if (progId.find_first_of(L"\\/") != std::wstring::npos) return;
+        const auto key = progId.empty() ? extension : progId;
+        AddIconReference(result, target, RegistryText(HKEY_CLASSES_ROOT, key + L"\\DefaultIcon"), true);
+    }
 }
 } // namespace
 
@@ -365,36 +517,29 @@ std::vector<IconResourceLocation> ReadLocalIconResources(std::wstring_view sourc
 {
     namespace rules = shortcut_application_rules;
     std::vector<IconResourceLocation> result;
-    // Do not touch arbitrary document/folder paths on the local image lane.
     const bool link = rules::HasExtension(sourcePath, L".lnk");
     const bool url = rules::HasExtension(sourcePath, L".url");
-    if (!link && !url && !rules::HasExtension(sourcePath, L".exe") &&
-        !rules::HasExtension(sourcePath, L".ico")) return result;
+    if (!link && !url)
+    {
+        AddLocalTargetResources(result, std::wstring(sourcePath), std::wstring(sourcePath));
+        return result;
+    }
     const auto path = LocalFile(std::wstring(sourcePath));
     if (path.empty()) return result;
-    const auto add = [&](std::wstring value, int index, bool target) {
-        value = ResolveRelativeIconPath(path, ExpandIconPath(value));
-        if (target && !rules::HasExtension(value, L".exe") &&
-            !rules::HasExtension(value, L".ico")) return;
-        value = LocalFile(std::move(value));
-        if (!value.empty()) result.push_back({std::move(value), index});
-    };
     if (link)
     {
-        const auto bytes = ReadLinkFile(path);
+        const auto bytes = ReadLocalBytes(path, 0x4c);
         LocalLinkHints hints;
         if (!ParseLocalLink({bytes}, hints)) return result;
-        if (!hints.icon.empty()) add(std::move(hints.icon), hints.index, false);
-        if (!hints.target.empty()) add(std::move(hints.target), 0, true);
-        else if (!hints.relative.empty()) add(std::move(hints.relative), 0, true);
+        if (!hints.icon.empty()) AddLocalResource(result, path, std::move(hints.icon), hints.index);
+        if (!hints.target.empty()) AddLocalTargetResources(result, path, std::move(hints.target));
+        else if (!hints.relative.empty()) AddLocalTargetResources(result, path, std::move(hints.relative));
     }
     else if (url)
     {
         if (auto icon = ReadInternetShortcutIconResource(path))
-            add(std::move(icon->path), icon->index, false);
+            AddLocalResource(result, path, std::move(icon->path), icon->index);
     }
-    else
-        result.push_back({path, 0});
     return result;
 }
 } // namespace snowdesktop::shortcut_icon_resource
