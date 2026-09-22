@@ -131,12 +131,14 @@ bool PumpMessagesUntil(
 
 void RunWidgetBackgroundCacheTests();
 void RunWidgetTextLayoutCacheTests();
+void RunScrollContentClipTests();
 
 int wmain()
 {
     TestWidgetClipFactoryReplacement();
     RunWidgetBackgroundCacheTests();
     RunWidgetTextLayoutCacheTests();
+    RunScrollContentClipTests();
     using namespace snowdesktop::component_preview;
 
     bool hasPartialRoundedCoverage = false;

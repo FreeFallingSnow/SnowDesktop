@@ -1961,9 +1961,9 @@ void FileGroup::DrawContent(
             !PtInRect(
                 &data_->bounds,
                 app_->lastMousePoint_);
-        context->PushAxisAlignedClip(
-            app_->ToD2DRect(content),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const snowdesktop::ScrollContentClip contentClip(
+            context, scrollContentFadeCache_, content,
+            GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
         std::vector<std::pair<Item*, RECT>>
             foregroundTitles;
         for (const auto& slot : GetSlots())
@@ -2067,7 +2067,6 @@ void FileGroup::DrawContent(
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
                 context, bounds, true, 1.0f, light);
-        context->PopAxisAlignedClip();
         return;
     }
 

@@ -1046,7 +1046,9 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     std::vector<std::pair<Item*, RECT>>
         foregroundTitles;
 
-    context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const snowdesktop::ScrollContentClip contentClip(
+        context, scrollContentFadeCache_, content,
+        GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
     if (data_->dateHeaders && !IsSearchActive())
     {
         EnsureDateLayout();
@@ -1129,7 +1131,6 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(
             context, bounds, true, 1.0f, lt);
-    context->PopAxisAlignedClip();
 }
 
 RECT FolderMapping::GetMemberLayoutRect(size_t index) const

@@ -1223,7 +1223,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             return;
         }
 
-        context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const snowdesktop::ScrollContentClip contentClip(
+            context, scrollContentFadeCache_, content,
+            GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
         std::vector<std::pair<Item*, RECT>>
             foregroundTitles;
         for (size_t i = 0; i < slots.size(); ++i)
@@ -1269,7 +1271,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
                 context, bounds, true, 1.0f, lt);
-        context->PopAxisAlignedClip();
         return;
     }
 
@@ -1323,7 +1324,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     DrawDetailsHeader(context, content);
 
     const auto& slots = GetSlots();
-    context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const snowdesktop::ScrollContentClip contentClip(
+        context, scrollContentFadeCache_, content,
+        GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
     std::vector<std::pair<Item*, RECT>>
         foregroundTitles;
 
@@ -1396,7 +1399,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(
             context, bounds, true, 1.0f, lt);
-    context->PopAxisAlignedClip();
 }
 
 RECT FileCategories::GetMemberLayoutRect(size_t index) const

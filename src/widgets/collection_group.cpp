@@ -1089,9 +1089,9 @@ void CollectionGroup::DrawContent(
         return;
     }
 
-    context->PushAxisAlignedClip(
-        app_->ToD2DRect(content),
-        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const snowdesktop::ScrollContentClip contentClip(
+        context, scrollContentFadeCache_, content,
+        GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
 
     const std::wstring activeCollectionId =
         CollectionGroupActiveCategory(this);
@@ -1177,7 +1177,6 @@ void CollectionGroup::DrawContent(
         item->DrawTitle(
             context, bounds, true, 1.0f,
             light, activeCollection);
-    context->PopAxisAlignedClip();
 }
 
 RECT CollectionGroup::GetMemberLayoutRect(size_t index) const

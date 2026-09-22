@@ -486,7 +486,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     {
         RECT content = GetContentViewportRect();
         DrawDetailsHeader(context, content);
-        context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const snowdesktop::ScrollContentClip contentClip(
+            context, scrollContentFadeCache_, content,
+            GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
 
         auto& slots = GetSlots();
         std::vector<std::pair<Item*, RECT>>
@@ -555,7 +557,6 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
                 context, bounds, true, 1.0f, lt, data_);
-        context->PopAxisAlignedClip();
         return;
     }
 

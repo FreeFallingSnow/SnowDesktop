@@ -2212,6 +2212,7 @@ if (BUILD_TESTING)
             tests/component_preview_tests.cpp
             tests/widget_background_cache_tests.cpp
             tests/widget_text_layout_cache_tests.cpp
+            tests/scroll_content_clip_tests.cpp
             src/widget_background_cache.cpp
             src/component_preview.cpp
             src/menu_icon_render.cpp

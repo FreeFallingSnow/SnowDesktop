@@ -33,6 +33,7 @@
 #include <unordered_map>
 #include <vector>
 #include <memory>
+#include "../scroll_content_clip.h"
 
 struct DesktopWidget;
 struct CategorySettings;
@@ -423,6 +424,7 @@ public:
     BarStyle GetInsertionStyle() const override;
 
 protected:
+    snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
     std::wstring searchText_;
     size_t searchCursorPos_ = 0;
     size_t searchSelectionAnchor_ = 0;
