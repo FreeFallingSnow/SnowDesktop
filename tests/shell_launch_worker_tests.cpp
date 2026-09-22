@@ -43,6 +43,7 @@ struct ConsentBoundary
     std::wstring expectedPath;
     int activations = 0;
     int invocations = 0;
+    int unexpectedOpens = 0;
     bool granted = false;
     bool cancel = false;
     bool foregroundConsent = false;
@@ -74,6 +75,12 @@ BOOL WINAPI ConsentExecute(SHELLEXECUTEINFOW* info)
     return !consent.cancel;
 }
 
+bool ConsentRejectOpen(HWND, const std::wstring&, PCIDLIST_ABSOLUTE, int, ULONG)
+{
+    ++consent.unexpectedOpens;
+    return false;
+}
+
 void CheckElevationDispatch(const std::wstring& path,
     snowdesktop::shell_launch_process::Action action)
 {
@@ -84,7 +91,8 @@ void CheckElevationDispatch(const std::wstring& path,
     Check(input != nullptr, "consent regression must create its independent input fixture");
     if (!input) return;
     ShowWindow(input, SW_SHOWNOACTIVATE);
-    const process::ExecutionApi api{ConsentForeground, ConsentActivate, ConsentAllow, ConsentExecute};
+    const process::ExecutionApi api{ConsentForeground, ConsentActivate, ConsentAllow,
+        ConsentExecute, ConsentRejectOpen};
     process::Request request;
     request.owner = input;
     request.path = path;
@@ -97,7 +105,8 @@ void CheckElevationDispatch(const std::wstring& path,
         consent.expectedPath = path;
         consent.cancel = cancel;
         const bool opened = process::ExecuteRequestWithApi(request, api);
-        Check(opened == !cancel && consent.invocations == 1 && consent.foregroundConsent,
+        Check(opened == !cancel && consent.invocations == 1 && consent.foregroundConsent &&
+            consent.unexpectedOpens == 0,
             "elevated launch must hand foreground to consent once; cancellation must never retry");
     }
     consent = {};
@@ -110,6 +119,11 @@ void CheckElevationDispatch(const std::wstring& path,
     Check(process::ExecuteRequestWithApi(request, api) && consent.invocations == 1 &&
         consent.activations == 0 && consent.invocationOwner == nullptr,
         "a destroyed launch owner must not be activated or prevent dispatch");
+    consent = {};
+    request.action = process::Action::Open;
+    Check(!process::ExecuteRequestWithApi(request, api) && consent.unexpectedOpens == 1 &&
+        consent.invocations == 0,
+        "the consent probe must reject unexpected ordinary Open without invoking the real Shell");
 }
 
 void TestLaunchOwnerSurvivesMenuDismissal()

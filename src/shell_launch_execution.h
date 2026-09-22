@@ -9,10 +9,14 @@ namespace snowdesktop::shell_launch_process
 // regressions. Tests replace only OS foreground/consent calls, not routing.
 struct ExecutionApi
 {
+    using OpenExecutor = bool (*)(HWND, const std::wstring&,
+        PCIDLIST_ABSOLUTE, int, ULONG);
     decltype(&GetForegroundWindow) foreground = &GetForegroundWindow;
     decltype(&SetForegroundWindow) activate = &SetForegroundWindow;
     decltype(&AllowSetForegroundWindow) allow = &AllowSetForegroundWindow;
     decltype(&ShellExecuteExW) execute = &ShellExecuteExW;
+    // A null Open boundary selects the production Shell implementation.
+    OpenExecutor open = nullptr;
 };
 
 inline bool IsLaunchOwner(HWND window)

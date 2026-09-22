@@ -439,7 +439,8 @@ bool shell_launch_process::ExecuteRequestWithApi(
         const auto pidl = request.absolutePidl.empty() ? nullptr :
             reinterpret_cast<PCIDLIST_ABSOLUTE>(request.absolutePidl.data());
         api.allow(ASFW_ANY);
-        return ExecuteShellOpen(validOwner, path, pidl, request.showCommand,
+        const auto open = api.open ? api.open : &ExecuteShellOpen;
+        return open(validOwner, path, pidl, request.showCommand,
             SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE);
     }
     SHELLEXECUTEINFOW executeInfo{};

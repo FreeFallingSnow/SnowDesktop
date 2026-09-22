@@ -94,14 +94,22 @@
 `highestAvailable` 清单读取，仅替换 Win32 前台操作与 UAC 执行边界。覆盖 owner 选择、
 两种管理员快捷方式、显式管理员命令、取消不重试、owner 销毁和前台丢失后的不再激活。
 测试程序的 `--elevation-contract [快捷方式路径]` 可只读检查原始快捷方式的实际路由，
-管理员分支的授权执行使用替身；当前探针若意外进入普通 Open 仍会触达真实 Shell，
-须先收紧此失败边界，再将其作为通用样本检查入口。它不是宿主 CLI。
+管理员分支的授权执行使用替身，意外进入普通 Open 时也由替身直接拒绝；两条分支均不会
+启动该目标程序。它不是宿主 CLI。另以强制绕过提权路由的隔离副本验证，此类回归会明确
+失败而不会调用真实 Shell；生产默认边界仍使用原来的 Shell Open。
 
 本轮定向测试 4/4 通过：`shell_launch_worker`、`shell_integration_contract`、
 `modern_menu_interaction`、`ui_animation_scheduler`。原机 VGN VHUB 快捷方式通过上述
 元数据及模拟边界检查。隔离副本中删除即时授权，或恢复无效 owner，均使新回归以退出码 1
 失败；两份负向对照编译成功且无编译/链接警告。日志在
 `.codex-probes/20260922-uac-foreground/`。
+
+收紧普通 Open 测试边界后，最终候选重新通过 `scripts/build.bat` 和
+`scripts/test.bat full`（120/120，CTest 96.32 秒），退出码均为 0，完整日志无编译或
+链接警告。原机 VGN 快捷方式探针再次通过；强制错误提权路由的隔离副本编译成功，
+并以退出码 1 拒绝测试断言。最终证据分别为上述目录中的 `final-build.log`、
+`final-full.log`、`final-original-shortcut.log`、`negative-route.log` 和
+`final-hashes.json`；全量默认排除 manual 诊断。
 
 这些结果不能证明实际 UAC 的层级和焦点。仍须用户用原 VGN VHUB 分别验收双击、
 右键管理员启动、快捷启动面板，以及等待、取消、同意期间的焦点和面板收尾。
