@@ -365,7 +365,9 @@ void DesktopApp::OpenDockFolderPopupAt(
     if (dockPage) popupPageId_ = dockPage->id;
 
     SyncFolderChangeNotifications();
-    RefreshDockFolderPopup();
+    // Prepare the model/geometry without revealing a loading frame under the
+    // previous timeline. Start the new animation before presenting the host.
+    RefreshDockFolderPopup(nullptr, false);
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
     if (popupAnchoredToDock_)

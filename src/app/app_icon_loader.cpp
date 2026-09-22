@@ -252,6 +252,7 @@ void DesktopApp::DrainBackgroundShellWork()
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
         return; // The maintenance timer retries after the interaction fence.
     iconWork_.Drain();
+    dockIconWork_.Drain();
     shellVisualWork_.Drain();
     shellModelWork_.Drain();
     appIndexWork_.Drain();
@@ -593,6 +594,7 @@ void DesktopApp::RefreshIconBitmapResolution()
 void DesktopApp::StopIconLoader()
 {
     iconWork_.Stop();
+    dockIconWork_.Stop();
     shellVisualWork_.Stop();
     shellModelWork_.Stop();
     folderReadWork_.Stop();

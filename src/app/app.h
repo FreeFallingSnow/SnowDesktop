@@ -21,6 +21,7 @@
 #include "shell_icon_work.h"
 #include "shell_icon_request.h"
 #include "../dock_refresh_cache.h"
+#include "dock_icon_work.h"
 #include "../desktop_namespace_registry.h"
 #include "item.h"
 #include "slot.h"
@@ -2978,8 +2979,9 @@ private:
     /** @brief 释放拖拽期间保存的 Dock 文件夹弹窗来源快照。 */
     void ClearDockFolderPopupDragSourceSnapshot();
     void RefreshDockFolderPopup(
-        const snowdesktop::shell_refresh::FolderSnapshot* snapshot = nullptr);
-    void RefreshDockFolderPopupGeometry();
+        const snowdesktop::shell_refresh::FolderSnapshot* snapshot = nullptr,
+        bool present = true);
+    void RefreshDockFolderPopupGeometry(bool present = true);
     /** @brief 刷新当前悬浮 Dock 集合弹窗的几何与宿主裁剪。 */
     void RefreshOpenCollectionPopupGeometry();
     void CommitDockFolderPopupStateToSource();
@@ -3478,8 +3480,7 @@ private:
     mutable snowdesktop::dock_refresh_cache::Cache<
         snowdesktop::item_location::FolderTarget>
         dockFolderTargetCache_;
-    mutable snowdesktop::dock_refresh_cache::Cache<int>
-        dockFolderIconIndexCache_;
+    snowdesktop::dock_refresh_cache::Cache<ComPtr<ID2D1Bitmap1>> dockFolderBitmapCache_;
     snowdesktop::dock_drop_rules::MaterializedPathReservations
         pendingDesktopMaterializedPaths_;
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
@@ -4407,6 +4408,7 @@ private:
     /** @name 异步图标加载 */
     /** @{ */
     snowdesktop::shell_icon_request::Work iconWork_;
+    snowdesktop::dock_icon_work::Work dockIconWork_;
     mutable snowdesktop::BackgroundWork shellVisualWork_{4};
     snowdesktop::BackgroundWork shellModelWork_{4};
     snowdesktop::BackgroundWork appIndexWork_{1};

@@ -222,13 +222,15 @@ private:
 
 enum class ContentRefreshAction { Stable, ContinueAnimation, FinalizeClose };
 
-// Retire the old bitmap and native completion together, then continue from the
-// elapsed timeline. Restarting Open() here would replay the stale loading scene.
-template<class RetireSnapshot>
-ContentRefreshAction RefreshContent(State& state, std::uint64_t now, RetireSnapshot retire)
+// Publish replacement pixels before retiring the native snapshot. Both use
+// the elapsed timeline; resetting Open() would replay the loading scene.
+template<class PrepareLive, class RetireSnapshot>
+ContentRefreshAction RefreshContent(State& state, std::uint64_t now,
+    PrepareLive prepareLive, RetireSnapshot retire)
 {
     const bool wasClosing = state.IsClosing();
     state.Advance(now);
+    if (!(wasClosing && state.IsHidden())) prepareLive();
     retire();
     if (wasClosing && state.IsHidden()) return ContentRefreshAction::FinalizeClose;
     return state.IsAnimating() ? ContentRefreshAction::ContinueAnimation : ContentRefreshAction::Stable;

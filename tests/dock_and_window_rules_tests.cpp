@@ -1642,6 +1642,15 @@ int main(int argc, char** argv)
                 dockWidgetSpan),
         "Dock widget drops at the page edge must move the anchor instead of shrinking the original span");
 
+    const auto loadingFolderCount = popupLayout::LayoutItemCount(true, 0, 13);
+    Check(popupLayout::PreferredColumnCount(loadingFolderCount, 5) == 5 &&
+        popupLayout::RequiredRowCount(loadingFolderCount, 5) == 3 &&
+        popupLayout::RequiredListRowCount(loadingFolderCount) == 13,
+        "a known 13-item folder reserves its loaded grid/list footprint before the opening animation");
+    Check(popupLayout::LayoutItemCount(false, 0, 13) == 0 &&
+        popupLayout::LayoutItemCount(true, 0, 0) == 0 &&
+        popupLayout::LayoutItemCount(true, 15, 13) == 15,
+        "completed empty and unknown folders do not invent items, and refresh retains existing content space");
     Check(
         popupLayout::PreferredColumnCount(
             0, 5) == 3 &&

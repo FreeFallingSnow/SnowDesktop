@@ -734,21 +734,39 @@ void DesktopApp::RefreshDockRunningWindows(
             const auto window = info.window;
             DWORD process = 0;
             GetWindowThreadProcessId(window, &process);
-            shellVisualWork_.Submit(L"dock-running:" + key + L"\n" +
-                std::to_wstring(requiredIconSize), [window, process, path, appId, requiredIconSize] {
+            const auto queuedAt = GetTickCount64();
+            dockIconWork_.Submit(L"dock-running:" + key + L"\n" +
+                std::to_wstring(requiredIconSize), [path, appId, requiredIconSize, queuedAt] {
+                const auto started = GetTickCount64();
+                auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+                // Packaged apps may share a host executable. Keep their Shell
+                // identity selection rather than showing that host's icon.
+                if (appId.empty())
+                    result->bitmap = GetLocalIconResourceBitmap(path, result->size, requiredIconSize);
+                WriteDiagnosticLogEntry((L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
+                    std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
+                return result;
+            }, [window, process, path, appId, requiredIconSize, queuedAt] {
+                const auto started = GetTickCount64();
                 auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                 DWORD current = 0;
                 GetWindowThreadProcessId(window, &current);
                 if (current == process)
                     result->bitmap = CreateDockWindowIconBitmap(window, path, appId,
                         result->size, requiredIconSize);
+                WriteDiagnosticLogEntry((L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
+                    std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
-            }, [this, key, path, appId, requiredIconSize](auto result) {
+            }, [this, key, path, appId, requiredIconSize](auto result, bool refined) {
                 if (!result || !result->bitmap) return;
                 for (auto& app : dockUnpinnedRunningApps_)
                 {
                     if (app.identityKey != key || app.executablePath != path ||
                         app.appUserModelId != appId || app.iconRequestedSize > requiredIconSize) continue;
+                    // A slow local completion must not replace a refined icon.
+                    if (!refined && app.iconBitmap) return;
                     if (app.iconBitmap) { EraseD2DIconCacheForBitmap(app.iconBitmap); DeleteObject(app.iconBitmap); }
                     app.iconBitmap = std::exchange(result->bitmap, nullptr);
                     app.iconBitmapSize = result->size;

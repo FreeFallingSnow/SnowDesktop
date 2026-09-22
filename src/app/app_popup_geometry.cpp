@@ -267,6 +267,9 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
 {
     const GridPage* page = ResolveCollectionPopupPage(widget);
     const auto metrics = GetCollectionPopupLayoutMetrics(widget);
+    const size_t itemCount = snowdesktop::collection_popup_layout::LayoutItemCount(
+        dockFolderPopupOpen_ && dockFolderPopupLoading_ && &widget == &dockFolderPopupWidget_,
+        GetPopupItemCount(widget), widget.itemKeys.size());
     if (UsesCollectionPopupFan(widget))
     {
         namespace layout = snowdesktop::collection_popup_layout;
@@ -274,7 +277,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
         const int width = layout::ScaleDimension(400, metrics.scale);
         const int maximum = std::min(metrics.maximumHeight,
             static_cast<int>(available.bottom - available.top));
-        const auto visible = layout::FanVisibleItemCount(metrics, maximum, GetPopupItemCount(widget));
+        const auto visible = layout::FanVisibleItemCount(metrics, maximum, itemCount);
         const int height = layout::FanFrameHeight(metrics, visible + 1);
         const int anchorX = popupHasAnchor_ ? popupAnchorPoint_.x : (available.left + available.right) / 2;
         const bool mirrored = anchorX - layout::FanRootX(metrics, width, false) < available.left;
@@ -298,8 +301,6 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     const int maxColumns = std::max(1,
         (popupContentWidth + metrics.gapX) /
         std::max(1, cellW + metrics.gapX));
-    const size_t itemCount =
-        GetPopupItemCount(widget);
     const bool listMode = UsesCollectionPopupList(widget);
     int columns = listMode
         ? 1
@@ -920,6 +921,15 @@ void DesktopApp::InvalidateCollectionPopupContent()
     using namespace snowdesktop::popup_animation_rules;
     const auto action = RefreshContent(popupAnimation_, static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()),
+        [this] {
+            const RECT dirty = popupAnimationCacheRect_;
+            // DrawAt must not reuse the obsolete loading bitmap while the
+            // live surface is prepared underneath the still-attached visual.
+            popupAnimationRenderCache_.Reset();
+            popupAnimationCacheRect_ = {};
+            UpdateFloatingPopupWindowBounds(false);
+            PrepareCompositionAnimationOverlayRetirement(popupAnimationOverlay_, dirty);
+        },
         [this] { ResetCollectionPopupAnimationCache(); });
     if (action == ContentRefreshAction::FinalizeClose)
     {

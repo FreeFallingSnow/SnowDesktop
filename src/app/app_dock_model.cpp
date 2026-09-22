@@ -100,10 +100,10 @@ void DesktopApp::InvalidateDockShellMetadata()
 {
     dockAppIdentityCache_.Invalidate();
     dockFolderTargetCache_.Invalidate();
-    dockFolderIconIndexCache_.Invalidate();
+    dockFolderBitmapCache_.Invalidate();
+    dockIconWork_.Cancel(L"dock-folder:");
     shellVisualWork_.Cancel(L"dock-identity:");
     shellVisualWork_.Cancel(L"dock-target:");
-    shellVisualWork_.Cancel(L"dock-folder:");
 }
 
 void DesktopApp::PruneDockShellMetadata()
@@ -130,7 +130,7 @@ void DesktopApp::PruneDockShellMetadata()
     }
     dockAppIdentityCache_.Retain([&](const auto& key) { return identities.contains(key); });
     dockFolderTargetCache_.Retain([&](const auto& key) { return folders.contains(key); });
-    dockFolderIconIndexCache_.Retain([&](const auto& key) { return icons.contains(key); });
+    dockFolderBitmapCache_.Retain([&](const auto& key) { return icons.contains(key); });
 }
 
 bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const

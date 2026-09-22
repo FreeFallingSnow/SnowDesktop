@@ -916,6 +916,8 @@ void DesktopApp::SetIconBeautifySettings(
     d2dIconCache_.clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
+    dockFolderBitmapCache_.Retain([](const auto&) { return false; });
+    dockIconWork_.Cancel(L"dock-folder:");
     quickNavSysIconCache_.clear();
     quickNavAppIconCache_.clear();
     privacyFileIconBitmap_.Reset();

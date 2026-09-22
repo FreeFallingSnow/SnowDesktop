@@ -42,17 +42,20 @@ public:
             entry.value && entry.valueVersion == version};
     }
 
-    bool Publish(const std::wstring& key, std::uint64_t ticket, Value value)
+    bool Publish(const std::wstring& key, std::uint64_t ticket, Value value, bool replaceCurrent = true)
     {
         const auto found = entries_.find(key);
         if (found == entries_.end() || found->second.generation != generation_ ||
             found->second.ticket != ticket)
             return false;
         auto& entry = found->second;
+        if (!replaceCurrent && entry.value && entry.valueTicket == ticket) return false;
         entry.value = std::move(value);
+        entry.valueTicket = ticket;
         entry.valueVersion = entry.requestVersion;
         entry.fresh = true;
-        entry.retryAt.reset();
+        // A provisional local result must retain a failed refinement's retry.
+        if (replaceCurrent) entry.retryAt.reset();
         return true;
     }
 
@@ -88,6 +91,7 @@ private:
         std::uint64_t ticket = 0;
         bool fresh = false;
         std::optional<Clock::time_point> retryAt;
+        std::uint64_t valueTicket = 0;
     };
     std::unordered_map<std::wstring, Entry> entries_;
     std::uint64_t generation_ = 1;

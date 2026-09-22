@@ -473,7 +473,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
             if (index >= widgets_.size()) continue;
             const auto key = ToUpperInvariant(entry.reference + L"\n" +
                 widgets_[index].sourceFolderPath);
-            if (!dockFolderIconIndexCache_.Read(key).fresh)
+            if (!dockFolderBitmapCache_.Read(key, std::to_wstring(GetMaximumShellIconBitmapSize())).fresh)
             {
                 InvalidateDockRects();
                 break;

@@ -583,7 +583,7 @@ bool DesktopApp::IsOpenDockFolderPopupDropTarget(
 }
 
 void DesktopApp::RefreshDockFolderPopup(
-    const snowdesktop::shell_refresh::FolderSnapshot* snapshot)
+    const snowdesktop::shell_refresh::FolderSnapshot* snapshot, bool present)
 {
     if (shellFileOperationInFlight_ > 0)
     {
@@ -675,10 +675,10 @@ void DesktopApp::RefreshDockFolderPopup(
         std::make_unique<FolderMapping>(
             &dockFolderPopupWidget_, this);
     dockFolderPopupContainer_->InvalidateFilterCache();
-    RefreshDockFolderPopupGeometry();
+    RefreshDockFolderPopupGeometry(present);
 }
 
-void DesktopApp::RefreshDockFolderPopupGeometry()
+void DesktopApp::RefreshDockFolderPopupGeometry(bool present)
 {
     popupRect_ =
         GetCollectionPopupRect(
@@ -690,6 +690,7 @@ void DesktopApp::RefreshDockFolderPopupGeometry()
         GetCollectionPopupMaxScrollOffset(
             dockFolderPopupWidget_,
             popupRect_));
+    if (!present) return;
     InvalidateCollectionPopupContent();
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))

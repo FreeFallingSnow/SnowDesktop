@@ -40,23 +40,35 @@ int main()
     // resources; the production timeline and refresh dispatch remain real.
     State refreshed;
     bool oldSnapshot = true, oldCompletion = true;
-    const auto retire = [&] { oldSnapshot = false; oldCompletion = false; };
+    bool liveReady = false;
+    const auto prepareLive = [&] {
+        Check(oldSnapshot, "replacement pixels are prepared while the native snapshot still covers the host");
+        liveReady = true;
+    };
+    const auto retire = [&] {
+        Check(liveReady || refreshed.IsHidden(), "a visible snapshot cannot retire before replacement pixels are ready");
+        oldSnapshot = false; oldCompletion = false;
+    };
     refreshed.Open(100);
-    auto action = RefreshContent(refreshed, 145, retire);
+    auto action = RefreshContent(refreshed, 145, prepareLive, retire);
     Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
         NearlyEqual(refreshed.GetVisual().progress, 0.5f) && refreshed.IsInteractive(),
         "content completion retires the loading snapshot and resumes the elapsed opening timeline");
     refreshed.Close(145);
     oldSnapshot = oldCompletion = true;
-    action = RefreshContent(refreshed, 160, retire);
+    liveReady = false;
+    action = RefreshContent(refreshed, 160, prepareLive, retire);
     Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
         refreshed.IsClosing() && NearlyEqual(refreshed.GetVisual().progress, 1.0f / 3.0f),
         "new folder contents during close preserve direction and elapsed progress");
-    action = RefreshContent(refreshed, 200, retire);
+    liveReady = false;
+    action = RefreshContent(refreshed, 200, prepareLive, retire);
+    Check(!liveReady, "an elapsed close does not publish another visible frame");
     Check(action == ContentRefreshAction::FinalizeClose && refreshed.IsHidden(),
         "late content completion finalizes an elapsed close instead of resurrecting its snapshot");
     refreshed.Open(300);
-    action = RefreshContent(refreshed, 400, retire);
+    oldSnapshot = oldCompletion = true;
+    action = RefreshContent(refreshed, 400, prepareLive, retire);
     Check(action == ContentRefreshAction::Stable && refreshed.IsInteractive() && !refreshed.IsAnimating(),
         "late content completion after opening paints current content without replaying animation");
     Check(state.IsHidden(), "new state starts hidden");

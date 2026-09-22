@@ -3,6 +3,32 @@
 void CheckDockRefreshContinuity()
 {
     using snowdesktop::dock_refresh_cache::Cache;
+    {
+        Cache<int> pixels;
+        const auto request = pixels.Read(L"mapped", L"96");
+        Check(pixels.Publish(L"mapped", request.ticket, 11, false) &&
+            pixels.Publish(L"mapped", request.ticket, 22) &&
+            !pixels.Publish(L"mapped", request.ticket, 11, false) &&
+            pixels.Read(L"mapped", L"96").value == 22,
+            "late local pixels cannot replace a refined Dock folder icon for the same request");
+        pixels.Invalidate();
+        const auto changed = pixels.Read(L"mapped", L"96");
+        Check(!pixels.Publish(L"mapped", request.ticket, 99) &&
+            pixels.Publish(L"mapped", changed.ticket, 33, false) &&
+            pixels.Read(L"mapped", L"96").value == 33,
+            "a refreshed folder accepts new local pixels while rejecting an obsolete Shell result");
+        pixels.Retain([](const auto&) { return false; });
+        const auto recreated = pixels.Read(L"mapped", L"192");
+        Check(recreated.ticket != changed.ticket && !recreated.value &&
+            !pixels.Publish(L"mapped", changed.ticket, 44),
+            "graphics/style cache reset cannot accept a bitmap created for the retired request");
+        const Cache<int>::Clock::time_point now{};
+        pixels.PublishFailure(L"mapped", recreated.ticket, std::chrono::seconds(5), now);
+        pixels.Publish(L"mapped", recreated.ticket, 55, false);
+        const auto retry = pixels.Read(L"mapped", L"192", now + std::chrono::seconds(5));
+        Check(!retry.fresh && retry.ticket != recreated.ticket && retry.value == 55,
+            "local pixels arriving after Shell failure preserve the refinement retry and visible icon");
+    }
     using snowdesktop::dock_refresh_cache::SourceKey;
     const auto key = SourceKey(L"PIN", L"C:\\DESKTOP\\EDITOR.LNK");
     const std::wstring editor = L"C:\\APPS\\EDITOR.EXE";
