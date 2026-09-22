@@ -32,6 +32,8 @@ public:
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
 
+    void SetItems(size_t items) noexcept { items_ = items; }
+
     void Finish() noexcept
     {
         if (!id_) return;

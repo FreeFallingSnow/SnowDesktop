@@ -185,8 +185,13 @@ inline void PreserveRuntime(DesktopItem& item, DesktopItem& previous)
     item.largeIcon = previous.largeIcon;
     item.slot = previous.slot;
     item.bounds = previous.bounds;
-    if (item.sysIconIndex == previous.sysIconIndex)
+    if (item.sysIconIndex < 0 || previous.sysIconIndex < 0 ||
+        item.sysIconIndex == previous.sysIconIndex)
     {
+        // Membership-only snapshots carry no Shell index. They must not
+        // discard an icon already delivered by the independent loader.
+        if (item.sysIconIndex < 0) item.sysIconIndex = previous.sysIconIndex;
+        if (item.typeName.empty()) item.typeName = previous.typeName;
         TransferIcon(item, previous);
         if (item.fileSize != previous.fileSize ||
             !SameTime(item.modifiedTime, previous.modifiedTime))

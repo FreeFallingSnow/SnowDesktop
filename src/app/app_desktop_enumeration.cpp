@@ -1,5 +1,6 @@
 #include "app.h"
 #include "shell_icon_request.h"
+#include "startup_diagnostics.h"
 #include "../desktop_namespace_registry.h"
 
 // Shell desktop enumeration and display-topology refresh.
@@ -51,7 +52,9 @@ static bool ReadDesktopSource(
         enumFlags = static_cast<SHCONTF>(enumFlags | SHCONTF_INCLUDEHIDDEN);
 
     ComPtr<IEnumIDList> enumerator;
-    hr = desktopFolder->EnumObjects(nullptr, enumFlags, &enumerator);
+    hr = snowdesktop::startup_diagnostics::Call(L"Shell.EnumObjects", [&] {
+        return desktopFolder->EnumObjects(nullptr, enumFlags, &enumerator);
+    });
     if (FAILED(hr)) return false;
     if (!enumerator) return true;
 
@@ -146,40 +149,13 @@ static bool ReadDesktopSource(
         // extensions to resolve unchanged shortcut icons and display metadata.
         const auto stamp = FileStamp::From(fileAttributes);
         const auto metadataKey = ToUpperInvariant(parsingName);
-        SHFILEINFOW info{};
-        const auto cached = cache ? cache->desktop.find(metadataKey) : MetadataMap::iterator{};
-        if (basicMetadata)
-        {
-            // Do not resolve a shortcut target or invoke a per-file icon
-            // handler before publishing ordinary desktop membership. The
-            // independent full read supplies Explorer metadata when ready.
-            SHGetFileInfoW(parsingName.c_str(), hasAttributes
-                    ? fileAttributes.dwFileAttributes : FILE_ATTRIBUTE_NORMAL,
-                &info, sizeof(info), SHGFI_USEFILEATTRIBUTES | SHGFI_SYSICONINDEX |
-                    SHGFI_TYPENAME);
-        }
-        else if (cache && hasAttributes && cached != cache->desktop.end() &&
-            cached->second.Matches(parsingName, stamp))
-        {
-            info = cached->second.info;
-            ++cache->hits;
-            seenMetadata.insert(metadataKey);
-        }
-        else
-        {
-            if (cache) ++cache->queries;
-            const auto loaded = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0,
-                &info, sizeof(info), SHGFI_PIDL | SHGFI_SYSICONINDEX |
-                    SHGFI_DISPLAYNAME | SHGFI_TYPENAME);
-            if (cache && hasAttributes && loaded)
-            {
-                auto& metadata = cache->desktop[metadataKey];
-                metadata.path = parsingName;
-                metadata.stamp = stamp;
-                metadata.info = info;
-                seenMetadata.insert(metadataKey);
-            }
-        }
+        const auto info = ReadDesktopMetadata(basicMetadata, parsingName,
+            metadataKey, stamp, hasAttributes, cache, seenMetadata,
+            [absolute](SHFILEINFOW& value) {
+                return SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0,
+                    &value, sizeof(value), SHGFI_PIDL | SHGFI_SYSICONINDEX |
+                        SHGFI_DISPLAYNAME | SHGFI_TYPENAME) != 0;
+            });
 
         DesktopItem item;
         item.absolutePidl.reset(absolute);
@@ -228,14 +204,20 @@ bool snowdesktop::shell_refresh::ReadDesktop(
     bool showHiddenItems, std::vector<DesktopItem>& items, MetadataCache* cache,
     const std::function<void(const DesktopItem&)>& publish)
 {
+    snowdesktop::startup_diagnostics::Scope startup(
+        L"Shell.Desktop.Read", static_cast<bool>(publish));
     if (!ReadDesktopSource(visibility, showHiddenItems, items, cache, false, publish)) return false;
-    return !snowdesktop::debug_profile::Enabled() ||
+    const bool complete = !snowdesktop::debug_profile::Enabled() ||
         ReadDesktopSource(visibility, showHiddenItems, items, nullptr, true, publish);
+    startup.SetItems(items.size());
+    return complete;
 }
 
 bool snowdesktop::shell_refresh::ReadLocalDesktop(
     const Request& request, Snapshot& snapshot, bool common)
 {
+    snowdesktop::startup_diagnostics::Scope startup(
+        common ? L"Shell.LocalCommon.Read" : L"Shell.LocalUser.Read", true);
     // Bypass the root Desktop enumerator: it can stall in NetUseEnum while
     // obtaining the next virtual/network item. Physical desktop folders are
     // independent sources, and publish each completed item immediately.
@@ -250,8 +232,10 @@ bool snowdesktop::shell_refresh::ReadLocalDesktop(
     if (!SHGetSpecialFolderPathW(nullptr, directory,
             common ? CSIDL_COMMON_DESKTOPDIRECTORY : CSIDL_DESKTOPDIRECTORY, FALSE))
         return false;
-    return ReadDesktopSource(request.iconVisibility, showHidden,
+    const bool complete = ReadDesktopSource(request.iconVisibility, showHidden,
         snapshot.desktopItems, nullptr, false, request.publishDesktopItem, directory);
+    startup.SetItems(snapshot.desktopItems.size());
+    return complete;
 }
 
 void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot)

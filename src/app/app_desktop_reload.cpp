@@ -1195,7 +1195,7 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     result->bitmap = nullptr;
                 }
                 matched = true;
-                item.sysIconIndex = result->sysIconIndex;
+                if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
                 if (!result->typeName.empty()) item.typeName = result->typeName;
                 if (result->phase == IconLoadPhase::Phase1)
                 {
@@ -1249,7 +1249,7 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         result->bitmap = nullptr;
                     }
                     matched = true;
-                    entry.sysIconIndex = result->sysIconIndex;
+                    if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
                     if (!result->typeName.empty()) entry.typeName = result->typeName;
                     if (result->phase == IconLoadPhase::Phase1)
                     {

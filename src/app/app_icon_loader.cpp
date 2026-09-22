@@ -259,14 +259,18 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
 {
     auto input = std::make_shared<IconLoadTask>(std::move(value));
     const auto key = input->requestKey;
-    if (!iconWork_.Submit(key, [input] {
+    const auto queuedAt = GetTickCount64();
+    if (!iconWork_.Submit(input->phase == IconLoadPhase::Phase2, key, [input, queuedAt] {
         auto& task = *input;
+        const auto started = GetTickCount64();
         auto result = std::shared_ptr<IconLoadResult>(new IconLoadResult,
             [](IconLoadResult* value) {
                 if (value->bitmap) DeleteObject(value->bitmap);
                 delete value;
             });
-        if (task.sysIconIndex < 0)
+        // Phase 1 can extract shortcut resources directly with the PIDL from
+        // enumeration. Do not gate the first bitmap on the system image list.
+        if (task.sysIconIndex < 0 && task.phase == IconLoadPhase::Phase2)
         {
             SHFILEINFOW info{};
             const auto& path = task.parsingName.empty() ? task.folderPath : task.parsingName;
@@ -276,6 +280,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                 result->typeName = info.szTypeName;
             }
         }
+        const auto metadataDone = GetTickCount64();
         result->sysIconIndex = task.sysIconIndex;
         if (!task.absolutePidl.get())
         {
@@ -284,6 +289,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)))
                 task.absolutePidl.reset(pidl);
         }
+        const auto pidlDone = GetTickCount64();
             SIZE bitmapSize{};
             const std::wstring_view representationName =
                 !task.parsingName.empty()
@@ -325,6 +331,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                 forShortcut, representationName, &iconIsThumbnail) : nullptr;
             if (task.phase == IconLoadPhase::Phase1 && bitmap)
                 ClampAlphaToColorKey(bitmap, kTransparentKey);
+            const auto bitmapDone = GetTickCount64();
 
             bool isShortcut = false;
             bool isApplicationShortcut = false;
@@ -384,6 +391,20 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                 }
             }
 
+                const auto finished = GetTickCount64();
+                if (finished - queuedAt >= 250)
+                {
+                    wchar_t timing[512]{};
+                    swprintf_s(timing, L"Shell icon slow: phase=%u queueMs=%llu metadataMs=%llu "
+                        L"pidlMs=%llu bitmapMs=%llu shortcutMs=%llu totalMs=%llu bitmap=%d path=",
+                        task.phase == IconLoadPhase::Phase1 ? 1u : 2u,
+                        started - queuedAt, metadataDone - started, pidlDone - metadataDone,
+                        bitmapDone - pidlDone, finished - bitmapDone, finished - queuedAt,
+                        bitmap ? 1 : 0);
+                    const auto message = std::wstring(timing) +
+                        (task.parsingName.empty() ? task.folderPath : task.parsingName);
+                    WriteDiagnosticLogEntry(message.c_str());
+                }
                 result->serial = task.serial;
                 result->popupGeneration = task.popupGeneration;
                 result->requestKey = std::move(task.requestKey);

@@ -18,6 +18,7 @@
 #pragma once
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
+#include "shell_icon_work.h"
 #include "../dock_refresh_cache.h"
 #include "../desktop_namespace_registry.h"
 #include "item.h"
@@ -4388,7 +4389,7 @@ private:
 
     /** @name 异步图标加载 */
     /** @{ */
-    snowdesktop::BackgroundWork iconWork_{4};
+    snowdesktop::shell_icon_request::Work iconWork_;
     mutable snowdesktop::BackgroundWork shellVisualWork_{4};
     snowdesktop::BackgroundWork shellModelWork_{4};
     snowdesktop::BackgroundWork appIndexWork_{1};
