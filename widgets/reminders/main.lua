@@ -1,6 +1,7 @@
 -- reminders/main.lua - API v2 transactional local ToDo list
 local descriptor
 local taskLayout = module.require("modules/task_layout.lua")
+local taskPriority = module.require("modules/task_priority.lua")
 
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
@@ -97,23 +98,54 @@ local function saveDoneIds(tx, ids, done)
     setOrRemove(tx, "doneIds", table.concat(ordered, ","))
 end
 
+local function loadPriorities()
+    return taskPriority.decode(storage.get("priorities"))
+end
+
+local function savePriorities(tx, ids, priorities)
+    setOrRemove(tx, "priorities", taskPriority.encode(ids, priorities))
+end
+
 local function loadTasks(includeCompleted)
-    local pending = {}
-    local completed = {}
+    local tasks = {}
     local done = loadDoneIds()
+    local priorities = loadPriorities()
     for _, id in ipairs(loadOrder()) do
         local text = storage.get(taskTextKey(id))
         if text ~= nil then
-            local task = { id = id, text = text, done = done[id] == true }
-            if task.done then
-                if includeCompleted then completed[#completed + 1] = task end
-            else
-                pending[#pending + 1] = task
+            local task = { id = id, text = text, done = done[id] == true,
+                priority = priorities[id] or taskPriority.normal }
+            if includeCompleted or not task.done then
+                tasks[#tasks + 1] = task
             end
         end
     end
-    for _, task in ipairs(completed) do pending[#pending + 1] = task end
-    return pending
+    return taskPriority.sort(tasks)
+end
+
+local function setTaskPriority(id, level)
+    if level == nil or level < 0 or level > 3 or level % 1 ~= 0 or
+        storage.get(taskTextKey(id)) == nil then return end
+    local ids = loadOrder()
+    local exists = false
+    for _, current in ipairs(ids) do
+        if current == id then exists = true; break end
+    end
+    if not exists then return end
+    local priorities = loadPriorities()
+    priorities[id] = level
+    storage.transaction(function(tx)
+        savePriorities(tx, ids, priorities)
+    end)
+end
+
+local function priorityLabels()
+    return {
+        [3] = l10n.tr("lua_widget.reminders.priority_urgent"),
+        [2] = l10n.tr("lua_widget.reminders.priority_high"),
+        [1] = l10n.tr("lua_widget.reminders.priority_normal"),
+        [0] = l10n.tr("lua_widget.reminders.priority_low"),
+    }
 end
 
 local function taskCounts()
@@ -159,6 +191,7 @@ end
 local function deleteTask(id)
     local ids = loadOrder()
     local done = loadDoneIds()
+    local priorities = loadPriorities()
     local kept = {}
     for _, current in ipairs(ids) do
         if current ~= id then kept[#kept + 1] = current end
@@ -168,12 +201,14 @@ local function deleteTask(id)
         tx:remove(taskTextKey(id))
         saveOrder(tx, kept)
         saveDoneIds(tx, kept, done)
+        savePriorities(tx, kept, priorities)
     end)
 end
 
 local function clearCompleted()
     local ids = loadOrder()
     local done = loadDoneIds()
+    local priorities = loadPriorities()
     local kept = {}
     local removed = {}
     for _, id in ipairs(ids) do
@@ -187,6 +222,7 @@ local function clearCompleted()
         for _, id in ipairs(removed) do tx:remove(taskTextKey(id)) end
         saveOrder(tx, kept)
         tx:remove("doneIds")
+        savePriorities(tx, kept, priorities)
     end)
 end
 
@@ -236,6 +272,8 @@ local function getPalette()
             inputText = 0x000000, placeholder = 0x000000,
             inputBg = 0x000000, inputBorder = 0x000000,
             inputFocus = 0x000000, delete = 0x000000,
+            priorities = { [3] = 0xDC2626, [2] = 0xD97706,
+                [1] = 0x2563EB, [0] = 0x6B7280 },
         }
     end
     return {
@@ -244,6 +282,8 @@ local function getPalette()
         inputText = 0xFFFFFF, placeholder = 0xFFFFFF,
         inputBg = 0xFFFFFF, inputBorder = 0xFFFFFF,
         inputFocus = 0xFFFFFF, delete = 0xFFFFFF,
+        priorities = { [3] = 0xF04452, [2] = 0xF5A623,
+            [1] = 0x60A5FA, [0] = 0x9CA3AF },
     }
 end
 
@@ -309,6 +349,7 @@ local function render(context, model)
     local function px(value) return value * unit end
     local gap = metrics.spacingSm
     local palette = getPalette()
+    local urgencyLabels = priorityLabels()
     local scale = fontScale()
     local fontSize = metrics.bodyFontSize * scale
     local inputFont = metrics.controlFontSize * scale
@@ -463,6 +504,9 @@ local function render(context, model)
         draw.rect(contentInset, cardY, cardW, cardH, palette.card,
             metrics.controlRadius,
             selected and 0.105 or (rowHovered and 0.08 or 0.055))
+        draw.rect(contentInset, cardY, metrics.spacingXs, cardH,
+            palette.priorities[task.priority], metrics.spacingXs / 2,
+            task.done and 0.45 or 1.0)
         if selected then
             local inset = px(1.2)
             draw.strokeRect(contentInset + inset, cardY + inset,
@@ -478,9 +522,10 @@ local function render(context, model)
             click = { id = "task.select", value = task.id },
             doubleClick = { id = "task.edit", value = task.id },
             contextMenu = { id = "task.menu", value = task.id },
-        }, { role = "listitem", label = task.text }, nil, viewportShape)
+        }, { role = "listitem", label = task.text .. ", " ..
+            urgencyLabels[task.priority] }, nil, viewportShape)
 
-        local checkboxY = cardY + (baseCardH - checkboxSize) / 2
+        local checkboxY = cardY + (cardH - checkboxSize) / 2
         local checkboxKey = "task.toggle." .. task.id
         local checkboxHovered = interaction.isHovered(checkboxKey)
         draw.strokeRect(checkboxX, checkboxY, checkboxSize, checkboxSize,
@@ -552,15 +597,15 @@ local function render(context, model)
             local deleteHovered = interaction.isHovered(deleteKey)
             if deleteHovered then
                 draw.circle(deleteX + deleteSize / 2,
-                    cardY + baseCardH / 2, deleteSize * 0.85,
+                    cardY + cardH / 2, deleteSize * 0.85,
                     palette.delete, 0.09)
             end
             draw.fluent(fluent.delete, deleteX,
-                cardY + (baseCardH - deleteSize) / 2,
+                cardY + (cardH - deleteSize) / 2,
                 deleteSize, palette.delete)
             registerRegion(deleteKey, {
                 type = "rect", x = deleteX - metrics.spacingXs,
-                y = cardY,
+                y = cardY + (cardH - baseCardH) / 2,
                 width = deleteSize + metrics.spacingSm, height = baseCardH,
             }, "hand", {
                 click = { id = "task.delete", value = task.id },
@@ -601,6 +646,10 @@ local function event(_context, model, value)
         model.selectedId = nil
         model.editingTaskId = nil
         deleteTask(id)
+    elseif id and type(value.id) == "string" and
+        value.id:match("^task%.priority%.[0-3]$") then
+        model.editingTaskId = nil
+        setTaskPriority(id, tonumber(value.id:match("(%d)$")))
     elseif value.id == "task.focusAdd" then
         control.focus("new-task")
     elseif value.id == "task.clearCompleted" then
@@ -619,12 +668,26 @@ local function menu(_context, _model, request)
     local total, completed = taskCounts()
     local taskId = request.value and tostring(request.value) or nil
     if taskId and storage.get(taskTextKey(taskId)) ~= nil then
+        local currentPriority = loadPriorities()[taskId] or taskPriority.normal
+        local labels = priorityLabels()
+        local priorityItems = {}
+        for level = 3, 0, -1 do
+            priorityItems[#priorityItems + 1] = {
+                id = "task.priority." .. level,
+                label = labels[level],
+                checked = currentPriority == level,
+            }
+        end
         return ui.menu({
             {
                 id = "task.edit",
                 label = l10n.tr("lua_widget.reminders.edit_selected"),
                 icon = fluent.edit,
                 iconFont = "fluent",
+            },
+            {
+                label = l10n.tr("lua_widget.reminders.priority"),
+                children = priorityItems,
             },
             {
                 id = "task.delete",
