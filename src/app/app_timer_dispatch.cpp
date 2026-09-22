@@ -462,6 +462,23 @@ void DesktopApp::OnTimer(WPARAM timerId)
         PollInitialShellRead();
         DrainBackgroundShellWork();
         RefreshIconBitmapResolution();
+        // A failed mapped-folder icon has a retry deadline. Wake a stationary
+        // Dock from the existing maintenance timer too, not only from hover or
+        // unrelated repaints. Read advances an expired ticket once; the async
+        // queue still coalesces that request while its Shell provider runs.
+        for (const auto& entry : dockEntries_)
+        {
+            if (entry.type != DockEntryType::FolderMapping) continue;
+            const auto index = FindWidgetIndexById(entry.reference);
+            if (index >= widgets_.size()) continue;
+            const auto key = ToUpperInvariant(entry.reference + L"\n" +
+                widgets_[index].sourceFolderPath);
+            if (!dockFolderIconIndexCache_.Read(key).fresh)
+            {
+                InvalidateDockRects();
+                break;
+            }
+        }
         // Restore the Explorer-owned desktop host first. Hook injection can
         // take time while the new taskbar XAML tree is still starting up.
         WatchDesktopHost();
