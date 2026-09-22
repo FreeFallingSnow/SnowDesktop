@@ -1186,6 +1186,8 @@ public:
         std::wstring& error, bool allowSourceChange = false,
         bool allowPermissionExpansion = false);
     static snowdesktop::widget::PackagePaths GetWidgetPackagePaths();
+    // Owner-thread discovery for package UI; does not reload live Lua instances.
+    static bool RefreshWidgetPackages(std::string& error);
     static std::vector<snowdesktop::widget::InstalledPackage>
         ListWidgetPackages();
     static std::vector<snowdesktop::widget::InvalidPackage>

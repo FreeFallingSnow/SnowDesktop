@@ -370,7 +370,8 @@
   构建，再运行
   `scripts/widget-dev.bat developer_assets/workshop_widgets/<slug> -Configuration <Configuration> -Once`，
   将组件镜像到该构建的 `data/widgets/dev/<slug>/`。新候选、来源从错误的内置组件切换为开发组件，
-  或宿主尚未重新发现该目录时，应追加 `-RestartHost`。同步成功后，新发现且验证通过的开发组件 UUID 默认激活为开发来源；
+  或宿主尚未重新发现该目录时，打开组件设置或右键“添加组件”菜单以重新扫描；使用尚不支持入口刷新
+  的旧宿主时追加 `-RestartHost`。同步成功后，新发现且验证通过的开发组件 UUID 默认激活为开发来源；
   已保存的停用决定与旧注册表中的现存候选选择保持不变，具体迁移规则见
   `docs/widget_development_defaults.md`。必须核对当前来源和权限状态后再交付实机验证；
   仅同步或默认激活不等于桌面交互已验证。

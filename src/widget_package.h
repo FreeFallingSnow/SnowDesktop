@@ -318,6 +318,8 @@ public:
         PackagePaths paths = PackagePaths::ForCurrentDeployment());
 
     bool Initialize(std::string& error);
+    // Host UI discovery; preserve the last catalog if scanning/persistence fails.
+    bool RefreshCatalog(std::string& error);
     const PackagePaths& Paths() const { return paths_; }
     std::vector<InstalledPackage> ListPackages() const;
     std::vector<InvalidPackage> ListInvalidPackages() const;

@@ -228,6 +228,71 @@ PackagePaths TestPaths(const std::filesystem::path& root)
     return paths;
 }
 
+void TestWidgetCatalogRediscovery(const std::filesystem::path& root)
+{
+    // Same manager as an already running host: external file copies must become
+    // visible on UI discovery without Initialize(), Lua loading or new consent.
+    const auto paths = TestPaths(root / L"catalog-rediscovery");
+    WidgetPackageManager manager(paths);
+    std::string error;
+    Expect(manager.Initialize(error), "empty discovery catalog initializes");
+    const std::string firstId = "e1fe7894-d56b-4faa-956a-ebadf89ace82";
+    const std::string repairedId = "29d5fca2-c367-49d7-8b05-2b49b7ef9efc";
+    const std::string laterId = "8e2b9f26-7f4e-49db-a8f4-3cfbc846d7aa";
+    const auto firstRoot = paths.development / L"first";
+    const auto repairedRoot = paths.development / L"repaired";
+    MakePackage(firstRoot, "1.0.0", firstId, "\"calendar.read\"");
+    Write(repairedRoot / L"widget.json", "{");
+    Expect(!manager.ContainsPackage(firstId),
+        "external copy is absent from the running host's cached catalog");
+    Expect(manager.RefreshCatalog(error), "UI discovery scans external copies");
+    const auto first = manager.Resolve(firstId);
+    Expect(first && first->development && first->active &&
+            first->permissionState == PermissionDecisionState::Pending &&
+            first->grantedPermissions.empty() &&
+            manager.ListInvalidPackages().size() == 1,
+        "new development source appears active without granting sensitive permissions; incomplete copies remain invalid");
+    Expect(manager.SetDevelopmentOverride(firstId, false, error),
+        "discovered development source can be explicitly deactivated");
+    MakePackage(repairedRoot, "1.0.0", repairedId);
+    Expect(manager.RefreshCatalog(error), "next UI opening retries repaired copies");
+    const auto packages = manager.ListPackages();
+    const auto inactive = std::find_if(packages.begin(), packages.end(),
+        [&](const auto& package) { return package.manifest.id == firstId; });
+    const auto repaired = manager.Resolve(repairedId);
+    Expect(inactive != packages.end() && !inactive->active &&
+            repaired && repaired->active && manager.ListInvalidPackages().empty(),
+        "reopening preserves explicit opt-outs and discovers repaired candidates");
+
+    // A blocked registry replacement must not erase the usable UI snapshot or
+    // consume first-discovery activation before the next successful opening.
+    const HANDLE registryLock = CreateFileW(paths.registry.c_str(), GENERIC_READ,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(registryLock != INVALID_HANDLE_VALUE, "registry failure fixture opens");
+    MakePackage(paths.development / L"later", "1.0.0", laterId);
+    if (registryLock != INVALID_HANDLE_VALUE)
+    {
+        Expect(!manager.RefreshCatalog(error) && !error.empty() &&
+                manager.ContainsPackage(repairedId) &&
+                !manager.ContainsPackage(laterId),
+            "failed discovery persistence retains the prior catalog");
+        CloseHandle(registryLock);
+    }
+    Expect(manager.RefreshCatalog(error) && error.empty(),
+        "discovery recovers after registry access is restored");
+    const auto later = manager.Resolve(laterId);
+    Expect(later && later->active,
+        "failed persistence does not consume the new candidate's default activation");
+
+    std::filesystem::remove_all(repairedRoot);
+    Expect(manager.RefreshCatalog(error) && !manager.ContainsPackage(repairedId),
+        "next UI opening removes externally deleted candidates from the list");
+    WidgetPackageManager reopened(paths);
+    Expect(reopened.Initialize(error) && !reopened.Resolve(firstId) &&
+            reopened.ContainsPackage(laterId),
+        "UI discovery persists new candidates without losing earlier opt-outs");
+}
+
 void TestDockLayoutBackup(const std::filesystem::path& root)
 {
     namespace layout = snowdesktop::layout_storage;
@@ -651,6 +716,7 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestWidgetCatalogRediscovery(root);
     TestDebugProfile(root);
     TestWidgetRemoval(root);
     TestDockLayoutBackup(root);

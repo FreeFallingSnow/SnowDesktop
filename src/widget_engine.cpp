@@ -30168,6 +30168,10 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
 std::vector<snowdesktop::widget_menu::Entry> WidgetEngine::ListAvailableMenuEntries()
 {
     static thread_local snowdesktop::widget_menu::Catalogue catalogue;
+    std::string refreshError;
+    if (!RefreshWidgetPackages(refreshError))
+        OutputDebugStringW((L"Widget catalog refresh failed: " +
+            Utf8ToWideLocal(refreshError) + L"\n").c_str());
     const auto packages = GetWidgetPackageManager().ListPackages();
     return catalogue.Build(packages, Locale::Instance().GetEffectiveLanguage(),
         [](const snowdesktop::widget::InstalledPackage& package) {
@@ -31552,6 +31556,11 @@ bool WidgetEngine::InstallAndVerifyStaticWidgetPackage(
 snowdesktop::widget::PackagePaths WidgetEngine::GetWidgetPackagePaths()
 {
     return GetWidgetPackageManager().Paths();
+}
+
+bool WidgetEngine::RefreshWidgetPackages(std::string& error)
+{
+    return GetWidgetPackageManager().RefreshCatalog(error);
 }
 
 std::vector<snowdesktop::widget::InstalledPackage>

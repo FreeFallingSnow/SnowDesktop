@@ -2404,6 +2404,15 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
     return AtomicWrite(paths_.registry, out.str(), error);
 }
 
+bool WidgetPackageManager::RefreshCatalog(std::string& error)
+{
+    error.clear();
+    auto refreshed = *this;
+    if (!refreshed.Refresh(error)) return false;
+    *this = std::move(refreshed);
+    return true;
+}
+
 bool WidgetPackageManager::Refresh(std::string& error)
 {
     const auto previousKnown = knownDevelopmentIds_;
@@ -2637,6 +2646,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
     scanRoot(paths_.installed, false, false);
     scanRoot(paths_.development, false, true);
 
+    if (!error.empty()) return false;
     if (knownDevelopmentIds_ != previousKnown && !SaveRegistry(error))
     {
         knownDevelopmentIds_ = previousKnown;

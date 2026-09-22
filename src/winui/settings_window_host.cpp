@@ -3642,6 +3642,8 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     // made by another SnowDesktop build or by Windows Startup Apps settings.
     impl_->RefreshExternalStateNow();
 
+    const bool refreshActiveWidgetsPage = !reopening &&
+        impl_->widgetsPageActive && impl_->widgetsBackendPage == route.page;
     SettingsActionResult openResult;
     if (!impl_->CommitRoute(route, &openResult))
     {
@@ -3651,6 +3653,8 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     }
     const auto snapshot = impl_->controller->Snapshot();
     impl_->ApplySnapshotNow(snapshot);
+    if (refreshActiveWidgetsPage && impl_->widgetsPageBackend)
+        (void)impl_->widgetsPageBackend->Refresh();
     impl_->RefreshAgentSkillNavigationState();
     impl_->ResumeInteraction();
     if (IsIconic(impl_->window))
