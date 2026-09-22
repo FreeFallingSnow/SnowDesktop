@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file utils.cpp
  * @brief 杂项工具函数实现
  *
@@ -15,6 +15,7 @@
 #include "icon_render_rules.h"
 #include "shortcut_application_rules.h"
 #include "shortcut_icon_resource.h"
+#include "shell_call_diagnostics.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
@@ -29,6 +30,8 @@
 #include <mutex>
 #include <unordered_set>
 #include <vector>
+
+namespace shellCalls = snowdesktop::shell_call_diagnostics;
 
 // ============================================================================
 // 窗口枚举回调函数
@@ -1104,13 +1107,22 @@ std::wstring ResolveRelativeIconResourcePath(
 HBITMAP ExtractIconResourceBitmap(const std::wstring& resourcePath,
     int iconIndex, int sourceSize, SIZE& bitmapSize)
 {
-    if (resourcePath.empty() ||
-        GetFileAttributesW(resourcePath.c_str()) == INVALID_FILE_ATTRIBUTES)
+    if (resourcePath.empty() || shellCalls::Call(
+                                    L"Resource.GetFileAttributes",
+                                    [&] {
+                                        return GetFileAttributesW(resourcePath.c_str());
+                                    },
+                                    resourcePath) == INVALID_FILE_ATTRIBUTES)
         return nullptr;
 
     HICON icon = nullptr;
-    const HRESULT result = SHDefExtractIconW(resourcePath.c_str(),
-        iconIndex, 0, &icon, nullptr, MAKELONG(sourceSize, 0));
+    const HRESULT result = shellCalls::Call(
+        L"Resource.SHDefExtractIcon",
+        [&] {
+            return SHDefExtractIconW(resourcePath.c_str(), iconIndex, 0, &icon, nullptr,
+                                     MAKELONG(sourceSize, 0));
+        },
+        resourcePath);
     if (FAILED(result) || !icon)
     {
         if (icon)
@@ -1118,8 +1130,12 @@ HBITMAP ExtractIconResourceBitmap(const std::wstring& resourcePath,
         return nullptr;
     }
 
-    HBITMAP bitmap = CreateAlphaBitmapFromIcon(
-        icon, sourceSize, sourceSize, bitmapSize);
+    HBITMAP bitmap = shellCalls::Call(
+        L"Resource.CreateAlphaBitmap",
+        [&] {
+            return CreateAlphaBitmapFromIcon(icon, sourceSize, sourceSize, bitmapSize);
+        },
+        resourcePath);
     DestroyIcon(icon);
     return bitmap;
 }
@@ -1132,19 +1148,36 @@ HBITMAP ExtractShellLinkSourceIcon(std::wstring_view sourcePath,
 
     const std::wstring shortcutPath(sourcePath);
     ComPtr<IShellLinkW> shellLink;
-    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink))) || !shellLink)
+    if (FAILED(shellCalls::Call(L"Link.CoCreateInstance",
+                                [&] {
+                                    return CoCreateInstance(CLSID_ShellLink, nullptr,
+                                                            CLSCTX_INPROC_SERVER,
+                                                            IID_PPV_ARGS(&shellLink));
+                                })) ||
+        !shellLink)
         return nullptr;
 
     ComPtr<IPersistFile> persistFile;
-    if (FAILED(shellLink.As(&persistFile)) ||
-        FAILED(persistFile->Load(shortcutPath.c_str(), STGM_READ)))
+    if (FAILED(shellCalls::Call(L"Link.QueryPersistFile",
+                                [&] {
+                                    return shellLink.As(&persistFile);
+                                })) ||
+        FAILED(shellCalls::Call(
+            L"Link.Load",
+            [&] {
+                return persistFile->Load(shortcutPath.c_str(), STGM_READ);
+            },
+            shortcutPath)))
         return nullptr;
 
     std::vector<wchar_t> iconLocation(32768, L'\0');
     int iconIndex = 0;
-    if (SUCCEEDED(shellLink->GetIconLocation(iconLocation.data(),
-            static_cast<int>(iconLocation.size()), &iconIndex)) &&
+    if (SUCCEEDED(shellCalls::Call(L"Link.GetIconLocation",
+                                   [&] {
+                                       return shellLink->GetIconLocation(
+                                           iconLocation.data(),
+                                           static_cast<int>(iconLocation.size()), &iconIndex);
+                                   })) &&
         iconLocation[0] != L'\0')
     {
         std::wstring iconPath = ResolveRelativeIconResourcePath(
@@ -1155,8 +1188,12 @@ HBITMAP ExtractShellLinkSourceIcon(std::wstring_view sourcePath,
     }
 
     std::vector<wchar_t> targetPath(32768, L'\0');
-    if (SUCCEEDED(shellLink->GetPath(targetPath.data(),
-            static_cast<int>(targetPath.size()), nullptr, SLGP_RAWPATH)) &&
+    if (SUCCEEDED(shellCalls::Call(L"Link.GetPath.Raw",
+                                   [&] {
+                                       return shellLink->GetPath(
+                                           targetPath.data(), static_cast<int>(targetPath.size()),
+                                           nullptr, SLGP_RAWPATH);
+                                   })) &&
         targetPath[0] != L'\0')
     {
         std::wstring expandedTarget =
@@ -1172,8 +1209,13 @@ HBITMAP ExtractShellLinkSourceIcon(std::wstring_view sourcePath,
 HBITMAP ExtractInternetShortcutSourceIcon(std::wstring_view sourcePath,
     int sourceSize, SIZE& bitmapSize)
 {
-    const auto resource = snowdesktop::shortcut_icon_resource::
-        ReadInternetShortcutIconResource(sourcePath);
+    const auto resource = shellCalls::Call(
+        L"Url.ReadIconResource",
+        [&] {
+            return snowdesktop::shortcut_icon_resource::ReadInternetShortcutIconResource(
+                sourcePath);
+        },
+        sourcePath);
     if (!resource)
         return nullptr;
     return ExtractIconResourceBitmap(
@@ -1229,14 +1271,23 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
             snowdesktop::shortcut_application_rules;
         if (shortcutRules::HasExtension(sourcePath, L".url"))
         {
-            if (HBITMAP bitmap = ExtractInternetShortcutSourceIcon(
-                    sourcePath, sourceSize, bitmapSize))
+            if (HBITMAP bitmap = shellCalls::Call(
+                    L"Url.SourceIcon",
+                    [&] {
+                        return ExtractInternetShortcutSourceIcon(sourcePath, sourceSize,
+                                                                 bitmapSize);
+                    },
+                    sourcePath))
                 return bitmap;
         }
         else if (shortcutRules::HasExtension(sourcePath, L".lnk"))
         {
-            if (HBITMAP bitmap = ExtractShellLinkSourceIcon(
-                    sourcePath, sourceSize, bitmapSize))
+            if (HBITMAP bitmap = shellCalls::Call(
+                    L"Link.SourceIcon",
+                    [&] {
+                        return ExtractShellLinkSourceIcon(sourcePath, sourceSize, bitmapSize);
+                    },
+                    sourcePath))
                 return bitmap;
         }
     }
@@ -1244,14 +1295,22 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     {
         ComPtr<IShellFolder> parentFolder;
         PCUITEMID_CHILD child = nullptr;
-        if (SUCCEEDED(SHBindToParent(pidl, IID_PPV_ARGS(&parentFolder),
-                &child)) && parentFolder && child)
+        if (SUCCEEDED(shellCalls::Call(L"Extract.SHBindToParent",
+                                       [&] {
+                                           return SHBindToParent(pidl, IID_PPV_ARGS(&parentFolder),
+                                                                 &child);
+                                       })) &&
+            parentFolder && child)
         {
             PCUITEMID_CHILD children[]{ child };
             ComPtr<IExtractIconW> extractor;
-            if (SUCCEEDED(parentFolder->GetUIObjectOf(nullptr, 1,
-                    children, IID_IExtractIconW, nullptr,
-                    reinterpret_cast<void**>(extractor.GetAddressOf()))) &&
+            if (SUCCEEDED(shellCalls::Call(L"Extract.GetUIObjectOf",
+                                           [&] {
+                                               return parentFolder->GetUIObjectOf(
+                                                   nullptr, 1, children, IID_IExtractIconW, nullptr,
+                                                   reinterpret_cast<void**>(
+                                                       extractor.GetAddressOf()));
+                                           })) &&
                 extractor)
             {
                 std::vector<wchar_t> iconFile(32768, L'\0');
@@ -1259,16 +1318,21 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
                 UINT iconFlags = 0;
                 const UINT locationFlags = GIL_FORSHELL |
                     (forShortcut ? GIL_FORSHORTCUT : 0u);
-                const HRESULT locationResult = extractor->GetIconLocation(
-                    locationFlags, iconFile.data(),
-                    static_cast<UINT>(iconFile.size()),
-                    &iconIndex, &iconFlags);
+                const HRESULT locationResult = shellCalls::Call(L"Extract.GetIconLocation", [&] {
+                    return extractor->GetIconLocation(locationFlags, iconFile.data(),
+                                                      static_cast<UINT>(iconFile.size()),
+                                                      &iconIndex, &iconFlags);
+                });
                 if (locationResult == S_OK)
                 {
                     HICON icon = nullptr;
-                    HRESULT extractResult = extractor->Extract(
-                        iconFile.data(), static_cast<UINT>(iconIndex),
-                        &icon, nullptr, MAKELONG(sourceSize, 0));
+                    HRESULT extractResult = shellCalls::Call(
+                        L"Extract.Extract",
+                        [&] {
+                            return extractor->Extract(iconFile.data(), static_cast<UINT>(iconIndex),
+                                                      &icon, nullptr, MAKELONG(sourceSize, 0));
+                        },
+                        iconFile.data());
                     if (extractResult == S_FALSE && iconFile[0] != L'\0')
                     {
                         if (icon)
@@ -1276,15 +1340,21 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
                             DestroyIcon(icon);
                             icon = nullptr;
                         }
-                        extractResult = SHDefExtractIconW(
-                            iconFile.data(), iconIndex,
-                            iconFlags & GIL_SIMULATEDOC,
-                            &icon, nullptr, MAKELONG(sourceSize, 0));
+                        extractResult = shellCalls::Call(
+                            L"Extract.SHDefExtractIcon",
+                            [&] {
+                                return SHDefExtractIconW(iconFile.data(), iconIndex,
+                                                         iconFlags & GIL_SIMULATEDOC, &icon,
+                                                         nullptr, MAKELONG(sourceSize, 0));
+                            },
+                            iconFile.data());
                     }
                     if (SUCCEEDED(extractResult) && icon)
                     {
-                        HBITMAP bitmap = CreateAlphaBitmapFromIcon(
-                            icon, sourceSize, sourceSize, bitmapSize);
+                        HBITMAP bitmap = shellCalls::Call(L"Bitmap.CreateAlphaBitmap", [&] {
+                            return CreateAlphaBitmapFromIcon(icon, sourceSize, sourceSize,
+                                                             bitmapSize);
+                        });
                         DestroyIcon(icon);
                         if (bitmap)
                             return bitmap;
@@ -1298,18 +1368,28 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
         }
     }
     ComPtr<IShellItemImageFactory> imageFactory;
-    if (SUCCEEDED(SHCreateItemFromIDList(pidl, IID_PPV_ARGS(&imageFactory))) && imageFactory)
+    if (SUCCEEDED(shellCalls::Call(L"ImageFactory.SHCreateItemFromIDList",
+                                   [&] {
+                                       return SHCreateItemFromIDList(pidl,
+                                                                     IID_PPV_ARGS(&imageFactory));
+                                   })) &&
+        imageFactory)
     {
         const auto tryImageFactory = [&](UINT flags, bool thumbnail) -> HBITMAP
         {
             SIZE size{ sourceSize, sourceSize };
             HBITMAP bitmap = nullptr;
-            if (FAILED(imageFactory->GetImage(size, flags, &bitmap)) ||
+            if (FAILED(shellCalls::Call(thumbnail ? L"ImageFactory.GetImage.Thumbnail"
+                                                  : L"ImageFactory.GetImage.Icon",
+                                        [&] {
+                                            return imageFactory->GetImage(size, flags, &bitmap);
+                                        })) ||
                 bitmap == nullptr)
                 return nullptr;
 
-            HBITMAP alphaBitmap = CopyBitmapToAlphaDib(
-                bitmap, bitmapSize);
+            HBITMAP alphaBitmap = shellCalls::Call(L"ImageFactory.CopyAlphaBitmap", [&] {
+                return CopyBitmapToAlphaDib(bitmap, bitmapSize);
+            });
             DeleteObject(bitmap);
             if (alphaBitmap && returnedThumbnail)
                 *returnedThumbnail = thumbnail;
@@ -1327,26 +1407,38 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     }
 
     ComPtr<IImageList> imageList;
-    HRESULT hr = SHGetImageList(SHIL_JUMBO, __uuidof(IImageList), reinterpret_cast<void**>(imageList.GetAddressOf()));
+    HRESULT hr = shellCalls::Call(L"ImageList.SHGetImageList.Jumbo", [&] {
+        return SHGetImageList(SHIL_JUMBO, __uuidof(IImageList),
+                              reinterpret_cast<void**>(imageList.GetAddressOf()));
+    });
     if (FAILED(hr) || !imageList)
     {
         imageList.Reset();
-        hr = SHGetImageList(SHIL_EXTRALARGE, __uuidof(IImageList), reinterpret_cast<void**>(imageList.GetAddressOf()));
+        hr = shellCalls::Call(L"ImageList.SHGetImageList.ExtraLarge", [&] {
+            return SHGetImageList(SHIL_EXTRALARGE, __uuidof(IImageList),
+                                  reinterpret_cast<void**>(imageList.GetAddressOf()));
+        });
     }
     if (FAILED(hr) || !imageList)
     {
         imageList.Reset();
-        hr = SHGetImageList(SHIL_LARGE, __uuidof(IImageList), reinterpret_cast<void**>(imageList.GetAddressOf()));
+        hr = shellCalls::Call(L"ImageList.SHGetImageList.Large", [&] {
+            return SHGetImageList(SHIL_LARGE, __uuidof(IImageList),
+                                  reinterpret_cast<void**>(imageList.GetAddressOf()));
+        });
     }
 
     HICON icon = nullptr;
     if (SUCCEEDED(hr) && imageList && fallbackIndex >= 0)
     {
-        imageList->GetIcon(fallbackIndex, ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon);
+        shellCalls::Call(L"ImageList.GetIcon", [&] {
+            return imageList->GetIcon(fallbackIndex, ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon);
+        });
         if (icon != nullptr)
         {
-            HBITMAP bitmap = CreateAlphaBitmapFromIcon(
-                icon, sourceSize, sourceSize, bitmapSize);
+            HBITMAP bitmap = shellCalls::Call(L"Bitmap.CreateAlphaBitmap", [&] {
+                return CreateAlphaBitmapFromIcon(icon, sourceSize, sourceSize, bitmapSize);
+            });
             DestroyIcon(icon);
             if (bitmap != nullptr)
             {
@@ -1356,17 +1448,16 @@ HBITMAP GetHighResolutionShellIconBitmap(PCIDLIST_ABSOLUTE pidl,
     }
 
     SHFILEINFOW iconInfo{};
-    SHGetFileInfoW(
-        reinterpret_cast<LPCWSTR>(pidl),
-        0,
-        &iconInfo,
-        sizeof(iconInfo),
-        SHGFI_PIDL | SHGFI_ICON | SHGFI_LARGEICON | SHGFI_ADDOVERLAYS);
+    shellCalls::Call(L"Fallback.SHGetFileInfo.Icon", [&] {
+        return SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &iconInfo, sizeof(iconInfo),
+                              SHGFI_PIDL | SHGFI_ICON | SHGFI_LARGEICON | SHGFI_ADDOVERLAYS);
+    });
     icon = iconInfo.hIcon;
     if (icon != nullptr)
     {
-        HBITMAP bitmap = CreateAlphaBitmapFromIcon(
-            icon, sourceSize, sourceSize, bitmapSize);
+        HBITMAP bitmap = shellCalls::Call(L"Bitmap.CreateAlphaBitmap", [&] {
+            return CreateAlphaBitmapFromIcon(icon, sourceSize, sourceSize, bitmapSize);
+        });
         DestroyIcon(icon);
         return bitmap;
     }

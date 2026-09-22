@@ -1,7 +1,11 @@
 #include "app.h"
 #include "shell_icon_request.h"
+#include "../shell_call_diagnostics.h"
+
 #include "../popup_icon_load_rules.h"
 #include "../shortcut_application_rules.h"
+
+namespace shellCalls = snowdesktop::shell_call_diagnostics;
 
 // Asynchronous icon-loading lifecycle.
 
@@ -278,6 +282,9 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     };
     auto image = [input, queuedAt, makeResult] {
         auto& task = *input;
+        const auto& tracePath = task.parsingName.empty() ? task.folderPath : task.parsingName;
+        shellCalls::Context trace(
+            task.phase == IconLoadPhase::Phase1 ? L"icon.phase1" : L"icon.phase2", tracePath);
         const auto started = GetTickCount64();
         auto result = makeResult();
         // First pixels must not wait for the system image list or shortcut
@@ -286,7 +293,10 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         {
             SHFILEINFOW info{};
             const auto& path = task.parsingName.empty() ? task.folderPath : task.parsingName;
-            if (SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info), SHGFI_SYSICONINDEX | SHGFI_TYPENAME))
+            if (shellCalls::Call(L"Metadata.SHGetFileInfo", [&] {
+                    return SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info),
+                                          SHGFI_SYSICONINDEX | SHGFI_TYPENAME);
+                }))
             {
                 task.sysIconIndex = info.iIcon;
                 result->typeName = info.szTypeName;
@@ -298,7 +308,9 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         {
             PIDLIST_ABSOLUTE pidl = nullptr;
             const auto& path = task.parsingName.empty() ? task.folderPath : task.parsingName;
-            if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)))
+            if (SUCCEEDED(shellCalls::Call(L"Pidl.SHParseDisplayName", [&] {
+                    return SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr);
+                })))
                 task.absolutePidl.reset(pidl);
         }
         const auto pidlDone = GetTickCount64();
@@ -310,10 +322,18 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         if (task.phase == IconLoadPhase::Phase2)
         {
             ComPtr<IShellItem> shellItem;
-            if (SUCCEEDED(SHCreateItemFromIDList(task.absolutePidl.get(), IID_PPV_ARGS(&shellItem))) && shellItem)
+            if (SUCCEEDED(shellCalls::Call(L"Attributes.SHCreateItemFromIDList",
+                                           [&] {
+                                               return SHCreateItemFromIDList(
+                                                   task.absolutePidl.get(),
+                                                   IID_PPV_ARGS(&shellItem));
+                                           })) &&
+                shellItem)
             {
                 SFGAOF attributes = 0;
-                if (SUCCEEDED(shellItem->GetAttributes(SFGAO_FOLDER, &attributes)))
+                if (SUCCEEDED(shellCalls::Call(L"Attributes.GetAttributes", [&] {
+                        return shellItem->GetAttributes(SFGAO_FOLDER, &attributes);
+                    })))
                     shellFolder = (attributes & SFGAO_FOLDER) != 0;
             }
         }
@@ -322,23 +342,34 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         const bool forShortcut = shortcutRules::HasExtension(representationName, L".lnk") ||
             shortcutRules::HasExtension(representationName, L".url");
         bool iconIsThumbnail = false;
-        result->bitmap = task.absolutePidl.get() ? GetHighResolutionShellIconBitmap(
-            task.absolutePidl.get(), task.sysIconIndex, result->bitmapSize,
-            allowThumbnail, task.requestedSize, nameLooksApplicationLike && !shellFolder,
-            forShortcut, representationName, &iconIsThumbnail) : nullptr;
+        result->bitmap =
+            task.absolutePidl.get()
+                ? shellCalls::Call(L"Bitmap.GetHighResolution",
+                                   [&] {
+                                       return GetHighResolutionShellIconBitmap(
+                                           task.absolutePidl.get(), task.sysIconIndex,
+                                           result->bitmapSize, allowThumbnail, task.requestedSize,
+                                           nameLooksApplicationLike && !shellFolder, forShortcut,
+                                           representationName, &iconIsThumbnail);
+                                   })
+                : nullptr;
         if (task.phase == IconLoadPhase::Phase1 && result->bitmap)
-            ClampAlphaToColorKey(result->bitmap, kTransparentKey);
+            shellCalls::Call(L"Bitmap.ClampAlphaToColorKey", [&] {
+                return ClampAlphaToColorKey(result->bitmap, kTransparentKey);
+            });
         result->iconIsMediaThumbnail = snowdesktop::icon_render_rules::IsMediaThumbnail(
             iconIsThumbnail, shellFolder);
         const auto finished = GetTickCount64();
         if (finished - queuedAt >= 250)
         {
             wchar_t timing[512]{};
-            swprintf_s(timing, L"Shell icon slow: phase=%u queueMs=%llu metadataMs=%llu "
-                L"pidlMs=%llu bitmapMs=%llu shortcutMs=0 totalMs=%llu bitmap=%d path=",
-                task.phase == IconLoadPhase::Phase1 ? 1u : 2u,
-                started - queuedAt, metadataDone - started, pidlDone - metadataDone,
-                finished - pidlDone, finished - queuedAt, result->bitmap ? 1 : 0);
+            swprintf_s(
+                timing,
+                L"Shell icon slow: phase=%u queueMs=%llu metadataMs=%llu "
+                L"pidlMs=%llu bitmapMs=%llu shortcutMs=0 totalMs=%llu bitmap=%d trace=%llu path=",
+                task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
+                metadataDone - started, pidlDone - metadataDone, finished - pidlDone,
+                finished - queuedAt, result->bitmap ? 1 : 0, trace.Id());
             WriteDiagnosticLogEntry((std::wstring(timing) + std::wstring(representationName)).c_str());
         }
         return result;
@@ -353,6 +384,9 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     if (input->phase == IconLoadPhase::Phase1)
     {
         auto classify = [input, makeResult] {
+            const auto& tracePath =
+                input->parsingName.empty() ? input->folderPath : input->parsingName;
+            shellCalls::Context trace(L"icon.shortcut", tracePath);
             const auto started = GetTickCount64();
             auto result = makeResult();
             result->phase = IconLoadPhase::Shortcut;
@@ -365,23 +399,37 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             if (isLnk)
             {
                 ComPtr<IShellLinkW> shellLink;
-                if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                        IID_PPV_ARGS(&shellLink))))
+                if (SUCCEEDED(shellCalls::Call(L"Classify.CoCreateInstance", [&] {
+                        return CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                                IID_PPV_ARGS(&shellLink));
+                    })))
                 {
                     ComPtr<IPersistFile> persistFile;
-                    const bool loaded = SUCCEEDED(shellLink.As(&persistFile)) &&
-                        SUCCEEDED(persistFile->Load(path.c_str(), STGM_READ));
+                    const bool loaded =
+                        SUCCEEDED(shellCalls::Call(L"Classify.QueryPersistFile",
+                                                   [&] {
+                                                       return shellLink.As(&persistFile);
+                                                   })) &&
+                        SUCCEEDED(shellCalls::Call(L"Classify.Load", [&] {
+                            return persistFile->Load(path.c_str(), STGM_READ);
+                        }));
                     const auto loadedAt = GetTickCount64();
                     loadMs = loadedAt - started;
                     if (loaded)
                     {
-                        result->isApplicationShortcut = IsApplicationsShellLinkTarget(shellLink.Get(), path);
+                        result->isApplicationShortcut =
+                            shellCalls::Call(L"Classify.ApplicationTarget", [&] {
+                                return IsApplicationsShellLinkTarget(shellLink.Get(), path);
+                            });
                         const auto classifiedAt = GetTickCount64();
                         classifyMs = classifiedAt - loadedAt;
                         if (!result->isApplicationShortcut)
                         {
                             wchar_t target[32768]{};
-                            if (SUCCEEDED(shellLink->GetPath(target, static_cast<int>(std::size(target)), nullptr, 0)))
+                            if (SUCCEEDED(shellCalls::Call(L"Classify.GetPath.ExeFallback", [&] {
+                                    return shellLink->GetPath(
+                                        target, static_cast<int>(std::size(target)), nullptr, 0);
+                                })))
                                 result->isApplicationShortcut = shortcutRules::HasExtension(target, L".exe");
                         }
                         targetMs = GetTickCount64() - classifiedAt;
@@ -391,16 +439,21 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             else if (isUrl)
             {
                 wchar_t url[32768]{};
-                GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
-                    static_cast<DWORD>(std::size(url)), path.c_str());
+                shellCalls::Call(L"Classify.ReadUrl", [&] {
+                    return GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
+                                                    static_cast<DWORD>(std::size(url)),
+                                                    path.c_str());
+                });
                 result->isApplicationShortcut = shortcutRules::IsSteamApplicationUrl(url);
             }
             const auto elapsed = GetTickCount64() - started;
             if (elapsed >= 250)
             {
                 wchar_t timing[256]{};
-                swprintf_s(timing, L"Shell shortcut slow: loadMs=%llu classifyMs=%llu targetMs=%llu totalMs=%llu path=",
-                    loadMs, classifyMs, targetMs, elapsed);
+                swprintf_s(timing,
+                           L"Shell shortcut slow: loadMs=%llu classifyMs=%llu targetMs=%llu "
+                           L"totalMs=%llu trace=%llu path=",
+                           loadMs, classifyMs, targetMs, elapsed, trace.Id());
                 WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
             }
             return result;

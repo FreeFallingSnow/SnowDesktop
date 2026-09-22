@@ -2,6 +2,7 @@
 #include "application_restart_policy.h"
 #include "app/startup_cancellation.h"
 #include "app/startup_diagnostics.h"
+#include "shell_call_diagnostics.h"
 
 #include <iostream>
 #include <string>
@@ -80,6 +81,64 @@ void TestStartupDiagnostics()
     Call(L"later paint", [] {});
     Expect(finishedCount == 6 && startupMessages.size() == finishedCount,
         "finishing startup also disables subsequent runtime probes");
+}
+
+ULONGLONG diagnosticTick = 0;
+ULONGLONG WINAPI DiagnosticClock() { return diagnosticTick; }
+
+void TestSlowShellDiagnostics()
+{
+    using namespace snowdesktop::shell_call_diagnostics;
+    startupMessages.clear();
+    diagnosticTick = 1000;
+    {
+        Context trace(L"icon.phase1", L"C:\\app.lnk", &DiagnosticClock);
+        Call(L"fast", [] { diagnosticTick += 249; });
+        Expect(startupMessages.empty(), "fast Shell calls do not write to the disk sink");
+        const HRESULT result = Call(L"Link.SourceIcon", [] {
+            return Call(L"Resource.SHDefExtractIcon", [] {
+                diagnosticTick += 250;
+                SetLastError(ERROR_NOT_READY);
+                return E_PENDING;
+            }, L"C:\\app.exe");
+        });
+        Expect(result == E_PENDING && GetLastError() == ERROR_NOT_READY,
+            "slow-call diagnostics preserve provider failure results and Win32 errors");
+        Expect(startupMessages.size() == 2 &&
+            startupMessages[0].find(L"step=Resource.SHDefExtractIcon") != std::wstring::npos &&
+            startupMessages[0].find(L"elapsed_ms=250") != std::wstring::npos &&
+            startupMessages[0].find(L"path=C:\\app.lnk detail=C:\\app.exe") != std::wstring::npos &&
+            startupMessages[0].find(L"parentCall=2") != std::wstring::npos,
+            "a nested slow resource call retains its API, duration, source, resource and parent");
+        std::thread unrelated([] { Call(L"unrelated", [] {}); });
+        unrelated.join();
+        Expect(startupMessages.size() == 2, "other threads do not inherit a Shell task context");
+        {
+            Context child(L"desktop.local", L"C:\\Desktop", &DiagnosticClock);
+            child.SetItem(7);
+            try { Call(L"Enum.Next", [] { diagnosticTick += 300; throw 1; }); }
+            catch (int) {}
+        }
+        const auto field = [](const std::wstring& line, const wchar_t* key) {
+            const auto pos = line.find(key);
+            if (pos == std::wstring::npos) return std::wstring{};
+            const auto value = pos + wcslen(key);
+            return line.substr(value, line.find(L' ', value) - value);
+        };
+        Expect(startupMessages.size() == 4 &&
+            startupMessages[2].find(L"step=Enum.Next item=7") != std::wstring::npos &&
+            field(startupMessages[2], L"parentTrace=") == field(startupMessages[0], L"trace="),
+            "a failed nested read identifies the next item ordinal and original task");
+        Call(L"after-child", [] { diagnosticTick += 250; });
+        Expect(startupMessages.size() == 5 &&
+            field(startupMessages.back(), L"trace=") == field(startupMessages[0], L"trace="),
+            "nested reads restore the parent task for later calls");
+    }
+    Expect(startupMessages.size() == 6 &&
+        startupMessages.back().find(L"step=total") != std::wstring::npos,
+        "slow tasks retain a total for uninstrumented gaps");
+    Call(L"outside", [] {});
+    Expect(startupMessages.size() == 6, "completed tasks leave later callers uninstrumented");
 }
 
 HANDLE StartChild(std::wstring_view argument)
@@ -171,6 +230,7 @@ int wmain(int argc, wchar_t* argv[])
 
     using namespace snowdesktop::application_restart_policy;
     TestStartupDiagnostics();
+    TestSlowShellDiagnostics();
     if (!AllowsCrashRestart(kFlags))
     {
         std::cerr << "FAILED: application restart must remain enabled for crashes\n";

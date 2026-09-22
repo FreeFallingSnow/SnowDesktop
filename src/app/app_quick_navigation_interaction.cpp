@@ -1,8 +1,12 @@
 #include "app.h"
+#include "../shell_call_diagnostics.h"
+
 #include "../menu_fluent_glyphs.h"
 #include "../shortcut_application_rules.h"
 #include "quick_navigation_helpers.h"
 #include "quick_navigation_rules.h"
+
+namespace shellCalls = snowdesktop::shell_call_diagnostics;
 
 // Quick-navigation rename, click handling, shortcuts and context menus.
 
@@ -607,7 +611,12 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
         PROPVARIANT value{};
         PropVariantInit(&value);
         std::wstring result;
-        if (SUCCEEDED(propertyStore->GetValue(propertyKey, &value)) &&
+        if (SUCCEEDED(shellCalls::Call(IsEqualPropertyKey(propertyKey, PKEY_AppUserModel_ID)
+                                           ? L"Classify.PropertyStore.AppUserModelId"
+                                           : L"Classify.PropertyStore.TargetParsingPath",
+                                       [&] {
+                                           return propertyStore->GetValue(propertyKey, &value);
+                                       })) &&
             value.vt == VT_LPWSTR && value.pwszVal)
             result = value.pwszVal;
         PropVariantClear(&value);
@@ -617,7 +626,11 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
     std::wstring appUserModelId;
     std::wstring targetParsingPath;
     ComPtr<IPropertyStore> propertyStore;
-    if (SUCCEEDED(shellLink->QueryInterface(IID_PPV_ARGS(&propertyStore))) &&
+    if (SUCCEEDED(shellCalls::Call(L"Classify.QueryPropertyStore",
+                                   [&] {
+                                       return shellLink->QueryInterface(
+                                           IID_PPV_ARGS(&propertyStore));
+                                   })) &&
         propertyStore)
     {
         appUserModelId = readProperty(
@@ -630,14 +643,22 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
         (appUserModelId.empty() || targetParsingPath.empty()))
     {
         ComPtr<IShellItem2> shortcutItem;
-        if (SUCCEEDED(SHCreateItemFromParsingName(
-                shortcutPath.c_str(), nullptr,
-                IID_PPV_ARGS(&shortcutItem))) && shortcutItem)
+        if (SUCCEEDED(shellCalls::Call(L"Classify.SHCreateItemFromParsingName",
+                                       [&] {
+                                           return SHCreateItemFromParsingName(
+                                               shortcutPath.c_str(), nullptr,
+                                               IID_PPV_ARGS(&shortcutItem));
+                                       })) &&
+            shortcutItem)
         {
             PWSTR value = nullptr;
             if (appUserModelId.empty() &&
-                SUCCEEDED(shortcutItem->GetString(
-                    PKEY_AppUserModel_ID, &value)) && value)
+                SUCCEEDED(shellCalls::Call(L"Classify.ShellItem.GetString.AppUserModelId",
+                                           [&] {
+                                               return shortcutItem->GetString(PKEY_AppUserModel_ID,
+                                                                              &value);
+                                           })) &&
+                value)
                 appUserModelId = value;
             if (value)
             {
@@ -645,8 +666,12 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
                 value = nullptr;
             }
             if (targetParsingPath.empty() &&
-                SUCCEEDED(shortcutItem->GetString(
-                    PKEY_Link_TargetParsingPath, &value)) && value)
+                SUCCEEDED(shellCalls::Call(L"Classify.ShellItem.GetString.TargetParsingPath",
+                                           [&] {
+                                               return shortcutItem->GetString(
+                                                   PKEY_Link_TargetParsingPath, &value);
+                                           })) &&
+                value)
                 targetParsingPath = value;
             if (value)
                 CoTaskMemFree(value);
@@ -654,17 +679,23 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
     }
 
     wchar_t resolvedPath[32768]{};
-    shellLink->GetPath(
-        resolvedPath, static_cast<int>(std::size(resolvedPath)),
-        nullptr, 0);
+    shellCalls::Call(L"Classify.GetPath", [&] {
+        return shellLink->GetPath(resolvedPath, static_cast<int>(std::size(resolvedPath)), nullptr,
+                                  0);
+    });
     wchar_t arguments[32768]{};
-    shellLink->GetArguments(
-        arguments, static_cast<int>(std::size(arguments)));
+    shellCalls::Call(L"Classify.GetArguments", [&] {
+        return shellLink->GetArguments(arguments, static_cast<int>(std::size(arguments)));
+    });
 
     PIDLIST_ABSOLUTE rawPidl = nullptr;
     Pidl targetPidl;
     bool applicationsPidlTarget = false;
-    if (SUCCEEDED(shellLink->GetIDList(&rawPidl)) && rawPidl)
+    if (SUCCEEDED(shellCalls::Call(L"Classify.GetIDList",
+                                   [&] {
+                                       return shellLink->GetIDList(&rawPidl);
+                                   })) &&
+        rawPidl)
     {
         targetPidl.reset(rawPidl);
         const SIGDN names[] = {
@@ -675,8 +706,11 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
         for (SIGDN nameKind : names)
         {
             PWSTR parsingName = nullptr;
-            if (SUCCEEDED(SHGetNameFromIDList(
-                    targetPidl.get(), nameKind, &parsingName)) &&
+            if (SUCCEEDED(shellCalls::Call(L"Classify.SHGetNameFromIDList",
+                                           [&] {
+                                               return SHGetNameFromIDList(targetPidl.get(),
+                                                                          nameKind, &parsingName);
+                                           })) &&
                 parsingName)
             {
                 applicationsPidlTarget =
@@ -692,10 +726,13 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
         if (!applicationsPidlTarget)
         {
             SHFILEINFOW info{};
-            if (SHGetFileInfoW(
-                    reinterpret_cast<LPCWSTR>(targetPidl.get()), 0,
-                    &info, sizeof(info),
-                    SHGFI_PIDL | SHGFI_TYPENAME) && info.szTypeName[0])
+            if (shellCalls::Call(L"Classify.SHGetFileInfo.TypeName",
+                                 [&] {
+                                     return SHGetFileInfoW(
+                                         reinterpret_cast<LPCWSTR>(targetPidl.get()), 0, &info,
+                                         sizeof(info), SHGFI_PIDL | SHGFI_TYPENAME);
+                                 }) &&
+                info.szTypeName[0])
             {
                 const std::wstring typeName =
                     ToUpperInvariant(info.szTypeName);
