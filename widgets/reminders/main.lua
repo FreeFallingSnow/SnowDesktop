@@ -1,5 +1,6 @@
 -- reminders/main.lua - API v2 transactional local ToDo list
 local descriptor
+local taskLayout = module.require("modules/task_layout.lua")
 
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
@@ -316,13 +317,20 @@ local function render(context, model)
     local total = taskCounts()
 
     local contentInset = metrics.spacingSm
-    local inputH = math.min(metrics.layoutRowHeight,
-        math.max(unit, h - contentInset * 2))
     local inputY = contentInset
-    local addSize = inputH
+    local addSize = metrics.layoutRowHeight
     local inputW = math.max(unit,
         w - contentInset * 2 - addSize - gap)
-    control.textInput({
+    local draft = storage.get("draft") or ""
+    -- The host text area reserves eight logical pixels for its scrollbar.
+    local scrollbarReserve = 8
+    local inputPadding = metrics.spacingXs
+    local draftMetrics = draw.measureText(draft .. " ", math.max(9, inputFont),
+        math.max(unit, inputW - inputPadding * 2 - scrollbarReserve), false)
+    local inputH = math.min(
+        math.max(metrics.layoutRowHeight, draftMetrics.height + inputPadding * 2),
+        math.max(metrics.layoutRowHeight, math.min(metrics.layoutRowHeight * 3, h / 3)))
+    control.textArea({
         key = "new-task",
         storageKey = "draft",
         shape = { type = "rect", x = contentInset, y = inputY,
@@ -339,7 +347,7 @@ local function render(context, model)
         borderAlpha = 0.10,
         focusedBorderAlpha = 0.75,
         radius = metrics.controlRadius,
-        padding = metrics.spacingSm,
+        padding = inputPadding,
         borderThickness = metrics.strokeWidth,
         selectAll = false,
         liveUpdate = true,
@@ -348,7 +356,7 @@ local function render(context, model)
 
     local addEnabled = trim(storage.get("draft") or "") ~= ""
     local addX = contentInset + inputW + gap
-    local addY = inputY + (inputH - addSize) / 2
+    local addY = inputY
     local addKey = "task.add"
     local addHovered = interaction.isHovered(addKey)
     if addHovered and addEnabled then
@@ -392,9 +400,8 @@ local function render(context, model)
         contextMenu = { id = "task.menu", scope = "component" },
     }, { role = "list", label = l10n.tr("lua_widget.reminders.name") })
 
-    local cardH = math.max(unit, metrics.layoutRowHeight)
+    local baseCardH = math.max(unit, metrics.layoutRowHeight)
     local rowGap = metrics.spacingXs
-    local rowH = cardH + rowGap
     local tasks = loadTasks(showCompleted())
     if #tasks == 0 then
         local hint = total > 0 and
@@ -422,21 +429,33 @@ local function render(context, model)
         return
     end
 
+    local checkboxSize = math.min(fontSize + metrics.spacingSm,
+        baseCardH - metrics.spacingSm)
+    local checkboxX = contentInset + metrics.spacingSm
+    local deleteSize = metrics.iconSize
+    local deleteX = w - contentInset - deleteSize - metrics.spacingSm
+    local textX = checkboxX + checkboxSize + metrics.spacingSm
+    local editorW = math.max(unit, deleteX - textX - metrics.spacingSm)
+    local textW = math.max(unit, editorW - scrollbarReserve)
+    local rows, contentHeight = taskLayout.build(tasks, draw.measureText,
+        textW, fontSize, baseCardH, metrics.spacingXs, rowGap,
+        l10n.tr("lua_widget.reminders.untitled"))
+    local singleLineHeight = draw.measureText(" ", fontSize, 0, false).height
     local scroll = interaction.scroll({
         key = "tasks.scroll",
         shape = viewportShape,
-        contentHeight = math.ceil(#tasks * rowH - rowGap),
+        contentHeight = math.ceil(contentHeight),
     })
-    local first = math.max(1, math.floor(scroll.offset / rowH) + 1)
-    local last = math.min(#tasks,
-        math.ceil((scroll.offset + viewportH) / rowH))
+    local first, last = taskLayout.visibleRange(rows, scroll.offset, viewportH)
     local selectedId = model.selectedId
 
     draw.pushClip(contentInset, listTop,
         w - contentInset * 2, viewportH)
     for index = first, last do
-        local task = tasks[index]
-        local cardY = listTop + (index - 1) * rowH - scroll.offset
+        local row = rows[index]
+        local task = row.task
+        local cardH = row.height
+        local cardY = listTop + row.top - scroll.offset
         local cardW = w - contentInset * 2
         local rowKey = "task.row." .. task.id
         local selected = task.id == selectedId
@@ -461,10 +480,7 @@ local function render(context, model)
             contextMenu = { id = "task.menu", value = task.id },
         }, { role = "listitem", label = task.text }, nil, viewportShape)
 
-        local checkboxSize = math.min(fontSize + metrics.spacingSm,
-            cardH - metrics.spacingSm)
-        local checkboxX = contentInset + metrics.spacingSm
-        local checkboxY = cardY + (cardH - checkboxSize) / 2
+        local checkboxY = cardY + (baseCardH - checkboxSize) / 2
         local checkboxKey = "task.toggle." .. task.id
         local checkboxHovered = interaction.isHovered(checkboxKey)
         draw.strokeRect(checkboxX, checkboxY, checkboxSize, checkboxSize,
@@ -488,21 +504,16 @@ local function render(context, model)
             role = "checkbox", label = task.text,
         }, nil, viewportShape)
 
-        local deleteSize = metrics.iconSize
-        local deleteX = w - contentInset - deleteSize - metrics.spacingSm
-        local textX = checkboxX + checkboxSize + metrics.spacingSm
-        local textW = math.max(unit,
-            deleteX - textX - metrics.spacingSm)
-        local displayText = task.text ~= "" and task.text or
-            l10n.tr("lua_widget.reminders.untitled")
-        local measured = draw.measureText(displayText, fontSize, 0, false)
+        local displayText = row.text
+        local measured = row.measured
         local textY = cardY + math.max(0, (cardH - measured.height) / 2)
         local editShape = clipShape({ type = "rect", x = textX,
-            y = cardY, width = textW, height = cardH }, viewportShape)
+            y = textY, width = editorW,
+            height = cardH - (textY - cardY) }, viewportShape)
         local editing = selected and model.editingTaskId == task.id and
             editShape ~= nil
         if editing then
-            control.textInput({
+            control.textArea({
                 key = "edit-task-" .. task.id,
                 storageKey = taskTextKey(task.id),
                 shape = editShape,
@@ -527,8 +538,8 @@ local function render(context, model)
         else
             draw.text(textX, textY, displayText, fontSize,
                 task.done and palette.completed or palette.text,
-                textW, false, true)
-            if task.done then
+                textW, false, false)
+            if task.done and measured.height <= singleLineHeight + unit then
                 draw.line(textX, cardY + cardH / 2,
                     textX + math.min(textW, measured.width),
                     cardY + cardH / 2, metrics.strokeWidth,
@@ -541,16 +552,16 @@ local function render(context, model)
             local deleteHovered = interaction.isHovered(deleteKey)
             if deleteHovered then
                 draw.circle(deleteX + deleteSize / 2,
-                    cardY + cardH / 2, deleteSize * 0.85,
+                    cardY + baseCardH / 2, deleteSize * 0.85,
                     palette.delete, 0.09)
             end
             draw.fluent(fluent.delete, deleteX,
-                cardY + (cardH - deleteSize) / 2,
+                cardY + (baseCardH - deleteSize) / 2,
                 deleteSize, palette.delete)
             registerRegion(deleteKey, {
                 type = "rect", x = deleteX - metrics.spacingXs,
                 y = cardY,
-                width = deleteSize + metrics.spacingSm, height = cardH,
+                width = deleteSize + metrics.spacingSm, height = baseCardH,
             }, "hand", {
                 click = { id = "task.delete", value = task.id },
             }, { role = "button",
