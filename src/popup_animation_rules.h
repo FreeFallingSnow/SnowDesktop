@@ -220,6 +220,20 @@ private:
     std::uint64_t lastTick_ = 0;
 };
 
+enum class ContentRefreshAction { Stable, ContinueAnimation, FinalizeClose };
+
+// Retire the old bitmap and native completion together, then continue from the
+// elapsed timeline. Restarting Open() here would replay the stale loading scene.
+template<class RetireSnapshot>
+ContentRefreshAction RefreshContent(State& state, std::uint64_t now, RetireSnapshot retire)
+{
+    const bool wasClosing = state.IsClosing();
+    state.Advance(now);
+    retire();
+    if (wasClosing && state.IsHidden()) return ContentRefreshAction::FinalizeClose;
+    return state.IsAnimating() ? ContentRefreshAction::ContinueAnimation : ContentRefreshAction::Stable;
+}
+
 /**
  * @brief 弹窗是否仍占据屏幕区域并遮挡下层元素。
  * 以"已打开或仍可见"为准：Open() 一经调用桌面层即开始绘制全尺寸弹窗

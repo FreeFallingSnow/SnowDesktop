@@ -2655,6 +2655,7 @@ private:
     void PrepareCollectionPopupAnimationCache();
     /** @brief 释放弹窗动画位图。 */
     void ResetCollectionPopupAnimationCache();
+    void InvalidateCollectionPopupContent();
     bool PrepareCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         const DragRenderCache& cache,
@@ -4226,6 +4227,7 @@ private:
     std::unique_ptr<Item> popupMouseDownItem_;
     bool dockFolderPopupOpen_ = false;
     bool dockFolderPopupAvailable_ = false;
+    bool dockFolderPopupLoading_ = false;
     std::wstring dockFolderPopupSourceId_;
     std::wstring dockFolderPopupMappingWidgetId_;
     DesktopWidget dockFolderPopupWidget_;

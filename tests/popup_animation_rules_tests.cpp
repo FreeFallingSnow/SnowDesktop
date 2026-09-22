@@ -35,6 +35,30 @@ int main()
     using namespace snowdesktop::popup_animation_rules;
 
     State state;
+    // An asynchronous folder read can replace the loading scene while a native
+    // snapshot is opening or closing. The retirement callback represents GPU
+    // resources; the production timeline and refresh dispatch remain real.
+    State refreshed;
+    bool oldSnapshot = true, oldCompletion = true;
+    const auto retire = [&] { oldSnapshot = false; oldCompletion = false; };
+    refreshed.Open(100);
+    auto action = RefreshContent(refreshed, 145, retire);
+    Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
+        NearlyEqual(refreshed.GetVisual().progress, 0.5f) && refreshed.IsInteractive(),
+        "content completion retires the loading snapshot and resumes the elapsed opening timeline");
+    refreshed.Close(145);
+    oldSnapshot = oldCompletion = true;
+    action = RefreshContent(refreshed, 160, retire);
+    Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
+        refreshed.IsClosing() && NearlyEqual(refreshed.GetVisual().progress, 1.0f / 3.0f),
+        "new folder contents during close preserve direction and elapsed progress");
+    action = RefreshContent(refreshed, 200, retire);
+    Check(action == ContentRefreshAction::FinalizeClose && refreshed.IsHidden(),
+        "late content completion finalizes an elapsed close instead of resurrecting its snapshot");
+    refreshed.Open(300);
+    action = RefreshContent(refreshed, 400, retire);
+    Check(action == ContentRefreshAction::Stable && refreshed.IsInteractive() && !refreshed.IsAnimating(),
+        "late content completion after opening paints current content without replaying animation");
     Check(state.IsHidden(), "new state starts hidden");
     Check(!state.IsInteractive(), "hidden popup does not accept input");
 

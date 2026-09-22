@@ -997,6 +997,7 @@
   "widget.categories.default_archive": "Arquivo",
   "widget.categories.default_audio": "Áudio",
   "widget.folder_mapping.empty": "Pasta vazia",
+  "widget.folder_mapping.loading": "Carregando pasta…",
   "widget.folder_mapping.unavailable": "Esta pasta não está disponível",
   "widget.desktop.no_shortcut": "Os arquivos da área de trabalho não podem armazenar atalhos",
   "widget.desktop.no_create_shortcut": "Não é possível criar atalhos para arquivos da área de trabalho",

@@ -597,7 +597,7 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
     {
         const auto folder = snapshot.folders.find(
             snowdesktop::shell_refresh::FolderKey(dockFolderPopupWidget_.sourceFolderPath));
-        if (folder != snapshot.folders.end() && folder->second.complete)
+        if (folder != snapshot.folders.end())
             RefreshDockFolderPopup(&folder->second);
     }
     if (orderChanged) SaveLayoutSlots();

@@ -997,6 +997,7 @@
   "widget.categories.default_archive": "アーカイブ",
   "widget.categories.default_audio": "オーディオ",
   "widget.folder_mapping.empty": "空のフォルダー",
+  "widget.folder_mapping.loading": "フォルダーを読み込み中…",
   "widget.folder_mapping.unavailable": "このフォルダーは使用できません",
   "widget.desktop.no_shortcut": "デスクトップ ファイルはショートカットの保存をサポートしていません",
   "widget.desktop.no_create_shortcut": "デスクトップ ファイルはショートカットの作成をサポートしていません",

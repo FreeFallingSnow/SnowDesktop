@@ -14,6 +14,7 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
     if (path.empty())
     {
         result.complete = true;
+        result.error = ERROR_INVALID_NAME;
         return result;
     }
     // 磁盘根目录（如 "C:\"）自身以反斜杠结尾：直接拼接会生成 "C:\\名称"
@@ -28,6 +29,7 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
     if (hFind == INVALID_HANDLE_VALUE)
     {
         const DWORD error = GetLastError();
+        result.error = error;
         result.complete = error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
         if (metadata && result.complete) metadata->clear();
         return result;
@@ -66,7 +68,9 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
         else entry.sysIconIndex = -1;
         result.entries.push_back(std::move(entry));
     } while (FindNextFileW(hFind, &fd));
-    result.complete = GetLastError() == ERROR_NO_MORE_FILES;
+    const DWORD error = GetLastError();
+    result.complete = error == ERROR_NO_MORE_FILES;
+    result.error = result.complete ? ERROR_SUCCESS : error;
     FindClose(hFind);
     if (metadata && result.complete)
         std::erase_if(*metadata, [&](const auto& entry) { return !seenMetadata.contains(entry.first); });

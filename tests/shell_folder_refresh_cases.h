@@ -70,6 +70,44 @@ void TestFolderRefreshScopeAndReads()
     scope.Add({second}, false);
     Check(scope.FoldersOnly() && scope.Includes(second) && !scope.Includes(first),
         "a new batch after completion or failure does not inherit obsolete folder scope");
+
+    // Startup target resolution is still pending (available=false). Exercise the
+    // same read/apply boundary as the popup; only the filesystem and UI are fake.
+    bool available = false, loading = false;
+    int reads = 0, applies = 0;
+    size_t displayed = 0;
+    const auto queue = [&](const auto& path) { Check(path == first, "popup queues its current folder"); ++reads; };
+    const auto apply = [&](const auto& result) { displayed = result.entries.size(); ++applies; };
+    const auto refresh = [&](const FolderSnapshot* result) {
+        return snowdesktop::dock_folder_popup_read::Refresh(first, result, available, loading, queue, apply);
+    };
+    Check(refresh(nullptr) && loading && !available && reads == 1,
+        "opening before target resolution starts reading instead of reporting unavailable");
+    FolderSnapshot listing;
+    listing.path = first;
+    listing.complete = true;
+    listing.entries.emplace_back();
+    Check(refresh(&listing) && available && !loading && displayed == 1 && applies == 1,
+        "completed folder read replaces startup unavailable state and publishes entries");
+    FolderSnapshot denied;
+    denied.path = first;
+    denied.error = ERROR_ACCESS_DENIED;
+    Check(refresh(&denied) && !available && !loading && displayed == 1 && applies == 1,
+        "real access failure stops loading and retains the last listing without permitting operations");
+    Check(refresh(nullptr) && loading && refresh(&listing) && available && !loading && applies == 2,
+        "a subsequent successful read recovers from unavailable without reopening the popup");
+    FolderSnapshot other;
+    other.path = second;
+    other.complete = true;
+    Check(!refresh(&other) && available && displayed == 1 && applies == 2,
+        "late completion from another folder cannot replace the current popup");
+    listing.entries.clear();
+    listing.error = ERROR_PATH_NOT_FOUND;
+    Check(refresh(&listing) && !available && !loading && displayed == 0,
+        "a missing folder clears obsolete entries but does not masquerade as an accessible empty folder");
+    listing.error = ERROR_FILE_NOT_FOUND;
+    Check(refresh(&listing) && available && !loading && displayed == 0,
+        "an accessible empty wildcard listing displays empty rather than unavailable");
 }
 
 void TestFolderShellSubscriptions()

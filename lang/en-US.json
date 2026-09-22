@@ -997,6 +997,7 @@
     "widget.categories.default_archive": "Archive",
     "widget.categories.default_audio": "Audio",
     "widget.folder_mapping.empty": "Empty Folder",
+    "widget.folder_mapping.loading": "Loading folder…",
     "widget.folder_mapping.unavailable": "This folder is unavailable",
     "widget.desktop.no_shortcut": "Desktop files do not support storing shortcuts",
     "widget.desktop.no_create_shortcut": "Desktop files do not support creating shortcuts",

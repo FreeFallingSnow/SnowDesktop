@@ -181,9 +181,11 @@ void DesktopApp::OpenDockFolderPopupAt(
         dockFolderPopupOpen_ &&
         dockFolderPopupSourceId_ == sourceId &&
         collectionPopupDockHost_ == requestedDockHost;
+    ResetCollectionPopupAnimationCache();
     AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
-    dockFolderPopupAvailable_ = target.available;
+    dockFolderPopupAvailable_ = false;
+    dockFolderPopupLoading_ = !target.path.empty();
     dockFolderPopupSourceId_ = sourceId;
     dockFolderPopupMappingWidgetId_.clear();
     popupWidgetIndex_ = static_cast<size_t>(-1);
@@ -486,6 +488,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     dockFolderPopupOpen_ = false;
     SyncFolderChangeNotifications();
     dockFolderPopupAvailable_ = false;
+    dockFolderPopupLoading_ = false;
     dockFolderPopupSourceId_.clear();
     dockFolderPopupMappingWidgetId_.clear();
     dockFolderPopupContainer_.reset();

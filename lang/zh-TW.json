@@ -997,6 +997,7 @@
   "widget.categories.default_archive": "壓縮包",
   "widget.categories.default_audio": "音訊",
   "widget.folder_mapping.empty": "空資料夾",
+  "widget.folder_mapping.loading": "正在載入資料夾…",
   "widget.folder_mapping.unavailable": "無法存取此資料夾",
   "widget.desktop.no_shortcut": "桌面檔案不支援收納捷徑",
   "widget.desktop.no_create_shortcut": "桌面檔案不支援建立捷徑",

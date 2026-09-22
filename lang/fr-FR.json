@@ -997,6 +997,7 @@
   "widget.categories.default_archive": "Archive",
   "widget.categories.default_audio": "Audio",
   "widget.folder_mapping.empty": "Dossier vide",
+  "widget.folder_mapping.loading": "Chargement du dossier…",
   "widget.folder_mapping.unavailable": "Ce dossier est indisponible",
   "widget.desktop.no_shortcut": "Les fichiers de bureau ne prennent pas en charge le stockage des raccourcis",
   "widget.desktop.no_create_shortcut": "Les fichiers de bureau ne prennent pas en charge la création de raccourcis",

@@ -17,6 +17,7 @@ struct FolderSnapshot
 {
     std::wstring path;
     bool complete = false;
+    DWORD error = ERROR_SUCCESS;
     std::vector<FolderEntry> entries;
     std::unordered_map<std::wstring, Pidl> absoluteIds;
 };

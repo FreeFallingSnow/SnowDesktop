@@ -912,3 +912,24 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 }
+
+void DesktopApp::InvalidateCollectionPopupContent()
+{
+    if (!popupAnimationOverlay_.active && IsRectEmptyRect(popupAnimationCacheRect_))
+        return;
+    using namespace snowdesktop::popup_animation_rules;
+    const auto action = RefreshContent(popupAnimation_, static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()),
+        [this] { ResetCollectionPopupAnimationCache(); });
+    if (action == ContentRefreshAction::FinalizeClose)
+    {
+        FinalizeCloseCollectionPopup();
+        return;
+    }
+    if (action == ContentRefreshAction::ContinueAnimation)
+        EnsureUiAnimationFrame();
+    // Clearing the snapshot also cancels the native timeline. Resume live
+    // rendering so further arriving icons do not require another GPU capture.
+    ApplyCollectionPopupBackdropAnimationFrame();
+    InvalidateCollectionPopupAnimation(true);
+}

@@ -997,6 +997,7 @@
   "widget.categories.default_archive": "Archiv",
   "widget.categories.default_audio": "Audio",
   "widget.folder_mapping.empty": "Leerer Ordner",
+  "widget.folder_mapping.loading": "Ordner wird geladen…",
   "widget.folder_mapping.unavailable": "Dieser Ordner ist nicht verfügbar",
   "widget.desktop.no_shortcut": "Desktop-Dateien unterstützen das Speichern von Verknüpfungen nicht",
   "widget.desktop.no_create_shortcut": "Desktop-Dateien unterstützen das Erstellen von Verknüpfungen nicht",

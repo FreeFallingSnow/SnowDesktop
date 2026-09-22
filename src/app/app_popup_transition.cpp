@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_folder_popup_read.h"
 #include "../menu_fluent_glyphs.h"
 
 // Collection and Dock-folder popup transitions.
@@ -245,6 +246,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     dockFolderPopupOpen_ = false;
     SyncFolderChangeNotifications();
     dockFolderPopupAvailable_ = false;
+    dockFolderPopupLoading_ = false;
     dockFolderPopupContainer_.reset();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
@@ -649,20 +651,26 @@ void DesktopApp::RefreshDockFolderPopup(
                 clear();
         }
     }
-    if (dockFolderPopupAvailable_)
+    const bool accepted = snowdesktop::dock_folder_popup_read::Refresh(
+        dockFolderPopupWidget_.sourceFolderPath, snapshot,
+        dockFolderPopupAvailable_, dockFolderPopupLoading_,
+        [this](const auto& path) { QueueFolderRead(path); },
+        [this](const auto& folder) {
+            EnumerateFolderMappingEntries(dockFolderPopupWidget_, true, &folder);
+            if (dockFolderPopupAvailable_ && ApplyPendingFolderPlacements(
+                    dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
+                CommitDockFolderPopupStateToSource();
+        });
+    if (!accepted) return;
+    if (snapshot)
     {
-        EnumerateFolderMappingEntries(
-            dockFolderPopupWidget_, true, snapshot);
-        if (ApplyPendingFolderPlacements(
-                dockFolderPopupWidget_,
-                dockFolderPopupMappingWidgetId_,
-                dockFolderPopupSourceId_))
-        {
-            CommitDockFolderPopupStateToSource();
-        }
+        const auto message = L"Dock folder popup read: available=" +
+            std::to_wstring(dockFolderPopupAvailable_ ? 1 : 0) + L" error=" +
+            std::to_wstring(snapshot->error) + L" items=" +
+            std::to_wstring(dockFolderPopupWidget_.folderEntries.size()) + L" path=" +
+            dockFolderPopupWidget_.sourceFolderPath;
+        WriteDiagnosticLogEntry(message.c_str());
     }
-    else
-        ClearDockFolderPopupEntries();
     dockFolderPopupContainer_ =
         std::make_unique<FolderMapping>(
             &dockFolderPopupWidget_, this);
@@ -682,6 +690,7 @@ void DesktopApp::RefreshDockFolderPopupGeometry()
         GetCollectionPopupMaxScrollOffset(
             dockFolderPopupWidget_,
             popupRect_));
+    InvalidateCollectionPopupContent();
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);

@@ -997,6 +997,7 @@
   "widget.categories.default_archive": "Archivo comprimido",
   "widget.categories.default_audio": "Audio",
   "widget.folder_mapping.empty": "Carpeta vacía",
+  "widget.folder_mapping.loading": "Cargando carpeta…",
   "widget.folder_mapping.unavailable": "Esta carpeta no está disponible",
   "widget.desktop.no_shortcut": "Los archivos del escritorio no admiten guardar accesos directos",
   "widget.desktop.no_create_shortcut": "Los archivos del escritorio no admiten crear accesos directos",

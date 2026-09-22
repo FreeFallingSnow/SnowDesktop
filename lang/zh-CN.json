@@ -997,6 +997,7 @@
     "widget.categories.default_archive": "压缩包",
     "widget.categories.default_audio": "音频",
     "widget.folder_mapping.empty": "空文件夹",
+    "widget.folder_mapping.loading": "正在加载文件夹…",
     "widget.folder_mapping.unavailable": "无法访问此文件夹",
     "widget.desktop.no_shortcut": "桌面文件不支持收纳快捷方式",
     "widget.desktop.no_create_shortcut": "桌面文件不支持创建快捷方式",

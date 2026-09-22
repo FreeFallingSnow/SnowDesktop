@@ -1251,8 +1251,9 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         InvalidateQuickNavigationWindow();
                     if (dockFolderPopup)
                     {
+                        InvalidateCollectionPopupContent();
                         InvalidateDragStaticScene();
-                        InvalidateFloatingDockWindow(false);
+                        InvalidateFloatingPopupWindow(false);
                     }
                     return true;
                 }

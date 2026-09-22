@@ -536,9 +536,11 @@ void DesktopApp::DrawCollectionPopup(
     if (widget.type == DesktopWidgetType::FolderMapping &&
         popupItemCount == 0)
     {
-        const std::wstring status = dockFolderPopupAvailable_
-            ? _LW("widget.folder_mapping.empty")
-            : _LW("widget.folder_mapping.unavailable");
+        const std::wstring status = dockFolderPopupLoading_
+            ? _LW("widget.folder_mapping.loading")
+            : dockFolderPopupAvailable_
+                ? _LW("widget.folder_mapping.empty")
+                : _LW("widget.folder_mapping.unavailable");
         DrawD2DTextEllipsis(ctx, status, content, itemTextFormat_.Get(),
             popupTextColor(0.68f),
             DWRITE_TEXT_ALIGNMENT_CENTER,

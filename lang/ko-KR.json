@@ -997,6 +997,7 @@
   "widget.categories.default_archive": "아카이브",
   "widget.categories.default_audio": "오디오",
   "widget.folder_mapping.empty": "빈 폴더",
+  "widget.folder_mapping.loading": "폴더를 불러오는 중…",
   "widget.folder_mapping.unavailable": "이 폴더를 사용할 수 없습니다.",
   "widget.desktop.no_shortcut": "데스크톱 파일 구성 요소는 바로 가기 보관을 지원하지 않습니다.",
   "widget.desktop.no_create_shortcut": "데스크톱 파일 구성 요소는 바로 가기 만들기를 지원하지 않습니다.",
