@@ -273,7 +273,7 @@ local function getPalette()
             inputBg = 0x000000, inputBorder = 0x000000,
             inputFocus = 0x000000, delete = 0x000000,
             priorities = { [3] = 0xDC2626, [2] = 0xD97706,
-                [1] = 0x2563EB, [0] = 0x6B7280 },
+                [1] = 0xFFFFFF, [0] = 0x6B7280 },
         }
     end
     return {
@@ -283,7 +283,7 @@ local function getPalette()
         inputBg = 0xFFFFFF, inputBorder = 0xFFFFFF,
         inputFocus = 0xFFFFFF, delete = 0xFFFFFF,
         priorities = { [3] = 0xF04452, [2] = 0xF5A623,
-            [1] = 0x60A5FA, [0] = 0x9CA3AF },
+            [1] = 0xFFFFFF, [0] = 0x9CA3AF },
     }
 end
 
@@ -365,8 +365,14 @@ local function render(context, model)
     local draft = storage.get("draft") or ""
     -- The host text area reserves eight logical pixels for its scrollbar.
     local scrollbarReserve = 8
-    local inputPadding = metrics.spacingXs
-    local draftMetrics = draw.measureText(draft .. " ", math.max(9, inputFont),
+    local inputPlaceholder = l10n.tr("lua_widget.reminders.add_placeholder")
+    local inputLineHeight = draw.measureText(inputPlaceholder,
+        math.max(9, inputFont), 0, false).height
+    -- Center the first line in a standard row and reuse that inset horizontally.
+    local inputPadding = math.max(metrics.spacingXs,
+        (metrics.layoutRowHeight - inputLineHeight) / 2)
+    local inputText = draft == "" and inputPlaceholder or draft
+    local draftMetrics = draw.measureText(inputText .. " ", math.max(9, inputFont),
         math.max(unit, inputW - inputPadding * 2 - scrollbarReserve), false)
     local inputH = math.min(
         math.max(metrics.layoutRowHeight, draftMetrics.height + inputPadding * 2),
@@ -376,7 +382,7 @@ local function render(context, model)
         storageKey = "draft",
         shape = { type = "rect", x = contentInset, y = inputY,
             width = inputW, height = inputH },
-        placeholder = l10n.tr("lua_widget.reminders.add_placeholder"),
+        placeholder = inputPlaceholder,
         fontSize = inputFont,
         textColor = palette.inputText,
         placeholderColor = palette.placeholder,
@@ -397,7 +403,7 @@ local function render(context, model)
 
     local addEnabled = trim(storage.get("draft") or "") ~= ""
     local addX = contentInset + inputW + gap
-    local addY = inputY
+    local addY = inputY + (inputH - addSize) / 2
     local addKey = "task.add"
     local addHovered = interaction.isHovered(addKey)
     if addHovered and addEnabled then
