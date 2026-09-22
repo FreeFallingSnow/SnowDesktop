@@ -111,10 +111,14 @@
 `final-full.log`、`final-original-shortcut.log`、`negative-route.log` 和
 `final-hashes.json`；全量默认排除 manual 诊断。
 
-这些结果不能证明实际 UAC 的层级和焦点。仍须用户用原 VGN VHUB 分别验收双击、
-右键管理员启动、快捷启动面板，以及等待、取消、同意期间的焦点和面板收尾。
-还需观察切换到其他程序后是否抢回焦点、连续启动是否相互阻塞；不得把通用 Shell
-集成测试通过等同于这些实机结果。
+上述自动化结果不能单独证明实际 UAC 的层级和焦点。交付最终候选及 VGN VHUB 双击、
+右键管理员启动、快捷启动面板的验证步骤后，用户反馈“没问题了”。据此记录
+`7f510f81`、`0ccf38bd` 对应的原始 VGN VHUB 授权框前台问题实机验收通过。
+验收记录时再次核对源码、测试和宿主二进制的 9 项 SHA256，与最终候选证据全部一致，
+复用上述有效构建与全量结果，不重复编译或测试。
+
+用户未逐项列举各入口、等待/取消/同意、切换到其他程序及连续启动的结果，不将这次反馈
+扩展为所有交互分支、第三方程序或 Windows 版本均已验证；也未通过二分确认唯一回归提交。
 
 机制参考：[DLL 初始化约束](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-best-practices)、
 [ShellExecute 的同步交接标志](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-shellexecuteinfow)、
