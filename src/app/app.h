@@ -465,6 +465,7 @@ struct DesktopWidgetCompositionItem
     UINT height = 0;
     std::uint64_t hiddenSince = 0;
     bool visible = false;
+    bool backdropRequested = false;
     bool backdropRegistered = false;
     int backdropCornerRadius = 0;
     int backdropBlurRadius = 0;
@@ -2679,6 +2680,7 @@ private:
         bool visible,
         const RECT& bounds);
     void KeepDesktopWidgetBackdropPanels();
+    void LogDesktopWidgetBackdropState(const wchar_t* phase) const;
     void RemoveDesktopWidgetComposition(
         const std::wstring& widgetId,
         bool invalidateRoot = true);

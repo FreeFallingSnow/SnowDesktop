@@ -1,4 +1,5 @@
 #include "app/desktop_backdrop_compositor.h"
+#include "app/desktop_backdrop_update_rules.h"
 
 #include <roapi.h>
 
@@ -22,6 +23,18 @@ struct PopupWindow
     {
         if (handle) DestroyWindow(handle);
     }
+};
+
+// Substitute only widget rasterization/cache storage. The production
+// reconciliation and Windows Composition target/region/commit remain real.
+struct RetainedWidget
+{
+    RECT bounds{};
+    bool visible = true;
+    bool backdropRequested = true;
+    bool backdropRegistered = false;
+    int backdropCornerRadius = 18;
+    int backdropBlurRadius = 24;
 };
 
 bool WaitForCommit(HWND window, WPARAM token)
@@ -76,6 +89,80 @@ int RunDesktopBackdropCompositorTests()
     if (!check(content.handle && otherContent.handle,
             "backdrop integration creates only its own hidden popup windows"))
         return failures;
+
+    {
+        PopupWindow startupContent;
+        DesktopBackdropCompositor startupGlass;
+        if (!check(startupContent.handle && SetWindowPos(
+                startupContent.handle, nullptr, 0, 0, 3840, 3240,
+                SWP_NOACTIVATE | SWP_NOZORDER),
+                "startup fixture covers the reported two-monitor desktop"))
+            return failures;
+        // Primary: 3840x2160. Secondary: (960,2160)-(2880,3240).
+        // Both surfaces already exist; neither is redrawn in this regression.
+        RetainedWidget primary{{100, 100, 400, 300}};
+        RetainedWidget secondary{{1100, 2300, 1400, 2500}};
+        RetainedWidget hidden{{1500, 2300, 1800, 2500}, false};
+        RetainedWidget opaque{{1900, 2300, 2200, 2500}, true, false};
+        const auto reconcile = [&] {
+            for (auto* widget : {&primary, &secondary, &hidden, &opaque})
+            {
+                widget->backdropRegistered =
+                    snowdesktop::desktop_backdrop_update_rules::
+                        KeepOrRestoreWidgetPanel(startupGlass, *widget);
+            }
+        };
+        reconcile();
+        check(!primary.backdropRegistered && !secondary.backdropRegistered &&
+                startupGlass.PanelCount() == 0,
+            "prepaint without a target retains glass requests without claiming registration");
+        if (!check(startupGlass.InitializePopup(startupContent.handle, false, false),
+                "the startup backdrop target is created after the cached widget surfaces"))
+            return failures;
+        startupGlass.BeginFrame(false);
+        reconcile();
+        startupGlass.EndFrame();
+        check(primary.backdropRegistered && secondary.backdropRegistered &&
+                !hidden.backdropRegistered && !opaque.backdropRegistered &&
+                startupGlass.PanelCount() == 2,
+            "partial paint must restore both monitors' cached glass without repainting widgets");
+        const HWND helper = GetWindow(startupContent.handle, GW_HWNDNEXT);
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        check(startupGlass.IsBackdropWindow(helper) && region &&
+                GetWindowRgn(helper, region) != ERROR &&
+                PtInRegion(region, 200, 200) && PtInRegion(region, 1200, 2400) &&
+                !PtInRegion(region, 1600, 2400) && !PtInRegion(region, 2000, 2400),
+            "startup region includes primary and secondary glass but excludes hidden and opaque widgets");
+        if (region) DeleteObject(region);
+        check(!IsWindowVisible(helper) &&
+                startupGlass.CommitVisualChangesAndNotify(
+                    startupContent.handle, kCommitCompleted, 100) &&
+                WaitForCommit(startupContent.handle, 100),
+            "the complete glass transaction submits while the startup windows remain hidden");
+
+        startupGlass.BeginFrame(true);
+        reconcile();
+        startupGlass.EndFrame();
+        check(startupGlass.PanelCount() == 2 && startupGlass.BlurFactoryCount() == 1,
+            "a full collection keeps cached glass without duplicating panels or factories");
+        // Cached registration flags are deliberately left true across reset.
+        check(startupGlass.InitializePopup(startupContent.handle, false, false),
+            "the backdrop target can be replaced while widget surfaces survive");
+        startupGlass.BeginFrame(false);
+        reconcile();
+        startupGlass.EndFrame();
+        check(primary.backdropRegistered && secondary.backdropRegistered &&
+                startupGlass.PanelCount() == 2,
+            "stale registered flags cannot strand widgets after target replacement");
+        secondary.visible = false;
+        primary.backdropRequested = false;
+        startupGlass.BeginFrame(true);
+        reconcile();
+        startupGlass.EndFrame();
+        check(!primary.backdropRegistered && !secondary.backdropRegistered &&
+                startupGlass.PanelCount() == 0 && startupGlass.BlurFactoryCount() == 0,
+            "hiding widgets and disabling glass retire restored panels and factories");
+    }
 
     DesktopBackdropCompositor glass;
     DesktopBackdropCompositor otherGlass;

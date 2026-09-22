@@ -1544,6 +1544,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 desktopBackdropCompositor_.LastError();
             WriteDiagnosticLogEntry(message.c_str());
         }
+        // The first content frame precedes backdrop initialization. Collect
+        // all visible panels while both desktop windows are still hidden;
+        // WM_PAINT after ShowWindow may cover only part of the virtual screen.
+        // A successful submission does not certify the eventual DWM pixels.
+        if (!OnPaint() || !FlushPendingCompositionCommit())
+        {
+            LogDesktopWidgetBackdropState(L"prepare-failed");
+            WriteDiagnosticLogEntry(
+                L"Startup glass frame FAILED; native desktop retained",
+                DiagnosticLogLevel::Error);
+            return __LINE__;
+        }
+        LogDesktopWidgetBackdropState(L"prepared");
     }
     desktopStartupPresentationPending_ = false;
     AddTrayIcon();
@@ -1555,6 +1568,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 ReconcileMode::AllowImmediateActivation);
         UpdateWindow(hwnd_);
         FlushPendingCompositionCommit();
+        LogDesktopWidgetBackdropState(L"shown");
     }
     startupAnimation.Finish();
     logStartupStage(L"desktop handoff complete");

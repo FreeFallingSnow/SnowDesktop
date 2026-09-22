@@ -1,4 +1,5 @@
 #include "app.h"
+#include "desktop_backdrop_update_rules.h"
 #include "../performance_trace.h"
 #include "../widget_surface_retention.h"
 
@@ -349,6 +350,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
             continue;
         }
 
+        item.backdropRequested = backdropRequested;
         if (boundsChanged && item.backdropRegistered)
         {
             (void)desktopBackdropCompositor_.RemovePanel(oldBounds);
@@ -518,11 +520,51 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
 
 void DesktopApp::KeepDesktopWidgetBackdropPanels()
 {
-    for (const auto& [_, item] : desktopWidgetCompositionItems_)
+    for (auto& [_, item] : desktopWidgetCompositionItems_)
     {
-        if (item.visible && item.backdropRegistered)
-            (void)desktopBackdropCompositor_.KeepPanel(item.bounds);
+        item.backdropRegistered = snowdesktop::desktop_backdrop_update_rules::
+            KeepOrRestoreWidgetPanel(desktopBackdropCompositor_, item);
     }
+}
+
+void DesktopApp::LogDesktopWidgetBackdropState(const wchar_t* phase) const
+{
+    const ULONGLONG tick = GetTickCount64();
+    size_t requested = 0;
+    size_t registered = 0;
+    for (const auto& [widgetId, item] : desktopWidgetCompositionItems_)
+    {
+        requested += item.visible && item.backdropRequested ? 1 : 0;
+        registered += item.visible && item.backdropRegistered ? 1 : 0;
+        RECT screenBounds = item.bounds;
+        MapWindowPoints(hwnd_, nullptr,
+            reinterpret_cast<POINT*>(&screenBounds), 2);
+        MONITORINFOEXW monitor{};
+        monitor.cbSize = sizeof(monitor);
+        const bool monitorKnown = GetMonitorInfoW(
+            MonitorFromRect(&screenBounds, MONITOR_DEFAULTTONULL), &monitor) != FALSE;
+        wchar_t message[768]{};
+        swprintf_s(message,
+            L"Startup glass widget: pid=%lu tick=%llu phase=%.32ls id=%.128ls "
+            L"visible=%d requested=%d registered=%d "
+            L"bounds=(%ld,%ld,%ld,%ld) screen=(%ld,%ld,%ld,%ld) "
+            L"monitor=%ls primary=%d blur=%d",
+            GetCurrentProcessId(), tick, phase, widgetId.c_str(),
+            item.visible, item.backdropRequested, item.backdropRegistered,
+            item.bounds.left, item.bounds.top, item.bounds.right, item.bounds.bottom,
+            screenBounds.left, screenBounds.top, screenBounds.right, screenBounds.bottom,
+            monitorKnown ? monitor.szDevice : L"unknown",
+            monitorKnown && (monitor.dwFlags & MONITORINFOF_PRIMARY) != 0,
+            item.backdropBlurRadius);
+        WriteDiagnosticLogEntry(message);
+    }
+    wchar_t summary[256]{};
+    swprintf_s(summary,
+        L"Startup glass summary: pid=%lu tick=%llu phase=%ls "
+        L"available=%d requested=%zu registered=%zu panels=%zu",
+        GetCurrentProcessId(), tick, phase, desktopBackdropCompositor_.IsAvailable(),
+        requested, registered, desktopBackdropCompositor_.PanelCount());
+    WriteDiagnosticLogEntry(summary);
 }
 
 std::uint64_t DesktopApp::GetDesktopWidgetSurfaceBytes(
