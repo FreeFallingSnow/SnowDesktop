@@ -7,14 +7,12 @@
 void DesktopApp::BeginDesktopInteractionTrace(const wchar_t* reason)
 {
     const ULONGLONG now = GetTickCount64();
-    // Preserve correlation and budgets across nested ShowWindow/focus/menu
-    // messages belonging to the same interaction burst.
-    if (now > desktopInteractionTraceUntil_)
-    {
-        ++desktopInteractionTraceId_;
-        desktopInteractionTraceEvents_ = 0;
-        desktopInteractionTraceFrames_ = 0;
-    }
+    // Each click/menu/layer checkpoint receives a fresh budget, including
+    // repeated clicks less than two seconds apart. Nested lifecycle messages
+    // join the current trace in TraceDesktopWindowMessage instead of resetting it.
+    ++desktopInteractionTraceId_;
+    desktopInteractionTraceEvents_ = 0;
+    desktopInteractionTraceFrames_ = 0;
     desktopInteractionTraceUntil_ = now + 2000;
     SYSTEM_POWER_STATUS power{};
     const bool powerKnown = GetSystemPowerStatus(&power) != FALSE;

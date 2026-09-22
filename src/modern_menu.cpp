@@ -200,7 +200,6 @@ public:
     ~MenuController()
     {
         CloseFromDepth(0);
-        TraceOwnedPopupZOrder(L"after-popup-destroy", nullptr, true);
         if (fontAwesomeIconFont_)
             DeleteObject(fontAwesomeIconFont_);
         if (submenuArrowFont_)
@@ -350,6 +349,7 @@ public:
         HWND expectedRoot = rootWindow;
         gActiveRootMenu.compare_exchange_strong(expectedRoot, nullptr);
         CloseFromDepth(0);
+        TraceOwnedPopupZOrder(L"after-popup-destroy", nullptr, true);
         if (!superseded_ && options_.owner && IsWindow(options_.owner))
         {
             SetForegroundWindow(options_.owner);
