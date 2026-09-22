@@ -29,8 +29,6 @@ local fluent = {
     edit = utf8.char(0xE70F),
 }
 
-local MAX_TASKS = 200
-
 local settings = {
     fields = {
         {
@@ -130,7 +128,7 @@ end
 local function addDraft()
     local text = trim(storage.get("draft") or "")
     local ids = loadOrder()
-    if text == "" or #ids >= MAX_TASKS then return false end
+    if text == "" then return false end
 
     local nextId = math.max(1, tonumber(storage.get("nextId")) or 1)
     local id = tostring(nextId)
@@ -265,8 +263,29 @@ local function setup()
     return { editingTaskId = nil, selectedId = nil }
 end
 
+local function clipShape(shape, viewport)
+    local x, y = shape.x, shape.y
+    local width, height = shape.width, shape.height
+    if shape.type == "circle" then
+        x, y = x - shape.radius, y - shape.radius
+        width, height = shape.radius * 2, shape.radius * 2
+    end
+    local left = math.max(x, viewport.x)
+    local top = math.max(y, viewport.y)
+    local right = math.min(x + width, viewport.x + viewport.width)
+    local bottom = math.min(y + height, viewport.y + viewport.height)
+    if right <= left or bottom <= top then return nil end
+    if left == x and top == y and right == x + width and
+        bottom == y + height then return shape end
+    return { type = "rect", x = left, y = top,
+        width = right - left, height = bottom - top }
+end
+
 local function registerRegion(key, shape, cursor, events, accessibility,
-    enabled)
+    enabled, viewport)
+    -- Drawing clips do not clip immediate-mode hit regions in the host.
+    if viewport then shape = clipShape(shape, viewport) end
+    if not shape then return end
     interaction.region({
         key = key,
         shape = shape,
@@ -327,8 +346,7 @@ local function render(context, model)
         maxBytes = 4096,
     })
 
-    local addEnabled = trim(storage.get("draft") or "") ~= "" and
-        total < MAX_TASKS
+    local addEnabled = trim(storage.get("draft") or "") ~= ""
     local addX = contentInset + inputW + gap
     local addY = inputY + (inputH - addSize) / 2
     local addKey = "task.add"
@@ -441,7 +459,7 @@ local function render(context, model)
             click = { id = "task.select", value = task.id },
             doubleClick = { id = "task.edit", value = task.id },
             contextMenu = { id = "task.menu", value = task.id },
-        }, { role = "listitem", label = task.text })
+        }, { role = "listitem", label = task.text }, nil, viewportShape)
 
         local checkboxSize = math.min(fontSize + metrics.spacingSm,
             cardH - metrics.spacingSm)
@@ -468,7 +486,7 @@ local function render(context, model)
             radius = checkboxSize / 2 + metrics.spacingXs,
         }, "hand", { click = { id = "task.toggle", value = task.id } }, {
             role = "checkbox", label = task.text,
-        })
+        }, nil, viewportShape)
 
         local deleteSize = metrics.iconSize
         local deleteX = w - contentInset - deleteSize - metrics.spacingSm
@@ -479,13 +497,15 @@ local function render(context, model)
             l10n.tr("lua_widget.reminders.untitled")
         local measured = draw.measureText(displayText, fontSize, 0, false)
         local textY = cardY + math.max(0, (cardH - measured.height) / 2)
-        local editing = selected and model.editingTaskId == task.id
+        local editShape = clipShape({ type = "rect", x = textX,
+            y = cardY, width = textW, height = cardH }, viewportShape)
+        local editing = selected and model.editingTaskId == task.id and
+            editShape ~= nil
         if editing then
             control.textInput({
                 key = "edit-task-" .. task.id,
                 storageKey = taskTextKey(task.id),
-                shape = { type = "rect", x = textX,
-                    y = cardY, width = textW, height = cardH },
+                shape = editShape,
                 fontSize = fontSize,
                 textColor = palette.inputText,
                 placeholder = l10n.tr("lua_widget.reminders.untitled"),
@@ -534,7 +554,8 @@ local function render(context, model)
             }, "hand", {
                 click = { id = "task.delete", value = task.id },
             }, { role = "button",
-                label = l10n.tr("lua_widget.reminders.delete_selected") })
+                label = l10n.tr("lua_widget.reminders.delete_selected") },
+                nil, viewportShape)
         end
     end
     draw.popClip()
