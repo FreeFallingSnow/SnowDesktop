@@ -5,6 +5,7 @@
 #include "layout_storage.h"
 #include "json_value.h"
 #include "widget_package.h"
+#include "widget_removal.h"
 #include "portable_data_migration.h"
 #include "single_instance.h"
 
@@ -517,6 +518,116 @@ void TestDebugProfile(const std::filesystem::path& fixture)
     profile::runtimeSession = {};
 }
 
+void TestWidgetRemoval(const std::filesystem::path& root)
+{
+    using snowdesktop::widget_runtime::ConfirmWidgetRemoval;
+    DesktopWidget first;
+    first.id = L"first";
+    first.type = DesktopWidgetType::LuaScript;
+    first.packageId = L"notes";
+    first.title = L"My note";
+    DesktopWidget second = first;
+    second.id = L"second";
+    std::vector<DesktopWidget> widgets{ first, second };
+    int prompts = 0;
+    auto rejected = ConfirmWidgetRemoval(widgets, 0, true,
+        [&](const std::wstring& title) {
+            ++prompts;
+            Expect(title == L"My note", "removal prompt names the selected instance");
+            return false; // Cancel, close and dialog failure all use this result.
+        });
+    Expect(!rejected && prompts == 1 && widgets.size() == 2 &&
+            widgets[0].id == L"first",
+        "cancelled removal returns no commit target and preserves the layout");
+    auto accepted = ConfirmWidgetRemoval(widgets, 0, true,
+        [&](const std::wstring&) {
+            std::swap(widgets[0], widgets[1]);
+            return true;
+        });
+    Expect(accepted == 1 && widgets[*accepted].id == L"first",
+        "modal message dispatch cannot redirect deletion to the old index");
+    rejected = ConfirmWidgetRemoval(widgets, 1, true,
+        [&](const std::wstring&) {
+            widgets.erase(widgets.begin() + 1);
+            return true;
+        });
+    Expect(!rejected && widgets.size() == 1 && widgets[0].id == L"second",
+        "an instance removed during confirmation leaves its neighbor intact");
+    rejected = ConfirmWidgetRemoval(widgets, 0, true,
+        [&](const std::wstring&) {
+            widgets[0].packageId = L"replacement";
+            return true;
+        });
+    Expect(!rejected, "confirmation does not authorize a replacement package");
+    const auto direct = ConfirmWidgetRemoval(widgets, 0, false,
+        [&](const std::wstring&) { ++prompts; return false; });
+    Expect(direct == 0 && prompts == 1,
+        "components without confirmation retain direct deletion");
+    rejected = ConfirmWidgetRemoval(widgets, 4, true,
+        [&](const std::wstring&) { ++prompts; return true; });
+    Expect(!rejected && prompts == 1, "stale targets cannot open a removal prompt");
+
+    const auto source = root / L"removal-contract";
+    MakePackage(source, "1.0.0");
+    const auto path = source / L"widget.json";
+    const auto original = Read(path);
+    WidgetPackageValidator validator;
+    PackageManifest manifest;
+    Expect(validator.ValidateDirectory(source, &manifest).Ok() &&
+            !manifest.confirmRemoval,
+        "existing packages default to direct removal");
+    auto writeConfirmation = [&](const std::string& value, bool required) {
+        auto json = original;
+        json.insert(1, "\"confirmRemoval\":" + value + ",");
+        if (required)
+        {
+            const std::string emptyFeatures = "\"requiredFeatures\": []";
+            json.replace(json.find(emptyFeatures), emptyFeatures.size(),
+                "\"requiredFeatures\": [\"widget.confirmRemoval\"]");
+        }
+        Write(path, json);
+    };
+    auto hasIssue = [](const ValidationReport& report, const char* code) {
+        return std::any_of(report.issues.begin(), report.issues.end(),
+            [&](const auto& issue) { return issue.code == code; });
+    };
+    writeConfirmation("true", false);
+    Expect(hasIssue(validator.ValidateDirectory(source),
+            "manifest.confirmRemovalFeature"),
+        "data-loss protection cannot silently degrade on hosts without the capability");
+    writeConfirmation("\"true\"", true);
+    Expect(hasIssue(validator.ValidateDirectory(source), "manifest.confirmRemoval"),
+        "a mistyped removal flag is rejected rather than silently ignored");
+    writeConfirmation("false", false);
+    Expect(validator.ValidateDirectory(source, &manifest).Ok() &&
+            !manifest.confirmRemoval, "explicit false does not require a new capability");
+    writeConfirmation("true", true);
+    Expect(validator.ValidateDirectory(source, &manifest).Ok() &&
+            manifest.confirmRemoval,
+        "protected packages must explicitly require removal confirmation support");
+
+    WidgetPackageManager manager(TestPaths(root / L"removal-manager"));
+    PackageArtifact artifact;
+    ValidationReport report;
+    std::string error;
+    const auto archive = root / L"removal.snowwidget";
+    Expect(manager.ExportDirectory(source, archive, artifact, report, error),
+        "protected component can be packaged");
+    Expect(manager.ValidateArchive(archive, &manifest).Ok() && manifest.confirmRemoval,
+        "package roundtrip retains removal protection");
+    LocalCatalogPublisher publisher(root / L"removal-catalog",
+        root / L"removal-staging");
+    PublishRequest request;
+    request.artifact = artifact;
+    request.title = "Protected note";
+    request.description = "Removal contract fixture";
+    Expect(publisher.Publish(request).ok, "protected package publishes to an isolated catalog");
+    StaticCatalogSource catalog(root / L"removal-catalog" / L"catalog.json");
+    const auto entries = catalog.Query({}, error);
+    Expect(entries.size() == 1 && entries[0].manifest.confirmRemoval,
+        "catalog publication and reload preserve the removal declaration");
+}
+
 int main()
 {
     // PIDs are reused across runs, and a previous interrupted cleanup can
@@ -541,6 +652,7 @@ int main()
 
     const auto hashInput = root / L"sha256-input.bin";
     TestDebugProfile(root);
+    TestWidgetRemoval(root);
     TestDockLayoutBackup(root);
     TestLayoutReset(root);
     TestInitializationExperiment(root);

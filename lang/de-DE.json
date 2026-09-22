@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "Komponente löschen?",
+  "app.widget.removal.content": "Beim Löschen von „{0}“ werden die von dieser Komponenteninstanz gespeicherten Daten gelöscht. Dies kann nicht rückgängig gemacht werden.",
   "settings.contextMenu.inspectDesktop": "Desktopmenü prüfen",
   "settings.contextMenu.commandUnavailable": "Dieser Befehl ist nicht mehr verfügbar. Öffnen Sie das Kontextmenü erneut.",
   "settings.contextMenu.currentSelection": "Aktuelle Auswahl",

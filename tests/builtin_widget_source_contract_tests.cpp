@@ -201,6 +201,12 @@ void TestBuiltinPackages(const fs::path& repository)
         Check(NumberEquals(manifest, "schemaVersion", 2) && NumberEquals(manifest, "apiVersion", 2),
             "built-in packages declare schema/API v2 as numbers");
         const auto* slug = manifest.Find("slug");
+        if (package == "reminders" || package == "sticky-note")
+        {
+            const auto* confirmation = manifest.Find("confirmRemoval");
+            Check(confirmation && confirmation->IsBoolean() && confirmation->boolean,
+                "ToDo and sticky note instances require data-loss confirmation");
+        }
         Check(slug && slug->IsString() && slug->string == package,
             "manifest slug agrees with its distributed package directory");
         const auto* entry = manifest.Find("entry");

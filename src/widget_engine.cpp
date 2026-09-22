@@ -15269,6 +15269,19 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
 
 }
 
+bool WidgetEngine::RequiresRemovalConfirmation(const std::wstring& widgetId,
+    const std::wstring& packageId)
+{
+    const int index = FindWidget(widgetId);
+    if (index >= 0 && widgets_[index].manifest.confirmRemoval)
+        return true;
+    // Resolve metadata even if the script failed to load or was disabled.
+    if (const auto package = GetWidgetPackage(packageId))
+        return package->manifest.confirmRemoval;
+    // A missing package must not silently discard an orphaned instance's data.
+    return index < 0;
+}
+
 void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
 {
     RemoveNotificationSchedules(widgetId);
@@ -30500,6 +30513,7 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         manifest.apiVersion = static_cast<int>(packageNumber);
     if (readNumber(root, "dataVersion", packageNumber))
         manifest.dataVersion = static_cast<int>(packageNumber);
+    readBool(root, "confirmRemoval", manifest.confirmRemoval);
     readString(root, "name", manifest.name);
     readString(root, "nameKey", manifest.nameKey);
     readString(root, "version", manifest.version);

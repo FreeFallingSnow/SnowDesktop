@@ -4,8 +4,9 @@
   "slug": "reminders",
   "apiVersion": 2,
   "dataVersion": 3,
+  "confirmRemoval": true,
   "entry": "main.lua",
-  "minHostVersion": "1.0.5.0",
+  "minHostVersion": "1.0.7.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "ToDo List",
@@ -13,7 +14,7 @@
   "titleKeys": [
     "lua_widget.reminders.legacy_name"
   ],
-  "version": "2.0.12",
+  "version": "2.0.13",
   "description": "An interactive local ToDo list with quick add, completion, editing, and filtering.",
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
@@ -330,7 +331,8 @@
     "l10n.basic",
     "layout.relativeUnits",
     "storage.transaction",
-    "ui.semanticMetrics.rowUnit"
+    "ui.semanticMetrics.rowUnit",
+    "widget.confirmRemoval"
   ],
   "optionalFeatures": []
 }

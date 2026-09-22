@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "Excluir componente?",
+  "app.widget.removal.content": "Excluir “{0}” apagará os dados salvos por esta instância do componente. Esta ação não pode ser desfeita.",
   "settings.contextMenu.inspectDesktop": "Inspecionar menu da área de trabalho",
   "settings.contextMenu.commandUnavailable": "Este comando não está mais disponível. Abra o menu de contexto novamente.",
   "settings.contextMenu.currentSelection": "Seleção atual",

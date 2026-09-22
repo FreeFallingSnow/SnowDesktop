@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "Delete component?",
+  "app.widget.removal.content": "Deleting “{0}” will erase the data saved by this component instance. This cannot be undone.",
   "settings.contextMenu.inspectDesktop": "Inspect desktop menu",
   "settings.contextMenu.commandUnavailable": "This command is no longer available. Open the context menu again.",
   "settings.contextMenu.currentSelection": "Current selection",

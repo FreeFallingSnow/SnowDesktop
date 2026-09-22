@@ -93,6 +93,7 @@ struct PackageManifest
     std::string version;
     int apiVersion = 0;
     int dataVersion = 1;
+    bool confirmRemoval = false;
     std::string entry = "main.lua";
     std::string minHostVersion;
     std::string name;

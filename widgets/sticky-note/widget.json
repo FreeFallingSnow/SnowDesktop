@@ -4,13 +4,14 @@
   "slug": "sticky-note",
   "apiVersion": 2,
   "dataVersion": 1,
+  "confirmRemoval": true,
   "entry": "main.lua",
-  "minHostVersion": "1.0.5.0",
+  "minHostVersion": "1.0.7.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "Sticky Note",
   "nameKey": "lua_widget.sticky_note.name",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "An editable desktop sticky note.",
   "descriptionKey": "lua_widget.sticky_note.description",
   "locales": {
@@ -212,7 +213,8 @@
     "lifecycle.model",
     "l10n.basic",
     "layout.relativeUnits",
-    "ui.semanticMetrics.rowUnit"
+    "ui.semanticMetrics.rowUnit",
+    "widget.confirmRemoval"
   ],
   "optionalFeatures": []
 }

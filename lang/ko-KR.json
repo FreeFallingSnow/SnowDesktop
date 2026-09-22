@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "위젯을 삭제할까요?",
+  "app.widget.removal.content": "“{0}”을(를) 삭제하면 이 위젯 인스턴스에 저장된 데이터가 지워집니다. 이 작업은 되돌릴 수 없습니다.",
   "settings.contextMenu.inspectDesktop": "바탕 화면 메뉴 확인",
   "settings.contextMenu.commandUnavailable": "이 명령은 더 이상 사용할 수 없습니다. 바로 가기 메뉴를 다시 여세요.",
   "settings.contextMenu.currentSelection": "현재 선택",

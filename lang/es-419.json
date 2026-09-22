@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "¿Eliminar el componente?",
+  "app.widget.removal.content": "Al eliminar «{0}», se borrarán los datos guardados por esta instancia del componente. Esta acción no se puede deshacer.",
   "settings.contextMenu.inspectDesktop": "Examinar menú del escritorio",
   "settings.contextMenu.commandUnavailable": "Este comando ya no está disponible. Abre nuevamente el menú contextual.",
   "settings.contextMenu.currentSelection": "Selección actual",

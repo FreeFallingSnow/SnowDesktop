@@ -158,6 +158,7 @@ struct LuaWidgetManifest
     std::string slug;                  ///< 人类可读短名称
     int apiVersion = 0;                ///< Lua 宿主 API 契约版本
     int dataVersion = 1;               ///< 实例存储结构版本
+    bool confirmRemoval = false;       ///< 删除实例前由宿主确认数据丢失
     std::string name;                  ///< 小部件显示名称
     std::string nameKey;               ///< 小部件名称翻译键
     std::string version;               ///< 版本号字符串
@@ -911,6 +912,8 @@ public:
      */
     void UnloadWidget(const std::wstring& widgetId);
     void DeleteWidgetInstance(const std::wstring& widgetId);
+    bool RequiresRemovalConfirmation(const std::wstring& widgetId,
+        const std::wstring& packageId);
     void RevokeFilesystemHandlesForPackage(
         const std::string& packageId);
 

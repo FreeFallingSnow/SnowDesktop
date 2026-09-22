@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "ウィジェットを削除しますか？",
+  "app.widget.removal.content": "「{0}」を削除すると、このウィジェットに保存されたデータが消去されます。この操作は元に戻せません。",
   "settings.contextMenu.inspectDesktop": "デスクトップメニューを確認",
   "settings.contextMenu.commandUnavailable": "このコマンドは利用できなくなりました。右クリックメニューを開き直してください。",
   "settings.contextMenu.currentSelection": "現在の選択",

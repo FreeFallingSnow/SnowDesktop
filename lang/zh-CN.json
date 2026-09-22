@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "删除组件？",
+  "app.widget.removal.content": "删除“{0}”将清除该组件实例保存的数据。此操作无法撤销。",
   "settings.contextMenu.inspectDesktop": "检查桌面菜单",
   "settings.contextMenu.commandUnavailable": "此菜单命令已不可用，请重新打开右键菜单。",
   "settings.contextMenu.currentSelection": "当前选择的项目",

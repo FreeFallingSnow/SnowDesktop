@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "刪除元件？",
+  "app.widget.removal.content": "刪除「{0}」將清除這個元件實例儲存的資料。此操作無法復原。",
   "settings.contextMenu.inspectDesktop": "檢查桌面功能表",
   "settings.contextMenu.commandUnavailable": "此命令已無法使用，請重新開啟右鍵功能表。",
   "settings.contextMenu.currentSelection": "目前選取項目",

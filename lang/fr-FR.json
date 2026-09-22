@@ -1,4 +1,6 @@
 {
+  "app.widget.removal.title": "Supprimer le composant ?",
+  "app.widget.removal.content": "La suppression de « {0} » effacera les données enregistrées par cette instance du composant. Cette action est irréversible.",
   "settings.contextMenu.inspectDesktop": "Examiner le menu du Bureau",
   "settings.contextMenu.commandUnavailable": "Cette commande n’est plus disponible. Ouvrez à nouveau le menu contextuel.",
   "settings.contextMenu.currentSelection": "Sélection actuelle",
