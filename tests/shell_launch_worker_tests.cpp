@@ -1,6 +1,7 @@
 #include "shell_launch_worker.h"
 #include "shell_launch_process.h"
 #include "shell_open_command.h"
+#include "shell_launch_execution.h"
 
 #include <array>
 #include <chrono>
@@ -28,6 +29,125 @@ void Check(bool condition, const char* message)
         return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+// Real HWND validity/owner selection and real shortcut policy, with only the
+// Windows foreground and UAC broker boundary substituted. This protects the
+// VGN-like double-click path without claiming that a simulated prompt proves
+// real UAC Z-order. Old early grants are deliberately absent at broker entry.
+struct ConsentBoundary
+{
+    HWND foreground = nullptr;
+    HWND expectedOwner = nullptr;
+    HWND invocationOwner = nullptr;
+    std::wstring expectedPath;
+    int activations = 0;
+    int invocations = 0;
+    bool granted = false;
+    bool cancel = false;
+    bool foregroundConsent = false;
+} consent;
+
+HWND WINAPI ConsentForeground() { return consent.foreground; }
+BOOL WINAPI ConsentActivate(HWND window)
+{
+    ++consent.activations;
+    consent.foreground = window;
+    return TRUE;
+}
+BOOL WINAPI ConsentAllow(DWORD process)
+{
+    consent.granted = process == ASFW_ANY;
+    return consent.granted;
+}
+BOOL WINAPI ConsentExecute(SHELLEXECUTEINFOW* info)
+{
+    ++consent.invocations;
+    consent.invocationOwner = info->hwnd;
+    consent.foregroundConsent = consent.granted &&
+        consent.activations == 1 && info->hwnd == consent.expectedOwner &&
+        consent.foreground == consent.expectedOwner && info->lpVerb &&
+        wcscmp(info->lpVerb, L"runas") == 0 &&
+        info->lpFile && info->lpFile == consent.expectedPath &&
+        (info->fMask & SEE_MASK_NOASYNC) && info->nShow == SW_SHOWNORMAL;
+    if (consent.cancel) SetLastError(ERROR_CANCELLED);
+    return !consent.cancel;
+}
+
+void CheckElevationDispatch(const std::wstring& path,
+    snowdesktop::shell_launch_process::Action action)
+{
+    namespace process = snowdesktop::shell_launch_process;
+    // Independent off-screen test windows, never the user's desktop host.
+    const HWND input = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Consent test input",
+        WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(input != nullptr, "consent regression must create its independent input fixture");
+    if (!input) return;
+    ShowWindow(input, SW_SHOWNOACTIVATE);
+    const process::ExecutionApi api{ConsentForeground, ConsentActivate, ConsentAllow, ConsentExecute};
+    process::Request request;
+    request.owner = input;
+    request.path = path;
+    request.action = action;
+    for (bool cancel : {false, true})
+    {
+        consent = {};
+        consent.foreground = input;
+        consent.expectedOwner = input;
+        consent.expectedPath = path;
+        consent.cancel = cancel;
+        const bool opened = process::ExecuteRequestWithApi(request, api);
+        Check(opened == !cancel && consent.invocations == 1 && consent.foregroundConsent,
+            "elevated launch must hand foreground to consent once; cancellation must never retry");
+    }
+    consent = {};
+    consent.expectedPath = path;
+    Check(process::ExecuteRequestWithApi(request, api) && consent.invocations == 1 &&
+        consent.activations == 0,
+        "a delayed elevated launch must not reactivate the owner after its process loses foreground");
+    DestroyWindow(input);
+    consent = {};
+    Check(process::ExecuteRequestWithApi(request, api) && consent.invocations == 1 &&
+        consent.activations == 0 && consent.invocationOwner == nullptr,
+        "a destroyed launch owner must not be activated or prevent dispatch");
+}
+
+void TestLaunchOwnerSurvivesMenuDismissal()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    const auto topLevel = [instance](DWORD extendedStyle) {
+        return CreateWindowExW(extendedStyle, L"STATIC", L"Launch owner fixture",
+            WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, instance, nullptr);
+    };
+    const HWND input = topLevel(WS_EX_TOOLWINDOW);
+    const HWND control = topLevel(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    const HWND panel = topLevel(WS_EX_TOOLWINDOW);
+    const HWND render = CreateWindowExW(0, L"STATIC", L"Render fixture", WS_CHILD | WS_VISIBLE,
+        0, 0, 1, 1, input, nullptr, instance, nullptr);
+    Check(input && control && panel && render, "launch owner fixtures must be created");
+    if (input && control && panel && render)
+    {
+        ShowWindow(input, SW_SHOWNOACTIVATE);
+        Check(process::ResolveLaunchOwner(control, render, input) == input &&
+            process::ResolveLaunchOwner(render, render, input) == input &&
+            process::ResolveLaunchOwner(nullptr, render, input) == input,
+            "desktop launches must replace hidden control/render owners with the persistent input proxy");
+        ShowWindow(control, SW_SHOWNOACTIVATE);
+        Check(process::ResolveLaunchOwner(control, render, input) == input,
+            "even a visible NOACTIVATE window cannot anchor the consent dialog");
+        ShowWindow(panel, SW_SHOWNOACTIVATE);
+        Check(process::ResolveLaunchOwner(panel, render, input) == panel,
+            "explicit activatable top-level callers must retain their invocation owner");
+        ShowWindow(panel, SW_HIDE);
+        Check(process::ResolveLaunchOwner(panel, render, input) == input,
+            "a dismissed panel must fall back to the surviving input window");
+        ShowWindow(input, SW_HIDE);
+        Check(process::ResolveLaunchOwner(control, render, input) == nullptr,
+            "no usable input proxy must not fall back to a hidden or Explorer-owned window");
+    }
+    for (HWND window : {render, panel, control, input})
+        if (window) DestroyWindow(window);
 }
 
 // Models the shell extension boundary that previously loaded an unrelated
@@ -542,6 +662,8 @@ void TestAdministratorShortcutMetadataIsDetected()
                 snowdesktop::ShellLaunchWorker::
                     ShortcutRequestsAdministrator(linkPath),
                 "the SLDF_RUNAS_USER flag must select administrator launch");
+            CheckElevationDispatch(linkPath,
+                snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
         }
 
         wchar_t windowsDirectory[MAX_PATH]{};
@@ -577,6 +699,8 @@ void TestAdministratorShortcutMetadataIsDetected()
                 snowdesktop::ShellLaunchWorker::
                     ShortcutRequestsAdministrator(manifestLinkPath),
                 "a highestAvailable target manifest must select administrator launch");
+            CheckElevationDispatch(manifestLinkPath,
+                snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
         }
     }
 
@@ -887,6 +1011,25 @@ int wmain(int argc, wchar_t** argv)
         TestDefaultOpenDoesNotPrepareUnrelatedMenus();
         return failures ? 1 : 0;
     }
+    if ((argc == 2 || argc == 3) && wcscmp(argv[1], L"--elevation-contract") == 0)
+    {
+        TestLaunchOwnerSurvivesMenuDismissal();
+        TestAdministratorShortcutMetadataIsDetected();
+        CheckElevationDispatch(L"explicit-administrator.exe",
+            snowdesktop::shell_launch_process::Action::RunAs);
+        if (argc == 3)
+        {
+            const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            Check(SUCCEEDED(com), "original shortcut check must initialize COM");
+            if (SUCCEEDED(com))
+            {
+                CheckElevationDispatch(argv[2],
+                    snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
+                CoUninitialize();
+            }
+        }
+        return failures ? 1 : 0;
+    }
     if (argc == 3 && wcscmp(argv[1], L"--shell-open-survivor") == 0)
     {
         const std::wstring name(argv[2]);
@@ -918,6 +1061,9 @@ int wmain(int argc, wchar_t** argv)
     TestInvalidRequestsAreRejected();
     TestShellItemPidlIsCopiedBeforeExecution();
     TestAdministratorShortcutMetadataIsDetected();
+    TestLaunchOwnerSurvivesMenuDismissal();
+    CheckElevationDispatch(L"explicit-administrator.exe",
+        snowdesktop::shell_launch_process::Action::RunAs);
     TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
     TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped();
     TestIsolatedOpenLaunchesShortcut();

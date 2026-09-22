@@ -840,6 +840,7 @@ private:
     void UpdateHostInputImePosition();
     /** @brief 获取 Shell 弹窗/命令使用的顶层 owner，避免使用挂在 Explorer 下的子窗口。 */
     HWND ShellDialogOwnerHwnd() const;
+    HWND ShellLaunchOwnerHwnd(HWND requested = nullptr) const;
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
     /** Start one Steam ownership registration attempt when it is needed. */

@@ -76,6 +76,38 @@
 真实 Explorer 窗口可见且未最小化，防止请求执行前的旧窗口让测试误通过。只使用独立临时
 文件夹并清理其窗口。此证据不替代用户原桌面场景、前台焦点及其他 Windows 版本的验收。
 
+### 2026-09-22：管理员快捷方式的前台交接
+
+用户报告 VGN VHUB 双击时 UAC 未进入前台。原机快捷方式未设置 `SLDF_RUNAS_USER`，
+目标 EXE 清单声明 `highestAvailable`，因此必须覆盖目标清单触发的提权路径。
+`3af68677` 曾记录此对象双击实测通过；`55d888f9` 的隔离改造随后移除了临近 `runas`
+的窗口激活，将授权提前到辅助入口。此为代码回归线索，尚未通过原场景二分确认唯一致因。
+
+本轮调整将桌面/Dock 双击、映射路径、快速导航和管理员菜单的启动 owner 收口到已有的
+独立输入窗口。隐藏控制窗口、`WS_EX_NOACTIVATE` 窗口和 Explorer 下的渲染子窗口不作为
+提权 owner；显式传入的可激活顶层窗口继续保留。快捷方式元数据读取完成后，辅助进程
+紧邻 `ShellExecuteExW(runas)` 交接前台；只有前台仍属于 owner 进程时才请求激活 owner。
+取消授权不重试，Shell 调用和等待仍保留在独立辅助进程。内部测试边界不属于公开 API，
+不改变同构建请求格式或组件 capability。
+
+新增回归位于现有 `shell_launch_worker` 目标，使用独立测试 HWND、真实临时 `.lnk` 和
+`highestAvailable` 清单读取，仅替换 Win32 前台操作与 UAC 执行边界。覆盖 owner 选择、
+两种管理员快捷方式、显式管理员命令、取消不重试、owner 销毁和前台丢失后的不再激活。
+测试程序的 `--elevation-contract [快捷方式路径]` 可只读检查原始快捷方式的实际路由，
+管理员分支的授权执行使用替身；当前探针若意外进入普通 Open 仍会触达真实 Shell，
+须先收紧此失败边界，再将其作为通用样本检查入口。它不是宿主 CLI。
+
+本轮定向测试 4/4 通过：`shell_launch_worker`、`shell_integration_contract`、
+`modern_menu_interaction`、`ui_animation_scheduler`。原机 VGN VHUB 快捷方式通过上述
+元数据及模拟边界检查。隔离副本中删除即时授权，或恢复无效 owner，均使新回归以退出码 1
+失败；两份负向对照编译成功且无编译/链接警告。日志在
+`.codex-probes/20260922-uac-foreground/`。
+
+这些结果不能证明实际 UAC 的层级和焦点。仍须用户用原 VGN VHUB 分别验收双击、
+右键管理员启动、快捷启动面板，以及等待、取消、同意期间的焦点和面板收尾。
+还需观察切换到其他程序后是否抢回焦点、连续启动是否相互阻塞；不得把通用 Shell
+集成测试通过等同于这些实机结果。
+
 机制参考：[DLL 初始化约束](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-best-practices)、
 [ShellExecute 的同步交接标志](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-shellexecuteinfow)、
 [Job 子进程边界](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。

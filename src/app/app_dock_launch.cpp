@@ -2,6 +2,7 @@
 #include "shell_icon_request.h"
 #include "dock_platform_helpers.h"
 #include "animation_settings.h"
+#include "../shell_launch_execution.h"
 
 // Dock launch animation, item activation and application identity resolution.
 
@@ -221,11 +222,17 @@ void DesktopApp::InvalidateDockLaunchBounceRects()
         InvalidateFloatingDockWindow(false);
 }
 
+HWND DesktopApp::ShellLaunchOwnerHwnd(HWND requested) const
+{
+    return snowdesktop::shell_launch_process::ResolveLaunchOwner(
+        requested, hwnd_, inputHwnd_);
+}
+
 bool DesktopApp::LaunchPathWithShortcutPolicy(
     HWND owner, const std::wstring& path)
 {
     return snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-        owner, path, nullptr);
+        ShellLaunchOwnerHwnd(owner), path, nullptr);
 }
 
 bool DesktopApp::LaunchDesktopItem(
@@ -258,7 +265,7 @@ bool DesktopApp::LaunchDesktopItem(
     // one helper per launch also keeps later opens out of a blocked queue.
     const bool launchAccepted =
         snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-            ShellDialogOwnerHwnd(), item.parsingName,
+            ShellLaunchOwnerHwnd(), item.parsingName,
             item.absolutePidl.get());
     if (!launchAccepted)
         return false;

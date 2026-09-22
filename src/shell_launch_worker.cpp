@@ -1,6 +1,7 @@
 #include "shell_launch_worker.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_launch_process.h"
+#include "shell_launch_execution.h"
 #include "shell_open_command.h"
 
 #include <optional>
@@ -419,10 +420,16 @@ bool ShellLaunchWorker::ExecuteRunAsAdministrator(
 
 bool shell_launch_process::ExecuteRequest(const Request& request)
 {
+    return ExecuteRequestWithApi(request, ExecutionApi{});
+}
+
+bool shell_launch_process::ExecuteRequestWithApi(
+    const Request& request, const ExecutionApi& api)
+{
     const auto& path = request.path;
     if (path.empty() && request.absolutePidl.empty())
         return false;
-    const HWND validOwner = request.owner && IsWindow(request.owner)
+    const HWND validOwner = IsLaunchOwner(request.owner)
         ? request.owner : nullptr;
     const bool runAs = request.action == Action::RunAs ||
         (request.action == Action::OpenWithShortcutPolicy &&
@@ -431,6 +438,7 @@ bool shell_launch_process::ExecuteRequest(const Request& request)
     {
         const auto pidl = request.absolutePidl.empty() ? nullptr :
             reinterpret_cast<PCIDLIST_ABSOLUTE>(request.absolutePidl.data());
+        api.allow(ASFW_ANY);
         return ExecuteShellOpen(validOwner, path, pidl, request.showCommand,
             SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE);
     }
@@ -441,7 +449,22 @@ bool shell_launch_process::ExecuteRequest(const Request& request)
     executeInfo.lpVerb = L"runas";
     executeInfo.lpFile = path.c_str();
     executeInfo.nShow = request.showCommand;
-    return ShellExecuteExW(&executeInfo) != FALSE;
+    // Shortcut/manifest inspection can take time. Refresh the handoff only
+    // after it finishes, immediately before entering the consent broker.
+    // Do not reactivate the desktop if the user has switched to another app.
+    const HWND foreground = api.foreground();
+    DWORD foregroundProcess = 0, ownerProcess = 0;
+    if (foreground) GetWindowThreadProcessId(foreground, &foregroundProcess);
+    if (validOwner) GetWindowThreadProcessId(validOwner, &ownerProcess);
+    const BOOL activated = validOwner && ownerProcess == foregroundProcess
+        ? api.activate(validOwner) : FALSE;
+    const BOOL granted = api.allow(ASFW_ANY);
+    wchar_t diagnostic[256]{};
+    swprintf_s(diagnostic,
+        L"SnowDesktop: elevation owner=%p foreground=%p activated=%d granted=%d.\n",
+        validOwner, foreground, activated, granted);
+    OutputDebugStringW(diagnostic);
+    return api.execute(&executeInfo) != FALSE;
 }
 
 bool ShellLaunchWorker::ShortcutRequestsAdministrator(
