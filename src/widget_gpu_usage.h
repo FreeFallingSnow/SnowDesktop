@@ -5,12 +5,20 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
 
 namespace snowdesktop::widget_runtime
 {
+inline std::string WidgetGpuAdapterId(std::uint64_t luid)
+{
+    // A Windows-session identity, independent of DXGI enumeration order.
+    return "adapter-" + std::to_string(luid);
+}
+
 // PDH reports one sample per process and engine. Only samples belonging to
 // the same physical engine are additive; independent engines run in parallel.
 class WidgetGpuUsageAccumulator
@@ -40,10 +48,11 @@ public:
         adapterUsage = std::max(adapterUsage, engineUsage);
     }
 
-    double UsagePercent(std::uint64_t luid) const
+    std::optional<double> UsagePercent(std::uint64_t luid) const
     {
         const auto found = usageByLuid_.find(luid);
-        return found == usageByLuid_.end() ? 0.0 : found->second;
+        if (found == usageByLuid_.end()) return std::nullopt;
+        return found->second;
     }
 
 private:

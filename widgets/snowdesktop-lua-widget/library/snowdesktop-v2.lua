@@ -1350,7 +1350,7 @@ function animation.cancelFrame(id) end
 ---@field truncated boolean True when more accessible processes existed than were returned.
 
 ---@class SnowGpuAdapterDataValue
----@field id string Opaque adapter identifier.
+---@field id string Opaque Windows-session adapter identifier, independent of enumeration order; not persistent across reboots.
 ---@field name string
 ---@field usagePercent number Busiest physical engine's total across processes (0-100); parallel engines are not summed.
 ---@field dedicatedMemoryBytes integer
@@ -1380,8 +1380,8 @@ function animation.cancelFrame(id) end
 ---@field connected boolean
 ---@field receivedBytes integer
 ---@field sentBytes integer
----@field downloadBytesPerSecond integer
----@field uploadBytesPerSecond integer
+---@field downloadBytesPerSecond integer Sum of per-interface rates; new or reset interfaces establish a baseline first.
+---@field uploadBytesPerSecond integer Sum of per-interface rates; includes connected virtual interfaces.
 
 ---@class SnowStorageVolumeDataValue
 ---@field id string Opaque volume identifier; never a filesystem path.
@@ -1400,7 +1400,7 @@ function animation.cancelFrame(id) end
 ---@class SnowStorageIoDataValue
 ---@field readBytesPerSecond integer Aggregate physical-disk read rate.
 ---@field writeBytesPerSecond integer Aggregate physical-disk write rate.
----@field busyPercent number Aggregate physical-disk busy percentage, clamped to 0..100.
+---@field busyPercent number Busiest physical disk's non-idle percentage (0-100); throughput fields remain totals across disks.
 
 ---@class SnowDisplayRect
 ---@field x number

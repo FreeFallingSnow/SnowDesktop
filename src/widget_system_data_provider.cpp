@@ -1,5 +1,6 @@
 #include "widget_system_data_provider.h"
 #include "widget_gpu_usage.h"
+#include "widget_storage_usage.h"
 #include "performance_trace.h"
 #include "widget_media_contract.h"
 
@@ -899,9 +900,7 @@ void WidgetSystemDataProvider::StopAll()
     previousUser_ = 0;
     previousProcessCpuTimes_.clear();
     previousProcessSample_ = {};
-    previousReceived_ = 0;
-    previousSent_ = 0;
-    previousNetworkSample_ = {};
+    networkTrafficSampler_.Reset();
     CloseGpuQuery();
     CloseStorageIoQuery();
 }
@@ -1463,19 +1462,17 @@ WidgetSystemDataProvider::SampleNetworkTraffic()
     snapshot.timestampMs = TimestampMilliseconds();
     const auto sampleTime = Clock::now();
     if (resetNetworkBaseline_.exchange(false))
-    {
-        previousReceived_ = 0;
-        previousSent_ = 0;
-        previousNetworkSample_ = {};
-    }
+        networkTrafficSampler_.Reset();
 
     PMIB_IF_TABLE2 table = nullptr;
     if (GetIfTable2(&table) != NO_ERROR || !table)
     {
+        networkTrafficSampler_.Reset();
         snapshot.error = "Network traffic sampling failed";
         return snapshot;
     }
-    snapshot.available = true;
+    std::vector<WidgetNetworkInterfaceCounters> interfaces;
+    interfaces.reserve(table->NumEntries);
     for (ULONG index = 0; index < table->NumEntries; ++index)
     {
         const auto& row = table->Table[index];
@@ -1483,32 +1480,19 @@ WidgetSystemDataProvider::SampleNetworkTraffic()
             row.OperStatus != IfOperStatusUp ||
             row.MediaConnectState != MediaConnectStateConnected)
             continue;
-        snapshot.connected = true;
-        snapshot.receivedBytes += row.InOctets;
-        snapshot.sentBytes += row.OutOctets;
+        interfaces.push_back({ row.InterfaceLuid.Value,
+            row.InOctets, row.OutOctets });
     }
     FreeMibTable(table);
 
-    if (previousNetworkSample_.time_since_epoch().count() != 0)
-    {
-        const double seconds = std::chrono::duration<double>(
-            sampleTime - previousNetworkSample_).count();
-        if (seconds > 0.0 &&
-            snapshot.receivedBytes >= previousReceived_ &&
-            snapshot.sentBytes >= previousSent_)
-        {
-            snapshot.warmingUp = false;
-            snapshot.downloadBytesPerSecond =
-                static_cast<std::uint64_t>(
-                    (snapshot.receivedBytes - previousReceived_) / seconds);
-            snapshot.uploadBytesPerSecond =
-                static_cast<std::uint64_t>(
-                    (snapshot.sentBytes - previousSent_) / seconds);
-        }
-    }
-    previousReceived_ = snapshot.receivedBytes;
-    previousSent_ = snapshot.sentBytes;
-    previousNetworkSample_ = sampleTime;
+    const auto traffic = networkTrafficSampler_.Sample(interfaces, sampleTime);
+    snapshot.available = !traffic.warmingUp;
+    snapshot.connected = traffic.connected;
+    snapshot.warmingUp = traffic.warmingUp;
+    snapshot.receivedBytes = traffic.receivedBytes;
+    snapshot.sentBytes = traffic.sentBytes;
+    snapshot.downloadBytesPerSecond = traffic.downloadBytesPerSecond;
+    snapshot.uploadBytesPerSecond = traffic.uploadBytesPerSecond;
     return snapshot;
 }
 
@@ -1613,8 +1597,7 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 
         AdapterEntry entry;
         entry.luid = LuidKey(description.AdapterLuid);
-        entry.snapshot.id = "adapter-" +
-            std::to_string(adapters.size() + 1);
+        entry.snapshot.id = WidgetGpuAdapterId(entry.luid);
         entry.snapshot.name = WideToUtf8(description.Description);
         entry.snapshot.dedicatedMemoryBytes =
             description.DedicatedVideoMemory;
@@ -1628,8 +1611,6 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
         snapshot.warmingUp = false;
         return snapshot;
     }
-    snapshot.available = true;
-
     const bool initializeQuery = resetGpuBaseline_.exchange(false) ||
         !gpuQuery_ || !gpuUtilizationCounter_ ||
         !gpuDedicatedUsageCounter_ || !gpuSharedUsageCounter_;
@@ -1674,9 +1655,10 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
                 }
                 for (auto& entry : adapters)
                 {
-                    entry.snapshot.usagePercent = usage.UsagePercent(entry.luid);
+                    const auto percent = usage.UsagePercent(entry.luid);
+                    entry.snapshot.usagePercent = percent.value_or(0.0);
+                    utilizationAvailable = utilizationAvailable || percent.has_value();
                 }
-                utilizationAvailable = true;
             }
         }
 
@@ -1705,12 +1687,12 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
                         PDH_CSTATUS_NEW_DATA)
                     continue;
                 const auto luid = ParseGpuLuid(values[index].szName);
-                if (!luid || values[index].FmtValue.largeValue <= 0)
+                if (!luid || values[index].FmtValue.largeValue < 0)
                     continue;
                 byLuid[*luid] += static_cast<std::uint64_t>(
                     values[index].FmtValue.largeValue);
             }
-            return true;
+            return !byLuid.empty();
         };
         std::unordered_map<std::uint64_t, std::uint64_t>
             dedicatedUsageByLuid;
@@ -1722,16 +1704,22 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
                 gpuSharedUsageCounter_, sharedUsageByLuid);
         if (memoryUsageAvailable)
         {
+            memoryUsageAvailable = false;
             for (auto& entry : adapters)
             {
-                entry.snapshot.dedicatedUsedBytes =
-                    dedicatedUsageByLuid[entry.luid];
-                entry.snapshot.sharedUsedBytes =
-                    sharedUsageByLuid[entry.luid];
+                const auto dedicated = dedicatedUsageByLuid.find(entry.luid);
+                const auto shared = sharedUsageByLuid.find(entry.luid);
+                if (dedicated == dedicatedUsageByLuid.end() ||
+                    shared == sharedUsageByLuid.end())
+                    continue;
+                entry.snapshot.dedicatedUsedBytes = dedicated->second;
+                entry.snapshot.sharedUsedBytes = shared->second;
+                memoryUsageAvailable = true;
             }
         }
 
-        snapshot.warmingUp = !utilizationAvailable;
+        snapshot.available = utilizationAvailable && memoryUsageAvailable;
+        snapshot.warmingUp = false;
         if (!utilizationAvailable)
             snapshot.error = "GPU utilization sampling unavailable";
         else if (!memoryUsageAvailable)
@@ -1741,6 +1729,7 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
     {
         snapshot.error = "GPU utilization sampling failed";
         snapshot.warmingUp = false;
+        CloseGpuQuery();
     }
 
     snapshot.adapters.reserve(adapters.size());
@@ -1839,7 +1828,7 @@ bool WidgetSystemDataProvider::InitializeStorageIoQuery()
             L"\\PhysicalDisk(_Total)\\Disk Write Bytes/sec",
             0, &writeCounter) == ERROR_SUCCESS &&
         PdhAddEnglishCounterW(query,
-            L"\\PhysicalDisk(_Total)\\% Disk Time",
+            L"\\PhysicalDisk(*)\\% Idle Time",
             0, &busyCounter) == ERROR_SUCCESS;
     if (!countersAdded || PdhCollectQueryData(query) != ERROR_SUCCESS)
     {
@@ -1887,7 +1876,6 @@ WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
     performance::Scope performanceScope("shared.system", "SampleStorageIo");
     WidgetStorageIoDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
-    snapshot.available = true;
     const bool initializeQuery = resetStorageIoBaseline_.exchange(false) ||
         !storageIoQuery_ || !storageReadCounter_ ||
         !storageWriteCounter_ || !storageBusyCounter_;
@@ -1919,14 +1907,38 @@ WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
                 formatted.CStatus != PDH_CSTATUS_NEW_DATA))
             return false;
         value = formatted.doubleValue;
-        return true;
+        return std::isfinite(value) && value >= 0.0;
     };
     double readBytes = 0.0;
     double writeBytes = 0.0;
-    double busyPercent = 0.0;
+    WidgetStorageBusyAccumulator busy;
+    DWORD bufferBytes = 0, itemCount = 0;
+    PDH_STATUS status = PdhGetFormattedCounterArrayW(
+        reinterpret_cast<HCOUNTER>(storageBusyCounter_),
+        PDH_FMT_DOUBLE, &bufferBytes, &itemCount, nullptr);
+    if (status == PDH_MORE_DATA && bufferBytes > 0)
+    {
+        std::vector<std::byte> buffer(bufferBytes);
+        auto* items = reinterpret_cast<PPDH_FMT_COUNTERVALUE_ITEM_W>(buffer.data());
+        status = PdhGetFormattedCounterArrayW(
+            reinterpret_cast<HCOUNTER>(storageBusyCounter_),
+            PDH_FMT_DOUBLE, &bufferBytes, &itemCount, items);
+        if (status == ERROR_SUCCESS)
+        {
+            for (DWORD index = 0; index < itemCount; ++index)
+            {
+                if (items[index].szName &&
+                    (items[index].FmtValue.CStatus == PDH_CSTATUS_VALID_DATA ||
+                        items[index].FmtValue.CStatus == PDH_CSTATUS_NEW_DATA))
+                    busy.AddIdleSample(items[index].szName,
+                        items[index].FmtValue.doubleValue);
+            }
+        }
+    }
+    const auto busyPercent = busy.BusyPercent();
     if (!readCounter(storageReadCounter_, readBytes) ||
         !readCounter(storageWriteCounter_, writeBytes) ||
-        !readCounter(storageBusyCounter_, busyPercent))
+        !busyPercent)
     {
         snapshot.available = false;
         snapshot.warmingUp = false;
@@ -1937,7 +1949,8 @@ WidgetStorageIoDataSnapshot WidgetSystemDataProvider::SampleStorageIo()
         std::max(0.0, readBytes));
     snapshot.writeBytesPerSecond = static_cast<std::uint64_t>(
         std::max(0.0, writeBytes));
-    snapshot.busyPercent = std::clamp(busyPercent, 0.0, 100.0);
+    snapshot.busyPercent = *busyPercent;
+    snapshot.available = true;
     snapshot.warmingUp = false;
     return snapshot;
 }

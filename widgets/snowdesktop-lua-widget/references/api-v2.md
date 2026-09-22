@@ -1754,7 +1754,10 @@ GPU value 的 `adapters` 是数组；每项包含不透明 `id`、显示 `name`�
 两个容量来自 DXGI adapter 描述；两个 used 字段
 分别来自 Windows `GPU Adapter Memory` 的 Dedicated Usage 和 Shared Usage，并按
 adapter LUID 归属，不能把核显 LOCAL segment 当作专用显存。宿主不会只返回第一块
-GPU；首次 PDH 差分样本为 `warmingUp=true`。最后一个 GPU 订阅释放后会关闭 PDH
+GPU；adapter `id` 在同一 Windows 会话内不随枚举顺序改变，不能作为跨重启硬件标识。
+首次 PDH 差分样本为 `available=false, warmingUp=true`；没有与当前 adapter 匹配的
+有效占用样本或显存计数器不可用时，快照为不可用状态，不把整次采样失败表示为 0%。
+最后一个 GPU 订阅释放后会关闭 PDH
 query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
@@ -1763,7 +1766,11 @@ query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 采样得到相同的新语义才切换；单次相反或异常采样继续返回上一稳定语义，但使用本次
 采样时间戳保持快照新鲜。权限撤销仍由授权层立即生效，不经过此稳定处理。
 traffic value 包含 `connected/receivedBytes/sentBytes/downloadBytesPerSecond/
-uploadBytesPerSecond`，首次差分样本为 `warmingUp=true`。状态和流量是两个独立
+uploadBytesPerSecond`。累计字节是当前已连接非 loopback 接口的合计；速率按接口 LUID
+分别差分后求和，新加入、重连或计数器重置的接口先建立基线，不把其历史累计量计入速率。
+首次差分样本为 `available=false, warmingUp=true`；没有已连接接口时返回
+`available=true, connected=false` 和零速率。
+虚拟接口仍包含在上述范围内，该合计不等同于去重后的互联网流量。状态和流量是两个独立
 topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP、MAC、SSID、BSSID
 或主机名。
 
@@ -1773,9 +1780,11 @@ topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP
 容量的设备以 `capacityAvailable=false` 表示；宿主不会为了刷新快照同步访问远程卷，
 避免断开的网络映射拖住其他共享 provider。预览使用固定模拟卷，不枚举开发机。
 
-存储 I/O value 是所有物理磁盘的有界聚合，包含 `readBytesPerSecond`、
-`writeBytesPerSecond` 和钳制到 0–100 的 `busyPercent`，不包含磁盘序列号或文件路径。
-首次 PDH 差分样本为 `warmingUp=true`；最后一个 I/O 订阅释放后立即关闭该 PDH query，
+存储 I/O value 的 `readBytesPerSecond`、`writeBytesPerSecond` 是所有物理磁盘的总吞吐；
+`busyPercent` 为最忙物理磁盘的活动时间百分比，按各盘 `100 - % Idle Time` 取最大值，
+范围 0–100，排除 `_Total` 实例。它不代表队列长度或磁盘吞吐容量利用率。
+快照不包含磁盘序列号或文件路径。
+首次 PDH 差分样本为 `available=false, warmingUp=true`；最后一个 I/O 订阅释放后立即关闭该 PDH query，
 不会因卷列表或其他系统 topic 仍有订阅而继续采样。
 
 显示拓扑 value 的 `displays` 是所有活动显示器数组；每项包含不透明 `id`、显示

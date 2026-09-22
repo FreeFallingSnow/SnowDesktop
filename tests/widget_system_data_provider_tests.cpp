@@ -1,5 +1,6 @@
 #include "widget_system_data_provider.h"
 #include "widget_gpu_usage.h"
+#include "widget_storage_usage.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -60,8 +61,8 @@ void TestGpuEngineUsageAggregation()
     Check(usage.UsagePercent(0x1000012abull) == 90.0 &&
             usage.UsagePercent(0x5678) == 15.0 &&
             usage.UsagePercent(0x12ab) == 80.0 &&
-            usage.UsagePercent(0x9999) == 0.0,
-        "adapter usage must preserve both halves of the LUID and default idle adapters to zero");
+            !usage.UsagePercent(0x9999),
+        "adapter usage must preserve both halves of the LUID and distinguish missing samples");
 
     constexpr auto valid = L"pid_10_luid_0x00000000_0x000012ab_phys_0_eng_0_engtype_3D";
     usage.AddSample(valid, std::numeric_limits<double>::quiet_NaN());
@@ -85,8 +86,87 @@ void TestGpuEngineUsageAggregation()
     WidgetGpuUsageAccumulator nextSample;
     nextSample.AddSample(valid, 2.0);
     Check(nextSample.UsagePercent(0x12ab) == 2.0 &&
-            nextSample.UsagePercent(0x5678) == 0.0,
+            !nextSample.UsagePercent(0x5678),
         "each sample must discard the previous interval's engine totals");
+    WidgetGpuUsageAccumulator idle;
+    idle.AddSample(valid, 0.0);
+    Check(idle.UsagePercent(0x12ab).has_value() &&
+            *idle.UsagePercent(0x12ab) == 0.0 && !idle.UsagePercent(0x5678),
+        "a valid zero percent sample must remain distinct from an unobserved adapter");
+    Check(snowdesktop::widget_runtime::WidgetGpuAdapterId(0x1000012abull) !=
+            snowdesktop::widget_runtime::WidgetGpuAdapterId(0x12ab),
+        "adapter identities must retain the full session LUID");
+}
+
+void TestNetworkInterfaceTrafficDeltas()
+{
+    using snowdesktop::widget_runtime::WidgetNetworkInterfaceCounters;
+    using snowdesktop::widget_runtime::WidgetNetworkTrafficSampler;
+    WidgetNetworkTrafficSampler sampler;
+    const auto start = WidgetNetworkTrafficSampler::Clock::time_point{};
+    const auto sample = [&](std::initializer_list<WidgetNetworkInterfaceCounters> rows,
+        int seconds) {
+        return sampler.Sample(std::span(rows.begin(), rows.size()),
+            start + std::chrono::seconds(seconds));
+    };
+    auto value = sample({ { 1, 1000, 400 } }, 0);
+    Check(value.connected && value.warmingUp && value.downloadBytesPerSecond == 0,
+        "the first interface reading establishes a baseline, not a rate");
+    value = sample({ { 1, 1200, 500 }, { 2, 1000000000, 500000000 } }, 2);
+    Check(!value.warmingUp && value.downloadBytesPerSecond == 100 &&
+            value.uploadBytesPerSecond == 50,
+        "a newly connected interface must not inject its historical traffic into the rate");
+    value = sample({ { 2, 1000000300, 500000060 }, { 1, 1400, 520 } }, 3);
+    Check(value.downloadBytesPerSecond == 500 && value.uploadBytesPerSecond == 80,
+        "interface order changes must preserve independent baselines and sum their deltas");
+    value = sample({ { 1, 1550, 545 } }, 4);
+    Check(!value.warmingUp && value.downloadBytesPerSecond == 150 &&
+            value.uploadBytesPerSecond == 25,
+        "removing a high-counter interface must not erase traffic from interfaces that remain");
+    value = sample({ { 1, 1750, 585 }, { 2, 1000000999, 500000999 } }, 5);
+    Check(value.downloadBytesPerSecond == 200 && value.uploadBytesPerSecond == 40,
+        "a returning interface needs a fresh baseline");
+    value = sample({ { 1, 5, 5 }, { 2, 1000001009, 500001019 } }, 6);
+    Check(value.downloadBytesPerSecond == 10 && value.uploadBytesPerSecond == 20,
+        "one interface counter reset must not suppress valid deltas on another interface");
+    value = sample({ { 1, 25, 15 }, { 2, 1000001029, 500001049 } }, 7);
+    Check(value.downloadBytesPerSecond == 40 && value.uploadBytesPerSecond == 40,
+        "reset counters must resume from their new baseline");
+    value = sample({}, 8);
+    Check(!value.connected && !value.warmingUp && value.downloadBytesPerSecond == 0,
+        "no connected interfaces is a measured disconnected state");
+    value = sample({ { 1, 5000, 8000 } }, 9);
+    Check(value.warmingUp && value.downloadBytesPerSecond == 0,
+        "reconnection after all interfaces disappear must warm up");
+    sampler.Reset();
+    value = sample({ { 1, 7000, 9000 } }, 10);
+    Check(value.warmingUp && value.uploadBytesPerSecond == 0,
+        "sampling failure or subscription reset must discard all baselines");
+    value = sample({ { 1, 8000, 9500 } }, 10);
+    Check(value.warmingUp && value.downloadBytesPerSecond == 0,
+        "a zero-duration interval must not produce an infinite rate");
+}
+
+void TestPhysicalDiskBusyTime()
+{
+    using snowdesktop::widget_runtime::WidgetStorageBusyAccumulator;
+    WidgetStorageBusyAccumulator busy;
+    busy.AddIdleSample(L"_Total", 0.0);
+    busy.AddIdleSample(L"0 C:", std::numeric_limits<double>::quiet_NaN());
+    busy.AddIdleSample(L"0 C:", -1.0);
+    Check(!busy.BusyPercent(),
+        "an aggregate instance or invalid counter must not become measured disk activity");
+    busy.AddIdleSample(L"0 C:", 80.0);
+    busy.AddIdleSample(L"1 D:", 35.0);
+    Check(busy.BusyPercent() == 65.0,
+        "disk busy percentage is the busiest disk's non-idle time, not summed or averaged activity");
+    WidgetStorageBusyAccumulator idle;
+    idle.AddIdleSample(L"0 C:", 100.0);
+    Check(idle.BusyPercent().has_value() && *idle.BusyPercent() == 0.0,
+        "a fully idle disk is valid zero activity");
+    busy.AddIdleSample(L"2 E:", 0.0);
+    Check(busy.BusyPercent() == 100.0,
+        "a fully active disk must remain bounded at 100 percent");
 }
 
 template<typename Predicate>
@@ -643,6 +723,8 @@ void TestStopAll()
 
 int main()
 {
+    TestNetworkInterfaceTrafficDeltas();
+    TestPhysicalDiskBusyTime();
     TestGpuEngineUsageAggregation();
     TestCurrentDisplayMatching();
     TestSampledDataEnvelopeDebounce();

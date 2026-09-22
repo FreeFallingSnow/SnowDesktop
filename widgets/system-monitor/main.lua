@@ -1,6 +1,8 @@
 -- system-monitor/main.lua - API v2 system data subscriptions
 local subscriptions = {}
 local cardLayout = module.require("modules/card_layout.lua")
+local monitorData = module.require("modules/monitor_data.lua")
+local monitorSources = module.require("modules/monitor_sources.lua")
 
 local fluent = {
     refresh = utf8.char(0xF13D),
@@ -17,15 +19,15 @@ local style = {
 
 local settings = {
     fields = {
-        { key = "show_cpu", label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = true },
-        { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = true },
-        { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = true },
-        { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = true },
-        { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = true },
-        { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = true },
-        { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = true },
-        { key = "show_disk_io", label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = false },
-        { key = "show_uptime", label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = false },
+        { key = "show_cpu", label = l10n.tr("lua_widget.system_monitor.show_cpu"), type = "bool", default = monitorSources.defaults.cpu },
+        { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = monitorSources.defaults.memory },
+        { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = monitorSources.defaults.gpu },
+        { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = monitorSources.defaults.vram },
+        { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = monitorSources.defaults.network },
+        { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = monitorSources.defaults.battery },
+        { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = monitorSources.defaults.storage },
+        { key = "show_disk_io", label = l10n.tr("lua_widget.system_monitor.show_disk_io"), type = "bool", default = monitorSources.defaults.disk_io },
+        { key = "show_uptime", label = l10n.tr("lua_widget.system_monitor.show_uptime"), type = "bool", default = monitorSources.defaults.uptime },
     },
 }
 
@@ -102,9 +104,7 @@ local function formatUptime(milliseconds)
 end
 
 local function showCard(name)
-    local value = storage.get("show_" .. name)
-    if type(value) == "boolean" then return value end
-    return value ~= "0" and value ~= "false"
+    return monitorSources.cardShown(name, storage.get("show_" .. name))
 end
 
 local function subscriptionValue(handle, permissionGranted)
@@ -141,39 +141,6 @@ local function detailsWithStatus(details, status)
     if statusValue then values[#values + 1] = statusValue end
     if #values == 0 then return nil end
     return l10n.formatList(values)
-end
-
-local function summarizeGpu(value)
-    if not value or not value.adapters or #value.adapters == 0 then
-        return nil
-    end
-    local summary = {
-        usagePercent = 0,
-        dedicatedMemoryBytes = 0,
-        dedicatedUsedBytes = 0,
-        sharedMemoryBytes = 0,
-        sharedUsedBytes = 0,
-        names = {},
-    }
-    for _, adapter in ipairs(value.adapters) do
-        summary.usagePercent = math.max(summary.usagePercent,
-            adapter.usagePercent or 0)
-        local dedicatedTotal = math.max(0,
-            adapter.dedicatedMemoryBytes or 0)
-        summary.dedicatedMemoryBytes = math.max(
-            summary.dedicatedMemoryBytes, dedicatedTotal)
-        summary.dedicatedUsedBytes = summary.dedicatedUsedBytes +
-            math.max(0, adapter.dedicatedUsedBytes or 0)
-        summary.sharedMemoryBytes = summary.sharedMemoryBytes +
-            math.max(0, adapter.sharedMemoryBytes or 0)
-        summary.sharedUsedBytes = summary.sharedUsedBytes +
-            math.max(0, adapter.sharedUsedBytes or 0)
-        if adapter.name and adapter.name ~= "" then
-            summary.names[#summary.names + 1] = adapter.name
-        end
-    end
-    summary.name = table.concat(summary.names, " · ")
-    return summary
 end
 
 local function summarizeStorage(value)
@@ -294,56 +261,13 @@ local function drawCard(x, y, width, height, info, palette)
     end
 end
 
+local function reconcileSubscriptions()
+    monitorSources.reconcile(subscriptions, showCard,
+        widget.hasFeature, widget.hasPermission, data.subscribe)
+end
+
 local function setup()
-    subscriptions.cpu = data.subscribe("system.cpu", {
-        maxAgeMs = 1000,
-        whenHidden = "throttle",
-    })
-    subscriptions.memory = data.subscribe("system.memory", {
-        maxAgeMs = 1000,
-        whenHidden = "throttle",
-    })
-    subscriptions.gpu = data.subscribe("system.gpu", {
-        maxAgeMs = 1000,
-        whenHidden = "pause",
-    })
-    if widget.hasFeature("data.system.power") and
-        widget.hasPermission("system.power.read") then
-        subscriptions.power = data.subscribe("system.power", {
-            maxAgeMs = 2000,
-            whenHidden = "throttle",
-        })
-    end
-    if widget.hasFeature("data.system.network.traffic") and
-        widget.hasPermission("system.network.read") then
-        subscriptions.network = data.subscribe("system.network.traffic", {
-            maxAgeMs = 1000,
-            whenHidden = "throttle",
-        })
-    end
-    if widget.hasFeature("data.system.network.status") and
-        widget.hasPermission("system.network.read") then
-        subscriptions.networkStatus = data.subscribe(
-            "system.network.status", {
-                maxAgeMs = 2000,
-                whenHidden = "throttle",
-            })
-    end
-    if widget.hasFeature("data.system.storage.volumes") and
-        widget.hasPermission("system.storage.read") then
-        subscriptions.storage = data.subscribe(
-            "system.storage.volumes", {
-                maxAgeMs = 5000,
-                whenHidden = "throttle",
-            })
-    end
-    if widget.hasFeature("data.system.storage.io") and
-        widget.hasPermission("system.storage.read") then
-        subscriptions.diskIo = data.subscribe("system.storage.io", {
-            maxAgeMs = 1000,
-            whenHidden = "pause",
-        })
-    end
+    reconcileSubscriptions()
     return {
         previousColumns = 0,
         previousRows = 0,
@@ -355,7 +279,7 @@ local function buildCards()
     local cpu, cpuState = subscriptionValue(subscriptions.cpu)
     local memory, memoryState = subscriptionValue(subscriptions.memory)
     local gpuValue, gpuState = subscriptionValue(subscriptions.gpu)
-    local gpu = summarizeGpu(gpuValue)
+    local gpu = monitorData.summarizeGpu(gpuValue)
     if not gpu and not gpuState then gpuState = "notPresent" end
     local powerPermission = widget.hasPermission("system.power.read")
     local networkPermission = widget.hasPermission("system.network.read")
@@ -655,6 +579,11 @@ local function render(_context, model)
 end
 
 local function event(_context, _model, value)
+    if value.kind == "settings.changed" or value.kind == "environment" then
+        reconcileSubscriptions()
+        widget.invalidate()
+        return
+    end
     if value.kind ~= "action" then return end
     if value.id == "system.refresh" then
         widget.invalidate()
