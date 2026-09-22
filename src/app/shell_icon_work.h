@@ -10,23 +10,32 @@ class Work final
 {
 public:
     explicit Work(unsigned firstWorkers = 4, unsigned detailWorkers = 2,
-        unsigned shortcutWorkers = 2)
-        : first_(firstWorkers), detail_(detailWorkers), shortcut_(shortcutWorkers) {}
+        unsigned shortcutWorkers = 2, unsigned fallbackWorkers = 2)
+        : first_(firstWorkers), detail_(detailWorkers), shortcut_(shortcutWorkers),
+          fallback_(fallbackWorkers) {}
 
-    // Only schedule classification after the UI has accepted the first bitmap.
-    // Providers own copied input; no worker calls the host or retains this Work.
-    template<class Image, class Classify, class ApplyImage, class ApplyShortcut>
-    bool SubmitFirst(std::wstring key, Image image, Classify classify,
-        ApplyImage applyImage, ApplyShortcut applyShortcut, HWND window, UINT message)
+    // Local misses leave the first-image lane before any Shell provider runs.
+    // Each successful bitmap is delivered separately; stalled fallbacks retain
+    // only their own bounded workers and never delay unrelated local images.
+    template<class Local, class Shell, class Ready, class Classify,
+        class ApplyImage, class ApplyShortcut>
+    bool SubmitFirstWithFallback(std::wstring key, Local local, Shell shell,
+        Ready ready, Classify classify, ApplyImage applyImage,
+        ApplyShortcut applyShortcut, HWND window, UINT message)
     {
-        return first_.Submit(key, std::move(image),
-            [this, key, classify = std::move(classify),
-                applyImage = std::move(applyImage),
-                applyShortcut = std::move(applyShortcut), window, message]
-            (auto result) mutable {
-                if (applyImage(std::move(result)))
-                    shortcut_.Submit(key, std::move(classify),
-                        std::move(applyShortcut), window, message);
+        auto deliver = [this, key, classify = std::move(classify),
+            applyImage = std::move(applyImage), applyShortcut = std::move(applyShortcut),
+            window, message](auto result) mutable {
+            if (applyImage(std::move(result)))
+                shortcut_.Submit(key, std::move(classify), std::move(applyShortcut), window, message);
+        };
+        return first_.Submit(key, std::move(local),
+            [this, key, shell = std::move(shell), ready = std::move(ready),
+                deliver = std::move(deliver), window, message](auto result) mutable {
+                if (ready(result))
+                    deliver(std::move(result));
+                else if (!fallback_.Submit(key, std::move(shell), deliver, window, message))
+                    deliver(std::move(result)); // Preserve the host's failure/cleanup path.
             }, window, message);
     }
 
@@ -38,12 +47,12 @@ public:
             std::move(provider), std::move(apply), window, message);
     }
 
-    void Drain() { first_.Drain(); detail_.Drain(); shortcut_.Drain(); }
+    void Drain() { first_.Drain(); fallback_.Drain(); detail_.Drain(); shortcut_.Drain(); }
     void Cancel(const std::wstring& prefix = {})
-    { first_.Cancel(prefix); detail_.Cancel(prefix); shortcut_.Cancel(prefix); }
-    void Stop() { first_.Stop(); detail_.Stop(); shortcut_.Stop(); }
+    { first_.Cancel(prefix); fallback_.Cancel(prefix); detail_.Cancel(prefix); shortcut_.Cancel(prefix); }
+    void Stop() { first_.Stop(); fallback_.Stop(); detail_.Stop(); shortcut_.Stop(); }
 
 private:
-    BackgroundWork first_, detail_, shortcut_;
+    BackgroundWork first_, detail_, shortcut_, fallback_;
 };
 }

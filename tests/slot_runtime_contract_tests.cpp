@@ -3087,6 +3087,7 @@ int wmain(int argc, wchar_t** argv)
     TestFirstIconsDoNotWaitForDetails();
     TestShortcutClassificationDoesNotGateIcons();
     TestShortcutClassificationCancellation();
+    TestLocalIconsBypassBlockedShellFallback();
     TestBackgroundShellWorkIsolation();
     TestShellIconSourceStamp();
     TestIncrementalDesktopPreservesUnobservedItems();

@@ -284,6 +284,9 @@ HBITMAP GetDirectIconResourceBitmap(std::wstring_view resourcePath,
     int iconIndex, SIZE& bitmapSize,
     int requestedSize = kIconBitmapSize);
 
+// Local first-image hints only; nullptr requests a separately scheduled Shell fallback.
+HBITMAP GetLocalIconResourceBitmap(std::wstring_view path, SIZE& bitmapSize, int requestedSize);
+
 /**
  * @brief 获取高分辨率 Shell 图标位图
  * @details 通过 IShellIconImageSize 或 Shell_GetImageLists 接口获取桌面项

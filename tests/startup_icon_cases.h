@@ -146,6 +146,17 @@ bool DrainIconsUntil(snowdesktop::shell_icon_request::Work& work, Predicate read
     return ready();
 }
 
+template<class Image, class Classify, class ApplyImage, class ApplyShortcut>
+bool SubmitLocalIcon(snowdesktop::shell_icon_request::Work& work, std::wstring key,
+    Image image, Classify classify, ApplyImage applyImage, ApplyShortcut applyShortcut,
+    HWND window, UINT message)
+{
+    using Result = decltype(image());
+    return work.SubmitFirstWithFallback(std::move(key), std::move(image),
+        [] { return Result{}; }, [](const auto&) { return true; },
+        std::move(classify), std::move(applyImage), std::move(applyShortcut), window, message);
+}
+
 // The actual first-image/classification submission used by QueueIconTask.
 // Only Shell providers are substituted; scheduling and result ordering are real.
 void TestShortcutClassificationDoesNotGateIcons()
@@ -156,7 +167,7 @@ void TestShortcutClassificationDoesNotGateIcons()
     DesktopItem item;
     bool firstApplied = false, nextApplied = false, detailApplied = false;
     int classifications = 0;
-    work.SubmitFirst(L"desktop:adobe", [] {
+    SubmitLocalIcon(work, L"desktop:adobe", [] {
         auto pixels = std::make_shared<snowdesktop::BackgroundBitmap>();
         pixels->bitmap = CreateBitmap(1, 1, 1, 32, nullptr);
         return pixels;
@@ -174,7 +185,7 @@ void TestShortcutClassificationDoesNotGateIcons()
             WaitForSingleObject(gate->entered, 0) == WAIT_OBJECT_0; }),
         "first bitmap reaches the model before its slow shortcut classifier returns");
     const auto firstBitmap = item.iconBitmap;
-    work.SubmitFirst(L"desktop:next", [] { return 42; }, [] { return false; },
+    SubmitLocalIcon(work, L"desktop:next", [] { return 42; }, [] { return false; },
         [&](int value) { nextApplied = value == 42; return true; },
         [&](bool) { ++classifications; }, nullptr, 0);
     work.Submit(true, L"desktop:detail", [] { return 1; }, [&](int) {
@@ -208,14 +219,14 @@ void TestShortcutClassificationCancellation()
     Work work(1, 1, 1);
     std::atomic<bool> rejectedClassified = false;
     bool rejected = false;
-    work.SubmitFirst(L"stale", [] { return 1; }, [&] {
+    SubmitLocalIcon(work, L"stale", [] { return 1; }, [&] {
         rejectedClassified = true; return 1;
     }, [&](int) { rejected = true; return false; }, [](int) {}, nullptr, 0);
     Check(DrainIconsUntil(work, [&] { return rejected; }),
         "a stale first result reaches the host acceptance boundary");
     auto gate = std::make_shared<ShortcutClassificationGate>();
     int cancelledApplied = 0;
-    work.SubmitFirst(L"popup:old", [] { return 1; }, [gate] { return gate->Run(); },
+    SubmitLocalIcon(work, L"popup:old", [] { return 1; }, [gate] { return gate->Run(); },
         [](int) { return true; }, [&](bool) { ++cancelledApplied; }, nullptr, 0);
     Check(DrainIconsUntil(work, [&] {
         return WaitForSingleObject(gate->entered, 0) == WAIT_OBJECT_0;
@@ -223,7 +234,7 @@ void TestShortcutClassificationCancellation()
     work.Cancel(L"popup:");
     SetEvent(gate->release);
     bool replacementApplied = false;
-    work.SubmitFirst(L"popup:old", [] { return 2; }, [] { return 2; },
+    SubmitLocalIcon(work, L"popup:old", [] { return 2; }, [] { return 2; },
         [](int value) { return value == 2; },
         [&](int value) { replacementApplied = value == 2; }, nullptr, 0);
     Check(DrainIconsUntil(work, [&] { return replacementApplied; }) &&
@@ -233,7 +244,7 @@ void TestShortcutClassificationCancellation()
     auto retired = std::make_unique<Work>(1, 1, 1);
     auto destroyedGate = std::make_shared<ShortcutClassificationGate>();
     std::atomic<bool> destroyedApplied = false;
-    retired->SubmitFirst(L"destroyed", [] { return 1; },
+    SubmitLocalIcon(*retired, L"destroyed", [] { return 1; },
         [destroyedGate] { return destroyedGate->Run(); }, [](int) { return true; },
         [&](bool) { destroyedApplied = true; }, nullptr, 0);
     Check(DrainIconsUntil(*retired, [&] {
@@ -244,7 +255,83 @@ void TestShortcutClassificationCancellation()
     Check(WaitForSingleObject(destroyedGate->returned, 2000) == WAIT_OBJECT_0 && !destroyedApplied,
         "destroying the scheduler drops late classification without joining its blocked provider");
     work.Stop();
-    Check(!work.SubmitFirst(L"stopped", [] { return 1; }, [] { return 1; },
+    Check(!SubmitLocalIcon(work, L"stopped", [] { return 1; }, [] { return 1; },
         [](int) { return true; }, [](int) {}, nullptr, 0),
         "shutdown also rejects the production first-image/classification entry point");
+}
+
+// Production fallback routing: all reserved Shell-first workers are blocked,
+// yet later local first images must reach the host without waiting for them.
+void TestLocalIconsBypassBlockedShellFallback()
+{
+    using namespace snowdesktop::shell_icon_request;
+    Work work(1, 1, 1, 1);
+    auto gate = std::make_shared<ShortcutClassificationGate>();
+    int slowApplied = 0, slowClassified = 0;
+    const auto ready = [](int value) { return value != 0; };
+    work.SubmitFirstWithFallback(L"slow", [] { return 0; }, [gate] {
+        gate->Run(); return 7;
+    }, ready, [] { return 1; }, [&](int value) {
+        slowApplied = value; return true;
+    }, [&](int value) { slowClassified += value; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] {
+        return WaitForSingleObject(gate->entered, 0) == WAIT_OBJECT_0;
+    }), "a local miss enters the bounded Shell fallback lane");
+    bool localApplied = false, detailApplied = false;
+    int localClassified = 0;
+    std::atomic<int> unnecessaryShellCalls = 0;
+    work.SubmitFirstWithFallback(L"local", [] { return 42; }, [&] {
+        ++unnecessaryShellCalls; return 99;
+    }, ready, [] { return 1; }, [&](int value) {
+        localApplied = value == 42; return true;
+    }, [&](int value) { localClassified += value; }, nullptr, 0);
+    work.Submit(true, L"detail", [] { return 8; },
+        [&](int value) { detailApplied = value == 8; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return localApplied && localClassified == 1 && detailApplied; }) &&
+        slowApplied == 0 && slowClassified == 0 && unnecessaryShellCalls == 0 &&
+        WaitForSingleObject(gate->returned, 0) == WAIT_TIMEOUT,
+        "local pixels, classification and details continue while every Shell-first worker is stuck");
+    SetEvent(gate->release);
+    Check(DrainIconsUntil(work, [&] { return slowApplied == 7 && slowClassified == 1; }),
+        "a late Shell bitmap delivers once and starts classification only after acceptance");
+
+    auto cancelled = std::make_shared<ShortcutClassificationGate>();
+    int staleCallbacks = 0;
+    work.SubmitFirstWithFallback(L"popup:old", [] { return 0; }, [cancelled] {
+        cancelled->Run(); return 1;
+    }, ready, [] { return 1; }, [&](int) { ++staleCallbacks; return true; },
+        [&](int) { ++staleCallbacks; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] {
+        return WaitForSingleObject(cancelled->entered, 0) == WAIT_OBJECT_0;
+    }), "fallback is running when its popup is closed");
+    work.Cancel(L"popup:");
+    bool replacement = false, barrier = false;
+    work.SubmitFirstWithFallback(L"popup:old", [] { return 2; }, [] { return 0; }, ready,
+        [] { return 0; }, [&](int value) { replacement = value == 2; return false; },
+        [&](int) { ++staleCallbacks; }, nullptr, 0);
+    SetEvent(cancelled->release);
+    work.SubmitFirstWithFallback(L"barrier", [] { return 0; }, [] { return 3; }, ready,
+        [] { return 0; }, [&](int value) { barrier = value == 3; return false; },
+        [&](int) { ++staleCallbacks; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return replacement && barrier; }) && staleCallbacks == 0,
+        "cancelled fallback cannot overwrite a reused key or start stale classification");
+
+    auto retired = std::make_unique<Work>(1, 1, 1, 1);
+    auto destroyed = std::make_shared<ShortcutClassificationGate>();
+    std::atomic<bool> lateApplied = false;
+    retired->SubmitFirstWithFallback(L"destroyed", [] { return 0; }, [destroyed] {
+        destroyed->Run(); return 1;
+    }, ready, [] { return 0; }, [&](int) { lateApplied = true; return true; },
+        [&](int) { lateApplied = true; }, nullptr, 0);
+    Check(DrainIconsUntil(*retired, [&] {
+        return WaitForSingleObject(destroyed->entered, 0) == WAIT_OBJECT_0;
+    }), "Shell fallback enters before owner destruction");
+    retired.reset();
+    SetEvent(destroyed->release);
+    Check(WaitForSingleObject(destroyed->returned, 2000) == WAIT_OBJECT_0 && !lateApplied,
+        "destruction drops in-flight fallback delivery without retaining the host");
+    work.Stop();
+    Check(!work.SubmitFirstWithFallback(L"stopped", [] { return 1; }, [] { return 1; }, ready,
+        [] { return 0; }, [](int) { return true; }, [](int) {}, nullptr, 0),
+        "shutdown rejects local/fallback submissions");
 }

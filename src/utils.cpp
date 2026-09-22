@@ -1223,6 +1223,19 @@ HBITMAP ExtractInternetShortcutSourceIcon(std::wstring_view sourcePath,
 }
 } // namespace
 
+HBITMAP GetLocalIconResourceBitmap(std::wstring_view path, SIZE& bitmapSize, int requestedSize)
+{
+    bitmapSize = {};
+    const auto resources = shellCalls::Call(L"Local.ReadIconResources", [&] {
+        return snowdesktop::shortcut_icon_resource::ReadLocalIconResources(path);
+    });
+    const int sourceSize = snowdesktop::icon_render_rules::SourcePixelsForTarget(requestedSize);
+    for (const auto& resource : resources)
+        if (auto bitmap = ExtractIconResourceBitmap(resource.path, resource.index, sourceSize, bitmapSize))
+            return bitmap;
+    return nullptr;
+}
+
 HBITMAP GetDirectIconResourceBitmap(std::wstring_view resourcePath,
     int iconIndex, SIZE& bitmapSize, int requestedSize)
 {

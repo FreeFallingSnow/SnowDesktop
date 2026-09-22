@@ -383,6 +383,22 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     bool submitted = false;
     if (input->phase == IconLoadPhase::Phase1)
     {
+        auto localImage = [input, queuedAt, makeResult] {
+            const auto& path = input->parsingName.empty() ? input->folderPath : input->parsingName;
+            shellCalls::Context trace(L"icon.local", path);
+            const auto started = GetTickCount64();
+            auto result = makeResult();
+            result->sysIconIndex = input->sysIconIndex;
+            result->bitmap = GetLocalIconResourceBitmap(path, result->bitmapSize, input->requestedSize);
+            if (result->bitmap) ClampAlphaToColorKey(result->bitmap, kTransparentKey);
+            // Record successes as well as misses during rollout so a startup
+            // log distinguishes local delivery from waiting for Shell fallback.
+            wchar_t timing[256]{};
+            swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d trace=%llu path=",
+                started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0, trace.Id());
+            WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
+            return result;
+        };
         auto classify = [input, makeResult] {
             const auto& tracePath =
                 input->parsingName.empty() ? input->folderPath : input->parsingName;
@@ -458,8 +474,9 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             }
             return result;
         };
-        submitted = iconWork_.SubmitFirst(key, std::move(image), std::move(classify),
-            apply, apply, hwnd_, kBackgroundShellReadyMessage);
+        submitted = iconWork_.SubmitFirstWithFallback(key, std::move(localImage), std::move(image),
+            [](const std::shared_ptr<IconLoadResult>& result) { return result && result->bitmap; },
+            std::move(classify), apply, apply, hwnd_, kBackgroundShellReadyMessage);
     }
     else
     {
