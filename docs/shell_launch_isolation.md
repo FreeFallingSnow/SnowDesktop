@@ -61,6 +61,21 @@
 原用户安装百度网盘扩展后的文件夹打开、Windows 10 文档 DDE/执行委托、前台焦点及 UAC
 仍需实机验证。单元测试和构建通过不能替代这些兼容性场景。
 
+### 2026-09-22：重复打开时窗口隐藏
+
+独立临时目录通过真实辅助进程连续打开三次：首次 Explorer 窗口可见，第二、三次辅助进程均
+成功退出，但同一个窗口句柄仍存在且 `IsWindowVisible` 为假。由此确认本机复现的是窗口被
+隐藏，而非关闭或打开请求排队阻塞；仅检查 `IShellWindows` 中的目录地址无法发现这个问题。
+
+辅助进程原先固定传入 `STARTF_USESHOWWINDOW + SW_HIDE`。仅将该启动显示状态改为请求中的
+`showCommand`，保持其余 Shell 调用不变后，同一探针连续三次打开均可见。辅助进程本身不创建
+界面，控制台仍由 `CREATE_NO_WINDOW` 抑制。此修改不改变内部请求格式或公开组件 API。
+
+现有 `shell_launch_worker` 集成测试增加普通文件夹的 PIDL 入口，并覆盖五种路径/PIDL 形式
+的首次打开、已打开时再次打开、最小化后再次打开。每次均等待对应辅助进程退出，再核对
+真实 Explorer 窗口可见且未最小化，防止请求执行前的旧窗口让测试误通过。只使用独立临时
+文件夹并清理其窗口。此证据不替代用户原桌面场景、前台焦点及其他 Windows 版本的验收。
+
 机制参考：[DLL 初始化约束](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-best-practices)、
 [ShellExecute 的同步交接标志](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-shellexecuteinfow)、
 [Job 子进程边界](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。

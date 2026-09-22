@@ -114,10 +114,11 @@ void TestIsolatedFolderActivation()
         Microsoft::WRL::ComPtr<IShellWindows> windows;
         Check(SUCCEEDED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
             IID_PPV_ARGS(&windows))), "folder activation must observe real Explorer navigation");
-        // Separate fresh targets prevent an already-open directory from passing.
-        // Cover desktop/Dock, path-only callers, ordinary folders and Shell
-        // objects with no parsing name. Only this test's windows are closed.
-        for (int kind = 0; windows && kind < 4; ++kind)
+        // Real Shell execution must leave the folder visible after the helper
+        // exits, including repeated activation of an existing Explorer window.
+        // A registered LocationURL alone also matches a silently hidden window.
+        // Only the unique fixture folders' windows are observed and closed.
+        for (int kind = 0; windows && kind < 5; ++kind)
         {
             GUID id{}; wchar_t idText[64]{}, temp[MAX_PATH]{};
             const bool pathsReady = SUCCEEDED(CoCreateGuid(&id)) &&
@@ -135,12 +136,12 @@ void TestIsolatedFolderActivation()
                 SUCCEEDED(link.As(&persist)) && SUCCEEDED(persist->Save(shortcut.c_str(), TRUE));
             Check(ready, "folder shortcut fixture must be created");
             snowdesktop::shell_launch_process::Request request;
-            request.path = kind == 2 ? folder : shortcut;
+            request.path = kind == 2 || kind == 4 ? folder : shortcut;
             request.action = snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy;
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (kind == 0 || kind == 3)
+            if (kind == 0 || kind == 3 || kind == 4)
             {
-                ready = ready && SUCCEEDED(SHParseDisplayName(shortcut.c_str(), nullptr, &pidl, 0, nullptr)) && pidl;
+                ready = ready && SUCCEEDED(SHParseDisplayName(request.path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl;
                 if (pidl)
                 {
                     const auto bytes = reinterpret_cast<const unsigned char*>(pidl);
@@ -148,13 +149,7 @@ void TestIsolatedFolderActivation()
                 }
             }
             if (kind == 3) request.path.clear();
-            const auto started = ready ? snowdesktop::shell_launch_process::Start(request, 10000) :
-                snowdesktop::shell_launch_process::StartedProcess{};
-            Check(static_cast<bool>(started), "folder activation must dispatch the real helper");
-            bool observed = false;
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-            while (started && !observed && std::chrono::steady_clock::now() < deadline)
-            {
+            const auto visitFolderWindows = [&](auto&& visit) {
                 long count = 0; windows->get_Count(&count);
                 for (long i = 0; i < count; ++i)
                 {
@@ -165,21 +160,73 @@ void TestIsolatedFolderActivation()
                     BSTR url = nullptr; browser->get_LocationURL(&url);
                     wchar_t path[32768]{}; DWORD size = 32768;
                     if (url && SUCCEEDED(PathCreateFromUrlW(url, path, &size, 0)) && SameFolder(folder, path))
-                    { observed = true; browser->Quit(); }
+                        visit(browser.Get());
                     SysFreeString(url);
                 }
-                if (!observed)
+            };
+            const auto pumpMessages = [] {
+                MSG message{};
+                while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                { TranslateMessage(&message); DispatchMessageW(&message); }
+                MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+            };
+            // First open, reopen while visible, then reopen from minimized.
+            // All three use the same production transport and Shell handler.
+            for (int attempt = 0; ready && attempt < 3; ++attempt)
+            {
+                if (attempt == 2)
                 {
-                    MSG message{};
-                    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
-                    { TranslateMessage(&message); DispatchMessageW(&message); }
-                    MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+                    visitFolderWindows([](IWebBrowser2* browser) {
+                        SHANDLE_PTR handle = 0;
+                        if (SUCCEEDED(browser->get_HWND(&handle)))
+                            ShowWindow(reinterpret_cast<HWND>(handle), SW_MINIMIZE);
+                    });
                 }
+                const auto started = snowdesktop::shell_launch_process::Start(request, 10000);
+                Check(static_cast<bool>(started), "folder activation must dispatch the real helper");
+                HANDLE child = started ? OpenProcess(
+                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, started.id) : nullptr;
+                Check(child != nullptr, "folder activation must observe helper completion");
+                bool visible = false;
+                bool completed = false;
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+                while (child && std::chrono::steady_clock::now() < deadline)
+                {
+                    // Observe the window after the request has finished so an
+                    // old visible window cannot pass before the reopen runs.
+                    completed = WaitForSingleObject(child, 0) == WAIT_OBJECT_0;
+                    if (completed)
+                    {
+                        visible = false;
+                        visitFolderWindows([&](IWebBrowser2* browser) {
+                            SHANDLE_PTR handle = 0;
+                            if (SUCCEEDED(browser->get_HWND(&handle)))
+                            {
+                                const HWND window = reinterpret_cast<HWND>(handle);
+                                visible = visible || (IsWindowVisible(window) && !IsIconic(window));
+                            }
+                        });
+                        if (visible) break;
+                    }
+                    pumpMessages();
+                }
+                DWORD result = ERROR_PROCESS_ABORTED;
+                if (child)
+                {
+                    GetExitCodeProcess(child, &result);
+                    CloseHandle(child);
+                }
+                if (!completed || !visible || result != ERROR_SUCCESS)
+                    std::cerr << "Folder activation kind=" << kind << " attempt=" << attempt
+                              << " completed=" << completed << " result=" << result
+                              << " visible=" << visible << '\n';
+                Check(completed && result == ERROR_SUCCESS,
+                    "folder activation helper must complete successfully");
+                Check(visible, attempt == 0 ? "first folder activation must show Explorer" :
+                    attempt == 1 ? "reopening an existing folder must keep Explorer visible" :
+                    "reopening a minimized folder must restore visible Explorer");
             }
-            Check(observed, kind == 0 ? "PIDL folder shortcut must actually navigate Explorer" :
-                kind == 1 ? "path-only folder shortcut must actually navigate Explorer" :
-                kind == 2 ? "ordinary folder must actually navigate Explorer" :
-                "PIDL-only Shell item must actually navigate Explorer");
+            visitFolderWindows([](IWebBrowser2* browser) { browser->Quit(); });
             CoTaskMemFree(pidl); persist.Reset(); link.Reset();
             DeleteFileW(shortcut.c_str()); RemoveDirectoryW(folder.c_str());
         }

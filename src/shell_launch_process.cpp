@@ -253,7 +253,11 @@ StartedProcess Start(const Request& request, DWORD timeoutMs)
         STARTUPINFOEXW startup{};
         startup.StartupInfo.cb = sizeof(startup);
         startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
-        startup.StartupInfo.wShowWindow = SW_HIDE;
+        // Shell folder activation can forward this startup state when reusing
+        // an Explorer window, even when InvokeCommand specifies nShow. SW_HIDE
+        // here hides an already-open folder and keeps later opens invisible.
+        // The helper creates no UI; CREATE_NO_WINDOW suppresses its console.
+        startup.StartupInfo.wShowWindow = static_cast<WORD>(request.showCommand);
         startup.lpAttributeList = attributes;
         PROCESS_INFORMATION information{};
         if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
