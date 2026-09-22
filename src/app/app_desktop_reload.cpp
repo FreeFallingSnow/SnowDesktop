@@ -1150,10 +1150,10 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
     QueueIconTask(std::move(task));
 }
 
-void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
+bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
 {
     auto* result = reinterpret_cast<IconLoadResult*>(lParam);
-    if (!result) return;
+    if (!result) return false;
 
     std::unique_ptr<IconLoadResult> resultGuard(result);
     std::uint64_t currentPopupGeneration = 0;
@@ -1174,7 +1174,7 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
     {
         if (result->bitmap) DeleteObject(result->bitmap);
         result->bitmap = nullptr;
-        return;
+        return false;
     }
     bool matched = false;
 
@@ -1197,12 +1197,10 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 matched = true;
                 if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
                 if (!result->typeName.empty()) item.typeName = result->typeName;
+                snowdesktop::shell_icon_request::ApplyPresentation(item, result->phase,
+                    result->isShortcut, result->isApplicationShortcut);
                 if (result->phase == IconLoadPhase::Phase1)
                 {
-                    item.iconState = IconState::IconReady;
-                    item.shortcutArrow = result->shortcutArrow;
-                    item.isShortcut = result->isShortcut;
-                    item.isApplicationShortcut = result->isApplicationShortcut;
                     IconLoadTask phase2;
                     phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
                     phase2.serial = result->serial;
@@ -1213,10 +1211,6 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     phase2.isDesktopItem = true;
                     phase2.phase = IconLoadPhase::Phase2;
                     EnqueueIconLoad(std::move(phase2));
-                }
-                else
-                {
-                    item.iconState = IconState::FullQuality;
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 if (quickNavigationOpen_)
@@ -1251,12 +1245,10 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     matched = true;
                     if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
                     if (!result->typeName.empty()) entry.typeName = result->typeName;
+                    snowdesktop::shell_icon_request::ApplyPresentation(entry, result->phase,
+                        result->isShortcut, result->isApplicationShortcut);
                     if (result->phase == IconLoadPhase::Phase1)
                     {
-                        entry.iconState = IconState::IconReady;
-                        entry.shortcutArrow = result->shortcutArrow;
-                        entry.isShortcut = result->isShortcut;
-                        entry.isApplicationShortcut = result->isApplicationShortcut;
                         IconLoadTask phase2;
                         phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
                         phase2.serial = result->serial;
@@ -1266,10 +1258,6 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         phase2.isDesktopItem = false;
                         phase2.phase = IconLoadPhase::Phase2;
                         EnqueueIconLoad(std::move(phase2));
-                    }
-                    else
-                    {
-                        entry.iconState = IconState::FullQuality;
                     }
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     if (quickNavigationOpen_)
@@ -1306,6 +1294,7 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
 
     if (!matched && result->bitmap)
         DeleteObject(result->bitmap);
+    return matched;
 }
 
 /**

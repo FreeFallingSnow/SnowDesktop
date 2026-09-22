@@ -19,6 +19,7 @@
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
 #include "shell_icon_work.h"
+#include "shell_icon_request.h"
 #include "../dock_refresh_cache.h"
 #include "../desktop_namespace_registry.h"
 #include "item.h"
@@ -224,7 +225,7 @@ std::uint64_t D2DColorBrushKey(const D2D1_COLOR_F& color);
 D2D1_COLOR_F ToD2DColor(COLORREF color, float alpha = 1.0f);
 std::wstring DockItemWindowKey(const DesktopItem& item);
 
-enum class IconLoadPhase { Phase1, Phase2 };
+using IconLoadPhase = snowdesktop::shell_icon_request::Phase;
 
 struct IconLoadTask {
     std::wstring sourceStamp;
@@ -2762,7 +2763,7 @@ private:
     int GetMaximumShellIconBitmapSize() const;
     void RefreshIconBitmapResolution();
     void EnqueueIconLoad(IconLoadTask task);
-    void OnIconLoaded(WPARAM wParam, LPARAM lParam);
+    bool OnIconLoaded(WPARAM wParam, LPARAM lParam);
     void DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT iconRect,
         float alpha, bool allowBeautify = true);
     /** @brief 绘制与应用稳定身份绑定的快捷导航应用图标快照。 */

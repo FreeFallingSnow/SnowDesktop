@@ -151,10 +151,19 @@ static bool ReadDesktopSource(
         const auto metadataKey = ToUpperInvariant(parsingName);
         const auto info = ReadDesktopMetadata(basicMetadata, parsingName,
             metadataKey, stamp, hasAttributes, cache, seenMetadata,
-            [absolute](SHFILEINFOW& value) {
-                return SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0,
+            [absolute, &parsingName](SHFILEINFOW& value) {
+                const auto started = GetTickCount64();
+                const bool success = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(absolute), 0,
                     &value, sizeof(value), SHGFI_PIDL | SHGFI_SYSICONINDEX |
                         SHGFI_DISPLAYNAME | SHGFI_TYPENAME) != 0;
+                const auto elapsed = GetTickCount64() - started;
+                if (elapsed >= 250)
+                {
+                    const auto message = L"Shell desktop metadata slow: elapsed_ms=" +
+                        std::to_wstring(elapsed) + L" path=" + parsingName;
+                    WriteDiagnosticLogEntry(message.c_str());
+                }
+                return success;
             });
 
         DesktopItem item;

@@ -4,6 +4,25 @@
 
 namespace snowdesktop::shell_icon_request
 {
+enum class Phase { Phase1, Phase2, Shortcut };
+
+// A classification may arrive after full-quality pixels. It must not reset
+// quality or replace pixels; conversely bitmap refreshes retain known metadata.
+template<class Item>
+void ApplyPresentation(Item& item, Phase phase, bool isShortcut, bool isApplicationShortcut)
+{
+    if (phase == Phase::Shortcut)
+    {
+        item.isShortcut = isShortcut;
+        item.isApplicationShortcut = isApplicationShortcut;
+        item.shortcutArrow = isShortcut && !isApplicationShortcut;
+    }
+    else
+    {
+        item.iconState = phase == Phase::Phase1 ? IconState::IconReady : IconState::FullQuality;
+    }
+}
+
 inline std::wstring Stamp(const std::optional<FILETIME>& modified,
     const std::optional<std::uint64_t>& bytes)
 {
