@@ -1,4 +1,5 @@
 #include "widget_system_data_provider.h"
+#include "widget_gpu_usage.h"
 #include "performance_trace.h"
 #include "widget_media_contract.h"
 
@@ -1660,7 +1661,7 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
                 PDH_FMT_DOUBLE, &bufferBytes, &itemCount, items);
             if (status == ERROR_SUCCESS)
             {
-                std::unordered_map<std::uint64_t, double> usageByLuid;
+                WidgetGpuUsageAccumulator usage;
                 for (DWORD index = 0; index < itemCount; ++index)
                 {
                     if (items[index].FmtValue.CStatus !=
@@ -1668,15 +1669,12 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
                         items[index].FmtValue.CStatus !=
                             PDH_CSTATUS_NEW_DATA)
                         continue;
-                    const auto luid = ParseGpuLuid(items[index].szName);
-                    if (!luid) continue;
-                    usageByLuid[*luid] +=
-                        items[index].FmtValue.doubleValue;
+                    usage.AddSample(items[index].szName,
+                        items[index].FmtValue.doubleValue);
                 }
                 for (auto& entry : adapters)
                 {
-                    entry.snapshot.usagePercent = std::clamp(
-                        usageByLuid[entry.luid], 0.0, 100.0);
+                    entry.snapshot.usagePercent = usage.UsagePercent(entry.luid);
                 }
                 utilizationAvailable = true;
             }

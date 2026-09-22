@@ -1748,7 +1748,10 @@ topic 隐藏时强制暂停，最后一个可见订阅释放后立即停止枚�
 
 GPU value 的 `adapters` 是数组；每项包含不透明 `id`、显示 `name`、
 `usagePercent`、`dedicatedMemoryBytes/dedicatedUsedBytes` 和
-`sharedMemoryBytes/sharedUsedBytes`。两个容量来自 DXGI adapter 描述；两个 used 字段
+`sharedMemoryBytes/sharedUsedBytes`。`usagePercent` 使用 Windows GPU Engine 计数器，
+按 adapter LUID、物理 GPU 和引擎编号累加同一引擎的各进程占用，再取该 adapter 最忙
+引擎的百分比（0–100）；不同引擎可并行工作，不能跨引擎相加，也不按引擎类型合并。
+两个容量来自 DXGI adapter 描述；两个 used 字段
 分别来自 Windows `GPU Adapter Memory` 的 Dedicated Usage 和 Shared Usage，并按
 adapter LUID 归属，不能把核显 LOCAL segment 当作专用显存。宿主不会只返回第一块
 GPU；首次 PDH 差分样本为 `warmingUp=true`。最后一个 GPU 订阅释放后会关闭 PDH

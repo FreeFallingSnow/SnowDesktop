@@ -1,8 +1,10 @@
 #include "widget_system_data_provider.h"
+#include "widget_gpu_usage.h"
 
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <thread>
 
@@ -30,6 +32,61 @@ void Check(bool condition, const char* message)
         std::cerr << "FAIL: " << message << '\n';
         std::exit(1);
     }
+}
+
+void TestGpuEngineUsageAggregation()
+{
+    using snowdesktop::widget_runtime::WidgetGpuUsageAccumulator;
+    WidgetGpuUsageAccumulator usage;
+    // These are PDH boundary samples consumed by SampleGpu, not per-adapter
+    // totals. Summing parallel 3D/copy/video engines used to report 100%,
+    // although the busiest engine was only 50% occupied across two processes.
+    usage.AddSample(L"pid_10_luid_0x00000000_0x000012AB_phys_0_eng_0_engtype_3D", 20.0);
+    usage.AddSample(L"pid_20_luid_0x00000000_0x000012ab_phys_0_eng_0_engtype_3D", 30.0);
+    usage.AddSample(L"pid_10_luid_0x00000000_0x000012ab_phys_0_eng_1_engtype_Copy", 40.0);
+    usage.AddSample(L"pid_20_luid_0x00000000_0x000012ab_phys_0_eng_2_engtype_VideoDecode", 45.0);
+    Check(usage.UsagePercent(0x12ab) == 50.0,
+        "parallel engines must not inflate adapter usage, and processes on one engine must add");
+
+    usage.AddSample(L"pid_30_luid_0x00000000_0x000012ab_phys_0_eng_3_engtype_Copy", 60.0);
+    Check(usage.UsagePercent(0x12ab) == 60.0,
+        "distinct engines with the same type must not be merged");
+    usage.AddSample(L"pid_30_luid_0x00000000_0x000012ab_phys_1_eng_0_engtype_3D", 80.0);
+    Check(usage.UsagePercent(0x12ab) == 80.0,
+        "linked physical adapters must keep their engine identities separate");
+
+    usage.AddSample(L"pid_10_luid_0x00000001_0x000012ab_phys_0_eng_0_engtype_3D", 90.0);
+    usage.AddSample(L"pid_10_luid_0x00000000_0x00005678_phys_0_eng_0_engtype_3D", 15.0);
+    Check(usage.UsagePercent(0x1000012abull) == 90.0 &&
+            usage.UsagePercent(0x5678) == 15.0 &&
+            usage.UsagePercent(0x12ab) == 80.0 &&
+            usage.UsagePercent(0x9999) == 0.0,
+        "adapter usage must preserve both halves of the LUID and default idle adapters to zero");
+
+    constexpr auto valid = L"pid_10_luid_0x00000000_0x000012ab_phys_0_eng_0_engtype_3D";
+    usage.AddSample(valid, std::numeric_limits<double>::quiet_NaN());
+    usage.AddSample(valid, std::numeric_limits<double>::infinity());
+    usage.AddSample(valid, -100.0);
+    for (const wchar_t* malformed : {
+        L"", L"_Total", L"luid_0x0_0x12ab", L"luid_0x0_0x12ab_phys_0_eng__engtype_3D",
+        L"luid_0x0_0x12ab_phys_-1_eng_0_engtype_3D",
+        L"luid_0x0_0x12ab_phys_0_eng_4294967296_engtype_3D",
+        L"luid_0x100000000_0x12ab_phys_0_eng_0_engtype_3D",
+        L"luid_0x0_0x12ab_phys_0_eng_0junk_engtype_3D",
+        L"luid_0x0_0x12ab_phys_0_eng_0_engtype_" })
+        usage.AddSample(malformed, 100.0);
+    usage.AddSample(nullptr, 100.0);
+    Check(usage.UsagePercent(0x12ab) == 80.0,
+        "invalid readings and malformed identities must not poison or inflate valid usage");
+
+    usage.AddSample(valid, 70.0);
+    Check(usage.UsagePercent(0x12ab) == 100.0,
+        "per-engine totals must remain bounded at 100 percent");
+    WidgetGpuUsageAccumulator nextSample;
+    nextSample.AddSample(valid, 2.0);
+    Check(nextSample.UsagePercent(0x12ab) == 2.0 &&
+            nextSample.UsagePercent(0x5678) == 0.0,
+        "each sample must discard the previous interval's engine totals");
 }
 
 template<typename Predicate>
@@ -586,6 +643,7 @@ void TestStopAll()
 
 int main()
 {
+    TestGpuEngineUsageAggregation();
     TestCurrentDisplayMatching();
     TestSampledDataEnvelopeDebounce();
     TestMediaArtworkTransitionDropsUnconfirmedImage();

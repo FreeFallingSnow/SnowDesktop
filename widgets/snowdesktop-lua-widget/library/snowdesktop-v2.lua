@@ -1352,7 +1352,7 @@ function animation.cancelFrame(id) end
 ---@class SnowGpuAdapterDataValue
 ---@field id string Opaque adapter identifier.
 ---@field name string
----@field usagePercent number
+---@field usagePercent number Busiest physical engine's total across processes (0-100); parallel engines are not summed.
 ---@field dedicatedMemoryBytes integer
 ---@field dedicatedUsedBytes integer PDH Dedicated Usage assigned by adapter LUID.
 ---@field sharedMemoryBytes integer
