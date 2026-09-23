@@ -143,3 +143,39 @@
 本次完整检查点：上述候选在干净生产代码输入上执行 `scripts/test.bat full`，退出 0，118/118 通过、0 失败、0 跳过；JUnit 的 118 个条目已另行核对。配置 1.01 秒，聚合增量构建/准备 19.45 秒，CTest 执行 97.69 秒（进程 97.77 秒）。报告 `.build/Testing/test-run-8503406e6fb6478b86070bce8b8d2265.xml`，SHA256 `D85700F03E371D68F7ECB8C5C318F2F03ADEE7F030523969009EFA52289CAF1E`；日志 `.codex-probes/drop-full.log`。未重复运行其他候选的全量，不把首轮失败或链接阶段阻断计为通过；最终文档更新不改变已测的生产/测试输入。Windows Release、CMake/CTest 4.3.1、MSBuild 18.5.4、SDK 10.0.26100.0；本轮完整日志未出现编译警告。
 
 逐项实际路径来自 Windows 的 [IFileOperationProgressSink::PostCopyItem](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postcopyitem) / `PostMoveItem` 完成通知，使用系统给出的实际输出对象，不能把排队成功或预选文件名当作文件已产生。
+
+
+## 2026-09-23：启动图标与 Dock 弹窗审查新增项
+
+审查源码为 `8d33be27`，向前覆盖本轮 28 个相关提交；本次仅审查，没有调整生产行为。完整范围、调用链、探针和验证边界见[相关改动审查](startup_dock_related_review_20260923.md)。用户“好像没问题了”记录为正常打开场景的初步反馈，不关闭下面的未触发边界。
+
+| 编号 | 问题 | 状态 | 优先级 |
+| --- | --- | --- | --- |
+| DOCK-POPUP-01 | 快捷方式目标过期时，旧目录读取成功可重新启用弹窗操作 | 调用链确认的代码风险；真实缓存/读取 helper 状态证据，未运行完整桌面复现 | P2 |
+| STARTUP-ICON-01 | 首图交付后的分类入队失败被忽略，容量恢复不补发 | 真实生产调度器隔离复现，未修复 | P2 |
+| DOCK-POPUP-02 | 已知多项目录变空/失败后，加载尺寸可能在动画完成处突变 | 代码推导的视觉风险；helper 分支确认，待实际帧/实机 | P3 |
+
+### DOCK-POPUP-01：过期目标的可用性未贯通弹窗读取
+
+- 生产位置：`app_dock_model.cpp:86–92` 对旧来源目标设 `available=false`，但 `app_popup_lifecycle.cpp:162,184–213` 仍复制旧路径，`app_popup_transition.cpp:655–664` / `dock_folder_popup_read.h:38–50` 读取成功后重新启用；目标解析完成也没有重新绑定已打开弹窗。
+- 触发与影响：已缓存的文件夹 `.lnk` 从 A 改指 B，在重新解析完成前打开；A 仍可读时显示旧目录，粘贴/新建入口可能针对错误目录可用。普通映射目录的已知路径无需等待目标分类，与本边界不同。
+- 证据：真实缓存与读取 helper 组合输出 `stale=1 targetAvailable=0 popupAvailable=1`；宿主失效标记为按调用方连接的输入，未执行真实快捷方式修改、文件操作或完整宿主。
+- 关联测试与缺口：`dock_refresh_cache_cases` 校验来源版本及旧身份保留，`shell_folder_refresh_cases` 校验读取可用性，但没有贯通目标过期到打开弹窗的边界。
+- 关闭条件：区分确定路径与过期快捷方式目标，覆盖 A→B、旧/新结果交错、弹窗关闭重开，确认旧 A 不重新变为可操作目标；保留启动映射目录独立读取，并完成对应实际场景验证。
+
+### STARTUP-ICON-01：分类队列容量拒绝导致漏交
+
+- 生产位置：`shell_icon_work.h:26–30` 忽略 `shortcut_.Submit` 返回值；`background_work.h:26,39–40` 默认容量 2048。外层首图 pending 已释放，已有完整位图不会由维护周期补发分类。
+- 触发与影响：分类提供程序阻塞，成功首图继续交付并填满分类队列；超过容量的分类丢弃。影响应用快捷方式分类及箭头，不能表述为已交付的位图也丢失。
+- 受控复现：本轮直接使用生产 `Work/BackgroundWork`，用事件代替分类提供程序等待；交付 2050 个首图，释放事件并等待后置哨兵后，只有 2048 次分类回调。队列容量未改；单分类工作线程用来确定完成顺序。没有实际查询 2050 个用户文件。
+- 关联测试与缺口：`background_work_cases` 覆盖容量拒绝，`startup_icon_cases` 覆盖阶段隔离与取消，但没有覆盖跨阶段拒绝后的最终交付。
+- 关闭条件：为失败提交保留可重试状态，相同输入容量恢复后交付 2050 项，并验证取消、来源变化和关闭弹窗不会恢复旧请求。优先扩展现有 `slot_runtime_contract`。
+
+### DOCK-POPUP-02：空/失败目录的尺寸交接
+
+- 生产位置：`collection_popup_layout.h:174–178` 加载时使用旧条目数，完成后恢复实际数量；`dock_folder_popup_read.h:21–23` 对空/不可用结果不触发 reveal；`app_popup_geometry.cpp:276–282` 暂时冻结边界，`app_composition_animation_overlay.cpp:752–788` 在动画结束解除冻结并调整窗口。
+- 触发与影响：上次有多项的网格目录在重开前已变空、被删除或不可访问；加载提示用旧尺寸，返回空/失败后可能在动画完成处突然缩小。当前正常非空目录打开的用户反馈不覆盖此条件。
+- 证据与限制：真实 helper 输出 `pending=9 ready=0 reveal=0`，并核对上下游几何。未采集实际 DWM 帧，不能宣称肉眼跳变已复现。
+- 关联测试与关闭条件：`shell_folder_refresh_cases` 的首批内容测试拒绝空结果，但未验收尺寸交接；覆盖结果在动画期间及结束后到达，确认空/失败状态的连续性，保留实际点击数量为零，并取得同等桌面场景实测。
+
+本轮探针命令 `python .codex-probes/related-review-20260923/run-probe.py` 退出 0，最终无编译/链接警告；退出 0 表示诊断完成，包含已确认错误行为，不表示缺陷修复。1,094 项有效输入哈希与上一轮标准构建/120 项完整测试一致，本轮仅复用该基线，没有重新执行宿主构建或全量。证据路径、输入/产物哈希和具体边界见审查报告。
