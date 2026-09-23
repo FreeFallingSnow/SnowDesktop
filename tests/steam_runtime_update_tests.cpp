@@ -2,6 +2,7 @@
 #include "data_path_policy.h"
 #include "steam_runtime_context.h"
 #include "steam_runtime_manager.h"
+#include "steam_runtime_publish.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -1305,7 +1306,7 @@ void TestCompletionMarkerIsFinalFence()
     const auto stagedValidation = source.find(
         "ValidatePublishedRuntime(staging, &*manifest", completionMarker);
     const auto publish = source.find(
-        "MoveFileExW(staging.c_str(), destination.path.c_str()",
+        "detail::PublishRuntimeDirectory(",
         stagedValidation);
     Check(payloadValidation != std::string::npos &&
             internalManifest != std::string::npos &&
@@ -1496,6 +1497,89 @@ void TestSteamAutoStartRules()
             portableLegacy.owner == UnifiedAutoStartOwner::Portable,
         "Steam migration preserves a sole active portable legacy owner");
 }
+
+void TestOccupiedRuntimePublication(const std::filesystem::path& root)
+{
+    using snowdesktop::steam_runtime::detail::PublishRuntimeDirectory;
+    // Exercise the launcher's real rename primitive with a real Windows reader.
+    // Only the wait boundary is replaced: release after the first failure,
+    // retain throughout the retry budget, or introduce a destination collision.
+    for (const bool lockDirectory : {false, true})
+    {
+        const auto caseRoot = root / (lockDirectory ? L"directory" : L"file");
+        const auto staging = caseRoot / L"staging";
+        const auto destination = caseRoot / L"published";
+        const auto payload = staging / L"SnowDesktop.exe";
+        WriteText(payload, "validated host");
+        const auto occupied = lockDirectory ? staging : payload;
+        HANDLE reader = CreateFileW(occupied.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+            lockDirectory ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        Check(reader != INVALID_HANDLE_VALUE,
+            "publication regression can hold a reader without delete sharing");
+        if (reader == INVALID_HANDLE_VALUE)
+            continue;
+
+        // This is exactly the old one-shot publication operation. A child-file
+        // reader reproduces the user's Win32 error 5; a directory reader gives 32.
+        const bool moved = MoveFileExW(staging.c_str(), destination.c_str(),
+            MOVEFILE_WRITE_THROUGH) != FALSE;
+        const DWORD moveError = GetLastError();
+        Check(!moved && moveError == (lockDirectory ?
+                ERROR_SHARING_VIOLATION : ERROR_ACCESS_DENIED),
+            "one-shot publication reproduces the occupied-runtime launch failure");
+        unsigned waits = 0;
+        const auto result = PublishRuntimeDirectory(staging, destination,
+            [&](std::chrono::milliseconds) {
+                ++waits;
+                CloseHandle(reader);
+                reader = INVALID_HANDLE_VALUE;
+            });
+        if (reader != INVALID_HANDLE_VALUE)
+            CloseHandle(reader);
+        Check(result.error == ERROR_SUCCESS && waits == 1 &&
+                ReadText(destination / L"SnowDesktop.exe") == "validated host" &&
+                !std::filesystem::exists(staging),
+            "publication succeeds with intact bytes once the transient reader releases");
+    }
+
+    const auto staging = root / L"persistent" / L"staging";
+    const auto destination = root / L"persistent" / L"published";
+    WriteText(staging / L"SnowDesktop.exe", "preserve staged host");
+    {
+        OccupiedFile reader(staging / L"SnowDesktop.exe");
+        Check(reader.valid(), "persistent publication blocker is available");
+        if (!reader.valid())
+            return;
+        std::chrono::milliseconds waited{0};
+        const auto result = PublishRuntimeDirectory(staging, destination,
+            [&](std::chrono::milliseconds delay) { waited += delay; });
+        Check(result.error == ERROR_ACCESS_DENIED &&
+                waited > std::chrono::milliseconds::zero() &&
+                waited <= std::chrono::seconds(2) &&
+                !std::filesystem::exists(destination) &&
+                ReadText(staging / L"SnowDesktop.exe") == "preserve staged host",
+            "persistent denial ends within the wait budget without publishing or altering payload");
+
+        unsigned waits = 0;
+        const auto collision = PublishRuntimeDirectory(staging, destination,
+            [&](std::chrono::milliseconds) {
+                ++waits;
+                WriteText(destination / L"sentinel.txt", "preserve destination");
+            });
+        Check(collision.error != ERROR_SUCCESS && waits == 1 &&
+                ReadText(destination / L"sentinel.txt") == "preserve destination" &&
+                ReadText(staging / L"SnowDesktop.exe") == "preserve staged host",
+            "a destination created during retry is never overwritten");
+    }
+    bool waited = false;
+    const auto missing = PublishRuntimeDirectory(root / L"missing",
+        root / L"missing-destination",
+        [&](std::chrono::milliseconds) { waited = true; });
+    Check(missing.error == ERROR_FILE_NOT_FOUND && !waited,
+        "non-transient publication errors fail immediately");
+}
 }
 
 int main()
@@ -1526,6 +1610,7 @@ int main()
         TestUnexpectedRuntimeEntries(root / L"unexpected-runtime-entries");
         TestLegacyDistributionWrites(root / L"legacy-distribution-writes");
         TestCleanupFailureDoesNotBlockUpdate(root / L"blocked-cleanup-update");
+        TestOccupiedRuntimePublication(root / L"occupied-publication");
         TestSteamAutoStartRules();
     }
     catch (const std::exception& exception)

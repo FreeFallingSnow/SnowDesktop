@@ -2,6 +2,7 @@
 
 #include "json_value.h"
 #include "steam_runtime_context.h"
+#include "steam_runtime_publish.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -1663,13 +1664,15 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
         return FailureOrFallback(stateRoot, runtimeRoot, error);
     }
 
-    if (!MoveFileExW(staging.c_str(), destination.path.c_str(),
-            MOVEFILE_WRITE_THROUGH))
+    const auto publication = detail::PublishRuntimeDirectory(
+        staging, destination.path);
+    if (publication.error != ERROR_SUCCESS)
     {
-        const DWORD moveError = GetLastError();
         std::string publishError =
             "cannot publish the staged Steam runtime (Win32 error " +
-            std::to_string(moveError) + ')';
+            std::to_string(publication.error) + ", attempts " +
+            std::to_string(publication.attempts) + "); source: " +
+            staging.string() + "; destination: " + destination.path.string();
         std::string cleanupError;
         if (!RemoveStagingDirectorySafely(
                 staging, runtimeRoot, cleanupError))
