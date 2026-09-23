@@ -2174,7 +2174,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme());
+                app_->IsLightContentTheme(), true);
         return;
     }
 
@@ -2203,7 +2203,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                app_->IsLightContentTheme());
+                app_->IsLightContentTheme(), true);
         return;
     }
 

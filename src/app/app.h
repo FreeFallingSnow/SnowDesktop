@@ -2584,10 +2584,11 @@ private:
      * @param text 文字内容
      * @param selected 是否选中
      * @param opacity 透明度
+     * @param componentPanel 标题位于组件面板内，毛玻璃下使用轻阴影
      */
     void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f,
-        bool lightTheme = false);
+        bool lightTheme = false, bool componentPanel = false);
     /**
      * @brief 快捷导航大图标下标签的自绘文本（不依赖桌面 DrawItemText）。
      * 使用 quickNavItemTextFormat_（变量字体 + 细字重），居中、可换行。
@@ -2603,12 +2604,14 @@ private:
      * @param layoutSize 文本布局尺寸
      * @param layoutScale 布局缩放
      * @param opacity 整体透明度
+     * @param componentPanel 网格标题位于组件面板内；列表标题由 componentList 标识
      */
     void DrawStyledItemTextLayout(ID2D1RenderTarget* ctx,
         IDWriteTextLayout* layout, const std::wstring& shadowKey,
         D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
         float layoutScale, float opacity = 1.0f,
-        bool lightTheme = false, bool componentList = false);
+        bool lightTheme = false, bool componentList = false,
+        bool componentPanel = false);
     /**
      * @brief 使用指定格式绘制 D2D 文字。
      * @param ctx D2D 上下文

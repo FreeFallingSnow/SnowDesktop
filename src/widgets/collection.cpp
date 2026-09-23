@@ -754,7 +754,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 app_->DrawItemText(context, allRect,
                     collectionTitle, false, 1.0f,
-                    app_->IsLightContentTheme());
+                    app_->IsLightContentTheme(), true);
             }
             else if (canShowTitlelessTooltip &&
                 PtInRect(&allRect,

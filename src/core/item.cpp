@@ -232,7 +232,8 @@ void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
         : item_->name;
     app_->DrawItemText(
         context, rect, title,
-        selected, opacity, lightTheme);
+        selected, opacity, lightTheme,
+        demoCollection || dynamic_cast<WidgetContainer*>(container_));
 }
 
 /**
@@ -397,7 +398,8 @@ void FolderEntryIcon::DrawTitle(ID2D1RenderTarget* context,
     if (!app_ || !entry_ || !context) return;
     app_->DrawItemText(
         context, rect, entry_->name,
-        selected, opacity, lightTheme);
+        selected, opacity, lightTheme,
+        dynamic_cast<WidgetContainer*>(container_) != nullptr);
 }
 
 /**
