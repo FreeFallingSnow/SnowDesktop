@@ -1,5 +1,6 @@
 #include "app.h"
 #include "shell_icon_request.h"
+#include "dock_folder_popup_read.h"
 #include "../json_value.h"
 #include "dock_platform_helpers.h"
 
@@ -30,9 +31,10 @@ bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
 }
 
 snowdesktop::item_location::FolderTarget
-DesktopApp::ResolveDockFolderTarget(const DockEntry& entry) const
+DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending) const
 {
     using namespace snowdesktop::item_location;
+    if (targetPending) *targetPending = false;
     std::wstring path, stamp;
     const bool mapping = entry.type == DockEntryType::FolderMapping;
     if (mapping)
@@ -51,6 +53,8 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry) const
     const auto key = (mapping ? L"M:" : L"I:") +
         ToUpperInvariant(snowdesktop::dock_refresh_cache::SourceKey(entry.reference, path));
     const auto cached = dockFolderTargetCache_.Read(key, stamp);
+    if (targetPending) *targetPending = snowdesktop::dock_folder_popup_read::TargetPending(
+        mapping, cached.fresh, cached.sameSourceVersion);
     if (cached.fresh) return cached.value.value_or(FolderTarget{});
     const bool wasFolder = cached.value && cached.value->kind != FolderTargetKind::None;
     auto* owner = const_cast<DesktopApp*>(this);
@@ -76,19 +80,31 @@ DesktopApp::ResolveDockFolderTarget(const DockEntry& entry) const
             else if (!stamp.empty()) return;
         }
         const bool isFolder = target.kind != FolderTargetKind::None;
+        const auto targetPath = target.path;
         if (!owner->dockFolderTargetCache_.Publish(key, ticket, std::move(target))) return;
         if (wasFolder != isFolder) owner->NormalizeDockRecycleBinPosition();
         owner->InvalidateDockContainers();
         owner->InvalidateDragStaticScene();
         owner->UpdateFloatingDockWindowBounds(false);
         owner->InvalidateDockRects();
+        const auto sourceId = std::to_wstring(static_cast<int>(entry.type)) +
+            L":" + ToUpperInvariant(entry.reference);
+        if (!mapping && owner->dockFolderPopupOpen_ &&
+            owner->dockFolderPopupSourceId_ == sourceId && owner->popupAnimation_.IsInteractive() &&
+            (owner->dockFolderPopupWidget_.sourceFolderPath != targetPath ||
+                (targetPath.empty() && owner->dockFolderPopupLoading_)))
+            owner->RefreshDockFolderPopup();
     }, hwnd_, kBackgroundShellReadyMessage);
     if (cached.value)
     {
         auto pending = *cached.value;
         // Retain section membership, but don't execute an obsolete shortcut
         // target after the source itself changed.
-        if (!cached.sameSourceVersion) pending.available = false;
+        if (!cached.sameSourceVersion)
+        {
+            pending.available = false;
+            pending.path.clear();
+        }
         return pending;
     }
     FolderTarget pending;

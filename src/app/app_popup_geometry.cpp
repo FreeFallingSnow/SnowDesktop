@@ -282,9 +282,10 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     }
     const GridPage* page = ResolveCollectionPopupPage(widget);
     const auto metrics = GetCollectionPopupLayoutMetrics(widget);
+    const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
     const size_t itemCount = snowdesktop::collection_popup_layout::LayoutItemCount(
-        dockFolderPopupOpen_ && dockFolderPopupLoading_ && &widget == &dockFolderPopupWidget_,
-        GetPopupItemCount(widget), widget.itemKeys.size());
+        dockFolder && dockFolderPopupLoading_, GetPopupItemCount(widget),
+        dockFolder ? dockFolderPopupKnownItemCount_ : 0);
     if (UsesCollectionPopupFan(widget))
     {
         namespace layout = snowdesktop::collection_popup_layout;

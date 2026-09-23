@@ -1393,7 +1393,7 @@ private:
     bool IsDockExclusiveItemKey(const std::wstring& key) const;
     bool IsDockExclusiveWidgetId(const std::wstring& id) const;
     snowdesktop::item_location::FolderTarget ResolveDockFolderTarget(
-        const DockEntry& entry) const;
+        const DockEntry& entry, bool* targetPending = nullptr) const;
     bool IsFolderDockEntry(const DockEntry& entry) const;
     size_t DockMainEntryCount() const;
     size_t DockFolderEntryCount() const;
@@ -4236,6 +4236,7 @@ private:
     bool dockFolderPopupOpen_ = false;
     bool dockFolderPopupAvailable_ = false;
     bool dockFolderPopupLoading_ = false;
+    size_t dockFolderPopupKnownItemCount_ = 0;
     std::wstring dockFolderPopupSourceId_;
     std::wstring dockFolderPopupMappingWidgetId_;
     DesktopWidget dockFolderPopupWidget_;

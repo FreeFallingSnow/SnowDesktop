@@ -19,6 +19,7 @@
 #include "app/rename_model_update.h"
 #include "app/shell_refresh_snapshot.h"
 #include "app/dock_folder_popup_read.h"
+#include "dock_refresh_cache.h"
 #include "app/dock_icon_work.h"
 #include "app/initial_icon_bitmap.h"
 #include "app/startup_shell_read.h"
@@ -3091,6 +3092,7 @@ int wmain(int argc, wchar_t** argv)
     TestFirstIconsDoNotWaitForDetails();
     TestShortcutClassificationDoesNotGateIcons();
     TestShortcutClassificationCancellation();
+    TestShortcutClassificationCapacityRecovery();
     TestLocalIconsBypassBlockedShellFallback();
     TestBackgroundShellWorkIsolation();
     TestDockLocalIconsBypassShell();

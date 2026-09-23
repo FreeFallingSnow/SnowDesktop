@@ -171,11 +171,11 @@ inline int ResolveDetailsHeaderHeight(const Metrics& metrics)
     return ScaleDimension(30, metrics.scale);
 }
 
-// Keep a known folder's footprint while its asynchronous listing is pending.
+// Keep a known folder's footprint through loading and empty/error status.
 // This count is for geometry only; drawing/hit testing still use actual items.
 inline std::size_t LayoutItemCount(bool loading, std::size_t actual, std::size_t known)
 {
-    return loading ? std::max(actual, known) : actual;
+    return loading || actual == 0 ? std::max(actual, known) : actual;
 }
 
 inline int PreferredColumnCount(

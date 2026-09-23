@@ -1,6 +1,49 @@
 // Included inside the slot runtime test namespace. Exercise the production
 // subscription, event routing and read-selection boundaries without a desktop
 // host or real user data. The filesystem reader is replaced only in scope tests.
+void TestPopupTargetRebinding()
+{
+    using namespace snowdesktop::dock_folder_popup_read;
+    using namespace snowdesktop::shell_refresh;
+    snowdesktop::dock_refresh_cache::Cache<std::wstring> targets;
+    const auto old = targets.Read(L"shortcut", L"v1");
+    targets.Publish(L"shortcut", old.ticket, L"C:\\A");
+    const auto changed = targets.Read(L"shortcut", L"v2");
+    std::wstring path = L"C:\\A";
+    bool available = true, loading = false;
+    const bool pending = TargetPending(false, changed.fresh, changed.sameSourceVersion);
+    Check(BindTarget(*changed.value, pending, path, available, loading) &&
+        path.empty() && !available && loading,
+        "changing a shortcut clears its obsolete directory binding before the replacement target resolves");
+    int reads = 0, applies = 0;
+    const auto queue = [&](const auto&) { ++reads; };
+    const auto apply = [&](const auto&) { ++applies; };
+    FolderSnapshot oldListing;
+    oldListing.path = L"C:\\A";
+    oldListing.complete = true;
+    Check(Refresh(path, nullptr, available, loading, queue, apply, pending) && reads == 0 &&
+        !Refresh(path, &oldListing, available, loading, queue, apply, pending) &&
+        !available && loading && applies == 0,
+        "a successful old-directory result cannot re-enable a pending shortcut or publish its files");
+    Check(!targets.Publish(L"shortcut", old.ticket, L"C:\\A"),
+        "a late target from the previous source version is rejected");
+    targets.Publish(L"shortcut", changed.ticket, L"C:\\B");
+    const auto current = targets.Read(L"shortcut", L"v2");
+    Check(BindTarget(*current.value, TargetPending(false, current.fresh, current.sameSourceVersion),
+        path, available, loading) && path == L"C:\\B" && !available && loading,
+        "the confirmed replacement binds the open popup without enabling it before directory validation");
+    Check(Refresh(path, nullptr, available, loading, queue, apply) && reads == 1 &&
+        !Refresh(path, &oldListing, available, loading, queue, apply) && !available,
+        "the replacement queues its own read and rejects the old folder after rebinding");
+    FolderSnapshot newListing;
+    newListing.path = path;
+    newListing.complete = true;
+    Check(Refresh(path, &newListing, available, loading, queue, apply) && available && !loading && applies == 1,
+        "only the confirmed replacement listing enables popup operations");
+    Check(!TargetPending(true, false, false) && !TargetPending(false, false, true),
+        "direct mappings and unchanged cached source versions keep their independent read path");
+}
+
 void TestFolderFirstListing()
 {
     using namespace snowdesktop::dock_folder_popup_read;
@@ -50,6 +93,7 @@ void TestFolderFirstListing()
 void TestFolderRefreshScopeAndReads()
 {
     TestFolderFirstListing();
+    TestPopupTargetRebinding();
     using namespace snowdesktop::shell_refresh;
     const std::wstring first = L"C:\\mapped";
     const std::wstring second = L"C:\\other";

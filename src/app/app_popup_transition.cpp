@@ -247,6 +247,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     SyncFolderChangeNotifications();
     dockFolderPopupAvailable_ = false;
     dockFolderPopupLoading_ = false;
+    dockFolderPopupKnownItemCount_ = 0;
     dockFolderPopupContainer_.reset();
     dockFolderPopupDragItems_.clear();
     dockFolderPopupMarqueeInitialSelection_.clear();
@@ -592,6 +593,32 @@ void DesktopApp::RefreshDockFolderPopup(
     }
     shellDockFolderPopupRefreshPending_ = false;
     if (!dockFolderPopupOpen_) return;
+    bool targetPending = false;
+    if (dockFolderPopupMappingWidgetId_.empty())
+    {
+        const auto source = std::find_if(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
+            return std::to_wstring(static_cast<int>(entry.type)) + L":" +
+                ToUpperInvariant(entry.reference) == dockFolderPopupSourceId_;
+        });
+        const auto target = source != dockEntries_.end()
+            ? ResolveDockFolderTarget(*source, &targetPending)
+            : snowdesktop::item_location::FolderTarget{};
+        if (snowdesktop::dock_folder_popup_read::BindTarget(target.path, targetPending,
+                dockFolderPopupWidget_.sourceFolderPath,
+                dockFolderPopupAvailable_, dockFolderPopupLoading_))
+        {
+            PreserveDockFolderPopupDragSourceForTransition();
+            ClearPopupDragTarget();
+            ClearPopupMouseDownItem();
+            CancelDockFolderPopupIconLoads();
+            ClearDockFolderPopupEntries();
+            popupScrollOffset_ = 0;
+            // A read for the old path cannot supply this binding. Queue the
+            // newly confirmed path instead; late old snapshots are rejected.
+            snapshot = nullptr;
+            SyncFolderChangeNotifications();
+        }
+    }
     const size_t previousCount = dockFolderPopupWidget_.folderEntries.size();
     if (!snapshot)
         CancelDockFolderPopupIconLoads();
@@ -661,8 +688,10 @@ void DesktopApp::RefreshDockFolderPopup(
             if (dockFolderPopupAvailable_ && ApplyPendingFolderPlacements(
                     dockFolderPopupWidget_, dockFolderPopupMappingWidgetId_, dockFolderPopupSourceId_))
                 CommitDockFolderPopupStateToSource();
-        });
+        }, targetPending);
     if (!accepted) return;
+    if (!dockFolderPopupWidget_.folderEntries.empty())
+        dockFolderPopupKnownItemCount_ = dockFolderPopupWidget_.folderEntries.size();
     if (snapshot)
     {
         // Remember a successfully listed plain Dock folder in memory. Its next

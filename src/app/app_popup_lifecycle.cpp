@@ -159,7 +159,8 @@ void DesktopApp::OpenDockFolderPopupAt(
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     const DockEntry entry = dockEntries_[entryIndex];
-    const auto target = ResolveDockFolderTarget(entry);
+    bool targetPending = false;
+    const auto target = ResolveDockFolderTarget(entry, &targetPending);
     const std::wstring sourceId =
         std::to_wstring(static_cast<int>(entry.type)) +
         L":" + ToUpperInvariant(entry.reference);
@@ -185,7 +186,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
     dockFolderPopupAvailable_ = false;
-    dockFolderPopupLoading_ = !target.path.empty();
+    dockFolderPopupLoading_ = targetPending || !target.path.empty();
     dockFolderPopupSourceId_ = sourceId;
     dockFolderPopupMappingWidgetId_.clear();
     popupWidgetIndex_ = static_cast<size_t>(-1);
@@ -303,6 +304,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     if (dockFolderPopupWidget_.title.empty())
         dockFolderPopupWidget_.title =
             _LW("widget.folder_mapping");
+    dockFolderPopupKnownItemCount_ = dockFolderPopupWidget_.itemKeys.size();
 
     const GridPage* dockPage = nullptr;
     if (DockContainer* dock =
@@ -501,6 +503,7 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     SyncFolderChangeNotifications();
     dockFolderPopupAvailable_ = false;
     dockFolderPopupLoading_ = false;
+    dockFolderPopupKnownItemCount_ = 0;
     dockFolderPopupSourceId_.clear();
     dockFolderPopupMappingWidgetId_.clear();
     dockFolderPopupContainer_.reset();

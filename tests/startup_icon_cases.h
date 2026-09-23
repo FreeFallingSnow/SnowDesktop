@@ -345,6 +345,59 @@ void TestShortcutClassificationCancellation()
         "shutdown also rejects the production first-image/classification entry point");
 }
 
+// Reproduce classification saturation after successful first-image delivery.
+// Only providers wait on a gate; the production scheduler owns all stages.
+void TestShortcutClassificationCapacityRecovery()
+{
+    using snowdesktop::shell_icon_request::Work;
+    Work work(1, 1, 1, 1, 2);
+    auto gate = std::make_shared<ShortcutClassificationGate>();
+    std::vector<int> images, classified;
+    const auto submit = [&](std::wstring key, int id) {
+        return SubmitLocalIcon(work, std::move(key), [id] { return id; },
+            [gate, id] { gate->Run(); return id; },
+            [&](int value) { images.push_back(value); return true; },
+            [&](int value) { classified.push_back(value); }, nullptr, 0);
+    };
+    for (int id = 0; id < 4; ++id)
+    {
+        Check(submit(id == 2 ? L"popup:old" : std::to_wstring(id), id),
+            "bounded scheduler accepts initial images while classifications fill up");
+        Check(DrainIconsUntil(work, [&] { return images.size() == static_cast<size_t>(id + 1); }),
+            "saturated classifiers do not discard or block already accepted pixels");
+    }
+    Check(classified.empty() && !submit(L"later", 4),
+        "a full deferred queue applies admission backpressure without an unbounded retry list");
+    work.Cancel(L"popup:");
+    Check(submit(L"popup:old", 5) && DrainIconsUntil(work, [&] { return images.size() == 5; }),
+        "cancelling a deferred classification allows the replacement generation to enter");
+    SetEvent(gate->release);
+    Check(DrainIconsUntil(work, [&] { return classified.size() == 4; }),
+        "queue capacity recovery delivers every non-cancelled classification including deferred work");
+    std::sort(classified.begin(), classified.end());
+    Check(classified == std::vector<int>({0, 1, 3, 5}),
+        "deferred cancellation rejects the old generation even when its key is reused");
+    Check(submit(L"later", 4) && DrainIconsUntil(work, [&] { return classified.size() == 5; }),
+        "a previously rejected first request remains retryable after capacity recovers");
+    work.Stop();
+
+    Work stopped(1, 1, 1, 1, 1);
+    auto blocked = std::make_shared<ShortcutClassificationGate>();
+    int delivered = 0;
+    auto retained = std::make_shared<int>(7);
+    const std::weak_ptr<int> weak = retained;
+    SubmitLocalIcon(stopped, L"active", [] { return 1; }, [blocked] { return blocked->Run(); },
+        [&](int) { ++delivered; return true; }, [](bool) {}, nullptr, 0);
+    Check(DrainIconsUntil(stopped, [&] { return delivered == 1; }), "shutdown fixture occupies its classifier");
+    SubmitLocalIcon(stopped, L"deferred", [] { return 1; }, [retained] { return *retained; },
+        [&](int) { ++delivered; return true; }, [](int) {}, nullptr, 0);
+    Check(DrainIconsUntil(stopped, [&] { return delivered == 2; }), "shutdown fixture retains a deferred classifier");
+    retained.reset();
+    stopped.Stop();
+    Check(weak.expired(), "shutdown releases deferred classification ownership without running it");
+    SetEvent(blocked->release);
+}
+
 // Production fallback routing: all reserved Shell-first workers are blocked,
 // yet later local first images must reach the host without waiting for them.
 void TestLocalIconsBypassBlockedShellFallback()

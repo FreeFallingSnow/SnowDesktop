@@ -1647,10 +1647,17 @@ int main(int argc, char** argv)
         popupLayout::RequiredRowCount(loadingFolderCount, 5) == 3 &&
         popupLayout::RequiredListRowCount(loadingFolderCount) == 13,
         "a known 13-item folder reserves its loaded grid/list footprint before the opening animation");
-    Check(popupLayout::LayoutItemCount(false, 0, 13) == 0 &&
+    const auto emptyFolderCount = popupLayout::LayoutItemCount(false, 0, 13);
+    Check(emptyFolderCount == loadingFolderCount &&
+        popupLayout::PreferredColumnCount(emptyFolderCount, 5) == 5 &&
+        popupLayout::RequiredRowCount(emptyFolderCount, 5) == 3 &&
+        popupLayout::RequiredListRowCount(emptyFolderCount) == 13,
+        "empty or failed listings retain this open session's grid/list footprint after animation handoff");
+    Check(popupLayout::LayoutItemCount(false, 0, 0) == 0 &&
         popupLayout::LayoutItemCount(true, 0, 0) == 0 &&
+        popupLayout::LayoutItemCount(false, 4, 13) == 4 &&
         popupLayout::LayoutItemCount(true, 15, 13) == 15,
-        "completed empty and unknown folders do not invent items, and refresh retains existing content space");
+        "reopened empty folders release the old reservation and nonempty results use their actual content size");
     Check(
         popupLayout::PreferredColumnCount(
             0, 5) == 3 &&
