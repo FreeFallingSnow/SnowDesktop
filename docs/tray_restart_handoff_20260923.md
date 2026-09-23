@@ -60,7 +60,24 @@
   退出码 0，11.703 秒。
 - 首轮标准 `scripts/build.bat --reload-shell`：退出码 0，444.406 秒，生成 Release EXE，
   无编译或链接警告。对应 `try` 提交 `e9d3b9f2`。
-- 控制窗口生命周期补充调整后的标准构建及最终 CTest 结果待本轮完成后补记。
+- 控制窗口生命周期补充：`scripts/build.bat` 退出码 0，43.406 秒；对应 `try` 提交
+  `1d3850f6`，无编译或链接警告。
+- 最终代码候选：`43486674`。`scripts/build.bat` 退出码 0，31.313 秒；
+  标准 Release EXE SHA256：`8e71eb0d4357623295bc0609be353a8a66f034ae154c802ac1f7b96e4d3fb927`。
+- 前一候选定向 8/8 通过：`single_instance`、`application_data_lifecycle`、
+  `application_restart_policy`、`settings_controller`、`settings_window_open_rules`、
+  `slot_runtime_contract`、`modern_menu_interaction`、`shell_context_menu_invoke`；
+  脚本耗时 54.031 秒，CTest 25.80 秒。
+- 最终候选追加 `scripts/test.bat name single_instance`：1/1 通过，退出码 0，
+  脚本 7.969 秒，CTest 1.23 秒。后代错误继承 Job 的隔离变体
+  因明确退出码/业务断言失败（退出码 1）；当前同一回归通过。
+- **本次执行** `scripts/test.bat full`：**120/120 通过**，退出码 0，脚本
+  127.625 秒，CTest 103.97 秒。最终构建及所有定向/全量测试日志均无编译和链接警告。
+  报告：`.build/Testing/test-run-e2dacf435b424aeab28f81a86b9a163a.xml`。
+- 全量后实际交付 EXE SHA256：`aa2860703ffab84d254137e66d36d70e81cd8fc085904c05588f69ac83ff7867`。
+  `856` 个源码、测试和构建入口文件的清单在验证前后相同；清单 SHA256：
+  `0129b967e6260401700bbf28826f7acef16b27a1c30ba0d1b99e5ad501f107af`。资源与其余已跟踪输入绑定最终代码提交；构建配置和工具链
+  保存在本地构建/CTest 日志中。用户已有的问题台账修改未并入本轮提交。
 - 原始托盘操作、设置页重启和 Steam/MSIX 形态的实机交互：未运行，待验证。
 - 桌面宿主未通过 GUI 自动化启动或操作；上述子进程回归不等价于托盘视觉/交互验收。
 - 本次未运行默认排除的 `shell_file_operation_worker` 手动诊断。
