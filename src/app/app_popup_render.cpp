@@ -242,7 +242,7 @@ void DesktopApp::DrawCollectionPopup(
     const size_t endItem = fan ? fanRange.end : popupItemCount;
     ComPtr<ID2D1DeviceContext> iconRecorder;
     ComPtr<ID2D1Effect> iconShadow;
-    if (fan && d2dDevice_ && SUCCEEDED(d2dDevice_->CreateDeviceContext(
+    if (fan && popupItemCount > 0 && d2dDevice_ && SUCCEEDED(d2dDevice_->CreateDeviceContext(
             D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &iconRecorder)) &&
         SUCCEEDED(ctx->CreateEffect(CLSID_D2D1Shadow, &iconShadow)))
     {
@@ -258,7 +258,7 @@ void DesktopApp::DrawCollectionPopup(
             static_cast<double>(index) - fanOffset;
         const float visibility = index == popupItemCount ? 1.0f : layout::FanItemOpacity(slot, fanCapacity);
         if (visibility <= 0.001f) return;
-        const bool hovered = popupAnimation_.IsInteractive() &&
+        const bool hovered = popupItemCount > 0 && popupAnimation_.IsInteractive() &&
             layout::FanItemContains(pose, lastMousePoint_);
         float progress = 1.0f;
         if (applyAnimation && animation.progress < 1.0f &&
@@ -507,7 +507,13 @@ void DesktopApp::DrawCollectionPopup(
                     ? &widget : nullptr);
         }
     }
-    if (fan)
+    if (fan && popupItemCount == 0)
+    {
+        // A noninteractive status label shares the fan pose instead of flashing
+        // a rectangular panel or exposing a Show all action for a pending read.
+        drawFanSlot(0, false, false, [](ID2D1DeviceContext*, const RECT&) {});
+    }
+    else if (fan)
     {
         drawFanSlot(popupItemCount, popupFanActionFocused_, false, [&](ID2D1DeviceContext* iconContext, const RECT& iconRect) {
             const float x = (iconRect.left + iconRect.right) * 0.5f;
@@ -533,7 +539,7 @@ void DesktopApp::DrawCollectionPopup(
     }
     ctx->PopAxisAlignedClip();
 
-    if (widget.type == DesktopWidgetType::FolderMapping &&
+    if (!fan && widget.type == DesktopWidgetType::FolderMapping &&
         popupItemCount == 0)
     {
         const std::wstring status = dockFolderPopupLoading_

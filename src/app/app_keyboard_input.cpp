@@ -209,7 +209,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     // Keyboard selection follows the whole fan's order and scrolls its window
     // as needed; the final action still opens the complete grid.
     if (auto* popup = GetOpenPopupWidget(); !ctrl && !alt &&
-        IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup))
+        IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup) &&
+        GetPopupItemCount(*popup) > 0)
     {
         const int count = static_cast<int>(GetPopupItemCount(*popup));
         int current = popupFanActionFocused_ ? count : -1;

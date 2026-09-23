@@ -267,7 +267,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (UsesCollectionPopupFan(*popupWidget))
             {
                 popupFanActionFocused_ = false;
-                if (snowdesktop::collection_popup_layout::FanItemContains(
+                if (GetPopupItemCount(*popupWidget) > 0 &&
+                    snowdesktop::collection_popup_layout::FanItemContains(
                         GetCollectionPopupFanItem(popup, GetPopupItemCount(*popupWidget)), pt))
                 {
                     mouseDown_ = false;

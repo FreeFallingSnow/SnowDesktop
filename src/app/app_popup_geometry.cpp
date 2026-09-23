@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_folder_popup_read.h"
 #include "../widget_item_layout.h"
 
 // Collection-popup model lookup, selection adapter, geometry and animation-cache preparation.
@@ -85,15 +86,13 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
-    // A loading grid can acquire fan entries while its native grid snapshot is
-    // still moving. Keep the current view until that transition completes.
-    if (popupAnimationCompositorDriven_ && popupAnimationOverlay_.active &&
-        &widget == GetOpenPopupWidget())
-        return false;
     namespace layout = snowdesktop::collection_popup_layout;
+    // Loading/empty directories retain the chosen presentation. Entry arrivals
+    // must not turn a rectangular opening snapshot into a fan at completion.
     if (layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
             widget.listMode, popupFanShowAll_) != layout::View::Fan ||
-        GetPopupItemCount(widget) == 0)
+        !snowdesktop::dock_folder_popup_read::HasFanContent(
+            widget.type == DesktopWidgetType::FolderMapping, GetPopupItemCount(widget)))
         return false;
     // A vertical side Dock has no native fan counterpart. Use the existing
     // grid there, and when there is insufficient space for an anchored fan.
@@ -124,6 +123,10 @@ size_t DesktopApp::GetCollectionPopupFanVisibleCount(const RECT& popup) const
 std::wstring DesktopApp::GetCollectionPopupFanLabel(size_t index) const
 {
     const auto* widget = GetOpenPopupWidget();
+    if (widget && dockFolderPopupOpen_ && GetPopupItemCount(*widget) == 0)
+        return dockFolderPopupLoading_ ? _LW("widget.folder_mapping.loading") :
+            dockFolderPopupAvailable_ ? _LW("widget.folder_mapping.empty") :
+            _LW("widget.folder_mapping.unavailable");
     if (!widget || index >= GetPopupItemCount(*widget))
         return _LW("app.interact.popup_show_all");
     if (widget->type == DesktopWidgetType::FolderMapping)
@@ -240,7 +243,7 @@ void DesktopApp::EnsureCollectionPopupFanItemVisible(size_t index)
 void DesktopApp::ShowAllCollectionPopupItems()
 {
     const auto* widget = GetOpenPopupWidget();
-    if (!widget || !UsesCollectionPopupFan(*widget)) return;
+    if (!widget || !UsesCollectionPopupFan(*widget) || GetPopupItemCount(*widget) == 0) return;
     // This is a change of the same popup, not an outside click. Retire queued
     // hook notifications against the old fan before its hit region shrinks.
     AdvanceFloatingPopupContentGeneration();

@@ -1,8 +1,55 @@
 // Included inside the slot runtime test namespace. Exercise the production
 // subscription, event routing and read-selection boundaries without a desktop
 // host or real user data. The filesystem reader is replaced only in scope tests.
+void TestFolderFirstListing()
+{
+    using namespace snowdesktop::dock_folder_popup_read;
+    using snowdesktop::popup_animation_rules::State;
+    Check(HasFanContent(true, 0) && HasFanContent(true, 13) &&
+        !HasFanContent(false, 0) && HasFanContent(false, 1),
+        "a folder's pending/empty listing cannot downgrade its fan preference; empty collections retain their fallback");
+    State animation;
+    animation.Configure(false, 2.4);
+    animation.Open(100);
+    animation.Advance(400); // The loading label has already finished appearing.
+    Check(RevealFirstEntries(animation, true, 0, 13, true, true, 410) &&
+        animation.IsAnimating() && animation.GetVisual().progress == 0.0f,
+        "a delayed first folder listing must start a fan reveal instead of appearing fully unfolded");
+    animation.Advance(518);
+    Check(animation.GetVisual().progress > 0.49f && animation.GetVisual().progress < 0.51f,
+        "the entries get their own complete fan duration after the loading label");
+    Check(!RevealFirstEntries(animation, true, 13, 13, true, true, 520) &&
+        animation.GetVisual().progress > 0.49f,
+        "duplicate listings and later icon refreshes cannot restart a populated fan");
+    Check(!RevealFirstEntries(animation, false, 0, 13, true, true, 520) &&
+        !RevealFirstEntries(animation, true, 0, 0, true, true, 520) &&
+        !RevealFirstEntries(animation, true, 0, 13, false, true, 520) &&
+        !RevealFirstEntries(animation, true, 0, 13, true, false, 520),
+        "unchanged geometry, empty, failed and disabled-animation results cannot restart opening");
+    State grid;
+    grid.Open(100);
+    grid.Advance(190);
+    Check(RevealFirstEntries(grid, true, 0, 9, true, true, 200) &&
+        grid.IsAnimating() && grid.GetVisual().progress == 0.0f,
+        "a first grid listing that outgrows the loading frame cannot jump straight to full size");
+    grid.Advance(245);
+    Check(grid.GetVisual().progress > 0.49f && grid.GetVisual().progress < 0.51f,
+        "the enlarged grid has observable intermediate opening frames");
+    animation.Close(520);
+    Check(!RevealFirstEntries(animation, true, 0, 13, true, true, 540) && animation.IsClosing(),
+        "a late listing cannot reverse the user's close action");
+    animation.ResetHidden();
+    Check(!RevealFirstEntries(animation, true, 0, 13, true, true, 800) && animation.IsHidden(),
+        "late results cannot reopen a hidden fan");
+    animation.Open(900);
+    Check(RevealFirstEntries(animation, true, 0, 9, true, true, 920) &&
+        animation.IsAnimating() && animation.GetVisual().progress == 0.0f,
+        "reopening starts a fresh fan even after a prior delayed load and close");
+}
+
 void TestFolderRefreshScopeAndReads()
 {
+    TestFolderFirstListing();
     using namespace snowdesktop::shell_refresh;
     const std::wstring first = L"C:\\mapped";
     const std::wstring second = L"C:\\other";

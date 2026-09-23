@@ -1268,6 +1268,7 @@ void DesktopApp::OnMouseMoveAt(
                     }
                 }
                 if (UsesCollectionPopupFan(*popupWidget) &&
+                    GetPopupItemCount(*popupWidget) > 0 &&
                     snowdesktop::collection_popup_layout::FanItemContains(
                         GetCollectionPopupFanItem(popupRect_, GetPopupItemCount(*popupWidget)), point))
                     return {popupWidget, popupWidget, 3, 0, true, nullptr, popupRect_,
