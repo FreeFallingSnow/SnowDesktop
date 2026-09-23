@@ -22,3 +22,8 @@ The user additionally reported a small Quick Access popup jumping to a larger fr
 - Evidence: `.codex-probes/dock-fan-loading-20260923/`; input manifest SHA256 `d1bfc753e9e45d2f87099be606f926c254c0b15324c19913fcdcc01e0391b1d9`.
 
 限制 / Limitations: 桌面宿主视觉尚待用户实机验证；首次未知尺寸且读取很慢时仍可先显示加载状态，再展开真实列表。全量将在本轮图标排查完成、最终输入稳定后执行。Desktop-host visuals await user validation; an initially unknown slow directory can still show loading status before the real listing reveal. Full regression is deferred to the stable combined candidate after icon investigation.
+
+
+最终组合候选完成 `scripts/test.bat full`：120/120，exit 0；完整证据见 [图标与弹窗最终检查点](dock_icon_initial_pixels_validation_20260923.md)。扇形与快捷访问原始场景仍待用户实机验证。
+
+The combined candidate passed all 120 automatic tests (exit 0); the linked checkpoint records the final inputs and binary. Original fan and Quick Access desktop acceptance remains pending.

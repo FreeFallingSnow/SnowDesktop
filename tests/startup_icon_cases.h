@@ -452,10 +452,12 @@ void TestInitialIconBitmaps()
     Check(source.bitmap && pixels, "create owned shortcut pixel fixture");
     if (!source.bitmap || !pixels) return;
     auto* color = static_cast<std::uint32_t*>(pixels);
-    color[0] = 0xff123456;
+    // CopyImage may return a bottom-up DIB. Use a uniform fixture so the
+    // ownership/quality expectation is independent of raw scan-line order.
+    std::fill_n(color, 4, 0xff123456u);
     ShortcutCache cache(2);
     cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size);
-    color[0] = 0xffabcdef;
+    std::fill_n(color, 4, 0xffabcdefu);
     cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size, false);
     auto first = cache.Get(L"shortcut-A/version-1/96");
     BITMAP firstBitmap{};
