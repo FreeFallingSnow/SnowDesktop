@@ -370,33 +370,34 @@ std::vector<std::filesystem::path> DiscoverSteamLibraryRoots(
     const VdfObject* folders = FindObject(root, "libraryfolders");
     if (!folders) folders = &root;
     const std::string expectedAppId = std::to_string(appId);
+    std::vector<std::filesystem::path> otherLibraries;
     for (const auto& entry : folders->entries)
     {
         if (!DigitsOnly(entry.key)) continue;
         std::optional<std::string> path;
+        bool appRegistered = false;
         if (entry.object)
         {
             path = FindValue(*entry.object, "path");
-            if (appId != 0)
-            {
-                const VdfObject* apps =
-                    FindObject(*entry.object, "apps");
-                if (!apps || !FindValue(*apps, expectedAppId))
-                    continue;
-            }
+            const VdfObject* apps = FindObject(*entry.object, "apps");
+            appRegistered = apps && FindValue(*apps, expectedAppId).has_value();
         }
-        else if (appId == 0)
-            path = entry.value;
         else
-            continue;
+            path = entry.value;
         if (!path) continue;
         const auto wide = Utf8ToWide(*path);
-        if (wide && !wide->empty()) append(*wide);
+        if (!wide || wide->empty()) continue;
+        if (appRegistered || appId == 0)
+            append(*wide);
+        else
+            otherLibraries.emplace_back(*wide);
     }
-    // Old libraryfolders formats do not carry the per-library app map. The
-    // Steam install root remains the safest fallback and avoids probing every
-    // unrelated/offline library merely to discover one Workshop manifest.
-    if (libraries.empty()) append(steamPath);
+    // The apps map can omit an installed application while its subscribed
+    // Workshop content is ready in that library. Use registration only to
+    // prioritize roots, never to exclude them (including legacy path entries).
+    // Cache readers still inspect only this application's Workshop manifest.
+    for (const auto& library : otherLibraries) append(library);
+    append(steamPath);
     return libraries;
 }
 

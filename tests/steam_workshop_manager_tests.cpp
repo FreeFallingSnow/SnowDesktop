@@ -976,8 +976,9 @@ void TestComponentPublishPlan()
 void TestSteamLibraryDiscovery()
 {
     TemporaryDirectory temporary;
-    const auto steamRoot = temporary.path / L"SteamClient";
-    const auto secondaryRoot = temporary.path / L"SteamLibrary";
+    const auto temporaryRoot = std::filesystem::canonical(temporary.path);
+    const auto steamRoot = temporaryRoot / L"SteamClient";
+    const auto secondaryRoot = temporaryRoot / L"SteamLibrary";
     const auto libraryFile = steamRoot / L"steamapps" / L"libraryfolders.vdf";
     const auto workshop = secondaryRoot / L"steamapps" / L"workshop";
     const auto content = workshop / L"content" / L"5080330";
