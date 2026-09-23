@@ -68,9 +68,16 @@ inline Layout Resolve(RECT frame, bool top, int titleHeight,
     int minimumInset, int edgeGap) noexcept
 {
     const auto bar = [&](int height, bool atTop) -> RECT {
+        const int cornerInset = widget_chrome_rules::BottomBarSideInset(
+            cornerRadius, height, minimumInset, edgeGap);
+        // A top toolbar needs breathing room as well as geometric clearance.
+        // Both action groups and the centered title share this symmetric inset.
+        const int sideInset = atTop
+            ? std::max({cornerInset, 2 * minimumInset,
+                std::max(0, cornerRadius) / 2 + minimumInset})
+            : cornerInset;
         const int inset = std::min(
-            widget_chrome_rules::BottomBarSideInset(
-                cornerRadius, height, minimumInset, edgeGap),
+            sideInset,
             std::max<int>(0, (frame.right - frame.left - 1) / 2));
         const LONG y = atTop
             ? std::min<LONG>(frame.bottom, frame.top + edgeGap)
