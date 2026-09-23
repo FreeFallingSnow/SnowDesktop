@@ -1580,9 +1580,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     MSG msg{};
     bool running = true;
-    while (running)
+    while (running && !exitRequested_)
     {
         ProcessGraphicsDeviceRecovery();
+        if (exitRequested_) break;
         HANDLE animationWait = uiAnimationScheduler_.WaitHandle();
         const DWORD handleCount = animationWait ? 1U : 0U;
         const DWORD waitResult = MsgWaitForMultipleObjectsEx(
@@ -1602,7 +1603,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         // and again after every message lets a costly frame repeatedly jump
         // ahead of pointer feedback.
         unsigned processedMessages = 0;
-        while (processedMessages < 64 &&
+        while (!exitRequested_ && processedMessages < 64 &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
@@ -1610,6 +1611,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 running = false;
                 break;
             }
+            // PeekMessage itself dispatches sent messages, including an exit
+            // requested by a nested tray/settings callback.
+            if (exitRequested_) break;
             const bool nativeDragActive =
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
@@ -1661,6 +1665,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            if (exitRequested_) break;
             FinishWidgetGroupTransitions();
             if (usageGuideWelcomeQueued_) ShowUsageGuideWelcome();
             if (usageGuideWaitingForDesktop_ &&
@@ -1677,6 +1682,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FlushPendingQuickNavigationCompositionCommit();
             ++processedMessages;
         }
+        if (!running || exitRequested_) break;
         if (animationWait &&
             (animationWasReady ||
                 WaitForSingleObject(animationWait, 0) ==
@@ -1693,8 +1699,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FlushPendingQuickNavigationCompositionCommit();
         }
     }
+    WriteDiagnosticLogEntry(L"Application message loop stopped");
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();
     uiAnimationScheduler_.Shutdown();
-    return static_cast<int>(msg.wParam);
+    return exitRequested_ ? 0 : static_cast<int>(msg.wParam);
 }

@@ -18,6 +18,7 @@
 #pragma once
 #include "../graphics_device_recovery.h"
 #include "../background_work.h"
+#include "../single_instance.h"
 #include "shell_icon_work.h"
 #include "shell_icon_request.h"
 #include "../dock_refresh_cache.h"
@@ -506,6 +507,11 @@ public:
      */
     int Run(HINSTANCE instance, int showCommand);
 
+    // Transfer the prepared child before destruction; main resumes it only
+    // after every DesktopApp member has finished shutting down.
+    std::unique_ptr<snowdesktop::single_instance::PreparedRestart> TakeRestart()
+    { return std::move(preparedRestart_); }
+
     /** Render deterministic native component presets without starting desktop UI. */
     snowdesktop::native_component_preview::Result
         ExportNativeComponentPreviews(
@@ -844,10 +850,11 @@ private:
     HWND ShellLaunchOwnerHwnd(HWND requested = nullptr) const;
     /** @brief 请求退出应用程序，在下次消息循环中执行清理。 */
     void RequestExit();
+    void CompleteExitRequest();
     /** Start one Steam ownership registration attempt when it is needed. */
     void StartSteamEntitlementRegistration(
         bool revalidateRegistered = false);
-    /** @brief 请求重启应用程序，启动新实例后按正常流程退出当前实例。 */
+    /** @brief 准备暂停的新实例，清理旧应用后由入口点放行。 */
     [[nodiscard]] bool RequestRestart();
     /** @brief 确保各个独立 UI 动画轨道均已启动。 */
     void EnsureUiAnimationFrame();
@@ -3850,6 +3857,7 @@ private:
     bool explorerDesktopRecreatePending_ = false;
     DWORD desktopHostExplorerProcessId_ = 0;
     bool exitRequested_ = false;
+    std::unique_ptr<snowdesktop::single_instance::PreparedRestart> preparedRestart_;
     bool startupInitializationComplete_ = false;
     bool desktopStartupPresentationPending_ = true;
     snowdesktop::settings_window_open_rules::RequestState

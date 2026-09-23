@@ -562,12 +562,38 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         nullptr, snowdesktop::application_restart_policy::kFlags);
 
     /* 创建主应用实例并进入消息循环 */
-    DesktopApp app;
-    int result = app.Run(instance, showCommand);
+    int result = 0;
+    std::unique_ptr<snowdesktop::single_instance::PreparedRestart> restart;
+    {
+        DesktopApp app;
+        result = app.Run(instance, showCommand);
+        restart = app.TakeRestart();
+        WriteDiagnosticLogEntry(L"Application run returned; releasing host resources");
+    }
+    WriteDiagnosticLogEntry(L"Application host resources released");
 
     /* 正常退出时清除崩溃计数器，避免残留记录影响后续启动 */
     if (result == 0)
         RegDeleteKeyValueW(HKEY_CURRENT_USER, kRegSubKey, kRegValueName);
+
+    if (restart)
+    {
+        const DWORD error = result == 0 ? restart->Resume() : ERROR_CANCELLED;
+        WriteDiagnosticLogEntry((L"Application restart handoff: pid=" +
+            std::to_wstring(GetCurrentProcessId()) + L" child=" +
+            std::to_wstring(restart->ProcessId()) + L" error=" +
+            std::to_wstring(error)).c_str(), error == ERROR_SUCCESS
+                ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Error);
+        if (error != ERROR_SUCCESS)
+        {
+            restart.reset();
+            const std::wstring message =
+                _LFW("app.run.restart_error", std::to_wstring(error));
+            MessageBoxW(nullptr, message.c_str(), _LW("app.run.restart_failed"),
+                MB_OK | MB_ICONERROR);
+            return static_cast<int>(error);
+        }
+    }
 
     return result;
 }

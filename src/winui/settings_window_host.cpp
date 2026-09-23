@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "settings_window_host.h"
+#include "../pending_window_message.h"
 #include "../performance_trace.h"
 #include "../shell_launch_worker.h"
 
@@ -1171,8 +1172,8 @@ struct SettingsWindowHost::Impl
         if (!window)
             return;
         MSG message{};
-        while (PeekMessageW(&message, window, kDispatchOwnerTaskMessage,
-            kDispatchOwnerTaskMessage, PM_REMOVE))
+        while (snowdesktop::TakePendingWindowMessage(message, window,
+            kDispatchOwnerTaskMessage) == snowdesktop::PendingWindowMessage::Ready)
         {
             delete reinterpret_cast<std::function<void()>*>(message.lParam);
         }

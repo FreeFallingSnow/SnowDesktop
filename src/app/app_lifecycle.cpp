@@ -1034,7 +1034,16 @@ void DesktopApp::RequestExit()
     {
         return;
     }
+    CompleteExitRequest();
+}
+
+void DesktopApp::CompleteExitRequest()
+{
+    if (exitRequested_) return;
     exitRequested_ = true;
+    WriteDiagnosticLogEntry((L"Application exit begin: pid=" +
+        std::to_wstring(GetCurrentProcessId()) + L" restart=" +
+        std::to_wstring(preparedRestart_ != nullptr)).c_str());
     shellLaunchWorker_.Stop();
     shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
@@ -1062,6 +1071,7 @@ void DesktopApp::RequestExit()
 
 bool DesktopApp::RequestRestart()
 {
+    if (exitRequested_ || preparedRestart_) return false;
     if (settingsWindow_ && settingsWindow_->IsVisible() &&
         !settingsWindow_->FlushPendingChanges())
     {
@@ -1079,38 +1089,11 @@ bool DesktopApp::RequestRestart()
         return false;
     }
 
-    std::wstring commandLine = L"\"";
-    commandLine.append(exePath, pathLen);
-    commandLine += L"\" --wait-for-pid=";
-    commandLine += std::to_wstring(GetCurrentProcessId());
-    std::vector<wchar_t> commandLineBuffer(commandLine.begin(), commandLine.end());
-    commandLineBuffer.push_back(L'\0');
-
-    std::wstring workingDir(exePath, pathLen);
-    const size_t slash = workingDir.find_last_of(L"\\/");
-    if (slash != std::wstring::npos)
-        workingDir.resize(slash);
-    else
-        workingDir.clear();
-
-    STARTUPINFOW startupInfo{};
-    startupInfo.cb = sizeof(startupInfo);
-    PROCESS_INFORMATION processInfo{};
-    const BOOL created = CreateProcessW(
-        exePath,
-        commandLineBuffer.data(),
-        nullptr,
-        nullptr,
-        FALSE,
-        0,
-        nullptr,
-        workingDir.empty() ? nullptr : workingDir.c_str(),
-        &startupInfo,
-        &processInfo);
-
-    if (!created)
+    auto restart = std::make_unique<
+        snowdesktop::single_instance::PreparedRestart>();
+    const DWORD error = restart->Prepare(std::wstring_view(exePath, pathLen));
+    if (error != ERROR_SUCCESS)
     {
-        const DWORD error = GetLastError();
         std::wstring message =
             _LFW("app.run.restart_error", std::to_wstring(error));
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
@@ -1118,8 +1101,12 @@ bool DesktopApp::RequestRestart()
         return false;
     }
 
-    CloseHandle(processInfo.hThread);
-    CloseHandle(processInfo.hProcess);
-    RequestExit();
+    WriteDiagnosticLogEntry((L"Application restart prepared: pid=" +
+        std::to_wstring(GetCurrentProcessId()) + L" child=" +
+        std::to_wstring(restart->ProcessId())).c_str());
+    preparedRestart_ = std::move(restart);
+    // Settings were already flushed above. A second flush after child creation
+    // could reject exit and leave a restart waiting for a host that stays open.
+    CompleteExitRequest();
     return true;
 }

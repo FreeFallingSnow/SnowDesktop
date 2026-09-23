@@ -1,5 +1,6 @@
 #include "single_instance.h"
 #include "steam_runtime_context.h"
+#include "pending_window_message.h"
 
 #include <windows.h>
 
@@ -8,6 +9,8 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include <shlobj.h>
 
@@ -191,10 +194,210 @@ void TestManagedSteamRuntimeReplacement(const std::filesystem::path& root)
     Check(!IsManagedSteamRuntimeReplacement(running, requested),
         "managed Steam runtimes from different installs retain the explicit version-conflict flow");
 }
+
+struct Handle
+{
+    HANDLE value = nullptr;
+    explicit Handle(HANDLE handle = nullptr) : value(handle) {}
+    ~Handle() { if (value) CloseHandle(value); }
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+};
+
+std::wstring SelfPath()
+{
+    std::wstring path(32768, L'\0');
+    const DWORD size = GetModuleFileNameW(nullptr, path.data(),
+        static_cast<DWORD>(path.size()));
+    if (!size || size >= path.size()) throw std::runtime_error("test executable path");
+    path.resize(size);
+    return path;
 }
 
-int main()
+HANDLE Event(const std::wstring& prefix, const wchar_t* suffix)
 {
+    return CreateEventW(nullptr, TRUE, FALSE, (prefix + suffix).c_str());
+}
+
+constexpr wchar_t kRestartTestEnvironment[] = L"SNOWDESKTOP_RESTART_TEST_PREFIX";
+
+// These modes run only this test executable: no desktop host or real data.
+int RunRestartChild(DWORD predecessor)
+{
+    wchar_t prefix[256]{};
+    if (!GetEnvironmentVariableW(kRestartTestEnvironment, prefix, 256)) return 10;
+    Handle started(Event(prefix, L"-started"));
+    Handle primary(Event(prefix, L"-primary"));
+    if (!started.value || !primary.value || !SetEvent(started.value)) return 11;
+    if (!snowdesktop::single_instance::WaitForRestartPredecessor(predecessor, 10000))
+        return 12;
+    snowdesktop::single_instance::Guard instance;
+    if (instance.Acquire((std::wstring(prefix) + L"-mutex").c_str()) !=
+        snowdesktop::single_instance::AcquireResult::Primary) return 13;
+    return SetEvent(primary.value) ? 0 : 14;
+}
+
+int RunRestartFixture(const std::wstring& prefix)
+{
+    if (!SetEnvironmentVariableW(kRestartTestEnvironment, prefix.c_str())) return 20;
+    Handle prepared(Event(prefix, L"-prepared"));
+    Handle release(Event(prefix, L"-release"));
+    Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+        0, sizeof(DWORD), (prefix + L"-pid").c_str()));
+    if (!prepared.value || !release.value || !mapping.value) return 21;
+    auto* childId = static_cast<DWORD*>(MapViewOfFile(mapping.value, FILE_MAP_WRITE, 0, 0, sizeof(DWORD)));
+    if (!childId) return 22;
+    snowdesktop::single_instance::Guard instance;
+    if (instance.Acquire((prefix + L"-mutex").c_str()) !=
+        snowdesktop::single_instance::AcquireResult::Primary)
+    {
+        UnmapViewOfFile(childId);
+        return 23;
+    }
+    snowdesktop::single_instance::PreparedRestart restart;
+    const DWORD error = restart.Prepare(SelfPath());
+    *childId = restart.ProcessId();
+    UnmapViewOfFile(childId);
+    if (error != ERROR_SUCCESS || !SetEvent(prepared.value)) return 24;
+    // Represents old-host teardown, controlled by the test rather than sleep.
+    if (WaitForSingleObject(release.value, 10000) != WAIT_OBJECT_0) return 25;
+    return static_cast<int>(restart.Resume());
+}
+
+void TestRestartHandoff()
+{
+    using snowdesktop::single_instance::PreparedRestart;
+    const std::wstring prefix = L"Local\\SnowDesktopRestartTests-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+    Handle prepared(Event(prefix, L"-prepared"));
+    Handle release(Event(prefix, L"-release"));
+    Handle started(Event(prefix, L"-started"));
+    Handle primary(Event(prefix, L"-primary"));
+    Handle mapping(CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+        0, sizeof(DWORD), (prefix + L"-pid").c_str()));
+    Check(prepared.value && release.value && started.value && primary.value && mapping.value,
+        "restart fixture synchronization objects are available");
+    if (!prepared.value || !release.value || !started.value || !primary.value || !mapping.value) return;
+    const auto* childId = static_cast<const DWORD*>(MapViewOfFile(mapping.value,
+        FILE_MAP_READ, 0, 0, sizeof(DWORD)));
+    Check(childId != nullptr, "restart fixture PID mapping is available");
+    if (!childId) return;
+
+    // Two handoffs protect repeat restart; a third kills only the isolated
+    // preparing fixture, checking that its uncommitted child cannot be orphaned.
+    for (int round = 0; round < 3; ++round)
+    {
+        ResetEvent(prepared.value); ResetEvent(release.value);
+        ResetEvent(started.value); ResetEvent(primary.value);
+        const std::wstring executable = SelfPath();
+        std::wstring command = L"\"" + executable + L"\" --restart-fixture " + prefix;
+        STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        const bool launched = CreateProcessW(executable.c_str(), command.data(), nullptr,
+            nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process) != FALSE;
+        Check(launched, "isolated preparing process starts");
+        if (!launched) break;
+        CloseHandle(process.hThread);
+        Handle fixture(process.hProcess);
+        const bool ready = WaitForSingleObject(prepared.value, 10000) == WAIT_OBJECT_0;
+        Check(ready, "restart preparation succeeds before teardown");
+        if (!ready)
+        {
+            TerminateProcess(fixture.value, ERROR_CANCELLED);
+            WaitForSingleObject(fixture.value, 5000);
+            break;
+        }
+        Handle child(OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, *childId));
+        Check(child.value != nullptr, "prepared child has a stable process handle");
+        Check(WaitForSingleObject(started.value, 250) == WAIT_TIMEOUT,
+            "replacement must not begin its predecessor timeout while host cleanup is blocked");
+        if (round == 2)
+        {
+            Check(TerminateProcess(fixture.value, ERROR_CANCELLED) != FALSE,
+                "isolated preparing fixture can simulate an abrupt exit");
+        }
+        else SetEvent(release.value);
+        Check(WaitForSingleObject(fixture.value, 5000) == WAIT_OBJECT_0,
+            "preparing fixture exits after cleanup is released");
+        if (round != 2)
+        {
+            DWORD code = STILL_ACTIVE;
+            GetExitCodeProcess(fixture.value, &code);
+            Check(code == 0, "prepared restart resumes successfully");
+            Check(WaitForSingleObject(primary.value, 10000) == WAIT_OBJECT_0,
+                "replacement waits for predecessor then acquires the production single-instance guard");
+        }
+        if (child.value)
+        {
+            Check(WaitForSingleObject(child.value, 5000) == WAIT_OBJECT_0,
+                "replacement completes or uncommitted child is cancelled with its parent");
+            if (round != 2)
+            {
+                DWORD code = STILL_ACTIVE;
+                GetExitCodeProcess(child.value, &code);
+                Check(code == 0, "replacement exits normally after claiming its isolated guard");
+            }
+        }
+        if (round == 2)
+            Check(WaitForSingleObject(started.value, 0) == WAIT_TIMEOUT,
+                "an uncommitted restart never runs when its preparing parent dies");
+    }
+    UnmapViewOfFile(childId);
+
+    HANDLE cancelled = nullptr;
+    {
+        PreparedRestart restart;
+        Check(restart.Prepare(SelfPath() + L".missing") != ERROR_SUCCESS && restart.ProcessId() == 0,
+            "launch failure leaves no pending restart and the caller can keep its host running");
+        Check(restart.Prepare(SelfPath()) == ERROR_SUCCESS, "failed preparation can be retried");
+        const DWORD child = restart.ProcessId();
+        Check(restart.Prepare(SelfPath()) == ERROR_ALREADY_EXISTS && restart.ProcessId() == child,
+            "a pending request cannot create duplicate restart children");
+        cancelled = OpenProcess(SYNCHRONIZE, FALSE, child);
+    }
+    Handle cancelledChild(cancelled);
+    Check(cancelled && WaitForSingleObject(cancelled, 5000) == WAIT_OBJECT_0,
+        "discarding a pending request cancels its suspended child");
+}
+
+void TestCleanupPreservesQuit()
+{
+    constexpr UINT completion = WM_APP + 37;
+    const HWND window = CreateWindowExW(0, L"STATIC", L"Restart cleanup test", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(window != nullptr, "isolated completion window is available");
+    if (!window) return;
+    PostMessageW(window, completion, 0, 123);
+    PostQuitMessage(73);
+    MSG message{};
+    int completions = 0;
+    while (snowdesktop::TakePendingWindowMessage(message, window, completion) ==
+        snowdesktop::PendingWindowMessage::Ready)
+    {
+        Check(message.message == completion && message.lParam == 123,
+            "cleanup receives only its owned completion, never a quit payload");
+        ++completions;
+    }
+    Check(completions == 1, "pending completion is drained exactly once");
+    // Several cleanup paths may drain on the same UI thread before returning
+    // to the outer loop; each must leave the same exit request available.
+    Check(snowdesktop::TakePendingWindowMessage(message, window, completion) ==
+            snowdesktop::PendingWindowMessage::Quit,
+        "a second cleanup preserves the pending quit request");
+    Check(PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) &&
+        message.message == WM_QUIT && message.wParam == 73,
+        "outer message loop still receives the original exit code after cleanup");
+    DestroyWindow(window);
+}
+}
+
+int wmain(int argc, wchar_t** argv)
+{
+    if (argc == 3 && std::wstring_view(argv[1]) == L"--restart-fixture")
+        return RunRestartFixture(argv[2]);
+    if (const DWORD predecessor = snowdesktop::single_instance::
+        ParseRestartPredecessorProcessId(GetCommandLineW()))
+        return RunRestartChild(predecessor);
     const auto root = std::filesystem::temp_directory_path() /
         (L"SnowDesktopSingleInstanceTests-" +
             std::to_wstring(GetCurrentProcessId()) + L"-" +
@@ -204,6 +407,8 @@ int main()
     {
         TestDeploymentDataResolution(root);
         TestManagedSteamRuntimeReplacement(root);
+        TestRestartHandoff();
+        TestCleanupPreservesQuit();
     }
     catch (const std::exception& error)
     {

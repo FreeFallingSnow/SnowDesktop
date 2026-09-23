@@ -1083,7 +1083,7 @@ if (BUILD_TESTING)
             src/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 user32 version
-        LABELS core contract deployment steam)
+        LABELS core contract integration deployment steam)
 
     snowdesktop_add_test(
         SnowDesktopHttpSecurityTests

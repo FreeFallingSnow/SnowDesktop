@@ -276,6 +276,82 @@ AcquireResult Guard::Acquire(const wchar_t* mutexName)
     return AcquireResult::Primary;
 }
 
+PreparedRestart::~PreparedRestart()
+{
+    // Closing the private job cancels an uncommitted suspended child, including
+    // when the preparing host crashes. A successful Resume removes that limit.
+    if (job_) CloseHandle(job_);
+    if (thread_) CloseHandle(thread_);
+    if (process_) CloseHandle(process_);
+}
+
+DWORD PreparedRestart::Prepare(std::wstring_view executablePath)
+{
+    if (job_ || process_ || thread_) return ERROR_ALREADY_EXISTS;
+    if (executablePath.empty()) return ERROR_INVALID_PARAMETER;
+    const std::wstring executable(executablePath);
+    std::wstring command = L"\"" + executable + L"\" --wait-for-pid=" +
+        std::to_wstring(GetCurrentProcessId());
+    const auto directory = std::filesystem::path(executable).parent_path();
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!job) return GetLastError();
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+            &limits, sizeof(limits)))
+    {
+        const DWORD error = GetLastError();
+        CloseHandle(job);
+        return error;
+    }
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child{};
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
+            FALSE, CREATE_SUSPENDED, nullptr,
+            directory.empty() ? nullptr : directory.c_str(), &startup, &child))
+    {
+        const DWORD error = GetLastError();
+        CloseHandle(job);
+        return error;
+    }
+    if (!AssignProcessToJobObject(job, child.hProcess))
+    {
+        const DWORD error = GetLastError();
+        // Only this newly created, still suspended child is cancelled.
+        TerminateProcess(child.hProcess, ERROR_CANCELLED);
+        CloseHandle(child.hThread);
+        CloseHandle(child.hProcess);
+        CloseHandle(job);
+        return error;
+    }
+    job_ = job;
+    process_ = child.hProcess;
+    thread_ = child.hThread;
+    processId_ = child.dwProcessId;
+    return ERROR_SUCCESS;
+}
+
+DWORD PreparedRestart::Resume()
+{
+    if (!thread_) return ERROR_INVALID_HANDLE;
+    if (ResumeThread(thread_) == static_cast<DWORD>(-1)) return GetLastError();
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation,
+            &limits, sizeof(limits)))
+    {
+        const DWORD error = GetLastError();
+        // The resumed child is still waiting for this process to exit.
+        // Retain kill-on-close so a failed handoff cannot later start a host.
+        return error;
+    }
+    CloseHandle(thread_);
+    CloseHandle(process_);
+    CloseHandle(job_);
+    thread_ = process_ = job_ = nullptr;
+    return ERROR_SUCCESS;
+}
+
 DWORD ParseRestartPredecessorProcessId(std::wstring_view commandLine)
 {
     constexpr std::wstring_view prefix = L"--wait-for-pid=";

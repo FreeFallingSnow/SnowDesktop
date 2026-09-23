@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../pending_window_message.h"
 #include "shell_icon_request.h"
 #include "initial_icon_bitmap.h"
 #include "../shell_call_diagnostics.h"
@@ -165,8 +166,8 @@ void DesktopApp::StopDemoIconLoader()
     if (hwnd_)
     {
         MSG message{};
-        while (PeekMessageW(&message, hwnd_, kDemoIconDecodedMessage,
-                kDemoIconDecodedMessage, PM_REMOVE))
+        while (snowdesktop::TakePendingWindowMessage(message, hwnd_,
+                kDemoIconDecodedMessage) == snowdesktop::PendingWindowMessage::Ready)
             delete reinterpret_cast<DemoIconDecodeResult*>(message.lParam);
     }
 }

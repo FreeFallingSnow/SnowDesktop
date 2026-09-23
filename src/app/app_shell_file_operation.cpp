@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../pending_window_message.h"
 #include "startup_diagnostics.h"
 
 #include <atomic>
@@ -435,11 +436,8 @@ void DesktopApp::StopShellFileOperationWorker()
         return;
 
     MSG message{};
-    while (PeekMessageW(
-        &message, completionWindow,
-        kShellFileOperationCompletedMessage,
-        kShellFileOperationCompletedMessage,
-        PM_REMOVE))
+    while (snowdesktop::TakePendingWindowMessage(message, completionWindow,
+        kShellFileOperationCompletedMessage) == snowdesktop::PendingWindowMessage::Ready)
     {
         delete reinterpret_cast<ShellFileOperationUiCompletion*>(
             message.lParam);
