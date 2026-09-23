@@ -49,10 +49,10 @@ inline RECT VisibleFrame(RECT fullFrame, bool collapsed,
 }
 
 inline bool ExpandOnHover(bool eligible, bool wasExpanded, bool suppressed,
-    bool inTitle, bool inFrame, bool interactionRetained) noexcept
+    bool inFrame, bool interactionRetained) noexcept
 {
     return eligible && !suppressed &&
-        (inTitle || (wasExpanded && (inFrame || interactionRetained)));
+        (inFrame || (wasExpanded && interactionRetained));
 }
 
 // Reserve both sides equally so the title stays at the widget's true center,

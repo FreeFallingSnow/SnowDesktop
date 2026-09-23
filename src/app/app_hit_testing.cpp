@@ -136,11 +136,8 @@ bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         if (!eligible) continue;
 
         const RECT frame = GetExpandedWidgetFrameRect(widget);
-        const RECT title = snowdesktop::storage_title_bar::VisibleFrame(frame, true,
-            ScaleWidgetCu(GetCategorizedWidgetTabHeight(), GetWidgetCellScale(widget)),
-            ScaleWidgetCu(2.0f, GetWidgetCellScale(widget)));
-        const bool inTitle = PtInRect(&title, point) != FALSE;
-        const bool suppressed = hoverExpansionSuppressedWidgetId_ == widget.id && inTitle;
+        const bool inFrame = PtInRect(&frame, point) != FALSE;
+        const bool suppressed = hoverExpansionSuppressedWidgetId_ == widget.id && inFrame;
         suppressionStillInside |= suppressed;
         const bool wasExpanded = hoverExpandedWidgetId_ == widget.id;
         bool retained = interactionPinnedWidgetId_ == widget.id ||
@@ -164,8 +161,7 @@ bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         const bool pointerAvailable = !HasActiveContextMenuSession() &&
             !IsPointOccludedByOpenPopup(point);
         if (snowdesktop::storage_title_bar::ExpandOnHover(eligible, wasExpanded,
-                suppressed, pointerAvailable && inTitle,
-                pointerAvailable && PtInRect(&frame, point), retained))
+                suppressed, pointerAvailable && inFrame, retained))
         {
             expandedId = widget.id;
             if (wasExpanded) break;
