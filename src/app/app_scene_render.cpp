@@ -17,6 +17,9 @@ void DesktopApp::DrawStaticBackground(
 {
     snowdesktop::performance::Scope performanceScope("desktop", "background");
     UpdateLargeIconHover();
+    // Reconcile retained hover after menus, keyboard focus or capture end,
+    // even when those transitions do not deliver another mouse-move sample.
+    UpdateWidgetHoverExpansion(lastMousePoint_);
     auto intersectsUpdate =
         [&](RECT bounds, int overdraw = 0) {
         if (!updateRect)

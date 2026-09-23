@@ -621,6 +621,7 @@ void DesktopApp::CommitDragVisualEndBeforeShellOperation()
 
 void DesktopApp::PresentPassiveHoverVisualChange()
 {
+    UpdateWidgetHoverExpansion(lastMousePoint_);
     RecordShellHoverTrace(
         ShellHoverTraceEvent::PassivePresent);
     // Content and backdrop are collected from the same full render pass. The

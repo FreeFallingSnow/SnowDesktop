@@ -868,6 +868,7 @@
   "app.interact.current": "Actual",
   "app.interact.inactive": "Inactivo",
   "app.interact.hover_only": "Mostrar solo al pasar el mouse",
+  "app.interact.expand_on_hover": "Expandir automáticamente al pasar el mouse",
   "app.interact.keep_when_hidden": "Mantener cuando el escritorio está oculto",
   "app.interact.privacy_mode": "Modo de privacidad",
   "app.interact.large_folder_titleless": "Modo compacto sin etiquetas",

@@ -445,7 +445,6 @@ RECT WidgetContainer::GetTitleRect() const
 {
     RECT handle = GetMoveHandleRect();
     const float barScale = GetBarScale();
-    LONG left = handle.left + Cu(2.0f * barScale);
     const int reserved = snowdesktop::widget_chrome_rules::
         BottomBarTitleTrailingReserve(
             GetBottomBarButtonCount(),
@@ -457,6 +456,14 @@ RECT WidgetContainer::GetTitleRect() const
     if (UsesTopTitleBar())
         return snowdesktop::storage_title_bar::CenteredTitleRect(handle,
             Cu(26.0f * barScale), reserved, Cu(GetBarHeight() * 0.083f));
+    // Mirror the resize dot's outside edge, including its rounded-corner inset.
+    const RECT resize = GetResizeHandleRect();
+    const LONG dotRight = resize.left + (resize.right - resize.left) / 2 +
+        Cu(GetResizeBarHeight() * 0.333f) / 2;
+    const RECT frame = GetLayoutFrameRect();
+    const LONG left = std::min<LONG>(handle.right,
+        std::max<LONG>(handle.left + Cu(2.0f * barScale),
+            frame.left + frame.right - dotRight));
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
     const float bh = GetBarHeight();
     return { left, handle.top + Cu(bh * 0.083f), right, handle.bottom - Cu(bh * 0.083f) };

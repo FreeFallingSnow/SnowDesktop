@@ -425,6 +425,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
         widget.titleBarCollapsed = saved.titleBarCollapsed;
+        widget.titleBarExpandOnHover = saved.titleBarExpandOnHover;
         widget.largeFolderTitleless =
             widget.type == DesktopWidgetType::Collection &&
             snowdesktop::collection_titleless_rules::ResolveStoredMode(
@@ -1051,6 +1052,7 @@ bool DesktopApp::SaveLayoutSlots()
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
              << ", \"titleBarCollapsed\": " << (w.titleBarCollapsed ? "true" : "false")
+             << ", \"titleBarExpandOnHover\": " << (w.titleBarExpandOnHover ? "true" : "false")
              << ", \"largeFolderTitleless\": "
              << (w.largeFolderTitleless ? "true" : "false")
              << ", \"keepWhenDesktopHidden\": "

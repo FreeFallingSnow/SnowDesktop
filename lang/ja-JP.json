@@ -868,6 +868,7 @@
   "app.interact.current": "現在",
   "app.interact.inactive": "非アクティブ",
   "app.interact.hover_only": "ホバー時のみ表示",
+  "app.interact.expand_on_hover": "ホバー時に自動展開",
   "app.interact.keep_when_hidden": "デスクトップ非表示時に保持",
   "app.interact.privacy_mode": "プライバシー モード",
   "app.interact.large_folder_titleless": "ラベルなしコンパクト モード",

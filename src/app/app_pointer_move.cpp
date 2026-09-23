@@ -234,6 +234,8 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    if (UpdateWidgetHoverExpansion(current))
+        PresentPassiveHoverVisualChange();
     if (HandleUsageGuidePointerMove(current)) return;
     if (IsUsageGuideVisible())
         for (const auto bounds : {usageGuidePauseRect_, usageGuideSettingsRect_,

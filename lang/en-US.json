@@ -868,6 +868,7 @@
     "app.interact.current": "Current",
     "app.interact.inactive": "Inactive",
     "app.interact.hover_only": "Show on Hover Only",
+    "app.interact.expand_on_hover": "Expand Automatically on Hover",
     "app.interact.keep_when_hidden": "Keep When Desktop Hidden",
     "app.interact.privacy_mode": "Privacy Mode",
     "app.interact.large_folder_titleless": "Label-free Compact Mode",

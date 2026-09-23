@@ -868,6 +868,7 @@
   "app.interact.current": "현재",
   "app.interact.inactive": "비활성",
   "app.interact.hover_only": "마우스오버 시에만 표시",
+  "app.interact.expand_on_hover": "마우스를 올리면 자동으로 펼치기",
   "app.interact.keep_when_hidden": "데스크톱을 숨겨도 유지",
   "app.interact.privacy_mode": "개인 정보 보호 모드",
   "app.interact.large_folder_titleless": "레이블 없는 컴팩트 모드",

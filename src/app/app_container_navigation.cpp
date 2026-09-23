@@ -26,7 +26,11 @@ void DesktopApp::ToggleWidgetCollapsed(size_t widgetIndex)
     SelectWidgetOnly(widgetIndex);
     // Collapse changes presentation only: never resize the occupied grid,
     // reset scrolling, or rebuild the underlying item/slot objects.
-    widget.titleBarCollapsed = !widget.titleBarCollapsed;
+    const bool collapse = !IsWidgetCollapsed(widget);
+    widget.titleBarCollapsed = collapse;
+    if (hoverExpandedWidgetId_ == widget.id)
+        hoverExpandedWidgetId_.clear();
+    hoverExpansionSuppressedWidgetId_ = collapse ? widget.id : L"";
     UpdateHostInputImePosition();
     SaveLayoutSlots();
     InvalidateDragStaticScene();

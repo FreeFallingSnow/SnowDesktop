@@ -5,6 +5,7 @@
 #include "../right_click_contract.h"
 #include "../widget_removal.h"
 #include "../widgets/collection_group_rules.h"
+#include "../widgets/storage_title_bar_layout.h"
 
 #include <commctrl.h>
 #include <functional>
@@ -761,6 +762,8 @@ void DesktopApp::ShowWidgetContextMenu(
                 widget.scrollContainerMode,
                 widget.gridSpan.columns,
                 widget.gridSpan.rows);
+    const bool showExpandOnHoverOption = snowdesktop::storage_title_bar::UsesTop(
+        widget, CurrentPersonalization().scrollableTitleBarOnTop);
     if (!luaElementMenu)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -783,6 +786,13 @@ void DesktopApp::ShowWidgetContextMenu(
             _LW("app.interact.keep_when_hidden"),
             widget.keepWhenDesktopHidden);
         AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
+        if (showExpandOnHoverOption)
+        {
+            const std::wstring expandLabel = toggleLabel(
+                _LW("app.interact.expand_on_hover"), widget.titleBarExpandOnHover);
+            AppendMenuW(menu, MF_STRING, kContextWidgetToggleExpandOnHover,
+                expandLabel.c_str());
+        }
         AppendMenuW(menu, MF_STRING, keepToggleCommand, keepLabel.c_str());
         if (widget.type == DesktopWidgetType::Collection ||
             widget.type == DesktopWidgetType::FileCategories ||
@@ -841,6 +851,9 @@ void DesktopApp::ShowWidgetContextMenu(
     SetMenuItemQuickAction(menu, kContextWidgetRename);
     SetMenuItemQuickAction(menu, kContextWidgetDelete);
     setFluentIcon(menu, hoverToggleCommand, L"\uE5F2");
+    if (showExpandOnHoverOption)
+        setFluentIcon(menu, kContextWidgetToggleExpandOnHover,
+            snowdesktop::menu_fluent_glyphs::kChevronRight);
     setFluentIcon(menu, keepToggleCommand, L"\uF359");
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
@@ -1478,6 +1491,18 @@ void DesktopApp::ShowWidgetContextMenu(
         widgets_[widgetIndex].showOnHoverOnly = true;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetToggleExpandOnHover:
+        if (snowdesktop::storage_title_bar::UsesTop(widgets_[widgetIndex],
+                CurrentPersonalization().scrollableTitleBarOnTop))
+        {
+            auto& target = widgets_[widgetIndex];
+            target.titleBarExpandOnHover = !target.titleBarExpandOnHover;
+            UpdateWidgetHoverExpansion(lastMousePoint_);
+            SaveLayoutSlots();
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         break;
     case kContextWidgetShowOnHoverOff:
         widgets_[widgetIndex].showOnHoverOnly = false;

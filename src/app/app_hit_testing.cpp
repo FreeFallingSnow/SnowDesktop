@@ -116,7 +116,67 @@ bool DesktopApp::IsWidgetCollapsed(const DesktopWidget& widget) const
         CurrentPersonalization().scrollableTitleBarOnTop,
         // Keep the target expanded through synchronous drop submission too.
         dragSession_.HasContext(), dragDropController_.IsExternalDragActive(),
-        widgetAction_ == WidgetAction::Move);
+        widgetAction_ == WidgetAction::Move) &&
+        !(widget.titleBarExpandOnHover && hoverExpandedWidgetId_ == widget.id);
+}
+
+bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
+{
+    std::wstring expandedId;
+    bool suppressionStillInside = false;
+    for (size_t index = 0; index < widgets_.size(); ++index)
+    {
+        const auto& widget = widgets_[index];
+        const bool eligible = widget.titleBarCollapsed && widget.titleBarExpandOnHover &&
+            snowdesktop::storage_title_bar::UsesTop(widget,
+                CurrentPersonalization().scrollableTitleBarOnTop) &&
+            customDesktopVisible_ && !desktopPassthroughActive_ &&
+            (!desktopIconsHidden_ || widget.keepWhenDesktopHidden) &&
+            !IsRectEmptyRect(widget.bounds) && !IsGroupedWidget(widget);
+        if (!eligible) continue;
+
+        const RECT frame = GetExpandedWidgetFrameRect(widget);
+        const RECT title = snowdesktop::storage_title_bar::VisibleFrame(frame, true,
+            ScaleWidgetCu(GetCategorizedWidgetTabHeight(), GetWidgetCellScale(widget)),
+            ScaleWidgetCu(2.0f, GetWidgetCellScale(widget)));
+        const bool inTitle = PtInRect(&title, point) != FALSE;
+        const bool suppressed = hoverExpansionSuppressedWidgetId_ == widget.id && inTitle;
+        suppressionStillInside |= suppressed;
+        const bool wasExpanded = hoverExpandedWidgetId_ == widget.id;
+        bool retained = interactionPinnedWidgetId_ == widget.id ||
+            popupWidgetIndex_ == index ||
+            (mouseDown_ && mouseDownWidgetIndex_ == index) ||
+            (keyboardNavVisualFocus_ && keyboardNavInsideWidget_ &&
+                keyboardNavWidgetIndex_ == index);
+        if (wasExpanded && !retained)
+        {
+            for (const auto& container : containers_)
+            {
+                const auto* searchable = dynamic_cast<ScrollingItemWidget*>(container.get());
+                if (searchable && searchable->GetWidgetData() == &widget &&
+                    searchable->IsSearchFocused())
+                {
+                    retained = true;
+                    break;
+                }
+            }
+        }
+        const bool pointerAvailable = !HasActiveContextMenuSession() &&
+            !IsPointOccludedByOpenPopup(point);
+        if (snowdesktop::storage_title_bar::ExpandOnHover(eligible, wasExpanded,
+                suppressed, pointerAvailable && inTitle,
+                pointerAvailable && PtInRect(&frame, point), retained))
+        {
+            expandedId = widget.id;
+            if (wasExpanded) break;
+        }
+    }
+    if (!suppressionStillInside) hoverExpansionSuppressedWidgetId_.clear();
+    if (expandedId == hoverExpandedWidgetId_) return false;
+    hoverExpandedWidgetId_ = std::move(expandedId);
+    InvalidateDragStaticScene();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
 }
 
 RECT DesktopApp::GetExpandedWidgetFrameRect(const DesktopWidget& widget) const

@@ -868,6 +868,7 @@
   "app.interact.current": "Actuel",
   "app.interact.inactive": "Inactif",
   "app.interact.hover_only": "Afficher en survol uniquement",
+  "app.interact.expand_on_hover": "Développer automatiquement au survol",
   "app.interact.keep_when_hidden": "Conserver lorsque le bureau est masqué",
   "app.interact.privacy_mode": "Mode de confidentialité",
   "app.interact.large_folder_titleless": "Mode compact sans libellés",

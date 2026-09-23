@@ -845,6 +845,9 @@ int main()
         { "widget collapse preference type",
             R"({"widgets":[{"id":"w","page":"p","x":0,"y":0,"titleBarCollapsed":"yes"}]})",
             "widgets[0].titleBarCollapsed" },
+        { "widget hover expansion preference type",
+            R"({"widgets":[{"id":"w","page":"p","x":0,"y":0,"titleBarExpandOnHover":"yes"}]})",
+            "widgets[0].titleBarExpandOnHover" },
         { "widget detail column type",
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"detailShowModified\":\"yes\"}]}",
@@ -1037,8 +1040,8 @@ int main()
     {
         // Persist only the user's choice, never a transient drag expansion.
         const std::string collapseDocument = R"({"widgets":[
-            {"id":"closed","type":"folderMapping","page":"p","x":0,"y":0,"titleBarCollapsed":true},
-            {"id":"open","type":"collection","page":"p","x":1,"y":0,"titleBarCollapsed":false},
+            {"id":"closed","type":"folderMapping","page":"p","x":0,"y":0,"titleBarCollapsed":true,"titleBarExpandOnHover":true},
+            {"id":"open","type":"collection","page":"p","x":1,"y":0,"titleBarCollapsed":false,"titleBarExpandOnHover":false},
             {"id":"legacy","type":"fileGroup","page":"p","x":2,"y":0}]})";
         const auto collapsePath = root / "collapse-layout.json";
         snowdesktop::layout_storage::Document collapseLayout;
@@ -1049,8 +1052,11 @@ int main()
             collapseLayout.widgets.size() == 3 &&
             collapseLayout.widgets[0].titleBarCollapsed &&
             !collapseLayout.widgets[1].titleBarCollapsed &&
-            !collapseLayout.widgets[2].titleBarCollapsed,
-            "restart retains each collapse preference and defaults legacy layouts to expanded");
+            !collapseLayout.widgets[2].titleBarCollapsed &&
+            collapseLayout.widgets[0].titleBarExpandOnHover &&
+            !collapseLayout.widgets[1].titleBarExpandOnHover &&
+            !collapseLayout.widgets[2].titleBarExpandOnHover,
+            "restart retains collapse and hover preferences; legacy layouts are expanded with hover expansion off");
     }
 
     snowdesktop::layout_storage::Document spacingLayout;

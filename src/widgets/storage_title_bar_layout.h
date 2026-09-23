@@ -48,6 +48,13 @@ inline RECT VisibleFrame(RECT fullFrame, bool collapsed,
     return fullFrame;
 }
 
+inline bool ExpandOnHover(bool eligible, bool wasExpanded, bool suppressed,
+    bool inTitle, bool inFrame, bool interactionRetained) noexcept
+{
+    return eligible && !suppressed &&
+        (inTitle || (wasExpanded && (inFrame || interactionRetained)));
+}
+
 // Reserve both sides equally so the title stays at the widget's true center,
 // regardless of the number of action buttons on the right.
 inline RECT CenteredTitleRect(RECT bar, int leadingReserve,

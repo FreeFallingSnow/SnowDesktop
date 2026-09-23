@@ -486,6 +486,9 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadBoolean(object, "titleBarCollapsed",
                 path + ".titleBarCollapsed", record.titleBarCollapsed,
                 error) ||
+            !ReadBoolean(object, "titleBarExpandOnHover",
+                path + ".titleBarExpandOnHover", record.titleBarExpandOnHover,
+                error) ||
             !ReadBoolean(object, "largeFolderTitleless",
                 path + ".largeFolderTitleless",
                 record.largeFolderTitleless, error) ||

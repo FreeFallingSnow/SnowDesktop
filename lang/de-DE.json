@@ -868,6 +868,7 @@
   "app.interact.current": "Aktuell",
   "app.interact.inactive": "Inaktiv",
   "app.interact.hover_only": "Nur bei Hover anzeigen",
+  "app.interact.expand_on_hover": "Beim Darüberfahren automatisch aufklappen",
   "app.interact.keep_when_hidden": "Behalten, wenn der Desktop ausgeblendet ist",
   "app.interact.privacy_mode": "Datenschutzmodus",
   "app.interact.large_folder_titleless": "Kompaktmodus ohne Beschriftungen",

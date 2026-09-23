@@ -1027,6 +1027,7 @@ void DesktopApp::WatchDesktopHost()
  */
 void DesktopApp::InvalidateAllWidgetSlots()
 {
+    UpdateWidgetHoverExpansion(lastMousePoint_);
     for (auto& c : containers_)
     {
         c->InvalidateSlots();

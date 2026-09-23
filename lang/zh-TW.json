@@ -868,6 +868,7 @@
   "app.interact.current": "目前",
   "app.interact.inactive": "未使用",
   "app.interact.hover_only": "僅在懸停時顯示",
+  "app.interact.expand_on_hover": "游標懸停時自動展開",
   "app.interact.keep_when_hidden": "隱藏桌面時保留",
   "app.interact.privacy_mode": "隱私模式",
   "app.interact.large_folder_titleless": "無字緊湊模式",

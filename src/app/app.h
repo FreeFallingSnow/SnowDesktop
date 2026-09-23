@@ -3128,6 +3128,9 @@ private:
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
     RECT GetExpandedWidgetFrameRect(const DesktopWidget& widget) const;
     bool IsWidgetCollapsed(const DesktopWidget& widget) const;
+    bool UpdateWidgetHoverExpansion(POINT point);
+    std::wstring hoverExpandedWidgetId_;
+    std::wstring hoverExpansionSuppressedWidgetId_;
     void ToggleWidgetCollapsed(size_t widgetIndex);
     RECT GetLuaWidgetHostActionRect(const DesktopWidget& widget) const;
     float GetWidgetCellScale(const DesktopWidget& widget) const;
