@@ -3126,6 +3126,9 @@ private:
      * @return 框架矩形
     */
     RECT GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const;
+    RECT GetExpandedWidgetFrameRect(const DesktopWidget& widget) const;
+    bool IsWidgetCollapsed(const DesktopWidget& widget) const;
+    void ToggleWidgetCollapsed(size_t widgetIndex);
     RECT GetLuaWidgetHostActionRect(const DesktopWidget& widget) const;
     float GetWidgetCellScale(const DesktopWidget& widget) const;
     int GetComponentEdgeMargin(const GridPage& page, bool vertical) const;
@@ -3894,7 +3897,7 @@ private:
     unsigned expectedCaptureReleaseDepth_ = 0;
     POINT mouseDownPoint_{};
     Item* mouseDownHit_ = nullptr;
-    WidgetHit pendingGuideAction_ = WidgetHit::None;
+    WidgetHit pendingWidgetButtonAction_ = WidgetHit::None;
     bool marqueeActive_ = false;
     bool marqueeFullPresentPending_ = false;
     RECT marqueeRect_{};

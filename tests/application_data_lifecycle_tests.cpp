@@ -842,6 +842,9 @@ int main()
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"largeFolderTitleless\":\"yes\"}]}",
             "widgets[0].largeFolderTitleless" },
+        { "widget collapse preference type",
+            R"({"widgets":[{"id":"w","page":"p","x":0,"y":0,"titleBarCollapsed":"yes"}]})",
+            "widgets[0].titleBarCollapsed" },
         { "widget detail column type",
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"detailShowModified\":\"yes\"}]}",
@@ -1030,6 +1033,25 @@ int main()
             R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":"true"}]})",
             pairLayout, &layoutError) && layoutError.find("dissolveWhenSingle") != std::string::npos,
         "invalid automatic group state must be rejected before replacing the layout");
+
+    {
+        // Persist only the user's choice, never a transient drag expansion.
+        const std::string collapseDocument = R"({"widgets":[
+            {"id":"closed","type":"folderMapping","page":"p","x":0,"y":0,"titleBarCollapsed":true},
+            {"id":"open","type":"collection","page":"p","x":1,"y":0,"titleBarCollapsed":false},
+            {"id":"legacy","type":"fileGroup","page":"p","x":2,"y":0}]})";
+        const auto collapsePath = root / "collapse-layout.json";
+        snowdesktop::layout_storage::Document collapseLayout;
+        Expect(snowdesktop::layout_storage::SaveDocument(
+                collapsePath, collapseDocument, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(collapsePath, collapseLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            collapseLayout.widgets.size() == 3 &&
+            collapseLayout.widgets[0].titleBarCollapsed &&
+            !collapseLayout.widgets[1].titleBarCollapsed &&
+            !collapseLayout.widgets[2].titleBarCollapsed,
+            "restart retains each collapse preference and defaults legacy layouts to expanded");
+    }
 
     snowdesktop::layout_storage::Document spacingLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(

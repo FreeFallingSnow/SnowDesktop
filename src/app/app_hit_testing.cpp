@@ -1,5 +1,6 @@
 #include "app.h"
 #include "widgets/widget_chrome_rules.h"
+#include "widgets/storage_title_bar_layout.h"
 
 // Desktop-item and standalone-widget hit testing.
 
@@ -24,6 +25,7 @@ bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
             }
         if (hit == WidgetHit::ResizeHandle) cursor = IDC_SIZENWSE;
         else if (hit == WidgetHit::MoveHandle) cursor = IDC_SIZEALL;
+        else if (hit == WidgetHit::CollapseToggleBtn) cursor = IDC_HAND;
     }
     if (!cursor) return false;
     SetCursor(LoadCursorW(nullptr, cursor));
@@ -101,6 +103,23 @@ int DesktopApp::GetComponentEdgeMargin(
 }
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
+{
+    return snowdesktop::storage_title_bar::VisibleFrame(
+        GetExpandedWidgetFrameRect(widget), IsWidgetCollapsed(widget),
+        ScaleWidgetCu(GetCategorizedWidgetTabHeight(), GetWidgetCellScale(widget)),
+        ScaleWidgetCu(2.0f, GetWidgetCellScale(widget)));
+}
+
+bool DesktopApp::IsWidgetCollapsed(const DesktopWidget& widget) const
+{
+    return snowdesktop::storage_title_bar::IsCollapsed(widget,
+        CurrentPersonalization().scrollableTitleBarOnTop,
+        // Keep the target expanded through synchronous drop submission too.
+        dragSession_.HasContext(), dragDropController_.IsExternalDragActive(),
+        widgetAction_ == WidgetAction::Move);
+}
+
+RECT DesktopApp::GetExpandedWidgetFrameRect(const DesktopWidget& widget) const
 {
     RECT frame = widget.bounds;
     for (const auto& page : gridPages_)

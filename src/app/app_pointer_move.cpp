@@ -1147,7 +1147,7 @@ void DesktopApp::OnMouseMoveAt(
     }
 
     if (mouseDown_ && !mouseDownHit_ &&
-        pendingGuideAction_ == WidgetHit::None)
+        pendingWidgetButtonAction_ == WidgetHit::None)
     {
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)

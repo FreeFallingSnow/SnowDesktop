@@ -32,6 +32,35 @@ struct Layout
     LONG contentBottom = 0;
 };
 
+inline bool IsCollapsed(const DesktopWidget& widget, bool topEnabled,
+    bool itemDragActive, bool externalDragActive, bool widgetMoveActive) noexcept
+{
+    return UsesTop(widget, topEnabled) && widget.titleBarCollapsed &&
+        !itemDragActive && !externalDragActive && !widgetMoveActive;
+}
+
+inline RECT VisibleFrame(RECT fullFrame, bool collapsed,
+    int titleHeight, int edgeGap) noexcept
+{
+    if (collapsed && fullFrame.bottom > fullFrame.top)
+        fullFrame.bottom = std::min<LONG>(fullFrame.bottom,
+            fullFrame.top + titleHeight + 2 * edgeGap);
+    return fullFrame;
+}
+
+// Reserve both sides equally so the title stays at the widget's true center,
+// regardless of the number of action buttons on the right.
+inline RECT CenteredTitleRect(RECT bar, int leadingReserve,
+    int trailingReserve, int verticalInset) noexcept
+{
+    const LONG center = bar.left + (bar.right - bar.left) / 2;
+    const int reserve = std::max(leadingReserve, trailingReserve);
+    return {std::min<LONG>(center, bar.left + reserve),
+        bar.top + verticalInset,
+        std::max<LONG>(center, bar.right - reserve),
+        bar.bottom - verticalInset};
+}
+
 // All inputs are scaled pixels. The resize target always uses the original
 // bottom-bar height, independently of the tab-height-driven top title bar.
 inline Layout Resolve(RECT frame, bool top, int titleHeight,

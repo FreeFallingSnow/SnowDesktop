@@ -18,7 +18,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
-    pendingGuideAction_ = WidgetHit::None;
+    pendingWidgetButtonAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (HandleUsageGuidePointerDown(pt)) return;
     if (HandleLargeIconPointerDown(pt)) return;
@@ -842,7 +842,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::None) continue;
 
-        if (wh != WidgetHit::ResizeHandle &&
+        if (!wc->IsCollapsed() && wh != WidgetHit::CollapseToggleBtn &&
+            wh != WidgetHit::ResizeHandle &&
             wh != WidgetHit::MoveHandle)
         {
             const int maximum = wc->GetMaxScrollOffset();
@@ -903,18 +904,11 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
-        else if (wh == WidgetHit::GuideAddWidgetBtn)
+        else if (wh == WidgetHit::CollapseToggleBtn ||
+                 wh == WidgetHit::GuideAddWidgetBtn ||
+                 wh == WidgetHit::GuideDetailsBtn)
         {
-            pendingGuideAction_ = wh;
-            mouseDownWidgetIndex_ = wi;
-            mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
-            InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
-            return;
-        }
-        else if (wh == WidgetHit::GuideDetailsBtn)
-        {
-            pendingGuideAction_ = wh;
+            pendingWidgetButtonAction_ = wh;
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);

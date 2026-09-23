@@ -20,6 +20,7 @@
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "storage_title_bar_layout.h"
+#include "../menu_fluent_glyphs.h"
 #include "widget_preview_scene.h"
 #include "../widget_item_layout.h"
 #include "../widget_scroll_rules.h"
@@ -162,7 +163,7 @@ snowdesktop::storage_title_bar::Layout StorageChromeLayout(
     const WidgetContainer& widget, float cornerRadius)
 {
     return snowdesktop::storage_title_bar::Resolve(
-        widget.GetFrameRect(), widget.UsesTopTitleBar(),
+        widget.GetLayoutFrameRect(), widget.UsesTopTitleBar(),
         widget.Cu(widget.GetBarHeight()),
         widget.Cu(widget.GetResizeBarHeight()),
         widget.Cu(widget.GetResizeBarHeight() - 2.0f),
@@ -359,10 +360,34 @@ RECT WidgetContainer::GetFrameRect() const
         : data_->bounds;
 }
 
+RECT WidgetContainer::GetLayoutFrameRect() const
+{
+    if (!data_) return {};
+    if (hostedFrameActive_) return hostedFrame_;
+    if (app_ && app_->IsGroupedWidget(*data_)) return {};
+    return app_ ? app_->GetExpandedWidgetFrameRect(*data_) : data_->bounds;
+}
+
+bool WidgetContainer::IsCollapsed() const
+{
+    // A source hosted inside a file group follows its host's layout, not its
+    // own saved standalone collapse preference. Previews also stay expanded.
+    return !hostedFrameActive_ && data_ && app_ && app_->IsWidgetCollapsed(*data_);
+}
+
+RECT WidgetContainer::GetCollapseButtonRect() const
+{
+    if (!UsesTopTitleBar()) return {};
+    RECT bar = GetMoveHandleRect();
+    const int size = Cu(22.0f * GetBarScale());
+    const LONG y = bar.top + (bar.bottom - bar.top - size) / 2;
+    return {bar.left, y, std::min<LONG>(bar.right, bar.left + size), y + size};
+}
+
 snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 {
     return app_
-        ? app_->GetItemVisualMetrics(GetFrameRect())
+        ? app_->GetItemVisualMetrics(GetLayoutFrameRect())
         : Widget::GetItemVisualMetrics();
 }
 
@@ -392,6 +417,7 @@ RECT WidgetContainer::GetMoveHandleRect() const
  */
 RECT WidgetContainer::GetResizeHandleRect() const
 {
+    if (IsCollapsed()) return {};
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).resize;
 }
@@ -428,6 +454,9 @@ RECT WidgetContainer::GetTitleRect() const
             Cu(4.0f * barScale),
             GetTitleBarResizeReserve(),
             Cu(2.0f * barScale));
+    if (UsesTopTitleBar())
+        return snowdesktop::storage_title_bar::CenteredTitleRect(handle,
+            Cu(26.0f * barScale), reserved, Cu(GetBarHeight() * 0.083f));
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
     const float bh = GetBarHeight();
     return { left, handle.top + Cu(bh * 0.083f), right, handle.bottom - Cu(bh * 0.083f) };
@@ -458,10 +487,13 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
 
     if (HitResizeHandle(pt)) return WidgetHit::ResizeHandle;
 
+    RECT collapse = GetCollapseButtonRect();
+    if (PtInRect(&collapse, pt)) return WidgetHit::CollapseToggleBtn;
+
     RECT move = GetMoveHandleRect();
     if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
 
-    return WidgetHit::Content;
+    return IsCollapsed() ? WidgetHit::MoveHandle : WidgetHit::Content;
 }
 
 // ── Container drag virtuals ──────────────────────────────────────
@@ -2487,6 +2519,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         selected, strokeW, &backgroundAppearance, ShouldRegisterBackdrop());
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
+    if (!IsCollapsed())
     {
         auto* factory = app_->GetD2DFactory();
         ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
@@ -2562,7 +2595,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 
     if (showHandle)
     {
-        // Title text (with shadow)
+        // Top title: larger centered text, without a shadow.
         const bool demoCollectionTitle =
             app_->ShouldUseDemoCollectionIdentity(data_);
         const std::wstring displayTitle = demoCollectionTitle
@@ -2578,9 +2611,11 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 auto* dwrite = app_->GetDWriteFactory();
                 auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
                     std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
+                if (UsesTopTitleBar())
+                    titleWeight = DWRITE_FONT_WEIGHT_SEMI_BOLD;
                 IDWriteTextFormat* fmt = GetCuTextFormatWeight(UsesTopTitleBar()
-                    ? GetBarHeight() * 15.0f / 34.0f
-                    : GetBarHeight() * 0.542f, titleWeight, false);
+                    ? GetBarHeight() * 18.0f / 34.0f
+                    : GetBarHeight() * 0.542f, titleWeight, UsesTopTitleBar());
                 if (fmt)
                 {
                     ComPtr<IDWriteTextLayout> layout;
@@ -2589,7 +2624,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                         (float)tw, (float)th, &layout);
                     if (layout)
                     {
-                        if (!lightTheme)
+                        if (!lightTheme && !UsesTopTitleBar())
                         {
                             if (auto* shadowBrush = getBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)))
                                 context->DrawTextLayout(
@@ -2609,6 +2644,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         }
 
         // Resize handle dot
+        if (!IsCollapsed())
         {
             RECT rh = GetResizeHandleRect();
             const int dot = Cu(GetResizeBarHeight() * 0.333f);
@@ -2633,6 +2669,40 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 context->DrawRoundedRectangle(pill, b, 1.0f);
         }
 
+        if (UsesTopTitleBar())
+        {
+            const RECT button = GetCollapseButtonRect();
+            const bool hot = !IsPreviewRendering() && PtInRect(&button, mousePt);
+            const auto color = lightTheme
+                ? D2D1::ColorF(0.11f, 0.13f, 0.17f, hot ? 1.0f : 0.72f)
+                : D2D1::ColorF(1.0f, 1.0f, 1.0f, hot ? 1.0f : 0.80f);
+            // Reuse the bundled official right chevron; rotate it downward
+            // while expanded. The hit target itself does not rotate.
+            D2D1_MATRIX_3X2_F previousTransform;
+            context->GetTransform(&previousTransform);
+            if (!IsCollapsed())
+                context->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f,
+                    D2D1::Point2F((button.left + button.right) * 0.5f,
+                        (button.top + button.bottom) * 0.5f)) * previousTransform);
+            if (auto* format = GetCuFluentTextFormat(14.0f * GetBarScale()))
+                app_->DrawD2DText(context,
+                    snowdesktop::menu_fluent_glyphs::kChevronRight,
+                    button, format, color);
+            context->SetTransform(previousTransform);
+
+            if (!IsCollapsed())
+            {
+                const RECT bar = GetMoveHandleRect();
+                if (auto* line = getBrush(lightTheme
+                    ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.18f)
+                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f)))
+                    context->DrawLine(
+                        D2D1::Point2F(static_cast<float>(bar.left), static_cast<float>(bar.bottom)),
+                        D2D1::Point2F(static_cast<float>(bar.right), static_cast<float>(bar.bottom)),
+                        line, std::max(1.0f, static_cast<float>(Cu(1.0f))));
+            }
+        }
+
         // Subclass buttons
         {
             RECT handle = GetMoveHandleRect();
@@ -2641,7 +2711,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     }
 
     // ── Scrollbar (on top of everything, hover only) ──────────
-    DrawScrollbar(context, hovered);
+    if (!IsCollapsed()) DrawScrollbar(context, hovered);
 
     // The material reflection must remain visible after component content and
     // the bottom gradient have been composited. Selection keeps its flat

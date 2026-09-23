@@ -326,7 +326,7 @@ public:
             group_->GetSearchCompositionText(),
             group_->GetSearchCompositionCursor());
 
-        RECT frame = group_->GetFrameRect();
+        RECT frame = group_->GetLayoutFrameRect();
         source_->SetHostedFrame(&frame);
         const bool searching =
             groupData_->showSearchBox &&

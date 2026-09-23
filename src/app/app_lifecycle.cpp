@@ -1028,7 +1028,17 @@ void DesktopApp::WatchDesktopHost()
 void DesktopApp::InvalidateAllWidgetSlots()
 {
     for (auto& c : containers_)
+    {
         c->InvalidateSlots();
+        // Changing the global title-bar position can restore a saved fold.
+        // Do not retain a search caret inside content that just became hidden.
+        auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+        if (searchable && searchable->IsCollapsed())
+            searchable->SetSearchFocused(false);
+    }
+    if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size() &&
+        IsWidgetCollapsed(widgets_[keyboardNavWidgetIndex_]))
+        SelectWidgetOnly(keyboardNavWidgetIndex_);
 }
 
 void DesktopApp::RequestExit()

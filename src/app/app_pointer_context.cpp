@@ -709,7 +709,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             !IsRetainedContainer(it->get()))
             continue;
         auto* wc = dynamic_cast<WidgetContainer*>(it->get());
-        if (!wc) continue;
+        if (!wc || wc->IsCollapsed()) continue;
 
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::MoveHandle || wh == WidgetHit::ResizeHandle)

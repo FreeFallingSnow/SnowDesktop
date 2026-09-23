@@ -12,7 +12,7 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
         mouseDownWidgetIndex_ >= widgets_.size();
     return snowdesktop::drag_input_rules::IsMarqueePointerGesture(
         marqueeActive_, mouseDown_, mouseDownHit_ != nullptr,
-        pendingGuideAction_ != WidgetHit::None,
+        pendingWidgetButtonAction_ != WidgetHit::None,
         widgetAction_ != WidgetAction::None,
         middleButtonWidgetMove_, detailColumnResizeActive_,
         widgetScrollbarDragging_, popupScrollbarDragging_,

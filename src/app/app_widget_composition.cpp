@@ -466,11 +466,14 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
     bool visible,
     const RECT& bounds)
 {
-    (void)bounds;
     const auto position = desktopWidgetCompositionItems_.find(widgetId);
     if (position == desktopWidgetCompositionItems_.end())
         return;
     auto& item = position->second;
+    // Collapse and drag-time expansion can change another widget's frame
+    // outside the current dirty region. Rebuild its surface at the new size.
+    if (visible && !EqualRect(&item.bounds, &bounds))
+        pendingDesktopWidgetCompositions_.insert(widgetId);
     if (item.visible == visible)
         return;
     item.visible = visible;

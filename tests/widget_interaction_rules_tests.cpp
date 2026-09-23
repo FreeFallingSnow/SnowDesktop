@@ -470,6 +470,47 @@ void TestScrollableStorageTitleBar()
             scaled.resize.top == 1148 && scaled.resize.bottom == 1196 &&
             scaled.resize.right < 800,
         "scaled title and resize targets remain inside rounded corners");
+
+    widget.type = DesktopWidgetType::FolderMapping;
+    widget.gridSpan.columns = 3;
+    widget.gridSpan.rows = 4;
+    widget.bounds = frame;
+    widget.scrollOffset = 137;
+    Check(!titleBar::IsCollapsed(widget, true, false, false, false),
+        "new and legacy widgets start expanded");
+    widget.titleBarCollapsed = true;
+    Check(titleBar::IsCollapsed(widget, true, false, false, false) &&
+            !titleBar::IsCollapsed(widget, false, false, false, false),
+        "only top title bars apply the stored collapse preference");
+    Check(!titleBar::IsCollapsed(widget, true, true, false, false),
+        "internal drag and retained drop context temporarily expand a collapsed target");
+    Check(!titleBar::IsCollapsed(widget, true, false, true, false),
+        "external file drag temporarily expands a collapsed target");
+    Check(!titleBar::IsCollapsed(widget, true, false, false, true),
+        "moving a widget temporarily expands collapsed targets");
+    const RECT collapsed = titleBar::VisibleFrame(frame,
+        titleBar::IsCollapsed(widget, true, false, false, false), 34, 2);
+    const RECT expanded = titleBar::VisibleFrame(frame, false, 34, 2);
+    Check(collapsed.left == 100 && collapsed.top == 200 &&
+            collapsed.right == 400 && collapsed.bottom == 238 &&
+            EqualRect(&expanded, &frame),
+        "ending or cancelling a drag restores just the title row; expanding restores full bounds");
+    Check(widget.titleBarCollapsed && widget.gridSpan.columns == 3 &&
+            widget.gridSpan.rows == 4 && widget.scrollOffset == 137 &&
+            EqualRect(&widget.bounds, &frame),
+        "temporary expansion never changes saved preference, occupancy, size or scroll position");
+    widget.type = DesktopWidgetType::Collection;
+    widget.scrollContainerMode = false;
+    Check(!titleBar::IsCollapsed(widget, true, false, false, false),
+        "switching to large-folder mode reveals content despite a retained collapse preference");
+
+    const RECT centered = titleBar::CenteredTitleRect({100, 202, 400, 236}, 26, 60, 3);
+    Check(centered.left == 160 && centered.right == 340 &&
+            centered.top == 205 && centered.bottom == 233,
+        "title is centered on the complete widget while avoiding both toolbar sides");
+    const RECT narrow = titleBar::CenteredTitleRect({100, 202, 150, 236}, 26, 60, 3);
+    Check(narrow.left == 125 && narrow.right == 125,
+        "narrow widgets hide title text instead of overlapping controls or inverting its rectangle");
 }
 
 void TestBottomBarWidthFollowsCornerAndHeight()

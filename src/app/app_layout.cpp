@@ -424,6 +424,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.titleBarCollapsed = saved.titleBarCollapsed;
         widget.largeFolderTitleless =
             widget.type == DesktopWidgetType::Collection &&
             snowdesktop::collection_titleless_rules::ResolveStoredMode(
@@ -1049,6 +1050,7 @@ bool DesktopApp::SaveLayoutSlots()
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"titleBarCollapsed\": " << (w.titleBarCollapsed ? "true" : "false")
              << ", \"largeFolderTitleless\": "
              << (w.largeFolderTitleless ? "true" : "false")
              << ", \"keepWhenDesktopHidden\": "

@@ -93,9 +93,9 @@ void GuideWidget::DrawContent(ID2D1DeviceContext* context, RECT body)
     const bool secondaryHovered =
         PtInRect(&secondaryButton, app_->lastMousePoint_) != FALSE;
     const bool primaryPressed = primaryHovered && app_->mouseDown_ &&
-        app_->pendingGuideAction_ == WidgetHit::GuideAddWidgetBtn;
+        app_->pendingWidgetButtonAction_ == WidgetHit::GuideAddWidgetBtn;
     const bool secondaryPressed = secondaryHovered && app_->mouseDown_ &&
-        app_->pendingGuideAction_ == WidgetHit::GuideDetailsBtn;
+        app_->pendingWidgetButtonAction_ == WidgetHit::GuideDetailsBtn;
 
     const D2D1_COLOR_F secondaryFill = lightTheme
         ? D2D1::ColorF(0.04f, 0.08f, 0.14f,

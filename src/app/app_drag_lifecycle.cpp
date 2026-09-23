@@ -471,7 +471,7 @@ bool DesktopApp::HasCancelablePointerPressState() const
         dockPressedTargetWindow_ != nullptr ||
         dockPressedContainer_ != nullptr ||
         dockPressedClosedCollectionPopup_ ||
-        pendingGuideAction_ != WidgetHit::None ||
+        pendingWidgetButtonAction_ != WidgetHit::None ||
         marqueeActive_ ||
         widgetAction_ != WidgetAction::None ||
         middleButtonWidgetMove_ ||
@@ -535,7 +535,7 @@ void DesktopApp::CancelPointerPressWithoutCaptureRelease()
     pendingCtrlToggleWidgetIndex_ =
         static_cast<size_t>(-1);
     pendingCtrlToggleWidgetItem_ = nullptr;
-    pendingGuideAction_ = WidgetHit::None;
+    pendingWidgetButtonAction_ = WidgetHit::None;
     if (pressedDockItem)
         pressedDockItem->SetSelected(false);
     ClearDockPressedState();

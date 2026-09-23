@@ -2,6 +2,38 @@
 
 // Keyboard entry/exit and activation for widget-contained items.
 
+void DesktopApp::ToggleWidgetCollapsed(size_t widgetIndex)
+{
+    if (widgetIndex >= widgets_.size()) return;
+    auto& widget = widgets_[widgetIndex];
+    WidgetContainer* target = nullptr;
+    for (const auto& container : containers_)
+    {
+        auto* candidate = dynamic_cast<WidgetContainer*>(container.get());
+        if (candidate && candidate->GetWidgetData() == &widget)
+        {
+            target = candidate;
+            break;
+        }
+    }
+    if (!target || !target->UsesTopTitleBar() ||
+        dragSession_.HasContext() || dragDropController_.IsExternalDragActive() ||
+        widgetAction_ != WidgetAction::None)
+        return;
+
+    if (auto* searchable = dynamic_cast<ScrollingItemWidget*>(target))
+        searchable->SetSearchFocused(false);
+    SelectWidgetOnly(widgetIndex);
+    // Collapse changes presentation only: never resize the occupied grid,
+    // reset scrolling, or rebuild the underlying item/slot objects.
+    widget.titleBarCollapsed = !widget.titleBarCollapsed;
+    UpdateHostInputImePosition();
+    SaveLayoutSlots();
+    InvalidateDragStaticScene();
+    (void)QueueDesktopWidgetComposition(widget.id);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 void DesktopApp::EnterWidget()
 {
     int foundIdx = -1;
@@ -15,6 +47,9 @@ void DesktopApp::EnterWidget()
     if (widget.type == DesktopWidgetType::LuaScript ||
         widget.type == DesktopWidgetType::Guide)
         return;   // 此类组件无内部成员导航
+
+    if (IsWidgetCollapsed(widget))
+        ToggleWidgetCollapsed(static_cast<size_t>(foundIdx));
 
     ClearSelection();
 

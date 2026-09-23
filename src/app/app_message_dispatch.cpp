@@ -845,6 +845,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(it->get());
             if (!wc) continue;
+            if (wc->HitTestWidget(pt) == WidgetHit::CollapseToggleBtn)
+            {
+                // The double-click message replaces the second button-down.
+                OnLeftButtonDown(wp, lp);
+                return 0;
+            }
+            if (wc->IsCollapsed()) continue;
             RECT bodyRect = wc->GetBodyRect();
             for (auto& slot : wc->GetSlots())
             {
@@ -906,7 +913,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             {
                 auto* wc = dynamic_cast<WidgetContainer*>(c.get());
                 if (!wc) continue;
-                RECT bodyRect = wc->GetBodyRect();
+                RECT bodyRect = wc->IsCollapsed()
+                    ? wc->GetFrameRect() : wc->GetBodyRect();
                 if (PtInRect(&bodyRect, pt))
                 {
                     overWidgetArea = true;
