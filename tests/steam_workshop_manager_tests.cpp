@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <optional>
@@ -92,6 +93,62 @@ struct ScopedEnvironmentVariable
         SetEnvironmentVariableW(name.c_str(),
             original ? original->c_str() : nullptr);
     }
+};
+
+// Redirect registry reads only inside this test process. Never overwrite the
+// user's Steam installation registration to exercise library discovery.
+struct ScopedSteamRegistry
+{
+    std::wstring keyPath = L"Software\\SnowDesktopWorkshopTests-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" +
+        std::to_wstring(GetTickCount64());
+    HKEY root = nullptr;
+    bool redirected = false;
+
+    explicit ScopedSteamRegistry(const std::filesystem::path& steamRoot)
+    {
+        const auto created = RegCreateKeyExW(HKEY_CURRENT_USER,
+            keyPath.c_str(), 0, nullptr, REG_OPTION_VOLATILE,
+            KEY_ALL_ACCESS, nullptr, &root, nullptr);
+        Check(created == ERROR_SUCCESS,
+            "create isolated Steam registry fixture");
+        if (created != ERROR_SUCCESS) return;
+
+        HKEY steam = nullptr;
+        const auto opened = RegCreateKeyExW(root, L"Software\\Valve\\Steam",
+            0, nullptr, REG_OPTION_VOLATILE, KEY_ALL_ACCESS, nullptr,
+            &steam, nullptr);
+        Check(opened == ERROR_SUCCESS,
+            "create isolated SteamPath registry key");
+        if (opened != ERROR_SUCCESS) return;
+        const std::wstring path = steamRoot.wstring();
+        const auto written = RegSetValueExW(steam, L"SteamPath", 0, REG_SZ,
+            reinterpret_cast<const BYTE*>(path.c_str()),
+            static_cast<DWORD>((path.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(steam);
+        Check(written == ERROR_SUCCESS,
+            "write isolated SteamPath registry value");
+        if (written != ERROR_SUCCESS) return;
+        redirected = RegOverridePredefKey(HKEY_CURRENT_USER, root) ==
+            ERROR_SUCCESS;
+        Check(redirected, "redirect Steam registry discovery for this process");
+    }
+
+    ~ScopedSteamRegistry()
+    {
+        if (redirected)
+            Check(RegOverridePredefKey(HKEY_CURRENT_USER, nullptr) ==
+                ERROR_SUCCESS, "restore process registry discovery");
+        if (root)
+        {
+            RegCloseKey(root);
+            Check(RegDeleteTreeW(HKEY_CURRENT_USER, keyPath.c_str()) ==
+                ERROR_SUCCESS, "remove isolated Steam registry fixture");
+        }
+    }
+
+    ScopedSteamRegistry(const ScopedSteamRegistry&) = delete;
+    ScopedSteamRegistry& operator=(const ScopedSteamRegistry&) = delete;
 };
 
 void TestManagerFrameScheduler()
@@ -916,6 +973,109 @@ void TestComponentPublishPlan()
         "component publish action names are stable for JSON CLI output");
 }
 
+void TestSteamLibraryDiscovery()
+{
+    TemporaryDirectory temporary;
+    const auto steamRoot = temporary.path / L"SteamClient";
+    const auto secondaryRoot = temporary.path / L"SteamLibrary";
+    const auto libraryFile = steamRoot / L"steamapps" / L"libraryfolders.vdf";
+    const auto workshop = secondaryRoot / L"steamapps" / L"workshop";
+    const auto content = workshop / L"content" / L"5080330";
+    const std::vector<std::string> itemIds{
+        "3793834692", "3795310094", "3806202707" };
+    std::filesystem::create_directories(libraryFile.parent_path());
+    for (const auto& id : itemIds)
+        std::filesystem::create_directories(content / id);
+    // Reported failure: the secondary library has fully downloaded subscribed
+    // items but its libraryfolders.vdf apps map does not contain 5080330.
+    std::ofstream(workshop / L"appworkshop_5080330.acf", std::ios::binary) <<
+        R"VDF("AppWorkshop"
+{
+    "appid" "5080330"
+    "NeedsUpdate" "0"
+    "NeedsDownload" "0"
+    "WorkshopItemsInstalled"
+    {
+        "3793834692" { "manifest" "1506793581503237230" }
+        "3795310094" { "manifest" "5544047464103459455" }
+        "3806202707" { "manifest" "7688366594659867925" }
+    }
+    "WorkshopItemDetails"
+    {
+        "3793834692" { "latest_manifest" "1506793581503237230" "subscribedby" "123" }
+        "3795310094" { "latest_manifest" "5544047464103459455" "subscribedby" "123" }
+        "3806202707" { "latest_manifest" "7688366594659867925" "subscribedby" "123" }
+    }
+})VDF";
+
+    ScopedSteamRegistry registry(steamRoot);
+    if (!registry.redirected) return;
+    const auto pathText = [](const std::filesystem::path& path)
+    {
+        const auto utf8 = path.generic_u8string();
+        return std::string(utf8.begin(), utf8.end());
+    };
+    const auto writeLibraries = [&](bool primaryRegistered,
+                                   bool secondaryHasApps, bool legacy)
+    {
+        std::ofstream output(libraryFile, std::ios::binary | std::ios::trunc);
+        output << "\"libraryfolders\" {\n";
+        if (legacy)
+        {
+            output << "\"0\" " << std::quoted(pathText(steamRoot)) << '\n'
+                << "\"1\" " << std::quoted(pathText(secondaryRoot)) << '\n';
+        }
+        else
+        {
+            output << "\"0\" { \"path\" " << std::quoted(pathText(steamRoot))
+                << " \"apps\" { \"" << (primaryRegistered ? "5080330" : "228980")
+                << "\" \"123\" } }\n"
+                << "\"1\" { \"path\" " << std::quoted(pathText(secondaryRoot));
+            if (secondaryHasApps) output << " \"apps\" { \"730\" \"456\" }";
+            output << " }\n\"2\" { \"path\" "
+                << std::quoted(pathText(secondaryRoot / L".")) << " }\n";
+        }
+        output << "}\n";
+        output.flush();
+        Check(output.good(), "write library discovery input fixture");
+    };
+    const auto checkSubscriptions = [&](const char* scenario)
+    {
+        std::string error;
+        const auto libraries = DiscoverSteamLibraryRoots(5080330u, error);
+        Check(error.empty(), "valid library metadata is readable");
+        Check(libraries.size() == 2,
+            "library discovery retains both roots without duplicate watches");
+        const auto cache = ReadSteamWorkshopLocalCache(libraries, 5080330u);
+        Check(cache.authoritative && cache.subscribedPublishedFileIds == itemIds,
+            scenario);
+        Check(cache.readyItems.size() == itemIds.size(),
+            "all three reported subscribed downloads reach the ready snapshot");
+        for (const auto& item : cache.readyItems)
+            Check(item.contentDirectory == content / item.publishedFileId,
+                "ready downloads retain their actual secondary library paths");
+    };
+
+    writeLibraries(false, true, false);
+    checkSubscriptions("discover subscribed content when neither apps map lists SnowDesktop");
+    writeLibraries(true, true, false);
+    checkSubscriptions("an app registration in the primary library does not hide secondary downloads");
+    writeLibraries(true, false, false);
+    checkSubscriptions("a missing secondary apps map does not hide Workshop downloads");
+    writeLibraries(false, false, true);
+    checkSubscriptions("legacy library paths remain discoverable without apps maps");
+
+    std::filesystem::remove(libraryFile);
+    std::string error;
+    auto libraries = DiscoverSteamLibraryRoots(5080330u, error);
+    Check(error.empty() && libraries == std::vector{steamRoot},
+        "missing library metadata retains the Steam installation fallback");
+    std::ofstream(libraryFile, std::ios::binary) << "\"libraryfolders\" {";
+    libraries = DiscoverSteamLibraryRoots(5080330u, error);
+    Check(!error.empty() && libraries == std::vector{steamRoot},
+        "partially written library metadata reports an error and retains the fallback");
+}
+
 void TestSteamWorkshopLocalCache()
 {
     TemporaryDirectory temporary;
@@ -1133,6 +1293,7 @@ int wmain(int argc, wchar_t** argv)
     TestPreviewCacheNotifications();
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
+    TestSteamLibraryDiscovery();
     TestSteamWorkshopLocalCache();
     TestProjectStore();
     TestWorkshopManagerDataMigration();
