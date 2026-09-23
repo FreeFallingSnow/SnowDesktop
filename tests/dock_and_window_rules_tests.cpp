@@ -4395,6 +4395,42 @@ int main(int argc, char** argv)
                 L"C:\\PROGRAMS\\SUITE\\UI\\HELPER.EXE",
                 L"", std::span<const std::wstring>{}),
         "an executable launcher must match a descendant window process only inside the same installation tree");
+    {
+        // GitHub Desktop's root stub has already exited, and the real window
+        // exposes no AUMID. Pin suppression and activation share this matcher.
+        const std::wstring launcher = L"C:\\APPS\\GITHUBDESKTOP\\GITHUBDESKTOP.EXE";
+        const std::wstring appId = L"COM.SQUIRREL.GITHUBDESKTOP.GITHUBDESKTOP";
+        const auto matches = [&](const std::wstring& running,
+                                 const std::wstring& shortcutId) {
+            return identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable, launcher, shortcutId, L"",
+                running, L"", {});
+        };
+        const std::wstring running =
+            L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\GITHUBDESKTOP.EXE";
+        Check(matches(running, appId),
+            "a pinned Squirrel shortcut must match its versioned executable after the launcher exits without a window AUMID");
+        Check(matches(L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.7\\GITHUBDESKTOP.EXE", appId) &&
+                matches(L"C:\\APPS\\GITHUBDESKTOP\\APP-3.7.0-BETA.1+BUILD.2\\GITHUBDESKTOP.EXE", appId),
+            "a stable Squirrel pin must survive version and prerelease directory changes");
+        Check(!matches(running, L"") && !matches(running, L"OTHER.APP") &&
+                !matches(running, L"COM.SQUIRREL."),
+            "a versioned directory alone must not identify an arbitrary executable as a Squirrel launcher");
+        for (const auto* unrelated : {
+                 L"D:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP-OTHER\\APP-3.6.6\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\OTHER.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\TOOLS\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\TOOLS\\APP-3.6.6\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-TOOLS\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-..\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\..\\GITHUBDESKTOP.EXE"})
+        {
+            Check(!matches(unrelated, appId),
+                "a Squirrel pin must not absorb other installs, other executables, nested helpers or non-version directories");
+        }
+    }
     Check(identityRules::MatchesRunningApp(
             DockAppIdentityKind::Applications,
             L"", L"CONTOSO.EDITOR_123!APP", L"",

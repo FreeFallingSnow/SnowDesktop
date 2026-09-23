@@ -345,21 +345,21 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
                     }
                 }
 
-                // 普通 EXE 快捷方式使用独立的进程路径匹配，不读取 AUMID。
-                // 只有无法解析出 EXE 的虚拟 Applications 项才进入下方分支。
+                // Squirrel EXE shortcuts identify a stable launcher whose
+                // short-lived process may be gone before window discovery.
+                ComPtr<IPropertyStore> propertyStore;
+                if (SUCCEEDED(shellLink.As(&propertyStore)))
+                    identity.appUserModelId = ReadDockAppUserModelId(propertyStore.Get());
+                if (identity.appUserModelId.empty())
+                    identity.appUserModelId = ToUpperInvariant(ReadDockShellItemStringProperty(
+                        path, PKEY_AppUserModel_ID));
+
                 if (identity.kind != DockAppIdentityKind::Executable)
                 {
-                    ComPtr<IPropertyStore> propertyStore;
                     std::wstring targetParsingPath;
-                    if (SUCCEEDED(shellLink.As(&propertyStore)))
-                    {
-                        identity.appUserModelId = ReadDockAppUserModelId(propertyStore.Get());
+                    if (propertyStore)
                         targetParsingPath = ReadDockStringProperty(
                             propertyStore.Get(), PKEY_Link_TargetParsingPath);
-                    }
-                    if (identity.appUserModelId.empty())
-                        identity.appUserModelId = ToUpperInvariant(ReadDockShellItemStringProperty(
-                            path, PKEY_AppUserModel_ID));
                     if (targetParsingPath.empty())
                         targetParsingPath = ReadDockShellItemStringProperty(
                             path, PKEY_Link_TargetParsingPath);

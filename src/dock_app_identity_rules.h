@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <span>
 #include <string>
+#include <string_view>
 
 enum class DockAppIdentityKind
 {
@@ -53,6 +54,44 @@ inline bool MatchesExecutableProcessFamily(
         ancestorExecutablePaths.end();
 }
 
+inline bool MatchesSquirrelVersionedExecutable(
+    const std::wstring& launcherExecutablePath,
+    const std::wstring& launcherAppUserModelId,
+    const std::wstring& runningExecutablePath)
+{
+    // Squirrel's stable root stub exits after starting app-<version>\<same exe>.
+    // Its explicit shortcut ID distinguishes this layout from arbitrary apps
+    // with similarly named executables. All inputs are already normalized.
+    constexpr std::wstring_view squirrelIdPrefix = L"COM.SQUIRREL.";
+    if (!launcherAppUserModelId.starts_with(squirrelIdPrefix) ||
+        launcherAppUserModelId.size() == squirrelIdPrefix.size())
+        return false;
+
+    const size_t separator = launcherExecutablePath.find_last_of(L'\\');
+    if (separator == std::wstring::npos || separator <= 2 ||
+        separator + 1 == launcherExecutablePath.size())
+        return false;
+    const std::wstring_view launcher(launcherExecutablePath);
+    const std::wstring_view running(runningExecutablePath);
+    if (!running.starts_with(launcher.substr(0, separator + 1)))
+        return false;
+
+    const auto relative = running.substr(separator + 1);
+    const size_t versionEnd = relative.find(L'\\');
+    if (versionEnd == std::wstring_view::npos ||
+        relative.substr(versionEnd + 1) != launcher.substr(separator + 1))
+        return false;
+    const auto directory = relative.substr(0, versionEnd);
+    if (!directory.starts_with(L"APP-") || directory.size() <= 4 ||
+        directory[4] < L'0' || directory[4] > L'9')
+        return false;
+    // Include prerelease/build suffixes, but never nested paths or traversal.
+    return std::all_of(directory.begin() + 4, directory.end(), [](wchar_t ch) {
+        return (ch >= L'0' && ch <= L'9') || (ch >= L'A' && ch <= L'Z') ||
+            ch == L'.' || ch == L'-' || ch == L'+';
+    });
+}
+
 inline bool MatchesRunningApp(
     DockAppIdentityKind kind,
     const std::wstring& identityExecutablePath,
@@ -69,7 +108,11 @@ inline bool MatchesRunningApp(
         return MatchesExecutableProcessFamily(
             identityExecutablePath,
             runningExecutablePath,
-            ancestorExecutablePaths);
+            ancestorExecutablePaths) ||
+            MatchesSquirrelVersionedExecutable(
+                identityExecutablePath,
+                identityAppUserModelId,
+                runningExecutablePath);
     case DockAppIdentityKind::Applications:
         return !identityAppUserModelId.empty() &&
             identityAppUserModelId == runningAppUserModelId;
