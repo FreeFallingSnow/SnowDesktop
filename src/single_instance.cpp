@@ -337,6 +337,10 @@ DWORD PreparedRestart::Resume()
     if (!thread_) return ERROR_INVALID_HANDLE;
     if (ResumeThread(thread_) == static_cast<DWORD>(-1)) return GetLastError();
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    // This private job owns only the prepared replacement. Its watchdog,
+    // launched applications and subsequent restarts must not inherit it and
+    // accumulate another ancestor job on every restart.
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
     if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation,
             &limits, sizeof(limits)))
     {

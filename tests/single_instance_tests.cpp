@@ -221,6 +221,30 @@ HANDLE Event(const std::wstring& prefix, const wchar_t* suffix)
 
 constexpr wchar_t kRestartTestEnvironment[] = L"SNOWDESKTOP_RESTART_TEST_PREFIX";
 
+bool RestartDescendantsAreIndependent()
+{
+    const std::wstring executable = SelfPath();
+    std::wstring command = L"\"" + executable + L"\" --restart-leaf";
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    PROCESS_INFORMATION child{};
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
+            FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child)) return false;
+    CloseHandle(child.hThread);
+    Handle process(child.hProcess);
+    const DWORD waited = WaitForSingleObject(process.value, 5000);
+    if (waited != WAIT_OBJECT_0)
+    {
+        TerminateProcess(process.value, ERROR_CANCELLED);
+        WaitForSingleObject(process.value, 5000);
+        return false;
+    }
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+    // Query the real immediate job after spawning another process. The private
+    // handoff job must have contained only this replacement, not descendants.
+    return QueryInformationJobObject(nullptr, JobObjectBasicAccountingInformation,
+        &accounting, sizeof(accounting), nullptr) && accounting.TotalProcesses == 1;
+}
+
 // These modes run only this test executable: no desktop host or real data.
 int RunRestartChild(DWORD predecessor)
 {
@@ -234,7 +258,9 @@ int RunRestartChild(DWORD predecessor)
     snowdesktop::single_instance::Guard instance;
     if (instance.Acquire((std::wstring(prefix) + L"-mutex").c_str()) !=
         snowdesktop::single_instance::AcquireResult::Primary) return 13;
-    return SetEvent(primary.value) ? 0 : 14;
+    const bool independent = RestartDescendantsAreIndependent();
+    if (!SetEvent(primary.value)) return 14;
+    return independent ? 0 : 15;
 }
 
 int RunRestartFixture(const std::wstring& prefix)
@@ -335,6 +361,7 @@ void TestRestartHandoff()
             {
                 DWORD code = STILL_ACTIVE;
                 GetExitCodeProcess(child.value, &code);
+                Check(code != 15, "replacement descendants must not inherit the private restart job");
                 Check(code == 0, "replacement exits normally after claiming its isolated guard");
             }
         }
@@ -393,6 +420,7 @@ void TestCleanupPreservesQuit()
 
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--restart-leaf") return 0;
     if (argc == 3 && std::wstring_view(argv[1]) == L"--restart-fixture")
         return RunRestartFixture(argv[2]);
     if (const DWORD predecessor = snowdesktop::single_instance::
