@@ -79,7 +79,8 @@ int main()
         Check(liveReady || refreshed.IsHidden(), "a visible snapshot cannot retire before replacement pixels are ready");
         oldSnapshot = false; oldCompletion = false;
     };
-    const auto noNativeQueue = [] { Check(false, "UI fallback cannot queue a native surface update"); };
+    int unexpectedNativeUpdates = 0;
+    const auto noNativeQueue = [&] { ++unexpectedNativeUpdates; };
     refreshed.Open(100);
     auto action = RefreshContent(refreshed, 145, false, noNativeQueue, prepareLive, retire);
     Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
@@ -102,6 +103,7 @@ int main()
     action = RefreshContent(refreshed, 400, false, noNativeQueue, prepareLive, retire);
     Check(action == ContentRefreshAction::Stable && refreshed.IsInteractive() && !refreshed.IsAnimating(),
         "late content completion after opening paints current content without replaying animation");
+    Check(unexpectedNativeUpdates == 0, "UI fallback cannot queue a native surface update");
     Check(state.IsHidden(), "new state starts hidden");
     Check(!state.IsInteractive(), "hidden popup does not accept input");
 
