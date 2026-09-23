@@ -79,6 +79,12 @@ DesktopApp::~DesktopApp()
     }
     if (oleDragDropAdapter_)
         oleDragDropAdapter_->Detach();
+    // The restart handoff may display an error after this object is destroyed.
+    // Retire the last HWND carrying this pointer while members are still alive,
+    // so that dialog's message loop cannot call back into a destroyed host.
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        DestroyWindow(controlHwnd_);
+    controlHwnd_ = nullptr;
 }
 
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept
