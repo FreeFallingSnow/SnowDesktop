@@ -1314,7 +1314,7 @@ private:
     {
         bool restored = false;
         bool foreground = false;
-        bool synchronousActivationSafe = false;
+        bool responsive = false;
     };
     DockWindowActivationOutcome RequestDockWindowActivation(
         HWND target, bool wasMinimized);
@@ -3501,11 +3501,8 @@ private:
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
     std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;
-    struct DockWindowActivationObservation
-    {
-        bool awaitingRestore = false;
-        ULONGLONG activationRetryDeadline = 0;
-    };
+    using DockWindowActivationObservation =
+        snowdesktop::dock_window_rules::DockWindowActivationObservation;
     std::unordered_map<HWND, DockWindowActivationObservation>
         dockWindowActivationObservations_;
     snowdesktop::UiScheduleToken

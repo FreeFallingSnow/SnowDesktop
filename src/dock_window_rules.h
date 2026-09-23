@@ -368,58 +368,73 @@ constexpr bool IsDockWindowActivationPopupEligible(
 }
 
 /**
- * @brief 判断普通前台请求失败后是否可以共享输入队列重试。
- */
-constexpr bool ShouldRetryDockWindowForegroundActivation(
-    bool foregroundMatched,
-    bool synchronousActivationSafe) noexcept
-{
-    return !foregroundMatched && synchronousActivationSafe;
-}
-
-/**
- * @brief 以前台请求优先、附加输入队列重试为后备激活一个 Dock 窗口。
+ * @brief 只请求一次前台切换，异步完成由观察器确认。
  *
- * 两个请求都必须只操作最终激活窗口。普通路径不得先调用任务切换器或
- * BringWindowToTop；否则根窗口、最后活动弹窗和目标窗口会连续进入前台，
- * 改写无关应用之间的 Z-order。重试回调由平台层负责临时附加输入队列。
+ * 返回时尚未进入前台不代表请求失败。不得在同一次调用里合并外部输入
+ * 队列强制重试，否则异步激活会变成等待外部线程的同步操作。
  */
 template <typename IsForeground,
-    typename RequestForeground,
-    typename RetryForeground>
+    typename RequestForeground>
 bool ApplyDockWindowForegroundActivation(
-    bool synchronousActivationSafe,
     IsForeground&& isForeground,
-    RequestForeground&& requestForeground,
-    RetryForeground&& retryForeground)
+    RequestForeground&& requestForeground)
 {
     if (isForeground())
         return true;
     requestForeground();
-    if (isForeground())
-        return true;
-    if (!ShouldRetryDockWindowForegroundActivation(
-            false, synchronousActivationSafe))
-        return false;
-    retryForeground();
     return isForeground();
 }
 
 /**
- * @brief 根窗口与实际弹窗都可响应时，才允许执行同步置前操作。
+ * @brief 根窗口与实际弹窗仍可响应时才继续观察置前结果。
  */
-constexpr bool IsDockWindowSynchronousActivationSafe(
+constexpr bool IsDockWindowActivationResponsive(
     bool rootWindowSafe,
     bool activationWindowSafe) noexcept
 {
     return rootWindowSafe && activationWindowSafe;
 }
 
+// Host-private observation state. Both waiting for restore and retrying
+// foreground activation have a fixed deadline; polling never renews it.
+struct DockWindowActivationObservation
+{
+    static constexpr ULONGLONG RestoreTimeoutMs = 5000;
+    static constexpr ULONGLONG ActivationTimeoutMs = 1000;
+
+    bool awaitingRestore = false;
+    ULONGLONG deadline = 0;
+    DWORD processId = 0;
+    DWORD threadId = 0;
+
+    void Begin(bool restoring, ULONGLONG now, DWORD process, DWORD thread) noexcept
+    {
+        awaitingRestore = restoring;
+        deadline = now + (restoring ? RestoreTimeoutMs : ActivationTimeoutMs);
+        processId = process;
+        threadId = thread;
+    }
+
+    void Restored(ULONGLONG now) noexcept
+    {
+        if (awaitingRestore && now + ActivationTimeoutMs < deadline)
+            deadline = now + ActivationTimeoutMs;
+        awaitingRestore = false;
+    }
+
+    bool Expired(ULONGLONG now) const noexcept { return now >= deadline; }
+
+    bool Matches(DWORD process, DWORD thread) const noexcept
+    {
+        return processId != 0 && threadId != 0 &&
+            processId == process && threadId == thread;
+    }
+};
+
 /**
  * @brief 解析异步恢复/激活观察器的下一步动作。
  *
- * 恢复请求在窗口退出最小化前没有短超时；真正显示后则只在有限窗口内
- * 重试置前，避免一个已经被用户后续操作取代的旧请求长期抢占前台。
+ * 超时同样适用于始终保持最小化的窗口，避免过期请求稍后抢占前台。
  */
 constexpr DockWindowActivationObservationAction
 ResolveDockWindowActivationObservationAction(
@@ -429,10 +444,10 @@ ResolveDockWindowActivationObservationAction(
     bool awaitingRestore,
     bool iconic,
     bool foregroundMatched,
-    bool activationRetryExpired) noexcept
+    bool observationExpired) noexcept
 {
     if (!windowValid || closePending || !rootWindowSafe ||
-        foregroundMatched)
+        foregroundMatched || observationExpired)
     {
         return DockWindowActivationObservationAction::Stop;
     }
@@ -442,9 +457,7 @@ ResolveDockWindowActivationObservationAction(
             ? DockWindowActivationObservationAction::WaitForRestore
             : DockWindowActivationObservationAction::Stop;
     }
-    return activationRetryExpired
-        ? DockWindowActivationObservationAction::Stop
-        : DockWindowActivationObservationAction::Activate;
+    return DockWindowActivationObservationAction::Activate;
 }
 
 /**

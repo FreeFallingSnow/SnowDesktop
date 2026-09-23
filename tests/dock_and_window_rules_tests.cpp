@@ -4495,60 +4495,41 @@ int main(int argc, char** argv)
                 4, noDockEntry, 4, noDockEntry,
                 501, 500),
         "release-based Dock double-click fallback must match one real item within the system interval");
-    int foregroundSequence = 0;
     int foregroundChecks = 0;
-    int primaryForegroundStep = 0;
-    int retryForegroundStep = 0;
+    int foregroundRequests = 0;
     bool foregroundMatched = false;
+    // A successful cross-queue request may return before the target processes
+    // activation. An immediate mismatch must remain pending, never force a
+    // second request through shared input queues.
     const bool foregroundActivated =
         rules::ApplyDockWindowForegroundActivation(
-            true,
             [&]() {
                 ++foregroundChecks;
                 return foregroundMatched;
             },
-            [&]() {
-                primaryForegroundStep = ++foregroundSequence;
-            },
-            [&]() {
-                retryForegroundStep = ++foregroundSequence;
-                foregroundMatched = true;
-            });
-    Check(foregroundActivated &&
-            foregroundChecks == 3 &&
-            primaryForegroundStep == 1 &&
-            retryForegroundStep == 2,
-        "Dock activation must try one foreground request before one attached-input retry");
+            [&]() { ++foregroundRequests; });
+    Check(!foregroundActivated && foregroundChecks == 2 && foregroundRequests == 1,
+        "a pending asynchronous foreground request must return without an immediate retry");
+    foregroundMatched = true;
+    Check(rules::ApplyDockWindowForegroundActivation(
+            [&]() { return foregroundMatched; },
+            [&]() { ++foregroundRequests; }) && foregroundRequests == 1,
+        "observing delayed foreground completion must not issue another activation");
     int successfulPrimaryRequests = 0;
-    int successfulPrimaryRetries = 0;
     bool primaryMatched = false;
     Check(rules::ApplyDockWindowForegroundActivation(
-            true,
             [&]() { return primaryMatched; },
             [&]() {
                 ++successfulPrimaryRequests;
                 primaryMatched = true;
-            },
-            [&]() { ++successfulPrimaryRetries; }) &&
-            successfulPrimaryRequests == 1 &&
-            successfulPrimaryRetries == 0,
-        "a successful foreground request must not enter the attached-input retry");
+            }) && successfulPrimaryRequests == 1,
+        "an immediately completed foreground request must be observed");
     int alreadyForegroundRequests = 0;
     Check(rules::ApplyDockWindowForegroundActivation(
-            true,
             []() { return true; },
-            [&]() { ++alreadyForegroundRequests; },
             [&]() { ++alreadyForegroundRequests; }) &&
             alreadyForegroundRequests == 0,
         "an already foreground application must not mutate Z-order again");
-    int unsafeForegroundRetries = 0;
-    Check(!rules::ApplyDockWindowForegroundActivation(
-            false,
-            []() { return false; },
-            []() {},
-            [&]() { ++unsafeForegroundRetries; }) &&
-            unsafeForegroundRetries == 0,
-        "a hung activation target must not enter the attached-input retry");
     using MinimizeRoute = rules::DockWindowMinimizeRequestRoute;
     const auto checkMinimizeRequestRoute = [](
         bool postAccepted, bool showAccepted, MinimizeRoute expectedRoute,
@@ -4653,26 +4634,41 @@ int main(int argc, char** argv)
             !rules::IsDockWindowActivationPopupEligible(
                 true, true, false, true),
         "only a visible restorable popup may replace the root activation target");
-    Check(rules::ShouldRetryDockWindowForegroundActivation(
-            false, true) &&
-            !rules::ShouldRetryDockWindowForegroundActivation(
-                true, true) &&
-            !rules::ShouldRetryDockWindowForegroundActivation(
-                false, false),
-        "input queues may be shared only after a safe ordinary foreground request fails");
-    Check(rules::IsDockWindowSynchronousActivationSafe(
+    Check(rules::IsDockWindowActivationResponsive(
             true, true) &&
-            !rules::IsDockWindowSynchronousActivationSafe(
+            !rules::IsDockWindowActivationResponsive(
                 false, true) &&
-            !rules::IsDockWindowSynchronousActivationSafe(
+            !rules::IsDockWindowActivationResponsive(
                 true, false),
-        "synchronous activation must require both the root and actual popup threads to respond");
+        "activation observation stops when the root or actual popup stops responding");
+    rules::DockWindowActivationObservation observation;
+    observation.Begin(true, 100, 42, 7);
+    Check(observation.awaitingRestore && !observation.Expired(5099) && observation.Expired(5100),
+        "a restore that never completes must expire after five seconds");
+    Check(observation.Matches(42, 7) && !observation.Matches(43, 7) &&
+        !observation.Matches(42, 8) && !observation.Matches(0, 0),
+        "an old activation request must not follow a recycled window to a different owner");
+    observation.Restored(300);
+    observation.Restored(900);
+    Check(!observation.awaitingRestore && !observation.Expired(1299) && observation.Expired(1300),
+        "a visible target gets one second for foreground activation and polling cannot renew it");
+    observation.Begin(true, 100, 42, 7);
+    observation.Restored(5000);
+    Check(observation.Expired(5100),
+        "late restore completion must not extend the original request deadline");
+    observation.Begin(false, 100, 42, 7);
+    observation.Restored(500);
+    Check(!observation.Expired(1099) && observation.Expired(1100),
+        "an already visible target gets a bounded activation window from the original click");
     using ObservationAction =
         rules::DockWindowActivationObservationAction;
     Check(rules::ResolveDockWindowActivationObservationAction(
             true, false, true, true, true, false, false) ==
             ObservationAction::WaitForRestore,
         "a valid asynchronous restore must remain observed while the window is iconic");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, true, true, false, true) == ObservationAction::Stop,
+        "an expired restore must stop even when the target keeps pumping messages while minimized");
     Check(rules::ResolveDockWindowActivationObservationAction(
             true, false, true, true, false, false, false) ==
             ObservationAction::Activate &&
@@ -5932,6 +5928,10 @@ int main(int argc, char** argv)
             {"src/app/app_dock_window_tracking.cpp", "void DesktopApp::RefreshDockForegroundState()",
              "void DesktopApp::RefreshDockRunningWindows(",
              {"EnumWindows(", "QueryDock", "RefreshDockRunningWindows(", "InvalidateDockContainers("}},
+            // Negative architecture boundary: attaching external input queues
+            // turns native foreground activation into an unbounded wait. The
+            // injected request tests above do not exercise that Win32 hazard.
+            {"src/app/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
             {"src/app/app_widget_placement.cpp", "", "", {"RebuildContainersAndItems("}},
             {"src/app/app_floating_dock_lifecycle.cpp", "", "", {"SetWindowsHookExW("}},
             {"src/app/app_floating_popup_window.cpp", "", "", {"SetWindowsHookExW(", "CloseFloatingDock("}},
