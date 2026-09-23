@@ -856,7 +856,10 @@ bool DesktopApp::SaveLayoutSlots()
     {
         if (!item.parsingName.empty())
         {
-            RememberSavedPageId(item.gridCell.pageId);
+            // Hidden collection/Dock members keep their return-position record,
+            // but must not recreate a page that the visible layout reclaimed.
+            if (!item.name.empty() && !IsItemInAnyWidget(item))
+                RememberSavedPageId(item.gridCell.pageId);
             LayoutRecord record;
             record.cell = item.gridCell;
             record.span = item.gridSpan;

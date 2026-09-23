@@ -1545,6 +1545,76 @@ int main(int argc, char** argv)
     }
 
     {
+        // Page lifetime follows visible ownership, not collected files' stale
+        // return cells. Only ownership lookup is a fixture; occupancy and page
+        // reclamation run the same rules as DesktopApp::PageHasContent/mapping.
+        std::vector<DesktopItem> pageItems(2);
+        pageItems[0].name = L"Collected.txt";
+        pageItems[0].layoutKey = L"collected";
+        pageItems[0].gridCell = { L"retired", 9, 8 };
+        pageItems[1].name = L"Dock shortcut";
+        pageItems[1].layoutKey = L"dock-only";
+        pageItems[1].gridCell = { L"retired", 4, 3 };
+        std::vector<DesktopWidget> pageWidgets(3);
+        pageWidgets[0].id = L"group-child";
+        pageWidgets[1].id = L"dock-widget";
+        pageWidgets[2].id = L"guide";
+        pageWidgets[2].type = DesktopWidgetType::Guide;
+        for (auto& widget : pageWidgets)
+            widget.gridCell.pageId = L"retired";
+        const auto isOwned = [](const DesktopItem& item) {
+            return item.layoutKey == L"collected" || item.layoutKey == L"dock-only";
+        };
+        const auto isHosted = [](const DesktopWidget& widget) {
+            return widget.id == L"group-child" || widget.id == L"dock-widget";
+        };
+        const auto hasContent = [&](const std::wstring& pageId) {
+            return pageNavigation::HasContent(
+                pageId, pageItems, pageWidgets, isOwned, isHosted);
+        };
+        Check(hasContent(L"retired"),
+            "the guide must keep a newly created page available before real content arrives");
+        pageWidgets.pop_back();
+        Check(!hasContent(L"retired"),
+            "removing the guide must expose an empty page despite hidden files and hosted widgets");
+        std::vector<std::wstring> ids{ L"fixed", L"default", L"retired" };
+        std::unordered_map<std::wstring, int> columns{
+            { L"fixed", 27 }, { L"default", 20 }, { L"retired", 20 } };
+        std::unordered_map<std::wstring, int> rows{
+            { L"fixed", 11 }, { L"default", 10 }, { L"retired", 10 } };
+        pageNavigation::PruneEmptyPages(ids, columns, rows, 2, true, hasContent);
+        Check(ids == std::vector<std::wstring>{ L"fixed", L"default" } &&
+                !columns.contains(L"retired") && !rows.contains(L"retired"),
+            "a page with only hidden ownership must be reclaimed while physical monitor slots remain");
+        Check(pageItems[0].layoutKey == L"collected" &&
+                pageItems[0].gridCell.column == 9 && pageItems[0].gridCell.row == 8 &&
+                pageItems.size() == 2 && pageWidgets.size() == 2,
+            "reclaiming a page must preserve hosted data and remembered return positions");
+        pageItems[0].layoutKey = L"visible";
+        Check(hasContent(L"retired"), "a visible desktop file must still keep its page");
+        pageItems[0].name.clear();
+        Check(!hasContent(L"retired"), "an empty desktop entry must not reserve a page");
+        pageWidgets[0].id = L"standalone";
+        Check(hasContent(L"retired"), "a standalone widget must still keep its page");
+    }
+
+    {
+        // Dropping on page 3 empties page 2 while page 4 also exists. Keeping
+        // the numeric offset would switch the user to page 4 after pruning.
+        std::vector<std::wstring> ids{ L"fixed", L"source", L"target", L"later" };
+        std::unordered_map<std::wstring, int> columns{
+            { L"fixed", 27 }, { L"source", 20 }, { L"target", 15 }, { L"later", 12 } };
+        std::unordered_map<std::wstring, int> rows{
+            { L"fixed", 11 }, { L"source", 10 }, { L"target", 8 }, { L"later", 6 } };
+        const int offset = pageNavigation::PruneEmptyPages(
+            ids, columns, rows, 2, true,
+            [](const std::wstring& id) { return id == L"target" || id == L"later"; }, 1);
+        Check(offset == 0 && ids == std::vector<std::wstring>{ L"fixed", L"target", L"later" } &&
+                columns.at(L"target") == 15 && rows.at(L"target") == 8,
+            "reclaiming the source page must retain the requested target and its grid dimensions");
+    }
+
+    {
         // GRID-02: loaded placement records precede Shell item enumeration.
         // Unknown content must not erase dimensions later needed by a file.
         std::vector<std::wstring> ids{ L"main", L"secondary" };

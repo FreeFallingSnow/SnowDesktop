@@ -28,7 +28,7 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
     std::vector<size_t> displaced;
     for (size_t i = 0; i < items_.size(); ++i)
     {
-        if (items_[i].name.empty()) continue;
+        if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
         if (items_[i].gridCell.pageId != targetCell.pageId) continue;
         if (targetCell.column + targetSpan.columns <= items_[i].gridCell.column) continue;
         if (items_[i].gridCell.column + items_[i].gridSpan.columns <= targetCell.column) continue;
@@ -54,7 +54,7 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
 
     for (size_t i = 0; i < items_.size(); ++i)
     {
-        if (items_[i].name.empty()) continue;
+        if (items_[i].name.empty() || IsItemInAnyWidget(items_[i])) continue;
         bool isDisplaced = std::find(displaced.begin(), displaced.end(), i) != displaced.end();
         if (!isDisplaced)
         {
@@ -235,6 +235,9 @@ void DesktopApp::PlaceWidgetWithDisplacement(size_t widgetIndex, GridCell target
         widgets_[widgetIndex].scrollOffset = 0;
     }
 
+    // Commit occupancy and page numbering before rebuilding runtime pointers
+    // or persisting the layout. Moving the last widget can empty its old page.
+    ApplyPageMapping();
     LayoutItems();
     SaveLayoutSlots();
 }

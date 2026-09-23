@@ -180,20 +180,50 @@ inline bool ShortcutMatches(
             NormalizeModifiers(pressedModifiers);
 }
 
+// Ownership, rather than the remembered grid cell alone, determines whether
+// content keeps a desktop page alive. Collected/Dock items and hosted widgets
+// retain their data without reserving their former desktop page.
+template <typename Items, typename Widgets,
+    typename IsOwnedItem, typename IsHostedWidget>
+bool HasContent(
+    const std::wstring& pageId,
+    const Items& items,
+    const Widgets& widgets,
+    IsOwnedItem&& isOwnedItem,
+    IsHostedWidget&& isHostedWidget)
+{
+    for (const auto& item : items)
+        if (!item.name.empty() && item.gridCell.pageId == pageId &&
+            !isOwnedItem(item))
+            return true;
+    for (const auto& widget : widgets)
+        if (widget.gridCell.pageId == pageId && !isHostedWidget(widget))
+            return true;
+    return false;
+}
+
 // Before Shell enumeration completes, an empty runtime item vector does not
 // prove that the pages loaded from disk are empty. Once ready, retain the
 // ordinary empty-page reclamation policy, including disconnected empty pages.
 template <typename HasContent>
-void PruneEmptyPages(
+int PruneEmptyPages(
     std::vector<std::wstring>& pageIds,
     std::unordered_map<std::wstring, int>& columns,
     std::unordered_map<std::wstring, int>& rows,
     std::size_t monitorCount,
     bool contentReady,
-    HasContent&& hasContent)
+    HasContent&& hasContent,
+    int pageOffset = 0)
 {
     if (!contentReady || monitorCount == 0 || pageIds.empty())
-        return;
+        return pageOffset;
+
+    // Preserve the requested page when empty predecessors disappear. Using
+    // the mapped GridPage here would undo navigation that has not mapped yet.
+    const std::size_t requestedIndex = std::min(monitorCount, pageIds.size()) - 1 +
+        static_cast<std::size_t>(std::max(0, pageOffset));
+    const std::wstring requestedId = requestedIndex < pageIds.size()
+        ? pageIds[requestedIndex] : std::wstring{};
 
     std::vector<bool> populated(pageIds.size());
     std::vector<bool> hasNonEmptyAfter(pageIds.size());
@@ -222,6 +252,11 @@ void PruneEmptyPages(
         }
     }
     pageIds = std::move(keep);
+    const auto requested = std::find(pageIds.begin(), pageIds.end(), requestedId);
+    if (requested != pageIds.end())
+        return std::max(0, static_cast<int>(requested - pageIds.begin()) -
+            static_cast<int>(monitorCount - 1));
+    return pageOffset;
 }
 
 template <typename HasContentAtPageIndex>
