@@ -259,6 +259,7 @@ void DesktopApp::DrainBackgroundShellWork()
     shellModelWork_.Drain();
     appIndexWork_.Drain();
     folderReadWork_.Drain();
+    RetryFolderReads();
     clipboardReadWork_.Drain();
 }
 
@@ -620,6 +621,7 @@ void DesktopApp::StopIconLoader()
     shellVisualWork_.Stop();
     shellModelWork_.Stop();
     folderReadWork_.Stop();
+    folderReadRetries_.Clear();
     clipboardReadWork_.Stop();
     iconLoaderPendingKeys_.clear();
 }

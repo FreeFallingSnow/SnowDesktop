@@ -139,3 +139,52 @@ void TestBackgroundShellWorkIsolation()
     while (!weak.expired() && GetTickCount64() < deadline) SwitchToThread();
     Check(weak.expired(), "late results and captured resources are reclaimed without a host callback");
 }
+
+void TestDeferredFolderReadAfterCapacityRecovers()
+{
+    struct Gate
+    {
+        HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ~Gate() { CloseHandle(entered); CloseHandle(release); }
+    };
+    auto gate = std::make_shared<Gate>();
+    snowdesktop::BackgroundWork work(1, 1);
+    snowdesktop::shell_refresh::FolderReadRetries retries;
+    int applied = 0;
+    Check(work.Submit(L"folder:blocked", [gate] {
+        SetEvent(gate->entered);
+        WaitForSingleObject(gate->release, 5000);
+        return 1;
+    }, [&](int value) { applied += value; }, nullptr, 0),
+        "first folder read fills the bounded production worker");
+    Check(WaitForSingleObject(gate->entered, 2000) == WAIT_OBJECT_0,
+        "first folder read is active before the second request");
+    const auto submitNext = [&](const std::wstring& path) {
+        const auto key = L"folder:" + path;
+        const bool accepted = work.Submit(key, [] { return 10; },
+            [&](int value) { applied += value; }, nullptr, 0);
+        if (accepted) retries.Forget(path);
+        else retries.Remember(path, path);
+        return accepted;
+    };
+    Check(!submitNext(L"next") && !retries.Empty(),
+        "capacity rejection retains the affected directory for retry");
+    SetEvent(gate->release);
+    const auto deadline = GetTickCount64() + 2000;
+    while (applied != 1 && GetTickCount64() < deadline)
+    {
+        work.Drain();
+        SwitchToThread();
+    }
+    Check(applied == 1 && !retries.Empty(),
+        "completion alone does not synthesize a new filesystem event");
+    while (applied != 11 && GetTickCount64() < deadline)
+    {
+        work.Drain();
+        retries.Retry(submitNext);
+        SwitchToThread();
+    }
+    Check(applied == 11 && retries.Empty(),
+        "maintenance retry delivers the rejected folder read after capacity frees");
+}

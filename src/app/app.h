@@ -114,6 +114,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "../rename_edit_layout.h"
 #include "rename_notification_tracker.h"
 #include "shell_refresh_snapshot.h"
+#include "folder_read_retries.h"
 #include "startup_shell_read.h"
 #include "selection_controller.h"
 #include "tray_icon_controller.h"
@@ -4434,8 +4435,9 @@ private:
     void RefreshTrayNamespaceRegistrations();
     std::unordered_map<std::wstring, std::uint64_t> folderReadVersions_;
     std::unordered_set<std::wstring> folderReadsPending_;
-    void QueueFolderRead(const std::wstring& path);
-    void QueueDockPathChecks(const std::vector<std::wstring>& paths);
+    snowdesktop::shell_refresh::FolderReadRetries folderReadRetries_;
+    bool QueueFolderRead(const std::wstring& path);
+    void RetryFolderReads();
     void QueueIconTask(IconLoadTask task);
     void DrainBackgroundShellWork();
     std::mutex iconLoaderMutex_;

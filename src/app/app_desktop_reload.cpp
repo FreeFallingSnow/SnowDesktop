@@ -796,10 +796,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     // Revalidate against the new snapshot without losing the last confirmed
     // section/pinned identity while asynchronous Shell queries are pending.
     if (!incremental) InvalidateDockShellMetadata();
-    // A Shell delete removes the desktop item, but its persisted Dock mapping
-    // otherwise survives and still consumes a slot.  Only prune references
-    // that are confirmed missing on disk: hidden files and temporarily
-    // unenumerated Shell items must remain pinned.
+    // A persisted Dock pin is user layout. A missing-path observation can be
+    // stale by the time it reaches the UI or reflect a disconnected drive.
+    // Only the virtual Recycle Bin follows desktop enumeration here.
     std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
         if (snapshot && snapshot->desktopIncremental) return false;
         if (entry.type != DockEntryType::DesktopItem)
@@ -807,22 +806,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         if (IsRecycleBinDockEntry(entry))
             return FindItemIndexByKey(entry.reference) == static_cast<size_t>(-1);
 
-        const std::wstring& path = entry.reference;
-        if (snapshot)
-            return snapshot->missingDockPaths.contains(ToUpperInvariant(path));
-        const bool driveAbsolute = path.size() >= 3 &&
-            ((path[0] >= L'A' && path[0] <= L'Z') ||
-             (path[0] >= L'a' && path[0] <= L'z')) &&
-            path[1] == L':' && (path[2] == L'\\' || path[2] == L'/');
-        const bool uncAbsolute = path.starts_with(L"\\\\");
-        if (!driveAbsolute && !uncAbsolute)
-            return false;
-
-        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
-            return false;
-        const DWORD error = GetLastError();
-        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
-            error == ERROR_INVALID_NAME;
+        return false;
     });
     PruneDockShellMetadata();
     if (!incremental) NormalizeDockRecycleBinPosition();

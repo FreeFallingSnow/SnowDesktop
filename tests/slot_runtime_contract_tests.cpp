@@ -18,6 +18,7 @@
 #include "app/rename_notification_tracker.h"
 #include "app/rename_model_update.h"
 #include "app/shell_refresh_snapshot.h"
+#include "app/folder_read_retries.h"
 #include "app/dock_folder_popup_read.h"
 #include "dock_refresh_cache.h"
 #include "app/dock_icon_work.h"
@@ -3095,6 +3096,7 @@ int wmain(int argc, wchar_t** argv)
     TestShortcutClassificationCapacityRecovery();
     TestLocalIconsBypassBlockedShellFallback();
     TestBackgroundShellWorkIsolation();
+    TestDeferredFolderReadAfterCapacityRecovers();
     TestDockLocalIconsBypassShell();
     TestInitialIconBitmaps();
     TestShellIconSourceStamp();

@@ -118,11 +118,10 @@ void TestFolderRefreshScopeAndReads()
         "a second folder event rejects the old read while retaining both pending directories");
     Request request;
     request.folders = {first, L"c:/mapped/", second, L"C:\\unrelated"};
-    request.dockPaths = {L"C:\\desktop-file"};
     request.iconVisibility[L"desktop-icon"] = true;
     SelectFolders(request, scope);
     Snapshot snapshot;
-    int desktopReads = 0, dockReads = 0;
+    int desktopReads = 0;
     std::vector<std::wstring> foldersRead;
     const auto desktop = [&](const Request&, Snapshot&) { ++desktopReads; return true; };
     const auto folder = [&](const std::wstring& path, MetadataCache&) {
@@ -132,19 +131,18 @@ void TestFolderRefreshScopeAndReads()
         result.complete = true;
         return result;
     };
-    const auto missing = [&](const std::wstring&) { ++dockReads; return false; };
-    Check(ReadSources(request, snapshot, desktop, folder, missing) &&
+    Check(ReadSources(request, snapshot, desktop, folder) &&
             snapshot.foldersOnly && snapshot.folders.size() == 2 &&
-            foldersRead.size() == 2 && desktopReads == 0 && dockReads == 0 &&
+            foldersRead.size() == 2 && desktopReads == 0 &&
             snapshot.folders.contains(L"C:\\MAPPED") && snapshot.folders.contains(L"C:\\OTHER") &&
             request.iconVisibility.empty(),
-        "a mapped-folder event reads each affected directory once without enumerating desktop, unrelated mappings or Dock targets");
+        "a mapped-folder event reads each affected directory once without enumerating desktop or unrelated mappings");
     // Keep filesystem failure separate from an empty successfully read folder.
     Snapshot failed;
     ReadSources(request, failed, desktop,
         [](const std::wstring& path, MetadataCache&) {
             FolderSnapshot result; result.path = path; return result;
-        }, missing);
+        });
     const auto failedFolder = failed.folders.find(key);
     Check(failedFolder != failed.folders.end() && !failedFolder->second.complete,
         "a failed folder read stays incomplete so applying it cannot erase the current listing");
@@ -152,12 +150,11 @@ void TestFolderRefreshScopeAndReads()
     scope.Add({first}, true);
     Request full;
     full.folders = {first, second};
-    full.dockPaths = {L"C:\\desktop-file"};
     SelectFolders(full, scope);
     Snapshot complete;
-    Check(!full.foldersOnly && ReadSources(full, complete, desktop, folder, missing) &&
-            desktopReads == 1 && dockReads == 1,
-        "a desktop/manual refresh dominates folder requests and retains full enumeration and Dock checks");
+    Check(!full.foldersOnly && ReadSources(full, complete, desktop, folder) &&
+            desktopReads == 1,
+        "a desktop/manual refresh dominates folder requests and retains full enumeration");
     scope.Add({second}, false);
     Check(scope.FoldersOnly() && scope.Includes(second) && !scope.Includes(first),
         "a new batch after completion or failure does not inherit obsolete folder scope");
