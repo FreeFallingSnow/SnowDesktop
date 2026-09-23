@@ -420,3 +420,62 @@ void TestLocalIconsBypassBlockedShellFallback()
         [] { return 0; }, [](int) { return true; }, [](int) {}, nullptr, 0),
         "shutdown rejects local/fallback submissions");
 }
+// The slow samples include executables without embedded resources. Window pixels
+// must be available independently of Shell refinement. Shortcut reopen tests use
+// real GDI ownership; only resource/window providers are replaced with values.
+void TestInitialIconBitmaps()
+{
+    using namespace snowdesktop::initial_icon_bitmap;
+    int resources = 0, windows = 0;
+    const auto resource = [&] { ++resources; return 11; };
+    const auto window = [&] { ++windows; return 22; };
+    Check(ReadRunning(false, resource, window) == 11 && resources == 1 && windows == 0,
+        "a local executable icon does not need cross-process window messaging");
+    Check(ReadRunning(false, [&] { ++resources; return 0; }, window) == 22 && windows == 1,
+        "a running executable without embedded resources gets its window icon before Shell returns");
+    Check(ReadRunning(true, resource, window) == 22 && resources == 2 && windows == 2,
+        "packaged apps can preview their window without using a shared host executable icon");
+    Check(ReadRunning(false, [] { return 0; }, [] { return 0; }) == 0,
+        "failed initial providers leave Shell refinement responsible for pixels");
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 2;
+    info.bmiHeader.biHeight = -2;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* pixels = nullptr;
+    snowdesktop::BackgroundBitmap source;
+    source.bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    source.size = {2, 2};
+    Check(source.bitmap && pixels, "create owned shortcut pixel fixture");
+    if (!source.bitmap || !pixels) return;
+    auto* color = static_cast<std::uint32_t*>(pixels);
+    color[0] = 0xff123456;
+    ShortcutCache cache(2);
+    cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size);
+    color[0] = 0xffabcdef;
+    cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size, false);
+    auto first = cache.Get(L"shortcut-A/version-1/96");
+    BITMAP firstBitmap{};
+    Check(first && first->bitmap != source.bitmap && first->size.cx == 2 &&
+        GetObjectW(first->bitmap, sizeof(firstBitmap), &firstBitmap) && firstBitmap.bmBits &&
+        static_cast<std::uint32_t*>(firstBitmap.bmBits)[0] == 0xff123456,
+        "reopened shortcut owns independent refined pixels; late first-quality results cannot downgrade them");
+    first.reset();
+    DeleteObject(std::exchange(source.bitmap, nullptr));
+    auto reopened = cache.Get(L"shortcut-A/version-1/96");
+    Check(reopened && !cache.Get(L"shortcut-A/version-2/96") &&
+        !cache.Get(L"shortcut-A/version-1/192"),
+        "closing the prior popup retains pixels but changed source versions or sizes miss");
+    if (!reopened) return;
+    cache.Put(L"shortcut-A/version-1/96", nullptr, {});
+    Check(cache.Get(L"shortcut-A/version-1/96") != nullptr,
+        "failed refinement cannot replace successful cached shortcut pixels");
+    cache.Put(L"B", reopened->bitmap, reopened->size);
+    (void)cache.Get(L"shortcut-A/version-1/96");
+    cache.Put(L"C", reopened->bitmap, reopened->size);
+    Check(cache.Get(L"shortcut-A/version-1/96") && !cache.Get(L"B") && cache.Get(L"C"),
+        "bounded shortcut cache evicts the least recently used entry without invalidating consumers");
+}

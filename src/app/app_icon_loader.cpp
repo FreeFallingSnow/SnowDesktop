@@ -1,5 +1,6 @@
 #include "app.h"
 #include "shell_icon_request.h"
+#include "initial_icon_bitmap.h"
 #include "../shell_call_diagnostics.h"
 
 #include "../popup_icon_load_rules.h"
@@ -265,6 +266,17 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     auto input = std::make_shared<IconLoadTask>(std::move(value));
     const auto key = input->requestKey;
     const auto queuedAt = GetTickCount64();
+    // Share first pixels across desktop/mapping/popup consumers, independent of
+    // their delivery generation. Version and requested size stay in the key.
+    static const auto shortcutCache = std::make_shared<snowdesktop::initial_icon_bitmap::ShortcutCache>();
+    const auto cache = shortcutCache; // Outstanding workers retain their own lifetime.
+    const auto& source = input->parsingName.empty() ? input->folderPath : input->parsingName;
+    const bool shortcut = snowdesktop::shortcut_application_rules::HasExtension(source, L".lnk") ||
+        snowdesktop::shortcut_application_rules::HasExtension(source, L".url");
+    const auto cacheKey = shortcut && !input->sourceStamp.empty() &&
+            input->sourceStamp.find(L"unknown") == std::wstring::npos
+        ? ToUpperInvariant(source) + L"\n" + std::to_wstring(input->requestedSize) + input->sourceStamp
+        : std::wstring{};
     const auto makeResult = [input] {
         auto result = std::shared_ptr<IconLoadResult>(new IconLoadResult,
             [](IconLoadResult* value) {
@@ -281,7 +293,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
         result->folderPath = input->folderPath;
         return result;
     };
-    auto image = [input, queuedAt, makeResult] {
+    auto image = [input, queuedAt, makeResult, cache, cacheKey] {
         auto& task = *input;
         const auto& tracePath = task.parsingName.empty() ? task.folderPath : task.parsingName;
         shellCalls::Context trace(
@@ -360,6 +372,8 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
             });
         result->iconIsMediaThumbnail = snowdesktop::icon_render_rules::IsMediaThumbnail(
             iconIsThumbnail, shellFolder);
+        if (!result->iconIsMediaThumbnail)
+            cache->Put(cacheKey, result->bitmap, result->bitmapSize, task.phase == IconLoadPhase::Phase2);
         const auto finished = GetTickCount64();
         if (finished - queuedAt >= 250)
         {
@@ -396,19 +410,26 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
     bool submitted = false;
     if (input->phase == IconLoadPhase::Phase1)
     {
-        auto localImage = [input, queuedAt, makeResult] {
+        auto localImage = [input, queuedAt, makeResult, cache, cacheKey] {
             const auto& path = input->parsingName.empty() ? input->folderPath : input->parsingName;
             shellCalls::Context trace(L"icon.local", path);
             const auto started = GetTickCount64();
             auto result = makeResult();
             result->sysIconIndex = input->sysIconIndex;
-            result->bitmap = GetLocalIconResourceBitmap(path, result->bitmapSize, input->requestedSize);
+            const auto cached = cache->Get(cacheKey);
+            if (cached)
+            {
+                result->bitmap = std::exchange(cached->bitmap, nullptr);
+                result->bitmapSize = cached->size;
+            }
+            else result->bitmap = GetLocalIconResourceBitmap(path, result->bitmapSize, input->requestedSize);
             if (result->bitmap) ClampAlphaToColorKey(result->bitmap, kTransparentKey);
             // Record successes as well as misses during rollout so a startup
             // log distinguishes local delivery from waiting for Shell fallback.
             wchar_t timing[256]{};
-            swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d trace=%llu path=",
-                started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0, trace.Id());
+            swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d cached=%d trace=%llu path=",
+                started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0,
+                cached ? 1 : 0, trace.Id());
             WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
             return result;
         };

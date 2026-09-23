@@ -20,6 +20,7 @@
 #include "app/shell_refresh_snapshot.h"
 #include "app/dock_folder_popup_read.h"
 #include "app/dock_icon_work.h"
+#include "app/initial_icon_bitmap.h"
 #include "app/startup_shell_read.h"
 #include "background_work.h"
 #include "app/shell_icon_request.h"
@@ -3093,6 +3094,7 @@ int wmain(int argc, wchar_t** argv)
     TestLocalIconsBypassBlockedShellFallback();
     TestBackgroundShellWorkIsolation();
     TestDockLocalIconsBypassShell();
+    TestInitialIconBitmaps();
     TestShellIconSourceStamp();
     TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();

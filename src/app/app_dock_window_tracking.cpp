@@ -1,6 +1,7 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
+#include "initial_icon_bitmap.h"
 #include "../drag_input_rules.h"
 
 // Running-window discovery, visual state and activation behavior.
@@ -736,13 +737,17 @@ void DesktopApp::RefreshDockRunningWindows(
             GetWindowThreadProcessId(window, &process);
             const auto queuedAt = GetTickCount64();
             dockIconWork_.Submit(L"dock-running:" + key + L"\n" +
-                std::to_wstring(requiredIconSize), [path, appId, requiredIconSize, queuedAt] {
+                std::to_wstring(requiredIconSize), [path, appId, window, process, requiredIconSize, queuedAt] {
                 const auto started = GetTickCount64();
                 auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
-                // Packaged apps may share a host executable. Keep their Shell
-                // identity selection rather than showing that host's icon.
-                if (appId.empty())
-                    result->bitmap = GetLocalIconResourceBitmap(path, result->size, requiredIconSize);
+                result->bitmap = snowdesktop::initial_icon_bitmap::ReadRunning(!appId.empty(),
+                    [&] { return GetLocalIconResourceBitmap(path, result->size, requiredIconSize); },
+                    [&]() -> HBITMAP {
+                        DWORD current = 0;
+                        GetWindowThreadProcessId(window, &current);
+                        if (!process || current != process) return nullptr;
+                        return CreateDockWindowProvidedIconBitmap(window, result->size, requiredIconSize);
+                    });
                 WriteDiagnosticLogEntry((L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
