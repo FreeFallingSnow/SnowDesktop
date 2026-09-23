@@ -19,6 +19,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -578,8 +579,9 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
 static RECT FileCategoryContentRect(FileCategories* widget)
 {
     if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
     body.bottom = std::max<LONG>(body.top,
         std::min<LONG>(body.bottom + widget->Cu(4.0f),
             widget->GetScrollContentBottom()));

@@ -22,6 +22,7 @@
 #include "../category_settings.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -146,13 +147,14 @@ static RECT FolderMappingTabsRect(FolderMapping* widget)
 /**
  * @brief 计算映射文件夹内容区域的矩形
  * @param widget FolderMapping 组件指针
- * @return 内容区域矩形，水平缩进 4 CU、顶部缩进 8 CU，底边靠近底栏但不进入其命中区域
+ * @return 内容区域矩形，水平缩进 4 CU、顶部在顶栏模式缩进 4 CU，其他模式缩进 8 CU
  */
 static RECT FolderMappingContentRect(FolderMapping* widget)
 {
     if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
     body.bottom = std::max<LONG>(body.top,
         std::min<LONG>(body.bottom + widget->Cu(4.0f),
             widget->GetScrollContentBottom()));

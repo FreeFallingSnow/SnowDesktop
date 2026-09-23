@@ -742,8 +742,8 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
     if (categorizedSearchVisibilityOverrideActive_)
         visible = categorizedSearchVisible_;
     if (!visible) return {};
-    RECT body = GetBodyRect();
-    InflateRect(&body, -Cu(10.0f), -Cu(12.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(12.0f), Cu(4.0f));
     if (IsRectEmptyRect(body)) return {};
     InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
@@ -762,8 +762,8 @@ RECT ScrollingItemWidget::GetCategorizedTabsRect(
     if (categorizedTabsVisibilityOverrideActive_)
         visible = categorizedTabsVisible_;
     if (!visible) return {};
-    RECT body = GetBodyRect();
-    InflateRect(&body, -Cu(10.0f), -Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        GetBodyRect(), UsesTopTitleBar(), Cu(10.0f), Cu(8.0f), Cu(4.0f));
     if (IsRectEmptyRect(body)) return {};
     const RECT search = GetSearchBoxRect();
     LONG top = IsRectEmptyRect(search)

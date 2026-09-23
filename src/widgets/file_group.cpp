@@ -17,6 +17,7 @@
 #include "../l10n.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -1402,9 +1403,8 @@ RECT FileGroup::GetContentViewportRect() const
 {
     if (IsGroupSearchActive())
     {
-        RECT body = GetBodyRect();
-        InflateRect(
-            &body, -Cu(4.0f), -Cu(8.0f));
+        RECT body = snowdesktop::storage_title_bar::InsetContent(
+            GetBodyRect(), UsesTopTitleBar(), Cu(4.0f), Cu(8.0f), Cu(4.0f));
         body.bottom = std::max<LONG>(body.top,
             std::min<LONG>(body.bottom + Cu(4.0f),
                 GetScrollContentBottom()));
@@ -1418,9 +1418,8 @@ RECT FileGroup::GetContentViewportRect() const
     auto* source = GetActiveSourceContainer();
     if (!source)
     {
-        RECT body = GetBodyRect();
-        InflateRect(
-            &body, -Cu(4.0f), -Cu(8.0f));
+        RECT body = snowdesktop::storage_title_bar::InsetContent(
+            GetBodyRect(), UsesTopTitleBar(), Cu(4.0f), Cu(8.0f), Cu(4.0f));
         body.bottom = std::max<LONG>(body.top,
             std::min<LONG>(body.bottom + Cu(4.0f),
                 GetScrollContentBottom()));

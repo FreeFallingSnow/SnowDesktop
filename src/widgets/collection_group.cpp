@@ -16,6 +16,7 @@
 #include "../l10n.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -66,8 +67,9 @@ RECT CollectionGroupTabsRect(CollectionGroup* widget)
 RECT CollectionGroupContentRect(CollectionGroup* widget)
 {
     if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
     body.bottom = std::max<LONG>(body.top,
         std::min<LONG>(body.bottom + widget->Cu(4.0f),
             widget->GetScrollContentBottom()));

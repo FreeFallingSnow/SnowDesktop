@@ -77,6 +77,17 @@ inline RECT CenteredTitleRect(RECT bar, int leadingReserve,
         bar.bottom - verticalInset};
 }
 
+// A top title already clears the frame's rounded edge. Use the compact
+// inter-control gap there instead of adding the old outer-edge padding again.
+// Horizontal and bottom insets stay unchanged in both title-bar positions.
+inline RECT InsetContent(RECT body, bool top, int horizontalInset,
+    int verticalInset, int topGap) noexcept
+{
+    return {body.left + horizontalInset,
+        body.top + (top ? topGap : verticalInset),
+        body.right - horizontalInset, body.bottom - verticalInset};
+}
+
 // All inputs are scaled pixels. The resize target always uses the original
 // bottom-bar height, independently of the tab-height-driven top title bar.
 inline Layout Resolve(RECT frame, bool top, int titleHeight,
