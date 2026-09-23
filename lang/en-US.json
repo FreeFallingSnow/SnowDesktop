@@ -521,6 +521,8 @@
     "app.settings.category_hint": "Separate extensions with spaces, commas, or semicolons. The dot prefix is optional and will be normalized on save.",
     "app.settings.category_rules": "Category Rules",
     "app.settings.tab_height": "Tab and Search Box Height",
+    "app.settings.scrollable_title_bar_position": "Scrollable storage widget title bar position",
+    "app.settings.scrollable_title_bar_position_hint": "At the top, the title and actions scale with the tab height. Only the resize dot stays at the bottom. Large-folder mode is unaffected.",
     "app.settings.category_show_count": "Show File Counts on Category Tabs",
     "app.settings.add_category": "Add Category Type",
     "app.settings.new_category": "New Category",

@@ -138,12 +138,14 @@ void TestCodec()
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
     settings.values.personalization.panelGradient.enabled = true;
     settings.values.personalization.showGroupTabCounts = true;
+    settings.values.personalization.scrollableTitleBarOnTop = true;
     settings.values.personalization.showCategoryTabCounts = false;
     settings.values.personalization.panelGradient.angle = 213;
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
     Check(restored.values.personalization.showGroupTabCounts &&
+            restored.values.personalization.scrollableTitleBarOnTop &&
             !restored.values.personalization.showCategoryTabCounts,
         "group tab counts cross the settings process boundary independently from category counts");
     for (const int style : {5, 6})

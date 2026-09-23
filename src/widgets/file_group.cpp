@@ -221,7 +221,7 @@ FileGroupButtonRects GetFileGroupButtonRects(
     const int size = group->Cu(14.0f * scale);
     const int gap = group->Cu(4.0f * scale);
     const int between = group->Cu(4.0f * scale);
-    const int resizeReserve = group->Cu(20.0f * scale);
+    const int resizeReserve = group->GetTitleBarResizeReserve();
     const int height = handle.bottom - handle.top;
     LONG right = handle.right - resizeReserve - gap;
     if (includeOpen)
@@ -1407,7 +1407,7 @@ RECT FileGroup::GetContentViewportRect() const
             &body, -Cu(4.0f), -Cu(8.0f));
         body.bottom = std::max<LONG>(body.top,
             std::min<LONG>(body.bottom + Cu(4.0f),
-                GetMoveHandleRect().top));
+                GetScrollContentBottom()));
         RECT search = GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
             body.top = std::min<LONG>(
@@ -1423,7 +1423,7 @@ RECT FileGroup::GetContentViewportRect() const
             &body, -Cu(4.0f), -Cu(8.0f));
         body.bottom = std::max<LONG>(body.top,
             std::min<LONG>(body.bottom + Cu(4.0f),
-                GetMoveHandleRect().top));
+                GetScrollContentBottom()));
         RECT search = GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
             body.top = std::min<LONG>(

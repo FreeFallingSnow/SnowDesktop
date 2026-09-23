@@ -383,7 +383,7 @@ void DesktopApp::OnMouseMoveAt(
         auto* data = container->GetWidgetData();
         const int maximum = container->GetMaxScrollOffset();
         const int visible = container->GetVisibleContentHeight();
-        const RECT viewport = container->GetContentViewportRect();
+        const RECT viewport = container->GetScrollbarViewportRect();
         const auto geometry = snowdesktop::widget_scroll_rules::
             ResolveScrollbarAxisGeometry(
                 viewport.top, viewport.bottom,

@@ -151,6 +151,9 @@ struct PersonalizationSettings
      */
     float categorizedTabHeight = 34.0f;
 
+    /** Scrollable native storage title bars; independent of theme presets. */
+    bool scrollableTitleBarOnTop = false;
+
     /** Lua desktop widget semantic row height in page CU. */
     float luaWidgetContentRowHeight = 28.0f;
 

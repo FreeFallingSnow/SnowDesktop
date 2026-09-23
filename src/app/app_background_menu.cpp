@@ -718,6 +718,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.gradientEndA) + L":" +
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +
+        std::to_wstring(appearance.scrollableTitleBarOnTop) + L":" +
         std::to_wstring(appearance.categorizedTabHeight) + L":" +
         std::to_wstring(appearance.backgroundPreset) + L":" +
         std::to_wstring(appearance.glassEnabled) + L":" +

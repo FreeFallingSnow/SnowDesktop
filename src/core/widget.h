@@ -124,6 +124,9 @@ public:
     IDWriteTextFormat* GetCuFluentTextFormat(float value) const;
     float GetBarHeight() const;
     float GetBarScale() const;
+    bool UsesTopTitleBar() const;
+    float GetResizeBarHeight() const;
+    int GetTitleBarResizeReserve() const;
     void SetRenderOptions(
         const snowdesktop::WidgetRenderOptions* options)
     {
@@ -186,6 +189,8 @@ public:
     RECT GetMoveHandleRect() const;
     RECT GetResizeHandleRect() const;
     RECT GetTitleRect() const;
+    LONG GetScrollContentBottom() const;
+    RECT GetScrollbarViewportRect() const;
     virtual RECT GetContentViewportRect() const { return GetBodyRect(); }
     virtual void ApplyMarqueeSelection(const RECT& contentRect)
     {

@@ -22,7 +22,7 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBgR, v.widgetBgG, v.widgetBgB, v.widgetBorderR,
     v.widgetBorderG, v.widgetBorderB, v.widgetAlpha, v.widgetBorderAlpha,
     v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength,
-    v.gradientEndA, v.barHeight, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
+    v.gradientEndA, v.barHeight, v.scrollableTitleBarOnTop, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
     v.showCategoryTabCounts, v.showGroupTabCounts, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);

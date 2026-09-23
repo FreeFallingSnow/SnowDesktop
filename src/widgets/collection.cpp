@@ -56,10 +56,10 @@ static RECT CollectionScrollContentRect(Collection* widget)
     if (!widget) return {};
     RECT body = widget->GetBodyRect();
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
-    // Bring the fade closer to the bar without entering its pointer hit area.
+    // Fade near the footer, or near the frame edge when the title is on top.
     body.bottom = std::max<LONG>(body.top,
         std::min<LONG>(body.bottom + widget->Cu(4.0f),
-            widget->GetMoveHandleRect().top));
+            widget->GetScrollContentBottom()));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
@@ -1057,7 +1057,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
             const float bs = GetBarScale();
             const int btnSize = Cu(14.0f * bs);
             const int gap = Cu(4.0f * bs);
-            const int resizeReserve = Cu(20.0f * bs);
+            const int resizeReserve = GetTitleBarResizeReserve();
             RECT toggleBtn = {
                 handle.right - resizeReserve - gap - btnSize,
                 handle.top + (handle.bottom - handle.top - btnSize) / 2,
@@ -1326,7 +1326,7 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
     const float bs = GetBarScale();
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
-    const int resizeReserve = Cu(20.0f * bs);
+    const int resizeReserve = GetTitleBarResizeReserve();
     RECT toggleBtn = {
         handleRect.right - resizeReserve - gap - btnSize,
         handleRect.top + (handleRect.bottom - handleRect.top - btnSize) / 2,

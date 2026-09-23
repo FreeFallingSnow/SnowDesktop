@@ -409,6 +409,8 @@ bool LoadPersonalization(
     if (ReadDoubleField(text, "cornerRadius", v)) s.cornerRadius = (float)v;
     if (ReadDoubleField(text, "contextMenuStyle", v))
         s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
+    s.scrollableTitleBarOnTop = false;
+    ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
@@ -452,6 +454,7 @@ bool LoadPersonalization(
             s.widgetEdgeHighlightStrength;
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
+        const bool titleBarOnTop = s.scrollableTitleBarOnTop;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
         const float luaWidgetContentRowHeight =
@@ -463,6 +466,7 @@ bool LoadPersonalization(
         s = MakeAppearancePreset(s.backgroundPreset);
         s.cornerRadius = cornerRadius;
         s.barHeight = barHeight;
+        s.scrollableTitleBarOnTop = titleBarOnTop;
         s.categorizedTabHeight =
             categorizedTabHeight;
         s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
@@ -529,6 +533,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
     file << "  \"panelGradient\": " << snowdesktop::EncodePanelGradient(s.panelGradient) << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";
+    file << "  \"scrollableTitleBarOnTop\": "
+         << (s.scrollableTitleBarOnTop ? "true" : "false") << ",\n";
     file << "  \"categorizedTabHeight\": "
          << std::clamp(
                 s.categorizedTabHeight,

@@ -2332,6 +2332,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.cornerRadius",
                 "personalization.barHeight",
+                "personalization.scrollableTitleBarOnTop",
                 "personalization.luaWidgetRowHeight",
                 "personalization.showGroupTabCounts",
                 "desktop.categoryLayout",

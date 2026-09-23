@@ -7,6 +7,7 @@
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 #include "widgets/widget_chrome_rules.h"
+#include "widgets/storage_title_bar_layout.h"
 #include "widgets/guide_widget_rules.h"
 #include "pending_drop_rules.h"
 #include "list_detail_rules.h"
@@ -414,6 +415,61 @@ void TestPendingFilePlacementReconciliation()
             "old-a", "new-a", "new-b", "old-b"
         }),
         "multiple pending members must preserve their landing order");
+}
+
+void TestScrollableStorageTitleBar()
+{
+    namespace titleBar = snowdesktop::storage_title_bar;
+    DesktopWidget widget;
+    widget.gridSpan.columns = 3;
+    widget.gridSpan.rows = 4;
+    for (const auto type : {DesktopWidgetType::Collection,
+            DesktopWidgetType::FileCategories, DesktopWidgetType::FolderMapping,
+            DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+    {
+        widget.type = type;
+        widget.scrollContainerMode = true;
+        Check(titleBar::UsesTop(widget, true) && !titleBar::UsesTop(widget, false),
+            "the global position switch applies to every scrollable storage type");
+    }
+    widget.type = DesktopWidgetType::Collection;
+    widget.scrollContainerMode = false;
+    Check(!titleBar::UsesTop(widget, true), "large-folder collections keep their bottom bar");
+    widget.scrollContainerMode = true;
+    widget.gridSpan.columns = widget.gridSpan.rows = 1;
+    Check(!titleBar::UsesTop(widget, true), "compact collections keep their bottom bar");
+    for (const auto type : {DesktopWidgetType::LuaScript, DesktopWidgetType::Guide})
+    {
+        widget.type = type;
+        Check(!titleBar::UsesTop(widget, true), "Lua and guide chrome is unaffected");
+    }
+
+    const RECT frame{100, 200, 400, 600};
+    const auto bottom = titleBar::Resolve(frame, false, 24, 24, 22, 12, 4, 2);
+    Check(bottom.body.top == 200 && bottom.body.bottom == 578 &&
+            bottom.titleBar.top == 574 && bottom.titleBar.bottom == 598 &&
+            bottom.resize.left == 372 && bottom.resize.right == 396 &&
+            bottom.resize.top == 574 && bottom.contentBottom == 574,
+        "default bottom position preserves existing content, move and resize geometry");
+    // A former footer clamp at titleBar.top would erase this content viewport.
+    for (const int height : {24, 34, 48})
+    {
+        const auto top = titleBar::Resolve(frame, true, height, 24, 22, 12, 4, 2);
+        Check(top.titleBar.top == 202 &&
+                top.titleBar.bottom - top.titleBar.top == height &&
+                top.body.top == top.titleBar.bottom && top.body.bottom == 600 &&
+                top.contentBottom == 598 && top.contentBottom > top.body.top,
+            "top title uses tab height, shifts content once and releases the footer row");
+        Check(EqualRect(&top.resize, &bottom.resize) &&
+                top.resize.top > top.titleBar.bottom,
+            "top title height never moves or enlarges the bottom-right resize target");
+    }
+    const auto scaled = titleBar::Resolve({200, 400, 800, 1200},
+        true, 68, 48, 44, 56, 8, 4);
+    Check(scaled.titleBar.bottom == 472 && scaled.body.bottom == 1200 &&
+            scaled.resize.top == 1148 && scaled.resize.bottom == 1196 &&
+            scaled.resize.right < 800,
+        "scaled title and resize targets remain inside rounded corners");
 }
 
 void TestBottomBarWidthFollowsCornerAndHeight()
@@ -1641,6 +1697,7 @@ int main()
     TestActiveItemFallback();
     TestTabWidthDistribution();
     TestBottomBarWidthFollowsCornerAndHeight();
+    TestScrollableStorageTitleBar();
     TestBottomBarContentReservation();
     TestGuidePlaceholderLifecycle();
     TestStableReorder();

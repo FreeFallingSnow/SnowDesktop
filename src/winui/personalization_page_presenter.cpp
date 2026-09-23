@@ -184,6 +184,9 @@ struct PersonalizationPagePresenter::Impl
     ContinuousControl cornerRadius;
     ContinuousControl barHeight;
     ContinuousControl categorizedTabHeight;
+    muxc::ComboBox titleBarPosition{nullptr};
+    SettingRow titleBarPositionRow;
+    winrt::event_token titleBarPositionToken{};
     ContinuousControl luaWidgetContentRowHeight;
     muxc::ToggleSwitch showGroupTabCounts{nullptr};
     SettingRow showGroupTabCountsRow;
@@ -452,6 +455,11 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(categorizedTabHeight, L"cu");
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
+        titleBarPosition = muxc::ComboBox{};
+        titleBarPosition.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        titleBarPosition.MaxWidth(520.0);
+        titleBarPositionRow.Initialize(titleBarPosition);
+        layoutCard.content.Children().Append(titleBarPositionRow.root);
         layoutCard.content.Children().Append(categorizedTabHeight.row.root);
         InitializeContinuousControl(luaWidgetContentRowHeight,
             &PersonalizationSettings::luaWidgetContentRowHeight,
@@ -588,6 +596,7 @@ struct PersonalizationPagePresenter::Impl
                         }
                         const float corner = settings.cornerRadius;
                         const float bar = settings.barHeight;
+                        const bool titleOnTop = settings.scrollableTitleBarOnTop;
                         const float tab = settings.categorizedTabHeight;
                         const float luaWidgetContentRowHeight =
                             settings.luaWidgetContentRowHeight;
@@ -597,6 +606,7 @@ struct PersonalizationPagePresenter::Impl
                         settings = MakeAppearancePreset(preset);
                         settings.cornerRadius = corner;
                         settings.barHeight = bar;
+                        settings.scrollableTitleBarOnTop = titleOnTop;
                         settings.categorizedTabHeight = tab;
                         settings.luaWidgetContentRowHeight =
                             luaWidgetContentRowHeight;
@@ -686,6 +696,15 @@ struct PersonalizationPagePresenter::Impl
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [enabled](PersonalizationSettings& settings) {
                         settings.showGroupTabCounts = enabled;
+                    });
+            });
+        titleBarPositionToken = titleBarPosition.SelectionChanged(
+            [this](const auto&, const auto&) {
+                const int position = titleBarPosition.SelectedIndex();
+                if (position < 0) return;
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [position](PersonalizationSettings& settings) {
+                        settings.scrollableTitleBarOnTop = position == 1;
                     });
             });
         for (ContinuousControl* control : continuousControls)
@@ -855,6 +874,7 @@ struct PersonalizationPagePresenter::Impl
         acrylicToggle.IsOn(settings.acrylicEnabled);
         edgeHighlightToggle.IsOn(settings.widgetEdgeHighlightEnabled);
         showGroupTabCounts.IsOn(settings.showGroupTabCounts);
+        titleBarPosition.SelectedIndex(settings.scrollableTitleBarOnTop ? 1 : 0);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
@@ -1100,6 +1120,17 @@ struct PersonalizationPagePresenter::Impl
             "app.settings.bar_height", L"Bar Height");
         SetContinuousText(categorizedTabHeight,
             "app.settings.tab_height", L"Category Tab Height");
+        titleBarPositionRow.SetText(
+            L("app.settings.scrollable_title_bar_position",
+                L"Scrollable storage widget title bar position"),
+            L("app.settings.scrollable_title_bar_position_hint",
+                L"At the top, the title and actions use the tab height. Only the resize dot stays at the bottom. Large-folder mode is unaffected."));
+        ReplaceComboItems(titleBarPosition, {
+            {"app.dock.bottom", L"Bottom"},
+            {"app.dock.top", L"Top"},
+        });
+        muxa::AutomationProperties::SetName(
+            titleBarPosition, titleBarPositionRow.label.Text());
         SetContinuousText(luaWidgetContentRowHeight,
             "app.settings.lua_widget_row_height",
             L"Lua Widget Row Height");
@@ -1234,6 +1265,8 @@ struct PersonalizationPagePresenter::Impl
             return showGroupTabCounts;
         if (id == "personalization.barHeight")
             return barHeight.slider;
+        if (id == "personalization.scrollableTitleBarOnTop")
+            return titleBarPosition;
         if (id == "personalization.luaWidgetRowHeight")
             return luaWidgetContentRowHeight.slider;
         if (id == "desktop.categoryLayout" ||
@@ -1321,6 +1354,7 @@ struct PersonalizationPagePresenter::Impl
             contentThemeCombo.SelectionChanged(contentThemeToken);
             contextMenuCombo.SelectionChanged(contextMenuToken);
             showGroupTabCounts.Toggled(showGroupTabCountsToken);
+            titleBarPosition.SelectionChanged(titleBarPositionToken);
         }
         catch (...)
         {

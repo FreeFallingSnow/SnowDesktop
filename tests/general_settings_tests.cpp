@@ -360,6 +360,9 @@ int main()
     Check(!savedAppearance.showGroupTabCounts,
         "group tab file counts are opt-in for a new profile");
     savedAppearance.showGroupTabCounts = true;
+    Check(!savedAppearance.scrollableTitleBarOnTop,
+        "existing profiles default to a bottom title bar");
+    savedAppearance.scrollableTitleBarOnTop = true;
     savedAppearance.showCategoryTabCounts = false;
     savedAppearance.panelGradient.enabled = true;
     savedAppearance.panelGradient.angle = 45;
@@ -379,6 +382,7 @@ int main()
                 0.42f) < 0.0001f &&
             loadedAppearance.luaWidgetContentRowHeight == 34.0f &&
             loadedAppearance.showGroupTabCounts &&
+            loadedAppearance.scrollableTitleBarOnTop &&
             !loadedAppearance.showCategoryTabCounts &&
             !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
             loadedAppearance.gradientEndA == savedAppearance.gradientEndA,
@@ -391,11 +395,13 @@ int main()
         {
             auto appearance = MakeAppearancePreset(preset);
             appearance.showGroupTabCounts = enabled;
+            appearance.scrollableTitleBarOnTop = enabled;
             appearance.showCategoryTabCounts = !enabled;
             loadedAppearance.showGroupTabCounts = !enabled;
             Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
                     LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
                     loadedAppearance.showGroupTabCounts == enabled &&
+                    loadedAppearance.scrollableTitleBarOnTop == enabled &&
                     loadedAppearance.showCategoryTabCounts == !enabled,
                 "group count preference survives acrylic preset refresh independently from category counts");
         }
@@ -439,9 +445,11 @@ int main()
     }
     PersonalizationSettings migratedGlass;
     migratedGlass.showGroupTabCounts = true;
+    migratedGlass.scrollableTitleBarOnTop = true;
     migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
             !migratedGlass.showGroupTabCounts &&
+            !migratedGlass.scrollableTitleBarOnTop &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
                 kDefaultEdgeHighlightWidth &&

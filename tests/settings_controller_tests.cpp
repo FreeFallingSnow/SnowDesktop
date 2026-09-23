@@ -283,6 +283,12 @@ void TestRoutes()
     Check(groupCounts.page == SettingsPage::AppearanceWidgets &&
             groupCounts.focusId == "personalization.showGroupTabCounts",
         "group count links reach Widgets & layout without redirecting to desktop categories");
+    const auto titleBarPosition = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.scrollableTitleBarOnTop"));
+    Check(titleBarPosition.page == SettingsPage::AppearanceWidgets &&
+            titleBarPosition.focusId == "personalization.scrollableTitleBarOnTop",
+        "title bar position search and deep links reach the global widget layout settings");
 
     const SettingsRoute desktopIcons = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(

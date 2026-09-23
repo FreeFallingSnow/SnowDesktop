@@ -582,7 +582,7 @@ static RECT FileCategoryContentRect(FileCategories* widget)
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
     body.bottom = std::max<LONG>(body.top,
         std::min<LONG>(body.bottom + widget->Cu(4.0f),
-            widget->GetMoveHandleRect().top));
+            widget->GetScrollContentBottom()));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FileCategoryTabsRect(widget);
     RECT search = widget->GetSearchBoxRect();
@@ -840,7 +840,7 @@ static RECT FileCategoryToggleRect(FileCategories* widget)
     const float bs = widget->GetBarScale();
     const int btnSize = widget->Cu(14.0f * bs);
     const int gap = widget->Cu(4.0f * bs);
-    const int resizeReserve = widget->Cu(20.0f * bs);
+    const int resizeReserve = widget->GetTitleBarResizeReserve();
     return MakeRect(handle.right - resizeReserve - gap - btnSize,
         handle.top + (handle.bottom - handle.top - btnSize) / 2,
         handle.right - resizeReserve - gap, handle.top + (handle.bottom - handle.top + btnSize) / 2);
@@ -859,7 +859,7 @@ static RECT FileCategoryDateToggleRect(FileCategories* widget)
     const int btnSize = widget->Cu(14.0f * bs);
     const int gap = widget->Cu(4.0f * bs);
     const int gapBetween = widget->Cu(4.0f * bs);
-    const int resizeReserve = widget->Cu(20.0f * bs);
+    const int resizeReserve = widget->GetTitleBarResizeReserve();
     const int right = handle.right - resizeReserve - gap - btnSize - gapBetween;
     const int h = handle.bottom - handle.top;
     return MakeRect(right - btnSize,

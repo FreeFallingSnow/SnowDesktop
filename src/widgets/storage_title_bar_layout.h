@@ -1,0 +1,68 @@
+#pragma once
+
+#include "../types.h"
+#include "widget_chrome_rules.h"
+
+namespace snowdesktop::storage_title_bar
+{
+
+inline bool UsesTop(const DesktopWidget& widget, bool enabled) noexcept
+{
+    if (!enabled) return false;
+    switch (widget.type)
+    {
+    case DesktopWidgetType::Collection:
+        return widget.scrollContainerMode &&
+            (widget.gridSpan.columns > 1 || widget.gridSpan.rows > 1);
+    case DesktopWidgetType::FileCategories:
+    case DesktopWidgetType::FolderMapping:
+    case DesktopWidgetType::CollectionGroup:
+    case DesktopWidgetType::FileGroup:
+        return true;
+    default:
+        return false;
+    }
+}
+
+struct Layout
+{
+    RECT body{};
+    RECT titleBar{};
+    RECT resize{};
+    LONG contentBottom = 0;
+};
+
+// All inputs are scaled pixels. The resize target always uses the original
+// bottom-bar height, independently of the tab-height-driven top title bar.
+inline Layout Resolve(RECT frame, bool top, int titleHeight,
+    int bottomHeight, int bottomReserve, int cornerRadius,
+    int minimumInset, int edgeGap) noexcept
+{
+    const auto bar = [&](int height, bool atTop) -> RECT {
+        const int inset = std::min(
+            widget_chrome_rules::BottomBarSideInset(
+                cornerRadius, height, minimumInset, edgeGap),
+            std::max<int>(0, (frame.right - frame.left - 1) / 2));
+        const LONG y = atTop
+            ? std::min<LONG>(frame.bottom, frame.top + edgeGap)
+            : std::max<LONG>(frame.top, frame.bottom - height - edgeGap);
+        return {frame.left + inset, y, frame.right - inset,
+            atTop ? std::min<LONG>(frame.bottom, y + height)
+                  : frame.bottom - edgeGap};
+    };
+    Layout result;
+    result.titleBar = bar(titleHeight, top);
+    result.resize = top ? bar(bottomHeight, false) : result.titleBar;
+    result.resize.left = std::max<LONG>(result.resize.left,
+        result.resize.right - bottomHeight);
+    result.body = frame;
+    if (top)
+        result.body.top = result.titleBar.bottom;
+    else
+        result.body.bottom = std::max<LONG>(
+            frame.top + bottomReserve, frame.bottom - bottomReserve);
+    result.contentBottom = top ? frame.bottom - edgeGap : result.titleBar.top;
+    return result;
+}
+
+} // namespace snowdesktop::storage_title_bar

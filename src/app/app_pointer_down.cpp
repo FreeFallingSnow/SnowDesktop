@@ -847,7 +847,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         {
             const int maximum = wc->GetMaxScrollOffset();
             const int visible = wc->GetVisibleContentHeight();
-            const RECT viewport = wc->GetContentViewportRect();
+            const RECT viewport = wc->GetScrollbarViewportRect();
             const auto geometry = snowdesktop::widget_scroll_rules::
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,

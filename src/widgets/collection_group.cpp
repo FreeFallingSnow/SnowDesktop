@@ -70,7 +70,7 @@ RECT CollectionGroupContentRect(CollectionGroup* widget)
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
     body.bottom = std::max<LONG>(body.top,
         std::min<LONG>(body.bottom + widget->Cu(4.0f),
-            widget->GetMoveHandleRect().top));
+            widget->GetScrollContentBottom()));
     RECT search = widget->GetSearchBoxRect();
     if (!IsRectEmptyRect(search))
         body.top = std::min<LONG>(
@@ -269,7 +269,7 @@ RECT CollectionGroupListToggleRect(CollectionGroup* widget)
     const int size = widget->Cu(14.0f * scale);
     const int gap = widget->Cu(4.0f * scale);
     const int resizeReserve =
-        widget->Cu(20.0f * scale);
+        widget->GetTitleBarResizeReserve();
     return MakeRect(
         handle.right - resizeReserve - gap - size,
         handle.top +

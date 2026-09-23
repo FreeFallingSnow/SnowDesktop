@@ -19,6 +19,7 @@
 #include "app.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
+#include "storage_title_bar_layout.h"
 #include "widget_preview_scene.h"
 #include "../widget_item_layout.h"
 #include "../widget_scroll_rules.h"
@@ -128,17 +129,47 @@ int Widget::Cu(float value) const
     return ScaleWidgetCu(value, GetCellScale());
 }
 
+bool Widget::UsesTopTitleBar() const
+{
+    return data_ && app_ && snowdesktop::storage_title_bar::UsesTop(
+        *data_, app_->CurrentPersonalization().scrollableTitleBarOnTop);
+}
+
+float Widget::GetResizeBarHeight() const
+{
+    return app_ ? app_->CurrentPersonalization().barHeight : 24.0f;
+}
+
 float Widget::GetBarHeight() const
 {
-    if (app_)
-        return app_->CurrentPersonalization().barHeight;
-    return 24.0f;
+    return UsesTopTitleBar()
+        ? app_->GetCategorizedWidgetTabHeight() : GetResizeBarHeight();
 }
 
 float Widget::GetBarScale() const
 {
-    return GetBarHeight() / 24.0f;
+    return GetBarHeight() / (UsesTopTitleBar() ? 34.0f : 24.0f);
 }
+
+int Widget::GetTitleBarResizeReserve() const
+{
+    return UsesTopTitleBar() ? 0 : Cu(20.0f * GetBarScale());
+}
+
+namespace
+{
+snowdesktop::storage_title_bar::Layout StorageChromeLayout(
+    const WidgetContainer& widget, float cornerRadius)
+{
+    return snowdesktop::storage_title_bar::Resolve(
+        widget.GetFrameRect(), widget.UsesTopTitleBar(),
+        widget.Cu(widget.GetBarHeight()),
+        widget.Cu(widget.GetResizeBarHeight()),
+        widget.Cu(widget.GetResizeBarHeight() - 2.0f),
+        widget.Cu(cornerRadius),
+        widget.Cu(4.0f), widget.Cu(2.0f));
+}
+} // namespace
 
 float Widget::FontCu(float value) const
 {
@@ -336,39 +367,23 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 }
 
 /**
- * @brief 获取内容区域矩形（去除底部操作栏区域）
+ * @brief 获取内容区域矩形（去除当前标题栏区域）
  * @return 内容边界矩形
  */
 RECT WidgetContainer::GetBodyRect() const
 {
-    RECT frame = GetFrameRect();
-    const int barReserve = Cu(GetBarHeight() - 2.0f);
-    frame.bottom = std::max<LONG>(frame.top + barReserve, frame.bottom - barReserve);
-    return frame;
+    return StorageChromeLayout(*this,
+        app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
 
 /**
- * @brief 获取底部移动操作栏区域
+ * @brief 获取标题栏移动区域
  * @return 移动操作栏边界矩形
  */
 RECT WidgetContainer::GetMoveHandleRect() const
 {
-    RECT frame = GetFrameRect();
-    const int handleHeight = Cu(GetBarHeight());
-    const float cornerRadius = app_
-        ? app_->CurrentPersonalization().cornerRadius
-        : 12.0f;
-    const int sideInset = snowdesktop::widget_chrome_rules::BottomBarSideInset(
-        Cu(cornerRadius), handleHeight, Cu(4.0f), Cu(2.0f));
-    const int maxSideInset = std::max<int>(
-        0, (frame.right - frame.left - 1) / 2);
-    const int clampedSideInset = std::min(sideInset, maxSideInset);
-    return {
-        frame.left + clampedSideInset,
-        std::max<LONG>(frame.top, frame.bottom - handleHeight - Cu(2.0f)),
-        frame.right - clampedSideInset,
-        frame.bottom - Cu(2.0f)
-    };
+    return StorageChromeLayout(*this,
+        app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).titleBar;
 }
 
 /**
@@ -377,14 +392,23 @@ RECT WidgetContainer::GetMoveHandleRect() const
  */
 RECT WidgetContainer::GetResizeHandleRect() const
 {
-    RECT handle = GetMoveHandleRect();
-    const int handleWidth = Cu(GetBarHeight());
-    return {
-        std::max<LONG>(handle.left, handle.right - handleWidth),
-        handle.top,
-        handle.right,
-        handle.bottom
-    };
+    return StorageChromeLayout(*this,
+        app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).resize;
+}
+
+LONG WidgetContainer::GetScrollContentBottom() const
+{
+    return StorageChromeLayout(*this,
+        app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).contentBottom;
+}
+
+RECT WidgetContainer::GetScrollbarViewportRect() const
+{
+    RECT viewport = GetContentViewportRect();
+    if (UsesTopTitleBar())
+        viewport.bottom = std::max<LONG>(viewport.top,
+            std::min(viewport.bottom, GetResizeHandleRect().top));
+    return viewport;
 }
 
 /**
@@ -402,7 +426,7 @@ RECT WidgetContainer::GetTitleRect() const
             Cu(14.0f * barScale),
             Cu(4.0f * barScale),
             Cu(4.0f * barScale),
-            Cu(20.0f * barScale),
+            GetTitleBarResizeReserve(),
             Cu(2.0f * barScale));
     LONG right = std::max<LONG>(left + 1, handle.right - reserved);
     const float bh = GetBarHeight();
@@ -2359,7 +2383,7 @@ void DrawHorizontalScrollbarAt(ID2D1DeviceContext* context, RECT body,
  */
 void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const
 {
-    const RECT viewport = GetContentViewportRect();
+    const RECT viewport = GetScrollbarViewportRect();
     const int visible = GetVisibleContentHeight();
     const int content = std::max(
         GetTotalContentHeight(), visible + GetMaxScrollOffset());
@@ -2490,14 +2514,18 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         !data_->bottomBarHover || hovered;
     if (showGradient)
     {
-        RECT gradRect = { frame.left, std::max<LONG>(body.top, frame.bottom - Cu(GetBarHeight() * 1.5f)),
-                          frame.right, frame.bottom };
+        const bool topTitle = UsesTopTitleBar();
+        RECT gradRect = topTitle
+            ? RECT{frame.left, frame.top, frame.right, body.top}
+            : RECT{frame.left,
+                std::max<LONG>(body.top, frame.bottom - Cu(GetBarHeight() * 1.5f)),
+                frame.right, frame.bottom};
         if (gradRect.bottom > gradRect.top && !IsRectEmptyRect(gradRect))
         {
             ComPtr<ID2D1GradientStopCollection> stops;
             D2D1_GRADIENT_STOP sd[] = {
-                { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, 0.0f) },
-                { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, gradientEndA) },
+                { 0.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, topTitle ? gradientEndA : 0.0f) },
+                { 1.0f, D2D1::ColorF(fillColor.r, fillColor.g, fillColor.b, topTitle ? 0.0f : gradientEndA) },
             };
             if (SUCCEEDED(context->CreateGradientStopCollection(sd, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) && stops)
             {
@@ -2550,7 +2578,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 auto* dwrite = app_->GetDWriteFactory();
                 auto titleWeight = static_cast<DWRITE_FONT_WEIGHT>(
                     std::max<int>(100, static_cast<int>(app_->GetItemFontWeight()) - (lightTheme ? 200 : 0)));
-                IDWriteTextFormat* fmt = GetCuTextFormatWeight(GetBarHeight() * 0.542f, titleWeight, false);
+                IDWriteTextFormat* fmt = GetCuTextFormatWeight(UsesTopTitleBar()
+                    ? GetBarHeight() * 15.0f / 34.0f
+                    : GetBarHeight() * 0.542f, titleWeight, false);
                 if (fmt)
                 {
                     ComPtr<IDWriteTextLayout> layout;
@@ -2581,13 +2611,13 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Resize handle dot
         {
             RECT rh = GetResizeHandleRect();
-            const int dot = Cu(GetBarHeight() * 0.333f);
+            const int dot = Cu(GetResizeBarHeight() * 0.333f);
             int cx = rh.left + (rh.right - rh.left) / 2;
             int cy = rh.top + (rh.bottom - rh.top) / 2;
             D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(
                 D2D1::RectF((float)(cx - dot/2), (float)(cy - dot/2),
                              (float)(cx + dot/2), (float)(cy + dot/2)),
-                static_cast<float>(Cu(4.0f * GetBarScale())), static_cast<float>(Cu(4.0f * GetBarScale())));
+                static_cast<float>(Cu(4.0f * GetResizeBarHeight() / 24.0f)), static_cast<float>(Cu(4.0f * GetResizeBarHeight() / 24.0f)));
             D2D1::ColorF dotFill = selected
                 ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.62f)
                 : (lightTheme

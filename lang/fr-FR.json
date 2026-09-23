@@ -521,6 +521,8 @@
   "app.settings.category_hint": "Séparez les extensions par des espaces, des virgules ou des points-virgules. Le préfixe point est facultatif et sera normalisé lors de la sauvegarde.",
   "app.settings.category_rules": "Règles de catégorie",
   "app.settings.tab_height": "Hauteur des onglets et de la zone de recherche",
+  "app.settings.scrollable_title_bar_position": "Position de la barre de titre des widgets de rangement défilants",
+  "app.settings.scrollable_title_bar_position_hint": "En haut, le titre et les actions suivent la hauteur des onglets. Seul le point de redimensionnement reste en bas. Le mode grand dossier reste inchangé.",
   "app.settings.category_show_count": "Afficher le nombre de fichiers sur les onglets",
   "app.settings.add_category": "Ajouter un type de catégorie",
   "app.settings.new_category": "Nouvelle catégorie",

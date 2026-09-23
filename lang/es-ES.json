@@ -521,6 +521,8 @@
   "app.settings.category_hint": "Separe las extensiones con espacios, comas o punto y coma. El prefijo de punto es opcional y se normalizará al guardar.",
   "app.settings.category_rules": "Reglas de categoría",
   "app.settings.tab_height": "Altura de pestañas y cuadro de búsqueda",
+  "app.settings.scrollable_title_bar_position": "Posición de la barra de título de los widgets de almacenamiento desplazables",
+  "app.settings.scrollable_title_bar_position_hint": "Arriba, el título y las acciones se ajustan a la altura de las pestañas. Abajo solo queda el punto para cambiar el tamaño. No afecta al modo de carpeta grande.",
   "app.settings.category_show_count": "Mostrar el número de archivos en las pestañas",
   "app.settings.add_category": "Añadir tipo de categoría",
   "app.settings.new_category": "Nueva categoría",

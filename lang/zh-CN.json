@@ -521,6 +521,8 @@
     "app.settings.category_hint": "扩展名用空格、逗号或分号分隔；可省略点号，保存时会自动规范。",
     "app.settings.category_rules": "分类规则",
     "app.settings.tab_height": "标签与搜索框高度",
+    "app.settings.scrollable_title_bar_position": "可滚动收纳组件的标题栏位置",
+    "app.settings.scrollable_title_bar_position_hint": "设为顶部时，标题和操作按钮随标签高度缩放，底部仅保留大小调节圆点。不影响大文件夹模式。",
     "app.settings.category_show_count": "标签显示文件数量",
     "app.settings.add_category": "新增分类类型",
     "app.settings.new_category": "新分类",

@@ -155,7 +155,7 @@ static RECT FolderMappingContentRect(FolderMapping* widget)
     InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
     body.bottom = std::max<LONG>(body.top,
         std::min<LONG>(body.bottom + widget->Cu(4.0f),
-            widget->GetMoveHandleRect().top));
+            widget->GetScrollContentBottom()));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FolderMappingTabsRect(widget);
     if (!IsRectEmptyRect(tabs))
@@ -1163,7 +1163,7 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
     const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = Cu(20.0f * bs);
+    const int resizeReserve = GetTitleBarResizeReserve();
     const int h = handleRect.bottom - handleRect.top;
     RECT toggleBtn = {
         handleRect.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
@@ -1301,7 +1301,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
     const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = Cu(20.0f * bs);
+    const int resizeReserve = GetTitleBarResizeReserve();
     const int h = handle.bottom - handle.top;
     RECT toggleBtn = {
         handle.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
