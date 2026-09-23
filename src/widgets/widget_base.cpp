@@ -2696,18 +2696,6 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                     snowdesktop::menu_fluent_glyphs::kChevronRight,
                     button, format, color);
             context->SetTransform(previousTransform);
-
-            if (!IsCollapsed())
-            {
-                const RECT bar = GetMoveHandleRect();
-                if (auto* line = getBrush(lightTheme
-                    ? D2D1::ColorF(0.11f, 0.13f, 0.17f, 0.18f)
-                    : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f)))
-                    context->DrawLine(
-                        D2D1::Point2F(static_cast<float>(bar.left), static_cast<float>(bar.bottom)),
-                        D2D1::Point2F(static_cast<float>(bar.right), static_cast<float>(bar.bottom)),
-                        line, std::max(1.0f, static_cast<float>(Cu(1.0f))));
-            }
         }
 
         // Subclass buttons

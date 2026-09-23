@@ -1118,12 +1118,12 @@ struct PersonalizationPagePresenter::Impl
         SetContinuousText(barHeight,
             "app.settings.bar_height", L"Bar Height");
         SetContinuousText(categorizedTabHeight,
-            "app.settings.tab_height", L"Category Tab Height");
+            "app.settings.tab_height", L"Top Bar, Tab and Search Box Height");
         topTitleBarRow.SetText(
             L("app.settings.scrollable_title_bar_position",
                 L"Use top title bars for storage widgets"),
             L("app.settings.scrollable_title_bar_position_hint",
-                L"When enabled, scrollable storage widgets show titles and actions at the top, scaled to the tab height. Only the resize dot stays at the bottom. Large-folder mode is unaffected."));
+                L"Place titles and actions at the top, except in large-folder mode."));
         muxa::AutomationProperties::SetName(
             topTitleBarToggle, topTitleBarRow.label.Text());
         SetContinuousText(luaWidgetContentRowHeight,

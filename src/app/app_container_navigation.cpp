@@ -28,8 +28,7 @@ void DesktopApp::ToggleWidgetCollapsed(size_t widgetIndex)
     // reset scrolling, or rebuild the underlying item/slot objects.
     const bool collapse = !IsWidgetCollapsed(widget);
     widget.titleBarCollapsed = collapse;
-    if (hoverExpandedWidgetId_ == widget.id)
-        hoverExpandedWidgetId_.clear();
+    hoverExpandedWidgetIds_.erase(widget.id);
     hoverExpansionSuppressedWidgetId_ = collapse ? widget.id : L"";
     UpdateHostInputImePosition();
     SaveLayoutSlots();

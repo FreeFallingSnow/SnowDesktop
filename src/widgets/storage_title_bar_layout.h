@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../types.h"
+#include "../widget_visibility_rules.h"
 #include "widget_chrome_rules.h"
 
 namespace snowdesktop::storage_title_bar
@@ -49,10 +50,18 @@ inline RECT VisibleFrame(RECT fullFrame, bool collapsed,
 }
 
 inline bool ExpandOnHover(bool eligible, bool wasExpanded, bool suppressed,
-    bool inFrame, bool interactionRetained) noexcept
+    bool inFrame, bool widgetSelected, bool widgetFileSelected,
+    bool interactionRetained) noexcept
 {
+    // Share hover-only visibility's retention policy. Selection retains an
+    // existing expansion, but must not undo an explicit manual collapse.
+    // Drag expansion is handled independently by IsCollapsed, even when the
+    // hover option is disabled or the pointer is suppressed.
     return eligible && !suppressed &&
-        (inFrame || (wasExpanded && interactionRetained));
+        widget_visibility_rules::ShouldRenderWidget(true,
+            false, false, false, wasExpanded && widgetSelected,
+            wasExpanded && widgetFileSelected,
+            wasExpanded && interactionRetained, inFrame);
 }
 
 // Reserve both sides equally so the title stays at the widget's true center,

@@ -117,12 +117,12 @@ bool DesktopApp::IsWidgetCollapsed(const DesktopWidget& widget) const
         // Keep the target expanded through synchronous drop submission too.
         dragSession_.HasContext(), dragDropController_.IsExternalDragActive(),
         widgetAction_ == WidgetAction::Move) &&
-        !(widget.titleBarExpandOnHover && hoverExpandedWidgetId_ == widget.id);
+        !(widget.titleBarExpandOnHover && hoverExpandedWidgetIds_.contains(widget.id));
 }
 
 bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
 {
-    std::wstring expandedId;
+    std::unordered_set<std::wstring> expandedIds;
     bool suppressionStillInside = false;
     for (size_t index = 0; index < widgets_.size(); ++index)
     {
@@ -139,12 +139,13 @@ bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         const bool inFrame = PtInRect(&frame, point) != FALSE;
         const bool suppressed = hoverExpansionSuppressedWidgetId_ == widget.id && inFrame;
         suppressionStillInside |= suppressed;
-        const bool wasExpanded = hoverExpandedWidgetId_ == widget.id;
+        const bool wasExpanded = hoverExpandedWidgetIds_.contains(widget.id);
         bool retained = interactionPinnedWidgetId_ == widget.id ||
             popupWidgetIndex_ == index ||
             (mouseDown_ && mouseDownWidgetIndex_ == index) ||
-            (keyboardNavVisualFocus_ && keyboardNavInsideWidget_ &&
-                keyboardNavWidgetIndex_ == index);
+            snowdesktop::widget_visibility_rules::ShouldRetainForKeyboardNavigation(
+                keyboardNavVisualFocus_, keyboardNavInsideWidget_,
+                keyboardNavWidgetIndex_, index);
         if (wasExpanded && !retained)
         {
             for (const auto& container : containers_)
@@ -161,15 +162,15 @@ bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
         const bool pointerAvailable = !HasActiveContextMenuSession() &&
             !IsPointOccludedByOpenPopup(point);
         if (snowdesktop::storage_title_bar::ExpandOnHover(eligible, wasExpanded,
-                suppressed, pointerAvailable && inFrame, retained))
+                suppressed, pointerAvailable && inFrame, widget.selected,
+                HasSelectedFilesInWidget(index), retained))
         {
-            expandedId = widget.id;
-            if (wasExpanded) break;
+            expandedIds.insert(widget.id);
         }
     }
     if (!suppressionStillInside) hoverExpansionSuppressedWidgetId_.clear();
-    if (expandedId == hoverExpandedWidgetId_) return false;
-    hoverExpandedWidgetId_ = std::move(expandedId);
+    if (expandedIds == hoverExpandedWidgetIds_) return false;
+    hoverExpandedWidgetIds_ = std::move(expandedIds);
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;

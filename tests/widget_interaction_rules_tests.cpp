@@ -515,18 +515,24 @@ void TestScrollableStorageTitleBar()
     // The entire original footprint remains an activation target when folded.
     // Leaving, including native mouse-leave,
     // returns to the saved fold unless an interaction still owns the content.
-    Check(titleBar::ExpandOnHover(true, false, false, true, false),
+    Check(titleBar::ExpandOnHover(true, false, false, true, false, false, false),
         "hovering anywhere in the full frame opens a collapsed widget");
-    Check(titleBar::ExpandOnHover(true, true, false, true, false),
+    Check(titleBar::ExpandOnHover(true, true, false, true, false, false, false),
         "moving within the full frame keeps the widget expanded");
-    Check(!titleBar::ExpandOnHover(true, true, false, false, false) &&
-            titleBar::ExpandOnHover(true, true, false, false, true),
+    Check(!titleBar::ExpandOnHover(true, true, false, false, false, false, false) &&
+            titleBar::ExpandOnHover(true, true, false, false, false, false, true),
         "leaving folds the widget unless a menu or editing interaction retains it");
-    Check(!titleBar::ExpandOnHover(true, false, false, false, true),
+    Check(titleBar::ExpandOnHover(true, true, false, false, true, false, false),
+        "widget selection retains hover expansion after pointer leave");
+    Check(titleBar::ExpandOnHover(true, true, false, false, false, true, false),
+        "selected inner files retain hover expansion after pointer leave");
+    Check(!titleBar::ExpandOnHover(true, false, false, false, false, false, true),
         "interaction retention alone must not open an unhovered widget");
-    Check(!titleBar::ExpandOnHover(true, false, true, true, false),
+    Check(!titleBar::ExpandOnHover(true, false, false, false, true, false, false),
+        "selection left by manual collapse must not immediately reopen the widget");
+    Check(!titleBar::ExpandOnHover(true, false, true, true, true, false, false),
         "manual collapse suppresses expansion throughout the full frame");
-    Check(!titleBar::ExpandOnHover(false, true, false, true, true),
+    Check(!titleBar::ExpandOnHover(false, true, false, true, true, true, true),
         "disabling hover expansion or top mode clears transient expansion");
 }
 
