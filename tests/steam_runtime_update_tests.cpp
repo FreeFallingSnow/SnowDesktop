@@ -1526,8 +1526,9 @@ void TestOccupiedRuntimePublication(const std::filesystem::path& root)
         const bool moved = MoveFileExW(staging.c_str(), destination.c_str(),
             MOVEFILE_WRITE_THROUGH) != FALSE;
         const DWORD moveError = GetLastError();
-        Check(!moved && moveError == (lockDirectory ?
-                ERROR_SHARING_VIOLATION : ERROR_ACCESS_DENIED),
+        const DWORD expectedError = lockDirectory ?
+            ERROR_SHARING_VIOLATION : ERROR_ACCESS_DENIED;
+        Check(!moved && moveError == expectedError,
             "one-shot publication reproduces the occupied-runtime launch failure");
         unsigned waits = 0;
         const auto result = PublishRuntimeDirectory(staging, destination,
