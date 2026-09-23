@@ -36,8 +36,8 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     const float tw = std::max(1.0f, layoutSize.width);
     const float th = std::max(1.0f, layoutSize.height);
     const float shadowScale = std::max(0.5f, layoutScale);
-    // Glass panels already separate their contents from the wallpaper. Keep
-    // white labels readable with one close shadow instead of the desktop halo.
+    // The selected panel style keeps one moderate soft shadow plus a close
+    // offset shadow. Desktop labels retain their stronger, repeated soft layer.
     const bool lightPanelShadow = !lightTheme &&
         (componentPanel || componentList) && CurrentPersonalization().glassEnabled;
     ComPtr<ID2D1DeviceContext> deviceContext;
@@ -110,9 +110,8 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                     ComPtr<ID2D1Effect> softShadow;
                     ComPtr<ID2D1Effect> offsetShadow;
                     ComPtr<ID2D1Effect> offsetTransform;
-                    if ((lightPanelShadow ||
-                        (SUCCEEDED(itemTextEffectContext_->CreateEffect(
-                            CLSID_D2D1Shadow, &softShadow)) && softShadow)) &&
+                    if (SUCCEEDED(itemTextEffectContext_->CreateEffect(
+                            CLSID_D2D1Shadow, &softShadow)) && softShadow &&
                         SUCCEEDED(itemTextEffectContext_->CreateEffect(
                             CLSID_D2D1Shadow, &offsetShadow)) && offsetShadow &&
                         SUCCEEDED(itemTextEffectContext_->CreateEffect(
@@ -124,10 +123,11 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                             softShadow->SetInput(0, shadowMask.Get());
                             softShadow->SetValue(
                                 D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
-                                1.5f * shadowScale);
+                                (lightPanelShadow ? 1.2f : 1.5f) * shadowScale);
                             softShadow->SetValue(
                                 D2D1_SHADOW_PROP_COLOR,
-                                D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, 0.95f });
+                                D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f,
+                                    lightPanelShadow ? 0.65f : 0.95f });
                             softShadow->SetValue(
                                 D2D1_SHADOW_PROP_OPTIMIZATION,
                                 D2D1_SHADOW_OPTIMIZATION_QUALITY);
@@ -136,11 +136,11 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         offsetShadow->SetInput(0, shadowMask.Get());
                         offsetShadow->SetValue(
                             D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
-                            (lightPanelShadow ? 0.6f : 0.5f) * shadowScale);
+                            0.5f * shadowScale);
                         offsetShadow->SetValue(
                             D2D1_SHADOW_PROP_COLOR,
                             D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f,
-                                lightPanelShadow ? 0.30f : 1.0f });
+                                lightPanelShadow ? 0.80f : 1.0f });
                         offsetShadow->SetValue(
                             D2D1_SHADOW_PROP_OPTIMIZATION,
                             D2D1_SHADOW_OPTIMIZATION_QUALITY);
@@ -149,8 +149,8 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         offsetTransform->SetValue(
                             D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX,
                             D2D1::Matrix3x2F::Translation(
-                                lightPanelShadow ? 0.0f : shadowScale,
-                                (lightPanelShadow ? 0.5f : 1.0f) * shadowScale));
+                                (lightPanelShadow ? 0.75f : 1.0f) * shadowScale,
+                                (lightPanelShadow ? 0.75f : 1.0f) * shadowScale));
                         offsetTransform->SetValue(
                             D2D1_2DAFFINETRANSFORM_PROP_INTERPOLATION_MODE,
                             D2D1_2DAFFINETRANSFORM_INTERPOLATION_MODE_LINEAR);
@@ -162,7 +162,8 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         if (softShadow)
                         {
                             itemTextEffectContext_->DrawImage(softShadow.Get());
-                            itemTextEffectContext_->DrawImage(softShadow.Get());
+                            if (!lightPanelShadow)
+                                itemTextEffectContext_->DrawImage(softShadow.Get());
                         }
                         itemTextEffectContext_->DrawImage(offsetTransform.Get());
                         HRESULT shadowHr = itemTextEffectContext_->EndDraw();
@@ -197,14 +198,13 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
         ID2D1SolidColorBrush* shadowBrush =
             getBrush(lightTheme
                 ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.12f * opacity)
-                : D2D1::ColorF(0.0f, 0.0f, 0.0f,
-                    (lightPanelShadow ? 0.30f : 0.80f) * opacity));
+                : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.80f * opacity));
         if (shadowBrush)
         {
             context->DrawTextLayout(
                 D2D1::Point2F(
-                    origin.x + (lightPanelShadow ? 0.0f : layoutScale),
-                    origin.y + (lightPanelShadow ? 0.5f : 1.0f) * layoutScale),
+                    origin.x + (lightPanelShadow ? 0.75f : 1.0f) * layoutScale,
+                    origin.y + (lightPanelShadow ? 0.75f : 1.0f) * layoutScale),
                 layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
             if (!lightPanelShadow)
                 context->DrawTextLayout(
