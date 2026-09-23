@@ -692,6 +692,8 @@ void DesktopApp::RefreshDockFolderPopupGeometry(bool present)
             popupRect_));
     if (!present) return;
     InvalidateCollectionPopupContent();
+    if (popupAnimationCompositorDriven_)
+        return; // The queued paint updates pixels; geometry settles at completion.
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_))
         InvalidateRect(hwnd_, nullptr, TRUE);

@@ -626,6 +626,9 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         ~PaintScope() { active = false; }
     } paintScope{ floatingPopupCompositionPaintInProgress_ };
 
+    // Coalesce arriving folder/icons before BeginDraw on the host surface.
+    // The animated child keeps its native timeline while only its pixels change.
+    RefreshCollectionPopupAnimationContent();
     HRESULT hr = CreateOrResizeFloatingPopupCompositionSurface();
     if (FAILED(hr) || !floatingPopupDcompSurface_)
     {

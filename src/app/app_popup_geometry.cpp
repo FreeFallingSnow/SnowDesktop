@@ -85,6 +85,11 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
+    // A loading grid can acquire fan entries while its native grid snapshot is
+    // still moving. Keep the current view until that transition completes.
+    if (popupAnimationCompositorDriven_ && popupAnimationOverlay_.active &&
+        &widget == GetOpenPopupWidget())
+        return false;
     namespace layout = snowdesktop::collection_popup_layout;
     if (layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
             widget.listMode, popupFanShowAll_) != layout::View::Fan ||
@@ -265,6 +270,13 @@ void DesktopApp::ShowAllCollectionPopupItems()
 
 RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
 {
+    if (popupAnimationCompositorDriven_ && popupAnimationOverlay_.active &&
+        &widget == GetOpenPopupWidget() && !IsRectEmptyRect(popupAnimationCacheRect_))
+    {
+        RECT bounds = popupAnimationCacheRect_;
+        InflateRect(&bounds, -4, -4);
+        return bounds;
+    }
     const GridPage* page = ResolveCollectionPopupPage(widget);
     const auto metrics = GetCollectionPopupLayoutMetrics(widget);
     const size_t itemCount = snowdesktop::collection_popup_layout::LayoutItemCount(
@@ -854,6 +866,8 @@ void DesktopApp::ResetCollectionPopupAnimationCache()
             popupAnimationCompletionToken_);
     popupAnimationCompletionToken_ = 0;
     popupAnimationCompositorDriven_ = false;
+    popupAnimationContentPending_ = false;
+    popupAnimationContentRevision_ = 0;
     ResetCompositionAnimationOverlay(
         popupAnimationOverlay_);
     popupAnimationRenderCache_.Reset();
@@ -871,6 +885,18 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
     popupRect_ = GetCollectionPopupRect(*openWidget);
     popupAnimationCacheRect_ = popupRect_;
     InflateRect(&popupAnimationCacheRect_, 4, 4);
+    if (!DrawCollectionPopupAnimationCache())
+        popupAnimationCacheRect_ = {};
+    else
+        (void)PrepareCompositionAnimationOverlay(
+            popupAnimationOverlay_, popupAnimationRenderCache_,
+            popupAnimationCacheRect_, UiCompositionAnimationHost::FloatingPopup);
+}
+
+bool DesktopApp::DrawCollectionPopupAnimationCache()
+{
+    if (!d2dDevice_ || !GetOpenPopupWidget() || IsRectEmptyRect(popupAnimationCacheRect_))
+        return false;
     const UINT width = static_cast<UINT>(
         std::max<LONG>(
             1,
@@ -886,7 +912,7 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
         popupAnimationRenderCache_.Ensure(
             d2dDevice_.Get(),
             D2D1::SizeU(width, height),
-            1,
+            ++popupAnimationContentRevision_,
             [&](ID2D1DeviceContext* cacheContext) {
                 cacheContext->SetTransform(
                     D2D1::Matrix3x2F::Translation(
@@ -897,21 +923,31 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
                 DrawCollectionPopup(
                     cacheContext, false);
             });
-    if (!ready)
-        popupAnimationCacheRect_ = {};
-    else
-    {
-        (void)PrepareCompositionAnimationOverlay(
-            popupAnimationOverlay_,
-            popupAnimationRenderCache_,
-            popupAnimationCacheRect_,
-            UiCompositionAnimationHost::FloatingPopup);
-    }
-
     // The off-screen draw switches the shared brush cache to its context.
     // Restore lazy creation for the next desktop/floating-Dock frame.
     brushCache_.clear();
     brushCacheContext_ = nullptr;
+    return ready;
+}
+
+void DesktopApp::RefreshCollectionPopupAnimationContent()
+{
+    if (!std::exchange(popupAnimationContentPending_, false) ||
+        !popupAnimationCompositorDriven_ || !popupAnimationOverlay_.active)
+        return;
+    const double started = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    // Update the same surface. Its scale/opacity curves and completion token
+    // remain installed; a failed refresh is superseded by live content at the
+    // normal completion handoff, without switching to UI-driven animation.
+    const bool updated = DrawCollectionPopupAnimationCache() &&
+        UpdateCompositionAnimationOverlayContent(popupAnimationOverlay_, popupAnimationRenderCache_);
+    if (updated) CommitCompositionAnimationFrame();
+    wchar_t message[240]{};
+    swprintf_s(message,
+        L"Popup animation content: driver=compositor updated=%d elapsedMs=%.2f revision=%llu",
+        updated ? 1 : 0, snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
+        static_cast<unsigned long long>(popupAnimationContentRevision_));
+    WriteDiagnosticLogEntry(message);
 }
 
 void DesktopApp::InvalidateCollectionPopupContent()
@@ -921,6 +957,11 @@ void DesktopApp::InvalidateCollectionPopupContent()
     using namespace snowdesktop::popup_animation_rules;
     const auto action = RefreshContent(popupAnimation_, static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()),
+        popupAnimationCompositorDriven_,
+        [this] {
+            if (!std::exchange(popupAnimationContentPending_, true))
+                InvalidateFloatingPopupWindow(false);
+        },
         [this] {
             const RECT dirty = popupAnimationCacheRect_;
             // DrawAt must not reuse the obsolete loading bitmap while the
@@ -931,6 +972,8 @@ void DesktopApp::InvalidateCollectionPopupContent()
             PrepareCompositionAnimationOverlayRetirement(popupAnimationOverlay_, dirty);
         },
         [this] { ResetCollectionPopupAnimationCache(); });
+    if (action == ContentRefreshAction::ContinueCompositor)
+        return;
     if (action == ContentRefreshAction::FinalizeClose)
     {
         FinalizeCloseCollectionPopup();
@@ -938,8 +981,7 @@ void DesktopApp::InvalidateCollectionPopupContent()
     }
     if (action == ContentRefreshAction::ContinueAnimation)
         EnsureUiAnimationFrame();
-    // Clearing the snapshot also cancels the native timeline. Resume live
-    // rendering so further arriving icons do not require another GPU capture.
+    // The UI fallback has no independent native track to preserve.
     ApplyCollectionPopupBackdropAnimationFrame();
     InvalidateCollectionPopupAnimation(true);
 }

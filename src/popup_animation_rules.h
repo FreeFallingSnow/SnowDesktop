@@ -220,14 +220,23 @@ private:
     std::uint64_t lastTick_ = 0;
 };
 
-enum class ContentRefreshAction { Stable, ContinueAnimation, FinalizeClose };
+enum class ContentRefreshAction { Stable, ContinueAnimation, ContinueCompositor, FinalizeClose };
 
-// Publish replacement pixels before retiring the native snapshot. Both use
-// the elapsed timeline; resetting Open() would replay the loading scene.
-template<class PrepareLive, class RetireSnapshot>
+// Keep a native track intact. The UI fallback publishes replacement pixels
+// before retiring its cache, without replaying the opening timeline.
+template<class QueueSnapshot, class PrepareLive, class RetireSnapshot>
 ContentRefreshAction RefreshContent(State& state, std::uint64_t now,
+    bool compositorDriven, QueueSnapshot queueSnapshot,
     PrepareLive prepareLive, RetireSnapshot retire)
 {
+    // Content arrivals do not own the native clock or its completion token.
+    // Keep that track even when its completion callback is waiting on the UI
+    // thread; switching to UI frames here can skip the rest of a short open.
+    if (compositorDriven)
+    {
+        queueSnapshot();
+        return ContentRefreshAction::ContinueCompositor;
+    }
     const bool wasClosing = state.IsClosing();
     state.Advance(now);
     if (!(wasClosing && state.IsHidden())) prepareLive();

@@ -2654,6 +2654,8 @@ private:
     void ForgetLuaWidgetPanelCapture(HWND hostWindow);
     /** @brief 在动画开始前将完整弹窗录制到 GPU 位图。 */
     void PrepareCollectionPopupAnimationCache();
+    bool DrawCollectionPopupAnimationCache();
+    void RefreshCollectionPopupAnimationContent();
     /** @brief 释放弹窗动画位图。 */
     void ResetCollectionPopupAnimationCache();
     void InvalidateCollectionPopupContent();
@@ -2662,6 +2664,9 @@ private:
         const DragRenderCache& cache,
         const RECT& bounds,
         UiCompositionAnimationHost host);
+    bool UpdateCompositionAnimationOverlayContent(
+        UiCompositionAnimationOverlay& overlay,
+        const DragRenderCache& cache);
     bool UpdateCompositionAnimationOverlay(
         UiCompositionAnimationOverlay& overlay,
         float scale, POINT anchor, float opacity,
@@ -4201,6 +4206,8 @@ private:
     snowdesktop::UiScheduleToken
         popupAnimationCompletionToken_ = 0;
     bool popupAnimationCompositorDriven_ = false;
+    bool popupAnimationContentPending_ = false;
+    std::uint64_t popupAnimationContentRevision_ = 0;
     RECT popupRect_{};
     int popupScrollOffset_ = 0;
     // Per-open presentation only; never persisted over the object's preference.

@@ -408,7 +408,9 @@ void DesktopApp::StartCollectionPopupAnimation(
     // can be attached to the correct DComp tree instead of falling back to
     // UI-thread frame rendering.
     UpdateFloatingPopupWindowBounds(false);
+    const double cacheStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     PrepareCollectionPopupAnimationCache();
+    const double cacheElapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - cacheStarted;
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::
             MonotonicMilliseconds()));
@@ -417,6 +419,14 @@ void DesktopApp::StartCollectionPopupAnimation(
         UpdateCollectionPopupCompositionAnimation();
         EnsureUiAnimationFrame();
     }
+    wchar_t message[240]{};
+    swprintf_s(message,
+        L"Popup animation prepared: driver=%s cacheMs=%.2f folder=%d fan=%d items=%llu",
+        popupAnimationCompositorDriven_ ? L"compositor" : L"ui",
+        cacheElapsed, dockFolderPopupOpen_ ? 1 : 0,
+        widget && UsesCollectionPopupFan(*widget) ? 1 : 0,
+        static_cast<unsigned long long>(widget ? GetPopupItemCount(*widget) : 0));
+    WriteDiagnosticLogEntry(message);
 }
 
 

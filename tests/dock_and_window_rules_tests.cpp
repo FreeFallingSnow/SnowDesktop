@@ -5939,6 +5939,17 @@ int main(int argc, char** argv)
             {"src/app/app_popup_transition.cpp", "void DesktopApp::RefreshDockFolderPopupGeometry(",
              "CommitDockFolderPopupStateToSource()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow("}},
+            // Updating pixels must never replace the visual or its native
+            // timelines. These negative boundaries cover the GPU bridge that
+            // cannot be exercised by the pure animation dispatch tests.
+            {"src/app/app_composition_animation_overlay.cpp", "bool DesktopApp::UpdateCompositionAnimationOverlayContent(",
+             "bool DesktopApp::PrepareCompositionAnimationOverlay(",
+             {"ResetCompositionAnimationOverlay(", "SetContent(", "SetScaleX(", "SetScaleY(",
+              "SetOpacity(", "AnimateCompositionAnimationOverlay(", "CreateSurface(", "WaitForCommitCompletion("}},
+            {"src/app/app_popup_geometry.cpp", "void DesktopApp::RefreshCollectionPopupAnimationContent(",
+             "void DesktopApp::InvalidateCollectionPopupContent(",
+             {"ResetCollectionPopupAnimationCache(", "PrepareCollectionPopupAnimationCache(",
+              "StartCollectionPopupCompositionAnimation(", "EnsureUiAnimationFrame(", ".Cancel("}},
             {"src/app/dock_platform_helpers.h", "", "", {"swThumbnailWnd", "PROME-TASKBAR"}},
             {"src/app/app_drag_target_update.cpp", "void DesktopApp::ResolveCurrentDragTargetAt(",
              "void DesktopApp::RefreshDragTargetAt(",

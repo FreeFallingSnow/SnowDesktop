@@ -35,9 +35,39 @@ int main()
     using namespace snowdesktop::popup_animation_rules;
 
     State state;
-    // An asynchronous folder read can replace the loading scene while a native
-    // snapshot is opening or closing. The retirement callback represents GPU
-    // resources; the production timeline and refresh dispatch remain real.
+    // Directory/icon completions used to retire the native snapshot and cancel
+    // its completion token mid-open. Exercise production refresh dispatch with
+    // GPU operations as callbacks; this does not measure displayed DWM frames.
+    State native;
+    native.Open(100);
+    int queued = 0, prepared = 0, retired = 0;
+    const auto queueNative = [&] { ++queued; };
+    const auto prepareNative = [&] { ++prepared; };
+    const auto retireNative = [&] { ++retired; };
+    for (const std::uint64_t arrival : { 115u, 145u, 220u })
+    {
+        const auto nativeAction = RefreshContent(native, arrival, true,
+            queueNative, prepareNative, retireNative);
+        Check(nativeAction == ContentRefreshAction::ContinueCompositor &&
+            prepared == 0 && retired == 0 && native.IsAnimating() && native.IsInteractive() &&
+            NearlyEqual(native.GetVisual().progress, 0.0f),
+            "content arrivals, including a late completion, must keep the native track alive");
+    }
+    Check(queued == 3, "every content arrival requests fresh snapshot pixels");
+    native.Advance(230);
+    Check(!native.IsAnimating() && NearlyEqual(native.GetVisual().progress, 1.0f),
+        "the original native completion still finishes open on time");
+    native.Close(300);
+    const auto nativeCloseAction = RefreshContent(native, 400, true,
+        queueNative, prepareNative, retireNative);
+    Check(nativeCloseAction == ContentRefreshAction::ContinueCompositor &&
+        native.IsClosing() && retired == 0 && prepared == 0,
+        "late content during native close cannot reopen or prematurely retire the popup");
+    native.Advance(400);
+    Check(native.IsHidden(), "the original native completion still finishes close on time");
+
+    // Without an independent native track, the UI fallback still replaces its
+    // cached pixels before retirement and resumes the original elapsed clock.
     State refreshed;
     bool oldSnapshot = true, oldCompletion = true;
     bool liveReady = false;
@@ -49,26 +79,27 @@ int main()
         Check(liveReady || refreshed.IsHidden(), "a visible snapshot cannot retire before replacement pixels are ready");
         oldSnapshot = false; oldCompletion = false;
     };
+    const auto noNativeQueue = [] { Check(false, "UI fallback cannot queue a native surface update"); };
     refreshed.Open(100);
-    auto action = RefreshContent(refreshed, 145, prepareLive, retire);
+    auto action = RefreshContent(refreshed, 145, false, noNativeQueue, prepareLive, retire);
     Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
         NearlyEqual(refreshed.GetVisual().progress, 0.5f) && refreshed.IsInteractive(),
-        "content completion retires the loading snapshot and resumes the elapsed opening timeline");
+        "UI fallback content completion retires its snapshot and resumes the elapsed opening timeline");
     refreshed.Close(145);
     oldSnapshot = oldCompletion = true;
     liveReady = false;
-    action = RefreshContent(refreshed, 160, prepareLive, retire);
+    action = RefreshContent(refreshed, 160, false, noNativeQueue, prepareLive, retire);
     Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
         refreshed.IsClosing() && NearlyEqual(refreshed.GetVisual().progress, 1.0f / 3.0f),
         "new folder contents during close preserve direction and elapsed progress");
     liveReady = false;
-    action = RefreshContent(refreshed, 200, prepareLive, retire);
+    action = RefreshContent(refreshed, 200, false, noNativeQueue, prepareLive, retire);
     Check(!liveReady, "an elapsed close does not publish another visible frame");
     Check(action == ContentRefreshAction::FinalizeClose && refreshed.IsHidden(),
         "late content completion finalizes an elapsed close instead of resurrecting its snapshot");
     refreshed.Open(300);
     oldSnapshot = oldCompletion = true;
-    action = RefreshContent(refreshed, 400, prepareLive, retire);
+    action = RefreshContent(refreshed, 400, false, noNativeQueue, prepareLive, retire);
     Check(action == ContentRefreshAction::Stable && refreshed.IsInteractive() && !refreshed.IsAnimating(),
         "late content completion after opening paints current content without replaying animation");
     Check(state.IsHidden(), "new state starts hidden");
