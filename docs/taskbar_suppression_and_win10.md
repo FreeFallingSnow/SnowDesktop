@@ -80,6 +80,29 @@ Win11 上的独立窗口测试不能代替 Win10 验收。可用 Win10 22H2 虚�
 
 本机原始日志保存在忽略目录 `.codex-probes/taskbar-native/`：`build-3.log`、`full-tests-2.log`、`probe-3.log`、`negative-3.log`、`recovery-before.log`、`steam-diagnostic-1.log`。`final-inputs.json` 记录各改动文件及构建入口的 SHA-256，`final-test-selection.json` 记录实际 CTest 选择集合，`final-artifacts.json` 记录产物和日志指纹。两轮 CTest XML 也已留存；这些是本机证据，不是构建依赖或发行内容。
 
+## 2026-09-24 面板、占位与设置调整验证记录
+
+本轮代码输入为 `e85a683eada565c71a7838813f2adeacea9eded1`，环境与前一记录相同。用户已有的 `docs/testing_audit_product_issues.md` 修改和 `.codex-remote-attachments/` 未修改或暂存。下面的结果仅属于本候选，不能与前一轮拼接成全量通过。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `scripts/build.bat --reload-shell` | 16:32:15–16:43:22，退出码 0；标准 Release x64 宿主与 Hook 生成，无编译/链接警告。构建前已告知停止 SnowDesktop 并重载 Explorer |
+| 独立窗口 `probe.bat` | 退出码 0；实际 DWM/生产 Hook 覆盖面板单屏放行、任务视图多屏放行、面板关闭后重新隐藏、原自动隐藏偏好恢复及失败重试；系统自动隐藏 API 使用替身，不更改测试机真实设置 |
+| 面板负向对照 | `negative.bat` 在隔离副本中移除面板放行，退出码 6，命中两条原生路径各 3 个预期失败；未覆盖生产源码 |
+| 工作区负向对照 | `negative-work-area.bat` 在隔离副本中跳过临时自动隐藏，退出码 8，命中 8 个预期生命周期失败；未覆盖生产源码 |
+| `scripts/test.bat` | 16:44:14–16:47:24，脚本退出码 1、CTest 退出码 8；119/120 通过，`component_preview` 失败；默认排除 `manual` 条目 |
+| 受影响检查 | `dock_and_window_rules`、`settings_controller`（含 IPC）、Dock 设置页契约、本地化及现有动态规则检查通过；显式关闭的全屏手势限制在 IPC 中保留 |
+| 桌面验收 | 真实面板检测、任务栏临时显示、工作区释放与恢复、两张卡片高亮、多屏及 Win10 Explorer 外观仍待用户实机验证 |
+
+全量配置耗时 2.41 秒、编译及输出整理 40.62 秒、CTest 145.35 秒，完整日志未发现编译或链接警告。`component_preview` 的具体失败是 `tests/component_preview_tests.cpp` 中测试夹具的 `SetCursorPos(0, 0)` 返回失败，消息为 `the preview fixture can move outside the pending preview`；尚未进入后续兄弟预览切换的行为断言。该输入操作失败的具体环境原因未定位，没有修改该模块或放宽断言，也没有靠重复执行获取绿色结果。之前失败过的 `steam_runtime_update` 和 `shell_launch_worker` 本轮通过，但不据此声明它们的历史不稳定问题已解决。
+
+完整测试构建后产物 SHA-256：
+
+- `.build/Release/SnowDesktop.exe`：`E8A71619FF71C17A18F1E2B2C6B921E2C478480930C4E80260D0BA89EE8A70D0`
+- `.build/Release/SnowDesktop.Runtime/SnowDesktopTaskbarHook.dll`：`B45C62EEB06ED2CA90E755D3A210FD2D596E41C09002FBEC14DEA56666F16AD3`
+
+本机证据位于忽略目录 `.codex-probes/taskbar-panels/`：`build-1.log`、`build-1-result.json`、`full-tests.log`、`full-tests-result.json`、`full-tests.xml`、`probe-1.log`、`negative-panels.log` 和 `negative-work-area.log`。`final-inputs.json` 绑定候选提交、变更文件及构建入口哈希，`final-test-selection.json` 保存实际自动测试集合，`final-artifacts.json` 保存产物与日志哈希。本节后续文档提交不改变运行输入。
+
 ## 参考
 
 - [微软 DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)
