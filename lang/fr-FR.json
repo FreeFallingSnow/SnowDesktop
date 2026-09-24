@@ -1347,7 +1347,7 @@
   "settings.dock.taskbar.description": "Définissez le thème, les règles dynamiques, l'alignement et le masquage automatique.",
   "settings.dock.floatingShortcut": "Raccourci du Dock flottant",
   "settings.dock.blockFullscreenSwipe": "Désactiver le geste de bord en plein écran",
-  "settings.dock.blockFullscreenSwipe.description": "Suspend le geste de bord sur l’écran occupé par l’application active en plein écran. Les raccourcis clavier restent disponibles.",
+  "settings.dock.blockFullscreenSwipe.description": "Concerne uniquement l'écran de l'application en plein écran. Les raccourcis restent disponibles.",
   "settings.dock.edgeSwipe": "Geste depuis le bord pour le Dock flottant",
   "settings.dock.layoutAndPosition": "Position et disposition",
   "settings.dock.itemsAndBehavior": "Éléments et comportement",
@@ -1377,7 +1377,7 @@
   "settings.taskbar.behavior": "Comportement de la barre des tâches",
   "settings.taskbar.defaultAppearance": "Apparence par défaut de la barre des tâches",
   "settings.taskbar.scenarioOverrides": "Apparence selon le contexte (avancé)",
-  "settings.taskbar.scenarioOverrides.description": "Les règles sont évaluées de haut en bas par ordre de priorité ; celles placées plus haut sont prioritaires. Si aucune ne correspond, l’apparence par défaut est utilisée.",
+  "settings.taskbar.scenarioOverrides.description": "Évalue les règles de haut en bas ; sinon, utilise l'apparence par défaut.",
   "settings.taskbar.systemPanels": "Menu Démarrer et panneaux système",
   "settings.taskbar.customAppearance": "Apparence personnalisée",
   "settings.taskbar.theme": "Apparence de la barre des tâches",
@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "1 heure avant",
     "settings.calendar.reminder.1440": "1 jour avant",
     "settings.dock.suppressTaskbar": "Toujours masquer la barre des tâches du système",
-    "settings.dock.suppressTaskbar.description": "Masque les barres des tâches uniquement sur les écrans avec un Dock et libère leur espace réservé. La barre réapparaît temporairement pour les panneaux système, comme le menu Démarrer. Le bouton Windows reste dans le Dock. Désactiver le Dock ou quitter restaure les paramètres d’origine.",
+    "settings.dock.suppressTaskbar.description": "Masque la barre des tâches sur les écrans avec le Dock ; l'affiche pour les panneaux système. Le bouton Windows reste dans le Dock.",
     "settings.dock.suppressTaskbar.failed": "Impossible de masquer la barre des tâches. Désactivez cette option pour la restaurer, puis réessayez.",
-    "settings.taskbar.classic.description": "Windows 10 : le texte et les icônes suivent le thème du système ; Windows contrôle l’intensité du flou. Si l’acrylique est indisponible, l’effet de flou est utilisé."
+    "settings.taskbar.classic.description": "Windows 10 contrôle la couleur des icônes et du texte, ainsi que l'intensité du flou."
 }

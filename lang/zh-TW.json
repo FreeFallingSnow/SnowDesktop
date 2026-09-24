@@ -1347,7 +1347,7 @@
   "settings.dock.taskbar.description": "設定佈景主題、動態規則、對齊和自動隱藏。",
   "settings.dock.floatingShortcut": "浮動 Dock 快速鍵",
   "settings.dock.blockFullscreenSwipe": "全螢幕應用程式執行時停用手勢喚出",
-  "settings.dock.blockFullscreenSwipe.description": "前景全螢幕應用程式覆蓋的螢幕會暫停邊緣手勢喚出，仍可透過快捷鍵喚出 Dock。",
+  "settings.dock.blockFullscreenSwipe.description": "僅影響全螢幕應用程式所在螢幕，快捷鍵仍可用。",
   "settings.dock.edgeSwipe": "浮動 Dock 邊緣手勢",
   "settings.dock.layoutAndPosition": "位置與版面配置",
   "settings.dock.itemsAndBehavior": "項目與行為",
@@ -1377,7 +1377,7 @@
   "settings.taskbar.behavior": "工作列行為",
   "settings.taskbar.defaultAppearance": "預設工作列外觀",
   "settings.taskbar.scenarioOverrides": "依情境覆寫（進階）",
-  "settings.taskbar.scenarioOverrides.description": "規則依優先順序由上而下比對，清單中較前面的規則優先；沒有規則符合時使用預設外觀。",
+  "settings.taskbar.scenarioOverrides.description": "由上到下依序比對，無符合規則時使用預設外觀。",
   "settings.taskbar.systemPanels": "開始功能表與系統面板",
   "settings.taskbar.customAppearance": "自訂外觀",
   "settings.taskbar.theme": "工作列外觀",
@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "提前 1 小時",
     "settings.calendar.reminder.1440": "提前 1 天",
     "settings.dock.suppressTaskbar": "一律隱藏系統工作列",
-    "settings.dock.suppressTaskbar.description": "僅隱藏有 Dock 的螢幕上的工作列並釋放保留空間；開啟開始功能表等系統面板時暫時顯示。Dock 中始終保留 Windows 按鈕。關閉 Dock 或結束軟體後還原原有設定。",
+    "settings.dock.suppressTaskbar.description": "僅隱藏 Dock 所在螢幕的工作列；系統面板開啟時暫時顯示。Dock 保留 Windows 按鈕。",
     "settings.dock.suppressTaskbar.failed": "無法隱藏工作列。請關閉此開關恢復工作列，然後重試。",
-    "settings.taskbar.classic.description": "Windows 10：文字和圖示配色依照系統佈景主題，模糊強度由 Windows 控制。無法使用壓克力效果時，改用模糊效果。"
+    "settings.taskbar.classic.description": "Windows 10 的圖示、文字配色及模糊強度由系統控制。"
 }

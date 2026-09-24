@@ -1347,7 +1347,7 @@
   "settings.dock.taskbar.description": "테마, 동적 규칙, 맞춤 및 자동 숨기기를 설정합니다.",
   "settings.dock.floatingShortcut": "플로팅 Dock 바로 가기 키",
   "settings.dock.blockFullscreenSwipe": "전체 화면 앱 사용 시 가장자리 제스처 비활성화",
-  "settings.dock.blockFullscreenSwipe.description": "활성 전체 화면 앱이 표시된 화면에서는 가장자리 제스처 호출을 중지합니다. 키보드 단축키는 계속 사용할 수 있습니다.",
+  "settings.dock.blockFullscreenSwipe.description": "전체 화면 앱이 있는 화면에만 적용됩니다. 단축키는 계속 사용할 수 있습니다.",
   "settings.dock.edgeSwipe": "플로팅 Dock 가장자리 제스처",
   "settings.dock.layoutAndPosition": "위치 및 레이아웃",
   "settings.dock.itemsAndBehavior": "항목 및 동작",
@@ -1377,7 +1377,7 @@
   "settings.taskbar.behavior": "작업 표시줄 동작",
   "settings.taskbar.defaultAppearance": "기본 작업 표시줄 모양",
   "settings.taskbar.scenarioOverrides": "시나리오별 재정의(고급)",
-  "settings.taskbar.scenarioOverrides.description": "규칙은 우선순위에 따라 위에서 아래로 평가되며 목록에서 위에 있는 규칙이 우선합니다. 일치하는 규칙이 없으면 기본 모양이 사용됩니다.",
+  "settings.taskbar.scenarioOverrides.description": "위에서 아래로 규칙을 확인하고, 일치하는 규칙이 없으면 기본 모양을 사용합니다.",
   "settings.taskbar.systemPanels": "시작 메뉴 및 시스템 패널",
   "settings.taskbar.customAppearance": "사용자 지정 모양",
   "settings.taskbar.theme": "작업 표시줄 모양",
@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "1시간 전",
     "settings.calendar.reminder.1440": "1일 전",
     "settings.dock.suppressTaskbar": "시스템 작업 표시줄 항상 숨기기",
-    "settings.dock.suppressTaskbar.description": "Dock이 있는 화면의 작업 표시줄만 숨기고 예약된 공간을 해제합니다. 시작 메뉴 등 시스템 패널을 열면 작업 표시줄이 일시적으로 표시됩니다. Dock의 Windows 버튼은 항상 표시됩니다. Dock을 끄거나 앱을 종료하면 원래 설정으로 복원됩니다.",
+    "settings.dock.suppressTaskbar.description": "Dock이 있는 화면의 작업 표시줄을 숨기고 시스템 패널을 열면 잠시 표시합니다. Dock의 Windows 버튼은 유지됩니다.",
     "settings.dock.suppressTaskbar.failed": "작업 표시줄을 숨길 수 없습니다. 이 옵션을 꺼서 작업 표시줄을 복원한 후 다시 시도하세요.",
-    "settings.taskbar.classic.description": "Windows 10: 텍스트와 아이콘 색상은 시스템 테마를 따르며 흐림 강도는 Windows에서 제어합니다. 아크릴 효과를 사용할 수 없으면 흐림 효과를 사용합니다."
+    "settings.taskbar.classic.description": "Windows 10에서는 아이콘과 텍스트 색상, 흐림 강도를 시스템이 제어합니다."
 }

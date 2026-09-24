@@ -2209,8 +2209,7 @@ struct DockPagePresenter::Impl
                 L"Set taskbar theme, material, colors and dynamic rules.");
         taskbarRulesHint.Text(L(
             "settings.taskbar.scenarioOverrides.description",
-            L"Rules are matched from top to bottom. Higher rules take "
-              "priority; otherwise the default appearance is used."));
+            L"Match rules from top to bottom; otherwise use the default appearance."));
         muxa::AutomationProperties::SetHelpText(
             taskbarRulesCard.root, taskbarRulesHint.Text());
         muxa::AutomationProperties::SetHelpText(taskbarCard.root,
@@ -2264,7 +2263,7 @@ struct DockPagePresenter::Impl
         fullscreenSwipeRow.SetText(
             L("settings.dock.blockFullscreenSwipe", L"Disable edge swipe in fullscreen apps"),
             L("settings.dock.blockFullscreenSwipe.description",
-                L"Pause edge swipe on the screen covered by the active fullscreen app. Keyboard shortcuts remain available."));
+                L"Only affects the fullscreen app's display. Shortcuts remain available."));
         muxa::AutomationProperties::SetName(
             fullscreenSwipeToggle, fullscreenSwipeRow.label.Text());
         allowDesktopContentOverlapRow.SetText(
@@ -2280,9 +2279,9 @@ struct DockPagePresenter::Impl
                 L"Show the Dock by swiping along its screen edge or "
                   "dragging an item to that edge."));
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
-            L("settings.dock.suppressTaskbar.description", L"Hide taskbars only on displays with Dock and free their reserved space. Show the taskbar temporarily for system panels such as Start. Keep the Windows button in Dock. Turning Dock off or exiting restores the original taskbar settings."));
+            L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels. Keep the Windows button in Dock."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
-        classicTaskbarHint.Text(L("settings.taskbar.classic.description", L"Windows 10: text and icons follow the system theme; blur strength is controlled by Windows. Acrylic falls back to blur if unavailable."));
+        classicTaskbarHint.Text(L("settings.taskbar.classic.description", L"Windows 10 controls icon and text colors and blur strength."));
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         showFrequentItemsRow.SetText(L(
@@ -2304,9 +2303,7 @@ struct DockPagePresenter::Impl
         SetUnit(frequentItemCount, ExtractNumericUnit(
             L("app.settings.items_unit", L"%d items")));
         taskbarSettingsRow.SetText(
-            L("settings.taskbar.systemSettings", L"Windows taskbar settings"),
-            L("settings.taskbar.systemSettings.description",
-                L"Manage taskbar behavior in Windows Settings."));
+            L("settings.taskbar.systemSettings", L"Windows taskbar settings"));
         taskbarSettingsLink.Content(winrt::box_value(L(
             "settings.taskbar.systemSettings.open", L"Open settings")));
         muxa::AutomationProperties::SetName(
@@ -2340,8 +2337,7 @@ struct DockPagePresenter::Impl
                 L"Restart File Explorer to apply Windows shell changes."));
 
         taskbarThemeRow.SetText(
-            L("app.settings.taskbar_theme", L"Taskbar Theme"),
-            L("app.settings.taskbar_theme_hint", L""));
+            L("app.settings.taskbar_theme", L"Taskbar Theme"));
         muxa::AutomationProperties::SetName(
             taskbarThemeCombo, taskbarThemeRow.label.Text());
         ReplaceTaskbarThemeItems(taskbarThemeCombo);

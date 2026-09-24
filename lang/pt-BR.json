@@ -1347,7 +1347,7 @@
   "settings.dock.taskbar.description": "Defina tema, regras dinâmicas, alinhamento e ocultação automática.",
   "settings.dock.floatingShortcut": "Atalho do Dock flutuante",
   "settings.dock.blockFullscreenSwipe": "Desativar gesto de borda em aplicativos em tela cheia",
-  "settings.dock.blockFullscreenSwipe.description": "Pausa o gesto de borda na tela ocupada pelo aplicativo ativo em tela cheia. Os atalhos de teclado continuam disponíveis.",
+  "settings.dock.blockFullscreenSwipe.description": "Afeta apenas a tela do app em tela cheia. Os atalhos continuam disponíveis.",
   "settings.dock.edgeSwipe": "Gesto a partir da borda para o Dock flutuante",
   "settings.dock.layoutAndPosition": "Posição e layout",
   "settings.dock.itemsAndBehavior": "Itens e comportamento",
@@ -1377,7 +1377,7 @@
   "settings.taskbar.behavior": "Comportamento da barra de tarefas",
   "settings.taskbar.defaultAppearance": "Aparência padrão da barra de tarefas",
   "settings.taskbar.scenarioOverrides": "Aparência por cenário (avançado)",
-  "settings.taskbar.scenarioOverrides.description": "As regras são avaliadas de cima para baixo por ordem de prioridade; as que aparecem antes têm prioridade. Se nenhuma corresponder, a aparência padrão será usada.",
+  "settings.taskbar.scenarioOverrides.description": "Verifica as regras de cima para baixo; se nenhuma corresponder, usa a aparência padrão.",
   "settings.taskbar.systemPanels": "Menu Iniciar e painéis do sistema",
   "settings.taskbar.customAppearance": "Aparência personalizada",
   "settings.taskbar.theme": "Aparência da barra de tarefas",
@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "1 hora antes",
     "settings.calendar.reminder.1440": "1 dia antes",
     "settings.dock.suppressTaskbar": "Sempre ocultar a barra de tarefas do sistema",
-    "settings.dock.suppressTaskbar.description": "Oculta as barras de tarefas somente nas telas com Dock e libera o espaço reservado. A barra aparece temporariamente ao abrir painéis do sistema, como o menu Iniciar. O botão do Windows permanece no Dock. Ao desativar o Dock ou sair, as configurações originais são restauradas.",
+    "settings.dock.suppressTaskbar.description": "Oculta a barra de tarefas nas telas com Dock e a exibe ao abrir painéis do sistema. Mantém o botão do Windows no Dock.",
     "settings.dock.suppressTaskbar.failed": "Não foi possível ocultar a barra de tarefas. Desative esta opção para restaurá-la e tente novamente.",
-    "settings.taskbar.classic.description": "Windows 10: o texto e os ícones seguem o tema do sistema; o Windows controla a intensidade do desfoque. Se o acrílico não estiver disponível, será usado o efeito de desfoque."
+    "settings.taskbar.classic.description": "O Windows 10 controla as cores dos ícones e do texto e a intensidade do desfoque."
 }

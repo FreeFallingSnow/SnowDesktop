@@ -1347,7 +1347,7 @@
   "settings.dock.taskbar.description": "テーマ、動的ルール、配置、自動的に隠す動作を設定します。",
   "settings.dock.floatingShortcut": "フローティング Dock のショートカット",
   "settings.dock.blockFullscreenSwipe": "全画面アプリ使用時はエッジジェスチャーを無効にする",
-  "settings.dock.blockFullscreenSwipe.description": "アクティブな全画面アプリが表示されている画面では、エッジジェスチャーによる呼び出しを停止します。キーボードショートカットは引き続き使用できます。",
+  "settings.dock.blockFullscreenSwipe.description": "全画面アプリのある画面のみに適用されます。ショートカットは引き続き使えます。",
   "settings.dock.edgeSwipe": "フローティング Dock の画面端ジェスチャ",
   "settings.dock.layoutAndPosition": "位置とレイアウト",
   "settings.dock.itemsAndBehavior": "項目と動作",
@@ -1377,7 +1377,7 @@
   "settings.taskbar.behavior": "タスクバーの動作",
   "settings.taskbar.defaultAppearance": "既定のタスクバーの外観",
   "settings.taskbar.scenarioOverrides": "シナリオ別の上書き（詳細設定）",
-  "settings.taskbar.scenarioOverrides.description": "ルールは優先度順に上から下へ照合され、一覧で上にあるルールが優先されます。一致するルールがない場合は、既定の外観が使用されます。",
+  "settings.taskbar.scenarioOverrides.description": "上から順にルールを確認し、一致しなければ既定の外観を使います。",
   "settings.taskbar.systemPanels": "スタート メニューとシステム パネル",
   "settings.taskbar.customAppearance": "カスタム外観",
   "settings.taskbar.theme": "タスクバーの外観",
@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "1 時間前",
     "settings.calendar.reminder.1440": "1 日前",
     "settings.dock.suppressTaskbar": "システムのタスクバーを常に非表示にする",
-    "settings.dock.suppressTaskbar.description": "Dock のある画面のタスクバーのみを非表示にし、占有スペースを解放します。スタートメニューなどのシステムパネルを開くと一時的に表示します。Dock の Windows ボタンは常に表示されます。Dock を無効にするかアプリを終了すると、元の設定に戻ります。",
+    "settings.dock.suppressTaskbar.description": "Dock のある画面のタスクバーを隠し、システムパネル表示時は一時的に表示します。Dock の Windows ボタンは常に表示されます。",
     "settings.dock.suppressTaskbar.failed": "タスクバーを非表示にできませんでした。この設定をオフにしてタスクバーを元に戻し、もう一度お試しください。",
-    "settings.taskbar.classic.description": "Windows 10：文字とアイコンの配色はシステムのテーマに従い、ぼかしの強さは Windows が制御します。アクリル効果が利用できない場合は、ぼかし効果を使用します。"
+    "settings.taskbar.classic.description": "Windows 10 では、アイコンと文字の色、ぼかしの強さはシステムが制御します。"
 }

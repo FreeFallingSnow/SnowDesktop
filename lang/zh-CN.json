@@ -1347,7 +1347,7 @@
     "settings.dock.taskbar.description": "设置主题、动态规则、对齐和自动隐藏。",
     "settings.dock.floatingShortcut": "悬浮 Dock 快捷键",
     "settings.dock.blockFullscreenSwipe": "全屏应用时禁用手势唤起",
-    "settings.dock.blockFullscreenSwipe.description": "前台全屏应用覆盖的屏幕暂停边缘手势唤起，仍可通过快捷键唤起 Dock。",
+    "settings.dock.blockFullscreenSwipe.description": "仅影响全屏应用所在屏幕，快捷键仍可用。",
     "settings.dock.edgeSwipe": "悬浮 Dock 边缘手势",
     "settings.dock.layoutAndPosition": "位置与布局",
     "settings.dock.itemsAndBehavior": "项目与行为",
@@ -1377,7 +1377,7 @@
     "settings.taskbar.behavior": "任务栏行为",
     "settings.taskbar.defaultAppearance": "默认任务栏外观",
     "settings.taskbar.scenarioOverrides": "按场景覆盖（高级）",
-    "settings.taskbar.scenarioOverrides.description": "规则按优先级从上到下匹配，列表中靠前的规则优先；无规则匹配时使用默认外观。",
+    "settings.taskbar.scenarioOverrides.description": "按从上到下的顺序匹配，无匹配时使用默认外观。",
     "settings.taskbar.systemPanels": "开始菜单与系统面板",
     "settings.taskbar.customAppearance": "自定义外观",
     "settings.taskbar.theme": "任务栏外观",
@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "提前 1 小时",
     "settings.calendar.reminder.1440": "提前 1 天",
     "settings.dock.suppressTaskbar": "始终隐藏系统任务栏",
-    "settings.dock.suppressTaskbar.description": "仅隐藏有 Dock 的屏幕上的任务栏并释放占位；打开开始菜单等系统面板时临时显示。Dock 中始终保留 Windows 按钮。关闭 Dock 或退出软件后恢复原设置。",
+    "settings.dock.suppressTaskbar.description": "仅隐藏 Dock 所在屏幕的任务栏；系统面板打开时临时显示。Dock 保留 Windows 按钮。",
     "settings.dock.suppressTaskbar.failed": "无法隐藏任务栏。请关闭此开关恢复任务栏，然后重试。",
-    "settings.taskbar.classic.description": "Windows 10：文字和图标配色跟随系统主题，模糊强度由 Windows 控制。亚克力不可用时回退为模糊效果。"
+    "settings.taskbar.classic.description": "Windows 10 的图标、文字配色和模糊强度由系统控制。"
 }
