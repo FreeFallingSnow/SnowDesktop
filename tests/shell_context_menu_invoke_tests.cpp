@@ -138,6 +138,7 @@ void TestNativeCascadeOwnerThread()
         bool initializedOnOwnerThread = false;
         bool displayed = false;
         unsigned initializationCount = 0;
+        ULONGLONG displayDeadline = 0;
         ~LazyCascade()
         {
             if (window) DestroyWindow(window);
@@ -169,6 +170,11 @@ void TestNativeCascadeOwnerThread()
                 RECT bounds{};
                 self->displayed = GetMenuItemRect(self->tracker.load(), self->menu, 0, &bounds) &&
                     !IsRectEmpty(&bounds);
+                // Tracker activation can pump this timer before TrackPopupMenu
+                // has laid out its deferred commands. Wait for observable
+                // bounds, with a deadline; a fixed first tick is not readiness.
+                if (!self->displayed && GetTickCount64() < self->displayDeadline)
+                    return 0;
                 // Cancel on the tracker's thread, including in the negative
                 // control that restores the old cross-thread implementation.
                 PostMessageW(self->tracker.load(), WM_CANCELMODE, 0, 0);
@@ -189,6 +195,7 @@ void TestNativeCascadeOwnerThread()
     cascade.window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"Cascade owner test",
         WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, &cascade);
     Expect(cascade.window != nullptr, "create isolated cascade owner");
+    cascade.displayDeadline = GetTickCount64() + 2000;
     Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound the native popup lifetime");
     const auto selected = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
         TPM_RETURNCMD | TPM_RIGHTBUTTON, {100, 100}, cascade.window, false,
