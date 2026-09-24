@@ -6,6 +6,7 @@
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <MinHook.h>
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -48,6 +49,9 @@ struct WindowState
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
     DWORD contextMenuThread = 0;
+    HWND contextMenuPopup = nullptr;
+    bool overflowWasVisible = false;
+    std::vector<HWND> previousPopups;
     ~WindowState()
     {
         if (menuMouseHook) UnhookWindowsHookEx(menuMouseHook);
@@ -88,6 +92,42 @@ bool ReadMenu(DWORD thread, GUITHREADINFO& info)
         (info.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE));
 }
 
+bool IsVisibleMenuPopup(HWND window)
+{
+    if (!window || !IsWindowVisible(window)) return false;
+    const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+    const LONG_PTR extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    if (!(style & WS_POPUP) || (style & WS_CAPTION) == WS_CAPTION ||
+        !(extended & WS_EX_TOOLWINDOW) || (extended & WS_EX_TRANSPARENT)) return false;
+    wchar_t name[128]{};
+    GetClassNameW(window, name, static_cast<int>(std::size(name)));
+    if (_wcsicmp(name, L"tooltips_class32") == 0 ||
+        wcsstr(name, L"ToolTip") || wcsstr(name, L"Tooltip")) return false;
+    DWORD cloak = 0;
+    return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && !cloak;
+}
+
+std::vector<HWND> VisibleMenuPopups()
+{
+    std::vector<HWND> result;
+    EnumWindows([](HWND window, LPARAM value) -> BOOL {
+        if (IsVisibleMenuPopup(window))
+            reinterpret_cast<std::vector<HWND>*>(value)->push_back(window);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&result));
+    return result;
+}
+
+void ArmContextMenu(const std::shared_ptr<WindowState>& state)
+{
+    auto existing = VisibleMenuPopups();
+    std::lock_guard lock(state->mutex);
+    state->previousPopups = std::move(existing);
+    state->contextMenuPopup = nullptr;
+    state->contextMenuThread = 0;
+    state->contextMenuUntil = GetTickCount64() + 1500;
+}
+
 bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
 {
     GUITHREADINFO info{};
@@ -105,8 +145,17 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
     }
     const ULONGLONG now = GetTickCount64();
     std::lock_guard lock(state->mutex);
+    if (overflowVisible && !state->overflowWasVisible && now >= state->contextMenuUntil)
+        state->previousPopups = VisibleMenuPopups();
+    state->overflowWasVisible = overflowVisible;
     if (overflowVisible) state->contextMenuUntil = now + 1500;
     if (state->menuLoop || ownedMenu) return true;
+    if (state->contextMenuPopup)
+    {
+        if (IsVisibleMenuPopup(state->contextMenuPopup)) return true;
+        state->contextMenuPopup = nullptr;
+        state->contextMenuUntil = 0;
+    }
     if (state->contextMenuThread)
     {
         if (ReadMenu(state->contextMenuThread, info)) return true;
@@ -118,6 +167,29 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
         if (threadMenu || ReadMenu(0, info))
             state->contextMenuThread = GetWindowThreadProcessId(
                 threadMenu ? threadMenuOwner : info.hwndMenuOwner, nullptr);
+        else
+        {
+            // WPF/WinUI and SnowDesktop menus can use a nonactivating tool
+            // popup without entering a Win32 menu loop. Only accept a new
+            // popup following an actual tray interaction, on this monitor,
+            // belonging to Explorer, the foreground app or our host.
+            DWORD foregroundProcess = 0, taskbarProcess = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
+            GetWindowThreadProcessId(taskbar, &taskbarProcess);
+            for (const HWND popup : VisibleMenuPopups())
+            {
+                if (std::find(state->previousPopups.begin(), state->previousPopups.end(), popup) !=
+                    state->previousPopups.end()) continue;
+                DWORD process = 0;
+                GetWindowThreadProcessId(popup, &process);
+                if ((process == foregroundProcess || process == taskbarProcess || process == state->ownerId) &&
+                    snowdesktop::taskbar_monitor::Resolve(popup) == snowdesktop::taskbar_monitor::Resolve(taskbar))
+                {
+                    state->contextMenuPopup = popup;
+                    break;
+                }
+            }
+        }
         return true;
     }
     return overflowVisible;
@@ -137,9 +209,7 @@ LRESULT CALLBACK MenuMouseProc(int code, WPARAM message, LPARAM data) try
         for (const auto& [window, state] : targets)
             if (IsTrayOrigin(source, window))
             {
-                { std::lock_guard lock(state->mutex);
-                  state->contextMenuThread = 0;
-                  state->contextMenuUntil = GetTickCount64() + 1500; }
+                ArmContextMenu(state);
                 PostMessageW(window, RegisterWindowMessageW(kApplyMessageName), 0, 0);
             }
     }
@@ -470,9 +540,9 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     { Update(window, state, false); return 0; }
     if (message == WM_ENTERMENULOOP || message == WM_CONTEXTMENU)
     {
+        ArmContextMenu(state);
         { std::lock_guard lock(state->mutex);
-          if (message == WM_ENTERMENULOOP) state->menuLoop = true;
-          state->contextMenuUntil = GetTickCount64() + 1500; }
+          if (message == WM_ENTERMENULOOP) state->menuLoop = true; }
         // Release the owner before Explorer creates its menu; a later host
         // visibility scan can cloak the menu along with the taskbar on Win10.
         Update(window, state, false);
@@ -481,7 +551,8 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     if (message == WM_EXITMENULOOP)
     {
         { std::lock_guard lock(state->mutex);
-          state->menuLoop = false; state->contextMenuUntil = 0; state->contextMenuThread = 0; }
+          state->menuLoop = false; state->contextMenuUntil = 0; state->contextMenuThread = 0;
+          state->contextMenuPopup = nullptr; state->previousPopups.clear(); }
         Update(window, state, false);
     }
     else if (message == WM_WINDOWPOSCHANGED || message == WM_SHOWWINDOW)
@@ -520,9 +591,11 @@ void ObserveMenuMessage(HWND source, UINT message) noexcept try
     for (const auto& [window, state] : targets)
         if (IsTrayOrigin(source, window))
         {
+            if (message != WM_EXITMENULOOP) ArmContextMenu(state);
             { std::lock_guard lock(state->mutex);
               if (message != WM_CONTEXTMENU) state->menuLoop = message == WM_ENTERMENULOOP;
               state->contextMenuThread = 0;
+              state->contextMenuPopup = nullptr;
               state->contextMenuUntil = message == WM_EXITMENULOOP ? 0 : GetTickCount64() + 1500; }
             if (GetWindowThreadProcessId(window, nullptr) == GetCurrentThreadId())
                 Update(window, state, false);

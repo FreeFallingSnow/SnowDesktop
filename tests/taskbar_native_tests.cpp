@@ -220,6 +220,35 @@ int RunNativeTaskbarTests()
             "a tray context request hands off to another menu owner beyond the opening grace period");
         check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
             "closing a handed-off tray menu resumes suppression");
+        HWND customPopup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"STATIC", L"Isolated custom tray popup", WS_POPUP, -32000, -32000, 80, 80,
+            nullptr, nullptr, instance, nullptr);
+        check(customPopup != nullptr, "create a private non-Win32 menu popup");
+        if (customPopup)
+        {
+            ShowWindow(customPopup, SW_SHOWNOACTIVATE);
+            SendMessageW(window, apply, 0, 0);
+            check(cloaked(), "an ordinary custom popup without a tray origin does not release suppression");
+            ShowWindow(customPopup, SW_HIDE);
+            SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+            ShowWindow(customPopup, SW_SHOWNOACTIVATE);
+            SendMessageW(window, apply, 0, 0);
+            const ULONGLONG menuDeadline = GetTickCount64() + 1650;
+            while (GetTickCount64() < menuDeadline)
+            {
+                MSG message{};
+                while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                { TranslateMessage(&message); DispatchMessageW(&message); }
+                MsgWaitForMultipleObjectsEx(0, nullptr, 30, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            }
+            SendMessageW(window, apply, 0, 0);
+            check(!cloaked(), "a custom tray popup remains exempt beyond the opening grace period");
+            ShowWindow(customPopup, SW_HIDE);
+            SendMessageW(window, apply, 0, 0);
+            check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
+                "hiding a custom tray popup ends its exemption");
+            DestroyWindow(customPopup);
+        }
         DWORD value = 0;
         DwmSetWindowAttribute(unrelated, DWMWA_CLOAK, &reveal, sizeof(reveal));
         check(SUCCEEDED(DwmGetWindowAttribute(unrelated, DWMWA_CLOAKED, &value, sizeof(value))) &&
