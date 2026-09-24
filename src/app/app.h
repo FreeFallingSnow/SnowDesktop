@@ -3247,6 +3247,7 @@ private:
     snowdesktop::UiScheduleToken luaPanelAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken quickNavigationAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken dockBounceAnimationFrameToken_ = 0;
+    snowdesktop::UiScheduleToken dockMagnificationAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
     bool compositionCommitPending_ = false;

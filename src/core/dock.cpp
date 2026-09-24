@@ -284,6 +284,7 @@ void DockContainer::SetReservedArea(RECT area)
     hoveredTitleBoundsCacheAnchor_ = {};
     hoveredTitleBoundsCache_ = {};
     magnificationFocusRect_ = {};
+    magnificationEntry_ = {};
 }
 
 RECT DockContainer::GetDesktopItemVisualRect(
@@ -695,6 +696,37 @@ float DockContainer::GetMaximumMagnificationScale() const
         snowdesktop::animation::RuntimeAnimationsEnabled());
 }
 
+float DockContainer::GetCurrentMagnificationScale() const
+{
+    const float maximum = GetMaximumMagnificationScale();
+    return app_ && app_->dockSettings_.hoverEffect == 2
+        ? magnificationEntry_.FocusScale(maximum) : maximum;
+}
+
+bool DockContainer::IsMagnificationAnimating() const
+{
+    return magnificationEntry_.IsAnimating();
+}
+
+bool DockContainer::AdvanceMagnificationAnimation(double nowMilliseconds)
+{
+    if (!IsMagnificationAnimating())
+        return false;
+    // Reconcile leave, drag suppression and preference changes before another
+    // frame, even if the pointer stopped moving after entering the Dock.
+    if (!app_ || !app_->IsDockContainerInteractionVisible(this))
+    {
+        magnificationFocusRect_ = {};
+        magnificationEntry_ = {};
+    }
+    else
+    {
+        ResolveMagnificationFocusRect(app_->lastMousePoint_);
+        magnificationEntry_.Advance(nowMilliseconds);
+    }
+    return true; // The terminal frame still needs to be presented.
+}
+
 int DockContainer::GetLaunchAnimationPadding(bool reserveForLaunch) const
 {
     if (!app_)
@@ -712,6 +744,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
     if (IsMagnificationSuppressed())
     {
         magnificationFocusRect_ = {};
+        magnificationEntry_ = {};
         return RECT{};
     }
 
@@ -891,6 +924,20 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
     }
 
     magnificationFocusRect_ = nextFocus;
+    // Hit testing also queries the previous mouse point to find dirty bounds.
+    // Those historical queries must not restart or cancel the entry timeline.
+    if (app_ && pointer.x == app_->lastMousePoint_.x &&
+        pointer.y == app_->lastMousePoint_.y)
+    {
+        magnificationEntry_.SetHovered(
+            !IsRectEmpty(&nextFocus) &&
+                app_->dockSettings_.hoverEffect == 2 &&
+                GetMaximumMagnificationScale() > 1.0f,
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(),
+            snowdesktop::animation::RuntimeDurationScale());
+        if (IsMagnificationAnimating())
+            app_->EnsureUiAnimationFrame();
+    }
     return nextFocus;
 }
 
@@ -920,7 +967,7 @@ float DockContainer::GetMagnificationScale(
             baseCenter -
             (IsVertical()
                 ? pointer.y : pointer.x)),
-        ItemPitch(), GetMaximumMagnificationScale());
+        ItemPitch(), GetCurrentMagnificationScale());
 }
 
 int DockContainer::GetMagnificationAxisShift(
@@ -928,7 +975,7 @@ int DockContainer::GetMagnificationAxisShift(
     POINT pointer) const
 {
     if (!app_ || IsRectEmpty(&focusRect) ||
-        GetMaximumMagnificationScale() <= 1.0f)
+        GetCurrentMagnificationScale() <= 1.0f)
         return 0;
     if (IsEdgeAttached())
     {
@@ -969,7 +1016,7 @@ int DockContainer::GetMagnificationAxisShift(
                         static_cast<float>(
                             candidateCenter -
                             pointerAxis),
-                        ItemPitch(), GetMaximumMagnificationScale()));
+                        ItemPitch(), GetCurrentMagnificationScale()));
         }
         return snowdesktop::dock_magnification::PackedAxisShift(
             scales,
@@ -988,13 +1035,13 @@ int DockContainer::GetMagnificationAxisShift(
             : (focusRect.left + focusRect.right) / 2;
         return snowdesktop::dock_magnification::SingleFocusAxisShift(
             baseCenter - focusCenter, ItemIconSize(),
-            GetMaximumMagnificationScale());
+            GetCurrentMagnificationScale());
     }
     return snowdesktop::dock_magnification::AxisShiftForDistance(
         baseCenter -
             (IsVertical()
                 ? pointer.y : pointer.x),
-        ItemPitch(), ItemIconSize(), GetMaximumMagnificationScale());
+        ItemPitch(), ItemIconSize(), GetCurrentMagnificationScale());
 }
 
 RECT DockContainer::GetElementVisualRect(

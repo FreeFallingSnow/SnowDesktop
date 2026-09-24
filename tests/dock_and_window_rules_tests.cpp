@@ -92,6 +92,7 @@ void Check(bool condition, const char* message)
 }
 
 #include "dock_refresh_cache_cases.h"
+#include "dock_magnification_entry_cases.h"
 
 #include "grid_drag_geometry_cases.h"
 
@@ -5298,6 +5299,7 @@ int main(int argc, char** argv)
         "Dock launch pulse must return to rest and remain inside the icon bounds");
 
     namespace magnification = snowdesktop::dock_magnification;
+    CheckDockMagnificationEntry();
     Check(magnification::ResolveFocusScale(0, 2.0f, true) == 1.0f &&
             magnification::ResolveFocusScale(2, 2.0f, false) == 1.0f &&
             magnification::ResolveFocusScale(2, 0.5f, true) == 1.0f &&

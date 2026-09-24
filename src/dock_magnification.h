@@ -120,6 +120,49 @@ inline float InterpolateScale(
     return from + (to - from) * eased;
 }
 
+// Only the entry amplitude is animated. The wave center continues to follow
+// each pointer sample immediately, including while the entry is in progress.
+class HoverEntryAnimation
+{
+public:
+    static constexpr double kDurationMilliseconds = 160.0;
+
+    void SetHovered(bool hovered, double now, double durationScale)
+    {
+        if (!hovered)
+        {
+            *this = {};
+            return;
+        }
+        if (hovered_)
+            return;
+        hovered_ = true;
+        started_ = now;
+        duration_ = kDurationMilliseconds * std::max(0.01, durationScale);
+        progress_ = 0.0f;
+    }
+
+    bool IsAnimating() const { return hovered_ && progress_ < 1.0f; }
+
+    void Advance(double now)
+    {
+        if (IsAnimating())
+            progress_ = std::max(progress_, static_cast<float>(
+                std::clamp((now - started_) / duration_, 0.0, 1.0)));
+    }
+
+    float FocusScale(float maximumScale) const
+    {
+        return InterpolateScale(1.0f, maximumScale, progress_);
+    }
+
+private:
+    bool hovered_ = false;
+    double started_ = 0.0;
+    double duration_ = kDurationMilliseconds;
+    float progress_ = 0.0f;
+};
+
 inline int GrowthForScale(float scale, int baseIconSize)
 {
     return std::max(0, static_cast<int>(std::round(

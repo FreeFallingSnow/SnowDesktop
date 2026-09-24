@@ -263,6 +263,48 @@ void DesktopApp::EnsureUiAnimationFrame()
                 });
     }
 
+    if (!dockMagnificationAnimationFrameToken_ &&
+        std::any_of(containers_.begin(), containers_.end(),
+            [](const auto& container) {
+                const auto* dock = dynamic_cast<const DockContainer*>(container.get());
+                return dock && dock->IsMagnificationAnimating();
+            }))
+    {
+        dockMagnificationAnimationFrameToken_ = uiAnimationScheduler_.StartAnimation(
+            snowdesktop::UiAnimationSurface::FloatingDock,
+            [this](double nowMilliseconds) {
+                RECT desktopDirty{};
+                bool keep = false;
+                for (const auto& container : containers_)
+                {
+                    auto* dock = dynamic_cast<DockContainer*>(container.get());
+                    if (!dock || !dock->AdvanceMagnificationAnimation(nowMilliseconds))
+                        continue;
+                    if (auto* host = FindPersistentDockHost(dock))
+                    {
+                        // Refresh the title/input region and backdrop together
+                        // with the changing icon and panel geometry.
+                        UpdateFloatingDockWindowBounds(*host, false);
+                        InvalidateFloatingDockWindow(*host, true);
+                    }
+                    else
+                    {
+                        RECT dirty = snowdesktop::floating_dock_rules::
+                            ExpandHostForTitleLayer(dock->GetInteractiveBounds(),
+                                dockSettings_.position);
+                        InflateRect(&dirty, 4, 4);
+                        UnionRect(&desktopDirty, &desktopDirty, &dirty);
+                    }
+                    keep = keep || dock->IsMagnificationAnimating();
+                }
+                if (!IsRectEmpty(&desktopDirty) && hwnd_ && IsWindow(hwnd_))
+                    (void)PresentDesktopForegroundComposition(desktopDirty);
+                if (!keep)
+                    dockMagnificationAnimationFrameToken_ = 0;
+                return keep;
+            });
+    }
+
     if (!dockBounceAnimationFrameToken_ &&
         !dockLaunchBounces_.empty())
     {
@@ -438,6 +480,7 @@ void DesktopApp::CancelUiAnimationFrame()
         &luaPanelAnimationFrameToken_,
         &quickNavigationAnimationFrameToken_,
         &dockBounceAnimationFrameToken_,
+        &dockMagnificationAnimationFrameToken_,
         &pageNotifyAnimationFrameToken_,
         &pointerRecoveryFrameToken_,
         &floatingDockHoverTailToken_,
