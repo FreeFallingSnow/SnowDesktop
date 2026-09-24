@@ -35,6 +35,9 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    POINT hoverPoint{};
+    if (TryGetDesktopHoverPointFromCursor(hoverPoint)) UpdatePopupHover(hoverPoint);
+    else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
     if (snowdesktop::desktop_hover_rules::

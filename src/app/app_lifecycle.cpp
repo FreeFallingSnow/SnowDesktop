@@ -194,6 +194,7 @@ void DesktopApp::ResetDesktopWindowResources()
     CancelAllDockWindowActivationObservations();
     CancelPendingExternalOleDragLeave();
     CancelCollectionPopupDwell();
+    CancelPopupHover();
     CancelCollectionGroupTabDwell();
     nativeGlassPanelReadyLogged_ = false;
     if (hwnd_ && IsWindow(hwnd_))

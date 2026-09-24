@@ -582,6 +582,13 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
+    else if (timerId == kPopupHoverTimerId)
+    {
+        if (!popupHoverTimerArmed_) return;
+        POINT point{};
+        if (TryGetDesktopHoverPointFromCursor(point)) UpdatePopupHover(point, true);
+        else CancelPopupHover();
+    }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
         if (!collectionPopupDwellTimerArmed_)

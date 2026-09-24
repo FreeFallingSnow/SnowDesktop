@@ -12,6 +12,7 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    CancelPopupHover(true);
     CancelRenameClick();
     (void)wp;
     if (renameEdit_ != nullptr)
@@ -223,6 +224,7 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    UpdatePopupHover(current);
     if (UpdateWidgetHoverExpansion(current))
         PresentPassiveHoverVisualChange();
     if (HandleUsageGuidePointerMove(current)) return;

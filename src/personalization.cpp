@@ -411,6 +411,8 @@ bool LoadPersonalization(
         s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
     s.scrollableTitleBarOnTop = false;
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
+    s.popupHoverOpen = false;
+    ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
@@ -455,6 +457,7 @@ bool LoadPersonalization(
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
         const bool titleBarOnTop = s.scrollableTitleBarOnTop;
+        const bool popupHoverOpen = s.popupHoverOpen;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
         const float luaWidgetContentRowHeight =
@@ -467,6 +470,7 @@ bool LoadPersonalization(
         s.cornerRadius = cornerRadius;
         s.barHeight = barHeight;
         s.scrollableTitleBarOnTop = titleBarOnTop;
+        s.popupHoverOpen = popupHoverOpen;
         s.categorizedTabHeight =
             categorizedTabHeight;
         s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
@@ -547,6 +551,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
     file << "  \"showGroupTabCounts\": "
          << (s.showGroupTabCounts ? "true" : "false") << ",\n";
+    file << "  \"popupHoverOpen\": "
+         << (s.popupHoverOpen ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"contextMenuStyle\": "

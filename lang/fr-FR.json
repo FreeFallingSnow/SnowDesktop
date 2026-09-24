@@ -1,4 +1,6 @@
 {
+  "app.settings.popup_hover_open": "Ouvrir les fenêtres contextuelles au survol",
+  "app.settings.popup_hover_open_hint": "Survolez un dossier ou une collection du Dock, ou le bouton de développement d’une collection du bureau, pendant 600 ms pour ouvrir sa fenêtre contextuelle.",
   "app.widget.removal.title": "Supprimer le composant ?",
   "app.widget.removal.content": "La suppression de « {0} » effacera les données enregistrées par cette instance du composant. Cette action est irréversible.",
   "settings.contextMenu.inspectDesktop": "Examiner le menu du Bureau",

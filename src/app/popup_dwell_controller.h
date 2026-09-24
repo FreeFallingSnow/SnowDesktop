@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstddef>
+#include <string>
 
 /** Owns hover-candidate timing for drag-opened collection popups. */
 class PopupDwellController
@@ -53,4 +54,36 @@ public:
 private:
     std::size_t candidate_ = NoCandidate;
     DWORD startedAt_ = 0;
+};
+
+/** Passive popup opening is opt-in and independent of drag dwell. */
+class PopupHoverController
+{
+public:
+    static constexpr DWORD DelayMs = 600;
+
+    void Track(const std::wstring& token, DWORD now)
+    {
+        if (token_ == token) return;
+        token_ = token;
+        startedAt_ = now;
+        consumed_ = false;
+    }
+
+    bool Consume(DWORD now)
+    {
+        if (!Pending() || now - startedAt_ < DelayMs) return false;
+        consumed_ = true;
+        return true;
+    }
+
+    // Clicking or dismissing must not reopen the same target until re-entry.
+    void SuppressUntilLeave() { consumed_ = true; }
+    void Reset() { token_.clear(); startedAt_ = 0; consumed_ = false; }
+    bool Pending() const { return !token_.empty() && !consumed_; }
+
+private:
+    std::wstring token_;
+    DWORD startedAt_ = 0;
+    bool consumed_ = false;
 };

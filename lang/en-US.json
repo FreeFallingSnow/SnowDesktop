@@ -1,4 +1,6 @@
 {
+  "app.settings.popup_hover_open": "Open popups on hover",
+  "app.settings.popup_hover_open_hint": "Hover over a Dock folder or collection, or a collection's expand button, for 600 ms to open its popup.",
   "app.widget.removal.title": "Delete component?",
   "app.widget.removal.content": "Deleting “{0}” will erase the data saved by this component instance. This cannot be undone.",
   "settings.contextMenu.inspectDesktop": "Inspect desktop menu",

@@ -2899,6 +2899,40 @@ void TestPopupDwellControllerHandlesCandidateChanges()
             !controller.IsReady(1000, 0),
         "reset popup dwell must remove both candidate and readiness");
 }
+
+// Prevent passive hover from opening early, reopening after click/Escape, or
+// inheriting time from a different source/monitor. No clock sleeps or UI mocks.
+void TestPassivePopupHoverTiming()
+{
+    PopupHoverController controller;
+    Check(!controller.Pending() && !controller.Consume(1000),
+        "no opener cannot trigger a popup");
+    controller.Track(L"collection:a", 100);
+    controller.Track(L"collection:a", 650);
+    Check(!controller.Consume(699) && controller.Consume(700) &&
+            !controller.Consume(2000),
+        "a continuous hover opens once at 600 ms, even while moving inside the opener");
+    controller.Track(L"dock:monitor1:folder", 2000);
+    controller.Track(L"dock:monitor2:folder", 2500);
+    Check(!controller.Consume(2600) && controller.Consume(3100),
+        "the same Dock source on another monitor starts a fresh dwell");
+    controller.Track(L"collection:b", 4000);
+    controller.SuppressUntilLeave();
+    controller.Track(L"collection:b", 4600);
+    Check(!controller.Consume(5000),
+        "clicking or dismissing suppresses the hovered opener until leave");
+    controller.Track(L"", 5100);
+    controller.Track(L"collection:b", 5200);
+    Check(!controller.Consume(5799) && controller.Consume(5800),
+        "reentering a suppressed opener requires the full delay");
+    controller.Track(L"collection:c", 6000);
+    controller.Reset();
+    Check(!controller.Consume(9000),
+        "disabling hover, leaving the surface or occlusion cancels pending opening");
+    controller.Track(L"dock:folder", MAXDWORD - 200);
+    Check(!controller.Consume(398) && controller.Consume(399),
+        "hover timing survives the Windows tick counter wrapping");
+}
 }
 
 // DND-03: drive the production completion publisher in both completion orders;
@@ -3133,6 +3167,7 @@ int wmain(int argc, wchar_t** argv)
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
     TestPopupDwellControllerHandlesCandidateChanges();
+    TestPassivePopupHoverTiming();
     if (failures != 0)
     {
         std::cerr << failures

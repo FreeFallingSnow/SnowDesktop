@@ -1,4 +1,6 @@
 {
+  "app.settings.popup_hover_open": "懸停延遲展開彈出視窗",
+  "app.settings.popup_hover_open_hint": "滑鼠在 Dock 資料夾、集合圖示或桌面集合的展開入口停留 600 毫秒後，自動展開彈出視窗。",
   "app.widget.removal.title": "刪除元件？",
   "app.widget.removal.content": "刪除「{0}」將清除這個元件實例儲存的資料。此操作無法復原。",
   "settings.contextMenu.inspectDesktop": "檢查桌面功能表",

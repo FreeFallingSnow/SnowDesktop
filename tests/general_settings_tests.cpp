@@ -363,6 +363,9 @@ int main()
     Check(!savedAppearance.scrollableTitleBarOnTop,
         "existing profiles default to a bottom title bar");
     savedAppearance.scrollableTitleBarOnTop = true;
+    Check(!savedAppearance.popupHoverOpen,
+        "popup hover opening defaults off for new profiles");
+    savedAppearance.popupHoverOpen = true;
     savedAppearance.showCategoryTabCounts = false;
     savedAppearance.panelGradient.enabled = true;
     savedAppearance.panelGradient.angle = 45;
@@ -383,6 +386,7 @@ int main()
             loadedAppearance.luaWidgetContentRowHeight == 34.0f &&
             loadedAppearance.showGroupTabCounts &&
             loadedAppearance.scrollableTitleBarOnTop &&
+            loadedAppearance.popupHoverOpen &&
             !loadedAppearance.showCategoryTabCounts &&
             !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
             loadedAppearance.gradientEndA == savedAppearance.gradientEndA,
@@ -396,12 +400,14 @@ int main()
             auto appearance = MakeAppearancePreset(preset);
             appearance.showGroupTabCounts = enabled;
             appearance.scrollableTitleBarOnTop = enabled;
+            appearance.popupHoverOpen = enabled;
             appearance.showCategoryTabCounts = !enabled;
             loadedAppearance.showGroupTabCounts = !enabled;
             Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
                     LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
                     loadedAppearance.showGroupTabCounts == enabled &&
                     loadedAppearance.scrollableTitleBarOnTop == enabled &&
+                    loadedAppearance.popupHoverOpen == enabled &&
                     loadedAppearance.showCategoryTabCounts == !enabled,
                 "group count preference survives acrylic preset refresh independently from category counts");
         }
@@ -446,10 +452,12 @@ int main()
     PersonalizationSettings migratedGlass;
     migratedGlass.showGroupTabCounts = true;
     migratedGlass.scrollableTitleBarOnTop = true;
+    migratedGlass.popupHoverOpen = true;
     migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
             !migratedGlass.showGroupTabCounts &&
             !migratedGlass.scrollableTitleBarOnTop &&
+            !migratedGlass.popupHoverOpen &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
                 kDefaultEdgeHighlightWidth &&

@@ -2333,6 +2333,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "personalization.cornerRadius",
                 "personalization.barHeight",
                 "personalization.scrollableTitleBarOnTop",
+                "personalization.popupHoverOpen",
                 "personalization.luaWidgetRowHeight",
                 "personalization.showGroupTabCounts",
                 "desktop.categoryLayout",

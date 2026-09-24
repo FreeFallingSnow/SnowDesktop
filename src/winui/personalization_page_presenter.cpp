@@ -190,6 +190,9 @@ struct PersonalizationPagePresenter::Impl
     ContinuousControl luaWidgetContentRowHeight;
     muxc::ToggleSwitch showGroupTabCounts{nullptr};
     SettingRow showGroupTabCountsRow;
+    muxc::ToggleSwitch popupHoverOpen{nullptr};
+    SettingRow popupHoverOpenRow;
+    winrt::event_token popupHoverOpenToken{};
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -472,6 +475,11 @@ struct PersonalizationPagePresenter::Impl
         showGroupTabCountsRow.Initialize(showGroupTabCounts);
         showGroupTabCountsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         layoutCard.content.Children().Append(showGroupTabCountsRow.root);
+        popupHoverOpen = muxc::ToggleSwitch{};
+        popupHoverOpen.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        popupHoverOpenRow.Initialize(popupHoverOpen);
+        popupHoverOpenRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(popupHoverOpenRow.root);
     }
 
     void InitializeColorControl(
@@ -602,6 +610,7 @@ struct PersonalizationPagePresenter::Impl
                             settings.luaWidgetContentRowHeight;
                         const bool counts = settings.showCategoryTabCounts;
                         const bool groupCounts = settings.showGroupTabCounts;
+                        const bool hoverOpen = settings.popupHoverOpen;
                         const int menu = settings.contextMenuStyle;
                         settings = MakeAppearancePreset(preset);
                         settings.cornerRadius = corner;
@@ -612,6 +621,7 @@ struct PersonalizationPagePresenter::Impl
                             luaWidgetContentRowHeight;
                         settings.showCategoryTabCounts = counts;
                         settings.showGroupTabCounts = groupCounts;
+                        settings.popupHoverOpen = hoverOpen;
                         settings.contextMenuStyle = menu;
                     });
             });
@@ -704,6 +714,14 @@ struct PersonalizationPagePresenter::Impl
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [enabled](PersonalizationSettings& settings) {
                         settings.scrollableTitleBarOnTop = enabled;
+                    });
+            });
+        popupHoverOpenToken = popupHoverOpen.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = popupHoverOpen.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.popupHoverOpen = enabled;
                     });
             });
         for (ContinuousControl* control : continuousControls)
@@ -873,6 +891,7 @@ struct PersonalizationPagePresenter::Impl
         acrylicToggle.IsOn(settings.acrylicEnabled);
         edgeHighlightToggle.IsOn(settings.widgetEdgeHighlightEnabled);
         showGroupTabCounts.IsOn(settings.showGroupTabCounts);
+        popupHoverOpen.IsOn(settings.popupHoverOpen);
         topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
@@ -1135,6 +1154,12 @@ struct PersonalizationPagePresenter::Impl
                 L"Applies to collection group and file group tabs."));
         muxa::AutomationProperties::SetName(
             showGroupTabCounts, showGroupTabCountsRow.label.Text());
+        popupHoverOpenRow.SetText(
+            L("app.settings.popup_hover_open", L"Open popups on hover"),
+            L("app.settings.popup_hover_open_hint",
+                L"Hover over a Dock folder or collection, or a collection's expand button, for 600 ms to open its popup."));
+        muxa::AutomationProperties::SetName(
+            popupHoverOpen, popupHoverOpenRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1258,6 +1283,8 @@ struct PersonalizationPagePresenter::Impl
             return cornerRadius.slider;
         if (id == "personalization.showGroupTabCounts")
             return showGroupTabCounts;
+        if (id == "personalization.popupHoverOpen")
+            return popupHoverOpen;
         if (id == "personalization.barHeight")
             return barHeight.slider;
         if (id == "personalization.scrollableTitleBarOnTop")
@@ -1349,6 +1376,7 @@ struct PersonalizationPagePresenter::Impl
             contentThemeCombo.SelectionChanged(contentThemeToken);
             contextMenuCombo.SelectionChanged(contextMenuToken);
             showGroupTabCounts.Toggled(showGroupTabCountsToken);
+            popupHoverOpen.Toggled(popupHoverOpenToken);
             topTitleBarToggle.Toggled(topTitleBarToken);
         }
         catch (...)

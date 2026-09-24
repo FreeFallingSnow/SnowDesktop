@@ -283,6 +283,12 @@ void TestRoutes()
     Check(groupCounts.page == SettingsPage::AppearanceWidgets &&
             groupCounts.focusId == "personalization.showGroupTabCounts",
         "group count links reach Widgets & layout without redirecting to desktop categories");
+    const auto popupHover = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.popupHoverOpen"));
+    Check(popupHover.page == SettingsPage::AppearanceWidgets &&
+            popupHover.focusId == "personalization.popupHoverOpen",
+        "hover popup search and deep links reach widget layout settings");
     const auto titleBarPosition = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.scrollableTitleBarOnTop"));

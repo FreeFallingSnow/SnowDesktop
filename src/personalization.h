@@ -165,6 +165,8 @@ struct PersonalizationSettings
 
     /** Group source tab counts, independent of category counts and themes. */
     bool showGroupTabCounts = false;
+    // Open Dock folder/collection and desktop collection popups after hover.
+    bool popupHoverOpen = false;
 
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */

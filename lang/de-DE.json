@@ -1,4 +1,6 @@
 {
+  "app.settings.popup_hover_open": "Popups bei Mauszeigerkontakt öffnen",
+  "app.settings.popup_hover_open_hint": "Den Mauszeiger 600 ms über einem Ordner oder einer Sammlung im Dock oder der Schaltfläche zum Erweitern einer Desktop-Sammlung halten, um das Popup zu öffnen.",
   "app.widget.removal.title": "Komponente löschen?",
   "app.widget.removal.content": "Beim Löschen von „{0}“ werden die von dieser Komponenteninstanz gespeicherten Daten gelöscht. Dies kann nicht rückgängig gemacht werden.",
   "settings.contextMenu.inspectDesktop": "Desktopmenü prüfen",
