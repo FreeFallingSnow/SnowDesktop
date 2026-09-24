@@ -200,16 +200,55 @@ int RunNativeTaskbarTests()
         "a real taskbar-owned popup releases its owner and permits Explorer's reveal during the menu loop");
     check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
         "closing the taskbar popup resumes suppression and removes the scene exemption");
-    HWND trayChild = CreateWindowExW(0, L"STATIC", L"Isolated tray child", WS_CHILD,
+    WNDCLASSW trayRegistration{};
+    trayRegistration.hInstance = instance;
+    trayRegistration.lpszClassName = L"SnowDesktop.IsolatedTrayChild";
+    trayRegistration.lpfnWndProc = [](HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) -> LRESULT {
+        // Real notification-area children consume the request and notify the
+        // application instead of forwarding WM_CONTEXTMENU to the root bar.
+        if (message == WM_CONTEXTMENU || message == WM_ENTERMENULOOP || message == WM_EXITMENULOOP)
+            return 0;
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    };
+    check(RegisterClassW(&trayRegistration) != 0, "register a private tray child that consumes menu messages");
+    HWND trayChild = CreateWindowExW(0, trayRegistration.lpszClassName, L"Isolated tray child", WS_CHILD,
         0, 0, 16, 16, window, nullptr, instance, nullptr);
     check(trayChild != nullptr, "create a private notification-area child");
     if (trayChild)
     {
-        native::ObserveMenuMessage(trayChild, WM_ENTERMENULOOP);
+        SendMessageW(trayChild, WM_ENTERMENULOOP, TRUE, 0);
         check(!cloaked(), "the Explorer hook releases a child-owned menu before its window is created");
-        native::ObserveMenuMessage(trayChild, WM_EXITMENULOOP);
+        SendMessageW(trayChild, WM_EXITMENULOOP, TRUE, 0);
         check(cloaked(), "closing a child-owned tray menu restores suppression");
+        // Start/Search can temporarily reparent the actual taskbar. The tray
+        // child still belongs to it even though GA_ROOT is now the panel host.
+        HWND panelHost = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"STATIC", L"Isolated shell panel host", WS_POPUP,
+            -32000, -32000, 320, 80, nullptr, nullptr, instance, nullptr);
+        check(panelHost != nullptr, "create a private panel reparenting host");
+        if (panelHost)
+        {
+            SetParent(window, panelHost);
+            check(GetAncestor(trayChild, GA_ROOT) == panelHost && IsChild(window, trayChild),
+                "the panel root differs from the taskbar while its tray remains a descendant");
+            SendMessageW(panelHost, WM_ENTERMENULOOP, TRUE, 0);
+            check(!GetPropW(window, native::kContextMenuProperty),
+                "sharing the panel root does not make an unrelated menu a tray interaction");
+            SendMessageW(panelHost, WM_EXITMENULOOP, TRUE, 0);
+            SendMessageW(trayChild, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(trayChild), -1);
+            check(GetPropW(window, native::kContextMenuProperty) != nullptr,
+                "a direct tray right-click is recognized while its taskbar is reparented");
+            SetParent(window, nullptr);
+            check(ProbeMenu(unrelated, window, 1650) && !menuProbe.cloaked && !menuProbe.revealBlocked,
+                "closing the shell panel preserves the direct tray menu handoff beyond its opening grace");
+            SendMessageW(trayChild, WM_EXITMENULOOP, TRUE, 0);
+            SendMessageW(window, apply, 0, 0);
+            check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
+                "closing the menu after a panel handoff restores direct tray suppression");
+            DestroyWindow(panelHost);
+        }
         DestroyWindow(trayChild);
+        UnregisterClassW(trayRegistration.lpszClassName, instance);
     }
     if (unrelated)
     {

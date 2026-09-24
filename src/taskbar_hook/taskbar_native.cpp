@@ -46,6 +46,7 @@ struct WindowState
     RECT bounds{};
     ClassicSurface surface;
     HHOOK menuMouseHook = nullptr;
+    HHOOK menuMessageHook = nullptr;
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
     DWORD contextMenuThread = 0;
@@ -55,6 +56,7 @@ struct WindowState
     ~WindowState()
     {
         if (menuMouseHook) UnhookWindowsHookEx(menuMouseHook);
+        if (menuMessageHook) UnhookWindowsHookEx(menuMessageHook);
         if (owner) CloseHandle(owner);
     }
 };
@@ -70,9 +72,11 @@ std::shared_ptr<WindowState> Find(HWND window)
 
 bool IsTrayOrigin(HWND source, HWND taskbar)
 {
+    // Start/Search may temporarily put the bar under a Shell panel host.
+    // Its tray descendants still belong to the bar even when GA_ROOT does not.
+    if (source && (source == taskbar || IsChild(taskbar, source))) return true;
     const HWND root = source ? GetAncestor(source, GA_ROOT) : nullptr;
     if (!root) return false;
-    if (root == taskbar) return true;
     wchar_t name[96]{};
     GetClassNameW(root, name, static_cast<int>(std::size(name)));
     if (wcscmp(name, L"NotifyIconOverflowWindow") != 0 &&
@@ -218,6 +222,26 @@ LRESULT CALLBACK MenuMouseProc(int code, WPARAM message, LPARAM data) try
 catch (...)
 {
     return CallNextHookEx(nullptr, code, message, data);
+}
+
+LRESULT CALLBACK MenuMessageProc(int code, WPARAM wParam, LPARAM lParam) try
+{
+    if (code >= 0 && lParam)
+    {
+        const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (message->message == WM_ENTERMENULOOP || message->message == WM_EXITMENULOOP ||
+            message->message == WM_CONTEXTMENU)
+        {
+            // The root subclass already observes its own messages. Keep the
+            // child/overflow listener alive after the injection hook is removed.
+            if (!Find(message->hwnd)) ObserveMenuMessage(message->hwnd, message->message);
+        }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+catch (...)
+{
+    return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
 HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD size)
@@ -628,7 +652,9 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     if (!SetWindowSubclass(window, Subclass, kSubclass, 0)) return false;
     { std::lock_guard lock(windowsMutex); windows.emplace(window, state); }
     state->menuMouseHook = SetWindowsHookExW(WH_MOUSE, MenuMouseProc, nullptr, GetCurrentThreadId());
-    if (!SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
+    state->menuMessageHook = SetWindowsHookExW(WH_CALLWNDPROC, MenuMessageProc, nullptr, GetCurrentThreadId());
+    if (!state->menuMouseHook || !state->menuMessageHook ||
+        !SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
         !SetTimer(window, kTimer, 250, nullptr))
     { Detach(window, state); return false; }
     return Update(window, state, true);
