@@ -1,4 +1,5 @@
 #include "popup_animation_rules.h"
+#include "app/popup_dwell_controller.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -33,6 +34,63 @@ float EvaluateSegmentCurve(
 int main()
 {
     using namespace snowdesktop::popup_animation_rules;
+
+    // Exercise the production hover-switch dispatcher and timing controller.
+    // Only the window/GPU boundary is replaced: close advances the real State,
+    // and publishing replacement content must wait for its hidden endpoint.
+    for (const bool fadeMode : {false, true})
+    {
+        State outgoing;
+        outgoing.Configure(fadeMode, 2.0);
+        outgoing.ShowImmediately();
+        PopupHoverController hover;
+        hover.Track(L"dock:folder-b", 100);
+        int closes = 0, opens = 0;
+        const auto close = [&] { ++closes; outgoing.Close(700); };
+        const auto open = [&] {
+            Check(outgoing.IsHidden(), "new popup cannot replace visible outgoing content");
+            Check(hover.Consume(900), "waiting for close retains the completed hover delay");
+            ++opens;
+        };
+        Check(hover.IsReady(700) && !OpenAfterClose(outgoing, true, close, open) &&
+                outgoing.IsClosing() && closes == 1 && opens == 0 && hover.Pending(),
+            "mature hover starts the old popup's close before publishing another source");
+        outgoing.Advance(790);
+        Check(!OpenAfterClose(outgoing, true, close, open) && closes == 1 &&
+                opens == 0 && outgoing.GetVisual().visible,
+            "repeated hover polls preserve the in-progress outgoing animation");
+        outgoing.Advance(880);
+        Check(OpenAfterClose(outgoing, false, close, open) && closes == 1 && opens == 1,
+            "new content opens only after close completes for scale and fade");
+    }
+    {
+        State immediate;
+        immediate.ShowImmediately();
+        int closes = 0, opens = 0;
+        Check(OpenAfterClose(immediate, true,
+                [&] { ++closes; immediate.ResetHidden(); }, [&] { ++opens; }) &&
+                closes == 1 && opens == 1,
+            "disabled effects close and open in one dispatch without an extra dwell");
+        immediate.ResetHidden();
+        Check(OpenAfterClose(immediate, false, [&] { ++closes; }, [&] { ++opens; }) &&
+                closes == 1 && opens == 2,
+            "opening from an empty surface does not request an outgoing animation");
+    }
+    {
+        PopupHoverController hover;
+        hover.Track(L"collection:b", 100);
+        Check(hover.IsReady(700), "a switch can start after the dwell delay");
+        hover.Reset();
+        Check(!hover.IsReady(900) && !hover.Consume(900),
+            "leaving or disabling hover during close cancels replacement opening");
+        hover.Track(L"collection:b", 1000);
+        Check(hover.IsReady(1600), "reentry must complete another dwell");
+        hover.SuppressUntilLeave();
+        Check(!hover.IsReady(1800), "clicking during close cancels the pending hover switch");
+        hover.Track(L"collection:c", 1900);
+        Check(!hover.IsReady(2400) && hover.IsReady(2500),
+            "moving to a third opener during close requires its own full dwell");
+    }
 
     State state;
     // Directory/icon completions used to retire the native snapshot and cancel

@@ -70,9 +70,14 @@ public:
         consumed_ = false;
     }
 
+    bool IsReady(DWORD now) const
+    {
+        return Pending() && now - startedAt_ >= DelayMs;
+    }
+
     bool Consume(DWORD now)
     {
-        if (!Pending() || now - startedAt_ < DelayMs) return false;
+        if (!IsReady(now)) return false;
         consumed_ = true;
         return true;
     }

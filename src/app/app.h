@@ -3013,6 +3013,8 @@ private:
     /** @brief 关闭集合弹出面板。 */
     void CloseCollectionPopup(
         bool clearSelection = true);
+    /** Start closing while retaining a passive hover request for revalidation. */
+    void BeginCollectionPopupClose(bool clearSelection);
     void FinalizeCloseCollectionPopup();
     void StartCollectionPopupAnimation(
         bool reverseClosingAnimation = false);

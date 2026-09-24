@@ -220,6 +220,23 @@ private:
     std::uint64_t lastTick_ = 0;
 };
 
+// Passive switching must preserve the outgoing content until its real close
+// finishes. The caller revalidates hover on every attempt, so no stale target
+// is queued into the close-completion callback. A synchronous close (effects
+// disabled) can open the replacement immediately.
+template<class CloseExisting, class OpenRequested>
+bool OpenAfterClose(const State& state, bool hasExistingPopup,
+    CloseExisting closeExisting, OpenRequested openRequested)
+{
+    if (hasExistingPopup)
+    {
+        if (state.IsInteractive()) closeExisting();
+        if (state.IsInteractive() || !state.IsHidden()) return false;
+    }
+    openRequested();
+    return true;
+}
+
 enum class ContentRefreshAction { Stable, ContinueAnimation, ContinueCompositor, FinalizeClose };
 
 // Keep a native track intact. The UI fallback publishes replacement pixels

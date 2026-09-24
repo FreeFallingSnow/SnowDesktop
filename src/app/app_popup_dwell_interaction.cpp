@@ -111,14 +111,23 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         CancelPopupHover(true);
         return;
     }
-    if (allowOpen && popupHoverController_.Consume(now))
+    if (allowOpen && popupHoverController_.IsReady(now))
     {
-        CancelPopupHover(true);
-        HideDockWindowPreview();
-        if (folderIndex < dockEntries_.size()) OpenDockFolderPopupAt(folderIndex, point);
-        else if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, point);
-        PresentDesktopPointerUpdate();
-        InvalidateFloatingDockWindow(true);
+        snowdesktop::popup_animation_rules::OpenAfterClose(
+            popupAnimation_, GetOpenPopupWidget() != nullptr,
+            [this] {
+                pendingCollectionPopupOpen_.reset();
+                BeginCollectionPopupClose(false);
+            },
+            [this, now, folderIndex, widgetIndex, point] {
+                if (!popupHoverController_.Consume(now)) return;
+                CancelPopupHover(true);
+                HideDockWindowPreview();
+                if (folderIndex < dockEntries_.size()) OpenDockFolderPopupAt(folderIndex, point);
+                else if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, point);
+                PresentDesktopPointerUpdate();
+                InvalidateFloatingDockWindow(true);
+            });
         return;
     }
     if (popupHoverController_.Pending() && !popupHoverTimerArmed_ && hwnd_)
