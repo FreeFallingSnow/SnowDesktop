@@ -1873,5 +1873,7 @@
     "settings.dock.suppressTaskbar": "시스템 작업 표시줄 항상 숨기기",
     "settings.dock.suppressTaskbar.description": "Dock이 있는 화면의 작업 표시줄을 숨기고 시스템 패널을 열면 잠시 표시합니다. Dock의 Windows 버튼은 유지됩니다.",
     "settings.dock.suppressTaskbar.failed": "작업 표시줄을 숨길 수 없습니다. 이 옵션을 꺼서 작업 표시줄을 복원한 후 다시 시도하세요.",
-    "settings.taskbar.classic.description": "Windows 10에서는 시스템 패널과 테마를 공유하며 두 설정이 동기화됩니다. 흐림 강도는 Windows에서 제어합니다."
+    "settings.taskbar.classic.description": "시스템 패널과 동기화됩니다. 자동은 기본 작업 표시줄 모양에 맞춥니다. 흐림 강도는 Windows에서 제어합니다.",
+    "settings.taskbar.classic.automatic": "자동",
+    "settings.taskbar.classic.theme": "작업 표시줄 테마 및 색상"
 }

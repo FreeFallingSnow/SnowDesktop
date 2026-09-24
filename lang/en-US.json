@@ -1873,5 +1873,7 @@
     "settings.dock.suppressTaskbar": "Always hide the system taskbar",
     "settings.dock.suppressTaskbar.description": "Hide the taskbar on Dock displays; show it for system panels. Keep the Windows button in Dock.",
     "settings.dock.suppressTaskbar.failed": "The taskbar could not be hidden. Turn this option off to restore it, then try again.",
-    "settings.taskbar.classic.description": "Windows 10 shares this theme with system panels; both controls stay in sync. Blur strength is controlled by Windows."
+    "settings.taskbar.classic.description": "Shared with system panels. Automatic matches the primary taskbar appearance. Blur strength is controlled by Windows.",
+    "settings.taskbar.classic.automatic": "Automatic",
+    "settings.taskbar.classic.theme": "Taskbar theme and colors"
 }

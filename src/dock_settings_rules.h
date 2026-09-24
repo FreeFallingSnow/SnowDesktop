@@ -1,7 +1,20 @@
 #pragma once
 
+#include <optional>
+
 namespace snowdesktop::dock_settings_rules
 {
+
+inline std::optional<bool> ResolveClassicTaskbarSystemLightTheme(
+    int preference, bool appearanceEnabled, int contentTheme) noexcept
+{
+    if (preference == 0) return true;
+    if (preference == 1) return false;
+    // Native appearance has no SnowDesktop foreground to match. Leave the
+    // Windows theme alone. Dark text (contentTheme == 1) needs a light shell.
+    if (!appearanceEnabled) return std::nullopt;
+    return contentTheme == 1;
+}
 
 inline bool ShouldRevealTaskbarForShellPanel(
     bool taskViewVisible, bool shellPanelVisible, bool onPanelMonitor) noexcept

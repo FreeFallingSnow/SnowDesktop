@@ -1873,5 +1873,7 @@
     "settings.dock.suppressTaskbar": "Toujours masquer la barre des tâches du système",
     "settings.dock.suppressTaskbar.description": "Masque la barre des tâches sur les écrans avec le Dock ; l'affiche pour les panneaux système. Le bouton Windows reste dans le Dock.",
     "settings.dock.suppressTaskbar.failed": "Impossible de masquer la barre des tâches. Désactivez cette option pour la restaurer, puis réessayez.",
-    "settings.taskbar.classic.description": "Sous Windows 10, ce thème est commun aux panneaux système ; les deux réglages sont synchronisés. Windows contrôle l’intensité du flou."
+    "settings.taskbar.classic.description": "Synchronisé avec les panneaux système. Automatique suit l’apparence de la barre principale. Windows contrôle l’intensité du flou.",
+    "settings.taskbar.classic.automatic": "Automatique",
+    "settings.taskbar.classic.theme": "Thème et couleurs de la barre des tâches"
 }

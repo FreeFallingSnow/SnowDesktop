@@ -85,6 +85,8 @@ struct DockSettings : DockLayoutSettings
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
     int systemTaskbarContentTheme = -1; // -1=跟随全局, 0=浅色, 1=深色
+    // Windows 10 shares one shell theme across taskbars and system panels.
+    int classicTaskbarSystemTheme = -1; // -1=match appearance, 0=light, 1=dark
     PersonalizationSettings systemTaskbarAppearance =
         PersonalizationSettings::AcrylicDarkPreset();
     SystemTaskbarDynamicRule systemTaskbarVisibleWindow;

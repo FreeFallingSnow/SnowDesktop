@@ -1115,6 +1115,9 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
     if (ReadDoubleField(text, "systemTaskbarContentTheme", value))
         settings.systemTaskbarContentTheme = std::clamp(static_cast<int>(value), -1, 1);
+    if (ReadDoubleField(text, "classicTaskbarSystemTheme", value) &&
+        std::isfinite(value) && value >= -1 && value <= 1 && std::floor(value) == value)
+        settings.classicTaskbarSystemTheme = static_cast<int>(value);
     ReadDynamicRule(text, "systemTaskbarVisibleWindow",
         settings.systemTaskbarVisibleWindow);
     ReadDynamicRule(text, "systemTaskbarMaximizedWindow",
@@ -1208,6 +1211,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"taskbarGlassBlurRadius\": " << taskbarStyle.glassBlurRadius << ",\n";
     file << "  \"systemTaskbarContentTheme\": "
          << settings.systemTaskbarContentTheme << ",\n";
+    file << "  \"classicTaskbarSystemTheme\": "
+         << settings.classicTaskbarSystemTheme << ",\n";
     WriteDynamicRule(file, "systemTaskbarVisibleWindow",
         settings.systemTaskbarVisibleWindow);
     WriteDynamicRule(file, "systemTaskbarMaximizedWindow",

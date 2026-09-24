@@ -718,11 +718,12 @@ struct DockPagePresenter::Impl
     {
         muxc::RadioButtons choices{};
         choices.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        choices.MaxColumns(2);
+        const int count = IsClassicSystemTaskbar() ? 3 : 2;
+        choices.MaxColumns(count);
         // Keep application-owned RadioButton instances stable. Rebuilding a
         // string Items collection while the control is unloaded can leave
         // RadioButtons.SelectedIndex set but no generated container checked.
-        for (int index = 0; index < 2; ++index)
+        for (int index = 0; index < count; ++index)
         {
             muxc::RadioButton choice{};
             choice.MinWidth(0.0);
@@ -1161,6 +1162,11 @@ struct DockPagePresenter::Impl
                 const int value = windowsSystemThemeChoices.SelectedIndex();
                 if (value >= 0)
                 {
+                    if (IsClassicSystemTaskbar())
+                    {
+                        SetClassicSystemTheme(value);
+                        return;
+                    }
                     windowsSystemThemeValue = std::clamp(value, 0, 1);
                     (void)RequestWindowsSystemLightThemeEnabled(value == 0);
                     RefreshTaskbarEntryState();
@@ -1195,8 +1201,7 @@ struct DockPagePresenter::Impl
                 {
                     if (!taskbarInputReady || closed || updatingControls ||
                         !active || !hasSnapshot) return;
-                    (void)RequestWindowsSystemLightThemeEnabled(value == 0);
-                    RefreshTaskbarEntryState();
+                    SetClassicSystemTheme(value);
                     return;
                 }
                 const bool custom = taskbarThemeCombo.SelectedIndex() ==
@@ -1662,8 +1667,9 @@ struct DockPagePresenter::Impl
                     settings.showOnlyWhenSummoned,
                     settings.allowDesktopContentOverlap));
         showOnlyWhenSummonedToggle.IsOn(settings.showOnlyWhenSummoned);
-        windowsSystemThemeValue =
-            IsWindowsSystemLightThemeEnabled() ? 0 : 1;
+        windowsSystemThemeValue = IsClassicSystemTaskbar()
+            ? std::clamp(settings.classicTaskbarSystemTheme, -1, 1) + 1
+            : (IsWindowsSystemLightThemeEnabled() ? 0 : 1);
         SelectChoice(windowsSystemThemeChoices, windowsSystemThemeValue);
         const int taskbarMode = MainTaskbarThemeMode(settings);
         taskbarThemeCombo.SelectedIndex(taskbarMode);
@@ -1856,14 +1862,25 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetHelpText(taskbarRuntimeStatus, text);
     }
 
+    void SetClassicSystemTheme(int selectedIndex)
+    {
+        windowsSystemThemeValue = std::clamp(selectedIndex, 0, 2);
+        const int preference = windowsSystemThemeValue - 1;
+        RefreshTaskbarEntryState();
+        EmitDock(SettingsUpdateMode::PreviewAndCommit,
+            [preference](DockSettings& settings) {
+                settings.classicTaskbarSystemTheme = preference;
+            });
+    }
+
     void RefreshTaskbarEntryState()
     {
         const bool previousUpdating = updatingControls;
         updatingControls = true;
         try
         {
-            windowsSystemThemeValue =
-                IsWindowsSystemLightThemeEnabled() ? 0 : 1;
+            if (!IsClassicSystemTaskbar())
+                windowsSystemThemeValue = IsWindowsSystemLightThemeEnabled() ? 0 : 1;
             SelectChoice(
                 windowsSystemThemeChoices, windowsSystemThemeValue);
             if (IsClassicSystemTaskbar())
@@ -1965,8 +1982,10 @@ struct DockPagePresenter::Impl
         const muxc::RadioButtons& choices,
         int selectedIndex)
     {
-        const int selected = std::clamp(selectedIndex, 0, 1);
-        for (int index = 0; index < 2; ++index)
+        const int count = static_cast<int>(choices.Items().Size());
+        if (count == 0) return;
+        const int selected = std::clamp(selectedIndex, 0, count - 1);
+        for (int index = 0; index < count; ++index)
         {
             if (const auto option =
                     choices.Items().GetAt(index).try_as<muxc::RadioButton>())
@@ -2153,8 +2172,8 @@ struct DockPagePresenter::Impl
     {
         if (IsClassicSystemTaskbar())
         {
-            custom = true;
-            logicalValue = windowsSystemThemeValue;
+            custom = false;
+            logicalValue = windowsSystemThemeValue - 1;
         }
         const bool previousUpdating = updatingControls;
         updatingControls = true;
@@ -2324,12 +2343,20 @@ struct DockPagePresenter::Impl
                 L"Manage taskbar behavior in Windows Settings."));
         windowsSystemThemeRow.SetText(
             L("app.settings.appearance", L"Appearance"), systemPanelHelp);
-        windowsSystemThemeValue =
-            IsWindowsSystemLightThemeEnabled() ? 0 : 1;
-        ReplaceChoiceItems(windowsSystemThemeChoices, {
-            {"app.settings.light", L"Light"},
-            {"app.settings.dark", L"Dark"},
-        }, windowsSystemThemeValue);
+        if (IsClassicSystemTaskbar())
+            ReplaceChoiceItems(windowsSystemThemeChoices, {
+                {"settings.taskbar.classic.automatic", L"Automatic"},
+                {"app.settings.light", L"Light"},
+                {"app.settings.dark", L"Dark"},
+            }, windowsSystemThemeValue);
+        else
+        {
+            windowsSystemThemeValue = IsWindowsSystemLightThemeEnabled() ? 0 : 1;
+            ReplaceChoiceItems(windowsSystemThemeChoices, {
+                {"app.settings.light", L"Light"},
+                {"app.settings.dark", L"Dark"},
+            }, windowsSystemThemeValue);
+        }
         muxa::AutomationProperties::SetName(
             windowsSystemThemeChoices, windowsSystemThemeRow.label.Text());
         restartExplorerRow.SetText(
@@ -2352,11 +2379,11 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             taskbarThemeCombo, taskbarThemeRow.label.Text());
         ReplaceTaskbarThemeItems(taskbarThemeCombo);
-        taskbarContentThemeRow.SetText(L(
-            "app.settings.taskbar_foreground_color",
-            L"Taskbar Icon and Text Color"), IsClassicSystemTaskbar()
+        taskbarContentThemeRow.SetText(IsClassicSystemTaskbar()
+                ? L("settings.taskbar.classic.theme", L"Taskbar theme and colors")
+                : L("app.settings.taskbar_foreground_color", L"Taskbar Icon and Text Color"), IsClassicSystemTaskbar()
                 ? L("settings.taskbar.classic.description",
-                    L"Windows 10 shares this theme with system panels; both controls stay in sync. Blur strength is controlled by Windows.")
+                    L"Shared with system panels. Automatic matches the primary taskbar appearance. Blur strength is controlled by Windows.")
                 : L"");
         muxa::AutomationProperties::SetName(
             taskbarContentThemeCombo, taskbarContentThemeRow.label.Text());

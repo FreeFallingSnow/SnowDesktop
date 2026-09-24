@@ -1873,5 +1873,7 @@
     "settings.dock.suppressTaskbar": "始终隐藏系统任务栏",
     "settings.dock.suppressTaskbar.description": "仅隐藏 Dock 所在屏幕的任务栏；系统面板打开时临时显示。Dock 保留 Windows 按钮。",
     "settings.dock.suppressTaskbar.failed": "无法隐藏任务栏。请关闭此开关恢复任务栏，然后重试。",
-    "settings.taskbar.classic.description": "Windows 10 与系统面板共用此主题，两处设置同步。模糊强度由系统控制。"
+    "settings.taskbar.classic.description": "与系统面板同步；自动匹配主任务栏外观。模糊强度由系统控制。",
+    "settings.taskbar.classic.automatic": "自动",
+    "settings.taskbar.classic.theme": "任务栏主题和颜色"
 }

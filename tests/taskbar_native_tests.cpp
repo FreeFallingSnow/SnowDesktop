@@ -14,6 +14,50 @@ UINT_PTR appBarState = 0;
 bool rejectAppBarChange = false;
 snowdesktop::taskbar_hook::SharedState* connectionState = nullptr;
 HANDLE firstConnectionReady = nullptr;
+struct MenuProbe
+{
+    HWND taskbar = nullptr;
+    ULONGLONG started = 0;
+    ULONGLONG minimumDuration = 0;
+    bool observed = false;
+    bool cloaked = false;
+    bool revealBlocked = false;
+} menuProbe;
+
+void CALLBACK InspectAndCloseMenu(HWND, UINT, UINT_PTR, DWORD)
+{
+    SendMessageW(menuProbe.taskbar,
+        RegisterWindowMessageW(snowdesktop::taskbar_hook::kApplyMessageName), 0, 0);
+    if (GetTickCount64() - menuProbe.started < menuProbe.minimumDuration) return;
+    DWORD cloak = 0;
+    menuProbe.observed = SUCCEEDED(DwmGetWindowAttribute(menuProbe.taskbar,
+        DWMWA_CLOAKED, &cloak, sizeof(cloak)));
+    menuProbe.cloaked = (cloak & DWM_CLOAKED_APP) != 0;
+    const BOOL reveal = FALSE;
+    DwmSetWindowAttribute(menuProbe.taskbar, DWMWA_CLOAK, &reveal, sizeof(reveal));
+    DwmGetWindowAttribute(menuProbe.taskbar, DWMWA_CLOAKED, &cloak, sizeof(cloak));
+    menuProbe.revealBlocked = (cloak & DWM_CLOAKED_APP) != 0;
+    EndMenu();
+}
+
+bool ProbeMenu(HWND owner, HWND taskbar, ULONGLONG minimumDuration = 0)
+{
+    menuProbe = {taskbar, GetTickCount64(), minimumDuration};
+    const HMENU menu = CreatePopupMenu();
+    if (!menu) return false;
+    AppendMenuW(menu, MF_STRING, 1, L"Isolated taskbar menu regression");
+    const UINT_PTR timer = SetTimer(owner, 0x53444d50, 30, InspectAndCloseMenu);
+    if (timer)
+    {
+        // Real Win32 menu loop on private test windows. No mouse movement,
+        // Explorer interaction or substitution of the cloaking controller.
+        TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, -32000, -32000, 0, owner, nullptr);
+        KillTimer(owner, timer);
+    }
+    DestroyMenu(menu);
+    SendMessageW(taskbar, RegisterWindowMessageW(snowdesktop::taskbar_hook::kApplyMessageName), 0, 0);
+    return menuProbe.observed;
+}
 // Replace only the system preference boundary: tests must never change the
 // user's real taskbar auto-hide setting. Native ownership/timers remain real.
 UINT_PTR WINAPI TestAppBarMessage(DWORD message, PAPPBARDATA data)
@@ -90,6 +134,21 @@ int RunNativeTaskbarTests()
     check(native::MakeClassicTaskbarPolicy(tint).color == 0x804080ff,
         "solid styles without extra drawing use the taskbar native tint directly");
     DockSettings settings;
+    using snowdesktop::dock_settings_rules::ResolveClassicTaskbarSystemLightTheme;
+    check(settings.classicTaskbarSystemTheme == -1,
+        "new and legacy Win10 preferences default to automatic shell theme");
+    // Exercise the same decision used after the primary taskbar's scene is
+    // selected. Substitute only the registry boundary; never recolor the user's shell.
+    check(ResolveClassicTaskbarSystemLightTheme(-1, true, 0) == false &&
+        ResolveClassicTaskbarSystemLightTheme(-1, true, 1) == true,
+        "automatic shell theme supplies light text on dark scenes and dark text on light scenes");
+    check(!ResolveClassicTaskbarSystemLightTheme(-1, false, 1).has_value(),
+        "automatic native appearance leaves the Windows theme unchanged");
+    check(ResolveClassicTaskbarSystemLightTheme(0, true, 0) == true &&
+        ResolveClassicTaskbarSystemLightTheme(1, true, 1) == false &&
+        ResolveClassicTaskbarSystemLightTheme(0, false, 0) == true &&
+        ResolveClassicTaskbarSystemLightTheme(1, false, 1) == false,
+        "manual light or dark shell theme survives scene changes and disabled styling");
     check(settings.floatingEdgeSwipeBlockFullscreen, "new Dock preferences block edge swipes over fullscreen apps");
     settings.showWindowsButton = false;
     check(!ShowDockWindowsButton(settings), "Windows button follows base preference outside suppression");
@@ -137,8 +196,19 @@ int RunNativeTaskbarTests()
     const BOOL reveal = FALSE;
     check(SUCCEEDED(DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal))) && cloaked(),
         "an explicit shell uncloak request cannot reveal a protected taskbar");
+    check(ProbeMenu(window, window) && !menuProbe.cloaked && !menuProbe.revealBlocked,
+        "a real taskbar-owned popup releases its owner and permits Explorer's reveal during the menu loop");
+    check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
+        "closing the taskbar popup resumes suppression and removes the scene exemption");
     if (unrelated)
     {
+        check(ProbeMenu(unrelated, window) && menuProbe.cloaked && menuProbe.revealBlocked,
+            "ordinary application menus do not release taskbar suppression");
+        SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+        check(ProbeMenu(unrelated, window, 1650) && !menuProbe.cloaked && !menuProbe.revealBlocked,
+            "a tray context request hands off to another menu owner beyond the opening grace period");
+        check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
+            "closing a handed-off tray menu resumes suppression");
         DWORD value = 0;
         DwmSetWindowAttribute(unrelated, DWMWA_CLOAK, &reveal, sizeof(reveal));
         check(SUCCEEDED(DwmGetWindowAttribute(unrelated, DWMWA_CLOAKED, &value, sizeof(value))) &&

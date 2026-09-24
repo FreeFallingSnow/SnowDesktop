@@ -1,6 +1,7 @@
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
 #include "../taskbar_monitor.h"
+#include "../taskbar_hook/taskbar_native.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -417,6 +418,15 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
 bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
+    const auto applyClassicSystemTheme = [this](bool enabled,
+        const PersonalizationSettings& appearance) {
+        if (!IsClassicSystemTaskbar()) return;
+        const auto light = snowdesktop::dock_settings_rules::
+            ResolveClassicTaskbarSystemLightTheme(
+                dockSettings_.classicTaskbarSystemTheme, enabled, appearance.contentTheme);
+        if (light && IsWindowsSystemLightThemeEnabled() != *light)
+            (void)RequestWindowsSystemLightThemeEnabled(*light);
+    };
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
     const bool protectActivation = !IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(dockSettings_,
         generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
@@ -424,6 +434,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const bool hookRequired = appearanceRequired || protectActivation || suppressionRequested;
     if (!hookRequired)
     {
+        applyClassicSystemTheme(false, dockSettings_.systemTaskbarAppearance);
         ApplySystemTaskbarBackdrop(false, false,
             ResolveSystemTaskbarAppearance(dockSettings_));
         systemTaskbarBackdropRefreshTick_ = GetTickCount();
@@ -513,7 +524,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
 
         const bool shellPanelVisible = snowdesktop::dock_settings_rules::
             ShouldRevealTaskbarForShellPanel(systemTaskbarTaskViewActive_,
-                systemTaskbarShellUiActive_, monitor == systemTaskbarShellUiMonitor_);
+                systemTaskbarShellUiActive_, monitor == systemTaskbarShellUiMonitor_) ||
+            GetPropW(taskbar, snowdesktop::taskbar_hook::native::kContextMenuProperty) != nullptr;
         const SystemTaskbarDynamicRule* selectedRule = nullptr;
         if (dockSettings_.systemTaskbarShellUi.enabled && shellPanelVisible)
             selectedRule = &dockSettings_.systemTaskbarShellUi;
@@ -544,6 +556,14 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         }
         targets.push_back(std::move(target));
     }
+
+    // Windows 10 has one global shell theme. Resolve it once from the primary
+    // taskbar's active scene, never let differently styled monitors compete.
+    const HWND primaryTaskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    const auto primary = std::find_if(targets.begin(), targets.end(),
+        [primaryTaskbar](const auto& target) { return target.taskbar == primaryTaskbar; });
+    if (primary != targets.end())
+        applyClassicSystemTheme(primary->enabled, primary->appearance);
 
     const bool suppressTaskbar = std::any_of(targets.begin(), targets.end(),
         [](const auto& target) { return target.suppressTaskbar; });

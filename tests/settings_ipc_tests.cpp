@@ -150,6 +150,14 @@ void TestCodec()
         "an explicit fullscreen gesture opt-out survives IPC despite the enabled default");
     Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
         "suppression crosses private settings IPC without replacing the base Windows button preference");
+    for (const int theme : {-1, 0, 1})
+    {
+        auto themeSettings = settings;
+        themeSettings.values.dock.classicTaskbarSystemTheme = theme;
+        const auto themeRestored = Unpack<snowdesktop::SettingsSnapshot>(Pack(themeSettings));
+        Check(themeRestored.values.dock.classicTaskbarSystemTheme == theme,
+            "Win10 automatic and manual shell choices survive the settings process boundary");
+    }
     Check(restored.values.personalization.showGroupTabCounts &&
             restored.values.personalization.scrollableTitleBarOnTop &&
             !restored.values.personalization.showCategoryTabCounts,

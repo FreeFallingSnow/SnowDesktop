@@ -36,7 +36,7 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
-    v.followComponentAppearance, v.customAppearance, v.appearancePreset);
+    v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode);
 SD_IPC_FIELDS(calendar::DisplayPreferences, v.enabled, v.calendar, v.holidaysEnabled, v.region);
