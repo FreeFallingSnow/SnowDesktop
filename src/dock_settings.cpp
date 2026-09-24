@@ -6,6 +6,7 @@
 #include "deployment_context.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include "taskbar_hook/taskbar_native.h"
+#include "taskbar_hook/taskbar_connection.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -618,18 +619,23 @@ public:
             now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
             return false;
 
+        const bool appearanceConnected = state_->explorerProcessId == explorerProcessId &&
+            state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
         state_->explorerProcessId = explorerProcessId;
         lastInjectionAttemptTick_ = now;
-        InterlockedExchange(&state_->status,
-            snowdesktop::taskbar_hook::kStatusInjecting);
+        if (!appearanceConnected)
+            InterlockedExchange(&state_->status,
+                snowdesktop::taskbar_hook::kStatusInjecting);
         InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
         if (injectionCancelEvent_)
             ResetEvent(injectionCancelEvent_);
         injectionInFlight_.store(true, std::memory_order_release);
         try
         {
-            injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId] {
-                const bool injected = Inject(primaryTaskbar, explorerProcessId);
+            injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId,
+                    appearanceConnected, taskbars = std::move(taskbars)] {
+                const bool injected = Inject(primaryTaskbar, explorerProcessId,
+                    taskbars, appearanceConnected);
                 {
                     std::lock_guard workerLock(mutex_);
                     if (!injected && state_ &&
@@ -702,7 +708,8 @@ private:
         return true;
     }
 
-    bool Inject(HWND taskbar, DWORD expectedExplorerProcessId)
+    bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
+        const std::vector<HWND>& taskbars, bool appearanceConnected)
     {
         const std::filesystem::path hookPath =
             snowdesktop::deployment::GetTaskbarHookPath();
@@ -731,69 +738,18 @@ private:
         }
         auto hookProc = reinterpret_cast<HOOKPROC>(
             GetProcAddress(module, "SnowDesktopTaskbarHookProc"));
-        DWORD processId = 0;
-        const DWORD threadId = GetWindowThreadProcessId(taskbar, &processId);
-        HHOOK hook = hookProc && threadId
-            ? SetWindowsHookExW(WH_CALLWNDPROC, hookProc, module, threadId)
-            : nullptr;
-        if (!hook)
-        {
-            const DWORD error = GetLastError();
-            FreeLibrary(module);
-            if (explorerProcess)
-                CloseHandle(explorerProcess);
-            CloseHandle(readyEvent);
-            return Fail(expectedExplorerProcessId,
-                error ? error : ERROR_INVALID_FUNCTION);
-        }
-
-        DWORD_PTR ignored = 0;
-        SendMessageTimeoutW(taskbar, WM_NULL, 0, 0,
-            SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored);
-        std::array<HANDLE, 3> waitHandles{};
-        DWORD waitCount = 0;
-        waitHandles[waitCount++] = readyEvent;
-        const DWORD explorerWaitIndex = explorerProcess ? waitCount : MAXDWORD;
-        if (explorerProcess)
-            waitHandles[waitCount++] = explorerProcess;
-        const DWORD cancelWaitIndex = injectionCancelEvent_ ? waitCount : MAXDWORD;
-        if (injectionCancelEvent_)
-            waitHandles[waitCount++] = injectionCancelEvent_;
-        const DWORD waitResult = WaitForMultipleObjects(
-            waitCount, waitHandles.data(), FALSE, 35000);
-        UnhookWindowsHookEx(hook);
-        if (waitResult == WAIT_OBJECT_0)
-        {
-            // Secondary taskbars can belong to different Explorer UI threads.
-            // Install the native subclass on each owner thread, never across it.
-            for (HWND secondary : FindSystemTaskbarWindows())
-            {
-                if (secondary == taskbar) continue;
-                DWORD secondaryProcess = 0;
-                const DWORD secondaryThread = GetWindowThreadProcessId(secondary, &secondaryProcess);
-                if (secondaryProcess != expectedExplorerProcessId || !secondaryThread) continue;
-                if (HHOOK secondaryHook = SetWindowsHookExW(WH_CALLWNDPROC, hookProc, module, secondaryThread))
-                {
-                    SendMessageTimeoutW(secondary, WM_NULL, 0, 0,
-                        SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored);
-                    UnhookWindowsHookEx(secondaryHook);
-                }
-            }
-        }
+        const DWORD error = hookProc
+            ? snowdesktop::taskbar_hook::ConnectTaskbarThreads(taskbar, taskbars,
+                expectedExplorerProcessId, module, hookProc, readyEvent,
+                explorerProcess, injectionCancelEvent_, appearanceConnected)
+            : ERROR_INVALID_FUNCTION;
         FreeLibrary(module);
         if (explorerProcess)
             CloseHandle(explorerProcess);
         CloseHandle(readyEvent);
 
-        if (cancelWaitIndex != MAXDWORD &&
-            waitResult == WAIT_OBJECT_0 + cancelWaitIndex)
-            return false;
-        if (explorerWaitIndex != MAXDWORD &&
-            waitResult == WAIT_OBJECT_0 + explorerWaitIndex)
-            return Fail(expectedExplorerProcessId, ERROR_PROCESS_ABORTED);
-        if (waitResult != WAIT_OBJECT_0)
-            return Fail(expectedExplorerProcessId,
-                waitResult == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError());
+        if (error == ERROR_CANCELLED) return false;
+        if (error != ERROR_SUCCESS) return Fail(expectedExplorerProcessId, error);
 
         std::lock_guard lock(mutex_);
         return state_ &&
@@ -983,15 +939,7 @@ SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState()
     {
         result = state->suppressionStatus < 0 || state->status < 0 || state->autoHideStatus < 0
             ? SystemTaskbarBackdropRuntimeState::Failed : SystemTaskbarBackdropRuntimeState::Loading;
-        const auto taskbars = FindSystemTaskbarWindows();
-        const bool allControlled = !taskbars.empty() && std::all_of(taskbars.begin(), taskbars.end(), [&snapshot](HWND window) {
-            if (!GetPropW(window, native::kAttachedProperty)) return false;
-            // A panel deliberately suspends suppression; this is still an
-            // active controller, not a connection failure or a disabled option.
-            if (!ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))) return true;
-            DWORD cloak = 0;
-            return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && (cloak & DWM_CLOAKED_APP);
-        });
+        const bool allControlled = AreSuppressedTaskbarsControlled(snapshot);
         if (allControlled && state->autoHideStatus >= kStatusApplied)
             result = SystemTaskbarBackdropRuntimeState::Active;
     }

@@ -1,5 +1,6 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_classic_surface.h"
+#include "taskbar_hook/taskbar_connection.h"
 #include "dock_settings.h"
 #include "taskbar_monitor.h"
 #include <dwmapi.h>
@@ -10,6 +11,8 @@ namespace
 {
 UINT_PTR appBarState = 0;
 bool rejectAppBarChange = false;
+snowdesktop::taskbar_hook::SharedState* connectionState = nullptr;
+HANDLE firstConnectionReady = nullptr;
 // Replace only the system preference boundary: tests must never change the
 // user's real taskbar auto-hide setting. Native ownership/timers remain real.
 UINT_PTR WINAPI TestAppBarMessage(DWORD message, PAPPBARDATA data)
@@ -18,6 +21,23 @@ UINT_PTR WINAPI TestAppBarMessage(DWORD message, PAPPBARDATA data)
     if (message == ABM_SETSTATE && !rejectAppBarChange)
         appBarState = static_cast<UINT_PTR>(data->lParam);
     return TRUE;
+}
+
+LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code >= 0 && lParam && connectionState)
+    {
+        const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (message->message == WM_NULL)
+        {
+            snowdesktop::taskbar_hook::native::Attach(
+                message->hwnd, connectionState, false, TestAppBarMessage);
+            // Only XAML discovery is substituted. The production connector,
+            // thread hook, native subclass and DWM cloaking remain real.
+            if (firstConnectionReady) SetEvent(firstConnectionReady);
+        }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 }
 
@@ -211,6 +231,81 @@ int RunNativeTaskbarTests()
             return SUCCEEDED(DwmGetWindowAttribute(secondary, DWMWA_CLOAKED, &value, sizeof(value))) &&
                 (value & DWM_CLOAKED_APP) != 0;
         };
+        shared.enabled = TRUE;
+        shared.appearanceEnabled = FALSE;
+        shared.suppressTaskbar = TRUE;
+        shared.targetCount = 2;
+        shared.targets[0] = {};
+        shared.targets[1] = {};
+        shared.targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
+        shared.targets[0].suppressTaskbar = TRUE;
+        shared.targets[1].taskbar = reinterpret_cast<std::uintptr_t>(secondary);
+        check(native::Attach(window, &shared, false, TestAppBarMessage),
+            "attach only the display that has Dock");
+        Snapshot connectionSnapshot;
+        check(ReadSharedSnapshot(&shared, connectionSnapshot) &&
+            AreSuppressedTaskbarsControlled(connectionSnapshot) &&
+            !GetPropW(secondary, native::kAttachedProperty),
+            "an untouched display without Dock cannot keep suppression status connecting");
+        connectionSnapshot.targets[0].shellPanelVisible = TRUE;
+        shared.targets[0].shellPanelVisible = TRUE;
+        SendMessageW(window, apply, 0, 0);
+        check(!cloaked() && AreSuppressedTaskbarsControlled(connectionSnapshot),
+            "revealing a system panel keeps suppression connected");
+        connectionSnapshot.targets[0].shellPanelVisible = FALSE;
+        check(!AreSuppressedTaskbarsControlled(connectionSnapshot),
+            "a requested but uncloaked target must not report active");
+        connectionSnapshot.targets[0].suppressTaskbar = FALSE;
+        check(!AreSuppressedTaskbarsControlled(connectionSnapshot),
+            "an empty Dock target set is not a completed suppression attachment");
+        shared.enabled = FALSE;
+        SendMessageW(window, apply, 0, 0);
+
+        HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE cancel = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        check(ready && cancel, "create private connection events");
+        if (ready && cancel)
+        {
+            const std::array<HWND, 2> windows{window, secondary};
+            connectionState = &shared;
+            shared.enabled = TRUE;
+            shared.targets[0].shellPanelVisible = FALSE;
+            shared.targets[1].suppressTaskbar = TRUE;
+            firstConnectionReady = ready;
+            check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
+                nullptr, TestConnectionHook, ready, nullptr, cancel, false, 0) == ERROR_SUCCESS &&
+                cloaked() && secondaryCloaked(),
+                "initial XAML notification completes native attachment on both taskbars");
+            shared.enabled = FALSE;
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+
+            // Exact reconnect condition: personalization is already connected,
+            // suppression was disabled, and the one-time Ready event is reset.
+            ResetEvent(ready);
+            firstConnectionReady = nullptr;
+            shared.enabled = TRUE;
+            check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
+                nullptr, TestConnectionHook, ready, nullptr, cancel, true, 0) == ERROR_SUCCESS &&
+                WaitForSingleObject(ready, 0) == WAIT_TIMEOUT && cloaked() && secondaryCloaked(),
+                "enabling suppression after personalization must not wait for a second XAML notification");
+            check(ReadSharedSnapshot(&shared, connectionSnapshot) &&
+                AreSuppressedTaskbarsControlled(connectionSnapshot),
+                "reconnected Dock displays immediately report completed suppression");
+            shared.enabled = FALSE;
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+            shared.enabled = TRUE;
+            SetEvent(cancel);
+            check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
+                nullptr, TestConnectionHook, ready, nullptr, cancel, true, 0) == ERROR_CANCELLED &&
+                !cloaked() && !secondaryCloaked(),
+                "cancelled reconnect cannot reattach native taskbars");
+            connectionState = nullptr;
+            shared.enabled = FALSE;
+        }
+        if (ready) CloseHandle(ready);
+        if (cancel) CloseHandle(cancel);
         using snowdesktop::dock_settings_rules::ShouldRevealTaskbarForShellPanel;
         for (bool classic : {false, true})
         {
