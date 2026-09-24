@@ -34,6 +34,9 @@ constexpr wchar_t kDistributionDirectory[] = L"distribution";
 constexpr wchar_t kStateDirectory[] = L".snowdesktop";
 constexpr wchar_t kRuntimeDirectory[] = L"runtime";
 constexpr wchar_t kCurrentRuntimeFilename[] = L"current-runtime.txt";
+constexpr wchar_t kConfirmedRuntimeFilename[] = L"confirmed-runtime.txt";
+constexpr wchar_t kPreviousRuntimeFilename[] = L"previous-runtime.txt";
+constexpr wchar_t kFailedManifestFilename[] = L"failed-launch-manifest.txt";
 constexpr wchar_t kCompleteFilename[] = L".snowdesktop-runtime-complete";
 constexpr wchar_t kRuntimeManifestFilename[] =
     L".snowdesktop-runtime-manifest.json";
@@ -55,6 +58,7 @@ struct DistributionManifest
     std::vector<DistributionFile> files;
     std::string digest;
     std::string contents;
+    unsigned launcherProtocol = 0;
 };
 
 class ExclusiveFile final
@@ -440,6 +444,15 @@ std::optional<DistributionManifest> ReadManifest(
     }
 
     DistributionManifest manifest;
+    if (const JsonValue* protocol = root.Find("launcherProtocol"))
+    {
+        if (!protocol->IsNumber() || protocol->number != 1.0)
+        {
+            error = "distribution requires an unsupported launcher protocol";
+            return std::nullopt;
+        }
+        manifest.launcherProtocol = 1;
+    }
     manifest.version = version->string;
     manifest.buildId = buildId->string;
     std::set<std::wstring> uniquePaths;
@@ -702,7 +715,22 @@ std::string RuntimeContextJson()
 
 std::wstring ExactPathKey(const std::filesystem::path& path)
 {
-    return path.generic_wstring();
+    std::wstring key = path.generic_wstring();
+    std::transform(key.begin(), key.end(), key.begin(),
+        [](wchar_t value) { return static_cast<wchar_t>(towlower(value)); });
+    return key;
+}
+
+bool IsInertRuntimeResidue(const std::filesystem::path& relative)
+{
+    // Only loose root-level documentation/logs are ignored. Never relax DLL,
+    // script, component, language, or other resource discovery directories.
+    if (relative.has_parent_path())
+        return false;
+    const auto key = ExactPathKey(relative);
+    const auto extension = ExactPathKey(relative.extension());
+    return extension == L".txt" || extension == L".md" ||
+        extension == L".log" || key == L"imgui.ini";
 }
 
 bool ValidatePlainFileNoReparse(const std::filesystem::path& path,
@@ -814,6 +842,16 @@ bool ValidateExactPayloadTree(const std::filesystem::path& root,
         {
             if (!expectedFiles.contains(key))
             {
+                if (IsInertRuntimeResidue(relative))
+                {
+                    iterator.increment(iteratorError);
+                    if (iteratorError)
+                    {
+                        error = "cannot enumerate the complete Steam payload tree";
+                        return false;
+                    }
+                    continue;
+                }
                 error = "Steam payload contains an unexpected file: " +
                     relative.string();
                 return false;
@@ -868,6 +906,7 @@ bool SameManifest(const DistributionManifest& left,
     const DistributionManifest& right) noexcept
 {
     if (left.version != right.version || left.buildId != right.buildId ||
+        left.launcherProtocol != right.launcherProtocol ||
         left.digest != right.digest || left.contents != right.contents ||
         left.files.size() != right.files.size())
     {
@@ -889,7 +928,8 @@ bool SameManifest(const DistributionManifest& left,
 
 std::optional<DistributionManifest> ValidatePublishedRuntime(
     const std::filesystem::path& runtime,
-    const DistributionManifest* expectedManifest, std::string& error)
+    const DistributionManifest* expectedManifest, std::string& error,
+    bool verifyPayloadHashes = true)
 {
     const DWORD runtimeAttributes = GetFileAttributesW(runtime.c_str());
     if (runtimeAttributes == INVALID_FILE_ATTRIBUTES ||
@@ -939,7 +979,8 @@ std::optional<DistributionManifest> ValidatePublishedRuntime(
 
     for (const DistributionFile& file : manifest->files)
     {
-        if (!ValidateFile(runtime / file.relativePath, file, error))
+        if (verifyPayloadHashes &&
+            !ValidateFile(runtime / file.relativePath, file, error))
         {
             if (error.empty())
                 error = "published Steam runtime file is invalid";
@@ -1418,27 +1459,12 @@ ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath,
     return {};
 }
 
-std::optional<std::pair<std::filesystem::path, std::string>>
-ReadFallback(const std::filesystem::path& stateRoot,
-    const std::filesystem::path& runtimeRoot, std::string& validationError)
+std::optional<std::string> ReadSelection(
+    const std::filesystem::path& pointer, std::string& error)
 {
-    if (!ValidatePlainDirectoryNoReparse(
-            stateRoot, "Steam runtime state directory", validationError) ||
-        !ValidatePlainDirectoryNoReparse(
-            runtimeRoot, "Steam runtime directory", validationError))
-    {
-        return std::nullopt;
-    }
-
-    std::string error;
-    const std::filesystem::path pointer =
-        stateRoot / kCurrentRuntimeFilename;
     if (!ValidatePlainFileNoReparse(
             pointer, "active Steam runtime selection", error))
-    {
-        validationError = std::move(error);
         return std::nullopt;
-    }
     std::string directoryId = ReadFile(pointer, 256, error);
     while (!directoryId.empty() &&
         (directoryId.back() == '\r' || directoryId.back() == '\n'))
@@ -1447,9 +1473,16 @@ ReadFallback(const std::filesystem::path& stateRoot,
     }
     if (!error.empty() || !IsSafeIdentifier(directoryId))
     {
-        validationError = "the active Steam runtime selection is invalid";
+        error = "the active Steam runtime selection is invalid";
         return std::nullopt;
     }
+    return directoryId;
+}
+
+std::optional<ApplyResult> ReadNamedRuntime(
+    const std::filesystem::path& runtimeRoot, const std::string& directoryId,
+    std::string& validationError)
+{
     const std::filesystem::path runtime = runtimeRoot /
         Utf8ToWide(directoryId);
     auto manifest = ValidatePublishedRuntime(
@@ -1462,7 +1495,39 @@ ReadFallback(const std::filesystem::path& stateRoot,
             "the active Steam runtime directory does not match its manifest";
         return std::nullopt;
     }
-    return std::pair(runtime / L"SnowDesktop.exe", manifest->buildId);
+    ApplyResult result;
+    result.ok = true;
+    result.usedFallback = true;
+    result.executable = runtime / L"SnowDesktop.exe";
+    result.buildId = manifest->buildId;
+    result.launcherProtocol = manifest->launcherProtocol;
+    return result;
+}
+
+std::optional<ApplyResult> ReadFallback(const std::filesystem::path& stateRoot,
+    const std::filesystem::path& runtimeRoot, std::string& validationError,
+    std::string_view excluded = {})
+{
+    if (!ValidatePlainDirectoryNoReparse(
+            stateRoot, "Steam runtime state directory", validationError) ||
+        !ValidatePlainDirectoryNoReparse(
+            runtimeRoot, "Steam runtime directory", validationError))
+        return std::nullopt;
+    std::set<std::string> visited;
+    for (const auto* filename : {kCurrentRuntimeFilename,
+             kConfirmedRuntimeFilename, kPreviousRuntimeFilename})
+    {
+        std::string error;
+        const auto id = ReadSelection(stateRoot / filename, error);
+        if (id && *id != excluded && visited.insert(*id).second)
+        {
+            if (auto runtime = ReadNamedRuntime(runtimeRoot, *id, error))
+                return runtime;
+        }
+        if (validationError.empty() && !error.empty())
+            validationError = std::move(error);
+    }
+    return std::nullopt;
 }
 
 ApplyResult FailureOrFallback(const std::filesystem::path& stateRoot,
@@ -1474,10 +1539,9 @@ ApplyResult FailureOrFallback(const std::filesystem::path& stateRoot,
     if (const auto fallback = ReadFallback(
             stateRoot, runtimeRoot, fallbackError))
     {
-        result.ok = true;
-        result.usedFallback = true;
-        result.executable = fallback->first;
-        result.buildId = fallback->second;
+        const std::string originalError = std::move(result.error);
+        result = *fallback;
+        result.error = originalError;
     }
     else if (!fallbackError.empty())
     {
@@ -1489,7 +1553,8 @@ ApplyResult FailureOrFallback(const std::filesystem::path& stateRoot,
 
 namespace snowdesktop::steam_runtime
 {
-ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
+ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
+    bool retryFailedLaunch)
 {
     const std::filesystem::path stateRoot = installRoot / kStateDirectory;
     const std::filesystem::path runtimeRoot = stateRoot / kRuntimeDirectory;
@@ -1542,6 +1607,13 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     if (!manifest)
         return FailureOrFallback(stateRoot, runtimeRoot, error);
 
+    std::string failureRecordError;
+    if (!retryFailedLaunch && ValidatePlainFileNoReparse(
+            stateRoot / kFailedManifestFilename, "failed launch record", failureRecordError) &&
+        ReadFile(stateRoot / kFailedManifestFilename, 256, failureRecordError) == manifest->digest + "\n")
+        return FailureOrFallback(stateRoot, runtimeRoot,
+            "the distribution previously failed before data access; using the preserved runtime");
+
     auto activate = [&](const RuntimeDestination& selected) {
         if (!ValidatePlainDirectoryNoReparse(
                 stateRoot, "Steam runtime state directory", error) ||
@@ -1550,7 +1622,21 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
         {
             return FailureOrFallback(stateRoot, runtimeRoot, error);
         }
-        if (!WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
+        std::string ignored;
+        const auto current = ReadSelection(stateRoot / kCurrentRuntimeFilename, ignored);
+        ignored.clear();
+        const auto confirmed = ReadSelection(stateRoot / kConfirmedRuntimeFilename, ignored);
+        ignored.clear();
+        const auto previous = ReadSelection(stateRoot / kPreviousRuntimeFilename, ignored);
+        // Preserve the last confirmed selection across several unconfirmed
+        // attempts. The initial backup also repairs a lost current pointer.
+        if ((!previous || (current && confirmed && *current == *confirmed &&
+                *current != selected.directoryId)) &&
+            !WriteTextAtomically(stateRoot / kPreviousRuntimeFilename,
+                confirmed.value_or(current.value_or(selected.directoryId)) + "\n", error))
+            return FailureOrFallback(stateRoot, runtimeRoot, error);
+        if ((!current || *current != selected.directoryId) &&
+            !WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
                 selected.directoryId + "\n", error))
         {
             return FailureOrFallback(stateRoot, runtimeRoot, error);
@@ -1560,6 +1646,7 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
         result.executable = selected.path / L"SnowDesktop.exe";
         result.buildId = manifest->buildId;
         result.error = cleanupWarning;
+        result.launcherProtocol = manifest->launcherProtocol;
         return result;
     };
 
@@ -1606,11 +1693,6 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
             distribution, *manifest, false, true, error))
     {
         return FailureOrFallback(stateRoot, runtimeRoot, error);
-    }
-    for (const DistributionFile& file : manifest->files)
-    {
-        if (!ValidateFile(distribution / file.relativePath, file, error))
-            return FailureOrFallback(stateRoot, runtimeRoot, error);
     }
 
     if (!ValidatePlainDirectoryNoReparse(
@@ -1665,7 +1747,7 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
     if (staged)
     {
         std::string validationError;
-        if (!ValidatePublishedRuntime(staging, &*manifest, validationError))
+        if (!ValidatePublishedRuntime(staging, &*manifest, validationError, false))
         {
             error = "staged Steam runtime validation failed: " +
                 validationError;
@@ -1704,12 +1786,90 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
 
     std::string publishedError;
     if (!ValidatePublishedRuntime(
-            destination.path, &*manifest, publishedError))
+            destination.path, &*manifest, publishedError, false))
     {
         return FailureOrFallback(stateRoot, runtimeRoot,
             "published Steam runtime validation failed: " + publishedError);
     }
     return activate(destination);
+}
+
+bool ConfirmRuntimeStarted(const std::filesystem::path& installRoot,
+    const std::filesystem::path& executable, std::string& error)
+{
+    const auto context = snowdesktop::deployment::ResolveRuntimeDeploymentContext(executable, false);
+    std::error_code pathError;
+    if (context.kind != snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged ||
+        !std::filesystem::equivalent(installRoot, context.installRoot, pathError) || pathError)
+    {
+        error = "cannot confirm a runtime outside its managed installation";
+        return false;
+    }
+    const auto stateRoot = installRoot / kStateDirectory;
+    const auto runtimeRoot = stateRoot / kRuntimeDirectory;
+    if (!ValidatePlainDirectoryNoReparse(stateRoot, "Steam runtime state directory", error) ||
+        !ValidatePlainDirectoryNoReparse(runtimeRoot, "Steam runtime directory", error))
+        return false;
+    auto lock = AcquireUpdateLock(stateRoot / kUpdateLockFilename, error);
+    if (!lock.valid()) return false;
+    std::string ignored;
+    const auto current = ReadSelection(stateRoot / kCurrentRuntimeFilename, ignored);
+    const auto id = executable.parent_path().filename().string();
+    if (current && *current != id)
+    {
+        error = "a newer runtime selection superseded this startup acknowledgement";
+        return false;
+    }
+    const auto manifest = ValidatePublishedRuntime(executable.parent_path(), nullptr, error, false);
+    if (!manifest || !DirectoryIdMatchesManifest(id, *manifest)) return false;
+    ignored.clear();
+    const auto confirmed = ReadSelection(stateRoot / kConfirmedRuntimeFilename, ignored);
+    if ((!current && !WriteTextAtomically(stateRoot / kCurrentRuntimeFilename, id + "\n", error)) ||
+        ((!confirmed || *confirmed != id) &&
+            !WriteTextAtomically(stateRoot / kConfirmedRuntimeFilename, id + "\n", error)))
+        return false;
+    // Do not remove a rejection record belonging to a different distribution.
+    ignored.clear();
+    if (ValidatePlainFileNoReparse(stateRoot / kFailedManifestFilename, "failed launch record", ignored) &&
+        ReadFile(stateRoot / kFailedManifestFilename, 256, ignored) == manifest->digest + "\n")
+        DeleteFileW((stateRoot / kFailedManifestFilename).c_str());
+    return true;
+}
+
+ApplyResult RecoverAfterLaunchFailure(const std::filesystem::path& installRoot,
+    const std::filesystem::path& failedExecutable)
+{
+    ApplyResult failure;
+    const auto stateRoot = installRoot / kStateDirectory;
+    const auto runtimeRoot = stateRoot / kRuntimeDirectory;
+    if (!ValidatePlainDirectoryNoReparse(stateRoot, "Steam runtime state directory", failure.error) ||
+        !ValidatePlainDirectoryNoReparse(runtimeRoot, "Steam runtime directory", failure.error))
+        return failure;
+    auto lock = AcquireUpdateLock(stateRoot / kUpdateLockFilename, failure.error);
+    if (!lock.valid()) return failure;
+    const auto current = ReadSelection(stateRoot / kCurrentRuntimeFilename, failure.error);
+    const auto failedId = failedExecutable.parent_path().filename().string();
+    if (!current || *current != failedId ||
+        failedExecutable.parent_path().parent_path().lexically_normal() != runtimeRoot.lexically_normal())
+    {
+        failure.error = "runtime selection changed before launch failure recovery";
+        return failure;
+    }
+    auto recovered = ReadFallback(stateRoot, runtimeRoot, failure.error, failedId);
+    if (!recovered)
+    {
+        failure.error = "no preserved runtime is available after launch failure: " + failure.error;
+        return failure;
+    }
+    std::string manifestError;
+    const auto failedManifest = ReadManifest(failedExecutable.parent_path() / kRuntimeManifestFilename, manifestError);
+    if (!failedManifest ||
+        !WriteTextAtomically(stateRoot / kFailedManifestFilename, failedManifest->digest + "\n", failure.error) ||
+        !WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
+            recovered->executable.parent_path().filename().string() + "\n", failure.error))
+        return failure;
+    recovered->error = "recovered the preserved runtime after a pre-data startup failure";
+    return *recovered;
 }
 
 PruneResult PruneInactiveRuntimes(
@@ -1764,16 +1924,26 @@ PruneResult PruneInactiveRuntimes(
     }
 
     std::string pointerError;
-    const auto active = ReadFallback(stateRoot, runtimeRoot, pointerError);
-    pathError.clear();
-    if (!active || !std::filesystem::equivalent(
-            active->first, currentExecutable, pathError) || pathError)
+    const auto active = ReadSelection(stateRoot / kCurrentRuntimeFilename, pointerError);
+    pointerError.clear();
+    const auto confirmed = ReadSelection(stateRoot / kConfirmedRuntimeFilename, pointerError);
+    const auto currentId = currentExecutable.parent_path().filename().string();
+    if (!active || !confirmed || *active != currentId || *confirmed != currentId)
     {
-        result.error = pointerError.empty()
-            ? "the selected executable is not the active Steam runtime"
-            : std::move(pointerError);
+        // Old callers and superseded startup acknowledgements cannot retire
+        // anything. In particular, preparation alone never enables cleanup.
+        result.ok = true;
         return result;
     }
+    const auto currentManifest = ValidatePublishedRuntime(
+        currentExecutable.parent_path(), nullptr, error, false);
+    if (!currentManifest || !DirectoryIdMatchesManifest(currentId, *currentManifest))
+    {
+        result.error = "cannot inspect the confirmed runtime: " + error;
+        return result;
+    }
+    pointerError.clear();
+    const auto previous = ReadSelection(stateRoot / kPreviousRuntimeFilename, pointerError);
 
     const std::filesystem::path currentRuntime =
         currentExecutable.parent_path();
@@ -1793,7 +1963,8 @@ PruneResult PruneInactiveRuntimes(
         pathError.clear();
         const bool isCurrent = std::filesystem::equivalent(
             entry, currentRuntime, pathError);
-        if (!pathError && !isCurrent)
+        if (!pathError && !isCurrent &&
+            (!previous || entry.filename().string() != *previous))
         {
             const DWORD attributes = GetFileAttributesW(entry.c_str());
             if (attributes != INVALID_FILE_ATTRIBUTES &&

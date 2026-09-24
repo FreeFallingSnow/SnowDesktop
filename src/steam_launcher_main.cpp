@@ -27,7 +27,8 @@ std::filesystem::path CurrentExecutableDirectory()
 
 std::wstring QuoteArgument(std::wstring_view argument)
 {
-    if (argument.find_first_of(L" \t\n\v\"") == std::wstring_view::npos)
+    if (!argument.empty() &&
+        argument.find_first_of(L" \t\n\v\"") == std::wstring_view::npos)
         return std::wstring(argument);
     std::wstring result(L"\"");
     std::size_t slashes = 0;
@@ -200,8 +201,14 @@ int RunLauncher(bool& maintenance)
     LocalFree(rawArguments);
     maintenance = applyOnly || pruneOnly;
 
+    // Legacy hosts provide no runtime identity or readiness acknowledgement.
+    // Keep their maintenance invocation compatible without activating or
+    // deleting a runtime on behalf of an unknown caller.
+    if (pruneOnly)
+        return 0;
+
     const auto applied =
-        snowdesktop::steam_runtime::ApplyDistribution(installRoot);
+        snowdesktop::steam_runtime::ApplyDistribution(installRoot, applyOnly);
     if (!applied.error.empty())
         AppendLauncherLog(installRoot, applied.error);
     if (!applied.ok)
@@ -209,26 +216,6 @@ int RunLauncher(bool& maintenance)
         if (!maintenance)
             ShowLaunchFailure(installRoot, applied.error);
         return ERROR_INSTALL_FAILURE;
-    }
-    if (pruneOnly)
-    {
-        snowdesktop::steam_runtime::PruneResult pruned;
-        for (int attempt = 0; attempt < 40; ++attempt)
-        {
-            pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
-                installRoot, applied.executable);
-            if (!pruned.ok)
-            {
-                AppendLauncherLog(installRoot, pruned.error);
-                return ERROR_INSTALL_FAILURE;
-            }
-            if (pruned.retained == 0)
-                return 0;
-            Sleep(250);
-        }
-        AppendLauncherLog(installRoot,
-            "inactive Steam runtime remains occupied after handoff");
-        return 0;
     }
     if (applyOnly)
         return 0;

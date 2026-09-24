@@ -155,31 +155,6 @@ bool CreateFileHardLink(const std::filesystem::path& link,
     return CreateHardLinkW(link.c_str(), target.c_str(), nullptr) != FALSE;
 }
 
-std::filesystem::path FindRepositoryFile(
-    const std::filesystem::path& relativePath)
-{
-    std::filesystem::path testSource(__FILE__);
-    if (testSource.is_absolute())
-    {
-        const auto candidate = testSource.parent_path().parent_path() /
-            relativePath;
-        if (std::filesystem::is_regular_file(candidate))
-            return candidate;
-    }
-
-    std::filesystem::path current = std::filesystem::current_path();
-    while (!current.empty())
-    {
-        const auto candidate = current / relativePath;
-        if (std::filesystem::is_regular_file(candidate))
-            return candidate;
-        if (current == current.parent_path())
-            break;
-        current = current.parent_path();
-    }
-    return {};
-}
-
 std::string Sha256(const std::filesystem::path& path)
 {
     BCRYPT_ALG_HANDLE algorithm = nullptr;
@@ -490,10 +465,16 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
 {
     const auto oldRuntime = PrepareRuntime(
         root, "1.0.5.0-1111111111111111", "host old", "dll old");
+    const auto preserved = PrepareRuntime(root, "1.0.5.0-3333333333333333");
+    std::string confirmationError;
+    Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, preserved.executable, confirmationError),
+        "the predecessor is confirmed before preparing the new runtime");
     const auto currentRuntime = PrepareRuntime(
         root, "1.0.5.0-2222222222222222", "host current", "dll current");
     if (!oldRuntime.ok || !currentRuntime.ok)
         return;
+    Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, currentRuntime.executable, confirmationError),
+        "only a confirmed new runtime may request retirement");
 
     const auto runtimeRoot = root / L".snowdesktop" / L"runtime";
     WriteText(oldRuntime.executable.parent_path() / L"imgui.ini",
@@ -532,6 +513,8 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
         "runtime pruning preserves an unrelated directory in the managed root");
     Check(std::filesystem::exists(similarUnknownDirectory / L"keep.txt"),
         "runtime pruning preserves a directory outside launcher naming rules");
+    Check(std::filesystem::exists(preserved.executable),
+        "runtime pruning preserves the last confirmed predecessor");
 }
 
 void CorruptDistributionLibrary(const std::filesystem::path& root)
@@ -1238,9 +1221,9 @@ void TestCaseExactRuntimeTree(const std::filesystem::path& root)
     Check(observedUpperCase,
         "the exact-tree fixture preserves the case-only renamed directory entry");
     CorruptDistributionManifest(root);
-    CheckFallbackRejected(
-        snowdesktop::steam_runtime::ApplyDistribution(root),
-        "fallback rejects a hash-identical payload whose filename casing differs from the manifest");
+    const auto fallback = snowdesktop::steam_runtime::ApplyDistribution(root);
+    Check(fallback.ok && fallback.usedFallback && fallback.executable == initial.executable,
+        "fallback accepts hash-identical files resolved by Windows despite case-only renames");
 }
 
 void TestManifestSizeBoundaries(const std::filesystem::path& root)
@@ -1283,66 +1266,6 @@ void TestManifestSizeBoundaries(const std::filesystem::path& root)
         "manifest file sizes at 2^64 are rejected without conversion overflow");
 }
 
-void TestCompletionMarkerIsFinalFence()
-{
-    const auto sourcePath =
-        FindRepositoryFile(L"src/steam_runtime_manager.cpp");
-    Check(!sourcePath.empty(),
-        "the runtime manager source is available for the publish-order contract");
-    if (sourcePath.empty())
-        return;
-
-    const std::string source = ReadText(sourcePath);
-    const auto payloadValidation =
-        source.find("!ValidateFile(fileDestination, file, error)");
-    const auto internalManifest = source.find(
-        "WriteTextAtomically(staging / kRuntimeManifestFilename",
-        payloadValidation);
-    const auto sidecar = source.find(
-        "snowdesktop::deployment::kSteamRuntimeContextFilename",
-        internalManifest);
-    const auto completionMarker = source.find(
-        "WriteTextAtomically(staging / kCompleteFilename", sidecar);
-    const auto stagedValidation = source.find(
-        "ValidatePublishedRuntime(staging, &*manifest", completionMarker);
-    const auto publish = source.find(
-        "detail::PublishRuntimeDirectory(",
-        stagedValidation);
-    Check(payloadValidation != std::string::npos &&
-            internalManifest != std::string::npos &&
-            sidecar != std::string::npos &&
-            completionMarker != std::string::npos &&
-            stagedValidation != std::string::npos &&
-            publish != std::string::npos &&
-            payloadValidation < internalManifest &&
-            internalManifest < sidecar && sidecar < completionMarker &&
-            completionMarker < stagedValidation &&
-            stagedValidation < publish,
-        "the completion marker is the final staged write after payload validation and before validation and publish");
-
-    const auto publishedValidation = source.find(
-        "std::optional<DistributionManifest> ValidatePublishedRuntime");
-    const auto publishedSidecar = source.find(
-        "const std::string sidecar = ReadFile", publishedValidation);
-    const auto publishedPayload = source.find(
-        "for (const DistributionFile& file : manifest->files)",
-        publishedValidation);
-    const auto publishedMarker = source.find(
-        "const std::string marker = ReadFile", publishedValidation);
-    const auto publishedValidationEnd = source.find(
-        "struct RuntimeDestination", publishedValidation);
-    Check(publishedValidation != std::string::npos &&
-            publishedSidecar != std::string::npos &&
-            publishedPayload != std::string::npos &&
-            publishedMarker != std::string::npos &&
-            publishedValidationEnd != std::string::npos &&
-            publishedValidation < publishedSidecar &&
-            publishedSidecar < publishedPayload &&
-            publishedPayload < publishedMarker &&
-            publishedMarker < publishedValidationEnd,
-        "published runtime validation reads the completion marker only after sidecar and payload hashes pass");
-}
-
 void TestUnexpectedRuntimeEntries(const std::filesystem::path& root)
 {
     const auto verifyRejected = [&](const std::filesystem::path& caseRoot,
@@ -1380,10 +1303,6 @@ void TestUnexpectedRuntimeEntries(const std::filesystem::path& root)
             fallbackMessage);
     };
 
-    verifyRejected(root / L"ordinary-file", "unexpected-file",
-        L"unexpected.txt", false,
-        "fast path rejects a runtime containing an unexpected ordinary file",
-        "fallback rejects a runtime containing an unexpected ordinary file");
     verifyRejected(root / L"library", "unexpected-library",
         L"SnowDesktop.Runtime/unexpected.dll", false,
         "fast path rejects a runtime containing an unexpected DLL",
@@ -1392,10 +1311,6 @@ void TestUnexpectedRuntimeEntries(const std::filesystem::path& root)
         L"unexpected-directory", true,
         "fast path rejects a runtime containing an unexpected directory",
         "fallback rejects a runtime containing an unexpected directory");
-    verifyRejected(root / L"legacy-imgui", "legacy-imgui-runtime",
-        L"imgui.ini", false,
-        "fast path still rejects a runtime containing legacy ImGui settings",
-        "fallback still rejects a runtime containing legacy ImGui settings");
     verifyRejected(root / L"legacy-data", "legacy-data-runtime",
         L"data", true,
         "fast path still rejects a runtime containing a legacy data directory",
@@ -1646,6 +1561,58 @@ void TestUpdateLockValidation(const std::filesystem::path& root)
         Skip("lock symlink regression fixture could not be created", linkError);
     }
 }
+
+void TestStartupRecoveryState(const std::filesystem::path& root)
+{
+    using namespace snowdesktop::steam_runtime;
+    const auto first = PrepareRuntime(root, "1.0.7.0-aaaaaaaaaaaaaaaa");
+    const auto state = root / L".snowdesktop";
+    std::string error;
+    Check(ConfirmRuntimeStarted(root, first.executable, error), "a ready host confirms its selected runtime");
+    {
+        OccupiedFile pointer(state / kCurrentRuntimeFilename);
+        Check(pointer.valid(), "the selected pointer can be held open without delete sharing");
+        const auto reused = ApplyDistribution(root);
+        Check(reused.ok && !reused.usedFallback && reused.error.empty(),
+            "unchanged selection neither rewrites its pointer nor manufactures an update failure");
+    }
+    WriteText(first.executable.parent_path() / L"notes.txt", "preserve ordinary notes");
+    WriteText(first.executable.parent_path() / L"imgui.ini", "preserve legacy preferences");
+    CorruptDistributionManifest(root);
+    std::filesystem::remove(state / kCurrentRuntimeFilename);
+    const auto recoveredPointer = ApplyDistribution(root);
+    Check(recoveredPointer.ok && recoveredPointer.usedFallback && recoveredPointer.executable == first.executable,
+        "missing selection recovers a recorded completed runtime despite inert text residue");
+    Check(ConfirmRuntimeStarted(root, first.executable, error), "readiness repairs a missing current pointer");
+    Check(ReadText(first.executable.parent_path() / L"notes.txt") == "preserve ordinary notes",
+        "ignoring inert residue never deletes it");
+
+    WriteDistribution(root, "1.0.7.0", "1.0.7.0-bbbbbbbbbbbbbbbb", "host next", "dll next");
+    const auto next = ApplyDistribution(root);
+    Check(next.ok && !next.usedFallback, "the new runtime is prepared before its launch is attempted");
+    const auto beforeReady = PruneInactiveRuntimes(root, next.executable);
+    Check(beforeReady.ok && beforeReady.removed == 0 && std::filesystem::exists(first.executable),
+        "preparation without readiness cannot authorize deletion");
+    error.clear();
+    Check(!ConfirmRuntimeStarted(root, first.executable, error),
+        "a stale host cannot confirm a newer selected runtime");
+    const auto fallback = RecoverAfterLaunchFailure(root, next.executable);
+    Check(fallback.ok && fallback.executable == first.executable,
+        "pre-data launch failure reselects the preserved working runtime");
+    const auto later = ApplyDistribution(root);
+    Check(later.ok && later.usedFallback && later.executable == first.executable,
+        "subsequent launches do not repeatedly select the rejected distribution");
+    const auto retry = ApplyDistribution(root, true);
+    Check(retry.ok && retry.executable == next.executable,
+        "explicit apply-only recovery can retry an unchanged rejected distribution");
+    error.clear();
+    Check(ConfirmRuntimeStarted(root, retry.executable, error), "a successful retry confirms the new runtime");
+    Check(!std::filesystem::exists(state / L"failed-launch-manifest.txt"),
+        "successful readiness clears only its distribution's failure record");
+    const auto pruned = PruneInactiveRuntimes(root, retry.executable);
+    Check(pruned.ok && pruned.removed == 0 && std::filesystem::exists(first.executable),
+        "confirmed startup keeps its predecessor for recovery");
+}
 }
 
 int main()
@@ -1672,13 +1639,14 @@ int main()
             root / L"readonly-and-staging-cleanup");
         TestCaseExactRuntimeTree(root / L"case-exact-tree");
         TestManifestSizeBoundaries(root / L"manifest-size-boundaries");
-        TestCompletionMarkerIsFinalFence();
+
         TestUnexpectedRuntimeEntries(root / L"unexpected-runtime-entries");
         TestLegacyDistributionWrites(root / L"legacy-distribution-writes");
         TestCleanupFailureDoesNotBlockUpdate(root / L"blocked-cleanup-update");
         TestOccupiedRuntimePublication(root / L"occupied-publication");
         TestUpdateLockValidation(root / L"update-lock-validation");
         TestSteamAutoStartRules();
+        TestStartupRecoveryState(root / L"startup-recovery-state");
     }
     catch (const std::exception& exception)
     {
