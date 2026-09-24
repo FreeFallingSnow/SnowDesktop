@@ -1603,6 +1603,11 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     const auto later = ApplyDistribution(root);
     Check(later.ok && later.usedFallback && later.executable == first.executable,
         "subsequent launches do not repeatedly select the rejected distribution");
+    WriteText(state / kCurrentRuntimeFilename, next.executable.parent_path().filename().string() + "\n");
+    const auto interrupted = ApplyDistribution(root);
+    Check(interrupted.ok && interrupted.executable == first.executable &&
+            ReadText(state / kCurrentRuntimeFilename) == first.executable.parent_path().filename().string() + "\n",
+        "an interrupted rejection transaction repairs the pointer without relaunching the rejected runtime");
     const auto retry = ApplyDistribution(root, true);
     Check(retry.ok && retry.executable == next.executable,
         "explicit apply-only recovery can retry an unchanged rejected distribution");
@@ -1613,6 +1618,10 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     const auto pruned = PruneInactiveRuntimes(root, retry.executable);
     Check(pruned.ok && pruned.removed == 0 && std::filesystem::exists(first.executable),
         "confirmed startup keeps its predecessor for recovery");
+    WriteText(state / L"previous-runtime.txt", "invalid/selection\n");
+    const auto unsafeCleanup = PruneInactiveRuntimes(root, retry.executable);
+    Check(!unsafeCleanup.ok && unsafeCleanup.removed == 0 && std::filesystem::exists(first.executable),
+        "a damaged predecessor record prevents cleanup from discarding recovery data");
 }
 
 // The same test executable acts as a controlled host. Only this OS-process

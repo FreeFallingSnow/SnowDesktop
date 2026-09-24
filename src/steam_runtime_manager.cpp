@@ -1624,8 +1624,22 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
     if (!retryFailedLaunch && ValidatePlainFileNoReparse(
             stateRoot / kFailedManifestFilename, "failed launch record", failureRecordError) &&
         ReadFile(stateRoot / kFailedManifestFilename, 256, failureRecordError) == manifest->digest + "\n")
-        return FailureOrFallback(stateRoot, runtimeRoot,
+    {
+        auto fallback = FailureOrFallback(stateRoot, runtimeRoot,
             "the distribution previously failed before data access; using the preserved runtime", manifest->digest);
+        if (fallback.ok)
+        {
+            // A crash after persisting rejection but before restoring the
+            // pointer must not keep selecting the rejected publication.
+            std::string selectionError;
+            const auto current = ReadSelection(stateRoot / kCurrentRuntimeFilename, selectionError);
+            const auto id = fallback.executable.parent_path().filename().string();
+            if ((!current || *current != id) &&
+                !WriteTextAtomically(stateRoot / kCurrentRuntimeFilename, id + "\n", selectionError))
+                fallback.error += "; selection recovery failed: " + selectionError;
+        }
+        return fallback;
+    }
 
     auto activate = [&](const RuntimeDestination& selected) {
         if (!ValidatePlainDirectoryNoReparse(
@@ -1957,6 +1971,11 @@ PruneResult PruneInactiveRuntimes(
     }
     pointerError.clear();
     const auto previous = ReadSelection(stateRoot / kPreviousRuntimeFilename, pointerError);
+    if (!previous)
+    {
+        result.error = "cannot read the preserved runtime selection; cleanup skipped: " + pointerError;
+        return result;
+    }
 
     const std::filesystem::path currentRuntime =
         currentExecutable.parent_path();
