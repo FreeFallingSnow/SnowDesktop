@@ -144,6 +144,23 @@ int RunNativeTaskbarTests()
     SendMessageW(window, apply, 0, 0);
     check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
         "disabling the controller releases both classic appearance and suppression");
+    // Occupying the real lower composition target reproduces a backend failure
+    // without mocking away native attachment, DWM or the restoration path.
+    check(SUCCEEDED(surface.Draw(window, style)), "reserve the lower composition target for a competing owner");
+    shared.enabled = TRUE;
+    shared.appearanceEnabled = TRUE;
+    shared.suppressTaskbar = TRUE;
+    check(native::Attach(window, &shared, true) && cloaked() && shared.status == kStatusFailed,
+        "appearance failure must report failure without revealing a suppressed taskbar");
+    surface.Reset();
+    shared.borderAlpha = .1f;
+    SendMessageW(window, apply, 0, 0);
+    check(cloaked() && shared.status == kStatusApplied,
+        "editing appearance after releasing the competing target recovers rendering while staying hidden");
+    shared.enabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
+        "release after a recovered material failure restores the taskbar");
     DestroyWindow(window);
     UnregisterClassW(registration.lpszClassName, instance);
     return failures;

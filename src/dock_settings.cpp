@@ -956,7 +956,8 @@ SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState()
     auto result = SystemTaskbarBackdropRuntimeState::Disabled;
     if (ReadSharedSnapshot(state, snapshot) && snapshot.enabled && snapshot.suppressTaskbar)
     {
-        result = state->suppressionStatus < 0 ? SystemTaskbarBackdropRuntimeState::Failed : SystemTaskbarBackdropRuntimeState::Loading;
+        result = state->suppressionStatus < 0 || state->status < 0
+            ? SystemTaskbarBackdropRuntimeState::Failed : SystemTaskbarBackdropRuntimeState::Loading;
         const auto taskbars = FindSystemTaskbarWindows();
         const bool allHidden = !taskbars.empty() && std::all_of(taskbars.begin(), taskbars.end(), [](HWND window) {
             DWORD cloak = 0;

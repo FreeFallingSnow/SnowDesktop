@@ -1427,7 +1427,9 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
             if (classic)
             {
                 g_sharedState->explorerProcessId = GetCurrentProcessId();
-                SetHookStatus(applied ? kStatusApplied : kStatusFailed);
+                // Native attachment and appearance application are independent:
+                // keep a rendering failure visible even while cloaking works.
+                if (!applied) SetHookStatus(kStatusFailed);
                 SignalReady();
                 bool expected = false;
                 if (applied && g_taskbarTapStarted.compare_exchange_strong(expected, true))

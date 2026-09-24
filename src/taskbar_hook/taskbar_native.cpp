@@ -41,6 +41,7 @@ struct WindowState
     AccentPolicy restoreAccent{}, accent{};
     bool haveRestoreAccent = false;
     TargetAppearance applied;
+    ULONGLONG appearanceRetryTick = 0;
     RECT bounds{};
     ClassicSurface surface;
     ~WindowState() { if (owner) CloseHandle(owner); }
@@ -147,21 +148,17 @@ TargetAppearance Resolve(HWND window, const Snapshot& snapshot)
     return result;
 }
 
-void Restore(HWND window, const std::shared_ptr<WindowState>& state)
+void RestoreAppearance(HWND window, const std::shared_ptr<WindowState>& state)
 {
-    BOOL cloak = FALSE;
     AccentPolicy accent;
-    bool wasCloaked, wasStyled, restoreAccent;
+    bool wasStyled, restoreAccent;
     {
         std::lock_guard lock(state->mutex);
-        wasCloaked = std::exchange(state->cloaked, false);
         wasStyled = std::exchange(state->styled, false);
-        cloak = state->restoreCloak;
         accent = state->restoreAccent;
         restoreAccent = state->haveRestoreAccent;
     }
     state->surface.Reset();
-    if (wasCloaked) originalDwm(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
     if (wasStyled)
     {
         if (restoreAccent)
@@ -174,6 +171,19 @@ void Restore(HWND window, const std::shared_ptr<WindowState>& state)
         PostMessageW(window, WM_DWMCOMPOSITIONCHANGED, 0, 0);
         InvalidateRect(window, nullptr, TRUE);
     }
+}
+
+void Restore(HWND window, const std::shared_ptr<WindowState>& state)
+{
+    BOOL cloak;
+    bool wasCloaked;
+    {
+        std::lock_guard lock(state->mutex);
+        wasCloaked = std::exchange(state->cloaked, false);
+        cloak = state->restoreCloak;
+    }
+    RestoreAppearance(window, state);
+    if (wasCloaked) originalDwm(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
 }
 
 LRESULT CALLBACK Subclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
@@ -243,18 +253,14 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         !(contrast.dwFlags & HCF_HIGHCONTRASTON);
     bool wasStyled;
     { std::lock_guard lock(state->mutex); wasStyled = state->styled; }
-    if (!styled && wasStyled)
+    if (!styled)
     {
-        // Restore only the material; suppression has an independent lifetime.
-        AccentPolicy accent;
-        bool haveAccent;
-        { std::lock_guard lock(state->mutex);
-          state->styled = false; accent = state->restoreAccent; haveAccent = state->haveRestoreAccent; }
-        state->surface.Reset();
-        if (haveAccent) { CompositionData data{19, &accent, sizeof(accent)}; originalComposition(window, &data); }
-        PostMessageW(window, WM_DWMCOMPOSITIONCHANGED, 0, 0);
+        state->appearanceRetryTick = 0;
+        if (wasStyled) RestoreAppearance(window, state);
+        if (state->classic) InterlockedExchange(&state->mapping->status, kStatusApplied);
     }
-    if (styled)
+    if (styled && (!state->appearanceRetryTick || GetTickCount64() >= state->appearanceRetryTick ||
+            !(style == state->applied)))
     {
         RECT bounds{};
         GetClientRect(window, &bounds);
@@ -285,15 +291,18 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
                 materialApplied = originalComposition(window, &data) != FALSE;
             }
             const HRESULT result = materialApplied ? state->surface.Draw(window, style) : E_FAIL;
-            if (SUCCEEDED(result)) { state->applied = style; state->bounds = bounds; }
+            state->applied = style;
+            state->bounds = bounds;
             InterlockedExchange(&state->mapping->status, FAILED(result) ? kStatusFailed : kStatusApplied);
             if (FAILED(result))
             {
-                // Release partial visual ownership; the next host retry can
-                // reconnect without leaving a transparent, unpainted taskbar.
-                Detach(window, state);
-                return false;
+                // A competing composition target or device failure must not
+                // release suppression. Restore native material and retry with
+                // a bounded cadence (or immediately after an appearance edit).
+                state->appearanceRetryTick = GetTickCount64() + 10000;
+                RestoreAppearance(window, state);
             }
+            else state->appearanceRetryTick = 0;
         }
     }
     if (!snapshot.suppressTaskbar && !styled && !state->classic)
