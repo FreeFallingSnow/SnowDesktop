@@ -1581,6 +1581,71 @@ void TestOccupiedRuntimePublication(const std::filesystem::path& root)
     Check(missing.error == ERROR_FILE_NOT_FOUND && !waited,
         "non-transient publication errors fail immediately");
 }
+
+void TestUpdateLockValidation(const std::filesystem::path& root)
+{
+    const auto readonlyRoot = root / L"readonly";
+    const auto initial = PrepareRuntime(readonlyRoot, "lock-validation");
+    if (!initial.ok)
+        return;
+    const auto lockPath = readonlyRoot / L".snowdesktop" / L"update.lock";
+    const DWORD originalAttributes = GetFileAttributesW(lockPath.c_str());
+    Check(originalAttributes != INVALID_FILE_ATTRIBUTES &&
+            SetFileAttributesW(lockPath.c_str(),
+                originalAttributes | FILE_ATTRIBUTE_READONLY) != FALSE,
+        "the read-only lock fixture can be prepared");
+    const auto blocked = snowdesktop::steam_runtime::ApplyDistribution(readonlyRoot);
+    const auto blockedCleanup = snowdesktop::steam_runtime::PruneInactiveRuntimes(
+        readonlyRoot, initial.executable);
+    Check(SetFileAttributesW(lockPath.c_str(), originalAttributes) != FALSE,
+        "the read-only lock fixture restores its attributes");
+    Check(blocked.ok && blocked.usedFallback &&
+            blocked.executable == initial.executable &&
+            blocked.error.find("cannot open the Steam runtime lock file") !=
+                std::string::npos &&
+            blocked.error.find("Win32 error 5") != std::string::npos &&
+            blocked.error.find(lockPath.string()) != std::string::npos,
+        "lock open failures preserve the valid fallback and report the system error and path");
+    Check(!blockedCleanup.ok && blockedCleanup.removed == 0 &&
+            blockedCleanup.error.find("Win32 error 5") != std::string::npos &&
+            std::filesystem::exists(initial.executable),
+        "cleanup lock failures report the error without removing the current runtime");
+    Check(snowdesktop::steam_runtime::ApplyDistribution(readonlyRoot).ok,
+        "a leftover plain lock file remains reusable after its handle closes");
+
+    const auto directoryRoot = root / L"directory";
+    WriteDistribution(directoryRoot, "1.0.7.0", "lock-directory", "host", "library");
+    WriteText(directoryRoot / L".snowdesktop" / L"update.lock" / L"sentinel.txt",
+        "preserve directory");
+    CheckFallbackRejected(snowdesktop::steam_runtime::ApplyDistribution(directoryRoot),
+        "an update.lock directory cannot be accepted as a lock file");
+    Check(ReadText(directoryRoot / L".snowdesktop" / L"update.lock" /
+                L"sentinel.txt") == "preserve directory",
+        "a rejected lock directory is left untouched");
+
+    const auto linkRoot = root / L"link";
+    WriteDistribution(linkRoot, "1.0.7.0", "lock-link", "host", "library");
+    const auto outside = root / L"outside.txt";
+    WriteText(outside, "preserve link target");
+    const auto link = linkRoot / L".snowdesktop" / L"update.lock";
+    std::filesystem::create_directories(link.parent_path());
+    DWORD linkError = ERROR_SUCCESS;
+    if (CreateFileSymlink(link, outside, linkError))
+    {
+        const auto rejected = snowdesktop::steam_runtime::ApplyDistribution(linkRoot);
+        CheckFallbackRejected(rejected,
+            "basic handle attributes still reject a symlinked update lock");
+        Check(rejected.error.find("not a plain file") != std::string::npos &&
+                IsReparsePoint(link) && ReadText(outside) == "preserve link target",
+            "lock validation inspects the link handle without following or modifying its target");
+        Check(DeleteFileW(link.c_str()) != FALSE,
+            "the lock symlink fixture can be detached");
+    }
+    else
+    {
+        Skip("lock symlink regression fixture could not be created", linkError);
+    }
+}
 }
 
 int main()
@@ -1612,6 +1677,7 @@ int main()
         TestLegacyDistributionWrites(root / L"legacy-distribution-writes");
         TestCleanupFailureDoesNotBlockUpdate(root / L"blocked-cleanup-update");
         TestOccupiedRuntimePublication(root / L"occupied-publication");
+        TestUpdateLockValidation(root / L"update-lock-validation");
         TestSteamAutoStartRules();
     }
     catch (const std::exception& exception)

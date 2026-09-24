@@ -570,16 +570,18 @@ bool FlushPlainFile(const std::filesystem::path& path,
         return false;
     }
 
-    FILE_ATTRIBUTE_TAG_INFO attributes{};
+    // Only the attributes are needed; tag-information queries are not
+    // supported by every filesystem. Inspect the already opened handle so
+    // rejecting a reparse point does not depend on a second path lookup.
+    BY_HANDLE_FILE_INFORMATION attributes{};
     DWORD operationError = ERROR_SUCCESS;
-    if (!GetFileInformationByHandleEx(file,
-            FileAttributeTagInfo, &attributes, sizeof(attributes)))
+    if (!GetFileInformationByHandle(file, &attributes))
     {
         operationError = GetLastError();
     }
-    else if ((attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
-        (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
-        (attributes.FileAttributes & FILE_ATTRIBUTE_DEVICE) != 0)
+    else if ((attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_DEVICE) != 0)
     {
         operationError = ERROR_INVALID_DATA;
     }
@@ -1367,10 +1369,16 @@ bool CleanupAbandonedStagingDirectories(
     return error.empty();
 }
 
-ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
+ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath,
+    std::string& error)
 {
     const auto deadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(30);
+    DWORD openError = ERROR_SUCCESS;
+    const auto describe = [&](std::string_view operation, DWORD code) {
+        return std::string(operation) + " (Win32 error " +
+            std::to_string(code) + "); path: " + lockPath.string();
+    };
     do
     {
         HANDLE value = CreateFileW(lockPath.c_str(),
@@ -1378,26 +1386,35 @@ ExclusiveFile AcquireUpdateLock(const std::filesystem::path& lockPath)
             FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
         if (value != INVALID_HANDLE_VALUE)
         {
-            FILE_ATTRIBUTE_TAG_INFO attributes{};
-            if (GetFileInformationByHandleEx(value, FileAttributeTagInfo,
-                    &attributes, sizeof(attributes)) &&
-                (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
-                (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
-                (attributes.FileAttributes & FILE_ATTRIBUTE_DEVICE) == 0)
+            BY_HANDLE_FILE_INFORMATION attributes{};
+            if (!GetFileInformationByHandle(value, &attributes))
+            {
+                error = describe("cannot inspect the Steam runtime lock file",
+                    GetLastError());
+            }
+            else if ((attributes.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY |
+                    FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DEVICE)) != 0)
+            {
+                error = describe("the Steam runtime lock is not a plain file",
+                    ERROR_INVALID_DATA);
+            }
+            else
             {
                 return ExclusiveFile(value);
             }
             CloseHandle(value);
-            break;
+            return {};
         }
-        const DWORD openError = GetLastError();
+        openError = GetLastError();
         if (openError != ERROR_SHARING_VIOLATION &&
             openError != ERROR_LOCK_VIOLATION)
         {
-            break;
+            error = describe("cannot open the Steam runtime lock file", openError);
+            return {};
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     } while (std::chrono::steady_clock::now() < deadline);
+    error = describe("timed out waiting for the Steam runtime lock", openError);
     return {};
 }
 
@@ -1500,10 +1517,12 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot)
 
     std::error_code fileError;
 
-    ExclusiveFile lock = AcquireUpdateLock(stateRoot / kUpdateLockFilename);
+    std::string lockError;
+    ExclusiveFile lock = AcquireUpdateLock(
+        stateRoot / kUpdateLockFilename, lockError);
     if (!lock.valid())
         return FailureOrFallback(stateRoot, runtimeRoot,
-            "cannot acquire the Steam runtime update lock");
+            "cannot acquire the Steam runtime update lock: " + lockError);
 
     std::string error;
     // Retired/staging residue is maintenance work, never a prerequisite for
@@ -1730,10 +1749,12 @@ PruneResult PruneInactiveRuntimes(
         return result;
     }
 
-    ExclusiveFile lock = AcquireUpdateLock(stateRoot / kUpdateLockFilename);
+    std::string lockError;
+    ExclusiveFile lock = AcquireUpdateLock(
+        stateRoot / kUpdateLockFilename, lockError);
     if (!lock.valid())
     {
-        result.error = "cannot acquire the Steam runtime cleanup lock";
+        result.error = "cannot acquire the Steam runtime cleanup lock: " + lockError;
         return result;
     }
     if (!CleanupAbandonedStagingDirectories(runtimeRoot, error))
