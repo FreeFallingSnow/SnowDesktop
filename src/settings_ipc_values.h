@@ -33,7 +33,7 @@ SD_IPC_FIELDS(DockSettings,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.floatingEdgeSwipeBlockFullscreen, v.monitorScope, v.showWindowsButton,
     v.showRunningApps, v.showWindowPreviews, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.frequentItemCount, v.thicknessScale,
-    v.systemTaskbarAutoHide, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
+    v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset);

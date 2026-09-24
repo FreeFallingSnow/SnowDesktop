@@ -193,9 +193,10 @@ bool AppearanceRequiresTaskbarHook(const DockSettings& settings)
 
 bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 {
-    return AppearanceRequiresTaskbarHook(settings) ||
-        ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
-            settings.systemTaskbarAutoHide);
+    return (generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
+        AppearanceRequiresTaskbarHook(settings) ||
+        (!IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
+            settings.systemTaskbarAutoHide));
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -416,9 +417,10 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
-    const bool protectActivation = ShouldProtectAutoHideTaskbar(dockSettings_,
+    const bool protectActivation = !IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(dockSettings_,
         generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
-    const bool hookRequired = appearanceRequired || protectActivation;
+    const bool suppressTaskbar = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
+    const bool hookRequired = appearanceRequired || protectActivation || suppressTaskbar;
     if (!hookRequired)
     {
         ApplySystemTaskbarBackdrop(false, false,
@@ -540,7 +542,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     }
 
     ApplySystemTaskbarBackdrop(true,
-        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired);
+        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;
 }

@@ -78,6 +78,7 @@ struct DockSettings : DockLayoutSettings
     int launchEffect = 1;
     int windowEffect = 1;
     bool systemTaskbarAutoHide = false;
+    bool suppressSystemTaskbar = false;
     int systemTaskbarAlignment = 1; // 0=靠左, 1=居中
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
@@ -88,6 +89,11 @@ struct DockSettings : DockLayoutSettings
     SystemTaskbarDynamicRule systemTaskbarMaximizedWindow;
     SystemTaskbarDynamicRule systemTaskbarShellUi;
 };
+
+inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
+{
+    return settings.showWindowsButton || settings.suppressSystemTaskbar;
+}
 
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     bool dockEnabled, bool autoHideEnabled) noexcept
@@ -134,6 +140,8 @@ bool RequestWindowsSystemLightThemeEnabled(bool enabled);
 bool RestartWindowsExplorer();
 PersonalizationSettings MakeTransparentTaskbarAppearance();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
+SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState();
+bool IsClassicSystemTaskbar();
 void NotifySystemTaskbarCreated();
 LONG DrainSystemTaskbarAutoHideTrace(
     std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
@@ -141,6 +149,6 @@ LONG DrainSystemTaskbarAutoHideTrace(
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& defaultAppearance,
     const std::vector<SystemTaskbarTargetAppearance>& targets = {},
-    bool appearanceEnabled = true);
+    bool appearanceEnabled = true, bool suppressTaskbar = false);
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings);
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings);

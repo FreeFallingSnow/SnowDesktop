@@ -129,6 +129,8 @@ void TestCodec()
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;
     settings.values.dock.windowEffect = 3;
+    settings.values.dock.suppressSystemTaskbar = true;
+    settings.values.dock.showWindowsButton = false;
     settings.values.general.language[0] = 'z';
     settings.values.general.language[1] = 'h';
     settings.values.general.language[2] = '\0';
@@ -144,6 +146,8 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
+        "suppression crosses private settings IPC without replacing the base Windows button preference");
     Check(restored.values.personalization.showGroupTabCounts &&
             restored.values.personalization.scrollableTitleBarOnTop &&
             !restored.values.personalization.showCategoryTabCounts,

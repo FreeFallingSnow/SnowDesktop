@@ -526,6 +526,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.floatingEdgeSwipeBlockFullscreen",
         "settings.dock.blockFullscreenSwipe",
         "settings.dock.blockFullscreenSwipe.description"},
+    {SettingsPage::Dock, "dock.suppressSystemTaskbar",
+        "settings.dock.suppressTaskbar", "settings.dock.suppressTaskbar.description"},
     {SettingsPage::Dock, "dock.showWindowsButton",
         "app.dock.show_windows_button",
         "settings.dock.items.description"},

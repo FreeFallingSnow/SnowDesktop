@@ -1869,5 +1869,9 @@
     "settings.calendar.reminder.15": "15 minutos antes",
     "settings.calendar.reminder.30": "30 minutos antes",
     "settings.calendar.reminder.60": "1 hora antes",
-    "settings.calendar.reminder.1440": "1 dia antes"
+    "settings.calendar.reminder.1440": "1 dia antes",
+    "settings.dock.suppressTaskbar": "Sempre ocultar a barra de tarefas do sistema",
+    "settings.dock.suppressTaskbar.description": "Oculta as barras de tarefas em todas as telas enquanto o Dock estiver ativado. O botão do Windows permanece visível no Dock. Desative o Dock ou saia do aplicativo para restaurar as barras de tarefas.",
+    "settings.dock.suppressTaskbar.failed": "Não foi possível ocultar a barra de tarefas. Desative esta opção para restaurá-la e tente novamente.",
+    "settings.taskbar.classic.description": "Windows 10: o texto e os ícones seguem o tema do sistema; o Windows controla a intensidade do desfoque. Se o acrílico não estiver disponível, será usado o efeito de desfoque."
 }

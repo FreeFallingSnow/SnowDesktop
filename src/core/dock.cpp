@@ -523,7 +523,7 @@ RECT DockContainer::GetBounds() const
     const size_t frequentCount = app_
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const size_t fixedCount = SortableEntryCount();
-    const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
+    const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const int nonEmptyGroupCount = static_cast<int>(fixedCount > 0) +
         static_cast<int>(runningCount > 0) + static_cast<int>(frequentCount > 0);
     const int separatorCount = nonEmptyGroupCount +
@@ -1434,7 +1434,7 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
 {
     RECT viewport = bounds;
     const int halfGap = ScaledSpacing() / 2;
-    const int leadingLength = app_ && app_->dockSettings_.showWindowsButton
+    const int leadingLength = app_ && ShowDockWindowsButton(app_->dockSettings_)
         ? ItemPitch() + ScaledSeparatorGap() : 0;
     const size_t count = entries_ ? entries_->size() : 0;
     const bool hasRecycleBin = count > 0 && app_ &&
@@ -1554,7 +1554,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     const int slotLength = ItemPitch();
     const int halfGap = ScaledSpacing() / 2;
     const int separatorGap = ScaledSeparatorGap();
-    const bool showWindowsButton = app_ && app_->dockSettings_.showWindowsButton;
+    const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
     const size_t leadingControlSlots = showWindowsButton ? 1 : 0;
     const int leadingControlOffset = showWindowsButton ? separatorGap : 0;
     int groupOffset = 0;
@@ -1832,7 +1832,7 @@ void DockContainer::DrawInsertionPreview(
                 2.0f, 2.0f), brush.Get());
         return;
     }
-    const int leadingOffset = app_ && app_->dockSettings_.showWindowsButton
+    const int leadingOffset = app_ && ShowDockWindowsButton(app_->dockSettings_)
         ? ItemPitch() + ScaledSeparatorGap() : 0;
     if (IsVertical())
     {
@@ -2723,7 +2723,7 @@ RECT DockContainer::GetSearchRect() const
 
 RECT DockContainer::GetWindowsButtonRect() const
 {
-    if (!app_ || !app_->dockSettings_.showWindowsButton)
+    if (!app_ || !ShowDockWindowsButton(app_->dockSettings_))
         return RECT{};
     const RECT bounds = GetBounds();
     const int halfGap = ScaledSpacing() / 2;

@@ -1869,5 +1869,9 @@
     "settings.calendar.reminder.15": "提前 15 分鐘",
     "settings.calendar.reminder.30": "提前 30 分鐘",
     "settings.calendar.reminder.60": "提前 1 小時",
-    "settings.calendar.reminder.1440": "提前 1 天"
+    "settings.calendar.reminder.1440": "提前 1 天",
+    "settings.dock.suppressTaskbar": "一律隱藏系統工作列",
+    "settings.dock.suppressTaskbar.description": "Dock 啟用期間隱藏所有螢幕的工作列，並一律顯示 Dock 中的 Windows 按鈕。關閉 Dock 或結束軟體後恢復工作列。",
+    "settings.dock.suppressTaskbar.failed": "無法隱藏工作列。請關閉此開關恢復工作列，然後重試。",
+    "settings.taskbar.classic.description": "Windows 10：文字和圖示配色依照系統佈景主題，模糊強度由 Windows 控制。無法使用壓克力效果時，改用模糊效果。"
 }

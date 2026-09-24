@@ -1869,5 +1869,9 @@
     "settings.calendar.reminder.15": "15 Minuten vorher",
     "settings.calendar.reminder.30": "30 Minuten vorher",
     "settings.calendar.reminder.60": "1 Stunde vorher",
-    "settings.calendar.reminder.1440": "1 Tag vorher"
+    "settings.calendar.reminder.1440": "1 Tag vorher",
+    "settings.dock.suppressTaskbar": "Systemtaskleiste immer ausblenden",
+    "settings.dock.suppressTaskbar.description": "Blendet die Taskleisten auf allen Bildschirmen aus, solange das Dock aktiviert ist. Die Windows-Schaltfläche bleibt im Dock sichtbar. Beim Deaktivieren des Docks oder Beenden werden die Taskleisten wiederhergestellt.",
+    "settings.dock.suppressTaskbar.failed": "Die Taskleiste konnte nicht ausgeblendet werden. Deaktivieren Sie diese Option zur Wiederherstellung und versuchen Sie es erneut.",
+    "settings.taskbar.classic.description": "Windows 10: Text und Symbole folgen dem Systemdesign; Windows steuert die Unschärfestärke. Ist Acryl nicht verfügbar, wird der Unschärfeeffekt verwendet."
 }

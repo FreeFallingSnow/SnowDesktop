@@ -1869,5 +1869,9 @@
     "settings.calendar.reminder.15": "15분 전",
     "settings.calendar.reminder.30": "30분 전",
     "settings.calendar.reminder.60": "1시간 전",
-    "settings.calendar.reminder.1440": "1일 전"
+    "settings.calendar.reminder.1440": "1일 전",
+    "settings.dock.suppressTaskbar": "시스템 작업 표시줄 항상 숨기기",
+    "settings.dock.suppressTaskbar.description": "Dock이 활성화된 동안 모든 화면의 작업 표시줄을 숨깁니다. Dock의 Windows 버튼은 항상 표시됩니다. Dock을 끄거나 프로그램을 종료하면 작업 표시줄이 복원됩니다.",
+    "settings.dock.suppressTaskbar.failed": "작업 표시줄을 숨길 수 없습니다. 이 옵션을 꺼서 작업 표시줄을 복원한 후 다시 시도하세요.",
+    "settings.taskbar.classic.description": "Windows 10: 텍스트와 아이콘 색상은 시스템 테마를 따르며 흐림 강도는 Windows에서 제어합니다. 아크릴 효과를 사용할 수 없으면 흐림 효과를 사용합니다."
 }

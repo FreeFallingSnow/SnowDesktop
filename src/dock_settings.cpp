@@ -5,9 +5,11 @@
 #include "data_paths.h"
 #include "deployment_context.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
+#include "taskbar_hook/taskbar_native.h"
 
 #include <windows.h>
 #include <shellapi.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 #include <array>
@@ -471,7 +473,7 @@ public:
 
     bool Apply(bool hookEnabled, bool defaultEnabled,
         const PersonalizationSettings& appearance,
-        const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled)
+        const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled, bool suppressTaskbar)
     {
         // Reap a completed worker before reusing its std::thread object. The
         // actual injection never runs on the UI thread.
@@ -492,6 +494,7 @@ public:
         state_->enabled = hookEnabled ? TRUE : FALSE;
         state_->defaultEnabled = defaultEnabled ? TRUE : FALSE;
         state_->appearanceEnabled = hookEnabled && appearanceEnabled ? TRUE : FALSE;
+        state_->suppressTaskbar = hookEnabled && suppressTaskbar ? TRUE : FALSE;
         state_->style = appearance.glassEnabled
             ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
         if (appearance.glassEnabled && appearance.acrylicEnabled)
@@ -595,10 +598,14 @@ public:
                 SetEvent(injectionCancelEvent_);
             return true;
         }
-        if (!IsWindows11OrGreater() || !primaryTaskbar || !explorerProcessId)
+        if (!primaryTaskbar || !explorerProcessId)
             return false;
 
-        if (state_->explorerProcessId == explorerProcessId &&
+        const bool nativeRequired = suppressTaskbar || !IsWindows11OrGreater();
+        const bool nativeMissing = nativeRequired && std::any_of(taskbars.begin(), taskbars.end(), [](HWND window) {
+            return !GetPropW(window, snowdesktop::taskbar_hook::native::kAttachedProperty);
+        });
+        if (!nativeMissing && state_->explorerProcessId == explorerProcessId &&
             state_->status >= snowdesktop::taskbar_hook::kStatusInjecting)
             return true;
         if (injectionInFlight_.load(std::memory_order_acquire))
@@ -647,8 +654,6 @@ public:
         std::lock_guard lock(mutex_);
         if (!state_ || !state_->enabled)
             return SystemTaskbarBackdropRuntimeState::Disabled;
-        if (!IsWindows11OrGreater())
-            return SystemTaskbarBackdropRuntimeState::Unsupported;
         if (state_->status >= snowdesktop::taskbar_hook::kStatusApplied)
             return SystemTaskbarBackdropRuntimeState::Active;
         if (state_->status < snowdesktop::taskbar_hook::kStatusIdle)
@@ -755,6 +760,24 @@ private:
         const DWORD waitResult = WaitForMultipleObjects(
             waitCount, waitHandles.data(), FALSE, 35000);
         UnhookWindowsHookEx(hook);
+        if (waitResult == WAIT_OBJECT_0)
+        {
+            // Secondary taskbars can belong to different Explorer UI threads.
+            // Install the native subclass on each owner thread, never across it.
+            for (HWND secondary : FindSystemTaskbarWindows())
+            {
+                if (secondary == taskbar) continue;
+                DWORD secondaryProcess = 0;
+                const DWORD secondaryThread = GetWindowThreadProcessId(secondary, &secondaryProcess);
+                if (secondaryProcess != expectedExplorerProcessId || !secondaryThread) continue;
+                if (HHOOK secondaryHook = SetWindowsHookExW(WH_CALLWNDPROC, hookProc, module, secondaryThread))
+                {
+                    SendMessageTimeoutW(secondary, WM_NULL, 0, 0,
+                        SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored);
+                    UnhookWindowsHookEx(secondaryHook);
+                }
+            }
+        }
         FreeLibrary(module);
         if (explorerProcess)
             CloseHandle(explorerProcess);
@@ -907,7 +930,44 @@ bool RestartWindowsExplorer()
 
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState()
 {
-    return GetTaskbarBackdropController().RuntimeState();
+    using namespace snowdesktop::taskbar_hook;
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedStateName);
+    if (!mapping) return SystemTaskbarBackdropRuntimeState::Disabled;
+    const auto* state = static_cast<const SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedState)));
+    Snapshot snapshot;
+    auto result = SystemTaskbarBackdropRuntimeState::Disabled;
+    if (ReadSharedSnapshot(state, snapshot) && snapshot.enabled && snapshot.appearanceEnabled)
+        result = state->status < 0 ? SystemTaskbarBackdropRuntimeState::Failed :
+            state->status >= kStatusApplied ? SystemTaskbarBackdropRuntimeState::Active : SystemTaskbarBackdropRuntimeState::Loading;
+    if (state) UnmapViewOfFile(state);
+    CloseHandle(mapping);
+    return result;
+}
+
+bool IsClassicSystemTaskbar() { return !IsWindows11OrGreater(); }
+
+SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState()
+{
+    using namespace snowdesktop::taskbar_hook;
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedStateName);
+    if (!mapping) return SystemTaskbarBackdropRuntimeState::Disabled;
+    const auto* state = static_cast<const SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedState)));
+    Snapshot snapshot;
+    auto result = SystemTaskbarBackdropRuntimeState::Disabled;
+    if (ReadSharedSnapshot(state, snapshot) && snapshot.enabled && snapshot.suppressTaskbar)
+    {
+        result = state->suppressionStatus < 0 ? SystemTaskbarBackdropRuntimeState::Failed : SystemTaskbarBackdropRuntimeState::Loading;
+        const auto taskbars = FindSystemTaskbarWindows();
+        const bool allHidden = !taskbars.empty() && std::all_of(taskbars.begin(), taskbars.end(), [](HWND window) {
+            DWORD cloak = 0;
+            return GetPropW(window, native::kAttachedProperty) &&
+                SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && (cloak & DWM_CLOAKED_APP);
+        });
+        if (allHidden) result = SystemTaskbarBackdropRuntimeState::Active;
+    }
+    if (state) UnmapViewOfFile(state);
+    CloseHandle(mapping);
+    return result;
 }
 
 void NotifySystemTaskbarCreated()
@@ -924,10 +984,10 @@ LONG DrainSystemTaskbarAutoHideTrace(
 
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& appearance,
-    const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled)
+    const std::vector<SystemTaskbarTargetAppearance>& targets, bool appearanceEnabled, bool suppressTaskbar)
 {
     return GetTaskbarBackdropController().Apply(hookEnabled, defaultEnabled,
-        appearance, targets, appearanceEnabled);
+        appearance, targets, appearanceEnabled, suppressTaskbar);
 }
 
 PersonalizationSettings MakeTransparentTaskbarAppearance()
@@ -1045,6 +1105,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     if (ReadDoubleField(text, "windowEffect", value) && std::isfinite(value) && value >= 0 && value <= 3 && std::floor(value) == value)
         settings.windowEffect = static_cast<int>(value);
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
+    ReadBoolField(text, "suppressSystemTaskbar", settings.suppressSystemTaskbar);
     if (ReadDoubleField(text, "systemTaskbarAlignment", value))
         settings.systemTaskbarAlignment = std::clamp(static_cast<int>(value), 0, 1);
     ReadBoolField(text, "systemTaskbarBackdropEnabled",
@@ -1144,6 +1205,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"hoverScale\": " << snowdesktop::animation::NormalizeHoverScale(settings.hoverScale) << ",\n";
     file << "  \"launchEffect\": " << snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect) << ",\n";
     file << "  \"windowEffect\": " << snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect) << ",\n";
+    file << "  \"suppressSystemTaskbar\": "
+         << (settings.suppressSystemTaskbar ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAutoHide\": "
          << (settings.systemTaskbarAutoHide ? "true" : "false") << ",\n";
     file << "  \"systemTaskbarAlignment\": " << settings.systemTaskbarAlignment << ",\n";

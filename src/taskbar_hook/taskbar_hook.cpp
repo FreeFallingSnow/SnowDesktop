@@ -8,6 +8,7 @@
 
 #include "taskbar_hook_protocol.h"
 #include "taskbar_autohide_observer.h"
+#include "taskbar_native.h"
 #include "taskview_visibility.h"
 
 #include <windows.h>
@@ -299,47 +300,7 @@ void SignalReady()
 
 bool ReadSnapshot(Snapshot& snapshot)
 {
-    if (!g_sharedState && !OpenSharedState())
-        return false;
-    for (int attempt = 0; attempt < 4; ++attempt)
-    {
-        const LONG generation = g_sharedState->generation;
-        if ((generation & 1) != 0)
-        {
-            YieldProcessor();
-            continue;
-        }
-        MemoryBarrier();
-        snapshot.generation = generation;
-        snapshot.enabled = g_sharedState->enabled != FALSE;
-        snapshot.defaultEnabled =
-            g_sharedState->defaultEnabled != FALSE;
-        snapshot.appearanceEnabled = g_sharedState->appearanceEnabled != FALSE;
-        snapshot.style = g_sharedState->style;
-        snapshot.contentTheme = g_sharedState->contentTheme;
-        snapshot.systemUsesLightTheme = g_sharedState->systemUsesLightTheme;
-        snapshot.ownerProcessId = g_sharedState->ownerProcessId;
-        snapshot.red = g_sharedState->red;
-        snapshot.green = g_sharedState->green;
-        snapshot.blue = g_sharedState->blue;
-        snapshot.alpha = g_sharedState->alpha;
-        snapshot.blurAmount = g_sharedState->blurAmount;
-        snapshot.borderRed = g_sharedState->borderRed;
-        snapshot.borderGreen = g_sharedState->borderGreen;
-        snapshot.borderBlue = g_sharedState->borderBlue;
-        snapshot.borderAlpha = g_sharedState->borderAlpha;
-        snapshot.gradient = g_sharedState->gradient;
-        snapshot.targetCount = std::clamp<LONG>(
-            static_cast<LONG>(g_sharedState->targetCount), 0,
-            static_cast<LONG>(kMaximumTaskbarTargets));
-        std::copy_n(g_sharedState->targets, snapshot.targetCount,
-            snapshot.targets);
-        MemoryBarrier();
-        if (generation == g_sharedState->generation &&
-            (generation & 1) == 0)
-            return true;
-    }
-    return false;
+    return OpenSharedState() && ReadSharedSnapshot(g_sharedState, snapshot);
 }
 
 BOOL CALLBACK PostApplyToTaskbar(HWND window, LPARAM)
@@ -1448,8 +1409,28 @@ void StartTaskbarTapIfNeeded()
 extern "C" __declspec(dllexport) LRESULT CALLBACK
 SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
 {
-    if (code >= 0)
-        StartTaskbarTapIfNeeded();
+    if (code >= 0 && lParam && IsExplorerProcess() && OpenSharedState())
+    {
+        const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (message->message != WM_NULL && message->message != RegisterWindowMessageW(kApplyMessageName))
+            return CallNextHookEx(nullptr, code, wParam, lParam);
+        const bool classic = native::IsClassicTaskbarPlatform();
+        if (classic || g_sharedState->suppressTaskbar)
+        {
+            const bool applied = native::Attach(message->hwnd, g_sharedState, classic);
+            if (classic)
+            {
+                g_sharedState->explorerProcessId = GetCurrentProcessId();
+                SetHookStatus(applied ? kStatusApplied : kStatusFailed);
+                SignalReady();
+                bool expected = false;
+                if (applied && g_taskbarTapStarted.compare_exchange_strong(expected, true))
+                    if (HANDLE monitor = CreateThread(nullptr, 0, MonitorTaskView, nullptr, 0, nullptr))
+                        CloseHandle(monitor);
+            }
+        }
+        if (!classic) StartTaskbarTapIfNeeded();
+    }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 

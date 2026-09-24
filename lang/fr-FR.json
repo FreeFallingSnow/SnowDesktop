@@ -1869,5 +1869,9 @@
     "settings.calendar.reminder.15": "15 minutes avant",
     "settings.calendar.reminder.30": "30 minutes avant",
     "settings.calendar.reminder.60": "1 heure avant",
-    "settings.calendar.reminder.1440": "1 jour avant"
+    "settings.calendar.reminder.1440": "1 jour avant",
+    "settings.dock.suppressTaskbar": "Toujours masquer la barre des tâches du système",
+    "settings.dock.suppressTaskbar.description": "Masque les barres des tâches sur tous les écrans lorsque le Dock est activé. Le bouton Windows reste visible dans le Dock. Désactivez le Dock ou quittez l’application pour restaurer les barres des tâches.",
+    "settings.dock.suppressTaskbar.failed": "Impossible de masquer la barre des tâches. Désactivez cette option pour la restaurer, puis réessayez.",
+    "settings.taskbar.classic.description": "Windows 10 : le texte et les icônes suivent le thème du système ; Windows contrôle l’intensité du flou. Si l’acrylique est indisponible, l’effet de flou est utilisé."
 }

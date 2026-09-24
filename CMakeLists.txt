@@ -619,6 +619,8 @@ if (MSVC)
 
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
+        src/taskbar_hook/taskbar_native.cpp
+        src/taskbar_hook/taskbar_classic_surface.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
         src/taskbar_hook/taskbar_autohide_observer.cpp
         src/taskbar_hook/taskbar_autohide_observer.h
@@ -642,7 +644,7 @@ if (MSVC)
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00 WINRT_NO_MODULE_LOCK)
     target_link_libraries(SnowDesktopTaskbarHook PRIVATE
-        advapi32 comctl32 d2d1 dxguid ole32 runtimeobject user32 windowsapp)
+        advapi32 comctl32 d2d1 d3d11 dcomp dwmapi dxgi dxguid ole32 runtimeobject user32 windowsapp)
     set_property(TARGET SnowDesktopTaskbarHook PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopTaskbarHook PRIVATE
@@ -2155,6 +2157,10 @@ if (BUILD_TESTING)
         dock_and_window_rules
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/taskbar_native_tests.cpp
+            src/taskbar_hook/taskbar_native.cpp
+            src/taskbar_hook/taskbar_classic_surface.cpp
+            ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
             src/app/desktop_backdrop_compositor.cpp
             src/l10n.cpp
@@ -2162,9 +2168,10 @@ if (BUILD_TESTING)
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 dwrite dwmapi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
+        LINK_LIBRARIES comctl32 d2d1 d3d11 dcomp dwrite dwmapi dxgi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
+    target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
 
     snowdesktop_add_test(
         SnowDesktopDesktopDropCacheTests
