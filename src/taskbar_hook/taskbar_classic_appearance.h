@@ -26,7 +26,7 @@ inline AccentPolicy MakeClassicAccentPolicy(const TargetAppearance& style,
     policy.flags = policy.state == 4 ? 0 : 2;
     // Classic taskbars accept straight-alpha ABGR in ACCENT_POLICY. Keep the
     // solid tint in the native material, as TranslucentTB does on Win10. The
-    // optional composition surface only supplies gradients and borders.
+    // extra-drawing path instead paints all color on its separate backdrop.
     if (!DecodeGradient(style.gradient).enabled)
     {
         const auto channel = [](float value) -> DWORD {

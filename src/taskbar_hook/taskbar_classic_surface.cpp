@@ -43,12 +43,16 @@ HRESULT ApplyBackdropMaterial(HWND window, const TargetAppearance& style)
     const auto set = reinterpret_cast<SetComposition>(GetProcAddress(
         GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute"));
     if (!set) return E_NOTIMPL;
-    auto accent = MakeClassicAccentPolicy(style);
+    // A plain layered window does not expose Explorer's native tint surface.
+    // Only request its blur/acrylic here; our own DComp canvas draws all color.
+    auto material = style;
+    material.red = material.green = material.blue = material.alpha = 0;
+    auto accent = MakeClassicAccentPolicy(material);
     CompositionData data{19, &accent, sizeof(accent)};
     if (set(window, &data)) return S_OK;
     if (accent.state == 4)
     {
-        accent = MakeClassicAccentPolicy(style, false);
+        accent = MakeClassicAccentPolicy(material, false);
         if (set(window, &data)) return S_OK;
     }
     return E_FAIL;
@@ -167,8 +171,8 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
         render->PushAxisAlignedClip(rectangle, D2D1_ANTIALIAS_MODE_ALIASED);
         render->Clear(D2D1::ColorF(0, 0));
         ComPtr<ID2D1SolidColorBrush> solid;
-        hr = render->CreateSolidColorBrush(D2D1::ColorF(style.borderRed,
-            style.borderGreen, style.borderBlue, style.borderAlpha), &solid);
+        hr = render->CreateSolidColorBrush(D2D1::ColorF(style.red,
+            style.green, style.blue, style.alpha), &solid);
         if (SUCCEEDED(hr) && gradient.enabled)
         {
             std::vector<D2D1_GRADIENT_STOP> stops;
@@ -186,10 +190,11 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
                 collection.Get(), &brush);
             if (SUCCEEDED(hr)) render->FillRectangle(rectangle, brush.Get());
         }
-        // Solid tint is already in ACCENT_POLICY. Drawing it here as well
-        // would apply its opacity twice wherever this visual is visible.
+        else if (SUCCEEDED(hr)) render->FillRectangle(rectangle, solid.Get());
         if (SUCCEEDED(hr) && style.borderAlpha > 0)
         {
+            solid->SetColor(D2D1::ColorF(style.borderRed, style.borderGreen,
+                style.borderBlue, style.borderAlpha));
             const float stroke = static_cast<float>(GetDpiForWindow(window)) / 96.0f;
             const float half = stroke / 2;
             render->DrawRectangle(D2D1::RectF(half, half, static_cast<float>(width) - half,

@@ -10,7 +10,7 @@ namespace snowdesktop::taskbar_hook::native
 inline constexpr wchar_t kClassicBackdropProperty[] = L"SnowDesktop.Taskbar.ClassicBackdrop.v1";
 
 // Independent background window immediately below Explorer's taskbar. Native
-// accent supplies its material/tint, while DComp adds gradients and borders.
+// accent supplies blur/acrylic; DComp supplies solid tint, gradients and borders.
 class ClassicSurface
 {
 public:
