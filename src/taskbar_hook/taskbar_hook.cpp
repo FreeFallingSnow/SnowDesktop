@@ -1412,6 +1412,9 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
     if (code >= 0 && lParam && IsExplorerProcess() && OpenSharedState())
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (message->message == WM_ENTERMENULOOP || message->message == WM_EXITMENULOOP ||
+            message->message == WM_CONTEXTMENU)
+            native::ObserveMenuMessage(message->hwnd, message->message);
         if (message->message != WM_NULL && message->message != RegisterWindowMessageW(kApplyMessageName))
             return CallNextHookEx(nullptr, code, wParam, lParam);
         wchar_t className[64]{};

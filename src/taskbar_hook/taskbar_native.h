@@ -13,4 +13,6 @@ using AppBarMessage = UINT_PTR(WINAPI*)(DWORD, PAPPBARDATA);
 bool Attach(HWND window, SharedState* state, bool classic,
     AppBarMessage appBarMessage = &SHAppBarMessage);
 bool IsClassicTaskbarPlatform() noexcept;
+// Private Explorer hook entry for menus owned by taskbar child windows.
+void ObserveMenuMessage(HWND source, UINT message) noexcept;
 }

@@ -200,6 +200,17 @@ int RunNativeTaskbarTests()
         "a real taskbar-owned popup releases its owner and permits Explorer's reveal during the menu loop");
     check(cloaked() && !GetPropW(window, native::kContextMenuProperty),
         "closing the taskbar popup resumes suppression and removes the scene exemption");
+    HWND trayChild = CreateWindowExW(0, L"STATIC", L"Isolated tray child", WS_CHILD,
+        0, 0, 16, 16, window, nullptr, instance, nullptr);
+    check(trayChild != nullptr, "create a private notification-area child");
+    if (trayChild)
+    {
+        native::ObserveMenuMessage(trayChild, WM_ENTERMENULOOP);
+        check(!cloaked(), "the Explorer hook releases a child-owned menu before its window is created");
+        native::ObserveMenuMessage(trayChild, WM_EXITMENULOOP);
+        check(cloaked(), "closing a child-owned tray menu restores suppression");
+        DestroyWindow(trayChild);
+    }
     if (unrelated)
     {
         check(ProbeMenu(unrelated, window) && menuProbe.cloaked && menuProbe.revealBlocked,

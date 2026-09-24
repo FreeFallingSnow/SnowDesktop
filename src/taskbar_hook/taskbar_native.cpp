@@ -510,6 +510,28 @@ bool IsClassicTaskbarPlatform() noexcept
     return getVersion && getVersion(&version) == 0 && version.dwMajorVersion == 10 && version.dwBuildNumber < 22000;
 }
 
+void ObserveMenuMessage(HWND source, UINT message) noexcept try
+{
+    if (message != WM_ENTERMENULOOP && message != WM_EXITMENULOOP && message != WM_CONTEXTMENU)
+        return;
+    std::vector<std::pair<HWND, std::shared_ptr<WindowState>>> targets;
+    { std::lock_guard lock(windowsMutex);
+      for (const auto& entry : windows) targets.push_back(entry); }
+    for (const auto& [window, state] : targets)
+        if (IsTrayOrigin(source, window))
+        {
+            { std::lock_guard lock(state->mutex);
+              if (message != WM_CONTEXTMENU) state->menuLoop = message == WM_ENTERMENULOOP;
+              state->contextMenuThread = 0;
+              state->contextMenuUntil = message == WM_EXITMENULOOP ? 0 : GetTickCount64() + 1500; }
+            if (GetWindowThreadProcessId(window, nullptr) == GetCurrentThreadId())
+                Update(window, state, false);
+            else
+                PostMessageW(window, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+        }
+}
+catch (...) {}
+
 bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBarMessage) try
 {
     if (auto existing = Find(window)) return Update(window, existing, false);
