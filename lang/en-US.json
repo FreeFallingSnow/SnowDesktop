@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "1 hour before",
     "settings.calendar.reminder.1440": "1 day before",
     "settings.dock.suppressTaskbar": "Always hide the system taskbar",
-    "settings.dock.suppressTaskbar.description": "Hide taskbars and free their reserved space while Dock is enabled. Show the taskbar temporarily for system panels such as Start. Keep the Windows button in Dock. Turning Dock off or exiting restores the original taskbar settings.",
+    "settings.dock.suppressTaskbar.description": "Hide taskbars only on displays with Dock and free their reserved space. Show the taskbar temporarily for system panels such as Start. Keep the Windows button in Dock. Turning Dock off or exiting restores the original taskbar settings.",
     "settings.dock.suppressTaskbar.failed": "The taskbar could not be hidden. Turn this option off to restore it, then try again.",
     "settings.taskbar.classic.description": "Windows 10: text and icons follow the system theme; blur strength is controlled by Windows. Acrylic falls back to blur if unavailable."
 }

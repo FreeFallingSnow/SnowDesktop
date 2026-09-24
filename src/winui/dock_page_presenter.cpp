@@ -2280,7 +2280,7 @@ struct DockPagePresenter::Impl
                 L"Show the Dock by swiping along its screen edge or "
                   "dragging an item to that edge."));
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
-            L("settings.dock.suppressTaskbar.description", L"Hide taskbars and free their reserved space while Dock is enabled. Show the taskbar temporarily for system panels such as Start. Keep the Windows button in Dock. Turning Dock off or exiting restores the original taskbar settings."));
+            L("settings.dock.suppressTaskbar.description", L"Hide taskbars only on displays with Dock and free their reserved space. Show the taskbar temporarily for system panels such as Start. Keep the Windows button in Dock. Turning Dock off or exiting restores the original taskbar settings."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
         classicTaskbarHint.Text(L("settings.taskbar.classic.description", L"Windows 10: text and icons follow the system theme; blur strength is controlled by Windows. Acrylic falls back to blur if unavailable."));
         showWindowsButtonRow.SetText(L(

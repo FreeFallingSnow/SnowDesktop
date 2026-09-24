@@ -10,15 +10,15 @@
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 10;
+inline constexpr std::uint32_t kSharedStateVersion = 11;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v10";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v11";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v10";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v11";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v10";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v11";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -96,6 +96,7 @@ struct TargetAppearance
     Gradient gradient;
     LONG protectAutoHideActivation = FALSE;
     LONG shellPanelVisible = FALSE;
+    LONG suppressTaskbar = FALSE;
 };
 
 struct SharedState
@@ -183,8 +184,10 @@ inline bool ShouldSuppressTaskbar(const Snapshot& snapshot, std::uintptr_t taskb
     if (!snapshot.enabled || !snapshot.suppressTaskbar) return false;
     for (LONG index = 0; index < snapshot.targetCount; ++index)
         if (snapshot.targets[index].taskbar == taskbar)
-            return snapshot.targets[index].shellPanelVisible == FALSE;
-    return true;
+            return snapshot.targets[index].suppressTaskbar != FALSE &&
+                snapshot.targets[index].shellPanelVisible == FALSE;
+    // An unknown/recreated taskbar has no confirmed Dock on its monitor yet.
+    return false;
 }
 
 inline bool ReadSharedSnapshot(const SharedState* state, Snapshot& snapshot)

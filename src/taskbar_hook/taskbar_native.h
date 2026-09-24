@@ -5,7 +5,7 @@
 
 namespace snowdesktop::taskbar_hook::native
 {
-inline constexpr wchar_t kAttachedProperty[] = L"SnowDesktop.Taskbar.Native.v10";
+inline constexpr wchar_t kAttachedProperty[] = L"SnowDesktop.Taskbar.Native.v11";
 
 // Called on the owning window thread. The mapping must outlive the subclass.
 using AppBarMessage = UINT_PTR(WINAPI*)(DWORD, PAPPBARDATA);

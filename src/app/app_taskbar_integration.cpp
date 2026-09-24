@@ -1,5 +1,6 @@
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
+#include "../taskbar_monitor.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -419,8 +420,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
     const bool protectActivation = !IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(dockSettings_,
         generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
-    const bool suppressTaskbar = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
-    const bool hookRequired = appearanceRequired || protectActivation || suppressTaskbar;
+    const bool suppressionRequested = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
+    const bool hookRequired = appearanceRequired || protectActivation || suppressionRequested;
     if (!hookRequired)
     {
         ApplySystemTaskbarBackdrop(false, false,
@@ -483,7 +484,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
     std::vector<HMONITOR> dockMonitors;
-    if (protectActivation && hwnd_)
+    if ((protectActivation || suppressionRequested) && hwnd_)
     {
         for (const auto& container : containers_)
         {
@@ -502,8 +503,9 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     targets.reserve(context.windows.size());
     for (HWND taskbar : context.windows)
     {
-        const HMONITOR monitor = MonitorFromWindow(taskbar,
-            MONITOR_DEFAULTTONULL);
+        const HMONITOR monitor = snowdesktop::taskbar_monitor::Resolve(taskbar);
+        const bool hasDock = monitor &&
+            std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
         const auto stateIt = systemTaskbarMonitorWindowStates_.find(monitor);
         const SystemTaskbarMonitorWindowState state =
             stateIt == systemTaskbarMonitorWindowStates_.end()
@@ -526,8 +528,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         target.taskbar = taskbar;
         // Panel access remains available even with all appearance rules off.
         target.shellPanelVisible = shellPanelVisible;
-        target.protectAutoHideActivation = protectActivation && !shellPanelVisible &&
-            std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
+        target.suppressTaskbar = suppressionRequested && hasDock;
+        target.protectAutoHideActivation = protectActivation && !shellPanelVisible && hasDock;
         if (selectedRule)
         {
             target.enabled =
@@ -543,6 +545,8 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         targets.push_back(std::move(target));
     }
 
+    const bool suppressTaskbar = std::any_of(targets.begin(), targets.end(),
+        [](const auto& target) { return target.suppressTaskbar; });
     ApplySystemTaskbarBackdrop(true,
         dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();

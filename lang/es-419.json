@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "1 hora antes",
     "settings.calendar.reminder.1440": "1 día antes",
     "settings.dock.suppressTaskbar": "Ocultar siempre la barra de tareas del sistema",
-    "settings.dock.suppressTaskbar.description": "Oculta las barras de tareas y libera su espacio mientras el Dock está activado. La barra se muestra temporalmente al abrir paneles del sistema, como Inicio. El botón de Windows permanece en el Dock. Al desactivar el Dock o salir, se restaura la configuración original.",
+    "settings.dock.suppressTaskbar.description": "Oculta las barras de tareas solo en las pantallas con Dock y libera su espacio. La barra se muestra temporalmente al abrir paneles del sistema, como Inicio. El botón de Windows permanece en el Dock. Al desactivar el Dock o salir, se restaura la configuración original.",
     "settings.dock.suppressTaskbar.failed": "No se pudo ocultar la barra de tareas. Desactiva esta opción para restaurarla y vuelve a intentarlo.",
     "settings.taskbar.classic.description": "Windows 10: el texto y los íconos siguen el tema del sistema; Windows controla la intensidad del desenfoque. Si el efecto acrílico no está disponible, se utiliza el desenfoque."
 }

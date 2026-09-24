@@ -54,6 +54,7 @@ struct SystemTaskbarTargetAppearance
         PersonalizationSettings::DarkPreset();
     bool protectAutoHideActivation = false;
     bool shellPanelVisible = false;
+    bool suppressTaskbar = false;
 };
 
 struct DockSettings : DockLayoutSettings

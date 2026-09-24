@@ -1,6 +1,7 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_classic_surface.h"
 #include "dock_settings.h"
+#include "taskbar_monitor.h"
 #include <dwmapi.h>
 #include <iostream>
 #include <string>
@@ -56,6 +57,9 @@ int RunNativeTaskbarTests()
     shared.ownerProcessId = GetCurrentProcessId();
     shared.enabled = TRUE;
     shared.suppressTaskbar = TRUE;
+    shared.targetCount = 1;
+    shared.targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
+    shared.targets[0].suppressTaskbar = TRUE;
     const UINT apply = RegisterWindowMessageW(kApplyMessageName);
     const auto cloaked = [&] {
         DWORD value = 0;
@@ -158,6 +162,8 @@ int RunNativeTaskbarTests()
     shared.defaultEnabled = TRUE;
     shared.suppressTaskbar = FALSE;
     shared.gradient = style.gradient;
+    shared.targets[0].enabled = TRUE;
+    shared.targets[0].gradient = style.gradient;
     check(native::Attach(window, &shared, true, TestAppBarMessage) && shared.status == kStatusApplied,
         "the complete classic adapter applies a gradient through its production entry point");
     shared.suppressTaskbar = TRUE;
@@ -180,6 +186,7 @@ int RunNativeTaskbarTests()
         "appearance failure must report failure without revealing a suppressed taskbar");
     surface.Reset();
     shared.borderAlpha = .1f;
+    shared.targets[0].borderAlpha = .1f;
     SendMessageW(window, apply, 0, 0);
     check(cloaked() && shared.status == kStatusApplied,
         "editing appearance after releasing the competing target recovers rendering while staying hidden");
@@ -215,9 +222,38 @@ int RunNativeTaskbarTests()
             shared.targets[1] = {};
             shared.targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
             shared.targets[1].taskbar = reinterpret_cast<std::uintptr_t>(secondary);
+            shared.targets[0].suppressTaskbar = TRUE;
+            shared.targets[1].suppressTaskbar = TRUE;
             check(native::Attach(window, &shared, classic, TestAppBarMessage) && native::Attach(secondary, &shared, classic, TestAppBarMessage) &&
                 cloaked() && secondaryCloaked(), "both taskbars start hidden without custom appearance");
-            shared.targets[0].shellPanelVisible = ShouldRevealTaskbarForShellPanel(false, true, true);
+
+            shared.targets[0].suppressTaskbar = FALSE;
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+            DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal));
+            check(!cloaked() && secondaryCloaked(),
+                "moving Dock to the secondary display releases the old taskbar and protects the new one");
+            shared.targets[0].suppressTaskbar = TRUE;
+            shared.targets[1].suppressTaskbar = FALSE;
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+            check(cloaked() && !secondaryCloaked(),
+                "moving Dock back updates suppression without restarting or reinjecting");
+            shared.targets[1].suppressTaskbar = TRUE;
+            shared.targetCount = 1;
+            SendMessageW(secondary, apply, 0, 0);
+            check(!secondaryCloaked(), "a taskbar absent from the new Dock scope is not hidden by a global fallback");
+            shared.targetCount = 2;
+            SendMessageW(secondary, apply, 0, 0);
+
+            // The original auto-hide preference was OFF. The real isolated
+            // taskbar is outside the virtual desktop, as after auto-hide moves
+            // it past an edge; its panel must still match a valid display.
+            const HMONITOR panelMonitor = MonitorFromPoint(POINT{-32000, -32000}, MONITOR_DEFAULTTONEAREST);
+            check(MonitorFromWindow(window, MONITOR_DEFAULTTONULL) == nullptr,
+                "panel regression fixture has no on-screen taskbar intersection");
+            shared.targets[0].shellPanelVisible = ShouldRevealTaskbarForShellPanel(false, true,
+                snowdesktop::taskbar_monitor::Resolve(window) == panelMonitor);
             shared.targets[1].shellPanelVisible = ShouldRevealTaskbarForShellPanel(false, true, false);
             DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal));
             check(!cloaked(), "panel reveal is permitted before the posted apply message reaches the taskbar");
@@ -244,7 +280,10 @@ int RunNativeTaskbarTests()
     UnregisterClassW(registration.lpszClassName, instance);
     // A replacement Explorer resumes the original preference from the shared
     // mapping rather than mistaking the forced ON state for the user's choice.
-    shared.targetCount = 0;
+    shared.targetCount = 1;
+    shared.targets[0] = {};
+    shared.targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
+    shared.targets[0].suppressTaskbar = TRUE;
     shared.enabled = TRUE;
     shared.suppressTaskbar = TRUE;
     shared.autoHideRestore = FALSE;

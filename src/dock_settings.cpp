@@ -528,6 +528,7 @@ public:
             destination.enabled = source.enabled ? TRUE : FALSE;
             destination.protectAutoHideActivation = source.protectAutoHideActivation ? TRUE : FALSE;
             destination.shellPanelVisible = source.shellPanelVisible ? TRUE : FALSE;
+            destination.suppressTaskbar = source.suppressTaskbar ? TRUE : FALSE;
             destination.style = source.appearance.glassEnabled
                 ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
             if (source.appearance.glassEnabled &&

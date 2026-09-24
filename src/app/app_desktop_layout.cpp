@@ -239,6 +239,11 @@ void DesktopApp::RebuildContainersAndItems()
     // Rebind after each runtime-tree rebuild because DockContainer pointers
     // are invalidated even though the HWND and composition resources remain.
     SyncPersistentDockHosts();
+    // First/last display pins and Dock scope changes rebuild this tree without
+    // necessarily changing the foreground. Reconcile taskbar targets on the
+    // next guard tick instead of retaining the previous Dock monitor binding.
+    systemTaskbarBackdropRefreshTick_ = 0;
+    systemTaskbarWindowStateChangedTick_.fetch_add(1, std::memory_order_relaxed);
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {
