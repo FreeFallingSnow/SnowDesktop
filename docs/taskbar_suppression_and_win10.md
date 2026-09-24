@@ -188,3 +188,14 @@ SteamCMD 的 `app_info_print` 只返回公开分支，并未提供私有分支 B
 - [TranslucentTB 经典任务栏材质与恢复路径](https://github.com/TranslucentTB/TranslucentTB/blob/release/TranslucentTB/taskbar/taskbarattributeworker.cpp)
 
 具体构建、测试、负向对照和产物证据随候选提交记录；未实际运行的项目不计为通过。
+## 2026-09-24：Windows 10 颜色实测失败
+
+用户在 Windows 10 虚拟机反馈：毛玻璃、亚克力材质可以切换，但所有背景颜色均无效果。
+用户提供的 `current-runtime.txt`、`confirmed-runtime.txt`、`launch-history.txt` 均记录
+`1.0.7.0-2249ba309928f45d`，与测试分支 BuildID `25504408` 的运行包一致；
+`previous-runtime.txt` 记录 `1.0.7.0-3118c0e99fcd38d8` 是前一版本记录。
+这证明新版运行包已经选择并确认启动，但不能单独证明 Explorer 中实际加载的 Hook 身份。
+
+结论：包含初始 Win10 后端 `06434d9d` 的候选未通过 Win10 背景颜色验收。
+现有隔离测试只验证 DirectComposition 调用成功及控制器生命周期，没有验证最终可见像素，
+不能代替 Win10 Explorer 的视觉验收。当前怀疑原生任务栏与附加合成图层的兼容性，根因待查。
