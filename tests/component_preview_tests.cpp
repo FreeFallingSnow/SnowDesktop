@@ -602,17 +602,25 @@ int wmain()
     Expect(window.ScheduleShow(replacementModel, menuBounds, nullptr, 96,
             false, {}, itemBounds),
         "hovering a sibling schedules its preview");
-    POINT savedCursor{};
-    Expect(GetCursorPos(&savedCursor) != FALSE,
-        "the preview fixture can save the cursor position");
-    Expect(SetCursorPos(0, 0) != FALSE,
-        "the preview fixture can move outside the pending preview");
+    // Keep the real pointer outside the fixture without moving it. SetCursorPos
+    // can be denied by the input desktop, and changing the user's cursor is not
+    // part of the sibling-preview behavior under test. The open timer below
+    // restores the preview to its normal menu anchor.
+    RECT pendingBounds{};
+    Expect(GetWindowRect(window.Handle(), &pendingBounds) != FALSE,
+        "read the pending preview fixture bounds");
+    const int virtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int virtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    Expect(SetWindowPos(window.Handle(), nullptr,
+            virtualLeft - (pendingBounds.right - pendingBounds.left) - 64,
+            virtualTop - (pendingBounds.bottom - pendingBounds.top) - 64,
+            0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE &&
+            GetWindowRect(window.Handle(), &pendingBounds) != FALSE &&
+            pendingBounds.right < virtualLeft && pendingBounds.bottom < virtualTop,
+        "the pending preview fixture is outside the pointer's desktop bounds");
     SendMessageW(window.Handle(), WM_TIMER, 2, 0);
     const bool oldFrameRetained = IsWindowVisible(window.Handle()) != FALSE;
     SendMessageW(window.Handle(), WM_TIMER, 1, 0);
-    // Restore before any assertion can terminate the test process.
-    const bool cursorRestored = SetCursorPos(savedCursor.x, savedCursor.y) != FALSE;
-    Expect(cursorRestored, "the preview fixture restores the saved cursor position");
     Expect(oldFrameRetained,
         "a stale close timer keeps the old frame while a sibling is pending");
     Expect(replacementRendered && IsWindowVisible(window.Handle()) != FALSE,
