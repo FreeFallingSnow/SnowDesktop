@@ -358,3 +358,36 @@ Win10 上控件双向同步、重启保留选择、实际图标配色与动态�
 不是编译错误或夹具结构失败。证据在 `artifacts/v1.0.7.0/taskbar-tray-parent-20260924/`
 的 `baseline-messages.log` 和 `baseline-messages-result.json`。这些是本机 Win11 上的控制器复现，
 不能单独确认 Win10 实机只有这一条故障路径。
+
+### 后续候选与验证
+
+`4103d820` 改为通过任务栏 HWND 自身和 `IsChild` 后代关系识别直接托盘来源；仍保持折叠面板的
+进程及显示器限制。同一个面板根窗口下、不属于任务栏的窗口不会因此获得豁免。
+菜单通知改由接管期间持续存在的线程级 `WH_CALLWNDPROC` 观察，并在释放接管时卸载；
+短暂连接 Hook 不再负责运行期菜单转发。根任务栏仍由其子类过程处理，避免重复处理相同通知。
+实现参考 Microsoft 的 [IsChild 后代关系](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-ischild)
+和 [线程 Hook 生命周期](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw)。
+
+- `scripts/build.bat --reload-shell`：22:11:11–22:12:05，退出 0，生成 Release 宿主和 Hook，
+  无编译或链接警告。执行前已告知关闭 SnowDesktop 和短暂重启 Explorer。
+- `scripts/test.bat full`：22:12:45–22:15:31，退出 0，**120/120 通过**，CTest 137.69 秒，
+  无编译或链接警告；默认排除 `manual`。`dock_and_window_rules` 7.41 秒，原三个失败均通过，
+  新增同根无关窗口的负向行为检查亦通过。报告为 `full-ctest.xml`，原始报告
+  `test-run-9580a22165434c2da6601451bb38ef1c.xml`。
+- `scripts/package_steam.ps1 -SkipBuild`：退出 0。全部 406 个包文件核对大小及 SHA-256，
+  ZIP 条目集合与内容逐项核对，宿主和 Hook 与测试结束后的构建输出一致；运行载荷 404 个文件。
+
+证据仍位于本节的 `taskbar-tray-parent-20260924/` 目录。`inputs.json` 绑定候选提交、1043 个源码、
+测试、资源及构建输入、工具链和最终产物。运行包为 `1.0.7.0-d762c1cc7d605984`，宿主 SHA-256
+`2D95A300CC67D461EF91B5F9DF6190244E119CF5B74EAC81FCE6444DA8E7E0BA`，Hook SHA-256
+`E69EB91D60B950E8A37BE78EA2A1258B08C36B904892C535C31C0FA200CAB05C`，Steam ZIP SHA-256
+`7C796E59E165217233EB4D4A20038CC113A79EF3C7E40E77FA7EB538CF9103CF`。
+本机是 Win11；**Win10 上直接显示的 SnowDesktop、Steam 托盘图标右键仍待用户复测**，
+尤其是先打开开始菜单、再右键托盘、保持菜单打开超过两秒、关闭菜单恢复隐藏这一完整交接。
+
+22:16:47，SteamPipe `UploadDev -SkipPackage -Yes -ConfirmVersion 1.0.7.0 -ConfirmPrivateBranch internal-dev`
+上传成功，BuildID **25507426**，脚本退出 0。Steam 客户端于 22:16:50 正常重启，
+22:17:00 的新连接日志确认登录成功。22:17:16 完成安装；客户端清单确认 `internal-dev` /
+`25507426`，Depot manifest `8686825345461149891`，406 个安装文件均匹配上传包哈希。
+分支核对依据为 `client-verification.json` 和 `client-update.log`，客户端恢复后未再次登录 SteamCMD。
+只更新私有测试分支，未推送 Git 或发布正式版本；用户已有审计文档与附件目录保持原状。
