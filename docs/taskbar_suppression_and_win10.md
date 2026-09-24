@@ -409,3 +409,50 @@ Win10 上控件双向同步、重启保留选择、实际图标配色与动态�
 
 证据保存于 `artifacts/v1.0.7.0/taskbar-tray-slide-20260924/`：`win10-before.jsonl`、
 `win10-identity.json` 和 `win10-runtime.json`。采集未注入鼠标、未自动操作宿主桌面。
+
+### 位置保持候选与实际验收
+
+`8c696333` 在经典任务栏的 `WM_WINDOWPOSCHANGING` 中处理已识别的托盘菜单：
+仅当同尺寸移动会把当前完整位于显示器内的任务栏移出屏幕时保留原位置。
+仍保持系统自动隐藏开启以释放工作区，菜单关闭、Dock 离开该屏幕、正常屏内移动和调整尺寸
+继续交给 Shell。Win11 不启用这条位置拦截。实现依据为 Microsoft 的
+[WM_WINDOWPOSCHANGING](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-windowposchanging)
+和 [WINDOWPOS](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowpos) 文档。
+
+隔离窗口回归通过真实 `SetWindowPos` 和生产子类过程覆盖四个任务栏方向、菜单关闭及 Dock
+移出后的行为；只替换全局任务栏偏好边界，不改变用户系统偏好。旧实现按四个位置断言失败，
+退出 4；候选退出 0。首次临时探针因复制头文件造成重复定义而编译失败，该次不计为缺陷复现；
+修正探针包含路径后才取得上述有效失败与通过。未为探针增加独立 CTest 条目。
+
+- `scripts/build.bat --reload-shell`：22:58:27–22:59:08，退出 0，生成 Release 宿主及 Hook，
+  无编译或链接警告。`scripts/test.bat name "^dock_and_window_rules$"`：22:59:29–22:59:43，
+  1/1 通过，CTest 6.72 秒，报告 `test-run-c82f6aa1b145493b989ac1009979c79e.xml`。
+- 在虚拟机使用现有 `steam_local_deploy.ps1 -Apply` 部署隔离副本，沿用原运行包的宿主、
+  仅替换本次 Hook，并复制现有设置到独立开发数据目录。实际 Explorer 加载的候选 Hook
+  SHA-256 为 `2DFD3937AB7E23FBDDA70228B76046D456CFFA5F2CFAEB1DD4459BB81F53CE03`。
+  用户按相同开始菜单到直接托盘右键场景复测，反馈“没问题了”，作为本轮实际交互通过依据。
+  候选的定时采集窗口内没有新的右键事件，因此不把该空闲记录当成通过证据。
+- `scripts/test.bat full`：23:06:05–23:08:48，退出 0，**120/120 通过**，CTest 133.14 秒，
+  无编译或链接警告；默认排除 `manual`。报告 `test-run-b7e73cabc4994cb8abaf61b27be82409.xml`。
+  `inputs.json` 绑定 `8c696333`、1108 个源码/资源/构建输入及真实验证边界。
+- 全量构建重新链接 Hook；最终 Hook 为
+  `B1A5EF43E034B0D1E460BE5C7B91EC0836727AACB8E652969D143AB82B4588E5`。
+  `hook-relink-comparison.json` 证实与 Win10 实测 DLL 的全部字节差异仅为链接时间戳和 PE 校验值，
+  归一化这几个字段后完整二进制一致，`.text`、数据、资源等节内容保持一致。
+- 完整测试后 `scripts/package_steam.ps1 -SkipBuild` 退出 0，406 个包文件及 ZIP 条目逐项核对
+  大小和 SHA-256，宿主与 Hook 匹配最终构建输出。运行包为 `1.0.7.0-1f2db3e69fd799ea`，
+  宿主 SHA-256 为 `946504373BDCC99D2236C97FF61D26F60089367E37436FC9A49DF93992783E98`，
+  ZIP SHA-256 为 `DC6FA85A2E6CD37D3EBE8D483300A60694DE66AC3E67C3074D15B4B954E51455`。
+- 23:11:25 上传私有 `internal-dev` 成功，BuildID **25508593**。宿主机 Steam 当时未运行，
+  保持关闭；虚拟机 Steam 于 23:12:22 正常重启，23:12:42 的新连接日志确认重新在线。
+  未在恢复后再次使用 SteamCMD 登录。
+- 虚拟机已退出独立调试副本，并通过 Steam 启动正常安装版。安装清单为
+  `internal-dev / 25508593`，406 个安装文件和 404 个实际运行文件全部匹配上传包，
+  Explorer 只加载最终 Hook。证据为 `guest-installed-verification.json` 和
+  `guest-steam-restoration.json`，没有把发出启动命令当作更新或加载成功。
+
+23:15 关闭临时桥接，移除本轮 `SnowDesktopDebug` 共享并恢复原先禁用的共享文件夹状态。
+虚拟机内独立开发副本和设置副本暂留作为排查材料，不影响正常安装版及原设置；连接用的
+PowerShell 窗口可以关闭。所有日志仍在本节证据目录中。实际交互通过仅覆盖用户这台 Win10
+及本轮直接托盘复现；四边和范围退出还有隔离窗口回归证据，没有宣称多屏实机或全部第三方菜单通过。
+未推送 Git、合并 main、创建标签或公开发行，用户原有审计文档及附件保持原状。
