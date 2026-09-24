@@ -159,6 +159,28 @@ Win11 上的独立窗口测试不能代替 Win10 验收。可用 Win10 22H2 虚�
 
 最终产物 SHA-256：宿主 `7ADA20C4068AE732CE951C536C38998DC3AC813211230DC4588EDAFAA11421DF`，Hook `2F5F3FB680DC99E4393C469F2EDC738EE7C129C14241763C446FEDDC0DD37539`。本机证据在 `.codex-probes/taskbar-status/`：构建、完整测试、独立窗口及两项负向对照的日志和结果 JSON；`full-tests.xml`、`final-test-selection.json`、`final-inputs.json` 和 `final-artifacts.json` 绑定自动测试集合、源码/工具链与产物哈希。用户已有审计文档修改和附件目录均未修改或暂存。
 
+## 2026-09-24 隐藏提示验收与 Win10 测试分支交付
+
+用户对 `ff5acd62` 候选反馈“没问题了”，确认此前已隐藏但持续显示连接中的问题不再出现，并要求精简设置提示后上传测试分支用于 Win10 验证。该反馈仅覆盖用户本次操作，不扩展为所有面板、多屏与 Win10 场景已经验收。
+
+文案候选为 `a58bee83b946a2f9549ad104fc9ab5a35adecda2`：移除任务栏主题与 Windows 设置入口中重复标题的说明，压缩始终隐藏、全屏手势、规则顺序及 Windows 10 限制提示；全部十种语言同步，保留隐藏范围、面板临时显示、Windows 按钮及错误提示，未改变行为。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `scripts/build.bat --reload-shell` | 19:43:51–19:44:48，退出码 0，标准 Release 构建通过；无编译或链接警告 |
+| `scripts/test.bat` | 19:45:13–19:47:51，退出码 0，120/120 通过，含本地化及设置页检查；配置 2.41 秒、编译整理 22.73 秒、CTest 131.07 秒，默认排除 `manual` |
+| `scripts/package_steam.ps1 -SkipBuild` | 19:48:16–19:48:31，退出码 0；406 个文件逐项大小、哈希核对通过，宿主和 Hook 与已测产物一致；没有用户数据、开发 App ID 文件或官方社区组件源码 |
+| SteamPipe 上传 | `scripts/steam_pipe.ps1 -Mode UploadDev -SkipPackage -Yes -ConfirmVersion 1.0.7.0 -ConfirmPrivateBranch internal-dev`，退出码 0，19:49:50 返回 BuildID **25504408**；App/Depot 为 `5080330/5080331` |
+| 分支与客户端更新 | 桌面 Steam 的安装清单确认 `BetaKey=internal-dev`、`buildid=25504408`；19:50:36 的内容日志确认下载提交完成，Depot manifest 为 `2074353354913472653`；已安装的 406 个发行文件全部匹配上传包哈希 |
+| Steam 客户端恢复 | 上传与查询结束后正常关闭并以 `-silent` 重启原有客户端；19:50:15 的新连接日志确认登录 `OK`，未强杀游戏或进程树 |
+| 待验证 | 精简文案的实机排版、Win10 任务栏材质/渐变/边框、面板放行、工作区恢复及多屏交互由用户继续验证 |
+
+SteamCMD 的 `app_info_print` 只返回公开分支，并未提供私有分支 BuildID；浏览器没有已登录的 Steamworks 会话。初次查询结果如实保留为未确认，后续通过桌面 Steam 的私有分支下载、安装清单和全部文件哈希完成核对，没有再次登录 SteamCMD 打断已恢复的客户端。上传成功与查询缺少私有分支信息是两项不同结果。
+
+运行包标识为 `1.0.7.0-2249ba309928f45d`。宿主 SHA-256 为 `C8902808C8A2E6872AE0BA4E7CD56CA54EF7AD9A2C684CCD2A00DC0FD59C63D0`，Hook 为 `8A0CBD5605B92BAC7076DF953B04D47CC8443C28F3BA14EC6202B0EF251DDF83`，Steam ZIP 为 `6EA41C494738C87B9BE9E7BD5C86154B7F6DB33E0B780072B48B51A981027D9D`。
+
+本次证据统一保存于 `artifacts/v1.0.7.0/taskbar-win10-test-20260924/`：`inputs.json`、构建及测试日志/结果、`full-tests.xml`、打包及哈希检查、`upload.log`、`publish-result.json`、`client-verification.json`、`client-update.log` 和 `steam-restoration.json`。发布只涉及 Steam 测试分支；未推送 Git 分支、修改 `main`、创建版本标签或发布 GitHub Release。用户已有审计文档修改和附件目录保持原状。
+
 ## 参考
 
 - [微软 DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)
