@@ -16,6 +16,12 @@ void ClassicSurface::Reset()
 
 HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
 {
+    const auto gradient = DecodeGradient(style.gradient);
+    if (!gradient.enabled && style.borderAlpha <= 0)
+    {
+        Reset();
+        return S_OK;
+    }
     RECT bounds{};
     if (!GetClientRect(window, &bounds)) return HRESULT_FROM_WIN32(GetLastError());
     const LONG width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
@@ -62,8 +68,8 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
         render->PushAxisAlignedClip(rectangle, D2D1_ANTIALIAS_MODE_ALIASED);
         render->Clear(D2D1::ColorF(0, 0));
         ComPtr<ID2D1SolidColorBrush> solid;
-        hr = render->CreateSolidColorBrush(D2D1::ColorF(style.red, style.green, style.blue, style.alpha), &solid);
-        const auto gradient = DecodeGradient(style.gradient);
+        hr = render->CreateSolidColorBrush(D2D1::ColorF(style.borderRed,
+            style.borderGreen, style.borderBlue, style.borderAlpha), &solid);
         if (SUCCEEDED(hr) && gradient.enabled)
         {
             std::vector<D2D1_GRADIENT_STOP> stops;
@@ -81,10 +87,10 @@ HRESULT ClassicSurface::Draw(HWND window, const TargetAppearance& style)
                 collection.Get(), &brush);
             if (SUCCEEDED(hr)) render->FillRectangle(rectangle, brush.Get());
         }
-        else if (SUCCEEDED(hr)) render->FillRectangle(rectangle, solid.Get());
+        // Solid tint is already in ACCENT_POLICY. Drawing it here as well
+        // would apply its opacity twice wherever this visual is visible.
         if (SUCCEEDED(hr) && style.borderAlpha > 0)
         {
-            solid->SetColor(D2D1::ColorF(style.borderRed, style.borderGreen, style.borderBlue, style.borderAlpha));
             const float stroke = static_cast<float>(GetDpiForWindow(window)) / 96.0f;
             const float half = stroke / 2;
             render->DrawRectangle(D2D1::RectF(half, half, static_cast<float>(width) - half,

@@ -7,7 +7,8 @@
 
 namespace snowdesktop::taskbar_hook::native
 {
-// Visual below taskbar child windows: never intercepts pointer/keyboard input.
+// Gradient/border visual below taskbar children; solid tint lives in the native
+// accent material. This surface never intercepts pointer/keyboard input.
 class ClassicSurface
 {
 public:

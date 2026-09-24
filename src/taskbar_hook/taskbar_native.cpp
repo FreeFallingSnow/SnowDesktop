@@ -1,5 +1,6 @@
 #include "taskbar_native.h"
 #include "taskbar_classic_surface.h"
+#include "taskbar_classic_appearance.h"
 
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -14,11 +15,6 @@ namespace snowdesktop::taskbar_hook::native
 {
 namespace
 {
-struct AccentPolicy
-{
-    int state = 0;
-    DWORD flags = 0, color = 0, animation = 0;
-};
 struct CompositionData { int attribute; void* data; SIZE_T size; };
 using SetComposition = BOOL(WINAPI*)(HWND, CompositionData*);
 using GetComposition = BOOL(WINAPI*)(HWND, CompositionData*);
@@ -314,13 +310,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         GetClientRect(window, &bounds);
         if (force || !wasStyled || !(style == state->applied) || !EqualRect(&bounds, &state->bounds))
         {
-            AccentPolicy policy;
-            // DirectComposition owns tint/gradient/border. Accent supplies only
-            // the system material underneath, so opacity is not applied twice.
-            policy.state = (style.style & kStyleGlassBackdrop) ?
-                ((style.style & kStyleAcrylicBackdrop) ? 4 : 3) : 2;
-            policy.flags = policy.state == 4 ? 0 : 2;
-            policy.color = policy.state == 4 ? 0x01000000 : 0;
+            AccentPolicy policy = MakeClassicAccentPolicy(style);
             if (!wasStyled && getComposition)
             {
                 AccentPolicy nativeAccent;
@@ -334,7 +324,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
             bool materialApplied = originalComposition(window, &data) != FALSE;
             if (!materialApplied && policy.state == 4)
             {
-                policy.state = 3; policy.flags = 2; policy.color = 0;
+                policy = MakeClassicAccentPolicy(style, false);
                 { std::lock_guard lock(state->mutex); state->accent = policy; }
                 materialApplied = originalComposition(window, &data) != FALSE;
             }

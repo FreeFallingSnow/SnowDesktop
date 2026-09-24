@@ -1,5 +1,6 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_classic_surface.h"
+#include "taskbar_hook/taskbar_classic_appearance.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "dock_settings.h"
 #include "taskbar_monitor.h"
@@ -51,6 +52,37 @@ int RunNativeTaskbarTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };
+    // Win10 user regression: blur/acrylic switched but every solid tint was
+    // clear. Exercise the production policy with independent ABGR constants;
+    // DirectComposition HRESULTs alone cannot prove a native tint was sent.
+    TargetAppearance tint;
+    tint.red = 1; tint.green = 0.5f; tint.blue = 0.25f; tint.alpha = 0.5f;
+    tint.style = 0;
+    auto accent = native::MakeClassicAccentPolicy(tint);
+    check(accent.state == 2 && accent.flags == 2 && accent.color == 0x804080ff,
+        "transparent material receives the requested unpremultiplied ABGR tint");
+    tint.style = kStyleGlassBackdrop;
+    accent = native::MakeClassicAccentPolicy(tint);
+    check(accent.state == 3 && accent.flags == 2 && accent.color == 0x804080ff,
+        "blur keeps the selected color and opacity in the native material");
+    tint.style |= kStyleAcrylicBackdrop;
+    accent = native::MakeClassicAccentPolicy(tint);
+    check(accent.state == 4 && accent.flags == 0 && accent.color == 0x804080ff,
+        "acrylic keeps the selected color and opacity in the native material");
+    accent = native::MakeClassicAccentPolicy(tint, false);
+    check(accent.state == 3 && accent.flags == 2 && accent.color == 0x804080ff,
+        "acrylic-to-blur fallback must retain the user's tint");
+    tint.alpha = 0;
+    check(native::MakeClassicAccentPolicy(tint).color == 0x014080ff &&
+        native::MakeClassicAccentPolicy(tint, false).color == 0x004080ff,
+        "only acrylic clamps fully transparent tint alpha to one");
+    snowdesktop::PanelGradient tintGradient;
+    tintGradient.enabled = true;
+    tintGradient.stops = {{0, 0xff0000, .5}, {1, 0x0000ff, .5}};
+    tint.gradient = EncodeGradient(tintGradient);
+    check(native::MakeClassicAccentPolicy(tint).color == 0x01000000 &&
+        native::MakeClassicAccentPolicy(tint, false).color == 0,
+        "gradient material does not add a second solid tint below the gradient");
     DockSettings settings;
     check(settings.floatingEdgeSwipeBlockFullscreen, "new Dock preferences block edge swipes over fullscreen apps");
     settings.showWindowsButton = false;
