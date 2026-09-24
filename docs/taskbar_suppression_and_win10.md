@@ -103,6 +103,31 @@ Win11 上的独立窗口测试不能代替 Win10 验收。可用 Win10 22H2 虚�
 
 本机证据位于忽略目录 `.codex-probes/taskbar-panels/`：`build-1.log`、`build-1-result.json`、`full-tests.log`、`full-tests-result.json`、`full-tests.xml`、`probe-1.log`、`negative-panels.log` 和 `negative-work-area.log`。`final-inputs.json` 绑定候选提交、变更文件及构建入口哈希，`final-test-selection.json` 保存实际自动测试集合，`final-artifacts.json` 保存产物与日志哈希。本节后续文档提交不改变运行输入。
 
+## 2026-09-24 Dock 范围与屏幕外匹配验证记录
+
+本轮代码输入为 `68a6f9a7c77473a303afdee14f04d1112a806e2a`，环境与前一记录相同。按用户确认，将强制隐藏范围改为有 Dock 的屏幕。暂停的全屏手势尝试已另存于本机忽略目录 `.codex-probes/fullscreen-swipe-shelved/`，没有混入本候选；用户已有文档和附件也未修改、暂存。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `scripts/build.bat --reload-shell` | 17:42:12–17:51:44，退出码 0；Release x64 宿主和 Hook 生成，无编译/链接警告。构建前检查到正在运行的宿主及 Explorer 中的多份旧 Hook，已告知并重载 Shell |
+| 独立窗口 `probe.bat` | 退出码 0；真实 DWM/生产 Hook 验证 Dock 目标双向切换、旧目标释放、未匹配任务栏不被隐藏，以及屏幕外任务栏仍按面板所属屏幕放行。自动隐藏系统 API 使用替身 |
+| 范围负向对照 | `negative-scope.bat` 在隔离副本恢复全局隐藏，退出码 6；两条原生路径分别命中换屏两个方向及移除目标的预期失败 |
+| 屏幕匹配负向对照 | `negative-monitor.bat` 在隔离副本恢复 `MONITOR_DEFAULTTONULL`，退出码 4；两条原生路径分别命中面板提前放行和面板期间放行的预期失败 |
+| `scripts/test.bat` | 17:52:48–17:55:33，脚本退出码 1、CTest 退出码 8；119/120 通过，默认排除 `manual` 条目。`component_preview` 再次在测试夹具移动鼠标时失败 |
+| 受影响检查 | `dock_and_window_rules`、`settings_controller`、Dock 设置页契约和本地化通过；`shell_launch_worker`、`steam_runtime_update` 本轮也通过 |
+| 实机验收 | 真实首屏/末屏交换、Dock 显示范围切换、原自动隐藏关闭时的开始菜单等面板个性化、Win10 外观及多屏实际表现仍待用户验证 |
+
+全量配置耗时 2.42 秒、编译及输出整理 36.50 秒、CTest 125.40 秒，完整日志未发现编译或链接警告。唯一失败仍为 `the preview fixture can move outside the pending preview`，对应 `SetCursorPos(0, 0)` 返回失败；没有修改该组件预览路径或放宽断言，也没有重复执行来取得绿色结果。因此本候选不能记录为全量通过，历史不稳定问题也未宣称解决。
+
+本候选保留原有工作区释放机制：临时开启的是 Windows 全局自动隐藏，无 Dock 屏幕允许正常唤起但也暂时采用自动隐藏；关闭隐藏功能后恢复原设置。私有协议为 v11，宿主与 Hook 应作为同一构建使用。
+
+完整测试构建后产物 SHA-256：
+
+- `.build/Release/SnowDesktop.exe`：`8FE75100FC421A994CF80FA59EE5D0B6DF0B2F7D504A6F3DD1A4D1623561A79E`
+- `.build/Release/SnowDesktop.Runtime/SnowDesktopTaskbarHook.dll`：`4A9E7DC0DD32BA7D4C4CDDBAE1E3B5E604C6A1063ECCA1F8CAAC9E133D5BC1FC`
+
+本机证据保存在 `.codex-probes/taskbar-scope/`：`build-1.log`、`build-1-result.json`、`full-tests.log`、`full-tests-result.json`、`full-tests.xml`、`probe-1.log`、`negative-scope.log` 和 `negative-monitor.log`。`final-inputs.json`、`final-test-selection.json`、`final-artifacts.json` 分别记录源码输入、实际自动测试集合和产物/日志哈希；本节后续文档提交不改变运行输入。
+
 ## 参考
 
 - [微软 DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)
