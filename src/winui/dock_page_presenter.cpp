@@ -322,8 +322,16 @@ struct DockPagePresenter::Impl
         BuildControls();
         HookEvents();
         RefreshLocalizedText();
+        runtimeTimer = mux::DispatcherTimer{};
+        runtimeTimer.Interval(std::chrono::seconds(1));
+        runtimeTimerToken = runtimeTimer.Tick([this](const auto&, const auto&) {
+            if (closed || !active) return;
+            try { RefreshTaskbarRuntimeStatus(); } catch (...) {}
+        });
     }
 
+    mux::DispatcherTimer runtimeTimer{nullptr};
+    winrt::event_token runtimeTimerToken{};
     LocalizeCallback localize;
     DockPageActions actions;
     mux::Style cardStyle{nullptr};
@@ -1736,7 +1744,8 @@ struct DockPagePresenter::Impl
         {
             const auto state = GetSystemTaskbarSuppressionRuntimeState();
             const bool failed = state == SystemTaskbarBackdropRuntimeState::Failed;
-            const bool pending = state == SystemTaskbarBackdropRuntimeState::Loading;
+            const bool pending = state == SystemTaskbarBackdropRuntimeState::Loading ||
+                state == SystemTaskbarBackdropRuntimeState::Disabled;
             suppressionStatus.Message(L(failed ? "settings.dock.suppressTaskbar.failed" : "app.settings.taskbar_connecting",
                 failed ? L"The taskbar could not be hidden. Turn this option off to restore it, then try again." : L"Connecting to the Explorer taskbar..."));
             suppressionStatus.Severity(failed ? muxc::InfoBarSeverity::Error : muxc::InfoBarSeverity::Informational);
@@ -2549,6 +2558,8 @@ struct DockPagePresenter::Impl
         confirmationGate->alive.store(false, std::memory_order_release);
         try
         {
+            runtimeTimer.Stop();
+            runtimeTimer.Tick(runtimeTimerToken);
             taskbarRoot.Loaded(taskbarRootLoadedToken);
             dockEnabledToggle.Toggled(dockEnabledToken);
             positionCombo.SelectionChanged(positionToken);
@@ -2648,7 +2659,10 @@ void DockPagePresenter::RefreshLocalizedText()
 void DockPagePresenter::Activate() noexcept
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->active = true;
+        try { impl_->runtimeTimer.Start(); impl_->RefreshTaskbarRuntimeState(); } catch (...) {}
+    }
 }
 
 void DockPagePresenter::ActivateTaskbar() noexcept
@@ -2657,7 +2671,7 @@ void DockPagePresenter::ActivateTaskbar() noexcept
         return;
     impl_->taskbarInputReady = false;
     impl_->active = true;
-    impl_->RefreshTaskbarRuntimeState();
+    try { impl_->runtimeTimer.Start(); impl_->RefreshTaskbarRuntimeState(); } catch (...) {}
 }
 
 void DockPagePresenter::Deactivate() noexcept
@@ -2668,6 +2682,7 @@ void DockPagePresenter::Deactivate() noexcept
     impl_->CommitContinuousEdits();
     impl_->taskbarInputReady = false;
     impl_->active = false;
+    try { impl_->runtimeTimer.Stop(); } catch (...) {}
 }
 
 mux::FrameworkElement DockPagePresenter::FocusTarget(

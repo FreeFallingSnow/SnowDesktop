@@ -1414,10 +1414,16 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
         if (message->message != WM_NULL && message->message != RegisterWindowMessageW(kApplyMessageName))
             return CallNextHookEx(nullptr, code, wParam, lParam);
+        wchar_t className[64]{};
+        GetClassNameW(message->hwnd, className, 64);
+        if (wcscmp(className, L"Shell_TrayWnd") != 0 && wcscmp(className, L"Shell_SecondaryTrayWnd") != 0)
+            return CallNextHookEx(nullptr, code, wParam, lParam);
         const bool classic = native::IsClassicTaskbarPlatform();
         if (classic || g_sharedState->suppressTaskbar)
         {
             const bool applied = native::Attach(message->hwnd, g_sharedState, classic);
+            if (!applied && g_sharedState->suppressTaskbar)
+                InterlockedExchange(&g_sharedState->suppressionStatus, kStatusFailed);
             if (classic)
             {
                 g_sharedState->explorerProcessId = GetCurrentProcessId();

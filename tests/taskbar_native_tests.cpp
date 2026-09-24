@@ -47,11 +47,24 @@ int RunNativeTaskbarTests()
             (value & DWM_CLOAKED_APP) != 0;
     };
     check(!cloaked(), "uncontrolled window provides an independent visible baseline");
+    HWND unrelated = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
+        L"Unrelated test window", WS_POPUP, -32000, -32000, 32, 32,
+        nullptr, nullptr, instance, nullptr);
+    check(unrelated && !native::Attach(unrelated, &shared, false),
+        "the native controller must refuse non-taskbar windows");
     check(native::Attach(window, &shared, false) && cloaked(),
         "production suppression must cloak its target immediately");
     const BOOL reveal = FALSE;
     check(SUCCEEDED(DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal))) && cloaked(),
         "an explicit shell uncloak request cannot reveal a protected taskbar");
+    if (unrelated)
+    {
+        DWORD value = 0;
+        DwmSetWindowAttribute(unrelated, DWMWA_CLOAK, &reveal, sizeof(reveal));
+        check(SUCCEEDED(DwmGetWindowAttribute(unrelated, DWMWA_CLOAKED, &value, sizeof(value))) &&
+            !(value & DWM_CLOAKED_APP), "DWM calls for other windows remain outside the suppression gate");
+        DestroyWindow(unrelated);
+    }
     ShowWindow(window, SW_HIDE);
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW | SWP_NOACTIVATE);
@@ -113,6 +126,24 @@ int RunNativeTaskbarTests()
     SetWindowPos(window, nullptr, 0, 0, 48, 320, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     check(SUCCEEDED(surface.Draw(window, style)), "classic surface follows a vertical taskbar resize");
     surface.Reset();
+    shared.ownerProcessId = GetCurrentProcessId();
+    shared.enabled = TRUE;
+    shared.appearanceEnabled = TRUE;
+    shared.defaultEnabled = TRUE;
+    shared.suppressTaskbar = FALSE;
+    shared.gradient = style.gradient;
+    check(native::Attach(window, &shared, true) && shared.status == kStatusApplied,
+        "the complete classic adapter applies a gradient through its production entry point");
+    shared.suppressTaskbar = TRUE;
+    SendMessageW(window, apply, 0, 0);
+    check(cloaked(), "classic appearance and taskbar suppression can coexist");
+    shared.appearanceEnabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    check(cloaked(), "releasing classic appearance must not release an active suppression request");
+    shared.enabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
+        "disabling the controller releases both classic appearance and suppression");
     DestroyWindow(window);
     UnregisterClassW(registration.lpszClassName, instance);
     return failures;
