@@ -281,6 +281,15 @@ int RunLauncher(bool& maintenance)
 
     for (unsigned attempt = 0; attempt < 2; ++attempt)
     {
+        snowdesktop::steam_runtime::LaunchAttempt launchAttempt;
+        std::string recordError;
+        if (!snowdesktop::steam_runtime::BeginRuntimeLaunch(
+                installRoot, applied.executable, launchAttempt, recordError))
+        {
+            AppendLauncherLog(installRoot, recordError);
+            if (!maintenance) ShowLaunchFailure(installRoot, recordError);
+            return ERROR_INSTALL_FAILURE;
+        }
         DWORD launchError = ERROR_SUCCESS;
         bool ready = false;
         bool canRecover = false;
@@ -313,7 +322,7 @@ int RunLauncher(bool& maintenance)
         if (canRecover && attempt == 0)
         {
             auto recovered = snowdesktop::steam_runtime::RecoverAfterLaunchFailure(
-                installRoot, applied.executable);
+                installRoot, applied.executable, launchAttempt);
             AppendLauncherLog(installRoot, recovered.error);
             if (recovered.ok)
             {

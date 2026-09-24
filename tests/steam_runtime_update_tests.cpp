@@ -1597,7 +1597,11 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     error.clear();
     Check(!ConfirmRuntimeStarted(root, first.executable, error),
         "a stale host cannot confirm a newer selected runtime");
-    const auto fallback = RecoverAfterLaunchFailure(root, next.executable);
+    error.clear();
+    LaunchAttempt attempt;
+    Check(BeginRuntimeLaunch(root, next.executable, attempt, error),
+        "the launch boundary is persisted before process creation");
+    const auto fallback = RecoverAfterLaunchFailure(root, next.executable, attempt);
     Check(fallback.ok && fallback.executable == first.executable,
         "pre-data launch failure reselects the preserved working runtime");
     const auto later = ApplyDistribution(root);
@@ -1612,6 +1616,7 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     Check(retry.ok && retry.executable == next.executable,
         "explicit apply-only recovery can retry an unchanged rejected distribution");
     error.clear();
+    Check(BeginRuntimeLaunch(root, retry.executable, attempt, error), "a retry records its data boundary");
     Check(ConfirmRuntimeStarted(root, retry.executable, error), "a successful retry confirms the new runtime");
     Check(!std::filesystem::exists(state / L"failed-launch-manifest.txt"),
         "successful readiness clears only its distribution's failure record");
@@ -1622,6 +1627,27 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     const auto unsafeCleanup = PruneInactiveRuntimes(root, retry.executable);
     Check(!unsafeCleanup.ok && unsafeCleanup.removed == 0 && std::filesystem::exists(first.executable),
         "a damaged predecessor record prevents cleanup from discarding recovery data");
+}
+
+void TestConcurrentLaunchRecovery(const std::filesystem::path& root)
+{
+    using namespace snowdesktop::steam_runtime;
+    const auto first = PrepareRuntime(root, "1.0.7.0-aaaaaaaaaaaaaaaa");
+    WriteDistribution(root, "1.0.7.0", "1.0.7.0-bbbbbbbbbbbbbbbb", "host next", "dll next");
+    const auto next = ApplyDistribution(root);
+    std::string error;
+    LaunchAttempt earlier, later;
+    Check(first.ok && next.ok && BeginRuntimeLaunch(root, next.executable, earlier, error) &&
+            BeginRuntimeLaunch(root, next.executable, later, error),
+        "two launches of the same version have separate persistent identities");
+    Check(!RecoverAfterLaunchFailure(root, next.executable, earlier).ok,
+        "an earlier failed launch cannot undo a later launch of the same version");
+    Check(!RecoverAfterLaunchFailure(root, next.executable, later).ok,
+        "a concurrent attempt cannot fall through the previous launch into an older data version");
+    CorruptDistributionManifest(root);
+    WriteText(next.executable, "damaged after an unobserved launch");
+    Check(!ApplyDistribution(root).ok && std::filesystem::exists(first.executable),
+        "lost startup observation plus damaged latest payload never selects the older preserved runtime");
 }
 
 // The same test executable acts as a controlled host. Only this OS-process
@@ -1764,6 +1790,12 @@ void TestLauncherEntry(const std::filesystem::path& root,
             ReadText(state / L"confirmed-runtime.txt") == std::string(a) + "\n" &&
             ReadText(output).substr(beforeDataFailure.size()).find("mode=ready") == std::string::npos,
         "post-data startup failure propagates without downgrading or discarding the preserved version");
+    CorruptDistributionManifest(root);
+    WriteText(runtime / c / L"SnowDesktop.exe", "damaged after data access");
+    const auto afterDataFailure = ReadText(output);
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == ERROR_INSTALL_FAILURE &&
+            ReadText(output) == afterDataFailure && std::filesystem::exists(runtime / a),
+        "a later launcher process cannot bypass the persisted data boundary through distribution failure fallback");
     WriteLauncherDistribution(root, host, d, "handled");
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
             ReadText(state / L"confirmed-runtime.txt") == std::string(a) + "\n",
@@ -1774,11 +1806,11 @@ void TestLauncherEntry(const std::filesystem::path& root,
         "user cancellation never triggers rollback or cleanup");
     WriteLauncherDistribution(root, host, f, "ready", true, true);
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
-            ReadText(state / kCurrentRuntimeFilename) == std::string(a) + "\n",
-        "CreateProcess failure recovers a preserved executable");
+            ReadText(state / kCurrentRuntimeFilename) == std::string(e) + "\n",
+        "CreateProcess failure recovers only the immediately preceding launched version");
     WriteLauncherDistribution(root, host, g, "ready");
     Check(RunLauncherProcess(root, L"--snowdesktop-launcher-prune-only") == 0 &&
-            ReadText(state / kCurrentRuntimeFilename) == std::string(a) + "\n" &&
+            ReadText(state / kCurrentRuntimeFilename) == std::string(e) + "\n" &&
             !std::filesystem::exists(runtime / g),
         "cleanup while a newer distribution is available never activates that distribution");
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
@@ -1829,6 +1861,7 @@ int wmain(int argc, wchar_t** argv)
         TestUpdateLockValidation(root / L"update-lock-validation");
         TestSteamAutoStartRules();
         TestStartupRecoveryState(root / L"startup-recovery-state");
+        TestConcurrentLaunchRecovery(root / L"concurrent-launch-recovery");
         Check(argc == 2, "CTest supplies the production launcher executable");
         if (argc == 2) TestLauncherEntry(root / L"launcher-entry", argv[1], argv[0]);
     }

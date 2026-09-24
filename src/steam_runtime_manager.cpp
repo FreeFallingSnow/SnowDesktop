@@ -37,6 +37,7 @@ constexpr wchar_t kCurrentRuntimeFilename[] = L"current-runtime.txt";
 constexpr wchar_t kConfirmedRuntimeFilename[] = L"confirmed-runtime.txt";
 constexpr wchar_t kPreviousRuntimeFilename[] = L"previous-runtime.txt";
 constexpr wchar_t kFailedManifestFilename[] = L"failed-launch-manifest.txt";
+constexpr wchar_t kLaunchHistoryFilename[] = L"launch-history.txt";
 constexpr wchar_t kCompleteFilename[] = L".snowdesktop-runtime-complete";
 constexpr wchar_t kRuntimeManifestFilename[] =
     L".snowdesktop-runtime-manifest.json";
@@ -1479,6 +1480,38 @@ std::optional<std::string> ReadSelection(
     return directoryId;
 }
 
+struct LaunchHistory
+{
+    std::string runtime;
+    std::string token;
+};
+
+std::optional<LaunchHistory> ReadLaunchHistory(
+    const std::filesystem::path& stateRoot, std::string& error)
+{
+    const auto path = stateRoot / kLaunchHistoryFilename;
+    if (!ValidatePlainFileNoReparse(path, "Steam launch history", error))
+        return std::nullopt;
+    std::istringstream input(ReadFile(path, 512, error));
+    LaunchHistory history;
+    std::string extra;
+    if (!error.empty() || !std::getline(input, history.runtime) ||
+        !std::getline(input, history.token) || std::getline(input, extra) ||
+        !IsSafeIdentifier(history.runtime) || !IsSafeIdentifier(history.token))
+    {
+        error = "the Steam launch history is invalid";
+        return std::nullopt;
+    }
+    return history;
+}
+
+bool WriteLaunchHistory(const std::filesystem::path& stateRoot,
+    std::string_view runtime, std::string_view token, std::string& error)
+{
+    return WriteTextAtomically(stateRoot / kLaunchHistoryFilename,
+        std::string(runtime) + "\n" + std::string(token) + "\n", error);
+}
+
 std::optional<ApplyResult> ReadNamedRuntime(
     const std::filesystem::path& runtimeRoot, const std::string& directoryId,
     std::string& validationError, std::string_view excludedManifest = {})
@@ -1518,20 +1551,24 @@ std::optional<ApplyResult> ReadNamedRuntime(
 
 std::optional<ApplyResult> ReadFallback(const std::filesystem::path& stateRoot,
     const std::filesystem::path& runtimeRoot, std::string& validationError,
-    std::string_view excluded = {}, std::string_view excludedManifest = {})
+    std::string_view excludedManifest = {})
 {
     if (!ValidatePlainDirectoryNoReparse(
             stateRoot, "Steam runtime state directory", validationError) ||
         !ValidatePlainDirectoryNoReparse(
             runtimeRoot, "Steam runtime directory", validationError))
         return std::nullopt;
+    std::string historyError;
+    const auto history = ReadLaunchHistory(stateRoot, historyError);
+    std::string selectionError;
+    const auto current = ReadSelection(stateRoot / kCurrentRuntimeFilename, selectionError);
+    // A prepared selection can be newer than the last process launch. Neither
+    // confirmed nor previous proves that shared data is still safe for it.
     std::set<std::string> visited;
-    for (const auto* filename : {kCurrentRuntimeFilename,
-             kConfirmedRuntimeFilename, kPreviousRuntimeFilename})
+    for (const auto& id : {current, history ? std::optional(history->runtime) : std::nullopt})
     {
         std::string error;
-        const auto id = ReadSelection(stateRoot / filename, error);
-        if (id && *id != excluded && visited.insert(*id).second)
+        if (id && visited.insert(*id).second)
         {
             if (auto runtime = ReadNamedRuntime(runtimeRoot, *id, error, excludedManifest))
                 return runtime;
@@ -1539,6 +1576,9 @@ std::optional<ApplyResult> ReadFallback(const std::filesystem::path& stateRoot,
         if (validationError.empty() && !error.empty())
             validationError = std::move(error);
     }
+    if (validationError.empty())
+        validationError = "no selected or last-launched runtime can be recovered: " +
+            selectionError + "; " + historyError;
     return std::nullopt;
 }
 
@@ -1550,7 +1590,7 @@ ApplyResult FailureOrFallback(const std::filesystem::path& stateRoot,
     result.error = std::move(error);
     std::string fallbackError;
     if (const auto fallback = ReadFallback(
-            stateRoot, runtimeRoot, fallbackError, {}, excludedManifest))
+            stateRoot, runtimeRoot, fallbackError, excludedManifest))
     {
         const std::string originalError = std::move(result.error);
         result = *fallback;
@@ -1655,6 +1695,20 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
         const auto confirmed = ReadSelection(stateRoot / kConfirmedRuntimeFilename, ignored);
         ignored.clear();
         const auto previous = ReadSelection(stateRoot / kPreviousRuntimeFilename, ignored);
+        ignored.clear();
+        if (!ReadLaunchHistory(stateRoot, ignored))
+        {
+            // Seed legacy installations from their current selection. A corrupt
+            // history has no trustworthy predecessor: only this new candidate
+            // may be used in that case.
+            const DWORD attributes = GetFileAttributesW((stateRoot / kLaunchHistoryFilename).c_str());
+            const DWORD inspectError = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
+            const bool missing = inspectError == ERROR_FILE_NOT_FOUND || inspectError == ERROR_PATH_NOT_FOUND;
+            if (!WriteLaunchHistory(stateRoot,
+                    missing ? current.value_or(selected.directoryId) : selected.directoryId,
+                    "prepared", error))
+                return FailureOrFallback(stateRoot, runtimeRoot, error);
+        }
         // Preserve the last confirmed selection across several unconfirmed
         // attempts. The initial backup also repairs a lost current pointer.
         if ((!previous || (current && confirmed && *current == *confirmed &&
@@ -1821,6 +1875,51 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
     return activate(destination);
 }
 
+bool BeginRuntimeLaunch(const std::filesystem::path& installRoot,
+    const std::filesystem::path& executable, LaunchAttempt& attempt, std::string& error)
+{
+    const auto context = snowdesktop::deployment::ResolveRuntimeDeploymentContext(executable, false);
+    std::error_code pathError;
+    if (context.kind != snowdesktop::deployment::RuntimeDeploymentKind::SteamManaged ||
+        !std::filesystem::equivalent(installRoot, context.installRoot, pathError) || pathError)
+    {
+        error = "cannot record a launch outside its managed installation";
+        return false;
+    }
+    const auto stateRoot = installRoot / kStateDirectory;
+    if (!ValidatePlainDirectoryNoReparse(stateRoot, "Steam runtime state directory", error) ||
+        !ValidatePlainDirectoryNoReparse(stateRoot / kRuntimeDirectory, "Steam runtime directory", error))
+        return false;
+    auto lock = AcquireUpdateLock(stateRoot / kUpdateLockFilename, error);
+    if (!lock.valid()) return false;
+    const auto id = executable.parent_path().filename().string();
+    std::string ignored;
+    const auto history = ReadLaunchHistory(stateRoot, ignored);
+    ignored.clear();
+    const auto current = ReadSelection(stateRoot / kCurrentRuntimeFilename, ignored);
+    if ((!current || *current != id) && (!history || history->runtime != id))
+    {
+        error = "runtime selection changed before process creation";
+        return false;
+    }
+    std::array<UCHAR, 16> randomBytes{};
+    if (BCryptGenRandom(nullptr, randomBytes.data(), static_cast<ULONG>(randomBytes.size()),
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
+    {
+        error = "cannot create a Steam startup attempt identity";
+        return false;
+    }
+    std::ostringstream token;
+    for (const auto byte : randomBytes)
+        token << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte);
+    attempt.token = token.str();
+    attempt.previousRuntime = history ? history->runtime : id;
+    if ((!current || *current != id) &&
+        !WriteTextAtomically(stateRoot / kCurrentRuntimeFilename, id + "\n", error))
+        return false;
+    return WriteLaunchHistory(stateRoot, id, attempt.token, error);
+}
+
 bool ConfirmRuntimeStarted(const std::filesystem::path& installRoot,
     const std::filesystem::path& executable, std::string& error)
 {
@@ -1864,7 +1963,7 @@ bool ConfirmRuntimeStarted(const std::filesystem::path& installRoot,
 }
 
 ApplyResult RecoverAfterLaunchFailure(const std::filesystem::path& installRoot,
-    const std::filesystem::path& failedExecutable)
+    const std::filesystem::path& failedExecutable, const LaunchAttempt& attempt)
 {
     ApplyResult failure;
     const auto stateRoot = installRoot / kStateDirectory;
@@ -1882,7 +1981,14 @@ ApplyResult RecoverAfterLaunchFailure(const std::filesystem::path& installRoot,
         failure.error = "runtime selection changed before launch failure recovery";
         return failure;
     }
-    auto recovered = ReadFallback(stateRoot, runtimeRoot, failure.error, failedId);
+    const auto history = ReadLaunchHistory(stateRoot, failure.error);
+    if (!history || history->runtime != failedId || history->token != attempt.token ||
+        !IsSafeIdentifier(attempt.previousRuntime) || attempt.previousRuntime == failedId)
+    {
+        failure.error = "no unchanged pre-data startup attempt permits recovery";
+        return failure;
+    }
+    auto recovered = ReadNamedRuntime(runtimeRoot, attempt.previousRuntime, failure.error);
     if (!recovered)
     {
         failure.error = "no preserved runtime is available after launch failure: " + failure.error;
@@ -1891,6 +1997,7 @@ ApplyResult RecoverAfterLaunchFailure(const std::filesystem::path& installRoot,
     std::string manifestError;
     const auto failedManifest = ReadManifest(failedExecutable.parent_path() / kRuntimeManifestFilename, manifestError);
     if (!failedManifest ||
+        !WriteLaunchHistory(stateRoot, attempt.previousRuntime, "recovered", failure.error) ||
         !WriteTextAtomically(stateRoot / kFailedManifestFilename, failedManifest->digest + "\n", failure.error) ||
         !WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
             recovered->executable.parent_path().filename().string() + "\n", failure.error))

@@ -41,10 +41,23 @@ struct PruneResult
     const std::filesystem::path& installRoot,
     const std::filesystem::path& executable, std::string& error);
 
+struct LaunchAttempt
+{
+    std::string token;
+    std::string previousRuntime;
+};
+
+// Persist the conservative data-access boundary before creating the process.
+// The token prevents an older concurrent attempt from undoing a later launch.
+[[nodiscard]] bool BeginRuntimeLaunch(
+    const std::filesystem::path& installRoot,
+    const std::filesystem::path& executable, LaunchAttempt& attempt,
+    std::string& error);
+
 // Used only when the failed child has not begun accessing user data.
 [[nodiscard]] ApplyResult RecoverAfterLaunchFailure(
     const std::filesystem::path& installRoot,
-    const std::filesystem::path& failedExecutable);
+    const std::filesystem::path& failedExecutable, const LaunchAttempt& attempt);
 
 /**
  * Retire inactive runtimes only for the confirmed current executable, keeping
