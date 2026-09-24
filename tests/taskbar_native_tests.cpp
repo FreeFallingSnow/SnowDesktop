@@ -294,6 +294,66 @@ int RunNativeTaskbarTests()
             !(value & DWM_CLOAKED_APP), "DWM calls for other windows remain outside the suppression gate");
         DestroyWindow(unrelated);
     }
+    // Real Win10 trace: Start closes, the tray exemption is already true and
+    // DWM cloak is zero, yet auto-hide slides the bar below the screen before
+    // the application can open its menu. Exercise actual SetWindowPos through
+    // the production subclass; only the global preference boundary is mocked.
+    shared.enabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    shared.enabled = TRUE;
+    check(native::Attach(window, &shared, true, TestAppBarMessage),
+        "attach classic controller for menu auto-hide movement regression");
+    MONITORINFO menuMonitor{sizeof(menuMonitor)};
+    check(GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &menuMonitor) != FALSE,
+        "resolve the private position fixture monitor");
+    const RECT screen = menuMonitor.rcMonitor;
+    const RECT edges[] = {
+        {screen.left, screen.bottom - 48, screen.left + 320, screen.bottom},
+        {screen.left, screen.top, screen.left + 320, screen.top + 48},
+        {screen.left, screen.top, screen.left + 48, screen.top + 320},
+        {screen.right - 48, screen.top, screen.right, screen.top + 320}
+    };
+    const POINT slide[] = {{0, 46}, {0, -46}, {-46, 0}, {46, 0}};
+    for (std::size_t edge = 0; edge < std::size(edges); ++edge)
+    {
+        const RECT before = edges[edge];
+        SetWindowPos(window, nullptr, before.left, before.top,
+            before.right - before.left, before.bottom - before.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        shared.targets[0].shellPanelVisible = TRUE;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+        shared.targets[0].shellPanelVisible = FALSE;
+        const auto moveOutside = [&] {
+            SetWindowPos(window, nullptr, before.left + slide[edge].x, before.top + slide[edge].y,
+                0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        };
+        moveOutside();
+        RECT after{};
+        GetWindowRect(window, &after);
+        check(EqualRect(&before, &after) && !cloaked() && (appBarState & ABS_AUTOHIDE),
+            "tray handoff prevents classic auto-hide movement without restoring reserved work area");
+        SendMessageW(window, WM_EXITMENULOOP, TRUE, 0);
+        moveOutside();
+        GetWindowRect(window, &after);
+        check(after.left == before.left + slide[edge].x && after.top == before.top + slide[edge].y && cloaked(),
+            "closing the tray menu permits auto-hide movement and resumes suppression");
+        SetWindowPos(window, nullptr, before.left, before.top, 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+        shared.targets[0].suppressTaskbar = FALSE;
+        moveOutside();
+        GetWindowRect(window, &after);
+        check(after.left == before.left + slide[edge].x && after.top == before.top + slide[edge].y,
+            "moving Dock away releases menu position control on its previous display");
+        SendMessageW(window, WM_EXITMENULOOP, TRUE, 0);
+        shared.targets[0].suppressTaskbar = TRUE;
+    }
+    shared.enabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    SetWindowPos(window, nullptr, -32000, -32000, 320, 48, SWP_NOZORDER | SWP_NOACTIVATE);
+    shared.enabled = TRUE;
+    check(native::Attach(window, &shared, false, TestAppBarMessage),
+        "restore the private controller after classic movement probes");
     ShowWindow(window, SW_HIDE);
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SetWindowPos(window, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW | SWP_NOACTIVATE);

@@ -199,6 +199,41 @@ bool HasContextMenu(HWND taskbar, const std::shared_ptr<WindowState>& state)
     return overflowVisible;
 }
 
+void HoldClassicMenuPosition(HWND window, const std::shared_ptr<WindowState>& state, WINDOWPOS& position)
+{
+    if (!state->classic || (position.flags & SWP_NOMOVE) ||
+        WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return;
+    Snapshot snapshot;
+    if (!ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
+        !snapshot.suppressTaskbar || snapshot.ownerProcessId != state->ownerId) return;
+    const auto target = std::find_if(snapshot.targets, snapshot.targets + snapshot.targetCount,
+        [window](const TargetAppearance& value) {
+            return value.taskbar == reinterpret_cast<std::uintptr_t>(window);
+        });
+    if (target == snapshot.targets + snapshot.targetCount || !target->suppressTaskbar ||
+        !HasContextMenu(window, state)) return;
+
+    RECT current{};
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetWindowRect(window, &current) ||
+        !GetMonitorInfoW(snowdesktop::taskbar_monitor::Resolve(window), &monitor)) return;
+    const LONG width = current.right - current.left, height = current.bottom - current.top;
+    if (!(position.flags & SWP_NOSIZE) && (position.cx != width || position.cy != height)) return;
+    POINT next{position.x, position.y};
+    if (GetWindowLongPtrW(window, GWL_STYLE) & WS_CHILD)
+        MapWindowPoints(GetParent(window), nullptr, &next, 1);
+    const RECT& screen = monitor.rcMonitor;
+    const bool currentlyInside = current.left >= screen.left && current.top >= screen.top &&
+        current.right <= screen.right && current.bottom <= screen.bottom;
+    const bool leavingScreen = next.x < screen.left || next.y < screen.top ||
+        next.x + width > screen.right || next.y + height > screen.bottom;
+    // Win10 still runs its auto-hide slide when Start gives focus back to the
+    // tray, even while DWM cloaking is exempt. Keep the clickable bar in place
+    // until the menu handoff ends, without changing global work-area settings.
+    // Resizing and moves inside the monitor retain normal Shell behavior.
+    if (currentlyInside && leavingScreen) position.flags |= SWP_NOMOVE;
+}
+
 LRESULT CALLBACK MenuMouseProc(int code, WPARAM message, LPARAM data) try
 {
     if (code == HC_ACTION && data && (message == WM_RBUTTONDOWN || message == WM_RBUTTONUP ||
@@ -571,6 +606,8 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
         // visibility scan can cloak the menu along with the taskbar on Win10.
         Update(window, state, false);
     }
+    if (message == WM_WINDOWPOSCHANGING && lParam)
+        HoldClassicMenuPosition(window, state, *reinterpret_cast<WINDOWPOS*>(lParam));
     const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
     if (message == WM_EXITMENULOOP)
     {
