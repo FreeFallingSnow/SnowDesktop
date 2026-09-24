@@ -128,6 +128,18 @@ Win11 上的独立窗口测试不能代替 Win10 验收。可用 Win10 22H2 虚�
 
 本机证据保存在 `.codex-probes/taskbar-scope/`：`build-1.log`、`build-1-result.json`、`full-tests.log`、`full-tests-result.json`、`full-tests.xml`、`probe-1.log`、`negative-scope.log` 和 `negative-monitor.log`。`final-inputs.json`、`final-test-selection.json`、`final-artifacts.json` 分别记录源码输入、实际自动测试集合和产物/日志哈希；本节后续文档提交不改变运行输入。
 
+## 2026-09-24 个性化连接异常反馈与会话清理
+
+用户在 `68a6f9a7` 候选上反馈任务栏始终跟随系统主题，修改个性化没有效果，并提供持续显示“正在连接 Explorer 任务栏”的设置截图。此反馈表示外观实机验收未通过，不能将前述独立窗口回归当成真实 Explorer 外观已经正常。
+
+清理前只读核对得到：Explorer PID 为 `76116`，其中只有一个 SnowDesktop Taskbar Hook 副本，来源为此前宿主进程 `45960` 的 `data/ShellHook/` 目录；其 SHA-256 为 `4A9E7DC0DD32BA7D4C4CDDBAE1E3B5E604C6A1063ECCA1F8CAAC9E133D5BC1FC`，与当时的发行 Hook 相同。驻留副本确实存在，但没有证据表明它是旧版 DLL 或协议不匹配。
+
+只读共享状态为 v11，`enabled=1`、`appearanceEnabled=1`、`suppressTaskbar=0`，宿主 PID 为 `31952`，包含两个任务栏目标；`status=2`（Connected）、`lastError=0`、`diagnosticStage=240`（XAML 订阅完成）。这说明连接已建立但外观未报告 Applied；设置页将此状态统一显示为“正在连接”。尚未定位是视觉树登记、任务栏重建还是会话交接导致，不能仅凭该状态宣称旧 Hook 已确认为根因。
+
+告知用户副作用后执行 `scripts/build.bat --reload-shell`，18:08:47–18:09:25，退出码 0，无编译或链接警告。新 Explorer PID 为 `68592`，检查时未加载 SnowDesktop Taskbar Hook。此次没有修改生产代码或测试，也没有删除布局和设置；未重复运行全量，前次全量失败仍保留。用户重新启动软件后的外观及连接状态待反馈，没有使用桌面自动化启动或操作宿主。
+
+本次标准构建后的 SHA-256：宿主 `A8A14C95AB9B6E27F5F54A645FA606ED54EC5758560294DDEC6F972BFA4D33F2`，Hook `DA8879ABE76344761EC2F417F5FB133164A652BF54ABB0B9B45513D6B93A2C76`。原始共享状态和构建记录位于忽略目录 `.codex-probes/taskbar-reconnect/` 的 `before.json`、`build.log`、`build-result.json`。
+
 ## 参考
 
 - [微软 DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)
