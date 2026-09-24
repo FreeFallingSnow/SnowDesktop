@@ -140,6 +140,25 @@ Win11 上的独立窗口测试不能代替 Win10 验收。可用 Win10 22H2 虚�
 
 本次标准构建后的 SHA-256：宿主 `A8A14C95AB9B6E27F5F54A645FA606ED54EC5758560294DDEC6F972BFA4D33F2`，Hook `DA8879ABE76344761EC2F417F5FB133164A652BF54ABB0B9B45513D6B93A2C76`。原始共享状态和构建记录位于忽略目录 `.codex-probes/taskbar-reconnect/` 的 `before.json`、`build.log`、`build-result.json`。
 
+## 2026-09-24 个性化恢复反馈与隐藏状态候选
+
+用户确认上一节清理 Explorer 会话后，个性化已恢复；这验证了该次会话清理的恢复效果，不代表驻留 Hook 的异常根因已经定位或软件内重连缺陷已全部消除。随后用户反馈“始终隐藏”实际生效但设置仍显示正在连接，截图后已关闭该选项；之后读取到 `suppressTaskbar=0` 与用户后续操作一致，不能用于否定截图中的问题。
+
+新代码输入为 `ff5acd6248ba5505243ac9d629fd95a0c2111d91`，环境与前文相同。宿主为已经连接的 XAML 外观补挂原生隐藏时，不再重置外观状态或重复等待首次订阅的 Ready 事件；主副任务栏均先在各自线程挂接，包括宿主缓存的临时重挂父窗口的目标。隐藏运行状态仅检查快照中有 Dock 的目标，面板临时放行仍属正常接管，不要求无 Dock 屏幕也完成原生隐藏挂接。私有 v11 协议布局及公共组件 API 未改变。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| `scripts/build.bat --reload-shell` | 19:31:29–19:32:11，退出码 0，Release x64 宿主及 Hook 生成；无编译或链接警告，执行前已说明停止软件和重启 Explorer |
+| 独立窗口 `probe.bat` | 退出码 0；真实线程 Hook、生产连接流程、原生接管及 DWM 覆盖首次连接、外观已连接后的隐藏接管、取消、无 Dock 屏幕、面板放行、未 cloaked 目标及空目标 |
+| 重复等待负向对照 | `negative-ready.bat` 在隔离头文件中恢复每次等待首次 Ready，退出码 1，命中开启隐藏后无法完成连接的预期失败 |
+| 范围负向对照 | `negative-scope.bat` 在隔离头文件中恢复检查无 Dock 屏幕，退出码 2，命中普通隐藏及面板临时放行的两个状态失败 |
+| `scripts/test.bat` | 19:33:42–19:36:27，退出码 0；自动集合 120/120 通过，CTest 134.26 秒；默认排除 `manual` 条目 |
+| 实机验收 | 个性化清理后的恢复已获用户确认；新候选的隐藏开关往返、连接提示消失、多屏及真实面板操作仍待用户确认；Win10 Explorer 外观仍未实测 |
+
+新增回归使用测试进程的独立窗口和未命名事件，仅替换 XAML 首次通知及系统自动隐藏设置边界，不操纵实际 Explorer 或宿主窗口，也不修改真实自动隐藏偏好。负向对照没有改写生产源码。前文 `component_preview` 等历史不稳定失败的原因并未解决；本次单次通过如实保留，不靠重试获得绿色结果，也不据此宣称历史问题已经消失。
+
+最终产物 SHA-256：宿主 `7ADA20C4068AE732CE951C536C38998DC3AC813211230DC4588EDAFAA11421DF`，Hook `2F5F3FB680DC99E4393C469F2EDC738EE7C129C14241763C446FEDDC0DD37539`。本机证据在 `.codex-probes/taskbar-status/`：构建、完整测试、独立窗口及两项负向对照的日志和结果 JSON；`full-tests.xml`、`final-test-selection.json`、`final-inputs.json` 和 `final-artifacts.json` 绑定自动测试集合、源码/工具链与产物哈希。用户已有审计文档修改和附件目录均未修改或暂存。
+
 ## 参考
 
 - [微软 DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)
