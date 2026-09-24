@@ -27,6 +27,7 @@
 #include "single_instance.h"
 #include "widget_author_preview.h"
 #include "native_component_preview_export.h"
+#include "steam_runtime_startup.h"
 
 #include <commctrl.h>
 
@@ -245,21 +246,6 @@ ExistingInstanceResolution ResolveExistingInstance(
     return ExistingInstanceResolution::ExitNewInstance;
 }
 
-void RequestSteamRuntimePrune()
-{
-    const auto& context =
-        snowdesktop::deployment::GetRuntimeDeploymentContext();
-    if (context.kind != snowdesktop::deployment::
-            RuntimeDeploymentKind::SteamManaged ||
-        context.launcher.empty())
-    {
-        return;
-    }
-
-    ShellExecuteW(nullptr, L"open", context.launcher.c_str(),
-        L"--snowdesktop-launcher-prune-only",
-        context.installRoot.c_str(), SW_HIDE);
-}
 }
 
 /*
@@ -366,6 +352,10 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    snowdesktop::steam_runtime::startup::Begin();
+    // Helpers and deployment discovery may access settings before Run.
+    // Conservatively prohibit automatic downgrade from this boundary.
+    snowdesktop::steam_runtime::startup::BeginDataAccess();
     if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
     if (const auto result = snowdesktop::shell_extensions::TryRunHelper()) return *result;
     if (const auto result = snowdesktop::shell_launch_process::TryRunCommand())
@@ -536,11 +526,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
             return ERROR_WRITE_FAULT;
         }
     }
-
-    // The stable launcher owns runtime retirement. At this point this process
-    // is the primary instance, so a previous immutable Steam runtime can no
-    // longer be the active application and may be removed out of process.
-    RequestSteamRuntimePrune();
 
     /* 注册全局未处理异常过滤器与崩溃日志处理器 */
     SetUnhandledExceptionFilter(UnhandledFilter);

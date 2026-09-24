@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include "steam_runtime_startup.h"
 
 #include <algorithm>
 #include <cwchar>
@@ -75,7 +76,8 @@ inline std::vector<wchar_t> BuildUnicodeEnvironmentBlock(
 }
 }
 
-inline std::vector<wchar_t> BuildSnowDesktopDetachedRuntimeEnvironment()
+inline std::vector<wchar_t> BuildSnowDesktopDetachedRuntimeEnvironment(
+    std::wstring_view startupChannel = {})
 {
     std::vector<std::wstring> entries =
         detail::ReadCurrentEnvironmentEntries();
@@ -83,8 +85,12 @@ inline std::vector<wchar_t> BuildSnowDesktopDetachedRuntimeEnvironment()
     entries.erase(std::remove_if(entries.begin(), entries.end(),
         [](const std::wstring& entry)
         {
-            return detail::EnvironmentEntryNameStartsWith(entry, L"Steam");
+            return detail::EnvironmentEntryNameStartsWith(entry, L"Steam") ||
+                detail::EnvironmentEntryHasName(entry, steam_runtime::startup::kChannelEnvironment);
         }), entries.end());
+    if (!startupChannel.empty())
+        entries.emplace_back(std::wstring(steam_runtime::startup::kChannelEnvironment) + L"=" +
+            std::wstring(startupChannel));
     return detail::BuildUnicodeEnvironmentBlock(std::move(entries));
 }
 }

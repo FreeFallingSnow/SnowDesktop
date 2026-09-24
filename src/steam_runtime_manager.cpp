@@ -1481,10 +1481,22 @@ std::optional<std::string> ReadSelection(
 
 std::optional<ApplyResult> ReadNamedRuntime(
     const std::filesystem::path& runtimeRoot, const std::string& directoryId,
-    std::string& validationError)
+    std::string& validationError, std::string_view excludedManifest = {})
 {
     const std::filesystem::path runtime = runtimeRoot /
         Utf8ToWide(directoryId);
+    if (!excludedManifest.empty())
+    {
+        if (!ValidatePlainDirectoryNoReparse(runtime, "preserved runtime", validationError) ||
+            !ValidatePlainFileNoReparse(runtime / kRuntimeManifestFilename, "preserved manifest", validationError))
+            return std::nullopt;
+        const auto recorded = ReadManifest(runtime / kRuntimeManifestFilename, validationError);
+        if (!recorded || recorded->digest == excludedManifest)
+        {
+            validationError = "the recorded runtime is the rejected distribution";
+            return std::nullopt;
+        }
+    }
     auto manifest = ValidatePublishedRuntime(
         runtime, nullptr, validationError);
     if (!manifest)
@@ -1506,7 +1518,7 @@ std::optional<ApplyResult> ReadNamedRuntime(
 
 std::optional<ApplyResult> ReadFallback(const std::filesystem::path& stateRoot,
     const std::filesystem::path& runtimeRoot, std::string& validationError,
-    std::string_view excluded = {})
+    std::string_view excluded = {}, std::string_view excludedManifest = {})
 {
     if (!ValidatePlainDirectoryNoReparse(
             stateRoot, "Steam runtime state directory", validationError) ||
@@ -1521,7 +1533,7 @@ std::optional<ApplyResult> ReadFallback(const std::filesystem::path& stateRoot,
         const auto id = ReadSelection(stateRoot / filename, error);
         if (id && *id != excluded && visited.insert(*id).second)
         {
-            if (auto runtime = ReadNamedRuntime(runtimeRoot, *id, error))
+            if (auto runtime = ReadNamedRuntime(runtimeRoot, *id, error, excludedManifest))
                 return runtime;
         }
         if (validationError.empty() && !error.empty())
@@ -1531,13 +1543,14 @@ std::optional<ApplyResult> ReadFallback(const std::filesystem::path& stateRoot,
 }
 
 ApplyResult FailureOrFallback(const std::filesystem::path& stateRoot,
-    const std::filesystem::path& runtimeRoot, std::string error)
+    const std::filesystem::path& runtimeRoot, std::string error,
+    std::string_view excludedManifest = {})
 {
     ApplyResult result;
     result.error = std::move(error);
     std::string fallbackError;
     if (const auto fallback = ReadFallback(
-            stateRoot, runtimeRoot, fallbackError))
+            stateRoot, runtimeRoot, fallbackError, {}, excludedManifest))
     {
         const std::string originalError = std::move(result.error);
         result = *fallback;
@@ -1612,7 +1625,7 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
             stateRoot / kFailedManifestFilename, "failed launch record", failureRecordError) &&
         ReadFile(stateRoot / kFailedManifestFilename, 256, failureRecordError) == manifest->digest + "\n")
         return FailureOrFallback(stateRoot, runtimeRoot,
-            "the distribution previously failed before data access; using the preserved runtime");
+            "the distribution previously failed before data access; using the preserved runtime", manifest->digest);
 
     auto activate = [&](const RuntimeDestination& selected) {
         if (!ValidatePlainDirectoryNoReparse(

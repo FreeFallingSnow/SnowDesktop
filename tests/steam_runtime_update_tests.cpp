@@ -3,6 +3,7 @@
 #include "steam_runtime_context.h"
 #include "steam_runtime_manager.h"
 #include "steam_runtime_publish.h"
+#include "steam_runtime_startup.h"
 
 #include <windows.h>
 #include <bcrypt.h>
@@ -1613,10 +1614,182 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     Check(pruned.ok && pruned.removed == 0 && std::filesystem::exists(first.executable),
         "confirmed startup keeps its predecessor for recovery");
 }
+
+// The same test executable acts as a controlled host. Only this OS-process
+// boundary is replaced: the production launcher, hashes, publication, IPC,
+// selection, recovery and cleanup all execute unchanged.
+int RunLauncherFixtureHost(int argc, wchar_t** argv)
+{
+    using namespace snowdesktop::steam_runtime::startup;
+    Begin();
+    const auto executable = std::filesystem::path(argv[0]);
+    const auto mode = ReadText(executable.parent_path() / L"mode.txt");
+    wchar_t output[32768]{};
+    GetEnvironmentVariableW(L"SNOWDESKTOP_LAUNCHER_TEST_OUTPUT", output, 32768);
+    {
+        std::ofstream observation(std::filesystem::path(output), std::ios::app);
+        observation << "mode=" << mode << ";args=" << argc - 2;
+        for (int index = 2; index < argc; ++index)
+        {
+            const int length = WideCharToMultiByte(CP_UTF8, 0, argv[index], -1, nullptr, 0, nullptr, nullptr);
+            std::string value(static_cast<std::size_t>(length), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, argv[index], -1, value.data(), length, nullptr, nullptr);
+            value.pop_back();
+            observation << ';' << std::quoted(value);
+        }
+        observation << ";channelCleared=" <<
+            (GetEnvironmentVariableW(kChannelEnvironment, nullptr, 0) == 0) << '\n';
+    }
+    if (mode == "fail-before") return ERROR_INVALID_DATA;
+    if (mode == "cancel") return ERROR_CANCELLED;
+    if (mode == "handled") return 0;
+    BeginDataAccess();
+    if (mode == "fail-after") return ERROR_INVALID_DATA;
+    Ready();
+    return 0;
 }
 
-int main()
+void WriteLauncherDistribution(const std::filesystem::path& root,
+    const std::filesystem::path& host, std::string_view id,
+    std::string_view mode, bool protocol = true, bool invalidExecutable = false)
 {
+    const auto distribution = root / L"distribution";
+    std::filesystem::create_directories(distribution);
+    const auto payload = distribution / L"SnowDesktop.exe";
+    if (invalidExecutable) WriteText(payload, "not an executable");
+    else std::filesystem::copy_file(host, payload, std::filesystem::copy_options::overwrite_existing);
+    WriteText(distribution / L"mode.txt", mode);
+    std::ostringstream manifest;
+    manifest << "{\"schemaVersion\":1,\"kind\":\"steam-managed\",\"version\":\"1.0.7.0\",\"buildId\":\""
+             << id << "\",\"distributionDirectory\":\"distribution\",\"runtimeDirectory\":\".snowdesktop/runtime\",\"dataDirectory\":\"data\",";
+    if (protocol) manifest << "\"launcherProtocol\":1,";
+    manifest << "\"files\":[";
+    bool first = true;
+    for (const auto* name : {L"SnowDesktop.exe", L"mode.txt"})
+    {
+        const auto path = distribution / name;
+        if (!first) manifest << ',';
+        first = false;
+        manifest << "{\"path\":\"" << std::filesystem::path(name).string()
+                 << "\",\"size\":" << std::filesystem::file_size(path)
+                 << ",\"sha256\":\"" << Sha256(path) << "\"}";
+    }
+    manifest << "]}";
+    WriteText(root / snowdesktop::steam_runtime::kDistributionManifestFilename, manifest.str());
+}
+
+DWORD RunLauncherProcess(const std::filesystem::path& root, std::wstring_view arguments)
+{
+    const auto launcher = root / L"SnowDesktopLauncher.exe";
+    std::wstring command = L"\"" + launcher.wstring() + L"\" --snowdesktop-launcher-no-ui " +
+        std::wstring(arguments);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW;
+    startup.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(launcher.c_str(), command.data(), nullptr, nullptr,
+            FALSE, CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &process))
+        return GetLastError();
+    CloseHandle(process.hThread);
+    const auto waited = WaitForSingleObject(process.hProcess, 30000);
+    DWORD result = ERROR_TIMEOUT;
+    if (waited == WAIT_OBJECT_0) GetExitCodeProcess(process.hProcess, &result);
+    else TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+    CloseHandle(process.hProcess);
+    return result;
+}
+
+void TestLauncherEntry(const std::filesystem::path& root,
+    const std::filesystem::path& launcher, const std::filesystem::path& host)
+{
+    std::filesystem::create_directories(root);
+    std::filesystem::copy_file(launcher, root / L"SnowDesktopLauncher.exe");
+    const auto output = root / L"observations.txt";
+    wchar_t originalOutput[32768]{};
+    GetEnvironmentVariableW(L"SNOWDESKTOP_LAUNCHER_TEST_OUTPUT", originalOutput, 32768);
+    struct RestoreEnvironment
+    {
+        const wchar_t* value;
+        ~RestoreEnvironment() { SetEnvironmentVariableW(L"SNOWDESKTOP_LAUNCHER_TEST_OUTPUT", *value ? value : nullptr); }
+    } restore{originalOutput};
+    SetEnvironmentVariableW(L"SNOWDESKTOP_LAUNCHER_TEST_OUTPUT", output.c_str());
+    const auto state = root / L".snowdesktop";
+    const auto runtime = state / L"runtime";
+    constexpr auto a = "1.0.7.0-1111111111111111";
+    constexpr auto b = "1.0.7.0-2222222222222222";
+    constexpr auto c = "1.0.7.0-3333333333333333";
+    constexpr auto d = "1.0.7.0-4444444444444444";
+    constexpr auto e = "1.0.7.0-5555555555555555";
+    constexpr auto f = "1.0.7.0-6666666666666666";
+    constexpr auto g = "1.0.7.0-7777777777777777";
+    WriteText(root / L"data" / L"sentinel.txt", "preserve user layout");
+    Check(RunLauncherProcess(root, L"--snowdesktop-launcher-prune-only") == 0 &&
+            !std::filesystem::exists(state),
+        "identity-free cleanup never prepares or activates a distribution");
+    WriteLauncherDistribution(root, host, a, "ready");
+    Check(RunLauncherProcess(root, L"--launcher-test-host \"\" \"two words\" \"quote\\\"inside\" \"tail \\\\\"") == 0,
+        "the real launcher receives readiness from a real child process");
+    Check(ReadText(state / L"confirmed-runtime.txt") == std::string(a) + "\n",
+        "readiness confirms exactly the launched runtime");
+    Check(ReadText(output).find("args=4;\"\";\"two words\";\"quote\\\"inside\";\"tail \\\\\";channelCleared=1") != std::string::npos,
+        "the real child receives empty, spaced, quoted and trailing-backslash arguments without inheriting startup identity");
+
+    WriteLauncherDistribution(root, host, b, "fail-before");
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
+            ReadText(state / kCurrentRuntimeFilename) == std::string(a) + "\n" &&
+            ReadText(state / L"launcher.log").find("before data access") != std::string::npos,
+        "pre-data child exit is diagnosed and recovers the previous host through the real launcher");
+    const auto beforeRetry = ReadText(output);
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
+            ReadText(output).substr(beforeRetry.size()).find("fail-before") == std::string::npos,
+        "the rejected distribution is not retried on the next normal launch");
+    Check(RunLauncherProcess(root, L"--snowdesktop-launcher-apply-only") == 0 &&
+            ReadText(state / kCurrentRuntimeFilename) == std::string(b) + "\n",
+        "apply-only explicitly retries preparation without claiming readiness");
+
+    WriteLauncherDistribution(root, host, c, "fail-after");
+    const auto beforeDataFailure = ReadText(output);
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == ERROR_INVALID_DATA &&
+            ReadText(state / kCurrentRuntimeFilename) == std::string(c) + "\n" &&
+            ReadText(state / L"confirmed-runtime.txt") == std::string(a) + "\n" &&
+            ReadText(output).substr(beforeDataFailure.size()).find("mode=ready") == std::string::npos,
+        "post-data startup failure propagates without downgrading or discarding the preserved version");
+    WriteLauncherDistribution(root, host, d, "handled");
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
+            ReadText(state / L"confirmed-runtime.txt") == std::string(a) + "\n",
+        "same-instance activation exit is neither a failure nor a readiness acknowledgement");
+    WriteLauncherDistribution(root, host, e, "cancel");
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
+            ReadText(state / L"confirmed-runtime.txt") == std::string(a) + "\n",
+        "user cancellation never triggers rollback or cleanup");
+    WriteLauncherDistribution(root, host, f, "ready", true, true);
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
+            ReadText(state / kCurrentRuntimeFilename) == std::string(a) + "\n",
+        "CreateProcess failure recovers a preserved executable");
+    WriteLauncherDistribution(root, host, g, "ready");
+    Check(RunLauncherProcess(root, L"--snowdesktop-launcher-prune-only") == 0 &&
+            ReadText(state / kCurrentRuntimeFilename) == std::string(a) + "\n" &&
+            !std::filesystem::exists(runtime / g),
+        "cleanup while a newer distribution is available never activates that distribution");
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
+            ReadText(state / L"confirmed-runtime.txt") == std::string(g) + "\n" &&
+            std::filesystem::exists(runtime / a) && !std::filesystem::exists(runtime / b),
+        "successful initialization cleans old attempts while retaining the confirmed predecessor");
+    WriteLauncherDistribution(root, host, b, "ready", false);
+    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
+            ReadText(state / L"confirmed-runtime.txt") == std::string(g) + "\n" &&
+            std::filesystem::exists(runtime / a),
+        "legacy hosts remain launchable without a fabricated readiness result or cleanup");
+    Check(ReadText(root / L"data" / L"sentinel.txt") == "preserve user layout",
+        "all real launcher paths preserve stable user data");
+}
+}
+
+int wmain(int argc, wchar_t** argv)
+{
+    if (argc >= 2 && std::wstring_view(argv[1]) == L"--launcher-test-host")
+        return RunLauncherFixtureHost(argc, argv);
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
         (L"SnowDesktop-steam-runtime-tests-" +
@@ -1647,6 +1820,8 @@ int main()
         TestUpdateLockValidation(root / L"update-lock-validation");
         TestSteamAutoStartRules();
         TestStartupRecoveryState(root / L"startup-recovery-state");
+        Check(argc == 2, "CTest supplies the production launcher executable");
+        if (argc == 2) TestLauncherEntry(root / L"launcher-entry", argv[1], argv[0]);
     }
     catch (const std::exception& exception)
     {

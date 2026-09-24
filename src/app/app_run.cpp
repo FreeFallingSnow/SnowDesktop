@@ -7,6 +7,7 @@
 #include "../drag_input_rules.h"
 #include "../steam_app_identity.h"
 #include "../steam_child_environment.h"
+#include "../steam_runtime_startup.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
 
@@ -1572,6 +1573,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     startupAnimation.Finish();
     logStartupStage(L"desktop handoff complete");
+    snowdesktop::steam_runtime::startup::Ready();
     ShowUsageGuideWelcome();
     TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_

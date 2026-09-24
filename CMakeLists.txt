@@ -1489,8 +1489,10 @@ if (BUILD_TESTING)
             src/steam_runtime_context.cpp
             src/steam_runtime_manager.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES bcrypt
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopLauncher>"
+        LINK_LIBRARIES bcrypt shell32
         LABELS contract deployment integration steam update)
+    add_dependencies(SnowDesktopSteamRuntimeUpdateTests SnowDesktopLauncher)
     add_test(
         NAME steam_local_deploy_contract
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
