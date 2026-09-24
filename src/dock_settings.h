@@ -53,6 +53,7 @@ struct SystemTaskbarTargetAppearance
     PersonalizationSettings appearance =
         PersonalizationSettings::DarkPreset();
     bool protectAutoHideActivation = false;
+    bool shellPanelVisible = false;
 };
 
 struct DockSettings : DockLayoutSettings
@@ -65,7 +66,7 @@ struct DockSettings : DockLayoutSettings
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
-    bool floatingEdgeSwipeBlockFullscreen = false;
+    bool floatingEdgeSwipeBlockFullscreen = true;
     // Legacy persisted fields kept for layout compatibility. Running
     // applications and hover previews are now unconditional Dock features.
     bool showRunningApps = true;

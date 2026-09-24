@@ -10,15 +10,15 @@
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 9;
+inline constexpr std::uint32_t kSharedStateVersion = 10;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v9";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v10";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v9";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v10";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v9";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v10";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -95,6 +95,7 @@ struct TargetAppearance
     float borderAlpha = 0.40f;
     Gradient gradient;
     LONG protectAutoHideActivation = FALSE;
+    LONG shellPanelVisible = FALSE;
 };
 
 struct SharedState
@@ -110,6 +111,10 @@ struct SharedState
     volatile LONG appearanceEnabled = FALSE;
     volatile LONG suppressTaskbar = FALSE;
     volatile LONG suppressionStatus = kStatusIdle;
+    // Explorer owns this reversible override. Keep the original preference in
+    // the mapping so a replacement Explorer can resume the same host session.
+    volatile LONG autoHideRestore = -1; // -1=no override, 0=off, 1=on
+    volatile LONG autoHideStatus = kStatusIdle;
     volatile LONG style = 0;
     volatile LONG contentTheme = 0; // 0=dark(white text), 1=light(black text)
     volatile LONG systemUsesLightTheme = TRUE; // 1=system light, 0=system dark
@@ -173,6 +178,15 @@ struct Snapshot
     LONG targetCount = 0;
     TargetAppearance targets[kMaximumTaskbarTargets]{};
 };
+inline bool ShouldSuppressTaskbar(const Snapshot& snapshot, std::uintptr_t taskbar) noexcept
+{
+    if (!snapshot.enabled || !snapshot.suppressTaskbar) return false;
+    for (LONG index = 0; index < snapshot.targetCount; ++index)
+        if (snapshot.targets[index].taskbar == taskbar)
+            return snapshot.targets[index].shellPanelVisible == FALSE;
+    return true;
+}
+
 inline bool ReadSharedSnapshot(const SharedState* state, Snapshot& snapshot)
 {
     if (!state || state->magic != kSharedStateMagic ||

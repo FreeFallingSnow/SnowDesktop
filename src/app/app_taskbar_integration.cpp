@@ -509,11 +509,11 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
             stateIt == systemTaskbarMonitorWindowStates_.end()
             ? SystemTaskbarMonitorWindowState{} : stateIt->second;
 
+        const bool shellPanelVisible = snowdesktop::dock_settings_rules::
+            ShouldRevealTaskbarForShellPanel(systemTaskbarTaskViewActive_,
+                systemTaskbarShellUiActive_, monitor == systemTaskbarShellUiMonitor_);
         const SystemTaskbarDynamicRule* selectedRule = nullptr;
-        if (dockSettings_.systemTaskbarShellUi.enabled &&
-            (systemTaskbarTaskViewActive_ ||
-             (systemTaskbarShellUiActive_ &&
-              monitor == systemTaskbarShellUiMonitor_)))
+        if (dockSettings_.systemTaskbarShellUi.enabled && shellPanelVisible)
             selectedRule = &dockSettings_.systemTaskbarShellUi;
         else if (dockSettings_.systemTaskbarMaximizedWindow.enabled &&
             state.maximized)
@@ -524,7 +524,9 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
 
         SystemTaskbarTargetAppearance target;
         target.taskbar = taskbar;
-        target.protectAutoHideActivation = protectActivation &&
+        // Panel access remains available even with all appearance rules off.
+        target.shellPanelVisible = shellPanelVisible;
+        target.protectAutoHideActivation = protectActivation && !shellPanelVisible &&
             std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
         if (selectedRule)
         {

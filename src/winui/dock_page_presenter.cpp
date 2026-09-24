@@ -9,8 +9,10 @@
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.h>
+#include <winrt/Windows.UI.ViewManagement.h>
 
 #include <algorithm>
 #include <array>
@@ -52,6 +54,7 @@ std::wstring ExtractNumericUnit(std::wstring text)
 struct SettingsCard
 {
     muxc::Border root{nullptr};
+    muxc::Border highlight{nullptr};
     muxc::StackPanel content{nullptr};
     muxc::TextBlock title{nullptr};
 };
@@ -328,10 +331,16 @@ struct DockPagePresenter::Impl
             if (closed || !active) return;
             try { RefreshTaskbarRuntimeStatus(); } catch (...) {}
         });
+        highlightTimer = mux::DispatcherTimer{};
+        highlightTimer.Interval(std::chrono::milliseconds(1600));
+        highlightTimerToken = highlightTimer.Tick([this](const auto&, const auto&) { StopCardHighlights(); });
     }
 
     mux::DispatcherTimer runtimeTimer{nullptr};
     winrt::event_token runtimeTimerToken{};
+    mux::DispatcherTimer highlightTimer{nullptr};
+    winrt::event_token highlightTimerToken{};
+    mux::Media::Animation::Storyboard cardHighlightAnimation{nullptr};
     LocalizeCallback localize;
     DockPageActions actions;
     mux::Style cardStyle{nullptr};
@@ -520,6 +529,7 @@ struct DockPagePresenter::Impl
         enableCard.content.Children().Append(dockEnabledRow.root);
 
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
+        InitializeCard(behaviorCard, cardStyle, dockRoot);
         InitializeCard(layoutCard, cardStyle, dockRoot);
         positionCombo = NewCombo();
         layoutCombo = NewCombo();
@@ -535,7 +545,6 @@ struct DockPagePresenter::Impl
         layoutCard.content.Children().Append(layoutRow.root);
         layoutCard.content.Children().Append(thicknessScale.root);
 
-        InitializeCard(behaviorCard, cardStyle, dockRoot);
         floatingShortcutToggle = muxc::ToggleSwitch{};
         floatingEdgeSwipeToggle = muxc::ToggleSwitch{};
         fullscreenSwipeToggle = muxc::ToggleSwitch{};
@@ -596,6 +605,20 @@ struct DockPagePresenter::Impl
         behaviorCard.content.Children().Append(showWindowsButtonRow.root);
         behaviorCard.content.Children().Append(showFrequentItemsRow.root);
         behaviorCard.content.Children().Append(frequentItemCount.root);
+        for (auto* card : {&edgeSwipeCard, &behaviorCard})
+        {
+            auto overlay = mux::Markup::XamlReader::Load(
+                LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" IsHitTestVisible="False" Opacity="0" />)")
+                .as<muxc::Border>();
+            const auto padding = card->root.Padding();
+            overlay.Margin({-padding.Left, -padding.Top, -padding.Right, -padding.Bottom});
+            muxc::Grid layer;
+            card->root.Child(nullptr);
+            layer.Children().Append(card->content);
+            layer.Children().Append(overlay);
+            card->root.Child(layer);
+            card->highlight = overlay;
+        }
         // keepWhenDesktopHidden is a post-migration field and intentionally
         // remains outside the 1:1 legacy surface.
 
@@ -960,6 +983,44 @@ struct DockPagePresenter::Impl
         return result;
     }
 
+    void StopCardHighlights() noexcept
+    {
+        try
+        {
+            if (highlightTimer) highlightTimer.Stop();
+            if (cardHighlightAnimation) cardHighlightAnimation.Stop();
+            cardHighlightAnimation = nullptr;
+            for (auto* card : {&edgeSwipeCard, &behaviorCard})
+                if (card->highlight) card->highlight.Opacity(0);
+        }
+        catch (...) {}
+    }
+
+    void HighlightEnabledDockCards()
+    {
+        StopCardHighlights();
+        if (closed || !active || !dockRoot.IsLoaded()) return;
+        namespace animation = mux::Media::Animation;
+        const bool animate = winrt::Windows::UI::ViewManagement::UISettings{}.AnimationsEnabled();
+        cardHighlightAnimation = animation::Storyboard{};
+        for (auto* card : {&edgeSwipeCard, &behaviorCard})
+        {
+            if (!animate) { card->highlight.Opacity(1); continue; }
+            animation::DoubleAnimation pulse;
+            pulse.From(0.0);
+            pulse.To(1.0);
+            pulse.Duration(mux::DurationHelper::FromTimeSpan(std::chrono::milliseconds(350)));
+            pulse.AutoReverse(true);
+            pulse.RepeatBehavior(animation::RepeatBehaviorHelper::FromCount(2));
+            pulse.FillBehavior(animation::FillBehavior::Stop);
+            animation::Storyboard::SetTarget(pulse, card->highlight);
+            animation::Storyboard::SetTargetProperty(pulse, L"Opacity");
+            cardHighlightAnimation.Children().Append(pulse);
+        }
+        if (animate) cardHighlightAnimation.Begin();
+        highlightTimer.Start();
+    }
+
     void HookEvents()
     {
         taskbarRootLoadedToken = taskbarRoot.Loaded(
@@ -973,10 +1034,13 @@ struct DockPagePresenter::Impl
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
                 const bool value = dockEnabledToggle.IsOn();
+                const bool highlight = value && CanEmitGeneral();
                 EmitGeneral(SettingsUpdateMode::PreviewAndCommit,
                     [value](GeneralSettings& settings) {
                         settings.dockEnabled = value;
                     });
+                if (highlight) HighlightEnabledDockCards();
+                else if (!value) StopCardHighlights();
             });
         positionToken = positionCombo.SelectionChanged(
             [this](const auto&, const auto&) {
@@ -2216,7 +2280,7 @@ struct DockPagePresenter::Impl
                 L"Show the Dock by swiping along its screen edge or "
                   "dragging an item to that edge."));
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
-            L("settings.dock.suppressTaskbar.description", L"Hide taskbars on all displays while Dock is enabled. The Windows button stays visible in Dock. Turn Dock off or exit to restore taskbars."));
+            L("settings.dock.suppressTaskbar.description", L"Hide taskbars and free their reserved space while Dock is enabled. Show the taskbar temporarily for system panels such as Start. Keep the Windows button in Dock. Turning Dock off or exiting restores the original taskbar settings."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
         classicTaskbarHint.Text(L("settings.taskbar.classic.description", L"Windows 10: text and icons follow the system theme; blur strength is controlled by Windows. Acrylic falls back to blur if unavailable."));
         showWindowsButtonRow.SetText(L(
@@ -2553,6 +2617,7 @@ struct DockPagePresenter::Impl
         CommitContinuousEdits();
         active = false;
         closed = true;
+        StopCardHighlights();
         taskbarGradient.editor->Close();
         for (auto* rule : dynamicRules) rule->gradient.editor->Close();
         confirmationGate->alive.store(false, std::memory_order_release);
@@ -2560,6 +2625,7 @@ struct DockPagePresenter::Impl
         {
             runtimeTimer.Stop();
             runtimeTimer.Tick(runtimeTimerToken);
+            highlightTimer.Tick(highlightTimerToken);
             taskbarRoot.Loaded(taskbarRootLoadedToken);
             dockEnabledToggle.Toggled(dockEnabledToken);
             positionCombo.SelectionChanged(positionToken);
@@ -2682,6 +2748,7 @@ void DockPagePresenter::Deactivate() noexcept
     impl_->CommitContinuousEdits();
     impl_->taskbarInputReady = false;
     impl_->active = false;
+    impl_->StopCardHighlights();
     try { impl_->runtimeTimer.Stop(); } catch (...) {}
 }
 

@@ -35,6 +35,8 @@ struct WindowState
     HANDLE owner = nullptr;
     DWORD ownerId = 0;
     bool classic = false;
+    bool primary = false, ownsAutoHide = false, updatingAutoHide = false;
+    AppBarMessage appBarMessage = nullptr;
     std::mutex mutex;
     bool cloaked = false, styled = false;
     BOOL restoreCloak = FALSE;
@@ -67,7 +69,12 @@ HRESULT WINAPI SetDwmHook(HWND window, DWORD attribute, const void* data, DWORD 
                 if (state->cloaked)
                 {
                     state->restoreCloak = *static_cast<const BOOL*>(data);
-                    enforce = state->mapping->enabled && state->mapping->suppressTaskbar &&
+                    Snapshot snapshot;
+                    // Observe a newly opened panel before the posted apply
+                    // message arrives, so Explorer's own reveal is not blocked.
+                    enforce = (ReadSharedSnapshot(state->mapping, snapshot)
+                            ? ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))
+                            : state->mapping->enabled && state->mapping->suppressTaskbar) &&
                         WaitForSingleObject(state->owner, 0) == WAIT_TIMEOUT;
                 }
             }
@@ -186,20 +193,59 @@ void Restore(HWND window, const std::shared_ptr<WindowState>& state)
     if (wasCloaked) originalDwm(window, DWMWA_CLOAK, &cloak, sizeof(cloak));
 }
 
+bool UpdateAutoHide(HWND window, const std::shared_ptr<WindowState>& state, bool requested)
+{
+    if (!state->primary || state->updatingAutoHide) return true;
+    state->updatingAutoHide = true;
+    struct ResetFlag { bool& flag; ~ResetFlag() { flag = false; } } reset{state->updatingAutoHide};
+    APPBARDATA data{};
+    data.cbSize = sizeof(data);
+    data.hWnd = window;
+    const UINT_PTR current = state->appBarMessage(ABM_GETSTATE, &data);
+    if (requested && !state->ownsAutoHide)
+    {
+        InterlockedCompareExchange(&state->mapping->autoHideRestore,
+            (current & ABS_AUTOHIDE) ? TRUE : FALSE, -1);
+        state->ownsAutoHide = true;
+    }
+    if (!state->ownsAutoHide) return true;
+    const bool wanted = requested || state->mapping->autoHideRestore == TRUE;
+    if (((current & ABS_AUTOHIDE) != 0) != wanted)
+    {
+        data.lParam = static_cast<LPARAM>(wanted ? current | ABS_AUTOHIDE :
+            current & ~static_cast<UINT_PTR>(ABS_AUTOHIDE));
+        state->appBarMessage(ABM_SETSTATE, &data);
+    }
+    // ABM_SETSTATE always returns TRUE; verify actual state independently.
+    const bool applied = ((state->appBarMessage(ABM_GETSTATE, &data) & ABS_AUTOHIDE) != 0) == wanted;
+    InterlockedExchange(&state->mapping->autoHideStatus,
+        !applied ? kStatusFailed : requested ? kStatusApplied : kStatusIdle);
+    if (applied && !requested)
+    {
+        state->ownsAutoHide = false;
+        InterlockedExchange(&state->mapping->autoHideRestore, -1);
+    }
+    return applied;
+}
+
 LRESULT CALLBACK Subclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
-void Detach(HWND window, const std::shared_ptr<WindowState>& state)
+void Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroying = false)
 {
+    Restore(window, state);
+    // If Shell has not accepted the restore yet, retain the owner-thread timer
+    // to retry after normal shutdown or owner death. Never retain a dead HWND.
+    if (!UpdateAutoHide(window, state, false) && !destroying) return;
     KillTimer(window, kTimer);
     RemoveWindowSubclass(window, Subclass, kSubclass);
     RemovePropW(window, kAttachedProperty);
-    Restore(window, state);
     std::lock_guard lock(windowsMutex);
     windows.erase(window);
 }
 
 bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
 {
+    if (state->updatingAutoHide) return true;
     if (WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT)
     {
         Detach(window, state);
@@ -212,13 +258,15 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         Detach(window, state);
         return false;
     }
+    UpdateAutoHide(window, state, snapshot.suppressTaskbar);
+    const bool suppress = ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window));
     bool cloakChanged = false;
     BOOL restoreCloak = FALSE;
     {
         std::lock_guard lock(state->mutex);
-        if (snapshot.suppressTaskbar != state->cloaked)
+        if (suppress != state->cloaked)
         {
-            if (snapshot.suppressTaskbar)
+            if (suppress)
             {
                 DWORD previous = 0;
                 if (FAILED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &previous, sizeof(previous))))
@@ -229,20 +277,20 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
                 state->restoreCloak = (previous & DWM_CLOAKED_APP) != 0;
             }
             restoreCloak = state->restoreCloak;
-            state->cloaked = snapshot.suppressTaskbar;
+            state->cloaked = suppress;
             cloakChanged = true;
         }
     }
     if (cloakChanged)
     {
-        const BOOL value = snapshot.suppressTaskbar ? TRUE : restoreCloak;
+        const BOOL value = suppress ? TRUE : restoreCloak;
         const HRESULT result = originalDwm(window, DWMWA_CLOAK, &value, sizeof(value));
         InterlockedExchange(&state->mapping->suppressionStatus,
             FAILED(result) ? kStatusFailed : (snapshot.suppressTaskbar ? kStatusApplied : kStatusIdle));
         if (FAILED(result))
         {
             std::lock_guard lock(state->mutex);
-            state->cloaked = !snapshot.suppressTaskbar;
+            state->cloaked = !suppress;
         }
     }
 
@@ -316,7 +364,7 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     if (!state) return DefSubclassProc(window, message, wParam, lParam);
     if (message == WM_NCDESTROY)
     {
-        Detach(window, state);
+        Detach(window, state, true);
         return DefSubclassProc(window, message, wParam, lParam);
     }
     const UINT apply = RegisterWindowMessageW(kApplyMessageName);
@@ -352,7 +400,7 @@ bool IsClassicTaskbarPlatform() noexcept
     return getVersion && getVersion(&version) == 0 && version.dwMajorVersion == 10 && version.dwBuildNumber < 22000;
 }
 
-bool Attach(HWND window, SharedState* mapping, bool classic) try
+bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBarMessage) try
 {
     if (auto existing = Find(window)) return Update(window, existing, false);
     DWORD process = 0;
@@ -365,6 +413,8 @@ bool Attach(HWND window, SharedState* mapping, bool classic) try
         (!classic && !snapshot.suppressTaskbar)) return false;
     auto state = std::make_shared<WindowState>();
     state->mapping = mapping; state->classic = classic; state->ownerId = snapshot.ownerProcessId;
+    state->primary = wcscmp(name, L"Shell_TrayWnd") == 0;
+    state->appBarMessage = appBarMessage;
     state->owner = OpenProcess(SYNCHRONIZE, FALSE, state->ownerId);
     if (!state->owner || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) return false;
     HMODULE pinned = nullptr;

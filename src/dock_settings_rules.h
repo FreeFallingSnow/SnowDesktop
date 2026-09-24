@@ -3,6 +3,12 @@
 namespace snowdesktop::dock_settings_rules
 {
 
+inline bool ShouldRevealTaskbarForShellPanel(
+    bool taskViewVisible, bool shellPanelVisible, bool onPanelMonitor) noexcept
+{
+    return taskViewVisible || (shellPanelVisible && onPanelMonitor);
+}
+
 inline void NormalizeAlwaysEnabledFeatures(
     bool& showRunningApps,
     bool& showWindowPreviews) noexcept

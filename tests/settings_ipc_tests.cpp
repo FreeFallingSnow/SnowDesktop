@@ -124,7 +124,7 @@ void TestCodec()
     settings.values.dock.followComponentAppearance = false;
     settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
     settings.values.dock.customAppearance.widgetBgR = .2f;
-    settings.values.dock.floatingEdgeSwipeBlockFullscreen = true;
+    settings.values.dock.floatingEdgeSwipeBlockFullscreen = false;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;
@@ -146,6 +146,8 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,
+        "an explicit fullscreen gesture opt-out survives IPC despite the enabled default");
     Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
         "suppression crosses private settings IPC without replacing the base Windows button preference");
     Check(restored.values.personalization.showGroupTabCounts &&

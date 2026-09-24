@@ -5,6 +5,21 @@
 #include <iostream>
 #include <string>
 
+namespace
+{
+UINT_PTR appBarState = 0;
+bool rejectAppBarChange = false;
+// Replace only the system preference boundary: tests must never change the
+// user's real taskbar auto-hide setting. Native ownership/timers remain real.
+UINT_PTR WINAPI TestAppBarMessage(DWORD message, PAPPBARDATA data)
+{
+    if (message == ABM_GETSTATE) return appBarState;
+    if (message == ABM_SETSTATE && !rejectAppBarChange)
+        appBarState = static_cast<UINT_PTR>(data->lParam);
+    return TRUE;
+}
+}
+
 // These are isolated windows in the test process, never the real Explorer
 // taskbar or SnowDesktop desktop host. DWM and the production subclass/hooks
 // remain real; this tests ownership/recovery, not Win10 shell rendering parity.
@@ -16,6 +31,7 @@ int RunNativeTaskbarTests()
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };
     DockSettings settings;
+    check(settings.floatingEdgeSwipeBlockFullscreen, "new Dock preferences block edge swipes over fullscreen apps");
     settings.showWindowsButton = false;
     check(!ShowDockWindowsButton(settings), "Windows button follows base preference outside suppression");
     settings.suppressSystemTaskbar = true;
@@ -50,10 +66,12 @@ int RunNativeTaskbarTests()
     HWND unrelated = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
         L"Unrelated test window", WS_POPUP, -32000, -32000, 32, 32,
         nullptr, nullptr, instance, nullptr);
-    check(unrelated && !native::Attach(unrelated, &shared, false),
+    check(unrelated && !native::Attach(unrelated, &shared, false, TestAppBarMessage),
         "the native controller must refuse non-taskbar windows");
-    check(native::Attach(window, &shared, false) && cloaked(),
+    check(native::Attach(window, &shared, false, TestAppBarMessage) && cloaked(),
         "production suppression must cloak its target immediately");
+    check((appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == FALSE,
+        "suppression temporarily enables auto-hide to release the work-area reservation");
     const BOOL reveal = FALSE;
     check(SUCCEEDED(DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal))) && cloaked(),
         "an explicit shell uncloak request cannot reveal a protected taskbar");
@@ -73,15 +91,21 @@ int RunNativeTaskbarTests()
     SendMessageW(window, apply, 0, 0);
     check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
         "turning the setting off releases the cloak and subclass");
+    check(!(appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == -1,
+        "turning suppression off restores the original non-auto-hide preference");
 
     // Preserve pre-existing app cloaking when no native uncloak is requested.
     const BOOL conceal = TRUE;
     DwmSetWindowAttribute(window, DWMWA_CLOAK, &conceal, sizeof(conceal));
+    appBarState = ABS_AUTOHIDE;
     shared.suppressTaskbar = TRUE;
-    check(native::Attach(window, &shared, false), "re-enter suppression on a previously cloaked window");
+    check(native::Attach(window, &shared, false, TestAppBarMessage), "re-enter suppression on a previously cloaked window");
     shared.enabled = FALSE;
     SendMessageW(window, apply, 0, 0);
     check(cloaked(), "release must preserve an independently owned original cloak");
+    check((appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == -1,
+        "a pre-existing auto-hide preference survives suppression");
+    appBarState = 0;
     DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal));
 
     wchar_t executable[32768]{};
@@ -96,7 +120,7 @@ int RunNativeTaskbarTests()
     {
         shared.enabled = TRUE;
         shared.ownerProcessId = child.dwProcessId;
-        check(native::Attach(window, &shared, false) && cloaked(), "takeover is bound to the live owner process handle");
+        check(native::Attach(window, &shared, false, TestAppBarMessage) && cloaked(), "takeover is bound to the live owner process handle");
         TerminateProcess(child.hProcess, 0);
         WaitForSingleObject(child.hProcess, 2000);
         const ULONGLONG deadline = GetTickCount64() + 3000;
@@ -110,6 +134,8 @@ int RunNativeTaskbarTests()
         }
         check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
             "owner death restores the taskbar without any host cleanup message");
+        check(!(appBarState & ABS_AUTOHIDE) && shared.autoHideRestore == -1,
+            "owner death also restores the original taskbar work-area policy");
         CloseHandle(child.hThread); CloseHandle(child.hProcess);
     }
 
@@ -132,7 +158,7 @@ int RunNativeTaskbarTests()
     shared.defaultEnabled = TRUE;
     shared.suppressTaskbar = FALSE;
     shared.gradient = style.gradient;
-    check(native::Attach(window, &shared, true) && shared.status == kStatusApplied,
+    check(native::Attach(window, &shared, true, TestAppBarMessage) && shared.status == kStatusApplied,
         "the complete classic adapter applies a gradient through its production entry point");
     shared.suppressTaskbar = TRUE;
     SendMessageW(window, apply, 0, 0);
@@ -150,7 +176,7 @@ int RunNativeTaskbarTests()
     shared.enabled = TRUE;
     shared.appearanceEnabled = TRUE;
     shared.suppressTaskbar = TRUE;
-    check(native::Attach(window, &shared, true) && cloaked() && shared.status == kStatusFailed,
+    check(native::Attach(window, &shared, true, TestAppBarMessage) && cloaked() && shared.status == kStatusFailed,
         "appearance failure must report failure without revealing a suppressed taskbar");
     surface.Reset();
     shared.borderAlpha = .1f;
@@ -161,7 +187,91 @@ int RunNativeTaskbarTests()
     SendMessageW(window, apply, 0, 0);
     check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
         "release after a recovered material failure restores the taskbar");
+    // Start/Search/sidebars use one monitor; Task View uses every monitor.
+    // Feed the real host policy into the private mapping, with all appearance
+    // rules disabled, then drive the production subclass and DWM detour.
+    registration.lpszClassName = L"Shell_SecondaryTrayWnd";
+    check(RegisterClassW(&registration) != 0, "register isolated secondary taskbar class");
+    const HWND secondary = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        registration.lpszClassName, L"Isolated secondary taskbar", WS_POPUP,
+        -32000, -32000, 320, 48, nullptr, nullptr, instance, nullptr);
+    check(secondary != nullptr, "create isolated secondary taskbar");
+    if (secondary)
+    {
+        ShowWindow(secondary, SW_SHOWNOACTIVATE);
+        const auto secondaryCloaked = [&] {
+            DWORD value = 0;
+            return SUCCEEDED(DwmGetWindowAttribute(secondary, DWMWA_CLOAKED, &value, sizeof(value))) &&
+                (value & DWM_CLOAKED_APP) != 0;
+        };
+        using snowdesktop::dock_settings_rules::ShouldRevealTaskbarForShellPanel;
+        for (bool classic : {false, true})
+        {
+            shared.enabled = TRUE;
+            shared.suppressTaskbar = TRUE;
+            shared.appearanceEnabled = FALSE;
+            shared.targetCount = 2;
+            shared.targets[0] = {};
+            shared.targets[1] = {};
+            shared.targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
+            shared.targets[1].taskbar = reinterpret_cast<std::uintptr_t>(secondary);
+            check(native::Attach(window, &shared, classic, TestAppBarMessage) && native::Attach(secondary, &shared, classic, TestAppBarMessage) &&
+                cloaked() && secondaryCloaked(), "both taskbars start hidden without custom appearance");
+            shared.targets[0].shellPanelVisible = ShouldRevealTaskbarForShellPanel(false, true, true);
+            shared.targets[1].shellPanelVisible = ShouldRevealTaskbarForShellPanel(false, true, false);
+            DwmSetWindowAttribute(window, DWMWA_CLOAK, &reveal, sizeof(reveal));
+            check(!cloaked(), "panel reveal is permitted before the posted apply message reaches the taskbar");
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+            check(!cloaked() && secondaryCloaked() && GetPropW(window, native::kAttachedProperty) &&
+                (appBarState & ABS_AUTOHIDE), "panel suspends only its monitor's hiding without restoring work-area reservation");
+            shared.targets[0].shellPanelVisible = ShouldRevealTaskbarForShellPanel(false, false, true);
+            SendMessageW(window, apply, 0, 0);
+            check(cloaked() && secondaryCloaked(), "panel close or an ordinary app resumes hiding without reinjection");
+            for (int target = 0; target != 2; ++target)
+                shared.targets[target].shellPanelVisible = ShouldRevealTaskbarForShellPanel(true, false, false);
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+            check(!cloaked() && !secondaryCloaked(), "Task View temporarily releases every taskbar");
+            shared.enabled = FALSE;
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+            check(!(appBarState & ABS_AUTOHIDE) && !GetPropW(window, native::kAttachedProperty) &&
+                !GetPropW(secondary, native::kAttachedProperty), "disable during a panel restores the original auto-hide setting");
+        }
+        DestroyWindow(secondary);
+    }
+    UnregisterClassW(registration.lpszClassName, instance);
+    // A replacement Explorer resumes the original preference from the shared
+    // mapping rather than mistaking the forced ON state for the user's choice.
+    shared.targetCount = 0;
+    shared.enabled = TRUE;
+    shared.suppressTaskbar = TRUE;
+    shared.autoHideRestore = FALSE;
+    appBarState = ABS_AUTOHIDE;
+    check(native::Attach(window, &shared, false, TestAppBarMessage), "reconnect after Explorer replacement");
+    shared.enabled = FALSE;
+    SendMessageW(window, apply, 0, 0);
+    check(!(appBarState & ABS_AUTOHIDE), "reconnection preserves the original non-auto-hide preference");
+    shared.enabled = TRUE;
+    rejectAppBarChange = true;
+    check(native::Attach(window, &shared, false, TestAppBarMessage) && shared.autoHideStatus == kStatusFailed,
+        "ABM_SETSTATE success return alone must not hide a rejected work-area change");
+    rejectAppBarChange = false;
+    SendMessageW(window, apply, 0, 0);
+    check(shared.autoHideStatus == kStatusApplied && (appBarState & ABS_AUTOHIDE),
+        "work-area override recovers when the system accepts the change");
+    shared.enabled = FALSE;
+    rejectAppBarChange = true;
+    SendMessageW(window, apply, 0, 0);
+    check(!cloaked() && GetPropW(window, native::kAttachedProperty) && shared.autoHideStatus == kStatusFailed,
+        "a rejected auto-hide restore keeps a recovery watcher but releases the cloak");
+    rejectAppBarChange = false;
+    SendMessageW(window, apply, 0, 0);
+    check(!(appBarState & ABS_AUTOHIDE) && !GetPropW(window, native::kAttachedProperty),
+        "pending auto-hide restoration completes without leaving a watcher");
     DestroyWindow(window);
+    registration.lpszClassName = L"Shell_TrayWnd";
     UnregisterClassW(registration.lpszClassName, instance);
     return failures;
 }

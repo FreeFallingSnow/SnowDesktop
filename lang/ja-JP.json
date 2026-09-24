@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "1 時間前",
     "settings.calendar.reminder.1440": "1 日前",
     "settings.dock.suppressTaskbar": "システムのタスクバーを常に非表示にする",
-    "settings.dock.suppressTaskbar.description": "Dock が有効な間、すべての画面のタスクバーを非表示にします。Dock の Windows ボタンは常に表示されます。Dock を無効にするかソフトウェアを終了すると、タスクバーが元に戻ります。",
+    "settings.dock.suppressTaskbar.description": "Dock の有効時にタスクバーを非表示にし、占有スペースを解放します。スタートメニューなどのシステムパネルを開くと一時的に表示します。Dock の Windows ボタンは常に表示されます。Dock を無効にするかアプリを終了すると、元の設定に戻ります。",
     "settings.dock.suppressTaskbar.failed": "タスクバーを非表示にできませんでした。この設定をオフにしてタスクバーを元に戻し、もう一度お試しください。",
     "settings.taskbar.classic.description": "Windows 10：文字とアイコンの配色はシステムのテーマに従い、ぼかしの強さは Windows が制御します。アクリル効果が利用できない場合は、ぼかし効果を使用します。"
 }

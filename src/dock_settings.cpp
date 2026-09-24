@@ -527,6 +527,7 @@ public:
                 reinterpret_cast<std::uintptr_t>(source.taskbar);
             destination.enabled = source.enabled ? TRUE : FALSE;
             destination.protectAutoHideActivation = source.protectAutoHideActivation ? TRUE : FALSE;
+            destination.shellPanelVisible = source.shellPanelVisible ? TRUE : FALSE;
             destination.style = source.appearance.glassEnabled
                 ? snowdesktop::taskbar_hook::kStyleGlassBackdrop : 0;
             if (source.appearance.glassEnabled &&
@@ -837,11 +838,34 @@ bool IsSystemTaskbarAutoHideEnabled()
     if (const auto requested =
             GetWindowsShellSettingsController().RequestedAutoHide())
         return *requested;
+    using namespace snowdesktop::taskbar_hook;
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, kSharedStateName);
+    if (mapping)
+    {
+        const auto* state = static_cast<const SharedState*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(SharedState)));
+        const LONG original = state && state->magic == kSharedStateMagic && state->version == kSharedStateVersion
+            ? state->autoHideRestore : -1;
+        if (state) UnmapViewOfFile(state);
+        CloseHandle(mapping);
+        if (original >= 0) return original != FALSE;
+    }
     return ReadSystemTaskbarAutoHideEnabled();
 }
 
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled)
 {
+    using namespace snowdesktop::taskbar_hook;
+    HANDLE mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, kSharedStateName);
+    if (mapping)
+    {
+        auto* state = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
+        const bool overridden = state && state->magic == kSharedStateMagic && state->version == kSharedStateVersion &&
+            state->enabled && state->suppressTaskbar && state->autoHideRestore >= 0;
+        if (overridden) InterlockedExchange(&state->autoHideRestore, enabled ? TRUE : FALSE);
+        if (state) UnmapViewOfFile(state);
+        CloseHandle(mapping);
+        if (overridden) return true;
+    }
     return GetWindowsShellSettingsController().RequestAutoHide(enabled);
 }
 
@@ -956,15 +980,19 @@ SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState()
     auto result = SystemTaskbarBackdropRuntimeState::Disabled;
     if (ReadSharedSnapshot(state, snapshot) && snapshot.enabled && snapshot.suppressTaskbar)
     {
-        result = state->suppressionStatus < 0 || state->status < 0
+        result = state->suppressionStatus < 0 || state->status < 0 || state->autoHideStatus < 0
             ? SystemTaskbarBackdropRuntimeState::Failed : SystemTaskbarBackdropRuntimeState::Loading;
         const auto taskbars = FindSystemTaskbarWindows();
-        const bool allHidden = !taskbars.empty() && std::all_of(taskbars.begin(), taskbars.end(), [](HWND window) {
+        const bool allControlled = !taskbars.empty() && std::all_of(taskbars.begin(), taskbars.end(), [&snapshot](HWND window) {
+            if (!GetPropW(window, native::kAttachedProperty)) return false;
+            // A panel deliberately suspends suppression; this is still an
+            // active controller, not a connection failure or a disabled option.
+            if (!ShouldSuppressTaskbar(snapshot, reinterpret_cast<std::uintptr_t>(window))) return true;
             DWORD cloak = 0;
-            return GetPropW(window, native::kAttachedProperty) &&
-                SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && (cloak & DWM_CLOAKED_APP);
+            return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) && (cloak & DWM_CLOAKED_APP);
         });
-        if (allHidden) result = SystemTaskbarBackdropRuntimeState::Active;
+        if (allControlled && state->autoHideStatus >= kStatusApplied)
+            result = SystemTaskbarBackdropRuntimeState::Active;
     }
     if (state) UnmapViewOfFile(state);
     CloseHandle(mapping);

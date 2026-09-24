@@ -1871,7 +1871,7 @@
     "settings.calendar.reminder.60": "提前 1 小时",
     "settings.calendar.reminder.1440": "提前 1 天",
     "settings.dock.suppressTaskbar": "始终隐藏系统任务栏",
-    "settings.dock.suppressTaskbar.description": "Dock 启用期间隐藏所有屏幕的任务栏，并始终显示 Dock 中的 Windows 按钮。关闭 Dock 或退出软件后恢复任务栏。",
+    "settings.dock.suppressTaskbar.description": "Dock 启用期间隐藏任务栏并释放占位；打开开始菜单等系统面板时临时显示。Dock 中始终保留 Windows 按钮。关闭 Dock 或退出软件后恢复原设置。",
     "settings.dock.suppressTaskbar.failed": "无法隐藏任务栏。请关闭此开关恢复任务栏，然后重试。",
     "settings.taskbar.classic.description": "Windows 10：文字和图标配色跟随系统主题，模糊强度由 Windows 控制。亚克力不可用时回退为模糊效果。"
 }
