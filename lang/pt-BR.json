@@ -1873,5 +1873,5 @@
     "settings.dock.suppressTaskbar": "Sempre ocultar a barra de tarefas do sistema",
     "settings.dock.suppressTaskbar.description": "Oculta a barra de tarefas nas telas com Dock e a exibe ao abrir painéis do sistema. Mantém o botão do Windows no Dock.",
     "settings.dock.suppressTaskbar.failed": "Não foi possível ocultar a barra de tarefas. Desative esta opção para restaurá-la e tente novamente.",
-    "settings.taskbar.classic.description": "O Windows 10 controla as cores dos ícones e do texto e a intensidade do desfoque."
+    "settings.taskbar.classic.description": "O Windows 10 compartilha este tema com os painéis do sistema; os dois controles ficam sincronizados. O Windows controla a intensidade do desfoque."
 }

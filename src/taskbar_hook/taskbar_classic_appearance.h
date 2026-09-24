@@ -12,6 +12,11 @@ struct AccentPolicy
     DWORD flags = 0, color = 0, animation = 0;
 };
 
+inline bool NeedsClassicSurface(const TargetAppearance& style)
+{
+    return DecodeGradient(style.gradient).enabled || style.borderAlpha > 0;
+}
+
 inline AccentPolicy MakeClassicAccentPolicy(const TargetAppearance& style,
     bool allowAcrylic = true)
 {
@@ -34,5 +39,13 @@ inline AccentPolicy MakeClassicAccentPolicy(const TargetAppearance& style,
     // Acrylic requires a nonzero alpha even for an otherwise clear material.
     if (policy.state == 4 && !(policy.color & 0xff000000)) policy.color |= 0x01000000;
     return policy;
+}
+
+inline AccentPolicy MakeClassicTaskbarPolicy(const TargetAppearance& style)
+{
+    // The separate backdrop owns material, tint and extra drawing together.
+    // Keep Explorer clear so its children/icons remain above that backdrop.
+    return NeedsClassicSurface(style) ? AccentPolicy{2, 2, 0, 0} :
+        MakeClassicAccentPolicy(style);
 }
 }

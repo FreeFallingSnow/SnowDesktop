@@ -7,12 +7,19 @@
 
 namespace snowdesktop::taskbar_hook::native
 {
-// Gradient/border visual below taskbar children; solid tint lives in the native
-// accent material. This surface never intercepts pointer/keyboard input.
+inline constexpr wchar_t kClassicBackdropProperty[] = L"SnowDesktop.Taskbar.ClassicBackdrop.v1";
+
+// Independent background window immediately below Explorer's taskbar. Native
+// accent supplies its material/tint, while DComp adds gradients and borders.
 class ClassicSurface
 {
 public:
+    ClassicSurface() = default;
+    ClassicSurface(const ClassicSurface&) = delete;
+    ClassicSurface& operator=(const ClassicSurface&) = delete;
+    ~ClassicSurface() { Reset(); }
     HRESULT Draw(HWND window, const TargetAppearance& style);
+    HRESULT Synchronize(HWND window);
     void Reset();
 private:
     Microsoft::WRL::ComPtr<IDCompositionDevice> device_;
@@ -20,5 +27,6 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
     Microsoft::WRL::ComPtr<ID2D1Factory> factory_;
     HWND window_ = nullptr;
+    HWND backdrop_ = nullptr;
 };
 }

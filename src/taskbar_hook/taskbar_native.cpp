@@ -310,7 +310,7 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
         GetClientRect(window, &bounds);
         if (force || !wasStyled || !(style == state->applied) || !EqualRect(&bounds, &state->bounds))
         {
-            AccentPolicy policy = MakeClassicAccentPolicy(style);
+            AccentPolicy policy = MakeClassicTaskbarPolicy(style);
             if (!wasStyled && getComposition)
             {
                 AccentPolicy nativeAccent;
@@ -343,6 +343,8 @@ bool Update(HWND window, const std::shared_ptr<WindowState>& state, bool force)
             else state->appearanceRetryTick = 0;
         }
     }
+    if (styled && FAILED(state->surface.Synchronize(window)))
+        InterlockedExchange(&state->mapping->status, kStatusFailed);
     if (!snapshot.suppressTaskbar && !styled && !state->classic)
     { Detach(window, state); return false; }
     return true;
@@ -366,7 +368,9 @@ LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lPara
     if (message == WM_TIMER && wParam == kTimer)
     { Update(window, state, false); return 0; }
     const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
-    if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_THEMECHANGED || message == WM_SETTINGCHANGE || message == WM_DWMCOMPOSITIONCHANGED)
+    if (message == WM_WINDOWPOSCHANGED || message == WM_SHOWWINDOW)
+        Update(window, state, false);
+    else if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_THEMECHANGED || message == WM_SETTINGCHANGE || message == WM_DWMCOMPOSITIONCHANGED)
         Update(window, state, true);
     return result;
 }

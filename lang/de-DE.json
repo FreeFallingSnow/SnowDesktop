@@ -1873,5 +1873,5 @@
     "settings.dock.suppressTaskbar": "Systemtaskleiste immer ausblenden",
     "settings.dock.suppressTaskbar.description": "Taskleiste auf Bildschirmen mit Dock ausblenden; bei Systembereichen kurz einblenden. Die Windows-Schaltfläche bleibt im Dock.",
     "settings.dock.suppressTaskbar.failed": "Die Taskleiste konnte nicht ausgeblendet werden. Deaktivieren Sie diese Option zur Wiederherstellung und versuchen Sie es erneut.",
-    "settings.taskbar.classic.description": "Windows 10 steuert Symbol- und Textfarben sowie die Unschärfestärke."
+    "settings.taskbar.classic.description": "Windows 10 verwendet dieses Design auch für Systembereiche; beide Einstellungen bleiben synchron. Die Weichzeichnungsstärke wird von Windows gesteuert."
 }

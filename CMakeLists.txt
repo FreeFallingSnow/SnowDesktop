@@ -644,7 +644,7 @@ if (MSVC)
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00 WINRT_NO_MODULE_LOCK)
     target_link_libraries(SnowDesktopTaskbarHook PRIVATE
-        advapi32 comctl32 d2d1 d3d11 dcomp dwmapi dxgi dxguid ole32 runtimeobject shell32 user32 windowsapp)
+        advapi32 comctl32 d2d1 d3d11 dcomp dwmapi dxgi dxguid gdi32 ole32 runtimeobject shell32 user32 windowsapp)
     set_property(TARGET SnowDesktopTaskbarHook PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopTaskbarHook PRIVATE

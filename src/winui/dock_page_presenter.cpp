@@ -370,7 +370,6 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
     muxc::InfoBar suppressionStatus{nullptr};
-    muxc::TextBlock classicTaskbarHint{nullptr};
     muxc::ToggleSwitch showFrequentItemsToggle{nullptr};
     muxc::ToggleSwitch keepWhenDesktopHiddenToggle{nullptr};
     muxc::ToggleSwitch allowDesktopContentOverlapToggle{nullptr};
@@ -641,9 +640,6 @@ struct DockPagePresenter::Impl
         taskbarAppearanceCard.content.Children().Append(
             taskbarContentThemeRow.root);
         taskbarAppearanceCard.content.Children().Append(taskbarRuntimeStatus);
-        classicTaskbarHint = NewHint();
-        classicTaskbarHint.Visibility(IsClassicSystemTaskbar() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        taskbarAppearanceCard.content.Children().Append(classicTaskbarHint);
 
         taskbarCustomAppearance = muxc::StackPanel{};
         taskbarCustomAppearance.Spacing(12.0);
@@ -1167,6 +1163,7 @@ struct DockPagePresenter::Impl
                 {
                     windowsSystemThemeValue = std::clamp(value, 0, 1);
                     (void)RequestWindowsSystemLightThemeEnabled(value == 0);
+                    RefreshTaskbarEntryState();
                 }
             });
         taskbarThemeToken = taskbarThemeCombo.SelectionChanged(
@@ -1194,6 +1191,14 @@ struct DockPagePresenter::Impl
             [this](const auto&, const auto&) {
                 const int value = taskbarContentThemeCombo.SelectedIndex();
                 if (value < 0) return;
+                if (IsClassicSystemTaskbar())
+                {
+                    if (!taskbarInputReady || closed || updatingControls ||
+                        !active || !hasSnapshot) return;
+                    (void)RequestWindowsSystemLightThemeEnabled(value == 0);
+                    RefreshTaskbarEntryState();
+                    return;
+                }
                 const bool custom = taskbarThemeCombo.SelectedIndex() ==
                     static_cast<int>(SystemTaskbarThemeMode::Custom);
                 const int logicalValue = custom
@@ -1734,10 +1739,10 @@ struct DockPagePresenter::Impl
             static_cast<int>(SystemTaskbarThemeMode::Native);
         const bool taskbarCustom = taskbarMode ==
             static_cast<int>(SystemTaskbarThemeMode::Custom);
-        taskbarContentThemeRow.root.Visibility(taskbarStyled && !IsClassicSystemTaskbar()
+        taskbarContentThemeRow.root.Visibility(taskbarStyled || IsClassicSystemTaskbar()
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-        taskbarContentThemeRow.SetEnabled(taskbarStyled);
+        taskbarContentThemeRow.SetEnabled(taskbarStyled || IsClassicSystemTaskbar());
         taskbarCustomAppearance.Visibility(taskbarCustom
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
@@ -1861,6 +1866,8 @@ struct DockPagePresenter::Impl
                 IsWindowsSystemLightThemeEnabled() ? 0 : 1;
             SelectChoice(
                 windowsSystemThemeChoices, windowsSystemThemeValue);
+            if (IsClassicSystemTaskbar())
+                taskbarContentThemeCombo.SelectedIndex(windowsSystemThemeValue);
             RefreshTaskbarRuntimeStatus();
         }
         catch (...)
@@ -2144,6 +2151,11 @@ struct DockPagePresenter::Impl
 
     void ReplaceMainContentThemeItems(bool custom, int logicalValue)
     {
+        if (IsClassicSystemTaskbar())
+        {
+            custom = true;
+            logicalValue = windowsSystemThemeValue;
+        }
         const bool previousUpdating = updatingControls;
         updatingControls = true;
         taskbarContentThemeCombo.Items().Clear();
@@ -2281,7 +2293,6 @@ struct DockPagePresenter::Impl
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
             L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels. Keep the Windows button in Dock."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
-        classicTaskbarHint.Text(L("settings.taskbar.classic.description", L"Windows 10 controls icon and text colors and blur strength."));
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         showFrequentItemsRow.SetText(L(
@@ -2343,7 +2354,10 @@ struct DockPagePresenter::Impl
         ReplaceTaskbarThemeItems(taskbarThemeCombo);
         taskbarContentThemeRow.SetText(L(
             "app.settings.taskbar_foreground_color",
-            L"Taskbar Icon and Text Color"));
+            L"Taskbar Icon and Text Color"), IsClassicSystemTaskbar()
+                ? L("settings.taskbar.classic.description",
+                    L"Windows 10 shares this theme with system panels; both controls stay in sync. Blur strength is controlled by Windows.")
+                : L"");
         muxa::AutomationProperties::SetName(
             taskbarContentThemeCombo, taskbarContentThemeRow.label.Text());
         ReplaceMainContentThemeItems(

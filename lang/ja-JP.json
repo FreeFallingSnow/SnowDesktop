@@ -1873,5 +1873,5 @@
     "settings.dock.suppressTaskbar": "システムのタスクバーを常に非表示にする",
     "settings.dock.suppressTaskbar.description": "Dock のある画面のタスクバーを隠し、システムパネル表示時は一時的に表示します。Dock の Windows ボタンは常に表示されます。",
     "settings.dock.suppressTaskbar.failed": "タスクバーを非表示にできませんでした。この設定をオフにしてタスクバーを元に戻し、もう一度お試しください。",
-    "settings.taskbar.classic.description": "Windows 10 では、アイコンと文字の色、ぼかしの強さはシステムが制御します。"
+    "settings.taskbar.classic.description": "Windows 10 ではシステムパネルとテーマを共有し、両方の設定が同期します。ぼかしの強さは Windows が制御します。"
 }

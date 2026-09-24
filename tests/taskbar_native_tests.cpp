@@ -83,6 +83,12 @@ int RunNativeTaskbarTests()
     check(native::MakeClassicAccentPolicy(tint).color == 0x01000000 &&
         native::MakeClassicAccentPolicy(tint, false).color == 0,
         "gradient material does not add a second solid tint below the gradient");
+    accent = native::MakeClassicTaskbarPolicy(tint);
+    check(accent.state == 2 && accent.flags == 2 && accent.color == 0,
+        "Explorer is clear above the separate gradient material window");
+    tint.gradient = {}; tint.borderAlpha = 0; tint.alpha = 0.5f;
+    check(native::MakeClassicTaskbarPolicy(tint).color == 0x804080ff,
+        "solid styles without extra drawing use the taskbar native tint directly");
     DockSettings settings;
     check(settings.floatingEdgeSwipeBlockFullscreen, "new Dock preferences block edge swipes over fullscreen apps");
     settings.showWindowsButton = false;
@@ -205,9 +211,20 @@ int RunNativeTaskbarTests()
     style.gradient = EncodeGradient(gradient);
     style.borderAlpha = .6f;
     check(SUCCEEDED(surface.Draw(window, style)), "classic surface accepts multistop gradient and border");
+    const HWND backdrop = static_cast<HWND>(GetPropW(window, native::kClassicBackdropProperty));
+    check(backdrop && backdrop != window && IsWindow(backdrop) &&
+        (GetWindowLongPtrW(backdrop, GWL_EXSTYLE) &
+            (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)) ==
+            (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW),
+        "classic color drawing owns a separate click-through, nonactivating background window");
+    check(backdrop && SendMessageW(backdrop, WM_NCHITTEST, 0, 0) == HTTRANSPARENT &&
+        SendMessageW(backdrop, WM_MOUSEACTIVATE, 0, 0) == MA_NOACTIVATE,
+        "background window cannot steal taskbar input or activation");
     SetWindowPos(window, nullptr, 0, 0, 48, 320, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     check(SUCCEEDED(surface.Draw(window, style)), "classic surface follows a vertical taskbar resize");
     surface.Reset();
+    check(!IsWindow(backdrop) && !GetPropW(window, native::kClassicBackdropProperty),
+        "releasing a classic surface destroys its background and diagnostic association");
     shared.ownerProcessId = GetCurrentProcessId();
     shared.enabled = TRUE;
     shared.appearanceEnabled = TRUE;
@@ -228,24 +245,32 @@ int RunNativeTaskbarTests()
     SendMessageW(window, apply, 0, 0);
     check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
         "disabling the controller releases both classic appearance and suppression");
-    // Occupying the real lower composition target reproduces a backend failure
-    // without mocking away native attachment, DWM or the restoration path.
-    check(SUCCEEDED(surface.Draw(window, style)), "reserve the lower composition target for a competing owner");
+    // Reproduce Explorer owning the taskbar's lower composition layer. The
+    // background must remain independent of that target and its child layout.
+    Microsoft::WRL::ComPtr<IDCompositionDevice> competingDevice;
+    Microsoft::WRL::ComPtr<IDCompositionTarget> competingTarget;
+    check(SUCCEEDED(DCompositionCreateDevice(nullptr, IID_PPV_ARGS(&competingDevice))) &&
+        SUCCEEDED(competingDevice->CreateTargetForHwnd(window, FALSE, &competingTarget)),
+        "reserve the taskbar composition target for a competing shell owner");
     shared.enabled = TRUE;
     shared.appearanceEnabled = TRUE;
     shared.suppressTaskbar = TRUE;
-    check(native::Attach(window, &shared, true, TestAppBarMessage) && cloaked() && shared.status == kStatusFailed,
-        "appearance failure must report failure without revealing a suppressed taskbar");
-    surface.Reset();
+    check(native::Attach(window, &shared, true, TestAppBarMessage) && cloaked() && shared.status == kStatusApplied,
+        "Explorer composition ownership does not block the separate classic backdrop or suppression");
+    const HWND suppressedBackdrop = static_cast<HWND>(GetPropW(window, native::kClassicBackdropProperty));
+    check(suppressedBackdrop && !IsWindowVisible(suppressedBackdrop),
+        "suppressed taskbars cannot leave their separate background visible");
     shared.borderAlpha = .1f;
     shared.targets[0].borderAlpha = .1f;
     SendMessageW(window, apply, 0, 0);
     check(cloaked() && shared.status == kStatusApplied,
-        "editing appearance after releasing the competing target recovers rendering while staying hidden");
+        "editing appearance remains independent of the occupied taskbar target while staying hidden");
     shared.enabled = FALSE;
     SendMessageW(window, apply, 0, 0);
     check(!cloaked() && !GetPropW(window, native::kAttachedProperty),
-        "release after a recovered material failure restores the taskbar");
+        "releasing classic appearance restores the taskbar");
+    check(!IsWindow(suppressedBackdrop), "controller shutdown destroys its separate background window");
+    competingTarget.Reset(); competingDevice.Reset();
     // Start/Search/sidebars use one monitor; Task View uses every monitor.
     // Feed the real host policy into the private mapping, with all appearance
     // rules disabled, then drive the production subclass and DWM detour.

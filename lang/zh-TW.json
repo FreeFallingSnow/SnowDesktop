@@ -1873,5 +1873,5 @@
     "settings.dock.suppressTaskbar": "一律隱藏系統工作列",
     "settings.dock.suppressTaskbar.description": "僅隱藏 Dock 所在螢幕的工作列；系統面板開啟時暫時顯示。Dock 保留 Windows 按鈕。",
     "settings.dock.suppressTaskbar.failed": "無法隱藏工作列。請關閉此開關恢復工作列，然後重試。",
-    "settings.taskbar.classic.description": "Windows 10 的圖示、文字配色及模糊強度由系統控制。"
+    "settings.taskbar.classic.description": "Windows 10 與系統面板共用此佈景主題，兩處設定同步。模糊強度由系統控制。"
 }
