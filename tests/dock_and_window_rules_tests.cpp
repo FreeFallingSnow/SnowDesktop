@@ -1690,6 +1690,7 @@ int main(int argc, char** argv)
         "Dock-exclusive widgets must not be displaced back onto the desktop");
 
     TestGridDragGeometry();
+    TestWidgetDragAnchorAcrossGrids();
 
     GridPage dockWidgetTargetPage;
     dockWidgetTargetPage.id = L"dock-widget-target";

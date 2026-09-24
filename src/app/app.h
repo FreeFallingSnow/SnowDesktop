@@ -3961,6 +3961,7 @@ private:
     int detailColumnResizeHeaderWidth_ = 1;
     GridCell widgetDragOriginalCell_{};
     GridSpan widgetDragOriginalSpan_{};
+    GridDragAnchor widgetDragAnchor_{};
     GridCell widgetPreviewCell_{};
     GridSpan widgetPreviewSpan_{};
     snowdesktop::widget_composition_layer_rules::WidgetDragFeedbackState

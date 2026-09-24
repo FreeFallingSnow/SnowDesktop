@@ -11,7 +11,7 @@
 - 拖动整块组件期间不删除临时引导组件，以免重排组件数组后使拖拽索引指向其他对象。
 - 修改宿主内部几何与交互，不涉及公共组件 API、清单、权限或持久化格式。
 
-调用链：图标提示、预览和提交均经 `ResolveDesktopRequestCell`；整块组件预览和松手采样均经 `CellFromDragOrigin`。两者复用 `ResolveGridDragCell`。列表、Dock、外部来源及组标签的指针落位规则保留。
+首两轮候选的调用链：图标提示、预览和提交均经 `ResolveDesktopRequestCell`；整块组件预览和松手采样均经 `CellFromDragOrigin`。两者复用 `ResolveGridDragCell`。列表、Dock、外部来源及组标签的指针落位规则保留。后续组件跨屏比例调整见文末。
 
 ## 自动验证
 
@@ -48,3 +48,21 @@
 ## 组件跨屏比例抓取的后续尝试
 
 用户在 `9cd36209` 后反馈同屏“好像没啥问题”，但不同屏幕间仍有偏移。这是部分场景的初步反馈，不视为上述完整矩阵已经通过。
+
+- 旧路径一直使用源屏像素抓取偏移，而组件预览会随目标屏网格改变宽高。现有 CU 是横纵网格比例取较小值的单一缩放，不能表达横纵比例各不相同的目标网格。
+- 左键移动手柄的两个入口及中键移动入口现在都通过 `CaptureGridDragAnchor`，在按下时从原始组件矩形记录横纵抓取比例。手柄在矩形外时保留有符号比例；翻页后不再读取可能已隐藏或重排的源组件矩形。
+- `ResolveGridSpanDragCell` 按鼠标选择目标页，分别用目标网格的实际跨度宽高恢复抓取点，再选择距离该抓取点最近的可放置行列。尺寸计算包含间距和网格取整，与 `GetGridRect` 一致；边缘保持完整跨度，超过整页时沿用页面裁剪规则。
+- 组件移动预览和松手时的最后一次 `OnMouseMoveAt` 采样共用这个函数，提交沿用同一个 `widgetPreviewCell_`。本轮不改变图标的像素虚影策略、Dock/分组/合并路由、持久化格式或公共组件 API。
+- 影响映射：`app.h` 中的私有组件状态、两个按下处理文件、共享网格几何头及其现有 `dock_and_window_rules` 测试目标；原有图标选页和吸附函数只抽出共用选页步骤，计算规则保持。由于共享几何和应用状态参与多个模块，本候选重新运行全量测试，不把前轮全量当成本轮结果。
+- 新回归直接调用生产捕获/落位函数，以独立的源矩形与目标落点覆盖大屏到小屏、小屏到负坐标大屏、非等比网格、隐藏源页后换网格、往返、矩形外手柄及边界约束。它们只证明几何规则，不代表宿主实际交互已经执行。
+- 隔离副本恢复固定像素偏移后，7 项行为断言失败；错误裁剪手柄抓取比例后，1 项失败；同一输入的候选基线退出码 0。全部以 MSVC `/W4 /WX` 编译通过，日志 `.codex-probes/widget-drag-anchor/controls.log`。
+
+本轮验证绑定 `d40f35ac` 后本节所属 `try` 提交的原生源码、测试及共享几何头；工具链、SDK 和 Release/tests 预设沿用上文记录，没有修改构建开关或运行时资源。用户原有审计文档和附件修改不纳入本次提交。
+
+- `scripts/test.bat name "^(dock_and_window_rules|slot_runtime_contract|desktop_drop_cache|widget_interaction_rules)$"`：本次 4/4 通过，退出码 0；配置 2.04 秒、编译 17.00 秒、CTest 2.31 秒。日志 `.codex-probes/widget-drag-anchor/targeted.log`，JUnit `.build/Testing/test-run-9f526eb5ca6343ce87768d1747226d18.xml`。
+- `scripts/test.bat full`：本次 120/120 通过，退出码 0；配置 1.67 秒、编译 24.05 秒、CTest 130.55 秒、入口总计 157.32 秒。日志 `.codex-probes/widget-drag-anchor/full.log`，JUnit `.build/Testing/test-run-f31fdfb56c974ae2b0813c6b702dcb8e.xml`。默认排除的 `manual` 诊断未运行。
+- `scripts/build.bat --reload-shell`：本次标准 Release 构建通过，退出码 0，484.86 秒；日志 `.codex-probes/widget-drag-anchor/build.log`。执行前已告知并关闭 SnowDesktop、重启 Explorer。脚本内 `timeout` 在重定向输入下提示不能等待，后续配置、编译和产物整理正常完成。
+- 全量后执行 `scripts/build.bat` 完成最终 Release 构建和产物整理，退出码 0，33.50 秒；日志 `.codex-probes/widget-drag-anchor/build-final.log`。预检无占用，最终构建与上述测试的原生源码和测试输入一致。
+- 已检查两次标准构建、定向/全量测试构建及隔离对照的完整编译日志，未发现编译或链接警告。最终 `.build/Release/SnowDesktop.exe` 为 17,092,096 字节，SHA-256 `5c4de9563fa2372e87c4e343cf8b789a9b6080b90b23a1b3e3a55b6c2420357e`。
+
+原始跨屏交互仍待用户使用本轮产物实测，重点核对两屏双向移动、靠近边缘及跨屏后翻回；网格吸附和页面边缘约束造成的离散位移仍属预期规则。未启动宿主做桌面交互自动化，不把自动测试通过记为原问题已经修复。

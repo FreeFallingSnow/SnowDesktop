@@ -109,8 +109,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     widgetDragOriginalSpan_ = widgets_[widgetIndex].gridSpan;
     widgetPreviewCell_ = widgetDragOriginalCell_;
     widgetPreviewSpan_ = widgetDragOriginalSpan_;
-    dragGroupOriginX_ = widgets_[widgetIndex].bounds.left;
-    dragGroupOriginY_ = widgets_[widgetIndex].bounds.top;
+    widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[widgetIndex].bounds, pt);
     SetCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -840,20 +839,11 @@ void DesktopApp::OnMouseMoveAt(
 
         UpdateWidgetDragPageNavigation(current);
 
-        POINT adjusted = {
-            dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
-            dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
-        };
-        GridCell cell = CellFromDragOrigin(adjusted, current);
+        // Preview and button-up sampling share this target-sized grab anchor.
+        GridCell cell = ResolveGridSpanDragCell(gridPages_, current,
+            widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
         if (!cell.pageId.empty())
         {
-            const GridPage* page = FindGridPage(gridPages_, cell.pageId);
-            if (page)
-            {
-                cell = ClampGridCellToFitPage(
-                    *page, cell,
-                    widgetDragOriginalSpan_);
-            }
             widgetPreviewCell_ = cell;
         }
         ShowDragHintWindow(current, pairHint.empty()

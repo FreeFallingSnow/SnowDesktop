@@ -775,9 +775,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
             widgetPreviewCell_ = widgetDragOriginalCell_;
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
-            RECT bounds = widgets_[wi].bounds;
-            dragGroupOriginX_ = bounds.left;
-            dragGroupOriginY_ = bounds.top;
+            widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
@@ -895,9 +893,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
             widgetPreviewCell_ = widgetDragOriginalCell_;
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
-            RECT bounds = widgets_[wi].bounds;
-            dragGroupOriginX_ = bounds.left;
-            dragGroupOriginY_ = bounds.top;
+            widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
