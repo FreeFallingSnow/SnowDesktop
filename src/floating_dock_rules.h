@@ -47,6 +47,28 @@ inline bool HasAnySummonTrigger(
     return hotkeyEnabled || edgeSwipeEnabled;
 }
 
+struct FloatingDockInputPolicy
+{
+    bool closeFloatingDocks;
+    bool registerHotkey;
+    bool monitorPointer;
+    bool monitorEdgeSwipe;
+};
+
+inline FloatingDockInputPolicy ResolveFloatingDockInputPolicy(
+    bool dockEnabled, bool hotkeyEnabled, bool effectiveEdgeSwipeEnabled)
+{
+    // Menus, folder popups and window previews can promote an ordinary Dock
+    // with both summon triggers disabled. Their outside-click dismissal uses
+    // the same pointer timer and must outlive the optional summon triggers.
+    return {
+        !dockEnabled || !HasAnySummonTrigger(hotkeyEnabled, effectiveEdgeSwipeEnabled),
+        dockEnabled && hotkeyEnabled,
+        dockEnabled,
+        dockEnabled && effectiveEdgeSwipeEnabled,
+    };
+}
+
 inline bool IsDockEffectivelyPromoted(
     bool manuallyPromoted,
     bool passiveDragRevealed,

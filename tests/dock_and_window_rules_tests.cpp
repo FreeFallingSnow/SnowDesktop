@@ -1889,12 +1889,39 @@ int main(int argc, char** argv)
                 true, false, true),
         "outside presses, items and popup controls must not start marquee selection");
 
-    Check(floatingDock::HasAnySummonTrigger(true, false),
-        "the floating Dock hotkey must work without edge swipe");
-    Check(floatingDock::HasAnySummonTrigger(false, true),
-        "the floating Dock edge swipe must work without the hotkey");
-    Check(!floatingDock::HasAnySummonTrigger(false, false),
-        "the floating Dock must stop its trigger sampler when both triggers are disabled");
+    // ApplyFloatingDockHotkey uses this policy after unregistering its old
+    // timer/hook. Associated surfaces still promote the Dock with no summon
+    // triggers, so stopping pointer sampling there strands outside-click exit.
+    // These are registration decisions, not desktop interaction acceptance.
+    struct InputPolicyCase
+    {
+        bool dockEnabled;
+        bool hotkeyEnabled;
+        bool edgeSwipeEnabled;
+        floatingDock::FloatingDockInputPolicy expected;
+    };
+    const InputPolicyCase inputPolicyCases[] = {
+        {true,  false, false, {true,  false, true,  false}},
+        {true,  true,  false, {false, true,  true,  false}},
+        {true,  false, true,  {false, false, true,  true }},
+        {true,  true,  true,  {false, true,  true,  true }},
+        {false, false, false, {true,  false, false, false}},
+        {false, true,  false, {true,  false, false, false}},
+        {false, false, true,  {true,  false, false, false}},
+        {false, true,  true,  {true,  false, false, false}},
+    };
+    for (const auto& test : inputPolicyCases)
+    {
+        const auto actual = floatingDock::ResolveFloatingDockInputPolicy(
+            test.dockEnabled, test.hotkeyEnabled, test.edgeSwipeEnabled);
+        Check(actual.monitorPointer == test.expected.monitorPointer,
+            "an enabled Dock must retain outside-click sampling even with both summon triggers disabled");
+        Check(actual.closeFloatingDocks == test.expected.closeFloatingDocks,
+            "disabling all summon triggers must still close an existing floating session");
+        Check(actual.registerHotkey == test.expected.registerHotkey &&
+                actual.monitorEdgeSwipe == test.expected.monitorEdgeSwipe,
+            "retaining dismissal must not enable a disabled summon hotkey or edge hook");
+    }
     Check(floatingDock::ShouldUseFloatingDockLogicalForeground(
             true, true, false, true) &&
             floatingDock::ShouldUseFloatingDockLogicalForeground(
