@@ -681,6 +681,39 @@ void TestDesktopPlacementPolicyMatchesSourceSemantics()
         "ordinary desktop drags must preserve their group-origin grab offset");
 }
 
+void TestPrimaryGhostSurvivesLabelDragAndPageTurn()
+{
+    ContractItem first({0, 0, 100, 120});
+    ContractItem pressed({100, 0, 200, 120});
+    DragSession session;
+    // The press is on the second icon's label, outside its 40x40 image.
+    session.Begin(nullptr, {&first, &pressed}, {}, {150, 100}, {220, 210});
+    session.SetVisualItemBounds({{30, 10, 70, 50}, {130, 10, 170, 50}}, 1);
+    const auto ghost = session.ResolveDraggedBounds(1, pressed.GetBounds(), {220, 210});
+    Check(ghost.left == 200 && ghost.top == 120 && ghost.right == 240 && ghost.bottom == 160 &&
+            session.IsPrimaryVisualItem(1, ghost, {220, 210}) &&
+            !session.IsPrimaryVisualItem(0, {200, 190, 240, 230}, {220, 210}),
+        "a multi-selection label drag must keep the pressed icon as its primary ghost even outside the image");
+
+    session.DetachRuntimeBindings();
+    ContractItem reboundFirst({});
+    ContractItem reboundPressed({});
+    session.RebindSource(nullptr, {&reboundFirst, &reboundPressed}, {});
+    Check(session.IsPrimaryVisualItem(1, ghost, {220, 210}) &&
+            !session.IsPrimaryVisualItem(0, {200, 190, 240, 230}, {220, 210}),
+        "page replacement must retain primary ghost identity after the source wrappers are rebuilt");
+
+    session.AnchorToPointer({150, 30});
+    Check(session.IsPointerAnchored(),
+        "pointer-anchored list and fan drags must select cells by pointer rather than snapping a group origin");
+    session.End();
+    session.Begin(nullptr, {&first, &pressed}, {}, {20, 20}, {20, 20});
+    Check(!session.IsPointerAnchored() &&
+            session.IsPrimaryVisualItem(0, {0, 0, 100, 120}, {20, 20}) &&
+            !session.IsPrimaryVisualItem(1, {100, 0, 200, 120}, {20, 20}),
+        "a new session must not inherit the previous primary icon or pointer placement mode");
+}
+
 void TestEverySurfaceRetainsStableDragMetadata()
 {
     using Surface =
@@ -3054,6 +3087,7 @@ int wmain(int argc, wchar_t** argv)
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
+    TestPrimaryGhostSurvivesLabelDragAndPageTurn();
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDesktopFilesDockPayload();
     TestDragTargetResolutionUsesContractAndZOrder();

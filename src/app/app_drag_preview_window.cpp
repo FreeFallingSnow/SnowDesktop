@@ -317,7 +317,7 @@ void DesktopApp::SyncDragPreviewWindow()
             firstValidBounds = draggedBounds;
         }
         if (primaryItemIndex == dragItems.size() &&
-            PtInRect(&draggedBounds, current))
+            dragSession_.IsPrimaryVisualItem(itemIndex, draggedBounds, current))
         {
             primaryItemIndex = itemIndex;
             primaryBounds = draggedBounds;

@@ -569,6 +569,8 @@ void DesktopApp::OnMouseMoveAt(
                 if (fanDrag && IsRectEmptyRect(bounds)) bounds = fanPressedIcon;
                 visualItemBounds.push_back(bounds);
             }
+            const size_t primaryVisualIndex = static_cast<size_t>(std::distance(
+                sourceItems.begin(), std::find(sourceItems.begin(), sourceItems.end(), mouseDownHit_)));
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
@@ -580,7 +582,7 @@ void DesktopApp::OnMouseMoveAt(
                     nullptr);
             }
             dragSession_.SetVisualItemBounds(
-                std::move(visualItemBounds));
+                std::move(visualItemBounds), primaryVisualIndex);
             auto* listSource =
                 dynamic_cast<ListContainer*>(source);
             const bool listIconDrag =
