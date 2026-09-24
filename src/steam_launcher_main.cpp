@@ -330,6 +330,10 @@ int RunLauncher(bool& maintenance)
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
+    // Loader/critical-error dialogs can block CreateProcess itself, before
+    // our exit monitoring starts. Report those failures through our log/UI.
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS |
+        SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     bool maintenance = false;
     try
     {
