@@ -199,3 +199,72 @@ SteamCMD 的 `app_info_print` 只返回公开分支，并未提供私有分支 B
 结论：包含初始 Win10 后端 `06434d9d` 的候选未通过 Win10 背景颜色验收。
 现有隔离测试只验证 DirectComposition 调用成功及控制器生命周期，没有验证最终可见像素，
 不能代替 Win10 Explorer 的视觉验收。当前怀疑原生任务栏与附加合成图层的兼容性，根因待查。
+
+## 2026-09-24：原生着色、独立背景与共享主题候选
+
+用户进一步确认纯色和渐变都无效，要求参照 TranslucentTB，并把 Win10 浅深色控制恢复到原提示位置，
+与底部“开始菜单与系统面板”的设置双向同步。
+
+### 实现与参考
+
+- `a3b921ff`：参照 [TranslucentTB 的经典任务栏实现](https://github.com/TranslucentTB/TranslucentTB/blob/322e2b7395a51975150126276308b415970e080b/TranslucentTB/taskbar/taskbarattributeworker.cpp)，
+  将纯色的非预乘 ABGR 和透明度传给 `ACCENT_POLICY`，亚克力失败回退毛玻璃时保留颜色。
+  Win11 的 XAML 后端与这条 Win10 路径独立。
+- `5585ffda`：额外绘制改为任务栏下方的独立窗口，原生任务栏保持透明、图标仍位于其上方。
+  参考了 [RainbowTaskbar 的背景窗口放置方式](https://github.com/ad2017gd/RainbowTaskbar/blob/5ee0f34e91e401f4f0c806d5fc4994b5feb9887a/RainbowTaskbar/Helpers/Taskbar.cs)，
+  未复制其实现。背景窗口不激活、穿透鼠标，随任务栏移动、隐藏、抑制和销毁；绘制范围裁切到显示器。
+  这样不再占用 Explorer 的 DirectComposition 目标，也不把颜色画到任务栏图标之上。
+- `ca1469eb` 保留失败证据：独立窗口的渐变像素正确，但原生纯色着色没有显示指定红色。
+  `fd1cdbb6` 随后在独立画布中统一绘制颜色、渐变和边框，原生材质只负责模糊；
+  无渐变和边框的纯色样式仍可直接使用任务栏原生着色，不重复叠加透明度。
+- 设置页现状审查确认：底部选项已通过同一个控制器写入 `SystemUsesLightTheme`，原来的 Win10
+  图标与文字选项却被隐藏。因此复用原行显示浅色/深色并复用该控制器；两处选择立即同步，周期刷新
+  读取同一份请求/系统状态。该行说明它与系统面板共用主题，十种语言同步更新。场景规则不单独切换
+  Windows 全局主题，Win11 的独立图标配色逻辑保持原有路径。
+
+### 实际验证边界
+
+本轮标准构建均生成 Release 宿主，未出现编译或链接警告。最后一次运行时输入的构建是
+`scripts/build.bat`（`solid-canvas-build.log`）；此前为更新占用的 Hook，按规则运行过
+`scripts/build.bat --reload-shell`。一次普通构建被应用运行预检阻止，退出码 3，未计为编译失败或通过。
+
+隔离 Win11 测试使用自建的透明窗口及绿色前景标记，直接调用生产 `ClassicSurface`：
+
+- 最终纯色像素为左右均 `COLORREF 0x0000ff`（红色）；渐变左右为 `0x0c00f3`、`0xf3000c`。
+- 两种情况下前景均为 `0x00ff00`（绿色），隐藏与销毁检查通过。
+- 在生产源码隔离副本恢复旧的透明颜色策略，原生颜色测试出现 6 个预期失败；把绘制重新绑定到
+  任务栏自身目标，独立背景测试出现 3 个预期失败。负向对照没有覆盖用户工作区源码。
+
+两次全量曾各有 119/120 通过，唯一失败是组件预览夹具调用 `SetCursorPos`，尚未到产品行为断言。
+`8a49ddff` 将测试窗口移到虚拟桌面之外，保留真实“指针在预览外”的条件，取消移动用户鼠标的依赖，
+未修改组件预览生产代码。定向 `component_preview` 1/1 通过；在隔离源码删除待替换预览的关闭保护后，
+同一个测试准确失败于 `a stale close timer keeps the old frame while a sibling is pending`。
+因此不是忽略失败、无条件重试或放宽原问题断言。后续全量结果单独登记。
+
+这些证据验证了颜色输出、前后层级、生命周期及测试失效信号，**仍不能替代 Win10 Explorer 验收**。
+需要用户测试：纯色及透明度、渐变、边框、毛玻璃/亚克力叠加、图标可见与可点击、任务栏自动隐藏、
+Dock 抑制与系统面板临时显示、多屏移动以及上下两处主题选项同步。更新 Hook 后应重启一次 Explorer，
+避免驻留的旧 DLL 继续参与本轮测试。
+
+证据目录：`artifacts/v1.0.7.0/taskbar-win10-color-20260924/`。`inputs.json` 绑定源码、测试、资源、
+工具链及候选提交；构建、测试、像素探针、负向对照、打包和上传各保留独立日志。
+当前运行包身份 `1.0.7.0-0632740838f492d0`；404 个运行载荷文件已逐项核对大小和 SHA-256，
+加启动器及清单共 406 个文件。宿主和 Hook 与实际构建输出哈希一致。
+
+### 最终交付记录
+
+- `scripts/build.bat`：20:51:54–20:52:32，退出 0；随后仅调整预览测试源码和文档，宿主输入未变，
+  复用该有效标准构建。宿主 SHA-256 `ACC6AFC8BC58B822CA9F261E2CD08C756E13BC9499E0E27E096478B3FDA2C895`，
+  Hook SHA-256 `DFE7D2DE1617433EDC94B673D937E838034DEFAA18EBECFD31CE75AA3DD3B02A`。
+- `scripts/test.bat full`：21:00:19–21:02:48，本次 **120/120 通过**，脚本退出 0，CTest 132.34 秒；
+  无编译或链接警告。测试报告 `test-run-da03243b100449018bd525fdeaa4add3.xml`，绑定 `8a49ddff`。
+- `scripts/package_steam.ps1 -SkipBuild`：退出 0；便携 Steam ZIP SHA-256
+  `A7E339D6D91ED567AE83AF8884CDE1B533544218ECBC8111F22FE5BFF75E6044`。
+- `scripts/steam_pipe.ps1 -Mode UploadDev -SkipPackage -Yes -ConfirmVersion 1.0.7.0 -ConfirmPrivateBranch internal-dev`：
+  21:03:55 上传成功，BuildID **25505879**；只更新私有测试分支，没有推送 Git 分支、main 或版本标签。
+- 本机 Steam 于 21:03:58 重启，21:04:25 新连接日志确认重新在线；21:04:52 安装完成。
+  客户端清单为 `internal-dev` / `25505879`，Depot manifest `679889778882297972`，406 个安装文件
+  与上传包逐项哈希一致。上传脚本中远程查询字段保留未验证状态，实际分支验收以
+  `client-verification.json` 和本次客户端下载日志为准；未在客户端恢复后再次登录 SteamCMD。
+
+交付仍是 Win10 待实机验证候选，不把隔离像素、全量测试和成功上传写成 Win10 Explorer 缺陷已经解决。
