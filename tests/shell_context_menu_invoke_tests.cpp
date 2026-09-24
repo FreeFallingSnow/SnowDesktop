@@ -15,6 +15,7 @@
 #include <mutex>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <string>
 #include <stdexcept>
@@ -993,6 +994,60 @@ void PumpUntil(Condition condition, const char *message)
     }
     Expect(condition(),message);
 }
+
+void TestCatalogueShutdown()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    std::promise<void> entered, release, shutdownEntered;
+    auto readerEntered = entered.get_future();
+    auto releaseReader = release.get_future().share();
+    auto stopping = shutdownEntered.get_future();
+    std::atomic_bool readerCompleted = false, readerTimedOut = false;
+    ext::MenuService service(directory.path / L"cache", [](const auto &) {
+        return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+    }, [&] {
+        entered.set_value();
+        readerTimedOut = releaseReader.wait_for(std::chrono::seconds(10)) !=
+            std::future_status::ready;
+        readerCompleted = true;
+        ext::Catalogue catalogue;
+        catalogue.revision = 1;
+        return catalogue;
+    });
+    // Only the registry reader is gated: scheduling and shutdown are real.
+    // A scan that survives Shutdown can access destroyed process-wide caches
+    // during a version switch and trigger the old host's crash restart.
+    service.Inspect({}, true);
+    const bool started = readerEntered.wait_for(std::chrono::seconds(10)) ==
+        std::future_status::ready;
+    if (!started)
+    {
+        release.set_value();
+        service.Shutdown();
+        Expect(false, "catalogue reader starts before the shutdown probe");
+    }
+    auto shutdown = std::async(std::launch::async, [&] {
+        shutdownEntered.set_value();
+        service.Shutdown();
+        return readerCompleted.load();
+    });
+    const bool stoppingStarted = stopping.wait_for(std::chrono::seconds(10)) ==
+        std::future_status::ready;
+    const bool returnedEarly = shutdown.wait_for(std::chrono::milliseconds(250)) ==
+        std::future_status::ready;
+    // Release the reader and join before any assertion can unwind its state.
+    release.set_value();
+    const bool stopped = shutdown.wait_for(std::chrono::seconds(10)) ==
+        std::future_status::ready;
+    const bool drained = shutdown.get();
+    service.Shutdown(); // Repeated explicit shutdown and destruction are safe.
+    Expect(stoppingStarted && stopped && !readerTimedOut,
+        "controlled shutdown completes without reader or worker timeout");
+    Expect(!returnedEarly && drained,
+        "Shutdown must drain the catalogue reader before host teardown can destroy its caches");
+}
+
 void TestSnapshotPresentation()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1880,6 +1935,7 @@ int wmain(int argc, wchar_t **argv)
         }
         else
         {
+            TestCatalogueShutdown();
             RunTests();
             TestDeferredPopups();
             TestCatalogueCache();

@@ -4,6 +4,7 @@
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
 #include "../http_runtime.h"
+#include "../shell_extension_service.h"
 
 // Desktop host lifecycle.
 
@@ -11,6 +12,9 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    // The shared service is constructed before the caches its asynchronous
+    // scans use. Stop it before CRT static destruction reverses that order.
+    snowdesktop::shell_extensions::SharedMenuService().Shutdown();
     if (largeIconAssets_) largeIconAssets_->Stop();
     uiAnimationScheduler_.CancelAll();
     dockWindowActivationObservationToken_ = 0;

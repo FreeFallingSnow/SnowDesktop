@@ -165,6 +165,9 @@ struct MenuService::Impl
         { std::lock_guard lock(mutex); stop = true; }
         SetEvent(wake);
         if (worker.joinable()) worker.join();
+        // The registry scan runs separately from the scheduler. Drain it before
+        // returning to host teardown, while its static metadata caches exist.
+        if (scan.valid()) scan.wait();
     }
     bool Enabled(const Request &request, unsigned contexts = 0) const
     {
