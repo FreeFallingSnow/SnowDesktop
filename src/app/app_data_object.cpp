@@ -22,7 +22,7 @@ GridCell DesktopApp::ResolveDesktopRequestCell(
 {
     if (sourceList.UsesPointerDesktopPlacement())
         return CellFromPoint(current);
-    return CellFromPointForDrag(GetDragTargetPoint(current));
+    return CellFromDragOrigin(GetDragTargetPoint(current), current);
 }
 
 void DesktopApp::RefreshDragPresentationAnchor()

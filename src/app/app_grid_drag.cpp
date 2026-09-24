@@ -359,6 +359,11 @@ GridCell DesktopApp::CellFromPointForDrag(POINT point) const
     return cell;
 }
 
+GridCell DesktopApp::CellFromDragOrigin(POINT origin, POINT pointer) const
+{
+    return ResolveGridDragCell(gridPages_, pointer, origin, GetFirstPageGridPage());
+}
+
 /**
  * @brief 检查网格区域是否被未选中的项目或组件占据。
  * @param cell 起始单元格。
@@ -560,74 +565,3 @@ void DesktopApp::UpdateDragGroupOrigin()
     dragGroupOriginX_ = groupRect.left;
     dragGroupOriginY_ = groupRect.top;
 }
-
-/**
- * @brief 将选中的项目迁移到最后一个监视器页面。
- */
-void DesktopApp::MigrateSelectedItemsToLastMonitorPage()
-{
-    // Page turning during a large-icon drag is a preview only. Retain the
-    // entire group's source cells/spans until its accepted drop commits them;
-    // this also makes cancellation leave the original layout intact.
-    if (std::any_of(items_.begin(), items_.end(), [](const auto& item) { return item.selected && item.largeIcon; })) return;
-    if (gridPages_.empty() || lastMonitorPageId_.empty()) return;
-    const GridPage* targetPage = FindGridPage(gridPages_, lastMonitorPageId_);
-    if (!targetPage) return;
-
-    std::unordered_set<std::wstring> usedSlots;
-    for (const auto& item : items_)
-    {
-        if (item.selected) continue;
-        if (item.name.empty()) continue;
-        if (item.gridCell.pageId == lastMonitorPageId_)
-            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-    }
-    for (const auto& w : widgets_)
-        if (!IsGroupedWidget(w))
-            MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
-
-    for (auto& item : items_)
-    {
-        if (!item.selected) continue;
-        if (item.gridCell.pageId == lastMonitorPageId_) continue;
-
-        GridCell newCell;
-        newCell.pageId = lastMonitorPageId_;
-        newCell.column = std::min(item.gridCell.column, std::max(0, targetPage->columns - 1));
-        newCell.row = std::min(item.gridCell.row, std::max(0, targetPage->rows - 1));
-
-        GridSpan span = item.gridSpan;
-        span.columns = std::clamp(span.columns, 1, std::max(1, targetPage->columns));
-        span.rows = std::clamp(span.rows, 1, std::max(1, targetPage->rows));
-
-        if (!AreGridSlotsMarked(usedSlots, newCell, span))
-        {
-            MarkGridArea(usedSlots, newCell, span);
-            item.gridCell = newCell;
-            item.gridSpan = span;
-            continue;
-        }
-
-        bool found = false;
-        for (int r = 0; r < targetPage->rows && !found; ++r)
-        {
-            for (int c = 0; c < targetPage->columns && !found; ++c)
-            {
-                GridCell tryCell{ lastMonitorPageId_, c, r };
-                if (!AreGridSlotsMarked(usedSlots, tryCell, span))
-                {
-                    MarkGridArea(usedSlots, tryCell, span);
-                    item.gridCell = tryCell;
-                    item.gridSpan = span;
-                    found = true;
-                }
-            }
-        }
-    }
-}
-
-/**
- * @brief 获取拖拽目标点的屏幕坐标。
- * @param current 当前鼠标位置。
- * @return 拖拽目标点。
- */

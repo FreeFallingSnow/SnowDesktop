@@ -188,22 +188,12 @@ void DesktopApp::UpdateWidgetDragPageNavigation(POINT clientPoint)
     if (newOffset == pageOffset_)
         return;
 
-    const RECT oldWidgetBounds =
-        widgets_[mouseDownWidgetIndex_].bounds;
     pageOffset_ = newOffset;
     ApplyPageMapping();
     LayoutItems();
     RefreshPageNavHotEdgeHoverAt(clientPoint);
-    const RECT newWidgetBounds =
-        widgets_[mouseDownWidgetIndex_].bounds;
-    const int dx =
-        newWidgetBounds.left - oldWidgetBounds.left;
-    const int dy =
-        newWidgetBounds.top - oldWidgetBounds.top;
-    dragGroupOriginX_ += dx;
-    dragGroupOriginY_ += dy;
-    mouseDownPoint_.x += dx;
-    mouseDownPoint_.y += dy;
+    // The source page may now be hidden. Keep the original grab offset;
+    // empty/rebuilt model bounds are not a new pointer coordinate system.
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
     PresentDesktopPointerUpdate();
@@ -557,15 +547,26 @@ void DesktopApp::OnMouseMoveAt(
             std::vector<RECT> visualItemBounds;
             visualItemBounds.reserve(sourceItems.size());
             const RECT fanPressedIcon = GetCollectionPopupFanDragBounds(mouseDownHit_);
-            dragFanIconsOnly_ = !IsRectEmptyRect(fanPressedIcon);
+            const bool fanDrag = !IsRectEmptyRect(fanPressedIcon);
+            // Desktop icon drawing normally resolves its in-cell icon geometry
+            // from the page currently beneath it. Retain the actual icon square
+            // so paging to another grid cannot move the image inside its ghost.
+            dragIconsOnly_ = fanDrag || (source == GetDesktopGrid() &&
+                std::all_of(sourceItems.begin(), sourceItems.end(), [](Item* item) {
+                    const auto* icon = dynamic_cast<const DesktopIcon*>(item);
+                    const auto* data = icon ? icon->GetDesktopItem() : nullptr;
+                    return data && !data->largeIcon;
+                }));
             for (Item* item : sourceItems)
             {
-                RECT bounds = dragFanIconsOnly_ ? GetCollectionPopupFanDragBounds(item) :
+                RECT bounds = fanDrag ? GetCollectionPopupFanDragBounds(item) :
                     (item ? item->GetBounds() : RECT{});
+                if (dragIconsOnly_ && !fanDrag && !IsRectEmptyRect(bounds))
+                    bounds = GetItemIconRect(bounds);
                 // Previously selected offscreen members still belong to the
                 // payload; compact them at the grabbed icon instead of using
                 // an unrelated desktop cell as a visual fallback.
-                if (dragFanIconsOnly_ && IsRectEmptyRect(bounds)) bounds = fanPressedIcon;
+                if (fanDrag && IsRectEmptyRect(bounds)) bounds = fanPressedIcon;
                 visualItemBounds.push_back(bounds);
             }
             PrepareDockBackdropForDragTransition();
@@ -586,7 +587,7 @@ void DesktopApp::OnMouseMoveAt(
                 listSource && listSource->SingleColumn() &&
                 (dynamic_cast<DesktopIcon*>(mouseDownHit_) ||
                  dynamic_cast<FolderEntryIcon*>(mouseDownHit_));
-            if (dragFanIconsOnly_)
+            if (fanDrag)
             {
                 // The fan label and its rotated AABB are not an icon grid cell.
                 // Keep the icon-sized snapshot and desktop landing at the pointer.
@@ -841,7 +842,7 @@ void DesktopApp::OnMouseMoveAt(
             dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
             dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
         };
-        GridCell cell = CellFromPointForDrag(adjusted);
+        GridCell cell = CellFromDragOrigin(adjusted, current);
         if (!cell.pageId.empty())
         {
             const GridPage* page = FindGridPage(gridPages_, cell.pageId);

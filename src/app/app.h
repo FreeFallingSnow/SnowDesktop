@@ -2250,6 +2250,8 @@ private:
      * @return 网格单元格
      */
     GridCell CellFromPointForDrag(POINT point) const;
+    /** @brief 在鼠标所在页，将拖拽原点吸附到最近的网格原点。 */
+    GridCell CellFromDragOrigin(POINT origin, POINT pointer) const;
     /**
      * @brief 根据坐标和轴向获取网格轴索引。
      * @param page 网格页面
@@ -2293,8 +2295,6 @@ private:
     void MoveSelectedItemsToCell(GridCell targetCell);
     /** @brief 更新拖拽组的原点位置。 */
     void UpdateDragGroupOrigin();
-    /** @brief 将选中项迁移到最后一个监视器的页面。 */
-    void MigrateSelectedItemsToLastMonitorPage();
     /**
      * @brief 获取拖拽的目标点（考虑吸附效果）。
      * @param current 当前鼠标坐标
@@ -3916,7 +3916,7 @@ private:
     /** @name 拖拽状态 */
     /** @{ */
     DragSession dragSession_;
-    bool dragFanIconsOnly_ = false;
+    bool dragIconsOnly_ = false;
     DragDropController dragDropController_{dragSession_};
     DragRenderCache dragRenderCache_;
     mutable snowdesktop::desktop_drop_cache::

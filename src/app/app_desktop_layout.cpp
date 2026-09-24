@@ -10,7 +10,7 @@ void DesktopApp::LayoutItems()
     // Guide is a temporary empty-page placeholder. Do not mutate the model
     // during a live drag preview; the committed layout pass removes it once
     // another visible item or standalone widget actually occupies the page.
-    if (!dragSession_.IsActive())
+    if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None)
         RemoveRedundantGuideWidgets();
 
     for (auto& item : items_)

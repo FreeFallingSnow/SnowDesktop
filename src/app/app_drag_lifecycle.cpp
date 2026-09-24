@@ -431,7 +431,7 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
-    dragFanIconsOnly_ = false;
+    dragIconsOnly_ = false;
     ClearPopupDragTarget();
     presentedDragFeedbackRevision_ = 0;
     presentedDragNavHoverSide_ = 0;

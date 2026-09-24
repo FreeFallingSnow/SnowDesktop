@@ -951,7 +951,6 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
     struct PageTurnCase
     {
         const char* name;
-        POINT nextGroupOrigin;
         RECT reboundBounds;
         bool sourcePageHidden;
     };
@@ -962,13 +961,11 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
     constexpr std::array pageTurns{
         PageTurnCase{
             "same-display page replacement",
-            originalGroupOrigin,
             RECT{},
             true,
         },
         PageTurnCase{
-            "cross-display migration with page replacement",
-            POINT{1960, 150},
+            "cross-display source rebuild with page replacement",
             RECT{1970, 160, 2060, 250},
             false,
         },
@@ -1039,9 +1036,8 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
                 staleTarget.GetSlots().front().get(),
                 HitRegion::Empty);
 
-            // ApplyPageMapping + LayoutItems destroys the runtime tree before
-            // a cross-display origin adjustment is known. Mirror that order:
-            // detach, rebuild the source, then compensate the group origin.
+            // Page turns rebuild runtime wrappers, but the drag-start origin
+            // and pointer remain immutable through both preview and release.
             session.DetachRuntimeBindings();
             originalItem.reset();
             original.reset();
@@ -1090,9 +1086,6 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
             session.RebindSource(
                 &rebuilt, std::move(reboundItems),
                 std::move(reboundList));
-            session.AdjustForGroupOriginChange(
-                originalGroupOrigin,
-                pageTurn.nextGroupOrigin);
 
             const RECT actualBounds =
                 reboundItem.GetBounds();
@@ -1117,7 +1110,7 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
 
             const POINT targetAfterTurn =
                 session.ResolveTargetPoint(
-                    pageTurn.nextGroupOrigin,
+                    originalGroupOrigin,
                     pointerCurrent);
             Check(targetAfterTurn.x == targetBeforeTurn.x &&
                     targetAfterTurn.y == targetBeforeTurn.y,
@@ -1152,7 +1145,7 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
             session.DeactivateForDrop();
             const POINT commitPoint =
                 session.ResolveTargetPoint(
-                    pageTurn.nextGroupOrigin,
+                    originalGroupOrigin,
                     pointerCurrent);
             Check(!session.IsActive() &&
                     session.HasContext() &&

@@ -44,39 +44,11 @@ bool DesktopApp::HandlePageNavClick(POINT point)
     int newOffset = NextNonEmptyOffset(pageOffset_, delta);
     if (newOffset == pageOffset_) return false;
 
-    bool wasDragging = dragSession_.IsActive();
-    if (!wasDragging)
-    {
-        NavigatePageOffset(delta);
-        return true;
-    }
-
-    const POINT oldGroupOrigin{
-        dragGroupOriginX_, dragGroupOriginY_ };
-    pageOffset_ = newOffset;
-    ApplyPageMapping();
-    if (wasDragging) MigrateSelectedItemsToLastMonitorPage();
-    LayoutItems();
+    NavigatePageOffset(delta);
     RefreshPageNavHotEdgeHoverAt(point);
-    if (wasDragging && !dragSession_.IsActive())
-    {
-        mouseDownHit_ = nullptr;
-        mouseDown_ = false;
-    }
-    wasDragging = wasDragging && dragSession_.IsActive();
-    if (wasDragging) InvalidateDragStaticScene();
-    if (wasDragging)
-    {
-        UpdateDragGroupOrigin();
-        dragSession_.AdjustForGroupOriginChange(
-            oldGroupOrigin,
-            { dragGroupOriginX_, dragGroupOriginY_ });
-    }
-    // 页面迁移后预览缓存失效
+    // Page navigation never commits a dragged source's placement.
     cachedDropPreview_ = {};
     cachedDropPreviewPoint_ = { -1, -1 };
-    SaveLayoutSlots();
-    InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
 }
 

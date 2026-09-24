@@ -93,8 +93,6 @@ bool DesktopApp::TryHandlePageNavigationKey(
     if (!repeated)
     {
         const int oldOffset = pageOffset_;
-        const RECT oldWidgetBounds = movingWidget
-            ? widgets_[mouseDownWidgetIndex_].bounds : RECT{};
         NavigatePageOffset(matchesPrevious ? -1 : 1);
         if (pageOffset_ != oldOffset &&
             navigationAction == KeyboardNavigationAction::NavigateDuringDrag)
@@ -118,13 +116,6 @@ bool DesktopApp::TryHandlePageNavigationKey(
             }
             else if (movingWidget && mouseDownWidgetIndex_ < widgets_.size())
             {
-                const RECT bounds = widgets_[mouseDownWidgetIndex_].bounds;
-                const int dx = bounds.left - oldWidgetBounds.left;
-                const int dy = bounds.top - oldWidgetBounds.top;
-                dragGroupOriginX_ += dx;
-                dragGroupOriginY_ += dy;
-                mouseDownPoint_.x += dx;
-                mouseDownPoint_.y += dy;
                 OnMouseMoveAt(0, lastMousePoint_);
             }
             PresentPointerInteractionFrame();

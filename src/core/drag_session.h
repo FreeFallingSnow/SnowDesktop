@@ -229,34 +229,10 @@ public:
     }
 
     /**
-     * @brief 平移鼠标按下基准点（用于跨页迁移后保持视觉连续性）。
-     * @param delta 基准点平移量。
-     */
-    void AdjustMouseDownPoint(POINT delta)
-    {
-        mouseDownPoint_.x += delta.x;
-        mouseDownPoint_.y += delta.y;
-    }
-
-    /**
-     * @brief 拖拽组因跨屏翻页迁移时，按组原点的实际变化重设按下基准点。
-     *
-     * 命中坐标以拖拽组原点为锚点，因此这里不能使用任意单个项目的 bounds
-     * 变化量。不同监视器的网格尺寸或单元格内边距不同时，两者并不相等。
-     */
-    void AdjustForGroupOriginChange(POINT previousOrigin, POINT nextOrigin)
-    {
-        AdjustMouseDownPoint({
-            nextOrigin.x - previousOrigin.x,
-            nextOrigin.y - previousOrigin.y
-        });
-    }
-
-    /**
      * @brief 按当前会话的按下基准点，将拖拽组原点平移到当前指针位置。
      *
-     * 跨屏翻页会通过 AdjustForGroupOriginChange 修正会话基准点；所有拖拽
-     * 可视位置与桌面网格命中都必须复用这里的同一份坐标状态。
+     * 翻页只切换视图，保留起拖时的组原点与按下点；可视位置与桌面
+     * 网格命中都复用这份坐标状态，直到松手提交。
      */
     POINT ResolveTargetPoint(POINT groupOrigin, POINT current) const
     {

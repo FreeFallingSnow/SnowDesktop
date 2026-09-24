@@ -213,7 +213,7 @@ bool DesktopApp::RenderDragPreviewCompositionFrame(
         const RECT destination = dragPreviewItemBounds_[previewIndex];
         auto* icon = dynamic_cast<DesktopIcon*>(item);
         const auto* data = icon ? icon->GetDesktopItem() : nullptr;
-        if (dragFanIconsOnly_)
+        if (dragIconsOnly_)
         {
             if (icon)
             {
@@ -337,7 +337,7 @@ void DesktopApp::SyncDragPreviewWindow()
     const auto compactLargeIcon = [&](std::size_t index, RECT bounds) {
         auto* icon = dynamic_cast<DesktopIcon*>(dragItems[index]);
         const auto* data = icon ? icon->GetDesktopItem() : nullptr;
-        if (dragFanIconsOnly_ || !data || !data->largeIcon) return bounds;
+        if (dragIconsOnly_ || !data || !data->largeIcon) return bounds;
         DesktopWidget geometry; geometry.gridCell = data->gridCell; geometry.bounds = bounds;
         const RECT sourceFrame = GetStandaloneWidgetFrameRect(geometry);
         geometry.bounds = GetGridRect(gridPages_, data->gridCell, {1, 1});

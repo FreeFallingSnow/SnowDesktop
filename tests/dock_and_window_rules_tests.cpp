@@ -92,6 +92,8 @@ void Check(bool condition, const char* message)
 
 #include "dock_refresh_cache_cases.h"
 
+#include "grid_drag_geometry_cases.h"
+
 void CheckDesktopPassthrough()
 {
     // Exercise the production visibility rule used by every DockHost refresh.
@@ -1686,6 +1688,8 @@ int main(int argc, char** argv)
         !itemLayout::ShouldRelayoutDesktopWidget(
             false, true),
         "Dock-exclusive widgets must not be displaced back onto the desktop");
+
+    TestGridDragGeometry();
 
     GridPage dockWidgetTargetPage;
     dockWidgetTargetPage.id = L"dock-widget-target";
@@ -6097,6 +6101,12 @@ int main(int argc, char** argv)
             {"src/app/app_drag_target_update.cpp", "void DesktopApp::ResolveCurrentDragTargetAt(",
              "void DesktopApp::RefreshDragTargetAt(",
              {"UpdateDragPageNavigation(", "Dwell", "ShowDragHintWindow", "Present", "DoDragDrop"}},
+            // Turning a page is a view change, not an ownership/layout commit.
+            {"src/app/app_drag_target_update.cpp", "bool DesktopApp::UpdateDragPageNavigation(",
+             "", {"MigrateSelectedItems", "MoveSelectedItems", "SaveLayoutSlots(", "UpdateDragGroupOrigin("}},
+            {"src/app/app_pointer_context.cpp", "bool DesktopApp::HandlePageNavClick(",
+             "bool DesktopApp::ShowHostInputContextMenu(",
+             {"MigrateSelectedItems", "MoveSelectedItems", "SaveLayoutSlots(", "UpdateDragGroupOrigin("}},
             {"src/app/app_ole_drop_session.cpp", "HRESULT DesktopApp::HandleOleDrop(",
              "HRESULT DesktopApp::HandleOleQueryContinueDrag(", {"dragDropController_.EndSelfDrag();"}},
         }), "Dock and drag source boundaries");

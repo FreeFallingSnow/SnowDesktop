@@ -663,19 +663,11 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
         return true;
 
     const bool hasInternalItems = !dragSession_.Items().empty();
-    const bool dockEntryDrag = dragSession_.SourceList().SourceSurfaceKind() ==
-        snowdesktop::slot_contract::SlotSurfaceKind::Dock;
-    const bool groupedEntryDrag =
-        dragSession_.SourceList().
-            hasCollectionGroupEntries ||
-        dragSession_.SourceList().
-            hasFileGroupEntries;
-    const POINT oldGroupOrigin{
-        dragGroupOriginX_, dragGroupOriginY_ };
     pageOffset_ = newOffset;
     ApplyPageMapping();
-    if (hasInternalItems && !groupedEntryDrag && !dockEntryDrag)
-        MigrateSelectedItemsToLastMonitorPage();
+    // As with keyboard paging, only change the visible page. Moving selected
+    // icons here can repack the group around occupied cells before release,
+    // while its ghost still uses the drag-start snapshot.
     LayoutItems();
     RefreshPageNavHotEdgeHoverAt(clientPoint);
     if (!dragSession_.IsActive() || (hasInternalItems && dragSession_.Items().empty()))
@@ -686,17 +678,9 @@ bool DesktopApp::UpdateDragPageNavigation(POINT clientPoint)
     }
 
     InvalidateDragStaticScene();
-    if (hasInternalItems && !groupedEntryDrag && !dockEntryDrag)
-    {
-        UpdateDragGroupOrigin();
-        dragSession_.AdjustForGroupOriginChange(
-            oldGroupOrigin,
-            { dragGroupOriginX_, dragGroupOriginY_ });
-    }
     // 页面迁移后 usedSlots 变化，预览缓存失效
     cachedDropPreview_ = {};
     cachedDropPreviewPoint_ = { -1, -1 };
-    SaveLayoutSlots();
     return true;
 }
 

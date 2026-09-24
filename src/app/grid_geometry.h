@@ -126,7 +126,7 @@ inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal)
 inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span = {})
 {
     auto* page = FindGridPage(pages, cell.pageId);
-    if (!page) return MakeRect(0, 0, 0, 0);
+    if (!page) return {};
     int col = std::clamp(cell.column, 0, std::max(0, page->columns - 1));
     int row = std::clamp(cell.row,    0, std::max(0, page->rows    - 1));
     int sc  = std::clamp(span.columns, 1, std::max(1, page->columns - col));
@@ -135,7 +135,47 @@ inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell
     int y = page->workArea.top  + page->marginY + GetGridAxisOffset(*page, row, false);
     int r = page->workArea.left + page->marginX + GetGridAxisOffset(*page, col + sc - 1, true)  + page->cellWidth;
     int b = page->workArea.top  + page->marginY + GetGridAxisOffset(*page, row + sr - 1, false) + page->cellHeight;
-    return MakeRect(x, y, r, b);
+    return {x, y, r, b};
+}
+
+// A drag origin can still be on the source display while the pointer has
+// entered the destination. Choose the page with the pointer, then snap the
+// translated origin to the nearest cell origin (not a cell's far edge).
+inline GridCell ResolveGridDragCell(const std::vector<GridPage>& pages,
+    POINT pointer, POINT origin, const GridPage* fallback = nullptr)
+{
+    const GridPage* target = fallback;
+    for (const auto& page : pages)
+        if (PtInRect(&page.bounds, pointer) || PtInRect(&page.workArea, pointer))
+        {
+            target = &page;
+            break;
+        }
+    if (!target) return {};
+    const auto nearestOrigin = [&](bool horizontal) {
+        const int count = horizontal ? target->columns : target->rows;
+        const LONG coordinate = horizontal ? origin.x : origin.y;
+        const LONG start = horizontal
+            ? target->workArea.left + target->marginX
+            : target->workArea.top + target->marginY;
+        int best = 0;
+        auto distance = [&](int index) {
+            return std::abs(static_cast<long long>(coordinate) - start -
+                GetGridAxisOffset(*target, index, horizontal));
+        };
+        auto bestDistance = distance(0);
+        for (int index = 1; index < count; ++index)
+        {
+            const auto nextDistance = distance(index);
+            if (nextDistance < bestDistance)
+            {
+                best = index;
+                bestDistance = nextDistance;
+            }
+        }
+        return best;
+    };
+    return {target->id, nearestOrigin(true), nearestOrigin(false)};
 }
 
 /**
