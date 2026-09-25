@@ -1976,5 +1976,9 @@
   "statusBar.notifications": "Central de notificações",
   "statusBar.taskManager": "Gerenciador de Tarefas",
   "statusBar.terminal": "Terminal",
-  "statusBar.systemSettings": "Configurações do sistema"
+  "statusBar.systemSettings": "Configurações do sistema",
+  "statusBar.trayConnecting": "Conectando à área de notificação…",
+  "statusBar.trayEmpty": "Nenhum ícone para exibir.",
+  "statusBar.trayUnknown": "Aplicativo",
+  "statusBar.trayBack": "Voltar à bandeja"
 }

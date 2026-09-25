@@ -21,6 +21,16 @@ envelope at 8192 bytes, copies at most the known structure, and validates field
 bounds before use. Truncated, oversized or unsupported-operation packets are
 rejected; native notification-area access remains available.
 
+The compact overflow grid in `src/winui/system_tray_view.cpp` also references
+`src/core/widgets/services/systray/systray_popup.py` and `systray_widget.py` at the
+same pinned commit: pinned icons stay in the bar, unpinned icons appear in the
+popup, and layout follows the visible icon set. SnowDesktop uses its own WinUI
+controls and stable image/tooltip updates, with a separate pin/order view and
+Windows notification-area fallback. It does not distribute YASB's Qt code.
+`snowwidget preview-native tray-panel` renders this production view offline with
+Windows stock-icon fixtures; it never starts the desktop host or collector and
+does not replace real Explorer or third-party menu acceptance.
+
 The `Shell_NotifyIconGetRect` compatibility reply is an origin followed by a
 width/height pair. Returning a second corner would offset native app menus.
 An opt-in real-Explorer regression is available through

@@ -1976,5 +1976,9 @@
   "statusBar.notifications": "通知中心",
   "statusBar.taskManager": "任务管理器",
   "statusBar.terminal": "终端",
-  "statusBar.systemSettings": "系统设置"
+  "statusBar.systemSettings": "系统设置",
+  "statusBar.trayConnecting": "正在连接系统托盘…",
+  "statusBar.trayEmpty": "暂无可显示的托盘图标。",
+  "statusBar.trayUnknown": "应用",
+  "statusBar.trayBack": "返回托盘"
 }

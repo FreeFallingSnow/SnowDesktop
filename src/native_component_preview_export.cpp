@@ -148,7 +148,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -661,7 +661,7 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
         return 1;
     }
 
-    if (request.component == "calendar-panel" || request.component == "control-panel")
+    if (request.component == "calendar-panel" || request.component == "control-panel" || request.component == "tray-panel")
         result = winui::ExportSystemPanelPreview(request, ignoredAppearance);
     else
     {

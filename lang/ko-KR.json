@@ -1976,5 +1976,9 @@
   "statusBar.notifications": "알림 센터",
   "statusBar.taskManager": "작업 관리자",
   "statusBar.terminal": "터미널",
-  "statusBar.systemSettings": "시스템 설정"
+  "statusBar.systemSettings": "시스템 설정",
+  "statusBar.trayConnecting": "알림 영역에 연결 중…",
+  "statusBar.trayEmpty": "표시할 아이콘이 없습니다.",
+  "statusBar.trayUnknown": "앱",
+  "statusBar.trayBack": "트레이로 돌아가기"
 }

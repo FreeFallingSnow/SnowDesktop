@@ -1976,5 +1976,9 @@
   "statusBar.notifications": "Notification center",
   "statusBar.taskManager": "Task Manager",
   "statusBar.terminal": "Terminal",
-  "statusBar.systemSettings": "System settings"
+  "statusBar.systemSettings": "System settings",
+  "statusBar.trayConnecting": "Connecting to the notification area…",
+  "statusBar.trayEmpty": "No icons to show here.",
+  "statusBar.trayUnknown": "Application",
+  "statusBar.trayBack": "Back to tray"
 }

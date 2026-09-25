@@ -95,6 +95,11 @@
 - 稳定候选 `scripts/test.bat full` **120/120 通过**，165.83 秒，退出 0，无编译／链接警告（`22-full-tests.log`，JUnit `test-run-c0eb34e2517d4f8eb1bec54a7018073b.xml`）。生产源码仍对应 `a9007432`，标准构建引用本轮 `20-controls-build.log` 的有效结果，21／22 仅调整测试和文档，没有重跑或声称新的标准构建。最终宿主 SHA256 `a42c13250e9d69a46be1014a97fad730ca716e963e1c86b577b0fe3135954e70`，Hook `b8722e4092fcb09659c010b1a0f77da9f3761659946907affbadd71b2aaef15c`；输入绑定 `22-before-full-validation-inputs.json`／`22-final-validation-inputs.json`。
 - 本检查点已覆盖菜单显式关闭、生产控制中心 8 状态 × 浅深色／不同 DPI、四角、短设备列表底部入口、切页尺寸请求和无设备副作用；用户状态栏空白点击、真实设备操作、玻璃、高对比和桌面尺寸响应仍待实机。栏体／托盘／信息面板的离线绘制及 AMD 原始样本等开放项目不因本次通过而关闭。
 
+
+- 托盘视图首轮候选：生产托盘面板提取为 `SystemTrayView`，固定项只留在栏体，展开网格复用未变化的图像／提示；整理页保存固定与顺序，保留离线应用身份，像素缺失／异常清除旧图。新增显式 `snowwidget preview-native tray-panel`，旧 `all` 和 Lua API v2 不变；使用 Windows 库存图标夹具与动作记录边界，不接入 Explorer、不启动桌面宿主。YASB 固定版本的 popup／widget 参考已补入许可说明。
+- `scripts/build.bat` 重试退出 0，无编译／链接警告（`23-tray-build-retry.log`）；初次编译的 SDK SymbolIcon 属性／枚举错误保留于 `23-tray-build.log`。定向 `widget_author_preview_cli|localization_contract|settings_controller|modern_menu_interaction|dock_and_window_rules` **5/5 通过**，64.68 秒，退出 0，无编译／链接警告（`23-tray-tests-retry.log`，JUnit `test-run-0610c33467dd4cb6b2d1491f5ba145e6.xml`；初次命令被 shell 的管道引用拒绝，未执行测试，记录于 `23-tray-tests.log`）。宿主 SHA256 `a5969013e6029b718f86037ad79f6743e8130746b3a449de894961a1e4253445`；输入 `23-final-validation-inputs.json`。
+- 浅色 zh-CN 96 DPI／深色 en-US 144 DPI 各 6 状态实际控件图在 `tray-render-23/`，内置检查通过：固定与隐藏项排除、动态像素／提示、异常图清理、未变化对象及布局稳定、无障碍激活、固定保存、排序边界／离线身份、关闭后旧控件不再执行。目检仍发现 WinUI 复选框动画勾选未进入离线图片，只显示选中底色；先保存本次编译通过的尝试，再收敛该控件。完整测试未运行；实际第三方菜单、鼠标多击／焦点、玻璃及高对比仍待验收。
+
 ## YASB 参考边界
 
 固定来源、复用范围及许可见 [third_party/yasb/README.md](../third_party/yasb/README.md)。不能把它的私有协议当作 Microsoft 稳定 API。

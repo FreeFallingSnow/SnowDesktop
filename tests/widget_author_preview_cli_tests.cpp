@@ -1157,6 +1157,40 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
     }
 }
 
+void TestTrayPanelPreview(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& temporary)
+{
+    // Uses the production tray controls. Only collector/action boundaries are
+    // replaced; view updates, accessible clicks, pinning, reorder and teardown
+    // execute in the same implementation as the live panel.
+    for (const bool dark : {false, true})
+    {
+        const auto output = temporary / (dark ? L"tray-dark" : L"tray-light");
+        const auto [exitCode, json] = Run(snowwidget, {L"preview-native", L"tray-panel", output.wstring(),
+            L"--appearance", dark ? L"dark" : L"light", L"--dpi", dark ? L"144" : L"96",
+            L"--locale", dark ? L"en-US" : L"zh-CN", L"--transparent",
+            L"--canvas-width", L"1000", L"--canvas-height", L"1000", L"--padding", L"24", L"--host", host.wstring()});
+        if (exitCode != 0) std::cerr << json << '\n';
+        Check(exitCode == 0 && json.find("\"ok\":true") != std::string::npos,
+            "real tray view renders offline and preserves stable controls, actions and lifecycle");
+        LONG gridHeight = 0;
+        for (const auto* page : {L"grid", L"updated", L"manage", L"empty", L"connecting", L"unavailable"})
+        {
+            const auto bitmap = ReadPng(output / (std::wstring(L"tray-panel-") + page + L".png"));
+            const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;
+            const bool manage = std::wstring_view(page) == L"manage";
+            Check(std::abs(bounds.right - bounds.left - (manage ? 440 : 280) * scale / 2) <= 1,
+                "tray grid is compact and management expands to accommodate its controls");
+            Check(HasFourRoundedCorners(bitmap, bounds), "tray panel preserves all four corners");
+            if (std::wstring_view(page) == L"grid") gridHeight = bounds.bottom - bounds.top;
+            if (std::wstring_view(page) == L"updated") Check(bounds.bottom - bounds.top == gridHeight,
+                "dynamic icon updates keep the tray grid dimensions stable");
+            if (std::wstring_view(page) == L"empty") Check(bounds.bottom - bounds.top < gridHeight,
+                "empty overflow collapses the unused icon rows");
+        }
+    }
+}
+
 int wmain(int argc, wchar_t** argv) try
 {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
@@ -1185,6 +1219,7 @@ int wmain(int argc, wchar_t** argv) try
     TemporaryDirectory temporary;
     TestCalendarPanelPreview(snowwidget, host, temporary.path);
     TestControlPanelPreview(snowwidget, host, temporary.path);
+    TestTrayPanelPreview(snowwidget, host, temporary.path);
     TestTextControlFontSizing(snowwidget, host, temporary.path);
     const auto tooltipRoot = temporary.path / L"tooltip";
     std::filesystem::create_directory(tooltipRoot);

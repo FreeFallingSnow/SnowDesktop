@@ -1976,5 +1976,9 @@
   "statusBar.notifications": "通知センター",
   "statusBar.taskManager": "タスク マネージャー",
   "statusBar.terminal": "ターミナル",
-  "statusBar.systemSettings": "システム設定"
+  "statusBar.systemSettings": "システム設定",
+  "statusBar.trayConnecting": "通知領域に接続しています…",
+  "statusBar.trayEmpty": "表示するアイコンはありません。",
+  "statusBar.trayUnknown": "アプリ",
+  "statusBar.trayBack": "トレイに戻る"
 }

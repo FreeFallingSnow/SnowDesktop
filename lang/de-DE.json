@@ -1976,5 +1976,9 @@
   "statusBar.notifications": "Benachrichtigungscenter",
   "statusBar.taskManager": "Task-Manager",
   "statusBar.terminal": "Terminal",
-  "statusBar.systemSettings": "Systemeinstellungen"
+  "statusBar.systemSettings": "Systemeinstellungen",
+  "statusBar.trayConnecting": "Verbindung mit dem Infobereich wird hergestellt…",
+  "statusBar.trayEmpty": "Keine Symbole zum Anzeigen.",
+  "statusBar.trayUnknown": "Anwendung",
+  "statusBar.trayBack": "Zurück zum Infobereich"
 }

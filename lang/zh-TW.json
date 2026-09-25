@@ -1976,5 +1976,9 @@
   "statusBar.notifications": "通知中心",
   "statusBar.taskManager": "工作管理員",
   "statusBar.terminal": "終端機",
-  "statusBar.systemSettings": "系統設定"
+  "statusBar.systemSettings": "系統設定",
+  "statusBar.trayConnecting": "正在連接系統匣…",
+  "statusBar.trayEmpty": "暫無可顯示的系統匣圖示。",
+  "statusBar.trayUnknown": "應用程式",
+  "statusBar.trayBack": "返回系統匣"
 }

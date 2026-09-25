@@ -3,6 +3,7 @@
 #include "system_panel_surface.h"
 #include "system_calendar_view.h"
 #include "system_control_view.h"
+#include "system_tray_view.h"
 #include "../widget_system_control_data.h"
 #include <set>
 #include "winui_runtime.h"
@@ -17,6 +18,8 @@
 #include <winrt/Windows.Globalization.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Provider.h>
 
 namespace snowdesktop::winui
 {
@@ -99,6 +102,131 @@ SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> sta
     };
     source.artwork = [] { return std::optional<widget_runtime::WidgetMediaArtworkDataSnapshot>{}; };
     return source;
+}
+tray::Snapshot PreviewTray()
+{
+    // Windows stock icons are fixture pixels, not a claim that these apps were
+    // discovered. This path never constructs a tray::Service or injects a hook.
+    tray::Snapshot snapshot; snapshot.connected = true; snapshot.revision = 1;
+    const SHSTOCKICONID stock[]{SIID_SHIELD, SIID_WORLD, SIID_DRIVEFIXED, SIID_FOLDER,
+        SIID_INFO, SIID_WARNING, SIID_APPLICATION, SIID_RECYCLER};
+    const wchar_t* names[]{L"Snow Shield", L"Snow Sync", L"Snow Drive", L"Snow Notes",
+        L"Snow Info", L"Snow Alerts", L"Snow Tools", L"Hidden application"};
+    for (unsigned i = 0; i < std::size(stock); ++i)
+    {
+        SHSTOCKICONINFO info{sizeof(info)};
+        winrt::check_hresult(SHGetStockIconInfo(stock[i], SHGSI_ICON | SHGSI_SMALLICON, &info));
+        struct Pixels
+        {
+            HICON icon = nullptr; HDC dc = nullptr; HBITMAP bitmap = nullptr; HGDIOBJ old = nullptr;
+            ~Pixels() { if (old) SelectObject(dc, old); if (bitmap) DeleteObject(bitmap); if (dc) DeleteDC(dc); if (icon) DestroyIcon(icon); }
+        } bitmap;
+        bitmap.icon = info.hIcon; bitmap.dc = CreateCompatibleDC(nullptr);
+        BITMAPINFO format{}; format.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        format.bmiHeader.biWidth = 32; format.bmiHeader.biHeight = -32;
+        format.bmiHeader.biPlanes = 1; format.bmiHeader.biBitCount = 32; format.bmiHeader.biCompression = BI_RGB;
+        void* bytes = nullptr;
+        bitmap.bitmap = CreateDIBSection(bitmap.dc, &format, DIB_RGB_COLORS, &bytes, nullptr, 0);
+        if (!bitmap.dc || !bitmap.bitmap || !bytes) winrt::throw_last_error();
+        bitmap.old = SelectObject(bitmap.dc, bitmap.bitmap); std::memset(bytes, 0, 32 * 32 * 4);
+        if (!DrawIconEx(bitmap.dc, 0, 0, info.hIcon, 32, 32, 0, nullptr, DI_NORMAL)) winrt::throw_last_error();
+        GdiFlush();
+        tray::Icon icon; icon.key = icon.persistentKey = "preview-" + std::to_string(i);
+        icon.tip = names[i]; icon.width = icon.height = 32;
+        icon.pixels.assign(static_cast<const std::uint32_t*>(bytes), static_cast<const std::uint32_t*>(bytes) + 1024);
+        if (i == 7) icon.state = NIS_HIDDEN;
+        snapshot.icons.push_back(std::move(icon));
+    }
+    return snapshot;
+}
+x::FrameworkElement FindPreviewElement(const x::DependencyObject& root, const wchar_t* id)
+{
+    if (const auto element = root.try_as<x::FrameworkElement>(); element &&
+        x::Automation::AutomationProperties::GetAutomationId(element) == id) return element;
+    for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(root); ++i)
+        if (const auto child = FindPreviewElement(x::Media::VisualTreeHelper::GetChild(root, i), id)) return child;
+    return nullptr;
+}
+template<class Type> Type FindPreviewType(const x::DependencyObject& root)
+{
+    if (const auto match = root.try_as<Type>()) return match;
+    for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(root); ++i)
+        if (const auto child = FindPreviewType<Type>(x::Media::VisualTreeHelper::GetChild(root, i))) return child;
+    return nullptr;
+}
+void InvokePreviewElement(const x::FrameworkElement& element)
+{
+    if (!element) throw std::runtime_error("tray preview command is missing");
+    auto peer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(element);
+    peer.GetPattern(x::Automation::Peers::PatternInterface::Invoke).as<x::Automation::Provider::IInvokeProvider>().Invoke();
+}
+struct TrayPreviewState
+{
+    StatusBarSettings saved;
+    unsigned changes = 0, native = 0;
+    std::vector<std::pair<std::string, tray::Activation>> activations;
+};
+SystemTrayActions PreviewTrayActions(std::shared_ptr<TrayPreviewState> state)
+{
+    SystemTrayActions actions;
+    actions.activate = [state](const tray::Icon& icon, const auto&, tray::Activation activation) {
+        state->activations.emplace_back(icon.key, activation); return true;
+    };
+    actions.changed = [state](const StatusBarSettings& settings) { state->saved = settings; ++state->changes; };
+    actions.native = [state] { ++state->native; };
+    return actions;
+}
+void CheckTrayUpdates(SystemTrayView& view, const tray::Snapshot& snapshot,
+    const std::shared_ptr<TrayPreviewState>& state, unsigned& layoutChanges)
+{
+    auto root = view.Root(); root.UpdateLayout();
+    if (FindPreviewElement(root, L"tray.icon.preview-0") || FindPreviewElement(root, L"tray.icon.preview-7"))
+        throw std::runtime_error("overflow duplicates a pinned or hidden icon");
+    const auto first = FindPreviewElement(root, L"tray.icon.preview-1");
+    const auto image = FindPreviewType<x::Controls::Image>(first);
+    const auto source = image.Source();
+    const auto tip = x::Controls::ToolTipService::GetToolTip(first).as<x::Controls::ToolTip>();
+    const auto tipContent = tip.Content();
+    const auto before = layoutChanges;
+    auto same = snapshot; ++same.revision; view.Refresh(same);
+    if (first != FindPreviewElement(root, L"tray.icon.preview-1") || !source || source != image.Source() ||
+        tipContent != tip.Content() || layoutChanges != before)
+        throw std::runtime_error("unchanged tray event replaced the image, tooltip or layout");
+    same.icons[1].pixels = same.icons[2].pixels; same.icons[1].tip = L"Snow Sync — updated";
+    ++same.revision; view.Refresh(same);
+    if (source == image.Source() || winrt::unbox_value<winrt::hstring>(tip.Content()) != same.icons[1].tip)
+        throw std::runtime_error("tray ignored dynamic pixels or tooltip updates");
+    same.icons[1].pixels.resize(3); ++same.revision; view.Refresh(same);
+    if (image.Source()) throw std::runtime_error("invalid tray pixels retained the old image");
+    view.Refresh(snapshot); root.UpdateLayout();
+    InvokePreviewElement(first);
+    PumpUntil([&] { return state->activations.size() == 1; });
+    if (state->activations.front() != std::make_pair(std::string("preview-1"), tray::Activation::Keyboard))
+        throw std::runtime_error("accessible tray invoke did not route to the application");
+    InvokePreviewElement(FindPreviewElement(root, L"tray.organize"));
+    PumpUntil([&] { return view.PreferredWidth() == 440; }); root.UpdateLayout();
+    auto pin = FindPreviewElement(root, L"tray.pin.preview-0");
+    if (!pin || FindPreviewElement(root, L"tray.earlier.preview-0").as<x::Controls::Button>().IsEnabled())
+        throw std::runtime_error("tray management omitted the pinned icon or enabled an out-of-range move");
+    auto pinPeer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(pin);
+    pinPeer.GetPattern(x::Automation::Peers::PatternInterface::Toggle).as<x::Automation::Provider::IToggleProvider>().Toggle();
+    PumpUntil([&] { return state->changes == 1; });
+    if (!state->saved.pinnedTrayItems.empty()) throw std::runtime_error("tray pin control did not save its changed state");
+    InvokePreviewElement(FindPreviewElement(root, L"tray.earlier.preview-1"));
+    PumpUntil([&] { return state->changes == 2; });
+    if (state->saved.trayOrder.size() != 8 || state->saved.trayOrder[0] != "preview-1" ||
+        state->saved.trayOrder[1] != "preview-0" || state->saved.trayOrder.back() != "offline-app")
+        throw std::runtime_error("tray reorder failed or discarded a disconnected identity");
+    root.UpdateLayout();
+    const auto native = FindPreviewElement(root, L"tray.native");
+    InvokePreviewElement(native); PumpUntil([&] { return state->native == 1; });
+    view.Close();
+    InvokePreviewElement(native); InvokePreviewElement(FindPreviewElement(root, L"tray.icon.preview-1"));
+    // Drain queued automation invocations via a sentinel, not a fixed delay.
+    bool drained = false;
+    root.DispatcherQueue().TryEnqueue([&] { drained = true; }); PumpUntil([&] { return drained; });
+    if (state->native != 1 || state->activations.size() != 1)
+        throw std::runtime_error("closed tray view still dispatched a retained control action");
 }
 void CheckMonthFits(const x::DependencyObject& element, const x::Controls::CalendarView& month = nullptr,
     bool* foundLastDay = nullptr)
@@ -193,7 +321,7 @@ native_component_preview::Result ExportSystemPanelPreview(
         if (!host.window) winrt::throw_last_error();
         ShowWindow(host.window, SW_SHOWNOACTIVATE);
         const bool controlPanel = request.component == "control-panel";
-        const float widthDip = controlPanel ? 440.f : 520.f;
+        const bool trayPanel = request.component == "tray-panel";
         const auto controlState = std::make_shared<ControlPreviewState>();
         std::unique_ptr<SystemControlView> controls;
         unsigned layoutChanges = 0;
@@ -201,12 +329,17 @@ native_component_preview::Result ExportSystemPanelPreview(
             StatusBarSettings{}, StatusBarAction::ControlCenter, [&] { ++layoutChanges; });
         const std::vector<std::string> presets = controlPanel ?
             std::vector<std::string>{"overview", "audio", "brightness", "wifi", "bluetooth", "media", "power", "unavailable"} :
+            trayPanel ? std::vector<std::string>{"grid", "updated", "manage", "empty", "connecting", "unavailable"} :
             std::vector<std::string>{"empty", "agenda"};
         for (const auto& preset : presets)
         {
             result.stage = "panel.tree";
             auto frame = CreateSystemPanelFrame(appearance);
             std::unique_ptr<SystemCalendarView> calendar;
+            std::unique_ptr<SystemTrayView> trayView;
+            auto trayState = std::make_shared<TrayPreviewState>();
+            tray::Snapshot traySnapshot;
+            float widthDip = controlPanel ? 440.f : trayPanel ? 280.f : 520.f;
             if (controls)
             {
                 controlState->unavailable = preset == "unavailable";
@@ -216,6 +349,22 @@ native_component_preview::Result ExportSystemPanelPreview(
                 x::Controls::ScrollViewer scroll; scroll.MaxHeight(SystemControlViewportHeight); scroll.Content(controls->Root());
                 scroll.HorizontalScrollBarVisibility(x::Controls::ScrollBarVisibility::Disabled);
                 frame.Child(scroll);
+            }
+            else if (trayPanel)
+            {
+                StatusBarSettings settings; settings.pinnedTrayItems = {"preview-0"}; settings.trayOrder = {"offline-app"};
+                trayView = std::make_unique<SystemTrayView>(PreviewTrayActions(trayState), settings, [&] { ++layoutChanges; });
+                traySnapshot = PreviewTray();
+                if (preset == "empty") traySnapshot.icons.resize(1); // Only the pinned icon remains.
+                if (preset == "connecting") { traySnapshot.connected = false; traySnapshot.icons.clear(); }
+                if (preset == "unavailable") traySnapshot.degraded = true;
+                if (preset == "updated")
+                {
+                    traySnapshot.icons[1].tip = L"Snow Sync — updated";
+                    traySnapshot.icons[1].pixels = traySnapshot.icons[4].pixels;
+                    traySnapshot.icons[2].pixels.resize(3); // Explicit missing-image fallback.
+                }
+                trayView->Refresh(traySnapshot); frame.Child(trayView->Root());
             }
             else
             {
@@ -237,6 +386,14 @@ native_component_preview::Result ExportSystemPanelPreview(
             auto loadedEvent = frame.Loaded(winrt::auto_revoke, [&](const auto&, const auto&) { loaded = true; });
             if (!host.runtime.Attach(host.window, frame)) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
             PumpUntil([&] { return loaded; }); loadedEvent.revoke();
+            if (trayPanel && preset == "manage")
+            {
+                const auto before = layoutChanges;
+                InvokePreviewElement(FindPreviewElement(frame, L"tray.organize"));
+                PumpUntil([&] { return trayView->PreferredWidth() == 440; });
+                if (before == layoutChanges) throw std::runtime_error("tray management did not request immediate measurement");
+                widthDip = static_cast<float>(trayView->PreferredWidth());
+            }
             frame.Measure({widthDip, 1000});
             const float heightDip = std::ceil(frame.DesiredSize().Height);
             const double windowScale = GetDpiForWindow(host.window) / 96.;
@@ -256,15 +413,15 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (width + request.padding * 2 > request.canvasWidth || height + request.padding * 2 > request.canvasHeight)
                 throw std::runtime_error("preview canvas is too small for the system panel");
             result.stage = "panel.bitmap";
-            if (controlPanel)
+            if (controlPanel || trayPanel)
             {
                 RemovePreviewBrushTransitions(frame); CompletePreviewAnimations(frame); frame.UpdateLayout();
                 // These fixtures contain only one device/network per section.
                 // All commands must fit; outer PNG bounds alone miss a clipped
                 // settings button at the end of a short device list.
-                const auto scroll = frame.Child().as<x::Controls::ScrollViewer>();
+                const auto scroll = FindPreviewType<x::Controls::ScrollViewer>(frame.Child());
                 if (scroll.ScrollableHeight() > 1)
-                    throw std::runtime_error("control preview clipped commands in its single-device fixture: " + preset);
+                    throw std::runtime_error("panel preview clipped commands in its short fixture: " + preset);
             }
             x::Media::Imaging::RenderTargetBitmap bitmap;
             // WinUI's island rasterizer applies the XamlRoot scale to these
@@ -276,7 +433,27 @@ native_component_preview::Result ExportSystemPanelPreview(
             const auto buffer = Await(bitmap.GetPixelsAsync());
             // Check the real visual tree as well as outer pixels. A valid PNG
             // and rounded frame must not mask missing dates inside the month.
-            if (!controlPanel) CheckMonthFits(frame);
+            if (!controlPanel && !trayPanel) CheckMonthFits(frame);
+            if (trayPanel)
+            {
+                const auto notice = FindPreviewElement(frame, L"tray.notice").as<x::Controls::TextBlock>();
+                const auto expected = preset == "empty" ? _LW("statusBar.trayEmpty") : preset == "connecting" ?
+                    _LW("statusBar.trayConnecting") : preset == "unavailable" ? _LW("statusBar.trayUnavailable") : L"";
+                if (notice.Text() != expected) throw std::runtime_error("tray preview conflated empty, connecting and restricted states");
+                for (int i = 0; i < 8; ++i)
+                {
+                    const auto id = L"tray.icon.preview-" + std::to_wstring(i);
+                    const auto element = FindPreviewElement(frame, id.c_str());
+                    const bool present = preset != "empty" && preset != "connecting" && i != 7 && (i != 0 || preset == "manage");
+                    if (static_cast<bool>(element) != present) throw std::runtime_error("tray preview has missing or duplicate icons");
+                    if (!element) continue;
+                    const auto bounds = element.TransformToVisual(frame).TransformBounds({0, 0,
+                        static_cast<float>(element.ActualWidth()), static_cast<float>(element.ActualHeight())});
+                    if (bounds.Width < 39 || bounds.Height < 39 || bounds.X < 0 || bounds.Y < 0 ||
+                        bounds.X + bounds.Width > frame.ActualWidth() || bounds.Y + bounds.Height > frame.ActualHeight())
+                        throw std::runtime_error("tray preview clipped an icon target");
+                }
+            }
             // Allow one-pixel rounding at a fractional rasterization scale.
             // Reject a stale layout or missing pixels; retain the real size in
             // both the image and its metadata rather than stretching it.
@@ -313,6 +490,7 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (!preview_png::Save(path, canvas.width, canvas.height, canvas.pixels, result.error)) return result;
             result.outputs.push_back({request.component, preset, path, false, false, false, false, false, false,
                 static_cast<int>(std::lround(appearance.cornerRadius * request.dpi / 96.)), width, height, left, top});
+            if (trayView && preset == "grid") CheckTrayUpdates(*trayView, traySnapshot, trayState, layoutChanges);
             host.runtime.Detach();
             if (controls) frame.Child().as<x::Controls::ScrollViewer>().Content(nullptr);
             frame.Child(nullptr);
