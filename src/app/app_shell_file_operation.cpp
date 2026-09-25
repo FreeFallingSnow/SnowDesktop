@@ -629,7 +629,7 @@ void DesktopApp::RefreshShellItemsAsync()
         const size_t metadataHits = snapshot->metadata.hits;
         const size_t metadataQueries = snapshot->metadata.queries;
         shellMetadataCache_ = std::move(snapshot->metadata);
-        ReloadItems(shellReloadLayoutFromDiskPending_, snapshot.get());
+        ReloadItems(false, snapshot.get());
         if (dockFolderPopupOpen_)
         {
             const auto folder = snapshot->folders.find(
@@ -711,15 +711,7 @@ void DesktopApp::StartInitialShellRead()
 {
     if (exitRequested_ || !initialShellReadPending_ || initialShellRead_.Pending())
         return;
-    if (shellReloadLayoutFromDiskPending_)
-    {
-        LoadLayoutSlots();
-        RecreateItemTextFormat();
-        RecreateComponentListTextFormat();
-        UpdateLayoutWorkArea(false);
-        if (widgetEngine_) widgetEngine_->ReloadStorage();
-        shellReloadLayoutFromDiskPending_ = false;
-    }
+    layoutReload_.ApplyPendingRead([this] { ReloadLayoutStateFromDisk(); });
     const auto revision = shellRefreshRevision_.Begin();
     if (!revision) return;
     initialShellReadRevision_ = *revision;

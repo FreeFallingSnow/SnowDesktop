@@ -700,6 +700,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     snowdesktop::shell_refresh::Snapshot* snapshot)
 {
+    layoutReload_.Request(reloadLayoutFromDisk);
     if (!snapshot)
     {
         if (!initialShellReadPending_)
@@ -711,7 +712,6 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             for (auto& widget : widgets_)
                 for (auto& entry : widget.folderEntries) entry.iconState = IconState::Loading;
         }
-        shellReloadLayoutFromDiskPending_ |= reloadLayoutFromDisk;
         RequestShellRefresh();
         if (initialShellReadPending_) StartInitialShellRead();
         return;
@@ -725,8 +725,6 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     {
         shellReloadPending_ = true;
         shellRefreshScope_.Full();
-        shellReloadLayoutFromDiskPending_ =
-            shellReloadLayoutFromDiskPending_ || reloadLayoutFromDisk;
         // OLE clears mouseDown_ before entering its nested loop, so the Shell
         // debounce timer can no longer use that field as a drag-lifetime
         // proxy. Keep one pending reload alive until both native and OLE drag
@@ -751,22 +749,14 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         KillTimer(hwnd_, kShellChangeTimerId);
     shellReloadPending_ = false;
     shellRefreshScope_.Full();
-    shellReloadLayoutFromDiskPending_ = false;
     reloading_ = true;
     ULONGLONG stageStarted = GetTickCount64();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
-    if (reloadLayoutFromDisk)
-    {
-        LoadLayoutSlots();
-        RecreateItemTextFormat();
-        RecreateComponentListTextFormat();
-        // The file has just populated savedPageColumns_/savedPageRows_. Do not
-        // overwrite those restored values with the pre-reload runtime grid.
-        UpdateLayoutWorkArea(false);
-        if (widgetEngine_)
-            widgetEngine_->ReloadStorage();
-    }
-    else
+    // A partial startup snapshot can arrive while a disk reload is queued.
+    // It must consume that request by loading, never just clear its flag.
+    reloadLayoutFromDisk = layoutReload_.ApplyPendingRead(
+        [this] { ReloadLayoutStateFromDisk(); });
+    if (!reloadLayoutFromDisk)
     {
         for (auto& widget : widgets_)
         {
@@ -1040,6 +1030,10 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         });
     if (snapshot) snapshot->notifyMs = GetTickCount64() - stageStarted;
     InvalidateRect(hwnd_, nullptr, TRUE);
+    // Also drains a disk reload performed by StartInitialShellRead. Ordinary
+    // Shell refreshes must not reset an active floating Dock input session.
+    layoutReload_.ApplyAfterRebuild(
+        [this] { SynchronizeReloadedLayoutSettings(); });
 }
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)

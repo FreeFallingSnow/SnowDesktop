@@ -114,6 +114,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "../rename_edit_layout.h"
 #include "rename_notification_tracker.h"
 #include "shell_refresh_snapshot.h"
+#include "layout_reload.h"
 #include "folder_read_retries.h"
 #include "startup_shell_read.h"
 #include "selection_controller.h"
@@ -1431,6 +1432,8 @@ private:
     snowdesktop::SettingsActionResult CommitLayoutRestore(
         snowdesktop::winui::LayoutRestorePayload payload);
     snowdesktop::SettingsActionResult ReloadLayoutAndSynchronizeSettings();
+    void ReloadLayoutStateFromDisk();
+    void SynchronizeReloadedLayoutSettings();
     snowdesktop::SettingsActionResult SetTemporaryGridInitialization(bool enabled);
     snowdesktop::SettingsActionResult ChangeDebugProfile(const snowdesktop::SettingsHostActions::Request& request);
     std::wstring GetActiveWidgetStoragePath() const;
@@ -3758,7 +3761,7 @@ private:
     // still producing change notifications.
     bool shellReloadPending_ = false;
     snowdesktop::shell_refresh::FolderRefreshScope shellRefreshScope_;
-    bool shellReloadLayoutFromDiskPending_ = false;
+    snowdesktop::layout_reload::State layoutReload_;
     snowdesktop::shell_refresh::Revision shellRefreshRevision_;
     snowdesktop::shell_refresh::MetadataCache shellMetadataCache_;
     std::shared_ptr<snowdesktop::shell_refresh::Snapshot> readyShellRefresh_;

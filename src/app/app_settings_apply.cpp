@@ -733,11 +733,13 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
     return ReloadLayoutAndSynchronizeSettings();
 }
 
-snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings()
+void DesktopApp::SynchronizeReloadedLayoutSettings()
 {
-    using snowdesktop::SettingsActionResult;
-    ReloadItems(true);
+    // LoadLayoutSlots owns dockEnabled and the layout portion of DockSettings.
+    // Reconcile input only after those values have actually been loaded and
+    // containers rebuilt, including reloads requested during startup reads.
     ApplyFloatingDockHotkey();
+    if (!settingsController_) return;
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;
     desktop.iconSpacingScale = iconSpacingScale_;
@@ -758,10 +760,22 @@ snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings
         WriteDiagnosticLogEntry(
             L"Layout restored but settings mirror synchronization failed",
             DiagnosticLogLevel::Error);
-        return SettingsActionResult::Failure(
-            _LW("settings.backup.restoreLayout.commitFailed"));
     }
-    return SettingsActionResult::Success();
+    wchar_t state[192]{};
+    swprintf_s(state,
+        L"Reloaded layout settings applied: dockEnabled=%d pointerMonitor=%d hotkeyRegistered=%d mirrors=%d",
+        generalSettings_.dockEnabled, floatingDockEdgeSwipeHwnd_ != nullptr,
+        floatingDockHotkeyRegistered_,
+        generalSynchronized && desktopSynchronized && dockSynchronized);
+    WriteDiagnosticLogEntry(state);
+}
+
+snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings()
+{
+    // This only queues a Shell read. Runtime input and settings mirrors must
+    // follow the disk load and model rebuild, not this request.
+    ReloadItems(true);
+    return snowdesktop::SettingsActionResult::Success();
 }
 
 snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(

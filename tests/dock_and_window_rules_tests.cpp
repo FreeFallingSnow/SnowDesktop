@@ -47,6 +47,7 @@
 #include "windows_desktop_layout.h"
 #include "widget_item_layout.h"
 #include "app/grid_geometry.h"
+#include "app/layout_reload.h"
 #include "taskbar_hook/taskbar_autohide_trace.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
 
@@ -1929,6 +1930,69 @@ int main(int argc, char** argv)
         Check(actual.registerHotkey == test.expected.registerHotkey &&
                 actual.monitorEdgeSwipe == test.expected.monitorEdgeSwipe,
             "retaining dismissal must not enable a disabled summon hotkey or edge hook");
+    }
+    // Exercise the production async handoff. Only native registration and the
+    // settings mirror are replaced by observers; reads/rebuild completion use
+    // the same state owner as ReloadItems and StartInitialShellRead.
+    for (const bool summonEnabled : {false, true})
+    {
+        snowdesktop::layout_reload::State reload;
+        bool dockEnabled = true;
+        bool pointerMonitor = true;
+        bool hotkeyRegistered = summonEnabled;
+        bool settingsMirror = true;
+        int synchronizations = 0;
+        const auto synchronize = [&] {
+            const auto policy = floatingDock::ResolveFloatingDockInputPolicy(
+                dockEnabled, summonEnabled, summonEnabled);
+            pointerMonitor = policy.monitorPointer;
+            hotkeyRegistered = policy.registerHotkey;
+            settingsMirror = dockEnabled;
+            ++synchronizations;
+        };
+
+        reload.Request(); // Enter temporary initialization: saved Dock is off.
+        reload.ApplyAfterRebuild(synchronize); // Old model is still displayed.
+        Check(pointerMonitor && settingsMirror && synchronizations == 0,
+            "requesting a layout read must not apply the previous Dock settings");
+        reload.Request(false); // A partial startup snapshot must retain the request.
+        Check(reload.ApplyPendingRead([&] { dockEnabled = false; }),
+            "a partial startup snapshot must consume the queued disk reload");
+        Check(pointerMonitor && synchronizations == 0,
+            "loading layout values must wait for container rebuild before input changes");
+        reload.ApplyAfterRebuild(synchronize);
+        Check(!pointerMonitor && !hotkeyRegistered && !settingsMirror,
+            "entering a cleared layout must retire Dock input after rebuilding");
+
+        reload.Request(); // Exit temporary initialization: original Dock is on.
+        reload.Request(); // Duplicate requests coalesce before a snapshot arrives.
+        Check(!pointerMonitor && !settingsMirror,
+            "queuing the restored layout must not prematurely change input or mirrors");
+        Check(reload.ApplyPendingRead([&] { dockEnabled = true; }),
+            "startup and normal reads must load the requested restored layout");
+        // StartInitialShellRead can load before ReloadItems receives a snapshot.
+        reload.Request(false);
+        Check(!reload.ApplyPendingRead([&] { dockEnabled = false; }),
+            "the next snapshot must not reload or overwrite an already loaded layout");
+        reload.ApplyAfterRebuild(synchronize);
+        Check(pointerMonitor && settingsMirror && hotkeyRegistered == summonEnabled &&
+                synchronizations == 2,
+            "restoring Dock must resume dismissal and mirror its new value, with optional summons respected");
+        reload.ApplyAfterRebuild(synchronize);
+        Check(synchronizations == 2,
+            "ordinary refreshes must not reset a floating Dock input session");
+
+        reload.Request();
+        reload.ApplyPendingRead([&] { dockEnabled = false; });
+        reload.ApplyAfterRebuild([&] {
+            synchronize();
+            reload.Request(); // A callback can queue the next layout replacement.
+        });
+        Check(reload.ApplyPendingRead([&] { dockEnabled = true; }),
+            "synchronization must retain a reentrant layout replacement request");
+        reload.ApplyAfterRebuild(synchronize);
+        Check(pointerMonitor && settingsMirror && synchronizations == 4,
+            "each completed replacement must apply its own final Dock settings");
     }
     Check(floatingDock::ShouldUseFloatingDockLogicalForeground(
             true, true, false, true) &&
@@ -6065,6 +6129,14 @@ int main(int argc, char** argv)
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
         Check(snowdesktop::test::CheckSourceBoundaries(argv[1], {
+            // The Shell read is asynchronous. Applying input/mirrors while
+            // merely requesting it unregisters dismissal using the old layout
+            // when leaving temporary grid initialization (Dock off -> on).
+            // This is a negative boundary, not proof of desktop interaction.
+            {"src/app/app_settings_apply.cpp", "snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings()",
+             "snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(",
+             {"ApplyFloatingDockHotkey(", "SynchronizeGeneral(", "SynchronizeDesktop(",
+              "SynchronizeDock(", "SynchronizeReloadedLayoutSettings("}},
             {"src/app/app_lifecycle.cpp", "bool DesktopApp::CreateDesktopInputWindow(",
              "void DesktopApp::AttachInputWindowToDesktopHost(", {"WS_CHILD | WS_VISIBLE"}},
             {"src/app/app_dock_window_tracking.cpp", "void DesktopApp::RefreshDockForegroundState()",

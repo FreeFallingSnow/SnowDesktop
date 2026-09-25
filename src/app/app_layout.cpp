@@ -38,6 +38,17 @@ void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
         savedPageIds_.push_back(pageId);
 }
 
+void DesktopApp::ReloadLayoutStateFromDisk()
+{
+    LoadLayoutSlots();
+    RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
+    // Preserve the page dimensions just restored from disk rather than the
+    // pre-reload runtime grid. Both asynchronous read paths use this boundary.
+    UpdateLayoutWorkArea(false);
+    if (widgetEngine_) widgetEngine_->ReloadStorage();
+}
+
 /**
  * @brief 从布局 JSON 文件加载所有页面、组件和项目的网格位置信息。
  *
