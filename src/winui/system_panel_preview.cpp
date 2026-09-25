@@ -474,8 +474,20 @@ native_component_preview::Result ExportSystemPanelPreview(
                     const auto metric = FindPreviewElement(frame, id.c_str());
                     const auto bounds = metric.TransformToVisual(frame).TransformBounds({0, 0,
                         static_cast<float>(metric.ActualWidth()), static_cast<float>(metric.ActualHeight())});
-                    if (bounds.Width < 100 || bounds.Y + bounds.Height > frame.ActualHeight())
-                        throw std::runtime_error("resource metric card clipped its value");
+                    const auto cardId = L"resource.card." + std::to_wstring(i);
+                    const auto card = FindPreviewElement(frame, cardId.c_str());
+                    const auto cardBounds = card.TransformToVisual(frame).TransformBounds({0, 0,
+                        static_cast<float>(card.ActualWidth()), static_cast<float>(card.ActualHeight())});
+                    // TextBlock's ActualWidth follows short text; it is not
+                    // the width of the containing, evenly sized metric card.
+                    if (cardBounds.Width < 180 || bounds.Width <= 0 || bounds.X < cardBounds.X ||
+                        bounds.X + bounds.Width > cardBounds.X + cardBounds.Width + .5 ||
+                        bounds.Y + bounds.Height > cardBounds.Y + cardBounds.Height + .5 ||
+                        cardBounds.Y + cardBounds.Height > frame.ActualHeight() + .5)
+                        throw std::runtime_error("resource metric bounds invalid: " + preset + "/" + std::to_string(i) +
+                            " card=" + std::to_string(cardBounds.Width) + " text=" + std::to_string(bounds.Width) +
+                            " bottom=" + std::to_string(cardBounds.Y + cardBounds.Height) +
+                            " frame=" + std::to_string(frame.ActualHeight()));
                 }
                 resources->Refresh(); frame.UpdateLayout();
                 if (trace.Data() != geometry) throw std::runtime_error("unchanged resource snapshot rebuilt its graph");

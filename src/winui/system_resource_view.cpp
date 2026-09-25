@@ -145,6 +145,7 @@ struct SystemResourceView::Impl : std::enable_shared_from_this<Impl>
         for (int i = 0; i < count; ++i)
         {
             auto card = Themed<c::Border>(L"Border", L"Background=\"{ThemeResource CardBackgroundFillColorDefaultBrush}\" BorderBrush=\"{ThemeResource CardStrokeColorDefaultBrush}\" BorderThickness=\"1\" CornerRadius=\"8\" Padding=\"14\" MinHeight=\"82\"");
+            a::AutomationProperties::SetAutomationId(card, winrt::to_hstring("resource.card." + std::to_string(i)));
             c::StackPanel content; content.Spacing(6);
             auto label = Themed<c::TextBlock>(L"TextBlock", L"Foreground=\"{ThemeResource TextFillColorSecondaryBrush}\" FontSize=\"12\" TextTrimming=\"CharacterEllipsis\" MaxLines=\"1\"");
             label.Text(_LW(labels[i])); content.Children().Append(label);
