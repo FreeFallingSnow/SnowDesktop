@@ -2752,6 +2752,44 @@ void TestShellRefreshPreservesCurrentItemState()
         "mapped folders and popup aliases retain their independent selection and icon ownership");
 }
 
+void TestLayoutReloadReplacesLargeIconState()
+{
+    DesktopItem original;
+    original.layoutKey = L"C:\\Desktop\\kept.txt";
+    original.gridCell = {L"original-page", 2, 3};
+    original.gridSpan = {3, 2};
+    original.largeIcon = snowdesktop::LargeIconConfig{};
+    original.largeIcon->columns = 3;
+    original.largeIcon->rows = 2;
+    original.largeIcon->image = "original-cover.png";
+
+    DesktopItem experiment;
+    experiment.layoutKey = original.layoutKey;
+    snowdesktop::shell_refresh::PreserveRuntime(experiment, original);
+    snowdesktop::shell_refresh::ApplyLoadedLayout(experiment, nullptr);
+    Check(!experiment.largeIcon && experiment.gridCell.pageId.empty() &&
+            experiment.gridSpan.columns == 1 && experiment.gridSpan.rows == 1,
+        "temporary initialization must clear the original large icon and placement");
+
+    LayoutRecord saved;
+    saved.hasGrid = true;
+    saved.cell = {L"original-page", 2, 3};
+    saved.span = {3, 2};
+    saved.largeIcon = snowdesktop::LargeIconConfig{};
+    saved.largeIcon->columns = 3;
+    saved.largeIcon->rows = 2;
+    saved.largeIcon->image = "original-cover.png";
+    DesktopItem restored;
+    restored.layoutKey = experiment.layoutKey;
+    snowdesktop::shell_refresh::PreserveRuntime(restored, experiment);
+    snowdesktop::shell_refresh::ApplyLoadedLayout(restored, &saved);
+    Check(restored.largeIcon && restored.largeIcon->image == "original-cover.png" &&
+            restored.largeIcon->columns == 3 && restored.largeIcon->rows == 2 &&
+            restored.gridCell.pageId == L"original-page" &&
+            restored.gridSpan.columns == 3 && restored.gridSpan.rows == 2,
+        "leaving temporary initialization restores the saved large icon and placement");
+}
+
 void TestRenameNotificationsPreserveUnrelatedChanges()
 {
     RenameNotificationTracker tracker;
@@ -3164,6 +3202,7 @@ int wmain(int argc, wchar_t** argv)
     TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();
+    TestLayoutReloadReplacesLargeIconState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
     TestPopupDwellControllerHandlesCandidateChanges();

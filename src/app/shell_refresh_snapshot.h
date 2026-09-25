@@ -185,6 +185,18 @@ inline void PreserveRuntime(DesktopItem& item, DesktopItem& previous)
     }
 }
 
+inline void ApplyLoadedLayout(DesktopItem& item, const LayoutRecord* record)
+{
+    item.gridCell = {};
+    item.gridSpan = {1, 1};
+    item.largeIcon.reset();
+    item.slot = -1;
+    if (!record || !record->hasGrid) return;
+    item.gridCell = record->cell;
+    item.gridSpan = record->span;
+    item.largeIcon = record->largeIcon;
+}
+
 inline void PreserveRuntime(FolderEntry& item, FolderEntry& previous)
 {
     item.selected = previous.selected;

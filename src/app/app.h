@@ -1073,7 +1073,8 @@ private:
 
     // ── Data ────────────────────────────────────────────────
     /** @brief 从 Explorer 加载桌面项数据（IShellFolder 枚举）。 */
-    void LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot = nullptr);
+    void LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot = nullptr,
+        bool reloadLayoutFromDisk = false);
     /** @brief 重新加载所有项目并可选从磁盘恢复布局。 @param reloadLayoutFromDisk 是否重新从磁盘加载布局 */
     void ReloadItems(bool reloadLayoutFromDisk = true,
         snowdesktop::shell_refresh::Snapshot* snapshot = nullptr);

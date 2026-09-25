@@ -336,7 +336,8 @@ bool snowdesktop::shell_refresh::ReadLocalDesktop(
     return complete;
 }
 
-void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot)
+void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot,
+    bool reloadLayoutFromDisk)
 {
     if (snapshot && !snapshot->desktopComplete && !snapshot->desktopIncremental)
         return; // Partial/failed reads must never become an authoritative empty model.
@@ -367,20 +368,13 @@ void DesktopApp::LoadDesktopItems(snowdesktop::shell_refresh::Snapshot* snapshot
         const auto found = previousByKey.find(ToUpperInvariant(item.layoutKey));
         if (found != previousByKey.end())
             snowdesktop::shell_refresh::PreserveRuntime(item, previous[found->second]);
-        if (!snapshot || found == previousByKey.end())
+        if (reloadLayoutFromDisk || found == previousByKey.end())
         {
-            item.gridCell = {};
-            item.gridSpan = {1, 1};
-            item.largeIcon.reset();
-            item.slot = -1;
             const auto known = layoutRecords_.find(item.layoutKey);
+            snowdesktop::shell_refresh::ApplyLoadedLayout(item,
+                known != layoutRecords_.end() ? &known->second : nullptr);
             if (known != layoutRecords_.end() && known->second.hasGrid)
-            {
-                item.gridCell = known->second.cell;
-                item.gridSpan = known->second.span;
-                item.largeIcon = known->second.largeIcon;
                 item.slot = SlotFromCell(gridPages_, item.gridCell);
-            }
         }
         // Explicit refresh/settings changes must still rebuild icons even if
         // Shell reuses an image-list index and the file timestamps are equal.

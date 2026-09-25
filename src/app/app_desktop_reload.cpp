@@ -783,7 +783,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             }
         }
     }
-    snowdesktop::startup_diagnostics::Call(L"LoadDesktopItems", [&] { LoadDesktopItems(snapshot); });
+    snowdesktop::startup_diagnostics::Call(L"LoadDesktopItems", [&] {
+        LoadDesktopItems(snapshot, reloadLayoutFromDisk);
+    });
     if (!desktopItemsReady_ && !incremental)
     {
         // A failed initial read is not an empty desktop. Preserve the loaded
