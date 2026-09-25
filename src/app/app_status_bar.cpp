@@ -1,6 +1,7 @@
 #include "app.h"
 #include "system_controls.h"
 #include "modern_menu.h"
+#include "../status_bar_view.h"
 
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
@@ -165,21 +166,11 @@ void DesktopApp::SyncStatusBar()
                 MessageBoxW(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
             },
             [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
-                auto fillAppearance = appearance;
-                fillAppearance.widgetBorderWidth = 0;
-                fillAppearance.widgetBorderAlpha = 0;
+                auto fillAppearance = snowdesktop::StatusBarFillAppearance(appearance);
                 DrawWidgetPanelBackground(context, frame, 0,
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
-                if (appearance.widgetBorderWidth > 0 && appearance.widgetBorderAlpha > 0)
-                {
-                    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> border;
-                    context->CreateSolidColorBrush(D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG,
-                        appearance.widgetBorderB, appearance.widgetBorderAlpha), &border);
-                    const float width = appearance.widgetBorderWidth * scale;
-                    const float y = generalSettings_.statusBar.position == DockPosition::Top ? frame.bottom - width / 2 : width / 2;
-                    if (border) context->DrawLine(D2D1::Point2F(0, y), D2D1::Point2F(static_cast<float>(frame.right), y), border.Get(), width);
-                }
+                snowdesktop::DrawStatusBarEdge(context, frame, appearance, scale, generalSettings_.statusBar.position);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
             });
     }

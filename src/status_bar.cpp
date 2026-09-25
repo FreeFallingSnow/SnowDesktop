@@ -1,4 +1,5 @@
 #include "status_bar.h"
+#include "status_bar_view.h"
 #include "status_bar_appbar.h"
 #include "widget_system_data_provider.h"
 #include "app/desktop_backdrop_compositor.h"
@@ -98,24 +99,11 @@ UINT Edge(DockPosition position)
     default: return ABE_TOP;
     }
 }
-std::wstring Percent(double value)
-{
-    return std::to_wstring(static_cast<int>(std::lround(value))) + L"%";
-}
+
 }
 
 struct StatusBar::Impl
 {
-    struct Item
-    {
-        std::wstring text;
-        StatusBarAction action;
-        RECT bounds{};
-        std::optional<tray::Icon> icon;
-        std::string key;
-        std::wstring glyph, tip;
-        bool left = false;
-    };
     struct Window
     {
         Impl& owner;
@@ -139,7 +127,7 @@ struct StatusBar::Impl
         StatusBarTooltipState tooltipState;
         StatusBarVolumeWheel volumeWheel;
         std::uint64_t volumeTask = 0;
-        std::vector<Item> items;
+        std::vector<StatusBarItem> items;
         std::size_t focused = 0;
         bool keyboardFocusVisible = false;
         std::optional<std::size_t> hovered;
@@ -248,82 +236,17 @@ struct StatusBar::Impl
         }
         void BuildItems()
         {
-            items.clear();
-            const auto& s = owner.settings;
-            using namespace status_bar_glyphs;
-            const auto add = [&](const char* key, std::wstring text, StatusBarAction action,
-                const wchar_t* glyph = L"", bool left = false) {
-                Item item{std::move(text), action, {}, {}, key, glyph, {}, left};
-                item.tip = _LW((std::string("statusBar.") + key).c_str());
-                if (!item.text.empty()) item.tip += L"  " + item.text;
-                items.push_back(std::move(item));
-            };
-            if (s.menu) add("menu", L"", StatusBarAction::SystemMenu, kMenu, true);
-            if (s.quickSearch) add("quickSearch", L"", StatusBarAction::QuickSearch, kSearch, true);
-            {
-                wchar_t time[64]{}, date[96]{};
-                GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, nullptr, nullptr, time, 64);
-                GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, nullptr, nullptr, date, 96, nullptr);
-                add("clock", std::wstring(date) + L"   " + time, StatusBarAction::Calendar);
-            }
-            if (s.cpu)
-            {
-                const auto value = owner.data->Cpu();
-                add("cpu", L"CPU " + (value && value->available && !value->warmingUp ? Percent(value->usagePercent) : L"—"), StatusBarAction::Cpu);
-            }
-            if (s.memory)
-            {
-                const auto value = owner.data->Memory();
-                add("memory", _LW("statusBar.memory") + std::wstring(L" ") + (value && value->available && value->totalBytes ?
-                    Percent(100. * value->usedBytes / value->totalBytes) : L"—"), StatusBarAction::Memory);
-            }
-            if (s.gpu)
-            {
-                const auto value = owner.data->Gpu();
-                double maximum = 0;
-                if (value) for (const auto& adapter : value->adapters) maximum = std::max(maximum, adapter.usagePercent);
-                add("gpu", L"GPU " + (value && value->available && !value->warmingUp ? Percent(maximum) : L"—"), StatusBarAction::Gpu);
-            }
-            if (s.traffic)
-            {
-                const auto value = owner.data->NetworkTraffic();
-                add("traffic", value && value->available && !value->warmingUp ?
-                    L"↓ " + StatusBarRate(value->downloadBytesPerSecond) +
-                    L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::Traffic);
-            }
-            {
-                if (owner.tray)
-                {
-                    auto icons = owner.tray->Current().icons;
-                    const auto rank = [&](const tray::Icon& icon) {
-                        return std::find(s.trayOrder.begin(), s.trayOrder.end(), icon.persistentKey) - s.trayOrder.begin();
-                    };
-                    std::stable_sort(icons.begin(), icons.end(), [&](const auto& left, const auto& right) { return rank(left) < rank(right); });
-                    for (auto& icon : icons)
-                        if (!(icon.state & NIS_HIDDEN) && !icon.persistentKey.empty() &&
-                            std::find(s.pinnedTrayItems.begin(), s.pinnedTrayItems.end(), icon.persistentKey) != s.pinnedTrayItems.end())
-                            items.push_back({icon.tip, StatusBarAction::Tray, {}, std::move(icon), "tray", {}, {}, false});
-                }
-                add("tray", L"", StatusBarAction::Tray, kTray);
-            }
-            const auto network = owner.data->NetworkStatus();
-            const auto audio = owner.data->AudioOutputVolume();
-            const auto power = owner.data->Power();
-            const std::wstring glyphs = std::wstring(!network || !network->available || network->connectivity == "none" ? kOffline :
-                network->transport == "ethernet" ? kEthernet : kWifi) + (audio && audio->muted ? kMuted : kSpeaker) +
-                (power && power->available ? (power->charging ? kCharging : power->acPower ? kBatteryPlug :
-                    power->batteryPercent >= 99.5 ? kBatteryFull : kBattery) : kEthernet);
-            add("controlCenter", power && power->available ? Percent(power->batteryPercent) : L"—", StatusBarAction::ControlCenter);
-            items.back().glyph = glyphs;
-            items.back().tip += L"\n" + std::wstring(_LW("statusBar.volume")) + L"  " +
-                (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
-            if (power && power->available)
-                items.back().tip += L"\n" + std::wstring(_LW(power->charging ? "statusBar.charging" :
-                    power->acPower && power->batteryPercent >= 99.5 ? "statusBar.fullyCharged" :
-                    power->acPower ? "statusBar.pluggedIn" : "statusBar.battery")) + L"  " + Percent(power->batteryPercent);
-            // Fixed semantic zones: information, tray, one system control group.
-            // Old experimental rightOrder values cannot split this group.
-            add("notifications", L"", StatusBarAction::Notifications, kNotifications);
+            StatusBarSnapshot snapshot;
+            wchar_t time[64]{}, date[96]{};
+            GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, nullptr, nullptr, time, 64);
+            GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, nullptr, nullptr, date, 96, nullptr);
+            snapshot.clock = std::wstring(date) + L"   " + time;
+            snapshot.cpu = owner.data->Cpu(); snapshot.memory = owner.data->Memory();
+            snapshot.gpu = owner.data->Gpu(); snapshot.traffic = owner.data->NetworkTraffic();
+            snapshot.network = owner.data->NetworkStatus(); snapshot.audio = owner.data->AudioOutputVolume();
+            snapshot.power = owner.data->Power();
+            if (owner.tray) snapshot.tray = owner.tray->Current().icons;
+            items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
         void Paint()
@@ -331,12 +254,7 @@ struct StatusBar::Impl
             if (closing || painting || fullscreen || failed || !IsWindowVisible(hwnd) || !owner.composition || !owner.text) return;
             auto previousItems = std::move(items);
             BuildItems();
-            const bool same = previousItems.size() == items.size() && std::equal(items.begin(), items.end(), previousItems.begin(),
-                [](const auto& a, const auto& b) {
-                    return a.text == b.text && a.glyph == b.glyph && a.action == b.action && a.icon.has_value() == b.icon.has_value() &&
-                        (!a.icon || (a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
-                            a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels));
-                });
+            const bool same = SameStatusBarContent(items, previousItems);
             if (same && !paintDirty)
             {
                 for (std::size_t i = 0; i < items.size(); ++i) items[i].bounds = previousItems[i].bounds;
@@ -393,105 +311,20 @@ struct StatusBar::Impl
             context->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
             context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
             context->Clear(D2D1::ColorF(0, 0.f));
-            ComPtr<ID2D1SolidColorBrush> brush;
-            context->CreateSolidColorBrush(hc ? SystemColor(COLOR_WINDOWTEXT) :
-                D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4), &brush);
-            ComPtr<IDWriteTextFormat> format;
-            const float scale = dpi / 96.f * owner.settings.scale;
-            owner.text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &format);
-            ComPtr<IDWriteTextFormat> iconFormat;
-            iconFormat.Attach(CreateFluentTextFormat(owner.text.Get(), 16.f * scale));
-            if (format && brush)
+            const StatusBarPalette palette{hc, SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
+                SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
+            const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
+                dpi / 96.f * owner.settings.scale, a, palette, hovered,
+                keyboardFocusVisible && GetFocus() == hwnd, focused);
+            for (const auto& item : items) if (item.icon && owner.tray)
             {
-                format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                const float padding = 12.f * scale;
-                const auto extentOf = [&](const Item& item) {
-                    if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
-                    if (item.icon || item.text.empty()) return 32.f * scale;
-                    auto reserved = item.text;
-                    if (item.key == "memory") reserved = std::wstring(_LW("statusBar.memory")) + L" 100%";
-                    // Reserve equal digit advances for the date/time too.
-                    if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
-                    ComPtr<IDWriteTextLayout> layout;
-                    DWRITE_TEXT_METRICS metrics{};
-                    if (SUCCEEDED(owner.text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
-                            format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-                    return std::clamp(metrics.widthIncludingTrailingWhitespace + (item.glyph.empty() ? 16.f : 36.f) * scale, 32.f * scale, 260.f * scale);
-                };
-                LONG centerWidth = 0;
-                std::vector<LONG> leftWidths, rightWidths;
-                for (const auto& item : items)
-                    if (item.action == StatusBarAction::Calendar) centerWidth = static_cast<LONG>(std::ceil(extentOf(item)));
-                    else if (item.left) leftWidths.push_back(static_cast<LONG>(std::ceil(extentOf(item))));
-                    else rightWidths.push_back(static_cast<LONG>(std::ceil(extentOf(item))));
-                const auto bounds = StatusBarHorizontalLayout(static_cast<LONG>(w), static_cast<LONG>(h),
-                    static_cast<LONG>(padding), leftWidths, centerWidth, rightWidths);
-                std::size_t leftIndex = 0, rightIndex = leftWidths.size() + 1;
-                ComPtr<ID2D1SolidColorBrush> hoverBrush;
-                context->CreateSolidColorBrush(hc ? SystemColor(COLOR_HIGHLIGHT) :
-                    D2D1::ColorF(a.contentTheme == 1 ? 0x000000 : 0xffffff, .08f), &hoverBrush);
-                for (auto& item : items)
-                {
-                    const bool center = item.action == StatusBarAction::Calendar;
-                    item.bounds = bounds[item.left ? leftIndex++ : center ? leftWidths.size() : rightIndex++];
-                    if (IsRectEmpty(&item.bounds))
-                    {
-                        if (item.icon && owner.tray) owner.tray->SetGeometry(item.icon->key, {});
-                        continue;
-                    }
-                    const auto rect = D2D1::RectF(static_cast<float>(item.bounds.left), 0,
-                        static_cast<float>(item.bounds.right), static_cast<float>(h));
-                    const auto inset = D2D1::RoundedRect(D2D1::RectF(rect.left + 2 * scale, 3 * scale,
-                        rect.right - 2 * scale, rect.bottom - 3 * scale), 4 * scale, 4 * scale);
-                    const bool hover = hovered && *hovered == static_cast<std::size_t>(&item - items.data());
-                    if (hover && item.action != StatusBarAction::None && hoverBrush) context->FillRoundedRectangle(inset, hoverBrush.Get());
-                    brush->SetColor(hc && hover ? SystemColor(COLOR_HIGHLIGHTTEXT) : hc ? SystemColor(COLOR_WINDOWTEXT) :
-                        D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4));
-                    if (item.icon)
-                    {
-                        const auto& icon = *item.icon;
-                        ComPtr<ID2D1Bitmap> bitmap;
-                        if (!icon.pixels.empty() && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(icon.width, icon.height),
-                                icon.pixels.data(), icon.width * 4,
-                                D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &bitmap)))
-                        {
-                            const float size = 18.f * scale;
-                            const float iconLeft = (rect.left + rect.right - size) / 2, iconTop = (rect.top + rect.bottom - size) / 2;
-                            context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop, iconLeft + size, iconTop + size));
-                        }
-                        RECT screen = item.bounds;
-                        MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&screen), 2);
-                        owner.tray->SetGeometry(icon.key, screen);
-                    }
-                    else
-                    {
-                        auto textRect = rect;
-                        if (item.key == "controlCenter" && iconFormat)
-                        {
-                            for (std::size_t part = 0; part < item.glyph.size(); ++part)
-                            {
-                                const float left = rect.left + (4 + 28.f * static_cast<float>(part)) * scale;
-                                context->DrawText(&item.glyph[part], 1, iconFormat.Get(),
-                                    D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                            }
-                            textRect.left += 88 * scale; textRect.right -= 6 * scale;
-                        }
-                        else if (!item.glyph.empty() && iconFormat)
-                        {
-                            auto iconRect = rect;
-                            if (!item.text.empty()) { iconRect.right = iconRect.left + 28.f * scale; textRect.left += 22.f * scale; }
-                            context->DrawText(item.glyph.c_str(), static_cast<UINT32>(item.glyph.size()), iconFormat.Get(), iconRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                        }
-                        if (!item.text.empty()) context->DrawText(item.text.c_str(), static_cast<UINT32>(item.text.size()), format.Get(), textRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                    }
-                    if (keyboardFocusVisible && GetFocus() == hwnd && &item == &items[std::min(focused, items.size() - 1)])
-                        context->DrawRoundedRectangle(inset, brush.Get(), 1.f);
-                }
+                RECT screen = item.bounds;
+                if (!IsRectEmpty(&screen)) MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&screen), 2);
+                owner.tray->SetGeometry(item.icon->key, screen);
             }
             context.Reset();
-            const auto result = surface->EndDraw();
+            const auto surfaceResult = surface->EndDraw();
+            const auto result = FAILED(contentResult) ? contentResult : surfaceResult;
             painting = false;
             if (SUCCEEDED(result))
             {
@@ -621,8 +454,8 @@ struct StatusBar::Impl
                 { self->keyboardFocusVisible = false; self->paintDirty = true; self->Paint(); }
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 if (self->TrayMouse(message, point)) return 0;
-                for (std::size_t index = 0; index < self->items.size(); ++index)
-                    if (PtInRect(&self->items[index].bounds, point)) { self->ActivateItem(index); return 0; }
+                if (const auto index = HitTestStatusBarItems(self->items, point))
+                { self->ActivateItem(*index); return 0; }
                 self->hovered.reset(); self->tooltipState.Leave();
                 SendMessageW(self->tooltip, TTM_POP, 0, 0);
                 self->paintDirty = true; self->Paint();

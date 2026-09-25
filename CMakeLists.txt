@@ -168,6 +168,10 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_dock_launch.cpp
     src/app/app_dock_layout.cpp
     src/app/app_status_bar.cpp
+    src/status_bar_view.cpp
+    src/status_bar_view.h
+    src/status_bar_preview.cpp
+    src/status_bar_preview.h
     src/status_bar.cpp
     src/tray_service.cpp
     src/tray_model.cpp

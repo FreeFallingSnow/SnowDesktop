@@ -8,6 +8,7 @@
 #include "utils.h"
 #include "widget_preview_stage.h"
 #include "winui/system_panel_preview.h"
+#include "status_bar_preview.h"
 
 #include <shellapi.h>
 
@@ -148,7 +149,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -302,6 +303,17 @@ DesktopApp::ExportNativeComponentPreviews(
         result.error = "cannot initialize the native component renderer";
         return result;
     }
+
+    if (request.component == "status-bar")
+        return ExportStatusBarPreview(request, d2dDevice_.Get(), dwriteFactory_.Get(), appearance,
+            [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& style, float scale, DockPosition position) {
+                auto fill = StatusBarFillAppearance(style);
+                DrawWidgetPanelBackground(context, frame, 0,
+                    D2D1::ColorF(fill.widgetBgR, fill.widgetBgG, fill.widgetBgB, fill.widgetAlpha),
+                    D2D1::ColorF(0, 0.f), false, 0, &fill, false, 0, scale);
+                DrawStatusBarEdge(context, frame, style, scale, position);
+                brushCache_.clear(); brushCacheContext_ = nullptr;
+            });
 
     const float scale = static_cast<float>(request.dpi) /
         static_cast<float>(USER_DEFAULT_SCREEN_DPI);

@@ -1271,6 +1271,75 @@ void TestResourcePanelPreview(const std::filesystem::path& snowwidget,
     }
 }
 
+void TestStatusBarPreview(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& temporary)
+{
+    for (const bool dark : {false, true})
+    {
+        const auto output = temporary / (dark ? L"bar-dark" : L"bar-light");
+        const int scale = dark ? 2 : 1;
+        const auto [exitCode, json] = Run(snowwidget, {L"preview-native", L"status-bar", output.wstring(),
+            L"--appearance", dark ? L"dark" : L"light", L"--dpi", dark ? L"192" : L"96",
+            L"--locale", dark ? L"de-DE" : L"zh-CN", L"--transparent",
+            L"--canvas-width", std::to_wstring(1920 * scale + 48), L"--canvas-height", L"256",
+            L"--padding", L"24", L"--host", host.wstring()});
+        if (exitCode != 0) std::cerr << json << '\n';
+        Check(exitCode == 0 && json.find("\"ok\":true") != std::string::npos,
+            "native bar renders with centered clock, stable widths, matching hit targets and no blank-area item");
+        const auto read = [&](const wchar_t* state) { return ReadPng(output / (std::wstring(L"status-bar-") + state + L".png")); };
+        const auto normal = read(L"normal"), repeat = read(L"repeat"), hover = read(L"hover");
+        const auto bounds = PanelPixels(normal);
+        Check(bounds.right - bounds.left == 1920 * scale && bounds.bottom - bounds.top == 32 * scale,
+            "native bar occupies the requested full width and DIP thickness");
+        Check(normal.pixels == repeat.pixels, "unchanged bar state is pixel-identical");
+        Check(normal.pixels != hover.pixels, "bar hover feedback reaches actual native pixels");
+        const auto information = read(L"information"), updated = read(L"updated");
+        Check(information.pixels != updated.pixels, "new resource samples visibly update the bar");
+        const auto narrow = PanelPixels(read(L"narrow")), scaled = PanelPixels(read(L"scaled"));
+        Check(narrow.right - narrow.left == 640 * scale && scaled.bottom - scaled.top == 48 * scale,
+            "narrow and scaled bars preserve their requested geometry");
+        const auto full = read(L"full"), charging = read(L"charging"), unavailable = read(L"unavailable");
+        const RECT power{bounds.right - 120 * scale, bounds.top + 3 * scale,
+            bounds.right - 92 * scale, bounds.bottom - 3 * scale};
+        // Focus on the battery glyph, not the percentage, so a missing charging
+        // symbol cannot pass merely because the fixture text differs.
+        unsigned powerDifferences = 0;
+        for (LONG y = power.top; y < power.bottom; ++y)
+            for (LONG x = power.left; x < power.right; ++x)
+                if (PixelAt(full, x, y) != PixelAt(charging, x, y)) ++powerDifferences;
+        Check(powerDifferences > 10 && unavailable.pixels != normal.pixels,
+            "full, charging and unavailable states have distinguishable native output");
+        unsigned coloredTrayPixels = 0;
+        for (LONG y = bounds.top + 3 * scale; y < bounds.bottom - 3 * scale; ++y)
+            for (LONG x = bounds.right - 276 * scale; x < bounds.right - 212 * scale; ++x)
+            {
+                const auto pixel = PixelAt(normal, x, y);
+                if (*std::max_element(pixel.begin(), pixel.begin() + 3) - *std::min_element(pixel.begin(), pixel.begin() + 3) > 30)
+                    ++coloredTrayPixels;
+            }
+        Check(coloredTrayPixels > 20, "pinned tray bitmap pixels are present, not just empty hit rectangles");
+        auto bottom = read(L"bottom");
+        const auto oneBorder = [&](const RgbaBitmap& image, bool atBottom) {
+            const LONG x = bounds.left + 2 * scale;
+            const auto middle = PixelAt(image, x, (bounds.top + bounds.bottom) / 2);
+            const auto top = PixelAt(image, x, bounds.top), edge = PixelAt(image, x, bounds.bottom - 1);
+            return atBottom ? top == middle && edge != middle : edge == middle && top != middle;
+        };
+        Check(oneBorder(normal, true) && oneBorder(bottom, false), "bar border appears only at the desktop-facing edge");
+        // A second border on the opposite edge must fail the same output check.
+        for (LONG x = bounds.left; x < bounds.right; ++x)
+        {
+            const auto edge = PixelAt(bottom, x, bounds.top);
+            std::copy(edge.begin(), edge.end(), bottom.pixels.begin() +
+                (static_cast<std::size_t>(bounds.bottom - 1) * bottom.width + x) * 4);
+        }
+        Check(!oneBorder(bottom, false), "a restored opposite border is rejected");
+        const auto contrast = read(L"high-contrast");
+        Check(contrast.pixels != normal.pixels && contrast.pixels != hover.pixels,
+            "high-contrast palette reaches the shared native renderer");
+    }
+}
+
 int wmain(int argc, wchar_t** argv) try
 {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
@@ -1301,6 +1370,7 @@ int wmain(int argc, wchar_t** argv) try
     TestControlPanelPreview(snowwidget, host, temporary.path);
     TestTrayPanelPreview(snowwidget, host, temporary.path);
     TestResourcePanelPreview(snowwidget, host, temporary.path);
+    TestStatusBarPreview(snowwidget, host, temporary.path);
     TestTextControlFontSizing(snowwidget, host, temporary.path);
     const auto tooltipRoot = temporary.path / L"tooltip";
     std::filesystem::create_directory(tooltipRoot);

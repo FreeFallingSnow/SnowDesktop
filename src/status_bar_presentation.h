@@ -13,7 +13,7 @@ namespace snowdesktop
 inline float StatusBarFixedWidth(std::string_view key)
 {
     if (key == "cpu" || key == "gpu") return 80.f;
-    if (key == "traffic") return 176.f;
+    if (key == "traffic") return 208.f;
     if (key == "controlCenter") return 136.f;
     return 0.f;
 }
