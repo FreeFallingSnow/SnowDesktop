@@ -51,6 +51,10 @@
 - 最新标准构建通过；本轮完整测试 120/120 通过，先前的三项失败已处理并保留原始失败记录。后续代码变化须按依赖更新证据，不能直接沿用本次结果。
 - 首版不承载任意 Lua 顶栏布局、不做自有通知历史。系统通知使用 Windows 入口。
 
+## 离线面板预览
+
+`snowwidget preview-native calendar-panel <输出目录> --appearance light --locale zh-CN --dpi 96 --transparent --canvas-width 1000 --canvas-height 1000 --padding 24 --host <SnowDesktop.exe>` 使用生产 `SystemCalendarView` 和 `CreateSystemPanelFrame`，计划输出空日程与有日程两张 PNG。该显式目标不属于旧 `all` 集合，不改变已有目标及参数；旧宿主不支持新目标。预览在独立离屏渲染窗口运行，不创建桌面宿主／AppBar、不连接托盘或读取用户日程，使用固定日期和示例日程。控件通过 WinUI `RenderTargetBitmap` 导出；目前只支持 light／dark，桌面玻璃模糊不属于此 XAML 导出范围，玻璃预设会明确拒绝。首次标准构建通过，但实际运行因位图尺寸检查失败，尚无成功图片，不能作为视觉验收。
+
 ## 证据与检查点
 
 - `1af7c4a7`、`867e9132`、`b1d32282`：此前原生顶栏／WinUI 弹窗候选。
@@ -69,6 +73,8 @@
 
 - `be8432e1` 保存托盘几何与鼠标焦点候选。随后定位完整检查中的真实层级缺陷：在没有其他置顶窗的隔离桌面上，把背景放到唯一置顶内容窗之后，不会提升背景的置顶属性。生产实现改为在一个事务中分别提升两窗；回归在独立、从不激活的测试桌面执行，不再依赖其他应用的层级。隔离恢复旧实现稳定触发两条原断言失败，新实现通过（`pair-negative/`）；手动筛选遗漏托盘的负向对照触发对应断言（`selection-negative/`）。六个已有数据主题的文档列出完整 feature ID，无新增 API。
 - 2026-09-26 最新候选：`scripts/build.bat --reload-shell` 退出 0，无编译／链接警告（`13-regression-build.log`）；定向 `dock_and_window_rules`、`builtin_widget_source_contract`、`test_selection` 3/3 通过（9.98 秒）。`scripts/test.bat full` **120/120 通过**，165.08 秒，退出 0，无编译／链接警告；完整日志 `13-full-tests.log`，JUnit `test-run-5aef9dda91f0418abf5ab4c92f07544f.xml`。输入快照为 `13-validation-inputs.json` 和 `13-final-validation-inputs.json`。完整测试的聚合构建重新链接了相同生产源码：标准构建宿主 SHA256 `7410c8d6655ecde4774487132079b687513e5a9214d6ff73964468bededa3650`，最终宿主 `a499ae71678aad50b61631883d973ad975bce9d5df70639866fc5647689f3cab`；最终 Hook `6b2f04c978639411fc97575d8e6572cbc50dda8c8a43c153595b154ea8dbd527`。生产采集与协议源码未变，托盘真实链路引用上一候选有效结果；本轮未再次广播重注册。空白点击关闭与真实面板外观仍待用户反馈。
+
+2026-09-26 日历简化候选：日历改为压缩当日信息、月历和只读日程，管理入口进入现有设置；新增共享弹窗边框和离线 `calendar-panel` 目标。`scripts/build.bat` 增量重试退出 0，无编译／链接警告（`14-calendar-build-retry.log`；首次失败的 SDK 属性名和头文件问题记录于 `14-calendar-build.log`）。实际预览在 `panel.bitmap` 失败，未产生图片。定向筛选实际命中 4 项，3/4 通过，`widget_author_preview_cli` 在同一尺寸检查失败；6.02 秒，CTest 退出 8，外层退出 1（`14-calendar-tests.log`，JUnit `test-run-1599914e453845babb71204342917ef7.xml`）。记录输入 `14-validation-inputs.json`；此候选未运行完整测试，也未实机验收，先保存编译通过的尝试再继续定位。
 
 ## YASB 参考边界
 

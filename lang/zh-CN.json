@@ -1890,6 +1890,7 @@
     "statusBar.position": "屏幕边缘",
     "statusBar.scale": "缩放",
     "statusBar.contents": "栏内显示",
+    "statusBar.manageCalendar": "管理日程",
     "statusBar.clock": "日期与时间",
     "statusBar.tray": "系统托盘",
     "statusBar.network": "网络",

@@ -1045,6 +1045,62 @@ return widget.define({
         "hovering an immediate date region paints the tooltip over its content");
 }
 
+RECT PanelPixels(const RgbaBitmap& bitmap)
+{
+    RECT bounds{static_cast<LONG>(bitmap.width), static_cast<LONG>(bitmap.height), 0, 0};
+    for (UINT y = 0; y < bitmap.height; ++y) for (UINT x = 0; x < bitmap.width; ++x)
+        if (PixelAt(bitmap, x, y)[3] > 8)
+        {
+            bounds.left = (std::min)(bounds.left, static_cast<LONG>(x));
+            bounds.top = (std::min)(bounds.top, static_cast<LONG>(y));
+            bounds.right = (std::max)(bounds.right, static_cast<LONG>(x + 1));
+            bounds.bottom = (std::max)(bounds.bottom, static_cast<LONG>(y + 1));
+        }
+    return bounds;
+}
+bool HasFourRoundedCorners(const RgbaBitmap& bitmap, const RECT& bounds)
+{
+    if (IsRectEmpty(&bounds)) return false;
+    for (const LONG x : {bounds.left, bounds.right - 1})
+        for (const LONG y : {bounds.top, bounds.bottom - 1})
+            if (PixelAt(bitmap, static_cast<UINT>(x), static_cast<UINT>(y))[3] > 8) return false;
+    return PixelAt(bitmap, static_cast<UINT>((bounds.left + bounds.right) / 2), static_cast<UINT>(bounds.top + 1))[3] > 32 &&
+        PixelAt(bitmap, static_cast<UINT>((bounds.left + bounds.right) / 2), static_cast<UINT>(bounds.bottom - 2))[3] > 32;
+}
+void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& temporary)
+{
+    // Real shared XAML view/frame, clock and calendar storage replaced only at
+    // their input boundary. Never launch desktop services or read user events.
+    for (const bool dark : {false, true})
+    {
+        const auto output = temporary / (dark ? L"calendar-dark" : L"calendar-light");
+        const auto [exitCode, json] = Run(snowwidget, {L"preview-native", L"calendar-panel", output.wstring(),
+            L"--appearance", dark ? L"dark" : L"light", L"--dpi", dark ? L"144" : L"96",
+            L"--locale", dark ? L"en-US" : L"zh-CN", L"--transparent",
+            L"--canvas-width", L"1000", L"--canvas-height", L"1000", L"--padding", L"24", L"--host", host.wstring()});
+        if (exitCode != 0) std::cerr << json << '\n';
+        Check(exitCode == 0 && json.find("\"ok\":true") != std::string::npos, "production calendar panel renders offline");
+        LONG emptyHeight = 0;
+        for (const bool agenda : {false, true})
+        {
+            auto bitmap = ReadPng(output / (agenda ? L"calendar-panel-agenda.png" : L"calendar-panel-empty.png"));
+            const auto bounds = PanelPixels(bitmap);
+            const int scale = dark ? 3 : 2; // Twice the scale, no measured bounds in the expectation.
+            Check(bounds.right - bounds.left == 520 * scale / 2 && bounds.bottom - bounds.top >= 320 * scale / 2 &&
+                bounds.bottom - bounds.top <= 530 * scale / 2, "calendar uses a compact two-column panel within its canvas");
+            Check(HasFourRoundedCorners(bitmap, bounds), "calendar panel preserves all four corners including the bottom edge");
+            if (!agenda) emptyHeight = bounds.bottom - bounds.top;
+            else Check(bounds.bottom - bounds.top > emptyHeight + 16, "agenda rows contribute to actual panel measurement");
+            // Independent output mutation: a square bottom corner must fail,
+            // which the old top-only visual checks could not detect.
+            const auto bottomLeft = (static_cast<std::size_t>(bounds.bottom - 1) * bitmap.width + bounds.left) * 4 + 3;
+            bitmap.pixels[bottomLeft] = 255;
+            Check(!HasFourRoundedCorners(bitmap, bounds), "square bottom-corner mutation is rejected");
+        }
+    }
+}
+
 int wmain(int argc, wchar_t** argv) try
 {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
@@ -1066,6 +1122,7 @@ int wmain(int argc, wchar_t** argv) try
         "SnowDesktop preview host exists");
 
     TemporaryDirectory temporary;
+    TestCalendarPanelPreview(snowwidget, host, temporary.path);
     TestTextControlFontSizing(snowwidget, host, temporary.path);
     const auto tooltipRoot = temporary.path / L"tooltip";
     std::filesystem::create_directory(tooltipRoot);

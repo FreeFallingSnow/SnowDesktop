@@ -1890,6 +1890,7 @@
     "statusBar.position": "Screen edge",
     "statusBar.scale": "Scale",
     "statusBar.contents": "Bar contents",
+    "statusBar.manageCalendar": "Manage events",
     "statusBar.clock": "Date and time",
     "statusBar.tray": "System tray",
     "statusBar.network": "Network",

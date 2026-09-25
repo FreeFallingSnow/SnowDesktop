@@ -1890,6 +1890,7 @@
     "statusBar.position": "Borda da tela",
     "statusBar.scale": "Escala",
     "statusBar.contents": "Itens exibidos",
+    "statusBar.manageCalendar": "Gerenciar eventos",
     "statusBar.clock": "Data e hora",
     "statusBar.tray": "Bandeja do sistema",
     "statusBar.network": "Rede",

@@ -1890,6 +1890,7 @@
     "statusBar.position": "화면 가장자리",
     "statusBar.scale": "배율",
     "statusBar.contents": "표시 항목",
+    "statusBar.manageCalendar": "일정 관리",
     "statusBar.clock": "날짜 및 시간",
     "statusBar.tray": "시스템 트레이",
     "statusBar.network": "네트워크",

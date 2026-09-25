@@ -7,6 +7,7 @@
 #include "preview_png_writer.h"
 #include "utils.h"
 #include "widget_preview_stage.h"
+#include "winui/system_panel_preview.h"
 
 #include <shellapi.h>
 
@@ -147,7 +148,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -660,8 +661,13 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
         return 1;
     }
 
-    DesktopApp app;
-    result = app.ExportNativeComponentPreviews(request);
+    if (request.component == "calendar-panel")
+        result = winui::ExportCalendarPanelPreview(request, ignoredAppearance);
+    else
+    {
+        DesktopApp app;
+        result = app.ExportNativeComponentPreviews(request);
+    }
     WriteResultFile(resultPath, result);
     releaseArguments();
     return result.ok ? 0 : 1;

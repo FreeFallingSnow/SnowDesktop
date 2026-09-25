@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "system_panel.h"
 #include "system_control_view.h"
+#include "system_panel_surface.h"
 #include "winui_runtime.h"
 #include "../tray_service.h"
 #include "../widget_system_data_provider.h"
@@ -66,6 +67,7 @@ struct SystemPanel::Impl
     std::vector<std::shared_ptr<Row>> rows;
     std::uint64_t revision = 0;
     bool showing = false, rebuilding = false, hiding = false, managingTray = false;
+    double regionRadius = -1;
     Impl(SettingsChanged callback, SystemCalendarActions dates) : changed(std::move(callback)), calendarActions(std::move(dates)) {}
     ~Impl()
     {
@@ -272,51 +274,20 @@ struct SystemPanel::Impl
     }
     void Build()
     {
+        regionRadius = -1;
         controls.reset();
         calendar.reset();
         rows.clear();
-        frame = c::Border(); frame.Padding({12, 12, 12, 12});
-        const double radius = appearance.cornerRadius;
-        frame.CornerRadius({radius, radius, radius, radius});
-        frame.RequestedTheme(appearance.contentTheme == 1 ? x::ElementTheme::Light : x::ElementTheme::Dark);
-        HIGHCONTRASTW hc{sizeof(hc)}; SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0);
-        const bool highContrast = (hc.dwFlags & HCF_HIGHCONTRASTON) != 0;
-        if (highContrast)
-        {
-            const auto color = GetSysColor(COLOR_WINDOW);
-            frame.Background(m::SolidColorBrush(Color(GetRValue(color) / 255.f, GetGValue(color) / 255.f, GetBValue(color) / 255.f)));
-        }
-        else if (appearance.panelGradient.enabled)
-        {
-            m::LinearGradientBrush brush;
-            const auto line = ResolvePanelGradientLine(appearance.panelGradient, 480, 560);
-            brush.StartPoint({static_cast<float>(line.x1 / 480), static_cast<float>(line.y1 / 560)});
-            brush.EndPoint({static_cast<float>(line.x2 / 480), static_cast<float>(line.y2 / 560)});
-            for (const auto& value : appearance.panelGradient.stops)
-            {
-                m::GradientStop stop; stop.Offset(value.position);
-                stop.Color(Color(((value.color >> 16) & 255) / 255.f, ((value.color >> 8) & 255) / 255.f,
-                    (value.color & 255) / 255.f, static_cast<float>(value.opacity) * appearance.widgetAlpha));
-                brush.GradientStops().Append(stop);
-            }
-            frame.Background(brush);
-        }
-        else frame.Background(m::SolidColorBrush(Color(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha)));
-        if (!highContrast)
-        {
-            frame.BorderBrush(m::SolidColorBrush(Color(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha)));
-            const double width = appearance.widgetBorderWidth;
-            frame.BorderThickness({width, width, width, width});
-        }
+        frame = CreateSystemPanelFrame(appearance);
         c::StackPanel root; root.Spacing(12);
         auto title = Text(_LW(action == StatusBarAction::Tray ? "statusBar.tray" : action == StatusBarAction::Calendar ? "statusBar.clock" : "statusBar.controlCenter"));
         title.FontSize(20); title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        root.Children().Append(title);
+        if (action != StatusBarAction::Calendar) root.Children().Append(title);
         body = c::StackPanel(); body.Spacing(6);
         notice = Text(L"");
         if (action == StatusBarAction::Calendar)
         {
-            calendar = std::make_unique<SystemCalendarView>(calendarActions);
+            calendar = std::make_unique<SystemCalendarView>(calendarActions, [this] { if (showing) Arrange(); });
             root.Children().Append(calendar->Root());
         }
         else if (action == StatusBarAction::Tray)
@@ -355,7 +326,7 @@ struct SystemPanel::Impl
         if (!content || !window) return;
         MONITORINFO info{sizeof(info)}; if (!GetMonitorInfoW(monitor, &info)) return;
         const double scale = GetDpiForWindow(owner) / 96.;
-        const double requested = action == StatusBarAction::Calendar ? 400 : action == StatusBarAction::Tray && !managingTray ? 320 : 440;
+        const double requested = action == StatusBarAction::Calendar ? 520 : action == StatusBarAction::Tray && !managingTray ? 320 : 440;
         const double availableWidth = (info.rcWork.right - info.rcWork.left) / scale;
         const double availableHeight = (info.rcWork.bottom - info.rcWork.top) / scale;
         const float widthDip = static_cast<float>((std::min)(requested, availableWidth));
@@ -368,9 +339,11 @@ struct SystemPanel::Impl
         left = std::clamp(left, static_cast<int>(info.rcWork.left), static_cast<int>(info.rcWork.right) - width);
         top = std::clamp(top, static_cast<int>(info.rcWork.top), static_cast<int>(info.rcWork.bottom) - height);
         RECT previous{}; GetWindowRect(window, &previous);
-        if (showing && previous.left == left && previous.top == top && previous.right == left + width && previous.bottom == top + height) return;
+        const double radius = appearance.cornerRadius * scale;
+        if (showing && regionRadius == radius && previous.left == left && previous.top == top && previous.right == left + width && previous.bottom == top + height) return;
         SetWindowPos(window, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
         runtime.ResizeToClient();
+        if (UpdateSystemPanelRegion(window, width, height, radius)) regionRadius = radius;
         if (appearance.glassEnabled)
         {
             if (!backdrop.IsAvailable()) backdrop.InitializePopup(window, showing, false);
@@ -466,8 +439,8 @@ void SystemPanel::Show(StatusBarAction action, HWND owner, RECT anchor,
     self.monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{sizeof(info)}; if (!GetMonitorInfoW(self.monitor, &info)) return;
     const double scale = GetDpiForWindow(owner) / 96.;
-    const int width = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 400 : action == StatusBarAction::Tray ? 320 : 440) * scale), static_cast<int>(info.rcWork.right - info.rcWork.left));
-    const int height = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 640 : 560) * scale), static_cast<int>(info.rcWork.bottom - info.rcWork.top));
+    const int width = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 520 : action == StatusBarAction::Tray ? 320 : 440) * scale), static_cast<int>(info.rcWork.right - info.rcWork.left));
+    const int height = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 500 : 560) * scale), static_cast<int>(info.rcWork.bottom - info.rcWork.top));
     int left = action == StatusBarAction::Calendar ? (anchor.left + anchor.right - width) / 2 : anchor.right - width;
     int top = anchor.bottom + static_cast<int>(6 * scale);
     if (settings.position == DockPosition::Bottom) top = anchor.top - height - static_cast<int>(6 * scale);

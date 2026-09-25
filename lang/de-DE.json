@@ -1890,6 +1890,7 @@
     "statusBar.position": "Bildschirmrand",
     "statusBar.scale": "Skalierung",
     "statusBar.contents": "Angezeigte Elemente",
+    "statusBar.manageCalendar": "Termine verwalten",
     "statusBar.clock": "Datum und Uhrzeit",
     "statusBar.tray": "Infobereich",
     "statusBar.network": "Netzwerk",

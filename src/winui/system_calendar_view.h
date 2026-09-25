@@ -9,12 +9,13 @@ namespace snowdesktop::winui
 struct SystemCalendarActions
 {
     std::function<std::vector<calendar::CalendarEvent>(const std::string&)> events;
-    std::function<calendar::MutationResult(calendar::CalendarEvent, bool)> mutate;
+    std::function<void()> manage;
+    std::function<std::string()> today;
 };
 class SystemCalendarView
 {
 public:
-    explicit SystemCalendarView(SystemCalendarActions actions);
+    explicit SystemCalendarView(SystemCalendarActions actions, std::function<void()> layoutChanged = {});
     ~SystemCalendarView();
     winrt::Microsoft::UI::Xaml::UIElement Root() const;
     void Refresh();

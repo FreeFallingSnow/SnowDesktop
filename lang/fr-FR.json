@@ -1890,6 +1890,7 @@
     "statusBar.position": "Bord de l’écran",
     "statusBar.scale": "Échelle",
     "statusBar.contents": "Éléments affichés",
+    "statusBar.manageCalendar": "Gérer les événements",
     "statusBar.clock": "Date et heure",
     "statusBar.tray": "Zone de notification",
     "statusBar.network": "Réseau",

@@ -1890,6 +1890,7 @@
     "statusBar.position": "螢幕邊緣",
     "statusBar.scale": "縮放",
     "statusBar.contents": "列內顯示",
+    "statusBar.manageCalendar": "管理行程",
     "statusBar.clock": "日期與時間",
     "statusBar.tray": "系統匣",
     "statusBar.network": "網路",

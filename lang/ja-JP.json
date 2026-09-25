@@ -1890,6 +1890,7 @@
     "statusBar.position": "画面の端",
     "statusBar.scale": "表示倍率",
     "statusBar.contents": "表示項目",
+    "statusBar.manageCalendar": "予定を管理",
     "statusBar.clock": "日付と時刻",
     "statusBar.tray": "システムトレイ",
     "statusBar.network": "ネットワーク",

@@ -133,21 +133,10 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
                     return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date) :
                         std::vector<snowdesktop::calendar::CalendarEvent>{};
                 },
-                [this](snowdesktop::calendar::CalendarEvent event, bool remove) {
-                    using Result = snowdesktop::calendar::MutationResult;
-                    if (!widgetEngine_) return Result{false, {}, 0, "unavailable"};
-                    if (remove)
-                    {
-                        const auto events = widgetEngine_->RuntimeCalendarEvents(event.date, event.date);
-                        const auto found = std::find_if(events.begin(), events.end(), [&](const auto& current) { return current.id == event.id; });
-                        if (found == events.end() || found->revision != event.revision) return Result{false, {}, 0, "conflict"};
-                        return widgetEngine_->RuntimeCalendarRemove(event.id);
-                    }
-                    if (event.id.empty()) return widgetEngine_->RuntimeCalendarCreate(std::move(event));
-                    const auto id = event.id;
-                    const auto revision = event.revision;
-                    return widgetEngine_->RuntimeCalendarUpdate(id, revision, std::move(event));
-                }});
+                [this] {
+                    if (systemPanel_) systemPanel_->Hide();
+                    ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Calendar, "calendar.events"));
+                }, {}});
         systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
             statusBar_->Tray(), systemDataProvider_);
     }
