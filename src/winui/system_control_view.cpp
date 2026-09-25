@@ -86,7 +86,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         return j::Object();
     }
     void Notify(const char* key, bool error)
-    { layoutDirty = !status.IsOpen() || status.Message() != _LW(key); status.Message(_LW(key)); status.Severity(error ? c::InfoBarSeverity::Error : c::InfoBarSeverity::Informational); status.IsOpen(true); }
+    { layoutDirty = layoutDirty || !status.IsOpen() || status.Message() != _LW(key); status.Message(_LW(key)); status.Severity(error ? c::InfoBarSeverity::Error : c::InfoBarSeverity::Informational); status.IsOpen(true); }
     c::Button Button(c::StackPanel parent, const wchar_t* label, std::function<void()> action)
     {
         c::Button button; button.Content(winrt::box_value(label)); Name(button, label);
@@ -493,8 +493,8 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         }, [this](bool enabled) { Start("network.wifi.setRadio", {{"interfaceId", interfaceId}, {"enabled", enabled ? "1" : "0"}}); }, adapterGroup);
         const auto scan = Button(adapterGroup, _LW("controlCenter.scan"), [this] { Start("network.wifi.scan", {{"interfaceId", interfaceId}}); });
         section.updates.push_back([this, scan] { scan.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
-        c::TextBlock error = Text(L""); adapterGroup.Children().Append(error);
-        section.updates.push_back([this, error] { const auto state = WifiInterface(); error.Text(j::String(state, "error") == "accessDenied" ? _LW("controlCenter.locationDenied") : L""); });
+        c::TextBlock error = Text(_LW("controlCenter.locationDenied")); error.Visibility(x::Visibility::Collapsed);
+        adapterGroup.Children().Append(error);
         const auto available = Group(section.panel, _LW("controlCenter.availableNetworks"));
         if (networks.empty()) available.Children().Append(Text(_LW("controlCenter.unavailable")));
         for (const auto& network : networks)
@@ -540,7 +540,15 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         const auto hidden = Button(section.panel, _LW("controlCenter.hiddenNetwork"), [this] { HiddenNetwork(); });
         section.updates.push_back([this, hidden] { hidden.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
         Fallback(section, L"ms-settings:network-wifi");
-        Button(section.panel, _LW("controlCenter.locationSettings"), [this] { Settings(L"ms-settings:privacy-location"); });
+        const auto location = Button(section.panel, _LW("controlCenter.locationSettings"), [this] { Settings(L"ms-settings:privacy-location"); });
+        location.Visibility(x::Visibility::Collapsed);
+        section.updates.push_back([this, error, location] {
+            const auto visibility = j::String(WifiInterface(), "error") == "accessDenied" ? x::Visibility::Visible : x::Visibility::Collapsed;
+            if (error.Visibility() != visibility)
+            {
+                error.Visibility(visibility); location.Visibility(visibility); layoutDirty = true;
+            }
+        });
     }
     void Bluetooth(Section& section)
     {

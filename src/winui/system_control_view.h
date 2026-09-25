@@ -8,6 +8,7 @@
 namespace snowdesktop::widget_runtime { class WidgetSystemDataProvider; }
 namespace snowdesktop::winui
 {
+inline constexpr double SystemControlViewportHeight = 540;
 // Internal device boundary. The production adapter uses the application-owned
 // provider; offline rendering supplies fixed state and never touches hardware.
 struct SystemControlViewSource

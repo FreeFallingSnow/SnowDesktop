@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Globalization.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 
 namespace snowdesktop::winui
 {
@@ -125,6 +126,23 @@ void CheckMonthFits(const x::DependencyObject& element, const x::Controls::Calen
     for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(element); ++i)
         CheckMonthFits(x::Media::VisualTreeHelper::GetChild(element, i), month, foundLastDay);
 }
+// An offscreen RenderTargetBitmap must capture resting control states, not
+// the first frame of compositor brush fades. Keep the actual stock templates
+// and final state values; only complete their animation in this preview tree.
+void CompletePreviewAnimations(const x::DependencyObject& element)
+{
+    if (const auto presenter = element.try_as<x::Controls::ContentPresenter>()) presenter.BackgroundTransition(nullptr);
+    if (const auto border = element.try_as<x::Controls::Border>()) border.BackgroundTransition(nullptr);
+    if (const auto panel = element.try_as<x::Controls::Panel>()) panel.BackgroundTransition(nullptr);
+    if (const auto framework = element.try_as<x::FrameworkElement>())
+        for (const auto& group : x::VisualStateManager::GetVisualStateGroups(framework))
+            if (const auto state = group.CurrentState())
+                if (const auto storyboard = state.Storyboard(); storyboard &&
+                    storyboard.GetCurrentState() == x::Media::Animation::ClockState::Active)
+                    storyboard.SkipToFill();
+    for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(element); ++i)
+        CompletePreviewAnimations(x::Media::VisualTreeHelper::GetChild(element, i));
+}
 }
 native_component_preview::Result ExportSystemPanelPreview(
     const native_component_preview::Request& request, PersonalizationSettings appearance)
@@ -177,7 +195,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                 const auto before = layoutChanges;
                 controls->Select(preset == "overview" || preset == "unavailable" ? "" : preset);
                 if (layoutChanges == before) throw std::runtime_error("control page switch did not request immediate measurement");
-                x::Controls::ScrollViewer scroll; scroll.MaxHeight(470); scroll.Content(controls->Root());
+                x::Controls::ScrollViewer scroll; scroll.MaxHeight(SystemControlViewportHeight); scroll.Content(controls->Root());
                 scroll.HorizontalScrollBarVisibility(x::Controls::ScrollBarVisibility::Disabled);
                 frame.Child(scroll);
             }
@@ -220,6 +238,16 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (width + request.padding * 2 > request.canvasWidth || height + request.padding * 2 > request.canvasHeight)
                 throw std::runtime_error("preview canvas is too small for the system panel");
             result.stage = "panel.bitmap";
+            if (controlPanel)
+            {
+                CompletePreviewAnimations(frame); frame.UpdateLayout();
+                // These fixtures contain only one device/network per section.
+                // All commands must fit; outer PNG bounds alone miss a clipped
+                // settings button at the end of a short device list.
+                const auto scroll = frame.Child().as<x::Controls::ScrollViewer>();
+                if (scroll.ScrollableHeight() > 1)
+                    throw std::runtime_error("control preview clipped commands in its single-device fixture: " + preset);
+            }
             x::Media::Imaging::RenderTargetBitmap bitmap;
             // WinUI's island rasterizer applies the XamlRoot scale to these
             // dimensions. Convert from requested output pixels exactly once.
