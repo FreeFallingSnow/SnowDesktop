@@ -1,5 +1,6 @@
 #include "system_controls.h"
 #include <windows.h>
+#include <objbase.h>
 #include <algorithm>
 #include <charconv>
 #include <cmath>
