@@ -3386,6 +3386,8 @@ private:
     class SettingsHostActionsAdapter;
     std::unique_ptr<snowdesktop::SettingsHostActions> settingsHostActions_;
     std::unique_ptr<snowdesktop::SettingsController> settingsController_;
+    std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
+        systemDataProvider_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     std::unique_ptr<snowdesktop::widget_runtime::IWidgetSettingsBackend>
         widgetSettingsBackend_;

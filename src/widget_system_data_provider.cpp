@@ -787,15 +787,29 @@ bool WidgetSystemDataProvider::SupportsTopic(
 bool WidgetSystemDataProvider::StartTopic(
     std::string_view topic, std::chrono::milliseconds interval)
 {
-    if (!SupportsTopic(topic) || interval < MinimumInterval ||
+    return StartTopic("widgets", topic, interval);
+}
+
+bool WidgetSystemDataProvider::StartTopic(std::string_view consumer,
+    std::string_view topic, std::chrono::milliseconds interval)
+{
+    if (consumer.empty() || !SupportsTopic(topic) || interval < MinimumInterval ||
         interval > MaximumInterval)
         return false;
 
+    std::scoped_lock lifecycleLock(lifecycleMutex_);
     bool startWorker = false;
     {
         std::scoped_lock lock(mutex_);
         const auto now = Clock::now();
         const std::string key(topic);
+        auto& consumers = demands_[key];
+        consumers.insert_or_assign(std::string(consumer), interval);
+        for (const auto& [id, demand] : consumers)
+        {
+            (void)id;
+            interval = std::min(interval, demand);
+        }
         auto existing = schedules_.find(key);
         if (existing == schedules_.end())
         {
@@ -837,10 +851,37 @@ bool WidgetSystemDataProvider::StartTopic(
 
 bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
 {
+    return StopTopic("widgets", topic);
+}
+
+bool WidgetSystemDataProvider::StopTopic(
+    std::string_view consumer, std::string_view topic)
+{
+    std::scoped_lock lifecycleLock(lifecycleMutex_);
     bool removed = false;
     bool stopWorker = false;
     {
         std::scoped_lock lock(mutex_);
+        const auto demand = demands_.find(std::string(topic));
+        if (demand == demands_.end() ||
+            demand->second.erase(std::string(consumer)) == 0)
+            return false;
+        if (!demand->second.empty())
+        {
+            auto interval = MaximumInterval;
+            for (const auto& [id, value] : demand->second)
+            {
+                (void)id;
+                interval = std::min(interval, value);
+            }
+            auto& schedule = schedules_.at(std::string(topic));
+            schedule.interval = interval;
+            schedule.due = Clock::now() + interval;
+            ++configurationGeneration_;
+            condition_.notify_all();
+            return true;
+        }
+        demands_.erase(demand);
         removed = schedules_.erase(std::string(topic)) > 0;
         if (!removed) return false;
         semanticDebouncers_.erase(std::string(topic));
@@ -870,11 +911,33 @@ bool WidgetSystemDataProvider::StopTopic(std::string_view topic)
     return true;
 }
 
+void WidgetSystemDataProvider::RemoveConsumer(std::string_view consumer)
+{
+    std::vector<std::string> topics;
+    {
+        std::scoped_lock lock(mutex_);
+        for (const auto& [topic, consumers] : demands_)
+            if (consumers.contains(std::string(consumer))) topics.push_back(topic);
+    }
+    for (const auto& topic : topics) (void)StopTopic(consumer, topic);
+}
+
+std::optional<std::chrono::milliseconds>
+WidgetSystemDataProvider::EffectiveInterval(std::string_view topic) const
+{
+    std::scoped_lock lock(mutex_);
+    const auto schedule = schedules_.find(std::string(topic));
+    if (schedule == schedules_.end()) return std::nullopt;
+    return schedule->second.interval;
+}
+
 void WidgetSystemDataProvider::StopAll()
 {
+    std::scoped_lock lifecycleLock(lifecycleMutex_);
     {
         std::scoped_lock lock(mutex_);
         schedules_.clear();
+        demands_.clear();
         changedTopics_.clear();
         semanticDebouncers_.clear();
         networkStatusDebouncer_.Reset();
@@ -1037,6 +1100,7 @@ WidgetSystemDataProvider::DrainChangedTopics()
 
 bool WidgetSystemDataProvider::Running() const noexcept
 {
+    std::scoped_lock lock(lifecycleMutex_);
     return worker_.joinable();
 }
 

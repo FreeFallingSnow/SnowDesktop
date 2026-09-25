@@ -762,6 +762,10 @@ public:
      */
     ~WidgetEngine();
 
+    // Set before Init. Preview engines never attach live application services.
+    void SetSystemDataProvider(std::shared_ptr<
+        snowdesktop::widget_runtime::WidgetSystemDataProvider> provider);
+
     /**
      * @brief 初始化引擎
      * @param d2dContext Direct2D 设备上下文指针
@@ -1923,7 +1927,7 @@ private:
     snowdesktop::widget_runtime::WidgetTrustedGestureState
         trustedGestureState_;
     std::uint64_t nextWidgetRuntimeToken_ = 0;
-    std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
+    std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         widgetSystemDataProvider_;
     std::unique_ptr<snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>
         widgetAudioAnalysisProvider_;

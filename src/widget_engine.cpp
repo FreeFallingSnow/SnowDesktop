@@ -11739,6 +11739,13 @@ WidgetEngine::~WidgetEngine()
     Shutdown();
 }
 
+void WidgetEngine::SetSystemDataProvider(std::shared_ptr<
+    snowdesktop::widget_runtime::WidgetSystemDataProvider> provider)
+{
+    if (!dataBroker_ && !previewOnly_)
+        widgetSystemDataProvider_ = std::move(provider);
+}
+
 void WidgetEngine::SetAudioAnalysisWakeCallback(
     AudioAnalysisWakeCallback callback)
 {
@@ -11786,8 +11793,9 @@ void WidgetEngine::InitializeWidgetDataBroker()
     }
     else
     {
-        widgetSystemDataProvider_ = std::make_unique<
-            snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+        if (!widgetSystemDataProvider_)
+            widgetSystemDataProvider_ = std::make_shared<
+                snowdesktop::widget_runtime::WidgetSystemDataProvider>();
         widgetAudioAnalysisProvider_ = std::make_unique<
             snowdesktop::widget_runtime::WidgetAudioAnalysisProvider>();
         widgetAudioAnalysisProvider_->SetChangedCallback(
@@ -15186,7 +15194,7 @@ void WidgetEngine::Shutdown()
         ApplyWidgetDataBrokerActions();
     }
     if (widgetSystemDataProvider_)
-        widgetSystemDataProvider_->StopAll();
+        widgetSystemDataProvider_->RemoveConsumer("widgets");
     if (widgetAudioAnalysisProvider_)
         widgetAudioAnalysisProvider_->Stop();
     widgets_.clear();

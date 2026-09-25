@@ -719,6 +719,33 @@ void TestStopAll()
             provider.DrainChangedTopics().empty(),
         "StopAll must synchronously release the worker and pending changes");
 }
+
+void TestIndependentConsumerLifetime()
+{
+    // Production entry used by the widget broker and native desktop bars.
+    // Removing the faster/native consumer must not stop a widget's sampling,
+    // and closing widgets must not tear down the application's remaining demand.
+    WidgetSystemDataProvider provider;
+    Check(provider.StartTopic("system.cpu", 1000ms), "widget demand starts");
+    Check(provider.StartTopic("statusBar", "system.cpu", 250ms), "bar demand starts");
+    Check(provider.StartTopic("controlCenter", "system.cpu", 500ms), "panel demand starts");
+    Check(provider.ActiveTopicCount() == 1 &&
+            provider.EffectiveInterval("system.cpu") == 250ms,
+        "multiple consumers must share one fastest schedule");
+    provider.RemoveConsumer("statusBar");
+    Check(provider.Running() && provider.EffectiveInterval("system.cpu") == 500ms,
+        "removing the fastest consumer must restore the next interval");
+    provider.RemoveConsumer("widgets");
+    Check(provider.Running() && provider.ActiveTopicCount() == 1,
+        "widget engine shutdown must preserve native consumers");
+    Check(!provider.StopTopic("system.cpu"), "a removed consumer cannot stop another");
+    provider.RemoveConsumer("controlCenter");
+    Check(!provider.Running() && provider.ActiveTopicCount() == 0,
+        "the final consumer releases the worker");
+    Check(!provider.StartTopic("", "system.cpu", 1000ms) &&
+            !provider.StartTopic("statusBar", "unknown", 1000ms),
+        "invalid demand must not create resources");
+}
 }
 
 int main()
@@ -732,6 +759,7 @@ int main()
     TestNetworkStatusDebounce();
     TestTopicLifecycleAndSampling();
     TestStopAll();
+    TestIndependentConsumerLifetime();
     std::cout << "widget system data provider tests passed\n";
     return 0;
 }

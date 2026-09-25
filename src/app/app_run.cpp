@@ -10,6 +10,7 @@
 #include "../steam_runtime_startup.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
+#include "../widget_system_data_provider.h"
 
 #include <commoncontrols.h>
 #include <imm.h>
@@ -1169,7 +1170,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     StartSteamEntitlementRegistration(true);
 
+    systemDataProvider_ = std::make_shared<
+        snowdesktop::widget_runtime::WidgetSystemDataProvider>();
     widgetEngine_ = std::make_unique<WidgetEngine>();
+    widgetEngine_->SetSystemDataProvider(systemDataProvider_);
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {
         widgetEngine_->SetDesktopSnapshotProvider([this]() {

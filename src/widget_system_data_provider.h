@@ -367,6 +367,14 @@ public:
     bool StartTopic(std::string_view topic,
         std::chrono::milliseconds interval);
     bool StopTopic(std::string_view topic);
+    // Host-internal consumers share one schedule per topic. The two-argument
+    // overloads retain the widget broker's demand for existing callers.
+    bool StartTopic(std::string_view consumer, std::string_view topic,
+        std::chrono::milliseconds interval);
+    bool StopTopic(std::string_view consumer, std::string_view topic);
+    void RemoveConsumer(std::string_view consumer);
+    std::optional<std::chrono::milliseconds> EffectiveInterval(
+        std::string_view topic) const;
     void StopAll();
 
     std::optional<WidgetCpuDataSnapshot> Cpu() const;
@@ -443,8 +451,12 @@ private:
     void CloseStorageIoQuery();
 
     mutable std::mutex mutex_;
+    // Serializes worker creation/join without holding the snapshot mutex.
+    mutable std::mutex lifecycleMutex_;
     std::condition_variable condition_;
     std::unordered_map<std::string, TopicSchedule> schedules_;
+    std::unordered_map<std::string,
+        std::unordered_map<std::string, std::chrono::milliseconds>> demands_;
     std::unordered_set<std::string> changedTopics_;
     std::unordered_map<std::string, WidgetDataSemanticDebouncer>
         semanticDebouncers_;
