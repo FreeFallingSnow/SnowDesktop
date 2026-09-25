@@ -4,6 +4,139 @@
 
 // Collection/file-group dwell activation and popup tab switching.
 
+void DesktopApp::CancelPopupHover(bool suppressUntilLeave)
+{
+    if (suppressUntilLeave) popupHoverController_.SuppressUntilLeave();
+    else popupHoverController_.Reset();
+    if (popupHoverTimerArmed_ && hwnd_)
+        KillTimer(hwnd_, kPopupHoverTimerId);
+    popupHoverTimerArmed_ = false;
+}
+
+void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
+{
+    if (!personalizationSettings_.popupHoverOpen)
+    {
+        CancelPopupHover();
+        return;
+    }
+    const HWND dialogOwner = ShellDialogOwnerHwnd();
+    if (mouseDown_ || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive() ||
+        widgetAction_ != WidgetAction::None || largeIconGesture_ ||
+        middleButtonWidgetMove_ || detailColumnResizeActive_ ||
+        luaWidgetPanelMouseDown_ || renameEdit_ || GetCapture() ||
+        HasActiveContextMenuSession() ||
+        (dialogOwner && !IsWindowEnabled(dialogOwner)) ||
+        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+            GetAsyncKeyState(VK_MBUTTON)) & 0x8000))
+    {
+        CancelPopupHover(true);
+        return;
+    }
+    if (quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty() ||
+        IsPointInUsageGuide(point) || IsPointOccludedByOpenPopup(point))
+    {
+        CancelPopupHover();
+        return;
+    }
+
+    // Keep stable source identities across model rebuilds; indices are resolved
+    // again for every sample, including timer delivery. Different monitors must
+    // complete their own dwell even when displaying the same Dock entry.
+    std::wstring token;
+    size_t widgetIndex = static_cast<size_t>(-1);
+    size_t folderIndex = static_cast<size_t>(-1);
+    bool alreadyOpen = false;
+    if (DockContainer* dock = GetDockContainerAtPoint(point))
+    {
+        DockEntryItem* item = dock->ContainsInteractivePoint(point)
+            ? dock->EntryAtPoint(point) : nullptr;
+        if (item && item->GetEntryIndex() < dockEntries_.size())
+        {
+            const size_t index = item->GetEntryIndex();
+            const DockEntry& entry = dockEntries_[index];
+            PersistentDockHost* host = FindPersistentDockHost(dock);
+            const std::wstring source = std::to_wstring(static_cast<int>(entry.type)) +
+                L":" + ToUpperInvariant(entry.reference);
+            if (IsLogicalDockEntryType(entry.type))
+            {
+                widgetIndex = FindWidgetIndexById(entry.reference);
+                alreadyOpen = !dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex;
+            }
+            else if (IsFolderDockEntry(entry))
+            {
+                folderIndex = index;
+                alreadyOpen = dockFolderPopupOpen_ && dockFolderPopupSourceId_ == source;
+            }
+            if (widgetIndex < widgets_.size() || folderIndex < dockEntries_.size())
+            {
+                token = L"dock:" + std::to_wstring(
+                    reinterpret_cast<std::uintptr_t>(host ? host->hwnd : hwnd_)) +
+                    L":" + source;
+                alreadyOpen = alreadyOpen && collectionPopupDockHost_ == host;
+            }
+        }
+    }
+    else if (HitTestStandaloneWidgetIndex(point) >= widgets_.size())
+    {
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            if (desktopIconsHidden_ && !IsRetainedContainer(it->get())) continue;
+            auto* container = dynamic_cast<WidgetContainer*>(it->get());
+            if (!container) continue;
+            const WidgetHit hit = container->HitTestWidget(point);
+            if (hit == WidgetHit::None) continue;
+            const DesktopWidget* widget = container->GetWidgetData();
+            if (widget && widget->type == DesktopWidgetType::Collection &&
+                hit == WidgetHit::CollectionOpenBtn)
+            {
+                widgetIndex = FindWidgetIndexById(widget->id);
+                token = L"collection:" + widget->id;
+                alreadyOpen = !dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex &&
+                    !popupAnchoredToDock_;
+            }
+            break; // Never hover-open a collection through another component.
+        }
+    }
+    const DWORD now = GetTickCount();
+    popupHoverController_.Track(token, now);
+    if (token.empty())
+    {
+        CancelPopupHover();
+        return;
+    }
+    if (alreadyOpen && IsCollectionPopupInteractive())
+    {
+        CancelPopupHover(true);
+        return;
+    }
+    const DWORD delayMs = static_cast<DWORD>(NormalizePopupHoverDelayMs(
+        personalizationSettings_.popupHoverDelayMs));
+    if (allowOpen && popupHoverController_.IsReady(now, delayMs))
+    {
+        snowdesktop::popup_animation_rules::OpenAfterClose(
+            popupAnimation_, GetOpenPopupWidget() != nullptr,
+            [this] {
+                pendingCollectionPopupOpen_.reset();
+                BeginCollectionPopupClose(false);
+            },
+            [this, now, delayMs, folderIndex, widgetIndex, point] {
+                if (!popupHoverController_.Consume(now, delayMs)) return;
+                CancelPopupHover(true);
+                HideDockWindowPreview();
+                if (folderIndex < dockEntries_.size()) OpenDockFolderPopupAt(folderIndex, point);
+                else if (widgetIndex < widgets_.size()) OpenCollectionPopupAt(widgetIndex, point);
+                PresentDesktopPointerUpdate();
+                InvalidateFloatingDockWindow(true);
+            });
+        return;
+    }
+    if (popupHoverController_.Pending() && !popupHoverTimerArmed_ && hwnd_)
+        popupHoverTimerArmed_ = SetTimer(hwnd_, kPopupHoverTimerId,
+            kPopupHoverPollIntervalMs, nullptr) != 0;
+}
+
 void DesktopApp::TraceCollectionPopupDwell(
     const wchar_t* stage, const wchar_t* hit,
     POINT point, size_t candidate)
@@ -354,8 +487,11 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
 
     const DragSourceList& sourceList =
         dragSession_.SourceList();
+    // External OLE sessions deliberately have no internal source bindings.
+    const bool externalDrag =
+        dragDropController_.IsExternalDragActive();
     if (!dragSession_.IsActive() ||
-        !(sourceList.hasDesktopIcons ||
+        !(externalDrag || sourceList.hasDesktopIcons ||
           sourceList.hasFolderEntries ||
           sourceList.hasExternalFiles) ||
         sourceList.hasCollectionGroupEntries ||
@@ -383,7 +519,7 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
         std::wstring id;
         if (auto* group =
                 dynamic_cast<CollectionGroup*>(it->get());
-            group && sourceList.hasDesktopIcons)
+            group && (externalDrag || sourceList.hasDesktopIcons))
         {
             id = group->CategoryIdAtPoint(point);
             if (id.empty() ||
@@ -743,23 +879,8 @@ ShowDockFolderPopupContextMenu(
     }
     else
     {
-        ComPtr<IDataObject> clipObject;
-        bool canPaste = false;
-        if (dockFolderPopupAvailable_ &&
-            SUCCEEDED(
-                OleGetClipboard(
-                    &clipObject)) &&
-            clipObject)
-        {
-            FORMATETC format{
-                CF_HDROP, nullptr,
-                DVASPECT_CONTENT, -1,
-                TYMED_HGLOBAL
-            };
-            canPaste = SUCCEEDED(
-                clipObject->
-                    QueryGetData(&format));
-        }
+        const bool canPaste = dockFolderPopupAvailable_ &&
+            HasPasteableFileClipboardData();
         AppendMenuW(
             menu,
             canPaste
@@ -941,7 +1062,7 @@ ShowDockFolderPopupContextMenu(
             MenuIconFont::FluentRegular);
     }
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();

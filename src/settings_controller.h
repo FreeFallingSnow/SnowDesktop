@@ -232,6 +232,9 @@ public:
         SetTemporaryGridInitialization,
         StartUsageGuidePractice,
         SetUsageGuideExpanded,
+        SetDebugProfileEnabled,
+        SetDebugDesktopDirectory,
+        ClearDebugProfile,
     };
 
     struct Request

@@ -4,6 +4,7 @@
 
 void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 {
+    CancelRenameClick();
     if (renameController_.BlocksScrolling())
         return;
 
@@ -187,6 +188,7 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         if (!wc || !wc->GetWidgetData()) continue;
         RECT frame = wc->GetFrameRect();
         if (!PtInRect(&frame, pt)) continue;
+        if (wc->IsCollapsed()) return;
 
         int delta = GET_WHEEL_DELTA_WPARAM(wp);
         DesktopWidget* data = wc->GetWidgetData();

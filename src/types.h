@@ -511,6 +511,8 @@ struct DesktopWidget
     bool keepWhenDesktopHidden = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    bool titleBarCollapsed = false;
+    bool titleBarExpandOnHover = false;
     bool largeFolderTitleless = false;
     bool userRenamed = false; // Compatibility mirror of !customTitle.empty().
     bool dateHeaders = false;

@@ -1,8 +1,12 @@
 #include "auto_start_rules.h"
+#include "auto_start_elevation.h"
 #include "deployment_context.h"
 
 #include <cstdlib>
 #include <iostream>
+#include <string_view>
+
+int RunAutoStartManagerTests();
 
 namespace
 {
@@ -16,11 +20,15 @@ void Check(bool condition, const char* message)
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
+    if (argc > 1 && std::string_view(argv[1]) == "--scheduler")
+        return RunAutoStartManagerTests();
+    // A test task must remain harmless if a logon happens during the test.
+    if (argc > 1) return 0;
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::AutoStartOwnershipNotice;
-    using snowdesktop::CanExplicitlyEnableMissingAutoStart;
     using snowdesktop::ClassifyAutoStartOwnershipNotice;
     using snowdesktop::DecodePortableAutoStartApprovalState;
     using snowdesktop::HasActivePortableAutoStart;
@@ -108,19 +116,6 @@ int main()
                PortableAutoStartRegistrationOwner::Error,
                PortableAutoStartApprovalState::Enabled),
         "an unreadable Run registration is not reported as active");
-
-    Check(CanExplicitlyEnableMissingAutoStart(true, false,
-              UnifiedAutoStartTaskState::Missing),
-        "an explicit enable can recover when the unified task is confirmed missing");
-    Check(!CanExplicitlyEnableMissingAutoStart(false, false,
-              UnifiedAutoStartTaskState::Missing) &&
-            !CanExplicitlyEnableMissingAutoStart(true, true,
-              UnifiedAutoStartTaskState::Missing) &&
-            !CanExplicitlyEnableMissingAutoStart(true, false,
-              UnifiedAutoStartTaskState::Foreign) &&
-            !CanExplicitlyEnableMissingAutoStart(true, false,
-              UnifiedAutoStartTaskState::Unavailable),
-        "explicit recovery never disables, bypasses known state, or replaces unreadable tasks");
 
     Check(ClassifyAutoStartOwnershipNotice(true,
               UnifiedAutoStartTaskState::Enabled, false,

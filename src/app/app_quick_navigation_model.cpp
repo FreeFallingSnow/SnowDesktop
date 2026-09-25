@@ -117,75 +117,27 @@ DesktopApp::BuildQuickNavigationAppIndex(HWND ownerHwnd,
 
 void DesktopApp::StartQuickNavigationAppIndexing()
 {
-    if (quickNavigationAppsIndexed_)
-        return;
-
-    bool expected = false;
-    if (!quickNavigationAppIndexing_.compare_exchange_strong(expected, true))
-        return;
-
-    if (quickNavigationAppIndexThread_.joinable())
-        quickNavigationAppIndexThread_.join();
-
-    HWND targetHwnd = hwnd_;
-    if (!targetHwnd || !IsWindow(targetHwnd))
-    {
-        quickNavigationAppIndexing_ = false;
-        return;
-    }
-
-    const uint64_t serial = ++quickNavigationAppIndexSerial_;
-    const int iconTargetSize = QuickNavScale(28);
-    try
-    {
-        quickNavigationAppIndexThread_ = std::thread(
-            [this, targetHwnd, serial, iconTargetSize]() {
-            auto* result = new QuickNavigationAppIndexResult();
-            result->serial = serial;
-
-            HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            const bool coInitialized = SUCCEEDED(coHr);
-            if (coInitialized)
-            {
-                result->entries = BuildQuickNavigationAppIndex(
-                    targetHwnd, result->systemImageListSmall,
-                    iconTargetSize);
-                CoUninitialize();
-            }
-
-            if (!PostMessageW(targetHwnd, kQuickNavigationAppsIndexedMessage,
-                0, reinterpret_cast<LPARAM>(result)))
-            {
-                delete result;
-                quickNavigationAppIndexing_ = false;
-            }
-            });
-    }
-    catch (...)
-    {
-        quickNavigationAppIndexing_ = false;
-    }
+    if (quickNavigationAppsIndexed_ || quickNavigationAppIndexing_) return;
+    const auto serial = ++quickNavigationAppIndexSerial_;
+    const int size = QuickNavScale(28);
+    quickNavigationAppIndexing_ = appIndexWork_.Submit(L"apps", [serial, size] {
+        auto result = std::make_shared<QuickNavigationAppIndexResult>();
+        result->serial = serial;
+        result->entries = BuildQuickNavigationAppIndex(nullptr,
+            result->systemImageListSmall, size);
+        return result;
+    }, [this](std::shared_ptr<QuickNavigationAppIndexResult> result) {
+        if (result) OnQuickNavigationAppsIndexed(0,
+            reinterpret_cast<LPARAM>(new QuickNavigationAppIndexResult(std::move(*result))));
+        else quickNavigationAppIndexing_ = false;
+    }, hwnd_, kBackgroundShellReadyMessage);
 }
 
 void DesktopApp::StopQuickNavigationAppIndexing()
 {
     ++quickNavigationAppIndexSerial_;
-    if (quickNavigationAppIndexThread_.joinable() &&
-        quickNavigationAppIndexThread_.get_id() != std::this_thread::get_id())
-    {
-        quickNavigationAppIndexThread_.join();
-    }
+    appIndexWork_.Stop();
     quickNavigationAppIndexing_ = false;
-
-    if (!hwnd_)
-        return;
-
-    MSG msg{};
-    while (PeekMessageW(&msg, hwnd_, kQuickNavigationAppsIndexedMessage,
-        kQuickNavigationAppsIndexedMessage, PM_REMOVE))
-    {
-        delete reinterpret_cast<QuickNavigationAppIndexResult*>(msg.lParam);
-    }
 }
 
 void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
@@ -193,11 +145,7 @@ void DesktopApp::OnQuickNavigationAppsIndexed(WPARAM /*wParam*/, LPARAM lParam)
     std::unique_ptr<QuickNavigationAppIndexResult> result(
         reinterpret_cast<QuickNavigationAppIndexResult*>(lParam));
 
-    if (quickNavigationAppIndexThread_.joinable() &&
-        quickNavigationAppIndexThread_.get_id() != std::this_thread::get_id())
-    {
-        quickNavigationAppIndexThread_.join();
-    }
+
     quickNavigationAppIndexing_ = false;
 
     if (!result || result->serial != quickNavigationAppIndexSerial_)

@@ -35,6 +35,10 @@ struct Readers
 };
 
 Paths ReadFilePaths(IDataObject* source);
+enum class ClipboardFileSource { None, FilePaths, ShellObjects };
+// Menu admission only: never render files/descriptors or start source IO.
+// Shell keeps ownership of namespace IDs and virtual-file folder hierarchies.
+ClipboardFileSource ProbeClipboardFileSource(IDataObject* source);
 struct FileSource
 {
     bool asynchronous = false;

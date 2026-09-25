@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../shell_extension_service.h"
 #include "../drag_input_rules.h"
 
 // Selection projection, keyboard focus sync and marquee selection.
@@ -11,7 +12,7 @@ bool DesktopApp::IsMarqueePointerGesturePendingOrActive() const
         mouseDownWidgetIndex_ >= widgets_.size();
     return snowdesktop::drag_input_rules::IsMarqueePointerGesture(
         marqueeActive_, mouseDown_, mouseDownHit_ != nullptr,
-        pendingGuideAction_ != WidgetHit::None,
+        pendingWidgetButtonAction_ != WidgetHit::None,
         widgetAction_ != WidgetAction::None,
         middleButtonWidgetMove_, detailColumnResizeActive_,
         widgetScrollbarDragging_, popupScrollbarDragging_,
@@ -104,6 +105,15 @@ bool DesktopApp::HasSelectedFilesInWidget(
  */
 void DesktopApp::SyncKeyboardNavFromSelection()
 {
+    if (snowdesktop::shell_extensions::HasOptIns(generalSettings_.shellExtensions))
+    {
+        snowdesktop::shell_extensions::Request request;
+        request.paths = GetSelectedFolderEntryPaths();
+        if (request.paths.empty())
+            for (const auto &item : items_) if (item.selected && !item.parsingName.empty()) request.paths.push_back(item.parsingName);
+        snowdesktop::shell_extensions::SharedMenuService().Prewarm(request);
+    }
+
     // Pointer selection may seed the next arrow-key navigation position, but
     // it must not display the keyboard-only focus outline.
     keyboardNavVisualFocus_ = false;

@@ -1,4 +1,5 @@
 #include "steam_entitlement.h"
+#include "diagnostic_log.h"
 
 #include <windows.h>
 
@@ -7,12 +8,17 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 namespace
 {
 int failures = 0;
+std::mutex logMutex;
+std::vector<std::wstring> diagnosticLines;
 
 void Check(bool condition, const char* message)
 {
@@ -26,6 +32,13 @@ std::string Read(const std::filesystem::path& path)
     std::ifstream input(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(input), {});
 }
+}
+
+// Substitute only the file sink: the real service emits all diagnostic events.
+void WriteDiagnosticLogEntry(const wchar_t* message, DiagnosticLogLevel)
+{
+    std::lock_guard lock(logMutex);
+    diagnosticLines.emplace_back(message);
 }
 
 int wmain(int argc, wchar_t** argv)
@@ -51,8 +64,42 @@ int wmain(int argc, wchar_t** argv)
         "{\"ok\":false,\"error\":{"
         "\"code\":\"steam_not_logged_on\","
         "\"message\":\"offline\"}}\n", 4);
-    Check(offlineResponse.outcome == BridgeOutcome::SteamUnavailable,
-        "an offline Steam error is distinct from non-ownership");
+    using Problem = snowdesktop::steam_bridge::SteamConnectionProblem;
+    Check(offlineResponse.outcome == BridgeOutcome::SteamUnavailable &&
+            offlineResponse.connectionProblem == Problem::Offline &&
+            offlineResponse.errorDetail == "steam_not_logged_on: offline",
+        "offline registration preserves the correct guidance and raw diagnostic");
+    struct InitializationCase { const char* extra; Problem expected; };
+    for (const auto& sample : {
+            InitializationCase{"", Problem::InitializationFailed},
+            InitializationCase{",\"steamInitResult\":1", Problem::InitializationFailed},
+            InitializationCase{",\"steamInitResult\":2", Problem::ClientUnavailable},
+            InitializationCase{",\"steamInitResult\":3", Problem::ClientOutdated},
+            InitializationCase{",\"steamInitResult\":99", Problem::InitializationFailed},
+            InitializationCase{",\"steamInitResult\":-1", Problem::InitializationFailed},
+            InitializationCase{",\"steamInitResult\":2.5", Problem::InitializationFailed},
+            InitializationCase{",\"steamInitResult\":\"2\"", Problem::InitializationFailed}})
+    {
+        const auto response = ParseBridgeResponse(
+            std::string("{\"ok\":false,\"error\":{\"code\":\"steam_init_failed\","
+                "\"message\":\"IPC diagnostic\"") + sample.extra + "}}", 4);
+        Check(response.outcome == BridgeOutcome::SteamUnavailable &&
+                response.connectionProblem == sample.expected &&
+                response.errorDetail == "steam_init_failed: IPC diagnostic",
+            "optional initialization metadata refines guidance without changing ownership semantics");
+    }
+    for (const auto& sample : {
+            std::pair{"steam_interface_unavailable", Problem::InterfaceUnavailable},
+            std::pair{"steam_app_id_mismatch", Problem::AppIdMismatch},
+            std::pair{"steamworks_unavailable", Problem::SteamworksUnavailable}})
+    {
+        const auto response = ParseBridgeResponse(
+            std::string("{\"ok\":false,\"error\":{\"code\":\"") + sample.first +
+                "\",\"message\":\"diagnostic\"}}", 4);
+        Check(response.connectionProblem == sample.second &&
+                response.outcome != BridgeOutcome::Owned,
+            "interface and installation problems remain distinct and cannot unlock features");
+    }
     Check(ParseBridgeResponse("not json", 0).outcome ==
             BridgeOutcome::Failed,
         "malformed Bridge output never unlocks features");
@@ -173,8 +220,53 @@ int wmain(int argc, wchar_t** argv)
                 snapshot.validUntil == registeredUntil &&
                 snapshot.state == State::RegistrationFailed &&
                 snapshot.failure == Failure::SteamUnavailable &&
+                snapshot.connectionProblem == Problem::Offline &&
+                snapshot.errorDetail == "steam_not_logged_on: offline fixture" &&
                 std::filesystem::is_regular_file(cache),
             "temporary Steam failure keeps but does not renew the offline lease");
+    }
+    {
+        const auto failedFixture = root / L"client-unavailable-bridge.exe";
+        std::filesystem::copy_file(fixture, failedFixture,
+            std::filesystem::copy_options::overwrite_existing, error);
+        Check(!error, "the client initialization failure fixture is prepared");
+        Service service(failedFixture, failedFixture, root / L"new-cache.bin");
+        Check(service.StartRegistration({}), "first registration begins without a cached lease");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (service.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        const auto snapshot = service.Current();
+        Check(snapshot.state == State::RegistrationFailed && !snapshot.registered &&
+                snapshot.connectionProblem == Problem::ClientUnavailable &&
+                snapshot.errorDetail.find("cannot connect") != std::string::npos &&
+                !std::filesystem::exists(root / L"new-cache.bin"),
+            "real bridge IPC carries initialization guidance to the UI snapshot without registering");
+        Check(service.ResetRegistration() &&
+                service.Current().connectionProblem == Problem::None &&
+                service.Current().errorDetail.empty(),
+            "reset removes stale connection diagnostics");
+        // The executable passed configuration but disappears before activation.
+        std::filesystem::remove(failedFixture, error);
+        Check(!error && service.StartRegistration({}), "start failure is exercised after a valid probe");
+        const auto missingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (service.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < missingDeadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Check(service.Current().state == State::RegistrationFailed,
+            "a failed child launch completes registration with a failure");
+    }
+    {
+        const auto blockedCache = root / L"cache-is-directory";
+        std::filesystem::create_directory(blockedCache, error);
+        Service service(fixture, fixture, blockedCache);
+        Check(service.StartRegistration({}), "cache save failure follows a real ownership response");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (service.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Check(service.Current().failure == Failure::StorageError && !service.IsRegistered(),
+            "ownership without a saved cache does not report successful activation");
     }
     {
         Service refunded(notOwnedFixture, notOwnedFixture, cache);
@@ -269,6 +361,27 @@ int wmain(int argc, wchar_t** argv)
             "an SDK-free Bridge cannot register or expose Steam features");
     }
 
+    std::wstring trace;
+    {
+        std::lock_guard lock(logMutex);
+        for (const auto& line : diagnosticLines)
+        {
+            Check(line.find(L'\n') == std::wstring::npos &&
+                    line.find(L'\r') == std::wstring::npos,
+                "each diagnostic event occupies a single log line");
+            trace += line + L"\n";
+        }
+    }
+    for (const auto* required : {L"configuration compatible=1", L"registration requested",
+            L"bridge begin command=entitlement status", L"bridge finished exit_code=4",
+            L"steam_init_result=2", L"steam_not_logged_on: offline fixture",
+            L"stage=CreateProcessW win32_error=2", L"cache save success=0",
+            L"cache save success=1", L"outcome=owned", L"outcome=not_owned",
+            L"registration complete", L"[redacted-id]"})
+        Check(trace.find(required) != std::wstring::npos,
+            "activation trace retains success, failure stages and actionable diagnostics");
+    Check(trace.find(L"76561198000000001") == std::wstring::npos,
+        "activation logs redact Steam IDs and keep SDK diagnostics on one line");
     std::filesystem::remove_all(root, error);
     if (failures != 0)
     {

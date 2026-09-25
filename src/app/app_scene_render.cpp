@@ -17,6 +17,9 @@ void DesktopApp::DrawStaticBackground(
 {
     snowdesktop::performance::Scope performanceScope("desktop", "background");
     UpdateLargeIconHover();
+    // Reconcile retained hover after menus, keyboard focus or capture end,
+    // even when those transitions do not deliver another mouse-move sample.
+    UpdateWidgetHoverExpansion(lastMousePoint_);
     auto intersectsUpdate =
         [&](RECT bounds, int overdraw = 0) {
         if (!updateRect)
@@ -42,6 +45,22 @@ void DesktopApp::DrawStaticBackground(
     // lastMousePoint_ 绘制 item hover。
     if (popupOccludesPointer)
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
+
+    // Saved placement is already known even when Shell has not returned the
+    // item yet. These are visual marks only, never synthetic selectable files.
+    if (initialShellReadPending_ && !hiddenMode)
+        for (const auto& [key, record] : layoutRecords_)
+        {
+            if (!record.hasGrid || collectedKeysCache_.contains(ToUpperInvariant(key)) ||
+                FindItemIndexByKey(key) != static_cast<size_t>(-1))
+                continue;
+            if (const auto visibility = settingsIconVisibility_.find(ToUpperInvariant(key));
+                visibility != settingsIconVisibility_.end() && !visibility->second)
+                continue;
+            const RECT bounds = GetGridRect(gridPages_, record.cell, record.span);
+            if (!IsRectEmptyRect(bounds) && intersectsUpdate(bounds))
+                DrawPlaceholderIcon(ctx, -1, GetItemIconRect(bounds), 1.0f);
+        }
 
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
@@ -138,6 +157,7 @@ void DesktopApp::DrawStaticBackground(
                 interactionRetained,
                 PtInRect(&widgetFrame, lastMousePoint_) != FALSE);
         const bool desktopSurfaceVisible =
+            !desktopPassthroughActive_ &&
             snowdesktop::widget_visibility_rules::IsDesktopSurfaceVisible(
                 hiddenMode, widgetData.keepWhenDesktopHidden,
                 hasDesktopBounds, interactionVisible);

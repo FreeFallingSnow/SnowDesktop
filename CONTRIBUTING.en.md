@@ -21,7 +21,7 @@ Help improve features, stability, translations, and documentation through these 
 | --- | --- |
 | Branch | `internal-dev` |
 | Description | SnowDesktop internal development builds |
-| Access password | `SnowDestopDev0927` |
+| Access password | `SnowDesktopDev0927` |
 
 1. Right-click SnowDesktop in your Steam library, open **Properties**, and select **Game Versions & Betas**.
 2. Enter and verify the access password above, then select the `internal-dev` branch.

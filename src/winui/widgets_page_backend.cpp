@@ -1567,11 +1567,20 @@ struct WidgetsPageBackend::Impl final
         }
     }
 
-    bool CaptureInstalledState()
+    bool CaptureInstalledState(bool refreshCatalog = false)
     {
         if (!OnOwnerThread()) return false;
         try
         {
+            bool catalogRefreshed = true;
+            if (refreshCatalog)
+            {
+                std::string error;
+                catalogRefreshed = WidgetEngine::RefreshWidgetPackages(error);
+                if (!catalogRefreshed)
+                    SetFeedback(WidgetsPageFeedbackSeverity::Error,
+                        Utf8ToWide(error), "settings.status.error");
+            }
             packages = WidgetEngine::ListWidgetPackages();
             invalidPackages = WidgetEngine::ListInvalidWidgetPackages();
             workshopInstallFailures =
@@ -1699,7 +1708,7 @@ struct WidgetsPageBackend::Impl final
                     });
             }
             UpdateCatalogInstallationFlags();
-            return true;
+            return catalogRefreshed;
         }
         catch (const std::exception& exception)
         {
@@ -3870,7 +3879,7 @@ struct WidgetsPageBackend::Impl final
         confirmationRequestId = 0;
         state->task = {};
         ClearFeedback();
-        (void)CaptureInstalledState();
+        (void)CaptureInstalledState(true);
         Publish();
         deferredSourceDiscovery = discoverSources &&
             outstandingOperations.Busy();
@@ -3902,7 +3911,7 @@ struct WidgetsPageBackend::Impl final
     bool Refresh()
     {
         if (closed || !active || !OnOwnerThread()) return false;
-        const bool captured = CaptureInstalledState();
+        const bool captured = CaptureInstalledState(true);
         Publish();
         return captured;
     }

@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "popup_window_pair_z_order.h"
 
 // Floating-Dock window, composition surface and bounds management.
@@ -6,6 +7,7 @@
 bool DesktopApp::CreateFloatingDockWindow(
     PersistentDockHost& host)
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"Dock.CreateWindow");
     if (host.hwnd && IsWindow(host.hwnd))
         return true;
 
@@ -118,12 +120,15 @@ bool DesktopApp::ShouldShowPersistentDockHost(
             dockSettings_.showOnlyWhenSummoned,
             customDesktopVisible_,
             desktopIconsHidden_,
-            dockSettings_.keepWhenDesktopHidden);
+            dockSettings_.keepWhenDesktopHidden,
+            desktopPassthroughActive_);
 }
 
 bool DesktopApp::IsDockContainerInteractionVisible(
     const DockContainer* container) const
 {
+    if (desktopPassthroughActive_)
+        return false;
     const PersistentDockHost* host =
         FindPersistentDockHost(container);
     // Before graphics initialization, or after a Host creation failure, the
@@ -261,6 +266,7 @@ void DesktopApp::DestroyPersistentDockHost(
 
 bool DesktopApp::SyncPersistentDockHosts()
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"Dock.SyncHosts");
     // Window creation can trigger an early layout pass before InitGraphics.
     // Defer the first top-level DockHost allocation until both rendering
     // devices exist, so startup never creates, hides, and then recovers a
@@ -594,9 +600,11 @@ CalculateFloatingDockStableSourceRect(
     if (!host.container)
         return RECT{};
 
+    // Reserve before the first launch and after layout rebuilds. The active
+    // animation region still uses the unreserved bounds below, so idle
+    // reserve pixels never become visible or interactive.
     const RECT dockRect =
-        host.container->
-            GetAnimationVisualBounds();
+        host.container->GetAnimationVisualBounds(true);
     const PersonalizationSettings& appearance =
         IsPersistentDockHostEffectivelyFloating(host)
             ? floatingDockPersonalization_
@@ -684,6 +692,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     bool immediatePresent,
     bool forceRegionRefresh)
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"Dock.UpdateBounds");
     if (!host.active || !host.hwnd ||
         !IsWindow(host.hwnd) ||
         !host.container)
@@ -877,10 +886,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockBackdropCompositor_.IsAvailable())
     {
         // The native backdrop helper is a sibling sized to the content HWND.
-        // Keep its window placement in sync after the host expands so glass
-        // panels are not clipped to the old host bounds.
-        floatingDockBackdropCompositor_.
-            SetPopupTopmost(floatingLayerTopmost);
+        // Geometry does not own the current Z band: Show Desktop and window
+        // transitions can raise an unsummoned Dock. Preserve that band here;
+        // UpdatePersistentDockHostVisibility applies the complete policy.
         floatingDockBackdropCompositor_.
             Reattach(dockHostHwnd);
     }

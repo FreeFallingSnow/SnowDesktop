@@ -1,4 +1,6 @@
 #include "app.h"
+#include "shell_icon_request.h"
+#include "startup_diagnostics.h"
 #include "../performance_capture.h"
 #include "../performance_trace.h"
 #include "../drag_input_rules.h"
@@ -116,28 +118,35 @@ void DesktopApp::RegisterShellChangeNotifications()
         SHChangeNotifyDeregister(shellChangeRegId_);
         shellChangeRegId_ = 0;
     }
-    SHChangeNotifyEntry entries[2]{};
-    entries[0].pidl = desktopPidl_.get();
-    entries[0].fRecursive = FALSE;
     if (!recycleBinPidl_.get())
     {
         PIDLIST_ABSOLUTE rbPidl = nullptr;
         if (SUCCEEDED(SHGetSpecialFolderLocation(nullptr, CSIDL_BITBUCKET, &rbPidl)))
             recycleBinPidl_.reset(rbPidl);
     }
-    int entryCount = 1;
-    if (recycleBinPidl_.get())
-    {
-        entries[1].pidl = recycleBinPidl_.get();
-        entries[1].fRecursive = TRUE;
-        entryCount = 2;
-    }
-    shellChangeRegId_ = SHChangeNotifyRegister(hwnd_,
-        SHCNRF_ShellLevel | SHCNRF_InterruptLevel | SHCNRF_NewDelivery,
-        SHCNE_CREATE | SHCNE_DELETE | SHCNE_MKDIR | SHCNE_RMDIR |
-        SHCNE_RENAMEITEM | SHCNE_RENAMEFOLDER | SHCNE_UPDATEITEM |
-        SHCNE_UPDATEDIR | SHCNE_ATTRIBUTES | SHCNE_ASSOCCHANGED,
-        kShellChangeMessage, entryCount, entries);
+    shellChangeRegId_ = RegisterDesktopShellNotifications(hwnd_,
+        kShellChangeMessage, desktopPidl_.get(), recycleBinPidl_.get());
+    folderNotifications_.Clear();
+    SyncFolderChangeNotifications();
+    if (shellReloadPending_)
+        SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+}
+
+void DesktopApp::SyncFolderChangeNotifications()
+{
+    if (exitRequested_) return;
+    std::vector<std::wstring> paths;
+    if (snowdesktop::debug_profile::Enabled())
+        paths.push_back(snowdesktop::desktop_source::Directory());
+    for (const auto& widget : widgets_)
+        if (widget.type == DesktopWidgetType::FolderMapping)
+            paths.push_back(widget.sourceFolderPath);
+    if (dockFolderPopupOpen_)
+        paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
+    const auto added = folderNotifications_.Sync(hwnd_, kFolderChangeMessage,
+        kFolderSubscriptionReadyMessage, paths);
+    // Close the gap between the preceding enumeration and registration.
+    if (!added.empty()) RequestFolderRefresh(added);
 }
 
 /**
@@ -410,6 +419,12 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
+    if (menuUnavailable && msg == menuUnavailable)
+    {
+        ShowBalloonNotification(_LW("settings.contextMenu.page"), _LW("settings.contextMenu.commandUnavailable"));
+        return 0;
+    }
     if (snowdesktop::performance::IsControlMessage(msg, wp, lp))
     {
         return snowdesktop::performance::HandleControlMessage(
@@ -529,6 +544,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     }
     switch (msg)
     {
+    case kBackgroundShellReadyMessage:
+        PollInitialShellRead();
+        DrainBackgroundShellWork();
+        return 0;
     case kLargeIconAssetsReadyMessage:
         ProcessLargeIconAssets();
         return 0;
@@ -614,6 +633,10 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case WM_TIMER:
         OnTimer(wp);
         return 0;
+    case kDesktopPassthroughExitMessage:
+        if (desktopPassthroughIndicator_.OwnsWindow(reinterpret_cast<HWND>(wp)))
+            EndDesktopPassthrough();
+        return 0;
     case WM_HOTKEY:
         if (settingsWindow_ &&
             settingsWindow_->IsHotkeyCaptureActive())
@@ -636,7 +659,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         if (static_cast<int>(wp) ==
             kDesktopPassthroughHotkeyId)
         {
-            BeginDesktopPassthroughHold();
+            ToggleDesktopPassthrough();
             return 0;
         }
         break;
@@ -654,10 +677,9 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         }
         if (desktopPassthroughHotkeyHwnd_ == hwnd)
         {
-            KillTimer(hwnd, kDesktopPassthroughHoldTimerId);
+            EndDesktopPassthrough(false);
             desktopPassthroughHotkeyHwnd_ = nullptr;
             desktopPassthroughHotkeyRegistered_ = false;
-            desktopPassthroughHoldActive_ = false;
         }
         if (floatingDockEdgeSwipeHwnd_ == hwnd)
         {
@@ -678,6 +700,22 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     snowdesktop::shell_refresh::Snapshot* snapshot)
 {
+    layoutReload_.Request(reloadLayoutFromDisk);
+    if (!snapshot)
+    {
+        if (!initialShellReadPending_)
+        {
+            BeginIconLoadGeneration();
+            shellMetadataCache_ = {};
+            InvalidateDockShellMetadata();
+            for (auto& item : items_) item.iconState = IconState::Loading;
+            for (auto& widget : widgets_)
+                for (auto& entry : widget.folderEntries) entry.iconState = IconState::Loading;
+        }
+        RequestShellRefresh();
+        if (initialShellReadPending_) StartInitialShellRead();
+        return;
+    }
     extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCell& cell);
     const bool deferForDrag =
         snowdesktop::drag_input_rules::ShouldDeferModelReload(
@@ -686,8 +724,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     if (shellFileOperationInFlight_ > 0 || deferForDrag || !pendingRenames_.empty())
     {
         shellReloadPending_ = true;
-        shellReloadLayoutFromDiskPending_ =
-            shellReloadLayoutFromDiskPending_ || reloadLayoutFromDisk;
+        shellRefreshScope_.Full();
         // OLE clears mouseDown_ before entering its nested loop, so the Shell
         // debounce timer can no longer use that field as a drag-lifetime
         // proxy. Keep one pending reload alive until both native and OLE drag
@@ -700,38 +737,26 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         return;
     }
     if (reloading_) return;
-    shellRefreshRevision_.Invalidate();
+    const bool incremental = snapshot && snapshot->desktopIncremental;
+    snowdesktop::startup_diagnostics::Scope startup(
+        incremental ? L"ReloadItems.partial" : L"ReloadItems.complete",
+        initialShellReadPending_, snapshot ? snapshot->desktopItems.size() : items_.size());
+    snowdesktop::startup_diagnostics::Scope model(L"ReloadItems.model");
+    if (!incremental) shellRefreshRevision_.Invalidate();
     readyShellRefresh_.reset();
     ClearPopupDragTarget();
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kShellChangeTimerId);
     shellReloadPending_ = false;
-    shellReloadLayoutFromDiskPending_ = false;
+    shellRefreshScope_.Full();
     reloading_ = true;
     ULONGLONG stageStarted = GetTickCount64();
-    if (!snapshot)
-    {
-        shellMetadataCache_ = {};
-        dockAppIdentityCache_.clear();
-        dockRunningWindows_.clear();
-    }
-    dockFolderTargetCache_.clear();
-    dockFolderIconIndexCache_.clear();
-    if (!snapshot)
-        BeginIconLoadGeneration();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
-    if (reloadLayoutFromDisk)
-    {
-        LoadLayoutSlots();
-        RecreateItemTextFormat();
-        RecreateComponentListTextFormat();
-        // The file has just populated savedPageColumns_/savedPageRows_. Do not
-        // overwrite those restored values with the pre-reload runtime grid.
-        UpdateLayoutWorkArea(false);
-        if (widgetEngine_)
-            widgetEngine_->ReloadStorage();
-    }
-    else
+    // A partial startup snapshot can arrive while a disk reload is queued.
+    // It must consume that request by loading, never just clear its flag.
+    reloadLayoutFromDisk = layoutReload_.ApplyPendingRead(
+        [this] { ReloadLayoutStateFromDisk(); });
+    if (!reloadLayoutFromDisk)
     {
         for (auto& widget : widgets_)
         {
@@ -740,67 +765,60 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
                 if (!snapshot)
                     EnumerateFolderMappingEntries(widget);
                 else if (const auto folder = snapshot->folders.find(
-                        ToUpperInvariant(widget.sourceFolderPath));
+                        snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath));
                     folder != snapshot->folders.end())
                     EnumerateFolderMappingEntries(widget, true, &folder->second);
-                else
-                    RequestShellRefresh(); // The mapping changed during the read.
+                else if (!incremental)
+                    QueueFolderRead(widget.sourceFolderPath);
             }
         }
     }
-    LoadDesktopItems(snapshot);
-    if (!desktopItemsReady_)
+    snowdesktop::startup_diagnostics::Call(L"LoadDesktopItems", [&] {
+        LoadDesktopItems(snapshot, reloadLayoutFromDisk);
+    });
+    if (!desktopItemsReady_ && !incremental)
     {
         // A failed initial read is not an empty desktop. Preserve the loaded
         // placement records and let the existing Shell refresh path retry.
         reloading_ = false;
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
         RequestShellRefresh();
         return;
     }
-    InitializeGridFromWindows();
-    // LoadLayoutSlots may normalize Dock entries before the freshly
-    // enumerated desktop items are available. Discard those provisional
-    // resolutions so paths and shortcut targets are classified from the new
-    // item snapshot.
-    dockFolderTargetCache_.clear();
-    dockFolderIconIndexCache_.clear();
-    // A Shell delete removes the desktop item, but its persisted Dock mapping
-    // otherwise survives and still consumes a slot.  Only prune references
-    // that are confirmed missing on disk: hidden files and temporarily
-    // unenumerated Shell items must remain pinned.
+    snowdesktop::startup_diagnostics::Call(L"InitializeGridFromWindows", [&] { InitializeGridFromWindows(); });
+    // Revalidate against the new snapshot without losing the last confirmed
+    // section/pinned identity while asynchronous Shell queries are pending.
+    if (!incremental) InvalidateDockShellMetadata();
+    // A persisted Dock pin is user layout. A missing-path observation can be
+    // stale by the time it reaches the UI or reflect a disconnected drive.
+    // Only the virtual Recycle Bin follows desktop enumeration here.
     std::erase_if(dockEntries_, [this, snapshot](const DockEntry& entry) {
+        if (snapshot && snapshot->desktopIncremental) return false;
         if (entry.type != DockEntryType::DesktopItem)
             return false;
         if (IsRecycleBinDockEntry(entry))
             return FindItemIndexByKey(entry.reference) == static_cast<size_t>(-1);
 
-        const std::wstring& path = entry.reference;
-        if (snapshot)
-            return snapshot->missingDockPaths.contains(ToUpperInvariant(path));
-        const bool driveAbsolute = path.size() >= 3 &&
-            ((path[0] >= L'A' && path[0] <= L'Z') ||
-             (path[0] >= L'a' && path[0] <= L'z')) &&
-            path[1] == L':' && (path[2] == L'\\' || path[2] == L'/');
-        const bool uncAbsolute = path.starts_with(L"\\\\");
-        if (!driveAbsolute && !uncAbsolute)
-            return false;
-
-        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
-            return false;
-        const DWORD error = GetLastError();
-        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
-            error == ERROR_INVALID_NAME;
+        return false;
     });
-    NormalizeDockRecycleBinPosition();
+    PruneDockShellMetadata();
+    if (!incremental) NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
-    if (!generalSettings_.dockEnabled && !dockEntries_.empty())
+    if (!incremental && !generalSettings_.dockEnabled && !dockEntries_.empty())
         RestoreDockEntriesToDesktop();
-    ApplyAutoCollectFileCategoryWidgets();
+    if (!incremental) ApplyAutoCollectFileCategoryWidgets();
     if (snapshot) snapshot->modelMs = GetTickCount64() - stageStarted;
+    model.Finish();
     stageStarted = GetTickCount64();
+    snowdesktop::startup_diagnostics::Scope placement(L"ReloadItems.assignSlots");
 
     // Mark widgets as used
     std::unordered_set<std::wstring> usedSlots;
+    if (incremental)
+        for (const auto& [key, record] : layoutRecords_)
+            if (record.hasGrid && FindItemIndexByKey(key) == static_cast<size_t>(-1))
+                MarkGridArea(usedSlots, record.cell, record.span);
     for (const auto& w : widgets_)
         if (!IsGroupedWidget(w))
             MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
@@ -973,9 +991,10 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     // Loading new files may add virtual overflow pages, while deleting files
     // may remove the last usable offset. Refresh the runtime page mapping in
     // this same reload pass instead of waiting for the next manual refresh.
-    ApplyPageMapping();
+    placement.Finish();
+    snowdesktop::startup_diagnostics::Call(L"ApplyPageMapping", [&] { ApplyPageMapping(); });
     LayoutItems();
-    ApplyPendingPlacement();
+    snowdesktop::startup_diagnostics::Call(L"ApplyPendingPlacement", [&] { ApplyPendingPlacement(); });
     UpdateCutState();
 
     // Prune desktop-backed widget itemKeys that no longer exist (file was deleted from outside).
@@ -986,6 +1005,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
             allKeys.insert(ToUpperInvariant(item.layoutKey));
     for (auto& w : widgets_)
     {
+        if (incremental) break; // Unobserved keys remain valid until a complete read.
         if (w.type == DesktopWidgetType::FolderMapping)
             continue;
         auto it = std::remove_if(w.itemKeys.begin(), w.itemKeys.end(),
@@ -997,7 +1017,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
 
     if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
-    SaveLayoutSlots();
+    if (!layoutReload_.Pending())
+        snowdesktop::startup_diagnostics::Call(L"SaveLayoutSlots", [&] { SaveLayoutSlots(); });
     if (snapshot) snapshot->saveMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
     RebuildContainersAndItems();
@@ -1007,9 +1028,32 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         RefreshDockRunningWindows(false);
     stageStarted = GetTickCount64();
     if (widgetEngine_)
-        widgetEngine_->NotifyDesktopChanged("reload");
+        snowdesktop::startup_diagnostics::Call(L"NotifyDesktopChanged", [&] {
+            widgetEngine_->NotifyDesktopChanged("reload");
+        });
     if (snapshot) snapshot->notifyMs = GetTickCount64() - stageStarted;
     InvalidateRect(hwnd_, nullptr, TRUE);
+    // Also drains a disk reload performed by StartInitialShellRead. Ordinary
+    // Shell refreshes must not reset an active floating Dock input session.
+    if (!incremental && snapshot && snapshot->desktopComplete)
+        layoutReload_.MarkCompleteModel();
+    const auto synchronized = layoutReload_.ApplyAfterRebuild(
+        [this] { return SynchronizeReloadedLayoutSettings(); });
+    if (synchronized == snowdesktop::layout_reload::SynchronizeResult::Succeeded)
+    {
+        const ULONGLONG saveStarted = GetTickCount64();
+        const bool saved = SaveLayoutSlots();
+        if (snapshot) snapshot->saveMs += GetTickCount64() - saveStarted;
+        CompleteLayoutRestore(saved
+            ? snowdesktop::SettingsActionResult::Success()
+            : snowdesktop::SettingsActionResult::Failure(
+                  _LW("settings.backup.restoreLayout.commitFailed")));
+    }
+    else if (synchronized == snowdesktop::layout_reload::SynchronizeResult::Failed)
+    {
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
+    }
 }
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)
@@ -1063,17 +1107,40 @@ void DesktopApp::EnqueueIconLoad(IconLoadTask task)
                 std::to_wstring(task.requestedSize) + L"\n" +
                 std::to_wstring(task.popupGeneration);
         }
+        // Bulk enumeration supplies stamps directly. Rare producers such as
+        // rename completion can resolve against the already-updated UI model.
+        if (task.sourceStamp.empty())
+        {
+            if (task.isDesktopItem)
+            {
+                for (const auto& item : items_)
+                    if (item.layoutKey == task.layoutKey)
+                        { task.sourceStamp = snowdesktop::shell_icon_request::Stamp(item); break; }
+            }
+            else
+            {
+                const auto stamp = [&](const DesktopWidget& widget) {
+                    if (widget.id != task.widgetId) return;
+                    for (const auto& entry : widget.folderEntries)
+                        if (entry.fullPath == task.folderPath)
+                            { task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry); break; }
+                };
+                if (dockFolderPopupTask) stamp(dockFolderPopupWidget_);
+                else for (const auto& widget : widgets_) stamp(widget);
+            }
+        }
+        task.requestKey += task.sourceStamp;
         if (!iconLoaderPendingKeys_.insert(task.requestKey).second)
             return;
-        iconLoaderQueue_.push_back(std::move(task));
+
     }
-    iconLoaderCv_.notify_one();
+    QueueIconTask(std::move(task));
 }
 
-void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
+bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
 {
     auto* result = reinterpret_cast<IconLoadResult*>(lParam);
-    if (!result) return;
+    if (!result) return false;
 
     std::unique_ptr<IconLoadResult> resultGuard(result);
     std::uint64_t currentPopupGeneration = 0;
@@ -1094,7 +1161,7 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
     {
         if (result->bitmap) DeleteObject(result->bitmap);
         result->bitmap = nullptr;
-        return;
+        return false;
     }
     bool matched = false;
 
@@ -1102,7 +1169,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
     {
         for (auto& item : items_)
         {
-            if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey))
+            if (ToUpperInvariant(item.layoutKey) == ToUpperInvariant(result->layoutKey) &&
+                snowdesktop::shell_icon_request::Matches(result->requestKey, item))
             {
                 if (result->bitmap)
                 {
@@ -1114,13 +1182,14 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     result->bitmap = nullptr;
                 }
                 matched = true;
+                if (result->sysIconIndex >= 0) item.sysIconIndex = result->sysIconIndex;
+                if (!result->typeName.empty()) item.typeName = result->typeName;
+                snowdesktop::shell_icon_request::ApplyPresentation(item, result->phase,
+                    result->isShortcut, result->isApplicationShortcut);
                 if (result->phase == IconLoadPhase::Phase1)
                 {
-                    item.iconState = IconState::IconReady;
-                    item.shortcutArrow = result->shortcutArrow;
-                    item.isShortcut = result->isShortcut;
-                    item.isApplicationShortcut = result->isApplicationShortcut;
                     IconLoadTask phase2;
+                    phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
                     phase2.serial = result->serial;
                     phase2.layoutKey = item.layoutKey;
                     phase2.absolutePidl.reset(ILClone(item.absolutePidl.get()));
@@ -1129,10 +1198,6 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                     phase2.isDesktopItem = true;
                     phase2.phase = IconLoadPhase::Phase2;
                     EnqueueIconLoad(std::move(phase2));
-                }
-                else
-                {
-                    item.iconState = IconState::FullQuality;
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 if (quickNavigationOpen_)
@@ -1152,7 +1217,8 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                 return false;
             for (auto& entry : widget.folderEntries)
             {
-                if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath))
+                if (ToUpperInvariant(entry.fullPath) == ToUpperInvariant(result->folderPath) &&
+                    snowdesktop::shell_icon_request::Matches(result->requestKey, entry))
                 {
                     if (result->bitmap)
                     {
@@ -1164,37 +1230,30 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
                         result->bitmap = nullptr;
                     }
                     matched = true;
+                    if (result->sysIconIndex >= 0) entry.sysIconIndex = result->sysIconIndex;
+                    if (!result->typeName.empty()) entry.typeName = result->typeName;
+                    snowdesktop::shell_icon_request::ApplyPresentation(entry, result->phase,
+                        result->isShortcut, result->isApplicationShortcut);
                     if (result->phase == IconLoadPhase::Phase1)
                     {
-                        entry.iconState = IconState::IconReady;
-                        entry.shortcutArrow = result->shortcutArrow;
-                        entry.isShortcut = result->isShortcut;
-                        entry.isApplicationShortcut = result->isApplicationShortcut;
                         IconLoadTask phase2;
+                        phase2.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
                         phase2.serial = result->serial;
                         phase2.widgetId = widget.id;
                         phase2.folderPath = entry.fullPath;
                         phase2.sysIconIndex = entry.sysIconIndex;
                         phase2.isDesktopItem = false;
                         phase2.phase = IconLoadPhase::Phase2;
-                        PIDLIST_ABSOLUTE pidl = nullptr;
-                        if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &pidl, 0, nullptr)))
-                        {
-                            phase2.absolutePidl.reset(pidl);
-                            EnqueueIconLoad(std::move(phase2));
-                        }
-                    }
-                    else
-                    {
-                        entry.iconState = IconState::FullQuality;
+                        EnqueueIconLoad(std::move(phase2));
                     }
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     if (quickNavigationOpen_)
                         InvalidateQuickNavigationWindow();
                     if (dockFolderPopup)
                     {
+                        InvalidateCollectionPopupContent();
                         InvalidateDragStaticScene();
-                        InvalidateFloatingDockWindow(false);
+                        InvalidateFloatingPopupWindow(false);
                     }
                     return true;
                 }
@@ -1223,6 +1282,7 @@ void DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
 
     if (!matched && result->bitmap)
         DeleteObject(result->bitmap);
+    return matched;
 }
 
 /**

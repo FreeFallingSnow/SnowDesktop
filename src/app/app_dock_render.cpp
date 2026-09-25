@@ -1,4 +1,6 @@
 #include "app.h"
+#include "startup_diagnostics.h"
+#include "dock_platform_helpers.h"
 
 // Dock controls, entries and running-application rendering.
 
@@ -178,7 +180,12 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     if (entry.type == DockEntryType::DesktopItem)
     {
         size_t index = FindItemIndexByKey(entry.reference);
-        if (index >= items_.size()) return;
+        if (index >= items_.size())
+        {
+            if (initialShellReadPending_)
+                DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f);
+            return;
+        }
         const float launchOffset =
             GetDockLaunchBounceOffset(index, iconSize);
         const float launchScale = GetDockLaunchPulseScale(index);
@@ -301,31 +308,48 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DesktopWidget& widget = widgets_[widgetIndex];
     if (entry.type == DockEntryType::FolderMapping)
     {
-        int sysIconIndex = -1;
         const std::wstring iconCacheKey =
-            ToUpperInvariant(entry.reference);
-        if (const auto cached =
-                dockFolderIconIndexCache_.find(
-                    iconCacheKey);
-            cached !=
-                dockFolderIconIndexCache_.end())
+            ToUpperInvariant(entry.reference + L"\n" + widget.sourceFolderPath);
+        const int requestedSize = GetMaximumShellIconBitmapSize();
+        const auto local = dockFolderBitmapCache_.Read(iconCacheKey, std::to_wstring(requestedSize));
+        if (!local.fresh)
         {
-            sysIconIndex = cached->second;
+            const auto queuedAt = GetTickCount64();
+            dockIconWork_.Submit(L"dock-folder:" + iconCacheKey + L"\n" + std::to_wstring(local.ticket),
+                [path = widget.sourceFolderPath, requestedSize, queuedAt] {
+                    const auto started = GetTickCount64();
+                    auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+                    result->bitmap = GetLocalIconResourceBitmap(path, result->size, requestedSize);
+                    WriteDiagnosticLogEntry((L"Dock local folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                        L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
+                        std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
+                    return result;
+                }, [path = widget.sourceFolderPath, requestedSize, queuedAt] {
+                    const auto started = GetTickCount64();
+                    auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+                    result->bitmap = CreateDockShellIconBitmap(path, result->size, requestedSize);
+                    WriteDiagnosticLogEntry((L"Dock Shell folder icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                        L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
+                        std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
+                    return result;
+                }, [this, iconCacheKey, ticket = local.ticket](auto result, bool refined) {
+                    auto bitmap = result && result->bitmap
+                        ? CreateD2DBitmapFromHBitmap(result->bitmap, iconBeautifySettings_.enabled)
+                        : ComPtr<ID2D1Bitmap1>{};
+                    if (bitmap)
+                    {
+                        if (!dockFolderBitmapCache_.Publish(iconCacheKey, ticket, std::move(bitmap), refined)) return;
+                    }
+                    else if (!refined || !dockFolderBitmapCache_.PublishFailure(iconCacheKey, ticket, std::chrono::seconds(5))) return;
+                    InvalidateDockRects();
+                }, hwnd_, kBackgroundShellReadyMessage);
         }
+        if (local.value && local.value->Get())
+            DrawIconBitmap(ctx, local.value->Get(), iconRect);
+        else if (local.fresh)
+            DrawPrivacyFaIcon(ctx, iconRect, true);
         else
-        {
-            SHFILEINFOW info{};
-            if (!widget.sourceFolderPath.empty() &&
-                SHGetFileInfoW(
-                    widget.sourceFolderPath.c_str(), 0,
-                    &info, sizeof(info),
-                    SHGFI_SYSICONINDEX) != 0)
-                sysIconIndex = info.iIcon;
-            dockFolderIconIndexCache_.emplace(
-                iconCacheKey, sysIconIndex);
-        }
-        DrawPlaceholderIcon(
-            ctx, sysIconIndex, iconRect, 1.0f, true);
+            DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
         if (ShouldDrawShortcutArrow(true, false))
             DrawShortcutArrowOverlay(
                 ctx, iconRect, 1.0f);
@@ -343,7 +367,6 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
     {
         size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
-        if (itemIndex >= items_.size()) continue;
         int col = static_cast<int>(i % 2);
         int row = static_cast<int>(i / 2);
         const RECT cell =
@@ -351,7 +374,10 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 CellRect(
                     collectionLayout,
                     col, row);
-        drawDesktopItem(items_[itemIndex], cell, &widget);
+        if (itemIndex < items_.size())
+            drawDesktopItem(items_[itemIndex], cell, &widget);
+        else if (initialShellReadPending_)
+            DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
     }
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);

@@ -7,7 +7,7 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     IDWriteTextLayout* layout, const std::wstring& shadowKey,
     D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,
     float layoutScale, float opacity, bool lightTheme,
-    bool componentList)
+    bool componentList, bool componentPanel)
 {
     if (!context || !layout || shadowKey.empty()) return;
     if (context != brushCacheContext_ || brushCache_.size() >= 512)
@@ -36,6 +36,10 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     const float tw = std::max(1.0f, layoutSize.width);
     const float th = std::max(1.0f, layoutSize.height);
     const float shadowScale = std::max(0.5f, layoutScale);
+    // The selected panel style keeps one moderate soft shadow plus a close
+    // offset shadow. Desktop labels retain their stronger, repeated soft layer.
+    const bool lightPanelShadow = !lightTheme &&
+        (componentPanel || componentList) && CurrentPersonalization().glassEnabled;
     ComPtr<ID2D1DeviceContext> deviceContext;
     const bool supportsEffects =
         SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext;
@@ -51,15 +55,16 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
         }
     }
 
-    // Render both shadow layers through Direct2D's continuous Gaussian shadow
-    // effect. Cache the result per layout so normal desktop repaints only need
-    // one bitmap draw per label.
+    // Cache by layout AND shadow style: an identical title can appear on both
+    // the desktop and a glass panel during the same frame.
     if (supportsEffects && itemTextEffectContext_ && !lightTheme)
     {
         auto& shadowCache = componentList
             ? componentListTextShadowCache_
             : itemTextShadowCache_;
-        auto shadowIt = shadowCache.find(shadowKey);
+        const std::wstring cacheKey = lightPanelShadow
+            ? L"glass-panel\x1f" + shadowKey : shadowKey;
+        auto shadowIt = shadowCache.find(cacheKey);
         if (shadowIt == shadowCache.end())
         {
             const UINT shadowPadding =
@@ -106,23 +111,27 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                     ComPtr<ID2D1Effect> offsetShadow;
                     ComPtr<ID2D1Effect> offsetTransform;
                     if (SUCCEEDED(itemTextEffectContext_->CreateEffect(
-                        CLSID_D2D1Shadow, &softShadow)) && softShadow &&
+                            CLSID_D2D1Shadow, &softShadow)) && softShadow &&
                         SUCCEEDED(itemTextEffectContext_->CreateEffect(
                             CLSID_D2D1Shadow, &offsetShadow)) && offsetShadow &&
                         SUCCEEDED(itemTextEffectContext_->CreateEffect(
                             CLSID_D2D12DAffineTransform, &offsetTransform)) &&
                         offsetTransform)
                     {
-                        softShadow->SetInput(0, shadowMask.Get());
-                        softShadow->SetValue(
-                            D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
-                            1.5f * shadowScale);
-                        softShadow->SetValue(
-                            D2D1_SHADOW_PROP_COLOR,
-                            D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, 0.95f });
-                        softShadow->SetValue(
-                            D2D1_SHADOW_PROP_OPTIMIZATION,
-                            D2D1_SHADOW_OPTIMIZATION_QUALITY);
+                        if (softShadow)
+                        {
+                            softShadow->SetInput(0, shadowMask.Get());
+                            softShadow->SetValue(
+                                D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION,
+                                (lightPanelShadow ? 1.2f : 1.5f) * shadowScale);
+                            softShadow->SetValue(
+                                D2D1_SHADOW_PROP_COLOR,
+                                D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f,
+                                    lightPanelShadow ? 0.65f : 0.95f });
+                            softShadow->SetValue(
+                                D2D1_SHADOW_PROP_OPTIMIZATION,
+                                D2D1_SHADOW_OPTIMIZATION_QUALITY);
+                        }
 
                         offsetShadow->SetInput(0, shadowMask.Get());
                         offsetShadow->SetValue(
@@ -130,7 +139,8 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                             0.5f * shadowScale);
                         offsetShadow->SetValue(
                             D2D1_SHADOW_PROP_COLOR,
-                            D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f, 1.0f });
+                            D2D1_VECTOR_4F{ 0.0f, 0.0f, 0.0f,
+                                lightPanelShadow ? 0.80f : 1.0f });
                         offsetShadow->SetValue(
                             D2D1_SHADOW_PROP_OPTIMIZATION,
                             D2D1_SHADOW_OPTIMIZATION_QUALITY);
@@ -138,7 +148,9 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         offsetTransform->SetInputEffect(0, offsetShadow.Get());
                         offsetTransform->SetValue(
                             D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX,
-                            D2D1::Matrix3x2F::Translation(shadowScale, shadowScale));
+                            D2D1::Matrix3x2F::Translation(
+                                (lightPanelShadow ? 0.75f : 1.0f) * shadowScale,
+                                (lightPanelShadow ? 0.75f : 1.0f) * shadowScale));
                         offsetTransform->SetValue(
                             D2D1_2DAFFINETRANSFORM_PROP_INTERPOLATION_MODE,
                             D2D1_2DAFFINETRANSFORM_INTERPOLATION_MODE_LINEAR);
@@ -147,15 +159,19 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
                         itemTextEffectContext_->BeginDraw();
                         itemTextEffectContext_->Clear(
                             D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
-                        itemTextEffectContext_->DrawImage(softShadow.Get());
-                        itemTextEffectContext_->DrawImage(softShadow.Get());
+                        if (softShadow)
+                        {
+                            itemTextEffectContext_->DrawImage(softShadow.Get());
+                            if (!lightPanelShadow)
+                                itemTextEffectContext_->DrawImage(softShadow.Get());
+                        }
                         itemTextEffectContext_->DrawImage(offsetTransform.Get());
                         HRESULT shadowHr = itemTextEffectContext_->EndDraw();
                         itemTextEffectContext_->SetTarget(nullptr);
                         if (SUCCEEDED(shadowHr))
                         {
                             shadowIt = shadowCache.emplace(
-                                shadowKey, std::move(shadowBitmap)).first;
+                                cacheKey, std::move(shadowBitmap)).first;
                         }
                     }
                 }
@@ -186,11 +202,14 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
         if (shadowBrush)
         {
             context->DrawTextLayout(
-                D2D1::Point2F(origin.x + layoutScale, origin.y + layoutScale),
+                D2D1::Point2F(
+                    origin.x + (lightPanelShadow ? 0.75f : 1.0f) * layoutScale,
+                    origin.y + (lightPanelShadow ? 0.75f : 1.0f) * layoutScale),
                 layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            context->DrawTextLayout(
-                D2D1::Point2F(origin.x, origin.y + layoutScale),
-                layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            if (!lightPanelShadow)
+                context->DrawTextLayout(
+                    D2D1::Point2F(origin.x, origin.y + layoutScale),
+                    layout, shadowBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
     }
 
@@ -200,7 +219,8 @@ void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
 }
 
 void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
-    const std::wstring& text, bool selected, float opacity, bool lightTheme)
+    const std::wstring& text, bool selected, float opacity, bool lightTheme,
+    bool componentPanel)
 {
     if (!dwriteFactory_ || !itemTextFormat_ || text.empty()) return;
 
@@ -408,7 +428,7 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     DrawStyledItemTextLayout(
         context, layoutIt->second.Get(), layoutIt->first,
         D2D1::Point2F(static_cast<float>(textRect.left), ty),
-        D2D1::SizeF(tw, th), fontScale, opacity, lightTheme);
+        D2D1::SizeF(tw, th), fontScale, opacity, lightTheme, false, componentPanel);
 }
 
 void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,

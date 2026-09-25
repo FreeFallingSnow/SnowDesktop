@@ -1,4 +1,6 @@
+#include "../shell_extension_service.h"
 #include "app.h"
+#include "../single_instance.h"
 #include "../atomic_file.h"
 #include "../auto_start_manager.h"
 #include "../deployment_context.h"
@@ -9,6 +11,7 @@
 #include <cstring>
 #include <cwctype>
 #include <mutex>
+#include <utility>
 
 namespace
 {
@@ -476,59 +479,47 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     using snowdesktop::AutoStartApplyResult;
     using snowdesktop::AutoStartApplyStatus;
 
-    const auto finish = [this](AutoStartApplyStatus status,
-                            std::wstring message = {})
+    // A user request writes the task or its current-user fallback. Do not run legacy
+    // reconciliation before/after it: a stale task or failed migration must
+    // not prevent Windows from accepting this explicit choice.
+    AutoStartApplyResult result;
+    std::wstring error;
+    const bool applied = snowdesktop::auto_start::Apply(
+        snowdesktop::auto_start::CurrentDeploymentTarget(), enabled, &error);
+    const auto task = snowdesktop::auto_start::Query();
+    result.state.packaged = snowdesktop::deployment::IsPackaged();
+    result.state.stateKnown = task.status == snowdesktop::UnifiedAutoStartTaskState::Enabled ||
+        task.status == snowdesktop::UnifiedAutoStartTaskState::Disabled;
+    result.state.taskStatus = task.status;
+    result.state.taskOwner = task.target.owner;
+    result.state.taskOwnedByCurrentDeployment = result.state.stateKnown &&
+        snowdesktop::auto_start::IsCurrentDeploymentTarget(task.target);
+    result.state.enabled = result.state.taskOwnedByCurrentDeployment &&
+        task.status == snowdesktop::UnifiedAutoStartTaskState::Enabled;
+    result.state.ownerCommand = task.target.executable;
+    if (applied && result.state.stateKnown && result.state.enabled == enabled &&
+        result.state.taskOwnedByCurrentDeployment)
     {
-        AutoStartApplyResult result;
-        result.status = status;
-        result.state = QueryAutoStartState();
-        result.message = std::move(message);
+        result.status = AutoStartApplyStatus::Applied;
         return result;
-    };
-
-    const snowdesktop::AutoStartQueryResult before = QueryAutoStartState();
-    const bool explicitlyEnableMissing =
-        snowdesktop::CanExplicitlyEnableMissingAutoStart(
-            enabled, before.stateKnown, before.taskStatus);
-    if (!before.stateKnown && !explicitlyEnableMissing)
-    {
-        return finish(AutoStartApplyStatus::StateUnavailable,
-            _LW(enabled
-                ? "app.settings.auto_start_enable_failed"
-                : "app.settings.auto_start_disable_failed"));
     }
-
-    bool applied = false;
-    if (enabled)
+    result.status = AutoStartApplyStatus::Failed;
+    if (!task.error.empty())
     {
-        applied = snowdesktop::auto_start::Configure(
-            snowdesktop::auto_start::CurrentDeploymentTarget(), true);
+        if (!error.empty() && error != task.error) error += L"\n" + task.error;
+        else if (error.empty()) error = task.error;
     }
-    else if (!before.taskOwnedByCurrentDeployment)
-    {
-        applied = true;
-    }
-    else
-    {
-        applied = snowdesktop::auto_start::SetEnabled(false);
-    }
-    if (!applied)
-    {
-        return finish(AutoStartApplyStatus::Failed,
-            _LW(enabled
-                ? "app.settings.auto_start_enable_failed"
-                : "app.settings.auto_start_disable_failed"));
-    }
-    const snowdesktop::AutoStartQueryResult after = QueryAutoStartState();
-    if (after.stateKnown && after.enabled == enabled &&
-        (!enabled || after.taskOwnedByCurrentDeployment))
-        return finish(AutoStartApplyStatus::Applied);
-    return finish(
-        after.stateKnown ? AutoStartApplyStatus::Failed
-                         : AutoStartApplyStatus::StateUnavailable,
-        _LW(enabled
-            ? "app.settings.auto_start_enable_failed"
-            : "app.settings.auto_start_disable_failed"));
+    if (error.empty())
+        error = L"AutoStart.VerifyRequestedState (0x8007000D): " +
+            std::wstring(L"expected enabled=") + (enabled ? L"true" : L"false") +
+            L", actual enabled=" + (result.state.enabled ? L"true" : L"false") +
+            L", owner=" + task.target.executable;
+    result.message = _LW(enabled
+        ? "app.settings.auto_start_enable_failed"
+        : "app.settings.auto_start_disable_failed");
+    result.message += L"\n" + error;
+    WriteDiagnosticLogEntry(result.message.c_str(), DiagnosticLogLevel::Error);
+    return result;
 }
 
 snowdesktop::SettingsActionResult DesktopApp::OpenStoreUpdates()
@@ -570,6 +561,15 @@ snowdesktop::winui::HomeAboutStatusPatch DesktopApp::BuildHomeAboutStatus(std::u
     patch.animationDiagnosticsEnabled =
         uiAnimationScheduler_.DiagnosticsEnabled();
     patch.temporaryInitializationEnabled = !initializationExperimentDirectory_.empty();
+    const auto& profile = snowdesktop::debug_profile::Current();
+    snowdesktop::debug_profile::Configuration configuration;
+    std::string profileError;
+    if (!snowdesktop::debug_profile::Read(profile.paths, configuration, profileError))
+        configuration = profile.configuration;
+    patch.debugProfileEnabled = snowdesktop::debug_profile::Enabled();
+    patch.debugDataDirectory = profile.paths.data.wstring();
+    patch.debugDesktopDirectory = configuration.desktop.wstring();
+
     patch.animationDiagnosticsStatus =
         BuildAnimationDiagnosticsStatus();
     return patch;
@@ -611,11 +611,13 @@ std::wstring DesktopApp::BuildAnimationDiagnosticsStatus() const
 }
 
 snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
-    snowdesktop::winui::LayoutRestorePayload payload)
+    snowdesktop::winui::LayoutRestorePayload payload,
+    std::function<void(snowdesktop::SettingsActionResult)> completion)
 {
     using snowdesktop::SettingsActionResult;
 
     if (!settingsController_ || exitRequested_ || reloading_ ||
+        layoutReload_.Pending() || layoutRestoreCompletion_ ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive())
     {
@@ -731,14 +733,16 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         firstPageMonitorId_.clear();
         lastPageMonitorId_.clear();
     }
-    return ReloadLayoutAndSynchronizeSettings();
+    return ReloadLayoutAndSynchronizeSettings(std::move(completion));
 }
 
-snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings()
+bool DesktopApp::SynchronizeReloadedLayoutSettings()
 {
-    using snowdesktop::SettingsActionResult;
-    ReloadItems(true);
+    // LoadLayoutSlots owns dockEnabled and the layout portion of DockSettings.
+    // Reconcile input only after those values have actually been loaded and
+    // containers rebuilt, including reloads requested during startup reads.
     ApplyFloatingDockHotkey();
+    if (!settingsController_) return false;
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;
     desktop.iconSpacingScale = iconSpacingScale_;
@@ -759,19 +763,112 @@ snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings
         WriteDiagnosticLogEntry(
             L"Layout restored but settings mirror synchronization failed",
             DiagnosticLogLevel::Error);
-        return SettingsActionResult::Failure(
-            _LW("settings.backup.restoreLayout.commitFailed"));
     }
-    return SettingsActionResult::Success();
+    wchar_t state[192]{};
+    swprintf_s(state,
+        L"Reloaded layout settings applied: dockEnabled=%d pointerMonitor=%d hotkeyRegistered=%d mirrors=%d",
+        generalSettings_.dockEnabled, floatingDockEdgeSwipeHwnd_ != nullptr,
+        floatingDockHotkeyRegistered_,
+        generalSynchronized && desktopSynchronized && dockSynchronized);
+    WriteDiagnosticLogEntry(state);
+    return generalSynchronized && desktopSynchronized && dockSynchronized;
+}
+
+void DesktopApp::CompleteLayoutRestore(snowdesktop::SettingsActionResult result)
+{
+    auto completion = std::exchange(layoutRestoreCompletion_, {});
+    if (completion) completion(std::move(result));
+}
+
+snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings(
+    std::function<void(snowdesktop::SettingsActionResult)> completion)
+{
+    // This only queues a Shell read. Runtime input and settings mirrors must
+    // follow the disk load and model rebuild, not this request.
+    if (layoutReload_.Pending() || layoutRestoreCompletion_)
+        return snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.busy"));
+    layoutRestoreCompletion_ = std::move(completion);
+    ReloadItems(true);
+    return snowdesktop::SettingsActionResult::Success();
+}
+
+snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(
+    const snowdesktop::SettingsHostActions::Request& request)
+{
+    namespace profile = snowdesktop::debug_profile;
+    using Action = snowdesktop::SettingsHostActions::Action;
+    using Result = snowdesktop::SettingsActionResult;
+    const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
+    if (!snapshot || !snapshot->sessionActive || exitRequested_ || reloading_ ||
+        layoutReload_.Pending() || layoutRestoreCompletion_ ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        snowdesktop::winui::HasPendingBackupDataWork() || snapshot->externalReplacementPending)
+        return Result::Failure(_LW("settings.backup.restoreLayout.busy"));
+    if (!initializationExperimentDirectory_.empty())
+        return Result::Failure(_LW("settings.debug.profile.exclusive"));
+    const auto flushed = settingsController_->FlushAll();
+    if (!flushed.Succeeded()) return flushed;
+    if (!SaveLayoutSlots()) return Result::Failure(_LW("settings.debug.profile.failed"));
+    const auto& paths = profile::Current().paths;
+    profile::Configuration previous;
+    std::string error;
+    const auto failure = [&]() {
+        return Result::Failure(std::wstring(_LW("settings.debug.profile.failed")) + L"\n" + Utf8ToWide(error));
+    };
+    if (!profile::Read(paths, previous, error)) return failure();
+    auto next = previous;
+    if (request.action == Action::SetDebugProfileEnabled)
+    {
+        next.enabled = request.boolValue;
+        if (next.enabled == profile::Enabled()) return Result::Success();
+        if (next.enabled && !profile::Prepare(paths, next, snowdesktop::desktop_source::SystemDesktops(), error))
+            return failure();
+    }
+    else if (request.action == Action::SetDebugDesktopDirectory)
+    {
+        if (!profile::ValidateDesktop(paths, request.value, snowdesktop::desktop_source::SystemDesktops(), error))
+            return failure();
+        if (snowdesktop::single_instance::DataDirectoriesMatch(previous.desktop.wstring(), request.value))
+            return Result::Success();
+        next.desktop = request.value;
+        next.pendingDesktopChange = true;
+    }
+    else if (request.action == Action::ClearDebugProfile)
+    {
+        next.pendingReset = true;
+        if (!profile::Write(paths, next, error)) return failure();
+        if (!profile::Enabled())
+        {
+            if (!profile::Clear(paths, error)) return failure();
+            next.pendingReset = false;
+            next.pendingDesktopChange = false;
+            if (!profile::Write(paths, next, error)) return failure();
+            PublishHomeAboutStatus();
+            return Result::Success();
+        }
+    }
+    if (!profile::Write(paths, next, error)) return failure();
+    if (!RequestRestart())
+    {
+        std::string rollbackError;
+        if (!profile::Write(paths, previous, rollbackError)) error += " " + rollbackError;
+        return failure();
+    }
+    return Result::Success();
 }
 
 snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(bool enabled)
 {
     using snowdesktop::SettingsActionResult;
+    if (enabled && snowdesktop::debug_profile::Enabled())
+        return SettingsActionResult::Failure(_LW("settings.debug.profile.exclusive"));
     if (enabled == !initializationExperimentDirectory_.empty())
         return SettingsActionResult::Success();
     const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
     if (!settingsController_ || exitRequested_ || reloading_ ||
+        layoutReload_.Pending() || layoutRestoreCompletion_ ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
         dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
         snowdesktop::winui::HasPendingBackupDataWork() ||
@@ -870,6 +967,8 @@ public:
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
         }
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
@@ -897,6 +996,8 @@ public:
             app_.ApplyPersistentDockHostAppearance();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.dockSettings_.systemTaskbarAutoHide =
                 committedTaskbarAutoHide;
             app_.dockSettings_.systemTaskbarAlignment =
@@ -958,6 +1059,7 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             app_.ApplyDesktopPassthroughHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
         }
@@ -1019,6 +1121,8 @@ public:
             app_.dockSettings_ = requestedDockSettings;
             app_.ApplyPersistentDockHostAppearance();
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.ApplyFloatingDockHotkey();
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
@@ -1040,8 +1144,11 @@ public:
                 app_.generalSettings_.language,
                 snapshot.values.general.language) != 0;
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
             app_.ApplyAnimationPreferences();
+            if (app_.widgetEngine_)
+                app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
             app_.ApplyDesktopPassthroughHotkey();
@@ -1269,6 +1376,10 @@ public:
                 request.boolValue);
             app_.PublishHomeAboutStatus();
             break;
+        case Action::SetDebugProfileEnabled:
+        case Action::SetDebugDesktopDirectory:
+        case Action::ClearDebugProfile:
+            return app_.ChangeDebugProfile(request);
         case Action::SetTemporaryGridInitialization:
             return app_.SetTemporaryGridInitialization(request.boolValue);
         case Action::StartUsageGuidePractice:
@@ -1491,9 +1602,11 @@ void DesktopApp::InitializeSettingsController()
         dockSettings_ = snapshot->values.dock;
         navigationSettings_ = snapshot->values.navigation;
         generalSettings_ = snapshot->values.general;
+        snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
         ApplyAnimationPreferences();
         categorySettings_ = snapshot->values.category;
-        generalSettings_.autoStartEnabled = QueryAutoStartEnabled();
+        // External task state is refreshed when settings are opened. Startup
+        // must not wait for Task Scheduler RPC or migrate legacy tasks here.
         (void)settingsController_->SynchronizeGeneral(generalSettings_);
     }
     if (!result.Succeeded())
@@ -1627,29 +1740,6 @@ void DesktopApp::LoadNavigationSettingsAndApply()
     ApplyNavigationHotkey();
 }
 
-bool DesktopApp::IsDesktopPassthroughHotkeyDown() const
-{
-    const auto keyDown = [](int virtualKey) {
-        return (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
-    };
-    if (!keyDown(static_cast<int>(
-            generalSettings_.desktopPassthroughHotkeyVirtualKey)))
-        return false;
-
-    const UINT modifiers =
-        generalSettings_.desktopPassthroughHotkeyModifiers;
-    if ((modifiers & MOD_CONTROL) != 0 && !keyDown(VK_CONTROL))
-        return false;
-    if ((modifiers & MOD_ALT) != 0 && !keyDown(VK_MENU))
-        return false;
-    if ((modifiers & MOD_SHIFT) != 0 && !keyDown(VK_SHIFT))
-        return false;
-    if ((modifiers & MOD_WIN) != 0 &&
-        !keyDown(VK_LWIN) && !keyDown(VK_RWIN))
-        return false;
-    return true;
-}
-
 bool DesktopApp::IsDesktopPassthroughPointerDown() const
 {
     constexpr int pointerKeys[] = {
@@ -1664,25 +1754,24 @@ bool DesktopApp::IsDesktopPassthroughPointerDown() const
     return false;
 }
 
-void DesktopApp::EndDesktopPassthroughHold(
+void DesktopApp::EndDesktopPassthrough(
     bool restoreDesktop)
 {
-    if (desktopPassthroughHotkeyHwnd_ &&
-        IsWindow(desktopPassthroughHotkeyHwnd_))
-    {
-        KillTimer(desktopPassthroughHotkeyHwnd_,
-            kDesktopPassthroughHoldTimerId);
-    }
-
-    if (!desktopPassthroughHoldActive_)
+    desktopPassthroughIndicator_.Hide();
+    if (!desktopPassthroughActive_)
         return;
-    desktopPassthroughHoldActive_ = false;
+    desktopPassthroughActive_ = false;
 
-    if (!restoreDesktop || !customDesktopVisible_ ||
+    if (!restoreDesktop)
+        return;
+    UpdatePersistentDockHostVisibility();
+    if (!customDesktopVisible_ ||
         !hwnd_ || !IsWindow(hwnd_))
         return;
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        ShowWindow(inputHwnd_, SW_SHOWNA);
     desktopBackdropCompositor_.SetVisible(true);
     ReconcileDesktopHoverState(
         snowdesktop::desktop_hover_rules::
@@ -1691,10 +1780,17 @@ void DesktopApp::EndDesktopPassthroughHold(
     UpdateWindow(hwnd_);
 }
 
-void DesktopApp::BeginDesktopPassthroughHold()
+void DesktopApp::ToggleDesktopPassthrough()
 {
-    if (desktopPassthroughHoldActive_ ||
-        !desktopPassthroughHotkeyRegistered_ ||
+    // Do not interrupt an in-flight wallpaper gesture when toggling back.
+    if (IsDesktopPassthroughPointerDown())
+        return;
+    if (desktopPassthroughActive_)
+    {
+        EndDesktopPassthrough();
+        return;
+    }
+    if (!desktopPassthroughHotkeyRegistered_ ||
         !generalSettings_.desktopPassthroughHotkeyEnabled ||
         !customDesktopVisible_ ||
         !hwnd_ || !IsWindow(hwnd_) ||
@@ -1705,19 +1801,22 @@ void DesktopApp::BeginDesktopPassthroughHold()
     // Hiding in the middle of a desktop drag would prevent SnowDesktop from
     // receiving the matching button-up event and leave its interaction state
     // latched. The shortcut can be pressed again after the current gesture.
-    if (IsDesktopPassthroughPointerDown() ||
-        mouseDown_ || marqueeActive_ ||
+    if (mouseDown_ || marqueeActive_ ||
         dragSession_.IsActive() ||
         dragDropController_.IsTransportActive() ||
         GetCapture() != nullptr)
         return;
 
-    if (SetTimer(desktopPassthroughHotkeyHwnd_,
-            kDesktopPassthroughHoldTimerId,
-            kDesktopPassthroughHoldIntervalMs,
-            nullptr) == 0)
+    // Never hide the desktop if its visible mouse escape surface failed.
+    if (!desktopPassthroughIndicator_.Show(instance_,
+            desktopPassthroughHotkeyHwnd_, kDesktopPassthroughExitMessage,
+            _LW("app.desktop_passthrough.exit_hint")))
+    {
+        WriteDiagnosticLogEntry(L"Desktop passthrough edge indicator creation failed");
         return;
+    }
 
+    desktopPassthroughActive_ = true;
     if (quickNavigationOpen_)
     {
         CloseQuickNavigation();
@@ -1725,25 +1824,23 @@ void DesktopApp::BeginDesktopPassthroughHold()
     }
     HideDockWindowPreview();
     HideDragHintWindow();
-
-    desktopPassthroughHoldActive_ = true;
-    CloseAllFloatingDocksThen(
-        [this]() {
-            // The hotkey may have been released while the compositor hand-off
-            // was pending. In that case the desktop must remain visible.
-            if (!desktopPassthroughHoldActive_ ||
-                !hwnd_ || !IsWindow(hwnd_))
-                return;
-            if (widgetEngine_)
-                widgetEngine_->SetAllWidgetDesktopVisible(false);
-            desktopBackdropCompositor_.SetVisible(false);
-            ShowWindow(hwnd_, SW_HIDE);
-        });
+    pendingCollectionPopupOpen_.reset();
+    CloseCollectionPopup(false);
+    FinalizeCloseCollectionPopup();
+    CloseAllFloatingDocks();
+    // CloseAllFloatingDocks also hides every independent content/backdrop
+    // pair through the shared visibility rule, including idle desktop Docks.
+    if (widgetEngine_)
+        widgetEngine_->SetAllWidgetDesktopVisible(false);
+    desktopBackdropCompositor_.SetVisible(false);
+    ShowWindow(hwnd_, SW_HIDE);
+    if (inputHwnd_ && IsWindow(inputHwnd_))
+        ShowWindow(inputHwnd_, SW_HIDE);
 }
 
 void DesktopApp::UnregisterDesktopPassthroughHotkey()
 {
-    EndDesktopPassthroughHold();
+    EndDesktopPassthrough();
     if (desktopPassthroughHotkeyRegistered_ &&
         desktopPassthroughHotkeyHwnd_)
     {
@@ -1781,12 +1878,12 @@ void DesktopApp::ApplyDesktopPassthroughHotkey()
     {
         desktopPassthroughHotkeyHwnd_ = target;
         WriteDiagnosticLogEntry(
-            L"Desktop passthrough hold hotkey registered");
+            L"Desktop passthrough toggle hotkey registered");
     }
     else
     {
         WriteDiagnosticLogEntry(
-            L"Desktop passthrough hold hotkey registration failed");
+            L"Desktop passthrough toggle hotkey registration failed");
     }
 }
 
@@ -1802,6 +1899,8 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
+    if (widgetEngine_) widgetEngine_->SetCalendarDisplayPreferences(generalSettings_.calendarDisplay);
     ApplyAnimationPreferences();
     generalSettings_.autoStartEnabled = autoStartEnabled;
     if (std::strcmp(generalSettings_.language, "system") != 0 &&

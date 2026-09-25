@@ -499,7 +499,7 @@ bool DesktopApp::MaterializeFilesToDesktop(const DragSourceList& sourceList,
         createdPathsBySource->clear();
 
     wchar_t desktopPathRaw[MAX_PATH]{};
-    if (!SHGetSpecialFolderPathW(nullptr, desktopPathRaw, CSIDL_DESKTOPDIRECTORY, FALSE))
+    if (!snowdesktop::desktop_source::CopyDirectory(desktopPathRaw))
         return false;
     std::wstring desktopPath = TrimTrailingPathSeparators(desktopPathRaw);
 

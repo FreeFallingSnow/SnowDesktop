@@ -31,6 +31,9 @@
 
 #if SNOWDESKTOP_HAS_STEAMWORKS
 #include <steam/steam_api.h>
+static_assert(k_ESteamAPIInitResult_NoSteamClient == 2 &&
+    k_ESteamAPIInitResult_VersionMismatch == 3,
+    "Update Steam initialization diagnostic classification for this SDK");
 #endif
 
 namespace
@@ -129,13 +132,16 @@ void WriteJsonString(std::ostream& output, std::string_view value)
     output << '"';
 }
 
-int PrintError(int exitCode, std::string_view code, std::string_view message)
+int PrintError(int exitCode, std::string_view code, std::string_view message,
+    std::optional<std::uint32_t> steamInitResult = {})
 {
     std::cerr << "{\"ok\":false,\"error\":{";
     std::cerr << "\"code\":";
     WriteJsonString(std::cerr, code);
     std::cerr << ",\"message\":";
     WriteJsonString(std::cerr, message);
+    if (steamInitResult)
+        std::cerr << ",\"steamInitResult\":" << *steamInitResult;
     std::cerr << "}}\n";
     return exitCode;
 }
@@ -347,6 +353,7 @@ public:
         initialized_ = result == k_ESteamAPIInitResult_OK;
         if (!initialized_)
         {
+            initResult_ = static_cast<std::uint32_t>(result);
             errorCode_ = "steam_init_failed";
             error_ = message[0] ? message : "SteamAPI_InitEx failed";
             return;
@@ -386,12 +393,17 @@ public:
         return errorCode_;
     }
     [[nodiscard]] const std::string& Error() const noexcept { return error_; }
+    [[nodiscard]] std::optional<std::uint32_t> InitResult() const noexcept
+    {
+        return initResult_;
+    }
 
 private:
     bool initialized_ = false;
     std::uint32_t appId_ = 0;
     std::string errorCode_ = "steam_init_failed";
     std::string error_;
+    std::optional<std::uint32_t> initResult_;
 };
 
 template<typename Result, typename Progress>
@@ -582,7 +594,7 @@ int PrintInitializationFailure(const SteamApiSession& steam)
     return PrintError(kSteamInitializationFailed, steam.ErrorCode(),
         steam.Error().empty()
             ? "Launch the bridge through Steam and keep the Steam client running"
-            : steam.Error());
+            : steam.Error(), steam.InitResult());
 }
 
 int PrintStatus()
@@ -1298,7 +1310,8 @@ int ListPublishedWorkshopItems(const ParsedOptions& options)
     snowdesktop::steam_bridge::CoreError error;
     const auto result = core.ListPublished(
         static_cast<std::uint32_t>(rawPage), error);
-    if (!result) return PrintError(error.exitCode, error.code, error.message);
+    if (!result) return PrintError(error.exitCode, error.code, error.message,
+            error.steamInitResult);
     std::cout << "{\"ok\":true,\"protocolVersion\":1,\"page\":"
               << result->page << ",\"totalPages\":" << result->totalPages
               << ",\"totalResults\":" << result->totalResults
@@ -1407,7 +1420,8 @@ int PublishWorkshopItemWithCore(const ParsedOptions& options)
                       << (progress.submitStarted ? "true" : "false")
                       << "}\n" << std::flush;
         }, error);
-    if (!result) return PrintError(error.exitCode, error.code, error.message);
+    if (!result) return PrintError(error.exitCode, error.code, error.message,
+            error.steamInitResult);
     if (options.HasFlag(L"--open-page"))
     {
         OpenCommunityItem(result->publishedFileId, result->communityUrl);
@@ -1437,7 +1451,8 @@ int SetWorkshopSubscription(const ParsedOptions& options, bool subscribed)
     snowdesktop::steam_bridge::CoreError error;
     if (!core.SetSubscribed(publishedFileId, subscribed,
             std::chrono::seconds(timeout), error))
-        return PrintError(error.exitCode, error.code, error.message);
+        return PrintError(error.exitCode, error.code, error.message,
+            error.steamInitResult);
 
     std::cout << "{\"ok\":true,\"publishedFileId\":\""
               << publishedFileId << "\",\"subscribed\":"

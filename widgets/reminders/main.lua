@@ -1,5 +1,7 @@
 -- reminders/main.lua - API v2 transactional local ToDo list
 local descriptor
+local taskLayout = module.require("modules/task_layout.lua")
+local taskPriority = module.require("modules/task_priority.lua")
 
 local function componentMetrics()
     local row = ui.metrics().layoutRowHeight
@@ -28,8 +30,6 @@ local fluent = {
     reset = utf8.char(0xF19F),
     edit = utf8.char(0xE70F),
 }
-
-local MAX_TASKS = 200
 
 local settings = {
     fields = {
@@ -98,23 +98,54 @@ local function saveDoneIds(tx, ids, done)
     setOrRemove(tx, "doneIds", table.concat(ordered, ","))
 end
 
+local function loadPriorities()
+    return taskPriority.decode(storage.get("priorities"))
+end
+
+local function savePriorities(tx, ids, priorities)
+    setOrRemove(tx, "priorities", taskPriority.encode(ids, priorities))
+end
+
 local function loadTasks(includeCompleted)
-    local pending = {}
-    local completed = {}
+    local tasks = {}
     local done = loadDoneIds()
+    local priorities = loadPriorities()
     for _, id in ipairs(loadOrder()) do
         local text = storage.get(taskTextKey(id))
         if text ~= nil then
-            local task = { id = id, text = text, done = done[id] == true }
-            if task.done then
-                if includeCompleted then completed[#completed + 1] = task end
-            else
-                pending[#pending + 1] = task
+            local task = { id = id, text = text, done = done[id] == true,
+                priority = priorities[id] or taskPriority.normal }
+            if includeCompleted or not task.done then
+                tasks[#tasks + 1] = task
             end
         end
     end
-    for _, task in ipairs(completed) do pending[#pending + 1] = task end
-    return pending
+    return taskPriority.sort(tasks)
+end
+
+local function setTaskPriority(id, level)
+    if level == nil or level < 0 or level > 3 or level % 1 ~= 0 or
+        storage.get(taskTextKey(id)) == nil then return end
+    local ids = loadOrder()
+    local exists = false
+    for _, current in ipairs(ids) do
+        if current == id then exists = true; break end
+    end
+    if not exists then return end
+    local priorities = loadPriorities()
+    priorities[id] = level
+    storage.transaction(function(tx)
+        savePriorities(tx, ids, priorities)
+    end)
+end
+
+local function priorityLabels()
+    return {
+        [3] = l10n.tr("lua_widget.reminders.priority_urgent"),
+        [2] = l10n.tr("lua_widget.reminders.priority_high"),
+        [1] = l10n.tr("lua_widget.reminders.priority_normal"),
+        [0] = l10n.tr("lua_widget.reminders.priority_low"),
+    }
 end
 
 local function taskCounts()
@@ -130,7 +161,7 @@ end
 local function addDraft()
     local text = trim(storage.get("draft") or "")
     local ids = loadOrder()
-    if text == "" or #ids >= MAX_TASKS then return false end
+    if text == "" then return false end
 
     local nextId = math.max(1, tonumber(storage.get("nextId")) or 1)
     local id = tostring(nextId)
@@ -160,6 +191,7 @@ end
 local function deleteTask(id)
     local ids = loadOrder()
     local done = loadDoneIds()
+    local priorities = loadPriorities()
     local kept = {}
     for _, current in ipairs(ids) do
         if current ~= id then kept[#kept + 1] = current end
@@ -169,12 +201,14 @@ local function deleteTask(id)
         tx:remove(taskTextKey(id))
         saveOrder(tx, kept)
         saveDoneIds(tx, kept, done)
+        savePriorities(tx, kept, priorities)
     end)
 end
 
 local function clearCompleted()
     local ids = loadOrder()
     local done = loadDoneIds()
+    local priorities = loadPriorities()
     local kept = {}
     local removed = {}
     for _, id in ipairs(ids) do
@@ -188,6 +222,7 @@ local function clearCompleted()
         for _, id in ipairs(removed) do tx:remove(taskTextKey(id)) end
         saveOrder(tx, kept)
         tx:remove("doneIds")
+        savePriorities(tx, kept, priorities)
     end)
 end
 
@@ -237,6 +272,8 @@ local function getPalette()
             inputText = 0x000000, placeholder = 0x000000,
             inputBg = 0x000000, inputBorder = 0x000000,
             inputFocus = 0x000000, delete = 0x000000,
+            priorities = { [3] = 0xDC2626, [2] = 0xD97706,
+                [1] = 0xFFFFFF, [0] = 0x6B7280 },
         }
     end
     return {
@@ -245,6 +282,8 @@ local function getPalette()
         inputText = 0xFFFFFF, placeholder = 0xFFFFFF,
         inputBg = 0xFFFFFF, inputBorder = 0xFFFFFF,
         inputFocus = 0xFFFFFF, delete = 0xFFFFFF,
+        priorities = { [3] = 0xF04452, [2] = 0xF5A623,
+            [1] = 0xFFFFFF, [0] = 0x9CA3AF },
     }
 end
 
@@ -265,8 +304,29 @@ local function setup()
     return { editingTaskId = nil, selectedId = nil }
 end
 
+local function clipShape(shape, viewport)
+    local x, y = shape.x, shape.y
+    local width, height = shape.width, shape.height
+    if shape.type == "circle" then
+        x, y = x - shape.radius, y - shape.radius
+        width, height = shape.radius * 2, shape.radius * 2
+    end
+    local left = math.max(x, viewport.x)
+    local top = math.max(y, viewport.y)
+    local right = math.min(x + width, viewport.x + viewport.width)
+    local bottom = math.min(y + height, viewport.y + viewport.height)
+    if right <= left or bottom <= top then return nil end
+    if left == x and top == y and right == x + width and
+        bottom == y + height then return shape end
+    return { type = "rect", x = left, y = top,
+        width = right - left, height = bottom - top }
+end
+
 local function registerRegion(key, shape, cursor, events, accessibility,
-    enabled)
+    enabled, viewport)
+    -- Drawing clips do not clip immediate-mode hit regions in the host.
+    if viewport then shape = clipShape(shape, viewport) end
+    if not shape then return end
     interaction.region({
         key = key,
         shape = shape,
@@ -289,6 +349,7 @@ local function render(context, model)
     local function px(value) return value * unit end
     local gap = metrics.spacingSm
     local palette = getPalette()
+    local urgencyLabels = priorityLabels()
     local scale = fontScale()
     local fontSize = metrics.bodyFontSize * scale
     local inputFont = metrics.controlFontSize * scale
@@ -297,18 +358,31 @@ local function render(context, model)
     local total = taskCounts()
 
     local contentInset = metrics.spacingSm
-    local inputH = math.min(metrics.layoutRowHeight,
-        math.max(unit, h - contentInset * 2))
     local inputY = contentInset
-    local addSize = inputH
+    local addSize = metrics.layoutRowHeight
     local inputW = math.max(unit,
         w - contentInset * 2 - addSize - gap)
-    control.textInput({
+    local draft = storage.get("draft") or ""
+    -- The host text area reserves eight logical pixels for its scrollbar.
+    local scrollbarReserve = 8
+    local inputPlaceholder = l10n.tr("lua_widget.reminders.add_placeholder")
+    local inputLineHeight = draw.measureText(inputPlaceholder,
+        math.max(9, inputFont), 0, false).height
+    -- Center the first line in a standard row and reuse that inset horizontally.
+    local inputPadding = math.max(metrics.spacingXs,
+        (metrics.layoutRowHeight - inputLineHeight) / 2)
+    local inputText = draft == "" and inputPlaceholder or draft
+    local draftMetrics = draw.measureText(inputText .. " ", math.max(9, inputFont),
+        math.max(unit, inputW - inputPadding * 2 - scrollbarReserve), false)
+    local inputH = math.min(
+        math.max(metrics.layoutRowHeight, draftMetrics.height + inputPadding * 2),
+        math.max(metrics.layoutRowHeight, math.min(metrics.layoutRowHeight * 3, h / 3)))
+    control.textArea({
         key = "new-task",
         storageKey = "draft",
         shape = { type = "rect", x = contentInset, y = inputY,
             width = inputW, height = inputH },
-        placeholder = l10n.tr("lua_widget.reminders.add_placeholder"),
+        placeholder = inputPlaceholder,
         fontSize = inputFont,
         textColor = palette.inputText,
         placeholderColor = palette.placeholder,
@@ -320,15 +394,14 @@ local function render(context, model)
         borderAlpha = 0.10,
         focusedBorderAlpha = 0.75,
         radius = metrics.controlRadius,
-        padding = metrics.spacingSm,
+        padding = inputPadding,
         borderThickness = metrics.strokeWidth,
         selectAll = false,
         liveUpdate = true,
         maxBytes = 4096,
     })
 
-    local addEnabled = trim(storage.get("draft") or "") ~= "" and
-        total < MAX_TASKS
+    local addEnabled = trim(storage.get("draft") or "") ~= ""
     local addX = contentInset + inputW + gap
     local addY = inputY + (inputH - addSize) / 2
     local addKey = "task.add"
@@ -339,12 +412,24 @@ local function render(context, model)
     end
     local addCx = addX + addSize / 2
     local addCy = addY + addSize / 2
-    draw.line(addCx - addSize * 0.27, addCy,
-        addCx + addSize * 0.27, addCy, px(3), palette.add,
-        addEnabled and 1.0 or 0.28)
-    draw.line(addCx, addCy - addSize * 0.27,
-        addCx, addCy + addSize * 0.27, px(3), palette.add,
-        addEnabled and 1.0 or 0.28)
+    local arm = addSize * 0.27
+    local halfStroke = px(3) / 2
+    -- Fill one outline so the disabled alpha is applied only once at the center.
+    draw.path({
+        { op = "move", x = addCx - halfStroke, y = addCy - arm },
+        { op = "line", x = addCx + halfStroke, y = addCy - arm },
+        { op = "line", x = addCx + halfStroke, y = addCy - halfStroke },
+        { op = "line", x = addCx + arm, y = addCy - halfStroke },
+        { op = "line", x = addCx + arm, y = addCy + halfStroke },
+        { op = "line", x = addCx + halfStroke, y = addCy + halfStroke },
+        { op = "line", x = addCx + halfStroke, y = addCy + arm },
+        { op = "line", x = addCx - halfStroke, y = addCy + arm },
+        { op = "line", x = addCx - halfStroke, y = addCy + halfStroke },
+        { op = "line", x = addCx - arm, y = addCy + halfStroke },
+        { op = "line", x = addCx - arm, y = addCy - halfStroke },
+        { op = "line", x = addCx - halfStroke, y = addCy - halfStroke },
+        { op = "close" },
+    }, { fillColor = palette.add, alpha = addEnabled and 1.0 or 0.28 })
     registerRegion(addKey, {
         type = "circle", x = addCx, y = addCy, radius = addSize / 2,
     }, "hand", { click = { id = "task.add" } }, {
@@ -362,9 +447,8 @@ local function render(context, model)
         contextMenu = { id = "task.menu", scope = "component" },
     }, { role = "list", label = l10n.tr("lua_widget.reminders.name") })
 
-    local cardH = math.max(unit, metrics.layoutRowHeight)
+    local baseCardH = math.max(unit, metrics.layoutRowHeight)
     local rowGap = metrics.spacingXs
-    local rowH = cardH + rowGap
     local tasks = loadTasks(showCompleted())
     if #tasks == 0 then
         local hint = total > 0 and
@@ -392,21 +476,33 @@ local function render(context, model)
         return
     end
 
+    local checkboxSize = math.min(fontSize + metrics.spacingSm,
+        baseCardH - metrics.spacingSm)
+    local checkboxX = contentInset + metrics.spacingSm
+    local deleteSize = metrics.iconSize
+    local deleteX = w - contentInset - deleteSize - metrics.spacingSm
+    local textX = checkboxX + checkboxSize + metrics.spacingSm
+    local editorW = math.max(unit, deleteX - textX - metrics.spacingSm)
+    local textW = math.max(unit, editorW - scrollbarReserve)
+    local rows, contentHeight = taskLayout.build(tasks, draw.measureText,
+        textW, fontSize, baseCardH, metrics.spacingXs, rowGap,
+        l10n.tr("lua_widget.reminders.untitled"))
+    local singleLineHeight = draw.measureText(" ", fontSize, 0, false).height
     local scroll = interaction.scroll({
         key = "tasks.scroll",
         shape = viewportShape,
-        contentHeight = math.ceil(#tasks * rowH - rowGap),
+        contentHeight = math.ceil(contentHeight),
     })
-    local first = math.max(1, math.floor(scroll.offset / rowH) + 1)
-    local last = math.min(#tasks,
-        math.ceil((scroll.offset + viewportH) / rowH))
+    local first, last = taskLayout.visibleRange(rows, scroll.offset, viewportH)
     local selectedId = model.selectedId
 
     draw.pushClip(contentInset, listTop,
         w - contentInset * 2, viewportH)
     for index = first, last do
-        local task = tasks[index]
-        local cardY = listTop + (index - 1) * rowH - scroll.offset
+        local row = rows[index]
+        local task = row.task
+        local cardH = row.height
+        local cardY = listTop + row.top - scroll.offset
         local cardW = w - contentInset * 2
         local rowKey = "task.row." .. task.id
         local selected = task.id == selectedId
@@ -429,17 +525,15 @@ local function render(context, model)
             click = { id = "task.select", value = task.id },
             doubleClick = { id = "task.edit", value = task.id },
             contextMenu = { id = "task.menu", value = task.id },
-        }, { role = "listitem", label = task.text })
+        }, { role = "listitem", label = task.text .. ", " ..
+            urgencyLabels[task.priority] }, nil, viewportShape)
 
-        local checkboxSize = math.min(fontSize + metrics.spacingSm,
-            cardH - metrics.spacingSm)
-        local checkboxX = contentInset + metrics.spacingSm
         local checkboxY = cardY + (cardH - checkboxSize) / 2
         local checkboxKey = "task.toggle." .. task.id
         local checkboxHovered = interaction.isHovered(checkboxKey)
         draw.strokeRect(checkboxX, checkboxY, checkboxSize, checkboxSize,
-            palette.accent, checkboxSize / 2, px(1.5),
-            checkboxHovered and 1.0 or (task.done and 1.0 or 0.62))
+            palette.priorities[task.priority], checkboxSize / 2, px(1.5),
+            checkboxHovered and 1.0 or (task.done and 0.62 or 0.9))
         if task.done then
             local cx = checkboxX + checkboxSize / 2
             local cy = checkboxY + checkboxSize / 2
@@ -456,24 +550,21 @@ local function render(context, model)
             radius = checkboxSize / 2 + metrics.spacingXs,
         }, "hand", { click = { id = "task.toggle", value = task.id } }, {
             role = "checkbox", label = task.text,
-        })
+        }, nil, viewportShape)
 
-        local deleteSize = metrics.iconSize
-        local deleteX = w - contentInset - deleteSize - metrics.spacingSm
-        local textX = checkboxX + checkboxSize + metrics.spacingSm
-        local textW = math.max(unit,
-            deleteX - textX - metrics.spacingSm)
-        local displayText = task.text ~= "" and task.text or
-            l10n.tr("lua_widget.reminders.untitled")
-        local measured = draw.measureText(displayText, fontSize, 0, false)
+        local displayText = row.text
+        local measured = row.measured
         local textY = cardY + math.max(0, (cardH - measured.height) / 2)
-        local editing = selected and model.editingTaskId == task.id
+        local editShape = clipShape({ type = "rect", x = textX,
+            y = textY, width = editorW,
+            height = cardH - (textY - cardY) }, viewportShape)
+        local editing = selected and model.editingTaskId == task.id and
+            editShape ~= nil
         if editing then
-            control.textInput({
+            control.textArea({
                 key = "edit-task-" .. task.id,
                 storageKey = taskTextKey(task.id),
-                shape = { type = "rect", x = textX,
-                    y = cardY, width = textW, height = cardH },
+                shape = editShape,
                 fontSize = fontSize,
                 textColor = palette.inputText,
                 placeholder = l10n.tr("lua_widget.reminders.untitled"),
@@ -495,8 +586,8 @@ local function render(context, model)
         else
             draw.text(textX, textY, displayText, fontSize,
                 task.done and palette.completed or palette.text,
-                textW, false, true)
-            if task.done then
+                textW, false, false)
+            if task.done and measured.height <= singleLineHeight + unit then
                 draw.line(textX, cardY + cardH / 2,
                     textX + math.min(textW, measured.width),
                     cardY + cardH / 2, metrics.strokeWidth,
@@ -517,12 +608,13 @@ local function render(context, model)
                 deleteSize, palette.delete)
             registerRegion(deleteKey, {
                 type = "rect", x = deleteX - metrics.spacingXs,
-                y = cardY,
-                width = deleteSize + metrics.spacingSm, height = cardH,
+                y = cardY + (cardH - baseCardH) / 2,
+                width = deleteSize + metrics.spacingSm, height = baseCardH,
             }, "hand", {
                 click = { id = "task.delete", value = task.id },
             }, { role = "button",
-                label = l10n.tr("lua_widget.reminders.delete_selected") })
+                label = l10n.tr("lua_widget.reminders.delete_selected") },
+                nil, viewportShape)
         end
     end
     draw.popClip()
@@ -557,6 +649,10 @@ local function event(_context, model, value)
         model.selectedId = nil
         model.editingTaskId = nil
         deleteTask(id)
+    elseif id and type(value.id) == "string" and
+        value.id:match("^task%.priority%.[0-3]$") then
+        model.editingTaskId = nil
+        setTaskPriority(id, tonumber(value.id:match("(%d)$")))
     elseif value.id == "task.focusAdd" then
         control.focus("new-task")
     elseif value.id == "task.clearCompleted" then
@@ -575,12 +671,26 @@ local function menu(_context, _model, request)
     local total, completed = taskCounts()
     local taskId = request.value and tostring(request.value) or nil
     if taskId and storage.get(taskTextKey(taskId)) ~= nil then
+        local currentPriority = loadPriorities()[taskId] or taskPriority.normal
+        local labels = priorityLabels()
+        local priorityItems = {}
+        for level = 3, 0, -1 do
+            priorityItems[#priorityItems + 1] = {
+                id = "task.priority." .. level,
+                label = labels[level],
+                checked = currentPriority == level,
+            }
+        end
         return ui.menu({
             {
                 id = "task.edit",
                 label = l10n.tr("lua_widget.reminders.edit_selected"),
                 icon = fluent.edit,
                 iconFont = "fluent",
+            },
+            {
+                label = l10n.tr("lua_widget.reminders.priority"),
+                children = priorityItems,
             },
             {
                 id = "task.delete",

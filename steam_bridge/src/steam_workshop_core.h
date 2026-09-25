@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "steam_connection_feedback.h"
+
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -32,13 +34,8 @@ struct CoreError
     int exitCode = kSteamOperationFailed;
     std::string code;
     std::string message;
+    std::optional<std::uint32_t> steamInitResult = {};
 };
-
-inline bool SuggestOpeningSteamClient(const CoreError& error) noexcept
-{
-    return error.exitCode == kSteamInitializationFailed &&
-        error.code == "steam_initialization_failed";
-}
 
 struct SteamStatus
 {

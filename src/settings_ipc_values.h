@@ -22,8 +22,8 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBgR, v.widgetBgG, v.widgetBgB, v.widgetBorderR,
     v.widgetBorderG, v.widgetBorderB, v.widgetAlpha, v.widgetBorderAlpha,
     v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength,
-    v.gradientEndA, v.barHeight, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
-    v.showCategoryTabCounts, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
+    v.gradientEndA, v.barHeight, v.scrollableTitleBarOnTop, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
+    v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
@@ -33,20 +33,26 @@ SD_IPC_FIELDS(DockSettings,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.floatingEdgeSwipeBlockFullscreen, v.monitorScope, v.showWindowsButton,
     v.showRunningApps, v.showWindowPreviews, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.frequentItemCount, v.thicknessScale,
-    v.systemTaskbarAutoHide, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
+    v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
-    v.followComponentAppearance, v.customAppearance, v.appearancePreset);
+    v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode);
+SD_IPC_FIELDS(calendar::DisplayPreferences, v.enabled, v.calendar, v.holidaysEnabled, v.region);
+SD_IPC_FIELDS(shell_extensions::Selection, v.provider, v.command, v.label, v.placement);
+SD_IPC_FIELDS(shell_extensions::HiddenItem, v.id, v.context);
+SD_IPC_FIELDS(shell_extensions::Rule, v.id, v.category, v.shown);
+SD_IPC_FIELDS(shell_extensions::LocationOverride, v.id, v.context, v.visibility);
+SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections, v.hidden, v.shown, v.rulesVersion, v.rules, v.overrides);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
     v.pageNavigationPreviousModifiers, v.pageNavigationPreviousVirtualKey, v.pageNavigationNextModifiers, v.pageNavigationNextVirtualKey,
     v.quickNavTheme, v.collectionPopupTheme, v.dockEnabled, v.widgetDeveloperToolsEnabled,
-    v.language, v.animationMode, v.popupAnimationEffect, v.animationSpeed,
+    v.calendarDisplay, v.language, v.animationMode, v.popupAnimationEffect, v.animationSpeed,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
-    v.quickNavigationAppearance, v.collectionPopupAppearance);
+    v.quickNavigationAppearance, v.collectionPopupAppearance, v.shellExtensions);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions);
 SD_IPC_FIELDS(CategorySettings,

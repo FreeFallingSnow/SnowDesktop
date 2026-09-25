@@ -21,6 +21,7 @@
 #include "../item_render_layer_rules.h"
 #include "../collection_titleless_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -54,8 +55,13 @@ static bool CollectionItemIsDirectory(Item* item)
 static RECT CollectionScrollContentRect(Collection* widget)
 {
     if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
+    // Fade near the footer, or near the frame edge when the title is on top.
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetScrollContentBottom()));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
@@ -308,16 +314,22 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
 /// @{
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * @brief 绘制单个桌面项的缩略图
- *
- * 在指定的矩形区域内绘制项的图标（Icon），若项处于选中状态则先绘制蓝色高亮背景。
- * 图标居中绘制，大小自适应（限制在 16px 到区域尺寸之间）。
- * @param context  Direct2D 设备上下文
- * @param item     要绘制的桌面项
- * @param rect     绘制区域矩形
- * @param selected 是否处于选中状态
- */
+// Compact slots and the All-button mosaic share their icon inset in both
+// the saved-key placeholder path and the resolved-item thumbnail path.
+RECT Collection::GetThumbnailIconRect(RECT rect) const
+{
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    const int available = std::max(1,
+        std::min(width - Cu(6.0f), height - Cu(4.0f)));
+    const int iconSize = std::min(
+        std::max(Cu(16.0f), available),
+        std::max(1, std::min(width, height)));
+    const int iconX = rect.left + (width - iconSize) / 2;
+    const int iconY = rect.top + (height - iconSize) / 2;
+    return {iconX, iconY, iconX + iconSize, iconY + iconSize};
+}
+
 void Collection::DrawThumbnail(ID2D1DeviceContext* context,
     const DesktopItem& item, RECT rect, bool selected) const
 {
@@ -329,19 +341,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.24f),
             D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f));
     }
-
-    const int width = rect.right - rect.left;
-    const int height = rect.bottom - rect.top;
-    const int available = std::max(1,
-        std::min(width - Cu(6.0f), height - Cu(4.0f)));
-    const int iconSize = std::min(
-        std::max(Cu(16.0f), available),
-        std::max(1, std::min(width, height)));
-    const int iconX = rect.left + (width - iconSize) / 2;
-    const int iconY = rect.top + (height - iconSize) / 2;
-    const RECT iconRect = {
-        iconX, iconY, iconX + iconSize, iconY + iconSize
-    };
+    const RECT iconRect = GetThumbnailIconRect(rect);
     const bool useDemoIdentity =
         app_->ShouldUseDemoCollectionIdentity(data_);
     const std::wstring_view demoIdentity = item.layoutKey.empty()
@@ -364,8 +364,8 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
             app_->ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail));
         if (bmp)
         {
-            D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconX), static_cast<float>(iconY),
-                static_cast<float>(iconX + iconSize), static_cast<float>(iconY + iconSize));
+            D2D1_RECT_F dst = D2D1::RectF(static_cast<float>(iconRect.left), static_cast<float>(iconRect.top),
+                static_cast<float>(iconRect.right), static_cast<float>(iconRect.bottom));
             context->DrawBitmap(bmp, dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
         }
         else
@@ -492,7 +492,9 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
     {
         RECT content = GetContentViewportRect();
         DrawDetailsHeader(context, content);
-        context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const snowdesktop::ScrollContentClip contentClip(
+            context, scrollContentFadeCache_, content,
+            GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
 
         auto& slots = GetSlots();
         std::vector<std::pair<Item*, RECT>>
@@ -507,7 +509,18 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
 
             auto* icon = dynamic_cast<DesktopIcon*>(slot->GetItem());
             DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-            if (!item) continue;
+            if (!item)
+            {
+                if (!preview && app_->initialShellReadPending_)
+                {
+                    if (data_->listMode)
+                        DrawListItem(context, cell, nullptr, -1, L"", false, false);
+                    else
+                        app_->DrawPlaceholderIcon(context, -1,
+                            app_->GetItemIconRect(cell), 1.0f);
+                }
+                continue;
+            }
             const DesktopItem& di = *item;
 
             if (!data_->listMode)
@@ -550,7 +563,6 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
                 context, bounds, true, 1.0f, lt, data_);
-        context->PopAxisAlignedClip();
         return;
     }
 
@@ -591,10 +603,20 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (!slots[i]) continue;
         auto* icon = dynamic_cast<DesktopIcon*>(slots[i]->GetItem());
         DesktopItem* item = icon ? icon->GetDesktopItem() : nullptr;
-        if (!item) continue;
-        const DesktopItem& di = *item;
         RECT slotRect = slots[i]->GetBounds();
         if (IsRectEmptyRect(slotRect)) continue;
+        if (!item)
+        {
+            if (!preview && app_->initialShellReadPending_)
+            {
+                const RECT iconRect = compact ? GetThumbnailIconRect(slotRect) : titlelessLargeFolder
+                    ? snowdesktop::ResolveCenteredIconRect(slotRect, titlelessIconSize)
+                    : app_->GetItemIconRect(slotRect);
+                app_->DrawPlaceholderIcon(context, -1, iconRect, 1.0f);
+            }
+            continue;
+        }
+        const DesktopItem& di = *item;
 
         if (compact)
         {
@@ -667,7 +689,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
         RECT allRect = GetCollectionSlotRect(this, allSlot, body);
         if (!IsRectEmptyRect(allRect))
         {
-            bool hasRemainingIcon = false;
+            bool hasRemainingIcon = !preview && app_->initialShellReadPending_ &&
+                inlineCapacity < displayItemCount;
             for (size_t j = 0; j < 4; ++j)
             {
                 size_t keyIdx = inlineCapacity + j;
@@ -709,6 +732,8 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         else
                             DrawThumbnail(context, di, tile, di.selected);
                     }
+                    else if (!preview && app_->initialShellReadPending_)
+                        app_->DrawPlaceholderIcon(context, -1, GetThumbnailIconRect(tile), 1.0f);
                 }
                 else
                 {
@@ -731,7 +756,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 app_->DrawItemText(context, allRect,
                     collectionTitle, false, 1.0f,
-                    app_->IsLightContentTheme());
+                    app_->IsLightContentTheme(), true);
             }
             else if (canShowTitlelessTooltip &&
                 PtInRect(&allRect,
@@ -1034,7 +1059,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
             const float bs = GetBarScale();
             const int btnSize = Cu(14.0f * bs);
             const int gap = Cu(4.0f * bs);
-            const int resizeReserve = Cu(20.0f * bs);
+            const int resizeReserve = GetTitleBarResizeReserve();
             RECT toggleBtn = {
                 handle.right - resizeReserve - gap - btnSize,
                 handle.top + (handle.bottom - handle.top - btnSize) / 2,
@@ -1303,7 +1328,7 @@ void Collection::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bool 
     const float bs = GetBarScale();
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
-    const int resizeReserve = Cu(20.0f * bs);
+    const int resizeReserve = GetTitleBarResizeReserve();
     RECT toggleBtn = {
         handleRect.right - resizeReserve - gap - btnSize,
         handleRect.top + (handleRect.bottom - handleRect.top - btnSize) / 2,

@@ -3,6 +3,7 @@
 #include "winui/home_about_ipc_values.h"
 #include "large_icon_edit_rules.h"
 #include "settings_process.h"
+#include "shell_extension_service.h"
 
 #include <atomic>
 #include <future>
@@ -36,10 +37,42 @@ HANDLE CurrentProcessHandle()
 
 void TestCodec()
 {
+    GeneralSettings extensions;
+    extensions.shellExtensions = {true, {{"handler:{test}", "compress", "压缩", snowdesktop::shell_extensions::Placement::Root}}};
+    extensions.shellExtensions.hidden = {{"verb:sevenzip", snowdesktop::shell_extensions::Context::Folder},
+        {"verb:editor", snowdesktop::shell_extensions::Context::Desktop}};
+    extensions.shellExtensions.shown = {
+        {"verb:sevenzip", snowdesktop::shell_extensions::Context::File},
+        {"verb:editor", snowdesktop::shell_extensions::Context::FolderBackground}};
+    using namespace snowdesktop::shell_extensions;
+    SetCommon(extensions.shellExtensions, "clsid:test", Category::Background, true);
+    SetOverride(extensions.shellExtensions, "clsid:test", Context::Desktop, Visibility::Hide);
+    CatalogueView menuView;
+    menuView.selection.paths = {L"C:\\测试.pdf", L"C:\\other.png"}; menuView.selection.extended = true;
+      Registration registration; registration.id = "reg:test"; registration.contexts = 3; registration.linked = false;
+    registration.display.label = L"Type command"; registration.sources = {L".pdf\\shell\\test"};
+    registration.commandIdentity = std::string("command\0arguments", 17);
+    registration.application = {"file:test-provider", L"Provider application"};
+    menuView.catalogue.rows = {registration};
+    const auto menuRestored = Unpack<CatalogueView>(Pack(menuView));
+    Check(menuRestored.selection == menuView.selection && menuRestored.catalogue.rows.size() == 1 &&
+          menuRestored.catalogue.rows[0].id == registration.id && !menuRestored.catalogue.rows[0].linked &&
+          menuRestored.catalogue.rows[0].commandIdentity == registration.commandIdentity &&
+          menuRestored.catalogue.rows[0].application == registration.application,
+          "private menu IPC retains mixed selection, Shift and pending registration identity");
+    Check(Unpack<GeneralSettings>(Pack(extensions)).shellExtensions == extensions.shellExtensions,
+          "explicit visibility and legacy exclusions cross settings IPC without losing identity or context");
     snowdesktop::winui::HomeAboutStatusPatch guide;
     guide.generation = 71; guide.revision = 9;
     guide.usageGuideExpanded = false;
+    guide.debugProfileEnabled = true;
+    guide.debugDataDirectory = L"D:\\data.debug\\data";
+    guide.debugDesktopDirectory = L"D:\\模拟桌面";
     const auto restoredGuide = Unpack<snowdesktop::winui::HomeAboutStatusPatch>(Pack(guide));
+    Check(restoredGuide.debugProfileEnabled == guide.debugProfileEnabled &&
+        restoredGuide.debugDataDirectory == guide.debugDataDirectory &&
+        restoredGuide.debugDesktopDirectory == guide.debugDesktopDirectory,
+        "debug profile status crosses the process boundary without losing paths or mode");
     Check(restoredGuide.generation == 71 && restoredGuide.revision == 9 &&
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
@@ -91,11 +124,13 @@ void TestCodec()
     settings.values.dock.followComponentAppearance = false;
     settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
     settings.values.dock.customAppearance.widgetBgR = .2f;
-    settings.values.dock.floatingEdgeSwipeBlockFullscreen = true;
+    settings.values.dock.floatingEdgeSwipeBlockFullscreen = false;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;
     settings.values.dock.windowEffect = 3;
+    settings.values.dock.suppressSystemTaskbar = true;
+    settings.values.dock.showWindowsButton = false;
     settings.values.general.language[0] = 'z';
     settings.values.general.language[1] = 'h';
     settings.values.general.language[2] = '\0';
@@ -104,10 +139,42 @@ void TestCodec()
     settings.values.desktop.iconBeautify.filterTintR = 0.123f;
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
     settings.values.personalization.panelGradient.enabled = true;
+    settings.values.personalization.showGroupTabCounts = true;
+    settings.values.personalization.scrollableTitleBarOnTop = true;
+    settings.values.personalization.popupHoverOpen = true;
+    settings.values.personalization.popupHoverDelayMs = 1700.0f;
+    settings.values.personalization.showCategoryTabCounts = false;
     settings.values.personalization.panelGradient.angle = 213;
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,
+        "an explicit fullscreen gesture opt-out survives IPC despite the enabled default");
+    Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
+        "suppression crosses private settings IPC without replacing the base Windows button preference");
+    for (const int theme : {-1, 0, 1})
+    {
+        auto themeSettings = settings;
+        themeSettings.values.dock.classicTaskbarSystemTheme = theme;
+        const auto themeRestored = Unpack<snowdesktop::SettingsSnapshot>(Pack(themeSettings));
+        Check(themeRestored.values.dock.classicTaskbarSystemTheme == theme,
+            "Win10 automatic and manual shell choices survive the settings process boundary");
+    }
+    Check(restored.values.personalization.showGroupTabCounts &&
+            restored.values.personalization.scrollableTitleBarOnTop &&
+            restored.values.personalization.popupHoverOpen &&
+            restored.values.personalization.popupHoverDelayMs == 1700.0f &&
+            !restored.values.personalization.showCategoryTabCounts,
+        "group tab counts cross the settings process boundary independently from category counts");
+    for (const int style : {5, 6})
+    {
+        auto menuSettings = settings;
+        menuSettings.values.personalization.contextMenuStyle = style;
+        const auto styleRestored =
+            Unpack<snowdesktop::SettingsSnapshot>(Pack(menuSettings));
+        Check(styleRestored.values.personalization.contextMenuStyle == style,
+            "Win10 menu selection reaches the independent settings process intact");
+    }
     Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&
         restored.values.general.collectionPopupAppearance == settings.values.general.collectionPopupAppearance,
         "independent surface modes and custom gradients reach the settings process intact");

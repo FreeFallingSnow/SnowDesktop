@@ -38,6 +38,17 @@ void DesktopApp::RememberSavedPageId(const std::wstring& pageId)
         savedPageIds_.push_back(pageId);
 }
 
+void DesktopApp::ReloadLayoutStateFromDisk()
+{
+    LoadLayoutSlots();
+    RecreateItemTextFormat();
+    RecreateComponentListTextFormat();
+    // Preserve the page dimensions just restored from disk rather than the
+    // pre-reload runtime grid. Both asynchronous read paths use this boundary.
+    UpdateLayoutWorkArea(false);
+    if (widgetEngine_) widgetEngine_->ReloadStorage();
+}
+
 /**
  * @brief 从布局 JSON 文件加载所有页面、组件和项目的网格位置信息。
  *
@@ -74,8 +85,7 @@ void DesktopApp::LoadLayoutSlots()
             message.c_str(), DiagnosticLogLevel::Warning);
     }
 
-    dockFolderTargetCache_.clear();
-    dockFolderIconIndexCache_.clear();
+    InvalidateDockShellMetadata();
     struct PreservedFolderEntries
     {
         std::wstring sourceFolderPath;
@@ -278,6 +288,11 @@ void DesktopApp::LoadLayoutSlots()
 
     for (const auto& item : document.items)
     {
+        if (snowdesktop::debug_profile::Enabled() &&
+            snowdesktop::debug_profile::Current().configuration.pendingDesktopChange &&
+            std::filesystem::path(Utf8ToWide(item.key)).is_absolute() &&
+            (!item.page || Utf8ToWide(*item.page) != kDockPageId)) continue;
+
         LayoutRecord record;
         record.largeIcon = item.largeIcon;
         if (item.page && item.column && item.row)
@@ -420,6 +435,8 @@ void DesktopApp::LoadLayoutSlots()
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.titleBarCollapsed = saved.titleBarCollapsed;
+        widget.titleBarExpandOnHover = saved.titleBarExpandOnHover;
         widget.largeFolderTitleless =
             widget.type == DesktopWidgetType::Collection &&
             snowdesktop::collection_titleless_rules::ResolveStoredMode(
@@ -555,7 +572,8 @@ void DesktopApp::LoadLayoutSlots()
                     std::move(preservedIt->second.entries);
                 preservedFolderEntries.erase(preservedIt);
             }
-            EnumerateFolderMappingEntries(widgets_.back());
+            if (!initialShellReadPending_)
+                EnumerateFolderMappingEntries(widgets_.back());
         }
     }
 
@@ -804,6 +822,10 @@ void DesktopApp::LoadLayoutSlots()
  */
 bool DesktopApp::SaveLayoutSlots()
 {
+    // A backup may already be on disk while Shell still shows the old model.
+    // Exit and unrelated settings commits must not overwrite that document.
+    if (layoutReload_.Pending())
+        return false;
     // Do not replace a loaded layout with incomplete startup/enumeration state.
     if (!desktopItemsReady_ || gridPages_.empty())
         return false;
@@ -824,7 +846,7 @@ bool DesktopApp::SaveLayoutSlots()
     if (std::any_of(items_.begin(), items_.end(), [](const auto& item) { return item.largeIcon.has_value(); }))
     {
         const std::filesystem::path data = GetDataDirectoryPath();
-        auto state = std::filesystem::path(snowdesktop::deployment::GetPackageLocalStatePath());
+        auto state = std::filesystem::path(GetDataStateRootPath());
         if (state.empty()) state = data.parent_path();
         const auto result = snowdesktop::EnsureLargeIconUpgradeBackup(state, data, SNOWDESKTOP_VERSION, 2);
         if (!result.ok)
@@ -851,7 +873,10 @@ bool DesktopApp::SaveLayoutSlots()
     {
         if (!item.parsingName.empty())
         {
-            RememberSavedPageId(item.gridCell.pageId);
+            // Hidden collection/Dock members keep their return-position record,
+            // but must not recreate a page that the visible layout reclaimed.
+            if (!item.name.empty() && !IsItemInAnyWidget(item))
+                RememberSavedPageId(item.gridCell.pageId);
             LayoutRecord record;
             record.cell = item.gridCell;
             record.span = item.gridSpan;
@@ -1041,6 +1066,8 @@ bool DesktopApp::SaveLayoutSlots()
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
+             << ", \"titleBarCollapsed\": " << (w.titleBarCollapsed ? "true" : "false")
+             << ", \"titleBarExpandOnHover\": " << (w.titleBarExpandOnHover ? "true" : "false")
              << ", \"largeFolderTitleless\": "
              << (w.largeFolderTitleless ? "true" : "false")
              << ", \"keepWhenDesktopHidden\": "
@@ -1127,13 +1154,22 @@ bool DesktopApp::SaveLayoutSlots()
     }
     file << "]\n}\n";
     std::string saveError;
-    if (!snowdesktop::layout_storage::SaveDocument(
-            GetLayoutPath(), file.str(), &saveError))
+    const bool changedDesktop = snowdesktop::debug_profile::Enabled() &&
+        snowdesktop::debug_profile::Current().configuration.pendingDesktopChange;
+    const bool saved = changedDesktop
+        ? snowdesktop::layout_storage::SaveClearedDocument(GetLayoutPath(), file.str(), &saveError)
+        : snowdesktop::layout_storage::SaveDocument(GetLayoutPath(), file.str(), &saveError);
+    if (!saved)
     {
         const std::wstring message = L"Layout save failed: " +
             Utf8ToWide(saveError);
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Error);
+        return false;
+    }
+    if (!snowdesktop::debug_profile::AcknowledgeDesktopChange(saveError))
+    {
+        WriteDiagnosticLogEntry(Utf8ToWide(saveError).c_str(), DiagnosticLogLevel::Error);
         return false;
     }
     return true;

@@ -845,7 +845,7 @@ bool DesktopApp::LaunchQuickNavigationAppEntry(
             DockWindowVisualState::Closed;
 
     if (!snowdesktop::ShellLaunchWorker::ExecuteInteractive(
-            ShellDialogOwnerHwnd(), entry.parsingName, entry.absolutePidl.get()))
+            ShellLaunchOwnerHwnd(), entry.parsingName, entry.absolutePidl.get()))
         return false;
 
     if (dockItemIndex < items_.size())

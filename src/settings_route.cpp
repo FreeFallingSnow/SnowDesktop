@@ -30,7 +30,11 @@ bool IsCustomThemeFocus(std::string_view focusId) noexcept
 bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
 {
     return focusId == "personalization.cornerRadius" ||
-        focusId == "personalization.barHeight";
+        focusId == "personalization.barHeight" ||
+        focusId == "personalization.scrollableTitleBarOnTop" ||
+        focusId == "personalization.popupHoverOpen" ||
+        focusId == "personalization.popupHoverDelayMs" ||
+        focusId == "personalization.showGroupTabCounts";
 }
 
 bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept
@@ -67,6 +71,8 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
+        route.focusId == "personalization.contextMenu") route.page = SettingsPage::ContextMenu;
     if (route.page == SettingsPage::Home)
     {
         route.page = SettingsPage::General;
@@ -216,6 +222,8 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::DesktopPages:
     case SettingsPage::AnimationPerformance:
     case SettingsPage::LargeIcon:
+    case SettingsPage::Calendar:
+    case SettingsPage::ContextMenu:
         break;
     default:
         return false;
@@ -256,6 +264,8 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::DesktopPages: return "desktop-pages";
     case SettingsPage::AnimationPerformance: return "animation-performance";
     case SettingsPage::LargeIcon: return "large-icon";
+    case SettingsPage::Calendar: return "calendar";
+    case SettingsPage::ContextMenu: return "context-menu";
     }
     return "home";
 }

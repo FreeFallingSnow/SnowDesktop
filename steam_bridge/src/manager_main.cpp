@@ -562,6 +562,7 @@ private:
 
     void SetMessageUnlocked(bool success, std::string value)
     {
+        steamConnectionProblem_ = SteamConnectionProblem::None;
         messageSuccess_ = success;
         message_ = std::move(value);
         RequestManagerFrame();
@@ -569,10 +570,13 @@ private:
 
     bool ShowSteamRecovery(const CoreError& error)
     {
-        if (!SuggestOpeningSteamClient(error)) return false;
+        const auto problem = ClassifySteamConnectionProblem(
+            error.code, error.steamInitResult);
+        if (problem == SteamConnectionProblem::None) return false;
         std::lock_guard lock(mutex_);
-        steamClientUnavailable_ = true;
-        message_.clear();
+        steamConnectionProblem_ = problem;
+        messageSuccess_ = false;
+        message_ = error.code + ": " + error.message;
         RequestManagerFrame();
         return true;
     }
@@ -614,25 +618,25 @@ private:
             connected
             ? T("Steam 已连接", "Steam connected")
             : T("Steam 未连接", "Steam disconnected"));
-        bool showSteamRecovery = false;
+        SteamConnectionProblem connectionProblem = SteamConnectionProblem::None;
         bool messageSuccess = true;
         std::string message;
         {
             std::lock_guard lock(mutex_);
-            showSteamRecovery = steamClientUnavailable_;
+            connectionProblem = steamConnectionProblem_;
             messageSuccess = messageSuccess_;
             message = message_;
         }
-        if (showSteamRecovery)
+        if (connectionProblem != SteamConnectionProblem::None)
         {
+            const auto feedback = ConnectionFeedback(connectionProblem);
             ImGui::Spacing();
             ImGui::PushStyleColor(ImGuiCol_Text,
                 ImVec4(0.64f, 0.38f, 0.06f, 1.0f));
-            ImGui::TextWrapped("%s", T(
-                "Steam 未运行。请先打开 Steam，再重试刚才的操作。",
-                "Steam isn't running. Open Steam, then retry the operation."));
+            ImGui::TextWrapped("%s", T(feedback.chinese, feedback.english));
             ImGui::PopStyleColor();
-            if (BlueButton(T("打开 Steam", "Open Steam")) &&
+            if (feedback.offerOpenSteam &&
+                BlueButton(T("打开 Steam", "Open Steam")) &&
                 !OpenUrl(SteamClientHomeUrl()))
             {
                 SetMessage(false, T(
@@ -646,7 +650,9 @@ private:
                 ImVec4(0.35f, 0.85f, 0.52f, 1.0f) :
                 ImVec4(1.0f, 0.42f, 0.38f, 1.0f);
             ImGui::Spacing();
-            ImGui::TextColored(color, "%s", message.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            ImGui::TextWrapped("%s", message.c_str());
+            ImGui::PopStyleColor();
         }
         if (busy_.load())
         {
@@ -1500,7 +1506,7 @@ private:
             }
             std::lock_guard lock(mutex_);
             localizationStateCreating_ = false;
-            steamClientUnavailable_ = false;
+            steamConnectionProblem_ = SteamConnectionProblem::None;
             ++publishInputsRevision_;
             SetMessageUnlocked(true, result.needsLegalAgreement ?
                 T("上传成功；请打开 Steam 页面接受创意工坊协议",
@@ -1645,7 +1651,7 @@ private:
             const std::uint64_t steamId = ParseItemId(status.steamId).value_or(0);
             std::string saveError;
             std::lock_guard lock(mutex_);
-            steamClientUnavailable_ = false;
+            steamConnectionProblem_ = SteamConnectionProblem::None;
             published_ = result->items;
             publishedPage_ = result->page;
             publishedTotalPages_ = result->totalPages;
@@ -1717,7 +1723,7 @@ private:
     bool publishPublic_ = true;
     bool updatePreview_ = false;
     bool updateTags_ = false;
-    bool steamClientUnavailable_ = false;
+    SteamConnectionProblem steamConnectionProblem_ = SteamConnectionProblem::None;
     bool messageSuccess_ = true;
     std::string message_;
 };

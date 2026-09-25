@@ -294,7 +294,6 @@ local function render(_context, model)
         cursor = "hand",
         focusable = true,
         tabIndex = 0,
-        tooltip = l10n.tr("lua_widget.wooden_fish.tooltip", term),
         events = {
             click = { id = "wooden-fish.strike" },
             doubleClick = { id = "wooden-fish.strike" },

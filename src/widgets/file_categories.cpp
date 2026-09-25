@@ -19,6 +19,7 @@
 #include "../menu_fluent_glyphs.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -578,8 +579,12 @@ static RECT FileCategoryTabsRect(FileCategories* widget)
 static RECT FileCategoryContentRect(FileCategories* widget)
 {
     if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetScrollContentBottom()));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FileCategoryTabsRect(widget);
     RECT search = widget->GetSearchBoxRect();
@@ -837,7 +842,7 @@ static RECT FileCategoryToggleRect(FileCategories* widget)
     const float bs = widget->GetBarScale();
     const int btnSize = widget->Cu(14.0f * bs);
     const int gap = widget->Cu(4.0f * bs);
-    const int resizeReserve = widget->Cu(20.0f * bs);
+    const int resizeReserve = widget->GetTitleBarResizeReserve();
     return MakeRect(handle.right - resizeReserve - gap - btnSize,
         handle.top + (handle.bottom - handle.top - btnSize) / 2,
         handle.right - resizeReserve - gap, handle.top + (handle.bottom - handle.top + btnSize) / 2);
@@ -856,7 +861,7 @@ static RECT FileCategoryDateToggleRect(FileCategories* widget)
     const int btnSize = widget->Cu(14.0f * bs);
     const int gap = widget->Cu(4.0f * bs);
     const int gapBetween = widget->Cu(4.0f * bs);
-    const int resizeReserve = widget->Cu(20.0f * bs);
+    const int resizeReserve = widget->GetTitleBarResizeReserve();
     const int right = handle.right - resizeReserve - gap - btnSize - gapBetween;
     const int h = handle.bottom - handle.top;
     return MakeRect(right - btnSize,
@@ -1191,6 +1196,17 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
 
     DrawSearchBox(context);
 
+    if (!preview && app_->initialShellReadPending_ && categoryIds.empty() &&
+        !data_->itemKeys.empty())
+    {
+        const RECT bounds = GetBodyRect();
+        app_->DrawPlaceholderIcon(context, -1,
+            snowdesktop::ResolveCenteredIconRect(bounds,
+                std::min(Cu(40.0f), static_cast<int>(std::min(
+                    bounds.right - bounds.left, bounds.bottom - bounds.top)))), 1.0f);
+        return;
+    }
+
     if (searching)
     {
         const auto& keys = GetSearchResultKeys();
@@ -1212,7 +1228,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
             return;
         }
 
-        context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const snowdesktop::ScrollContentClip contentClip(
+            context, scrollContentFadeCache_, content,
+            GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
         std::vector<std::pair<Item*, RECT>>
             foregroundTitles;
         for (size_t i = 0; i < slots.size(); ++i)
@@ -1258,7 +1276,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
                 context, bounds, true, 1.0f, lt);
-        context->PopAxisAlignedClip();
         return;
     }
 
@@ -1312,7 +1329,9 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     DrawDetailsHeader(context, content);
 
     const auto& slots = GetSlots();
-    context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const snowdesktop::ScrollContentClip contentClip(
+        context, scrollContentFadeCache_, content,
+        GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
     std::vector<std::pair<Item*, RECT>>
         foregroundTitles;
 
@@ -1385,7 +1404,6 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(
             context, bounds, true, 1.0f, lt);
-    context->PopAxisAlignedClip();
 }
 
 RECT FileCategories::GetMemberLayoutRect(size_t index) const

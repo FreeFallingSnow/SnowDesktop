@@ -1,11 +1,26 @@
 #pragma once
 
 #include "../types.h"
+#include "../shortcut_application_rules.h"
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace snowdesktop::shell_refresh
 {
+// Membership-only startup labels cannot wait for Shell metadata. Hide shortcut
+// suffixes immediately, while keeping parsing names and layout identities intact.
+inline std::wstring LocalDesktopDisplayName(std::wstring_view path, bool directory)
+{
+    const auto separator = path.find_last_of(L"\\/");
+    auto name = separator == std::wstring_view::npos ? path : path.substr(separator + 1);
+    if (!directory && name.size() > 4 &&
+        (shortcut_application_rules::HasExtension(name, L".lnk") ||
+            shortcut_application_rules::HasExtension(name, L".url")))
+        name.remove_suffix(4);
+    return std::wstring(name);
+}
+
 // Access time is deliberately excluded: reading metadata can change it.
 struct FileStamp
 {
@@ -81,4 +96,37 @@ struct MetadataCache
         }
     }
 };
+
+// Publishing startup membership must not enter the system image list, even
+// with SHGFI_USEFILEATTRIBUTES: that list can be busy in another Shell query.
+// The callback is the Shell boundary; cache selection is shared with tests.
+template<class Query>
+SHFILEINFOW ReadDesktopMetadata(bool deferred, const std::wstring& path,
+    const std::wstring& key, const FileStamp& stamp, bool hasAttributes,
+    MetadataCache* cache, std::unordered_set<std::wstring>& seen, Query query)
+{
+    SHFILEINFOW info{};
+    info.iIcon = -1;
+    if (deferred) return info;
+    if (cache && hasAttributes)
+    {
+        const auto found = cache->desktop.find(key);
+        if (found != cache->desktop.end() && found->second.Matches(path, stamp))
+        {
+            ++cache->hits;
+            seen.insert(key);
+            return found->second.info;
+        }
+    }
+    if (cache) ++cache->queries;
+    if (query(info) && cache && hasAttributes)
+    {
+        auto& metadata = cache->desktop[key];
+        metadata.path = path;
+        metadata.stamp = stamp;
+        metadata.info = info;
+        seen.insert(key);
+    }
+    return info;
+}
 }

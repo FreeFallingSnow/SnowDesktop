@@ -25,14 +25,6 @@ enum class UnifiedAutoStartTaskState : std::uint8_t
     Unavailable,
 };
 
-[[nodiscard]] constexpr bool CanExplicitlyEnableMissingAutoStart(
-    bool enabled, bool stateKnown,
-    UnifiedAutoStartTaskState taskState) noexcept
-{
-    return enabled && !stateKnown &&
-        taskState == UnifiedAutoStartTaskState::Missing;
-}
-
 enum class AutoStartOwnershipNotice : std::uint8_t
 {
     None,

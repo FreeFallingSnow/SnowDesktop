@@ -4,6 +4,7 @@
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
 #include "../http_runtime.h"
+#include "../shell_extension_service.h"
 
 // Desktop host lifecycle.
 
@@ -11,6 +12,9 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    // The shared service is constructed before the caches its asynchronous
+    // scans use. Stop it before CRT static destruction reverses that order.
+    snowdesktop::shell_extensions::SharedMenuService().Shutdown();
     if (largeIconAssets_) largeIconAssets_->Stop();
     uiAnimationScheduler_.CancelAll();
     dockWindowActivationObservationToken_ = 0;
@@ -33,7 +37,7 @@ DesktopApp::~DesktopApp()
     StopUrlDropDownloadWorker();
     StopWebsiteIconWorker();
     StopSteamWorkshopWatcher();
-    EndDesktopPassthroughHold(false);
+    EndDesktopPassthrough(false);
     UnregisterDesktopPassthroughHotkey();
     ApplySystemTaskbarBackdrop(false, false,
         ResolveSystemTaskbarAppearance(dockSettings_));
@@ -79,6 +83,12 @@ DesktopApp::~DesktopApp()
     }
     if (oleDragDropAdapter_)
         oleDragDropAdapter_->Detach();
+    // The restart handoff may display an error after this object is destroyed.
+    // Retire the last HWND carrying this pointer while members are still alive,
+    // so that dialog's message loop cannot call back into a destroyed host.
+    if (controlHwnd_ && IsWindow(controlHwnd_))
+        DestroyWindow(controlHwnd_);
+    controlHwnd_ = nullptr;
 }
 
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept
@@ -176,7 +186,7 @@ void DesktopApp::ResetDesktopWindowResources()
 {
     if (widgetAccessibilityProvider_ && hwnd_)
         widgetAccessibilityProvider_->DetachWindow(hwnd_);
-    EndDesktopPassthroughHold(false);
+    EndDesktopPassthrough(false);
     UnregisterDesktopPassthroughHotkey();
     desktopBackdropCompositor_.Reset();
     if (dockWindowTransition_)
@@ -184,6 +194,7 @@ void DesktopApp::ResetDesktopWindowResources()
     CancelAllDockWindowActivationObservations();
     CancelPendingExternalOleDragLeave();
     CancelCollectionPopupDwell();
+    CancelPopupHover();
     CancelCollectionGroupTabDwell();
     nativeGlassPanelReadyLogged_ = false;
     if (hwnd_ && IsWindow(hwnd_))
@@ -232,6 +243,8 @@ void DesktopApp::ResetDesktopWindowResources()
     dockLaunchBounces_.clear();
     dropTargetRegistered_ = false;
 
+    folderNotifications_.Clear();
+
     if (shellChangeRegId_ != 0)
     {
         SHChangeNotifyDeregister(shellChangeRegId_);
@@ -259,6 +272,7 @@ void DesktopApp::ResetDesktopWindowResources()
     brushCache_.clear();
     brushCacheContext_ = nullptr;
     placeholderIconCache_.clear();
+    dockFolderBitmapCache_.Retain([](const auto&) { return false; });
     ResetDesktopWidgetComposition();
     ResetDesktopForegroundComposition();
     dcompSurface_.Reset();
@@ -363,7 +377,13 @@ void DesktopApp::FocusDesktopInputWindow()
 {
     const HWND target = inputHwnd_ && IsWindow(inputHwnd_)
         ? inputHwnd_
-        : (hwnd_ && IsWindow(hwnd_) ? hwnd_ : nullptr);
+        : nullptr;
+    if (!target)
+    {
+        WriteDiagnosticLogEntry(L"Desktop input proxy unavailable; render child activation refused",
+            DiagnosticLogLevel::Warning);
+        return;
+    }
     (void)FocusKeyboardWindow(
         target, true, L"Desktop input proxy");
 }
@@ -429,8 +449,16 @@ bool DesktopApp::FocusKeyboardWindow(
         (void)SetFocus(target);
     };
 
-    requestFocus();
     FocusObservation observation = observeFocus();
+    if (observation.ready)
+    {
+        TraceDesktopInteraction(L"focus-already-ready", target);
+        return true;
+    }
+    TraceDesktopInteraction(L"focus-request", target);
+    requestFocus();
+    observation = observeFocus();
+    TraceDesktopInteraction(L"focus-result", target);
     if (observation.ready)
         return true;
 
@@ -450,11 +478,13 @@ bool DesktopApp::FocusKeyboardWindow(
             currentThread, attachedThread, TRUE) != FALSE;
     if (attached)
     {
+        TraceDesktopInteraction(L"focus-attached-retry", target);
         requestFocus();
         AttachThreadInput(
             currentThread, attachedThread, FALSE);
     }
     observation = observeFocus();
+    TraceDesktopInteraction(L"focus-retry-result", target);
     if (observation.ready)
         return true;
 
@@ -874,6 +904,8 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     if (compositionPaintInProgress_)
         return;
 
+    EndDesktopPassthrough();
+
     // These resources belong to the Explorer shell rather than to the custom
     // desktop window. Restore the tray icon even when the native desktop is
     // selected, but never push cached taskbar settings back into Windows here.
@@ -1000,8 +1032,19 @@ void DesktopApp::WatchDesktopHost()
  */
 void DesktopApp::InvalidateAllWidgetSlots()
 {
+    UpdateWidgetHoverExpansion(lastMousePoint_);
     for (auto& c : containers_)
+    {
         c->InvalidateSlots();
+        // Changing the global title-bar position can restore a saved fold.
+        // Do not retain a search caret inside content that just became hidden.
+        auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
+        if (searchable && searchable->IsCollapsed())
+            searchable->SetSearchFocused(false);
+    }
+    if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size() &&
+        IsWidgetCollapsed(widgets_[keyboardNavWidgetIndex_]))
+        SelectWidgetOnly(keyboardNavWidgetIndex_);
 }
 
 void DesktopApp::RequestExit()
@@ -1013,7 +1056,16 @@ void DesktopApp::RequestExit()
     {
         return;
     }
+    CompleteExitRequest();
+}
+
+void DesktopApp::CompleteExitRequest()
+{
+    if (exitRequested_) return;
     exitRequested_ = true;
+    WriteDiagnosticLogEntry((L"Application exit begin: pid=" +
+        std::to_wstring(GetCurrentProcessId()) + L" restart=" +
+        std::to_wstring(preparedRestart_ != nullptr)).c_str());
     shellLaunchWorker_.Stop();
     shellElevationWorker_.Stop();
     StopShellFileOperationWorker();
@@ -1041,6 +1093,7 @@ void DesktopApp::RequestExit()
 
 bool DesktopApp::RequestRestart()
 {
+    if (exitRequested_ || preparedRestart_) return false;
     if (settingsWindow_ && settingsWindow_->IsVisible() &&
         !settingsWindow_->FlushPendingChanges())
     {
@@ -1058,38 +1111,11 @@ bool DesktopApp::RequestRestart()
         return false;
     }
 
-    std::wstring commandLine = L"\"";
-    commandLine.append(exePath, pathLen);
-    commandLine += L"\" --wait-for-pid=";
-    commandLine += std::to_wstring(GetCurrentProcessId());
-    std::vector<wchar_t> commandLineBuffer(commandLine.begin(), commandLine.end());
-    commandLineBuffer.push_back(L'\0');
-
-    std::wstring workingDir(exePath, pathLen);
-    const size_t slash = workingDir.find_last_of(L"\\/");
-    if (slash != std::wstring::npos)
-        workingDir.resize(slash);
-    else
-        workingDir.clear();
-
-    STARTUPINFOW startupInfo{};
-    startupInfo.cb = sizeof(startupInfo);
-    PROCESS_INFORMATION processInfo{};
-    const BOOL created = CreateProcessW(
-        exePath,
-        commandLineBuffer.data(),
-        nullptr,
-        nullptr,
-        FALSE,
-        0,
-        nullptr,
-        workingDir.empty() ? nullptr : workingDir.c_str(),
-        &startupInfo,
-        &processInfo);
-
-    if (!created)
+    auto restart = std::make_unique<
+        snowdesktop::single_instance::PreparedRestart>();
+    const DWORD error = restart->Prepare(std::wstring_view(exePath, pathLen));
+    if (error != ERROR_SUCCESS)
     {
-        const DWORD error = GetLastError();
         std::wstring message =
             _LFW("app.run.restart_error", std::to_wstring(error));
         MessageBoxW(controlHwnd_ ? controlHwnd_ : hwnd_, message.c_str(),
@@ -1097,8 +1123,12 @@ bool DesktopApp::RequestRestart()
         return false;
     }
 
-    CloseHandle(processInfo.hThread);
-    CloseHandle(processInfo.hProcess);
-    RequestExit();
+    WriteDiagnosticLogEntry((L"Application restart prepared: pid=" +
+        std::to_wstring(GetCurrentProcessId()) + L" child=" +
+        std::to_wstring(restart->ProcessId())).c_str());
+    preparedRestart_ = std::move(restart);
+    // Settings were already flushed above. A second flush after child creation
+    // could reject exit and leave a restart waiting for a host that stays open.
+    CompleteExitRequest();
     return true;
 }

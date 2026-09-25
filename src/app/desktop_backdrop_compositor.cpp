@@ -860,12 +860,13 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
 
     if (!positionedTogether)
     {
-        constexpr UINT contentFlags =
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
-            SWP_NOOWNERZORDER;
-        SetWindowPos(
-            contentWindow, contentInsertAfter,
-            0, 0, 0, 0, contentFlags);
+        // A concrete anchor can disappear or change bands during placement.
+        // Recover the requested band instead of repeating the rejected anchor;
+        // retain the same menu protection as the coordinated path.
+        snowdesktop::popup_window_pair_z_order::Apply(
+            contentWindow, nullptr,
+            topmost ? HWND_TOPMOST : HWND_NOTOPMOST, topmost,
+            POINT{}, SIZE{}, preserveAboveWindow);
         if (backdropWindow)
             impl_->SyncWindowPlacement();
     }

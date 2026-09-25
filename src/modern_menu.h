@@ -1,10 +1,12 @@
 #pragma once
 
 #include "menu_quick_icon.h"
+#include "menu_builtin_icon.h"
 
 #include <windows.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,8 @@ enum class Appearance
     SystemDarkBlur = 2,
     OpaqueLight = 3,
     OpaqueDark = 4,
+    Win10Light = 5,
+    Win10Dark = 6,
 };
 
 enum class IconFont
@@ -71,6 +75,11 @@ struct Item
     std::wstring inputText;
     /** Non-owning image kept alive by the caller for the synchronous menu. */
     HBITMAP image = nullptr;
+    /** Native menu access key, separate from literal display text. */
+    wchar_t accessKey = 0;
+    /** 为行内按钮组按文字和图标预留宽度，避免短操作的翻译被截断。 */
+    bool measureInlineAction = false;
+    menu_icon::BuiltinIcon builtinIcon = menu_icon::BuiltinIcon::None;
 };
 
 struct HoverInfo
@@ -113,6 +122,7 @@ inline void UpdateItemStates(std::vector<Item>& items, const std::vector<Item>& 
         items[i].label = values[i].label;
         items[i].enabled = values[i].enabled;
         items[i].checked = values[i].checked;
+        items[i].accessKey = values[i].accessKey;
         UpdateItemStates(items[i].children, values[i].children);
     }
 }
@@ -127,6 +137,9 @@ struct Options
      * popup 稳定保持在其上方。
      */
     HWND zOrderOwner = nullptr;
+    /** Host-internal ordering floor, sampled throughout the menu session.
+     * Keeps menus above independent surfaces without giving them ownership. */
+    std::function<HWND()> zOrderFloor;
     POINT anchor{};
     UINT dpi = USER_DEFAULT_SCREEN_DPI;
     bool lightTheme = true;
@@ -142,6 +155,8 @@ struct Options
         onTextChanged;
     /** 鼠标或键盘高亮项变化；command=0 表示当前没有可预览项。 */
     std::function<void(const HoverInfo&)> onHover;
+    /** Poll deadlines even during cascades; return additions only when canApply is true. */
+    std::function<std::optional<std::vector<Item>>(const std::vector<Item>&, bool canApply)> pollItems;
     /** Optional application event pump used by the nested modal loop. */
     EventPump eventPump;
 };

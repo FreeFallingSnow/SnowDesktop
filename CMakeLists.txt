@@ -133,6 +133,8 @@ set(SNOWDESKTOP_SOURCES
     src/main.cpp
     src/auto_start_manager.cpp
     src/auto_start_manager.h
+    src/auto_start_elevation.cpp
+    src/auto_start_elevation.h
     src/auto_start_rules.h
     src/application_crash_watchdog.cpp
     src/desktop_namespace_registry.cpp
@@ -207,6 +209,10 @@ set(SNOWDESKTOP_SOURCES
     src/windows_desktop_layout.cpp
     src/shell_launch_worker.cpp
     src/shell_launch_process.cpp
+    src/shell_extension_menu.cpp
+    src/shell_extension_menu_cache.cpp
+    src/shell_extension_catalogue.cpp
+    src/shell_extension_service.cpp
     src/shell_file_operation_worker.cpp
     src/app/app_navigation_render.cpp
     src/app/app_ole_drop_routing.cpp
@@ -246,6 +252,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_scroll_interaction.cpp
     src/app/app_selection_interaction.cpp
     src/app/app_settings_apply.cpp
+    src/app/desktop_passthrough_indicator.cpp
     src/app/app_text_render.cpp
     src/app/app_taskbar_integration.cpp
     src/app/app_steam_workshop.cpp
@@ -287,9 +294,11 @@ set(SNOWDESKTOP_SOURCES
     src/steam_entitlement.cpp
     src/steam_entitlement.h
     src/calendar_service.cpp
+    src/calendar_display.cpp
     src/full_data_backup.cpp
     src/portable_data_migration.cpp
     src/single_instance.cpp
+    src/debug_profile.cpp
     src/deployment_context.cpp
     src/shortcut_icon_resource.cpp
     src/shortcut_icon_resource.h
@@ -320,6 +329,10 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.cpp
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
+    src/winui/calendar_page_presenter.cpp
+    src/winui/calendar_page_presenter.h
+    src/winui/context_menu_page_presenter.cpp
+    src/winui/context_menu_page_presenter.h
     src/winui/animation_performance_page_presenter.cpp
     src/winui/animation_performance_page_presenter.h
     src/winui/dock_page_presenter.h
@@ -375,6 +388,7 @@ set(SNOWDESKTOP_SOURCES
     src/item_location.cpp
     src/layout_storage.cpp
     src/menu_icon_render.cpp
+    src/menu_builtin_icon.cpp
     src/modern_menu.cpp
     src/search_match.cpp
     src/everything_search.cpp
@@ -605,6 +619,8 @@ if (MSVC)
 
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
+        src/taskbar_hook/taskbar_native.cpp
+        src/taskbar_hook/taskbar_classic_surface.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
         src/taskbar_hook/taskbar_autohide_observer.cpp
         src/taskbar_hook/taskbar_autohide_observer.h
@@ -628,7 +644,7 @@ if (MSVC)
         _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS
         WINVER=0x0A00 _WIN32_WINNT=0x0A00 WINRT_NO_MODULE_LOCK)
     target_link_libraries(SnowDesktopTaskbarHook PRIVATE
-        advapi32 comctl32 d2d1 dxguid ole32 runtimeobject user32 windowsapp)
+        advapi32 comctl32 d2d1 d3d11 dcomp dwmapi dxgi dxguid gdi32 ole32 runtimeobject shell32 user32 windowsapp)
     set_property(TARGET SnowDesktopTaskbarHook PROPERTY
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(SnowDesktopTaskbarHook PRIVATE
@@ -854,7 +870,7 @@ target_link_libraries(SnowDesktop PRIVATE
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
-    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32
+    advapi32 bcrypt crypt32 delayimp imm32 iphlpapi ole32 oleaut32 pdh propsys runtimeobject shcore shell32 shlwapi uiautomationcore urlmon user32 windowsapp windowscodecs uuid winhttp ws2_32 xmllite
     version wbemuuid taskschd
 )
 
@@ -1052,6 +1068,7 @@ if (BUILD_TESTING)
             src/widget_permission_state.cpp
             src/portable_data_migration.cpp
             src/single_instance.cpp
+            src/debug_profile.cpp
             src/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt ole32 shell32 user32 version
@@ -1062,11 +1079,13 @@ if (BUILD_TESTING)
         single_instance
         SOURCES
             tests/single_instance_tests.cpp
+            src/atomic_file.cpp
             src/single_instance.cpp
+            src/debug_profile.cpp
             src/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 user32 version
-        LABELS core contract deployment steam)
+        LABELS core contract integration deployment steam)
 
     snowdesktop_add_test(
         SnowDesktopHttpSecurityTests
@@ -1077,6 +1096,12 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES shlwapi winhttp ws2_32
         LABELS core contract security)
+
+    add_test(NAME http_network_integration
+        COMMAND $<TARGET_FILE:SnowDesktopHttpSecurityTests> --network)
+    set_tests_properties(http_network_integration PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopHttpSecurityTests>"
+        LABELS "integration;widget;network;security")
 
     snowdesktop_add_test(
         SnowDesktopLuaRuntimeTests
@@ -1362,6 +1387,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/calendar_service_tests.cpp
             src/calendar_service.cpp
+    src/calendar_display.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32
         LABELS service)
@@ -1465,8 +1491,10 @@ if (BUILD_TESTING)
             src/steam_runtime_context.cpp
             src/steam_runtime_manager.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES bcrypt
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopLauncher>"
+        LINK_LIBRARIES bcrypt shell32
         LABELS contract deployment integration steam update)
+    add_dependencies(SnowDesktopSteamRuntimeUpdateTests SnowDesktopLauncher)
     add_test(
         NAME steam_local_deploy_contract
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
@@ -1577,8 +1605,18 @@ if (BUILD_TESTING)
         SnowDesktopAutoStartRulesTests
         auto_start_rules
         SOURCES tests/auto_start_rules_tests.cpp
+            tests/auto_start_manager_tests.cpp
+            src/auto_start_manager.cpp
+            src/auto_start_elevation.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES taskschd ole32 oleaut32 advapi32 shell32
         LABELS contract rules settings startup)
+
+    add_test(NAME auto_start_scheduler
+        COMMAND $<TARGET_FILE:SnowDesktopAutoStartRulesTests> --scheduler)
+    set_tests_properties(auto_start_scheduler PROPERTIES
+        TIMEOUT 60 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopAutoStartRulesTests>"
+        LABELS "integration;settings;startup")
 
     add_test(NAME winui_widget_settings_presenter
         COMMAND $<TARGET_FILE:SnowDesktopWinUiPresenterBoundaryTests>
@@ -1953,7 +1991,7 @@ if (BUILD_TESTING)
             src/atomic_file.cpp
             src/preview_png_writer.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs winhttp ws2_32
+        LINK_LIBRARIES advapi32 ole32 shell32 shlwapi uuid windowscodecs winhttp ws2_32 xmllite
         LABELS rules shell)
 
     snowdesktop_add_test(
@@ -1977,7 +2015,7 @@ if (BUILD_TESTING)
             src/preview_png_writer.cpp
             src/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
         LABELS rules shell ui)
 
     add_test(NAME large_icon_shell_assets
@@ -2063,8 +2101,15 @@ if (BUILD_TESTING)
         SnowDesktopShellContextMenuInvokeTests
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
+            src/shell_extension_menu.cpp
+            src/shell_extension_menu_cache.cpp
+    src/shell_extension_catalogue.cpp
+    src/shell_extension_service.cpp
+            src/shell_context_menu_site.cpp
+            src/settings_process.cpp
+            src/settings_ipc_channel.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 uuid
+        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version
         LABELS integration contract shell)
 
     snowdesktop_add_test(
@@ -2092,6 +2137,7 @@ if (BUILD_TESTING)
             tests/shell_file_operation_worker_tests.cpp
             src/item_location.cpp
             src/shell_file_operation_worker.cpp
+            src/external_drop_content.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32
         LABELS integration shell interaction)
@@ -2111,6 +2157,10 @@ if (BUILD_TESTING)
         dock_and_window_rules
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/taskbar_native_tests.cpp
+            src/taskbar_hook/taskbar_native.cpp
+            src/taskbar_hook/taskbar_classic_surface.cpp
+            ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
             src/app/desktop_backdrop_compositor.cpp
             src/l10n.cpp
@@ -2118,9 +2168,10 @@ if (BUILD_TESTING)
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 dwrite dwmapi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
+        LINK_LIBRARIES comctl32 d2d1 d3d11 dcomp dwrite dwmapi dxgi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
+    target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
 
     snowdesktop_add_test(
         SnowDesktopDesktopDropCacheTests
@@ -2145,9 +2196,10 @@ if (BUILD_TESTING)
         SOURCES
             tests/menu_icon_render_tests.cpp
             src/menu_icon_render.cpp
+            src/menu_builtin_icon.cpp
             src/resource.rc
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES gdi32 user32
+        LINK_LIBRARIES gdi32 ole32 user32 windowscodecs
         LABELS contract ui)
 
     snowdesktop_add_test(
@@ -2156,9 +2208,10 @@ if (BUILD_TESTING)
         SOURCES
             tests/modern_menu_interaction_tests.cpp
             src/menu_icon_render.cpp
+            src/menu_builtin_icon.cpp
             src/modern_menu.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES gdi32 imm32 user32
+        LINK_LIBRARIES gdi32 imm32 ole32 user32 windowscodecs
         LABELS integration ui)
 
     snowdesktop_add_test(
@@ -2168,9 +2221,11 @@ if (BUILD_TESTING)
             tests/component_preview_tests.cpp
             tests/widget_background_cache_tests.cpp
             tests/widget_text_layout_cache_tests.cpp
+            tests/scroll_content_clip_tests.cpp
             src/widget_background_cache.cpp
             src/component_preview.cpp
             src/menu_icon_render.cpp
+            src/menu_builtin_icon.cpp
             src/widget_preview_stage.cpp
             src/widget_preview_scene.cpp
             src/widget_preview_scene_model.cpp
@@ -2227,6 +2282,7 @@ if (BUILD_TESTING)
     add_executable(SnowDesktopModernMenuPreview WIN32 EXCLUDE_FROM_ALL
         tests/modern_menu_preview.cpp
         src/menu_icon_render.cpp
+        src/menu_builtin_icon.cpp
         src/modern_menu.cpp
         src/resource.rc)
     set_target_properties(SnowDesktopModernMenuPreview PROPERTIES
@@ -2238,7 +2294,7 @@ if (BUILD_TESTING)
     target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
     target_link_libraries(SnowDesktopModernMenuPreview PRIVATE
-        gdi32 imm32 user32)
+        gdi32 imm32 ole32 user32 windowscodecs)
     if (MSVC)
         set_property(TARGET SnowDesktopModernMenuPreview PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

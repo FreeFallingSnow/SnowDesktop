@@ -159,7 +159,8 @@ void DesktopApp::OpenDockFolderPopupAt(
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
     const DockEntry entry = dockEntries_[entryIndex];
-    const auto target = ResolveDockFolderTarget(entry);
+    bool targetPending = false;
+    const auto target = ResolveDockFolderTarget(entry, &targetPending);
     const std::wstring sourceId =
         std::to_wstring(static_cast<int>(entry.type)) +
         L":" + ToUpperInvariant(entry.reference);
@@ -181,9 +182,11 @@ void DesktopApp::OpenDockFolderPopupAt(
         dockFolderPopupOpen_ &&
         dockFolderPopupSourceId_ == sourceId &&
         collectionPopupDockHost_ == requestedDockHost;
+    ResetCollectionPopupAnimationCache();
     AdvanceFloatingPopupContentGeneration();
     dockFolderPopupOpen_ = true;
-    dockFolderPopupAvailable_ = target.available;
+    dockFolderPopupAvailable_ = false;
+    dockFolderPopupLoading_ = targetPending || !target.path.empty();
     dockFolderPopupSourceId_ = sourceId;
     dockFolderPopupMappingWidgetId_.clear();
     popupWidgetIndex_ = static_cast<size_t>(-1);
@@ -301,6 +304,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     if (dockFolderPopupWidget_.title.empty())
         dockFolderPopupWidget_.title =
             _LW("widget.folder_mapping");
+    dockFolderPopupKnownItemCount_ = dockFolderPopupWidget_.itemKeys.size();
 
     const GridPage* dockPage = nullptr;
     if (DockContainer* dock =
@@ -362,7 +366,10 @@ void DesktopApp::OpenDockFolderPopupAt(
         dockPage = GetFirstPageGridPage();
     if (dockPage) popupPageId_ = dockPage->id;
 
-    RefreshDockFolderPopup();
+    SyncFolderChangeNotifications();
+    // Prepare the model/geometry without revealing a loading frame under the
+    // previous timeline. Start the new animation before presenting the host.
+    RefreshDockFolderPopup(nullptr, false);
     StartCollectionPopupAnimation(
         reverseClosingAnimation);
     if (popupAnchoredToDock_)
@@ -403,7 +410,9 @@ void DesktopApp::StartCollectionPopupAnimation(
     // can be attached to the correct DComp tree instead of falling back to
     // UI-thread frame rendering.
     UpdateFloatingPopupWindowBounds(false);
+    const double cacheStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     PrepareCollectionPopupAnimationCache();
+    const double cacheElapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - cacheStarted;
     popupAnimation_.Open(static_cast<std::uint64_t>(
         snowdesktop::UiAnimationScheduler::
             MonotonicMilliseconds()));
@@ -412,6 +421,14 @@ void DesktopApp::StartCollectionPopupAnimation(
         UpdateCollectionPopupCompositionAnimation();
         EnsureUiAnimationFrame();
     }
+    wchar_t message[240]{};
+    swprintf_s(message,
+        L"Popup animation prepared: driver=%s cacheMs=%.2f folder=%d fan=%d items=%llu",
+        popupAnimationCompositorDriven_ ? L"compositor" : L"ui",
+        cacheElapsed, dockFolderPopupOpen_ ? 1 : 0,
+        widget && UsesCollectionPopupFan(*widget) ? 1 : 0,
+        static_cast<unsigned long long>(widget ? GetPopupItemCount(*widget) : 0));
+    WriteDiagnosticLogEntry(message);
 }
 
 
@@ -483,7 +500,10 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     ClearPopupDragTarget();
     popupWidgetIndex_ = static_cast<size_t>(-1);
     dockFolderPopupOpen_ = false;
+    SyncFolderChangeNotifications();
     dockFolderPopupAvailable_ = false;
+    dockFolderPopupLoading_ = false;
+    dockFolderPopupKnownItemCount_ = 0;
     dockFolderPopupSourceId_.clear();
     dockFolderPopupMappingWidgetId_.clear();
     dockFolderPopupContainer_.reset();
@@ -538,6 +558,13 @@ void DesktopApp::ClearDockFolderPopupEntries()
 void DesktopApp::CloseCollectionPopup(
     bool clearSelection)
 {
+    CancelPopupHover(true);
+    BeginCollectionPopupClose(clearSelection);
+}
+
+void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
+{
+    CancelRenameClick();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
         !dockFolderPopupOpen_)
         return;

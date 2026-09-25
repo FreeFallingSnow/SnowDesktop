@@ -29,6 +29,7 @@
 #include "system_snapshot.h"
 #include "http_runtime.h"
 #include "calendar_service.h"
+#include "calendar_display.h"
 #include "widget_package.h"
 #include "steam_workshop_sync.h"
 #include "lua_runtime.h"
@@ -60,6 +61,8 @@
 #include "widget_text_input_rules.h"
 #include "widget_storage_write_budget.h"
 #include "widget_secret_store.h"
+
+namespace snowdesktop::widget_menu { struct Entry; }
 
 namespace snowdesktop::widget_runtime
 {
@@ -155,6 +158,7 @@ struct LuaWidgetManifest
     std::string slug;                  ///< 人类可读短名称
     int apiVersion = 0;                ///< Lua 宿主 API 契约版本
     int dataVersion = 1;               ///< 实例存储结构版本
+    bool confirmRemoval = false;       ///< 删除实例前由宿主确认数据丢失
     std::string name;                  ///< 小部件显示名称
     std::string nameKey;               ///< 小部件名称翻译键
     std::string version;               ///< 版本号字符串
@@ -908,6 +912,8 @@ public:
      */
     void UnloadWidget(const std::wstring& widgetId);
     void DeleteWidgetInstance(const std::wstring& widgetId);
+    bool RequiresRemovalConfirmation(const std::wstring& widgetId,
+        const std::wstring& packageId);
     void RevokeFilesystemHandlesForPackage(
         const std::string& packageId);
 
@@ -1095,10 +1101,10 @@ public:
     const std::vector<LuaWidget>& GetWidgets() const { return widgets_; }
 
     /**
-     * @brief 枚举所有可用的小部件
-     * @return 可用小部件文件名列表
+     * @brief 枚举菜单可用组件，复用未变化清单的本地化元数据
+     * @return 按组件 ID 排序的名称、搜索文本及来源
      */
-    static std::vector<std::wstring> ListAvailable();
+    static std::vector<snowdesktop::widget_menu::Entry> ListAvailableMenuEntries();
 
     /**
      * @brief 获取小部件的显示名称
@@ -1180,6 +1186,8 @@ public:
         std::wstring& error, bool allowSourceChange = false,
         bool allowPermissionExpansion = false);
     static snowdesktop::widget::PackagePaths GetWidgetPackagePaths();
+    // Owner-thread discovery for package UI; does not reload live Lua instances.
+    static bool RefreshWidgetPackages(std::string& error);
     static std::vector<snowdesktop::widget::InstalledPackage>
         ListWidgetPackages();
     static std::vector<snowdesktop::widget::InvalidPackage>
@@ -1263,6 +1271,9 @@ public:
     std::vector<LuaDesktopItemInfo> RuntimeDesktopSelection() const;
     std::vector<LuaDesktopItemInfo> RuntimeApplicationSearch(const std::string& query, int maxResults) const;
     std::vector<LuaDesktopItemInfo> RuntimeEverythingSearch(const std::string& query, int maxResults) const;
+    void SetCalendarDisplayPreferences(snowdesktop::calendar::DisplayPreferences preferences);
+    const snowdesktop::calendar::DisplayPreferences& CalendarDisplayPreferences() const { return calendarDisplay_; }
+    const std::vector<snowdesktop::calendar::DayAnnotation>& RuntimeCalendarAnnotations(const std::string& from, const std::string& to);
     std::string RuntimeCalendarSelectedDate() const;
     bool RuntimeCalendarSetSelectedDate(
         const std::string& date);
@@ -1925,6 +1936,9 @@ private:
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;
+    snowdesktop::calendar::DisplayPreferences calendarDisplay_;
+    std::string calendarAnnotationCacheKey_;
+    std::vector<snowdesktop::calendar::DayAnnotation> calendarAnnotationCache_;
     bool pendingCalendarSelectionChange_ = false;
     bool pendingCalendarEventsChange_ = false;
     bool systemSnapshotServiceStarted_ = false;

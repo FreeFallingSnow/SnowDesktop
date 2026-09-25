@@ -1,4 +1,5 @@
 #include "settings_ipc_channel.h"
+#include "pending_window_message.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -13,7 +14,7 @@ namespace
 {
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-constexpr std::uint32_t Version = 11;
+constexpr std::uint32_t Version = 24;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;
@@ -407,8 +408,12 @@ Bytes Channel::Request(std::string_view name, Bytes arguments, DWORD timeoutMs)
             if (wait == WAIT_OBJECT_0 + 1 || wait == WAIT_FAILED)
                 throw ProtocolError("settings process exited");
             MSG message{};
-            while (PeekMessageW(&message, impl_->window, DispatchMessageId,
-                DispatchMessageId, PM_REMOVE)) DispatchMessageW(&message);
+            PendingWindowMessage pending;
+            while ((pending = TakePendingWindowMessage(message, impl_->window,
+                DispatchMessageId)) == PendingWindowMessage::Ready)
+                DispatchMessageW(&message);
+            if (pending == PendingWindowMessage::Quit)
+                throw ProtocolError("settings IPC interrupted by application exit");
         }
     }
     catch (...)

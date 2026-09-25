@@ -83,11 +83,10 @@ bool DesktopApp::RunPathAsAdministrator(
     // ShellExecuteEx(runas) can wait for the consent UI or a third-party
     // shortcut handler. Keep that wait off the rendering/input thread while
     // using a dedicated queue so a pending prompt cannot delay ordinary Open.
-    // Pass the stable desktop HWND instead of a quick panel that closes as
-    // soon as this request is accepted; the worker performs the foreground
-    // handoff immediately before invoking runas.
+    // The independent input proxy remains activatable after a quick panel or
+    // menu closes. Never activate the Explorer-owned desktop render child.
     return shellElevationWorker_.Enqueue(
-        hwnd_ && IsWindow(hwnd_) ? hwnd_ : ShellDialogOwnerHwnd(),
+        ShellLaunchOwnerHwnd(),
         path);
 }
 
@@ -103,11 +102,9 @@ bool DesktopApp::RunPathAsAdministratorAfterMenu(
     return uiAnimationScheduler_.ScheduleOnce(
         1,
         [this, path](snowdesktop::UiScheduleToken) {
-            const HWND owner = hwnd_ && IsWindow(hwnd_)
-                ? hwnd_
-                : ShellDialogOwnerHwnd();
+            const HWND owner = ShellLaunchOwnerHwnd();
             if (owner)
-                SetForegroundWindow(owner);
+                FocusKeyboardWindow(owner, true, L"Administrator launch owner");
             RunPathAsAdministrator(path);
         }) != 0;
 }
@@ -587,12 +584,15 @@ void DesktopApp::ShowItemContextMenu(
         });
         return true;
     };
+    snowdesktop::shell_extensions::Request shellRequest;
+    if (canCopyPath) shellRequest.paths = selectedFilePaths;
+    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = 0;
     {
         LargeIconMenuScope titleScope(*this,
             largeIconMenu && items_[itemIndex].largeIcon ? largeIconKey : std::wstring{});
         command = ShowModernMenu(
-            menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon);
+            menu, screenPoint, menuOwner, placeOutsideDock, false, nullptr, changeLargeIcon, {}, {}, &shellRequest);
     }
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -995,6 +995,7 @@ void DesktopApp::ShowShellContextMenu(
     }
     if (pidls.empty()) return;
 
+    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
     menuSite.Initialize(desktopFolder_.Get(), menuOwner);
@@ -1019,7 +1020,6 @@ void DesktopApp::ShowShellContextMenu(
     if (keepQuickNavigationOpen)
         SetQuickNavigationTopmost(false);
     SetForegroundWindow(menuOwner);
-    ShellPopupMenuLayerGuard shellMenuLayer(*this);
     UINT cmd = 0;
     {
         const bool desktopLargeIcon = itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size() &&

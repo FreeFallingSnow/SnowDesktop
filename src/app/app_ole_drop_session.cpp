@@ -15,9 +15,7 @@ using DirectoryPathSet = std::unordered_set<std::wstring>;
 std::wstring UserDesktopDirectory()
 {
     wchar_t desktopPath[MAX_PATH]{};
-    if (!SHGetSpecialFolderPathW(
-            nullptr, desktopPath,
-            CSIDL_DESKTOPDIRECTORY, FALSE))
+    if (!snowdesktop::desktop_source::CopyDirectory(desktopPath))
         return {};
     return TrimTrailingPathSeparators(desktopPath);
 }
@@ -294,6 +292,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     }
     UpdateCollectionPopupDwell(client);
+    UpdateCollectionGroupTabDwell(client);
 
     if (HitTestLuaFileDropTarget(client) < widgets_.size())
     {
@@ -416,6 +415,7 @@ HRESULT DesktopApp::HandleOleDragOver(
         return S_OK;
     }
     UpdateCollectionPopupDwell(client);
+    UpdateCollectionGroupTabDwell(client);
 
     if (HitTestLuaFileDropTarget(client) < widgets_.size())
     {

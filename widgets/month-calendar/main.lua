@@ -230,6 +230,39 @@ local function monthCells(model)
     return cells
 end
 
+local function annotations(model)
+    if not widget.hasFeature("calendar.annotations") then return {} end
+    local preferences = calendar.preferences()
+    if not preferences.enabled then return {} end
+    local first = calendar.addDays(monthDate(model.viewYear, model.viewMonth), -6)
+    local last = calendar.addDays(monthDate(model.viewYear, model.viewMonth), 47)
+    local key = tostring(first) .. tostring(last) .. l10n.language() ..
+        tostring(preferences.enabled) .. preferences.calendar
+    if model.annotationKey ~= key then
+        model.annotationKey = key
+        model.annotations = {}
+        for _, item in ipairs(calendar.annotations(first, last) or {}) do
+            model.annotations[item.date] = item
+        end
+    end
+    return model.annotations or {}
+end
+
+local function annotationTooltip(date, item)
+    if not item or not widget.hasFeature("interaction.tooltip") then return nil end
+    local text = item.fullDate or ""
+    if text == "" then text = item.secondary or "" end
+    if text == "" then return nil end
+    return { title = date, text = text }
+end
+
+local function dateDescription(date, item)
+    if not item then return date end
+    local parts = { date }
+    if item.fullDate and item.fullDate ~= "" then parts[#parts + 1] = item.fullDate end
+    return table.concat(parts, "\n")
+end
+
 local function eventCounts()
     local counts = {}
     if not eventSubscription then return counts end
@@ -353,6 +386,7 @@ local function render(context, model)
         (selectedDate() or model.selectedDate)
     local today = todayDate()
     local counts = eventCounts()
+    local extra = annotations(model)
     local title = l10n.tr("lua_widget.month_calendar.month_format",
         tostring(model.viewYear), monthName(model.viewMonth))
 
@@ -474,7 +508,7 @@ local function render(context, model)
             if counts[date] then
                 draw.circle(centerX,
                     weekTop + weekHeight - metrics.spacingXs,
-                    px(1.5), isSelected and colors.inverse or colors.text,
+                    px(1.5), colors.text,
                     0.86)
             end
             interaction.region({
@@ -488,7 +522,8 @@ local function render(context, model)
                     contextMenu = { id = "calendar.menu",
                         scope = "component" },
                 },
-                accessibility = { role = "button", label = date },
+                tooltip = annotationTooltip(date, extra[date]),
+                accessibility = { role = "button", label = dateDescription(date, extra[date]) },
             })
         end
         return
@@ -512,9 +547,10 @@ local function render(context, model)
             local key = "calendar.date." .. cell.date
             local isSelected = cell.date == selected
             local isToday = cell.date == today
-            local diameter = math.min(cellWidth, cellHeight) * 0.82
+            local dayHeight = cellHeight
+            local diameter = math.min(cellWidth, dayHeight) * 0.82
             local centerX = x + cellWidth / 2
-            local centerY = y + cellHeight * 0.44
+            local centerY = y + dayHeight * 0.44
             if isSelected then
                 draw.circle(centerX, centerY, diameter / 2,
                     colors.text, 0.92)
@@ -527,8 +563,8 @@ local function render(context, model)
                     colors.text, 0.12)
             end
             centeredText(tostring(cell.info.day),
-                centerX - cellWidth / 2, centerY - cellHeight / 2,
-                cellWidth, cellHeight, fontSize,
+                centerX - cellWidth / 2, centerY - dayHeight / 2,
+                cellWidth, dayHeight, fontSize,
                 isSelected and colors.inverse or colors.text,
                 isToday or isSelected,
                 cell.currentMonth and 1.0 or 0.38)
@@ -537,11 +573,12 @@ local function render(context, model)
                     y + cellHeight - metrics.spacingXs,
                     math.min(px(2), math.max(px(1.4),
                         cellWidth * 0.035)),
-                    isSelected and colors.inverse or colors.text,
+                    colors.text,
                     cell.currentMonth and 0.86 or 0.34)
             end
             interaction.region({
                 key = key,
+                tooltip = annotationTooltip(cell.date, extra[cell.date]),
                 shape = {
                     type = "rect", x = x, y = y,
                     width = cellWidth, height = cellHeight,
@@ -557,7 +594,7 @@ local function render(context, model)
                 },
                 accessibility = {
                     role = "button",
-                    label = cell.date,
+                    label = dateDescription(cell.date, extra[cell.date]),
                 },
             })
         end
@@ -572,6 +609,11 @@ local function event(_context, model, value)
             model.selectedDate = current
             setViewFromDate(model, current)
         end
+        return
+    end
+    if value.kind == "calendar.preferences" then
+        model.annotationKey = nil
+        widget.invalidate()
         return
     end
     if value.kind == "environment" then

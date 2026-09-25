@@ -33,6 +33,7 @@
 #include <unordered_map>
 #include <vector>
 #include <memory>
+#include "../scroll_content_clip.h"
 
 struct DesktopWidget;
 struct CategorySettings;
@@ -57,6 +58,7 @@ enum class WidgetHit {
     Content,            ///< 成员项区域（item 列表/网格区）
     MoveHandle,         ///< 底栏或无底栏组件左下手柄——拖拽移动组件
     ResizeHandle,       ///< 右下角 24px 缩放角 —— 拖拽调整组件大小
+    CollapseToggleBtn,  ///< 顶部标题栏：收起或展开组件
     ListToggleBtn,      ///< FolderMapping：列表/图标模式切换按钮
     DateHeaderToggleBtn, ///< FileCategories：日期表头开关按钮
     OpenFolderBtn,      ///< FolderMapping：打开源文件夹按钮
@@ -123,6 +125,9 @@ public:
     IDWriteTextFormat* GetCuFluentTextFormat(float value) const;
     float GetBarHeight() const;
     float GetBarScale() const;
+    bool UsesTopTitleBar() const;
+    float GetResizeBarHeight() const;
+    int GetTitleBarResizeReserve() const;
     void SetRenderOptions(
         const snowdesktop::WidgetRenderOptions* options)
     {
@@ -175,6 +180,9 @@ public:
 
     // ── Chrome geometry ──────────────────────────────────
     RECT GetFrameRect() const;
+    RECT GetLayoutFrameRect() const;
+    bool IsCollapsed() const;
+    RECT GetCollapseButtonRect() const;
     snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const override;
     RECT GetBodyRect() const;
     virtual RECT GetMemberLayoutRect(size_t index) const
@@ -185,6 +193,8 @@ public:
     RECT GetMoveHandleRect() const;
     RECT GetResizeHandleRect() const;
     RECT GetTitleRect() const;
+    LONG GetScrollContentBottom() const;
+    RECT GetScrollbarViewportRect() const;
     virtual RECT GetContentViewportRect() const { return GetBodyRect(); }
     virtual void ApplyMarqueeSelection(const RECT& contentRect)
     {
@@ -298,6 +308,7 @@ public:
         std::optional<bool> lightTheme = std::nullopt) const;
 
     int GetListRowHeight() const;
+    RECT GetListItemTextRect(RECT cell) const;
     int GetDetailsHeaderHeight() const;
     bool IsDetailsVisible() const;
     RECT ApplyDetailsHeaderToViewport(RECT viewport) const;
@@ -377,6 +388,8 @@ public:
     float GetCategorizedSearchBoxHeight() const;
     /** @brief 分类标签（桌面文件/映射文件夹）是否显示文件数量。 */
     bool ShowCategoryTabItemCounts() const;
+    /** @brief 集合组和文件组的来源标签是否显示文件数量。 */
+    bool ShowGroupTabItemCounts() const;
     /** @brief 按共同字号测量并分配标签宽度。 */
     std::vector<int> BuildCategorizedTabWidths(
         const std::vector<std::wstring>& labels,
@@ -420,6 +433,7 @@ public:
     BarStyle GetInsertionStyle() const override;
 
 protected:
+    snowdesktop::ScrollContentFadeCache scrollContentFadeCache_;
     std::wstring searchText_;
     size_t searchCursorPos_ = 0;
     size_t searchSelectionAnchor_ = 0;
@@ -513,6 +527,7 @@ public:
     RECT GetAllButtonRect() const;
 
 private:
+    RECT GetThumbnailIconRect(RECT rect) const;
     void DrawThumbnail(ID2D1DeviceContext* context, const DesktopItem& item,
         RECT rect, bool selected) const;
     void DrawTitlelessTooltip(ID2D1DeviceContext* context,

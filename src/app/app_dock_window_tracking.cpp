@@ -1,6 +1,7 @@
 #include "app.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
+#include "initial_icon_bitmap.h"
 #include "../drag_input_rules.h"
 
 // Running-window discovery, visual state and activation behavior.
@@ -8,43 +9,30 @@
 namespace
 {
 
-constexpr UINT kDockWindowActivationObservationIntervalMs = 24;
-constexpr ULONGLONG kDockWindowActivationRetryDurationMs = 1000;
+constexpr UINT kDockWindowActivationObservationIntervalMs = 100;
 
-class ScopedDockInputQueueAttachment
+void LogDockWindowActivation(HWND target, const wchar_t* phase,
+    int showCommand = 0, BOOL accepted = TRUE, DWORD error = ERROR_SUCCESS)
 {
-public:
-    ScopedDockInputQueueAttachment(
-        DWORD firstThread, DWORD secondThread)
-        : firstThread_(firstThread),
-          secondThread_(secondThread)
-    {
-        attached_ = firstThread_ != 0 &&
-            secondThread_ != 0 &&
-            firstThread_ != secondThread_ &&
-            AttachThreadInput(
-                firstThread_, secondThread_, TRUE) != FALSE;
-    }
-
-    ~ScopedDockInputQueueAttachment()
-    {
-        if (attached_)
-        {
-            AttachThreadInput(
-                firstThread_, secondThread_, FALSE);
-        }
-    }
-
-    ScopedDockInputQueueAttachment(
-        const ScopedDockInputQueueAttachment&) = delete;
-    ScopedDockInputQueueAttachment& operator=(
-        const ScopedDockInputQueueAttachment&) = delete;
-
-private:
-    DWORD firstThread_ = 0;
-    DWORD secondThread_ = 0;
-    bool attached_ = false;
-};
+    DWORD process = 0, foregroundProcess = 0;
+    const DWORD thread = GetWindowThreadProcessId(target, &process);
+    const HWND foreground = GetForegroundWindow();
+    const DWORD foregroundThread = foreground
+        ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
+    WINDOWPLACEMENT placement{sizeof(placement)};
+    const BOOL placementKnown = GetWindowPlacement(target, &placement);
+    wchar_t message[768]{};
+    swprintf_s(message,
+        L"DockActivation tick=%llu phase=%ls target=%p pid=%lu tid=%lu "
+        L"foreground=%p foregroundPid=%lu foregroundTid=%lu "
+        L"iconic=%d visible=%d hung=%d placementKnown=%d placement=%u flags=%u "
+        L"show=%d accepted=%d error=%lu",
+        GetTickCount64(), phase, target, process, thread,
+        foreground, foregroundProcess, foregroundThread,
+        IsIconic(target), IsWindowVisible(target), IsHungAppWindow(target),
+        placementKnown, placement.showCmd, placement.flags, showCommand, accepted, error);
+    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+}
 
 HWND ResolveDockWindowActivationTarget(HWND target)
 {
@@ -77,40 +65,18 @@ bool IsDockWindowActivationForeground(
             activationTarget, foreground);
 }
 
-bool ActivateDockWindowForeground(
-    HWND target, HWND activationTarget,
-    bool synchronousActivationSafe)
+bool ActivateDockWindowForeground(HWND target, HWND activationTarget)
 {
     if (!target || !IsWindow(target) ||
         !activationTarget || !IsWindow(activationTarget))
         return false;
     return snowdesktop::dock_window_rules::
         ApplyDockWindowForegroundActivation(
-            synchronousActivationSafe,
             [target, activationTarget]() {
                 return IsDockWindowActivationForeground(
                     target, activationTarget);
             },
             [activationTarget]() {
-                SetForegroundWindow(activationTarget);
-            },
-            [activationTarget]() {
-                // A desktop-layer/no-activate Dock is not always the
-                // foreground process. Share only the input queues needed to
-                // retry the same final target, then detach on every exit.
-                const DWORD currentThread = GetCurrentThreadId();
-                const HWND currentForeground = GetForegroundWindow();
-                const DWORD foregroundThread = currentForeground
-                    ? GetWindowThreadProcessId(
-                        currentForeground, nullptr)
-                    : 0;
-                const DWORD targetThread =
-                    GetWindowThreadProcessId(
-                        activationTarget, nullptr);
-                ScopedDockInputQueueAttachment foregroundAttachment(
-                    currentThread, foregroundThread);
-                ScopedDockInputQueueAttachment targetAttachment(
-                    currentThread, targetThread);
                 SetForegroundWindow(activationTarget);
             });
 }
@@ -119,11 +85,12 @@ void RequestDockWindowShow(HWND target, bool wasMinimized)
 {
     if (!target || !IsWindow(target))
         return;
-    const BOOL showAccepted = ShowWindowAsync(
-        target,
-        wasMinimized
-            ? DockRestoreShowCommand(target)
-            : SW_SHOW);
+    const int showCommand = wasMinimized ? DockRestoreShowCommand(target) : SW_SHOW;
+    LogDockWindowActivation(target, L"show-request", showCommand);
+    SetLastError(ERROR_SUCCESS);
+    const BOOL showAccepted = ShowWindowAsync(target, showCommand);
+    const DWORD showError = showAccepted ? ERROR_SUCCESS : GetLastError();
+    LogDockWindowActivation(target, L"show-result", showCommand, showAccepted, showError);
     const bool restoreFallbackRequired =
         snowdesktop::dock_window_rules::
             NeedsDockRestoreRequestFallback(
@@ -137,15 +104,19 @@ void RequestDockWindowShow(HWND target, bool wasMinimized)
                 // Elevated windows reject ShowWindowAsync through UIPI.
                 // Unlike posting WM_SYSCOMMAND, the default window procedure
                 // remains usable from a normal-integrity Dock process.
+                LogDockWindowActivation(target, L"before-default-restore");
                 DefWindowProcW(
                     target, WM_SYSCOMMAND,
                     systemCommand, 0);
+                LogDockWindowActivation(target, L"after-default-restore");
             },
             [target]() {
                 return IsIconic(target) != FALSE;
             },
             [target]() {
+                LogDockWindowActivation(target, L"before-switch-fallback");
                 SwitchToThisWindow(target, FALSE);
+                LogDockWindowActivation(target, L"after-switch-fallback");
             });
 }
 
@@ -165,10 +136,10 @@ DesktopApp::ActivateDockWindowAfterShow(
 
     const HWND activationTarget =
         ResolveDockWindowActivationTarget(target);
-    outcome.synchronousActivationSafe =
+    outcome.responsive =
         activationTarget &&
         snowdesktop::dock_window_rules::
-            IsDockWindowSynchronousActivationSafe(
+            IsDockWindowActivationResponsive(
                 !ShouldSkipSynchronousWindowActivation(target),
                 !ShouldSkipSynchronousWindowActivation(
                     activationTarget));
@@ -176,9 +147,7 @@ DesktopApp::ActivateDockWindowAfterShow(
             ShouldSwitchDockWindowAfterShow(
                 wasMinimized, outcome.restored))
     {
-        outcome.foreground = ActivateDockWindowForeground(
-            target, activationTarget,
-            outcome.synchronousActivationSafe);
+        outcome.foreground = ActivateDockWindowForeground(target, activationTarget);
     }
     return outcome;
 }
@@ -188,9 +157,9 @@ DesktopApp::RequestDockWindowActivation(
     HWND target, bool wasMinimized)
 {
     CancelAllDockWindowActivationObservations();
-    RequestDockWindowShow(target, wasMinimized);
     BeginDockWindowActivationObservation(
         target, wasMinimized);
+    RequestDockWindowShow(target, wasMinimized);
     const DockWindowActivationOutcome outcome =
         ActivateDockWindowAfterShow(target, wasMinimized);
     UpdateDockWindowActivationObservation(target, outcome);
@@ -202,9 +171,12 @@ void DesktopApp::BeginDockWindowActivationObservation(
 {
     if (!target || !IsWindow(target))
         return;
-    dockWindowActivationObservations_[target] = {
-        awaitingRestore, 0
-    };
+    DWORD process = 0;
+    const DWORD thread = GetWindowThreadProcessId(target, &process);
+    if (!process || !thread)
+        return;
+    dockWindowActivationObservations_[target].Begin(
+        awaitingRestore, GetTickCount64(), process, thread);
     if (dockWindowActivationObservationToken_)
         return;
     dockWindowActivationObservationToken_ =
@@ -229,18 +201,14 @@ void DesktopApp::UpdateDockWindowActivationObservation(
         return;
     }
     if (outcome.foreground ||
-        !outcome.synchronousActivationSafe)
+        !outcome.responsive)
     {
+        LogDockWindowActivation(target,
+            outcome.foreground ? L"foreground-observed" : L"unresponsive");
         CancelDockWindowActivationObservation(target);
         return;
     }
-    found->second.awaitingRestore = false;
-    if (!found->second.activationRetryDeadline)
-    {
-        found->second.activationRetryDeadline =
-            GetTickCount64() +
-            kDockWindowActivationRetryDurationMs;
-    }
+    found->second.Restored(GetTickCount64());
 }
 
 void DesktopApp::CancelDockWindowActivationObservation(
@@ -300,14 +268,15 @@ void DesktopApp::OnDockWindowActivationObservationTimer(
             dockWindowActivationObservations_.find(target);
         if (found == dockWindowActivationObservations_.end())
             continue;
-        const bool valid = target && IsWindow(target);
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(target, &process);
+        const bool valid = target && IsWindow(target) &&
+            found->second.Matches(process, thread);
         const bool foreground = valid &&
             IsDockWindowActivationForeground(target, target);
         const bool rootWindowSafe = valid &&
             !ShouldSkipSynchronousWindowActivation(target);
-        const bool retryExpired =
-            found->second.activationRetryDeadline != 0 &&
-            now >= found->second.activationRetryDeadline;
+        const bool retryExpired = found->second.Expired(now);
         const auto action =
             snowdesktop::dock_window_rules::
                 ResolveDockWindowActivationObservationAction(
@@ -321,6 +290,9 @@ void DesktopApp::OnDockWindowActivationObservationTimer(
         if (action == snowdesktop::dock_window_rules::
                 DockWindowActivationObservationAction::Stop)
         {
+            LogDockWindowActivation(target, retryExpired ? L"observation-timeout" :
+                foreground ? L"foreground-observed" :
+                !valid ? L"target-changed" : L"observation-cancelled");
             CancelDockWindowActivationObservation(target);
             continue;
         }
@@ -330,7 +302,6 @@ void DesktopApp::OnDockWindowActivationObservationTimer(
             continue;
         }
 
-        found->second.awaitingRestore = false;
         const DockWindowActivationOutcome outcome =
             ActivateDockWindowAfterShow(target, true);
         UpdateDockWindowActivationState(
@@ -539,7 +510,7 @@ void DesktopApp::RefreshDockRunningWindows(
                         processId,
                         *context->processParents);
             }
-            const std::wstring appUserModelId = QueryDockWindowAppUserModelId(window);
+            const std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(window);
 
             DWORD cloaked = 0;
             const bool isCloaked = SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
@@ -728,9 +699,58 @@ void DesktopApp::RefreshDockRunningWindows(
         if (!info.iconBitmap)
         {
             info.iconRequestedSize = requiredIconSize;
-            info.iconBitmap = CreateDockWindowIconBitmap(
-                info.window, info.executablePath, info.appUserModelId,
-                info.iconBitmapSize, requiredIconSize);
+            const auto key = info.identityKey;
+            const auto path = info.executablePath;
+            const auto appId = info.appUserModelId;
+            const auto window = info.window;
+            DWORD process = 0;
+            GetWindowThreadProcessId(window, &process);
+            const auto queuedAt = GetTickCount64();
+            dockIconWork_.Submit(L"dock-running:" + key + L"\n" +
+                std::to_wstring(requiredIconSize), [path, appId, window, process, requiredIconSize, queuedAt] {
+                const auto started = GetTickCount64();
+                auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+                result->bitmap = snowdesktop::initial_icon_bitmap::ReadRunning(!appId.empty(),
+                    [&] { return GetLocalIconResourceBitmap(path, result->size, requiredIconSize); },
+                    [&]() -> HBITMAP {
+                        DWORD current = 0;
+                        GetWindowThreadProcessId(window, &current);
+                        if (!process || current != process) return nullptr;
+                        return CreateDockWindowProvidedIconBitmap(window, result->size, requiredIconSize);
+                    });
+                WriteDiagnosticLogEntry((L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
+                    std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
+                return result;
+            }, [window, process, path, appId, requiredIconSize, queuedAt] {
+                const auto started = GetTickCount64();
+                auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+                DWORD current = 0;
+                GetWindowThreadProcessId(window, &current);
+                if (current == process)
+                    result->bitmap = CreateDockWindowIconBitmap(window, path, appId,
+                        result->size, requiredIconSize);
+                WriteDiagnosticLogEntry((L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
+                    L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
+                    std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
+                return result;
+            }, [this, key, path, appId, requiredIconSize](auto result, bool refined) {
+                if (!result || !result->bitmap) return;
+                for (auto& app : dockUnpinnedRunningApps_)
+                {
+                    if (app.identityKey != key || app.executablePath != path ||
+                        app.appUserModelId != appId || app.iconRequestedSize > requiredIconSize) continue;
+                    // A slow local completion must not replace a refined icon.
+                    if (!refined && app.iconBitmap) return;
+                    if (app.iconBitmap) { EraseD2DIconCacheForBitmap(app.iconBitmap); DeleteObject(app.iconBitmap); }
+                    app.iconBitmap = std::exchange(result->bitmap, nullptr);
+                    app.iconBitmapSize = result->size;
+                    app.iconRequestedSize = requiredIconSize;
+                    InvalidateDragStaticScene();
+                    InvalidateDockRects();
+                    break;
+                }
+            }, hwnd_, kBackgroundShellReadyMessage);
         }
         runningApps.push_back(std::move(info));
     }
@@ -1331,4 +1351,28 @@ void DesktopApp::UpdateDockWindowActivationState(
         }
     }
     InvalidateDockRects();
+}
+
+std::wstring DesktopApp::GetDockWindowAppUserModelIdAsync(HWND window)
+{
+    DWORD process = 0;
+    GetWindowThreadProcessId(window, &process);
+    std::wstring cached;
+    if (const auto found = dockWindowAppIds_.find(window);
+        found != dockWindowAppIds_.end() && found->second.first == process)
+        cached = found->second.second;
+    shellVisualWork_.Submit(L"window-appid:" + std::to_wstring(reinterpret_cast<UINT_PTR>(window)) +
+        L":" + std::to_wstring(process), [window, process] {
+            DWORD current = 0;
+            GetWindowThreadProcessId(window, &current);
+            return current == process ? QueryDockWindowAppUserModelId(window) : std::wstring{};
+        }, [this, window, process](std::wstring id) {
+            DWORD current = 0;
+            GetWindowThreadProcessId(window, &current);
+            if (current != process) return;
+            std::erase_if(dockWindowAppIds_, [](const auto& entry) { return !IsWindow(entry.first); });
+            dockWindowAppIds_[window] = {process, std::move(id)};
+            dockRunningWindowsRefreshTick_ = 0;
+        }, hwnd_, kBackgroundShellReadyMessage);
+    return cached;
 }

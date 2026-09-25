@@ -1,6 +1,13 @@
 #include "app.h"
+#include "../pending_window_message.h"
+#include "shell_icon_request.h"
+#include "initial_icon_bitmap.h"
+#include "../shell_call_diagnostics.h"
+
 #include "../popup_icon_load_rules.h"
 #include "../shortcut_application_rules.h"
+
+namespace shellCalls = snowdesktop::shell_call_diagnostics;
 
 // Asynchronous icon-loading lifecycle.
 
@@ -159,8 +166,8 @@ void DesktopApp::StopDemoIconLoader()
     if (hwnd_)
     {
         MSG message{};
-        while (PeekMessageW(&message, hwnd_, kDemoIconDecodedMessage,
-                kDemoIconDecodedMessage, PM_REMOVE))
+        while (snowdesktop::TakePendingWindowMessage(message, hwnd_,
+                kDemoIconDecodedMessage) == snowdesktop::PendingWindowMessage::Ready)
             delete reinterpret_cast<DemoIconDecodeResult*>(message.lParam);
     }
 }
@@ -237,167 +244,282 @@ void DesktopApp::OnDemoIconDecoded(LPARAM lParam)
         InvalidateQuickNavigationWindow();
 }
 
-void DesktopApp::StartIconLoader()
+void DesktopApp::StartIconLoader() {}
+
+void DesktopApp::DrainBackgroundShellWork()
 {
-    iconLoaderRunning_ = true;
-    iconLoaderThread_ = std::thread([this]() {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        MSG msg;
-        PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE);
-        while (true) {
-            IconLoadTask task;
-            {
-                std::unique_lock<std::mutex> lock(iconLoaderMutex_);
-                iconLoaderCv_.wait(lock, [this] { return !iconLoaderQueue_.empty() || !iconLoaderRunning_; });
-                if (!iconLoaderRunning_) break;
-                if (iconLoaderQueue_.empty()) continue;
-                task = std::move(iconLoaderQueue_.front());
-                iconLoaderQueue_.pop_front();
-            }
-            if (task.absolutePidl.get() == nullptr)
-            {
-                std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-                iconLoaderPendingKeys_.erase(task.requestKey);
-                continue;
-            }
+    if (exitRequested_ || compositionPaintInProgress_ || reloading_ ||
+        dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
+        HasActiveContextMenuSession() || mouseDown_ || renameEdit_ ||
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
+        return; // The maintenance timer retries after the interaction fence.
+    iconWork_.Drain();
+    dockIconWork_.Drain();
+    shellVisualWork_.Drain();
+    shellModelWork_.Drain();
+    appIndexWork_.Drain();
+    folderReadWork_.Drain();
+    RetryFolderReads();
+    clipboardReadWork_.Drain();
+}
 
-            SIZE bitmapSize{};
-            const std::wstring_view representationName =
-                !task.parsingName.empty()
-                ? std::wstring_view(task.parsingName)
-                : std::wstring_view(task.folderPath);
-            const bool nameLooksApplicationLike =
-                snowdesktop::shortcut_application_rules::
-                    ShouldUseShellIconOnly(representationName);
-            bool shellFolder = false;
-            if (task.phase == IconLoadPhase::Phase2)
+void DesktopApp::QueueIconTask(IconLoadTask value)
+{
+    auto input = std::make_shared<IconLoadTask>(std::move(value));
+    const auto key = input->requestKey;
+    const auto queuedAt = GetTickCount64();
+    // Share first pixels across desktop/mapping/popup consumers, independent of
+    // their delivery generation. Version and requested size stay in the key.
+    static const auto shortcutCache = std::make_shared<snowdesktop::initial_icon_bitmap::ShortcutCache>();
+    const auto cache = shortcutCache; // Outstanding workers retain their own lifetime.
+    const auto& source = input->parsingName.empty() ? input->folderPath : input->parsingName;
+    const bool shortcut = snowdesktop::shortcut_application_rules::HasExtension(source, L".lnk") ||
+        snowdesktop::shortcut_application_rules::HasExtension(source, L".url");
+    const auto cacheKey = shortcut && !input->sourceStamp.empty() &&
+            input->sourceStamp.find(L"unknown") == std::wstring::npos
+        ? ToUpperInvariant(source) + L"\n" + std::to_wstring(input->requestedSize) + input->sourceStamp
+        : std::wstring{};
+    const auto makeResult = [input] {
+        auto result = std::shared_ptr<IconLoadResult>(new IconLoadResult,
+            [](IconLoadResult* value) {
+                if (value->bitmap) DeleteObject(value->bitmap);
+                delete value;
+            });
+        result->serial = input->serial;
+        result->popupGeneration = input->popupGeneration;
+        result->requestKey = input->requestKey;
+        result->layoutKey = input->layoutKey;
+        result->widgetId = input->widgetId;
+        result->phase = input->phase;
+        result->isDesktopItem = input->isDesktopItem;
+        result->folderPath = input->folderPath;
+        return result;
+    };
+    auto image = [input, queuedAt, makeResult, cache, cacheKey] {
+        auto& task = *input;
+        const auto& tracePath = task.parsingName.empty() ? task.folderPath : task.parsingName;
+        shellCalls::Context trace(
+            task.phase == IconLoadPhase::Phase1 ? L"icon.phase1" : L"icon.phase2", tracePath);
+        const auto started = GetTickCount64();
+        auto result = makeResult();
+        // First pixels must not wait for the system image list or shortcut
+        // classification. Those providers have independent queues.
+        if (task.sysIconIndex < 0 && task.phase == IconLoadPhase::Phase2)
+        {
+            SHFILEINFOW info{};
+            const auto& path = task.parsingName.empty() ? task.folderPath : task.parsingName;
+            if (shellCalls::Call(L"Metadata.SHGetFileInfo", [&] {
+                    return SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info),
+                                          SHGFI_SYSICONINDEX | SHGFI_TYPENAME);
+                }))
             {
-                ComPtr<IShellItem> shellItem;
-                if (SUCCEEDED(SHCreateItemFromIDList(
-                        task.absolutePidl.get(), IID_PPV_ARGS(&shellItem))) &&
-                    shellItem)
-                {
-                    SFGAOF attributes = 0;
-                    if (SUCCEEDED(shellItem->GetAttributes(
-                            SFGAO_FOLDER, &attributes)))
-                        shellFolder = (attributes & SFGAO_FOLDER) != 0;
-                }
-            }
-            const bool allowThumbnail =
-                snowdesktop::icon_render_rules::ShouldRequestShellThumbnail(
-                    task.phase == IconLoadPhase::Phase2,
-                    nameLooksApplicationLike, shellFolder);
-            const bool preferDirectIconExtraction =
-                nameLooksApplicationLike && !shellFolder;
-            const bool forShortcut =
-                snowdesktop::shortcut_application_rules::HasExtension(
-                    representationName, L".lnk") ||
-                snowdesktop::shortcut_application_rules::HasExtension(
-                    representationName, L".url");
-            bool iconIsThumbnail = false;
-            HBITMAP bitmap = GetHighResolutionShellIconBitmap(
-                task.absolutePidl.get(), task.sysIconIndex, bitmapSize,
-                allowThumbnail, task.requestedSize,
-                preferDirectIconExtraction,
-                forShortcut, representationName, &iconIsThumbnail);
-            if (task.phase == IconLoadPhase::Phase1 && bitmap)
-                ClampAlphaToColorKey(bitmap, kTransparentKey);
-
-            bool isShortcut = false;
-            bool isApplicationShortcut = false;
-            if (task.phase == IconLoadPhase::Phase1)
-            {
-                namespace shortcutRules =
-                    snowdesktop::shortcut_application_rules;
-                const bool isLnk = shortcutRules::HasExtension(
-                    task.parsingName, L".lnk");
-                const bool isUrl = shortcutRules::HasExtension(
-                    task.parsingName, L".url");
-                isShortcut = isLnk || isUrl;
-                if (isLnk)
-                {
-                    wchar_t lnkPath[32768]{};
-                    if (SHGetPathFromIDListW(task.absolutePidl.get(), lnkPath))
-                    {
-                        ComPtr<IShellLinkW> shellLink;
-                        if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                            IID_IShellLinkW, reinterpret_cast<void**>(shellLink.GetAddressOf()))))
-                        {
-                            ComPtr<IPersistFile> persistFile;
-                            if (SUCCEEDED(shellLink.As(&persistFile)) &&
-                                SUCCEEDED(persistFile->Load(lnkPath, STGM_READ)))
-                            {
-                                if (!IsApplicationsShellLinkTarget(
-                                        shellLink.Get(), lnkPath))
-                                {
-                                    wchar_t target[32768]{};
-                                    if (SUCCEEDED(shellLink->GetPath(
-                                            target, static_cast<int>(std::size(target)),
-                                            nullptr, 0)) &&
-                                        target[0] != L'\0')
-                                    {
-                                        isApplicationShortcut =
-                                            shortcutRules::HasExtension(
-                                                target, L".exe");
-                                    }
-                                }
-                                else
-                                {
-                                    isApplicationShortcut = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                else if (isUrl)
-                {
-                    wchar_t url[32768]{};
-                    GetPrivateProfileStringW(
-                        L"InternetShortcut", L"URL", L"", url,
-                        static_cast<DWORD>(std::size(url)),
-                        task.parsingName.c_str());
-                    isApplicationShortcut =
-                        shortcutRules::IsSteamApplicationUrl(url);
-                }
-            }
-
-            if (bitmap || task.phase == IconLoadPhase::Phase2)
-            {
-                auto* result = new IconLoadResult();
-                result->serial = task.serial;
-                result->popupGeneration = task.popupGeneration;
-                result->requestKey = std::move(task.requestKey);
-                result->layoutKey = std::move(task.layoutKey);
-                result->widgetId = std::move(task.widgetId);
-                result->bitmap = bitmap;
-                result->bitmapSize = bitmapSize;
-                result->isShortcut = isShortcut;
-                result->isApplicationShortcut = isApplicationShortcut;
-                result->shortcutArrow = isShortcut && !isApplicationShortcut;
-                result->iconIsMediaThumbnail =
-                    snowdesktop::icon_render_rules::IsMediaThumbnail(
-                        iconIsThumbnail, shellFolder);
-                result->phase = task.phase;
-                result->isDesktopItem = task.isDesktopItem;
-                result->folderPath = std::move(task.folderPath);
-                if (!PostMessageW(hwnd_, kIconLoadedMessage, 0, reinterpret_cast<LPARAM>(result)))
-                {
-                    {
-                        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-                        iconLoaderPendingKeys_.erase(result->requestKey);
-                    }
-                    if (result->bitmap) DeleteObject(result->bitmap);
-                    delete result;
-                }
-            }
-            else
-            {
-                std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-                iconLoaderPendingKeys_.erase(task.requestKey);
+                task.sysIconIndex = info.iIcon;
+                result->typeName = info.szTypeName;
             }
         }
-        CoUninitialize();
-    });
+        const auto metadataDone = GetTickCount64();
+        result->sysIconIndex = task.sysIconIndex;
+        if (!task.absolutePidl.get())
+        {
+            PIDLIST_ABSOLUTE pidl = nullptr;
+            const auto& path = task.parsingName.empty() ? task.folderPath : task.parsingName;
+            if (SUCCEEDED(shellCalls::Call(L"Pidl.SHParseDisplayName", [&] {
+                    return SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr);
+                })))
+                task.absolutePidl.reset(pidl);
+        }
+        const auto pidlDone = GetTickCount64();
+        const std::wstring_view representationName = task.parsingName.empty()
+            ? std::wstring_view(task.folderPath) : std::wstring_view(task.parsingName);
+        namespace shortcutRules = snowdesktop::shortcut_application_rules;
+        const bool nameLooksApplicationLike = shortcutRules::ShouldUseShellIconOnly(representationName);
+        bool shellFolder = false;
+        if (task.phase == IconLoadPhase::Phase2)
+        {
+            ComPtr<IShellItem> shellItem;
+            if (SUCCEEDED(shellCalls::Call(L"Attributes.SHCreateItemFromIDList",
+                                           [&] {
+                                               return SHCreateItemFromIDList(
+                                                   task.absolutePidl.get(),
+                                                   IID_PPV_ARGS(&shellItem));
+                                           })) &&
+                shellItem)
+            {
+                SFGAOF attributes = 0;
+                if (SUCCEEDED(shellCalls::Call(L"Attributes.GetAttributes", [&] {
+                        return shellItem->GetAttributes(SFGAO_FOLDER, &attributes);
+                    })))
+                    shellFolder = (attributes & SFGAO_FOLDER) != 0;
+            }
+        }
+        const bool allowThumbnail = snowdesktop::icon_render_rules::ShouldRequestShellThumbnail(
+            task.phase == IconLoadPhase::Phase2, nameLooksApplicationLike, shellFolder);
+        const bool forShortcut = shortcutRules::HasExtension(representationName, L".lnk") ||
+            shortcutRules::HasExtension(representationName, L".url");
+        bool iconIsThumbnail = false;
+        result->bitmap =
+            task.absolutePidl.get()
+                ? shellCalls::Call(L"Bitmap.GetHighResolution",
+                                   [&] {
+                                       return GetHighResolutionShellIconBitmap(
+                                           task.absolutePidl.get(), task.sysIconIndex,
+                                           result->bitmapSize, allowThumbnail, task.requestedSize,
+                                           nameLooksApplicationLike && !shellFolder, forShortcut,
+                                           representationName, &iconIsThumbnail);
+                                   })
+                : nullptr;
+        if (task.phase == IconLoadPhase::Phase1 && result->bitmap)
+            shellCalls::Call(L"Bitmap.ClampAlphaToColorKey", [&] {
+                return ClampAlphaToColorKey(result->bitmap, kTransparentKey);
+            });
+        result->iconIsMediaThumbnail = snowdesktop::icon_render_rules::IsMediaThumbnail(
+            iconIsThumbnail, shellFolder);
+        if (!result->iconIsMediaThumbnail)
+            cache->Put(cacheKey, result->bitmap, result->bitmapSize, task.phase == IconLoadPhase::Phase2);
+        const auto finished = GetTickCount64();
+        if (finished - queuedAt >= 250)
+        {
+            wchar_t timing[512]{};
+            swprintf_s(
+                timing,
+                L"Shell icon slow: phase=%u queueMs=%llu metadataMs=%llu "
+                L"pidlMs=%llu bitmapMs=%llu shortcutMs=0 totalMs=%llu bitmap=%d trace=%llu path=",
+                task.phase == IconLoadPhase::Phase1 ? 1u : 2u, started - queuedAt,
+                metadataDone - started, pidlDone - metadataDone, finished - pidlDone,
+                finished - queuedAt, result->bitmap ? 1 : 0, trace.Id());
+            WriteDiagnosticLogEntry((std::wstring(timing) + std::wstring(representationName)).c_str());
+        }
+        return result;
+    };
+    auto apply = [this, key, queuedAt](std::shared_ptr<IconLoadResult> result) {
+        if (!result) { iconLoaderPendingKeys_.erase(key); return false; }
+        auto delivered = new IconLoadResult(*result);
+        result->bitmap = nullptr;
+        const auto beforeApply = GetTickCount64();
+        const bool accepted = OnIconLoaded(0, reinterpret_cast<LPARAM>(delivered));
+        if (!result->isDesktopItem && result->phase == IconLoadPhase::Phase1 &&
+            (beforeApply - queuedAt >= 250 || !accepted))
+        {
+            const auto message = L"Folder first icon delivery: totalMs=" +
+                std::to_wstring(beforeApply - queuedAt) + L" applyMs=" +
+                std::to_wstring(GetTickCount64() - beforeApply) + L" accepted=" +
+                std::to_wstring(accepted ? 1 : 0) + L" widget=" + result->widgetId +
+                L" path=" + result->folderPath;
+            WriteDiagnosticLogEntry(message.c_str());
+        }
+        return accepted;
+    };
+    bool submitted = false;
+    if (input->phase == IconLoadPhase::Phase1)
+    {
+        auto localImage = [input, queuedAt, makeResult, cache, cacheKey] {
+            const auto& path = input->parsingName.empty() ? input->folderPath : input->parsingName;
+            shellCalls::Context trace(L"icon.local", path);
+            const auto started = GetTickCount64();
+            auto result = makeResult();
+            result->sysIconIndex = input->sysIconIndex;
+            const auto cached = cache->Get(cacheKey);
+            if (cached)
+            {
+                result->bitmap = std::exchange(cached->bitmap, nullptr);
+                result->bitmapSize = cached->size;
+            }
+            else result->bitmap = GetLocalIconResourceBitmap(path, result->bitmapSize, input->requestedSize);
+            if (result->bitmap) ClampAlphaToColorKey(result->bitmap, kTransparentKey);
+            // Record successes as well as misses during rollout so a startup
+            // log distinguishes local delivery from waiting for Shell fallback.
+            wchar_t timing[256]{};
+            swprintf_s(timing, L"Local icon: queueMs=%llu readMs=%llu bitmap=%d cached=%d trace=%llu path=",
+                started - queuedAt, GetTickCount64() - started, result->bitmap ? 1 : 0,
+                cached ? 1 : 0, trace.Id());
+            WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
+            return result;
+        };
+        auto classify = [input, makeResult] {
+            const auto& tracePath =
+                input->parsingName.empty() ? input->folderPath : input->parsingName;
+            shellCalls::Context trace(L"icon.shortcut", tracePath);
+            const auto started = GetTickCount64();
+            auto result = makeResult();
+            result->phase = IconLoadPhase::Shortcut;
+            const auto& path = input->parsingName.empty() ? input->folderPath : input->parsingName;
+            namespace shortcutRules = snowdesktop::shortcut_application_rules;
+            const bool isLnk = shortcutRules::HasExtension(path, L".lnk");
+            const bool isUrl = shortcutRules::HasExtension(path, L".url");
+            result->isShortcut = isLnk || isUrl;
+            ULONGLONG loadMs = 0, classifyMs = 0, targetMs = 0;
+            if (isLnk)
+            {
+                ComPtr<IShellLinkW> shellLink;
+                if (SUCCEEDED(shellCalls::Call(L"Classify.CoCreateInstance", [&] {
+                        return CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                                IID_PPV_ARGS(&shellLink));
+                    })))
+                {
+                    ComPtr<IPersistFile> persistFile;
+                    const bool loaded =
+                        SUCCEEDED(shellCalls::Call(L"Classify.QueryPersistFile",
+                                                   [&] {
+                                                       return shellLink.As(&persistFile);
+                                                   })) &&
+                        SUCCEEDED(shellCalls::Call(L"Classify.Load", [&] {
+                            return persistFile->Load(path.c_str(), STGM_READ);
+                        }));
+                    const auto loadedAt = GetTickCount64();
+                    loadMs = loadedAt - started;
+                    if (loaded)
+                    {
+                        result->isApplicationShortcut =
+                            shellCalls::Call(L"Classify.ApplicationTarget", [&] {
+                                return IsApplicationsShellLinkTarget(shellLink.Get(), path);
+                            });
+                        const auto classifiedAt = GetTickCount64();
+                        classifyMs = classifiedAt - loadedAt;
+                        if (!result->isApplicationShortcut)
+                        {
+                            wchar_t target[32768]{};
+                            if (SUCCEEDED(shellCalls::Call(L"Classify.GetPath.ExeFallback", [&] {
+                                    return shellLink->GetPath(
+                                        target, static_cast<int>(std::size(target)), nullptr, 0);
+                                })))
+                                result->isApplicationShortcut = shortcutRules::HasExtension(target, L".exe");
+                        }
+                        targetMs = GetTickCount64() - classifiedAt;
+                    }
+                }
+            }
+            else if (isUrl)
+            {
+                wchar_t url[32768]{};
+                shellCalls::Call(L"Classify.ReadUrl", [&] {
+                    return GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url,
+                                                    static_cast<DWORD>(std::size(url)),
+                                                    path.c_str());
+                });
+                result->isApplicationShortcut = shortcutRules::IsSteamApplicationUrl(url);
+            }
+            const auto elapsed = GetTickCount64() - started;
+            if (elapsed >= 250)
+            {
+                wchar_t timing[256]{};
+                swprintf_s(timing,
+                           L"Shell shortcut slow: loadMs=%llu classifyMs=%llu targetMs=%llu "
+                           L"totalMs=%llu trace=%llu path=",
+                           loadMs, classifyMs, targetMs, elapsed, trace.Id());
+                WriteDiagnosticLogEntry((std::wstring(timing) + path).c_str());
+            }
+            return result;
+        };
+        submitted = iconWork_.SubmitFirstWithFallback(key, std::move(localImage), std::move(image),
+            [](const std::shared_ptr<IconLoadResult>& result) { return result && result->bitmap; },
+            std::move(classify), apply, apply, hwnd_, kBackgroundShellReadyMessage);
+    }
+    else
+    {
+        submitted = iconWork_.Submit(true, key, std::move(image), std::move(apply),
+            hwnd_, kBackgroundShellReadyMessage);
+    }
+    if (!submitted) iconLoaderPendingKeys_.erase(key);
 }
 
 int DesktopApp::GetShellIconBitmapSizeForPage(
@@ -437,20 +559,21 @@ void DesktopApp::RefreshIconBitmapResolution()
     const int desktopRequired = GetMaximumShellIconBitmapSize();
     for (auto& item : items_)
     {
-        if (item.iconState == IconState::Loading ||
+        if (item.iconState == IconState::FullQuality &&
             snowdesktop::icon_render_rules::SourceLongEdgeCoversTarget(
                 item.iconBitmapSize.cx, item.iconBitmapSize.cy,
-                desktopRequired) || !item.absolutePidl.get())
+                desktopRequired))
             continue;
 
         IconLoadTask task;
+        task.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
         task.serial = iconLoadSerial_;
         task.layoutKey = item.layoutKey;
         task.absolutePidl.reset(ILClone(item.absolutePidl.get()));
         task.sysIconIndex = item.sysIconIndex;
         task.parsingName = item.parsingName;
         task.isDesktopItem = true;
-        task.phase = IconLoadPhase::Phase2;
+        task.phase = item.iconState == IconState::Loading ? IconLoadPhase::Phase1 : IconLoadPhase::Phase2;
         task.requestedSize = desktopRequired;
         EnqueueIconLoad(std::move(task));
     }
@@ -463,25 +586,21 @@ void DesktopApp::RefreshIconBitmapResolution()
         const int required = GetShellIconBitmapSizeForPage(pageId);
         for (auto& entry : widget.folderEntries)
         {
-            if (entry.iconState == IconState::Loading ||
+            if (entry.iconState == IconState::FullQuality &&
                 snowdesktop::icon_render_rules::SourceLongEdgeCoversTarget(
                     entry.iconBitmapSize.cx, entry.iconBitmapSize.cy,
                     required))
                 continue;
 
-            PIDLIST_ABSOLUTE pidl = nullptr;
-            if (FAILED(SHParseDisplayName(entry.fullPath.c_str(), nullptr,
-                    &pidl, 0, nullptr)) || !pidl)
-                continue;
-
             IconLoadTask task;
+            task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
             task.serial = iconLoadSerial_;
             task.widgetId = widget.id;
             task.folderPath = entry.fullPath;
-            task.absolutePidl.reset(pidl);
             task.sysIconIndex = entry.sysIconIndex;
             task.isDesktopItem = false;
-            task.phase = IconLoadPhase::Phase2;
+            task.phase = entry.iconState == IconState::Loading ? IconLoadPhase::Phase1 : IconLoadPhase::Phase2;
+            task.parsingName = entry.fullPath;
             task.requestedSize = required;
             EnqueueIconLoad(std::move(task));
         }
@@ -497,57 +616,37 @@ void DesktopApp::RefreshIconBitmapResolution()
 
 void DesktopApp::StopIconLoader()
 {
-    {
-        std::lock_guard<std::mutex> lock(iconLoaderMutex_);
-        iconLoaderRunning_ = false;
-        iconLoaderQueue_.clear();
-        iconLoaderPendingKeys_.clear();
-    }
-    iconLoaderCv_.notify_all();
-    if (iconLoaderThread_.joinable())
-        iconLoaderThread_.join();
-    if (hwnd_)
-    {
-        MSG msg{};
-        while (PeekMessageW(&msg, hwnd_, kIconLoadedMessage, kIconLoadedMessage, PM_REMOVE))
-        {
-            auto* result = reinterpret_cast<IconLoadResult*>(msg.lParam);
-            if (result)
-            {
-                if (result->bitmap) DeleteObject(result->bitmap);
-                delete result;
-            }
-        }
-    }
+    iconWork_.Stop();
+    dockIconWork_.Stop();
+    shellVisualWork_.Stop();
+    shellModelWork_.Stop();
+    folderReadWork_.Stop();
+    folderReadRetries_.Clear();
+    clipboardReadWork_.Stop();
+    iconLoaderPendingKeys_.clear();
 }
 
 void DesktopApp::BeginIconLoadGeneration()
 {
-    std::lock_guard<std::mutex> lock(iconLoaderMutex_);
     ++iconLoadSerial_;
-    iconLoaderQueue_.clear();
+    iconWork_.Cancel();
     iconLoaderPendingKeys_.clear();
 }
 
 void DesktopApp::CancelDockFolderPopupIconLoads()
 {
-    std::lock_guard<std::mutex> lock(iconLoaderMutex_);
     dockFolderPopupIconGeneration_ =
-        snowdesktop::popup_icon_load_rules::NextGeneration(
-            dockFolderPopupIconGeneration_);
-    snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
-        iconLoaderQueue_, iconLoaderPendingKeys_,
-        [](const IconLoadTask& task) {
-            return !task.isDesktopItem &&
-                task.widgetId == kDockFolderPopupWidgetId;
-        });
+        snowdesktop::popup_icon_load_rules::NextGeneration(dockFolderPopupIconGeneration_);
+    const auto prefix = std::to_wstring(iconLoadSerial_) + L"\nF\n" + kDockFolderPopupWidgetId + L"\n";
+    iconWork_.Cancel(prefix);
+    std::erase_if(iconLoaderPendingKeys_, [&](const auto& key) { return key.starts_with(prefix); });
 }
 
 void DesktopApp::SetSoftwareDesktopEnabled(bool enabled, bool persist)
 {
     const bool wasEnabled = customDesktopVisible_;
     if (!enabled)
-        EndDesktopPassthroughHold(false);
+        EndDesktopPassthrough(false);
     customDesktopVisible_ = enabled;
     generalSettings_.softwareDesktopEnabled = enabled;
     if (persist)

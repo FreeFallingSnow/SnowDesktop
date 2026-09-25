@@ -1,4 +1,5 @@
 #include "http_runtime.h"
+#include "http_network_integration.h"
 
 #include <iostream>
 
@@ -14,8 +15,10 @@ void Expect(bool condition, const char* message)
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--network")
+        return RunHttpNetworkIntegrationTests();
     using snowdesktop::http_security::IsAllowedRemoteIpLiteral;
     using snowdesktop::http_security::IsAllowedHttpOrHttpsUrl;
     using snowdesktop::http_security::IsAllowedPublicHttpsUrl;
@@ -151,24 +154,40 @@ int main()
 
     Expect(IsAllowedUrlForDomains(
             L"https://hnrss.org/frontpage", {}, false, true),
-        "v2 public HTTPS mode accepts an arbitrary public HTTPS host");
-    Expect(IsAllowedUrlForDomains(
+        "v2 HTTP mode accepts an arbitrary HTTPS host");
+    Expect(!IsAllowedUrlForDomains(
             L"https://feeds.example.net/rss", {"unrelated.example"},
             false, true),
-        "v2 public HTTPS mode is independent of optional domain narrowing");
-    Expect(!IsAllowedUrlForDomains(
+        "v2 HTTP mode preserves the optional declared host scope");
+    Expect(IsAllowedUrlForDomains(
             L"http://hnrss.org/frontpage", {}, false, true),
-        "v2 public HTTPS mode rejects plaintext HTTP");
-    Expect(!IsAllowedUrlForDomains(
+        "v2 HTTP mode accepts plaintext HTTP");
+    Expect(IsAllowedUrlForDomains(
             L"https://localhost/feed", {}, false, true) &&
-            !IsAllowedUrlForDomains(
+            IsAllowedUrlForDomains(
                 L"https://192.168.1.10/feed", {}, false, true) &&
+            IsAllowedUrlForDomains(
+                L"https://[fc00::1]/feed", {}, false, true) &&
+            IsAllowedUrlForDomains(
+                L"https://[fdfe:dcba:9876::24]/feed", {}, false, true),
+        "v2 HTTP mode accepts local, LAN and IPv6 TUN targets");
+    Expect(IsAllowedUrlForDomains(
+                L"http://nas.local/feed", {"NAS.LOCAL."}, false, true) &&
+            IsAllowedUrlForDomains(
+                L"http://127.0.0.1/feed", {"127.0.0.1"}, false, true) &&
+            IsAllowedUrlForDomains(
+                L"http://[::1]/feed", {"::1"}, false, true),
+        "v2 HTTP host scopes can explicitly allow local names and IP literals");
+    Expect(!IsAllowedUrlForDomains(
+                L"http://sub.example.com/feed", {"example.com"}, false, true) &&
             !IsAllowedUrlForDomains(
-                L"https://[fc00::1]/feed", {}, false, true),
-        "v2 public HTTPS mode rejects local and private targets");
+                L"http://example.com/feed", {"*.example.com"}, false, true) &&
+            !IsAllowedUrlForDomains(
+                L"file:///C:/feed.xml", {}, false, true),
+        "v2 HTTP retains exact host matching and rejects non-HTTP schemes");
     Expect(!IsAllowedUrlForDomains(
             L"https://user@example.com/feed", {}, false, true),
-        "v2 public HTTPS mode rejects embedded credentials");
+        "v2 HTTP mode rejects embedded credentials");
 
     Expect(IsAllowedPublicHttpsUrl(L"https://example.com/article?id=1"),
         "shell HTTPS policy accepts a public URL");

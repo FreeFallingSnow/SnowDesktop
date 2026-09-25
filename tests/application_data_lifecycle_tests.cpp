@@ -1,8 +1,11 @@
+#include "debug_profile.h"
+#include "desktop_source.h"
 #include "full_data_backup.h"
 #include "large_icon_backup.h"
 #include "layout_storage.h"
 #include "json_value.h"
 #include "widget_package.h"
+#include "widget_removal.h"
 #include "portable_data_migration.h"
 #include "single_instance.h"
 
@@ -225,6 +228,71 @@ PackagePaths TestPaths(const std::filesystem::path& root)
     return paths;
 }
 
+void TestWidgetCatalogRediscovery(const std::filesystem::path& root)
+{
+    // Same manager as an already running host: external file copies must become
+    // visible on UI discovery without Initialize(), Lua loading or new consent.
+    const auto paths = TestPaths(root / L"catalog-rediscovery");
+    WidgetPackageManager manager(paths);
+    std::string error;
+    Expect(manager.Initialize(error), "empty discovery catalog initializes");
+    const std::string firstId = "e1fe7894-d56b-4faa-956a-ebadf89ace82";
+    const std::string repairedId = "29d5fca2-c367-49d7-8b05-2b49b7ef9efc";
+    const std::string laterId = "8e2b9f26-7f4e-49db-a8f4-3cfbc846d7aa";
+    const auto firstRoot = paths.development / L"first";
+    const auto repairedRoot = paths.development / L"repaired";
+    MakePackage(firstRoot, "1.0.0", firstId, "\"calendar.read\"");
+    Write(repairedRoot / L"widget.json", "{");
+    Expect(!manager.ContainsPackage(firstId),
+        "external copy is absent from the running host's cached catalog");
+    Expect(manager.RefreshCatalog(error), "UI discovery scans external copies");
+    const auto first = manager.Resolve(firstId);
+    Expect(first && first->development && first->active &&
+            first->permissionState == PermissionDecisionState::Pending &&
+            first->grantedPermissions.empty() &&
+            manager.ListInvalidPackages().size() == 1,
+        "new development source appears active without granting sensitive permissions; incomplete copies remain invalid");
+    Expect(manager.SetDevelopmentOverride(firstId, false, error),
+        "discovered development source can be explicitly deactivated");
+    MakePackage(repairedRoot, "1.0.0", repairedId);
+    Expect(manager.RefreshCatalog(error), "next UI opening retries repaired copies");
+    const auto packages = manager.ListPackages();
+    const auto inactive = std::find_if(packages.begin(), packages.end(),
+        [&](const auto& package) { return package.manifest.id == firstId; });
+    const auto repaired = manager.Resolve(repairedId);
+    Expect(inactive != packages.end() && !inactive->active &&
+            repaired && repaired->active && manager.ListInvalidPackages().empty(),
+        "reopening preserves explicit opt-outs and discovers repaired candidates");
+
+    // A blocked registry replacement must not erase the usable UI snapshot or
+    // consume first-discovery activation before the next successful opening.
+    const HANDLE registryLock = CreateFileW(paths.registry.c_str(), GENERIC_READ,
+        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(registryLock != INVALID_HANDLE_VALUE, "registry failure fixture opens");
+    MakePackage(paths.development / L"later", "1.0.0", laterId);
+    if (registryLock != INVALID_HANDLE_VALUE)
+    {
+        Expect(!manager.RefreshCatalog(error) && !error.empty() &&
+                manager.ContainsPackage(repairedId) &&
+                !manager.ContainsPackage(laterId),
+            "failed discovery persistence retains the prior catalog");
+        CloseHandle(registryLock);
+    }
+    Expect(manager.RefreshCatalog(error) && error.empty(),
+        "discovery recovers after registry access is restored");
+    const auto later = manager.Resolve(laterId);
+    Expect(later && later->active,
+        "failed persistence does not consume the new candidate's default activation");
+
+    std::filesystem::remove_all(repairedRoot);
+    Expect(manager.RefreshCatalog(error) && !manager.ContainsPackage(repairedId),
+        "next UI opening removes externally deleted candidates from the list");
+    WidgetPackageManager reopened(paths);
+    Expect(reopened.Initialize(error) && !reopened.Resolve(firstId) &&
+            reopened.ContainsPackage(laterId),
+        "UI discovery persists new candidates without losing earlier opt-outs");
+}
+
 void TestDockLayoutBackup(const std::filesystem::path& root)
 {
     namespace layout = snowdesktop::layout_storage;
@@ -427,6 +495,204 @@ void TestLayoutReset(const std::filesystem::path& root)
 }
 }
 
+// Exercise the production profile lifecycle with isolated normal/demo folders.
+// These sentinels detect data routing and destructive-reset regressions.
+void TestDebugProfile(const std::filesystem::path& fixture)
+{
+    namespace profile = snowdesktop::debug_profile;
+    const auto root = fixture / L"debug-profile-test";
+    const auto paths = profile::ResolvePaths(root / L"normal");
+    const auto realDesktop = root / L"real-desktop";
+    Write(paths.normalData / L"normal.txt", "normal-state");
+    Write(realDesktop / L"original.txt", "real-desktop");
+    std::string error;
+    profile::Configuration config;
+    Expect(profile::Read(paths, config, error) && !config.enabled && config.desktop == paths.defaultDesktop,
+        "missing control configuration starts in normal mode with a separate default desktop");
+    Expect(profile::Initialize(paths.normalData, {realDesktop}, error) && !profile::Enabled(),
+        "normal startup leaves debug environment inactive");
+    config.enabled = true;
+    Expect(profile::Prepare(paths, config, {realDesktop}, error), "prepare creates only the default demo directory and data");
+    Expect(!std::filesystem::exists(paths.data / L"normal.txt"), "first debug startup never clones normal state");
+    Write(config.desktop / L"demo.txt", "demo-file");
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) && profile::Enabled(),
+        "enabled profile survives process initialization");
+    Expect(snowdesktop::desktop_source::Directory() == config.desktop.wstring(),
+        "production desktop destination resolves to the simulated directory");
+    wchar_t desktop[MAX_PATH]{};
+    Expect(snowdesktop::desktop_source::CopyDirectory(desktop) && desktop == config.desktop.wstring(),
+        "legacy Shell destination adapter uses the simulated directory");
+    Write(std::filesystem::path(desktop) / L"created.txt", "new-demo-file");
+    Expect(!std::filesystem::exists(realDesktop / L"created.txt"), "desktop creation destination does not target the real desktop");
+    Write(paths.data / L"debug.txt", "saved-debug");
+    Expect(profile::Initialize(paths.normalData, {realDesktop}, error) && Read(paths.data / L"debug.txt") == "saved-debug",
+        "repeated debug initialization preserves state");
+    config.enabled = false;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) && !profile::Enabled() &&
+        Read(paths.data / L"debug.txt") == "saved-debug", "leaving debug mode preserves its data");
+    for (const auto& invalid : {realDesktop, realDesktop / L"child", paths.normalData, paths.data, paths.root, root})
+    {
+        std::filesystem::create_directories(invalid);
+        Expect(!profile::ValidateDesktop(paths, invalid, {realDesktop}, error),
+            "real desktop, managed data, descendants and ancestors cannot be selected");
+    }
+    Expect(!profile::ValidateDesktop(paths, L"relative-folder", {realDesktop}, error), "relative demo directories are rejected");
+    const auto otherDesktop = root / L"other-demo-模拟桌面";
+    Write(otherDesktop / L"keep.txt", "keep-demo");
+    Expect(profile::ValidateDesktop(paths, otherDesktop, {realDesktop}, error), "an independent existing folder is accepted");
+    config.desktop = otherDesktop;
+    config.pendingDesktopChange = true;
+    config.enabled = true;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) &&
+        profile::Current().configuration.pendingDesktopChange && snowdesktop::desktop_source::Directory() == otherDesktop.wstring(),
+        "a folder change survives restart and requests removal of stale placement records");
+    Expect(profile::AcknowledgeDesktopChange(error) && profile::Read(paths, config, error) && !config.pendingDesktopChange,
+        "successful layout persistence acknowledges the directory change");
+    Write(paths.root / L"FullBackups" / L"backup.txt", "backup");
+    Write(paths.root / L"TempState" / L"pending.txt", "restore");
+    Write(paths.root / L"PrivateState" / L"secrets.txt", "secret");
+    Write(paths.root / L"unmanaged.txt", "unmanaged");
+    const auto junction = paths.data / L"outside-link";
+    const std::wstring junctionCommand = L"cmd.exe /d /c mklink /J \"" + junction.wstring() +
+        L"\" \"" + otherDesktop.wstring() + L"\" >nul 2>&1";
+    Expect(_wsystem(junctionCommand.c_str()) == 0, "create isolated junction for reset boundary regression");
+    if (GetFileAttributesW(junction.c_str()) != INVALID_FILE_ATTRIBUTES)
+    {
+        Expect(!profile::Clear(paths, error) && Read(paths.data / L"debug.txt") == "saved-debug" &&
+            Read(otherDesktop / L"keep.txt") == "keep-demo",
+            "reset rejects a junction before deleting any managed data or its external target");
+        Expect(!profile::ValidateDesktop(paths, junction, {otherDesktop}, error),
+            "directory aliases cannot bypass real desktop overlap validation");
+        Expect(RemoveDirectoryW(junction.c_str()) != FALSE, "remove only the fixture junction, not its target");
+    }
+    config.pendingReset = true;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error),
+        "active profile reset completes at the startup boundary");
+    Expect(!std::filesystem::exists(paths.data / L"debug.txt") && !std::filesystem::exists(paths.root / L"FullBackups") &&
+        !std::filesystem::exists(paths.root / L"TempState") && !std::filesystem::exists(paths.root / L"PrivateState"), "reset removes debug state, backups and staged restores");
+    Expect(Read(otherDesktop / L"keep.txt") == "keep-demo" && Read(paths.defaultDesktop / L"demo.txt") == "demo-file" &&
+        Read(paths.normalData / L"normal.txt") == "normal-state" && Read(realDesktop / L"original.txt") == "real-desktop" &&
+        Read(paths.root / L"unmanaged.txt") == "unmanaged", "reset preserves both desktops, normal data and unmanaged profile files");
+    Expect(profile::Read(paths, config, error) && config.enabled && !config.pendingReset && config.desktop == otherDesktop,
+        "reset preserves the active mode and selected directory");
+    config.desktop = root / L"missing-custom-folder";
+    Expect(profile::Write(paths, config, error) && !profile::Initialize(paths.normalData, {realDesktop}, error),
+        "missing custom folder fails startup rather than falling back to the real desktop");
+    Write(paths.control, "{broken");
+    Expect(!profile::Read(paths, config, error), "malformed control data must not silently activate normal mode");
+    profile::runtimeSession = {};
+}
+
+void TestWidgetRemoval(const std::filesystem::path& root)
+{
+    using snowdesktop::widget_runtime::ConfirmWidgetRemoval;
+    DesktopWidget first;
+    first.id = L"first";
+    first.type = DesktopWidgetType::LuaScript;
+    first.packageId = L"notes";
+    first.title = L"My note";
+    DesktopWidget second = first;
+    second.id = L"second";
+    std::vector<DesktopWidget> widgets{ first, second };
+    int prompts = 0;
+    auto rejected = ConfirmWidgetRemoval(widgets, 0, true,
+        [&](const std::wstring& title) {
+            ++prompts;
+            Expect(title == L"My note", "removal prompt names the selected instance");
+            return false; // Cancel, close and dialog failure all use this result.
+        });
+    Expect(!rejected && prompts == 1 && widgets.size() == 2 &&
+            widgets[0].id == L"first",
+        "cancelled removal returns no commit target and preserves the layout");
+    auto accepted = ConfirmWidgetRemoval(widgets, 0, true,
+        [&](const std::wstring&) {
+            std::swap(widgets[0], widgets[1]);
+            return true;
+        });
+    Expect(accepted == 1 && widgets[*accepted].id == L"first",
+        "modal message dispatch cannot redirect deletion to the old index");
+    rejected = ConfirmWidgetRemoval(widgets, 1, true,
+        [&](const std::wstring&) {
+            widgets.erase(widgets.begin() + 1);
+            return true;
+        });
+    Expect(!rejected && widgets.size() == 1 && widgets[0].id == L"second",
+        "an instance removed during confirmation leaves its neighbor intact");
+    rejected = ConfirmWidgetRemoval(widgets, 0, true,
+        [&](const std::wstring&) {
+            widgets[0].packageId = L"replacement";
+            return true;
+        });
+    Expect(!rejected, "confirmation does not authorize a replacement package");
+    const auto direct = ConfirmWidgetRemoval(widgets, 0, false,
+        [&](const std::wstring&) { ++prompts; return false; });
+    Expect(direct == 0 && prompts == 1,
+        "components without confirmation retain direct deletion");
+    rejected = ConfirmWidgetRemoval(widgets, 4, true,
+        [&](const std::wstring&) { ++prompts; return true; });
+    Expect(!rejected && prompts == 1, "stale targets cannot open a removal prompt");
+
+    const auto source = root / L"removal-contract";
+    MakePackage(source, "1.0.0");
+    const auto path = source / L"widget.json";
+    const auto original = Read(path);
+    WidgetPackageValidator validator;
+    PackageManifest manifest;
+    Expect(validator.ValidateDirectory(source, &manifest).Ok() &&
+            !manifest.confirmRemoval,
+        "existing packages default to direct removal");
+    auto writeConfirmation = [&](const std::string& value, bool required) {
+        auto json = original;
+        json.insert(1, "\"confirmRemoval\":" + value + ",");
+        if (required)
+        {
+            const std::string emptyFeatures = "\"requiredFeatures\": []";
+            json.replace(json.find(emptyFeatures), emptyFeatures.size(),
+                "\"requiredFeatures\": [\"widget.confirmRemoval\"]");
+        }
+        Write(path, json);
+    };
+    auto hasIssue = [](const ValidationReport& report, const char* code) {
+        return std::any_of(report.issues.begin(), report.issues.end(),
+            [&](const auto& issue) { return issue.code == code; });
+    };
+    writeConfirmation("true", false);
+    Expect(hasIssue(validator.ValidateDirectory(source),
+            "manifest.confirmRemovalFeature"),
+        "data-loss protection cannot silently degrade on hosts without the capability");
+    writeConfirmation("\"true\"", true);
+    Expect(hasIssue(validator.ValidateDirectory(source), "manifest.confirmRemoval"),
+        "a mistyped removal flag is rejected rather than silently ignored");
+    writeConfirmation("false", false);
+    Expect(validator.ValidateDirectory(source, &manifest).Ok() &&
+            !manifest.confirmRemoval, "explicit false does not require a new capability");
+    writeConfirmation("true", true);
+    Expect(validator.ValidateDirectory(source, &manifest).Ok() &&
+            manifest.confirmRemoval,
+        "protected packages must explicitly require removal confirmation support");
+
+    WidgetPackageManager manager(TestPaths(root / L"removal-manager"));
+    PackageArtifact artifact;
+    ValidationReport report;
+    std::string error;
+    const auto archive = root / L"removal.snowwidget";
+    Expect(manager.ExportDirectory(source, archive, artifact, report, error),
+        "protected component can be packaged");
+    Expect(manager.ValidateArchive(archive, &manifest).Ok() && manifest.confirmRemoval,
+        "package roundtrip retains removal protection");
+    LocalCatalogPublisher publisher(root / L"removal-catalog",
+        root / L"removal-staging");
+    PublishRequest request;
+    request.artifact = artifact;
+    request.title = "Protected note";
+    request.description = "Removal contract fixture";
+    Expect(publisher.Publish(request).ok, "protected package publishes to an isolated catalog");
+    StaticCatalogSource catalog(root / L"removal-catalog" / L"catalog.json");
+    const auto entries = catalog.Query({}, error);
+    Expect(entries.size() == 1 && entries[0].manifest.confirmRemoval,
+        "catalog publication and reload preserve the removal declaration");
+}
+
 int main()
 {
     // PIDs are reused across runs, and a previous interrupted cleanup can
@@ -450,6 +716,9 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestWidgetCatalogRediscovery(root);
+    TestDebugProfile(root);
+    TestWidgetRemoval(root);
     TestDockLayoutBackup(root);
     TestLayoutReset(root);
     TestInitializationExperiment(root);
@@ -573,6 +842,12 @@ int main()
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"largeFolderTitleless\":\"yes\"}]}",
             "widgets[0].largeFolderTitleless" },
+        { "widget collapse preference type",
+            R"({"widgets":[{"id":"w","page":"p","x":0,"y":0,"titleBarCollapsed":"yes"}]})",
+            "widgets[0].titleBarCollapsed" },
+        { "widget hover expansion preference type",
+            R"({"widgets":[{"id":"w","page":"p","x":0,"y":0,"titleBarExpandOnHover":"yes"}]})",
+            "widgets[0].titleBarExpandOnHover" },
         { "widget detail column type",
             "{\"widgets\":[{\"id\":\"w\",\"page\":\"p\",\"x\":0,"
             "\"y\":0,\"detailShowModified\":\"yes\"}]}",
@@ -761,6 +1036,28 @@ int main()
             R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"type":"fileGroup","dissolveWhenSingle":"true"}]})",
             pairLayout, &layoutError) && layoutError.find("dissolveWhenSingle") != std::string::npos,
         "invalid automatic group state must be rejected before replacing the layout");
+
+    {
+        // Persist only the user's choice, never a transient drag expansion.
+        const std::string collapseDocument = R"({"widgets":[
+            {"id":"closed","type":"folderMapping","page":"p","x":0,"y":0,"titleBarCollapsed":true,"titleBarExpandOnHover":true},
+            {"id":"open","type":"collection","page":"p","x":1,"y":0,"titleBarCollapsed":false,"titleBarExpandOnHover":false},
+            {"id":"legacy","type":"fileGroup","page":"p","x":2,"y":0}]})";
+        const auto collapsePath = root / "collapse-layout.json";
+        snowdesktop::layout_storage::Document collapseLayout;
+        Expect(snowdesktop::layout_storage::SaveDocument(
+                collapsePath, collapseDocument, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(collapsePath, collapseLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            collapseLayout.widgets.size() == 3 &&
+            collapseLayout.widgets[0].titleBarCollapsed &&
+            !collapseLayout.widgets[1].titleBarCollapsed &&
+            !collapseLayout.widgets[2].titleBarCollapsed &&
+            collapseLayout.widgets[0].titleBarExpandOnHover &&
+            !collapseLayout.widgets[1].titleBarExpandOnHover &&
+            !collapseLayout.widgets[2].titleBarExpandOnHover,
+            "restart retains collapse and hover preferences; legacy layouts are expanded with hover expansion off");
+    }
 
     snowdesktop::layout_storage::Document spacingLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(

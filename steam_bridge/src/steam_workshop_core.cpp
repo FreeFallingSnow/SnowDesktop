@@ -59,6 +59,7 @@ void SetError(CoreError& error, int exitCode, std::string code,
     error.exitCode = exitCode;
     error.code = std::move(code);
     error.message = std::move(message);
+    error.steamInitResult.reset();
 }
 
 bool ValidateFile(const std::filesystem::path& path, bool preview,
@@ -279,6 +280,7 @@ bool SteamWorkshopCore::Initialize(CoreError& error)
             "steam_initialization_failed",
             status_.diagnostic.empty() ? "SteamAPI_InitEx failed" :
                 status_.diagnostic);
+        error.steamInitResult = static_cast<std::uint32_t>(result);
         return false;
     }
     status_.initialized = true;

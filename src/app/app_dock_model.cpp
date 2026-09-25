@@ -1,4 +1,6 @@
 #include "app.h"
+#include "shell_icon_request.h"
+#include "dock_folder_popup_read.h"
 #include "../json_value.h"
 #include "dock_platform_helpers.h"
 
@@ -29,60 +31,122 @@ bool DesktopApp::IsDockExclusiveWidgetId(const std::wstring& id) const
 }
 
 snowdesktop::item_location::FolderTarget
-DesktopApp::ResolveDockFolderTarget(const DockEntry& entry) const
+DesktopApp::ResolveDockFolderTarget(const DockEntry& entry, bool* targetPending) const
 {
-    std::wstring sourcePath;
-    if (entry.type == DockEntryType::FolderMapping)
+    using namespace snowdesktop::item_location;
+    if (targetPending) *targetPending = false;
+    std::wstring path, stamp;
+    const bool mapping = entry.type == DockEntryType::FolderMapping;
+    if (mapping)
     {
-        std::wstring cacheKey =
-            L"M:" + ToUpperInvariant(entry.reference);
-        if (const auto cached = dockFolderTargetCache_.find(cacheKey);
-            cached != dockFolderTargetCache_.end())
-            return cached->second;
-
-        const size_t widgetIndex = FindWidgetIndexById(entry.reference);
-        if (widgetIndex >= widgets_.size() ||
-            widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping)
-            return {};
-        sourcePath = widgets_[widgetIndex].sourceFolderPath;
-        auto target =
-            snowdesktop::item_location::ResolveFolderTarget(
-                sourcePath);
-        if (target.kind ==
-                snowdesktop::item_location::
-                    FolderTargetKind::None &&
-            !sourcePath.empty())
-        {
-            target.path = sourcePath;
-            target.kind =
-                snowdesktop::item_location::
-                    FolderTargetKind::Directory;
-            target.available = false;
-        }
-        dockFolderTargetCache_.insert_or_assign(
-            std::move(cacheKey), target);
-        return target;
+        const auto index = FindWidgetIndexById(entry.reference);
+        if (index >= widgets_.size()) return {};
+        path = widgets_[index].sourceFolderPath;
     }
-    if (entry.type != DockEntryType::DesktopItem ||
-        IsRecycleBinDockEntry(entry))
-        return {};
+    else
+    {
+        if (entry.type != DockEntryType::DesktopItem || IsRecycleBinDockEntry(entry)) return {};
+        const auto index = FindItemIndexByKey(entry.reference);
+        path = index < items_.size() ? items_[index].parsingName : entry.reference;
+        if (index < items_.size()) stamp = snowdesktop::shell_icon_request::Stamp(items_[index]);
+    }
+    const auto key = (mapping ? L"M:" : L"I:") +
+        ToUpperInvariant(snowdesktop::dock_refresh_cache::SourceKey(entry.reference, path));
+    const auto cached = dockFolderTargetCache_.Read(key, stamp);
+    if (targetPending) *targetPending = snowdesktop::dock_folder_popup_read::TargetPending(
+        mapping, cached.fresh, cached.sameSourceVersion);
+    if (cached.fresh) return cached.value.value_or(FolderTarget{});
+    const bool wasFolder = cached.value && cached.value->kind != FolderTargetKind::None;
+    auto* owner = const_cast<DesktopApp*>(this);
+    shellVisualWork_.Submit(L"dock-target:" + key + L"\n" + std::to_wstring(cached.ticket), [path, mapping] {
+        auto target = ResolveFolderTarget(path);
+        if (mapping && target.kind == FolderTargetKind::None && !path.empty())
+            target = {path, FolderTargetKind::Directory, false};
+        return target;
+    }, [owner, key, entry, path, stamp, mapping, wasFolder, ticket = cached.ticket](FolderTarget target) {
+        if (mapping)
+        {
+            const auto index = owner->FindWidgetIndexById(entry.reference);
+            if (index >= owner->widgets_.size() || owner->widgets_[index].sourceFolderPath != path) return;
+        }
+        else
+        {
+            const auto index = owner->FindItemIndexByKey(entry.reference);
+            if (index < owner->items_.size())
+            {
+                const auto& item = owner->items_[index];
+                if (item.parsingName != path || snowdesktop::shell_icon_request::Stamp(item) != stamp) return;
+            }
+            else if (!stamp.empty()) return;
+        }
+        const bool isFolder = target.kind != FolderTargetKind::None;
+        const auto targetPath = target.path;
+        if (!owner->dockFolderTargetCache_.Publish(key, ticket, std::move(target))) return;
+        if (wasFolder != isFolder) owner->NormalizeDockRecycleBinPosition();
+        owner->InvalidateDockContainers();
+        owner->InvalidateDragStaticScene();
+        owner->UpdateFloatingDockWindowBounds(false);
+        owner->InvalidateDockRects();
+        const auto sourceId = std::to_wstring(static_cast<int>(entry.type)) +
+            L":" + ToUpperInvariant(entry.reference);
+        if (!mapping && owner->dockFolderPopupOpen_ &&
+            owner->dockFolderPopupSourceId_ == sourceId && owner->popupAnimation_.IsInteractive() &&
+            (owner->dockFolderPopupWidget_.sourceFolderPath != targetPath ||
+                (targetPath.empty() && owner->dockFolderPopupLoading_)))
+            owner->RefreshDockFolderPopup();
+    }, hwnd_, kBackgroundShellReadyMessage);
+    if (cached.value)
+    {
+        auto pending = *cached.value;
+        // Retain section membership, but don't execute an obsolete shortcut
+        // target after the source itself changed.
+        if (!cached.sameSourceVersion)
+        {
+            pending.available = false;
+            pending.path.clear();
+        }
+        return pending;
+    }
+    FolderTarget pending;
+    if (mapping) { pending.kind = FolderTargetKind::Directory; pending.path = path; }
+    return pending;
+}
 
-    std::wstring cacheKey =
-        L"I:" + ToUpperInvariant(entry.reference);
-    if (const auto cached = dockFolderTargetCache_.find(cacheKey);
-        cached != dockFolderTargetCache_.end())
-        return cached->second;
+void DesktopApp::InvalidateDockShellMetadata()
+{
+    dockAppIdentityCache_.Invalidate();
+    dockFolderTargetCache_.Invalidate();
+    dockFolderBitmapCache_.Invalidate();
+    dockIconWork_.Cancel(L"dock-folder:");
+    shellVisualWork_.Cancel(L"dock-identity:");
+    shellVisualWork_.Cancel(L"dock-target:");
+}
 
-    const size_t itemIndex = FindItemIndexByKey(entry.reference);
-    const std::wstring& path = itemIndex < items_.size() &&
-            !items_[itemIndex].parsingName.empty()
-        ? items_[itemIndex].parsingName
-        : entry.reference;
-    auto target =
-        snowdesktop::item_location::ResolveFolderTarget(path);
-    dockFolderTargetCache_.insert_or_assign(
-        std::move(cacheKey), target);
-    return target;
+void DesktopApp::PruneDockShellMetadata()
+{
+    using snowdesktop::dock_refresh_cache::SourceKey;
+    std::unordered_set<std::wstring> identities, folders, icons;
+    for (const auto& item : items_)
+    {
+        const auto key = DockItemWindowKey(item);
+        identities.insert(SourceKey(key, item.parsingName));
+        folders.insert(L"I:" + ToUpperInvariant(SourceKey(key, item.parsingName)));
+    }
+    for (const auto& entry : dockEntries_)
+    {
+        if (entry.type == DockEntryType::DesktopItem && FindItemIndexByKey(entry.reference) >= items_.size())
+            folders.insert(L"I:" + ToUpperInvariant(SourceKey(entry.reference, entry.reference)));
+    }
+    for (const auto& widget : widgets_)
+    {
+        if (widget.type != DesktopWidgetType::FolderMapping) continue;
+        const auto key = ToUpperInvariant(SourceKey(widget.id, widget.sourceFolderPath));
+        folders.insert(L"M:" + key);
+        icons.insert(key);
+    }
+    dockAppIdentityCache_.Retain([&](const auto& key) { return identities.contains(key); });
+    dockFolderTargetCache_.Retain([&](const auto& key) { return folders.contains(key); });
+    dockFolderBitmapCache_.Retain([&](const auto& key) { return icons.contains(key); });
 }
 
 bool DesktopApp::IsFolderDockEntry(const DockEntry& entry) const

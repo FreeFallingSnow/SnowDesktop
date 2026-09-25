@@ -1,7 +1,116 @@
 #include "app.h"
 #include "../desktop_keyboard_rules.h"
+#include "../animation_settings.h"
 
 // Static window-procedure dispatch adapters.
+
+void DesktopApp::BeginDesktopInteractionTrace(const wchar_t* reason)
+{
+    const ULONGLONG now = GetTickCount64();
+    // Each click/menu/layer checkpoint receives a fresh budget, including
+    // repeated clicks less than two seconds apart. Nested lifecycle messages
+    // join the current trace in TraceDesktopWindowMessage instead of resetting it.
+    ++desktopInteractionTraceId_;
+    desktopInteractionTraceEvents_ = 0;
+    desktopInteractionTraceFrames_ = 0;
+    desktopInteractionTraceUntil_ = now + 2000;
+    SYSTEM_POWER_STATUS power{};
+    const bool powerKnown = GetSystemPowerStatus(&power) != FALSE;
+    wchar_t event[256]{};
+    swprintf_s(event,
+        L"%ls powerKnown=%d ac=%u battery=%u saver=%u frameLimit=%d",
+        reason, powerKnown ? 1 : 0,
+        powerKnown ? static_cast<unsigned>(power.ACLineStatus) : 255U,
+        powerKnown ? static_cast<unsigned>(power.BatteryLifePercent) : 255U,
+        powerKnown ? static_cast<unsigned>(power.SystemStatusFlag) : 255U,
+        snowdesktop::animation::RuntimeFrameLimit());
+    TraceDesktopInteraction(event, hwnd_, 0, 0, 0, true);
+}
+
+void DesktopApp::TraceDesktopInteraction(const wchar_t* event, HWND subject,
+    UINT message, WPARAM wp, LPARAM lp, bool force)
+{
+    const ULONGLONG now = GetTickCount64();
+    // Synchronous log I/O must not turn this diagnostic into a source of lag.
+    // Each input/menu checkpoint gets at most 64 window/focus records in 2 s.
+    if (!force && (now > desktopInteractionTraceUntil_ ||
+        desktopInteractionTraceEvents_ >= 64))
+        return;
+    ++desktopInteractionTraceEvents_;
+    const HWND foreground = GetForegroundWindow();
+    const DWORD foregroundThread = foreground
+        ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+    GUITHREADINFO gui{ sizeof(gui) };
+    const bool focusKnown = foregroundThread && GetGUIThreadInfo(foregroundThread, &gui);
+    const HWND parent = hwnd_ ? GetParent(hwnd_) : nullptr;
+    RECT rect{};
+    if (hwnd_) GetWindowRect(hwnd_, &rect);
+    std::wostringstream line;
+    line << L"DesktopInteraction id=" << desktopInteractionTraceId_
+         << L" seq=" << desktopInteractionTraceEvents_ << L" tick=" << now
+         << L" event=" << event << L" subject=" << subject
+         << L" msg=0x" << std::hex << message << L" wp=0x" << wp
+         << L" lp=0x" << lp << std::dec
+         << L" render=" << hwnd_ << L" parent=" << parent
+         << L" renderVisible=" << (hwnd_ && IsWindowVisible(hwnd_))
+         << L" parentVisible=" << (parent && IsWindowVisible(parent))
+         << L" prev=" << (hwnd_ ? GetWindow(hwnd_, GW_HWNDPREV) : nullptr)
+         << L" input=" << inputHwnd_ << L" foreground=" << foreground
+         << L" active=" << GetActiveWindow() << L" focus=" << GetFocus()
+         << L" foregroundFocusKnown=" << focusKnown
+         << L" foregroundFocus=" << gui.hwndFocus << L" capture=" << GetCapture()
+         << L" rect=" << rect.left << L"," << rect.top << L"," << rect.right << L"," << rect.bottom
+         << L" desktopVisible=" << customDesktopVisible_ << L" iconsHidden=" << desktopIconsHidden_
+         << L" surface=" << dcompSurface_.Get() << L" commitPending=" << compositionCommitPending_
+         << L" paintActive=" << compositionPaintInProgress_
+         << L" recovery=" << graphicsDeviceRecovery_.Pending()
+         << L" panels=" << desktopBackdropCompositor_.PanelCount();
+    if ((message == WM_WINDOWPOSCHANGING || message == WM_WINDOWPOSCHANGED) && lp)
+    {
+        const auto& pos = *reinterpret_cast<const WINDOWPOS*>(lp);
+        line << L" insertAfter=" << pos.hwndInsertAfter << L" posFlags=0x" << std::hex << pos.flags
+             << std::dec << L" xywh=" << pos.x << L"," << pos.y << L"," << pos.cx << L"," << pos.cy;
+    }
+    WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
+}
+
+void DesktopApp::TraceDesktopWindowMessage(HWND subject, UINT message,
+    WPARAM wp, LPARAM lp, bool afterDispatch)
+{
+    const bool input = message == WM_MOUSEACTIVATE || message == WM_LBUTTONDOWN ||
+        message == WM_LBUTTONDBLCLK || message == WM_RBUTTONDOWN || message == WM_CONTEXTMENU;
+    const bool lifecycle = message == WM_SHOWWINDOW || message == WM_SIZE ||
+        message == WM_DISPLAYCHANGE || message == WM_POWERBROADCAST;
+    const bool state = message == WM_ACTIVATE || message == WM_ACTIVATEAPP ||
+        message == WM_SETFOCUS || message == WM_KILLFOCUS ||
+        message == WM_WINDOWPOSCHANGING || message == WM_WINDOWPOSCHANGED;
+    if (!input && !lifecycle && !state) return;
+    if (!afterDispatch && (input || message == WM_POWERBROADCAST ||
+        (lifecycle && GetTickCount64() > desktopInteractionTraceUntil_)))
+        BeginDesktopInteractionTrace(message == WM_POWERBROADCAST ? L"power-message" : L"window-message");
+    TraceDesktopInteraction(afterDispatch ? L"message-after" : L"message-before",
+        subject, message, wp, lp, lifecycle);
+}
+
+void DesktopApp::TraceDesktopPresentation(const wchar_t* event, HRESULT result,
+    const RECT* dirty)
+{
+    if (GetTickCount64() > desktopInteractionTraceUntil_ ||
+        desktopInteractionTraceFrames_ >= 12)
+        return;
+    ++desktopInteractionTraceFrames_;
+    const RECT rect = dirty ? *dirty : RECT{};
+    wchar_t detail[384]{};
+    swprintf_s(detail,
+        L"DesktopInteraction id=%llu tick=%llu event=%ls sample=%u hr=0x%08X "
+        L"partial=%d dirty=%ld,%ld,%ld,%ld surface=%p pending=%d paintActive=%d recovery=%d",
+        desktopInteractionTraceId_, GetTickCount64(), event,
+        desktopInteractionTraceFrames_, static_cast<unsigned>(result),
+        dirty ? 1 : 0, rect.left, rect.top, rect.right, rect.bottom,
+        dcompSurface_.Get(), compositionCommitPending_ ? 1 : 0,
+        compositionPaintInProgress_ ? 1 : 0, graphicsDeviceRecovery_.Pending() ? 1 : 0);
+    WriteDiagnosticLogEntry(detail, DiagnosticLogLevel::Debug);
+}
 
 LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -17,16 +126,20 @@ LRESULT CALLBACK DesktopApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         app = reinterpret_cast<DesktopApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
 
-    // 只记录低频生命周期消息；逐帧记录 WM_PAINT 会造成同步文件 I/O
-    // 和整份日志扫描。
-    if (msg == WM_NCCREATE || msg == WM_CREATE || msg == WM_SIZE || msg == WM_SHOWWINDOW)
+    if (msg == WM_NCCREATE || msg == WM_CREATE)
     {
         wchar_t buf[128];
         wsprintfW(buf, L"WndProc msg=0x%04X app=%p", msg, app);
         WriteDiagnosticLogEntry(buf);
     }
 
-    if (app) return app->HandleMessage(hwnd, msg, wp, lp);
+    if (app)
+    {
+        app->TraceDesktopWindowMessage(hwnd, msg, wp, lp, false);
+        const LRESULT result = app->HandleMessage(hwnd, msg, wp, lp);
+        app->TraceDesktopWindowMessage(hwnd, msg, wp, lp, true);
+        return result;
+    }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
@@ -148,7 +261,12 @@ LRESULT CALLBACK DesktopApp::InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     }
 
     if (app)
-        return app->HandleInputMessage(hwnd, msg, wp, lp);
+    {
+        app->TraceDesktopWindowMessage(hwnd, msg, wp, lp, false);
+        const LRESULT result = app->HandleInputMessage(hwnd, msg, wp, lp);
+        app->TraceDesktopWindowMessage(hwnd, msg, wp, lp, true);
+        return result;
+    }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
@@ -425,6 +543,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        CancelRenameClick();
         if (widgetEngine_)
         {
             widgetEngine_->ClearHostViewKeyState();
@@ -433,6 +552,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
         ForgetLuaWidgetPanelCapture(hwnd);
         if (msg == WM_CANCELMODE ||
             !IsOwnedPointerCaptureWindow(
@@ -446,6 +566,10 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_TIMER:
         OnTimer(wp);
+        return 0;
+    case kDesktopPassthroughExitMessage:
+        if (desktopPassthroughIndicator_.OwnsWindow(reinterpret_cast<HWND>(wp)))
+            EndDesktopPassthrough();
         return 0;
     case WM_HOTKEY:
         if (settingsWindow_ &&
@@ -469,7 +593,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         if (static_cast<int>(wp) ==
             kDesktopPassthroughHotkeyId)
         {
-            BeginDesktopPassthroughHold();
+            ToggleDesktopPassthrough();
             return 0;
         }
         break;
@@ -486,10 +610,9 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         if (desktopPassthroughHotkeyHwnd_ == hwnd)
         {
-            KillTimer(hwnd, kDesktopPassthroughHoldTimerId);
+            EndDesktopPassthrough(false);
             desktopPassthroughHotkeyHwnd_ = nullptr;
             desktopPassthroughHotkeyRegistered_ = false;
-            desktopPassthroughHoldActive_ = false;
         }
         if (floatingDockEdgeSwipeHwnd_ == hwnd)
         {

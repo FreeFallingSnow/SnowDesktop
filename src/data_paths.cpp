@@ -4,6 +4,8 @@
  */
 
 #include "data_paths.h"
+#include "debug_profile.h"
+#include "desktop_source.h"
 #include "data_path_policy.h"
 #include "deployment_context.h"
 #include "portable_data_migration.h"
@@ -120,14 +122,48 @@ std::wstring GetExecutableDirectoryPath()
     return path;
 }
 
+namespace
+{
+snowdesktop::data_paths::RuntimeDataPathPolicy ResolveActivePolicy(
+    const snowdesktop::deployment::RuntimeDeploymentContext& context,
+    const std::filesystem::path& packageLocalState)
+{
+    if (snowdesktop::debug_profile::Enabled())
+    {
+        snowdesktop::data_paths::RuntimeDataPathPolicy policy;
+        policy.dataRoot = snowdesktop::debug_profile::Current().paths.data;
+        policy.pendingMigrationStateRoot = snowdesktop::debug_profile::Current().paths.root;
+        return policy;
+    }
+    return snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
+        context, packageLocalState, GetExecutableDirectoryPath());
+}
+}
+
+bool InitializeDebugProfile(std::string& error)
+{
+    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
+        snowdesktop::deployment::GetRuntimeDeploymentContext(),
+        snowdesktop::deployment::GetPackageLocalStatePath(), GetExecutableDirectoryPath());
+    return snowdesktop::debug_profile::Initialize(policy.dataRoot,
+        snowdesktop::desktop_source::SystemDesktops(), error);
+}
+
+std::wstring GetDataStateRootPath()
+{
+    if (snowdesktop::debug_profile::Enabled())
+        return snowdesktop::debug_profile::Current().paths.root.wstring();
+    const auto packaged = snowdesktop::deployment::GetPackageLocalStatePath();
+    return packaged.empty() ? std::filesystem::path(GetDataDirectoryPath()).parent_path().wstring() : packaged;
+}
+
 std::wstring GetDataDirectoryPath()
 {
     const auto& context =
         snowdesktop::deployment::GetRuntimeDeploymentContext();
     const std::filesystem::path packageLocalState =
         snowdesktop::deployment::GetPackageLocalStatePath();
-    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
-        context, packageLocalState, GetExecutableDirectoryPath());
+    const auto policy = ResolveActivePolicy(context, packageLocalState);
     const std::wstring dataDir = policy.dataRoot.wstring();
     EnsureDirectoryLocal(dataDir);
     return dataDir;
@@ -142,8 +178,7 @@ std::wstring GetDataFilePath(const wchar_t* filename)
         snowdesktop::deployment::GetPackageLocalStatePath();
     const auto& context =
         snowdesktop::deployment::GetRuntimeDeploymentContext();
-    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
-        context, packageLocalState, GetExecutableDirectoryPath());
+    const auto policy = ResolveActivePolicy(context, packageLocalState);
     const std::wstring dataDir = policy.dataRoot.wstring();
     EnsureDirectoryLocal(dataDir);
     const std::wstring currentPath = JoinPathLocal(dataDir, filename);
@@ -165,8 +200,7 @@ std::wstring GetDataSubdirectoryPath(const wchar_t* dirname)
         snowdesktop::deployment::GetPackageLocalStatePath();
     const auto& context =
         snowdesktop::deployment::GetRuntimeDeploymentContext();
-    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
-        context, packageLocalState, GetExecutableDirectoryPath());
+    const auto policy = ResolveActivePolicy(context, packageLocalState);
     const std::wstring dataDir = policy.dataRoot.wstring();
     EnsureDirectoryLocal(dataDir);
     const std::wstring currentPath = JoinPathLocal(dataDir, dirname);
@@ -186,8 +220,7 @@ void MigrateLegacyDataPaths()
         snowdesktop::deployment::GetPackageLocalStatePath();
     const auto& context =
         snowdesktop::deployment::GetRuntimeDeploymentContext();
-    const auto policy = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(
-        context, packageLocalState, GetExecutableDirectoryPath());
+    const auto policy = ResolveActivePolicy(context, packageLocalState);
     if (policy.pendingMigrationStateRoot)
     {
         const auto portableMigration = snowdesktop::migration::ApplyPending(

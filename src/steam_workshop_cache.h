@@ -27,6 +27,9 @@ struct SteamWorkshopLocalCache
 };
 
 std::string ReadSteamActiveUserAccountId();
+// Return every registered library plus the Steam installation root, deduplicated.
+// appId only prioritizes matching apps maps; missing registration never excludes
+// a library from Workshop cache discovery or directory watching.
 std::vector<std::filesystem::path> DiscoverSteamLibraryRoots(
     std::uint32_t appId, std::string& error);
 SteamWorkshopLocalCache ReadSteamWorkshopLocalCache(

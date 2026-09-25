@@ -5,6 +5,21 @@
 
 namespace snowdesktop::external_drop_content
 {
+ClipboardFileSource ProbeClipboardFileSource(IDataObject* source)
+{
+    if (!source) return ClipboardFileSource::None;
+    const auto offers = [source](CLIPFORMAT id) {
+        FORMATETC format{id, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        return id != 0 && source->QueryGetData(&format) == S_OK;
+    };
+    if (offers(CF_HDROP)) return ClipboardFileSource::FilePaths;
+    for (const auto* name : {L"Shell IDList Array", L"FileGroupDescriptorW",
+                            L"FileGroupDescriptor"})
+        if (offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name))))
+            return ClipboardFileSource::ShellObjects;
+    return ClipboardFileSource::None;
+}
+
 FileSource ProbeFileSource(IDataObject* source)
 {
     FileSource result;

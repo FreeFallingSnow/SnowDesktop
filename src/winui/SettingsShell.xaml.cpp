@@ -176,10 +176,17 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.general.advancedFeatures.register", L"Register through Steam"},
     LocalizedFallback{"settings.general.advancedFeatures.unlock", L"Unlock"},
     LocalizedFallback{"settings.general.advancedFeatures.unlockRequired", L"Please unlock advanced features before enabling them."},
-    LocalizedFallback{"settings.general.advancedFeatures.reminder", L"Start Steam and sign in to an account that owns SnowDesktop, then register manually."},
+    LocalizedFallback{"settings.general.advancedFeatures.reminder", L"Start Steam, sign in online to an account that owns SnowDesktop, then register."},
     LocalizedFallback{"settings.general.advancedFeatures.notOwned", L"The current Steam account does not own SnowDesktop."},
-    LocalizedFallback{"settings.general.advancedFeatures.failed", L"Steam registration failed. Start Steam and try again."},
-    LocalizedFallback{"settings.general.advancedFeatures.storageFailed", L"Steam ownership was verified, but the protected unlock state could not be saved."},
+    LocalizedFallback{"workshop_manager.steam_unavailable_hint", L"Cannot connect to the Steam client. Start Steam; if it is already open, make sure both apps use the same Windows user and privilege level, then retry."},
+    LocalizedFallback{"workshop_manager.steam_offline_hint", L"Steam is offline or the account is not signed in. Restore the connection and sign in to Steam, then retry once the client no longer shows No Connection."},
+    LocalizedFallback{"workshop_manager.steam_outdated_hint", L"The Steam client version is incompatible and lacks a required interface. Check for client updates in the Steam menu, then fully exit and reopen Steam. Launch SnowDesktop from your library and retry. If it still fails, share the client version and build date from Help → About Steam, along with the error details below."},
+    LocalizedFallback{"workshop_manager.steam_interface_hint", L"Steam interfaces are unavailable. Update and restart Steam; if the problem persists, verify the integrity of SnowDesktop files."},
+    LocalizedFallback{"workshop_manager.steam_app_mismatch_hint", L"The Steam app identity does not match. Launch SnowDesktop from your Steam library and verify its file integrity."},
+    LocalizedFallback{"workshop_manager.steam_bridge_unavailable_hint", L"This Steam Bridge does not support Steam features. Verify the integrity of SnowDesktop files in Steam."},
+    LocalizedFallback{"workshop_manager.steam_initialization_hint", L"Steam initialization failed. Restart Steam and launch SnowDesktop from your Steam library; if it still fails, share the error details below."},
+    LocalizedFallback{"settings.general.advancedFeatures.failed", L"Steam verification could not be completed. Retry; if it still fails, verify the integrity of SnowDesktop files and share the error details."},
+    LocalizedFallback{"settings.general.advancedFeatures.storageFailed", L"Steam ownership was verified, but the unlock state could not be saved. Check data folder write permissions and available disk space, then retry."},
     LocalizedFallback{"settings.general.language", L"Language"},
     LocalizedFallback{"settings.general.language.description", L"Choose the language used by SnowDesktop."},
     LocalizedFallback{"settings.general.hotkeys", L"Keyboard shortcuts"},
@@ -344,6 +351,11 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
                 localize, cardStyle());
         dockPage_->SetActions(dockPageActions_);
     };
+    const auto ensureCalendar = [&]() {
+        if (calendarPage_) return;
+        calendarPage_ = std::make_unique<snowdesktop::winui::CalendarPagePresenter>(localize, cardStyle());
+        calendarPage_->SetActions(calendarPageActions_);
+    };
     const auto ensureAnimation = [&]() {
         if (animationPage_) return;
         animationPage_ = std::make_unique<snowdesktop::winui::AnimationPerformancePagePresenter>(
@@ -401,6 +413,17 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::General:
     case SettingsPage::Desktop:
         ensureGeneral();
+        break;
+    case SettingsPage::ContextMenu:
+        ensurePersonalization();
+        if (!contextMenuPage_)
+        {
+            contextMenuPage_ = std::make_unique<snowdesktop::winui::ContextMenuPagePresenter>(localize, cardStyle());
+            contextMenuPage_->SetActions(personalizationPageActions_);
+        }
+        break;
+    case SettingsPage::Calendar:
+        ensureCalendar();
         break;
     case SettingsPage::AnimationPerformance:
         ensureAnimation();
@@ -529,6 +552,10 @@ void SettingsShell::Close() noexcept
     searchRequested_ = {};
     cancelOperation_ = {};
     actualThemeChanged_ = {};
+    if (calendarPage_) calendarPage_->Close();
+    calendarPage_.reset();
+    if (contextMenuPage_) contextMenuPage_->Close();
+    contextMenuPage_.reset();
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
@@ -542,6 +569,7 @@ void SettingsShell::Close() noexcept
     widgetsPage_.reset();
     backupDataPage_.reset();
     generalPageActions_ = {};
+    calendarPageActions_ = {};
     personalizationPageActions_ = {};
     desktopPageActions_ = {};
     dockPageActions_ = {};
@@ -629,6 +657,10 @@ void SettingsShell::ReleaseSessionResources() noexcept
     }
 
     activeDialog_ = nullptr;
+    if (calendarPage_) calendarPage_->Close();
+    calendarPage_.reset();
+    if (contextMenuPage_) contextMenuPage_->Close();
+    contextMenuPage_.reset();
     generalPage_.reset();
     personalizationPage_.reset();
     desktopPage_.reset();
@@ -659,6 +691,8 @@ void SettingsShell::RefreshLocalizedText()
 
     GeneralItem().Content(winrt::box_value(Localize("app.settings.general")));
     AnimationItem().Content(winrt::box_value(Localize("settings.nav.animation")));
+    CalendarItem().Content(winrt::box_value(Localize("settings.calendar.page")));
+    ContextMenuItem().Content(winrt::box_value(Localize("settings.contextMenu.page")));
     PersonalizationItem().Content(
         winrt::box_value(Localize("app.settings.appearance")));
     AppearanceThemeItem().Content(
@@ -706,6 +740,8 @@ void SettingsShell::RefreshLocalizedText()
 
     if (generalPage_)
         generalPage_->RefreshLocalizedText();
+    if (calendarPage_) calendarPage_->RefreshLocalizedText();
+    if (contextMenuPage_) contextMenuPage_->RefreshLocalizedText();
     if (personalizationPage_)
         personalizationPage_->RefreshLocalizedText();
     if (desktopPage_)
@@ -858,6 +894,12 @@ void SettingsShell::SetCancelOperationCallback(
     cancelOperation_ = std::move(callback);
 }
 
+void SettingsShell::SetCalendarPageActions(snowdesktop::winui::CalendarPageActions actions)
+{
+    calendarPageActions_ = std::move(actions);
+    if (calendarPage_) calendarPage_->SetActions(calendarPageActions_);
+}
+
 void SettingsShell::SetGeneralPageActions(
     snowdesktop::winui::GeneralPageActions actions)
 {
@@ -872,6 +914,7 @@ void SettingsShell::SetPersonalizationPageActions(
     personalizationPageActions_ = std::move(actions);
     if (personalizationPage_)
         personalizationPage_->SetActions(personalizationPageActions_);
+    if (contextMenuPage_) contextMenuPage_->SetActions(personalizationPageActions_);
 }
 
 void SettingsShell::SetDesktopPageActions(
@@ -1183,6 +1226,8 @@ void SettingsShell::SuspendInteraction() noexcept
             dockPage_->Deactivate();
         if (animationPage_)
             animationPage_->Deactivate();
+        if (calendarPage_) calendarPage_->Deactivate();
+        if (contextMenuPage_) contextMenuPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
         if (pageLayoutPage_)
@@ -1235,6 +1280,8 @@ bool SettingsShell::ApplySnapshot(
             EnsurePresentersForPage(navigation_.Route().page);
         if (generalPage_)
             generalPage_->ApplySnapshot(snapshot);
+        if (calendarPage_) calendarPage_->ApplySnapshot(snapshot);
+        if (contextMenuPage_) contextMenuPage_->ApplySnapshot(snapshot);
         if (personalizationPage_)
             personalizationPage_->ApplySnapshot(snapshot);
         if (desktopPage_)
@@ -1709,7 +1756,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::Desktop, SettingsPage::DesktopPages,
                      SettingsPage::DesktopCategories,
                      SettingsPage::Dock, SettingsPage::Taskbar,
-                     SettingsPage::Widgets,
+                     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
                      SettingsPage::BackupAndData, SettingsPage::About,
                      SettingsPage::DeveloperTools, SettingsPage::Debug})
             {
@@ -1963,6 +2010,8 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/dock.svg", L"\xEBC8"},
         IconDescriptor{TaskbarItem(),
             L"ms-appx:///Assets/Settings/Icons/taskbar.svg", L"\xEBC8"},
+        IconDescriptor{ContextMenuItem(), L"ms-appx:///Assets/Settings/Icons/context-menu.svg", L"\xE700"},
+        IconDescriptor{CalendarItem(), L"ms-appx:///Assets/Settings/Icons/calendar.svg", L"\xE787"},
         IconDescriptor{WidgetsItem(),
             L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
         IconDescriptor{BackupItem(),
@@ -2083,7 +2132,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     const auto usesPersonalizationPresenter = [](SettingsPage page) {
         return page == SettingsPage::Personalization ||
             page == SettingsPage::AppearanceTheme ||
-            page == SettingsPage::AppearanceWidgets;
+            page == SettingsPage::AppearanceWidgets || page == SettingsPage::ContextMenu;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
         return page == SettingsPage::AppearanceWidgets ||
@@ -2119,6 +2168,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         renderedPageRoute_->page == SettingsPage::AnimationPerformance &&
         pageRoute.page != SettingsPage::AnimationPerformance)
         animationPage_->Deactivate();
+    if (calendarPage_ && pageRoute.page != SettingsPage::Calendar) calendarPage_->Deactivate();
+    if (contextMenuPage_ && pageRoute.page != SettingsPage::ContextMenu) contextMenuPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
             renderedPageRoute_->page == SettingsPage::About ||
@@ -2193,6 +2244,28 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     };
     switch (navigation_.Route().page)
     {
+    case SettingsPage::ContextMenu:
+        if (personalizationPage_)
+        {
+            PageCards().Children().Append(personalizationPage_->MenuContent());
+            registerPersonalizationFocus({"personalization.contextMenu"});
+            personalizationPage_->Activate();
+        }
+        if (contextMenuPage_)
+        {
+            PageCards().Children().Append(contextMenuPage_->Content());
+            contextMenuPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) { RegisterFocusTarget(std::move(id), element); });
+            contextMenuPage_->Activate();
+        }
+        break;
+    case SettingsPage::Calendar:
+        if (calendarPage_)
+        {
+            PageCards().Children().Append(calendarPage_->Content());
+            calendarPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) { RegisterFocusTarget(std::move(id), element); });
+            calendarPage_->Activate();
+        }
+        break;
     case SettingsPage::AnimationPerformance:
         if (animationPage_)
         {
@@ -2259,7 +2332,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.cornerRadius",
                 "personalization.barHeight",
+                "personalization.scrollableTitleBarOnTop",
+                "personalization.popupHoverOpen",
+                "personalization.popupHoverDelayMs",
                 "personalization.luaWidgetRowHeight",
+                "personalization.showGroupTabCounts",
                 "desktop.categoryLayout",
                 "desktop.tabHeight",
                 "personalization.tabHeight"});
@@ -2393,7 +2470,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.monitor", "dock.thickness",
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
                 "dock.floatingEdgeSwipeBlockFullscreen",
-                "dock.showWindowsButton", "dock.showFrequentItems",
+                "dock.suppressSystemTaskbar", "dock.showWindowsButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap",
                 "dock.showOnlyWhenSummoned"});
@@ -2407,7 +2484,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             dockPage_->ActivateTaskbar();
             PageCards().Children().Append(dockPage_->TaskbarContent());
             registerDockFocus({
-                "taskbar.autoHide", "taskbar.alignment",
+                "taskbar.systemSettings", "taskbar.autoHide", "taskbar.alignment",
                 "taskbar.systemTheme", "taskbar.theme",
                 "taskbar.contentTheme", "taskbar.backgroundColor",
                 "taskbar.borderColor", "taskbar.backgroundOpacity",
@@ -2516,7 +2593,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(homeAboutPage_->DebugContent());
             for (const std::string_view focusId : {
-                     "debug.demo_mode", "debug.animation",
+                     "debug.profile", "debug.desktop", "debug.clearProfile",
+                     "debug.initialization", "debug.resetUnlock", "debug.demo_mode", "debug.animation",
                      "debug.crash"})
             {
                 RegisterFocusTarget(std::string(focusId),
@@ -2791,6 +2869,8 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
         return Localize("settings.nav.pages");
     case SettingsPage::DesktopCategories:
         return Localize("settings.nav.categories");
+    case SettingsPage::ContextMenu: return Localize("settings.contextMenu.page");
+    case SettingsPage::Calendar: return Localize("settings.calendar.page");
     case SettingsPage::AnimationPerformance: return Localize("settings.nav.animation");
     case SettingsPage::Dock: return Localize("settings.nav.dock");
     case SettingsPage::Taskbar: return Localize("settings.nav.taskbar");
@@ -2811,6 +2891,8 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
 {
     switch (page)
     {
+    case SettingsPage::ContextMenu: return Localize("settings.contextMenu.description");
+    case SettingsPage::Calendar: return Localize("settings.calendar.pageDescription");
     case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
     case SettingsPage::Home: return Localize("settings.page.home.description");
     case SettingsPage::General:
@@ -2859,6 +2941,8 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     {
     case SettingsPage::Home: return GeneralItem();
     case SettingsPage::General: return GeneralItem();
+    case SettingsPage::ContextMenu: return ContextMenuItem();
+    case SettingsPage::Calendar: return CalendarItem();
     case SettingsPage::AnimationPerformance: return AnimationItem();
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme: return AppearanceThemeItem();

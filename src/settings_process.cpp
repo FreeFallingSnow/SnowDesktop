@@ -99,8 +99,10 @@ bool SettingsProcess::Running() const noexcept
 DWORD SettingsProcess::ProcessId() const noexcept { return impl_->id; }
 std::string ExecutableIdentity() { return FileIdentity(ExecutablePath()); }
 
-void SettingsProcess::Start(Channel& channel)
+void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
 {
+    if (childCommand != L"--settings-ui" && childCommand != L"--shell-menu-helper")
+        throw ProtocolError("invalid private child mode");
     if (Running()) throw ProtocolError("settings process is already running");
     impl_->Stop();
     channel.Close();
@@ -134,18 +136,38 @@ void SettingsProcess::Start(Channel& channel)
         LPPROC_THREAD_ATTRIBUTE_LIST value;
         ~AttributeGuard() { DeleteProcThreadAttributeList(value); }
     } attributeGuard{attributes};
-    HANDLE inherited[] = {childRead.value, childWrite.value, inheritedParent.value};
-    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-        inherited, sizeof(inherited), nullptr, nullptr))
+    std::vector<HANDLE> inherited{childRead.value, childWrite.value, inheritedParent.value};
+    Handle nullStream;
+    if (childCommand == L"--shell-menu-helper")
+    {
+        // Extensions may retain or pass standard handles to another process.
+        // The helper talks through its private IPC only; never lend it the
+        // caller's console or redirected output pipe (which can hold CTest open).
+        nullStream.value =
+            CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
+                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (nullStream.value == INVALID_HANDLE_VALUE)
+            throw ProtocolError("cannot isolate Shell helper standard streams");
+        inherited.push_back(nullStream.value);
+    }
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited.data(),
+                                   inherited.size() * sizeof(HANDLE), nullptr, nullptr))
         throw ProtocolError("cannot set settings handle allowlist");
     const auto executable = ExecutablePath();
-    std::wstring command = L"\"" + executable + L"\" --settings-ui " +
+    std::wstring command = L"\"" + executable + L"\" " + std::wstring(childCommand) + L" " +
         std::to_wstring(reinterpret_cast<std::uintptr_t>(childRead.value)) + L" " +
         std::to_wstring(reinterpret_cast<std::uintptr_t>(childWrite.value)) + L" " +
         std::to_wstring(reinterpret_cast<std::uintptr_t>(inheritedParent.value));
     STARTUPINFOEXW startup{};
     startup.StartupInfo.cb = sizeof(startup);
     startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
+    if (nullStream.value)
+    {
+        startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+        startup.StartupInfo.hStdInput = nullStream.value;
+        startup.StartupInfo.hStdOutput = nullStream.value;
+        startup.StartupInfo.hStdError = nullStream.value;
+    }
     startup.StartupInfo.wShowWindow = SW_HIDE;
     startup.lpAttributeList = attributes;
     PROCESS_INFORMATION process{};
@@ -175,17 +197,17 @@ void SettingsProcess::Start(Channel& channel)
         throw ProtocolError("cannot resume settings process");
     }
 }
-bool IsSettingsProcessCommand()
+bool IsSettingsProcessCommand(std::wstring_view command)
 {
     const Arguments args;
     for (int i = 1; args.values && i < args.count; ++i)
-        if (std::wstring_view(args.values[i]) == L"--settings-ui") return true;
+        if (std::wstring_view(args.values[i]) == command) return true;
     return false;
 }
-void OpenInheritedSettingsChannel(Channel& channel)
+void OpenInheritedSettingsChannel(Channel& channel, std::wstring_view command)
 {
     const Arguments args;
-    if (!args.values || args.count != 5 || std::wstring_view(args.values[1]) != L"--settings-ui")
+    if (!args.values || args.count != 5 || std::wstring_view(args.values[1]) != command)
         throw ProtocolError("invalid settings process command");
     // Validate all handles before adopting any: repeated handles are rejected
     // so malformed input cannot close an unrelated object twice.

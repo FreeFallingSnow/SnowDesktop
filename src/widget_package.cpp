@@ -554,6 +554,7 @@ std::string ManifestJson(const PackageManifest& manifest)
         << "  \"version\": \"" << JsonEscape(manifest.version) << "\",\n"
         << "  \"apiVersion\": " << manifest.apiVersion << ",\n"
         << "  \"dataVersion\": " << manifest.dataVersion << ",\n"
+        << "  \"confirmRemoval\": " << (manifest.confirmRemoval ? "true" : "false") << ",\n"
         << "  \"entry\": \"" << JsonEscape(manifest.entry) << "\",\n"
         << "  \"minHostVersion\": \"" << JsonEscape(manifest.minHostVersion) << "\",\n"
         << "  \"name\": \"" << JsonEscape(manifest.name) << "\",\n"
@@ -1446,6 +1447,14 @@ bool WidgetPackageValidator::ReadManifest(
     ReadString(root, "version", manifest.version);
     ReadInteger(root, "apiVersion", manifest.apiVersion);
     ReadInteger(root, "dataVersion", manifest.dataVersion);
+    if (const JsonValue* confirmation = root.Find("confirmRemoval"))
+    {
+        if (confirmation->IsBoolean())
+            manifest.confirmRemoval = confirmation->boolean;
+        else
+            report.Add(ValidationSeverity::Error, "manifest.confirmRemoval",
+                manifestPath, "confirmRemoval must be a boolean");
+    }
     ReadString(root, "entry", manifest.entry);
     ReadString(root, "minHostVersion", manifest.minHostVersion);
     ReadString(root, "name", manifest.name);
@@ -1863,6 +1872,13 @@ bool WidgetPackageValidator::ReadManifest(
                 "duplicate network domain: " + domain);
     }
     std::set<std::string> uniqueFeatures;
+    if (manifest.confirmRemoval &&
+        std::find(manifest.requiredFeatures.begin(),
+            manifest.requiredFeatures.end(), "widget.confirmRemoval") ==
+            manifest.requiredFeatures.end())
+        report.Add(ValidationSeverity::Error, "manifest.confirmRemovalFeature",
+            manifestPath,
+            "confirmRemoval requires widget.confirmRemoval in requiredFeatures");
     for (const auto& feature : manifest.requiredFeatures)
     {
         if (!IsFeatureId(feature))
@@ -2388,6 +2404,15 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
     return AtomicWrite(paths_.registry, out.str(), error);
 }
 
+bool WidgetPackageManager::RefreshCatalog(std::string& error)
+{
+    error.clear();
+    auto refreshed = *this;
+    if (!refreshed.Refresh(error)) return false;
+    *this = std::move(refreshed);
+    return true;
+}
+
 bool WidgetPackageManager::Refresh(std::string& error)
 {
     const auto previousKnown = knownDevelopmentIds_;
@@ -2621,6 +2646,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
     scanRoot(paths_.installed, false, false);
     scanRoot(paths_.development, false, true);
 
+    if (!error.empty()) return false;
     if (knownDevelopmentIds_ != previousKnown && !SaveRegistry(error))
     {
         knownDevelopmentIds_ = previousKnown;
@@ -4008,6 +4034,9 @@ bool StaticCatalogSource::ReadCatalog(std::vector<PackageDetails>& entries,
         ReadInteger(value, "schemaVersion", detail.manifest.schemaVersion);
         ReadInteger(value, "apiVersion", detail.manifest.apiVersion);
         ReadInteger(value, "dataVersion", detail.manifest.dataVersion);
+        if (const auto* confirmation = value.Find("confirmRemoval");
+            confirmation && confirmation->IsBoolean())
+            detail.manifest.confirmRemoval = confirmation->boolean;
         bool arraysValid = true;
         detail.manifest.permissions =
             ReadStringArray(value, "permissions", arraysValid);
@@ -4260,6 +4289,7 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         int schemaVersion = 0;
         int apiVersion = 0;
         int dataVersion = 0;
+        bool confirmRemoval = false;
         std::vector<std::string> permissions;
         std::vector<std::string> optionalPermissions;
         std::vector<std::string> networkDomains;
@@ -4297,6 +4327,9 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
                 ReadInteger(value, "schemaVersion", record.schemaVersion);
                 ReadInteger(value, "apiVersion", record.apiVersion);
                 ReadInteger(value, "dataVersion", record.dataVersion);
+                if (const auto* confirmation = value.Find("confirmRemoval");
+                    confirmation && confirmation->IsBoolean())
+                    record.confirmRemoval = confirmation->boolean;
                 bool arraysValid = true;
                 record.permissions =
                     ReadStringArray(value, "permissions", arraysValid);
@@ -4345,6 +4378,7 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         publishedManifest.license, publishedManifest.minHostVersion,
         publishedManifest.schemaVersion,
         publishedManifest.apiVersion, publishedManifest.dataVersion,
+        publishedManifest.confirmRemoval,
         publishedManifest.permissions,
         publishedManifest.optionalPermissions,
         publishedManifest.networkDomains,
@@ -4377,6 +4411,7 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
             << "\",\"schemaVersion\":" << record.schemaVersion
             << ",\"apiVersion\":" << record.apiVersion
             << ",\"dataVersion\":" << record.dataVersion
+            << ",\"confirmRemoval\":" << (record.confirmRemoval ? "true" : "false")
             << ",\"permissions\":[";
         for (std::size_t permission = 0;
             permission < record.permissions.size(); ++permission)

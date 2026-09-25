@@ -916,6 +916,8 @@ void DesktopApp::SetIconBeautifySettings(
     d2dIconCache_.clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
+    dockFolderBitmapCache_.Retain([](const auto&) { return false; });
+    dockIconWork_.Cancel(L"dock-folder:");
     quickNavSysIconCache_.clear();
     quickNavAppIconCache_.clear();
     privacyFileIconBitmap_.Reset();
@@ -1077,12 +1079,12 @@ const GridPage* DesktopApp::GetFirstPageGridPage() const
 bool DesktopApp::PageHasContent(const std::wstring& pageId) const
 {
     if (pageId.empty() || pageId == kDockPageId) return false;
-    for (const auto& item : items_)
-        if (!item.name.empty() && item.gridCell.pageId == pageId) return true;
-    for (const auto& w : widgets_)
-        if (w.gridCell.pageId == pageId &&
-            !IsGroupedWidget(w)) return true;
-    return false;
+    return snowdesktop::page_navigation_rules::HasContent(
+        pageId, items_, widgets_,
+        [this](const DesktopItem& item) { return IsItemInAnyWidget(item); },
+        [this](const DesktopWidget& widget) {
+            return IsGroupedWidget(widget) || IsDockExclusiveWidgetId(widget.id);
+        });
 }
 
 bool DesktopApp::RemoveRedundantGuideWidgets()
@@ -1367,11 +1369,12 @@ void DesktopApp::NormalizePageIds()
  */
 void DesktopApp::PruneEmptyOverflowPages()
 {
-    snowdesktop::page_navigation_rules::PruneEmptyPages(
+    RefreshCollectedKeysCache();
+    pageOffset_ = snowdesktop::page_navigation_rules::PruneEmptyPages(
         savedPageIds_, savedPageColumns_, savedPageRows_, gridPages_.size(),
         desktopItemsReady_, [this](const std::wstring& pageId) {
             return PageHasContent(pageId);
-        });
+        }, pageOffset_);
 }
 
 /**

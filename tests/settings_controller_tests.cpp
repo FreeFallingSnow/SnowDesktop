@@ -269,7 +269,7 @@ void TestRoutes()
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.showCounts"));
     Check(legacyAppearance.page == SettingsPage::AppearanceTheme &&
-            legacyTheme.page == SettingsPage::AppearanceTheme &&
+            legacyTheme.page == SettingsPage::ContextMenu &&
             legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
             edgeHighlight.page == SettingsPage::AppearanceTheme &&
             legacyTabHeight.page == SettingsPage::AppearanceWidgets &&
@@ -277,6 +277,30 @@ void TestRoutes()
             legacyCounts.page == SettingsPage::DesktopCategories &&
             legacyCounts.focusId == "desktop.categoryCounts",
         "legacy Personalization routes resolve to their owned Appearance or Categories leaf");
+    const auto groupCounts = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.showGroupTabCounts"));
+    Check(groupCounts.page == SettingsPage::AppearanceWidgets &&
+            groupCounts.focusId == "personalization.showGroupTabCounts",
+        "group count links reach Widgets & layout without redirecting to desktop categories");
+    const auto popupHover = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.popupHoverOpen"));
+    Check(popupHover.page == SettingsPage::AppearanceWidgets &&
+            popupHover.focusId == "personalization.popupHoverOpen",
+        "hover popup search and deep links reach widget layout settings");
+    const auto popupHoverDelay = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.popupHoverDelayMs"));
+    Check(popupHoverDelay.page == SettingsPage::AppearanceWidgets &&
+            popupHoverDelay.focusId == "personalization.popupHoverDelayMs",
+        "hover delay search reaches the same widget layout section as its switch");
+    const auto titleBarPosition = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.scrollableTitleBarOnTop"));
+    Check(titleBarPosition.page == SettingsPage::AppearanceWidgets &&
+            titleBarPosition.focusId == "personalization.scrollableTitleBarOnTop",
+        "title bar position search and deep links reach the global widget layout settings");
 
     const SettingsRoute desktopIcons = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
@@ -293,11 +317,11 @@ void TestRoutes()
     const SettingsRoute legacyCategoryLayout = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::DesktopCategories, "desktop.categoryLayout"));
-    for (const auto page : {SettingsPage::Desktop, SettingsPage::AppearanceDesktopIcons,
+    for (const auto sourcePage : {SettingsPage::Desktop, SettingsPage::AppearanceDesktopIcons,
              SettingsPage::AppearanceWidgets})
         for (const auto focus : {"desktop.spacing", "desktop.iconSpacing"})
         {
-            const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(page, focus));
+            const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(sourcePage, focus));
             Check(spacing.page == SettingsPage::AppearanceWidgets && spacing.focusId == focus,
                 "layout spacing links reach Widgets & layout while retaining their focus target");
         }

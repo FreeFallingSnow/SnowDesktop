@@ -254,6 +254,13 @@ int main(int argc, char** argv)
 
     Check(general.find("ApplyAutoStartEnabled") == std::string_view::npos,
         "General JSON commits never mutate the Windows auto-start registration");
+    const auto explicitAutoStart = Between(source,
+        "DesktopApp::ApplyAutoStartEnabled(",
+        "DesktopApp::OpenStoreUpdates()");
+    Check(!explicitAutoStart.empty() &&
+            explicitAutoStart.find("QueryAutoStartState()") == std::string_view::npos &&
+            explicitAutoStart.find("ReconcileAutoStart(") == std::string_view::npos,
+        "explicit startup actions never invoke automatic legacy migration, including error refresh");
     Check(controllerHeader.find("SetAutoStartEnabled") !=
                 std::string::npos &&
             controllerHeader.find("OpenStartupAppsSettings") ==

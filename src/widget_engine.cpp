@@ -1,3 +1,4 @@
+#include "background_work.h"
 /**
  * @file widget_engine.cpp
  * @brief WidgetEngine 类的实现，管理 Lua 小部件的完整生命周期
@@ -11,6 +12,7 @@
  */
 
 #include "widget_engine.h"
+#include "widget_menu_catalogue.h"
 #include "widget_filesystem_drop.h"
 #include "widget_button_fill.h"
 #include "widget_date_picker_lua.h"
@@ -614,116 +616,41 @@ static bool EndsWithLastError(const std::string& key)
 class AsyncShellIconLoader
 {
 public:
-    struct Result
-    {
-        std::wstring path;
-        HBITMAP bitmap = nullptr;
-    };
-
+    struct Result { std::wstring path; HBITMAP bitmap = nullptr; };
     using ReadyCallback = std::function<void(const std::wstring&)>;
-
-    explicit AsyncShellIconLoader(ReadyCallback readyCallback)
-        : readyCallback_(std::move(readyCallback)),
-          worker_([this](std::stop_token stopToken) {
-              Run(stopToken);
-          })
-    {
-    }
-
+    explicit AsyncShellIconLoader(ReadyCallback readyCallback) : ready_(std::move(readyCallback)) {}
     ~AsyncShellIconLoader()
     {
-        worker_.request_stop();
-        condition_.notify_all();
-        if (worker_.joinable())
-            worker_.join();
-        for (auto& result : completed_)
-            if (result.bitmap)
-                DeleteObject(result.bitmap);
+        work_.Stop();
+        for (auto& result : completed_) if (result.bitmap) DeleteObject(result.bitmap);
     }
-
     void Request(const std::wstring& path, const std::wstring& widgetId)
     {
         if (path.empty()) return;
-        {
-            std::scoped_lock lock(mutex_);
-            if (pending_.contains(path) || requests_.size() >= 128)
-                return;
-            pending_.insert(path);
-            requests_.push_back({ path, widgetId });
-        }
-        condition_.notify_one();
-    }
-
-    std::vector<Result> Drain()
-    {
-        std::vector<Result> results;
-        std::scoped_lock lock(mutex_);
-        results.reserve(completed_.size());
-        while (!completed_.empty())
-        {
-            pending_.erase(completed_.front().path);
-            results.push_back(std::move(completed_.front()));
-            completed_.pop_front();
-        }
-        return results;
-    }
-
-private:
-    struct RequestEntry
-    {
-        std::wstring path;
-        std::wstring widgetId;
-    };
-
-    void Run(std::stop_token stopToken)
-    {
-        const HRESULT comResult = CoInitializeEx(
-            nullptr, COINIT_APARTMENTTHREADED);
-        while (!stopToken.stop_requested())
-        {
-            RequestEntry request;
-            {
-                std::unique_lock lock(mutex_);
-                condition_.wait(lock, [&] {
-                    return stopToken.stop_requested() ||
-                        !requests_.empty();
-                });
-                if (stopToken.stop_requested())
-                    break;
-                request = std::move(requests_.back());
-                requests_.pop_back();
-            }
-
-            HBITMAP bitmap = nullptr;
+        work_.Submit(path, [path] {
+            auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (SUCCEEDED(SHParseDisplayName(
-                request.path.c_str(), nullptr, &pidl, 0, nullptr)) &&
-                pidl)
+            if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl)
             {
-                SIZE bitmapSize{};
-                bitmap = GetHighResolutionShellIconBitmap(
-                    pidl, 0, bitmapSize);
+                result->bitmap = GetHighResolutionShellIconBitmap(pidl, -1, result->size);
                 CoTaskMemFree(pidl);
             }
-
-            {
-                std::scoped_lock lock(mutex_);
-                completed_.push_back({ request.path, bitmap });
-            }
-            if (readyCallback_)
-                readyCallback_(request.widgetId);
-        }
-        if (SUCCEEDED(comResult))
-            CoUninitialize();
+            return result;
+        }, [this, path, widgetId](auto result) {
+            completed_.push_back({path, result ? std::exchange(result->bitmap, nullptr) : nullptr});
+            if (ready_) ready_(widgetId); // UI only; never inspect widgets on the worker.
+        }, nullptr, 0);
     }
-
-    ReadyCallback readyCallback_;
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    std::deque<RequestEntry> requests_;
-    std::deque<Result> completed_;
-    std::unordered_set<std::wstring> pending_;
-    std::jthread worker_;
+    void Pump() { work_.Drain(); }
+    std::vector<Result> Drain()
+    {
+        Pump();
+        return std::exchange(completed_, {});
+    }
+private:
+    snowdesktop::BackgroundWork work_{2, 128};
+    ReadyCallback ready_;
+    std::vector<Result> completed_;
 };
 
 struct PrivateFontResource
@@ -7704,7 +7631,8 @@ static int lua_UiTextInput(lua_State* L)
     };
 
     const std::string placeholder = stringOption("placeholder", "");
-    const float fontSize = std::clamp(static_cast<float>(numberOption("fontSize", 15.0)), 9.0f, 96.0f);
+    const float fontSize = static_cast<float>(
+        std::clamp(numberOption("fontSize", 15.0), 9.0, 96.0));
     const int textColor = integerOption("textColor", 0xFFFFFF);
     const int placeholderColor = integerOption("placeholderColor", 0x94A3B8);
     const int backgroundColor = integerOption("backgroundColor", 0xFFFFFF);
@@ -7911,8 +7839,8 @@ static int lua_UiTextArea(lua_State* L)
     };
 
     const std::string placeholder = stringOption("placeholder", "");
-    const float fontSize = std::clamp(static_cast<float>(
-        numberOption("fontSize", 15.0)), 9.0f, 96.0f);
+    const float fontSize = static_cast<float>(
+        std::clamp(numberOption("fontSize", 15.0), 9.0, 96.0));
     const int textColor = integerOption("textColor", 0xFFFFFF);
     const int placeholderColor =
         integerOption("placeholderColor", 0x94A3B8);
@@ -8315,6 +8243,28 @@ static void ValidateOptionalControlNumber(lua_State* state, int table,
     }
 }
 
+static void ValidateOptionalControlFontSize(lua_State* state, int table,
+    const char* api)
+{
+    lua_getfield(state, lua_absindex(state, table), "fontSize");
+    if (lua_isnil(state, -1))
+    {
+        lua_pop(state, 1);
+        return;
+    }
+    if (lua_type(state, -1) != LUA_TNUMBER)
+    {
+        luaL_error(state, "%s: fontSize must be a number", api);
+        return;
+    }
+    const double value = lua_tonumber(state, -1);
+    lua_pop(state, 1);
+    // Row, page, and user scaling can exceed the editor's rendering range.
+    // The editor clamps valid sizes before converting them to float.
+    if (!std::isfinite(value) || value <= 0.0)
+        luaL_error(state, "%s: fontSize must be finite and positive", api);
+}
+
 static int LuaControlText(lua_State* state, bool multiline)
 {
     const char* api = multiline
@@ -8380,8 +8330,7 @@ static int LuaControlText(lua_State* state, bool multiline)
 
     ValidateOptionalControlString(
         state, descriptor, "placeholder", 4096, api);
-    ValidateOptionalControlNumber(
-        state, descriptor, "fontSize", 9.0, 96.0, api);
+    ValidateOptionalControlFontSize(state, descriptor, api);
     for (const char* field : { "textColor", "placeholderColor",
         "backgroundColor", "borderColor", "focusedBorderColor" })
     {
@@ -9656,6 +9605,73 @@ static int lua_CalendarSelectDate(lua_State* L)
     lua_pushboolean(L, state && state->engine && length == 10 &&
         date.find('\0') == std::string::npos &&
         state->engine->RuntimeCalendarSetSelectedDate(date));
+    return 1;
+}
+
+static int lua_CalendarPreferences(lua_State* L)
+{
+    if (lua_gettop(L) != 0) return luaL_error(L, "calendar.preferences: expected no arguments");
+    auto* state = GetD2D(L);
+    const auto p = state && state->engine ? state->engine->CalendarDisplayPreferences()
+        : snowdesktop::calendar::DisplayPreferences{};
+    lua_createtable(L, 0, 6);
+    lua_pushboolean(L, p.enabled); lua_setfield(L, -2, "enabled");
+    lua_pushstring(L, p.calendar.c_str()); lua_setfield(L, -2, "calendar");
+    lua_pushboolean(L, p.holidaysEnabled); lua_setfield(L, -2, "holidaysEnabled");
+    lua_pushstring(L, p.region.c_str()); lua_setfield(L, -2, "region");
+    lua_pushinteger(L, 0); lua_setfield(L, -2, "holidayFirstYear");
+    lua_pushinteger(L, 0); lua_setfield(L, -2, "holidayLastYear");
+    return 1;
+}
+static int lua_CalendarDisplayOptions(lua_State* L)
+{
+    if (lua_gettop(L) != 0) return luaL_error(L, "calendar.displayOptions: expected no arguments");
+    lua_createtable(L, 0, 2);
+    const auto push = [&](const auto& options, const char* field) {
+        lua_createtable(L, static_cast<int>(options.size()), 0);
+        int index = 1;
+        for (const auto& option : options)
+        {
+            lua_createtable(L, 0, 2);
+            lua_pushstring(L, option.id.c_str()); lua_setfield(L, -2, "id");
+            const auto label = WidgetWideToUtf8(option.label);
+            lua_pushlstring(L, label.data(), label.size()); lua_setfield(L, -2, "label");
+            lua_rawseti(L, -2, index++);
+        }
+        lua_setfield(L, -2, field);
+    };
+    push(snowdesktop::calendar::CalendarOptions(Locale::Instance().GetEffectiveLanguage()), "calendars");
+    push(std::vector<snowdesktop::calendar::DisplayOption>{}, "regions");
+    return 1;
+}
+static int lua_CalendarAnnotations(lua_State* L)
+{
+    if (lua_gettop(L) != 2) return luaL_error(L, "calendar.annotations: expected fromDate and toDate");
+    size_t fromSize = 0, toSize = 0;
+    const char* from = luaL_checklstring(L, 1, &fromSize);
+    const char* to = luaL_checklstring(L, 2, &toSize);
+    auto* state = GetD2D(L);
+    if (!state || !state->engine || fromSize != 10 || toSize != 10)
+    { lua_pushnil(L); return 1; }
+    const auto& days = state->engine->RuntimeCalendarAnnotations(std::string(from, fromSize), std::string(to, toSize));
+    if (days.empty()) { lua_pushnil(L); return 1; }
+    lua_createtable(L, static_cast<int>(days.size()), 0);
+    int index = 1;
+    for (const auto& item : days)
+    {
+        lua_createtable(L, 0, 12);
+        const auto text = [&](const char* key, const std::string& value) { lua_pushlstring(L, value.data(), value.size()); lua_setfield(L, -2, key); };
+        const auto number = [&](const char* key, int value) { lua_pushinteger(L, value); lua_setfield(L, -2, key); };
+        const auto flag = [&](const char* key, bool value) { lua_pushboolean(L, value); lua_setfield(L, -2, key); };
+        text("date", item.date); text("secondary", item.secondary); text("fullDate", item.fullDate);
+        number("year", item.year); number("month", item.month); number("day", item.day); number("era", item.era);
+        flag("leapMonth", item.leapMonth); flag("calendarAvailable", item.calendarAvailable); flag("holidaysAvailable", item.holidaysAvailable);
+        lua_createtable(L, static_cast<int>(item.holidays.size()), 0);
+        int holidayIndex = 1;
+        for (const auto& name : item.holidays) { lua_pushlstring(L, name.data(), name.size()); lua_rawseti(L, -2, holidayIndex++); }
+        lua_setfield(L, -2, "holidays");
+        lua_rawseti(L, -2, index++);
+    }
     return 1;
 }
 
@@ -12702,10 +12718,10 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         action.id, false, "providerUnavailable");
                     continue;
                 }
-                std::vector<LuaDesktopItemInfo> snapshot;
+                std::vector<LuaDesktopItemInfo> desktopItems;
                 try
                 {
-                    snapshot = RuntimeDesktopItems();
+                    desktopItems = RuntimeDesktopItems();
                 }
                 catch (...)
                 {
@@ -12713,11 +12729,11 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                         action.id, false, "providerFailed");
                     continue;
                 }
-                if (snapshot.size() > 2048) snapshot.resize(2048);
+                if (desktopItems.size() > 2048) desktopItems.resize(2048);
                 std::vector<snowdesktop::widget_runtime::
                     WidgetAppCatalogEntry> catalog;
-                catalog.reserve(snapshot.size());
-                for (const auto& item : snapshot)
+                catalog.reserve(desktopItems.size());
+                for (const auto& item : desktopItems)
                 {
                     if (item.title.empty() || item.path.empty()) continue;
                     snowdesktop::widget_runtime::WidgetAppCatalogEntry entry;
@@ -12961,8 +12977,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 static_cast<std::uint32_t>(maximumBytes);
             options.allowedDomains = owner->manifest.networkDomains;
             options.allowAnyHttpOrHttpsUrl = false;
-            options.allowAnyPublicHttpsUrl =
-                owner->manifest.networkDomains.empty();
+            options.allowHttpAndLocalTargets = true;
             options.sameOriginRedirectsOnly =
                 action.arguments.contains("usesSecret");
             wipe(headersUtf8);
@@ -15252,6 +15267,19 @@ void WidgetEngine::UnloadWidget(const std::wstring& widgetId)
         return widget.widgetId == widgetId;
     });
 
+}
+
+bool WidgetEngine::RequiresRemovalConfirmation(const std::wstring& widgetId,
+    const std::wstring& packageId)
+{
+    const int index = FindWidget(widgetId);
+    if (index >= 0 && widgets_[index].manifest.confirmRemoval)
+        return true;
+    // Resolve metadata even if the script failed to load or was disabled.
+    if (const auto package = GetWidgetPackage(packageId))
+        return package->manifest.confirmRemoval;
+    // A missing package must not silently discard an orphaned instance's data.
+    return index < 0;
 }
 
 void WidgetEngine::DeleteWidgetInstance(const std::wstring& widgetId)
@@ -18920,9 +18948,6 @@ static void DrawWidgetViewTooltip(D2DState* state,
     if (!state || !state->ctx || !state->dwrite) return;
     const auto* region = regions.Find(regions.HoveredKey());
     if (!region || region->tooltip.empty()) return;
-    float pointerX = 0.0f;
-    float pointerY = 0.0f;
-    if (!regions.LastPointer(pointerX, pointerY)) return;
 
     const float surfaceWidth = std::max(
         0.0f, state->widgetRect.right - state->widgetRect.left);
@@ -18971,12 +18996,25 @@ static void DrawWidgetViewTooltip(D2DState* state,
             16.0f));
     const float height = std::min(maximumHeight,
         std::max(24.0f, std::ceil(metrics.height) + 12.0f));
-    float x = pointerX + 12.0f;
-    float y = pointerY + 16.0f;
-    if (x + width > surfaceWidth - 4.0f)
-        x = pointerX - width - 12.0f;
+    const auto& shape = region->shape;
+    const bool circle = shape.type ==
+        snowdesktop::widget_runtime::InteractionShapeType::Circle;
+    float left = circle ? shape.x - shape.radius : shape.x;
+    float top = circle ? shape.y - shape.radius : shape.y;
+    float right = circle ? shape.x + shape.radius : shape.x + shape.width;
+    float bottom = circle ? shape.y + shape.radius : shape.y + shape.height;
+    if (region->clip)
+    {
+        left = std::max(left, region->clip->x);
+        top = std::max(top, region->clip->y);
+        right = std::min(right, region->clip->x + region->clip->width);
+        bottom = std::min(bottom, region->clip->y + region->clip->height);
+    }
+    // Anchor to the visible region, independent of where the pointer entered it.
+    float x = (left + right - width) * 0.5f;
+    float y = bottom + 6.0f;
     if (y + height > surfaceHeight - 4.0f)
-        y = pointerY - height - 12.0f;
+        y = top - height - 6.0f;
     x = std::clamp(x, 4.0f, std::max(4.0f, surfaceWidth - width - 4.0f));
     y = std::clamp(y, 4.0f, std::max(4.0f, surfaceHeight - height - 4.0f));
     DrawHostRect(state, x, y, width, height,
@@ -19813,6 +19851,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             DrawHostViewInteractionOverlays(*found,
                 found->interactionRegions,
                 found->viewKeyboardFocusKey, true);
+            DrawWidgetViewTooltip(d2dState_, found->interactionRegions);
             (void)ScheduleAnimationFrame(*found);
             return;
         }
@@ -20407,6 +20446,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         DrawHostViewInteractionOverlays(current,
             current.interactionRegions,
             current.viewKeyboardFocusKey, true);
+        // Immediate-mode regions carry the same tooltip contract as view nodes.
+        // Paint after the component's clips and cached content have been restored.
+        DrawWidgetViewTooltip(d2dState_, current.interactionRegions);
     }
     lua_pop(state, 1);
 }
@@ -20920,6 +20962,8 @@ void WidgetEngine::OnTaskWake()
 
 void WidgetEngine::TickRuntime()
 {
+    if (d2dState_ && d2dState_->shellIconLoader)
+        d2dState_->shellIconLoader->Pump();
     const auto healthNow = snowdesktop::widget_runtime::
         RuntimeHealth::Clock::now();
     std::vector<std::wstring> recoveryTargets;
@@ -25932,6 +25976,30 @@ bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId,
     return true;
 }
 
+void WidgetEngine::SetCalendarDisplayPreferences(snowdesktop::calendar::DisplayPreferences preferences)
+{
+    snowdesktop::calendar::Normalize(preferences);
+    if (calendarDisplay_ == preferences) return;
+    calendarDisplay_ = std::move(preferences);
+    calendarAnnotationCacheKey_.clear();
+    for (auto& widget : widgets_)
+        if (widget.state && WidgetDeclaresFeature(widget, "calendar.annotations"))
+            InvokeLifecycleEvent(widget, "calendar.preferences", [](lua_State*) {});
+    RuntimeInvalidateHost();
+}
+
+const std::vector<snowdesktop::calendar::DayAnnotation>& WidgetEngine::RuntimeCalendarAnnotations(const std::string& from, const std::string& to)
+{
+    const std::string language = Locale::Instance().GetEffectiveLanguage();
+    const std::string key = from + ":" + to + ":" + language;
+    if (key != calendarAnnotationCacheKey_)
+    {
+        calendarAnnotationCache_ = snowdesktop::calendar::Annotate(from, to, calendarDisplay_, language);
+        calendarAnnotationCacheKey_ = key;
+    }
+    return calendarAnnotationCache_;
+}
+
 std::string WidgetEngine::RuntimeCalendarSelectedDate() const
 {
     if (snowdesktop::widget_runtime::IsDryLoad()) return "2026-08-02";
@@ -30096,23 +30164,28 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
     }
 }
 
-// ── List available widget scripts ────────────────────────────────
-std::vector<std::wstring> WidgetEngine::ListAvailable()
+// Menu metadata cache is separate from runtime manifest/permission loading.
+std::vector<snowdesktop::widget_menu::Entry> WidgetEngine::ListAvailableMenuEntries()
 {
-    std::vector<std::wstring> result;
-    for (const auto& package : GetWidgetPackageManager().ListPackages())
-    {
-        if (!package.active || !package.enabled) continue;
-        LuaWidgetManifest manifest =
-            GetWidgetManifest((package.root /
+    static thread_local snowdesktop::widget_menu::Catalogue catalogue;
+    std::string refreshError;
+    if (!RefreshWidgetPackages(refreshError))
+        OutputDebugStringW((L"Widget catalog refresh failed: " +
+            Utf8ToWideLocal(refreshError) + L"\n").c_str());
+    const auto packages = GetWidgetPackageManager().ListPackages();
+    return catalogue.Build(packages, Locale::Instance().GetEffectiveLanguage(),
+        [](const snowdesktop::widget::InstalledPackage& package) {
+            const auto manifest = GetWidgetManifest((package.root /
                 Utf8ToWideLocal(package.manifest.entry)).wstring());
-        if (!manifest.minHostVersion.empty() &&
-            CompareVersions(SNOWDESKTOP_VERSION, manifest.minHostVersion) < 0)
-            continue;
-        result.push_back(Utf8ToWideLocal(package.manifest.id));
-    }
-    std::sort(result.begin(), result.end());
-    return result;
+            return snowdesktop::widget_menu::Metadata{
+                Utf8ToWideLocal(package.manifest.id),
+                Utf8ToWideLocal(manifest.name),
+                Utf8ToWideLocal(manifest.description),
+                Utf8ToWideLocal(manifest.publisher),
+                manifest.minHostVersion.empty() ||
+                    CompareVersions(SNOWDESKTOP_VERSION, manifest.minHostVersion) >= 0,
+                manifest.hasManifest};
+        });
 }
 
 void WidgetEngine::RuntimeOpenWidgetPanel(
@@ -30444,6 +30517,7 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
         manifest.apiVersion = static_cast<int>(packageNumber);
     if (readNumber(root, "dataVersion", packageNumber))
         manifest.dataVersion = static_cast<int>(packageNumber);
+    readBool(root, "confirmRemoval", manifest.confirmRemoval);
     readString(root, "name", manifest.name);
     readString(root, "nameKey", manifest.nameKey);
     readString(root, "version", manifest.version);
@@ -31482,6 +31556,11 @@ bool WidgetEngine::InstallAndVerifyStaticWidgetPackage(
 snowdesktop::widget::PackagePaths WidgetEngine::GetWidgetPackagePaths()
 {
     return GetWidgetPackageManager().Paths();
+}
+
+bool WidgetEngine::RefreshWidgetPackages(std::string& error)
+{
+    return GetWidgetPackageManager().RefreshCatalog(error);
 }
 
 std::vector<snowdesktop::widget::InstalledPackage>

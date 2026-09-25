@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../pending_window_message.h"
 
 #include <iterator>
 #include <new>
@@ -406,9 +407,8 @@ void DesktopApp::StopUrlDropDownloadWorker()
             continue;
         previous = window;
         MSG message{};
-        while (PeekMessageW(&message, window,
-            kUrlDropDownloadCompletedMessage,
-            kUrlDropDownloadCompletedMessage, PM_REMOVE))
+        while (snowdesktop::TakePendingWindowMessage(message, window,
+            kUrlDropDownloadCompletedMessage) == snowdesktop::PendingWindowMessage::Ready)
         {
             auto* completion =
                 reinterpret_cast<UrlDropDownloadUiCompletion*>(

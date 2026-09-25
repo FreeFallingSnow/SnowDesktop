@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../icon_loading_placeholder.h"
 #include "../demo_mode_rules.h"
 #include "../demo_collection_rules.h"
 #include <commoncontrols.h>
@@ -347,56 +348,35 @@ void DesktopApp::DrawShortcutArrowOverlay(ID2D1RenderTarget* ctx, RECT iconRect,
         return;
     }
 
-    auto createArrowBitmap = [&](ComPtr<ID2D1Bitmap>& outBitmap, SIZE& outSize) -> bool {
-        if (outBitmap)
-            return true;
-
-        SHSTOCKICONINFO sii{};
-        sii.cbSize = sizeof(sii);
-        if (FAILED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &sii)) || !sii.hIcon)
-            return false;
-
-        int w = GetSystemMetrics(SM_CXICON);
-        int h = GetSystemMetrics(SM_CYICON);
-        if (w <= 0) w = 32;
-        if (h <= 0) h = 32;
-
-        SIZE bitmapSize{};
-        HBITMAP dib = CreateAlphaBitmapFromIcon(sii.hIcon, w, h, bitmapSize);
-        if (!dib)
-        {
-            DestroyIcon(sii.hIcon);
-            return false;
-        }
-
-        DIBSECTION ds{};
-        GetObjectW(dib, sizeof(ds), &ds);
-
-        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-
-        ComPtr<ID2D1Bitmap> bitmap;
-        HRESULT hr = ctx->CreateBitmap(D2D1::SizeU(w, h), ds.dsBm.bmBits,
-            static_cast<UINT32>(ds.dsBm.bmWidthBytes), props, &bitmap);
-
-        DeleteObject(dib);
-        DestroyIcon(sii.hIcon);
-
-        if (FAILED(hr) || !bitmap)
-            return false;
-
-        outBitmap = std::move(bitmap);
-        outSize = bitmapSize;
-        return true;
-    };
+    if (!shortcutArrowBitmap_)
+    {
+        shellVisualWork_.Submit(L"shortcut-arrow", [] {
+            auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+            SHSTOCKICONINFO info{};
+            info.cbSize = sizeof(info);
+            if (SUCCEEDED(SHGetStockIconInfo(SIID_LINK, SHGSI_ICON, &info)) && info.hIcon)
+            {
+                result->bitmap = CreateAlphaBitmapFromIcon(info.hIcon, 32, 32, result->size);
+                DestroyIcon(info.hIcon);
+            }
+            return result;
+        }, [this](auto result) {
+            if (!result || !result->bitmap) return;
+            auto bitmap = CreateD2DBitmapFromHBitmap(result->bitmap, false);
+            if (bitmap) bitmap.As(&shortcutArrowBitmap_);
+            shortcutArrowBitmapSize_ = result->size;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateDockRects();
+            InvalidateQuickNavigationWindow();
+        }, hwnd_, kBackgroundShellReadyMessage);
+        return;
+    }
 
     ID2D1Bitmap* arrowBitmap = nullptr;
 
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) && deviceContext)
     {
-        if (!createArrowBitmap(shortcutArrowBitmap_, shortcutArrowBitmapSize_))
-            return;
         arrowBitmap = shortcutArrowBitmap_.Get();
     }
     else
@@ -568,13 +548,23 @@ void DesktopApp::DrawPrivacyFaIcon(
 void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     RECT iconRect, float alpha, bool allowBeautify)
 {
-    if (!ctx || sysIconIndex < 0) return;
+    if (!ctx) return;
+    const auto loading = [&] {
+        snowdesktop::icon_loading_placeholder::Draw(ctx, iconRect, alpha,
+            allowBeautify && iconBeautifySettings_.enabled
+                ? iconBeautifySettings_.shape : snowdesktop::IconBeautifyShape::LegacyRounded);
+    };
+    if (sysIconIndex < 0)
+    {
+        loading();
+        return;
+    }
 
     // 快捷导航改走 DComp 后，ctx 必为 ID2D1DeviceContext（与桌面同源 d2dDevice_）。
     // 非 device-context 路径已废弃，直接返回以避免在错误设备上创建位图。
     ComPtr<ID2D1DeviceContext> deviceContext;
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext || !d2dContext_)
-        return;
+    { loading(); return; }
     auto& cache = placeholderIconCache_;
     const bool beautify = allowBeautify && iconBeautifySettings_.enabled;
     const int targetSize = std::max(
@@ -591,48 +581,9 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
     auto cached = cache.find(cacheKey);
     if (cached == cache.end())
     {
-        ComPtr<IImageList> imageList;
-        HRESULT hr = SHGetImageList(SHIL_JUMBO, IID_IImageList,
-            reinterpret_cast<void**>(imageList.GetAddressOf()));
-        if (FAILED(hr) || !imageList)
-        {
-            imageList.Reset();
-            hr = SHGetImageList(SHIL_EXTRALARGE, IID_IImageList,
-                reinterpret_cast<void**>(imageList.GetAddressOf()));
-        }
-        if (FAILED(hr) || !imageList)
-        {
-            imageList.Reset();
-            hr = SHGetImageList(SHIL_LARGE, IID_IImageList,
-                reinterpret_cast<void**>(imageList.GetAddressOf()));
-        }
-        if (FAILED(hr) || !imageList)
-            return;
-
-        HICON icon = nullptr;
-        if (FAILED(imageList->GetIcon(sysIconIndex,
-                ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
-            return;
-
-        SIZE bitmapSize{};
-        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
-            icon, sourceSize, sourceSize, bitmapSize);
-        DestroyIcon(icon);
-        if (!alphaBitmap)
-            return;
-
-        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(alphaBitmap, beautify);
-        DeleteObject(alphaBitmap);
-        if (!iconBitmap)
-        {
-            return;
-        }
-
-        ComPtr<ID2D1Bitmap> bitmap;
-        if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
-            return;
-
-        cached = cache.emplace(cacheKey, std::move(bitmap)).first;
+        QueueSystemIconBitmap(sysIconIndex, sourceSize, beautify, cacheKey, false);
+        loading();
+        return;
     }
 
     DrawIconBitmap(ctx, cached->second.Get(), iconRect, alpha);
@@ -640,7 +591,13 @@ void DesktopApp::DrawPlaceholderIcon(ID2D1RenderTarget* ctx, int sysIconIndex,
 
 void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, RECT dstRect)
 {
-    if (!ctx || sysIconIndex < 0) return;
+    if (!ctx) return;
+    if (sysIconIndex < 0)
+    {
+        snowdesktop::icon_loading_placeholder::Draw(ctx, dstRect, 1.0f,
+            snowdesktop::IconBeautifyShape::LegacyRounded);
+        return;
+    }
     // 仅 ID2D1DeviceContext（与桌面同源 d2dDevice_）才支持 CreateBitmap/共享。
     ComPtr<ID2D1DeviceContext> dc;
     if (FAILED(ctx->QueryInterface(IID_PPV_ARGS(&dc))) || !dc) return;
@@ -657,44 +614,10 @@ void DesktopApp::DrawQuickNavSysIcon(ID2D1RenderTarget* ctx, int sysIconIndex, R
     auto cached = quickNavSysIconCache_.find(cacheKey);
     if (cached == quickNavSysIconCache_.end())
     {
-        // EXTRALARGE avoids the transparent padding used by some JUMBO icons;
-        // DrawIconEx then rasterizes it into the layout-aware source bucket.
-        ComPtr<IImageList> imageList;
-        HRESULT hr = SHGetImageList(SHIL_EXTRALARGE, IID_IImageList,
-            reinterpret_cast<void**>(imageList.GetAddressOf()));
-        if (FAILED(hr) || !imageList)
-        {
-            imageList.Reset();
-            hr = SHGetImageList(SHIL_LARGE, IID_IImageList,
-                reinterpret_cast<void**>(imageList.GetAddressOf()));
-        }
-        if (FAILED(hr) || !imageList) return;
-
-        HICON icon = nullptr;
-        if (FAILED(imageList->GetIcon(sysIconIndex,
-                ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) || !icon)
-            return;
-
-        SIZE bitmapSize{};
-        HBITMAP alphaBitmap = CreateAlphaBitmapFromIcon(
-            icon, sourceSize, sourceSize, bitmapSize);
-        DestroyIcon(icon);
-        if (!alphaBitmap) return;
-
-        ComPtr<ID2D1Bitmap1> iconBitmap = CreateD2DBitmapFromHBitmap(
-            alphaBitmap, iconBeautifySettings_.enabled);
-        DeleteObject(alphaBitmap);
-        if (!iconBitmap)
-        {
-            return;
-        }
-
-        ComPtr<ID2D1Bitmap> bitmap;
-        if (FAILED(iconBitmap.As(&bitmap)) || !bitmap)
-            return;
-
-        cached = quickNavSysIconCache_.emplace(
-            cacheKey, std::move(bitmap)).first;
+        QueueSystemIconBitmap(sysIconIndex, sourceSize, iconBeautifySettings_.enabled, cacheKey, true);
+        snowdesktop::icon_loading_placeholder::Draw(ctx, dstRect, 1.0f,
+            snowdesktop::IconBeautifyShape::LegacyRounded);
+        return;
     }
 
     DrawIconBitmap(ctx, cached->second.Get(), dstRect);
@@ -741,3 +664,34 @@ void DesktopApp::DrawQuickNavAppIcon(
  * @brief 触发换页通知（记录文本与时间戳，启动重绘定时器）。
  * @param text 通知文本（如"第3页"）。
  */
+
+void DesktopApp::QueueSystemIconBitmap(int index, int size, bool beautify,
+    std::uint64_t key, bool quick)
+{
+    shellVisualWork_.Submit((quick ? L"quick-system:" : L"system:") + std::to_wstring(key),
+        [index, size, quick] {
+            auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
+            ComPtr<IImageList> list;
+            if (FAILED(SHGetImageList(quick ? SHIL_EXTRALARGE : SHIL_JUMBO,
+                    IID_PPV_ARGS(&list))) || !list)
+                SHGetImageList(SHIL_LARGE, IID_PPV_ARGS(&list));
+            HICON icon = nullptr;
+            if (list && SUCCEEDED(list->GetIcon(index, ILD_TRANSPARENT | ILD_PRESERVEALPHA, &icon)) && icon)
+            {
+                result->bitmap = CreateAlphaBitmapFromIcon(icon, size, size, result->size);
+                DestroyIcon(icon);
+            }
+            return result;
+        }, [this, key, quick, beautify](auto result) {
+            if (!result || !result->bitmap) return;
+            auto bitmap = CreateD2DBitmapFromHBitmap(result->bitmap, beautify);
+            ComPtr<ID2D1Bitmap> converted;
+            if (!bitmap || FAILED(bitmap.As(&converted))) return;
+            (quick ? quickNavSysIconCache_ : placeholderIconCache_)[key] = std::move(converted);
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateDockRects();
+            InvalidateFloatingPopupWindow(false);
+            InvalidateQuickNavigationWindow();
+        }, hwnd_, kBackgroundShellReadyMessage);
+}

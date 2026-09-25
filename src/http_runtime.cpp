@@ -217,7 +217,7 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
     const std::wstring& url,
     const std::vector<std::string>& domains,
     bool allowAnyHttpOrHttpsUrl,
-    bool allowAnyPublicHttpsUrl)
+    bool allowHttpAndLocalTargets)
 {
     URL_COMPONENTS components{ sizeof(components) };
     wchar_t host[256]{};
@@ -228,19 +228,23 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
     const bool isHttps = components.nScheme == INTERNET_SCHEME_HTTPS;
     if (allowAnyHttpOrHttpsUrl)
         return (isHttp || isHttps) && components.dwHostNameLength > 0;
-    if (allowAnyPublicHttpsUrl)
-        return IsAllowedPublicHttpsUrl(url);
-    if (!isHttps) return false;
+    if (allowHttpAndLocalTargets)
+    {
+        if (!IsAllowedHttpOrHttpsUrl(url)) return false;
+        if (domains.empty()) return true;
+    }
+    else if (!isHttps) return false;
     std::wstring actual = NormalizeHostname(
         std::wstring(host, components.dwHostNameLength));
     if (actual.empty()) return false;
-    if (actual == L"localhost" || actual == L"::1" ||
+    if (!allowHttpAndLocalTargets &&
+        (actual == L"localhost" || actual == L"::1" ||
         actual.ends_with(L".localhost") || actual.ends_with(L".local") ||
         actual.starts_with(L"127.") || actual.starts_with(L"10.") ||
         actual.starts_with(L"192.168.") || actual.starts_with(L"169.254.") ||
-        actual.starts_with(L"0."))
+        actual.starts_with(L"0.")))
         return false;
-    if (actual.starts_with(L"172."))
+    if (!allowHttpAndLocalTargets && actual.starts_with(L"172."))
     {
         const size_t nextDot = actual.find(L'.', 4);
         if (nextDot != std::wstring::npos)
@@ -250,7 +254,7 @@ bool snowdesktop::http_security::IsAllowedUrlForDomains(
             if (secondOctet >= 16 && secondOctet <= 31) return false;
         }
     }
-    if (IsIpLiteral(actual) &&
+    if (!allowHttpAndLocalTargets && IsIpLiteral(actual) &&
         !IsAllowedRemoteIpLiteral(actual))
         return false;
     for (const auto& raw : domains)
@@ -722,7 +726,7 @@ int AsyncHttpService::Submit(HttpRequestOptions options)
             IsAllowedUrlForDomains(
                 options.url, options.allowedDomains,
                 options.allowAnyHttpOrHttpsUrl,
-                options.allowAnyPublicHttpsUrl))
+                options.allowHttpAndLocalTargets))
         return 0;
     std::scoped_lock lock(mutex_);
     int activeForWidget = 0;
@@ -841,7 +845,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
     response.widgetId = options.widgetId;
 
     HINTERNET session = WinHttpOpen(L"SnowDesktop/1.0",
-        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { response.error = "WinHttpOpen failed"; return response; }
     WinHttpSetTimeouts(session, options.timeoutMs, options.timeoutMs,
@@ -864,7 +868,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
                 IsAllowedUrlForDomains(
                     currentUrl, options.allowedDomains,
                     options.allowAnyHttpOrHttpsUrl,
-                    options.allowAnyPublicHttpsUrl))
+                    options.allowHttpAndLocalTargets))
         {
             response.error = "Redirect URL is not allowed";
             break;
@@ -886,7 +890,7 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
         }
         const std::wstring currentHost(host, components.dwHostNameLength);
         std::wstring pinnedAddress;
-        if (!options.allowAnyHttpOrHttpsUrl &&
+        if (!options.allowAnyHttpOrHttpsUrl && !options.allowHttpAndLocalTargets &&
             !ResolvePinnedPublicAddress(currentHost, pinnedAddress))
         {
             response.error =
@@ -946,7 +950,9 @@ HttpResponse AsyncHttpService::Execute(int id, const HttpRequestOptions& options
             WinHttpCloseHandle(connection);
             break;
         }
-        if (!options.allowAnyHttpOrHttpsUrl)
+        // Authorized widget requests use the normal Windows network path,
+        // including local services, proxy endpoints and TUN virtual addresses.
+        if (!options.allowAnyHttpOrHttpsUrl && !options.allowHttpAndLocalTargets)
         {
             WINHTTP_CONNECTION_INFO connectionInfo{};
             connectionInfo.cbSize = sizeof(connectionInfo);

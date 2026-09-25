@@ -16,6 +16,7 @@
 #include "../l10n.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -66,8 +67,12 @@ RECT CollectionGroupTabsRect(CollectionGroup* widget)
 RECT CollectionGroupContentRect(CollectionGroup* widget)
 {
     if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetScrollContentBottom()));
     RECT search = widget->GetSearchBoxRect();
     if (!IsRectEmptyRect(search))
         body.top = std::min<LONG>(
@@ -108,7 +113,15 @@ std::wstring CollectionGroupTabTitle(
 std::wstring CollectionGroupTabDisplayText(
     CollectionGroup* widget, size_t tabIndex)
 {
-    return CollectionGroupTabTitle(widget, tabIndex);
+    std::wstring label = CollectionGroupTabTitle(widget, tabIndex);
+    if (!widget || !widget->ShowGroupTabItemCounts())
+        return label;
+    const auto& children = widget->GetVisibleCollectionIds();
+    if (tabIndex >= children.size()) return label;
+    const DesktopWidget* child = FindCollectionWidget(widget, children[tabIndex]);
+    if (child)
+        label += L" " + std::to_wstring(child->itemKeys.size());
+    return label;
 }
 
 std::vector<int> CollectionGroupTabWidths(
@@ -258,7 +271,7 @@ RECT CollectionGroupListToggleRect(CollectionGroup* widget)
     const int size = widget->Cu(14.0f * scale);
     const int gap = widget->Cu(4.0f * scale);
     const int resizeReserve =
-        widget->Cu(20.0f * scale);
+        widget->GetTitleBarResizeReserve();
     return MakeRect(
         handle.right - resizeReserve - gap - size,
         handle.top +
@@ -1081,9 +1094,9 @@ void CollectionGroup::DrawContent(
         return;
     }
 
-    context->PushAxisAlignedClip(
-        app_->ToD2DRect(content),
-        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const snowdesktop::ScrollContentClip contentClip(
+        context, scrollContentFadeCache_, content,
+        GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
 
     const std::wstring activeCollectionId =
         CollectionGroupActiveCategory(this);
@@ -1169,7 +1182,6 @@ void CollectionGroup::DrawContent(
         item->DrawTitle(
             context, bounds, true, 1.0f,
             light, activeCollection);
-    context->PopAxisAlignedClip();
 }
 
 RECT CollectionGroup::GetMemberLayoutRect(size_t index) const

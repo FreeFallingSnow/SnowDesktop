@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "settings_window_host.h"
+#include "../pending_window_message.h"
 #include "../performance_trace.h"
 #include "../shell_launch_worker.h"
 
@@ -257,6 +258,15 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Desktop, "desktop.softwareDesktop",
         "settings.general.softwareDesktop",
         "settings.general.softwareDesktop.description"},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.background", "settings.contextMenu.locations"},
+    {SettingsPage::ContextMenu, "contextMenu.items", "settings.contextMenu.inspect", "settings.contextMenu.hint"},
+    {SettingsPage::ContextMenu, "contextMenu.application", "settings.contextMenu.viewApplications", "settings.contextMenu.extensions"},
+    {SettingsPage::ContextMenu, "contextMenu.extension", "settings.contextMenu.viewExtensions", "settings.contextMenu.extensions"},
+    {SettingsPage::ContextMenu, "contextMenu.batch", "settings.contextMenu.groupToggle", "settings.contextMenu.groupHint"},
+    {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
+    {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
     {SettingsPage::General, "general.language",
         "settings.general.language",
         "settings.general.language.description"},
@@ -359,7 +369,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme, "personalization.contentTheme",
         "app.settings.text_color",
         "settings.personalization.theme.description"},
-    {SettingsPage::AppearanceTheme, "personalization.contextMenu",
+    {SettingsPage::ContextMenu, "personalization.contextMenu",
         "settings.personalization.contextMenu",
         "settings.personalization.contextMenu.description"},
     {SettingsPage::AppearanceWidgets, "personalization.cornerRadius",
@@ -368,9 +378,18 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceWidgets, "personalization.barHeight",
         "app.settings.bar_height",
         "settings.personalization.widgets.description"},
+    {SettingsPage::AppearanceWidgets, "personalization.scrollableTitleBarOnTop",
+        "app.settings.scrollable_title_bar_position",
+        "app.settings.scrollable_title_bar_position_hint"},
     {SettingsPage::AppearanceWidgets, "desktop.categoryLayout",
         "app.settings.tab_height",
         "settings.personalization.widgets.description"},
+    {SettingsPage::AppearanceWidgets, "personalization.showGroupTabCounts",
+        "app.settings.group_show_count", "app.settings.group_show_count_hint"},
+    {SettingsPage::AppearanceWidgets, "personalization.popupHoverOpen",
+        "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint"},
+    {SettingsPage::AppearanceWidgets, "personalization.popupHoverDelayMs",
+        "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint"},
     {SettingsPage::DesktopCategories,
         "desktop.categoryCounts",
         "app.settings.category_show_count",
@@ -511,18 +530,17 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.floatingEdgeSwipeBlockFullscreen",
         "settings.dock.blockFullscreenSwipe",
         "settings.dock.blockFullscreenSwipe.description"},
+    {SettingsPage::Dock, "dock.suppressSystemTaskbar",
+        "settings.dock.suppressTaskbar", "settings.dock.suppressTaskbar.description"},
     {SettingsPage::Dock, "dock.showWindowsButton",
         "app.dock.show_windows_button",
         "settings.dock.items.description"},
     {SettingsPage::Dock, "dock.frequentItemCount",
         "app.settings.show_count",
         "settings.dock.frequentItems.description"},
-    {SettingsPage::Taskbar, "taskbar.autoHide",
-        "settings.taskbar.autoHide",
-        "settings.taskbar.autoHide.description"},
-    {SettingsPage::Taskbar, "taskbar.alignment",
-        "settings.taskbar.alignment",
-        "settings.taskbar.alignment.description"},
+    {SettingsPage::Taskbar, "taskbar.systemSettings",
+        "settings.taskbar.systemSettings",
+        "settings.taskbar.systemSettings.description"},
     {SettingsPage::Taskbar, "taskbar.theme",
         "settings.taskbar.theme", "settings.taskbar.theme.description"},
     {SettingsPage::Taskbar, "taskbar.contentTheme",
@@ -628,6 +646,9 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DeveloperTools, "developer.runtime",
         "app.settings.widgets_runtime_diagnostics",
         "settings.developer.tools.description"},
+    {SettingsPage::Debug, "debug.profile", "settings.debug.profile.enabled", "settings.debug.profile.description"},
+    {SettingsPage::Debug, "debug.desktop", "settings.debug.profile.desktop", "settings.debug.profile.chooseHint"},
+    {SettingsPage::Debug, "debug.clearProfile", "settings.debug.profile.clear", "settings.debug.profile.clearHint"},
     {SettingsPage::Debug, "debug.demo_mode", "app.settings.demo_mode",
         "app.settings.demo_mode_hint"},
     {SettingsPage::Debug, "debug.initialization", "settings.debug.initialization",
@@ -1160,8 +1181,8 @@ struct SettingsWindowHost::Impl
         if (!window)
             return;
         MSG message{};
-        while (PeekMessageW(&message, window, kDispatchOwnerTaskMessage,
-            kDispatchOwnerTaskMessage, PM_REMOVE))
+        while (snowdesktop::TakePendingWindowMessage(message, window,
+            kDispatchOwnerTaskMessage) == snowdesktop::PendingWindowMessage::Ready)
         {
             delete reinterpret_cast<std::function<void()>*>(message.lParam);
         }
@@ -2124,6 +2145,9 @@ struct SettingsWindowHost::Impl
             }
             return std::vector<StaticSettingSearchDescriptor>{};
         };
+        auto calendar = options.calendarPage;
+        calendar.commitGeneral = general.commitGeneral;
+        shell->SetCalendarPageActions(std::move(calendar));
         shell->SetGeneralPageActions(std::move(general));
 
         PageLayoutPageActions pageLayout = options.pageLayoutPage;
@@ -2165,6 +2189,7 @@ struct SettingsWindowHost::Impl
         });
 
         PersonalizationPageActions personalization;
+        personalization.contextMenu = options.contextMenu;
         personalization.update = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,
@@ -2278,6 +2303,22 @@ struct SettingsWindowHost::Impl
             const SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
+        };
+        dock.openTaskbarSettings = [weak](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller ||
+                !state->owner->controller->IsGenerationCurrent(generation))
+            {
+                return;
+            }
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(
+                    state->owner->window, L"open", L"ms-settings:taskbar",
+                    nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            {
+                state->owner->ShowActionError(SettingsActionResult::Failure(
+                    state->owner->L("settings.about.link.openFailed")));
+            }
         };
         dock.confirm = [weak](
             std::uint64_t generation,
@@ -2396,6 +2437,50 @@ struct SettingsWindowHost::Impl
             const SettingsActionResult result =
                 state->owner->controller->InvokeHostAction(request);
             state->owner->ShowActionError(result);
+        };
+        const auto invokeDebugProfile = [weak](std::uint64_t generation,
+            SettingsHostActions::Action action, bool enabled, std::wstring value) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner ||
+                !state->owner->controller || !state->owner->DebugPageVisible() ||
+                !state->owner->controller->IsGenerationCurrent(generation)) return;
+            SettingsHostActions::Request request;
+            request.action = action;
+            request.boolValue = enabled;
+            request.value = std::move(value);
+            const auto result = state->owner->controller->InvokeHostAction(request);
+            if (!state->alive.load() || !state->owner) return;
+            state->owner->ShowActionError(result);
+            if (state->owner->shell) state->owner->shell->RefreshRuntimeState();
+        };
+        homeAbout.setDebugProfileEnabled = [invokeDebugProfile](std::uint64_t generation, bool enabled) {
+            invokeDebugProfile(generation, SettingsHostActions::Action::SetDebugProfileEnabled, enabled, {});
+        };
+        homeAbout.chooseDebugDesktop = [weak, invokeDebugProfile](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->DebugPageVisible() || !state->owner->controller->IsGenerationCurrent(generation)) return;
+            const auto selected = ShowOpenPathDialog(state->owner->window,
+                state->owner->L("settings.debug.profile.desktop"), {}, true);
+            if (selected) invokeDebugProfile(generation,
+                SettingsHostActions::Action::SetDebugDesktopDirectory, false, selected->wstring());
+        };
+        homeAbout.clearDebugProfile = [weak, invokeDebugProfile](std::uint64_t generation) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->controller ||
+                !state->owner->DebugPageVisible() || !state->owner->controller->IsGenerationCurrent(generation)) return;
+            auto& owner = *state->owner;
+            if (!owner.options.homeAboutStatus) return;
+            const auto status = owner.options.homeAboutStatus(generation, owner.controller->Snapshot()->revision);
+            if (!status.debugDataDirectory || status.debugDataDirectory->empty()) return;
+            const auto root = std::filesystem::path(*status.debugDataDirectory).parent_path();
+            const auto detail = owner.L("settings.debug.profile.clearConfirm") + L"\n\n" +
+                *status.debugDataDirectory + L"\n" + (root / L"FullBackups").wstring() +
+                L"\n" + (root / L"TempState").wstring() + L"\n" + (root / L"PrivateState").wstring();
+            owner.ShowGenerationConfirmation(generation, owner.L("settings.debug.profile.clear"), detail,
+                [invokeDebugProfile, generation](bool confirmed) {
+                    if (confirmed) invokeDebugProfile(generation, SettingsHostActions::Action::ClearDebugProfile, false, {});
+                }, true, owner.L("settings.debug.profile.clear"));
         };
         homeAbout.setTemporaryInitialization = [weak](std::uint64_t generation, bool enabled) {
             const auto state = weak.lock();
@@ -3567,6 +3652,8 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     // made by another SnowDesktop build or by Windows Startup Apps settings.
     impl_->RefreshExternalStateNow();
 
+    const bool refreshActiveWidgetsPage = !reopening &&
+        impl_->widgetsPageActive && impl_->widgetsBackendPage == route.page;
     SettingsActionResult openResult;
     if (!impl_->CommitRoute(route, &openResult))
     {
@@ -3576,6 +3663,8 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
     }
     const auto snapshot = impl_->controller->Snapshot();
     impl_->ApplySnapshotNow(snapshot);
+    if (refreshActiveWidgetsPage && impl_->widgetsPageBackend)
+        (void)impl_->widgetsPageBackend->Refresh();
     impl_->RefreshAgentSkillNavigationState();
     impl_->ResumeInteraction();
     if (IsIconic(impl_->window))

@@ -108,6 +108,7 @@ constexpr UINT kContextRefreshCommand = 41007;
 constexpr UINT kContextSortByNameCommand = 41008;
 constexpr UINT kContextSortByTypeCommand = 41009;
 constexpr UINT kContextMoreCommand = 41010;
+constexpr UINT kContextManageMenuCommand = 41065;
 constexpr UINT kContextSelectAllCommand = 41011;
 constexpr UINT kContextGridAddRow = 41012;
 constexpr UINT kContextGridRemoveRow = 41013;
@@ -175,6 +176,7 @@ constexpr UINT kContextWidgetDetailModified = 41058;
 constexpr UINT kContextWidgetDetailType = 41059;
 constexpr UINT kContextWidgetDetailSize = 41060;
 constexpr UINT kContextWidgetToggleLargeFolderTitleless = 41061;
+constexpr UINT kContextWidgetToggleExpandOnHover = 41063;
 constexpr UINT kContextWidgetDemoCategoryFirst = 41900;
 constexpr UINT kContextWidgetDemoCategoryLast = 41912;
 constexpr UINT kContextSpacingPresetFirst = 41150;
@@ -230,6 +232,9 @@ constexpr UINT kContextDockCreateMapping = 41818;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
+constexpr UINT kFolderChangeMessage = WM_APP + 23;
+constexpr UINT kFolderSubscriptionReadyMessage = WM_APP + 24;
+constexpr UINT kBackgroundShellReadyMessage = WM_APP + 25;
 constexpr UINT kIconLoadedMessage = WM_APP + 3;
 constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT kCommitRenameMessage = WM_APP + 5;
@@ -243,6 +248,7 @@ constexpr UINT kWidgetConsentResolvedMessage = WM_APP + 13;
 constexpr UINT kWidgetConsentOpenedMessage = WM_APP + 14;
 constexpr UINT kWidgetAudioAnalysisWakeMessage = WM_APP + 15;
 constexpr UINT kWidgetTaskWakeMessage = WM_APP + 21;
+constexpr UINT kDesktopPassthroughExitMessage = WM_APP + 22;
 constexpr UINT kFloatingPopupExternalPointerMessage = WM_APP + 16;
 constexpr UINT kQuickNavigationEverythingSearchMessage = WM_APP + 17;
 constexpr UINT kUrlDropDownloadCompletedMessage = WM_APP + 18;
@@ -304,8 +310,6 @@ constexpr int kQuickNavigationHotkeyId = 101;
 constexpr int kFloatingDockHotkeyId = 102;
 constexpr int kDesktopPassthroughHotkeyId = 103;
 constexpr int kSettingsHotkeyProbeId = 104;
-constexpr UINT_PTR kDesktopPassthroughHoldTimerId = 20;
-constexpr UINT kDesktopPassthroughHoldIntervalMs = 16;
 // DoDragDrop owns a nested message loop, so the waitable animation timer in
 // the outer application pump needs a WM_TIMER bridge while a local drag is
 // visiting another process.
@@ -326,6 +330,9 @@ constexpr UINT kExternalOleDragLeaveGraceMs = 80;
 // surface transition starves that captured stream before it reaches an opener.
 constexpr UINT_PTR kNativeDragHoverRecoveryTimerId = 25;
 constexpr UINT_PTR kLargeIconRetryTimerId = 26;
+constexpr UINT_PTR kRenameClickTimerId = 27;
+constexpr UINT_PTR kPopupHoverTimerId = 28;
+constexpr UINT kPopupHoverPollIntervalMs = 50;
 constexpr UINT kNativeDragHoverRecoveryIntervalMs = 50;
 constexpr UINT_PTR kFloatingDockEdgeSwipeTimerId = 16;
 constexpr UINT kFloatingDockEdgeSwipeIntervalMs = 20;

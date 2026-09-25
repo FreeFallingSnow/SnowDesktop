@@ -14,9 +14,19 @@
 #include "app/ole_drag_drop_adapter.h"
 #include "app/popup_dwell_controller.h"
 #include "app/rename_controller.h"
+#include "app/rename_click_controller.h"
 #include "app/rename_notification_tracker.h"
 #include "app/rename_model_update.h"
 #include "app/shell_refresh_snapshot.h"
+#include "app/folder_read_retries.h"
+#include "app/dock_folder_popup_read.h"
+#include "dock_refresh_cache.h"
+#include "app/dock_icon_work.h"
+#include "app/initial_icon_bitmap.h"
+#include "app/startup_shell_read.h"
+#include "background_work.h"
+#include "app/shell_icon_request.h"
+#include "app/shell_icon_work.h"
 #include "app/selection_controller.h"
 #include "app/tray_icon_controller.h"
 #include "app/tray_notification_window.h"
@@ -32,6 +42,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -53,6 +64,12 @@ void Check(bool condition, const std::string& message)
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
 }
+
+#include "shell_folder_refresh_cases.h"
+#include "background_work_cases.h"
+#include "shell_icon_request_cases.h"
+#include "startup_icon_cases.h"
+#include "rename_click_cases.h"
 
 class ContractContainer final : public Container
 {
@@ -664,6 +681,39 @@ void TestDesktopPlacementPolicyMatchesSourceSemantics()
         "ordinary desktop drags must preserve their group-origin grab offset");
 }
 
+void TestPrimaryGhostSurvivesLabelDragAndPageTurn()
+{
+    ContractItem first({0, 0, 100, 120});
+    ContractItem pressed({100, 0, 200, 120});
+    DragSession session;
+    // The press is on the second icon's label, outside its 40x40 image.
+    session.Begin(nullptr, {&first, &pressed}, {}, {150, 100}, {220, 210});
+    session.SetVisualItemBounds({{30, 10, 70, 50}, {130, 10, 170, 50}}, 1);
+    const auto ghost = session.ResolveDraggedBounds(1, pressed.GetBounds(), {220, 210});
+    Check(ghost.left == 200 && ghost.top == 120 && ghost.right == 240 && ghost.bottom == 160 &&
+            session.IsPrimaryVisualItem(1, ghost, {220, 210}) &&
+            !session.IsPrimaryVisualItem(0, {200, 190, 240, 230}, {220, 210}),
+        "a multi-selection label drag must keep the pressed icon as its primary ghost even outside the image");
+
+    session.DetachRuntimeBindings();
+    ContractItem reboundFirst({});
+    ContractItem reboundPressed({});
+    session.RebindSource(nullptr, {&reboundFirst, &reboundPressed}, {});
+    Check(session.IsPrimaryVisualItem(1, ghost, {220, 210}) &&
+            !session.IsPrimaryVisualItem(0, {200, 190, 240, 230}, {220, 210}),
+        "page replacement must retain primary ghost identity after the source wrappers are rebuilt");
+
+    session.AnchorToPointer({150, 30});
+    Check(session.IsPointerAnchored(),
+        "pointer-anchored list and fan drags must select cells by pointer rather than snapping a group origin");
+    session.End();
+    session.Begin(nullptr, {&first, &pressed}, {}, {20, 20}, {20, 20});
+    Check(!session.IsPointerAnchored() &&
+            session.IsPrimaryVisualItem(0, {0, 0, 100, 120}, {20, 20}) &&
+            !session.IsPrimaryVisualItem(1, {100, 0, 200, 120}, {20, 20}),
+        "a new session must not inherit the previous primary icon or pointer placement mode");
+}
+
 void TestEverySurfaceRetainsStableDragMetadata()
 {
     using Surface =
@@ -934,7 +984,6 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
     struct PageTurnCase
     {
         const char* name;
-        POINT nextGroupOrigin;
         RECT reboundBounds;
         bool sourcePageHidden;
     };
@@ -945,13 +994,11 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
     constexpr std::array pageTurns{
         PageTurnCase{
             "same-display page replacement",
-            originalGroupOrigin,
             RECT{},
             true,
         },
         PageTurnCase{
-            "cross-display migration with page replacement",
-            POINT{1960, 150},
+            "cross-display source rebuild with page replacement",
             RECT{1970, 160, 2060, 250},
             false,
         },
@@ -1022,9 +1069,8 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
                 staleTarget.GetSlots().front().get(),
                 HitRegion::Empty);
 
-            // ApplyPageMapping + LayoutItems destroys the runtime tree before
-            // a cross-display origin adjustment is known. Mirror that order:
-            // detach, rebuild the source, then compensate the group origin.
+            // Page turns rebuild runtime wrappers, but the drag-start origin
+            // and pointer remain immutable through both preview and release.
             session.DetachRuntimeBindings();
             originalItem.reset();
             original.reset();
@@ -1073,9 +1119,6 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
             session.RebindSource(
                 &rebuilt, std::move(reboundItems),
                 std::move(reboundList));
-            session.AdjustForGroupOriginChange(
-                originalGroupOrigin,
-                pageTurn.nextGroupOrigin);
 
             const RECT actualBounds =
                 reboundItem.GetBounds();
@@ -1100,7 +1143,7 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
 
             const POINT targetAfterTurn =
                 session.ResolveTargetPoint(
-                    pageTurn.nextGroupOrigin,
+                    originalGroupOrigin,
                     pointerCurrent);
             Check(targetAfterTurn.x == targetBeforeTurn.x &&
                     targetAfterTurn.y == targetBeforeTurn.y,
@@ -1135,7 +1178,7 @@ void TestEveryDragSourceSurvivesPageTurnRebindMatrix()
             session.DeactivateForDrop();
             const POINT commitPoint =
                 session.ResolveTargetPoint(
-                    pageTurn.nextGroupOrigin,
+                    originalGroupOrigin,
                     pointerCurrent);
             Check(!session.IsActive() &&
                     session.HasContext() &&
@@ -2477,6 +2520,8 @@ void TestShellRefreshRejectsStaleSnapshots()
     Check(initial.has_value() && !revision.Begin().has_value(),
         "a burst of file notifications cannot queue concurrent reads");
     revision.Invalidate(); // A create/delete/rename arrives during the read.
+    Check(!revision.IsCurrent(*initial),
+        "incremental startup items from an invalidated read must also be rejected");
     Check(!revision.Finish(*initial) && !revision.Running(),
         "an older directory snapshot must not resurrect a deleted or renamed file");
     const auto latest = revision.Begin();
@@ -2487,6 +2532,118 @@ void TestShellRefreshRejectsStaleSnapshots()
     revision.Invalidate(); // A manual/settings reload has newer UI state.
     Check(!revision.Finish(*beforeManualReload),
         "a manual model reload invalidates an already running background read");
+}
+
+void TestStartupShellReadDoesNotGateReadyIcons()
+{
+    using namespace snowdesktop::shell_refresh;
+    using namespace std::chrono_literals;
+    struct Gate
+    {
+        HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        std::atomic<DWORD> thread = 0;
+        std::atomic<bool> sta = false;
+        ~Gate() { CloseHandle(entered); CloseHandle(release); CloseHandle(returned); }
+    };
+    auto gate = std::make_shared<Gate>();
+    const DWORD uiThread = GetCurrentThreadId();
+    // Replace only the unbounded Shell/RPC edge. Exercise the real STA worker,
+    // mailbox, bounded wait and incremental publication used by startup.
+    StartupRead slow([gate](const Request& request, Snapshot& snapshot) {
+        gate->thread = GetCurrentThreadId();
+        APTTYPE apartment{};
+        APTTYPEQUALIFIER qualifier{};
+        gate->sta = SUCCEEDED(CoGetApartmentType(&apartment, &qualifier)) &&
+            (apartment == APTTYPE_STA || apartment == APTTYPE_MAINSTA);
+        DesktopItem item;
+        item.layoutKey = L"READY-BEFORE-NETWORK";
+        item.name = L"ready";
+        request.publishDesktopItem(item);
+        snapshot.desktopItems.push_back(std::move(item));
+        SetEvent(gate->entered);
+        const bool released = WaitForSingleObject(gate->release, 5000) == WAIT_OBJECT_0;
+        SetEvent(gate->returned);
+        return released;
+    });
+    Check(slow.Start({}), "startup starts its background desktop read");
+    Check(WaitForSingleObject(gate->entered, 2000) == WAIT_OBJECT_0,
+        "controlled Shell read reaches the blocked-next-item boundary");
+    Check(gate->thread != uiThread && gate->sta,
+        "Shell enumeration executes in its own initialized STA, outside the UI thread");
+    const auto before = std::chrono::steady_clock::now();
+    Check(!slow.TakeReady(20ms) && slow.Pending(),
+        "a startup timeout preserves pending work without publishing an empty completed desktop");
+    Check(std::chrono::steady_clock::now() - before < 500ms,
+        "startup bounded wait returns while the network provider is still blocked");
+    Check(!slow.Start({}), "timeouts cannot accumulate duplicate blocked startup workers");
+    auto progress = slow.TakeProgress();
+    Check(progress.size() == 1 && progress[0].layoutKey == L"READY-BEFORE-NETWORK" &&
+            slow.TakeProgress().empty(),
+        "completed icons can be consumed once while the next Shell item is blocked");
+
+    StartupRead local([](const Request& request, Snapshot&) {
+        DesktopItem item;
+        item.layoutKey = L"LOCAL-ICON";
+        request.publishDesktopItem(item);
+        return true;
+    });
+    Check(local.Start({}), "physical desktop files have an independent reader");
+    auto localReady = local.TakeReady(2000ms);
+    Check(localReady && localReady->desktopComplete && slow.Pending(),
+        "a blocked Shell desktop source does not gate completion of the local source");
+    SetEvent(gate->release);
+    auto ready = slow.TakeReady(2000ms);
+    Check(ready && ready->desktopComplete && ready->desktopItems.size() == 1 && !slow.Pending(),
+        "the original delayed read remains consumable after its provider recovers");
+
+    auto stoppingGate = std::make_shared<Gate>();
+    StartupRead stopping([stoppingGate](const Request&, Snapshot&) {
+        SetEvent(stoppingGate->entered);
+        WaitForSingleObject(stoppingGate->release, 5000);
+        SetEvent(stoppingGate->returned);
+        return true;
+    });
+    Check(stopping.Start({}) &&
+            WaitForSingleObject(stoppingGate->entered, 2000) == WAIT_OBJECT_0,
+        "shutdown fixture reaches the uninterruptible provider call");
+    const auto stopStarted = std::chrono::steady_clock::now();
+    stopping.Stop();
+    Check(std::chrono::steady_clock::now() - stopStarted < 500ms &&
+            !stopping.Pending() && !stopping.Start({}),
+        "shutdown retires the mailbox without joining Shell or accepting another read");
+    SetEvent(stoppingGate->release);
+    Check(WaitForSingleObject(stoppingGate->returned, 2000) == WAIT_OBJECT_0 &&
+            !stopping.TakeReady() && stopping.TakeProgress().empty(),
+        "a late completion cannot publish to a stopped or destroyed host");
+
+    StartupRead failed([](const Request&, Snapshot& snapshot) {
+        snapshot.desktopItems.emplace_back();
+        return false;
+    });
+    Check(failed.Start({}), "partial-failure fixture starts");
+    auto failure = failed.TakeReady(2000ms);
+    Check(failure && !failure->desktopComplete,
+        "a failed enumeration with some items must not authorize deletion of unobserved items");
+}
+
+void TestIncrementalDesktopPreservesUnobservedItems()
+{
+    using namespace snowdesktop::shell_refresh;
+    std::vector<DesktopItem> current(1), previous(2);
+    current[0].layoutKey = L"FAST";
+    current[0].name = L"current name";
+    previous[0].layoutKey = L"FAST";
+    previous[0].name = L"old name";
+    previous[1].layoutKey = L"SLOW";
+    previous[1].gridCell = {L"saved-page", 4, 3};
+    previous[1].selected = true;
+    AppendUnobservedItems(current, previous);
+    Check(current.size() == 2 && current[0].name == L"current name" &&
+            current[1].layoutKey == L"SLOW" && current[1].gridCell.column == 4 &&
+            current[1].gridCell.row == 3 && current[1].selected,
+        "incremental publication preserves unobserved icons and their live position/selection without duplicating ready icons");
 }
 
 void TestShellMetadataCacheRejectsChangedFiles()
@@ -2593,6 +2750,44 @@ void TestShellRefreshPreservesCurrentItemState()
     Check(folderRead.selected && folderRead.isCut && folderRead.iconBitmap &&
             !folderPrevious.iconBitmap && folderRead.iconState == IconState::FullQuality,
         "mapped folders and popup aliases retain their independent selection and icon ownership");
+}
+
+void TestLayoutReloadReplacesLargeIconState()
+{
+    DesktopItem original;
+    original.layoutKey = L"C:\\Desktop\\kept.txt";
+    original.gridCell = {L"original-page", 2, 3};
+    original.gridSpan = {3, 2};
+    original.largeIcon = snowdesktop::LargeIconConfig{};
+    original.largeIcon->columns = 3;
+    original.largeIcon->rows = 2;
+    original.largeIcon->image = "original-cover.png";
+
+    DesktopItem experiment;
+    experiment.layoutKey = original.layoutKey;
+    snowdesktop::shell_refresh::PreserveRuntime(experiment, original);
+    snowdesktop::shell_refresh::ApplyLoadedLayout(experiment, nullptr);
+    Check(!experiment.largeIcon && experiment.gridCell.pageId.empty() &&
+            experiment.gridSpan.columns == 1 && experiment.gridSpan.rows == 1,
+        "temporary initialization must clear the original large icon and placement");
+
+    LayoutRecord saved;
+    saved.hasGrid = true;
+    saved.cell = {L"original-page", 2, 3};
+    saved.span = {3, 2};
+    saved.largeIcon = snowdesktop::LargeIconConfig{};
+    saved.largeIcon->columns = 3;
+    saved.largeIcon->rows = 2;
+    saved.largeIcon->image = "original-cover.png";
+    DesktopItem restored;
+    restored.layoutKey = experiment.layoutKey;
+    snowdesktop::shell_refresh::PreserveRuntime(restored, experiment);
+    snowdesktop::shell_refresh::ApplyLoadedLayout(restored, &saved);
+    Check(restored.largeIcon && restored.largeIcon->image == "original-cover.png" &&
+            restored.largeIcon->columns == 3 && restored.largeIcon->rows == 2 &&
+            restored.gridCell.pageId == L"original-page" &&
+            restored.gridSpan.columns == 3 && restored.gridSpan.rows == 2,
+        "leaving temporary initialization restores the saved large icon and placement");
 }
 
 void TestRenameNotificationsPreserveUnrelatedChanges()
@@ -2741,6 +2936,40 @@ void TestPopupDwellControllerHandlesCandidateChanges()
             controller.IsIdle() &&
             !controller.IsReady(1000, 0),
         "reset popup dwell must remove both candidate and readiness");
+}
+
+// Prevent passive hover from opening early, reopening after click/Escape, or
+// inheriting time from a different source/monitor. No clock sleeps or UI mocks.
+void TestPassivePopupHoverTiming()
+{
+    PopupHoverController controller;
+    Check(!controller.Pending() && !controller.Consume(1000, 600),
+        "no opener cannot trigger a popup");
+    controller.Track(L"collection:a", 100);
+    controller.Track(L"collection:a", 650);
+    Check(!controller.Consume(699, 600) && controller.Consume(700, 600) &&
+            !controller.Consume(2000, 600),
+        "a continuous hover opens once at 600 ms, even while moving inside the opener");
+    controller.Track(L"dock:monitor1:folder", 2000);
+    controller.Track(L"dock:monitor2:folder", 2500);
+    Check(!controller.Consume(2600, 600) && controller.Consume(3100, 600),
+        "the same Dock source on another monitor starts a fresh dwell");
+    controller.Track(L"collection:b", 4000);
+    controller.SuppressUntilLeave();
+    controller.Track(L"collection:b", 4600);
+    Check(!controller.Consume(5000, 600),
+        "clicking or dismissing suppresses the hovered opener until leave");
+    controller.Track(L"", 5100);
+    controller.Track(L"collection:b", 5200);
+    Check(!controller.Consume(5799, 600) && controller.Consume(5800, 600),
+        "reentering a suppressed opener requires the full delay");
+    controller.Track(L"collection:c", 6000);
+    controller.Reset();
+    Check(!controller.Consume(9000, 600),
+        "disabling hover, leaving the surface or occlusion cancels pending opening");
+    controller.Track(L"dock:folder", MAXDWORD - 200);
+    Check(!controller.Consume(398, 600) && controller.Consume(399, 600),
+        "hover timing survives the Windows tick counter wrapping");
 }
 }
 
@@ -2930,6 +3159,7 @@ int wmain(int argc, wchar_t** argv)
     TestEveryRegisteredSurfaceOriginLifecycle();
     TestDropActionModifiers();
     TestEveryDragSourceSurvivesPageTurnRebindMatrix();
+    TestPrimaryGhostSurvivesLabelDragAndPageTurn();
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDesktopFilesDockPayload();
     TestDragTargetResolutionUsesContractAndZOrder();
@@ -2950,13 +3180,33 @@ int wmain(int argc, wchar_t** argv)
     TestTrayNotificationShortcutPreservesUserEntry();
     TestSelectionControllerCoversEveryRegisteredRange();
     TestRenameControllerKeepsTargetsExclusive();
+    TestSlowRenameClicks();
     TestRenameControllerRejectsStaleFocusCommits();
     TestShellRefreshRejectsStaleSnapshots();
+    TestFolderRefreshScopeAndReads();
+    TestFolderShellSubscriptions();
+    TestStartupShellReadDoesNotGateReadyIcons();
+    TestStartupReadWakesConsumer();
+    TestStartupDesktopMetadataDeferral();
+    TestStartupIconSurvivesMetadataArrival();
+    TestFirstIconsDoNotWaitForDetails();
+    TestShortcutClassificationDoesNotGateIcons();
+    TestShortcutClassificationCancellation();
+    TestShortcutClassificationCapacityRecovery();
+    TestLocalIconsBypassBlockedShellFallback();
+    TestBackgroundShellWorkIsolation();
+    TestDeferredFolderReadAfterCapacityRecovers();
+    TestDockLocalIconsBypassShell();
+    TestInitialIconBitmaps();
+    TestShellIconSourceStamp();
+    TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();
+    TestLayoutReloadReplacesLargeIconState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
     TestPopupDwellControllerHandlesCandidateChanges();
+    TestPassivePopupHoverTiming();
     if (failures != 0)
     {
         std::cerr << failures

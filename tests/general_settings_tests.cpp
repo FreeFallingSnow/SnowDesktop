@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <utility>
 
 std::wstring GetDataFilePath(const wchar_t* filename)
 {
@@ -30,6 +31,52 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    {
+        using namespace snowdesktop::shell_extensions;
+        const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopMenuPreferences-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings saved, loaded;
+        saved.shellExtensions = {true, {{"handler:{provider}", "", "压缩软件", Placement::Submenu},
+            {"handler:{provider}", "compress", "压缩 \"文件\"", Placement::Root},
+            {"handler:{provider}", "extract", "解压", Placement::Hidden}}};
+        saved.shellExtensions.hidden = {{"verb:sevenzip", Context::File}, {"verb:sevenzip", Context::Desktop},
+            {"menu:特殊\"项目", Context::FolderBackground}};
+        saved.shellExtensions.shown = {{"verb:sevenzip", Context::Folder},
+                                       {"menu:特殊\"项目", Context::Desktop}};
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) &&
+                  loaded.shellExtensions == saved.shellExtensions,
+              "explicit visibility and legacy preferences survive restart including escaped Unicode "
+              "identities");
+        saved.shellExtensions.enabled = false;
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.shellExtensions == saved.shellExtensions,
+            "legacy selector data remains preserved alongside the active scoped exclusions");
+        { std::ofstream legacy(path); legacy << "{}"; }
+        Check(LoadGeneralSettings(path.c_str(), loaded) && !loaded.shellExtensions.enabled && loaded.shellExtensions.selections.empty(),
+            "old configuration has no local exclusions while retaining legacy fields for compatibility");
+        Check(loaded.shellExtensions.shown.empty() &&
+                  IsHidden(loaded.shellExtensions, "verb:sevenzip", Context::File),
+              "missing preferences hide every third-party menu item by default");
+        JsonValue legacy;
+        Check(ParseJson(R"({"enabled":true,"hidden":[{"id":"verb:editor","context":0}]})", legacy) &&
+                  ReadPreferences(&legacy).shown.empty(),
+              "exclusion-only settings never opt other extensions in");
+        std::error_code error; std::filesystem::remove(path, error);
+    }
+
+    {
+        const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopCalendarPreferences-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings settings;
+        settings.calendarDisplay = {true, "hebrew", false, ""};
+        Check(SaveGeneralSettings(path.c_str(), settings), "save host calendar preferences");
+        GeneralSettings loaded;
+        Check(LoadGeneralSettings(path.c_str(), loaded) && loaded.calendarDisplay == settings.calendarDisplay, "calendar preferences survive restart");
+        settings.calendarDisplay.enabled = false; settings.calendarDisplay.holidaysEnabled = false;
+        Check(SaveGeneralSettings(path.c_str(), settings) && LoadGeneralSettings(path.c_str(), loaded) && loaded.calendarDisplay == settings.calendarDisplay, "off switch preserves the selected calendar");
+        settings.calendarDisplay = {true, "invalid", true, "invalid"};
+        Check(SaveGeneralSettings(path.c_str(), settings) && LoadGeneralSettings(path.c_str(), loaded) && !loaded.calendarDisplay.enabled && !loaded.calendarDisplay.holidaysEnabled, "unknown preferences safely disable annotations");
+        { std::ofstream old(path); old << R"({"calendarEnabled":true,"calendarType":"hebrew","holidaysEnabled":true,"holidayRegion":"CN"})"; }
+        Check(LoadGeneralSettings(path.c_str(), loaded) && loaded.calendarDisplay.enabled && loaded.calendarDisplay.calendar == "hebrew" && !loaded.calendarDisplay.holidaysEnabled && loaded.calendarDisplay.region.empty(), "old holiday settings are ignored without losing the extra calendar");
+        std::error_code error; std::filesystem::remove(path, error);
+    }
     {
         // A gradient must survive restart independently in every taskbar rule,
         // including its inactive colors after switching back to solid fill.
@@ -311,6 +358,19 @@ int main()
     savedAppearance.widgetEdgeHighlightWidth = 2.5f;
     savedAppearance.widgetEdgeHighlightStrength = 0.42f;
     savedAppearance.luaWidgetContentRowHeight = 34.0f;
+    Check(!savedAppearance.showGroupTabCounts,
+        "group tab file counts are opt-in for a new profile");
+    savedAppearance.showGroupTabCounts = true;
+    Check(!savedAppearance.scrollableTitleBarOnTop,
+        "existing profiles default to a bottom title bar");
+    savedAppearance.scrollableTitleBarOnTop = true;
+    Check(!savedAppearance.popupHoverOpen,
+        "popup hover opening defaults off for new profiles");
+    Check(savedAppearance.popupHoverDelayMs == 600.0f,
+        "new profiles retain the original 600 ms hover delay");
+    savedAppearance.popupHoverOpen = true;
+    savedAppearance.popupHoverDelayMs = 1200.0f;
+    savedAppearance.showCategoryTabCounts = false;
     savedAppearance.panelGradient.enabled = true;
     savedAppearance.panelGradient.angle = 45;
     savedAppearance.panelGradient.start = .1;
@@ -328,9 +388,50 @@ int main()
             std::abs(loadedAppearance.widgetEdgeHighlightStrength -
                 0.42f) < 0.0001f &&
             loadedAppearance.luaWidgetContentRowHeight == 34.0f &&
+            loadedAppearance.showGroupTabCounts &&
+            loadedAppearance.scrollableTitleBarOnTop &&
+            loadedAppearance.popupHoverOpen &&
+            loadedAppearance.popupHoverDelayMs == 1200.0f &&
+            !loadedAppearance.showCategoryTabCounts &&
             !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
             loadedAppearance.gradientEndA == savedAppearance.gradientEndA,
         "appearance and Lua widget row height round trip independently");
+    // Group counts must survive the acrylic preset refresh on load and must
+    // remain independent from category counts, including an explicit off.
+    for (const int preset : {kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight})
+    {
+        for (const bool enabled : {true, false})
+        {
+            auto appearance = MakeAppearancePreset(preset);
+            appearance.showGroupTabCounts = enabled;
+            appearance.scrollableTitleBarOnTop = enabled;
+            appearance.popupHoverOpen = enabled;
+            appearance.popupHoverDelayMs = 1400.0f;
+            appearance.showCategoryTabCounts = !enabled;
+            loadedAppearance.showGroupTabCounts = !enabled;
+            Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
+                    LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                    loadedAppearance.showGroupTabCounts == enabled &&
+                    loadedAppearance.scrollableTitleBarOnTop == enabled &&
+                    loadedAppearance.popupHoverOpen == enabled &&
+                    loadedAppearance.popupHoverDelayMs == 1400.0f &&
+                    loadedAppearance.showCategoryTabCounts == !enabled,
+                "group count preference survives acrylic preset refresh independently from category counts");
+        }
+    }
+    // Persist through a non-custom theme as well: applying a preset must not
+    // discard the independent context-menu selection.
+    for (int style = 0; style <= 6; ++style)
+    {
+        auto menuAppearance = PersonalizationSettings::LightPreset();
+        menuAppearance.contextMenuStyle = style;
+        Check(SavePersonalization(personalizationPath.c_str(), menuAppearance) &&
+                LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance.contextMenuStyle == style,
+            "all existing and Win10 menu styles survive save/load with a theme preset");
+    }
+    Check(SavePersonalization(personalizationPath.c_str(), savedAppearance),
+        "restore the valid gradient fixture before testing rejected writes");
     auto invalidAppearance = savedAppearance;
     invalidAppearance.panelGradient.stops[1].position = 1;
     Check(!SavePersonalization(personalizationPath.c_str(), invalidAppearance) &&
@@ -356,8 +457,16 @@ int main()
                        "}\n";
     }
     PersonalizationSettings migratedGlass;
+    migratedGlass.showGroupTabCounts = true;
+    migratedGlass.scrollableTitleBarOnTop = true;
+    migratedGlass.popupHoverOpen = true;
+    migratedGlass.popupHoverDelayMs = 2200.0f;
     migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
+            !migratedGlass.showGroupTabCounts &&
+            !migratedGlass.scrollableTitleBarOnTop &&
+            !migratedGlass.popupHoverOpen &&
+            migratedGlass.popupHoverDelayMs == 600.0f &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
                 kDefaultEdgeHighlightWidth &&
@@ -366,6 +475,31 @@ int main()
             migratedGlass.widgetBorderWidth == 1.0f &&
             migratedGlass.widgetBorderAlpha == 0.0f && !migratedGlass.panelGradient.enabled,
         "legacy glass appearance migrates to an independent edge highlight");
+    // Loading old, hand-edited or out-of-range profiles must never turn the
+    // delay into an immediate popup or a practically infinite wait.
+    for (const auto& [serialized, expected] : {
+            std::pair{"-100", 100.0f}, std::pair{"99999", 3000.0f},
+            std::pair{"1e300", 3000.0f}, std::pair{"\"invalid\"", 600.0f},
+            std::pair{"450.4", 450.0f}})
+    {
+        {
+            std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
+            fixture << "{\"popupHoverDelayMs\":" << serialized << "}";
+        }
+        Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance.popupHoverDelayMs == expected,
+            "persisted hover delay is bounded and invalid values use the default");
+    }
+    for (const auto& [requested, expected] : {
+            std::pair{-1.0f, 100.0f}, std::pair{9999.0f, 3000.0f}})
+    {
+        auto appearance = savedAppearance;
+        appearance.popupHoverDelayMs = requested;
+        Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
+                LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance.popupHoverDelayMs == expected,
+            "saved hover delay respects the supported range");
+    }
     {
         std::ofstream legacyOpaque(
             personalizationPath, std::ios::binary | std::ios::trunc);

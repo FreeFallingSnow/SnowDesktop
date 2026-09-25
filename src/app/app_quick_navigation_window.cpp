@@ -366,67 +366,31 @@ void DesktopApp::ClearQuickNavigationEverythingResults()
 int DesktopApp::GetQuickNavigationEverythingIconIndex(
     const std::wstring& path, bool isDirectory)
 {
-    if (isDirectory)
-    {
-        auto cached = quickNavigationEverythingIconCache_.find(L"<DIR>");
-        if (cached != quickNavigationEverythingIconCache_.end())
-            return cached->second;
-
+    auto extension = ToUpperInvariant(PathFindExtensionW(path.c_str()));
+    if (extension.empty()) extension = L"<FILE>";
+    const bool perFile = !isDirectory && (extension == L".EXE" || extension == L".LNK" ||
+        extension == L".DLL" || extension == L".ICO" || extension == L".SCR" ||
+        extension == L".MSI" || extension == L".CPL");
+    const auto key = isDirectory ? std::wstring(L"<DIR>") : perFile ? ToUpperInvariant(path) : extension;
+    if (const auto found = quickNavigationEverythingIconCache_.find(key);
+        found != quickNavigationEverythingIconCache_.end()) return found->second;
+    shellVisualWork_.Submit(L"everything:" + key, [path, extension, perFile, isDirectory] {
         SHFILEINFOW info{};
-        DWORD_PTR imageList = SHGetFileInfoW(
-            path.empty() ? L"<DIR>" : path.c_str(),
-            FILE_ATTRIBUTE_DIRECTORY,
-            &info,
-            sizeof(info),
-            SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
-        int iconIndex = imageList ? info.iIcon : -1;
-        if (imageList)
-            quickNavigationSystemImageListSmall_ = reinterpret_cast<HIMAGELIST>(imageList);
-        quickNavigationEverythingIconCache_[L"<DIR>"] = iconIndex;
-        return iconIndex;
-    }
-
-    std::wstring ext = ToUpperInvariant(PathFindExtensionW(path.c_str()));
-    if (ext.empty())
-        ext = L"<FILE>";
-
-    bool perFileIcon = !path.empty() && (ext == L".EXE" || ext == L".LNK" || ext == L".DLL" ||
-        ext == L".ICO" || ext == L".SCR" || ext == L".MSI" || ext == L".CPL");
-
-    std::wstring cacheKey = perFileIcon ? ToUpperInvariant(path) : ext;
-
-    auto cached = quickNavigationEverythingIconCache_.find(cacheKey);
-    if (cached != quickNavigationEverythingIconCache_.end())
-        return cached->second;
-
-    SHFILEINFOW info{};
-    DWORD_PTR imageList = 0;
-
-    if (perFileIcon)
-    {
-        imageList = SHGetFileInfoW(
-            path.c_str(), 0, &info, sizeof(info),
+        DWORD_PTR loaded = 0;
+        if (perFile) loaded = SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info),
             SHGFI_SYSICONINDEX | SHGFI_SMALLICON);
-        if (!imageList)
-        {
-            imageList = SHGetFileInfoW(
-                ext.c_str(), FILE_ATTRIBUTE_NORMAL, &info, sizeof(info),
-                SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
-        }
-    }
-    else
-    {
-        imageList = SHGetFileInfoW(
-            ext.c_str(), FILE_ATTRIBUTE_NORMAL, &info, sizeof(info),
+        if (!loaded) loaded = SHGetFileInfoW(isDirectory ? L"folder" : extension.c_str(),
+            isDirectory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL, &info, sizeof(info),
             SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES);
-    }
-
-    int iconIndex = imageList ? info.iIcon : -1;
-    if (imageList)
-        quickNavigationSystemImageListSmall_ = reinterpret_cast<HIMAGELIST>(imageList);
-
-    quickNavigationEverythingIconCache_[cacheKey] = iconIndex;
-    return iconIndex;
+        return loaded ? info.iIcon : -1;
+    }, [this, key](int index) {
+        quickNavigationEverythingIconCache_[key] = index;
+        // Apply only to current results. A previous query cannot append rows.
+        for (auto& entry : quickNavigationEverythingResults_)
+            entry.systemIconIndex = GetQuickNavigationEverythingIconIndex(entry.path, entry.isDirectory);
+        InvalidateQuickNavigationWindow();
+    }, hwnd_, kBackgroundShellReadyMessage);
+    return -1;
 }
 
 void DesktopApp::RefreshQuickNavigationEverythingResults()

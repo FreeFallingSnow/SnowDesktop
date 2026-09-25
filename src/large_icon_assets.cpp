@@ -329,7 +329,13 @@ struct LargeIconAssets::Impl
     std::unordered_set<std::string> retained;
     std::unordered_map<std::string, std::filesystem::file_time_type> lastUse;
     std::vector<LargeIconAssetResult> completed;
-    std::array<std::jthread, 2> workers;
+    std::array<std::stop_source, 2> cancellation;
+    std::recursive_mutex callbackMutex;
+    void Notify()
+    {
+        std::lock_guard lock(callbackMutex);
+        if (ready) ready();
+    }
     std::array<std::mutex, 64> sourceMutexes;
     std::uint64_t clock = 0;
     bool stopped = false;
@@ -596,20 +602,25 @@ struct LargeIconAssets::Impl
             }
             try { CollectDisk(); }
             catch (...) { /* Cache cleanup must not discard decoded content. */ }
-            if (ready) ready();
+            Notify();
         }
         if (SUCCEEDED(initialized)) CoUninitialize();
     }
 };
 
 LargeIconAssets::LargeIconAssets(std::filesystem::path directory, std::function<void()> ready,
-    std::filesystem::path steamDirectory, LargeIconAssetLimits limits) : impl_(std::make_unique<Impl>())
+    std::filesystem::path steamDirectory, LargeIconAssetLimits limits) : impl_(std::make_shared<Impl>())
 {
     impl_->directory = std::move(directory); impl_->ready = std::move(ready);
     impl_->steamDirectory = std::move(steamDirectory);
     impl_->limits.decodedBytes = std::clamp<std::uint64_t>(limits.decodedBytes, 1, maxMemory);
     impl_->limits.automaticDiskBytes = std::clamp<std::uint64_t>(limits.automaticDiskBytes, 1, 512ull * 1024 * 1024);
-    for (auto& worker : impl_->workers) worker = std::jthread([this](auto stop) { impl_->Run(stop); });
+    try
+    {
+        for (auto& cancellation : impl_->cancellation)
+            std::thread([state = impl_, token = cancellation.get_token()] { state->Run(token); }).detach();
+    }
+    catch (...) { Stop(); throw; }
 }
 LargeIconAssets::~LargeIconAssets() { Stop(); }
 void LargeIconAssets::Stop()
@@ -617,10 +628,15 @@ void LargeIconAssets::Stop()
     {
         std::lock_guard lock(impl_->mutex); impl_->stopped = true;
         for (auto& [_, work] : impl_->pending) work.cancellation.request_stop();
+        impl_->queue.clear();
+        impl_->pending.clear();
+        impl_->completed.clear();
+        impl_->cache.clear();
     }
-    for (auto& worker : impl_->workers) worker.request_stop();
+    for (auto& cancellation : impl_->cancellation) cancellation.request_stop();
     impl_->condition.notify_all();
-    for (auto& worker : impl_->workers) if (worker.joinable()) worker.join();
+    std::lock_guard lock(impl_->callbackMutex);
+    impl_->ready = {};
 }
 void LargeIconAssets::Request(LargeIconAssetRequest request)
 {
@@ -651,7 +667,7 @@ void LargeIconAssets::Request(LargeIconAssetRequest request)
                 return current != impl_->currentRequests.end() && current->second == listener.generation;
             })) work.cancellation.request_stop();
     }
-    if (notify && impl_->ready) impl_->ready();
+    if (notify) impl_->Notify();
 }
 std::vector<LargeIconAssetResult> LargeIconAssets::TakeCompleted()
 {

@@ -1,4 +1,5 @@
 #include "modern_menu.h"
+#include "modern_menu_appearance_rules.h"
 #include "resource.h"
 
 #include <windows.h>
@@ -18,6 +19,7 @@ HANDLE gFluentFontHandle = nullptr;
 snowdesktop::modern_menu::Appearance gAppearance =
     snowdesktop::modern_menu::Appearance::SystemDarkBlur;
 UINT gPreviewDpi = USER_DEFAULT_SCREEN_DPI;
+bool gLongMenu = false;
 
 const wchar_t* AppearanceName(
     snowdesktop::modern_menu::Appearance appearance)
@@ -33,6 +35,10 @@ const wchar_t* AppearanceName(
         return L"浅色（不透明）";
     case Appearance::OpaqueDark:
         return L"深色（不透明）";
+    case Appearance::Win10Light:
+        return L"Win10 浅色";
+    case Appearance::Win10Dark:
+        return L"Win10 深色";
     default:
         return L"跟随系统";
     }
@@ -62,6 +68,20 @@ std::vector<snowdesktop::modern_menu::Item> BuildPreviewItems()
         { 12, L"隐藏桌面时保留\t关", L"\uE5F5", true },
         { 13, L"隐私模式\t开", L"\uE78F", true },
         { 14, L"删除组件", L"\uF34C", true },
+        { 0, L"无图标子菜单", L"", true, false, false,
+            {
+                { 201, L"普通项目", L"", true },
+                { 202, L"复制较长名称的项目\tCtrl+C", L"", true },
+                { 203, L"不可用项目", L"", false },
+                { 0, L"下一层有图标", L"", true, false, false,
+                    {{204, L"设置", L"\uF6A9", true}} },
+            } },
+        { 0, L"保留图标栏的子菜单", L"", true, false, false,
+            {
+                { 205, L"无图标项目", L"", true },
+                { 206, L"设置", L"\uF6A9", true },
+                { 207, L"已勾选", L"", true, true },
+            } },
     };
     items[0].quickAction = true;
     items[0].quickIcon = snowdesktop::MenuQuickIcon::Cut;
@@ -75,6 +95,8 @@ std::vector<snowdesktop::modern_menu::Item> BuildPreviewItems()
     items[4].quickIcon = snowdesktop::MenuQuickIcon::Edit;
     items[5].quickAction = true;
     items[5].quickIcon = snowdesktop::MenuQuickIcon::Delete;
+    if (gLongMenu)
+        for (UINT i = 0; i < 80; ++i) items.push_back({100 + i, L"滚动项目 / Scroll item " + std::to_wstring(i), L"", true});
     return items;
 }
 
@@ -88,9 +110,8 @@ void OpenPreviewMenu(HWND hwnd)
     // Keep the default preview at 96 DPI so low-resolution rasterization can
     // be inspected even when the development monitor uses display scaling.
     options.dpi = gPreviewDpi;
-    options.lightTheme = gAppearance !=
-            snowdesktop::modern_menu::Appearance::SystemDarkBlur &&
-        gAppearance != snowdesktop::modern_menu::Appearance::OpaqueDark;
+    options.lightTheme = snowdesktop::modern_menu::appearance_rules::
+        IsLightTheme(gAppearance, true);
     options.appearance = gAppearance;
     const auto items = BuildPreviewItems();
     gLastCommand = snowdesktop::modern_menu::Show(items, options).command;
@@ -123,6 +144,8 @@ LRESULT CALLBACK WindowProc(
             Appearance::SystemDarkBlur,
             Appearance::OpaqueLight,
             Appearance::OpaqueDark,
+            Appearance::Win10Light,
+            Appearance::Win10Dark,
         };
         const auto current = std::find(
             std::begin(previewAppearances), std::end(previewAppearances),
@@ -136,6 +159,9 @@ LRESULT CALLBACK WindowProc(
         OpenPreviewMenu(hwnd);
         return 0;
     }
+    case WM_KEYDOWN:
+        if (wParam == 'L') { gLongMenu = !gLongMenu; OpenPreviewMenu(hwnd); return 0; }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
     case WM_MBUTTONUP:
     {
         constexpr UINT previewDpis[] = { 96, 120, 144, 192 };
@@ -176,7 +202,7 @@ LRESULT CALLBACK WindowProc(
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 255, 255));
         std::wstring displayText =
-            L"单击重开，右键切换主题，中键切换 DPI\n当前主题：";
+            L"单击重开，右键切换主题，中键切换 DPI，L 切换长菜单\n当前主题：";
         displayText += AppearanceName(gAppearance);
         displayText += L"  当前 DPI：";
         displayText += std::to_wstring(gPreviewDpi);

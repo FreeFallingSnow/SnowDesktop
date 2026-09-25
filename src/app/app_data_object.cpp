@@ -20,9 +20,9 @@ POINT DesktopApp::GetDragTargetPoint(POINT current) const
 GridCell DesktopApp::ResolveDesktopRequestCell(
     const DragSourceList& sourceList, POINT current) const
 {
-    if (sourceList.UsesPointerDesktopPlacement())
+    if (sourceList.UsesPointerDesktopPlacement() || dragSession_.IsPointerAnchored())
         return CellFromPoint(current);
-    return CellFromPointForDrag(GetDragTargetPoint(current));
+    return CellFromDragOrigin(GetDragTargetPoint(current), current);
 }
 
 void DesktopApp::RefreshDragPresentationAnchor()

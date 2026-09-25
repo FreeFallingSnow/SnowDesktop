@@ -12,6 +12,8 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    CancelPopupHover(true);
+    CancelRenameClick();
     (void)wp;
     if (renameEdit_ != nullptr)
         CommitRename(false);
@@ -108,8 +110,7 @@ void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
     widgetDragOriginalSpan_ = widgets_[widgetIndex].gridSpan;
     widgetPreviewCell_ = widgetDragOriginalCell_;
     widgetPreviewSpan_ = widgetDragOriginalSpan_;
-    dragGroupOriginX_ = widgets_[widgetIndex].bounds.left;
-    dragGroupOriginY_ = widgets_[widgetIndex].bounds.top;
+    widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[widgetIndex].bounds, pt);
     SetCapture(hwnd_);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -187,22 +188,12 @@ void DesktopApp::UpdateWidgetDragPageNavigation(POINT clientPoint)
     if (newOffset == pageOffset_)
         return;
 
-    const RECT oldWidgetBounds =
-        widgets_[mouseDownWidgetIndex_].bounds;
     pageOffset_ = newOffset;
     ApplyPageMapping();
     LayoutItems();
     RefreshPageNavHotEdgeHoverAt(clientPoint);
-    const RECT newWidgetBounds =
-        widgets_[mouseDownWidgetIndex_].bounds;
-    const int dx =
-        newWidgetBounds.left - oldWidgetBounds.left;
-    const int dy =
-        newWidgetBounds.top - oldWidgetBounds.top;
-    dragGroupOriginX_ += dx;
-    dragGroupOriginY_ += dy;
-    mouseDownPoint_.x += dx;
-    mouseDownPoint_.y += dy;
+    // The source page may now be hidden. Keep the original grab offset;
+    // empty/rebuilt model bounds are not a new pointer coordinate system.
     InvalidateDragStaticScene();
     InvalidateRect(hwnd_, nullptr, TRUE);
     PresentDesktopPointerUpdate();
@@ -212,6 +203,8 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
+    renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
+        GetSystemMetrics(SM_CYDRAG));
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
     (void)wp;
@@ -231,6 +224,9 @@ void DesktopApp::OnMouseMoveAt(
 
     POINT oldMouse = lastMousePoint_;
     lastMousePoint_ = current;
+    UpdatePopupHover(current);
+    if (UpdateWidgetHoverExpansion(current))
+        PresentPassiveHoverVisualChange();
     if (HandleUsageGuidePointerMove(current)) return;
     if (IsUsageGuideVisible())
         for (const auto bounds : {usageGuidePauseRect_, usageGuideSettingsRect_,
@@ -380,7 +376,7 @@ void DesktopApp::OnMouseMoveAt(
         auto* data = container->GetWidgetData();
         const int maximum = container->GetMaxScrollOffset();
         const int visible = container->GetVisibleContentHeight();
-        const RECT viewport = container->GetContentViewportRect();
+        const RECT viewport = container->GetScrollbarViewportRect();
         const auto geometry = snowdesktop::widget_scroll_rules::
             ResolveScrollbarAxisGeometry(
                 viewport.top, viewport.bottom,
@@ -552,17 +548,30 @@ void DesktopApp::OnMouseMoveAt(
             std::vector<RECT> visualItemBounds;
             visualItemBounds.reserve(sourceItems.size());
             const RECT fanPressedIcon = GetCollectionPopupFanDragBounds(mouseDownHit_);
-            dragFanIconsOnly_ = !IsRectEmptyRect(fanPressedIcon);
+            const bool fanDrag = !IsRectEmptyRect(fanPressedIcon);
+            // Desktop icon drawing normally resolves its in-cell icon geometry
+            // from the page currently beneath it. Retain the actual icon square
+            // so paging to another grid cannot move the image inside its ghost.
+            dragIconsOnly_ = fanDrag || (source == GetDesktopGrid() &&
+                std::all_of(sourceItems.begin(), sourceItems.end(), [](Item* item) {
+                    const auto* icon = dynamic_cast<const DesktopIcon*>(item);
+                    const auto* data = icon ? icon->GetDesktopItem() : nullptr;
+                    return data && !data->largeIcon;
+                }));
             for (Item* item : sourceItems)
             {
-                RECT bounds = dragFanIconsOnly_ ? GetCollectionPopupFanDragBounds(item) :
+                RECT bounds = fanDrag ? GetCollectionPopupFanDragBounds(item) :
                     (item ? item->GetBounds() : RECT{});
+                if (dragIconsOnly_ && !fanDrag && !IsRectEmptyRect(bounds))
+                    bounds = GetItemIconRect(bounds);
                 // Previously selected offscreen members still belong to the
                 // payload; compact them at the grabbed icon instead of using
                 // an unrelated desktop cell as a visual fallback.
-                if (dragFanIconsOnly_ && IsRectEmptyRect(bounds)) bounds = fanPressedIcon;
+                if (fanDrag && IsRectEmptyRect(bounds)) bounds = fanPressedIcon;
                 visualItemBounds.push_back(bounds);
             }
+            const size_t primaryVisualIndex = static_cast<size_t>(std::distance(
+                sourceItems.begin(), std::find(sourceItems.begin(), sourceItems.end(), mouseDownHit_)));
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
@@ -574,14 +583,14 @@ void DesktopApp::OnMouseMoveAt(
                     nullptr);
             }
             dragSession_.SetVisualItemBounds(
-                std::move(visualItemBounds));
+                std::move(visualItemBounds), primaryVisualIndex);
             auto* listSource =
                 dynamic_cast<ListContainer*>(source);
             const bool listIconDrag =
                 listSource && listSource->SingleColumn() &&
                 (dynamic_cast<DesktopIcon*>(mouseDownHit_) ||
                  dynamic_cast<FolderEntryIcon*>(mouseDownHit_));
-            if (dragFanIconsOnly_)
+            if (fanDrag)
             {
                 // The fan label and its rotated AABB are not an icon grid cell.
                 // Keep the icon-sized snapshot and desktop landing at the pointer.
@@ -832,20 +841,11 @@ void DesktopApp::OnMouseMoveAt(
 
         UpdateWidgetDragPageNavigation(current);
 
-        POINT adjusted = {
-            dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
-            dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
-        };
-        GridCell cell = CellFromPointForDrag(adjusted);
+        // Preview and button-up sampling share this target-sized grab anchor.
+        GridCell cell = ResolveGridSpanDragCell(gridPages_, current,
+            widgetDragAnchor_, widgetDragOriginalSpan_, GetFirstPageGridPage());
         if (!cell.pageId.empty())
         {
-            const GridPage* page = FindGridPage(gridPages_, cell.pageId);
-            if (page)
-            {
-                cell = ClampGridCellToFitPage(
-                    *page, cell,
-                    widgetDragOriginalSpan_);
-            }
             widgetPreviewCell_ = cell;
         }
         ShowDragHintWindow(current, pairHint.empty()
@@ -1144,7 +1144,7 @@ void DesktopApp::OnMouseMoveAt(
     }
 
     if (mouseDown_ && !mouseDownHit_ &&
-        pendingGuideAction_ == WidgetHit::None)
+        pendingWidgetButtonAction_ == WidgetHit::None)
     {
         if (std::abs(current.x - mouseDownPoint_.x) > 3 ||
             std::abs(current.y - mouseDownPoint_.y) > 3)
@@ -1265,6 +1265,7 @@ void DesktopApp::OnMouseMoveAt(
                     }
                 }
                 if (UsesCollectionPopupFan(*popupWidget) &&
+                    GetPopupItemCount(*popupWidget) > 0 &&
                     snowdesktop::collection_popup_layout::FanItemContains(
                         GetCollectionPopupFanItem(popupRect_, GetPopupItemCount(*popupWidget)), point))
                     return {popupWidget, popupWidget, 3, 0, true, nullptr, popupRect_,

@@ -12,18 +12,22 @@
  */
 
 #include "app.h"
+#include "auto_start_elevation.h"
 #include "settings_process.h"
 #include "shell_launch_process.h"
+#include "shell_extension_menu.h"
 #include "crashlog.h"
 #include "application_crash_watchdog.h"
 #include "application_restart_policy.h"
 #include "data_paths.h"
+#include "debug_profile.h"
 #include "deployment_context.h"
 #include "general_settings.h"
 #include "l10n.h"
 #include "single_instance.h"
 #include "widget_author_preview.h"
 #include "native_component_preview_export.h"
+#include "steam_runtime_startup.h"
 
 #include <commctrl.h>
 
@@ -242,21 +246,6 @@ ExistingInstanceResolution ResolveExistingInstance(
     return ExistingInstanceResolution::ExitNewInstance;
 }
 
-void RequestSteamRuntimePrune()
-{
-    const auto& context =
-        snowdesktop::deployment::GetRuntimeDeploymentContext();
-    if (context.kind != snowdesktop::deployment::
-            RuntimeDeploymentKind::SteamManaged ||
-        context.launcher.empty())
-    {
-        return;
-    }
-
-    ShellExecuteW(nullptr, L"open", context.launcher.c_str(),
-        L"--snowdesktop-launcher-prune-only",
-        context.installRoot.c_str(), SW_HIDE);
-}
 }
 
 /*
@@ -363,6 +352,12 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* info)
  */
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
+    snowdesktop::steam_runtime::startup::Begin();
+    // Helpers and deployment discovery may access settings before Run.
+    // Conservatively prohibit automatic downgrade from this boundary.
+    snowdesktop::steam_runtime::startup::BeginDataAccess();
+    if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
+    if (const auto result = snowdesktop::shell_extensions::TryRunHelper()) return *result;
     if (const auto result = snowdesktop::shell_launch_process::TryRunCommand())
         return *result;
 
@@ -509,10 +504,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         return 0;
     }
 
-    // The stable launcher owns runtime retirement. At this point this process
-    // is the primary instance, so a previous immutable Steam runtime can no
-    // longer be the active application and may be removed out of process.
-    RequestSteamRuntimePrune();
+    std::string profileError;
+    if (!InitializeDebugProfile(profileError))
+    {
+        InitializeStartupLocale();
+        const std::wstring message = std::wstring(_LW("settings.debug.profile.recover")) +
+            L"\n\n" + Utf8ToWide(profileError);
+        if (MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_YESNO | MB_ICONERROR) != IDYES)
+            return ERROR_INVALID_DATA;
+        const auto paths = snowdesktop::debug_profile::ResolvePaths(GetDataDirectoryPath());
+        snowdesktop::debug_profile::Configuration config;
+        std::string recoveryError;
+        if (!snowdesktop::debug_profile::Read(paths, config, recoveryError))
+            config.desktop = paths.defaultDesktop;
+        config.enabled = false;
+        config.pendingReset = false;
+        if (!snowdesktop::debug_profile::Write(paths, config, recoveryError) ||
+            !InitializeDebugProfile(recoveryError))
+        {
+            MessageBoxW(nullptr, _LW("settings.debug.profile.recoveryFailed"), L"SnowDesktop", MB_OK | MB_ICONERROR);
+            return ERROR_WRITE_FAULT;
+        }
+    }
 
     /* 注册全局未处理异常过滤器与崩溃日志处理器 */
     SetUnhandledExceptionFilter(UnhandledFilter);
@@ -534,12 +547,38 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         nullptr, snowdesktop::application_restart_policy::kFlags);
 
     /* 创建主应用实例并进入消息循环 */
-    DesktopApp app;
-    int result = app.Run(instance, showCommand);
+    int result = 0;
+    std::unique_ptr<snowdesktop::single_instance::PreparedRestart> restart;
+    {
+        DesktopApp app;
+        result = app.Run(instance, showCommand);
+        restart = app.TakeRestart();
+        WriteDiagnosticLogEntry(L"Application run returned; releasing host resources");
+    }
+    WriteDiagnosticLogEntry(L"Application host resources released");
 
     /* 正常退出时清除崩溃计数器，避免残留记录影响后续启动 */
     if (result == 0)
         RegDeleteKeyValueW(HKEY_CURRENT_USER, kRegSubKey, kRegValueName);
+
+    if (restart)
+    {
+        const DWORD error = result == 0 ? restart->Resume() : ERROR_CANCELLED;
+        WriteDiagnosticLogEntry((L"Application restart handoff: pid=" +
+            std::to_wstring(GetCurrentProcessId()) + L" child=" +
+            std::to_wstring(restart->ProcessId()) + L" error=" +
+            std::to_wstring(error)).c_str(), error == ERROR_SUCCESS
+                ? DiagnosticLogLevel::Info : DiagnosticLogLevel::Error);
+        if (error != ERROR_SUCCESS)
+        {
+            restart.reset();
+            const std::wstring message =
+                _LFW("app.run.restart_error", std::to_wstring(error));
+            MessageBoxW(nullptr, message.c_str(), _LW("app.run.restart_failed"),
+                MB_OK | MB_ICONERROR);
+            return static_cast<int>(error);
+        }
+    }
 
     return result;
 }

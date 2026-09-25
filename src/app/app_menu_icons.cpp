@@ -1,6 +1,10 @@
 #include "app.h"
+#include "../desktop_input_activation.h"
+#include "../shell_extension_menu_presentation.h"
 #include "../menu_icon_render.h"
+#include "../menu_label.h"
 #include "../modern_menu.h"
+#include "../modern_menu_appearance_rules.h"
 #include "../widget_package_image_cache.h"
 #include "popup_window_pair_z_order.h"
 
@@ -323,26 +327,15 @@ void DesktopApp::PrepareMenuIconsForPoint(POINT screenPoint)
     menuIconDpi_ = dpi;
     const PersonalizationSettings appearance = CurrentPersonalization();
     menuAppearanceStyle_ = std::clamp(
-        appearance.contextMenuStyle, 0, 4);
-    switch (menuAppearanceStyle_)
-    {
-    case 1:
-    case 3:
-        menuLightTheme_ = true;
-        break;
-    case 2:
-    case 4:
-        menuLightTheme_ = false;
-        break;
-    default:
-        menuLightTheme_ = IsWindowsAppLightThemeEnabled();
-        break;
-    }
+        appearance.contextMenuStyle, 0, 6);
+    menuLightTheme_ = snowdesktop::modern_menu::appearance_rules::IsLightTheme(
+        static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_),
+        IsWindowsAppLightThemeEnabled());
 }
 
 void DesktopApp::SetMenuItemIcon(
     HMENU menu, UINT_PTR command, const wchar_t* text,
-    MenuIconFont font)
+    MenuIconFont font, snowdesktop::menu_icon::BuiltinIcon builtinIcon)
 {
     if (!menu || !text || !*text)
         return;
@@ -378,6 +371,7 @@ void DesktopApp::SetMenuItemIcon(
         }
 
         entry->glyph.clear();
+        entry->builtinIcon = builtinIcon;
         if (entry->imageBitmap)
         {
             DeleteObject(entry->imageBitmap);
@@ -413,9 +407,11 @@ void DesktopApp::SetMenuItemImage(HMENU menu, UINT_PTR command,
         source.pixels.data(), source.pixels.size(), source.width,
         source.height, source.stride,
     };
+    const auto metrics = snowdesktop::menu_icon::ResolveMetrics(menuIconDpi_,
+        snowdesktop::modern_menu::appearance_rules::IsWin10Style(
+            static_cast<snowdesktop::modern_menu::Appearance>(menuAppearanceStyle_)));
     HBITMAP bitmap = snowdesktop::menu_icon::CreateImageBitmap(
-        sourceView, std::max(1, MulDiv(18,
-            static_cast<int>(menuIconDpi_), USER_DEFAULT_SCREEN_DPI)));
+        sourceView, metrics.iconFontHeight);
     if (!bitmap) return;
 
     const int count = GetMenuItemCount(menu);
@@ -450,6 +446,7 @@ void DesktopApp::SetMenuItemImage(HMENU menu, UINT_PTR command,
         entry->glyph.clear();
         if (entry->imageBitmap) DeleteObject(entry->imageBitmap);
         entry->imageBitmap = bitmap;
+        entry->builtinIcon = snowdesktop::menu_icon::BuiltinIcon::None;
         return;
     }
     DeleteObject(bitmap);
@@ -574,7 +571,8 @@ UINT DesktopApp::ShowModernMenu(
     std::function<void(const snowdesktop::modern_menu::HoverInfo&)>
         onHover,
     std::function<void(UINT, const std::wstring&,
-        std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged)
+        std::vector<snowdesktop::modern_menu::Item>&)> onTextChanged,
+    const snowdesktop::shell_extensions::Request* shellRequest)
 {
     if (!rootMenu)
         return 0;
@@ -607,7 +605,9 @@ UINT DesktopApp::ShowModernMenu(
 
             snowdesktop::modern_menu::Item item;
             item.command = probe.wID;
-            item.label = label.data();
+            auto menuLabel = snowdesktop::DecodeMenuLabel(label.data());
+            item.label = std::move(menuLabel.text);
+            item.accessKey = menuLabel.accessKey;
             item.enabled =
                 (probe.fState & (MFS_DISABLED | MFS_GRAYED)) == 0;
             item.checked = (probe.fState & MFS_CHECKED) != 0;
@@ -622,6 +622,7 @@ UINT DesktopApp::ShowModernMenu(
                 {
                     item.glyph = icon->glyph;
                     item.image = icon->imageBitmap;
+                    item.builtinIcon = icon->builtinIcon;
                     item.iconFont = icon->fontAwesome
                         ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
                         : snowdesktop::modern_menu::IconFont::FluentRegular;
@@ -643,7 +644,7 @@ UINT DesktopApp::ShowModernMenu(
         return result;
     };
 
-    const std::vector<snowdesktop::modern_menu::Item> items =
+    std::vector<snowdesktop::modern_menu::Item> items =
         buildItems(rootMenu);
     snowdesktop::modern_menu::Options options;
     options.owner = owner;
@@ -753,8 +754,34 @@ UINT DesktopApp::ShowModernMenu(
              << L" pid=" << GetCurrentProcessId();
         WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
     }
+    snowdesktop::shell_extensions::AddMoreManagementAction(
+        items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"));
+    snowdesktop::shell_extensions::MoveMoreToBottom(items, kContextMoreCommand);
+    std::unique_ptr<snowdesktop::shell_extensions::Presentation> extensions;
+    if (shellRequest)
+    {
+        extensions = std::make_unique<snowdesktop::shell_extensions::Presentation>(*shellRequest, generalSettings_.shellExtensions,
+            _LW("settings.contextMenu.loading"),
+            _LW("settings.contextMenu.failed"), snowdesktop::shell_extensions::SharedMenuService(),
+            [owner = controlHwnd_](bool succeeded) {
+                if (!succeeded && owner) PostMessageW(owner, RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable"), 0, 0);
+            });
+        extensions->Attach(items, options, kContextMoreCommand);
+    }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
+    if (result.command == kContextManageMenuCommand)
+    {
+        if (shellRequest) snowdesktop::shell_extensions::SharedMenuService().Manage(*shellRequest);
+        // Let the caller finish restoring its popup/desktop focus before the
+        // settings window opens. Reuse the existing pending-route dispatcher.
+        settingsWindowOpenRequest_.Request(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::ContextMenu, "contextMenu.extensions"));
+        if (!controlHwnd_ || !SetTimer(controlHwnd_, kSettingsWindowRetryTimerId, 1, nullptr))
+            TryShowPendingSettingsWindow();
+        return 0;
+    }
+    if (extensions && extensions->Invoke(result.command, screenPoint)) return 0;
 
     return result.command;
 }
@@ -762,6 +789,11 @@ UINT DesktopApp::ShowModernMenu(
 void DesktopApp::ConfigureModernMenuEventPump(
     snowdesktop::modern_menu::Options& options)
 {
+    options.owner = snowdesktop::desktop_input_activation::ResolveMenuOwner(
+        options.owner, hwnd_, inputHwnd_, floatingDockInputHwnd_,
+        floatingDockKeyboardSessionActive_ && floatingDockVisible_);
+    BeginDesktopInteractionTrace(L"menu-configure");
+    TraceDesktopInteraction(L"menu-focus-owner", options.owner, 0, 0, 0, true);
     options.eventPump.scheduledWorkHandle =
         uiAnimationScheduler_.WaitHandle();
     options.eventPump.dispatchScheduledWork = [this]() {
@@ -771,9 +803,26 @@ void DesktopApp::ConfigureModernMenuEventPump(
         FlushPendingCompositionCommit();
         FlushPendingQuickNavigationCompositionCommit();
     };
-    options.eventPump.traceDiagnostic = [](const std::wstring& message) {
+    options.eventPump.traceDiagnostic = [this](const std::wstring& message) {
         WriteDiagnosticLogEntry(
             message.c_str(), DiagnosticLogLevel::Debug);
+        // Menu checkpoints share the click trace's window/composition state.
+        TraceDesktopInteraction(L"menu-checkpoint");
+    };
+    options.zOrderFloor = [this]() -> HWND {
+        HWND floor = nullptr;
+        // All visible DockHosts participate, including desktop-band hosts
+        // temporarily raised by Show Desktop or a window transition. Sample
+        // again after dispatch/presentation so a later promotion is covered.
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (host && host->active && host->hwnd &&
+                IsWindowVisible(host->hwnd) &&
+                (!floor || snowdesktop::popup_window_pair_z_order::IsAbove(
+                    host->hwnd, floor)))
+                floor = host->hwnd;
+        }
+        return floor;
     };
 }
 

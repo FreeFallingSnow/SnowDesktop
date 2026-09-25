@@ -323,6 +323,7 @@ $runtimeBuildId = "$version-$($distributionDigest.Substring(0, 16))"
 $runtimeManifest = [ordered]@{
     schemaVersion = 1
     kind = "steam-managed"
+    launcherProtocol = 1
     version = $version
     buildId = $runtimeBuildId
     steamAppId = $steamAppId

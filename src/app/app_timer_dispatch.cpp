@@ -304,6 +304,11 @@ void DesktopApp::RefreshDwellDragTarget(POINT clientPoint)
 
 void DesktopApp::OnTimer(WPARAM timerId)
 {
+    if (timerId == kRenameClickTimerId)
+    {
+        OnRenameClickTimer();
+        return;
+    }
     if (timerId == kLargeIconRetryTimerId)
     {
         KillTimer(controlHwnd_, kLargeIconRetryTimerId);
@@ -392,25 +397,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
         return;
     }
 
-    if (timerId == kDesktopPassthroughHoldTimerId)
-    {
-        if (!desktopPassthroughHoldActive_)
-        {
-            if (desktopPassthroughHotkeyHwnd_ &&
-                IsWindow(desktopPassthroughHotkeyHwnd_))
-            {
-                KillTimer(desktopPassthroughHotkeyHwnd_,
-                    kDesktopPassthroughHoldTimerId);
-            }
-        }
-        else if (!IsDesktopPassthroughHotkeyDown() &&
-            !IsDesktopPassthroughPointerDown())
-        {
-            EndDesktopPassthroughHold();
-        }
-        return;
-    }
-
     if (timerId == kDisplayTopologyRefreshTimerId)
     {
         if (controlHwnd_ && IsWindow(controlHwnd_))
@@ -438,16 +424,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         ApplyPendingRenames();
         if (shellReloadPending_)
         {
-            const bool reloadLayoutFromDisk =
-                shellReloadLayoutFromDiskPending_;
-            if (reloadLayoutFromDisk)
-            {
-                shellReloadPending_ = false;
-                shellReloadLayoutFromDiskPending_ = false;
-                ReloadItems(true);
-            }
-            else
-                RefreshShellItemsAsync();
+            RefreshShellItemsAsync();
         }
         if (shellDockFolderPopupRefreshPending_)
         {
@@ -482,6 +459,26 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kDesktopHostWatchTimerId)
     {
+        PollInitialShellRead();
+        DrainBackgroundShellWork();
+        RefreshIconBitmapResolution();
+        // A failed mapped-folder icon has a retry deadline. Wake a stationary
+        // Dock from the existing maintenance timer too, not only from hover or
+        // unrelated repaints. Read advances an expired ticket once; the async
+        // queue still coalesces that request while its Shell provider runs.
+        for (const auto& entry : dockEntries_)
+        {
+            if (entry.type != DockEntryType::FolderMapping) continue;
+            const auto index = FindWidgetIndexById(entry.reference);
+            if (index >= widgets_.size()) continue;
+            const auto key = ToUpperInvariant(entry.reference + L"\n" +
+                widgets_[index].sourceFolderPath);
+            if (!dockFolderBitmapCache_.Read(key, std::to_wstring(GetMaximumShellIconBitmapSize())).fresh)
+            {
+                InvalidateDockRects();
+                break;
+            }
+        }
         // Restore the Explorer-owned desktop host first. Hook injection can
         // take time while the new taskbar XAML tree is still starting up.
         WatchDesktopHost();
@@ -585,6 +582,13 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
+    else if (timerId == kPopupHoverTimerId)
+    {
+        if (!popupHoverTimerArmed_) return;
+        POINT point{};
+        if (TryGetDesktopHoverPointFromCursor(point)) UpdatePopupHover(point, true);
+        else CancelPopupHover();
+    }
     else if (timerId == kCollectionPopupDwellTimerId)
     {
         if (!collectionPopupDwellTimerArmed_)
@@ -615,7 +619,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
 
         if (TryActivateCollectionGroupTab(GetTickCount()))
         {
-            OnMouseMoveAt(0, lastMousePoint_);
+            RefreshDwellDragTarget(lastMousePoint_);
             PresentPointerInteractionFrame();
             InvalidateFloatingDockWindow(true);
         }

@@ -142,6 +142,7 @@ struct PersonalizationPagePresenter::Impl
     PersonalizationPageActions actions;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel themeRoot{nullptr};
+    muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
 
     SettingsCard themeCard;
@@ -183,7 +184,16 @@ struct PersonalizationPagePresenter::Impl
     ContinuousControl cornerRadius;
     ContinuousControl barHeight;
     ContinuousControl categorizedTabHeight;
+    muxc::ToggleSwitch topTitleBarToggle{nullptr};
+    SettingRow topTitleBarRow;
+    winrt::event_token topTitleBarToken{};
     ContinuousControl luaWidgetContentRowHeight;
+    muxc::ToggleSwitch showGroupTabCounts{nullptr};
+    SettingRow showGroupTabCountsRow;
+    muxc::ToggleSwitch popupHoverOpen{nullptr};
+    SettingRow popupHoverOpenRow;
+    winrt::event_token popupHoverOpenToken{};
+    ContinuousControl popupHoverDelayMs;
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -195,7 +205,7 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 11> continuousControls = {
+    std::array<ContinuousControl*, 12> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
@@ -207,6 +217,7 @@ struct PersonalizationPagePresenter::Impl
         &barHeight,
         &categorizedTabHeight,
         &luaWidgetContentRowHeight,
+        &popupHoverDelayMs,
     };
     std::array<ColorControl*, 2> colorControls = {
         &backgroundColor,
@@ -232,6 +243,7 @@ struct PersonalizationPagePresenter::Impl
     winrt::event_token acrylicToken{};
     winrt::event_token contentThemeToken{};
     winrt::event_token contextMenuToken{};
+    winrt::event_token showGroupTabCountsToken{};
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
@@ -377,7 +389,7 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
-        InitializeCard(contextMenuCard, cardStyle, themeRoot);
+        InitializeCard(contextMenuCard, cardStyle, menuRoot);
         contextMenuCombo = muxc::ComboBox{};
         contextMenuCombo.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
@@ -448,6 +460,11 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(categorizedTabHeight, L"cu");
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
+        topTitleBarToggle = muxc::ToggleSwitch{};
+        topTitleBarToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        topTitleBarRow.Initialize(topTitleBarToggle);
+        topTitleBarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(topTitleBarRow.root);
         layoutCard.content.Children().Append(categorizedTabHeight.row.root);
         InitializeContinuousControl(luaWidgetContentRowHeight,
             &PersonalizationSettings::luaWidgetContentRowHeight,
@@ -455,6 +472,22 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(luaWidgetContentRowHeight, L"cu");
         layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
+        showGroupTabCounts = muxc::ToggleSwitch{};
+        showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        showGroupTabCountsRow.Initialize(showGroupTabCounts);
+        showGroupTabCountsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(showGroupTabCountsRow.root);
+        popupHoverOpen = muxc::ToggleSwitch{};
+        popupHoverOpen.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        popupHoverOpenRow.Initialize(popupHoverOpen);
+        popupHoverOpenRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        layoutCard.content.Children().Append(popupHoverOpenRow.root);
+        InitializeContinuousControl(popupHoverDelayMs,
+            &PersonalizationSettings::popupHoverDelayMs,
+            kMinimumPopupHoverDelayMs, kMaximumPopupHoverDelayMs,
+            100.0, 1.0, kDefaultPopupHoverDelayMs);
+        SetUnit(popupHoverDelayMs, L"ms");
+        layoutCard.content.Children().Append(popupHoverDelayMs.row.root);
     }
 
     void InitializeColorControl(
@@ -579,18 +612,26 @@ struct PersonalizationPagePresenter::Impl
                         }
                         const float corner = settings.cornerRadius;
                         const float bar = settings.barHeight;
+                        const bool titleOnTop = settings.scrollableTitleBarOnTop;
                         const float tab = settings.categorizedTabHeight;
                         const float luaWidgetContentRowHeight =
                             settings.luaWidgetContentRowHeight;
                         const bool counts = settings.showCategoryTabCounts;
+                        const bool groupCounts = settings.showGroupTabCounts;
+                        const bool hoverOpen = settings.popupHoverOpen;
+                        const float hoverDelayMs = settings.popupHoverDelayMs;
                         const int menu = settings.contextMenuStyle;
                         settings = MakeAppearancePreset(preset);
                         settings.cornerRadius = corner;
                         settings.barHeight = bar;
+                        settings.scrollableTitleBarOnTop = titleOnTop;
                         settings.categorizedTabHeight = tab;
                         settings.luaWidgetContentRowHeight =
                             luaWidgetContentRowHeight;
                         settings.showCategoryTabCounts = counts;
+                        settings.showGroupTabCounts = groupCounts;
+                        settings.popupHoverOpen = hoverOpen;
+                        settings.popupHoverDelayMs = hoverDelayMs;
                         settings.contextMenuStyle = menu;
                     });
             });
@@ -666,7 +707,32 @@ struct PersonalizationPagePresenter::Impl
                     return;
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [value](PersonalizationSettings& settings) {
-                        settings.contextMenuStyle = std::clamp(value, 0, 4);
+                        settings.contextMenuStyle = std::clamp(value, 0, 6);
+                    });
+            });
+        showGroupTabCountsToken = showGroupTabCounts.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = showGroupTabCounts.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.showGroupTabCounts = enabled;
+                    });
+            });
+        topTitleBarToken = topTitleBarToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = topTitleBarToggle.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.scrollableTitleBarOnTop = enabled;
+                    });
+            });
+        popupHoverOpenToken = popupHoverOpen.Toggled(
+            [this](const auto&, const auto&) {
+                UpdateDependentStates();
+                const bool enabled = popupHoverOpen.IsOn();
+                Emit(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](PersonalizationSettings& settings) {
+                        settings.popupHoverOpen = enabled;
                     });
             });
         for (ContinuousControl* control : continuousControls)
@@ -835,10 +901,13 @@ struct PersonalizationPagePresenter::Impl
         glassToggle.IsOn(settings.glassEnabled);
         acrylicToggle.IsOn(settings.acrylicEnabled);
         edgeHighlightToggle.IsOn(settings.widgetEdgeHighlightEnabled);
+        showGroupTabCounts.IsOn(settings.showGroupTabCounts);
+        popupHoverOpen.IsOn(settings.popupHoverOpen);
+        topTitleBarToggle.IsOn(settings.scrollableTitleBarOnTop);
         contentThemeCombo.SelectedIndex(
             std::clamp(settings.contentTheme, 0, 1));
         contextMenuCombo.SelectedIndex(
-            std::clamp(settings.contextMenuStyle, 0, 4));
+            std::clamp(settings.contextMenuStyle, 0, 6));
         UpdateDependentStates();
     }
 
@@ -911,6 +980,7 @@ struct PersonalizationPagePresenter::Impl
         gradientEndAlpha.row.root.Visibility(visible(gradientToggle.IsOn()));
         blurRadius.row.root.Visibility(visible(glassToggle.IsOn()));
         acrylicRow.root.Visibility(visible(glassToggle.IsOn()));
+        popupHoverDelayMs.row.root.Visibility(visible(popupHoverOpen.IsOn()));
     }
 
     void SetCardText(
@@ -1070,6 +1140,8 @@ struct PersonalizationPagePresenter::Impl
             {"app.settings.context_menu_system_dark_blur", L"Dark"},
             {"app.settings.context_menu_opaque_light", L"Light (Opaque)"},
             {"app.settings.context_menu_opaque_dark", L"Dark (Opaque)"},
+            {"app.settings.context_menu_win10_light", L"Win10 Light"},
+            {"app.settings.context_menu_win10_dark", L"Win10 Dark"},
         });
 
         SetContinuousText(cornerRadius,
@@ -1077,10 +1149,31 @@ struct PersonalizationPagePresenter::Impl
         SetContinuousText(barHeight,
             "app.settings.bar_height", L"Bar Height");
         SetContinuousText(categorizedTabHeight,
-            "app.settings.tab_height", L"Category Tab Height");
+            "app.settings.tab_height", L"Top Bar, Tab and Search Box Height");
+        topTitleBarRow.SetText(
+            L("app.settings.scrollable_title_bar_position",
+                L"Use top title bars for storage widgets"),
+            L("app.settings.scrollable_title_bar_position_hint",
+                L"Place titles and actions at the top, except in large-folder mode."));
+        muxa::AutomationProperties::SetName(
+            topTitleBarToggle, topTitleBarRow.label.Text());
         SetContinuousText(luaWidgetContentRowHeight,
             "app.settings.lua_widget_row_height",
             L"Lua Widget Row Height");
+        showGroupTabCountsRow.SetText(
+            L("app.settings.group_show_count", L"Show file counts on group tabs"),
+            L("app.settings.group_show_count_hint",
+                L"Applies to collection group and file group tabs."));
+        muxa::AutomationProperties::SetName(
+            showGroupTabCounts, showGroupTabCountsRow.label.Text());
+        popupHoverOpenRow.SetText(
+            L("app.settings.popup_hover_open", L"Open popups on hover"),
+            L("app.settings.popup_hover_open_hint",
+                L"Hover over a Dock folder or collection, or a collection's expand button, to open its popup after the configured delay."));
+        muxa::AutomationProperties::SetName(
+            popupHoverOpen, popupHoverOpenRow.label.Text());
+        SetContinuousText(popupHoverDelayMs,
+            "app.settings.popup_hover_delay", L"Hover delay");
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1202,8 +1295,19 @@ struct PersonalizationPagePresenter::Impl
             return contextMenuCombo;
         if (id == "personalization.cornerRadius")
             return cornerRadius.slider;
+        if (id == "personalization.showGroupTabCounts")
+            return showGroupTabCounts;
+        if (id == "personalization.popupHoverOpen")
+            return popupHoverOpen;
+        if (id == "personalization.popupHoverDelayMs")
+        {
+            if (!popupHoverOpen.IsOn()) return popupHoverOpen;
+            return popupHoverDelayMs.slider;
+        }
         if (id == "personalization.barHeight")
             return barHeight.slider;
+        if (id == "personalization.scrollableTitleBarOnTop")
+            return topTitleBarToggle;
         if (id == "personalization.luaWidgetRowHeight")
             return luaWidgetContentRowHeight.slider;
         if (id == "desktop.categoryLayout" ||
@@ -1290,6 +1394,9 @@ struct PersonalizationPagePresenter::Impl
             acrylicToggle.Toggled(acrylicToken);
             contentThemeCombo.SelectionChanged(contentThemeToken);
             contextMenuCombo.SelectionChanged(contextMenuToken);
+            showGroupTabCounts.Toggled(showGroupTabCountsToken);
+            popupHoverOpen.Toggled(popupHoverOpenToken);
+            topTitleBarToggle.Toggled(topTitleBarToken);
         }
         catch (...)
         {
@@ -1329,8 +1436,12 @@ void PersonalizationPagePresenter::SetLayoutSpacingContent(
     if (!impl_ || !content) return;
     uint32_t index = 0;
     const auto children = impl_->layoutCard.content.Children();
-    if (!children.IndexOf(content, index)) children.InsertAt(0, content);
+    // The card title remains first; spacing is the first setting below it.
+    if (!children.IndexOf(content, index)) children.InsertAt(1, content);
 }
+
+mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept
+{ return impl_ ? impl_->menuRoot : nullptr; }
 
 mux::UIElement PersonalizationPagePresenter::ThemeContent() const noexcept
 {

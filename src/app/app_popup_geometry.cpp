@@ -1,4 +1,5 @@
 #include "app.h"
+#include "dock_folder_popup_read.h"
 #include "../widget_item_layout.h"
 
 // Collection-popup model lookup, selection adapter, geometry and animation-cache preparation.
@@ -86,9 +87,12 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
     namespace layout = snowdesktop::collection_popup_layout;
+    // Loading/empty directories retain the chosen presentation. Entry arrivals
+    // must not turn a rectangular opening snapshot into a fan at completion.
     if (layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
             widget.listMode, popupFanShowAll_) != layout::View::Fan ||
-        GetPopupItemCount(widget) == 0)
+        !snowdesktop::dock_folder_popup_read::HasFanContent(
+            widget.type == DesktopWidgetType::FolderMapping, GetPopupItemCount(widget)))
         return false;
     // A vertical side Dock has no native fan counterpart. Use the existing
     // grid there, and when there is insufficient space for an anchored fan.
@@ -119,6 +123,10 @@ size_t DesktopApp::GetCollectionPopupFanVisibleCount(const RECT& popup) const
 std::wstring DesktopApp::GetCollectionPopupFanLabel(size_t index) const
 {
     const auto* widget = GetOpenPopupWidget();
+    if (widget && dockFolderPopupOpen_ && GetPopupItemCount(*widget) == 0)
+        return dockFolderPopupLoading_ ? _LW("widget.folder_mapping.loading") :
+            dockFolderPopupAvailable_ ? _LW("widget.folder_mapping.empty") :
+            _LW("widget.folder_mapping.unavailable");
     if (!widget || index >= GetPopupItemCount(*widget))
         return _LW("app.interact.popup_show_all");
     if (widget->type == DesktopWidgetType::FolderMapping)
@@ -235,7 +243,7 @@ void DesktopApp::EnsureCollectionPopupFanItemVisible(size_t index)
 void DesktopApp::ShowAllCollectionPopupItems()
 {
     const auto* widget = GetOpenPopupWidget();
-    if (!widget || !UsesCollectionPopupFan(*widget)) return;
+    if (!widget || !UsesCollectionPopupFan(*widget) || GetPopupItemCount(*widget) == 0) return;
     // This is a change of the same popup, not an outside click. Retire queued
     // hook notifications against the old fan before its hit region shrinks.
     AdvanceFloatingPopupContentGeneration();
@@ -265,8 +273,19 @@ void DesktopApp::ShowAllCollectionPopupItems()
 
 RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
 {
+    if (popupAnimationCompositorDriven_ && popupAnimationOverlay_.active &&
+        &widget == GetOpenPopupWidget() && !IsRectEmptyRect(popupAnimationCacheRect_))
+    {
+        RECT bounds = popupAnimationCacheRect_;
+        InflateRect(&bounds, -4, -4);
+        return bounds;
+    }
     const GridPage* page = ResolveCollectionPopupPage(widget);
     const auto metrics = GetCollectionPopupLayoutMetrics(widget);
+    const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
+    const size_t itemCount = snowdesktop::collection_popup_layout::LayoutItemCount(
+        dockFolder && dockFolderPopupLoading_, GetPopupItemCount(widget),
+        dockFolder ? dockFolderPopupKnownItemCount_ : 0);
     if (UsesCollectionPopupFan(widget))
     {
         namespace layout = snowdesktop::collection_popup_layout;
@@ -274,7 +293,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
         const int width = layout::ScaleDimension(400, metrics.scale);
         const int maximum = std::min(metrics.maximumHeight,
             static_cast<int>(available.bottom - available.top));
-        const auto visible = layout::FanVisibleItemCount(metrics, maximum, GetPopupItemCount(widget));
+        const auto visible = layout::FanVisibleItemCount(metrics, maximum, itemCount);
         const int height = layout::FanFrameHeight(metrics, visible + 1);
         const int anchorX = popupHasAnchor_ ? popupAnchorPoint_.x : (available.left + available.right) / 2;
         const bool mirrored = anchorX - layout::FanRootX(metrics, width, false) < available.left;
@@ -298,8 +317,6 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     const int maxColumns = std::max(1,
         (popupContentWidth + metrics.gapX) /
         std::max(1, cellW + metrics.gapX));
-    const size_t itemCount =
-        GetPopupItemCount(widget);
     const bool listMode = UsesCollectionPopupList(widget);
     int columns = listMode
         ? 1
@@ -853,6 +870,8 @@ void DesktopApp::ResetCollectionPopupAnimationCache()
             popupAnimationCompletionToken_);
     popupAnimationCompletionToken_ = 0;
     popupAnimationCompositorDriven_ = false;
+    popupAnimationContentPending_ = false;
+    popupAnimationContentRevision_ = 0;
     ResetCompositionAnimationOverlay(
         popupAnimationOverlay_);
     popupAnimationRenderCache_.Reset();
@@ -870,6 +889,18 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
     popupRect_ = GetCollectionPopupRect(*openWidget);
     popupAnimationCacheRect_ = popupRect_;
     InflateRect(&popupAnimationCacheRect_, 4, 4);
+    if (!DrawCollectionPopupAnimationCache())
+        popupAnimationCacheRect_ = {};
+    else
+        (void)PrepareCompositionAnimationOverlay(
+            popupAnimationOverlay_, popupAnimationRenderCache_,
+            popupAnimationCacheRect_, UiCompositionAnimationHost::FloatingPopup);
+}
+
+bool DesktopApp::DrawCollectionPopupAnimationCache()
+{
+    if (!d2dDevice_ || !GetOpenPopupWidget() || IsRectEmptyRect(popupAnimationCacheRect_))
+        return false;
     const UINT width = static_cast<UINT>(
         std::max<LONG>(
             1,
@@ -885,7 +916,7 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
         popupAnimationRenderCache_.Ensure(
             d2dDevice_.Get(),
             D2D1::SizeU(width, height),
-            1,
+            ++popupAnimationContentRevision_,
             [&](ID2D1DeviceContext* cacheContext) {
                 cacheContext->SetTransform(
                     D2D1::Matrix3x2F::Translation(
@@ -896,19 +927,65 @@ void DesktopApp::PrepareCollectionPopupAnimationCache()
                 DrawCollectionPopup(
                     cacheContext, false);
             });
-    if (!ready)
-        popupAnimationCacheRect_ = {};
-    else
-    {
-        (void)PrepareCompositionAnimationOverlay(
-            popupAnimationOverlay_,
-            popupAnimationRenderCache_,
-            popupAnimationCacheRect_,
-            UiCompositionAnimationHost::FloatingPopup);
-    }
-
     // The off-screen draw switches the shared brush cache to its context.
     // Restore lazy creation for the next desktop/floating-Dock frame.
     brushCache_.clear();
     brushCacheContext_ = nullptr;
+    return ready;
+}
+
+void DesktopApp::RefreshCollectionPopupAnimationContent()
+{
+    if (!std::exchange(popupAnimationContentPending_, false) ||
+        !popupAnimationCompositorDriven_ || !popupAnimationOverlay_.active)
+        return;
+    const double started = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    // Update the same surface. Its scale/opacity curves and completion token
+    // remain installed; a failed refresh is superseded by live content at the
+    // normal completion handoff, without switching to UI-driven animation.
+    const bool updated = DrawCollectionPopupAnimationCache() &&
+        UpdateCompositionAnimationOverlayContent(popupAnimationOverlay_, popupAnimationRenderCache_);
+    if (updated) CommitCompositionAnimationFrame();
+    wchar_t message[240]{};
+    swprintf_s(message,
+        L"Popup animation content: driver=compositor updated=%d elapsedMs=%.2f revision=%llu",
+        updated ? 1 : 0, snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
+        static_cast<unsigned long long>(popupAnimationContentRevision_));
+    WriteDiagnosticLogEntry(message);
+}
+
+void DesktopApp::InvalidateCollectionPopupContent()
+{
+    if (!popupAnimationOverlay_.active && IsRectEmptyRect(popupAnimationCacheRect_))
+        return;
+    using namespace snowdesktop::popup_animation_rules;
+    const auto action = RefreshContent(popupAnimation_, static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds()),
+        popupAnimationCompositorDriven_,
+        [this] {
+            if (!std::exchange(popupAnimationContentPending_, true))
+                InvalidateFloatingPopupWindow(false);
+        },
+        [this] {
+            const RECT dirty = popupAnimationCacheRect_;
+            // DrawAt must not reuse the obsolete loading bitmap while the
+            // live surface is prepared underneath the still-attached visual.
+            popupAnimationRenderCache_.Reset();
+            popupAnimationCacheRect_ = {};
+            UpdateFloatingPopupWindowBounds(false);
+            PrepareCompositionAnimationOverlayRetirement(popupAnimationOverlay_, dirty);
+        },
+        [this] { ResetCollectionPopupAnimationCache(); });
+    if (action == ContentRefreshAction::ContinueCompositor)
+        return;
+    if (action == ContentRefreshAction::FinalizeClose)
+    {
+        FinalizeCloseCollectionPopup();
+        return;
+    }
+    if (action == ContentRefreshAction::ContinueAnimation)
+        EnsureUiAnimationFrame();
+    // The UI fallback has no independent native track to preserve.
+    ApplyCollectionPopupBackdropAnimationFrame();
+    InvalidateCollectionPopupAnimation(true);
 }

@@ -483,6 +483,12 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadBoolean(object, "scrollContainerMode",
                 path + ".scrollContainerMode", record.scrollContainerMode,
                 error) ||
+            !ReadBoolean(object, "titleBarCollapsed",
+                path + ".titleBarCollapsed", record.titleBarCollapsed,
+                error) ||
+            !ReadBoolean(object, "titleBarExpandOnHover",
+                path + ".titleBarExpandOnHover", record.titleBarExpandOnHover,
+                error) ||
             !ReadBoolean(object, "largeFolderTitleless",
                 path + ".largeFolderTitleless",
                 record.largeFolderTitleless, error) ||

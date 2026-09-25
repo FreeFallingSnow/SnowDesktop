@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 
 // Desktop and widget sorting plus clipboard cut-state updates.
 
@@ -326,17 +327,25 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
  */
 void DesktopApp::UpdateCutState()
 {
+    const auto sequence = GetClipboardSequenceNumber();
+    clipboardReadWork_.Submit(L"cut-state", [] {
+        const auto initialized = OleInitialize(nullptr);
+        struct OleScope { HRESULT hr; ~OleScope() { if (SUCCEEDED(hr)) OleUninitialize(); } } ole{initialized};
     std::unordered_set<std::wstring> clipCutPaths;
 
     ComPtr<IDataObject> clipObj;
-    if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
+    if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.OleGetClipboard", [&] {
+            return OleGetClipboard(&clipObj);
+        })) && clipObj)
     {
         CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
         FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
         STGMEDIUM medPref{};
         bool isMove = false;
 
-        if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
+        if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.DropEffect", [&] {
+                return clipObj->GetData(&fmtPref, &medPref);
+            })) && medPref.hGlobal)
         {
             DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
             if (pEffect)
@@ -352,7 +361,9 @@ void DesktopApp::UpdateCutState()
         {
             FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
             STGMEDIUM medDrop{};
-            if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
+            if (SUCCEEDED(snowdesktop::startup_diagnostics::Call(L"Clipboard.GetData.FileList", [&] {
+                    return clipObj->GetData(&fmtDrop, &medDrop);
+                })) && medDrop.hGlobal)
             {
                 HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
                 UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
@@ -367,16 +378,14 @@ void DesktopApp::UpdateCutState()
         }
     }
 
+        return clipCutPaths;
+    }, [this, sequence](auto clipCutPaths) {
+        if (GetClipboardSequenceNumber() != sequence) { UpdateCutState(); return; }
     for (auto& item : items_)
     {
         item.isCut = false;
         if (item.desktopIconClsid.empty() == false) continue;
-        wchar_t path[MAX_PATH]{};
-        if (SHGetPathFromIDListW(item.absolutePidl.get(), path))
-        {
-            if (clipCutPaths.contains(ToUpperInvariant(path)))
-                item.isCut = true;
-        }
+        item.isCut = clipCutPaths.contains(ToUpperInvariant(item.parsingName));
     }
 
     for (auto& widget : widgets_)
@@ -405,6 +414,11 @@ void DesktopApp::UpdateCutState()
                 entry.isCut = true;
         }
     }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        InvalidateDockRects();
+        InvalidateFloatingPopupWindow(false);
+        InvalidateQuickNavigationWindow();
+    }, hwnd_, kBackgroundShellReadyMessage);
 }
 
 // ── Shell 变更通知 ──────────────────────────────────────────

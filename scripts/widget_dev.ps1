@@ -78,9 +78,6 @@ if (-not $targetRoot.StartsWith(
     throw "Refusing unsafe development target: $targetRoot"
 }
 
-$targetAlreadyExisted = Test-Path -LiteralPath (
-    Join-Path $targetRoot "widget.json") -PathType Leaf
-
 function Get-ChildRelativePath(
     [string]$ParentPath,
     [string]$ChildPath
@@ -155,17 +152,18 @@ function Sync-WidgetPackage {
 Sync-WidgetPackage
 
 $hostProcesses = @(Get-Process -Name "SnowDesktop" -ErrorAction SilentlyContinue)
-$needsRestart = $RestartHost -or
-    ($hostProcesses.Count -gt 0 -and -not $targetAlreadyExisted)
-if ($needsRestart) {
+if ($RestartHost) {
     Write-Host "Restarting SnowDesktop once to discover the development candidate..."
     $hostProcesses | Stop-Process -Force
     Start-Sleep -Milliseconds 500
-    Start-Process -FilePath $hostExecutable -WorkingDirectory $hostRoot
+    Start-Process -FilePath $hostExecutable -WorkingDirectory $hostRoot -WindowStyle Hidden
 }
 elseif ($hostProcesses.Count -eq 0) {
     Write-Host "Starting SnowDesktop with the synced development candidate..."
-    Start-Process -FilePath $hostExecutable -WorkingDirectory $hostRoot
+    Start-Process -FilePath $hostExecutable -WorkingDirectory $hostRoot -WindowStyle Hidden
+}
+else {
+    Write-Host "Open component settings or the Add Component menu to discover new development candidates."
 }
 
 if ($Once) {

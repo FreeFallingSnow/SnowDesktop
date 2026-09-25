@@ -114,11 +114,26 @@ inline bool Apply(
         return synchronizeBackdropGeometry();
     }
 
+    // Explorer can reorder or destroy the concrete desktop anchor between
+    // policy refreshes. Its band must never override the requested Dock band.
+    const HWND bandInsertAfter = topmost ? HWND_TOPMOST : HWND_NOTOPMOST;
+    if (contentInsertAfter == HWND_TOP ||
+        contentInsertAfter == HWND_TOPMOST || contentInsertAfter == HWND_NOTOPMOST ||
+        (contentInsertAfter != HWND_BOTTOM &&
+            (!IsWindow(contentInsertAfter) || contentInsertAfter == contentWindow ||
+                contentInsertAfter == backdropWindow || IsTopmost(contentInsertAfter) != topmost)))
+    {
+        contentInsertAfter = bandInsertAfter;
+    }
+
     if (!backdropValid)
     {
+        if (contentInsertAfter != bandInsertAfter && IsTopmost(contentWindow) != topmost &&
+            !SetWindowPos(contentWindow, bandInsertAfter, 0, 0, 0, 0, contentFlags))
+            return false;
         return SetWindowPos(
             contentWindow, contentInsertAfter,
-            0, 0, 0, 0, contentFlags) != FALSE;
+            0, 0, 0, 0, contentFlags) != FALSE && IsTopmost(contentWindow) == topmost;
     }
 
     const bool pairAlreadySynchronized =
@@ -129,7 +144,7 @@ inline bool Apply(
         contentInsertAfter && IsWindow(contentInsertAfter) &&
         GetWindow(contentWindow, GW_HWNDPREV) == contentInsertAfter;
     if (pairAlreadySynchronized &&
-        (usesBandSentinel || concreteAnchorAlreadySynchronized))
+        (contentInsertAfter == bandInsertAfter || concreteAnchorAlreadySynchronized))
     {
         // A layer-policy refresh must not raise an already-correct popup
         // pair above a menu that Windows has since placed over its content.
@@ -154,9 +169,14 @@ inline bool Apply(
                 succeeded;
         }
 
-        // On promotion the content enters TOPMOST first. On demotion the
-        // backdrop is already in the destination band, so it cannot cover the
-        // content while this call crosses the boundary.
+        // Normalize the content band independently of concrete placement: a
+        // stale/rejected anchor must not undo dismissal of a floating Dock.
+        // On demotion the backdrop has already crossed the boundary first.
+        if (contentInsertAfter != bandInsertAfter && IsTopmost(contentWindow) != topmost)
+        {
+            succeeded = SetWindowPos(contentWindow, bandInsertAfter,
+                0, 0, 0, 0, contentFlags) != FALSE && succeeded;
+        }
         succeeded = SetWindowPos(
             contentWindow, contentInsertAfter,
             0, 0, 0, 0, contentFlags) != FALSE &&
@@ -188,7 +208,8 @@ inline bool Apply(
             backdropFlags);
     }
     if (deferred && EndDeferWindowPos(deferred) != FALSE)
-        return IsPaired(contentWindow, backdropWindow);
+        return IsTopmost(contentWindow) == topmost &&
+            IsTopmost(backdropWindow) == topmost && IsPaired(contentWindow, backdropWindow);
 
     const bool contentPositioned = SetWindowPos(
         contentWindow, contentInsertAfter,
@@ -199,7 +220,8 @@ inline bool Apply(
         backdropSize.cx, backdropSize.cy,
         backdropFlags) != FALSE;
     return contentPositioned && backdropPositioned &&
-        IsPaired(contentWindow, backdropWindow);
+        IsTopmost(contentWindow) == topmost &&
+        IsTopmost(backdropWindow) == topmost && IsPaired(contentWindow, backdropWindow);
 }
 
 // A transparent popup has no backdrop to establish pair adjacency. Refreshing

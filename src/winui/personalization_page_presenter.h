@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../settings_controller.h"
+#include "../shell_extension_service.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -16,6 +17,7 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Personalization settings presenter. */
 struct PersonalizationPageActions
 {
+    std::function<shell_extensions::CatalogueView(const shell_extensions::Request&, bool)> contextMenu;
     using Edit = std::function<void(PersonalizationSettings&)>;
     using GeneralEdit = std::function<void(GeneralSettings&)>;
     using DockEdit = std::function<void(DockSettings&)>;
@@ -65,6 +67,7 @@ public:
     /** Global, custom-surface, target-surface, and context-menu themes. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         ThemeContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement MenuContent() const noexcept;
     /** Shared widget dimension and layout controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetLayoutContent() const noexcept;

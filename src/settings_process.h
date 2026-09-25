@@ -14,7 +14,7 @@ public:
     ~SettingsProcess();
     SettingsProcess(const SettingsProcess&) = delete;
     SettingsProcess& operator=(const SettingsProcess&) = delete;
-    void Start(Channel& channel);
+    void Start(Channel& channel, std::wstring_view command = L"--settings-ui");
     void Stop() noexcept;
     bool Running() const noexcept;
     DWORD ProcessId() const noexcept;
@@ -26,8 +26,8 @@ private:
 // Called before single-instance discovery, watchdog or DesktopApp startup.
 // A recognized but invalid child command is handled with an error; it must
 // never fall through and accidentally start a second desktop runtime.
-bool IsSettingsProcessCommand();
-void OpenInheritedSettingsChannel(Channel& channel);
+bool IsSettingsProcessCommand(std::wstring_view command = L"--settings-ui");
+void OpenInheritedSettingsChannel(Channel& channel, std::wstring_view command = L"--settings-ui");
 std::string ExecutableIdentity();
 int RunSettingsProcess(HINSTANCE instance);
 }

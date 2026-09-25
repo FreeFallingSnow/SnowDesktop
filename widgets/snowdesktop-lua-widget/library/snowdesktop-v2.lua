@@ -602,7 +602,7 @@
 ---@field storageKey string Persistent storage key, 1..128 UTF-8 bytes.
 ---@field shape SnowTextControlShape Positive logical bounds submitted during render.
 ---@field placeholder? string Up to 4096 UTF-8 bytes.
----@field fontSize? number 9..96 logical pixels.
+---@field fontSize? number Finite positive logical pixels; the host clamps rendering to 9..96. Defaults to 15.
 ---@field textColor? integer RGB color.
 ---@field placeholderColor? integer RGB color.
 ---@field backgroundColor? integer RGB color.
@@ -1350,9 +1350,9 @@ function animation.cancelFrame(id) end
 ---@field truncated boolean True when more accessible processes existed than were returned.
 
 ---@class SnowGpuAdapterDataValue
----@field id string Opaque adapter identifier.
+---@field id string Opaque Windows-session adapter identifier, independent of enumeration order; not persistent across reboots.
 ---@field name string
----@field usagePercent number
+---@field usagePercent number Busiest physical engine's total across processes (0-100); parallel engines are not summed.
 ---@field dedicatedMemoryBytes integer
 ---@field dedicatedUsedBytes integer PDH Dedicated Usage assigned by adapter LUID.
 ---@field sharedMemoryBytes integer
@@ -1380,8 +1380,8 @@ function animation.cancelFrame(id) end
 ---@field connected boolean
 ---@field receivedBytes integer
 ---@field sentBytes integer
----@field downloadBytesPerSecond integer
----@field uploadBytesPerSecond integer
+---@field downloadBytesPerSecond integer Sum of per-interface rates; new or reset interfaces establish a baseline first.
+---@field uploadBytesPerSecond integer Sum of per-interface rates; includes connected virtual interfaces.
 
 ---@class SnowStorageVolumeDataValue
 ---@field id string Opaque volume identifier; never a filesystem path.
@@ -1400,7 +1400,7 @@ function animation.cancelFrame(id) end
 ---@class SnowStorageIoDataValue
 ---@field readBytesPerSecond integer Aggregate physical-disk read rate.
 ---@field writeBytesPerSecond integer Aggregate physical-disk write rate.
----@field busyPercent number Aggregate physical-disk busy percentage, clamped to 0..100.
+---@field busyPercent number Busiest physical disk's non-idle percentage (0-100); throughput fields remain totals across disks.
 
 ---@class SnowDisplayRect
 ---@field x number
@@ -1851,7 +1851,7 @@ function data.subscribe(topic, options) end
 ---@field revision integer New revision for create/update; zero for remove.
 
 ---@class SnowNetworkRequestArguments
----@field url string Public HTTPS URL; optional widget.json networkDomains narrows it to exact declared hostnames.
+---@field url string HTTP/HTTPS URL including local services; optional widget.json networkDomains narrows it to exact declared hostnames. Requires task.network.standardHttp for HTTP/local targets and system proxy support.
 ---@field method? 'GET'|'HEAD'|'POST'|'PUT'|'PATCH'|'DELETE' Defaults to GET.
 ---@field headers? table<string, string|SnowNetworkSecretDescriptor> Up to 32 single-line headers and 32 KiB after host injection.
 ---@field body? string|SnowNetworkSecretDescriptor Raw bytes up to 64 KiB; a descriptor injects one host-managed secret segment.
@@ -1985,6 +1985,38 @@ calendar = {}
 ---@param date string ISO YYYY-MM-DD.
 ---@return SnowCalendarDateInfo?
 function calendar.dateInfo(date) end
+
+---@class SnowCalendarDisplayPreferences
+---@field enabled boolean
+---@field calendar string ICU calendar ID; Gregorian storage is unchanged.
+---@field holidaysEnabled boolean Legacy field, always false; holidays were removed.
+---@field region string Legacy field, always empty.
+---@field holidayFirstYear integer Legacy field, always 0.
+---@field holidayLastYear integer Legacy field, always 0.
+---@class SnowCalendarAnnotation
+---@field date string Gregorian YYYY-MM-DD.
+---@field secondary string Localized compact secondary date (empty when disabled/unavailable).
+---@field fullDate string Localized complete secondary date.
+---@field year integer ICU extended year, not necessarily display year/era year.
+---@field month integer One-based native ICU month index; calendars may have gaps.
+---@field day integer
+---@field era integer Native ICU era index.
+---@field leapMonth boolean
+---@field calendarAvailable boolean
+---@field holidaysAvailable boolean Legacy field, always false.
+---@field holidays string[] Legacy field, always empty.
+---Requires optional feature calendar.annotations. No calendar permission required.
+---@return SnowCalendarDisplayPreferences
+function calendar.preferences() end
+---Inclusive Gregorian range, at most 62 days; nil for invalid ranges.
+---@param fromDate string
+---@param toDate string
+---@return SnowCalendarAnnotation[]?
+function calendar.annotations(fromDate, toDate) end
+---Localized host-supported calendars; legacy regions array is always empty.
+---@return table {calendars: {id:string,label:string}[], regions: {id:string,label:string}[]}
+function calendar.displayOptions() end
+
 
 ---Add a bounded number of Gregorian days without reading user calendar data.
 ---@param date string ISO YYYY-MM-DD.

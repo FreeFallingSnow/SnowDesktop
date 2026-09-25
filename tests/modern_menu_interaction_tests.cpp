@@ -1,5 +1,8 @@
 #include "modern_menu.h"
 #include "modern_menu_appearance_rules.h"
+#include "shell_extension_menu_presentation.h"
+#include "menu_label.h"
+#include "desktop_input_activation.h"
 
 #include <windows.h>
 
@@ -27,7 +30,10 @@ enum class DriveMode
     RebuiltRootSubmenu,
     TextInput,
     Nested,
+    Script,
 };
+std::function<void(HWND)> gMenuScript;
+std::function<void()> gOwnerFocusCallback;
 DriveMode gDriveMode = DriveMode::Cascade;
 int gDrivePhase = 0;
 bool gInputPosted = false;
@@ -54,6 +60,8 @@ bool gMessageReorderObserved = false;
 bool gMessageOrderRestored = false;
 bool gPresentationSawWrongOrder = false;
 bool gReorderCascade = false;
+HWND gDesktopParentProbe = nullptr;
+unsigned gDesktopParentActivations = 0;
 
 struct MenuWindows
 {
@@ -93,6 +101,11 @@ BOOL CALLBACK FindMenuWindows(HWND hwnd, LPARAM parameter)
 LRESULT CALLBACK OwnerWindowProc(
     HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (hwnd == gDesktopParentProbe && message == WM_ACTIVATE &&
+        LOWORD(wParam) != WA_INACTIVE)
+        ++gDesktopParentActivations;
+    if (message == WM_SETFOCUS && gOwnerFocusCallback)
+        gOwnerFocusCallback();
     if (message == kReorderMenuMessage)
     {
         const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
@@ -165,7 +178,13 @@ LRESULT CALLBACK OwnerWindowProc(
         MenuWindows menus;
         EnumThreadWindows(GetCurrentThreadId(),
             FindMenuWindows, reinterpret_cast<LPARAM>(&menus));
-        if (gDriveMode == DriveMode::Cascade && menus.root &&
+        if (gDriveMode == DriveMode::Script && menus.root)
+        {
+            gInputPosted = true;
+            KillTimer(hwnd, kDriveTimer);
+            gMenuScript(menus.root);
+        }
+        else if (gDriveMode == DriveMode::Cascade && menus.root &&
             gDrivePhase == 0)
         {
             // Select the cascade row, open it, then activate its first item.
@@ -388,6 +407,31 @@ struct IsolatedMenuDesktop
 
 int wmain()
 {
+    // Regression: asynchronous Shell entries belong immediately above More,
+    // in a final group after all ordinary host actions.
+    {
+        using snowdesktop::modern_menu::Item;
+        Item open; open.command = 1;
+        Item separator; separator.separator = true;
+        Item more; more.command = 2;
+        Item after; after.command = 3;
+        Item archive; archive.label = L"7-Zip";
+        Item compress; compress.command = 4;
+        archive.children = {compress};
+        std::vector<Item> items{open, separator, more, separator, after};
+        snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
+        Expect(items.size() == 6 && items[0].command == 1 && items[1].separator && items[2].command == 3 &&
+                   items[3].separator && items[4].label == L"7-Zip" &&
+                   items[4].children.front().command == 4 && items[5].command == 2,
+               "Shell entries and More form the bottom group after every host action");
+        items = {open, separator, more, separator, after};
+        snowdesktop::shell_extensions::AddMoreManagementAction(items, 2, 5, L"管理");
+        snowdesktop::shell_extensions::MoveMoreToBottom(items, 2);
+        snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
+        Expect(items.size() == 7 && items[4].label == L"7-Zip" && items[5].command == 2 &&
+                   items[6].command == 5 && items[5].inlineGroup == items[6].inlineGroup,
+               "management stays beside More after the real attachment and insertion sequence");
+    }
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.
     IsolatedMenuDesktop isolatedDesktop;
@@ -413,6 +457,18 @@ int wmain()
             Appearance::OpaqueDark, false, 10, 22621) ==
             Appearance::OpaqueDark,
         "an explicitly selected opaque theme remains available on Windows 11");
+    for (const auto appearance : {Appearance::Win10Light, Appearance::Win10Dark})
+    {
+        for (const unsigned long build : {19045UL, 22621UL})
+            Expect(ResolveForWindows(appearance, true, 10, build) == appearance,
+                "Win10 styles are available only by explicit selection on either OS");
+        for (const bool systemLight : {false, true})
+            Expect(snowdesktop::modern_menu::appearance_rules::IsLightTheme(
+                    appearance, systemLight) == (appearance == Appearance::Win10Light),
+                "explicit Win10 colors are independent of the system theme");
+        Expect(!snowdesktop::modern_menu::appearance_rules::UsesSystemBlur(appearance),
+            "Win10 styles always render opaque panels");
+    }
 
     WNDCLASSEXW windowClass{ sizeof(windowClass) };
     windowClass.lpfnWndProc = OwnerWindowProc;
@@ -484,6 +540,139 @@ int wmain()
         { 21, L"Add row", L"+", true },
         { 22, L"Remove row", L"-", true },
     };
+    // Run the real popup teardown/focus path. Only the host's composition
+    // submission is replaced: a focus-triggered repaint must be flushed before
+    // Show returns and its caller begins potentially slow Shell initialization.
+    for (const bool selectCommand : { true, false })
+    {
+        HWND closingMenu = nullptr;
+        bool focusRepaintObserved = false;
+        bool contentPending = false;
+        bool contentSubmittedAfterTeardown = false;
+        gOwnerFocusCallback = [&]() {
+            if (closingMenu &&
+                snowdesktop::modern_menu::ActiveRootWindow() == nullptr)
+            {
+                focusRepaintObserved = true;
+                contentPending = true;
+            }
+        };
+        auto closeOptions = options;
+        closeOptions.eventPump = {};
+        closeOptions.eventPump.flushPresentation = [&]() {
+            if (contentPending)
+            {
+                contentSubmittedAfterTeardown =
+                    snowdesktop::modern_menu::ActiveRootWindow() == nullptr &&
+                    !IsWindow(closingMenu) && GetFocus() == owner;
+                contentPending = false;
+            }
+        };
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            closingMenu = root;
+            SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+            SendMessageW(root, WM_KEYDOWN,
+                selectCommand ? VK_RETURN : VK_ESCAPE, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto closeResult =
+            snowdesktop::modern_menu::Show(adjustmentItems, closeOptions);
+        KillTimer(owner, kWatchdogTimer);
+        gOwnerFocusCallback = {};
+        gMenuScript = {};
+        Expect(!gWatchdogFired && gInputPosted &&
+                closeResult.command == (selectCommand ? 21U : 0U),
+            "teardown presentation covers command selection and cancellation");
+        Expect(focusRepaintObserved,
+            "restoring owner focus after popup destruction generates a host repaint");
+        Expect(contentSubmittedAfterTeardown && !contentPending,
+            "menu exit submits focus-triggered content before returning to the Shell caller");
+    }
+    // Regression for the user's desktop-click flash investigation. Exercise
+    // the host's owner resolver and real menu activation/teardown on an
+    // isolated desktop; only Explorer and the render pixels are substituted.
+    // A child owner used to activate its parent and steal the input proxy's
+    // already-acquired focus when an outside click dismissed the menu.
+    {
+        HWND parent = CreateWindowExW(WS_EX_TOOLWINDOW, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, 0, 0, 800, 600,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND render = CreateWindowExW(0, kOwnerClass, L"", WS_CHILD | WS_VISIBLE,
+            0, 0, 800, 600, parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND floatingInput = CreateWindowExW(WS_EX_TOOLWINDOW, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, -32000, -32000, 1, 1,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(parent && render && floatingInput, "synthetic desktop and input proxy windows exist");
+        using snowdesktop::desktop_input_activation::ResolveMenuOwner;
+        Expect(ResolveMenuOwner(owner, render, floatingInput, nullptr, false) == owner,
+            "explicit non-desktop menu owners retain their keyboard target");
+        Expect(ResolveMenuOwner(render, render, nullptr, nullptr, false) == nullptr,
+            "missing input proxy must never fall back to the Explorer-owned child");
+        Expect(ResolveMenuOwner(render, render, owner, nullptr, true) == owner,
+            "missing floating proxy falls back to the desktop input proxy");
+        for (const bool floatingSession : { false, true })
+        {
+            for (const bool outsideClick : { false, true })
+            {
+                HWND expectedInput = floatingSession ? floatingInput : owner;
+                SetActiveWindow(expectedInput);
+                SetFocus(expectedInput);
+                gDesktopParentProbe = parent;
+                gDesktopParentActivations = 0;
+                gWatchdogFired = false;
+                HANDLE wake = CreateEventW(nullptr, FALSE, TRUE, nullptr);
+                Expect(wake != nullptr, "menu focus driver event exists");
+                auto focusOptions = options;
+                focusOptions.owner = ResolveMenuOwner(render, render, owner,
+                    floatingInput, floatingSession);
+                focusOptions.eventPump = {};
+                focusOptions.eventPump.scheduledWorkHandle = wake;
+                bool scriptRan = false;
+                bool nativeOwnerMatches = false;
+                bool proxyReadyBeforeExit = false;
+                focusOptions.eventPump.dispatchScheduledWork = [&]() {
+                    scriptRan = true;
+                    HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+                    nativeOwnerMatches = GetWindow(root, GW_OWNER) == expectedInput;
+                    if (outsideClick)
+                    {
+                        SetActiveWindow(expectedInput);
+                        SetFocus(expectedInput);
+                        proxyReadyBeforeExit = GetActiveWindow() == expectedInput &&
+                            GetFocus() == expectedInput;
+                        // The actual WM_ACTIVATE handler posts cancellation.
+                    }
+                    else
+                    {
+                        SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                        SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+                    }
+                };
+                SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+                const auto focusResult = snowdesktop::modern_menu::Show(adjustmentItems, focusOptions);
+                KillTimer(owner, kWatchdogTimer);
+                CloseHandle(wake);
+                Expect(scriptRan && !gWatchdogFired &&
+                        focusResult.command == (outsideClick ? 0U : 21U),
+                    "proxy-owned menus support outside dismissal and keyboard commands");
+                Expect(nativeOwnerMatches && gDesktopParentActivations == 0,
+                    "desktop menus must not own or activate the rendering child's parent");
+                Expect((!outsideClick || proxyReadyBeforeExit) &&
+                        GetActiveWindow() == expectedInput && GetFocus() == expectedInput,
+                    "menu teardown leaves focus on the selected input proxy");
+            }
+        }
+        gDesktopParentProbe = nullptr;
+        DestroyWindow(floatingInput);
+        DestroyWindow(render);
+        DestroyWindow(parent);
+        SetActiveWindow(owner);
+        SetFocus(owner);
+    }
     gDriveMode = DriveMode::Simple;
     gDrivePhase = 0;
     gInputPosted = false;
@@ -683,6 +872,108 @@ int wmain()
     gCaptureAboveZOrderOwner = false;
     gZOrderOwnerProbe = nullptr;
     DestroyWindow(zOrderOwner);
+
+    // Real independent HWNDs model a desktop Dock: unlike a floating menu
+    // owner, it can enter TOPMOST during Show Desktop without being summoned.
+    // Exercise the production menu loop, including post-presentation restacks.
+    const auto checkIndependentDock = [&](bool initiallyTopmost,
+        bool initiallyHidden, bool promoteDuringPresentation, bool cascade) {
+        constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+            SWP_NOOWNERZORDER;
+        HWND dock = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"STATIC", L"", WS_POPUP, 2, 2, 1, 1,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND secondDock = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            L"STATIC", L"", WS_POPUP, 3, 3, 1, 1,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(dock && secondDock, "independent desktop Dock windows are created");
+        if (!initiallyHidden) ShowWindow(dock, SW_SHOWNOACTIVATE);
+        if (initiallyTopmost) SetWindowPos(dock, HWND_TOPMOST, 0, 0, 0, 0, flags);
+        options.topmost = false;
+        options.zOrderFloor = [&]() -> HWND {
+            if (IsWindowVisible(secondDock) &&
+                (!IsWindowVisible(dock) || IsWindowAbove(secondDock, dock)))
+                return secondDock;
+            return dock; // The production menu must ignore a hidden floor.
+        };
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMessageReorderObserved = false;
+        gMessageOrderRestored = false;
+        gPresentationSawWrongOrder = false;
+        gReorderCascade = cascade;
+        bool presentationPromotionPending = false;
+        options.eventPump.flushPresentation = [&]() {
+            const HWND root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (root && gMessageReorderObserved &&
+                !IsWindowAbove(root, gZOrderOwnerProbe))
+                gPresentationSawWrongOrder = true;
+            if (presentationPromotionPending)
+            {
+                presentationPromotionPending = false;
+                SetWindowPos(secondDock, HWND_TOPMOST, 0, 0, 0, 0,
+                    flags | SWP_SHOWWINDOW);
+                gZOrderOwnerProbe = secondDock;
+                gMessageReorderObserved = !IsWindowAbove(root, secondDock);
+            }
+        };
+        gMenuScript = [&](HWND root) {
+            Expect(GetWindow(root, GW_OWNER) == owner,
+                "a desktop menu keeps its focus owner instead of owning the Dock");
+            Expect(((GetWindowLongPtrW(root, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) ==
+                    !initiallyHidden,
+                "visible Dock floors protect initial menu display; hidden floors do not promote it");
+            Expect(((GetWindowLongPtrW(dock, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) ==
+                    initiallyTopmost,
+                "opening a desktop menu does not promote or demote the Dock");
+            if (!initiallyHidden)
+                Expect(IsWindowAbove(root, dock),
+                    "a desktop menu starts above an independent Dock, including Show Desktop");
+            if (cascade)
+            {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+            }
+            gZOrderOwnerProbe = dock;
+            if (promoteDuringPresentation)
+                presentationPromotionPending = true;
+            else
+            {
+                SetWindowPos(secondDock, HWND_TOPMOST, 0, 0, 0, 0,
+                    flags | SWP_SHOWWINDOW);
+                gZOrderOwnerProbe = secondDock;
+                gMessageReorderObserved = !IsWindowAbove(root, secondDock);
+            }
+            PostMessageW(owner, kInspectMenuMessage, 0, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = snowdesktop::modern_menu::Show(
+            cascade ? cascadeZOrderItems : adjustmentItems, options);
+        KillTimer(owner, kDriveTimer);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(!gWatchdogFired && result.command == (cascade ? 23u : 21u),
+            "independent Dock regression completes through normal menu selection");
+        Expect(gMessageReorderObserved,
+            "the regression actually raises an independent Dock above the menu");
+        Expect(gMessageOrderRestored && !gPresentationSawWrongOrder,
+            "menu and cascades recover above a newly promoted Dock before queued input");
+        Expect(((GetWindowLongPtrW(dock, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0) ==
+                initiallyTopmost,
+            "closing a desktop menu leaves the original Dock band unchanged");
+        options.zOrderFloor = {};
+        options.eventPump = {};
+        gMenuScript = {};
+        gReorderCascade = false;
+        gZOrderOwnerProbe = nullptr;
+        DestroyWindow(secondDock);
+        DestroyWindow(dock);
+    };
+    checkIndependentDock(true, false, false, false);
+    checkIndependentDock(false, false, true, true);
+    checkIndependentDock(false, true, false, true);
+    options.topmost = true;
 
     gDriveMode = DriveMode::Simple;
     gDrivePhase = 0;
@@ -1020,7 +1311,447 @@ int wmain()
     Expect(textInputResult.command == 82,
         "search input stays outside keyboard result navigation");
 
+    // Drive the real popup on the isolated desktop. Commands and returned row
+    // bounds catch accidental promotion of quick actions and stale hit geometry.
+    const auto runScript = [&](const std::vector<Item>& scriptItems,
+                               snowdesktop::modern_menu::Options scriptOptions,
+                               std::function<void(HWND)> script) {
+        gDriveMode = DriveMode::Script;
+        gMenuScript = std::move(script);
+        gInputPosted = false;
+        gWatchdogFired = false;
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto selected = snowdesktop::modern_menu::Show(scriptItems, scriptOptions);
+        KillTimer(owner, kWatchdogTimer);
+        gMenuScript = {};
+        Expect(gInputPosted && !gWatchdogFired,
+            "compact-menu input reaches the real popup without timing out");
+        return selected;
+    };
+    // Real cascade widths must follow their own contents, including disabled
+    // icons/checks. A decorated descendant must not force its parent's gutter.
+    {
+        using snowdesktop::modern_menu::Appearance;
+        const DWORD pixel = 0xff0078d4;
+        HBITMAP image = CreateBitmap(1, 1, 1, 32, &pixel);
+        Expect(image != nullptr, "cascade image fixture is available");
+        for (const auto appearance : {Appearance::OpaqueLight, Appearance::OpaqueDark,
+                 Appearance::Win10Light, Appearance::Win10Dark})
+            for (const UINT dpi : {96u, 120u, 144u, 192u})
+            {
+                snowdesktop::modern_menu::Options gutterOptions;
+                gutterOptions.owner = owner; gutterOptions.anchor = {80, 80};
+                gutterOptions.appearance = appearance; gutterOptions.dpi = dpi;
+                LONG plainWidth = 0, rootWidth = 0;
+                for (int decoration = 0; decoration < 4; ++decoration)
+                {
+                    Item leaf{9301, L"Long command with enough text to measure its full width\tCtrl+M", L""};
+                    Item marker{9302, L"Unavailable", L"", false};
+                    if (decoration == 1) marker.glyph = L"G";
+                    if (decoration == 2) marker.checked = true;
+                    if (decoration == 3) marker.image = image;
+                    Item nested{0, L"More", L"", true, false, false, {{9303, L"Nested icon", L"G"}}};
+                    Item separator{0, L"", L"ignored", false, true, true};
+                    Item parent{0, L"Parent", L"G", true, false, false, {leaf, marker, separator, nested}};
+                    LONG childWidth = 0, currentRootWidth = 0;
+                    const auto selected = runScript({parent}, gutterOptions, [&](HWND root) {
+                        RECT rootRect{}; GetWindowRect(root, &rootRect); currentRootWidth = rootRect.right - rootRect.left;
+                        SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                        SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                        MenuWindows cascade;
+                        EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows, reinterpret_cast<LPARAM>(&cascade));
+                        Expect(cascade.child != nullptr, "icon-gutter cascade opens");
+                        RECT childRect{}; GetWindowRect(cascade.child, &childRect); childWidth = childRect.right - childRect.left;
+                        SendMessageW(cascade.child, WM_KEYDOWN, VK_HOME, 0);
+                        SendMessageW(cascade.child, WM_KEYDOWN, VK_RETURN, 0);
+                    });
+                    Expect(selected.command == 9301, "iconless and decorated cascades dispatch the selected command");
+                    if (!decoration) { plainWidth = childWidth; rootWidth = currentRootWidth; }
+                    else
+                    {
+                        const bool compact = appearance == Appearance::Win10Light || appearance == Appearance::Win10Dark;
+                        const int expectedGutter = MulDiv(compact ? 20 : 22, dpi, 96) + MulDiv(compact ? 6 : 7, dpi, 96);
+                        Expect(childWidth - plainWidth == expectedGutter && rootWidth == currentRootWidth,
+                            "only a child-level glyph, image or check reserves the cascade gutter; root width is unchanged");
+                    }
+                }
+            }
+        DeleteObject(image);
+    }
+    {
+        auto nativeLabel = snowdesktop::DecodeMenuLabel(L"打开(&O)\tCtrl+O");
+        Item open; open.command = 9101; open.label = nativeLabel.text; open.accessKey = nativeLabel.accessKey;
+        auto keyOptions = options;
+        keyOptions.onTextChanged = {}; keyOptions.onHover = {}; keyOptions.onCommand = {};
+        const auto selected = runScript({open}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            // Deterministic negative control: absent key handling returns Cancel,
+            // rather than failing only because the test's watchdog times out.
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(selected.command == 9101, "the displayed native access key executes its unique matching command");
+
+        Item disabled = open; disabled.command = 9102; disabled.enabled = false;
+        const auto alt = runScript({disabled, open}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_SYSCHAR, L'O', 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(alt.command == 9101, "Alt access keys are case insensitive and ignore disabled matches");
+
+        Item duplicate = open; duplicate.command = 9103;
+        const auto cycled = runScript({disabled, open, duplicate}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            SendMessageW(root, WM_CHAR, L'O', 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(cycled.command == 9103, "duplicate access keys cycle without prematurely executing the first command");
+        const auto posted = runScript({disabled, open, duplicate}, keyOptions, [](HWND root) {
+            PostMessageW(root, WM_KEYDOWN, 'O', 1);
+            PostMessageW(root, WM_KEYDOWN, 'O', 1);
+            PostMessageW(root, WM_KEYDOWN, VK_RETURN, 1);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 1);
+        });
+        Expect(posted.command == 9103, "the real message loop handles letter keys before translation without duplicate character actions");
+
+        Item cascade; cascade.label = L"归档(Z)"; cascade.accessKey = L'z'; cascade.children = {open};
+        const auto childKey = runScript({cascade}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'z', 0);
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(childKey.command == 9101, "access keys open cascades and route the next key to the active child");
+
+        Item literal; literal.command = 9104; literal.label = L"name(O) & data";
+        const auto unmatched = runScript({disabled, literal}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+        });
+        Expect(unmatched.command == 0, "disabled keys and unmarked parentheses cannot execute a command");
+
+        Item input; input.command = 9105; input.textInput = true; input.label = L"搜索";
+        std::wstring entered;
+        keyOptions.onTextChanged = [&](UINT, const std::wstring& value, auto&) { entered = value; };
+        const auto searched = runScript({input, open}, keyOptions, [](HWND root) {
+            SendMessageW(root, WM_CHAR, L'o', 0);
+            SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        });
+        Expect(searched.command == 9101 && entered == L"o", "focused search input takes precedence over bare access keys");
+    }
+    // The footer's two actions must remain independently clickable and keyboard
+    // reachable with compact and regular metrics, including a longer translation.
+    for (const auto appearance : {Appearance::OpaqueLight, Appearance::Win10Light, Appearance::Win10Dark})
+        for (const UINT dpi : {96U, 120U, 144U, 192U})
+        {
+            snowdesktop::modern_menu::Options footerOptions;
+            footerOptions.owner = owner;
+            footerOptions.anchor = {80, 80};
+            footerOptions.appearance = appearance;
+            footerOptions.dpi = dpi;
+            std::vector<Item> footerItems{{9201, L"Weitere Optionen anzeigen", L"+", true}};
+            snowdesktop::shell_extensions::AddMoreManagementAction(footerItems, 9201, 9202, L"Verwalten");
+            snowdesktop::modern_menu::HoverInfo hover;
+            footerOptions.onHover = [&](const auto &info) { hover = info; };
+            RECT moreBounds{}, manageBounds{};
+            const auto manageResult = runScript(footerItems, footerOptions, [&](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                moreBounds = hover.itemScreenRect;
+                Expect(hover.command == 9201, "More remains the primary footer action");
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                manageBounds = hover.itemScreenRect;
+                Expect(hover.command == 9202, "management is reachable from keyboard navigation");
+                POINT point{(manageBounds.left + manageBounds.right) / 2,
+                            (manageBounds.top + manageBounds.bottom) / 2};
+                ScreenToClient(root, &point);
+                SendMessageW(root, WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
+                SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+            });
+            Expect(manageResult.command == 9202 && moreBounds.right == manageBounds.left &&
+                       moreBounds.top == manageBounds.top && moreBounds.bottom == manageBounds.bottom,
+                   "right-hand management click has its own hit target in the same footer row");
+            Expect(manageBounds.right - manageBounds.left > MulDiv(48, dpi, 96),
+                   "the longer management translation receives content width even with Win10 metrics");
+            const auto moreResult = runScript(footerItems, footerOptions, [&](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(moreResult.command == 9201, "the original More command remains independently executable");
+        }
+    for (const auto appearance : {Appearance::Win10Light, Appearance::Win10Dark})
+    {
+        for (const UINT dpi : {96U, 120U, 144U, 192U})
+        {
+            snowdesktop::modern_menu::Options compact;
+            compact.owner = owner;
+            compact.anchor = {80, 80};
+            compact.appearance = appearance;
+            compact.dpi = dpi;
+            std::vector<Item> compactItems{
+                {101, L"普通命令", L"", true},
+                {102, L"复制一个较长名称的项目\tCtrl+C", L"C", true},
+                {103, L"不可用的剪切", L"X", false},
+                {104, L"已选中", L"", true, true},
+                {0, L"子菜单", L"", true, false, false,
+                    {{106, L"子菜单命令", L"", true}}},
+            };
+            compactItems[1].quickAction = true;
+            compactItems[2].quickAction = true;
+            const int rowHeight = MulDiv(24, dpi, 96);
+            const auto first = runScript(compactItems, compact, [](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(first.command == 101,
+                "Win10 keyboard navigation preserves source order instead of promoting quick actions");
+
+            snowdesktop::modern_menu::HoverInfo hover;
+            compact.onHover = [&](const auto& info) { hover = info; };
+            RECT rootBounds{};
+            const auto pointer = runScript(compactItems, compact, [&](HWND root) {
+                GetWindowRect(root, &rootBounds);
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                Expect(hover.command == 102, "compact quick actions remain selectable rows");
+                const RECT copyBounds = hover.itemScreenRect;
+                SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                Expect(hover.command == 104,
+                    "compact keyboard navigation skips disabled quick actions");
+                POINT point{copyBounds.left + 4, copyBounds.bottom + rowHeight / 2};
+                ScreenToClient(root, &point);
+                SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+                Expect(snowdesktop::modern_menu::IsActive(),
+                    "clicking a disabled compact row cannot activate a command");
+                point = {(copyBounds.left + copyBounds.right) / 2,
+                    (copyBounds.top + copyBounds.bottom) / 2};
+                ScreenToClient(root, &point);
+                SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+            });
+            Expect(pointer.command == 102 &&
+                    pointer.itemScreenRect.bottom - pointer.itemScreenRect.top == rowHeight &&
+                    pointer.itemScreenRect.right - pointer.itemScreenRect.left ==
+                        rootBounds.right - rootBounds.left - 2 * MulDiv(6, dpi, 96),
+                "Win10 quick actions use full-width compact hit targets at every DPI");
+            const auto child = runScript(compactItems, compact, [&](HWND root) {
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                const RECT parentRow = hover.itemScreenRect;
+                SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                MenuWindows cascade;
+                EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows,
+                    reinterpret_cast<LPARAM>(&cascade));
+                Expect(cascade.child != nullptr, "compact submenu opens from the keyboard");
+                RECT childBounds{};
+                GetWindowRect(cascade.child, &childBounds);
+                Expect(childBounds.top + MulDiv(6, dpi, 96) ==
+                        parentRow.top - MulDiv(3, dpi, 96),
+                    "compact submenus align using the same panel padding as their parent");
+                SendMessageW(cascade.child, WM_KEYDOWN, VK_HOME, 0);
+                SendMessageW(cascade.child, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(child.command == 106 &&
+                    child.itemScreenRect.bottom - child.itemScreenRect.top == rowHeight,
+                "child popups inherit compact metrics and dispatch their command");
+
+            std::vector<Item> longMenu;
+            for (UINT i = 0; i < 100; ++i)
+                longMenu.push_back({200 + i, L"滚动菜单项", L"", true});
+            compact.anchor = {monitorInfo.rcWork.right - 2, monitorInfo.rcWork.bottom - 2};
+            RECT longBounds{};
+            const auto scrolled = runScript(longMenu, compact, [dpi, &longBounds](HWND root) {
+                GetWindowRect(root, &longBounds);
+                RECT client{}; GetClientRect(root, &client);
+                const auto hint = MAKELPARAM(client.right / 2, client.bottom - MulDiv(18, dpi, 96));
+                SendMessageW(root, WM_MOUSEMOVE, 0, hint);
+                SendMessageW(root, WM_LBUTTONDOWN, 0, hint);
+                SendMessageW(root, WM_LBUTTONUP, 0, hint);
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(scrolled.command == 299 &&
+                    scrolled.itemScreenRect.bottom == longBounds.bottom - MulDiv(6, dpi, 96) - MulDiv(3, dpi, 96) &&
+                    scrolled.itemScreenRect.right <= monitorInfo.rcWork.right,
+                "scroll hint click never activates a row and the reached bottom has no reserved blank band");
+            const auto topEdge = runScript(longMenu, compact, [dpi, &longBounds](HWND root) {
+                GetWindowRect(root, &longBounds);
+                SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                RECT client{}; GetClientRect(root, &client);
+                const auto point = MAKELPARAM(client.right / 2, MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96) + MulDiv(10, dpi, 96));
+                SendMessageW(root, WM_LBUTTONDOWN, 0, point); SendMessageW(root, WM_LBUTTONUP, 0, point);
+                // A successful click finishes the nested loop after this callback returns.
+                // Queue cancellation only for a missed click; sending it here erases success.
+                PostMessageW(root, WM_KEYDOWN, VK_ESCAPE, 0);
+            });
+            if (topEdge.command != 200 || topEdge.itemScreenRect.top != longBounds.top + MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96))
+                std::cerr << "top boundary: dpi=" << dpi << " command=" << topEdge.command
+                          << " rowTop=" << topEdge.itemScreenRect.top << " windowTop=" << longBounds.top << '\n';
+            Expect(topEdge.command == 200 && topEdge.itemScreenRect.top == longBounds.top + MulDiv(6, dpi, 96) + MulDiv(3, dpi, 96),
+                "returning to the top reclaims its band and the first visible row receives pointer clicks at every DPI");
+
+            compact.anchor = {80, 80};
+            compact.onTextChanged = options.onTextChanged;
+            textChangeCount = 0;
+            observedSearch.clear();
+            const auto search = runScript(textInputItems, compact, [](HWND root) {
+                SendMessageW(root, WM_CHAR, L'a', 0);
+                SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+                SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            });
+            Expect(search.command == 82 && observedSearch == L"a" && textChangeCount == 1,
+                "compact search rows accept input and retain keyboard result navigation");
+        }
+    }
+
     gCaptureRootRect = false;
+    // An asynchronous Shell reply can grow a tiny popup at a screen edge.
+    // Exercise actual placement and keyboard scrolling, not layout arithmetic.
+    for (const bool aboveDock : {false, true})
+        for (UINT dpi : {96u, 120u, 144u, 192u})
+        {
+            MONITORINFO monitor{sizeof(monitor)};
+            GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor);
+            options.anchor = {monitor.rcWork.right - 8, monitor.rcWork.bottom - 8};
+            options.rootPlacement = aboveDock ? snowdesktop::modern_menu::RootPlacement::AboveAnchorRect
+                                              : snowdesktop::modern_menu::RootPlacement::Default;
+            options.anchorRect = {monitor.rcWork.right - 300, monitor.rcWork.bottom - 64,
+                                  monitor.rcWork.right - 8, monitor.rcWork.bottom};
+            options.dpi = dpi;
+            options.appearance = snowdesktop::modern_menu::Appearance::Win10Light;
+            options.onCommand = {};
+            options.onTextChanged = {};
+            options.onHover = {};
+            bool populated = false;
+            RECT expanded{}, initial{};
+            const auto readyAt = GetTickCount64() + 30;
+            options.pollItems =
+                [&](const auto &,
+                    bool canApply) -> std::optional<std::vector<snowdesktop::modern_menu::Item>> {
+                if (!canApply || populated || GetTickCount64() < readyAt)
+                    return {};
+                populated = true;
+                GetWindowRect(snowdesktop::modern_menu::ActiveRootWindow(), &initial);
+                std::vector<snowdesktop::modern_menu::Item> expandedItems(100);
+                for (UINT i = 0; i < 100; ++i)
+                {
+                    expandedItems[i].command = 8100 + i;
+                    expandedItems[i].label = L"扩展命令 / long extension command " + std::to_wstring(i);
+                }
+                expandedItems[1].enabled = false;
+                expandedItems[2].checked = true;
+                return expandedItems;
+            };
+            gDriveMode = DriveMode::Script;
+            gInputPosted = false;
+            gWatchdogFired = false;
+            gMenuScript = [&](HWND menu) {
+                GetWindowRect(menu, &expanded);
+                SendMessageW(menu, WM_KEYDOWN, VK_END, 0);
+                SendMessageW(menu, WM_KEYDOWN, VK_RETURN, 0);
+            };
+            SetTimer(owner, kDriveTimer, 120, nullptr);
+            SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            snowdesktop::modern_menu::Item loading;
+            loading.label = L"Loading";
+            loading.enabled = false;
+            const auto asyncResult = snowdesktop::modern_menu::Show({loading}, options);
+            KillTimer(owner, kWatchdogTimer);
+            Expect(populated && !gWatchdogFired && asyncResult.command == 8199,
+                   "asynchronous extension commands support keyboard scrolling at every DPI");
+            Expect(expanded.bottom <= monitor.rcWork.bottom + 16 &&
+                       expanded.right <= monitor.rcWork.right + 16,
+                   "asynchronous menu growth stays within the monitor work area at every DPI");
+            Expect(expanded.top == initial.top && expanded.left == initial.left &&
+                       expanded.right == initial.right,
+                   "asynchronous growth preserves the visible origin and width at every DPI");
+            Expect(!aboveDock || expanded.bottom <= options.anchorRect.top + 16,
+                   "growing a menu above the Dock keeps the Dock clear and scrolls additional rows");
+        }
+    // Mouse input and async replacement share the real controller. A result
+    // must wait while the user is pointing at or pressing the old More row.
+    for (const bool pressed : {false, true})
+    {
+        int phase = 0;
+        bool deferred = false;
+        options.dpi = 96;
+        options.pollItems = [&](const auto &current, bool canApply) -> std::optional<std::vector<Item>> {
+            const auto root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (!phase)
+            {
+                ++phase;
+                SendMessageW(root, pressed ? WM_LBUTTONDOWN : WM_MOUSEMOVE, 0, MAKELPARAM(20, 20));
+                // The private test desktop's real cursor is outside this window.
+                // Cancel OS leave tracking so the synthetic hover lasts until
+                // the explicit leave below, just like a stationary real pointer.
+                TRACKMOUSEEVENT tracking{sizeof(tracking), TME_CANCEL | TME_LEAVE, root, 0};
+                TrackMouseEvent(&tracking);
+                MSG leave{};
+                while (PeekMessageW(&leave, root, WM_MOUSELEAVE, WM_MOUSELEAVE, PM_REMOVE))
+                {
+                }
+                return {};
+            }
+            if (phase == 1)
+            {
+                deferred = !canApply;
+                ++phase;
+                // Release over the shadow, where no action is selected.
+                SendMessageW(root, pressed ? WM_LBUTTONUP : WM_MOUSELEAVE, 0, 0);
+                return {};
+            }
+            if (!canApply)
+                return {};
+            auto updated = current;
+            Item loaded;
+            loaded.command = 8251;
+            loaded.label = L"Loaded";
+            updated.push_back(loaded);
+            PostMessageW(root, WM_KEYDOWN, VK_END, 0);
+            PostMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            return updated;
+        };
+        Item more;
+        more.command = 8250;
+        more.label = L"More";
+        gWatchdogFired = false;
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto pointerResult = snowdesktop::modern_menu::Show({more}, options);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(deferred && !gWatchdogFired && pointerResult.command == 8251,
+               "async replacement waits for mouse hover or button press to finish");
+    }
+    // Polling must continue while a cascade is open so an extension deadline
+    // cannot be postponed indefinitely by keyboard navigation.
+    {
+        bool observedCascade = false, refreshed = false;
+        snowdesktop::modern_menu::Item group; group.command=8200;group.label=L"Group";
+        snowdesktop::modern_menu::Item leaf;leaf.command=8201;leaf.label=L"Child";group.children={leaf};
+        gDriveMode=DriveMode::Script;gInputPosted=false;gWatchdogFired=false;
+        gMenuScript=[](HWND root){SendMessageW(root,WM_KEYDOWN,VK_HOME,0);SendMessageW(root,WM_KEYDOWN,VK_RIGHT,0);};
+        options.pollItems=[&](const auto& current,bool canApply)->std::optional<std::vector<snowdesktop::modern_menu::Item>> {
+            if(!canApply)
+            {
+                observedCascade=true;MenuWindows windows;EnumThreadWindows(GetCurrentThreadId(),FindMenuWindows,reinterpret_cast<LPARAM>(&windows));
+                if(windows.child)PostMessageW(windows.child,WM_KEYDOWN,VK_ESCAPE,0);
+                return {};
+            }
+            if(!observedCascade||refreshed)return {};
+            refreshed=true;auto updated=current;snowdesktop::modern_menu::Item command;command.command=8202;command.label=L"Loaded";updated.push_back(command);
+            const auto root=snowdesktop::modern_menu::ActiveRootWindow();PostMessageW(root,WM_KEYDOWN,VK_END,0);PostMessageW(root,WM_KEYDOWN,VK_RETURN,0);
+            return updated;
+        };
+        SetTimer(owner,kDriveTimer,10,nullptr);SetTimer(owner,kWatchdogTimer,3000,nullptr);
+        const auto cascadeResult=snowdesktop::modern_menu::Show({group},options);KillTimer(owner,kWatchdogTimer);
+        if (!observedCascade || !refreshed || gWatchdogFired || cascadeResult.command != 8202)
+            std::cerr << "cascade: observed=" << observedCascade << " refreshed=" << refreshed
+                      << " watchdog=" << gWatchdogFired << " command=" << cascadeResult.command
+                      << " input=" << gInputPosted << '\n';
+        Expect(observedCascade&&refreshed&&!gWatchdogFired&&cascadeResult.command==8202,
+            "extension deadlines are serviced during an open cascade and additions wait for its closure");
+    }
+    options.pollItems = {}; gMenuScript = {};
+
     gDriveMode = DriveMode::Nested;
     gDrivePhase = 0;
     gInputPosted = false;

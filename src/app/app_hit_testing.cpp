@@ -1,5 +1,6 @@
 #include "app.h"
 #include "widgets/widget_chrome_rules.h"
+#include "widgets/storage_title_bar_layout.h"
 
 // Desktop-item and standalone-widget hit testing.
 
@@ -24,6 +25,7 @@ bool DesktopApp::UpdateWidgetHandleCursor(POINT point)
             }
         if (hit == WidgetHit::ResizeHandle) cursor = IDC_SIZENWSE;
         else if (hit == WidgetHit::MoveHandle) cursor = IDC_SIZEALL;
+        else if (hit == WidgetHit::CollapseToggleBtn) cursor = IDC_HAND;
     }
     if (!cursor) return false;
     SetCursor(LoadCursorW(nullptr, cursor));
@@ -101,6 +103,80 @@ int DesktopApp::GetComponentEdgeMargin(
 }
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
+{
+    return snowdesktop::storage_title_bar::VisibleFrame(
+        GetExpandedWidgetFrameRect(widget), IsWidgetCollapsed(widget),
+        ScaleWidgetCu(GetCategorizedWidgetTabHeight(), GetWidgetCellScale(widget)),
+        ScaleWidgetCu(2.0f, GetWidgetCellScale(widget)));
+}
+
+bool DesktopApp::IsWidgetCollapsed(const DesktopWidget& widget) const
+{
+    return snowdesktop::storage_title_bar::IsCollapsed(widget,
+        CurrentPersonalization().scrollableTitleBarOnTop,
+        // Keep the target expanded through synchronous drop submission too.
+        dragSession_.HasContext(), dragDropController_.IsExternalDragActive(),
+        widgetAction_ == WidgetAction::Move) &&
+        !(widget.titleBarExpandOnHover && hoverExpandedWidgetIds_.contains(widget.id));
+}
+
+bool DesktopApp::UpdateWidgetHoverExpansion(POINT point)
+{
+    std::unordered_set<std::wstring> expandedIds;
+    bool suppressionStillInside = false;
+    for (size_t index = 0; index < widgets_.size(); ++index)
+    {
+        const auto& widget = widgets_[index];
+        const bool eligible = widget.titleBarCollapsed && widget.titleBarExpandOnHover &&
+            snowdesktop::storage_title_bar::UsesTop(widget,
+                CurrentPersonalization().scrollableTitleBarOnTop) &&
+            customDesktopVisible_ && !desktopPassthroughActive_ &&
+            (!desktopIconsHidden_ || widget.keepWhenDesktopHidden) &&
+            !IsRectEmptyRect(widget.bounds) && !IsGroupedWidget(widget);
+        if (!eligible) continue;
+
+        const RECT frame = GetExpandedWidgetFrameRect(widget);
+        const bool inFrame = PtInRect(&frame, point) != FALSE;
+        const bool suppressed = hoverExpansionSuppressedWidgetId_ == widget.id && inFrame;
+        suppressionStillInside |= suppressed;
+        const bool wasExpanded = hoverExpandedWidgetIds_.contains(widget.id);
+        bool retained = interactionPinnedWidgetId_ == widget.id ||
+            popupWidgetIndex_ == index ||
+            (mouseDown_ && mouseDownWidgetIndex_ == index) ||
+            snowdesktop::widget_visibility_rules::ShouldRetainForKeyboardNavigation(
+                keyboardNavVisualFocus_, keyboardNavInsideWidget_,
+                keyboardNavWidgetIndex_, index);
+        if (wasExpanded && !retained)
+        {
+            for (const auto& container : containers_)
+            {
+                const auto* searchable = dynamic_cast<ScrollingItemWidget*>(container.get());
+                if (searchable && searchable->GetWidgetData() == &widget &&
+                    searchable->IsSearchFocused())
+                {
+                    retained = true;
+                    break;
+                }
+            }
+        }
+        const bool pointerAvailable = !HasActiveContextMenuSession() &&
+            !IsPointOccludedByOpenPopup(point);
+        if (snowdesktop::storage_title_bar::ExpandOnHover(eligible, wasExpanded,
+                suppressed, pointerAvailable && inFrame, widget.selected,
+                HasSelectedFilesInWidget(index), retained))
+        {
+            expandedIds.insert(widget.id);
+        }
+    }
+    if (!suppressionStillInside) hoverExpansionSuppressedWidgetId_.clear();
+    if (expandedIds == hoverExpandedWidgetIds_) return false;
+    hoverExpandedWidgetIds_ = std::move(expandedIds);
+    InvalidateDragStaticScene();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+RECT DesktopApp::GetExpandedWidgetFrameRect(const DesktopWidget& widget) const
 {
     RECT frame = widget.bounds;
     for (const auto& page : gridPages_)

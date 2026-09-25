@@ -6,6 +6,7 @@
 #include "../grid_spacing_rules.h"
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -126,7 +127,7 @@ inline int GetGridAxisOffset(const GridPage& page, int index, bool horizontal)
 inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell, GridSpan span = {})
 {
     auto* page = FindGridPage(pages, cell.pageId);
-    if (!page) return MakeRect(0, 0, 0, 0);
+    if (!page) return {};
     int col = std::clamp(cell.column, 0, std::max(0, page->columns - 1));
     int row = std::clamp(cell.row,    0, std::max(0, page->rows    - 1));
     int sc  = std::clamp(span.columns, 1, std::max(1, page->columns - col));
@@ -135,7 +136,108 @@ inline RECT GetGridRect(const std::vector<GridPage>& pages, const GridCell& cell
     int y = page->workArea.top  + page->marginY + GetGridAxisOffset(*page, row, false);
     int r = page->workArea.left + page->marginX + GetGridAxisOffset(*page, col + sc - 1, true)  + page->cellWidth;
     int b = page->workArea.top  + page->marginY + GetGridAxisOffset(*page, row + sr - 1, false) + page->cellHeight;
-    return MakeRect(x, y, r, b);
+    return {x, y, r, b};
+}
+
+inline const GridPage* FindDragGridPage(const std::vector<GridPage>& pages,
+    POINT pointer, const GridPage* fallback = nullptr)
+{
+    for (const auto& page : pages)
+        if (PtInRect(&page.bounds, pointer) || PtInRect(&page.workArea, pointer))
+            return &page;
+    return fallback;
+}
+
+// A drag origin can still be on the source display while the pointer has
+// entered the destination. Choose the page with the pointer, then snap the
+// translated origin to the nearest cell origin (not a cell's far edge).
+inline GridCell ResolveGridDragCell(const std::vector<GridPage>& pages,
+    POINT pointer, POINT origin, const GridPage* fallback = nullptr)
+{
+    const GridPage* target = FindDragGridPage(pages, pointer, fallback);
+    if (!target) return {};
+    const auto nearestOrigin = [&](bool horizontal) {
+        const int count = horizontal ? target->columns : target->rows;
+        const LONG coordinate = horizontal ? origin.x : origin.y;
+        const LONG start = horizontal
+            ? target->workArea.left + target->marginX
+            : target->workArea.top + target->marginY;
+        int best = 0;
+        auto distance = [&](int index) {
+            return std::abs(static_cast<long long>(coordinate) - start -
+                GetGridAxisOffset(*target, index, horizontal));
+        };
+        auto bestDistance = distance(0);
+        for (int index = 1; index < count; ++index)
+        {
+            const auto nextDistance = distance(index);
+            if (nextDistance < bestDistance)
+            {
+                best = index;
+                bestDistance = nextDistance;
+            }
+        }
+        return best;
+    };
+    return {target->id, nearestOrigin(true), nearestOrigin(false)};
+}
+
+// Capture once from the original widget bounds, before paging can relayout or
+// hide them. Independent fractions retain the grab point on non-square grids;
+// a single CU/DPI scale cannot represent different horizontal/vertical ratios.
+struct GridDragAnchor
+{
+    double x = 0.0;
+    double y = 0.0;
+};
+
+inline GridDragAnchor CaptureGridDragAnchor(RECT bounds, POINT pointer)
+{
+    // Handles may extend outside the frame, so signed fractions are intentional.
+    return {
+        (static_cast<double>(pointer.x) - bounds.left) /
+            std::max(1L, bounds.right - bounds.left),
+        (static_cast<double>(pointer.y) - bounds.top) /
+            std::max(1L, bounds.bottom - bounds.top)
+    };
+}
+
+inline GridCell ResolveGridSpanDragCell(const std::vector<GridPage>& pages,
+    POINT pointer, GridDragAnchor anchor, GridSpan span,
+    const GridPage* fallback = nullptr)
+{
+    const GridPage* target = FindDragGridPage(pages, pointer, fallback);
+    if (!target) return {};
+    const auto nearestAnchor = [&](bool horizontal) {
+        const int count = std::max(1, horizontal ? target->columns : target->rows);
+        const int length = std::clamp(horizontal ? span.columns : span.rows, 1, count);
+        const int cellSize = horizontal ? target->cellWidth : target->cellHeight;
+        const LONG coordinate = horizontal ? pointer.x : pointer.y;
+        const LONG start = horizontal
+            ? target->workArea.left + target->marginX
+            : target->workArea.top + target->marginY;
+        const double fraction = horizontal ? anchor.x : anchor.y;
+        const auto distance = [&](int index) {
+            const int offset = GetGridAxisOffset(*target, index, horizontal);
+            // Match GetGridRect, including gaps and per-track integer rounding.
+            const int size = GetGridAxisOffset(*target, index + length - 1, horizontal)
+                + cellSize - offset;
+            return std::abs(static_cast<double>(coordinate) - start - offset - fraction * size);
+        };
+        int best = 0;
+        auto bestDistance = distance(0);
+        for (int index = 1; index <= count - length; ++index)
+        {
+            const auto nextDistance = distance(index);
+            if (nextDistance < bestDistance)
+            {
+                best = index;
+                bestDistance = nextDistance;
+            }
+        }
+        return best;
+    };
+    return {target->id, nearestAnchor(true), nearestAnchor(false)};
 }
 
 /**

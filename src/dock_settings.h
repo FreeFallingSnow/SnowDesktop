@@ -53,6 +53,8 @@ struct SystemTaskbarTargetAppearance
     PersonalizationSettings appearance =
         PersonalizationSettings::DarkPreset();
     bool protectAutoHideActivation = false;
+    bool shellPanelVisible = false;
+    bool suppressTaskbar = false;
 };
 
 struct DockSettings : DockLayoutSettings
@@ -65,7 +67,7 @@ struct DockSettings : DockLayoutSettings
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
-    bool floatingEdgeSwipeBlockFullscreen = false;
+    bool floatingEdgeSwipeBlockFullscreen = true;
     // Legacy persisted fields kept for layout compatibility. Running
     // applications and hover previews are now unconditional Dock features.
     bool showRunningApps = true;
@@ -78,16 +80,24 @@ struct DockSettings : DockLayoutSettings
     int launchEffect = 1;
     int windowEffect = 1;
     bool systemTaskbarAutoHide = false;
+    bool suppressSystemTaskbar = false;
     int systemTaskbarAlignment = 1; // 0=靠左, 1=居中
     bool systemTaskbarBackdropEnabled = false;
     bool systemTaskbarFollowPersonalization = true;
     int systemTaskbarContentTheme = -1; // -1=跟随全局, 0=浅色, 1=深色
+    // Windows 10 shares one shell theme across taskbars and system panels.
+    int classicTaskbarSystemTheme = -1; // -1=match appearance, 0=light, 1=dark
     PersonalizationSettings systemTaskbarAppearance =
         PersonalizationSettings::AcrylicDarkPreset();
     SystemTaskbarDynamicRule systemTaskbarVisibleWindow;
     SystemTaskbarDynamicRule systemTaskbarMaximizedWindow;
     SystemTaskbarDynamicRule systemTaskbarShellUi;
 };
+
+inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
+{
+    return settings.showWindowsButton || settings.suppressSystemTaskbar;
+}
 
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     bool dockEnabled, bool autoHideEnabled) noexcept
@@ -134,6 +144,8 @@ bool RequestWindowsSystemLightThemeEnabled(bool enabled);
 bool RestartWindowsExplorer();
 PersonalizationSettings MakeTransparentTaskbarAppearance();
 SystemTaskbarBackdropRuntimeState GetSystemTaskbarBackdropRuntimeState();
+SystemTaskbarBackdropRuntimeState GetSystemTaskbarSuppressionRuntimeState();
+bool IsClassicSystemTaskbar();
 void NotifySystemTaskbarCreated();
 LONG DrainSystemTaskbarAutoHideTrace(
     std::array<snowdesktop::taskbar_hook::AutoHideTraceRecord,
@@ -141,6 +153,6 @@ LONG DrainSystemTaskbarAutoHideTrace(
 bool ApplySystemTaskbarBackdrop(bool hookEnabled, bool defaultEnabled,
     const PersonalizationSettings& defaultAppearance,
     const std::vector<SystemTaskbarTargetAppearance>& targets = {},
-    bool appearanceEnabled = true);
+    bool appearanceEnabled = true, bool suppressTaskbar = false);
 bool LoadDockSettings(const wchar_t* path, DockSettings& settings);
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings);

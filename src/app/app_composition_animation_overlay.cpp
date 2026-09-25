@@ -1,4 +1,5 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "../performance_trace.h"
 #include "native_menu_presentation_rules.h"
 
@@ -46,9 +47,39 @@ HRESULT CreateSmoothStepAnimation(
 }
 }
 
-// Independent DComp layers for static popup snapshots. The desktop surface is
-// cleared once at animation start; subsequent frames change only visual
-// properties and never invoke the popup/Lua renderers.
+// Independent DComp layers for popup snapshots. Content arrivals update only
+// surface pixels; the compositor advances scale/opacity without UI frame work.
+
+bool DesktopApp::UpdateCompositionAnimationOverlayContent(
+    UiCompositionAnimationOverlay& overlay,
+    const DragRenderCache& cache)
+{
+    if (!overlay.surface)
+        return false;
+    ID2D1DeviceContext* rawContext = nullptr;
+    POINT updateOffset{};
+    const HRESULT hr = overlay.surface->BeginDraw(
+        nullptr, __uuidof(ID2D1DeviceContext),
+        reinterpret_cast<void**>(&rawContext), &updateOffset);
+    if (FAILED(hr))
+        return false;
+    ComPtr<ID2D1DeviceContext> context;
+    context.Attach(rawContext);
+    bool drawn = false;
+    if (context)
+    {
+        context->SetDpi(96.0f, 96.0f);
+        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        context->SetTransform(D2D1::Matrix3x2F::Identity());
+        context->Clear(D2D1::ColorF(0, 0, 0, 0));
+        drawn = cache.DrawAt(context.Get(),
+            D2D1::Point2F(static_cast<float>(updateOffset.x), static_cast<float>(updateOffset.y)),
+            D2D1_INTERPOLATION_MODE_LINEAR);
+    }
+    context.Reset();
+    const HRESULT endDrawHr = overlay.surface->EndDraw();
+    return drawn && SUCCEEDED(endDrawHr);
+}
 
 bool DesktopApp::PrepareCompositionAnimationOverlay(
     UiCompositionAnimationOverlay& overlay,
@@ -146,33 +177,7 @@ bool DesktopApp::PrepareCompositionAnimationOverlay(
     if (FAILED(hr) || !overlay.surface)
         return false;
 
-    ID2D1DeviceContext* rawContext = nullptr;
-    POINT updateOffset{};
-    hr = overlay.surface->BeginDraw(
-        nullptr, __uuidof(ID2D1DeviceContext),
-        reinterpret_cast<void**>(&rawContext),
-        &updateOffset);
-    if (FAILED(hr) || !rawContext)
-    {
-        overlay.surface.Reset();
-        return false;
-    }
-
-    ComPtr<ID2D1DeviceContext> context;
-    context.Attach(rawContext);
-    context->SetDpi(96.0f, 96.0f);
-    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-    context->SetTransform(D2D1::Matrix3x2F::Identity());
-    context->Clear(D2D1::ColorF(0, 0, 0, 0));
-    const bool drawn = cache.DrawAt(
-        context.Get(),
-        D2D1::Point2F(
-            static_cast<float>(updateOffset.x),
-            static_cast<float>(updateOffset.y)),
-        D2D1_INTERPOLATION_MODE_LINEAR);
-    context.Reset();
-    const HRESULT endDrawHr = overlay.surface->EndDraw();
-    if (!drawn || FAILED(endDrawHr))
+    if (!UpdateCompositionAnimationOverlayContent(overlay, cache))
     {
         overlay.surface.Reset();
         return false;
@@ -300,7 +305,10 @@ bool DesktopApp::FlushPendingCompositionCommit()
     }
     const double commitStart =
         snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    const HRESULT hr = dcompDevice_->Commit();
+    const HRESULT hr = snowdesktop::startup_diagnostics::Call(L"Composition.Commit", [&] {
+        return dcompDevice_->Commit();
+    });
+    TraceDesktopPresentation(L"composition-commit", hr);
     if (SUCCEEDED(hr))
         compositionCommitPending_ = false;
     RecordShellHoverTrace(
@@ -734,10 +742,11 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
     }
 
     popupAnimationCompositorDriven_ = true;
+    const double started = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
     popupAnimationCompletionToken_ =
         uiAnimationScheduler_.ScheduleOnce(
             duration + 2,
-            [this](snowdesktop::UiScheduleToken token) {
+            [this, duration, opening, started](snowdesktop::UiScheduleToken token) {
                 if (popupAnimationCompletionToken_ != token)
                     return;
                 popupAnimationCompletionToken_ = 0;
@@ -745,6 +754,13 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                 popupAnimation_.Advance(static_cast<std::uint64_t>(
                     snowdesktop::UiAnimationScheduler::
                         MonotonicMilliseconds()));
+                wchar_t message[192]{};
+                swprintf_s(message,
+                    L"Popup animation complete: driver=compositor opening=%d durationMs=%u elapsedMs=%.2f pendingContent=%d",
+                    opening ? 1 : 0, duration,
+                    snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
+                    popupAnimationContentPending_ ? 1 : 0);
+                WriteDiagnosticLogEntry(message);
                 // A hidden collection popup is retired by its own finalizer.
                 // Do not hide the backdrop helper here first: the finalizer
                 // closes it together with the shared popup host when no other
@@ -764,6 +780,9 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
                     return;
                 }
                 const RECT dirty = popupAnimationCacheRect_;
+                // Content changes kept the original bounds during the native
+                // track. Size the live host before the atomic snapshot handoff.
+                UpdateFloatingPopupWindowBounds(false);
                 PrepareCompositionAnimationOverlayRetirement(
                     popupAnimationOverlay_, dirty);
                 ResetCollectionPopupAnimationCache();
@@ -776,6 +795,11 @@ bool DesktopApp::StartCollectionPopupCompositionAnimation()
         UpdateCollectionPopupCompositionAnimation();
         return false;
     }
+    wchar_t message[192]{};
+    swprintf_s(message,
+        L"Popup animation start: driver=compositor opening=%d durationMs=%u folder=%d",
+        opening ? 1 : 0, duration, dockFolderPopupOpen_ ? 1 : 0);
+    WriteDiagnosticLogEntry(message);
     return true;
 }
 

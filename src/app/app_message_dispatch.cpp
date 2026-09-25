@@ -110,20 +110,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // child window after a monitor is added at runtime.
         return HTCLIENT;
     case WM_MOUSEACTIVATE:
-    {
-        POINT point{};
-        if (GetCursorPos(&point))
-        {
-            ScreenToClient(hwnd_, &point);
-            if (IsPointInUsageGuide(point)) return MA_NOACTIVATE;
-            if (DockContainer* dock = GetDockContainerAtPoint(point))
-            {
-                if (dock->ContainsInteractivePoint(point))
-                    return MA_NOACTIVATE;
-            }
-        }
-        break;
-    }
+        // DefWindowProc forwards activation to the Explorer parent. Pointer
+        // handlers explicitly focus our independent input proxy when needed;
+        // keep delivering the click without activating the rendering child.
+        return MA_NOACTIVATE;
     case WM_SETCURSOR:
     {
         if (largeIconGesture_ && LOWORD(lp) == HTCLIENT)
@@ -576,6 +566,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_LBUTTONDBLCLK:
     {
+        CancelRenameClick();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (HandleUsageGuidePointerDown(pt)) return 0;
         const auto clearSelectionAfterAcceptedOpen =
@@ -854,6 +845,13 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(it->get());
             if (!wc) continue;
+            if (wc->HitTestWidget(pt) == WidgetHit::CollapseToggleBtn)
+            {
+                // The double-click message replaces the second button-down.
+                OnLeftButtonDown(wp, lp);
+                return 0;
+            }
+            if (wc->IsCollapsed()) continue;
             RECT bodyRect = wc->GetBodyRect();
             for (auto& slot : wc->GetSlots())
             {
@@ -915,7 +913,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             {
                 auto* wc = dynamic_cast<WidgetContainer*>(c.get());
                 if (!wc) continue;
-                RECT bodyRect = wc->GetBodyRect();
+                RECT bodyRect = wc->IsCollapsed()
+                    ? wc->GetFrameRect() : wc->GetBodyRect();
                 if (PtInRect(&bodyRect, pt))
                 {
                     overWidgetArea = true;
@@ -989,6 +988,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (!OnKeyDown(static_cast<WPARAM>(key), repeated)) break;
         return 0;
     }
+    case kDesktopPassthroughExitMessage:
+        if (desktopPassthroughIndicator_.OwnsWindow(reinterpret_cast<HWND>(wp)))
+            EndDesktopPassthrough();
+        return 0;
     case WM_HOTKEY:
         if (settingsWindow_ &&
             settingsWindow_->IsHotkeyCaptureActive())
@@ -1011,7 +1014,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (static_cast<int>(wp) ==
             kDesktopPassthroughHotkeyId)
         {
-            BeginDesktopPassthroughHold();
+            ToggleDesktopPassthrough();
             return 0;
         }
         break;
@@ -1024,6 +1027,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        CancelRenameClick();
         if (widgetEngine_)
         {
             widgetEngine_->ClearHostViewKeyState();
@@ -1032,6 +1036,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
         if (usageGuidePressedButton_ &&
             (msg == WM_CANCELMODE || reinterpret_cast<HWND>(lp) != hwnd_))
         {
@@ -1087,6 +1092,25 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             ApplyPersistentDockHostAppearance();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+    case kBackgroundShellReadyMessage:
+        PollInitialShellRead();
+        DrainBackgroundShellWork();
+        return 0;
+    case kFolderSubscriptionReadyMessage:
+        SyncFolderChangeNotifications();
+        return 0;
+    case kFolderChangeMessage:
+    {
+        const auto change = ReadShellChangeNotification(wp, lp);
+        if (change)
+        {
+            const bool descendants = (change->event & (SHCNE_RENAMEFOLDER | SHCNE_RMDIR)) != 0;
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->source), descendants);
+            shellMetadataCache_.Invalidate(ToUpperInvariant(change->target), descendants);
+        }
+        RequestFolderRefresh(folderNotifications_.Affected(change));
+        return 0;
+    }
     case kShellChangeMessage:
     {
         // Match our own rename by both paths; unrelated notifications must

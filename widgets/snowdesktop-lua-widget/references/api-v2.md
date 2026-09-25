@@ -1474,7 +1474,9 @@ shape 首版支持 `rect`、`roundedRect` 和 `circle`；cursor 支持 `default`
 
 探测 `interaction.tooltip` 后，region 可声明最多 4096 UTF-8 字节的字符串 `tooltip`；探测
 `interaction.tooltip.rich` 后也可使用与声明式节点相同的 `{title?, text}`。两者都由宿主在命中区域内
-显示，不是任意 markup 或窗口。探测 `interaction.keyboard` 后，region 可声明
+触发显示，不是任意 markup 或窗口。气泡锚定区域可见边界，在下方居中；底部空间不足时翻到上方，
+并限制在组件范围内。同一区域内的鼠标位置不改变气泡锚点；声明式节点的 tooltip 使用相同定位规则。
+探测 `interaction.keyboard` 后，region 可声明
 `focusable`、`tabIndex=-1..32767` 及 `events.keyDown/keyUp`。默认仍从受控类型、click 或文本输入
 role 推导焦点；显式 `focusable=false` 会退出焦点，key 观察目标必须可聚焦。按键事件与声明式
 版本使用相同负载和按下/释放配对，`interaction.isFocused(key)` 可用于绘制焦点状态；这些事件
@@ -1590,8 +1592,12 @@ local value = control.textArea({
 placeholderColor/backgroundColor/borderColor/focusedBorderColor/backgroundAlpha/
 focusedBackgroundAlpha/borderAlpha/focusedBorderAlpha/radius/padding/
 borderThickness/selectAll/liveUpdate/maxBytes`。shape 只接受正尺寸 `rect`；key 和
-storageKey 是 1–128 字节有效 UTF-8。颜色是 `0xRRGGBB`，alpha 是 0–1，字号范围
-9–96。单行 `maxBytes` 默认 4096，多行默认 65536，允许范围 1–65536；粘贴、普通
+storageKey 是 1–128 字节有效 UTF-8。颜色是 `0xRRGGBB`，alpha 是 0–1。`fontSize`
+省略时默认为 15；传入时必须是有限正数，宿主在渲染前统一限制到 9–96 逻辑像素。
+组件可直接传入按行高、页面和用户偏好缩放后的字号；低于 9 或高于 96 的有限正数
+不会使组件报错，0、负数、NaN、无穷及非数字仍会被拒绝。此行为从包含该调整的宿主
+构建起生效；旧宿主仍要求传入 9–96，不能仅凭同一个开发版本号判断是否支持。
+单行 `maxBytes` 默认 4096，多行默认 65536，允许范围 1–65536；粘贴、普通
 输入和 IME 提交按编辑后的最终 UTF-8 大小原子接受或拒绝，不会先删除选择再留下
 半次修改。旧存储若已经超限仍可删除内容，宿主不会静默截断。
 
@@ -1742,10 +1748,16 @@ topic 隐藏时强制暂停，最后一个可见订阅释放后立即停止枚�
 
 GPU value 的 `adapters` 是数组；每项包含不透明 `id`、显示 `name`、
 `usagePercent`、`dedicatedMemoryBytes/dedicatedUsedBytes` 和
-`sharedMemoryBytes/sharedUsedBytes`。两个容量来自 DXGI adapter 描述；两个 used 字段
+`sharedMemoryBytes/sharedUsedBytes`。`usagePercent` 使用 Windows GPU Engine 计数器，
+按 adapter LUID、物理 GPU 和引擎编号累加同一引擎的各进程占用，再取该 adapter 最忙
+引擎的百分比（0–100）；不同引擎可并行工作，不能跨引擎相加，也不按引擎类型合并。
+两个容量来自 DXGI adapter 描述；两个 used 字段
 分别来自 Windows `GPU Adapter Memory` 的 Dedicated Usage 和 Shared Usage，并按
 adapter LUID 归属，不能把核显 LOCAL segment 当作专用显存。宿主不会只返回第一块
-GPU；首次 PDH 差分样本为 `warmingUp=true`。最后一个 GPU 订阅释放后会关闭 PDH
+GPU；adapter `id` 在同一 Windows 会话内不随枚举顺序改变，不能作为跨重启硬件标识。
+首次 PDH 差分样本为 `available=false, warmingUp=true`；没有与当前 adapter 匹配的
+有效占用样本或显存计数器不可用时，快照为不可用状态，不把整次采样失败表示为 0%。
+最后一个 GPU 订阅释放后会关闭 PDH
 query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
@@ -1754,7 +1766,11 @@ query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 采样得到相同的新语义才切换；单次相反或异常采样继续返回上一稳定语义，但使用本次
 采样时间戳保持快照新鲜。权限撤销仍由授权层立即生效，不经过此稳定处理。
 traffic value 包含 `connected/receivedBytes/sentBytes/downloadBytesPerSecond/
-uploadBytesPerSecond`，首次差分样本为 `warmingUp=true`。状态和流量是两个独立
+uploadBytesPerSecond`。累计字节是当前已连接非 loopback 接口的合计；速率按接口 LUID
+分别差分后求和，新加入、重连或计数器重置的接口先建立基线，不把其历史累计量计入速率。
+首次差分样本为 `available=false, warmingUp=true`；没有已连接接口时返回
+`available=true, connected=false` 和零速率。
+虚拟接口仍包含在上述范围内，该合计不等同于去重后的互联网流量。状态和流量是两个独立
 topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP、MAC、SSID、BSSID
 或主机名。
 
@@ -1764,9 +1780,11 @@ topic；只订阅状态不会启动流量差分采样。两者都不会返回 IP
 容量的设备以 `capacityAvailable=false` 表示；宿主不会为了刷新快照同步访问远程卷，
 避免断开的网络映射拖住其他共享 provider。预览使用固定模拟卷，不枚举开发机。
 
-存储 I/O value 是所有物理磁盘的有界聚合，包含 `readBytesPerSecond`、
-`writeBytesPerSecond` 和钳制到 0–100 的 `busyPercent`，不包含磁盘序列号或文件路径。
-首次 PDH 差分样本为 `warmingUp=true`；最后一个 I/O 订阅释放后立即关闭该 PDH query，
+存储 I/O value 的 `readBytesPerSecond`、`writeBytesPerSecond` 是所有物理磁盘的总吞吐；
+`busyPercent` 为最忙物理磁盘的活动时间百分比，按各盘 `100 - % Idle Time` 取最大值，
+范围 0–100，排除 `_Total` 实例。它不代表队列长度或磁盘吞吐容量利用率。
+快照不包含磁盘序列号或文件路径。
+首次 PDH 差分样本为 `available=false, warmingUp=true`；最后一个 I/O 订阅释放后立即关闭该 PDH query，
 不会因卷列表或其他系统 topic 仍有订阅而继续采样。
 
 显示拓扑 value 的 `displays` 是所有活动显示器数组；每项包含不透明 `id`、显示
@@ -1881,7 +1899,7 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `app.search`、`app.launch`，桌面项目任务 `desktop.search`、`everything.search`、
 `shell.openItem`、`shell.revealItem`、`desktop.refresh`，通知任务
 `notification.show/update/dismiss/schedule/cancel`，以及本地日历写入任务
-`calendar.create`、`calendar.update`、`calendar.remove`、公网读取
+`calendar.create`、`calendar.update`、`calendar.remove`、网络请求
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
 `system.openSettings`、有界剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
 范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
@@ -2287,13 +2305,19 @@ local updateId, err = task.start("calendar.update", {
 `invalid_time`、`invalid_reminder`、`event_limit`、`save_failed`、
 `permissionDenied`、`userGestureRequired` 和 `previewReadOnly`。
 
-`network.request` 要求 `network.internet`，支持公网 HTTPS 的 `GET/HEAD/POST/PUT/PATCH/DELETE`、
-有界自定义请求头和请求体，但仍不启用 WinHTTP Cookie 或系统认证。默认可访问任意公网 HTTPS 主机；如果组件功能固定依赖少数服务，
+`network.request` 要求 `network.internet`，支持 HTTP/HTTPS 的 `GET/HEAD/POST/PUT/PATCH/DELETE`、
+有界自定义请求头和请求体，但仍不启用 WinHTTP Cookie 或系统认证。默认可访问公网、本机和局域网服务，
+使用 Windows 系统及当前用户的代理设置，兼容 TUN 虚拟地址，不按 DNS 或连接 IP 的公网属性拦截。
+HTTPS 仍使用系统 TLS 证书校验。如果组件功能固定依赖少数服务，
 可以在 `networkDomains` 中逐项声明精确主机名，主动把自身网络范围收窄。域名限制不支持
-通配符或子域继承；无论是否收窄，localhost、局域网地址和指向非公网地址的解析或重定向
-都被拒绝。每实例该任务最多并发 2 个，参数只接受：
+通配符或子域继承，可使用 `nas.local` 等本地域名。`networkDomains` 清单仍只接受带点的 DNS 名称；
+直接请求 `localhost` 或 IP 地址时应省略此字段。URL 不接受内嵌用户名/密码。
+该行为通过 `task.network.standardHttp` 标记；旧宿主及同版本早期构建缺少该标记时仍可能只支持公网
+HTTPS 且不使用系统代理。组件依赖 HTTP、本地服务或代理时应声明该 required feature，或用
+`widget.hasFeature("task.network.standardHttp")` 检测后提供兼容提示；仅比较 `minHostVersion` 不足以区分同版本构建。
+无需提升 `apiVersion`；现有公网 HTTPS 调用参数和返回值不变。每实例该任务最多并发 2 个，参数只接受：
 
-- `url`：1–2048 字节有效 UTF-8 公网 HTTPS URL；清单声明了 `networkDomains` 时主机必须精确命中；
+- `url`：1–2048 字节有效 UTF-8 HTTP/HTTPS URL；清单声明了 `networkDomains` 时主机必须精确命中；
 - `method`：上述六个大写方法，默认 `GET`；
 - `headers`：最多 32 个 RFC token 名称；普通值必须是单行 UTF-8，也可以使用下述 secret descriptor；注入后合计不超过 32 KiB；
 - `body`：普通字符串字节或一个 secret descriptor，注入后不超过 64 KiB；
@@ -2337,7 +2361,7 @@ descriptor 的 prefix/suffix 只是原始拼接，不执行 JSON 或 URL 转义�
 `secretUnavailable`。对应 feature 为 `task.network.headers`、`task.network.requestBody` 和
 `task.network.secretReference`。
 
-重定向的每一跳都重新检查 HTTPS、可选的精确域名范围、DNS 解析地址和实际连接地址。响应在
+重定向的每一跳都重新检查 HTTP/HTTPS URL 和可选的精确主机范围；含 secret 的请求仍只允许同源重定向。响应在
 worker 中读取，超限立即失败，不会把慢网络 I/O 放进 UI/render 线程。稳定完成错误包括
 `requestRejected`、`networkError`、`redirectRejected`、`responseTooLarge`、
 `httpStatus`、`permissionRevoked` 和 `canceled`。预览返回确定性的最小 RSS mock，不发起
@@ -2838,6 +2862,23 @@ view.text({ key = "title", text = "SnowDesktop", font = display })
 无法激活；`optionalFeatures` 用于可降级能力。基础时钟、绘制、上下文和包资源
 不应声明高风险权限。
 
+### 删除实例前的数据丢失确认
+
+保存用户内容的组件可在清单顶层声明 `"confirmRemoval": true`，并必须把
+`widget.confirmRemoval` 加入 `requiredFeatures`。字段只接受布尔值，缺省或
+`false` 保持直接删除。无需存储迁移，`schemaVersion/apiVersion` 仍为 2。
+
+从支持该能力的 1.0.7.0 宿主开始，用户通过宿主菜单删除实例时，会先显示宿主本地化
+的数据丢失提示，默认选中“取消”。取消、关闭弹窗或创建弹窗失败都不会删除实例或其数据；
+只有明确选择“删除”才清理实例。脚本加载失败或禁用时仍读取包清单；包元数据不可用时
+宿主也会提示。提示不依赖 Lua 回调，组件不能绕过用户的取消决定。
+
+该开关针对宿主删除整个实例，不改变脚本内部清空内容、普通卸载/重载、包管理或全局
+数据重置流程。待办和便签内置包已开启。组件作者应把 `minHostVersion` 设为
+`1.0.7.0` 或更高；旧宿主及缺少该能力的同版本早期构建会因必需能力缺失而拒绝激活，
+不能只按版本号判断支持。已有布局在旧宿主中仍可能提供删除入口，因此此声明不保证
+降级宿主后的数据保护；依赖此能力的组件应与支持它的宿主一起或之后发布。
+
 ## 当前明确未开放
 
 当前沙箱不提供已移除的同步 `desktop`、`media`、`http` 和 `sys` 库，也不提供任意
@@ -2968,3 +3009,37 @@ cursor, hit-test, grant helper or automated component tests.
 Existing components without this binding keep their behavior. API version remains 2; a
 version number alone does not establish support in early 1.0.6.0 builds. Release the host
 capability before dependent community widgets; unsupported hosts reject required features.
+
+
+### Calendar display annotations (`calendar.annotations`)
+
+Optional API v2 feature added in the 1.0.7.0 development line. Detect with
+`widget.hasFeature("calendar.annotations")`; the version number alone does not
+identify early builds that lack it. Existing `dateInfo/addDays/selectDate` keep
+their Gregorian meaning. No new permission, apiVersion or minimum host version
+is required when a component supports the Gregorian fallback.
+
+- `calendar.preferences()` returns `enabled` and `calendar`. Preferences are owned
+  by the host's Calendar & agenda page, not component storage.
+- `calendar.displayOptions()` returns a `calendars` array of `{id,label}`.
+- `calendar.annotations(fromDate,toDate)` returns an inclusive array, at most 62
+  Gregorian civil dates; invalid/reversed/oversized ranges return nil. Entries have
+  `date`, `secondary`, `fullDate`, ICU `year` (extended year), `month` (native index
+  plus one, not an ordinal across leap months), `day`, `era`, `leapMonth` and
+  `calendarAvailable`. Conversion uses UTC noon and installed Windows ICU data.
+- Lifecycle event `{kind="calendar.preferences"}` tells declaring components to
+  invalidate cached annotations. Language changes use `environment`. Read current
+  preferences on first load as well. Names follow the effective UI language.
+
+For the Chinese calendar, `secondary` uses traditional Chinese day notation
+(初二, 廿一, etc.); day one shows the month name, including any leap-month prefix.
+`fullDate` retains the complete ICU-localized date. Numeric fields are unchanged.
+
+Holiday display was removed during 1.0.7.0 development. No holiday dataset,
+region setting, provider or network request remains. For compatibility with
+earlier components, preferences still return `holidaysEnabled=false`, `region=""`,
+`holidayFirstYear=0`, `holidayLastYear=0`; displayOptions returns `regions={}`;
+annotations retain `holidays={}` and `holidaysAvailable=false`. These legacy
+fields cannot enable holiday display and must not be treated as data coverage.
+Old stored holiday choices are ignored. The built-in month-calendar consumes
+only secondary dates. Disabling annotations never changes events.

@@ -626,6 +626,9 @@ bool DesktopApp::RenderFloatingPopupCompositionFrame()
         ~PaintScope() { active = false; }
     } paintScope{ floatingPopupCompositionPaintInProgress_ };
 
+    // Coalesce arriving folder/icons before BeginDraw on the host surface.
+    // The animated child keeps its native timeline while only its pixels change.
+    RefreshCollectionPopupAnimationContent();
     HRESULT hr = CreateOrResizeFloatingPopupCompositionSurface();
     if (FAILED(hr) || !floatingPopupDcompSurface_)
     {
@@ -1220,6 +1223,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
+        if (msg == WM_CANCELMODE) CancelRenameClick();
         ForgetLuaWidgetPanelCapture(hwnd);
         {
             const HWND currentCapture = GetCapture();

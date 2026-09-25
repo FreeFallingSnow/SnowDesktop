@@ -8,6 +8,8 @@
 #pragma once
 
 #include <d2d1_1.h>
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include "panel_gradient.h"
 
@@ -32,6 +34,18 @@ inline constexpr float kMinimumWidgetBorderWidth = 0.5f;
 inline constexpr float kMaximumWidgetBorderWidth = 4.0f;
 inline constexpr float kDefaultEdgeHighlightWidth = 2.0f;
 inline constexpr float kDefaultEdgeHighlightStrength = 0.75f;
+
+inline constexpr float kDefaultPopupHoverDelayMs = 600.0f;
+inline constexpr float kMinimumPopupHoverDelayMs = 100.0f;
+inline constexpr float kMaximumPopupHoverDelayMs = 3000.0f;
+
+inline float NormalizePopupHoverDelayMs(double delay)
+{
+    if (!std::isfinite(delay)) return kDefaultPopupHoverDelayMs;
+    return static_cast<float>(std::round(std::clamp(delay,
+        static_cast<double>(kMinimumPopupHoverDelayMs),
+        static_cast<double>(kMaximumPopupHoverDelayMs))));
+}
 
 /** @brief Clamp a persisted four-theme selection without changing its wire values. */
 constexpr int NormalizeFourThemeSelection(int selection)
@@ -151,6 +165,9 @@ struct PersonalizationSettings
      */
     float categorizedTabHeight = 34.0f;
 
+    /** Scrollable native storage title bars; independent of theme presets. */
+    bool scrollableTitleBarOnTop = false;
+
     /** Lua desktop widget semantic row height in page CU. */
     float luaWidgetContentRowHeight = 28.0f;
 
@@ -160,6 +177,12 @@ struct PersonalizationSettings
      */
     bool showCategoryTabCounts = true;
 
+    /** Group source tab counts, independent of category counts and themes. */
+    bool showGroupTabCounts = false;
+    // Open Dock folder/collection and desktop collection popups after hover.
+    bool popupHoverOpen = false;
+    float popupHoverDelayMs = kDefaultPopupHoverDelayMs;
+
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */
     float cornerRadius = 12.0f;
@@ -167,7 +190,7 @@ struct PersonalizationSettings
     /**
      * @brief 自绘右键菜单样式，不属于主题预设。
      * @details 0=跟随系统，1=浅色模糊，2=深色模糊，
-     *          3=浅色不透明，4=深色不透明。
+     *          3=浅色不透明，4=深色不透明，5=Win10 浅色，6=Win10 深色。
      */
     int contextMenuStyle = 0;
 

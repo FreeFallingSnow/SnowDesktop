@@ -61,9 +61,10 @@ scripts\release.bat steam-upload-public -Yes -ConfirmVersion 1.0.5.0 -ConfirmPub
 筛选参数是 CTest 正则表达式。完整测试用于任务最终交付、Pull Request 和发布验证，不要求每个
 中间 Commit 重复执行。
 
-`scripts\widget-dev.bat` 需要先构建一次宿主。首次创建开发候选时会重启一次
-SnowDesktop 以发现组件；开发候选默认不覆盖已安装版本，需要在“我的组件”卡片中
-显式激活。之后修改 `main.lua`、清单、本地化、模块或资源文件，只需保存即可同步；
+`scripts\widget-dev.bat` 需要先构建一次宿主。新增开发候选后，打开组件设置或右键
+“添加组件”菜单即可重新发现组件，无需重启；`-RestartHost` 仍可显式重启宿主。
+新发现且验证通过的开发 UUID 默认激活，已保存的停用选择保持不变；敏感权限仍需授权。
+之后修改 `main.lua`、清单、本地化、模块或资源文件，只需保存即可同步；
 候选处于激活状态时会触发事务式热重载。
 
 `scripts\steam-dev.bat` 需要 SDK-enabled Release 构建及正在运行、已登录且拥有
@@ -104,4 +105,3 @@ CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capa
 `profile.bat` 是默认关闭的性能采集入口。`status` 查询当前宿主能力，
 `capture -Seconds 60` 采集并生成 JSON/CSV，`start` / `stop -Session ...`
 支持异步自动化控制，`report` / `compare` 支持离线分析。
-参见 [性能调试说明](../docs/performance_debugging.md)。

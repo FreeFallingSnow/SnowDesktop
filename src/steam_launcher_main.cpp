@@ -27,7 +27,8 @@ std::filesystem::path CurrentExecutableDirectory()
 
 std::wstring QuoteArgument(std::wstring_view argument)
 {
-    if (argument.find_first_of(L" \t\n\v\"") == std::wstring_view::npos)
+    if (!argument.empty() &&
+        argument.find_first_of(L" \t\n\v\"") == std::wstring_view::npos)
         return std::wstring(argument);
     std::wstring result(L"\"");
     std::size_t slashes = 0;
@@ -105,8 +106,16 @@ void ShowLaunchFailure(const std::filesystem::path& installRoot,
 }
 
 bool LaunchRuntime(const std::filesystem::path& executable,
-    const std::vector<std::wstring>& arguments, DWORD& error)
+    const std::vector<std::wstring>& arguments, unsigned protocol,
+    DWORD& error, bool& ready, bool& canRecover, bool& pending)
 {
+    canRecover = true;
+    snowdesktop::steam_runtime::startup::Channel channel;
+    if (protocol != 0 && !channel.Create())
+    {
+        error = ERROR_INVALID_HANDLE;
+        return false;
+    }
     std::wstring command = QuoteArgument(executable.wstring());
     for (const std::wstring& argument : arguments)
     {
@@ -120,7 +129,7 @@ bool LaunchRuntime(const std::filesystem::path& executable,
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
     std::vector<wchar_t> environment =
-        snowdesktop::BuildSnowDesktopDetachedRuntimeEnvironment();
+        snowdesktop::BuildSnowDesktopDetachedRuntimeEnvironment(channel.Name());
     if (environment.empty())
     {
         error = ERROR_BAD_ENVIRONMENT;
@@ -131,7 +140,7 @@ bool LaunchRuntime(const std::filesystem::path& executable,
     if (!CreateProcessW(executable.c_str(), mutableCommand.data(), nullptr,
             nullptr, FALSE, CREATE_NEW_PROCESS_GROUP |
                 CREATE_UNICODE_ENVIRONMENT |
-                CREATE_BREAKAWAY_FROM_JOB,
+                CREATE_BREAKAWAY_FROM_JOB | CREATE_SUSPENDED,
             environment.data(), workingDirectory.c_str(), &startup,
             &process))
     {
@@ -144,7 +153,7 @@ bool LaunchRuntime(const std::filesystem::path& executable,
         mutableCommand.push_back(L'\0');
         if (!CreateProcessW(executable.c_str(), mutableCommand.data(),
                 nullptr, nullptr, FALSE, CREATE_NEW_PROCESS_GROUP |
-                    CREATE_UNICODE_ENVIRONMENT,
+                    CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
                 environment.data(), workingDirectory.c_str(), &startup,
                 &process))
         {
@@ -152,9 +161,55 @@ bool LaunchRuntime(const std::filesystem::path& executable,
             return false;
         }
     }
+    if (protocol != 0) channel.SetChild(process.dwProcessId);
+    if (ResumeThread(process.hThread) == static_cast<DWORD>(-1))
+    {
+        error = GetLastError();
+        // This child has never run. Do not leave a newly created suspended
+        // process behind when its initial resume fails.
+        TerminateProcess(process.hProcess, ERROR_PROCESS_ABORTED);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return false;
+    }
     CloseHandle(process.hThread);
+    if (protocol == 0)
+    {
+        // Old hosts do not implement readiness. Keep them launchable, but
+        // never treat process creation as confirmation or authorize pruning.
+        CloseHandle(process.hProcess);
+        return true;
+    }
+    const HANDLE waits[] = {channel.ReadyEvent(), process.hProcess};
+    const DWORD waited = WaitForMultipleObjects(2, waits, FALSE, 60000);
+    const DWORD waitError = waited == WAIT_FAILED ? GetLastError() : ERROR_SUCCESS;
+    const auto phase = channel.CurrentPhase();
+    ready = phase == snowdesktop::steam_runtime::startup::Phase::Ready;
+    canRecover = phase < snowdesktop::steam_runtime::startup::Phase::DataAccess;
+    DWORD childExit = 0;
+    const bool readExit = waited == WAIT_OBJECT_0 + 1 &&
+        GetExitCodeProcess(process.hProcess, &childExit) != FALSE;
     CloseHandle(process.hProcess);
-    return true;
+    if (ready) return true;
+    if (waited == WAIT_TIMEOUT)
+    {
+        // Leave a slow host alive. Neither downgrade nor clean up while it
+        // may still be initializing and accessing shared user data.
+        pending = true;
+        canRecover = false;
+        error = ERROR_TIMEOUT;
+        return false;
+    }
+    if (readExit)
+    {
+        if (childExit == ERROR_SUCCESS || childExit == ERROR_CANCELLED)
+            return true; // activation of an existing instance or user cancellation
+        error = childExit;
+        return false;
+    }
+    canRecover = false;
+    error = waitError != ERROR_SUCCESS ? waitError : ERROR_PROCESS_ABORTED;
+    return false;
 }
 }
 
@@ -179,6 +234,7 @@ int RunLauncher(bool& maintenance)
     }
     bool applyOnly = false;
     bool pruneOnly = false;
+    bool noUi = false;
     std::vector<std::wstring> forwarded;
     for (int index = 1; index < argumentCount; ++index)
     {
@@ -192,16 +248,26 @@ int RunLauncher(bool& maintenance)
         {
             pruneOnly = true;
         }
+        else if (wcscmp(rawArguments[index], L"--snowdesktop-launcher-no-ui") == 0)
+        {
+            noUi = true;
+        }
         else
         {
             forwarded.emplace_back(rawArguments[index]);
         }
     }
     LocalFree(rawArguments);
-    maintenance = applyOnly || pruneOnly;
+    maintenance = applyOnly || pruneOnly || noUi;
 
-    const auto applied =
-        snowdesktop::steam_runtime::ApplyDistribution(installRoot);
+    // Legacy hosts provide no runtime identity or readiness acknowledgement.
+    // Keep their maintenance invocation compatible without activating or
+    // deleting a runtime on behalf of an unknown caller.
+    if (pruneOnly)
+        return 0;
+
+    auto applied =
+        snowdesktop::steam_runtime::ApplyDistribution(installRoot, applyOnly);
     if (!applied.error.empty())
         AppendLauncherLog(installRoot, applied.error);
     if (!applied.ok)
@@ -210,45 +276,72 @@ int RunLauncher(bool& maintenance)
             ShowLaunchFailure(installRoot, applied.error);
         return ERROR_INSTALL_FAILURE;
     }
-    if (pruneOnly)
-    {
-        snowdesktop::steam_runtime::PruneResult pruned;
-        for (int attempt = 0; attempt < 40; ++attempt)
-        {
-            pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
-                installRoot, applied.executable);
-            if (!pruned.ok)
-            {
-                AppendLauncherLog(installRoot, pruned.error);
-                return ERROR_INSTALL_FAILURE;
-            }
-            if (pruned.retained == 0)
-                return 0;
-            Sleep(250);
-        }
-        AppendLauncherLog(installRoot,
-            "inactive Steam runtime remains occupied after handoff");
-        return 0;
-    }
     if (applyOnly)
         return 0;
 
-    DWORD launchError = ERROR_SUCCESS;
-    if (!LaunchRuntime(applied.executable, forwarded, launchError))
+    for (unsigned attempt = 0; attempt < 2; ++attempt)
     {
-        AppendLauncherLog(installRoot,
-            "cannot launch runtime (Win32 error " +
-                std::to_string(launchError) + ")");
-        ShowLaunchFailure(installRoot,
-            "cannot launch runtime (Win32 error " +
-                std::to_string(launchError) + ")");
+        snowdesktop::steam_runtime::LaunchAttempt launchAttempt;
+        std::string recordError;
+        if (!snowdesktop::steam_runtime::BeginRuntimeLaunch(
+                installRoot, applied.executable, launchAttempt, recordError))
+        {
+            AppendLauncherLog(installRoot, recordError);
+            if (!maintenance) ShowLaunchFailure(installRoot, recordError);
+            return ERROR_INSTALL_FAILURE;
+        }
+        DWORD launchError = ERROR_SUCCESS;
+        bool ready = false;
+        bool canRecover = false;
+        bool pending = false;
+        if (LaunchRuntime(applied.executable, forwarded, applied.launcherProtocol,
+                launchError, ready, canRecover, pending))
+        {
+            if (ready)
+            {
+                std::string confirmationError;
+                if (snowdesktop::steam_runtime::ConfirmRuntimeStarted(
+                        installRoot, applied.executable, confirmationError))
+                {
+                    const auto pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
+                        installRoot, applied.executable);
+                    if (!pruned.error.empty()) AppendLauncherLog(installRoot, pruned.error);
+                    if (pruned.retained != 0)
+                        AppendLauncherLog(installRoot, "occupied inactive runtimes retained until a later launch");
+                }
+                else
+                    AppendLauncherLog(installRoot, confirmationError);
+            }
+            return 0;
+        }
+        std::string detail = pending
+            ? "startup confirmation timed out; the host was left running and all runtimes were preserved"
+            : "runtime startup failed (Win32/exit code " + std::to_string(launchError) + "); " +
+                (canRecover ? "before data access" : "after data access; automatic downgrade disabled");
+        AppendLauncherLog(installRoot, detail);
+        if (canRecover && attempt == 0)
+        {
+            auto recovered = snowdesktop::steam_runtime::RecoverAfterLaunchFailure(
+                installRoot, applied.executable, launchAttempt);
+            AppendLauncherLog(installRoot, recovered.error);
+            if (recovered.ok)
+            {
+                applied = std::move(recovered);
+                continue;
+            }
+            detail += "; " + recovered.error;
+        }
+        if (!maintenance && !pending) ShowLaunchFailure(installRoot, detail);
         return static_cast<int>(launchError);
     }
-    return 0;
+    return ERROR_INSTALL_FAILURE;
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
+    // Loader/critical-error dialogs can block CreateProcess itself, before
+    // our exit monitoring starts. Report those failures through our log/UI.
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS);
     bool maintenance = false;
     try
     {

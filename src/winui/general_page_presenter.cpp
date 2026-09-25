@@ -869,6 +869,10 @@ struct GeneralPagePresenter::Impl
                     GeneralAdvancedFeatureFailure::StorageError)
                     noticeKey =
                         "settings.general.advancedFeatures.storageFailed";
+                else if (status.connectionProblem !=
+                    steam_bridge::SteamConnectionProblem::None)
+                    noticeKey = steam_bridge::ConnectionFeedback(
+                        status.connectionProblem).key;
                 else
                     noticeKey = "settings.general.advancedFeatures.failed";
                 break;
@@ -901,7 +905,10 @@ struct GeneralPagePresenter::Impl
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         registerAdvancedFeaturesButton.IsEnabled(buttonEnabled);
         advancedFeatureNotice.Severity(severity);
-        advancedFeatureNotice.Message(L(noticeKey));
+        std::wstring noticeText = L(noticeKey);
+        if (showNotice && !status.errorDetail.empty())
+            noticeText += L"\n" + status.errorDetail;
+        advancedFeatureNotice.Message(noticeText);
         advancedFeatureNotice.Visibility(showNotice
             ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         advancedFeatureNotice.IsOpen(showNotice);

@@ -1,14 +1,16 @@
 #include "app.h"
+#include "startup_diagnostics.h"
 #include "../widgets/lua_logical_slot.h"
 
 // Desktop-item layout and container rebuild.
 
 void DesktopApp::LayoutItems()
 {
+    snowdesktop::startup_diagnostics::Scope startup(L"LayoutItems");
     // Guide is a temporary empty-page placeholder. Do not mutate the model
     // during a live drag preview; the committed layout pass removes it once
     // another visible item or standalone widget actually occupies the page.
-    if (!dragSession_.IsActive())
+    if (!dragSession_.IsActive() && widgetAction_ == WidgetAction::None)
         RemoveRedundantGuideWidgets();
 
     for (auto& item : items_)
@@ -114,6 +116,9 @@ void DesktopApp::LayoutItems()
  */
 void DesktopApp::RebuildContainersAndItems()
 {
+    CancelRenameClick();
+    snowdesktop::startup_diagnostics::Scope startup(L"RebuildContainersAndItems");
+    SyncFolderChangeNotifications();
     // Cover direct rebuild callers as well as LayoutItems. A nested paint must
     // not publish the temporary single-member group while its caller unwinds.
     if (std::any_of(widgets_.begin(), widgets_.end(),
@@ -234,6 +239,11 @@ void DesktopApp::RebuildContainersAndItems()
     // Rebind after each runtime-tree rebuild because DockContainer pointers
     // are invalidated even though the HWND and composition resources remain.
     SyncPersistentDockHosts();
+    // First/last display pins and Dock scope changes rebuild this tree without
+    // necessarily changing the foreground. Reconcile taskbar targets on the
+    // next guard tick instead of retaining the previous Dock monitor binding.
+    systemTaskbarBackdropRefreshTick_ = 0;
+    systemTaskbarWindowStateChangedTick_.fetch_add(1, std::memory_order_relaxed);
     RebindDragSourceAfterRebuild();
     if (wasDragging && !dragSession_.IsActive())
     {

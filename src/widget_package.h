@@ -93,6 +93,7 @@ struct PackageManifest
     std::string version;
     int apiVersion = 0;
     int dataVersion = 1;
+    bool confirmRemoval = false;
     std::string entry = "main.lua";
     std::string minHostVersion;
     std::string name;
@@ -317,6 +318,8 @@ public:
         PackagePaths paths = PackagePaths::ForCurrentDeployment());
 
     bool Initialize(std::string& error);
+    // Host UI discovery; preserve the last catalog if scanning/persistence fails.
+    bool RefreshCatalog(std::string& error);
     const PackagePaths& Paths() const { return paths_; }
     std::vector<InstalledPackage> ListPackages() const;
     std::vector<InvalidPackage> ListInvalidPackages() const;

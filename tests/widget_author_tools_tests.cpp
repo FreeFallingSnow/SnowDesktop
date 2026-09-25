@@ -1,5 +1,6 @@
 #include "widget_author_permissions.h"
 #include "widget_package.h"
+#include "widget_api_registry.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -42,6 +43,8 @@ void TestPermissionReport()
 int main()
 {
     TestPermissionReport();
+    Check(snowdesktop::widget_api::SupportsFeature("widget.confirmRemoval"),
+        "host advertises removal confirmation for protected components");
     std::cout << "widget author tools tests passed\n";
     return 0;
 }

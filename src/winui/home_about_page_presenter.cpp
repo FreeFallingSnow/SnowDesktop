@@ -116,6 +116,18 @@ struct HomeAboutPagePresenter::Impl
     muxc::Button checkUpdateButton{nullptr};
 
     Section debugTitleSection;
+    Section debugProfileSection;
+    controls::SettingRow profileRow;
+    controls::SettingRow desktopDirectoryRow;
+    controls::SettingRow clearProfileRow;
+    muxc::ToggleSwitch profileToggle{nullptr};
+    muxc::TextBlock profileDataPath{nullptr};
+    muxc::Button chooseDesktopButton{nullptr};
+    muxc::Button clearProfileButton{nullptr};
+    bool profileEnabled = false;
+    std::wstring profileDirectory;
+    std::wstring simulatedDesktop;
+    winrt::event_token profileToken{}, chooseDesktopToken{}, clearProfileToken{};
     Section demoModeSection;
     Section initializationSection;
     Section animationSection;
@@ -320,6 +332,24 @@ struct HomeAboutPagePresenter::Impl
         debugPageDescription = MakeBodyText(0.72);
         debugTitleSection.content.Children().Append(debugPageDescription);
 
+        InitializeSection(debugProfileSection, cardStyle, debugRoot);
+        profileToggle = muxc::ToggleSwitch{};
+        profileToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        profileToggle.UseSystemFocusVisuals(true);
+        profileRow.Initialize(profileToggle, 180.0);
+        profileDataPath = MakeBodyText(0.72);
+        profileDataPath.IsTextSelectionEnabled(true);
+        chooseDesktopButton = muxc::Button{};
+        chooseDesktopButton.UseSystemFocusVisuals(true);
+        desktopDirectoryRow.Initialize(chooseDesktopButton);
+        clearProfileButton = muxc::Button{};
+        clearProfileButton.UseSystemFocusVisuals(true);
+        clearProfileRow.Initialize(clearProfileButton);
+        debugProfileSection.content.Children().Append(profileRow.root);
+        debugProfileSection.content.Children().Append(profileDataPath);
+        debugProfileSection.content.Children().Append(desktopDirectoryRow.root);
+        debugProfileSection.content.Children().Append(clearProfileRow.root);
+
         InitializeSection(demoModeSection, cardStyle, debugRoot);
         demoModeSection.title.Visibility(mux::Visibility::Collapsed);
         demoModeToggle = muxc::ToggleSwitch{};
@@ -416,6 +446,17 @@ struct HomeAboutPagePresenter::Impl
                         SettingsRoute::ForPage(SettingsPage::Debug));
                 }
             });
+        profileToken = profileToggle.Toggled([this](const auto&, const auto&) {
+            if (updatingControls || !CanInvokeDebug() || !actions.setDebugProfileEnabled) return;
+            actions.setDebugProfileEnabled(generation, profileToggle.IsOn());
+            RenderStatus();
+        });
+        chooseDesktopToken = chooseDesktopButton.Click([this](const auto&, const auto&) {
+            if (CanInvokeDebug() && actions.chooseDebugDesktop) actions.chooseDebugDesktop(generation);
+        });
+        clearProfileToken = clearProfileButton.Click([this](const auto&, const auto&) {
+            if (CanInvokeDebug() && actions.clearDebugProfile) actions.clearDebugProfile(generation);
+        });
         demoModeToken = demoModeToggle.Toggled(
             [this](const auto&, const auto&) {
                 if (updatingControls || !CanInvokeDebug() ||
@@ -519,6 +560,13 @@ struct HomeAboutPagePresenter::Impl
         SetButtonText(checkUpdateButton,
             "app.settings.check_update", L"Check for Updates");
         updatingControls = true;
+        profileToggle.IsOn(profileEnabled);
+        profileToggle.IsEnabled(!temporaryInitializationEnabled);
+        chooseDesktopButton.IsEnabled(!temporaryInitializationEnabled);
+        clearProfileButton.IsEnabled(!temporaryInitializationEnabled);
+        initializationToggle.IsEnabled(!profileEnabled);
+        profileDataPath.Text(L("settings.debug.profile.data") + L"\n" + profileDirectory);
+        desktopDirectoryRow.SetText(L("settings.debug.profile.desktop"), simulatedDesktop);
         demoModeToggle.IsOn(demoModeEnabled);
         animationToggle.IsOn(animationDiagnosticsEnabled);
         initializationToggle.IsOn(temporaryInitializationEnabled);
@@ -573,6 +621,14 @@ struct HomeAboutPagePresenter::Impl
             "app.settings.debug_page", L"Debug Page");
         debugPageDescription.Text(L("settings.page.debug.description",
             L"Diagnostics available only while Debug is unlocked."));
+        SetSectionTitle(debugProfileSection, "settings.debug.profile.title", L"Debug environment");
+        profileRow.SetText(L("settings.debug.profile.enabled"), L("settings.debug.profile.description"));
+        SetAutomation(profileToggle, profileRow.label.Text(), profileRow.help.Text());
+        SetButtonText(chooseDesktopButton, "settings.debug.profile.choose", L"Choose folder");
+        SetAutomation(chooseDesktopButton, L("settings.debug.profile.desktop"), L("settings.debug.profile.chooseHint"));
+        clearProfileRow.SetText(L("settings.debug.profile.clear"), L("settings.debug.profile.clearHint"));
+        SetButtonText(clearProfileButton, "settings.debug.profile.clear", L"Clear debug data");
+        SetAutomation(clearProfileButton, clearProfileRow.label.Text(), clearProfileRow.help.Text());
         SetSectionTitle(demoModeSection,
             "app.settings.demo_mode", L"Demo mode");
         demoModeRow.SetText(L("app.settings.demo_mode", L"Demo mode"),
@@ -624,6 +680,9 @@ struct HomeAboutPagePresenter::Impl
         packaged = false;
         animationDiagnosticsEnabled = false;
         temporaryInitializationEnabled = false;
+        profileEnabled = false;
+        profileDirectory.clear();
+        simulatedDesktop.clear();
         animationDiagnosticsStatus.clear();
     }
 
@@ -667,6 +726,9 @@ struct HomeAboutPagePresenter::Impl
                 *patch.animationDiagnosticsEnabled;
         if (patch.temporaryInitializationEnabled)
             temporaryInitializationEnabled = *patch.temporaryInitializationEnabled;
+        if (patch.debugProfileEnabled) profileEnabled = *patch.debugProfileEnabled;
+        if (patch.debugDataDirectory) profileDirectory = *patch.debugDataDirectory;
+        if (patch.debugDesktopDirectory) simulatedDesktop = *patch.debugDesktopDirectory;
         if (patch.animationDiagnosticsStatus)
             animationDiagnosticsStatus =
                 *patch.animationDiagnosticsStatus;
@@ -689,6 +751,9 @@ struct HomeAboutPagePresenter::Impl
         }
         if (page == SettingsPage::Debug)
         {
+            if (focusId == "debug.profile") return profileToggle;
+            if (focusId == "debug.desktop") return chooseDesktopButton;
+            if (focusId == "debug.clearProfile") return clearProfileButton;
             if (focusId == "debug.demo_mode") return demoModeToggle;
             if (focusId == "debug.initialization") return initializationToggle;
             if (focusId == "debug.animation") return animationToggle;
@@ -711,6 +776,9 @@ struct HomeAboutPagePresenter::Impl
                 link.button.Click(link.clickToken);
             checkUpdateButton.Click(checkUpdateToken);
             versionButton.Click(versionClickToken);
+            profileToggle.Toggled(profileToken);
+            chooseDesktopButton.Click(chooseDesktopToken);
+            clearProfileButton.Click(clearProfileToken);
             demoModeToggle.Toggled(demoModeToken);
             initializationToggle.Toggled(initializationToken);
             animationToggle.Toggled(animationToken);

@@ -8,6 +8,21 @@
 namespace snowdesktop::desktop_backdrop_update_rules
 {
 
+// A retained widget can be painted before its backdrop target exists, or
+// outlive a target reset. Reconcile every visible request even when that
+// widget is outside the current paint rectangle and its surface is reused.
+template<class Compositor, class Widget>
+bool KeepOrRestoreWidgetPanel(Compositor& compositor, const Widget& widget)
+{
+    if (!widget.visible || !widget.backdropRequested)
+        return false;
+    if (compositor.KeepPanel(widget.bounds))
+        return true;
+    return compositor.AddPanel(widget.bounds,
+        static_cast<float>(widget.backdropCornerRadius),
+        static_cast<float>(widget.backdropBlurRadius));
+}
+
 // Call after the final panel collection, so a remove/add pair in one frame
 // can reuse its factory. Brushes and backdrop sources remain panel-owned.
 template<class Factories, class Panels>

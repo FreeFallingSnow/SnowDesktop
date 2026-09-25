@@ -93,8 +93,6 @@ bool DesktopApp::TryHandlePageNavigationKey(
     if (!repeated)
     {
         const int oldOffset = pageOffset_;
-        const RECT oldWidgetBounds = movingWidget
-            ? widgets_[mouseDownWidgetIndex_].bounds : RECT{};
         NavigatePageOffset(matchesPrevious ? -1 : 1);
         if (pageOffset_ != oldOffset &&
             navigationAction == KeyboardNavigationAction::NavigateDuringDrag)
@@ -118,13 +116,6 @@ bool DesktopApp::TryHandlePageNavigationKey(
             }
             else if (movingWidget && mouseDownWidgetIndex_ < widgets_.size())
             {
-                const RECT bounds = widgets_[mouseDownWidgetIndex_].bounds;
-                const int dx = bounds.left - oldWidgetBounds.left;
-                const int dy = bounds.top - oldWidgetBounds.top;
-                dragGroupOriginX_ += dx;
-                dragGroupOriginY_ += dy;
-                mouseDownPoint_.x += dx;
-                mouseDownPoint_.y += dy;
                 OnMouseMoveAt(0, lastMousePoint_);
             }
             PresentPointerInteractionFrame();
@@ -148,6 +139,7 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    CancelRenameClick();
     if (largeIconGesture_)
     {
         if (key == VK_ESCAPE) { CancelLargeIconGesture(); return true; }
@@ -208,7 +200,8 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     // Keyboard selection follows the whole fan's order and scrolls its window
     // as needed; the final action still opens the complete grid.
     if (auto* popup = GetOpenPopupWidget(); !ctrl && !alt &&
-        IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup))
+        IsCollectionPopupInteractive() && popup && UsesCollectionPopupFan(*popup) &&
+        GetPopupItemCount(*popup) > 0)
     {
         const int count = static_cast<int>(GetPopupItemCount(*popup));
         int current = popupFanActionFocused_ ? count : -1;
@@ -398,8 +391,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                 {
                     if (target < widgets_.size()) desktopFilesWidgetId = widgets_[target].id;
                     wchar_t desktopPath[MAX_PATH]{};
-                    if (SHGetSpecialFolderPathW(nullptr, desktopPath,
-                            CSIDL_DESKTOPDIRECTORY, FALSE)) directory = desktopPath;
+                    if (snowdesktop::desktop_source::CopyDirectory(desktopPath)) directory = desktopPath;
                 }
             }
             if (!directory.empty())

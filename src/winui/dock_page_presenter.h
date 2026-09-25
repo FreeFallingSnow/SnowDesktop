@@ -37,6 +37,9 @@ struct DockPageActions
         std::uint64_t generation,
         SettingsHostActions::Request request)> invokeHost;
 
+    /** Opens Windows taskbar settings through the owning desktop window. */
+    std::function<void(std::uint64_t generation)> openTaskbarSettings;
+
     /**
      * Shows the host-owned ContentDialog used for dangerous actions.
      * The callback may complete asynchronously on the settings dispatcher.

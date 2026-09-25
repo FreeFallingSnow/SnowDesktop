@@ -1,4 +1,5 @@
 #include "large_icon_renderer.h"
+#include "icon_loading_placeholder.h"
 #include "preview_png_writer.h"
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -204,6 +205,118 @@ void CheckNewEffects(Canvas& canvas, const char* outputDirectory)
     Check(Pixel(clippedZoom, 105, 65) == 0 && Pixel(clippedZoom, 240, 180) != 0 &&
         Visible(clippedZoom, {0, 0, 99, Canvas::height}) == 0, "magnified fill remains inside percentage radius at high DPI");
 }
+
+void CheckLoadingPlaceholder(Canvas& canvas, const char* outputDirectory)
+{
+    // The production loading mark must produce pixels before any Shell item,
+    // system-image index or decoded bitmap is available. Use the real renderer
+    // on an isolated WIC surface; no desktop host is started or automated.
+    const auto draw = [&](RECT bounds, float alpha, unsigned background,
+        snowdesktop::IconBeautifyShape shape = snowdesktop::IconBeautifyShape::LegacyRounded) {
+        canvas.target->BeginDraw();
+        canvas.target->Clear(D2D1::ColorF(background & 0xffffff, (background >> 24) / 255.0f));
+        snowdesktop::icon_loading_placeholder::Draw(canvas.target.Get(), bounds, alpha, shape);
+        Require(canvas.target->EndDraw(), "loading placeholder draw");
+        std::vector<unsigned> pixels(Canvas::width * Canvas::height);
+        Require(canvas.surface->CopyPixels(nullptr, Canvas::width * 4,
+            static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data())),
+            "loading placeholder pixels");
+        return pixels;
+    };
+    for (const int size : {16, 32, 48, 96})
+    {
+        const RECT area{40, 40, 40 + size, 40 + size};
+        const auto pixels = draw(area, 1.0f, 0);
+        Check(Visible(pixels, area) > static_cast<size_t>(size * size / 4),
+            "unknown Shell icons still show a visible loading mark at small and large sizes");
+        Check(Visible(pixels, {0, 0, Canvas::width, Canvas::height}) == Visible(pixels, area),
+            "loading marks stay within their reserved icon bounds");
+        const auto faded = draw(area, 0.4f, 0);
+        const auto center = static_cast<size_t>(40 + size / 2) * Canvas::width + 40 + size / 2;
+        Check((faded[center] >> 24) > 0 && (faded[center] >> 24) < (pixels[center] >> 24),
+            "loading icons preserve container fade opacity");
+        for (const unsigned background : {0xfffafafaU, 0xff181818U})
+        {
+            const auto themed = draw(area, 1.0f, background);
+            const auto changed = std::count_if(themed.begin(), themed.end(),
+                [background](unsigned pixel) { return pixel != background; });
+            Check(changed > size * size / 4,
+                "loading icons are visible on both light and dark backgrounds");
+        }
+    }
+    const auto invisible = draw({40, 40, 88, 88}, 0.0f, 0);
+    Check(Visible(invisible, {0, 0, Canvas::width, Canvas::height}) == 0,
+        "hidden loading marks do not leave visible pixels");
+    Save(outputDirectory, "13-loading-placeholder.png", draw({176, 116, 304, 244}, 1.0f, 0));
+
+    // Compare actual vector loading pixels with the production bitmap beautifier.
+    // The old 80% plate fails this even though it was visible and inside its slot.
+    using Shape = snowdesktop::IconBeautifyShape;
+    std::vector<unsigned> comparison(Canvas::width * Canvas::height, 0);
+    int column = 0;
+    for (const Shape shape : {Shape::LegacyRounded, Shape::ContinuousRounded,
+            Shape::Circle, Shape::SoftRounded, Shape::Pebble})
+    {
+        for (const int size : {16, 32, 48, 96})
+        {
+            const RECT area{40, 40, 40 + size, 40 + size};
+            const auto loading = draw(area, 1.0f, 0, shape);
+            std::vector<std::uint32_t> source(size * size, 0);
+            for (int y = size / 4; y < size * 3 / 4; ++y)
+                for (int x = size / 4; x < size * 3 / 4; ++x)
+                    source[y * size + x] = 0xfff08030;
+            auto settings = snowdesktop::icon_beautify::MakePreset(
+                snowdesktop::IconBeautifyPreset::DefaultBeautify);
+            settings.shape = shape;
+            const auto finished = snowdesktop::icon_beautify::Render(source, size, size, settings);
+            RECT loadingBounds{size, size, 0, 0}, finishedBounds{size, size, 0, 0};
+            size_t silhouetteDifference = 0;
+            for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x)
+            {
+                const unsigned mark = Pixel(loading, area.left + x, area.top + y);
+                const unsigned icon = finished[y * size + x];
+                const bool markVisible = (mark >> 24) >= 40, iconVisible = (icon >> 24) >= 40;
+                const auto include = [&](RECT& bounds) {
+                    bounds.left = std::min<LONG>(bounds.left, x);
+                    bounds.top = std::min<LONG>(bounds.top, y);
+                    bounds.right = std::max<LONG>(bounds.right, x + 1);
+                    bounds.bottom = std::max<LONG>(bounds.bottom, y + 1);
+                };
+                if (markVisible) include(loadingBounds);
+                if (iconVisible) include(finishedBounds);
+                silhouetteDifference += markVisible != iconVisible;
+                if (size == 48)
+                {
+                    // Pairs on light and dark backgrounds, loading above ready.
+                    for (int theme = 0; theme < 2; ++theme)
+                    {
+                        const auto flatten = [theme](unsigned pixel) {
+                            const unsigned background = theme ? 24 : 250;
+                            const unsigned alpha = pixel >> 24;
+                            unsigned result = 0xff000000;
+                            for (const int shift : {0, 8, 16})
+                                result |= std::min(255u, ((pixel >> shift) & 255) +
+                                    (background * (255 - alpha) + 127) / 255) << shift;
+                            return result;
+                        };
+                        const int left = 24 + column * 90, top = 28 + theme * 176;
+                        comparison[(top + y) * Canvas::width + left + x] = flatten(mark);
+                        comparison[(top + 72 + y) * Canvas::width + left + x] = flatten(icon);
+                    }
+                }
+            }
+            Check(std::abs(loadingBounds.left - finishedBounds.left) <= 1 &&
+                std::abs(loadingBounds.top - finishedBounds.top) <= 1 &&
+                std::abs(loadingBounds.right - finishedBounds.right) <= 1 &&
+                std::abs(loadingBounds.bottom - finishedBounds.bottom) <= 1,
+                "loading and beautified icons reserve the same visible footprint");
+            Check(silhouetteDifference <= static_cast<size_t>(size * 2),
+                "loading follows the selected beautification shape within raster edge tolerance");
+        }
+        ++column;
+    }
+    Save(outputDirectory, "14-loading-size-comparison.png", comparison);
+}
 }
 
 int RunLargeIconRenderingTests(const char* outputDirectory)
@@ -212,6 +325,7 @@ int RunLargeIconRenderingTests(const char* outputDirectory)
     try
     {
         Canvas canvas;
+        CheckLoadingPlaceholder(canvas, outputDirectory);
         snowdesktop::LargeIconConfig config;
         snowdesktop::large_icon_renderer::View view;
         view.frame = {100, 60, 300, 260}; view.name = L"SnowDesktop";

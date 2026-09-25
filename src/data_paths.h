@@ -45,3 +45,7 @@ std::wstring GetDataSubdirectoryPath(const wchar_t* dirname);
  * @details 将 exe 同目录或 MSIX LocalState 根目录下的旧版数据迁移到 data 下。
  */
 void MigrateLegacyDataPaths();
+
+// Initialize once in the primary process, before opening any user stores.
+bool InitializeDebugProfile(std::string& error);
+std::wstring GetDataStateRootPath();

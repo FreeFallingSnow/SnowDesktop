@@ -36,6 +36,9 @@ struct HomeAboutStatusPatch
     /** Session-only scheduler state used by the conditional Debug page. */
     std::optional<bool> animationDiagnosticsEnabled;
     std::optional<bool> temporaryInitializationEnabled;
+    std::optional<bool> debugProfileEnabled;
+    std::optional<std::wstring> debugDataDirectory;
+    std::optional<std::wstring> debugDesktopDirectory;
     std::optional<std::wstring> animationDiagnosticsStatus;
     std::optional<bool> usageGuideExpanded;
 };

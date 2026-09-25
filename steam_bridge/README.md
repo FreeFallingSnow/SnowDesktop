@@ -99,6 +99,40 @@ Before testing uploads, enable ISteamUGC file transfer for the app and publish
 a nonzero Steam Cloud byte/file quota for Workshop preview images in Steamworks
 App Admin. Workshop visibility is configured and published separately there.
 
+## Initialization diagnostics
+
+Failed commands retain their existing exit codes and `error.code` / `error.message`.
+When Steam initialization itself fails, `error.steamInitResult` optionally carries
+the numeric `ESteamAPIInitResult`: `1` is a generic failure, `2` means the client
+could not be reached, and `3` indicates an incompatible client version. A value
+of `2` does not establish that the Steam process is stopped. An initialized but
+offline account uses the existing `steam_not_logged_on` error instead.
+
+Protocol version remains `1`. Consumers must accept an absent or unknown result
+and show a generic initialization error; older consumers can ignore the additional
+field and continue using the unchanged error code. No Lua component API or
+capability requirement changes. UI diagnostics do not alter ownership checks or
+the lifetime of a previously verified offline entitlement.
+
+### Host activation logs
+
+The host writes activation diagnostics to `SnowDesktop.log` in its active data
+directory (Settings → Open data folder). Steam-managed installs use the install
+root's `data` directory. The existing logger rotates the previous file to
+`SnowDesktop.log.1` at 1 MiB; collect both files after reproducing the failure.
+These events use normal INFO/WARN levels and need no debug switch.
+
+Search for `[SteamActivation]`. Each registration request and bridge probe has
+an `id` shared by its events. The trace includes manual/startup entry, host and
+bridge versions, SDK/protocol/App ID checks, process/session/elevation, executable
+and runtime paths, child PID, timeout, elapsed time, exit code, parsed online and
+ownership status, initialization result, SDK error details, cache read/decryption,
+save/reset errors, and final registration state. A bridge transport failure names
+the failed Win32 operation and numeric error. Cache writes report the atomic file
+operation error. Account IDs are redacted from SDK messages; successful account
+IDs and protected cache contents are never logged. Local paths remain present for
+diagnosis. This host log does not collect standalone Workshop Manager operations.
+
 ## Consumer commands
 
 ```powershell

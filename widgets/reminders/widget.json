@@ -4,8 +4,9 @@
   "slug": "reminders",
   "apiVersion": 2,
   "dataVersion": 3,
+  "confirmRemoval": true,
   "entry": "main.lua",
-  "minHostVersion": "1.0.5.0",
+  "minHostVersion": "1.0.7.0",
   "author": "SnowDesktop",
   "license": "GPL-3.0-only",
   "name": "ToDo List",
@@ -13,7 +14,7 @@
   "titleKeys": [
     "lua_widget.reminders.legacy_name"
   ],
-  "version": "2.0.8",
+  "version": "2.0.15",
   "description": "An interactive local ToDo list with quick add, completion, editing, and filtering.",
   "descriptionKey": "lua_widget.reminders.description",
   "locales": {
@@ -37,7 +38,12 @@
       "lua_widget.reminders.preview_task_1": "买一束花",
       "lua_widget.reminders.preview_task_2": "预订周五晚餐",
       "lua_widget.reminders.preview_task_3": "收拾周末行李",
-      "lua_widget.common.font_scale": "字体缩放"
+      "lua_widget.common.font_scale": "字体缩放",
+      "lua_widget.reminders.priority": "紧急程度",
+      "lua_widget.reminders.priority_urgent": "紧急",
+      "lua_widget.reminders.priority_high": "高",
+      "lua_widget.reminders.priority_normal": "普通",
+      "lua_widget.reminders.priority_low": "低"
     },
     "en-US": {
       "lua_widget.reminders.name": "ToDo List",
@@ -59,7 +65,12 @@
       "lua_widget.reminders.preview_task_1": "Pick up flowers",
       "lua_widget.reminders.preview_task_2": "Book dinner for Friday",
       "lua_widget.reminders.preview_task_3": "Pack for the weekend",
-      "lua_widget.common.font_scale": "Font Scale"
+      "lua_widget.common.font_scale": "Font Scale",
+      "lua_widget.reminders.priority": "Urgency",
+      "lua_widget.reminders.priority_urgent": "Urgent",
+      "lua_widget.reminders.priority_high": "High",
+      "lua_widget.reminders.priority_normal": "Normal",
+      "lua_widget.reminders.priority_low": "Low"
     },
     "zh-TW": {
       "lua_widget.reminders.name": "ToDo列表",
@@ -81,7 +92,12 @@
       "lua_widget.reminders.preview_task_1": "買一束花",
       "lua_widget.reminders.preview_task_2": "預訂週五晚餐",
       "lua_widget.reminders.preview_task_3": "收拾週末行李",
-      "lua_widget.common.font_scale": "字型縮放"
+      "lua_widget.common.font_scale": "字型縮放",
+      "lua_widget.reminders.priority": "緊急程度",
+      "lua_widget.reminders.priority_urgent": "緊急",
+      "lua_widget.reminders.priority_high": "高",
+      "lua_widget.reminders.priority_normal": "一般",
+      "lua_widget.reminders.priority_low": "低"
     },
     "ja-JP": {
       "lua_widget.reminders.name": "ToDo リスト",
@@ -103,7 +119,12 @@
       "lua_widget.reminders.preview_task_1": "花を買う",
       "lua_widget.reminders.preview_task_2": "金曜日のディナーを予約する",
       "lua_widget.reminders.preview_task_3": "週末の荷造りをする",
-      "lua_widget.common.font_scale": "フォント倍率"
+      "lua_widget.common.font_scale": "フォント倍率",
+      "lua_widget.reminders.priority": "緊急度",
+      "lua_widget.reminders.priority_urgent": "至急",
+      "lua_widget.reminders.priority_high": "高",
+      "lua_widget.reminders.priority_normal": "通常",
+      "lua_widget.reminders.priority_low": "低"
     },
     "ko-KR": {
       "lua_widget.reminders.name": "할 일 목록",
@@ -125,7 +146,12 @@
       "lua_widget.reminders.preview_task_1": "꽃 사기",
       "lua_widget.reminders.preview_task_2": "금요일 저녁 예약하기",
       "lua_widget.reminders.preview_task_3": "주말 짐 싸기",
-      "lua_widget.common.font_scale": "글꼴 배율"
+      "lua_widget.common.font_scale": "글꼴 배율",
+      "lua_widget.reminders.priority": "긴급도",
+      "lua_widget.reminders.priority_urgent": "긴급",
+      "lua_widget.reminders.priority_high": "높음",
+      "lua_widget.reminders.priority_normal": "보통",
+      "lua_widget.reminders.priority_low": "낮음"
     },
     "de-DE": {
       "lua_widget.reminders.name": "Aufgabenliste",
@@ -147,7 +173,12 @@
       "lua_widget.reminders.preview_task_1": "Blumen kaufen",
       "lua_widget.reminders.preview_task_2": "Tisch für Freitagabend reservieren",
       "lua_widget.reminders.preview_task_3": "Fürs Wochenende packen",
-      "lua_widget.common.font_scale": "Schrift-Skalierung"
+      "lua_widget.common.font_scale": "Schrift-Skalierung",
+      "lua_widget.reminders.priority": "Dringlichkeit",
+      "lua_widget.reminders.priority_urgent": "Dringend",
+      "lua_widget.reminders.priority_high": "Hoch",
+      "lua_widget.reminders.priority_normal": "Normal",
+      "lua_widget.reminders.priority_low": "Niedrig"
     },
     "fr-FR": {
       "lua_widget.reminders.name": "Liste de tâches",
@@ -169,7 +200,12 @@
       "lua_widget.reminders.preview_task_1": "Acheter des fleurs",
       "lua_widget.reminders.preview_task_2": "Réserver une table pour vendredi",
       "lua_widget.reminders.preview_task_3": "Faire sa valise pour le week-end",
-      "lua_widget.common.font_scale": "Échelle de police"
+      "lua_widget.common.font_scale": "Échelle de police",
+      "lua_widget.reminders.priority": "Niveau d’urgence",
+      "lua_widget.reminders.priority_urgent": "Urgent",
+      "lua_widget.reminders.priority_high": "Élevé",
+      "lua_widget.reminders.priority_normal": "Normal",
+      "lua_widget.reminders.priority_low": "Faible"
     },
     "es-ES": {
       "lua_widget.reminders.name": "Tareas",
@@ -191,7 +227,12 @@
       "lua_widget.reminders.preview_task_1": "Comprar flores",
       "lua_widget.reminders.preview_task_2": "Reservar mesa para el viernes",
       "lua_widget.reminders.preview_task_3": "Hacer la maleta para el fin de semana",
-      "lua_widget.common.font_scale": "Escala de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente",
+      "lua_widget.reminders.priority": "Urgencia",
+      "lua_widget.reminders.priority_urgent": "Urgente",
+      "lua_widget.reminders.priority_high": "Alta",
+      "lua_widget.reminders.priority_normal": "Normal",
+      "lua_widget.reminders.priority_low": "Baja"
     },
     "es-419": {
       "lua_widget.reminders.name": "Lista de tareas",
@@ -213,7 +254,12 @@
       "lua_widget.reminders.preview_task_1": "Comprar flores",
       "lua_widget.reminders.preview_task_2": "Reservar mesa para el viernes",
       "lua_widget.reminders.preview_task_3": "Hacer la maleta para el fin de semana",
-      "lua_widget.common.font_scale": "Escala de fuente"
+      "lua_widget.common.font_scale": "Escala de fuente",
+      "lua_widget.reminders.priority": "Urgencia",
+      "lua_widget.reminders.priority_urgent": "Urgente",
+      "lua_widget.reminders.priority_high": "Alta",
+      "lua_widget.reminders.priority_normal": "Normal",
+      "lua_widget.reminders.priority_low": "Baja"
     },
     "pt-BR": {
       "lua_widget.reminders.name": "Lista de tarefas",
@@ -223,7 +269,7 @@
       "lua_widget.reminders.empty": "Sem tarefas",
       "lua_widget.reminders.all_done": "Todas as tarefas concluídas",
       "lua_widget.reminders.add_placeholder": "Adicionar uma tarefa",
-    "lua_widget.reminders.empty_hint": "Adicione uma nova tarefa acima",
+      "lua_widget.reminders.empty_hint": "Adicione uma nova tarefa acima",
       "lua_widget.reminders.completed_hidden": "Tarefas concluídas estão ocultas",
       "lua_widget.reminders.untitled": "Tarefa sem título",
       "lua_widget.reminders.add_task": "Adicionar tarefa",
@@ -235,7 +281,12 @@
       "lua_widget.reminders.preview_task_1": "Comprar flores",
       "lua_widget.reminders.preview_task_2": "Reservar uma mesa para sexta-feira",
       "lua_widget.reminders.preview_task_3": "Fazer as malas para o fim de semana",
-      "lua_widget.common.font_scale": "Escala da fonte"
+      "lua_widget.common.font_scale": "Escala da fonte",
+      "lua_widget.reminders.priority": "Urgência",
+      "lua_widget.reminders.priority_urgent": "Urgente",
+      "lua_widget.reminders.priority_high": "Alta",
+      "lua_widget.reminders.priority_normal": "Normal",
+      "lua_widget.reminders.priority_low": "Baixa"
     }
   },
   "defaultSize": {
@@ -267,9 +318,11 @@
   "optionalPermissions": [],
   "requiredFeatures": [
     "control.focus",
-    "control.textInput",
+    "control.textArea",
+    "draw.advanced",
     "draw.immediate",
     "interaction.contextMenu",
+    "interaction.contextMenu.submenu",
     "interaction.pointerActions",
     "interaction.region",
     "interaction.scroll",
@@ -278,7 +331,8 @@
     "l10n.basic",
     "layout.relativeUnits",
     "storage.transaction",
-    "ui.semanticMetrics.rowUnit"
+    "ui.semanticMetrics.rowUnit",
+    "widget.confirmRemoval"
   ],
   "optionalFeatures": []
 }

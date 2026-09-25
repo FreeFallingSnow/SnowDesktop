@@ -1,6 +1,7 @@
 #pragma once
 
 #include "widget_data_semantic_debounce.h"
+#include "widget_network_traffic.h"
 #include "widget_runtime_image.h"
 
 #include <atomic>
@@ -483,9 +484,7 @@ private:
     std::uint64_t previousUser_ = 0;
     std::unordered_map<std::string, std::uint64_t> previousProcessCpuTimes_;
     Clock::time_point previousProcessSample_{};
-    std::uint64_t previousReceived_ = 0;
-    std::uint64_t previousSent_ = 0;
-    Clock::time_point previousNetworkSample_{};
+    WidgetNetworkTrafficSampler networkTrafficSampler_;
     void* gpuQuery_ = nullptr;
     void* gpuUtilizationCounter_ = nullptr;
     void* gpuDedicatedUsageCounter_ = nullptr;

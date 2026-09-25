@@ -3,6 +3,7 @@
 #include "container.h"
 #include "item.h"
 #include "types.h"
+#include "../dock_magnification.h"
 
 #include <memory>
 #include <vector>
@@ -127,7 +128,7 @@ public:
     RECT GetWindowsButtonRect() const;
     RECT GetSearchRect() const;
     RECT GetInteractiveBounds() const;
-    RECT GetAnimationVisualBounds() const;
+    RECT GetAnimationVisualBounds(bool reserveForLaunch = false) const;
     std::vector<RECT> GetOcclusionRects(POINT pointer) const;
     bool ContainsInteractivePoint(POINT pt) const;
     RECT GetElementVisualRect(RECT baseRect, POINT pointer) const;
@@ -136,6 +137,8 @@ public:
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
     void SetReservedArea(RECT area);
+    bool IsMagnificationAnimating() const;
+    bool AdvanceMagnificationAnimation(double nowMilliseconds);
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
@@ -151,7 +154,8 @@ private:
 
     bool IsMagnificationSuppressed() const;
     float GetMaximumMagnificationScale() const;
-    int GetLaunchAnimationPadding() const;
+    float GetCurrentMagnificationScale() const;
+    int GetLaunchAnimationPadding(bool reserveForLaunch = false) const;
     bool IsVertical() const;
     bool IsEdgeAttached() const;
     void RefreshEntryGroupCounts() const;
@@ -218,4 +222,6 @@ private:
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};
+    mutable snowdesktop::dock_magnification::HoverEntryAnimation
+        magnificationEntry_;
 };

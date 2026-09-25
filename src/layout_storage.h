@@ -76,6 +76,8 @@ struct WidgetRecord
     bool showOnHoverOnly = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    bool titleBarCollapsed = false;
+    bool titleBarExpandOnHover = false;
     bool largeFolderTitleless = false;
     bool keepWhenDesktopHidden = false;
     std::optional<bool> showTitle;

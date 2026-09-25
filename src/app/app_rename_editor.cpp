@@ -26,8 +26,9 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     RECT screenRect = rect;
     MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
+    const size_t owner = ResolveRenameVisibilityWidgetIndex(widgetIndex);
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(
-        widgets_[widgetIndex].listMode);
+        owner < widgets_.size() && widgets_[owner].listMode);
     renameEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         L"EDIT", widgets_[widgetIndex].folderEntries[memberIndex].name.c_str(), style,
         screenRect.left, screenRect.top,

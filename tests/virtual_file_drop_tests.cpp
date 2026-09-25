@@ -1,5 +1,6 @@
 #include "virtual_file_drop.h"
 #include "external_drop_content.h"
+#include "clipboard_file_operation.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -97,12 +98,15 @@ public:
 
     std::optional<std::vector<std::byte>> wide;
     std::optional<std::vector<std::byte>> ansi;
+    std::optional<std::vector<std::byte>> fileDrop;
     ContentsMedium contentsMedium = ContentsMedium::None;
     std::vector<std::byte> contents;
     bool exposeAsyncCapability = false;
     bool asyncMode = false;
     HRESULT asyncModeResult = S_OK;
     bool offerFileDrop = false;
+    CLIPFORMAT offeredClipboardFormat = 0;
+    HRESULT clipboardFormatResult = S_OK;
     int wideRequests = 0;
     int ansiRequests = 0;
     int getDataCalls = 0;
@@ -230,6 +234,8 @@ public:
             ++ansiRequests;
             payload = &ansi;
         }
+        else if (format->cfFormat == CF_HDROP)
+            payload = &fileDrop;
         else
             return DV_E_FORMATETC;
 
@@ -267,6 +273,11 @@ public:
         ++queryGetDataCalls;
         if (!format)
             return E_POINTER;
+        if (offeredClipboardFormat != 0 &&
+            format->cfFormat == offeredClipboardFormat &&
+            format->dwAspect == DVASPECT_CONTENT && format->lindex == -1 &&
+            (format->tymed & TYMED_HGLOBAL) != 0)
+            return clipboardFormatResult;
         return offerFileDrop &&
             format->cfFormat == CF_HDROP &&
             format->dwAspect == DVASPECT_CONTENT &&
@@ -809,6 +820,115 @@ void TestAlbumAsyncAdmissionDoesNotRenderData()
     Check(!unsupported.available && source.getDataCalls == 0 && source.startOperationCalls == 0,
         "async virtual-only sources remain rejected without materializing content");
 }
+
+void TestClipboardFilesWithoutLocalPaths()
+{
+    using namespace snowdesktop::external_drop_content;
+    Check(ProbeClipboardFileSource(nullptr) == ClipboardFileSource::None,
+        "an unavailable clipboard disables file paste");
+    MockDataObject source;
+    Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::None,
+        "a clipboard without file formats disables file paste");
+    // Reproduces phone/namespace and virtual-file menu admission. The mock
+    // provides only advertised formats; requesting data here is a regression.
+    for (const auto* name : {L"Shell IDList Array", L"FileGroupDescriptorW",
+                            L"FileGroupDescriptor"})
+    {
+        source.offeredClipboardFormat = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name));
+        Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::ShellObjects,
+            "non-path Shell files enable paste through the Shell handoff");
+        source.clipboardFormatResult = S_FALSE;
+        Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::None,
+            "S_FALSE must not enable file paste");
+        source.clipboardFormatResult = S_OK;
+    }
+    source.offerFileDrop = true;
+    Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::FilePaths,
+        "ordinary file paths retain precedence over supplementary Shell formats");
+    source.offerFileDrop = false;
+    for (CLIPFORMAT format : {static_cast<CLIPFORMAT>(CF_UNICODETEXT),
+                             static_cast<CLIPFORMAT>(CF_DIB),
+                             static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileContents"))})
+    {
+        source.offeredClipboardFormat = format;
+        Check(ProbeClipboardFileSource(&source) == ClipboardFileSource::None,
+            "text, preview images and contents without descriptors are not file paste");
+    }
+    Check(source.getDataCalls == 0 && source.startOperationCalls == 0,
+        "opening a paste menu never renders or starts a transfer from the phone");
+}
+void TestClipboardPathPasteExecution()
+{
+    using snowdesktop::TryExecuteClipboardFileOperation;
+    const std::vector<std::wstring> paths{L"C:\\paste-fixture\\one.txt", L"C:\\paste-fixture\\folder"};
+    std::wstring pathList;
+    for (const auto& path : paths) { pathList += path; pathList += L'\0'; }
+    pathList += L'\0';
+    DROPFILES drop{};
+    drop.pFiles = sizeof(drop);
+    drop.fWide = TRUE;
+    std::vector<std::byte> payload(sizeof(drop) + pathList.size() * sizeof(wchar_t));
+    std::memcpy(payload.data(), &drop, sizeof(drop));
+    std::memcpy(payload.data() + sizeof(drop), pathList.data(), pathList.size() * sizeof(wchar_t));
+
+    // The source formats and OS executor are the test boundaries. The actual
+    // clipboard reader and paste dispatch run here; real transfer completion
+    // is separately covered by the Shell worker's guarded integration cases.
+    for (bool async : {false, true})
+        for (DWORD effect : {DROPEFFECT_COPY, DROPEFFECT_MOVE})
+            for (bool succeeded : {false, true})
+            {
+                MockDataObject source;
+                source.offerFileDrop = true;
+                source.fileDrop = payload;
+                source.exposeAsyncCapability = source.asyncMode = async;
+                int executions = 0;
+                const auto result = TryExecuteClipboardFileOperation(&source, L"C:\\destination", effect,
+                    [&](const snowdesktop::ShellFileOperationRequest& request) {
+                        ++executions;
+                        Check(request.steps.size() == 1 && request.result != nullptr,
+                            "clipboard paste requires tracked completion for one batch");
+                        if (request.steps.size() == 1)
+                        {
+                            const auto& step = request.steps.front();
+                            Check(step.sources == paths && step.destination == L"C:\\destination\\",
+                                "clipboard paste preserves every source and the requested destination");
+                            Check(step.function == static_cast<UINT>(effect == DROPEFFECT_COPY ? FO_COPY : FO_MOVE),
+                                "clipboard cut must move while clipboard copy must preserve sources");
+                            Check((step.flags & FOF_RENAMEONCOLLISION) != 0,
+                                "repeated local paste must keep existing files and create unique copies");
+                        }
+                        return succeeded;
+                    });
+                Check(executions == 1 && result.has_value() && *result == succeeded,
+                    "local paste must execute once and report its result, without a second Shell handoff after failure");
+                Check(source.startOperationCalls == 0,
+                    "clipboard execution must not start another async operation inside the worker-owned operation");
+            }
+
+    MockDataObject source;
+    source.offerFileDrop = true;
+    source.fileDrop = payload;
+    int executions = 0;
+    const auto execute = [&](const snowdesktop::ShellFileOperationRequest&) { ++executions; return true; };
+    const auto recursive = TryExecuteClipboardFileOperation(&source, L"C:\\paste-fixture\\folder\\child", DROPEFFECT_COPY, execute);
+    Check(recursive.has_value() && !*recursive && executions == 0,
+        "copying a clipboard folder into its descendant must fail before filesystem execution");
+    source.fileDrop.reset();
+    const auto unavailable = TryExecuteClipboardFileOperation(&source, L"C:\\destination", DROPEFFECT_COPY, execute);
+    Check(unavailable.has_value() && !*unavailable && executions == 0,
+        "an unreadable advertised path batch must fail without falling through to duplicate-capable Shell execution");
+    source.offerFileDrop = false;
+    source.offeredClipboardFormat = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"));
+    const int reads = source.getDataCalls;
+    Check(!TryExecuteClipboardFileOperation(&source, L"C:\\destination", DROPEFFECT_COPY, execute).has_value() &&
+            executions == 0 && source.getDataCalls == reads,
+        "virtual-only phone files must remain with the namespace Shell handoff without being flattened");
+    source.offerFileDrop = true;
+    source.fileDrop = payload;
+    Check(!TryExecuteClipboardFileOperation(&source, L"C:\\destination", DROPEFFECT_LINK, execute).has_value() && executions == 0,
+        "link-only clipboard intent must retain the link handoff instead of becoming a copy");
+}
 } // namespace
 
 int main()
@@ -825,6 +945,8 @@ int main()
     TestGlobalFallbackUsesActualSizeWithoutAdvertisedBound();
     TestAsyncSourceCapabilityMatrix();
     TestAlbumAsyncAdmissionDoesNotRenderData();
+    TestClipboardFilesWithoutLocalPaths();
+    TestClipboardPathPasteExecution();
 
     if (failures != 0)
     {

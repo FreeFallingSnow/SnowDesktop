@@ -253,7 +253,11 @@ StartedProcess Start(const Request& request, DWORD timeoutMs)
         STARTUPINFOEXW startup{};
         startup.StartupInfo.cb = sizeof(startup);
         startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
-        startup.StartupInfo.wShowWindow = SW_HIDE;
+        // Shell folder activation can forward this startup state when reusing
+        // an Explorer window, even when InvokeCommand specifies nShow. SW_HIDE
+        // here hides an already-open folder and keeps later opens invisible.
+        // The helper creates no UI; CREATE_NO_WINDOW suppresses its console.
+        startup.StartupInfo.wShowWindow = static_cast<WORD>(request.showCommand);
         startup.lpAttributeList = attributes;
         PROCESS_INFORMATION information{};
         if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
@@ -329,9 +333,8 @@ std::optional<int> TryRunCommand(Executor executor)
         const HRESULT com = CoInitializeEx(nullptr,
             COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         if (FAILED(com)) return static_cast<int>(com);
-        // The parent grants this helper foreground eligibility before resuming
-        // it; pass that eligibility to the Shell execution/elevation delegate.
-        AllowSetForegroundWindow(ASFW_ANY);
+        // The executor refreshes Shell foreground access after resolving the
+        // shortcut policy, immediately before invocation rather than here.
         const bool opened = executor(*request);
         CoUninitialize();
         return opened ? ERROR_SUCCESS : ERROR_OPEN_FAILED;

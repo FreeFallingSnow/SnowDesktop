@@ -1,4 +1,5 @@
 #include "app.h"
+#include "shell_icon_request.h"
 #include "../folder_mapping_rules.h"
 
 // Folder-mapping enumeration and automatic file-category collection.
@@ -8,11 +9,12 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
 {
     FolderSnapshot result;
     result.path = path;
-    MetadataMap* metadata = cache ? &cache->folders[ToUpperInvariant(path)] : nullptr;
+    MetadataMap* metadata = cache ? &cache->folders[FolderKey(path)] : nullptr;
     std::unordered_set<std::wstring> seenMetadata;
     if (path.empty())
     {
         result.complete = true;
+        result.error = ERROR_INVALID_NAME;
         return result;
     }
     // 磁盘根目录（如 "C:\"）自身以反斜杠结尾：直接拼接会生成 "C:\\名称"
@@ -27,6 +29,7 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
     if (hFind == INVALID_HANDLE_VALUE)
     {
         const DWORD error = GetLastError();
+        result.error = error;
         result.complete = error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
         if (metadata && result.complete) metadata->clear();
         return result;
@@ -50,43 +53,24 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
                 (static_cast<std::uint64_t>(fd.nFileSizeHigh) << 32) |
                 static_cast<std::uint64_t>(fd.nFileSizeLow);
         }
-        SHFILEINFOW info{};
         const auto key = ToUpperInvariant(entry.fullPath);
         const auto stamp = FileStamp::From(fd);
         const auto cached = metadata ? metadata->find(key) : MetadataMap::iterator{};
-        if (metadata && cached != metadata->end() &&
-            cached->second.Matches(entry.fullPath, stamp) && cached->second.absoluteId.get())
+        if (metadata && cached != metadata->end() && cached->second.Matches(entry.fullPath, stamp))
         {
-            info = cached->second.info;
-            result.absoluteIds.emplace(key, Pidl(ILCloneFull(cached->second.absoluteId.get())));
+            entry.sysIconIndex = cached->second.info.iIcon;
+            entry.typeName = cached->second.info.szTypeName;
+            if (cached->second.absoluteId.get())
+                result.absoluteIds.emplace(key, Pidl(ILCloneFull(cached->second.absoluteId.get())));
             ++cache->hits;
             seenMetadata.insert(key);
         }
-        else
-        {
-            if (cache) ++cache->queries;
-            const auto loaded = SHGetFileInfoW(entry.fullPath.c_str(), 0, &info, sizeof(info),
-                SHGFI_SYSICONINDEX | SHGFI_TYPENAME);
-            PIDLIST_ABSOLUTE absolute = nullptr;
-            if (SUCCEEDED(SHParseDisplayName(entry.fullPath.c_str(), nullptr, &absolute, 0, nullptr)))
-            {
-                result.absoluteIds.emplace(key, Pidl(absolute));
-                if (metadata && loaded)
-                {
-                    auto& value = (*metadata)[key];
-                    value.path = entry.fullPath;
-                    value.stamp = stamp;
-                    value.info = info;
-                    value.absoluteId.reset(ILCloneFull(absolute));
-                    seenMetadata.insert(key);
-                }
-            }
-        }
-        entry.sysIconIndex = info.iIcon;
-        entry.typeName = info.szTypeName;
+        else entry.sysIconIndex = -1;
         result.entries.push_back(std::move(entry));
     } while (FindNextFileW(hFind, &fd));
-    result.complete = GetLastError() == ERROR_NO_MORE_FILES;
+    const DWORD error = GetLastError();
+    result.complete = error == ERROR_NO_MORE_FILES;
+    result.error = result.complete ? ERROR_SUCCESS : error;
     FindClose(hFind);
     if (metadata && result.complete)
         std::erase_if(*metadata, [&](const auto& entry) { return !seenMetadata.contains(entry.first); });
@@ -96,20 +80,17 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
 void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     bool enqueueIconLoads, const snowdesktop::shell_refresh::FolderSnapshot* snapshot)
 {
-    if (snapshot && ToUpperInvariant(snapshot->path) !=
-            ToUpperInvariant(widget.sourceFolderPath))
+    if (snapshot && snowdesktop::shell_refresh::FolderKey(snapshot->path) !=
+            snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath))
     {
         RequestShellRefresh();
         return;
     }
-    const bool refreshIcons = !snapshot;
-    snowdesktop::shell_refresh::FolderSnapshot local;
+    const bool refreshIcons = false;
     if (!snapshot)
     {
-        shellMetadataCache_.folders.erase(ToUpperInvariant(widget.sourceFolderPath));
-        local = snowdesktop::shell_refresh::ReadFolder(widget.sourceFolderPath,
-            AreExplorerHiddenItemsVisible(), &shellMetadataCache_);
-        snapshot = &local;
+        RequestFolderRefresh({widget.sourceFolderPath});
+        return;
     }
     if (!snapshot->complete)
     {
@@ -131,13 +112,13 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
             (entry.iconBitmap && entry.iconState == IconState::FullQuality))
             continue;
         const auto absolute = snapshot->absoluteIds.find(ToUpperInvariant(entry.fullPath));
-        if (absolute == snapshot->absoluteIds.end())
-            continue;
         IconLoadTask task;
+        task.sourceStamp = snowdesktop::shell_icon_request::Stamp(entry);
         task.serial = iconLoadSerial_;
         task.widgetId = widget.id;
         task.layoutKey = ToUpperInvariant(entry.fullPath);
-        task.absolutePidl.reset(ILCloneFull(absolute->second.get()));
+        if (absolute != snapshot->absoluteIds.end())
+            task.absolutePidl.reset(ILCloneFull(absolute->second.get()));
         task.sysIconIndex = entry.sysIconIndex;
         task.parsingName = entry.fullPath;
         task.isDesktopItem = false;

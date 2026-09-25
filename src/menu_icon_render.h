@@ -1,6 +1,7 @@
 #pragma once
 
 #include "menu_quick_icon.h"
+#include "menu_builtin_icon.h"
 
 #include <windows.h>
 
@@ -18,6 +19,8 @@ struct Palette
     COLORREF disabledText = RGB(118, 118, 118);
     COLORREF separator = RGB(225, 225, 225);
     COLORREF accent = RGB(0, 120, 212);
+    bool lightTheme = true;
+    bool colorIcons = true;
 };
 
 struct Metrics
@@ -29,6 +32,7 @@ struct Metrics
     int selectionInsetY = 2;
     int selectionRadius = 4;
     int leftPadding = 10;
+    // Zero collapses the ordinary-row icon gutter without changing shortcuts.
     int iconColumnWidth = 22;
     int textGap = 7;
     int rightPadding = 9;
@@ -43,6 +47,8 @@ struct Metrics
     int quickActionTextFontHeight = 12;
     int iconFontHeight = 18;
     int quickActionFontHeight = 18;
+    // Zero preserves the existing image bounds; compact menus cap package art.
+    int maximumImageSize = 0;
 };
 
 struct ItemView
@@ -55,6 +61,7 @@ struct ItemView
     MenuQuickIcon semanticIcon = MenuQuickIcon::FontGlyph;
     /** Optional non-owning premultiplied package image for the icon column. */
     HBITMAP image = nullptr;
+    BuiltinIcon builtinIcon = BuiltinIcon::None;
 };
 
 struct ImageSourceView
@@ -81,7 +88,7 @@ struct TextInputView
 Palette ResolvePalette(bool lightTheme);
 
 /** @brief 返回按显示器 DPI 缩放的菜单尺寸。 */
-Metrics ResolveMetrics(UINT dpi);
+Metrics ResolveMetrics(UINT dpi, bool win10Style = false);
 
 /** Build a bounded square premultiplied bitmap for a menu image. */
 HBITMAP CreateImageBitmap(const ImageSourceView& source, int pixelSize);

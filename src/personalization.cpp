@@ -367,9 +367,10 @@ bool LoadPersonalization(
     }
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     s.panelGradient = {};
-    JsonValue gradientDocument;
-    if (ParseJson(text, gradientDocument))
-        if (const auto* gradient = gradientDocument.Find("panelGradient"))
+    JsonValue document;
+    const bool documentParsed = ParseJson(text, document);
+    if (documentParsed)
+        if (const auto* gradient = document.Find("panelGradient"))
             if (!snowdesktop::DecodePanelGradient(*gradient, s.panelGradient)) return false;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
     if (ReadDoubleField(text, "categorizedTabHeight", v))
@@ -408,7 +409,15 @@ bool LoadPersonalization(
     }
     if (ReadDoubleField(text, "cornerRadius", v)) s.cornerRadius = (float)v;
     if (ReadDoubleField(text, "contextMenuStyle", v))
-        s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 4);
+        s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
+    s.scrollableTitleBarOnTop = false;
+    ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
+    s.popupHoverOpen = false;
+    ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
+    s.popupHoverDelayMs = kDefaultPopupHoverDelayMs;
+    if (documentParsed)
+        if (const auto* delay = document.Find("popupHoverDelayMs"); delay && delay->IsNumber())
+            s.popupHoverDelayMs = NormalizePopupHoverDelayMs(delay->number);
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
@@ -418,6 +427,9 @@ bool LoadPersonalization(
     bool b3 = false;
     if (ReadBoolField(text, "showCategoryTabCounts", b3))
         s.showCategoryTabCounts = b3;
+    s.showGroupTabCounts = false;
+    if (ReadBoolField(text, "showGroupTabCounts", b3))
+        s.showGroupTabCounts = b3;
     // Legacy releases tied edge reflection to glass and used border alpha as
     // its intensity. New edge-highlight fields take priority when present.
     if (!edgeHighlightEnabledLoaded)
@@ -449,21 +461,29 @@ bool LoadPersonalization(
             s.widgetEdgeHighlightStrength;
         const float cornerRadius = s.cornerRadius;
         const float barHeight = s.barHeight;
+        const bool titleBarOnTop = s.scrollableTitleBarOnTop;
+        const bool popupHoverOpen = s.popupHoverOpen;
+        const float popupHoverDelayMs = s.popupHoverDelayMs;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
         const float luaWidgetContentRowHeight =
             s.luaWidgetContentRowHeight;
         const bool showCategoryTabCounts =
             s.showCategoryTabCounts;
+        const bool showGroupTabCounts = s.showGroupTabCounts;
         const int contextMenuStyle = s.contextMenuStyle;
         s = MakeAppearancePreset(s.backgroundPreset);
         s.cornerRadius = cornerRadius;
         s.barHeight = barHeight;
+        s.scrollableTitleBarOnTop = titleBarOnTop;
+        s.popupHoverOpen = popupHoverOpen;
+        s.popupHoverDelayMs = popupHoverDelayMs;
         s.categorizedTabHeight =
             categorizedTabHeight;
         s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
         s.showCategoryTabCounts =
             showCategoryTabCounts;
+        s.showGroupTabCounts = showGroupTabCounts;
         s.contextMenuStyle = contextMenuStyle;
         if (borderWidthLoaded)
             s.widgetBorderWidth = explicitBorderWidth;
@@ -524,6 +544,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"gradientEndA\": " << s.gradientEndA << ",\n";
     file << "  \"panelGradient\": " << snowdesktop::EncodePanelGradient(s.panelGradient) << ",\n";
     file << "  \"barHeight\": " << s.barHeight << ",\n";
+    file << "  \"scrollableTitleBarOnTop\": "
+         << (s.scrollableTitleBarOnTop ? "true" : "false") << ",\n";
     file << "  \"categorizedTabHeight\": "
          << std::clamp(
                 s.categorizedTabHeight,
@@ -534,10 +556,16 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << ",\n";
     file << "  \"showCategoryTabCounts\": "
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
+    file << "  \"showGroupTabCounts\": "
+         << (s.showGroupTabCounts ? "true" : "false") << ",\n";
+    file << "  \"popupHoverOpen\": "
+         << (s.popupHoverOpen ? "true" : "false") << ",\n";
+    file << "  \"popupHoverDelayMs\": "
+         << NormalizePopupHoverDelayMs(s.popupHoverDelayMs) << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"contextMenuStyle\": "
-         << std::clamp(s.contextMenuStyle, 0, 4) << ",\n";
+         << std::clamp(s.contextMenuStyle, 0, 6) << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";
     file << "  \"glassBlurRadius\": " << s.glassBlurRadius << ",\n";
     file << "  \"contentTheme\": " << s.contentTheme << ",\n";

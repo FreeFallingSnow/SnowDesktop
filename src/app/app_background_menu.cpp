@@ -3,6 +3,7 @@
 #include "../modern_menu.h"
 #include "../search_match.h"
 #include "../widget_preview_stage.h"
+#include "../widget_menu_catalogue.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -12,14 +13,11 @@
 namespace
 {
 
+using snowdesktop::menu_icon::BuiltinIcon;
+
 constexpr size_t kLuaWidgetMenuPageSize = 8;
 
-enum class LuaWidgetMenuSource
-{
-    Builtin,
-    Installed,
-    Development,
-};
+using LuaWidgetMenuSource = snowdesktop::widget_menu::Source;
 
 enum class LuaWidgetMenuFilter
 {
@@ -29,50 +27,11 @@ enum class LuaWidgetMenuFilter
     Development,
 };
 
-struct LuaWidgetMenuEntry
-{
-    std::wstring packageId;
-    std::wstring displayName;
-    std::wstring searchText;
-    LuaWidgetMenuSource source = LuaWidgetMenuSource::Installed;
-};
+using LuaWidgetMenuEntry = snowdesktop::widget_menu::Entry;
 
 std::vector<LuaWidgetMenuEntry> BuildLuaWidgetMenuEntries()
 {
-    const auto packages = WidgetEngine::ListWidgetPackages();
-    std::unordered_map<std::wstring, const snowdesktop::widget::InstalledPackage*>
-        packagesById;
-    for (const auto& package : packages)
-    {
-        if (!package.active || !package.enabled)
-            continue;
-        packagesById[Utf8ToWide(package.manifest.id)] = &package;
-    }
-
-    std::vector<LuaWidgetMenuEntry> entries;
-    for (const auto& packageId : WidgetEngine::ListAvailable())
-    {
-        LuaWidgetMenuEntry entry;
-        entry.packageId = packageId;
-        entry.displayName = WidgetEngine::GetWidgetDisplayName(packageId);
-        if (entry.displayName.empty()) entry.displayName = packageId;
-        entry.searchText = entry.displayName + L"\n" + packageId;
-        const LuaWidgetManifest manifest =
-            WidgetEngine::GetWidgetManifest(packageId);
-        entry.searchText += L"\n" + Utf8ToWide(manifest.description);
-        entry.searchText += L"\n" + Utf8ToWide(manifest.publisher);
-
-        if (const auto found = packagesById.find(packageId);
-            found != packagesById.end())
-        {
-            if (found->second->builtin)
-                entry.source = LuaWidgetMenuSource::Builtin;
-            else if (found->second->development)
-                entry.source = LuaWidgetMenuSource::Development;
-        }
-        entries.push_back(std::move(entry));
-    }
-    return entries;
+    return WidgetEngine::ListAvailableMenuEntries();
 }
 
 bool LuaWidgetMenuSourceMatches(
@@ -166,14 +125,17 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
         items.push_back({ kContextOpenSteamWorkshop,
             _LW("app.settings.widgets_open_steam_workshop"),
             snowdesktop::menu_fluent_glyphs::kWorkshop, true });
+        items.back().builtinIcon = BuiltinIcon::Workshop;
     };
     UINT inlineGroup = 1;
     auto appendPair = [&](UINT command, UINT previewCommand,
-                          const wchar_t* label, const wchar_t* glyph) {
+                          const wchar_t* label, const wchar_t* glyph,
+                          BuiltinIcon builtinIcon) {
         Item item;
         item.command = command;
         item.label = label;
         item.glyph = glyph;
+        item.builtinIcon = builtinIcon;
         item.inlineAction = true;
         item.inlineGroup = inlineGroup;
         items.push_back(std::move(item));
@@ -189,23 +151,23 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
     appendPair(kContextAddCollectionWidget,
         kContextPreviewCollectionWidget,
         _LW("app.menu.collection"),
-        snowdesktop::menu_fluent_glyphs::kCollection);
+        snowdesktop::menu_fluent_glyphs::kCollection, BuiltinIcon::Collection);
     appendPair(kContextAddFileCategoryWidget,
         kContextPreviewFileCategoryWidget,
         _LW("app.menu.file_categories"),
-        snowdesktop::menu_fluent_glyphs::kDesktopFiles);
+        snowdesktop::menu_fluent_glyphs::kDesktopFiles, BuiltinIcon::DesktopFiles);
     appendPair(kContextAddFolderMappingWidget,
         kContextPreviewFolderMappingWidget,
         _LW("app.menu.folder_mapping"),
-        snowdesktop::menu_fluent_glyphs::kFolderMapping);
+        snowdesktop::menu_fluent_glyphs::kFolderMapping, BuiltinIcon::FolderMapping);
     appendPair(kContextAddCollectionGroupWidget,
         kContextPreviewCollectionGroupWidget,
         _LW("app.menu.collection_group"),
-        snowdesktop::menu_fluent_glyphs::kCollectionGroup);
+        snowdesktop::menu_fluent_glyphs::kCollectionGroup, BuiltinIcon::CollectionGroup);
     appendPair(kContextAddFileGroupWidget,
         kContextPreviewFileGroupWidget,
         _LW("app.menu.file_group"),
-        snowdesktop::menu_fluent_glyphs::kFileGroup);
+        snowdesktop::menu_fluent_glyphs::kFileGroup, BuiltinIcon::FileGroup);
 
     if (allLuaWidgets.empty())
     {
@@ -219,6 +181,7 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
     searchItem.command = kContextAddLuaWidgetSearch;
     searchItem.label = _LW("app.settings.widgets_search_hint");
     searchItem.glyph = L"\uF68F";
+    searchItem.builtinIcon = BuiltinIcon::Search;
     searchItem.textInput = true;
     searchItem.inputText = search;
     items.push_back(std::move(searchItem));
@@ -267,6 +230,7 @@ std::vector<snowdesktop::modern_menu::Item> BuildAddWidgetMenuItems(
         empty.command = kContextAddLuaWidgetEmpty;
         empty.label = _LW("app.settings.widgets_filter_empty");
         empty.glyph = snowdesktop::menu_fluent_glyphs::kCollectionGroup;
+        empty.builtinIcon = BuiltinIcon::CollectionGroup;
         empty.enabled = false;
         items.push_back(std::move(empty));
         appendWorkshopAction();
@@ -754,6 +718,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
         std::to_wstring(appearance.gradientEndA) + L":" +
         std::to_wstring(appearance.cornerRadius) + L":" +
         std::to_wstring(appearance.barHeight) + L":" +
+        std::to_wstring(appearance.scrollableTitleBarOnTop) + L":" +
         std::to_wstring(appearance.categorizedTabHeight) + L":" +
         std::to_wstring(appearance.backgroundPreset) + L":" +
         std::to_wstring(appearance.glassEnabled) + L":" +
@@ -1382,7 +1347,7 @@ void DesktopApp::ShowAddWidgetMenu(POINT screenPoint)
             previewAnchor = hover;
     };
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = snowdesktop::modern_menu::Show(items, options).command;
     previewWindow.Close();
     ClearMenuIcons();
@@ -1604,7 +1569,8 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
         AppendMenuW(menu, MF_POPUP,
             reinterpret_cast<UINT_PTR>(displaySettingsMenu), _LW("app.menu.display_settings"));
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(displaySettingsMenu), L"",
+            MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Display);
     }
 
     const auto allLuaWidgets = BuildLuaWidgetMenuEntries();
@@ -1740,9 +1706,11 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
 
     SetMenuItemIcon(menu, kContextNewMenu,
         snowdesktop::menu_fluent_glyphs::kNewItem,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextRefreshCommand, L"");
-    SetMenuItemIcon(menu, kContextPasteCommand, L"");
+        MenuIconFont::FluentRegular, BuiltinIcon::NewItem);
+    SetMenuItemIcon(menu, kContextRefreshCommand, L"",
+        MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Refresh);
+    SetMenuItemIcon(menu, kContextPasteCommand, L"",
+        MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Paste);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextNewMenu);
     SetMenuItemQuickAction(menu, kContextRefreshCommand);
@@ -1753,7 +1721,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu),
             snowdesktop::menu_fluent_glyphs::kSort,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::Sort);
         if (nameSortMenu)
         {
             SetMenuItemIcon(sortMenu,
@@ -1784,27 +1752,27 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     if (widgetMenu)
     {
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(widgetMenu),
-            L"\uF136", MenuIconFont::FluentRegular);
+            L"\uF136", MenuIconFont::FluentRegular, BuiltinIcon::Widgets);
         SetMenuItemIcon(widgetMenu, kContextAddCollectionWidget,
             snowdesktop::menu_fluent_glyphs::kCollection,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::Collection);
         SetMenuItemIcon(widgetMenu, kContextAddCollectionGroupWidget,
             snowdesktop::menu_fluent_glyphs::kCollectionGroup,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::CollectionGroup);
         SetMenuItemIcon(widgetMenu, kContextAddFileGroupWidget,
             snowdesktop::menu_fluent_glyphs::kFileGroup,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::FileGroup);
         SetMenuItemIcon(widgetMenu, kContextAddFileCategoryWidget,
             snowdesktop::menu_fluent_glyphs::kDesktopFiles,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::DesktopFiles);
         SetMenuItemIcon(widgetMenu, kContextAddFolderMappingWidget,
             snowdesktop::menu_fluent_glyphs::kFolderMapping,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::FolderMapping);
         SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetSearch,
-            L"\uF68F", MenuIconFont::FluentRegular);
+            L"\uF68F", MenuIconFont::FluentRegular, BuiltinIcon::Search);
         SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetEmpty,
             snowdesktop::menu_fluent_glyphs::kCollectionGroup,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::CollectionGroup);
         for (UINT i = 0; i < kLuaWidgetMenuPageSize; ++i)
         {
             SetMenuItemIcon(widgetMenu, kContextAddLuaWidgetFirst + i,
@@ -1817,22 +1785,25 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
             L"\uF181", MenuIconFont::FluentRegular);
         SetMenuItemIcon(widgetMenu, kContextOpenSteamWorkshop,
             snowdesktop::menu_fluent_glyphs::kWorkshop,
-            MenuIconFont::FluentRegular);
+            MenuIconFont::FluentRegular, BuiltinIcon::Workshop);
     }
     if (pinPageMenu)
     {
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pinPageMenu), L"");
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(pinPageMenu), L"",
+            MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Pin);
     }
-    SetMenuItemIcon(menu, kContextSettingsCommand, L"");
+    SetMenuItemIcon(menu, kContextSettingsCommand, L"",
+        MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Settings);
     if (pageOffset_ > 0)
         SetMenuItemIcon(menu, kContextPagePrev, L"");
     if (pageOffset_ < maxOff)
         SetMenuItemIcon(menu, kContextPageNext, L"");
-    SetMenuItemIcon(menu, kContextPageAdd, L"");
+    SetMenuItemIcon(menu, kContextPageAdd, L"",
+        MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::AddPage);
     if (jumpMenu)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(jumpMenu), L"");
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     snowdesktop::component_preview::Window previewWindow;
     bool wallpaperPrefetchStarted = false;
     UINT previewCacheCommand = 0;
@@ -1988,9 +1959,15 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         });
         return true;
     };
+    snowdesktop::shell_extensions::Request shellRequest;
+    const auto extensionDirectory = snowdesktop::desktop_source::Directory();
+    if (!extensionDirectory.empty()) shellRequest.paths.push_back(extensionDirectory);
+    shellRequest.background = true;
+    shellRequest.context = snowdesktop::shell_extensions::Context::Desktop;
+    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     UINT command = ShowModernMenu(menu, screenPoint, hwnd_,
         false, false, nullptr, changeDisplaySetting,
-        previewWidgetMenuItem, searchLuaWidgets);
+        previewWidgetMenuItem, searchLuaWidgets, &shellRequest);
     previewWindow.Close();
 
     if (sortMenu) DestroyMenu(sortMenu);
@@ -2060,7 +2037,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextNewMenu:
         {
             wchar_t desktopPath[MAX_PATH]{};
-            if (SHGetSpecialFolderPathW(nullptr, desktopPath, CSIDL_DESKTOPDIRECTORY, FALSE))
+            if (snowdesktop::desktop_source::CopyDirectory(desktopPath))
             {
                 ShowNewMenuAndInvoke(screenPoint, desktopPath);
                 RequestShellRefresh();

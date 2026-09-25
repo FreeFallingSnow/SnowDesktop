@@ -1,11 +1,13 @@
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
+#include "startup_diagnostics.h"
 #include "../data_paths.h"
 #include "../deployment_context.h"
 #include "../drag_input_rules.h"
 #include "../steam_app_identity.h"
 #include "../steam_child_environment.h"
+#include "../steam_runtime_startup.h"
 #include "../widget_engine_settings_backend.h"
 #include "../widget_settings_service.h"
 
@@ -261,6 +263,8 @@ ToGeneralAdvancedFeatureStatus(
     target.bridgeAvailable = source.bridgeAvailable;
     target.registered = source.registered;
     target.validUntil = source.validUntil;
+    target.connectionProblem = source.connectionProblem;
+    target.errorDetail = Utf8ToWide(source.errorDetail);
     target.cardVisible = source.registered || source.bridgeAvailable ||
         deploymentKind == snowdesktop::deployment::RuntimeDeploymentKind::Portable;
     target.offerSteamStore = !source.registered && !source.bridgeAvailable &&
@@ -309,6 +313,9 @@ ToGeneralAdvancedFeatureStatus(
 
 void DesktopApp::StartSteamEntitlementRegistration(bool revalidateRegistered)
 {
+    WriteDiagnosticLogEntry(revalidateRegistered
+        ? L"[SteamActivation] entry=startup revalidation"
+        : L"[SteamActivation] entry=manual registration");
     if (!steamEntitlementService_)
         return;
     const HWND notificationWindow = controlHwnd_;
@@ -344,7 +351,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
 
     LoadUsageGuidePreferences();
-    InitializeSettingsController();
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -367,6 +373,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         ~OleUninitializeOnExit() noexcept { OleUninitialize(); }
     };
     const OleUninitializeOnExit oleUninitializeOnExit;
+    InitializeSettingsController();
 
     if (!uiAnimationScheduler_.Initialize())
     {
@@ -376,6 +383,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
 
     instance_ = instance;
+    initialShellReadPending_ = true;
 
     // Resolve the persisted desktop mode before touching Explorer's icon layer.
     LoadGeneralSettingsAndApply();
@@ -576,6 +584,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     controlHwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         kControlWindowClassName, L"SnowDesktopControl", WS_POPUP,
         0, 0, 1, 1, nullptr, nullptr, instance, this);
+    SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
+        reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
     systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(
         L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
@@ -598,12 +608,24 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
-    ReloadItems(false);
-    StartIconLoader();
-    WriteDiagnosticLogEntry(L"LoadDesktopItems ok");
-    WriteDiagnosticLogEntry(L"Layout done");
-    WriteDiagnosticLogEntry(L"RebuildContainersAndItems ok");
-    logStartupStage(L"desktop items ready");
+    {
+        snowdesktop::startup_diagnostics::Scope startup(L"InitialDesktopLoad", true);
+        snowdesktop::startup_diagnostics::Call(L"StartInitialShellRead", [&] { StartInitialShellRead(); });
+        snowdesktop::startup_diagnostics::Call(L"PollInitialShellRead", [&] {
+            PollInitialShellRead();
+        });
+        if (!desktopItemsReady_)
+        {
+            // Show the saved widgets/layout while Shell is still reading. Do not
+            // feed an empty snapshot into placement, pruning or persistence.
+            LayoutItems();
+            WriteDiagnosticLogEntry(
+                L"Startup Shell read pending; saved widgets shown, desktop items deferred");
+        }
+        snowdesktop::startup_diagnostics::Call(L"StartIconLoader", [&] { StartIconLoader(); });
+    }
+    logStartupStage(desktopItemsReady_
+        ? L"desktop items ready" : L"desktop items deferred");
 
     // App icon
     if (HICON appIcon = LoadAppIcon())
@@ -811,7 +833,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         return generalSettings_.widgetDeveloperToolsEnabled;
     };
     settingsHostOptions.debugVisible = [this]() {
-        return !initializationExperimentDirectory_.empty();
+        return snowdesktop::debug_profile::Enabled() || !initializationExperimentDirectory_.empty();
     };
     settingsHostOptions.ensureWidgetSettingsInstance = [this](
         std::wstring_view instanceId) {
@@ -828,8 +850,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             widgets_[index].id, widgets_[index].packageId);
     };
     settingsHostOptions.backupDataPage.commitLayoutRestore = [this](
-        snowdesktop::winui::LayoutRestorePayload payload) {
-        return CommitLayoutRestore(std::move(payload));
+        snowdesktop::winui::LayoutRestorePayload payload,
+        std::function<void(snowdesktop::SettingsActionResult)> completion) {
+        return CommitLayoutRestore(std::move(payload), std::move(completion));
     };
     settingsHostOptions.backupDataPage.allowDataOperations = [this]() {
         return initializationExperimentDirectory_.empty()
@@ -1198,6 +1221,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         widgetEngine_->SetEverythingSearchProvider([this](const std::string& query, int maxResults) {
             return BuildLuaEverythingSearch(query, maxResults);
         });
+        widgetEngine_->SetCalendarDisplayPreferences(generalSettings_.calendarDisplay);
         widgetEngine_->SetWidgetTitleCallback([this](const std::wstring& widgetId, const std::wstring& title) {
             LuaSetWidgetTitle(widgetId, title);
         });
@@ -1478,19 +1502,15 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // are configured. Activation requests received during startup remain
     // pending until this point, including when native initialization is retried.
     startupInitializationComplete_ = true;
+    RefreshTrayNamespaceRegistrations();
     logStartupStage(L"services ready");
     if (customDesktopVisible_)
     {
         // Consume only already-completed icon work, without pumping unrelated
         // commands or waiting for slow Shell providers. Bound the batch even if
         // phase-two results arrive while phase-one completions are applied.
-        MSG iconMessage{};
-        for (unsigned count = 0; count < 256 &&
-            PeekMessageW(&iconMessage, hwnd_, kIconLoadedMessage,
-                kIconLoadedMessage, PM_REMOVE); ++count)
-        {
-            OnIconLoaded(iconMessage.wParam, iconMessage.lParam);
-        }
+        PollInitialShellRead();
+        iconWork_.Drain();
         FinishWidgetGroupTransitions();
         if (!OnPaint() || !FlushPendingCompositionCommit())
         {
@@ -1526,6 +1546,19 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 desktopBackdropCompositor_.LastError();
             WriteDiagnosticLogEntry(message.c_str());
         }
+        // The first content frame precedes backdrop initialization. Collect
+        // all visible panels while both desktop windows are still hidden;
+        // WM_PAINT after ShowWindow may cover only part of the virtual screen.
+        // A successful submission does not certify the eventual DWM pixels.
+        if (!OnPaint() || !FlushPendingCompositionCommit())
+        {
+            LogDesktopWidgetBackdropState(L"prepare-failed");
+            WriteDiagnosticLogEntry(
+                L"Startup glass frame FAILED; native desktop retained",
+                DiagnosticLogLevel::Error);
+            return __LINE__;
+        }
+        LogDesktopWidgetBackdropState(L"prepared");
     }
     desktopStartupPresentationPending_ = false;
     AddTrayIcon();
@@ -1537,9 +1570,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 ReconcileMode::AllowImmediateActivation);
         UpdateWindow(hwnd_);
         FlushPendingCompositionCommit();
+        LogDesktopWidgetBackdropState(L"shown");
     }
     startupAnimation.Finish();
     logStartupStage(L"desktop handoff complete");
+    snowdesktop::steam_runtime::startup::Ready();
     ShowUsageGuideWelcome();
     TryShowPendingSettingsWindow();
     WriteDiagnosticLogEntry(customDesktopVisible_
@@ -1548,9 +1583,10 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     MSG msg{};
     bool running = true;
-    while (running)
+    while (running && !exitRequested_)
     {
         ProcessGraphicsDeviceRecovery();
+        if (exitRequested_) break;
         HANDLE animationWait = uiAnimationScheduler_.WaitHandle();
         const DWORD handleCount = animationWait ? 1U : 0U;
         const DWORD waitResult = MsgWaitForMultipleObjectsEx(
@@ -1570,7 +1606,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         // and again after every message lets a costly frame repeatedly jump
         // ahead of pointer feedback.
         unsigned processedMessages = 0;
-        while (processedMessages < 64 &&
+        while (!exitRequested_ && processedMessages < 64 &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
@@ -1578,6 +1614,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 running = false;
                 break;
             }
+            // PeekMessage itself dispatches sent messages, including an exit
+            // requested by a nested tray/settings callback.
+            if (exitRequested_) break;
             const bool nativeDragActive =
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
@@ -1629,6 +1668,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            if (exitRequested_) break;
             FinishWidgetGroupTransitions();
             if (usageGuideWelcomeQueued_) ShowUsageGuideWelcome();
             if (usageGuideWaitingForDesktop_ &&
@@ -1645,6 +1685,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FlushPendingQuickNavigationCompositionCommit();
             ++processedMessages;
         }
+        if (!running || exitRequested_) break;
         if (animationWait &&
             (animationWasReady ||
                 WaitForSingleObject(animationWait, 0) ==
@@ -1661,8 +1702,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             FlushPendingQuickNavigationCompositionCommit();
         }
     }
+    WriteDiagnosticLogEntry(L"Application message loop stopped");
     widgetAccessibilityProvider_.reset();
     ShutdownSettingsInfrastructure();
     uiAnimationScheduler_.Shutdown();
-    return static_cast<int>(msg.wParam);
+    return exitRequested_ ? 0 : static_cast<int>(msg.wParam);
 }

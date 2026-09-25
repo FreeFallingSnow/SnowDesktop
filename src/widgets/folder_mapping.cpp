@@ -22,6 +22,7 @@
 #include "../category_settings.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -146,13 +147,17 @@ static RECT FolderMappingTabsRect(FolderMapping* widget)
 /**
  * @brief 计算映射文件夹内容区域的矩形
  * @param widget FolderMapping 组件指针
- * @return 内容区域的 RECT，已向内缩进 4 像素（水平）和 8 像素（垂直）
+ * @return 内容区域矩形，水平缩进 4 CU、顶部在顶栏模式缩进 4 CU，其他模式缩进 8 CU
  */
 static RECT FolderMappingContentRect(FolderMapping* widget)
 {
     if (!widget) return {};
-    RECT body = widget->GetBodyRect();
-    InflateRect(&body, -widget->Cu(4.0f), -widget->Cu(8.0f));
+    RECT body = snowdesktop::storage_title_bar::InsetContent(
+        widget->GetBodyRect(), widget->UsesTopTitleBar(),
+        widget->Cu(4.0f), widget->Cu(8.0f), widget->Cu(4.0f));
+    body.bottom = std::max<LONG>(body.top,
+        std::min<LONG>(body.bottom + widget->Cu(4.0f),
+            widget->GetScrollContentBottom()));
     if (IsRectEmptyRect(body)) return {};
     RECT tabs = FolderMappingTabsRect(widget);
     if (!IsRectEmptyRect(tabs))
@@ -969,6 +974,14 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     {
         RECT empty = GetBodyRect();
         InflateRect(&empty, -Cu(12.0f), -Cu(12.0f));
+        if (!preview && app_->initialShellReadPending_)
+        {
+            app_->DrawPlaceholderIcon(context, -1,
+                snowdesktop::ResolveCenteredIconRect(empty,
+                    std::min(Cu(40.0f), static_cast<int>(std::min(
+                        empty.right - empty.left, empty.bottom - empty.top)))), 1.0f);
+            return;
+        }
         IDWriteTextFormat* centered = GetCuTextFormat(13.0f, false, true);
         IDWriteTextFormat* lightCentered = lt ? GetCuTextFormatWeight(13.0f, DWRITE_FONT_WEIGHT_LIGHT, true) : nullptr;
         app_->DrawD2DText(context, _LW("widget.folder_mapping.empty"), empty,
@@ -1038,7 +1051,9 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     std::vector<std::pair<Item*, RECT>>
         foregroundTitles;
 
-    context->PushAxisAlignedClip(app_->ToD2DRect(content), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    const snowdesktop::ScrollContentClip contentClip(
+        context, scrollContentFadeCache_, content,
+        GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
     if (data_->dateHeaders && !IsSearchActive())
     {
         EnsureDateLayout();
@@ -1121,7 +1136,6 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(
             context, bounds, true, 1.0f, lt);
-    context->PopAxisAlignedClip();
 }
 
 RECT FolderMapping::GetMemberLayoutRect(size_t index) const
@@ -1151,7 +1165,7 @@ void FolderMapping::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, bo
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
     const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = Cu(20.0f * bs);
+    const int resizeReserve = GetTitleBarResizeReserve();
     const int h = handleRect.bottom - handleRect.top;
     RECT toggleBtn = {
         handleRect.right - resizeReserve - gap - btnSize - gapBetween - btnSize,
@@ -1289,7 +1303,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
     const int btnSize = Cu(14.0f * bs);
     const int gap = Cu(4.0f * bs);
     const int gapBetween = Cu(4.0f * bs);
-    const int resizeReserve = Cu(20.0f * bs);
+    const int resizeReserve = GetTitleBarResizeReserve();
     const int h = handle.bottom - handle.top;
     RECT toggleBtn = {
         handle.right - resizeReserve - gap - btnSize - gapBetween - btnSize,

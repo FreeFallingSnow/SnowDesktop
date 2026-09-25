@@ -99,6 +99,11 @@ void DesktopApp::ApplyFloatingDockHotkey()
             IsFloatingEdgeSwipeEnabled(
                 dockSettings_.showOnlyWhenSummoned,
                 dockSettings_.floatingEdgeSwipeEnabled);
+    const auto inputPolicy =
+        snowdesktop::floating_dock_rules::ResolveFloatingDockInputPolicy(
+            generalSettings_.dockEnabled,
+            dockSettings_.floatingShortcutMode,
+            edgeSwipeEnabled);
 
     // Passive drag reveal belongs only to summon-only mode. Clearing it here
     // keeps a settings toggle from leaving a Host effectively floating after
@@ -123,16 +128,10 @@ void DesktopApp::ApplyFloatingDockHotkey()
         }
     }
 
-    if (!generalSettings_.dockEnabled ||
-        (!dockSettings_.showOnlyWhenSummoned &&
-            !snowdesktop::floating_dock_rules::
-                HasAnySummonTrigger(
-                    dockSettings_.floatingShortcutMode,
-                    edgeSwipeEnabled)))
-    {
+    if (inputPolicy.closeFloatingDocks)
         CloseAllFloatingDocks();
+    if (!inputPolicy.monitorPointer)
         return;
-    }
 
     // Register on the independent top-level control window. The desktop input
     // HWND is a 1x1 child of Explorer's current desktop host and can be
@@ -146,7 +145,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
     if (!target)
         return;
 
-    if (dockSettings_.floatingShortcutMode)
+    if (inputPolicy.registerHotkey)
     {
         const UINT hotkeyModifiers =
             dockSettings_.floatingHotkeyModifiers |
@@ -183,14 +182,15 @@ void DesktopApp::ApplyFloatingDockHotkey()
     // optional edge-swipe recognition and mandatory outside-click dismissal.
     // Keeping them in one sampler prevents competing GetAsyncKeyState calls
     // from consuming the same click transition. It also remains available
-    // while a hidden Dock HWND cannot receive mouse or OLE drag messages.
+    // while a hidden Dock HWND cannot receive mouse or OLE drag messages,
+    // and when associated surfaces promote a Dock with no summon triggers.
     if (SetTimer(
             target, kFloatingDockEdgeSwipeTimerId,
             kFloatingDockEdgeSwipeIntervalMs,
             nullptr) != 0)
     {
         floatingDockEdgeSwipeHwnd_ = target;
-        if (edgeSwipeEnabled)
+        if (inputPolicy.monitorEdgeSwipe)
             StartFloatingDockEdgeSwipeMouseMonitor();
     }
 }
@@ -198,7 +198,7 @@ void DesktopApp::ApplyFloatingDockHotkey()
 bool DesktopApp::UpdatePassiveDragRevealHosts(
     POINT cursorScreen)
 {
-    if (!generalSettings_.dockEnabled ||
+    if (desktopPassthroughActive_ || !generalSettings_.dockEnabled ||
         !dockSettings_.showOnlyWhenSummoned)
     {
         return false;
@@ -386,6 +386,12 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
+    if (desktopPassthroughActive_)
+    {
+        floatingDockEdgeSwipeDetector_.Reset();
+        floatingDockPointerButtonsDown_ = 0;
+        return;
+    }
     constexpr UINT leftButtonBit = 1u << 0;
     constexpr UINT rightButtonBit = 1u << 1;
     constexpr UINT middleButtonBit = 1u << 2;

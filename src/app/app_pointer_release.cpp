@@ -35,6 +35,9 @@ bool OpenMissingWidgetWorkshopPage(HWND owner,
 
 void DesktopApp::OnMouseLeave()
 {
+    POINT hoverPoint{};
+    if (TryGetDesktopHoverPointFromCursor(hoverPoint)) UpdatePopupHover(hoverPoint);
+    else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
     if (snowdesktop::desktop_hover_rules::
@@ -861,7 +864,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         {
             const int maximum = container->GetMaxScrollOffset();
             const int visible = container->GetVisibleContentHeight();
-            const RECT viewport = container->GetContentViewportRect();
+            const RECT viewport = container->GetScrollbarViewportRect();
             const auto geometry = snowdesktop::widget_scroll_rules::
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
@@ -999,49 +1002,54 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         return;
     }
 
-    // Guide buttons open modal UI only after the initiating click has been
+    // Widget buttons act only after the initiating click has been
     // released. Opening the menu from WM_LBUTTONDOWN lets that same click's
     // button-up event immediately dismiss the newly-created menu.
-    if (pendingGuideAction_ != WidgetHit::None)
+    if (pendingWidgetButtonAction_ != WidgetHit::None)
     {
-        const WidgetHit pendingAction = pendingGuideAction_;
+        const WidgetHit pendingAction = pendingWidgetButtonAction_;
         const size_t widgetIndex = mouseDownWidgetIndex_;
-        GuideWidget* guide = nullptr;
-        if (widgetIndex < widgets_.size() &&
-            widgets_[widgetIndex].type == DesktopWidgetType::Guide)
+        WidgetContainer* buttonOwner = nullptr;
+        if (widgetIndex < widgets_.size())
         {
             for (auto& container : containers_)
             {
-                auto* candidate = dynamic_cast<GuideWidget*>(container.get());
+                auto* candidate = dynamic_cast<WidgetContainer*>(container.get());
                 if (candidate &&
                     candidate->GetWidgetData() == &widgets_[widgetIndex])
                 {
-                    guide = candidate;
+                    buttonOwner = candidate;
                     break;
                 }
             }
         }
-        const bool invoke = guide &&
-            guide->HitTestWidget(upPoint) == pendingAction;
-        const RECT guideBounds = widgetIndex < widgets_.size()
+        const bool invoke = buttonOwner &&
+            buttonOwner->HitTestWidget(upPoint) == pendingAction;
+        const RECT widgetBounds = widgetIndex < widgets_.size()
             ? widgets_[widgetIndex].bounds : RECT{};
 
-        pendingGuideAction_ = WidgetHit::None;
+        pendingWidgetButtonAction_ = WidgetHit::None;
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
         ReleaseCapture();
-        if (!IsRectEmpty(&guideBounds))
-            InvalidateRect(hwnd_, &guideBounds, FALSE);
+        if (!IsRectEmpty(&widgetBounds))
+            InvalidateRect(hwnd_, &widgetBounds, FALSE);
 
         if (!invoke)
             return;
+        if (pendingAction == WidgetHit::CollapseToggleBtn)
+        {
+            ToggleWidgetCollapsed(widgetIndex);
+            return;
+        }
         if (pendingAction == WidgetHit::GuideDetailsBtn)
         {
-            guide->ToggleDetails();
-            InvalidateRect(hwnd_, &guideBounds, FALSE);
+            if (auto* guide = dynamic_cast<GuideWidget*>(buttonOwner))
+                guide->ToggleDetails();
+            InvalidateRect(hwnd_, &widgetBounds, FALSE);
             return;
         }
 
@@ -1259,6 +1267,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
             pendingCtrlToggleWidgetItem_->SetSelected(!pendingCtrlToggleWidgetItem_->IsSelected());
             pendingCtrlToggleWidgetItem_ = nullptr;
         }
+        CompleteRenameClick(wp, upPoint);
         mouseDown_ = false;
         marqueeActive_ = false;
         marqueeWidgetIndex_ = static_cast<size_t>(-1);
@@ -1268,7 +1277,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         navAutoFlipDir_ = 0;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+        // Popup wrappers still exist here; normal capture release must not
+        // cancel the rename delay through pointer-abort cleanup.
+        ++expectedCaptureReleaseDepth_;
         ReleaseCapture();
+        --expectedCaptureReleaseDepth_;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }

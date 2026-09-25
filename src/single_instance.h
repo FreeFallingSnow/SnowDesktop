@@ -40,6 +40,27 @@ private:
     DWORD lastError_ = ERROR_SUCCESS;
 };
 
+// Internal tray/settings restart handoff. Preparation can fail while the old
+// host is still usable; the child cannot execute until host teardown finishes.
+class PreparedRestart
+{
+public:
+    PreparedRestart() = default;
+    ~PreparedRestart();
+    PreparedRestart(const PreparedRestart&) = delete;
+    PreparedRestart& operator=(const PreparedRestart&) = delete;
+
+    DWORD Prepare(std::wstring_view executablePath);
+    DWORD Resume();
+    DWORD ProcessId() const { return processId_; }
+
+private:
+    HANDLE job_ = nullptr;
+    HANDLE process_ = nullptr;
+    HANDLE thread_ = nullptr;
+    DWORD processId_ = 0;
+};
+
 struct InstanceInfo
 {
     HWND controlWindow = nullptr;

@@ -1,4 +1,5 @@
 #include "calendar_service.h"
+#include "calendar_display.h"
 
 #include <windows.h>
 
@@ -65,6 +66,41 @@ int main()
             "2025-12-31", 1) ==
             std::optional<std::string>("2026-01-01"),
         "date shifting crosses year");
+
+    // Independent civil dates protect real conversion, holiday selection and off-state semantics.
+    using snowdesktop::calendar::Annotate;
+    snowdesktop::calendar::DisplayPreferences display;
+    display.enabled = true;
+    auto lunar = Annotate("2024-02-10", "2024-02-10", display, "zh-CN");
+    Expect(lunar.size() == 1 && lunar[0].calendarAvailable && lunar[0].month == 1 && lunar[0].day == 1 && !lunar[0].leapMonth,
+        "Chinese New Year maps to month one day one");
+    lunar = Annotate("2023-03-22", "2023-03-22", display, "zh-CN");
+    Expect(lunar.size() == 1 && lunar[0].month == 2 && lunar[0].day == 1 && lunar[0].leapMonth, "Chinese leap month is preserved");
+    Expect(lunar[0].secondary == "闰二月", "first lunar day displays leap month name");
+    Expect(Annotate("2024-02-11", "2024-02-11", display, "zh-CN")[0].secondary == "初二", "ordinary lunar date uses traditional day name");
+    Expect(Annotate("2024-03-01", "2024-03-01", display, "zh-CN")[0].secondary == "廿一", "lunar day twenty one is compact");
+    Expect(Annotate("2026-10-01", "2026-10-01", display, "zh-CN")[0].fullDate.find(" 星期四") != std::string::npos,
+        "full lunar date separates the weekday with a space");
+    Expect(Annotate("2024-02-10", "2024-02-10", display, "zh-CN")[0].secondary == "正月", "lunar new year caption is month only");
+    display.holidaysEnabled = true; display.region = "CN";
+    const auto formerHoliday = Annotate("2024-10-01", "2024-10-01", display, "zh-CN");
+    Expect(formerHoliday.size() == 1 && formerHoliday[0].calendarAvailable && formerHoliday[0].holidays.empty() && !formerHoliday[0].holidaysAvailable,
+        "legacy holiday preferences cannot restore removed holiday display");
+    display.calendar = "persian";
+    auto persian = Annotate("2024-03-20", "2024-03-20", display, "en-US");
+    Expect(persian.size() == 1 && persian[0].year == 1403 && persian[0].month == 1 && persian[0].day == 1, "Persian New Year conversion");
+    display.enabled = false;
+    auto disabled = Annotate("2024-10-01", "2024-10-01", display, "zh-CN");
+    Expect(disabled.size() == 1 && !disabled[0].calendarAvailable && disabled[0].secondary.empty() && disabled[0].holidays.empty(), "disabled extra calendar leaves no annotations");
+    Expect(Annotate("2024-02-30", "2024-03-01", display, "en-US").empty() &&
+        Annotate("2024-03-01", "2024-02-01", display, "en-US").empty() &&
+        Annotate("2024-01-01", "2024-04-01", display, "en-US").empty(), "annotation input and work limits are enforced");
+    for (const auto& option : snowdesktop::calendar::CalendarOptions("en-US"))
+    {
+        display.enabled = true; display.calendar = option.id;
+        const auto sample = Annotate("2024-02-10", "2024-02-10", display, "en-US");
+        Expect(!option.label.empty() && sample.size() == 1 && sample[0].calendarAvailable, "advertised calendar converts with installed ICU");
+    }
 
     CalendarNow now{ "2026-07-30", 9 * 60 + 40 };
     const auto path = root / L"SnowDesktop.calendar.json";

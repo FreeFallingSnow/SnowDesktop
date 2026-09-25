@@ -1,4 +1,5 @@
 #include "popup_animation_rules.h"
+#include "app/popup_dwell_controller.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -34,7 +35,157 @@ int main()
 {
     using namespace snowdesktop::popup_animation_rules;
 
+    // Exercise the production hover-switch dispatcher and timing controller.
+    // Only the window/GPU boundary is replaced: close advances the real State,
+    // and publishing replacement content must wait for its hidden endpoint.
+    for (const bool fadeMode : {false, true})
+    {
+        State outgoing;
+        outgoing.Configure(fadeMode, 2.0);
+        outgoing.ShowImmediately();
+        PopupHoverController hover;
+        hover.Track(L"dock:folder-b", 100);
+        int closes = 0, opens = 0;
+        const auto close = [&] { ++closes; outgoing.Close(700); };
+        const auto open = [&] {
+            Check(outgoing.IsHidden(), "new popup cannot replace visible outgoing content");
+            Check(hover.Consume(900, 600), "waiting for close retains the completed hover delay");
+            ++opens;
+        };
+        Check(hover.IsReady(700, 600) && !OpenAfterClose(outgoing, true, close, open) &&
+                outgoing.IsClosing() && closes == 1 && opens == 0 && hover.Pending(),
+            "mature hover starts the old popup's close before publishing another source");
+        outgoing.Advance(790);
+        Check(!OpenAfterClose(outgoing, true, close, open) && closes == 1 &&
+                opens == 0 && outgoing.GetVisual().visible,
+            "repeated hover polls preserve the in-progress outgoing animation");
+        outgoing.Advance(880);
+        Check(OpenAfterClose(outgoing, false, close, open) && closes == 1 && opens == 1,
+            "new content opens only after close completes for scale and fade");
+    }
+    {
+        State immediate;
+        immediate.ShowImmediately();
+        int closes = 0, opens = 0;
+        Check(OpenAfterClose(immediate, true,
+                [&] { ++closes; immediate.ResetHidden(); }, [&] { ++opens; }) &&
+                closes == 1 && opens == 1,
+            "disabled effects close and open in one dispatch without an extra dwell");
+        immediate.ResetHidden();
+        Check(OpenAfterClose(immediate, false, [&] { ++closes; }, [&] { ++opens; }) &&
+                closes == 1 && opens == 2,
+            "opening from an empty surface does not request an outgoing animation");
+    }
+    {
+        PopupHoverController hover;
+        hover.Track(L"collection:b", 100);
+        Check(hover.IsReady(700, 600), "a switch can start after the dwell delay");
+        hover.Reset();
+        Check(!hover.IsReady(900, 600) && !hover.Consume(900, 600),
+            "leaving or disabling hover during close cancels replacement opening");
+        hover.Track(L"collection:b", 1000);
+        Check(hover.IsReady(1600, 600), "reentry must complete another dwell");
+        hover.SuppressUntilLeave();
+        Check(!hover.IsReady(1800, 600), "clicking during close cancels the pending hover switch");
+        hover.Track(L"collection:c", 1900);
+        Check(!hover.IsReady(2400, 600) && hover.IsReady(2500, 600),
+            "moving to a third opener during close requires its own full dwell");
+    }
+
+    // A configured dwell must govern both readiness and opening, including
+    // values on either side of the former fixed 600 ms threshold.
+    for (const DWORD delay : {100u, 1200u, 3000u})
+    {
+        PopupHoverController hover;
+        hover.Track(L"dock:custom-delay", 100);
+        Check(!hover.IsReady(100 + delay - 1, delay) &&
+                !hover.Consume(100 + delay - 1, delay),
+            "a configured hover delay must not open early");
+        Check(hover.IsReady(100 + delay, delay) &&
+                hover.Consume(100 + delay, delay) &&
+                !hover.Consume(100 + delay + 1, delay),
+            "a configured hover delay opens exactly once at its threshold");
+    }
+    {
+        PopupHoverController hover;
+        hover.Track(L"collection:updated-delay", 100);
+        Check(!hover.IsReady(800, 1200) && hover.IsReady(800, 300),
+            "changing the setting updates the pending hover's threshold");
+        hover.Track(L"collection:other", 800);
+        Check(!hover.IsReady(1099, 300) && hover.IsReady(1100, 300),
+            "a different opener still needs its own configured delay");
+    }
+
     State state;
+    // Directory/icon completions used to retire the native snapshot and cancel
+    // its completion token mid-open. Exercise production refresh dispatch with
+    // GPU operations as callbacks; this does not measure displayed DWM frames.
+    State native;
+    native.Open(100);
+    int queued = 0, prepared = 0, retired = 0;
+    const auto queueNative = [&] { ++queued; };
+    const auto prepareNative = [&] { ++prepared; };
+    const auto retireNative = [&] { ++retired; };
+    for (const std::uint64_t arrival : { 115u, 145u, 220u })
+    {
+        const auto nativeAction = RefreshContent(native, arrival, true,
+            queueNative, prepareNative, retireNative);
+        Check(nativeAction == ContentRefreshAction::ContinueCompositor &&
+            prepared == 0 && retired == 0 && native.IsAnimating() && native.IsInteractive() &&
+            NearlyEqual(native.GetVisual().progress, 0.0f),
+            "content arrivals, including a late completion, must keep the native track alive");
+    }
+    Check(queued == 3, "every content arrival requests fresh snapshot pixels");
+    native.Advance(230);
+    Check(!native.IsAnimating() && NearlyEqual(native.GetVisual().progress, 1.0f),
+        "the original native completion still finishes open on time");
+    native.Close(300);
+    const auto nativeCloseAction = RefreshContent(native, 400, true,
+        queueNative, prepareNative, retireNative);
+    Check(nativeCloseAction == ContentRefreshAction::ContinueCompositor &&
+        native.IsClosing() && retired == 0 && prepared == 0,
+        "late content during native close cannot reopen or prematurely retire the popup");
+    native.Advance(400);
+    Check(native.IsHidden(), "the original native completion still finishes close on time");
+
+    // Without an independent native track, the UI fallback still replaces its
+    // cached pixels before retirement and resumes the original elapsed clock.
+    State refreshed;
+    bool oldSnapshot = true, oldCompletion = true;
+    bool liveReady = false;
+    const auto prepareLive = [&] {
+        Check(oldSnapshot, "replacement pixels are prepared while the native snapshot still covers the host");
+        liveReady = true;
+    };
+    const auto retire = [&] {
+        Check(liveReady || refreshed.IsHidden(), "a visible snapshot cannot retire before replacement pixels are ready");
+        oldSnapshot = false; oldCompletion = false;
+    };
+    int unexpectedNativeUpdates = 0;
+    const auto noNativeQueue = [&] { ++unexpectedNativeUpdates; };
+    refreshed.Open(100);
+    auto action = RefreshContent(refreshed, 145, false, noNativeQueue, prepareLive, retire);
+    Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
+        NearlyEqual(refreshed.GetVisual().progress, 0.5f) && refreshed.IsInteractive(),
+        "UI fallback content completion retires its snapshot and resumes the elapsed opening timeline");
+    refreshed.Close(145);
+    oldSnapshot = oldCompletion = true;
+    liveReady = false;
+    action = RefreshContent(refreshed, 160, false, noNativeQueue, prepareLive, retire);
+    Check(!oldSnapshot && !oldCompletion && action == ContentRefreshAction::ContinueAnimation &&
+        refreshed.IsClosing() && NearlyEqual(refreshed.GetVisual().progress, 1.0f / 3.0f),
+        "new folder contents during close preserve direction and elapsed progress");
+    liveReady = false;
+    action = RefreshContent(refreshed, 200, false, noNativeQueue, prepareLive, retire);
+    Check(!liveReady, "an elapsed close does not publish another visible frame");
+    Check(action == ContentRefreshAction::FinalizeClose && refreshed.IsHidden(),
+        "late content completion finalizes an elapsed close instead of resurrecting its snapshot");
+    refreshed.Open(300);
+    oldSnapshot = oldCompletion = true;
+    action = RefreshContent(refreshed, 400, false, noNativeQueue, prepareLive, retire);
+    Check(action == ContentRefreshAction::Stable && refreshed.IsInteractive() && !refreshed.IsAnimating(),
+        "late content completion after opening paints current content without replaying animation");
+    Check(unexpectedNativeUpdates == 0, "UI fallback cannot queue a native surface update");
     Check(state.IsHidden(), "new state starts hidden");
     Check(!state.IsInteractive(), "hidden popup does not accept input");
 

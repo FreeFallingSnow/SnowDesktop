@@ -1,18 +1,12 @@
 #pragma once
 
-#include <windows.h>
+#include "windows_compat.h"
 #include <unknwn.h>
 
 // SnowDesktop supplies wWinMain and its own message loop. The generated XAML
 // application must not emit a second entry point.
 #ifndef DISABLE_XAML_GENERATED_MAIN
 #define DISABLE_XAML_GENERATED_MAIN
-#endif
-
-// windows.h defines GetCurrentTime as a macro, while WinUI exposes a method
-// with that name on Storyboard.
-#ifdef GetCurrentTime
-#undef GetCurrentTime
 #endif
 
 #include <winrt/base.h>

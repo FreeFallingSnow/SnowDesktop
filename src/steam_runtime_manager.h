@@ -16,6 +16,7 @@ struct ApplyResult
     std::filesystem::path executable;
     std::string buildId;
     std::string error;
+    unsigned launcherProtocol = 0;
 };
 
 struct PruneResult
@@ -32,12 +33,35 @@ struct PruneResult
  * returned without modifying user data.
  */
 [[nodiscard]] ApplyResult ApplyDistribution(
-    const std::filesystem::path& installRoot);
+    const std::filesystem::path& installRoot, bool retryFailedLaunch = false);
+
+// Only the launcher receiving this runtime's readiness acknowledgement calls
+// this. A stale acknowledgement cannot confirm a newer selection.
+[[nodiscard]] bool ConfirmRuntimeStarted(
+    const std::filesystem::path& installRoot,
+    const std::filesystem::path& executable, std::string& error);
+
+struct LaunchAttempt
+{
+    std::string token;
+    std::string previousRuntime;
+};
+
+// Persist the conservative data-access boundary before creating the process.
+// The token prevents an older concurrent attempt from undoing a later launch.
+[[nodiscard]] bool BeginRuntimeLaunch(
+    const std::filesystem::path& installRoot,
+    const std::filesystem::path& executable, LaunchAttempt& attempt,
+    std::string& error);
+
+// Used only when the failed child has not begun accessing user data.
+[[nodiscard]] ApplyResult RecoverAfterLaunchFailure(
+    const std::filesystem::path& installRoot,
+    const std::filesystem::path& failedExecutable, const LaunchAttempt& attempt);
 
 /**
- * Remove every launcher-owned inactive runtime except the selected
- * executable's runtime, including runtimes polluted by unexpected files.
- * Occupied directories are retained for a later retry.
+ * Retire inactive runtimes only for the confirmed current executable, keeping
+ * its predecessor. Occupied directories are left for the next launch.
  */
 [[nodiscard]] PruneResult PruneInactiveRuntimes(
     const std::filesystem::path& installRoot,

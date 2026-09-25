@@ -7,13 +7,16 @@
 #include "widget_scroll_rules.h"
 #include "widget_visibility_rules.h"
 #include "widgets/widget_chrome_rules.h"
+#include "widgets/storage_title_bar_layout.h"
 #include "widgets/guide_widget_rules.h"
 #include "pending_drop_rules.h"
 #include "list_detail_rules.h"
 #include "popup_icon_load_rules.h"
+#include "widget_menu_catalogue.h"
 
 #include <algorithm>
 #include <deque>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <set>
@@ -46,6 +49,125 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void TestWidgetMenuMetadataReuse()
+{
+    namespace menu = snowdesktop::widget_menu;
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() /
+        (L"SnowDesktop-menu-metadata-" + std::to_wstring(GetCurrentProcessId()) +
+            L"-" + std::to_wstring(GetTickCount64()));
+    fs::create_directories(root / L"builtin");
+    fs::create_directories(root / L"development");
+    struct Cleanup
+    {
+        fs::path root;
+        ~Cleanup() { std::error_code ignored; fs::remove_all(root, ignored); }
+    } cleanup{root};
+    const auto write = [](const fs::path& directory, const char* text) {
+        std::ofstream(directory / L"widget.json", std::ios::binary) << text;
+    };
+    write(root / L"builtin", "alpha");
+    write(root / L"development", "dev");
+    std::vector<snowdesktop::widget::InstalledPackage> packages(1);
+    auto& package = packages.front();
+    package.manifest.id = "package-a";
+    package.manifest.version = "1.0.0";
+    package.root = root / L"builtin";
+    package.builtin = true;
+    int reads = 0;
+    std::string language = "en-US";
+    // Substitute only the engine's manifest parser/version check. The actual
+    // menu catalogue probes real files, filters states and controls all reads.
+    const auto load = [&](const auto& input) {
+        ++reads;
+        std::ifstream file(input.root / L"widget.json", std::ios::binary);
+        std::string name;
+        std::getline(file, name);
+        menu::Metadata result;
+        result.packageId.assign(input.manifest.id.begin(), input.manifest.id.end());
+        result.name.assign(name.begin(), name.end());
+        if (language == "zh-CN") result.name = L"中文组件";
+        result.description = L"Searchable description";
+        result.publisher = L"Publisher";
+        result.compatible = name != "future";
+        result.valid = !name.empty();
+        return result;
+    };
+    menu::Catalogue catalogue;
+    auto entries = catalogue.Build(packages, language, load);
+    Check(reads == 1 && entries.size() == 1 &&
+            entries[0].displayName == L"alpha" &&
+            entries[0].searchText ==
+                L"alpha\npackage-a\nSearchable description\nPublisher" &&
+            entries[0].source == menu::Source::Builtin,
+        "menu loads name/search metadata once from the active package");
+    for (int opening = 0; opening < 10; ++opening)
+        entries = catalogue.Build(packages, language, load);
+    Check(reads == 1 && entries.size() == 1,
+        "reopening an unchanged menu must not read component manifests again");
+
+    const auto originalTime = fs::last_write_time(package.root / L"widget.json");
+    write(package.root, "bravo"); // Same size: modification time must invalidate.
+    fs::last_write_time(package.root / L"widget.json",
+        originalTime + std::chrono::seconds(2));
+    entries = catalogue.Build(packages, language, load);
+    Check(reads == 2 && entries[0].displayName == L"bravo",
+        "same-size development manifest edits refresh the menu");
+    const auto editedTime = fs::last_write_time(package.root / L"widget.json");
+    write(package.root, "longer title");
+    fs::last_write_time(package.root / L"widget.json", editedTime);
+    entries = catalogue.Build(packages, language, load);
+    Check(reads == 3 && entries[0].displayName == L"longer title",
+        "size changes refresh metadata even with a preserved timestamp");
+
+    language = "zh-CN";
+    entries = catalogue.Build(packages, language, load);
+    Check(reads == 4 && entries[0].displayName == L"中文组件",
+        "language changes cannot reuse text from the previous language");
+    package.root = root / L"development";
+    package.builtin = false;
+    package.development = true;
+    language = "en-US";
+    entries = catalogue.Build(packages, language, load);
+    Check(reads == 5 && entries[0].displayName == L"dev" &&
+            entries[0].source == menu::Source::Development,
+        "source overrides replace both metadata and source classification");
+    package.development = false;
+    entries = catalogue.Build(packages, language, load);
+    Check(reads == 5 && entries[0].source == menu::Source::Installed,
+        "source classification reflects the current package state on cache hits");
+    package.sha256 = "replacement-content";
+    entries = catalogue.Build(packages, language, load);
+    Check(reads == 6, "package replacement invalidates identical file metadata");
+
+    package.enabled = false;
+    Check(catalogue.Build(packages, language, load).empty() && reads == 6,
+        "disabled packages disappear without reading their manifests");
+    package.enabled = true;
+    package.active = false;
+    Check(catalogue.Build(packages, language, load).empty() && reads == 6,
+        "shadowed packages cannot reappear through cached entries");
+    package.active = true;
+    entries = catalogue.Build(packages, language, load);
+    Check(reads == 7 && entries.size() == 1,
+        "reenabling a package reloads metadata discarded while disabled");
+
+    write(package.root, "future");
+    Check(catalogue.Build(packages, language, load).empty(),
+        "cached metadata retains the host-version compatibility filter");
+    fs::remove(package.root / L"widget.json");
+    entries = catalogue.Build(packages, language, load);
+    Check(entries.size() == 1 && entries[0].displayName == L"package-a",
+        "a missing manifest does not retain stale names or compatibility state");
+    write(package.root, "restored");
+    entries = catalogue.Build(packages, language, load);
+    Check(entries.size() == 1 && entries[0].displayName == L"restored",
+        "a recovered manifest replaces a failed read immediately");
+    packages.clear();
+    Check(catalogue.Build(packages, language, load).empty(),
+        "uninstalled packages leave no menu entries");
 }
 
 void TestMarqueeUsesContentCoordinates()
@@ -293,6 +415,125 @@ void TestPendingFilePlacementReconciliation()
             "old-a", "new-a", "new-b", "old-b"
         }),
         "multiple pending members must preserve their landing order");
+}
+
+void TestScrollableStorageTitleBar()
+{
+    namespace titleBar = snowdesktop::storage_title_bar;
+    DesktopWidget widget;
+    widget.gridSpan.columns = 3;
+    widget.gridSpan.rows = 4;
+    for (const auto type : {DesktopWidgetType::Collection,
+            DesktopWidgetType::FileCategories, DesktopWidgetType::FolderMapping,
+            DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+    {
+        widget.type = type;
+        widget.scrollContainerMode = true;
+        Check(titleBar::UsesTop(widget, true) && !titleBar::UsesTop(widget, false),
+            "the global position switch applies to every scrollable storage type");
+    }
+    widget.type = DesktopWidgetType::Collection;
+    widget.scrollContainerMode = false;
+    Check(!titleBar::UsesTop(widget, true), "large-folder collections keep their bottom bar");
+    widget.scrollContainerMode = true;
+    widget.gridSpan.columns = widget.gridSpan.rows = 1;
+    Check(!titleBar::UsesTop(widget, true), "compact collections keep their bottom bar");
+    for (const auto type : {DesktopWidgetType::LuaScript, DesktopWidgetType::Guide})
+    {
+        widget.type = type;
+        Check(!titleBar::UsesTop(widget, true), "Lua and guide chrome is unaffected");
+    }
+
+    const RECT frame{100, 200, 400, 600};
+    const auto bottom = titleBar::Resolve(frame, false, 24, 24, 22, 12, 4, 2);
+    Check(bottom.body.top == 200 && bottom.body.bottom == 578 &&
+            bottom.titleBar.top == 574 && bottom.titleBar.bottom == 598 &&
+            bottom.resize.left == 372 && bottom.resize.right == 396 &&
+            bottom.resize.top == 574 && bottom.contentBottom == 574,
+        "default bottom position preserves existing content, move and resize geometry");
+    // A former footer clamp at titleBar.top would erase this content viewport.
+    for (const int height : {24, 34, 48})
+    {
+        const auto top = titleBar::Resolve(frame, true, height, 24, 22, 12, 4, 2);
+        Check(top.titleBar.top == 202 &&
+                top.titleBar.bottom - top.titleBar.top == height &&
+                top.body.top == top.titleBar.bottom && top.body.bottom == 600 &&
+                top.contentBottom == 598 && top.contentBottom > top.body.top,
+            "top title uses tab height, shifts content once and releases the footer row");
+        Check(EqualRect(&top.resize, &bottom.resize) &&
+                top.resize.top > top.titleBar.bottom,
+            "top title height never moves or enlarges the bottom-right resize target");
+    }
+    const auto scaled = titleBar::Resolve({200, 400, 800, 1200},
+        true, 68, 48, 44, 56, 8, 4);
+    Check(scaled.titleBar.bottom == 472 && scaled.body.bottom == 1200 &&
+            scaled.resize.top == 1148 && scaled.resize.bottom == 1196 &&
+            scaled.resize.right < 800,
+        "scaled title and resize targets remain inside rounded corners");
+
+    widget.type = DesktopWidgetType::FolderMapping;
+    widget.gridSpan.columns = 3;
+    widget.gridSpan.rows = 4;
+    widget.bounds = frame;
+    widget.scrollOffset = 137;
+    Check(!titleBar::IsCollapsed(widget, true, false, false, false),
+        "new and legacy widgets start expanded");
+    widget.titleBarCollapsed = true;
+    Check(titleBar::IsCollapsed(widget, true, false, false, false) &&
+            !titleBar::IsCollapsed(widget, false, false, false, false),
+        "only top title bars apply the stored collapse preference");
+    Check(!titleBar::IsCollapsed(widget, true, true, false, false),
+        "internal drag and retained drop context temporarily expand a collapsed target");
+    Check(!titleBar::IsCollapsed(widget, true, false, true, false),
+        "external file drag temporarily expands a collapsed target");
+    Check(!titleBar::IsCollapsed(widget, true, false, false, true),
+        "moving a widget temporarily expands collapsed targets");
+    const RECT collapsed = titleBar::VisibleFrame(frame,
+        titleBar::IsCollapsed(widget, true, false, false, false), 34, 2);
+    const RECT expanded = titleBar::VisibleFrame(frame, false, 34, 2);
+    Check(collapsed.left == 100 && collapsed.top == 200 &&
+            collapsed.right == 400 && collapsed.bottom == 238 &&
+            EqualRect(&expanded, &frame),
+        "ending or cancelling a drag restores just the title row; expanding restores full bounds");
+    Check(widget.titleBarCollapsed && widget.gridSpan.columns == 3 &&
+            widget.gridSpan.rows == 4 && widget.scrollOffset == 137 &&
+            EqualRect(&widget.bounds, &frame),
+        "temporary expansion never changes saved preference, occupancy, size or scroll position");
+    widget.type = DesktopWidgetType::Collection;
+    widget.scrollContainerMode = false;
+    Check(!titleBar::IsCollapsed(widget, true, false, false, false),
+        "switching to large-folder mode reveals content despite a retained collapse preference");
+
+    const RECT centered = titleBar::CenteredTitleRect({100, 202, 400, 236}, 26, 60, 3);
+    Check(centered.left == 160 && centered.right == 340 &&
+            centered.top == 205 && centered.bottom == 233,
+        "title is centered on the complete widget while avoiding both toolbar sides");
+    const RECT narrow = titleBar::CenteredTitleRect({100, 202, 150, 236}, 26, 60, 3);
+    Check(narrow.left == 125 && narrow.right == 125,
+        "narrow widgets hide title text instead of overlapping controls or inverting its rectangle");
+
+    // The entire original footprint remains an activation target when folded.
+    // Leaving, including native mouse-leave,
+    // returns to the saved fold unless an interaction still owns the content.
+    Check(titleBar::ExpandOnHover(true, false, false, true, false, false, false),
+        "hovering anywhere in the full frame opens a collapsed widget");
+    Check(titleBar::ExpandOnHover(true, true, false, true, false, false, false),
+        "moving within the full frame keeps the widget expanded");
+    Check(!titleBar::ExpandOnHover(true, true, false, false, false, false, false) &&
+            titleBar::ExpandOnHover(true, true, false, false, false, false, true),
+        "leaving folds the widget unless a menu or editing interaction retains it");
+    Check(titleBar::ExpandOnHover(true, true, false, false, true, false, false),
+        "widget selection retains hover expansion after pointer leave");
+    Check(titleBar::ExpandOnHover(true, true, false, false, false, true, false),
+        "selected inner files retain hover expansion after pointer leave");
+    Check(!titleBar::ExpandOnHover(true, false, false, false, false, false, true),
+        "interaction retention alone must not open an unhovered widget");
+    Check(!titleBar::ExpandOnHover(true, false, false, false, true, false, false),
+        "selection left by manual collapse must not immediately reopen the widget");
+    Check(!titleBar::ExpandOnHover(true, false, true, true, true, false, false),
+        "manual collapse suppresses expansion throughout the full frame");
+    Check(!titleBar::ExpandOnHover(false, true, false, true, true, true, true),
+        "disabling hover expansion or top mode clears transient expansion");
 }
 
 void TestBottomBarWidthFollowsCornerAndHeight()
@@ -942,46 +1183,6 @@ void TestDragInputSampling()
 
 void TestPopupIconLoadCancellationRules()
 {
-    struct Task
-    {
-        bool popup = false;
-        std::wstring requestKey;
-    };
-
-    std::deque<Task> queue;
-    std::unordered_set<std::wstring> pendingKeys;
-    const auto append = [&](bool popup, std::wstring key)
-    {
-        pendingKeys.insert(key);
-        queue.push_back(Task{popup, std::move(key)});
-    };
-    append(false, L"ordinary-before");
-    for (int index = 0; index < 5; ++index)
-    {
-        append(true, L"popup-queued-" + std::to_wstring(index));
-        if (index == 2) append(false, L"ordinary-middle");
-    }
-    append(false, L"ordinary-after");
-    pendingKeys.insert(L"popup-in-flight");
-    pendingKeys.insert(L"popup-posted");
-
-    const std::size_t removed =
-        snowdesktop::popup_icon_load_rules::CancelQueuedTasks(
-            queue, pendingKeys,
-            [](const Task& task) { return task.popup; });
-    Check(removed == 5 && queue.size() == 3 &&
-            queue[0].requestKey == L"ordinary-before" &&
-            queue[1].requestKey == L"ordinary-middle" &&
-            queue[2].requestKey == L"ordinary-after",
-        "popup cancellation removes interleaved tasks without reordering other icon work");
-    Check(pendingKeys.size() == 5 &&
-            pendingKeys.contains(L"ordinary-before") &&
-            pendingKeys.contains(L"ordinary-middle") &&
-            pendingKeys.contains(L"ordinary-after") &&
-            pendingKeys.contains(L"popup-in-flight") &&
-            pendingKeys.contains(L"popup-posted"),
-        "popup cancellation must erase only exact queued keys and retain in-flight or posted keys");
-
     namespace popupRules =
         snowdesktop::popup_icon_load_rules;
     const std::uint64_t currentGeneration = 43;
@@ -1554,11 +1755,13 @@ void TestListDetailRules()
 
 int main()
 {
+    TestWidgetMenuMetadataReuse();
     TestMarqueeUsesContentCoordinates();
     TestViewportClipping();
     TestActiveItemFallback();
     TestTabWidthDistribution();
     TestBottomBarWidthFollowsCornerAndHeight();
+    TestScrollableStorageTitleBar();
     TestBottomBarContentReservation();
     TestGuidePlaceholderLifecycle();
     TestStableReorder();

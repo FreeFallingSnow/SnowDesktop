@@ -2,6 +2,7 @@
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
+#include "modern_menu_scroll_hint.h"
 
 #include <dwmapi.h>
 #include <imm.h>
@@ -30,6 +31,15 @@ constexpr UINT_PTR kTextCaretTimer = 3;
 constexpr UINT kTextCaretBlinkMs = 530;
 constexpr UINT kCancelMessage = WM_APP + 0x311;
 std::atomic<HWND> gActiveRootMenu{ nullptr };
+
+bool IsWindowAbove(HWND upper, HWND lower)
+{
+    if (!upper || !lower) return false;
+    for (HWND current = upper; current;
+         current = GetWindow(current, GW_HWNDNEXT))
+        if (current == lower) return true;
+    return false;
+}
 
 int Scale(int value, UINT dpi)
 {
@@ -99,6 +109,9 @@ struct Popup
     int hoveredItem = -1;
     int keyboardItem = -1;
     int scrollOffset = 0;
+    int scrollBand = 0;
+    int scrollTopBand = 0, scrollBottomBand = 0;
+    int scrollHover = 0;
     int horizontalScrollOffset = 0;
     int horizontalScrollContentWidth = 0;
     RECT horizontalScrollRect{};
@@ -109,6 +122,7 @@ struct Popup
     int windowWidth = 0;
     int windowHeight = 0;
     POINT panelScreenOrigin{};
+    menu_icon::Metrics rowMetrics;
     std::vector<RECT> itemRects;
     std::vector<int> navigationOrder;
     RECT quickSeparatorRect{};
@@ -128,13 +142,18 @@ public:
           blurEnabled_(appearance_rules::UsesSystemBlur(
               effectiveAppearance_)),
           palette_(menu_icon::ResolvePalette(lightTheme_)),
-          metrics_(menu_icon::ResolveMetrics(options.dpi)),
+          metrics_(menu_icon::ResolveMetrics(options.dpi,
+              appearance_rules::IsWin10Style(effectiveAppearance_))),
           // Acrylic is composed for the complete HWND and does not respect an
           // inset alpha-only shadow margin.  Its window must therefore match
           // the panel bounds exactly; DWM supplies the material shadow.
-          shadowSize_(blurEnabled_ ? 0 : Scale(12, options.dpi)),
-          panelPadding_(Scale(kSubmenuPanelPaddingDip, options.dpi)),
-          panelRadius_(Scale(8, options.dpi))
+          shadowSize_(blurEnabled_ ? 0 : Scale(
+              appearance_rules::IsWin10Style(effectiveAppearance_) ? 6 : 12,
+              options.dpi)),
+          panelPadding_(Scale(appearance_rules::PanelPaddingDip(
+              effectiveAppearance_), options.dpi)),
+          panelRadius_(Scale(appearance_rules::PanelRadiusDip(
+              effectiveAppearance_), options.dpi))
     {
         const int textHeight = -metrics_.textFontHeight;
         const int iconHeight = -metrics_.iconFontHeight;
@@ -202,6 +221,11 @@ public:
         if (rootItems_.empty() || !RegisterWindowClass())
             return {};
 
+        // A desktop Dock may temporarily be topmost during Show Desktop,
+        // despite not being summoned. Do not make it the menu's native owner:
+        // activation would then also reorder that independent desktop surface.
+        if (ResolveZOrderFloor())
+            options_.topmost = true;
         if (!OpenPopup(rootItems_, 0, -1, options_.anchor, nullptr))
             return {};
 
@@ -220,6 +244,7 @@ public:
             }
             SetForegroundWindow(rootWindow);
             SetFocus(rootWindow);
+            RestoreOwnedPopupZOrder();
             TraceOwnedPopupZOrder(
                 L"session-start", nullptr, true);
         }
@@ -228,13 +253,39 @@ public:
         bool quitReceived = false;
         while (!done_ && !quitReceived)
         {
+            if (options_.pollItems)
+            {
+                const bool canApply = popups_.size() == 1 && popups_.front()->hoveredItem < 0 &&
+                                      !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
+                                      !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
+                                      !(GetAsyncKeyState(VK_RBUTTON) & 0x8000);
+                if (auto updated = options_.pollItems(rootItems_, canApply); updated && canApply)
+                {
+                    const int selected = popups_.front()->keyboardItem;
+                    const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
+                        ? rootItems_[selected].command : 0;
+                    rootItems_ = std::move(*updated);
+                    RefreshPopup(*popups_.front(), true);
+                    if (selectedCommand)
+                        for (size_t i = 0; i < rootItems_.size(); ++i)
+                            if (rootItems_[i].command == selectedCommand)
+                            {
+                                // Restoring a highlight must not reopen a cascade
+                                // the user just dismissed while the query ran.
+                                EnsureVisible(*popups_.front(), static_cast<int>(i));
+                                SetHoveredItem(*popups_.front(), static_cast<int>(i), true, false);
+                                break;
+                            }
+                    options_.pollItems = {};
+                }
+            }
             const HANDLE scheduledWork =
                 options_.eventPump.scheduledWorkHandle;
             const DWORD handleCount = scheduledWork ? 1U : 0U;
             const DWORD waitResult = MsgWaitForMultipleObjectsEx(
                 handleCount,
                 scheduledWork ? &scheduledWork : nullptr,
-                INFINITE,
+                options_.pollItems ? 50 : INFINITE,
                 QS_ALLINPUT,
                 MWMO_INPUTAVAILABLE);
             if (waitResult == WAIT_FAILED)
@@ -255,8 +306,11 @@ public:
                     quitReceived = true;
                     break;
                 }
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
+                if (!HandleAccessKeyMessage(message))
+                {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
                 TraceOwnedPopupZOrder(
                     L"after-dispatch", &message, false);
                 RestoreOwnedPopupZOrder();
@@ -295,11 +349,19 @@ public:
         HWND expectedRoot = rootWindow;
         gActiveRootMenu.compare_exchange_strong(expectedRoot, nullptr);
         CloseFromDepth(0);
+        TraceOwnedPopupZOrder(L"after-popup-destroy", nullptr, true);
         if (!superseded_ && options_.owner && IsWindow(options_.owner))
         {
             SetForegroundWindow(options_.owner);
             SetFocus(options_.owner);
         }
+        TraceOwnedPopupZOrder(L"after-focus-restore", nullptr, true);
+        // Destroying the popup and restoring focus can synchronously repaint
+        // a hover-only widget exposed beneath the pointer. Submit that content
+        // before the caller starts a Shell extension, whose initialization can
+        // otherwise leave only the independently committed glass visible.
+        if (options_.eventPump.flushPresentation)
+            options_.eventPump.flushPresentation();
         return result_;
     }
 
@@ -313,19 +375,30 @@ public:
             TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, hwnd, 0 };
             TrackMouseEvent(&tracking);
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            const int hover = ScrollHintDirection(popup, point);
+            const bool changed = popup.scrollHover != hover;
+            popup.scrollHover = hover;
             SetHoveredItem(popup, HitTest(popup, point), false);
+            if (changed) Render(popup);
             return 0;
         }
         case WM_MOUSELEAVE:
+            if (popup.scrollHover) { popup.scrollHover = 0; Render(popup); }
             if (popup.depth == ActiveDepth() &&
                 popup.hoveredItem >= 0 &&
                 !HasOpenChild(popup))
                 SetHoveredItem(popup, -1, false);
             return 0;
 
+        case WM_LBUTTONDOWN:
+            pointerPressed_ = true;
+            return 0;
         case WM_LBUTTONUP:
         {
+            pointerPressed_ = false;
             const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            const int direction = ScrollHintDirection(popup, point);
+            if (direction) { Scroll(popup, direction); return 0; }
             const int index = HitTest(popup, point);
             if (index >= 0 &&
                 (*popup.items)[index].textInput)
@@ -359,8 +432,12 @@ public:
                 HandleKey(wParam);
             return 0;
         case WM_CHAR:
-            if (!HandleTextInputCharacter(static_cast<wchar_t>(wParam)))
+            if (!HandleTextInputCharacter(static_cast<wchar_t>(wParam)) &&
+                !SelectByAccessKey(static_cast<wchar_t>(wParam)))
                 SelectByCharacter(static_cast<wchar_t>(wParam));
+            return 0;
+        case WM_SYSCHAR:
+            SelectByAccessKey(static_cast<wchar_t>(wParam));
             return 0;
         case WM_TIMER:
             if (wParam == kTextCaretTimer)
@@ -478,9 +555,9 @@ public:
 
         const RECT viewport{
             panel.left,
-            panel.top + panelPadding_,
+            panel.top + panelPadding_ + popup.scrollTopBand,
             panel.right,
-            panel.bottom - panelPadding_,
+            panel.bottom - panelPadding_ - popup.scrollBottomBand,
         };
         const int savedDc = SaveDC(memoryDc);
         IntersectClipRect(memoryDc, viewport.left, viewport.top,
@@ -511,7 +588,7 @@ public:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
-                item.quickIcon, item.image,
+                item.quickIcon, item.image, item.builtinIcon,
             };
             UINT state = 0;
             if (!item.enabled)
@@ -537,7 +614,7 @@ public:
                 menu_icon::DrawTextInput(memoryDc, textFont_, iconFont,
                     view, inputView, row, palette_, metrics_);
             }
-            else if (popup.depth == 0 && item.quickAction && !item.inlineAction)
+            else if (UsesQuickActionStrip(popup, item))
             {
                 HFONT quickIconFont =
                     item.iconFont == IconFont::FontAwesomeSolid
@@ -572,7 +649,7 @@ public:
             else
             {
                 menu_icon::DrawItem(memoryDc, textFont_, iconFont, view,
-                    row, state, palette_, metrics_, submenuArrowFont_);
+                    row, state, palette_, popup.rowMetrics, submenuArrowFont_);
             }
             RestoreDC(memoryDc, savedRowDc);
         }
@@ -601,10 +678,11 @@ public:
         }
         RestoreDC(memoryDc, savedDc);
 
-        if (popup.scrollOffset > 0)
+        if (popup.scrollBand)
+        {
             DrawScrollIndicator(memoryDc, popup, true);
-        if (popup.scrollOffset < MaxScroll(popup))
             DrawScrollIndicator(memoryDc, popup, false);
+        }
 
         ApplyAlphaMask(popup, pixels, panel);
 
@@ -715,8 +793,24 @@ private:
         return true;
     }
 
-    void CalculateLayout(Popup& popup)
+    bool UsesQuickActionStrip(const Popup& popup, const Item& item) const
     {
+        return !appearance_rules::IsWin10Style(effectiveAppearance_) &&
+            popup.depth == 0 && item.quickAction && !item.separator &&
+            !item.inlineAction;
+    }
+
+    void CalculateLayout(Popup &popup, bool preserveWidth = false)
+    {
+        popup.rowMetrics = metrics_;
+        // Each cascade owns its gutter; icons in descendants or separators
+        // do not reserve space here. Search and inline controls keep their metrics.
+        if (popup.depth > 0 && std::ranges::none_of(*popup.items,
+                [](const Item& item) {
+                    return !item.separator && !item.textInput && !item.inlineAction &&
+                        (item.checked || item.image || !item.glyph.empty());
+                }))
+            popup.rowMetrics.iconColumnWidth = 0;
         HDC screenDc = GetDC(nullptr);
         int width = metrics_.minimumWidth;
         std::vector<int> quickIndices;
@@ -726,8 +820,7 @@ private:
         for (size_t i = 0; i < popup.items->size(); ++i)
         {
             const Item& item = (*popup.items)[i];
-            if (popup.depth == 0 && item.quickAction && !item.separator &&
-                !item.inlineAction)
+            if (UsesQuickActionStrip(popup, item))
             {
                 quickIndices.push_back(static_cast<int>(i));
                 continue;
@@ -765,16 +858,47 @@ private:
                         static_cast<int>(labelSize.cx) +
                             metrics_.outerInset * 4);
                 }
+                else if (item.measureInlineAction && screenDc)
+                {
+                    HGDIOBJ oldFont = SelectObject(screenDc, textFont_);
+                    SIZE labelSize{};
+                    GetTextExtentPoint32W(screenDc, item.label.c_str(), static_cast<int>(item.label.size()),
+                                          &labelSize);
+                    if (oldFont)
+                        SelectObject(screenDc, oldFont);
+                    const int leading =
+                        !item.glyph.empty() || item.image
+                            ? metrics_.leftPadding + metrics_.iconColumnWidth + metrics_.textGap
+                            : metrics_.outerInset * 2;
+                    inlineWidths[i] =
+                        std::max(metrics_.rowHeight * (item.compactInlineAction ? 2 : 1),
+                                 static_cast<int>(labelSize.cx) + leading + metrics_.outerInset * 2);
+                }
                 continue;
             }
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
-                MenuQuickIcon::FontGlyph, item.image,
+                MenuQuickIcon::FontGlyph, item.image, item.builtinIcon,
             };
             const SIZE measured = menu_icon::MeasureItem(
-                screenDc, textFont_, view, metrics_);
+                screenDc, textFont_, view, popup.rowMetrics);
             width = std::max(width, static_cast<int>(measured.cx));
+        }
+        for (size_t position = 0; position < regularIndices.size(); ++position)
+        {
+            const auto &item = (*popup.items)[regularIndices[position]];
+            if (!item.measureInlineAction || !item.inlineAction)
+                continue;
+            int groupWidth = inlineWidths[regularIndices[position]];
+            while (position + 1 < regularIndices.size())
+            {
+                const auto &next = (*popup.items)[regularIndices[position + 1]];
+                if (!next.inlineAction || !next.measureInlineAction || next.inlineGroup != item.inlineGroup)
+                    break;
+                groupWidth += inlineWidths[regularIndices[++position]];
+            }
+            width = std::max(width, groupWidth);
         }
         if (!quickIndices.empty())
         {
@@ -809,6 +933,8 @@ private:
         if (screenDc)
             ReleaseDC(nullptr, screenDc);
 
+        if (preserveWidth)
+            width = popup.panelWidth;
         popup.itemRects.assign(popup.items->size(), RECT{});
         popup.navigationOrder.clear();
         popup.quickSeparatorRect = {};
@@ -817,6 +943,8 @@ private:
         popup.quickActionRight = 0;
         if (quickIndices.empty())
             popup.quickActionCellWidth = 0;
+        popup.scrollBand = 0;
+        popup.scrollTopBand = popup.scrollBottomBand = 0;
         int contentTop = shadowSize_ + panelPadding_;
         if (!quickIndices.empty())
         {
@@ -902,7 +1030,9 @@ private:
                     if (action.label.empty())
                         fixedWidth += narrowWidth;
                     else if (action.compactInlineAction)
-                        fixedWidth += compactWidth;
+                        fixedWidth += action.measureInlineAction
+                                          ? std::max(compactWidth, inlineWidths[regularIndices[i]])
+                                          : compactWidth;
                     else
                         ++flexibleCount;
                 }
@@ -917,10 +1047,13 @@ private:
                     const Item& action = (*popup.items)[actionIndex];
                     const bool flexible = !action.label.empty() &&
                         !action.compactInlineAction;
-                    const int requestedWidth = action.label.empty()
-                        ? narrowWidth
-                        : (action.compactInlineAction
-                            ? compactWidth : flexibleWidth);
+                    const int requestedWidth =
+                        action.label.empty() ? narrowWidth
+                                             : (action.compactInlineAction
+                                                    ? (action.measureInlineAction
+                                                           ? std::max(compactWidth, inlineWidths[actionIndex])
+                                                           : compactWidth)
+                                                    : flexibleWidth);
                     const int actionWidth = i == runEnd
                         ? shadowSize_ + width - left
                         : (flexible ? flexibleWidth : requestedWidth);
@@ -990,7 +1123,7 @@ private:
         popup.panelHeight = std::min(
             popup.contentHeight + panelPadding_ * 2,
             maxPanelHeight);
-        popup.viewportHeight = popup.panelHeight - panelPadding_ * 2;
+        SetScrollViewport(popup);
         popup.windowWidth = popup.panelWidth + shadowSize_ * 2;
         popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
     }
@@ -1065,13 +1198,51 @@ private:
         popup.panelScreenOrigin = { left, top };
     }
 
+    // Only actionable directions occupy space. The terminal offset uses one
+    // band so the final row reaches the panel padding when the bottom collapses.
+    void SetScrollViewport(Popup &popup)
+    {
+        const int available = std::max(1, popup.panelHeight - panelPadding_ * 2);
+        const int band = popup.contentHeight > available
+            ? std::max(1, std::min(Scale(18, options_.dpi), (available - Scale(12, options_.dpi)) / 2)) : 0;
+        const int maximum = std::max(0, popup.contentHeight - available + band);
+        popup.scrollOffset = std::clamp(popup.scrollOffset, 0, maximum);
+        const int top = popup.scrollOffset > 0 ? band : 0;
+        const int bottom = popup.scrollOffset < maximum ? band : 0;
+        const int shift = top - popup.scrollTopBand;
+        if (shift)
+        {
+            for (auto &rect : popup.itemRects) OffsetRect(&rect, 0, shift);
+            OffsetRect(&popup.quickSeparatorRect, 0, shift);
+            OffsetRect(&popup.horizontalScrollRect, 0, shift);
+        }
+        popup.scrollBand = band;
+        popup.scrollTopBand = top; popup.scrollBottomBand = bottom;
+        popup.viewportHeight = std::max(1, available - top - bottom);
+    }
+    RECT ScrollHintRect(const Popup &popup, bool top) const
+    {
+        const int height = top ? popup.scrollTopBand : popup.scrollBottomBand;
+        const int y = top ? shadowSize_ + panelPadding_ : shadowSize_ + popup.panelHeight - panelPadding_ - height;
+        return {shadowSize_ + Scale(2, options_.dpi), y,
+                shadowSize_ + popup.panelWidth - Scale(2, options_.dpi), y + height};
+    }
+    int ScrollHintDirection(const Popup &popup, POINT point) const
+    {
+        if (!popup.scrollBand) return 0;
+        const auto top = ScrollHintRect(popup, true), bottom = ScrollHintRect(popup, false);
+        if (popup.scrollOffset > 0 && PtInRect(&top, point)) return -1;
+        if (popup.scrollOffset < MaxScroll(popup) && PtInRect(&bottom, point)) return 1;
+        return 0;
+    }
+
     int HitTest(const Popup& popup, POINT point) const
     {
         const RECT viewport{
             shadowSize_,
-            shadowSize_ + panelPadding_,
+            shadowSize_ + panelPadding_ + popup.scrollTopBand,
             shadowSize_ + popup.panelWidth,
-            shadowSize_ + popup.panelHeight - panelPadding_,
+            shadowSize_ + popup.panelHeight - panelPadding_ - popup.scrollBottomBand,
         };
         if (!PtInRect(&viewport, point))
             return -1;
@@ -1092,7 +1263,7 @@ private:
         return -1;
     }
 
-    void SetHoveredItem(Popup& popup, int index, bool keyboard)
+    void SetHoveredItem(Popup& popup, int index, bool keyboard, bool updateChildren = true)
     {
         if (index >= 0 &&
             static_cast<size_t>(index) < popup.items->size() &&
@@ -1146,7 +1317,7 @@ private:
             }
             options_.onHover(info);
         }
-        if (index >= 0 &&
+        if (updateChildren && index >= 0 &&
             static_cast<size_t>(index) < popup.items->size() &&
             !(*popup.items)[index].children.empty() &&
             (*popup.items)[index].enabled)
@@ -1157,7 +1328,7 @@ private:
                 SetTimer(popup.hwnd, kSubmenuOpenTimer,
                     kSubmenuOpenDelayMs, nullptr);
         }
-        else if (HasOpenChild(popup))
+        else if (updateChildren && HasOpenChild(popup))
         {
             if (keyboard)
                 CloseFromDepth(popup.depth + 1);
@@ -1348,6 +1519,51 @@ private:
                 return;
             }
         }
+    }
+
+    bool HandleAccessKeyMessage(const MSG& message)
+    {
+        if ((message.message != WM_KEYDOWN && message.message != WM_SYSKEYDOWN) ||
+            !IsPopupWindow(message.hwnd) || (GetKeyState(VK_CONTROL) & 0x8000))
+            return false;
+        Popup* popup = ActivePopup();
+        if (!popup || (FindFocusedTextInput(*popup) && message.message != WM_SYSKEYDOWN))
+            return false;
+        // An active IME replaces the original key with VK_PROCESSKEY. Windows
+        // only exposes that original key before TranslateMessage is called.
+        const auto key = message.wParam == VK_PROCESSKEY
+            ? ImmGetVirtualKey(message.hwnd) : static_cast<UINT>(message.wParam);
+        if ((key >= 'A' && key <= 'Z') ||
+            (key >= '0' && key <= '9' && !(GetKeyState(VK_SHIFT) & 0x8000)))
+            return SelectByAccessKey(static_cast<wchar_t>(key));
+        return false;
+    }
+
+    bool SelectByAccessKey(wchar_t character)
+    {
+        Popup* popup = ActivePopup();
+        if (!popup || character < L' ')
+            return false;
+        const auto target = std::towlower(character);
+        std::vector<int> matches;
+        for (const int index : popup->navigationOrder)
+        {
+            const auto& item = (*popup->items)[index];
+            if (IsSelectable(item) && item.accessKey && std::towlower(item.accessKey) == target)
+                matches.push_back(index);
+        }
+        if (matches.empty())
+            return false;
+        const auto current = std::find(matches.begin(), matches.end(), CurrentItem(*popup));
+        const int index = current == matches.end() || std::next(current) == matches.end()
+            ? matches.front() : *std::next(current);
+        EnsureVisible(*popup, index);
+        // Duplicate access keys only cycle selection. Do not open a submenu or
+        // execute a command until the user presses Enter to resolve ambiguity.
+        SetHoveredItem(*popup, index, true, false);
+        if (matches.size() == 1)
+            ActivateItem(*popup, index, true);
+        return true;
     }
 
     void SelectByCharacter(wchar_t character)
@@ -1850,13 +2066,35 @@ private:
         ImmReleaseContext(focusWindow, context);
     }
 
-    void RefreshPopup(Popup& popup)
+    void RefreshPopup(Popup &popup, bool preservePosition = false)
     {
         CloseFromDepth(popup.depth + 1);
         popup.hoveredItem = -1;
         popup.keyboardItem = -1;
+        const int previousOffset = popup.scrollOffset;
         popup.scrollOffset = 0;
-        CalculateLayout(popup);
+        CalculateLayout(popup, preservePosition);
+        if (preservePosition)
+        {
+            // Async additions must not move existing actions under the cursor.
+            // Grow downward from the visible origin; use the existing scrolling
+            // viewport when the remaining work area cannot fit the new rows.
+            MONITORINFO monitor{sizeof(monitor)};
+            if (GetMonitorInfoW(MonitorFromPoint(popup.panelScreenOrigin, MONITOR_DEFAULTTONEAREST),
+                                &monitor))
+            {
+                const auto bottom = options_.rootPlacement == RootPlacement::AboveAnchorRect
+                                        ? std::min(monitor.rcWork.bottom, options_.anchorRect.top)
+                                        : monitor.rcWork.bottom;
+                popup.panelHeight =
+                    std::min(popup.panelHeight, static_cast<int>(bottom - popup.panelScreenOrigin.y));
+                SetScrollViewport(popup);
+                popup.windowHeight = popup.panelHeight + shadowSize_ * 2;
+            }
+            popup.scrollOffset =
+                std::clamp(previousOffset, 0, MaxScroll(popup));
+            SetScrollViewport(popup);
+        }
         if (popup.hwnd && IsWindow(popup.hwnd))
         {
             SetWindowPos(popup.hwnd, nullptr,
@@ -1920,6 +2158,7 @@ private:
             auto& popup = *current;
             CalculateLayout(popup);
             popup.scrollOffset = std::clamp(popup.scrollOffset, 0, MaxScroll(popup));
+            SetScrollViewport(popup);
             const auto validSelection = [&](int index) {
                 return index >= 0 && static_cast<size_t>(index) < popup.items->size() && IsSelectable((*popup.items)[index]);
             };
@@ -1936,7 +2175,7 @@ private:
     void EnsureVisible(Popup& popup, int index)
     {
         const RECT row = popup.itemRects[index];
-        const int viewportTop = shadowSize_ + panelPadding_;
+        const int viewportTop = shadowSize_ + panelPadding_ + popup.scrollTopBand;
         const int viewportBottom = viewportTop + popup.viewportHeight;
         if (row.top - popup.scrollOffset < viewportTop)
             popup.scrollOffset = row.top - viewportTop;
@@ -1944,6 +2183,7 @@ private:
             popup.scrollOffset = row.bottom - viewportBottom;
         popup.scrollOffset = std::clamp(
             popup.scrollOffset, 0, MaxScroll(popup));
+        SetScrollViewport(popup);
         if ((*popup.items)[index].horizontalScrollAction)
         {
             const int viewportLeft = popup.horizontalScrollRect.left;
@@ -1966,14 +2206,16 @@ private:
             0, MaxScroll(popup));
         if (popup.scrollOffset != oldOffset)
         {
+            SetScrollViewport(popup);
             CloseFromDepth(popup.depth + 1);
+            popup.hoveredItem = popup.keyboardItem = -1;
             Render(popup);
         }
     }
 
     int MaxScroll(const Popup& popup) const
     {
-        return std::max(0, popup.contentHeight - popup.viewportHeight);
+        return std::max(0, popup.contentHeight - std::max(1, popup.panelHeight - 2 * panelPadding_) + popup.scrollBand);
     }
 
     void ScrollHorizontal(Popup& popup, int direction)
@@ -2019,6 +2261,9 @@ private:
         LONG_PTR rootExStyle = 0;
         LONG_PTR ownerExStyle = 0;
         bool rootAboveOwner = false;
+        HWND floor = nullptr;
+        bool floorTopmost = false;
+        bool rootAboveFloor = false;
 
         bool operator==(const OwnedPopupZOrderSnapshot& other) const
         {
@@ -2032,13 +2277,23 @@ private:
                 ownerNext == other.ownerNext &&
                 rootExStyle == other.rootExStyle &&
                 ownerExStyle == other.ownerExStyle &&
-                rootAboveOwner == other.rootAboveOwner;
+                rootAboveOwner == other.rootAboveOwner &&
+                floor == other.floor &&
+                floorTopmost == other.floorTopmost &&
+                rootAboveFloor == other.rootAboveFloor;
         }
     };
+
+    HWND ResolveZOrderFloor() const
+    {
+        const HWND floor = options_.zOrderFloor ? options_.zOrderFloor() : nullptr;
+        return floor && IsWindow(floor) && IsWindowVisible(floor) ? floor : nullptr;
+    }
 
     OwnedPopupZOrderSnapshot CaptureOwnedPopupZOrder() const
     {
         OwnedPopupZOrderSnapshot snapshot;
+        snapshot.foreground = GetForegroundWindow();
         if (popups_.empty() || !popups_.front() ||
             !popups_.front()->hwnd ||
             !IsWindow(popups_.front()->hwnd))
@@ -2049,12 +2304,15 @@ private:
         snapshot.root = popups_.front()->hwnd;
         snapshot.zOrderOwner = options_.zOrderOwner;
         snapshot.rootOwner = GetWindow(snapshot.root, GW_OWNER);
-        snapshot.foreground = GetForegroundWindow();
         snapshot.rootPrevious =
             GetWindow(snapshot.root, GW_HWNDPREV);
         snapshot.rootNext = GetWindow(snapshot.root, GW_HWNDNEXT);
         snapshot.rootExStyle =
             GetWindowLongPtrW(snapshot.root, GWL_EXSTYLE);
+        snapshot.floor = ResolveZOrderFloor();
+        snapshot.floorTopmost = snapshot.floor &&
+            (GetWindowLongPtrW(snapshot.floor, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        snapshot.rootAboveFloor = IsWindowAbove(snapshot.root, snapshot.floor);
         if (snapshot.zOrderOwner &&
             IsWindow(snapshot.zOrderOwner))
         {
@@ -2102,6 +2360,9 @@ private:
                  << L" messageHwnd=" << message->hwnd;
         }
         line << L" root=" << snapshot.root
+             << L" focusOwner=" << options_.owner
+             << L" focusOwnerRoot=" << (options_.owner ? GetAncestor(options_.owner, GA_ROOT) : nullptr)
+             << L" active=" << GetActiveWindow() << L" focus=" << GetFocus()
              << L" zOrderOwner=" << snapshot.zOrderOwner
              << L" rootOwner=" << snapshot.rootOwner
              << L" foreground=" << snapshot.foreground
@@ -2115,14 +2376,15 @@ private:
              << L" rootNext=" << snapshot.rootNext
              << L" ownerPrev=" << snapshot.ownerPrevious
              << L" ownerNext=" << snapshot.ownerNext;
+        line << L" floor=" << snapshot.floor
+             << L" floorTopmost=" << snapshot.floorTopmost
+             << L" rootAboveFloor=" << snapshot.rootAboveFloor;
         options_.eventPump.traceDiagnostic(line.str());
     }
 
     void RestoreOwnedPopupZOrder()
     {
-        if (done_ || !options_.topmost ||
-            !options_.zOrderOwner ||
-            !IsWindow(options_.zOrderOwner) ||
+        if (done_ ||
             popups_.empty() ||
             !popups_.front()->hwnd ||
             !IsWindow(popups_.front()->hwnd) ||
@@ -2132,23 +2394,19 @@ private:
             return;
         }
 
-        bool needsRestore = false;
-        HWND precedingWindow = options_.zOrderOwner;
+        const HWND floor = ResolveZOrderFloor();
+        if (!options_.topmost && !floor)
+            return;
+        bool needsRestore = floor &&
+            !IsWindowAbove(popups_.front()->hwnd, floor);
+        HWND precedingWindow = IsWindow(options_.zOrderOwner)
+            ? options_.zOrderOwner : nullptr;
         for (const auto& popup : popups_)
         {
             if (!popup || !popup->hwnd || !IsWindowVisible(popup->hwnd))
                 continue;
-            bool abovePrecedingWindow = false;
-            for (HWND current = popup->hwnd; current;
-                 current = GetWindow(current, GW_HWNDNEXT))
-            {
-                if (current == precedingWindow)
-                {
-                    abovePrecedingWindow = true;
-                    break;
-                }
-            }
-            needsRestore = needsRestore || !abovePrecedingWindow ||
+            needsRestore = needsRestore ||
+                (precedingWindow && !IsWindowAbove(popup->hwnd, precedingWindow)) ||
                 (GetWindowLongPtrW(popup->hwnd, GWL_EXSTYLE) &
                     WS_EX_TOPMOST) == 0;
             precedingWindow = popup->hwnd;
@@ -2224,22 +2482,10 @@ private:
 
     void DrawScrollIndicator(HDC dc, const Popup& popup, bool top)
     {
-        const int centerX = shadowSize_ + popup.panelWidth / 2;
-        const int centerY = top
-            ? shadowSize_ + Scale(5, options_.dpi)
-            : shadowSize_ + popup.panelHeight - Scale(5, options_.dpi);
-        HPEN pen = CreatePen(PS_SOLID, 1,
-            lightTheme_ ? RGB(95, 95, 95) : RGB(190, 190, 190));
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        const int half = Scale(3, options_.dpi);
-        MoveToEx(dc, centerX - half,
-            centerY + (top ? half / 2 : -half / 2), nullptr);
-        LineTo(dc, centerX,
-            centerY + (top ? -half / 2 : half / 2));
-        LineTo(dc, centerX + half,
-            centerY + (top ? half / 2 : -half / 2));
-        SelectObject(dc, oldPen);
-        DeleteObject(pen);
+        scroll_hint::Draw(dc, ScrollHintRect(popup, top), top,
+            popup.scrollOffset, MaxScroll(popup), popup.scrollHover == (top ? -1 : 1),
+            options_.dpi, palette_.background, palette_.hoverBackground,
+            palette_.separator, lightTheme_ ? RGB(38, 38, 38) : RGB(238, 238, 238));
     }
 
     void DrawHorizontalScrollIndicator(
@@ -2293,7 +2539,8 @@ private:
         const float blurPanelAlpha = lightTheme_ ? 70.0f : 76.0f;
         constexpr float blurHoverAlpha = 146.0f;
         constexpr float blurContentAlpha = 246.0f;
-        constexpr float shadowAlpha = 34.0f;
+        const float shadowAlpha =
+            appearance_rules::IsWin10Style(effectiveAppearance_) ? 14.0f : 34.0f;
         const COLORREF borderColor = lightTheme_
             ? RGB(215, 215, 215) : RGB(73, 73, 73);
         const unsigned borderBlue = GetBValue(borderColor);
@@ -2504,6 +2751,7 @@ private:
     size_t textInputCompositionCursor_ = 0;
     bool textCaretVisible_ = true;
     bool done_ = false;
+    bool pointerPressed_ = false;
     bool closing_ = false;
     bool superseded_ = false;
     bool hasTracedZOrderSnapshot_ = false;

@@ -6,6 +6,9 @@
 #include <objbase.h>
 
 #include <filesystem>
+#include <algorithm>
+#include <cstdint>
+#include <fstream>
 #include <iostream>
 
 namespace rules =
@@ -88,6 +91,7 @@ void CheckInternetShortcutIconResource()
               ReadInternetShortcutIconResource(missingPath.wstring()),
         "Internet shortcuts without IconFile must use the Shell fallback");
 }
+#include "local_shortcut_icon_cases.h"
 } // namespace
 
 int RunWebsiteIconTests();
@@ -96,6 +100,8 @@ int RunWebsiteIconProbe(const wchar_t* shortcutPath, const wchar_t* outputDirect
 int wmain(int argc, wchar_t** argv)
 {
     if (argc == 4 && std::wstring_view(argv[1]) == L"--website-probe") return RunWebsiteIconProbe(argv[2], argv[3]);
+    CheckLocalShortcutIcons();
+    CheckLocalFolderAndDocumentIcons();
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     failures += RunWebsiteIconTests();
     if (SUCCEEDED(initialized)) CoUninitialize();

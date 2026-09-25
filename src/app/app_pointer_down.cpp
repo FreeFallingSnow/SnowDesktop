@@ -8,6 +8,8 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    CancelPopupHover(true);
+    BeginRenameClick(wp, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
     dockPressedClosedCollectionPopup_ = false;
     if (middleButtonWidgetMove_) return;
     // Popup/Dock hosts do not activate on clicks, so the EDIT may never
@@ -17,7 +19,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     keyboardNavVisualFocus_ = false;
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
-    pendingGuideAction_ = WidgetHit::None;
+    pendingWidgetButtonAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (HandleUsageGuidePointerDown(pt)) return;
     if (HandleLargeIconPointerDown(pt)) return;
@@ -266,7 +268,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (UsesCollectionPopupFan(*popupWidget))
             {
                 popupFanActionFocused_ = false;
-                if (snowdesktop::collection_popup_layout::FanItemContains(
+                if (GetPopupItemCount(*popupWidget) > 0 &&
+                    snowdesktop::collection_popup_layout::FanItemContains(
                         GetCollectionPopupFanItem(popup, GetPopupItemCount(*popupWidget)), pt))
                 {
                     mouseDown_ = false;
@@ -773,9 +776,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
             widgetPreviewCell_ = widgetDragOriginalCell_;
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
-            RECT bounds = widgets_[wi].bounds;
-            dragGroupOriginX_ = bounds.left;
-            dragGroupOriginY_ = bounds.top;
+            widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
@@ -840,12 +841,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::None) continue;
 
-        if (wh != WidgetHit::ResizeHandle &&
+        if (!wc->IsCollapsed() && wh != WidgetHit::CollapseToggleBtn &&
+            wh != WidgetHit::ResizeHandle &&
             wh != WidgetHit::MoveHandle)
         {
             const int maximum = wc->GetMaxScrollOffset();
             const int visible = wc->GetVisibleContentHeight();
-            const RECT viewport = wc->GetContentViewportRect();
+            const RECT viewport = wc->GetScrollbarViewportRect();
             const auto geometry = snowdesktop::widget_scroll_rules::
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
@@ -892,27 +894,18 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
             widgetPreviewCell_ = widgetDragOriginalCell_;
             widgetPreviewSpan_ = widgetDragOriginalSpan_;
-            RECT bounds = widgets_[wi].bounds;
-            dragGroupOriginX_ = bounds.left;
-            dragGroupOriginY_ = bounds.top;
+            widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
-        else if (wh == WidgetHit::GuideAddWidgetBtn)
+        else if (wh == WidgetHit::CollapseToggleBtn ||
+                 wh == WidgetHit::GuideAddWidgetBtn ||
+                 wh == WidgetHit::GuideDetailsBtn)
         {
-            pendingGuideAction_ = wh;
-            mouseDownWidgetIndex_ = wi;
-            mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
-            InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
-            return;
-        }
-        else if (wh == WidgetHit::GuideDetailsBtn)
-        {
-            pendingGuideAction_ = wh;
+            pendingWidgetButtonAction_ = wh;
             mouseDownWidgetIndex_ = wi;
             mouseDownHit_ = nullptr;
             SetCapture(hwnd_);

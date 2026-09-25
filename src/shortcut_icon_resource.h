@@ -25,4 +25,13 @@ std::optional<IconResourceLocation> ReadInternetShortcutIconResource(
 // HTTP(S) association's browser. Does not resolve links or access the network.
 std::vector<IconResourceLocation> ReadShortcutIconResources(
     std::wstring_view shortcutPath);
+
+// First-image path: raw .lnk/.url, folder configuration, library iconReference,
+// executables/icons and static file-type resources. XML reads are bounded and
+// prohibit DTDs; registry hints never activate association/icon providers.
+// Never creates a Shell COM object, resolves a PIDL, or follows library locations.
+// Unsupported links and nonlocal/reparse/offline sources return no candidates;
+// the caller must schedule its Shell fallback outside the local worker pool.
+std::vector<IconResourceLocation> ReadLocalIconResources(
+    std::wstring_view path);
 } // namespace snowdesktop::shortcut_icon_resource

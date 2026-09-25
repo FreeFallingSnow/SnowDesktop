@@ -167,6 +167,7 @@ public:
         visualMouseDownPoint_ = mouseDown;
         currentPoint_ = current;
         visualItemBounds_.clear();
+        primaryVisualIndex_ = static_cast<size_t>(-1);
         pointerAnchored_ = false;
         visualBoundsOffset_ = {};
         action_ = DropAction::Move;
@@ -205,10 +206,23 @@ public:
     }
 
     /** @brief 设置由应用层在真实渲染项上采集的拖拽视觉边界。 */
-    void SetVisualItemBounds(std::vector<RECT> bounds)
+    void SetVisualItemBounds(std::vector<RECT> bounds,
+        size_t primaryIndex = static_cast<size_t>(-1))
     {
         visualItemBounds_ = std::move(bounds);
+        primaryVisualIndex_ = primaryIndex;
     }
+
+    // A label press can be outside the icon-only snapshot. Retain the actual
+    // pressed item instead of switching the stack to another selected icon.
+    bool IsPrimaryVisualItem(size_t index, RECT bounds, POINT current) const
+    {
+        if (primaryVisualIndex_ < items_.size())
+            return index == primaryVisualIndex_;
+        return PtInRect(&bounds, current) != FALSE;
+    }
+
+    bool IsPointerAnchored() const { return pointerAnchored_; }
 
     /**
      * @brief 将拖拽逻辑落点重定向到指针，并把指定视觉热点吸附到指针。
@@ -229,34 +243,10 @@ public:
     }
 
     /**
-     * @brief 平移鼠标按下基准点（用于跨页迁移后保持视觉连续性）。
-     * @param delta 基准点平移量。
-     */
-    void AdjustMouseDownPoint(POINT delta)
-    {
-        mouseDownPoint_.x += delta.x;
-        mouseDownPoint_.y += delta.y;
-    }
-
-    /**
-     * @brief 拖拽组因跨屏翻页迁移时，按组原点的实际变化重设按下基准点。
-     *
-     * 命中坐标以拖拽组原点为锚点，因此这里不能使用任意单个项目的 bounds
-     * 变化量。不同监视器的网格尺寸或单元格内边距不同时，两者并不相等。
-     */
-    void AdjustForGroupOriginChange(POINT previousOrigin, POINT nextOrigin)
-    {
-        AdjustMouseDownPoint({
-            nextOrigin.x - previousOrigin.x,
-            nextOrigin.y - previousOrigin.y
-        });
-    }
-
-    /**
      * @brief 按当前会话的按下基准点，将拖拽组原点平移到当前指针位置。
      *
-     * 跨屏翻页会通过 AdjustForGroupOriginChange 修正会话基准点；所有拖拽
-     * 可视位置与桌面网格命中都必须复用这里的同一份坐标状态。
+     * 翻页只切换视图，保留起拖时的组原点与按下点；可视位置与桌面
+     * 网格命中都复用这份坐标状态，直到松手提交。
      */
     POINT ResolveTargetPoint(POINT groupOrigin, POINT current) const
     {
@@ -502,6 +492,7 @@ public:
         items_.clear();
         visualItemBounds_.clear();
         sourceList_ = {};
+        primaryVisualIndex_ = static_cast<size_t>(-1);
         targetContainer_ = nullptr;
         targetSlot_ = nullptr;
         targetSlotGeneration_ = 0;
@@ -548,6 +539,7 @@ private:
     POINT visualMouseDownPoint_{};           /**< 虚影固定使用的原始按下坐标 */
     POINT currentPoint_{};                   /**< 鼠标当前的屏幕坐标 */
     std::vector<RECT> visualItemBounds_;     /**< 拖拽开始时的虚影边界快照 */
+    size_t primaryVisualIndex_ = static_cast<size_t>(-1);
     bool pointerAnchored_ = false;           /**< 逻辑落点是否直接跟随真实指针 */
     POINT visualBoundsOffset_{};             /**< 将主视觉热点吸附到指针的快照平移量 */
     DropAction action_ = DropAction::Move;   /**< 当前拖拽动作类型，默认为 Move */

@@ -1,15 +1,17 @@
 #pragma once
 
+#include "windows_compat.h"
+
 #include "../settings_controller.h"
+#include "../shell_extension_service.h"
 #include "../large_icon_settings.h"
 #include "../settings_search_index.h"
 #include "backup_data_page_backend.h"
 #include "general_page_presenter.h"
+#include "calendar_page_presenter.h"
 #include "home_about_page_model.h"
 #include "page_layout_page_presenter.h"
 #include "widgets_page_backend.h"
-
-#include <windows.h>
 
 #include <functional>
 #include <memory>
@@ -41,6 +43,7 @@ struct SettingsWindowHostOptions
         std::uint64_t generation,
         std::uint64_t revision)>;
 
+    std::function<shell_extensions::CatalogueView(const shell_extensions::Request&, bool)> contextMenu;
     LocalizeCallback localize;
     LanguageCatalogProvider languageCatalog;
     SearchInputProvider searchInput;
@@ -62,6 +65,7 @@ struct SettingsWindowHostOptions
     WidgetsPageBackendOptions widgetsPage;
     BackupDataPageBackendOptions backupDataPage;
     PageLayoutPageActions pageLayoutPage;
+    CalendarPageActions calendarPage;
     LargeIconSettingsAction largeIconSettings;
 
     // The settings child supplies IPC adapters; the application supplies the

@@ -11,8 +11,10 @@
 
 #include <string>
 #include "animation_settings.h"
+#include "calendar_display.h"
 #include "dock_layout_settings.h"
 #include "surface_theme.h"
+#include "shell_extension_settings.h"
 
 struct GeneralSettings
 {
@@ -23,6 +25,8 @@ struct GeneralSettings
     bool softwareDesktopEnabled = true;
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
+    // The shortcut toggles temporary desktop/Dock passthrough; only this
+    // shortcut preference is persisted, never the active passthrough state.
     bool desktopPassthroughHotkeyEnabled = false;
     UINT desktopPassthroughHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT desktopPassthroughHotkeyVirtualKey = VK_OEM_3;
@@ -45,6 +49,8 @@ struct GeneralSettings
     int animationFrameLimit = 0;
     bool animationEnergySaver = true;
     bool animationOnBattery = false;
+    snowdesktop::calendar::DisplayPreferences calendarDisplay;
+    snowdesktop::shell_extensions::Preferences shellExtensions;
     char language[85] = "system";
 };
 

@@ -320,7 +320,7 @@ BackendPaths ResolvePaths(const BackupDataPageBackendOptions& options)
     if (paths.stateRoot.empty())
     {
         paths.stateRoot =
-            snowdesktop::deployment::GetPackageLocalStatePath();
+            options.dataDirectory.empty() ? std::filesystem::path(GetDataStateRootPath()) : paths.dataDirectory.parent_path();
         if (paths.stateRoot.empty())
             paths.stateRoot = paths.dataDirectory.parent_path();
     }
@@ -1899,6 +1899,30 @@ struct BackupDataPageBackend::State final
         }
     }
 
+    void FinishLayoutRestore(std::uint64_t generation,
+        std::uint64_t expectedActivationId, std::uint64_t requestId,
+        BackupDataCommand command, SettingsActionResult result)
+    {
+        if (closed || !active || !snapshot.initialized ||
+            snapshot.generation != generation || activationId != expectedActivationId ||
+            !snapshot.operation.running || snapshot.operation.requestId != requestId)
+            return;
+        snapshot.operation = {};
+        if (!result.Succeeded())
+        {
+            std::wstring message = FailureMessage(command);
+            if (!result.message.empty()) message += L"\n\n" + result.message;
+            SetNotice(BackupDataNoticeSeverity::Error,
+                OperationTitle(command), std::move(message));
+        }
+        else
+        {
+            SetNotice(BackupDataNoticeSeverity::Success,
+                OperationTitle(command), SuccessMessage(command));
+        }
+        Publish();
+    }
+
     void Finish(WorkCompletion completion)
     {
         const bool ownsTask =
@@ -1968,16 +1992,28 @@ struct BackupDataPageBackend::State final
         // leave a harmless safety backup; it must never replace live layout.
         if (completion.result.layoutRestore && completion.result.ok)
         {
-            snapshot.operation = {};
+            const std::uint64_t generation = completion.context.generation;
+            const std::uint64_t expectedActivationId = completion.context.activationId;
+            const std::uint64_t requestId = completion.context.requestId;
+            const BackupDataCommand command = completion.context.request.command;
+            const std::weak_ptr<State> weak = weak_from_this();
             const SettingsActionResult commitResult =
                 options.commitLayoutRestore
                 ? options.commitLayoutRestore(
-                      std::move(*completion.result.layoutRestore))
+                      std::move(*completion.result.layoutRestore),
+                      [weak, generation, expectedActivationId, requestId, command]
+                      (SettingsActionResult result) {
+                          if (const auto state = weak.lock())
+                              state->FinishLayoutRestore(generation,
+                                  expectedActivationId, requestId, command,
+                                  std::move(result));
+                      })
                 : SettingsActionResult::Failure(
                       L("settings.backup.error.restoreServiceUnavailable",
                           L"The application layout restore service is unavailable."));
             if (!commitResult.Succeeded())
             {
+                snapshot.operation = {};
                 std::wstring message = FailureMessage(
                     completion.context.request.command);
                 AppendError(message, completion.result.error);
@@ -1991,9 +2027,9 @@ struct BackupDataPageBackend::State final
             {
                 if (completion.result.hasInventory)
                     ApplyInventory(std::move(completion.result.inventory));
-                SetNotice(BackupDataNoticeSeverity::Success,
-                    OperationTitle(completion.context.request.command),
-                    SuccessMessage(completion.context.request.command));
+                if (snapshot.operation.running &&
+                    snapshot.operation.requestId == requestId)
+                    snapshot.operation.cancellable = false;
             }
             Publish();
             return;

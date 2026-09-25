@@ -105,6 +105,16 @@ struct ShellReadRequest
 ShellFileOperationRequest CreateRecycleBinDeleteRequest(
     std::vector<std::wstring> sources);
 
+// Paste has already selected one effect (COPY, MOVE or LINK). The synthetic
+// Shell drag must also identify the left button; modifiers alone can open
+// the drag-action menu instead of immediately performing the paste.
+inline DWORD ClipboardShellDropKeyState(DWORD effect) noexcept
+{
+    const DWORD modifiers = effect == DROPEFFECT_MOVE ? MK_SHIFT :
+        effect == DROPEFFECT_LINK ? MK_CONTROL | MK_SHIFT : MK_CONTROL;
+    return MK_LBUTTON | modifiers;
+}
+
 /** @brief Path-backed Shell IDropTarget handoff executed on the worker STA. */
 struct ShellDropRequest
 {
@@ -119,6 +129,9 @@ struct ShellDropRequest
     POINTL screenPoint{};
     DWORD allowedEffects = DROPEFFECT_COPY | DROPEFFECT_MOVE |
         DROPEFFECT_LINK;
+    // Clipboard path copies/moves must finish their tracked file operation
+    // before publishing completion. Live drags keep their Shell handoff.
+    bool clipboardPaste = false;
     // Optional bounded materialization performed on this worker after the
     // caller's StartOperation and before Shell/EndOperation. Returning true
     // means the preflight fully handled the data object and Shell is skipped.

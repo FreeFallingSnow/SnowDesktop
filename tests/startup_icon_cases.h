@@ -1,0 +1,536 @@
+// Prevent startup membership from waiting for Shell image-list queries, and
+// prevent ready bitmaps from returning to placeholders as snapshots catch up.
+void TestStartupDesktopMetadataDeferral()
+{
+    using namespace snowdesktop::shell_refresh;
+    Check(LocalDesktopDisplayName(L"C:\\Desktop\\My.App.LnK", false) == L"My.App" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\Website.URL", false) == L"Website" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\notes.txt", false) == L"notes.txt" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\folder.lnk", true) == L"folder.lnk" &&
+        LocalDesktopDisplayName(L"C:\\Desktop\\.lnk", false) == L".lnk",
+        "startup labels hide shortcut suffixes before Shell returns, without changing ordinary files or directory names");
+    MetadataCache cache;
+    std::unordered_set<std::wstring> seen;
+    FileStamp stamp;
+    stamp.modified = {7, 0};
+    int queries = 0;
+    const auto shell = [&](SHFILEINFOW& info) {
+        ++queries;
+        info.iIcon = 19;
+        wcscpy_s(info.szTypeName, L"Application shortcut");
+        return true;
+    };
+    const auto local = ReadDesktopMetadata(true, L"C:\\app.lnk", L"C:\\APP.LNK",
+        stamp, true, &cache, seen, shell);
+    Check(queries == 0 && local.iIcon == -1 && local.szTypeName[0] == 0 &&
+            cache.desktop.empty() && seen.empty(),
+        "local startup items publish an unknown icon without entering Shell or inventing cache metadata");
+    const auto full = ReadDesktopMetadata(false, L"C:\\app.lnk", L"C:\\APP.LNK",
+        stamp, true, &cache, seen, shell);
+    Check(queries == 1 && full.iIcon == 19 && seen.contains(L"C:\\APP.LNK"),
+        "the independent authoritative read still resolves Shell metadata");
+    const auto cached = ReadDesktopMetadata(false, L"C:\\app.lnk", L"C:\\APP.LNK",
+        stamp, true, &cache, seen, shell);
+    Check(queries == 1 && cached.iIcon == 19 && cache.hits == 1,
+        "ordinary refreshes retain the existing metadata cache");
+    ++stamp.modified.dwLowDateTime;
+    ReadDesktopMetadata(false, L"C:\\app.lnk", L"C:\\APP.LNK",
+        stamp, true, &cache, seen, shell);
+    Check(queries == 2, "an overwritten shortcut queries fresh Shell metadata");
+}
+
+// Exercise the production startup mailbox with an actual private message-only
+// window. A completed read must wake the consumer without a 2-second UI timer.
+void TestStartupReadWakesConsumer()
+{
+    using namespace snowdesktop::shell_refresh;
+    struct Window
+    {
+        HWND value = CreateWindowExW(0, L"STATIC", L"StartupReadTest", 0,
+            0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        ~Window() { if (value) DestroyWindow(value); }
+    } window;
+    Check(window.value != nullptr, "startup wake fixture owns a private message-only window");
+    if (!window.value) return;
+    constexpr UINT wake = WM_APP + 199;
+    struct Gate
+    {
+        HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ~Gate() { CloseHandle(entered); CloseHandle(release); CloseHandle(returned); }
+    };
+    const auto takeMessage = [&] {
+        MSG message{};
+        return PeekMessageW(&message, window.value, wake, wake, PM_REMOVE) != FALSE;
+    };
+    const auto waitMessage = [&] {
+        const auto deadline = GetTickCount64() + 1000;
+        while (GetTickCount64() < deadline)
+        {
+            if (takeMessage()) return true;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_POSTMESSAGE, MWMO_INPUTAVAILABLE);
+        }
+        return false;
+    };
+    auto gate = std::make_shared<Gate>();
+    StartupRead reader([gate](const Request& request, Snapshot& snapshot) {
+        for (int i = 0; i < 32; ++i)
+        {
+            DesktopItem item;
+            item.layoutKey = std::to_wstring(i);
+            request.publishDesktopItem(item);
+            snapshot.desktopItems.push_back(std::move(item));
+        }
+        SetEvent(gate->entered);
+        WaitForSingleObject(gate->release, 5000);
+        SetEvent(gate->returned);
+        return true;
+    });
+    Check(reader.Start({}, window.value, wake) &&
+        WaitForSingleObject(gate->entered, 2000) == WAIT_OBJECT_0,
+        "startup publishes a batch before entering a blocked Shell call");
+    Check(waitMessage() && !takeMessage(),
+        "a burst of ready startup items coalesces into one consumer wake");
+    const auto progress = reader.TakeProgress();
+    Check(progress.size() == 32 && !reader.TakeReady(),
+        "the wake exposes incremental items while the remaining read is still blocked");
+    SetEvent(gate->release);
+    const bool notified = waitMessage();
+    auto result = reader.TakeReady(std::chrono::milliseconds(1000));
+    Check(notified && result && result->desktopComplete && result->desktopItems.size() == 32,
+        "final completion wakes the consumer again after it consumed the partial batch");
+
+    auto stoppedGate = std::make_shared<Gate>();
+    StartupRead stopped([stoppedGate](const Request&, Snapshot&) {
+        SetEvent(stoppedGate->entered);
+        WaitForSingleObject(stoppedGate->release, 5000);
+        SetEvent(stoppedGate->returned);
+        return true;
+    });
+    Check(stopped.Start({}, window.value, wake) &&
+        WaitForSingleObject(stoppedGate->entered, 2000) == WAIT_OBJECT_0,
+        "retirement fixture starts before its provider completes");
+    stopped.Stop();
+    SetEvent(stoppedGate->release);
+    Check(WaitForSingleObject(stoppedGate->returned, 2000) == WAIT_OBJECT_0 &&
+        !stopped.TakeReady() && !takeMessage(),
+        "a retired startup reader never delivers into its former consumer");
+}
+
+void TestStartupIconSurvivesMetadataArrival()
+{
+    using namespace snowdesktop::shell_refresh;
+    DesktopItem ready;
+    ready.modifiedTime = FILETIME{7, 0};
+    ready.fileSize = 42;
+    ready.sysIconIndex = -1;
+    ready.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    ready.iconState = IconState::IconReady;
+    ready.selected = true;
+    ready.gridCell = {L"saved", 2, 3};
+    const auto bitmap = ready.iconBitmap;
+    Check(bitmap != nullptr, "startup regression owns a real icon bitmap");
+    DesktopItem full;
+    full.modifiedTime = ready.modifiedTime;
+    full.fileSize = ready.fileSize;
+    full.sysIconIndex = 19;
+    full.typeName = L"Application shortcut";
+    PreserveRuntime(full, ready);
+    Check(full.iconBitmap == bitmap && !ready.iconBitmap &&
+            full.iconState == IconState::IconReady && full.sysIconIndex == 19 &&
+            full.selected && full.gridCell.column == 2,
+        "late authoritative metadata retains the first bitmap and current placement");
+    DesktopItem incremental;
+    incremental.modifiedTime = full.modifiedTime;
+    incremental.fileSize = full.fileSize;
+    PreserveRuntime(incremental, full);
+    Check(incremental.iconBitmap == bitmap && incremental.sysIconIndex == 19 &&
+            incremental.typeName == L"Application shortcut" && !full.iconBitmap,
+        "a later membership-only snapshot cannot erase a ready icon or its Shell metadata");
+    DesktopItem overwritten;
+    overwritten.modifiedTime = FILETIME{8, 0};
+    overwritten.fileSize = 42;
+    PreserveRuntime(overwritten, incremental);
+    Check(overwritten.iconState == IconState::Loading,
+        "unknown image-list indices do not bypass changed-file invalidation");
+}
+
+void TestFirstIconsDoNotWaitForDetails()
+{
+    struct Gate
+    {
+        HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        ~Gate() { CloseHandle(entered); CloseHandle(release); CloseHandle(returned); }
+    };
+    auto gate = std::make_shared<Gate>();
+    snowdesktop::shell_icon_request::Work work(1, 1);
+    bool firstApplied = false;
+    int detailApplied = 0;
+    Check(work.Submit(true, L"popup:detail", [gate] {
+        SetEvent(gate->entered);
+        WaitForSingleObject(gate->release, 5000);
+        SetEvent(gate->returned);
+        return 1;
+    }, [&](int) { ++detailApplied; }, nullptr, 0), "detail request enters the production icon scheduler");
+    Check(WaitForSingleObject(gate->entered, 2000) == WAIT_OBJECT_0,
+        "detail provider occupies every refinement worker");
+    Check(work.Submit(false, L"desktop:first", [] { return 42; },
+        [&](int value) { firstApplied = value == 42; }, nullptr, 0),
+        "another desktop item can request its first bitmap");
+    const auto deadline = GetTickCount64() + 2000;
+    while (!firstApplied && GetTickCount64() < deadline)
+    { work.Drain(); SwitchToThread(); }
+    Check(firstApplied && WaitForSingleObject(gate->returned, 0) == WAIT_TIMEOUT,
+        "the first bitmap is delivered while all detail workers remain blocked");
+    bool cancelledFirstApplied = false;
+    work.Submit(false, L"popup:first", [] { return 1; },
+        [&](int) { cancelledFirstApplied = true; }, nullptr, 0);
+    work.Cancel(L"popup:");
+    SetEvent(gate->release);
+    Check(WaitForSingleObject(gate->returned, 2000) == WAIT_OBJECT_0,
+        "retired detail provider returns without holding the host");
+    bool barrier = false;
+    work.Submit(true, L"detail-barrier", [] { return 1; },
+        [&](int) { barrier = true; }, nullptr, 0);
+    const auto retiredDeadline = GetTickCount64() + 2000;
+    while (!barrier && GetTickCount64() < retiredDeadline)
+    { work.Drain(); SwitchToThread(); }
+    Check(barrier && detailApplied == 0 && !cancelledFirstApplied,
+        "popup cancellation rejects both first and detail results without cancelling unrelated work");
+    work.Stop();
+    Check(!work.Submit(false, L"late-first", [] { return 1; }, [](int) {}, nullptr, 0) &&
+            !work.Submit(true, L"late-detail", [] { return 1; }, [](int) {}, nullptr, 0),
+        "shutdown closes both icon stages");
+}
+
+struct ShortcutClassificationGate
+{
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    ~ShortcutClassificationGate()
+    { CloseHandle(entered); CloseHandle(release); CloseHandle(returned); }
+    bool Run()
+    {
+        SetEvent(entered);
+        WaitForSingleObject(release, 10000);
+        SetEvent(returned);
+        return true;
+    }
+};
+
+template<class Predicate>
+bool DrainIconsUntil(snowdesktop::shell_icon_request::Work& work, Predicate ready)
+{
+    const auto deadline = GetTickCount64() + 2000;
+    while (!ready() && GetTickCount64() < deadline)
+    { work.Drain(); SwitchToThread(); }
+    return ready();
+}
+
+template<class Image, class Classify, class ApplyImage, class ApplyShortcut>
+bool SubmitLocalIcon(snowdesktop::shell_icon_request::Work& work, std::wstring key,
+    Image image, Classify classify, ApplyImage applyImage, ApplyShortcut applyShortcut,
+    HWND window, UINT message)
+{
+    using Result = decltype(image());
+    return work.SubmitFirstWithFallback(std::move(key), std::move(image),
+        [] { return Result{}; }, [](const auto&) { return true; },
+        std::move(classify), std::move(applyImage), std::move(applyShortcut), window, message);
+}
+
+// The actual first-image/classification submission used by QueueIconTask.
+// Only Shell providers are substituted; scheduling and result ordering are real.
+void TestShortcutClassificationDoesNotGateIcons()
+{
+    using namespace snowdesktop::shell_icon_request;
+    auto gate = std::make_shared<ShortcutClassificationGate>();
+    Work work(1, 1, 1);
+    DesktopItem item;
+    bool firstApplied = false, nextApplied = false, detailApplied = false;
+    int classifications = 0;
+    SubmitLocalIcon(work, L"desktop:adobe", [] {
+        auto pixels = std::make_shared<snowdesktop::BackgroundBitmap>();
+        pixels->bitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+        return pixels;
+    }, [gate] { return gate->Run(); },
+        [&](std::shared_ptr<snowdesktop::BackgroundBitmap> pixels) {
+            item.iconBitmap = std::exchange(pixels->bitmap, nullptr);
+            ApplyPresentation(item, Phase::Phase1, false, false);
+            firstApplied = item.iconBitmap != nullptr;
+            return firstApplied;
+        }, [&](bool application) {
+            ApplyPresentation(item, Phase::Shortcut, true, application);
+            ++classifications;
+        }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return firstApplied &&
+            WaitForSingleObject(gate->entered, 0) == WAIT_OBJECT_0; }),
+        "first bitmap reaches the model before its slow shortcut classifier returns");
+    const auto firstBitmap = item.iconBitmap;
+    SubmitLocalIcon(work, L"desktop:next", [] { return 42; }, [] { return false; },
+        [&](int value) { nextApplied = value == 42; return true; },
+        [&](bool) { ++classifications; }, nullptr, 0);
+    work.Submit(true, L"desktop:detail", [] { return 1; }, [&](int) {
+        ApplyPresentation(item, Phase::Phase2, false, false);
+        detailApplied = true;
+    }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return nextApplied && detailApplied; }) &&
+            classifications == 0 && WaitForSingleObject(gate->returned, 0) == WAIT_TIMEOUT,
+        "later first bitmaps and full-quality refinement complete while every classification worker is occupied");
+    SetEvent(gate->release);
+    Check(DrainIconsUntil(work, [&] { return classifications == 2; }),
+        "classification catches up independently after its provider is released");
+    Check(firstBitmap && item.iconBitmap == firstBitmap &&
+            item.iconState == IconState::FullQuality && item.isApplicationShortcut &&
+            item.isShortcut && !item.shortcutArrow,
+        "late application classification preserves displayed pixels and full quality");
+    ApplyPresentation(item, Phase::Phase1, false, false);
+    Check(item.isApplicationShortcut && item.isShortcut && !item.shortcutArrow,
+        "a bitmap-only refresh retains known shortcut metadata");
+    FolderEntry entry;
+    entry.iconState = IconState::FullQuality;
+    ApplyPresentation(entry, Phase::Shortcut, true, false);
+    Check(entry.iconState == IconState::FullQuality && entry.isShortcut &&
+            !entry.isApplicationShortcut && entry.shortcutArrow,
+        "folder shortcut classification updates the arrow without resetting icon quality");
+}
+
+void TestShortcutClassificationCancellation()
+{
+    using namespace snowdesktop::shell_icon_request;
+    Work work(1, 1, 1);
+    std::atomic<bool> rejectedClassified = false;
+    bool rejected = false;
+    SubmitLocalIcon(work, L"stale", [] { return 1; }, [&] {
+        rejectedClassified = true; return 1;
+    }, [&](int) { rejected = true; return false; }, [](int) {}, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return rejected; }),
+        "a stale first result reaches the host acceptance boundary");
+    auto gate = std::make_shared<ShortcutClassificationGate>();
+    int cancelledApplied = 0;
+    SubmitLocalIcon(work, L"popup:old", [] { return 1; }, [gate] { return gate->Run(); },
+        [](int) { return true; }, [&](bool) { ++cancelledApplied; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] {
+        return WaitForSingleObject(gate->entered, 0) == WAIT_OBJECT_0;
+    }), "classification is in flight before the popup closes");
+    work.Cancel(L"popup:");
+    SetEvent(gate->release);
+    bool replacementApplied = false;
+    SubmitLocalIcon(work, L"popup:old", [] { return 2; }, [] { return 2; },
+        [](int value) { return value == 2; },
+        [&](int value) { replacementApplied = value == 2; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return replacementApplied; }) &&
+            cancelledApplied == 0 && !rejectedClassified,
+        "cancelled classification cannot deliver into a reused key and rejected images never schedule classification");
+
+    auto retired = std::make_unique<Work>(1, 1, 1);
+    auto destroyedGate = std::make_shared<ShortcutClassificationGate>();
+    std::atomic<bool> destroyedApplied = false;
+    SubmitLocalIcon(*retired, L"destroyed", [] { return 1; },
+        [destroyedGate] { return destroyedGate->Run(); }, [](int) { return true; },
+        [&](bool) { destroyedApplied = true; }, nullptr, 0);
+    Check(DrainIconsUntil(*retired, [&] {
+        return WaitForSingleObject(destroyedGate->entered, 0) == WAIT_OBJECT_0;
+    }), "classification enters before its owner is destroyed");
+    retired.reset();
+    SetEvent(destroyedGate->release);
+    Check(WaitForSingleObject(destroyedGate->returned, 2000) == WAIT_OBJECT_0 && !destroyedApplied,
+        "destroying the scheduler drops late classification without joining its blocked provider");
+    work.Stop();
+    Check(!SubmitLocalIcon(work, L"stopped", [] { return 1; }, [] { return 1; },
+        [](int) { return true; }, [](int) {}, nullptr, 0),
+        "shutdown also rejects the production first-image/classification entry point");
+}
+
+// Reproduce classification saturation after successful first-image delivery.
+// Only providers wait on a gate; the production scheduler owns all stages.
+void TestShortcutClassificationCapacityRecovery()
+{
+    using snowdesktop::shell_icon_request::Work;
+    Work work(1, 1, 1, 1, 2);
+    auto gate = std::make_shared<ShortcutClassificationGate>();
+    std::vector<int> images, classified;
+    const auto submit = [&](std::wstring key, int id) {
+        return SubmitLocalIcon(work, std::move(key), [id] { return id; },
+            [gate, id] { gate->Run(); return id; },
+            [&](int value) { images.push_back(value); return true; },
+            [&](int value) { classified.push_back(value); }, nullptr, 0);
+    };
+    for (int id = 0; id < 4; ++id)
+    {
+        Check(submit(id == 2 ? L"popup:old" : std::to_wstring(id), id),
+            "bounded scheduler accepts initial images while classifications fill up");
+        Check(DrainIconsUntil(work, [&] { return images.size() == static_cast<size_t>(id + 1); }),
+            "saturated classifiers do not discard or block already accepted pixels");
+    }
+    Check(classified.empty() && !submit(L"later", 4),
+        "a full deferred queue applies admission backpressure without an unbounded retry list");
+    work.Cancel(L"popup:");
+    Check(submit(L"popup:old", 5) && DrainIconsUntil(work, [&] { return images.size() == 5; }),
+        "cancelling a deferred classification allows the replacement generation to enter");
+    SetEvent(gate->release);
+    Check(DrainIconsUntil(work, [&] { return classified.size() == 4; }),
+        "queue capacity recovery delivers every non-cancelled classification including deferred work");
+    std::sort(classified.begin(), classified.end());
+    Check(classified == std::vector<int>({0, 1, 3, 5}),
+        "deferred cancellation rejects the old generation even when its key is reused");
+    Check(submit(L"later", 4) && DrainIconsUntil(work, [&] { return classified.size() == 5; }),
+        "a previously rejected first request remains retryable after capacity recovers");
+    work.Stop();
+
+    Work stopped(1, 1, 1, 1, 1);
+    auto blocked = std::make_shared<ShortcutClassificationGate>();
+    int delivered = 0;
+    auto retained = std::make_shared<int>(7);
+    const std::weak_ptr<int> weak = retained;
+    SubmitLocalIcon(stopped, L"active", [] { return 1; }, [blocked] { return blocked->Run(); },
+        [&](int) { ++delivered; return true; }, [](bool) {}, nullptr, 0);
+    Check(DrainIconsUntil(stopped, [&] { return delivered == 1; }), "shutdown fixture occupies its classifier");
+    SubmitLocalIcon(stopped, L"deferred", [] { return 1; }, [retained] { return *retained; },
+        [&](int) { ++delivered; return true; }, [](int) {}, nullptr, 0);
+    Check(DrainIconsUntil(stopped, [&] { return delivered == 2; }), "shutdown fixture retains a deferred classifier");
+    retained.reset();
+    stopped.Stop();
+    Check(weak.expired(), "shutdown releases deferred classification ownership without running it");
+    SetEvent(blocked->release);
+}
+
+// Production fallback routing: all reserved Shell-first workers are blocked,
+// yet later local first images must reach the host without waiting for them.
+void TestLocalIconsBypassBlockedShellFallback()
+{
+    using namespace snowdesktop::shell_icon_request;
+    Work work(1, 1, 1, 1);
+    auto gate = std::make_shared<ShortcutClassificationGate>();
+    int slowApplied = 0, slowClassified = 0;
+    const auto ready = [](int value) { return value != 0; };
+    work.SubmitFirstWithFallback(L"slow", [] { return 0; }, [gate] {
+        gate->Run(); return 7;
+    }, ready, [] { return 1; }, [&](int value) {
+        slowApplied = value; return true;
+    }, [&](int value) { slowClassified += value; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] {
+        return WaitForSingleObject(gate->entered, 0) == WAIT_OBJECT_0;
+    }), "a local miss enters the bounded Shell fallback lane");
+    bool localApplied = false, detailApplied = false;
+    int localClassified = 0;
+    std::atomic<int> unnecessaryShellCalls = 0;
+    work.SubmitFirstWithFallback(L"local", [] { return 42; }, [&] {
+        ++unnecessaryShellCalls; return 99;
+    }, ready, [] { return 1; }, [&](int value) {
+        localApplied = value == 42; return true;
+    }, [&](int value) { localClassified += value; }, nullptr, 0);
+    work.Submit(true, L"detail", [] { return 8; },
+        [&](int value) { detailApplied = value == 8; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return localApplied && localClassified == 1 && detailApplied; }) &&
+        slowApplied == 0 && slowClassified == 0 && unnecessaryShellCalls == 0 &&
+        WaitForSingleObject(gate->returned, 0) == WAIT_TIMEOUT,
+        "local pixels, classification and details continue while every Shell-first worker is stuck");
+    SetEvent(gate->release);
+    Check(DrainIconsUntil(work, [&] { return slowApplied == 7 && slowClassified == 1; }),
+        "a late Shell bitmap delivers once and starts classification only after acceptance");
+
+    auto cancelled = std::make_shared<ShortcutClassificationGate>();
+    int staleCallbacks = 0;
+    work.SubmitFirstWithFallback(L"popup:old", [] { return 0; }, [cancelled] {
+        cancelled->Run(); return 1;
+    }, ready, [] { return 1; }, [&](int) { ++staleCallbacks; return true; },
+        [&](int) { ++staleCallbacks; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] {
+        return WaitForSingleObject(cancelled->entered, 0) == WAIT_OBJECT_0;
+    }), "fallback is running when its popup is closed");
+    work.Cancel(L"popup:");
+    bool replacement = false, barrier = false;
+    work.SubmitFirstWithFallback(L"popup:old", [] { return 2; }, [] { return 0; }, ready,
+        [] { return 0; }, [&](int value) { replacement = value == 2; return false; },
+        [&](int) { ++staleCallbacks; }, nullptr, 0);
+    SetEvent(cancelled->release);
+    work.SubmitFirstWithFallback(L"barrier", [] { return 0; }, [] { return 3; }, ready,
+        [] { return 0; }, [&](int value) { barrier = value == 3; return false; },
+        [&](int) { ++staleCallbacks; }, nullptr, 0);
+    Check(DrainIconsUntil(work, [&] { return replacement && barrier; }) && staleCallbacks == 0,
+        "cancelled fallback cannot overwrite a reused key or start stale classification");
+
+    auto retired = std::make_unique<Work>(1, 1, 1, 1);
+    auto destroyed = std::make_shared<ShortcutClassificationGate>();
+    std::atomic<bool> lateApplied = false;
+    retired->SubmitFirstWithFallback(L"destroyed", [] { return 0; }, [destroyed] {
+        destroyed->Run(); return 1;
+    }, ready, [] { return 0; }, [&](int) { lateApplied = true; return true; },
+        [&](int) { lateApplied = true; }, nullptr, 0);
+    Check(DrainIconsUntil(*retired, [&] {
+        return WaitForSingleObject(destroyed->entered, 0) == WAIT_OBJECT_0;
+    }), "Shell fallback enters before owner destruction");
+    retired.reset();
+    SetEvent(destroyed->release);
+    Check(WaitForSingleObject(destroyed->returned, 2000) == WAIT_OBJECT_0 && !lateApplied,
+        "destruction drops in-flight fallback delivery without retaining the host");
+    work.Stop();
+    Check(!work.SubmitFirstWithFallback(L"stopped", [] { return 1; }, [] { return 1; }, ready,
+        [] { return 0; }, [](int) { return true; }, [](int) {}, nullptr, 0),
+        "shutdown rejects local/fallback submissions");
+}
+// The slow samples include executables without embedded resources. Window pixels
+// must be available independently of Shell refinement. Shortcut reopen tests use
+// real GDI ownership; only resource/window providers are replaced with values.
+void TestInitialIconBitmaps()
+{
+    using namespace snowdesktop::initial_icon_bitmap;
+    int resources = 0, windows = 0;
+    const auto resource = [&] { ++resources; return 11; };
+    const auto window = [&] { ++windows; return 22; };
+    Check(ReadRunning(false, resource, window) == 11 && resources == 1 && windows == 0,
+        "a local executable icon does not need cross-process window messaging");
+    Check(ReadRunning(false, [&] { ++resources; return 0; }, window) == 22 && windows == 1,
+        "a running executable without embedded resources gets its window icon before Shell returns");
+    Check(ReadRunning(true, resource, window) == 22 && resources == 2 && windows == 2,
+        "packaged apps can preview their window without using a shared host executable icon");
+    Check(ReadRunning(false, [] { return 0; }, [] { return 0; }) == 0,
+        "failed initial providers leave Shell refinement responsible for pixels");
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 2;
+    info.bmiHeader.biHeight = -2;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* pixels = nullptr;
+    snowdesktop::BackgroundBitmap source;
+    source.bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    source.size = {2, 2};
+    Check(source.bitmap && pixels, "create owned shortcut pixel fixture");
+    if (!source.bitmap || !pixels) return;
+    auto* color = static_cast<std::uint32_t*>(pixels);
+    // CopyImage may return a bottom-up DIB. Use a uniform fixture so the
+    // ownership/quality expectation is independent of raw scan-line order.
+    std::fill_n(color, 4, 0xff123456u);
+    ShortcutCache cache(2);
+    cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size);
+    std::fill_n(color, 4, 0xffabcdefu);
+    cache.Put(L"shortcut-A/version-1/96", source.bitmap, source.size, false);
+    auto first = cache.Get(L"shortcut-A/version-1/96");
+    BITMAP firstBitmap{};
+    Check(first && first->bitmap != source.bitmap && first->size.cx == 2 &&
+        GetObjectW(first->bitmap, sizeof(firstBitmap), &firstBitmap) && firstBitmap.bmBits &&
+        static_cast<std::uint32_t*>(firstBitmap.bmBits)[0] == 0xff123456,
+        "reopened shortcut owns independent refined pixels; late first-quality results cannot downgrade them");
+    first.reset();
+    DeleteObject(std::exchange(source.bitmap, nullptr));
+    auto reopened = cache.Get(L"shortcut-A/version-1/96");
+    Check(reopened && !cache.Get(L"shortcut-A/version-2/96") &&
+        !cache.Get(L"shortcut-A/version-1/192"),
+        "closing the prior popup retains pixels but changed source versions or sizes miss");
+    if (!reopened) return;
+    cache.Put(L"shortcut-A/version-1/96", nullptr, {});
+    Check(cache.Get(L"shortcut-A/version-1/96") != nullptr,
+        "failed refinement cannot replace successful cached shortcut pixels");
+    cache.Put(L"B", reopened->bitmap, reopened->size);
+    (void)cache.Get(L"shortcut-A/version-1/96");
+    cache.Put(L"C", reopened->bitmap, reopened->size);
+    Check(cache.Get(L"shortcut-A/version-1/96") && !cache.Get(L"B") && cache.Get(L"C"),
+        "bounded shortcut cache evicts the least recently used entry without invalidating consumers");
+}

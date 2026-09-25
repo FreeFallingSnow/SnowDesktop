@@ -1,5 +1,7 @@
 #include "app.h"
 #include "dock_taskbar_diagnostics.h"
+#include "../taskbar_monitor.h"
+#include "../taskbar_hook/taskbar_native.h"
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
@@ -193,9 +195,10 @@ bool AppearanceRequiresTaskbarHook(const DockSettings& settings)
 
 bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 {
-    return AppearanceRequiresTaskbarHook(settings) ||
-        ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
-            settings.systemTaskbarAutoHide);
+    return (generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
+        AppearanceRequiresTaskbarHook(settings) ||
+        (!IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
+            settings.systemTaskbarAutoHide));
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -415,12 +418,23 @@ bool DesktopApp::RefreshSystemTaskbarWindowState()
 bool DesktopApp::RefreshSystemTaskbarAppearance(
     bool forceWindowScan, bool skipUnchangedWindowState)
 {
+    const auto applyClassicSystemTheme = [this](bool enabled,
+        const PersonalizationSettings& appearance) {
+        if (!IsClassicSystemTaskbar()) return;
+        const auto light = snowdesktop::dock_settings_rules::
+            ResolveClassicTaskbarSystemLightTheme(
+                dockSettings_.classicTaskbarSystemTheme, enabled, appearance.contentTheme);
+        if (light && IsWindowsSystemLightThemeEnabled() != *light)
+            (void)RequestWindowsSystemLightThemeEnabled(*light);
+    };
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
-    const bool protectActivation = ShouldProtectAutoHideTaskbar(dockSettings_,
+    const bool protectActivation = !IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(dockSettings_,
         generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
-    const bool hookRequired = appearanceRequired || protectActivation;
+    const bool suppressionRequested = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
+    const bool hookRequired = appearanceRequired || protectActivation || suppressionRequested;
     if (!hookRequired)
     {
+        applyClassicSystemTheme(false, dockSettings_.systemTaskbarAppearance);
         ApplySystemTaskbarBackdrop(false, false,
             ResolveSystemTaskbarAppearance(dockSettings_));
         systemTaskbarBackdropRefreshTick_ = GetTickCount();
@@ -481,7 +495,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     const PersonalizationSettings defaultAppearance =
         ResolveSystemTaskbarAppearance(dockSettings_);
     std::vector<HMONITOR> dockMonitors;
-    if (protectActivation && hwnd_)
+    if ((protectActivation || suppressionRequested) && hwnd_)
     {
         for (const auto& container : containers_)
         {
@@ -500,18 +514,20 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
     targets.reserve(context.windows.size());
     for (HWND taskbar : context.windows)
     {
-        const HMONITOR monitor = MonitorFromWindow(taskbar,
-            MONITOR_DEFAULTTONULL);
+        const HMONITOR monitor = snowdesktop::taskbar_monitor::Resolve(taskbar);
+        const bool hasDock = monitor &&
+            std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
         const auto stateIt = systemTaskbarMonitorWindowStates_.find(monitor);
         const SystemTaskbarMonitorWindowState state =
             stateIt == systemTaskbarMonitorWindowStates_.end()
             ? SystemTaskbarMonitorWindowState{} : stateIt->second;
 
+        const bool shellPanelVisible = snowdesktop::dock_settings_rules::
+            ShouldRevealTaskbarForShellPanel(systemTaskbarTaskViewActive_,
+                systemTaskbarShellUiActive_, monitor == systemTaskbarShellUiMonitor_) ||
+            GetPropW(taskbar, snowdesktop::taskbar_hook::native::kContextMenuProperty) != nullptr;
         const SystemTaskbarDynamicRule* selectedRule = nullptr;
-        if (dockSettings_.systemTaskbarShellUi.enabled &&
-            (systemTaskbarTaskViewActive_ ||
-             (systemTaskbarShellUiActive_ &&
-              monitor == systemTaskbarShellUiMonitor_)))
+        if (dockSettings_.systemTaskbarShellUi.enabled && shellPanelVisible)
             selectedRule = &dockSettings_.systemTaskbarShellUi;
         else if (dockSettings_.systemTaskbarMaximizedWindow.enabled &&
             state.maximized)
@@ -522,8 +538,10 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
 
         SystemTaskbarTargetAppearance target;
         target.taskbar = taskbar;
-        target.protectAutoHideActivation = protectActivation &&
-            std::find(dockMonitors.begin(), dockMonitors.end(), monitor) != dockMonitors.end();
+        // Panel access remains available even with all appearance rules off.
+        target.shellPanelVisible = shellPanelVisible;
+        target.suppressTaskbar = suppressionRequested && hasDock;
+        target.protectAutoHideActivation = protectActivation && !shellPanelVisible && hasDock;
         if (selectedRule)
         {
             target.enabled =
@@ -539,8 +557,18 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
         targets.push_back(std::move(target));
     }
 
+    // Windows 10 has one global shell theme. Resolve it once from the primary
+    // taskbar's active scene, never let differently styled monitors compete.
+    const HWND primaryTaskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    const auto primary = std::find_if(targets.begin(), targets.end(),
+        [primaryTaskbar](const auto& target) { return target.taskbar == primaryTaskbar; });
+    if (primary != targets.end())
+        applyClassicSystemTheme(primary->enabled, primary->appearance);
+
+    const bool suppressTaskbar = std::any_of(targets.begin(), targets.end(),
+        [](const auto& target) { return target.suppressTaskbar; });
     ApplySystemTaskbarBackdrop(true,
-        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired);
+        dockSettings_.systemTaskbarBackdropEnabled, defaultAppearance, targets, appearanceRequired, suppressTaskbar);
     systemTaskbarBackdropRefreshTick_ = GetTickCount();
     return true;
 }

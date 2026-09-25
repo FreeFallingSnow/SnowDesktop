@@ -1,6 +1,7 @@
 #include "shell_launch_worker.h"
 #include "shell_launch_process.h"
 #include "shell_open_command.h"
+#include "shell_launch_execution.h"
 
 #include <array>
 #include <chrono>
@@ -28,6 +29,139 @@ void Check(bool condition, const char* message)
         return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+// Real HWND validity/owner selection and real shortcut policy, with only the
+// Windows foreground and UAC broker boundary substituted. This protects the
+// VGN-like double-click path without claiming that a simulated prompt proves
+// real UAC Z-order. Old early grants are deliberately absent at broker entry.
+struct ConsentBoundary
+{
+    HWND foreground = nullptr;
+    HWND expectedOwner = nullptr;
+    HWND invocationOwner = nullptr;
+    std::wstring expectedPath;
+    int activations = 0;
+    int invocations = 0;
+    int unexpectedOpens = 0;
+    bool granted = false;
+    bool cancel = false;
+    bool foregroundConsent = false;
+} consent;
+
+HWND WINAPI ConsentForeground() { return consent.foreground; }
+BOOL WINAPI ConsentActivate(HWND window)
+{
+    ++consent.activations;
+    consent.foreground = window;
+    return TRUE;
+}
+BOOL WINAPI ConsentAllow(DWORD process)
+{
+    consent.granted = process == ASFW_ANY;
+    return consent.granted;
+}
+BOOL WINAPI ConsentExecute(SHELLEXECUTEINFOW* info)
+{
+    ++consent.invocations;
+    consent.invocationOwner = info->hwnd;
+    consent.foregroundConsent = consent.granted &&
+        consent.activations == 1 && info->hwnd == consent.expectedOwner &&
+        consent.foreground == consent.expectedOwner && info->lpVerb &&
+        wcscmp(info->lpVerb, L"runas") == 0 &&
+        info->lpFile && info->lpFile == consent.expectedPath &&
+        (info->fMask & SEE_MASK_NOASYNC) && info->nShow == SW_SHOWNORMAL;
+    if (consent.cancel) SetLastError(ERROR_CANCELLED);
+    return !consent.cancel;
+}
+
+bool ConsentRejectOpen(HWND, const std::wstring&, PCIDLIST_ABSOLUTE, int, ULONG)
+{
+    ++consent.unexpectedOpens;
+    return false;
+}
+
+void CheckElevationDispatch(const std::wstring& path,
+    snowdesktop::shell_launch_process::Action action)
+{
+    namespace process = snowdesktop::shell_launch_process;
+    // Independent off-screen test windows, never the user's desktop host.
+    const HWND input = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Consent test input",
+        WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(input != nullptr, "consent regression must create its independent input fixture");
+    if (!input) return;
+    ShowWindow(input, SW_SHOWNOACTIVATE);
+    const process::ExecutionApi api{ConsentForeground, ConsentActivate, ConsentAllow,
+        ConsentExecute, ConsentRejectOpen};
+    process::Request request;
+    request.owner = input;
+    request.path = path;
+    request.action = action;
+    for (bool cancel : {false, true})
+    {
+        consent = {};
+        consent.foreground = input;
+        consent.expectedOwner = input;
+        consent.expectedPath = path;
+        consent.cancel = cancel;
+        const bool opened = process::ExecuteRequestWithApi(request, api);
+        Check(opened == !cancel && consent.invocations == 1 && consent.foregroundConsent &&
+            consent.unexpectedOpens == 0,
+            "elevated launch must hand foreground to consent once; cancellation must never retry");
+    }
+    consent = {};
+    consent.expectedPath = path;
+    Check(process::ExecuteRequestWithApi(request, api) && consent.invocations == 1 &&
+        consent.activations == 0,
+        "a delayed elevated launch must not reactivate the owner after its process loses foreground");
+    DestroyWindow(input);
+    consent = {};
+    Check(process::ExecuteRequestWithApi(request, api) && consent.invocations == 1 &&
+        consent.activations == 0 && consent.invocationOwner == nullptr,
+        "a destroyed launch owner must not be activated or prevent dispatch");
+    consent = {};
+    request.action = process::Action::Open;
+    Check(!process::ExecuteRequestWithApi(request, api) && consent.unexpectedOpens == 1 &&
+        consent.invocations == 0,
+        "the consent probe must reject unexpected ordinary Open without invoking the real Shell");
+}
+
+void TestLaunchOwnerSurvivesMenuDismissal()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    const auto topLevel = [instance](DWORD extendedStyle) {
+        return CreateWindowExW(extendedStyle, L"STATIC", L"Launch owner fixture",
+            WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, instance, nullptr);
+    };
+    const HWND input = topLevel(WS_EX_TOOLWINDOW);
+    const HWND control = topLevel(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    const HWND panel = topLevel(WS_EX_TOOLWINDOW);
+    const HWND render = CreateWindowExW(0, L"STATIC", L"Render fixture", WS_CHILD | WS_VISIBLE,
+        0, 0, 1, 1, input, nullptr, instance, nullptr);
+    Check(input && control && panel && render, "launch owner fixtures must be created");
+    if (input && control && panel && render)
+    {
+        ShowWindow(input, SW_SHOWNOACTIVATE);
+        Check(process::ResolveLaunchOwner(control, render, input) == input &&
+            process::ResolveLaunchOwner(render, render, input) == input &&
+            process::ResolveLaunchOwner(nullptr, render, input) == input,
+            "desktop launches must replace hidden control/render owners with the persistent input proxy");
+        ShowWindow(control, SW_SHOWNOACTIVATE);
+        Check(process::ResolveLaunchOwner(control, render, input) == input,
+            "even a visible NOACTIVATE window cannot anchor the consent dialog");
+        ShowWindow(panel, SW_SHOWNOACTIVATE);
+        Check(process::ResolveLaunchOwner(panel, render, input) == panel,
+            "explicit activatable top-level callers must retain their invocation owner");
+        ShowWindow(panel, SW_HIDE);
+        Check(process::ResolveLaunchOwner(panel, render, input) == input,
+            "a dismissed panel must fall back to the surviving input window");
+        ShowWindow(input, SW_HIDE);
+        Check(process::ResolveLaunchOwner(control, render, input) == nullptr,
+            "no usable input proxy must not fall back to a hidden or Explorer-owned window");
+    }
+    for (HWND window : {render, panel, control, input})
+        if (window) DestroyWindow(window);
 }
 
 // Models the shell extension boundary that previously loaded an unrelated
@@ -114,10 +248,11 @@ void TestIsolatedFolderActivation()
         Microsoft::WRL::ComPtr<IShellWindows> windows;
         Check(SUCCEEDED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
             IID_PPV_ARGS(&windows))), "folder activation must observe real Explorer navigation");
-        // Separate fresh targets prevent an already-open directory from passing.
-        // Cover desktop/Dock, path-only callers, ordinary folders and Shell
-        // objects with no parsing name. Only this test's windows are closed.
-        for (int kind = 0; windows && kind < 4; ++kind)
+        // Real Shell execution must leave the folder visible after the helper
+        // exits, including repeated activation of an existing Explorer window.
+        // A registered LocationURL alone also matches a silently hidden window.
+        // Only the unique fixture folders' windows are observed and closed.
+        for (int kind = 0; windows && kind < 5; ++kind)
         {
             GUID id{}; wchar_t idText[64]{}, temp[MAX_PATH]{};
             const bool pathsReady = SUCCEEDED(CoCreateGuid(&id)) &&
@@ -135,12 +270,12 @@ void TestIsolatedFolderActivation()
                 SUCCEEDED(link.As(&persist)) && SUCCEEDED(persist->Save(shortcut.c_str(), TRUE));
             Check(ready, "folder shortcut fixture must be created");
             snowdesktop::shell_launch_process::Request request;
-            request.path = kind == 2 ? folder : shortcut;
+            request.path = kind == 2 || kind == 4 ? folder : shortcut;
             request.action = snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy;
             PIDLIST_ABSOLUTE pidl = nullptr;
-            if (kind == 0 || kind == 3)
+            if (kind == 0 || kind == 3 || kind == 4)
             {
-                ready = ready && SUCCEEDED(SHParseDisplayName(shortcut.c_str(), nullptr, &pidl, 0, nullptr)) && pidl;
+                ready = ready && SUCCEEDED(SHParseDisplayName(request.path.c_str(), nullptr, &pidl, 0, nullptr)) && pidl;
                 if (pidl)
                 {
                     const auto bytes = reinterpret_cast<const unsigned char*>(pidl);
@@ -148,13 +283,7 @@ void TestIsolatedFolderActivation()
                 }
             }
             if (kind == 3) request.path.clear();
-            const auto started = ready ? snowdesktop::shell_launch_process::Start(request, 10000) :
-                snowdesktop::shell_launch_process::StartedProcess{};
-            Check(static_cast<bool>(started), "folder activation must dispatch the real helper");
-            bool observed = false;
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-            while (started && !observed && std::chrono::steady_clock::now() < deadline)
-            {
+            const auto visitFolderWindows = [&](auto&& visit) {
                 long count = 0; windows->get_Count(&count);
                 for (long i = 0; i < count; ++i)
                 {
@@ -165,21 +294,73 @@ void TestIsolatedFolderActivation()
                     BSTR url = nullptr; browser->get_LocationURL(&url);
                     wchar_t path[32768]{}; DWORD size = 32768;
                     if (url && SUCCEEDED(PathCreateFromUrlW(url, path, &size, 0)) && SameFolder(folder, path))
-                    { observed = true; browser->Quit(); }
+                        visit(browser.Get());
                     SysFreeString(url);
                 }
-                if (!observed)
+            };
+            const auto pumpMessages = [] {
+                MSG message{};
+                while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                { TranslateMessage(&message); DispatchMessageW(&message); }
+                MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+            };
+            // First open, reopen while visible, then reopen from minimized.
+            // All three use the same production transport and Shell handler.
+            for (int attempt = 0; ready && attempt < 3; ++attempt)
+            {
+                if (attempt == 2)
                 {
-                    MSG message{};
-                    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
-                    { TranslateMessage(&message); DispatchMessageW(&message); }
-                    MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+                    visitFolderWindows([](IWebBrowser2* browser) {
+                        SHANDLE_PTR handle = 0;
+                        if (SUCCEEDED(browser->get_HWND(&handle)))
+                            ShowWindow(reinterpret_cast<HWND>(handle), SW_MINIMIZE);
+                    });
                 }
+                const auto started = snowdesktop::shell_launch_process::Start(request, 10000);
+                Check(static_cast<bool>(started), "folder activation must dispatch the real helper");
+                HANDLE child = started ? OpenProcess(
+                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, started.id) : nullptr;
+                Check(child != nullptr, "folder activation must observe helper completion");
+                bool visible = false;
+                bool completed = false;
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+                while (child && std::chrono::steady_clock::now() < deadline)
+                {
+                    // Observe the window after the request has finished so an
+                    // old visible window cannot pass before the reopen runs.
+                    completed = WaitForSingleObject(child, 0) == WAIT_OBJECT_0;
+                    if (completed)
+                    {
+                        visible = false;
+                        visitFolderWindows([&](IWebBrowser2* browser) {
+                            SHANDLE_PTR handle = 0;
+                            if (SUCCEEDED(browser->get_HWND(&handle)))
+                            {
+                                const HWND window = reinterpret_cast<HWND>(handle);
+                                visible = visible || (IsWindowVisible(window) && !IsIconic(window));
+                            }
+                        });
+                        if (visible) break;
+                    }
+                    pumpMessages();
+                }
+                DWORD result = ERROR_PROCESS_ABORTED;
+                if (child)
+                {
+                    GetExitCodeProcess(child, &result);
+                    CloseHandle(child);
+                }
+                if (!completed || !visible || result != ERROR_SUCCESS)
+                    std::cerr << "Folder activation kind=" << kind << " attempt=" << attempt
+                              << " completed=" << completed << " result=" << result
+                              << " visible=" << visible << '\n';
+                Check(completed && result == ERROR_SUCCESS,
+                    "folder activation helper must complete successfully");
+                Check(visible, attempt == 0 ? "first folder activation must show Explorer" :
+                    attempt == 1 ? "reopening an existing folder must keep Explorer visible" :
+                    "reopening a minimized folder must restore visible Explorer");
             }
-            Check(observed, kind == 0 ? "PIDL folder shortcut must actually navigate Explorer" :
-                kind == 1 ? "path-only folder shortcut must actually navigate Explorer" :
-                kind == 2 ? "ordinary folder must actually navigate Explorer" :
-                "PIDL-only Shell item must actually navigate Explorer");
+            visitFolderWindows([](IWebBrowser2* browser) { browser->Quit(); });
             CoTaskMemFree(pidl); persist.Reset(); link.Reset();
             DeleteFileW(shortcut.c_str()); RemoveDirectoryW(folder.c_str());
         }
@@ -495,6 +676,8 @@ void TestAdministratorShortcutMetadataIsDetected()
                 snowdesktop::ShellLaunchWorker::
                     ShortcutRequestsAdministrator(linkPath),
                 "the SLDF_RUNAS_USER flag must select administrator launch");
+            CheckElevationDispatch(linkPath,
+                snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
         }
 
         wchar_t windowsDirectory[MAX_PATH]{};
@@ -530,6 +713,8 @@ void TestAdministratorShortcutMetadataIsDetected()
                 snowdesktop::ShellLaunchWorker::
                     ShortcutRequestsAdministrator(manifestLinkPath),
                 "a highestAvailable target manifest must select administrator launch");
+            CheckElevationDispatch(manifestLinkPath,
+                snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
         }
     }
 
@@ -840,6 +1025,25 @@ int wmain(int argc, wchar_t** argv)
         TestDefaultOpenDoesNotPrepareUnrelatedMenus();
         return failures ? 1 : 0;
     }
+    if ((argc == 2 || argc == 3) && wcscmp(argv[1], L"--elevation-contract") == 0)
+    {
+        TestLaunchOwnerSurvivesMenuDismissal();
+        TestAdministratorShortcutMetadataIsDetected();
+        CheckElevationDispatch(L"explicit-administrator.exe",
+            snowdesktop::shell_launch_process::Action::RunAs);
+        if (argc == 3)
+        {
+            const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            Check(SUCCEEDED(com), "original shortcut check must initialize COM");
+            if (SUCCEEDED(com))
+            {
+                CheckElevationDispatch(argv[2],
+                    snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
+                CoUninitialize();
+            }
+        }
+        return failures ? 1 : 0;
+    }
     if (argc == 3 && wcscmp(argv[1], L"--shell-open-survivor") == 0)
     {
         const std::wstring name(argv[2]);
@@ -871,6 +1075,9 @@ int wmain(int argc, wchar_t** argv)
     TestInvalidRequestsAreRejected();
     TestShellItemPidlIsCopiedBeforeExecution();
     TestAdministratorShortcutMetadataIsDetected();
+    TestLaunchOwnerSurvivesMenuDismissal();
+    CheckElevationDispatch(L"explicit-administrator.exe",
+        snowdesktop::shell_launch_process::Action::RunAs);
     TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
     TestBlockedHelperDoesNotSerializeLaterOpensAndIsReaped();
     TestIsolatedOpenLaunchesShortcut();

@@ -5,10 +5,13 @@
 #include "rename_edit_layout.h"
 #include "dock_drop_rules.h"
 #include "dock_folder_rules.h"
+#include "dock_refresh_cache.h"
+#include "item_location.h"
 #include "dock_collection_icon_rules.h"
 #include "collection_popup_layout.h"
 #include "folder_sort_rules.h"
 #include "shell_item_visibility.h"
+#include "shell_file_operation_worker.h"
 #include "popup_drag_rules.h"
 #include "item_layout_rules.h"
 #include "item_render_layer_rules.h"
@@ -25,6 +28,7 @@
 #include "dock_settings.h"
 #include "desktop_item_reference_migration.h"
 #include "app/desktop_backdrop_update_rules.h"
+#include "app/desktop_passthrough_indicator.h"
 #include "app/native_menu_presentation_rules.h"
 #include "app/popup_window_pair_z_order.h"
 #include "desktop_window_discovery_rules.h"
@@ -43,6 +47,7 @@
 #include "windows_desktop_layout.h"
 #include "widget_item_layout.h"
 #include "app/grid_geometry.h"
+#include "app/layout_reload.h"
 #include "taskbar_hook/taskbar_autohide_trace.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
 
@@ -73,6 +78,7 @@ namespace rules = snowdesktop::dock_window_rules;
 namespace identityRules = snowdesktop::dock_app_identity_rules;
 
 int RunDesktopBackdropCompositorTests();
+int RunNativeTaskbarTests();
 
 namespace
 {
@@ -84,6 +90,102 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+#include "dock_refresh_cache_cases.h"
+#include "dock_magnification_entry_cases.h"
+
+#include "grid_drag_geometry_cases.h"
+
+void CheckDesktopPassthrough()
+{
+    // Exercise the production visibility rule used by every DockHost refresh.
+    // A promoted/retained Dock must not cover the wallpaper during passthrough.
+    namespace dock = snowdesktop::floating_dock_rules;
+    for (bool promoted : {false, true})
+        for (bool summonOnly : {false, true})
+            for (bool desktopVisible : {false, true})
+                for (bool iconsHidden : {false, true})
+                    for (bool keep : {false, true})
+                        Check(!dock::ShouldShowPersistentDockHost(
+                            true, promoted, summonOnly, desktopVisible,
+                            iconsHidden, keep, true),
+                            "passthrough must hide all active Dock modes");
+    Check(dock::ShouldShowPersistentDockHost(true, false, false, true, false, false, false),
+        "leaving passthrough must restore the ordinary desktop Dock");
+    Check(dock::ShouldShowPersistentDockHost(true, false, false, true, true, true, false),
+        "leaving passthrough must retain the keep-when-hidden preference");
+    Check(!dock::ShouldShowPersistentDockHost(true, false, true, true, false, false, false) &&
+        !dock::ShouldShowPersistentDockHost(false, false, false, true, false, false, false),
+        "leaving passthrough must not reveal an idle summon-only or disabled Dock");
+
+    // Exact independent bounds protect wallpaper hit testing at monitor seams
+    // and on scaled monitors to the left/above the primary display.
+    const auto primary = snowdesktop::desktop_passthrough_rules::EdgeBounds(
+        RECT{0, 0, 1920, 1080}, 96);
+    const RECT expectedPrimary[] = {{0, 0, 1920, 4}, {0, 1076, 1920, 1080},
+        {0, 4, 4, 1076}, {1916, 4, 1920, 1076}};
+    const auto scaled = snowdesktop::desktop_passthrough_rules::EdgeBounds(
+        RECT{-1920, -120, 0, 960}, 144);
+    const RECT expectedScaled[] = {{-1920, -120, 0, -114}, {-1920, 954, 0, 960},
+        {-1920, -114, -1914, 954}, {-6, -114, 0, 954}};
+    for (size_t i = 0; i < primary.size(); ++i)
+    {
+        Check(EqualRect(&primary[i], &expectedPrimary[i]) != FALSE,
+            "primary escape edges must occupy only the four outer bands");
+        Check(EqualRect(&scaled[i], &expectedScaled[i]) != FALSE,
+            "scaled escape edges must retain their own monitor origin and DPI");
+        Check(!PtInRect(&primary[i], POINT{960, 540}) &&
+            !PtInRect(&scaled[i], POINT{-960, 420}),
+            "escape surfaces must leave wallpaper interiors available for input");
+    }
+}
+
+void CheckClipboardPasteEffects()
+{
+    // PasteClipboardToFolderPath uses this production rule before scheduling
+    // desktop/mapped-folder file operations. A copied file offering COPY | LINK
+    // must remain a file copy; choosing Link would materialize a .lnk instead.
+    struct Case
+    {
+        DWORD effect;
+        DropAction expected;
+        const char* message;
+    };
+    const Case cases[] = {
+        { DROPEFFECT_NONE, DropAction::Copy,
+          "clipboard without an effect defaults to copying" },
+        { DROPEFFECT_COPY, DropAction::Copy,
+          "clipboard copy retains file-copy semantics" },
+        { DROPEFFECT_MOVE, DropAction::Move,
+          "clipboard cut retains file-move semantics" },
+        { DROPEFFECT_LINK, DropAction::Link,
+          "clipboard link-only preference retains shortcut semantics" },
+        { DROPEFFECT_COPY | DROPEFFECT_LINK, DropAction::Copy,
+          "clipboard COPY | LINK must copy the file instead of creating a shortcut" },
+        { DROPEFFECT_MOVE | DROPEFFECT_LINK, DropAction::Move,
+          "clipboard move remains preferred over an offered link" },
+        { DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, DropAction::Move,
+          "clipboard combined effects preserve existing cut precedence" },
+        { DROPEFFECT_SCROLL | DROPEFFECT_COPY | DROPEFFECT_LINK, DropAction::Copy,
+          "clipboard non-transfer bits must not turn a copy into a shortcut" },
+    };
+    for (const auto& test : cases)
+        Check(DropActionFromClipboardEffect(test.effect) == test.expected,
+            test.message);
+}
+
+void CheckClipboardShellDropKeys()
+{
+    // Production paste uses these states for its Shell handoff. A left-button
+    // gesture avoids the extra action menu; modifiers retain copy/cut/link intent.
+    using snowdesktop::ClipboardShellDropKeyState;
+    Check(ClipboardShellDropKeyState(DROPEFFECT_COPY) == (MK_LBUTTON | MK_CONTROL),
+        "Shell clipboard copy must request a left-button copy without an action menu");
+    Check(ClipboardShellDropKeyState(DROPEFFECT_MOVE) == (MK_LBUTTON | MK_SHIFT),
+        "Shell clipboard cut must request a left-button move without an action menu");
+    Check(ClipboardShellDropKeyState(DROPEFFECT_LINK) == (MK_LBUTTON | MK_CONTROL | MK_SHIFT),
+        "Shell clipboard link must request a left-button link without an action menu");
 }
 
 void CheckTaskbarAutoHideTraceTransport()
@@ -433,6 +535,37 @@ void CheckPopupWindowPairZOrderTransitions()
             content, backdrop, HWND_TOPMOST, true, origin, size) &&
             pairMatches(true),
         "a later manual summon can promote the Dock pair after desktop protection ends");
+
+    // Explorer's predecessor can still be topmost while its desktop/taskbar
+    // order changes. The requested desktop band must win over that anchor.
+    Check(SetWindowPos(separator, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, backdrop, separator, false, origin, size) && pairMatches(false),
+        "a topmost desktop anchor must not leave a dismissed Dock pair topmost");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_NOTOPMOST, false, origin, size) && pairMatches(false),
+        "prepare a normal Dock pair independently of the topmost-anchor regression");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, separator, false, origin, size) && pairMatches(false),
+        "a later desktop refresh must not promote a normal pair through a topmost anchor");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, nullptr, HWND_TOPMOST, true, origin, size) &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, nullptr, separator, false, origin, size) &&
+            !snowdesktop::popup_window_pair_z_order::IsTopmost(content),
+        "transparent Dock dismissal must also reject a topmost desktop anchor");
+    HWND expiredAnchor = CreateWindowExW(extendedStyle, L"STATIC", L"expired-anchor",
+        WS_POPUP, 0, 0, 32, 32, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(expiredAnchor && DestroyWindow(expiredAnchor), "prepare an expired desktop anchor");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true, origin, size) &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, backdrop, expiredAnchor, false, origin, size) && pairMatches(false),
+        "an expired desktop anchor must not prevent explicit Dock demotion");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true, origin, size) && pairMatches(true),
+        "the Dock pair remains summonable after desktop anchor fallback");
 
     const auto isAbove = [](HWND upper, HWND lower) {
         for (HWND current = upper; current;
@@ -800,11 +933,16 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    CheckDockRefreshContinuity();
+    CheckDesktopPassthrough();
+    CheckClipboardPasteEffects();
+    CheckClipboardShellDropKeys();
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarActivationRevealDispatch();
     CheckNativeDesktopCaptureReadiness();
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();
+    failures += RunNativeTaskbarTests();
     CheckAdaptiveRenameEditor();
     CheckMenuProtectedHostPositionChanges();
     CheckDockWindowPreviewLateOwnerPromotion();
@@ -1444,6 +1582,76 @@ int main(int argc, char** argv)
     }
 
     {
+        // Page lifetime follows visible ownership, not collected files' stale
+        // return cells. Only ownership lookup is a fixture; occupancy and page
+        // reclamation run the same rules as DesktopApp::PageHasContent/mapping.
+        std::vector<DesktopItem> pageItems(2);
+        pageItems[0].name = L"Collected.txt";
+        pageItems[0].layoutKey = L"collected";
+        pageItems[0].gridCell = { L"retired", 9, 8 };
+        pageItems[1].name = L"Dock shortcut";
+        pageItems[1].layoutKey = L"dock-only";
+        pageItems[1].gridCell = { L"retired", 4, 3 };
+        std::vector<DesktopWidget> pageWidgets(3);
+        pageWidgets[0].id = L"group-child";
+        pageWidgets[1].id = L"dock-widget";
+        pageWidgets[2].id = L"guide";
+        pageWidgets[2].type = DesktopWidgetType::Guide;
+        for (auto& widget : pageWidgets)
+            widget.gridCell.pageId = L"retired";
+        const auto isOwned = [](const DesktopItem& item) {
+            return item.layoutKey == L"collected" || item.layoutKey == L"dock-only";
+        };
+        const auto isHosted = [](const DesktopWidget& widget) {
+            return widget.id == L"group-child" || widget.id == L"dock-widget";
+        };
+        const auto hasContent = [&](const std::wstring& pageId) {
+            return pageNavigation::HasContent(
+                pageId, pageItems, pageWidgets, isOwned, isHosted);
+        };
+        Check(hasContent(L"retired"),
+            "the guide must keep a newly created page available before real content arrives");
+        pageWidgets.pop_back();
+        Check(!hasContent(L"retired"),
+            "removing the guide must expose an empty page despite hidden files and hosted widgets");
+        std::vector<std::wstring> ids{ L"fixed", L"default", L"retired" };
+        std::unordered_map<std::wstring, int> columns{
+            { L"fixed", 27 }, { L"default", 20 }, { L"retired", 20 } };
+        std::unordered_map<std::wstring, int> rows{
+            { L"fixed", 11 }, { L"default", 10 }, { L"retired", 10 } };
+        pageNavigation::PruneEmptyPages(ids, columns, rows, 2, true, hasContent);
+        Check(ids == std::vector<std::wstring>{ L"fixed", L"default" } &&
+                !columns.contains(L"retired") && !rows.contains(L"retired"),
+            "a page with only hidden ownership must be reclaimed while physical monitor slots remain");
+        Check(pageItems[0].layoutKey == L"collected" &&
+                pageItems[0].gridCell.column == 9 && pageItems[0].gridCell.row == 8 &&
+                pageItems.size() == 2 && pageWidgets.size() == 2,
+            "reclaiming a page must preserve hosted data and remembered return positions");
+        pageItems[0].layoutKey = L"visible";
+        Check(hasContent(L"retired"), "a visible desktop file must still keep its page");
+        pageItems[0].name.clear();
+        Check(!hasContent(L"retired"), "an empty desktop entry must not reserve a page");
+        pageWidgets[0].id = L"standalone";
+        Check(hasContent(L"retired"), "a standalone widget must still keep its page");
+    }
+
+    {
+        // Dropping on page 3 empties page 2 while page 4 also exists. Keeping
+        // the numeric offset would switch the user to page 4 after pruning.
+        std::vector<std::wstring> ids{ L"fixed", L"source", L"target", L"later" };
+        std::unordered_map<std::wstring, int> columns{
+            { L"fixed", 27 }, { L"source", 20 }, { L"target", 15 }, { L"later", 12 } };
+        std::unordered_map<std::wstring, int> rows{
+            { L"fixed", 11 }, { L"source", 10 }, { L"target", 8 }, { L"later", 6 } };
+        const int offset = pageNavigation::PruneEmptyPages(
+            ids, columns, rows, 2, true,
+            [](const std::wstring& id) { return id == L"target" || id == L"later"; }, 1);
+        Check(offset == 0 && ids == std::vector<std::wstring>{ L"fixed", L"target", L"later" } &&
+                columns.at(L"target") == 15 && rows.at(L"target") == 8,
+            "reclaiming the source page must retain the requested target and its grid dimensions");
+    }
+
+    {
         // GRID-02: loaded placement records precede Shell item enumeration.
         // Unknown content must not erase dimensions later needed by a file.
         std::vector<std::wstring> ids{ L"main", L"secondary" };
@@ -1516,6 +1724,9 @@ int main(int argc, char** argv)
             false, true),
         "Dock-exclusive widgets must not be displaced back onto the desktop");
 
+    TestGridDragGeometry();
+    TestWidgetDragAnchorAcrossGrids();
+
     GridPage dockWidgetTargetPage;
     dockWidgetTargetPage.id = L"dock-widget-target";
     dockWidgetTargetPage.workArea = { 0, 0, 640, 480 };
@@ -1541,6 +1752,22 @@ int main(int argc, char** argv)
                 dockWidgetSpan),
         "Dock widget drops at the page edge must move the anchor instead of shrinking the original span");
 
+    const auto loadingFolderCount = popupLayout::LayoutItemCount(true, 0, 13);
+    Check(popupLayout::PreferredColumnCount(loadingFolderCount, 5) == 5 &&
+        popupLayout::RequiredRowCount(loadingFolderCount, 5) == 3 &&
+        popupLayout::RequiredListRowCount(loadingFolderCount) == 13,
+        "a known 13-item folder reserves its loaded grid/list footprint before the opening animation");
+    const auto emptyFolderCount = popupLayout::LayoutItemCount(false, 0, 13);
+    Check(emptyFolderCount == loadingFolderCount &&
+        popupLayout::PreferredColumnCount(emptyFolderCount, 5) == 5 &&
+        popupLayout::RequiredRowCount(emptyFolderCount, 5) == 3 &&
+        popupLayout::RequiredListRowCount(emptyFolderCount) == 13,
+        "empty or failed listings retain this open session's grid/list footprint after animation handoff");
+    Check(popupLayout::LayoutItemCount(false, 0, 0) == 0 &&
+        popupLayout::LayoutItemCount(true, 0, 0) == 0 &&
+        popupLayout::LayoutItemCount(false, 4, 13) == 4 &&
+        popupLayout::LayoutItemCount(true, 15, 13) == 15,
+        "reopened empty folders release the old reservation and nonempty results use their actual content size");
     Check(
         popupLayout::PreferredColumnCount(
             0, 5) == 3 &&
@@ -1702,12 +1929,130 @@ int main(int argc, char** argv)
                 true, false, true),
         "outside presses, items and popup controls must not start marquee selection");
 
-    Check(floatingDock::HasAnySummonTrigger(true, false),
-        "the floating Dock hotkey must work without edge swipe");
-    Check(floatingDock::HasAnySummonTrigger(false, true),
-        "the floating Dock edge swipe must work without the hotkey");
-    Check(!floatingDock::HasAnySummonTrigger(false, false),
-        "the floating Dock must stop its trigger sampler when both triggers are disabled");
+    // ApplyFloatingDockHotkey uses this policy after unregistering its old
+    // timer/hook. Associated surfaces still promote the Dock with no summon
+    // triggers, so stopping pointer sampling there strands outside-click exit.
+    // These are registration decisions, not desktop interaction acceptance.
+    struct InputPolicyCase
+    {
+        bool dockEnabled;
+        bool hotkeyEnabled;
+        bool edgeSwipeEnabled;
+        floatingDock::FloatingDockInputPolicy expected;
+    };
+    const InputPolicyCase inputPolicyCases[] = {
+        {true,  false, false, {true,  false, true,  false}},
+        {true,  true,  false, {false, true,  true,  false}},
+        {true,  false, true,  {false, false, true,  true }},
+        {true,  true,  true,  {false, true,  true,  true }},
+        {false, false, false, {true,  false, false, false}},
+        {false, true,  false, {true,  false, false, false}},
+        {false, false, true,  {true,  false, false, false}},
+        {false, true,  true,  {true,  false, false, false}},
+    };
+    for (const auto& test : inputPolicyCases)
+    {
+        const auto actual = floatingDock::ResolveFloatingDockInputPolicy(
+            test.dockEnabled, test.hotkeyEnabled, test.edgeSwipeEnabled);
+        Check(actual.monitorPointer == test.expected.monitorPointer,
+            "an enabled Dock must retain outside-click sampling even with both summon triggers disabled");
+        Check(actual.closeFloatingDocks == test.expected.closeFloatingDocks,
+            "disabling all summon triggers must still close an existing floating session");
+        Check(actual.registerHotkey == test.expected.registerHotkey &&
+                actual.monitorEdgeSwipe == test.expected.monitorEdgeSwipe,
+            "retaining dismissal must not enable a disabled summon hotkey or edge hook");
+    }
+    // Exercise the production async handoff. Only native registration and the
+    // settings mirror are replaced by observers; reads/rebuild completion use
+    // the same state owner as ReloadItems and StartInitialShellRead.
+    for (const bool summonEnabled : {false, true})
+    {
+        snowdesktop::layout_reload::State reload;
+        bool dockEnabled = true;
+        bool pointerMonitor = true;
+        bool hotkeyRegistered = summonEnabled;
+        bool settingsMirror = true;
+        int synchronizations = 0;
+        const auto synchronize = [&] {
+            const auto policy = floatingDock::ResolveFloatingDockInputPolicy(
+                dockEnabled, summonEnabled, summonEnabled);
+            pointerMonitor = policy.monitorPointer;
+            hotkeyRegistered = policy.registerHotkey;
+            settingsMirror = dockEnabled;
+            ++synchronizations;
+            return true;
+        };
+
+        reload.Request(); // Enter temporary initialization: saved Dock is off.
+        reload.ApplyAfterRebuild(synchronize); // Old model is still displayed.
+        Check(reload.Pending() && pointerMonitor && settingsMirror &&
+                synchronizations == 0,
+            "a queued disk replacement must block old-model saves and mirror changes");
+        reload.Request(false); // A partial startup snapshot must retain the request.
+        Check(reload.ApplyPendingRead([&] { dockEnabled = false; }),
+            "a partial startup snapshot must consume the queued disk reload");
+        Check(pointerMonitor && synchronizations == 0,
+            "loading layout values must wait for container rebuild before input changes");
+        Check(reload.ApplyAfterRebuild(synchronize) ==
+                snowdesktop::layout_reload::SynchronizeResult::Pending &&
+                reload.Pending(),
+            "a partial Shell snapshot must not release the layout write barrier");
+        reload.MarkCompleteModel();
+        Check(reload.ApplyAfterRebuild(synchronize) ==
+                snowdesktop::layout_reload::SynchronizeResult::Succeeded &&
+                !reload.Pending(),
+            "a complete rebuilt model and synchronized mirror release the write barrier");
+        Check(!pointerMonitor && !hotkeyRegistered && !settingsMirror,
+            "entering a cleared layout must retire Dock input after rebuilding");
+
+        reload.Request(); // Exit temporary initialization: original Dock is on.
+        reload.Request(); // Duplicate requests coalesce before a snapshot arrives.
+        Check(!pointerMonitor && !settingsMirror,
+            "queuing the restored layout must not prematurely change input or mirrors");
+        Check(reload.ApplyPendingRead([&] { dockEnabled = true; }),
+            "startup and normal reads must load the requested restored layout");
+        // StartInitialShellRead can load before ReloadItems receives a snapshot.
+        reload.Request(false);
+        Check(!reload.ApplyPendingRead([&] { dockEnabled = false; }),
+            "the next snapshot must not reload or overwrite an already loaded layout");
+        reload.MarkCompleteModel();
+        reload.ApplyAfterRebuild(synchronize);
+        Check(pointerMonitor && settingsMirror && hotkeyRegistered == summonEnabled &&
+                synchronizations == 2,
+            "restoring Dock must resume dismissal and mirror its new value, with optional summons respected");
+        reload.ApplyAfterRebuild(synchronize);
+        Check(synchronizations == 2,
+            "ordinary refreshes must not reset a floating Dock input session");
+
+        reload.Request();
+        reload.ApplyPendingRead([&] { dockEnabled = false; });
+        reload.MarkCompleteModel();
+        reload.ApplyAfterRebuild([&] {
+            synchronize();
+            reload.Request(); // A callback can queue the next layout replacement.
+            return true;
+        });
+        Check(reload.ApplyPendingRead([&] { dockEnabled = true; }),
+            "synchronization must retain a reentrant layout replacement request");
+        reload.MarkCompleteModel();
+        reload.ApplyAfterRebuild(synchronize);
+        Check(pointerMonitor && settingsMirror && synchronizations == 4,
+            "each completed replacement must apply its own final Dock settings");
+
+        reload.Request();
+        Check(reload.Pending(),
+            "a failed Shell read must leave the restored document protected from exit saves");
+        reload.ApplyPendingRead([&] { dockEnabled = false; });
+        reload.MarkCompleteModel();
+        Check(reload.ApplyAfterRebuild([] { return false; }) ==
+                snowdesktop::layout_reload::SynchronizeResult::Failed &&
+                reload.Pending(),
+            "a failed settings mirror must keep the restored layout write barrier");
+        Check(reload.ApplyAfterRebuild(synchronize) ==
+                snowdesktop::layout_reload::SynchronizeResult::Succeeded &&
+                !reload.Pending() && !settingsMirror,
+            "a later successful synchronization may finish the pending restore");
+    }
     Check(floatingDock::ShouldUseFloatingDockLogicalForeground(
             true, true, false, true) &&
             floatingDock::ShouldUseFloatingDockLogicalForeground(
@@ -4278,6 +4623,42 @@ int main(int argc, char** argv)
                 L"C:\\PROGRAMS\\SUITE\\UI\\HELPER.EXE",
                 L"", std::span<const std::wstring>{}),
         "an executable launcher must match a descendant window process only inside the same installation tree");
+    {
+        // GitHub Desktop's root stub has already exited, and the real window
+        // exposes no AUMID. Pin suppression and activation share this matcher.
+        const std::wstring launcher = L"C:\\APPS\\GITHUBDESKTOP\\GITHUBDESKTOP.EXE";
+        const std::wstring appId = L"COM.SQUIRREL.GITHUBDESKTOP.GITHUBDESKTOP";
+        const auto matches = [&](const std::wstring& running,
+                                 const std::wstring& shortcutId) {
+            return identityRules::MatchesRunningApp(
+                DockAppIdentityKind::Executable, launcher, shortcutId, L"",
+                running, L"", {});
+        };
+        const std::wstring running =
+            L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\GITHUBDESKTOP.EXE";
+        Check(matches(running, appId),
+            "a pinned Squirrel shortcut must match its versioned executable after the launcher exits without a window AUMID");
+        Check(matches(L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.7\\GITHUBDESKTOP.EXE", appId) &&
+                matches(L"C:\\APPS\\GITHUBDESKTOP\\APP-3.7.0-BETA.1+BUILD.2\\GITHUBDESKTOP.EXE", appId),
+            "a stable Squirrel pin must survive version and prerelease directory changes");
+        Check(!matches(running, L"") && !matches(running, L"OTHER.APP") &&
+                !matches(running, L"COM.SQUIRREL."),
+            "a versioned directory alone must not identify an arbitrary executable as a Squirrel launcher");
+        for (const auto* unrelated : {
+                 L"D:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP-OTHER\\APP-3.6.6\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\OTHER.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\TOOLS\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\TOOLS\\APP-3.6.6\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-TOOLS\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-..\\GITHUBDESKTOP.EXE",
+                 L"C:\\APPS\\GITHUBDESKTOP\\APP-3.6.6\\..\\GITHUBDESKTOP.EXE"})
+        {
+            Check(!matches(unrelated, appId),
+                "a Squirrel pin must not absorb other installs, other executables, nested helpers or non-version directories");
+        }
+    }
     Check(identityRules::MatchesRunningApp(
             DockAppIdentityKind::Applications,
             L"", L"CONTOSO.EDITOR_123!APP", L"",
@@ -4378,60 +4759,41 @@ int main(int argc, char** argv)
                 4, noDockEntry, 4, noDockEntry,
                 501, 500),
         "release-based Dock double-click fallback must match one real item within the system interval");
-    int foregroundSequence = 0;
     int foregroundChecks = 0;
-    int primaryForegroundStep = 0;
-    int retryForegroundStep = 0;
+    int foregroundRequests = 0;
     bool foregroundMatched = false;
+    // A successful cross-queue request may return before the target processes
+    // activation. An immediate mismatch must remain pending, never force a
+    // second request through shared input queues.
     const bool foregroundActivated =
         rules::ApplyDockWindowForegroundActivation(
-            true,
             [&]() {
                 ++foregroundChecks;
                 return foregroundMatched;
             },
-            [&]() {
-                primaryForegroundStep = ++foregroundSequence;
-            },
-            [&]() {
-                retryForegroundStep = ++foregroundSequence;
-                foregroundMatched = true;
-            });
-    Check(foregroundActivated &&
-            foregroundChecks == 3 &&
-            primaryForegroundStep == 1 &&
-            retryForegroundStep == 2,
-        "Dock activation must try one foreground request before one attached-input retry");
+            [&]() { ++foregroundRequests; });
+    Check(!foregroundActivated && foregroundChecks == 2 && foregroundRequests == 1,
+        "a pending asynchronous foreground request must return without an immediate retry");
+    foregroundMatched = true;
+    Check(rules::ApplyDockWindowForegroundActivation(
+            [&]() { return foregroundMatched; },
+            [&]() { ++foregroundRequests; }) && foregroundRequests == 1,
+        "observing delayed foreground completion must not issue another activation");
     int successfulPrimaryRequests = 0;
-    int successfulPrimaryRetries = 0;
     bool primaryMatched = false;
     Check(rules::ApplyDockWindowForegroundActivation(
-            true,
             [&]() { return primaryMatched; },
             [&]() {
                 ++successfulPrimaryRequests;
                 primaryMatched = true;
-            },
-            [&]() { ++successfulPrimaryRetries; }) &&
-            successfulPrimaryRequests == 1 &&
-            successfulPrimaryRetries == 0,
-        "a successful foreground request must not enter the attached-input retry");
+            }) && successfulPrimaryRequests == 1,
+        "an immediately completed foreground request must be observed");
     int alreadyForegroundRequests = 0;
     Check(rules::ApplyDockWindowForegroundActivation(
-            true,
             []() { return true; },
-            [&]() { ++alreadyForegroundRequests; },
             [&]() { ++alreadyForegroundRequests; }) &&
             alreadyForegroundRequests == 0,
         "an already foreground application must not mutate Z-order again");
-    int unsafeForegroundRetries = 0;
-    Check(!rules::ApplyDockWindowForegroundActivation(
-            false,
-            []() { return false; },
-            []() {},
-            [&]() { ++unsafeForegroundRetries; }) &&
-            unsafeForegroundRetries == 0,
-        "a hung activation target must not enter the attached-input retry");
     using MinimizeRoute = rules::DockWindowMinimizeRequestRoute;
     const auto checkMinimizeRequestRoute = [](
         bool postAccepted, bool showAccepted, MinimizeRoute expectedRoute,
@@ -4536,26 +4898,41 @@ int main(int argc, char** argv)
             !rules::IsDockWindowActivationPopupEligible(
                 true, true, false, true),
         "only a visible restorable popup may replace the root activation target");
-    Check(rules::ShouldRetryDockWindowForegroundActivation(
-            false, true) &&
-            !rules::ShouldRetryDockWindowForegroundActivation(
-                true, true) &&
-            !rules::ShouldRetryDockWindowForegroundActivation(
-                false, false),
-        "input queues may be shared only after a safe ordinary foreground request fails");
-    Check(rules::IsDockWindowSynchronousActivationSafe(
+    Check(rules::IsDockWindowActivationResponsive(
             true, true) &&
-            !rules::IsDockWindowSynchronousActivationSafe(
+            !rules::IsDockWindowActivationResponsive(
                 false, true) &&
-            !rules::IsDockWindowSynchronousActivationSafe(
+            !rules::IsDockWindowActivationResponsive(
                 true, false),
-        "synchronous activation must require both the root and actual popup threads to respond");
+        "activation observation stops when the root or actual popup stops responding");
+    rules::DockWindowActivationObservation observation;
+    observation.Begin(true, 100, 42, 7);
+    Check(observation.awaitingRestore && !observation.Expired(5099) && observation.Expired(5100),
+        "a restore that never completes must expire after five seconds");
+    Check(observation.Matches(42, 7) && !observation.Matches(43, 7) &&
+        !observation.Matches(42, 8) && !observation.Matches(0, 0),
+        "an old activation request must not follow a recycled window to a different owner");
+    observation.Restored(300);
+    observation.Restored(900);
+    Check(!observation.awaitingRestore && !observation.Expired(1299) && observation.Expired(1300),
+        "a visible target gets one second for foreground activation and polling cannot renew it");
+    observation.Begin(true, 100, 42, 7);
+    observation.Restored(5000);
+    Check(observation.Expired(5100),
+        "late restore completion must not extend the original request deadline");
+    observation.Begin(false, 100, 42, 7);
+    observation.Restored(500);
+    Check(!observation.Expired(1099) && observation.Expired(1100),
+        "an already visible target gets a bounded activation window from the original click");
     using ObservationAction =
         rules::DockWindowActivationObservationAction;
     Check(rules::ResolveDockWindowActivationObservationAction(
             true, false, true, true, true, false, false) ==
             ObservationAction::WaitForRestore,
         "a valid asynchronous restore must remain observed while the window is iconic");
+    Check(rules::ResolveDockWindowActivationObservationAction(
+            true, false, true, true, true, false, true) == ObservationAction::Stop,
+        "an expired restore must stop even when the target keeps pumping messages while minimized");
     Check(rules::ResolveDockWindowActivationObservationAction(
             true, false, true, true, false, false, false) ==
             ObservationAction::Activate &&
@@ -4974,6 +5351,24 @@ int main(int argc, char** argv)
 
     namespace launchAnimation =
         snowdesktop::dock_launch_animation;
+    // A first launch used to grow the whole Dock's HWND and replace its
+    // surface. Allocation must not depend on a bounce starting/stopping,
+    // while the actual animation-only clip must still retire after bounce.
+    for (const auto& sample : std::array<std::pair<int, int>, 3>{
+            std::pair{32, 14}, {76, 30}, {152, 59}})
+    {
+        for (const bool active : {false, true})
+        {
+            Check(launchAnimation::PaddingPixels(sample.first, true, active, true) ==
+                    sample.second,
+                "Dock host reserves the full launch envelope before and during bounce");
+            Check(launchAnimation::PaddingPixels(sample.first, true, active) ==
+                    (active ? sample.second : 0),
+                "only a running bounce expands the Dock visible region");
+            Check(launchAnimation::PaddingPixels(sample.first, false, active, true) == 0,
+                "disabled bounce and in-place pulse need no launch allocation padding");
+        }
+    }
     Check(launchAnimation::NormalizedOffset(0) == 0.0 &&
             launchAnimation::NormalizedOffset(
                 launchAnimation::kMaximumDurationMs) == 0.0,
@@ -5027,6 +5422,7 @@ int main(int argc, char** argv)
         "Dock launch pulse must return to rest and remain inside the icon bounds");
 
     namespace magnification = snowdesktop::dock_magnification;
+    CheckDockMagnificationEntry();
     Check(magnification::ResolveFocusScale(0, 2.0f, true) == 1.0f &&
             magnification::ResolveFocusScale(2, 2.0f, false) == 1.0f &&
             magnification::ResolveFocusScale(2, 0.5f, true) == 1.0f &&
@@ -5792,11 +6188,23 @@ int main(int argc, char** argv)
     Check(argc == 2, "source root argument is provided");
     if (argc == 2)
         Check(snowdesktop::test::CheckSourceBoundaries(argv[1], {
+            // The Shell read is asynchronous. Applying input/mirrors while
+            // merely requesting it unregisters dismissal using the old layout
+            // when leaving temporary grid initialization (Dock off -> on).
+            // This is a negative boundary, not proof of desktop interaction.
+            {"src/app/app_settings_apply.cpp", "snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings(",
+             "snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(",
+             {"ApplyFloatingDockHotkey(", "SynchronizeGeneral(", "SynchronizeDesktop(",
+              "SynchronizeDock(", "SynchronizeReloadedLayoutSettings("}},
             {"src/app/app_lifecycle.cpp", "bool DesktopApp::CreateDesktopInputWindow(",
              "void DesktopApp::AttachInputWindowToDesktopHost(", {"WS_CHILD | WS_VISIBLE"}},
             {"src/app/app_dock_window_tracking.cpp", "void DesktopApp::RefreshDockForegroundState()",
              "void DesktopApp::RefreshDockRunningWindows(",
              {"EnumWindows(", "QueryDock", "RefreshDockRunningWindows(", "InvalidateDockContainers("}},
+            // Negative architecture boundary: attaching external input queues
+            // turns native foreground activation into an unbounded wait. The
+            // injected request tests above do not exercise that Win32 hazard.
+            {"src/app/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
             {"src/app/app_widget_placement.cpp", "", "", {"RebuildContainersAndItems("}},
             {"src/app/app_floating_dock_lifecycle.cpp", "", "", {"SetWindowsHookExW("}},
             {"src/app/app_floating_popup_window.cpp", "", "", {"SetWindowsHookExW(", "CloseFloatingDock("}},
@@ -5808,13 +6216,33 @@ int main(int argc, char** argv)
              "void DesktopApp::ClearDockFolderPopupEntries()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow(",
               "RenderFloatingDockCompositionFrame(", "floatingDockBackdropCompositor_", "floatingDockHwnd_"}},
-            {"src/app/app_popup_transition.cpp", "void DesktopApp::RefreshDockFolderPopupGeometry()",
+            {"src/app/app_popup_transition.cpp", "void DesktopApp::RefreshDockFolderPopupGeometry(",
              "CommitDockFolderPopupStateToSource()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow("}},
+            // Updating pixels must never replace the visual or its native
+            // timelines. These negative boundaries cover the GPU bridge that
+            // cannot be exercised by the pure animation dispatch tests.
+            {"src/app/app_composition_animation_overlay.cpp", "bool DesktopApp::UpdateCompositionAnimationOverlayContent(",
+             "bool DesktopApp::PrepareCompositionAnimationOverlay(",
+             {"ResetCompositionAnimationOverlay(", "SetContent(", "SetScaleX(", "SetScaleY(",
+              "SetOpacity(", "AnimateCompositionAnimationOverlay(", "CreateSurface(", "WaitForCommitCompletion("}},
+            {"src/app/app_popup_geometry.cpp", "void DesktopApp::RefreshCollectionPopupAnimationContent(",
+             "void DesktopApp::InvalidateCollectionPopupContent(",
+             {"ResetCollectionPopupAnimationCache(", "PrepareCollectionPopupAnimationCache(",
+              "StartCollectionPopupCompositionAnimation(", "EnsureUiAnimationFrame(", ".Cancel("}},
+            {"src/app/app_popup_geometry.cpp", "bool DesktopApp::UsesCollectionPopupFan(",
+             "bool DesktopApp::UsesCollectionPopupList(",
+             {"popupAnimationCompositorDriven_", "popupAnimationOverlay_"}},
             {"src/app/dock_platform_helpers.h", "", "", {"swThumbnailWnd", "PROME-TASKBAR"}},
             {"src/app/app_drag_target_update.cpp", "void DesktopApp::ResolveCurrentDragTargetAt(",
              "void DesktopApp::RefreshDragTargetAt(",
              {"UpdateDragPageNavigation(", "Dwell", "ShowDragHintWindow", "Present", "DoDragDrop"}},
+            // Turning a page is a view change, not an ownership/layout commit.
+            {"src/app/app_drag_target_update.cpp", "bool DesktopApp::UpdateDragPageNavigation(",
+             "", {"MigrateSelectedItems", "MoveSelectedItems", "SaveLayoutSlots(", "UpdateDragGroupOrigin("}},
+            {"src/app/app_pointer_context.cpp", "bool DesktopApp::HandlePageNavClick(",
+             "bool DesktopApp::ShowHostInputContextMenu(",
+             {"MigrateSelectedItems", "MoveSelectedItems", "SaveLayoutSlots(", "UpdateDragGroupOrigin("}},
             {"src/app/app_ole_drop_session.cpp", "HRESULT DesktopApp::HandleOleDrop(",
              "HRESULT DesktopApp::HandleOleQueryContinueDrag(", {"dragDropController_.EndSelfDrag();"}},
         }), "Dock and drag source boundaries");

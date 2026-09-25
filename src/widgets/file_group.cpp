@@ -17,6 +17,7 @@
 #include "../l10n.h"
 #include "../item_render_layer_rules.h"
 #include "../widget_item_layout.h"
+#include "storage_title_bar_layout.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -77,7 +78,14 @@ std::wstring FileGroupSourceTabText(
     const DesktopWidget* child = FindFileGroupSource(
         group, sources[tabIndex]);
     if (!child) return L"";
-    return child->title;
+    std::wstring label = child->title;
+    if (group->ShowGroupTabItemCounts())
+    {
+        const size_t count = child->type == DesktopWidgetType::FolderMapping
+            ? child->folderEntries.size() : child->itemKeys.size();
+        label += L" " + std::to_wstring(count);
+    }
+    return label;
 }
 
 std::vector<int> FileGroupSourceTabWidths(
@@ -214,7 +222,7 @@ FileGroupButtonRects GetFileGroupButtonRects(
     const int size = group->Cu(14.0f * scale);
     const int gap = group->Cu(4.0f * scale);
     const int between = group->Cu(4.0f * scale);
-    const int resizeReserve = group->Cu(20.0f * scale);
+    const int resizeReserve = group->GetTitleBarResizeReserve();
     const int height = handle.bottom - handle.top;
     LONG right = handle.right - resizeReserve - gap;
     if (includeOpen)
@@ -319,7 +327,7 @@ public:
             group_->GetSearchCompositionText(),
             group_->GetSearchCompositionCursor());
 
-        RECT frame = group_->GetFrameRect();
+        RECT frame = group_->GetLayoutFrameRect();
         source_->SetHostedFrame(&frame);
         const bool searching =
             groupData_->showSearchBox &&
@@ -1395,9 +1403,11 @@ RECT FileGroup::GetContentViewportRect() const
 {
     if (IsGroupSearchActive())
     {
-        RECT body = GetBodyRect();
-        InflateRect(
-            &body, -Cu(4.0f), -Cu(8.0f));
+        RECT body = snowdesktop::storage_title_bar::InsetContent(
+            GetBodyRect(), UsesTopTitleBar(), Cu(4.0f), Cu(8.0f), Cu(4.0f));
+        body.bottom = std::max<LONG>(body.top,
+            std::min<LONG>(body.bottom + Cu(4.0f),
+                GetScrollContentBottom()));
         RECT search = GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
             body.top = std::min<LONG>(
@@ -1408,9 +1418,11 @@ RECT FileGroup::GetContentViewportRect() const
     auto* source = GetActiveSourceContainer();
     if (!source)
     {
-        RECT body = GetBodyRect();
-        InflateRect(
-            &body, -Cu(4.0f), -Cu(8.0f));
+        RECT body = snowdesktop::storage_title_bar::InsetContent(
+            GetBodyRect(), UsesTopTitleBar(), Cu(4.0f), Cu(8.0f), Cu(4.0f));
+        body.bottom = std::max<LONG>(body.top,
+            std::min<LONG>(body.bottom + Cu(4.0f),
+                GetScrollContentBottom()));
         RECT search = GetSearchBoxRect();
         if (!IsRectEmptyRect(search))
             body.top = std::min<LONG>(
@@ -1954,9 +1966,9 @@ void FileGroup::DrawContent(
             !PtInRect(
                 &data_->bounds,
                 app_->lastMousePoint_);
-        context->PushAxisAlignedClip(
-            app_->ToD2DRect(content),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const snowdesktop::ScrollContentClip contentClip(
+            context, scrollContentFadeCache_, content,
+            GetScrollOffset(), GetTotalContentHeight(), static_cast<float>(Cu(16.0f)));
         std::vector<std::pair<Item*, RECT>>
             foregroundTitles;
         for (const auto& slot : GetSlots())
@@ -2060,7 +2072,6 @@ void FileGroup::DrawContent(
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
                 context, bounds, true, 1.0f, light);
-        context->PopAxisAlignedClip();
         return;
     }
 

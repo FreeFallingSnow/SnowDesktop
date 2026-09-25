@@ -1,4 +1,5 @@
 #pragma once
+#include "desktop_source.h"
 
 #include <filesystem>
 #include <string>
@@ -29,16 +30,7 @@ inline UINT FindNewFolderCommand(IContextMenu* contextMenu, HMENU menu)
 
 inline std::wstring DesktopShellInvocationDirectory()
 {
-    PWSTR path = nullptr;
-    if (FAILED(SHGetKnownFolderPath(
-            FOLDERID_Desktop, KF_FLAG_DEFAULT, nullptr, &path)) ||
-        !path)
-    {
-        return {};
-    }
-    std::wstring result(path);
-    CoTaskMemFree(path);
-    return result;
+    return desktop_source::Directory();
 }
 
 inline std::wstring ShellInvocationDirectoryForItem(

@@ -3,11 +3,67 @@
 #include "../collection_titleless_rules.h"
 #include "../menu_fluent_glyphs.h"
 #include "../right_click_contract.h"
+#include "../widget_removal.h"
 #include "../widgets/collection_group_rules.h"
+#include "../widgets/storage_title_bar_layout.h"
 
+#include <commctrl.h>
 #include <functional>
 
 // Widget editor, group-tab and generic widget context menus.
+
+namespace
+{
+bool ShowWidgetRemovalConfirmation(HWND owner, POINT anchor,
+    const std::wstring& widgetTitle)
+{
+    const auto content = _LFW("app.widget.removal.content", widgetTitle);
+    const TASKDIALOG_BUTTON buttons[] = {
+        { IDYES, _LW("app.settings.delete") },
+        { IDCANCEL, _LW("app.settings.cancel") },
+    };
+    TASKDIALOGCONFIG dialog{};
+    dialog.cbSize = sizeof(dialog);
+    dialog.hwndParent = owner;
+    dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+    dialog.pszWindowTitle = L"SnowDesktop";
+    dialog.pszMainIcon = TD_WARNING_ICON;
+    dialog.pszMainInstruction = _LW("app.widget.removal.title");
+    dialog.pszContent = content.c_str();
+    dialog.cButtons = static_cast<UINT>(std::size(buttons));
+    dialog.pButtons = buttons;
+    dialog.nDefaultButton = IDCANCEL;
+    dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&anchor);
+    dialog.pfCallback = +[](HWND window, UINT notification,
+        WPARAM, LPARAM, LONG_PTR data) -> HRESULT {
+        if (notification != TDN_CREATED) return S_OK;
+        const auto point = *reinterpret_cast<const POINT*>(data);
+        RECT rect{};
+        MONITORINFO monitor{ sizeof(monitor) };
+        UINT flags = SWP_NOSIZE | SWP_SHOWWINDOW;
+        int x = 0;
+        int y = 0;
+        if (GetWindowRect(window, &rect) && GetMonitorInfoW(
+                MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST), &monitor))
+        {
+            const auto position = snowdesktop::widget_runtime::
+                CenterConsentDialogInWorkArea(monitor.rcWork.left,
+                    monitor.rcWork.top, monitor.rcWork.right,
+                    monitor.rcWork.bottom, rect.right - rect.left,
+                    rect.bottom - rect.top);
+            x = position.x;
+            y = position.y;
+        }
+        else flags |= SWP_NOMOVE;
+        SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, flags);
+        SetForegroundWindow(window);
+        return S_OK;
+    };
+    int selected = IDCANCEL;
+    return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) &&
+        selected == IDYES;
+}
+}
 
 void DesktopApp::ShowWidgetEditorHost(size_t widgetIndex)
 {
@@ -54,7 +110,7 @@ void DesktopApp::ShowCollectionGroupTabContextMenu(
     SetMenuItemIcon(
         menu, kContextWidgetRename, L"\U000F0A39",
         MenuIconFont::FluentRegular);
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -118,7 +174,7 @@ void DesktopApp::ShowFileGroupSourceTabContextMenu(
     SetMenuItemIcon(
         menu, kContextWidgetRename, L"\U000F0A39",
         MenuIconFont::FluentRegular);
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -191,7 +247,7 @@ void DesktopApp::ShowLuaLogicalSlotItemContextMenu(
         snowdesktop::menu_fluent_glyphs::kChevronRight,
         MenuIconFont::FluentRegular);
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
@@ -265,6 +321,9 @@ void DesktopApp::ShowWidgetContextMenu(
 
     const auto& widget = widgets_[widgetIndex];
     size_t effectiveSourceIndex = widgetIndex;
+    const auto menuWidgetId = widget.id;
+    const auto menuPackageId = widget.packageId;
+    const auto menuWidgetType = widget.type;
     if (widget.type == DesktopWidgetType::FileGroup)
     {
         effectiveSourceIndex =
@@ -703,6 +762,8 @@ void DesktopApp::ShowWidgetContextMenu(
                 widget.scrollContainerMode,
                 widget.gridSpan.columns,
                 widget.gridSpan.rows);
+    const bool showExpandOnHoverOption = snowdesktop::storage_title_bar::UsesTop(
+        widget, CurrentPersonalization().scrollableTitleBarOnTop);
     if (!luaElementMenu)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -725,6 +786,13 @@ void DesktopApp::ShowWidgetContextMenu(
             _LW("app.interact.keep_when_hidden"),
             widget.keepWhenDesktopHidden);
         AppendMenuW(menu, MF_STRING, hoverToggleCommand, hoverLabel.c_str());
+        if (showExpandOnHoverOption)
+        {
+            const std::wstring expandLabel = toggleLabel(
+                _LW("app.interact.expand_on_hover"), widget.titleBarExpandOnHover);
+            AppendMenuW(menu, MF_STRING, kContextWidgetToggleExpandOnHover,
+                expandLabel.c_str());
+        }
         AppendMenuW(menu, MF_STRING, keepToggleCommand, keepLabel.c_str());
         if (widget.type == DesktopWidgetType::Collection ||
             widget.type == DesktopWidgetType::FileCategories ||
@@ -783,6 +851,9 @@ void DesktopApp::ShowWidgetContextMenu(
     SetMenuItemQuickAction(menu, kContextWidgetRename);
     SetMenuItemQuickAction(menu, kContextWidgetDelete);
     setFluentIcon(menu, hoverToggleCommand, L"\uE5F2");
+    if (showExpandOnHoverOption)
+        setFluentIcon(menu, kContextWidgetToggleExpandOnHover,
+            snowdesktop::menu_fluent_glyphs::kChevronRight);
     setFluentIcon(menu, keepToggleCommand, L"\uF359");
     if (widget.type == DesktopWidgetType::Collection ||
         widget.type == DesktopWidgetType::FileCategories ||
@@ -859,9 +930,18 @@ void DesktopApp::ShowWidgetContextMenu(
         setFluentIcon(menu,
             reinterpret_cast<UINT_PTR>(demoCategoryMenu), L"\uF18B");
 
-    SetForegroundWindow(hwnd_);
+    RestoreInteractionInputFocus();
+    snowdesktop::shell_extensions::Request shellRequest;
+    if (effectiveSourceIndex < widgets_.size() &&
+        widgets_[effectiveSourceIndex].type == DesktopWidgetType::FolderMapping &&
+        !widgets_[effectiveSourceIndex].sourceFolderPath.empty())
+    {
+        shellRequest.paths.push_back(widgets_[effectiveSourceIndex].sourceFolderPath);
+        shellRequest.background = true;
+        shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    }
     UINT command = ShowModernMenu(
-        menu, screenPoint, hwnd_, dockRenameAnchor.has_value());
+        menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
 
@@ -1251,6 +1331,22 @@ void DesktopApp::ShowWidgetContextMenu(
         break;
     case kContextWidgetDelete:
     {
+        widgetIndex = FindWidgetIndexById(menuWidgetId);
+        if (widgetIndex >= widgets_.size() ||
+            widgets_[widgetIndex].packageId != menuPackageId ||
+            widgets_[widgetIndex].type != menuWidgetType)
+            break;
+        const bool requiresConfirmation =
+            widgets_[widgetIndex].type == DesktopWidgetType::LuaScript &&
+            (!widgetEngine_ || widgetEngine_->RequiresRemovalConfirmation(
+                widgets_[widgetIndex].id, widgets_[widgetIndex].packageId));
+        const auto removalIndex = snowdesktop::widget_runtime::ConfirmWidgetRemoval(
+            widgets_, widgetIndex, requiresConfirmation,
+            [&](const std::wstring& title) {
+                return ShowWidgetRemovalConfirmation(hwnd_, screenPoint, title);
+            });
+        if (!removalIndex) break;
+        widgetIndex = *removalIndex;
         // widgets_ 的下标会在删除后整体移动，不能让关闭动画继续引用
         // 即将失效的弹窗数据源。
         if (GetOpenPopupWidget())
@@ -1345,9 +1441,7 @@ void DesktopApp::ShowWidgetContextMenu(
                      DesktopWidgetType::FileCategories)
         {
             wchar_t desktopPath[MAX_PATH]{};
-            if (SHGetSpecialFolderPathW(
-                    nullptr, desktopPath,
-                    CSIDL_DESKTOPDIRECTORY, FALSE))
+            if (snowdesktop::desktop_source::CopyDirectory(desktopPath))
             {
                 ShowNewMenuAndInvoke(
                     screenPoint, desktopPath, false,
@@ -1397,6 +1491,18 @@ void DesktopApp::ShowWidgetContextMenu(
         widgets_[widgetIndex].showOnHoverOnly = true;
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
+        break;
+    case kContextWidgetToggleExpandOnHover:
+        if (snowdesktop::storage_title_bar::UsesTop(widgets_[widgetIndex],
+                CurrentPersonalization().scrollableTitleBarOnTop))
+        {
+            auto& target = widgets_[widgetIndex];
+            target.titleBarExpandOnHover = !target.titleBarExpandOnHover;
+            UpdateWidgetHoverExpansion(lastMousePoint_);
+            SaveLayoutSlots();
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         break;
     case kContextWidgetShowOnHoverOff:
         widgets_[widgetIndex].showOnHoverOnly = false;

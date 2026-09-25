@@ -15,6 +15,7 @@ SnowDesktop.log
 SnowDesktop.log.1
 .claude/
 .codex-probes/
+.codex-remote-attachments/
 imgui.ini
 out/
 .tmp/

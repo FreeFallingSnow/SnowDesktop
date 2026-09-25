@@ -3,6 +3,7 @@
 #include "../settings_controller.h"
 #include "hotkey_recorder.h"
 #include "start_page_presenter.h"
+#include "../../steam_bridge/src/steam_connection_feedback.h"
 
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -61,6 +62,9 @@ struct GeneralAdvancedFeatureStatus
         GeneralAdvancedFeatureState::BridgeUnavailable;
     GeneralAdvancedFeatureFailure failure =
         GeneralAdvancedFeatureFailure::None;
+    steam_bridge::SteamConnectionProblem connectionProblem =
+        steam_bridge::SteamConnectionProblem::None;
+    std::wstring errorDetail;
     bool bridgeAvailable = false;
     bool registered = false;
     std::int64_t validUntil = 0;

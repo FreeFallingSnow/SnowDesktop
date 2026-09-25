@@ -5,6 +5,8 @@
 void DesktopApp::ShowFloatingDock(
     HMONITOR preferredMonitor)
 {
+    if (desktopPassthroughActive_)
+        return;
     WriteDiagnosticLogEntry(
         preferredMonitor
             ? L"Floating Dock associated surface reveal received"
@@ -106,6 +108,8 @@ bool DesktopApp::
 EnsureFloatingDockVisibleForAssociatedSurface(
     POINT anchorScreen)
 {
+    if (desktopPassthroughActive_)
+        return false;
     const HMONITOR monitor = MonitorFromPoint(
         anchorScreen, MONITOR_DEFAULTTONEAREST);
     if (!SyncPersistentDockHost(monitor) ||
@@ -284,6 +288,8 @@ void DesktopApp::CloseAllFloatingDocksThen(
 
 void DesktopApp::ToggleFloatingDock()
 {
+    if (desktopPassthroughActive_)
+        return;
     POINT cursorScreen{};
     GetCursorPos(&cursorScreen);
     const HMONITOR monitor = MonitorFromPoint(
