@@ -1015,12 +1015,20 @@ void CheckStatusBarInteraction()
     state.Press(before, {70, 16}, false);
     Check(!state.Release(before, {12, 16}, false).accepted,
         "tray identities cannot alias a built-in menu button with the same textual key");
-    state.Press(before, {40, 16}, false);
+    state.hovered = 0;
+    Check(state.Press(before, {40, 16}, false) == StatusBarAction::Dismiss && !state.hovered,
+        "blank-area press dismisses immediately without waiting for release or focus loss");
     const auto blank = state.Release(before, {40, 16}, false);
-    Check(blank.accepted && !blank.item, "a complete blank-area click still dismisses status bar surfaces");
+    Check(!blank.accepted, "release after blank dismissal must not dispatch a second action");
     Check(!state.Release(before, {40, 16}, false).accepted, "unpaired release cannot dismiss or activate a surface");
     state.Press(before, {40, 16}, false);
     Check(!state.Release(before, {70, 16}, false).accepted, "dragging from blank space into an icon is not a click");
+    Check(state.Press(before, {40, 16}, true) == StatusBarAction::None &&
+        state.Release(before, {40, 16}, true).accepted,
+        "blank right-click still reaches the status bar context menu");
+    Check(state.Press(before, {12, 16}, false) == StatusBarAction::None &&
+        state.Release(before, {12, 16}, false).item == 0,
+        "a menu button retains its complete click instead of becoming blank dismissal");
     state.Press(before, {70, 16}, false); state.Press(before, {70, 16}, true);
     state.CancelPointer();
     Check(!state.Release(before, {70, 16}, false).accepted && !state.Release(before, {70, 16}, true).accepted &&

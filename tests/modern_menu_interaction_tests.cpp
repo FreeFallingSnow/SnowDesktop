@@ -3,6 +3,7 @@
 #include "shell_extension_menu_presentation.h"
 #include "menu_label.h"
 #include "desktop_input_activation.h"
+#include "status_bar_interaction.h"
 
 #include <windows.h>
 
@@ -48,6 +49,7 @@ bool gObservedAboveZOrderOwner = false;
 HWND gZOrderOwnerProbe = nullptr;
 bool gDismissOnDrive = false;
 bool gObservedDismissHidden = false;
+bool gObservedDismissWithoutRelease = false;
 bool gSelectEnd = false;
 bool gNestedMenuCompleted = false;
 UINT gNestedMenuCommand = 0;
@@ -226,9 +228,21 @@ LRESULT CALLBACK OwnerWindowProc(
             }
             if (gDismissOnDrive)
             {
-                snowdesktop::modern_menu::DismissActive();
+                // Real menu loop + production bar input state; only the
+                // desktop HWND/hit geometry is replaced by a fixed fixture.
+                snowdesktop::StatusBarItem button;
+                button.key = "menu";
+                button.action = snowdesktop::StatusBarAction::SystemMenu;
+                button.bounds = {0, 0, 32, 32};
+                const std::vector<snowdesktop::StatusBarItem> items{button};
+                snowdesktop::StatusBarInteraction input;
+                if (input.Press(items, {64, 16}, false) == snowdesktop::StatusBarAction::Dismiss)
+                    snowdesktop::modern_menu::DismissActive();
                 gObservedDismissHidden =
                     IsWindowVisible(menus.root) == FALSE;
+                input.CancelPointer(); // Release may be lost after capture/leave.
+                gObservedDismissWithoutRelease = gObservedDismissHidden &&
+                    !input.Release(items, {16, 16}, false).accepted;
                 gInputPosted = true;
                 KillTimer(hwnd, kDriveTimer);
                 return 0;
@@ -981,6 +995,7 @@ int wmain()
     gCaptureTopmost = false;
     gDismissOnDrive = true;
     gObservedDismissHidden = false;
+    gObservedDismissWithoutRelease = false;
     gWatchdogFired = false;
     options.topmost = false;
     SetTimer(owner, kDriveTimer, 10, nullptr);
@@ -992,8 +1007,8 @@ int wmain()
     Expect(!gWatchdogFired,
         "programmatically dismissed menu did not time out");
     Expect(dismissedMenuResult.command == 0 &&
-            gObservedDismissHidden,
-        "popup transitions hide the active menu before its loop unwinds");
+            gObservedDismissHidden && gObservedDismissWithoutRelease,
+        "blank bar press hides the active menu before release and its nested loop unwinds");
     gDismissOnDrive = false;
 
     auto quickAdjustmentItems = adjustmentItems;

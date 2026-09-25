@@ -477,7 +477,16 @@ struct StatusBar::Impl
             {
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
-                self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN);
+                if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN) == StatusBarAction::Dismiss)
+                {
+                    self->keyboardFocusVisible = false;
+                    self->ClearHover();
+                    self->paintDirty = true; self->Paint();
+                    const auto onActivated = self->owner.activate;
+                    if (!self->fullscreen && onActivated)
+                        onActivated(StatusBarAction::Dismiss, window, self->appbar.Bounds());
+                    return 0;
+                }
                 const UINT trayMessage = message == WM_LBUTTONDBLCLK && !doubleClick ? WM_LBUTTONDOWN : message;
                 if (self->TrayMouse(trayMessage, point)) return 0;
                 break;
@@ -497,12 +506,7 @@ struct StatusBar::Impl
                 const auto released = self->interaction.Release(self->items, point, false);
                 if (!released.accepted) return 0;
                 if (self->TrayMouse(message, point)) return 0;
-                if (released.item) { self->ActivateItem(*released.item); return 0; }
-                self->ClearHover();
-                self->paintDirty = true; self->Paint();
-                const auto onActivated = self->owner.activate;
-                if (!self->fullscreen && onActivated)
-                    onActivated(StatusBarAction::Dismiss, window, self->appbar.Bounds());
+                if (released.item) self->ActivateItem(*released.item);
                 return 0;
             }
             case WM_CONTEXTMENU:

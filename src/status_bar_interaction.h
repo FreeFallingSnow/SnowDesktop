@@ -17,7 +17,7 @@ inline StatusBarTarget StatusBarTargetOf(const StatusBarItem& item)
 struct StatusBarRelease
 {
     bool accepted = false;
-    // An accepted release without an item is an explicit blank-area click.
+    // An accepted release without an item is a blank-area context click.
     std::optional<std::size_t> item;
 };
 struct StatusBarInteraction
@@ -56,12 +56,21 @@ struct StatusBarInteraction
         }
         focused.reset();
     }
-    void Press(const std::vector<StatusBarItem>& items, POINT point, bool right)
+    StatusBarAction Press(const std::vector<StatusBarItem>& items, POINT point, bool right)
     {
+        const auto hit = HitTestStatusBarItems(items, point);
+        // A no-activate bar cannot rely on popup deactivation. Dismiss at
+        // button-down, even if capture/leave cancels the eventual release.
+        // Do not arm a click that could reopen a surface after dismissal.
+        if (!right && !hit)
+        {
+            CancelPointer();
+            return StatusBarAction::Dismiss;
+        }
         auto& press = right ? right_ : left_;
         press.active = true;
-        const auto hit = HitTestStatusBarItems(items, point);
         press.target = hit ? std::optional{StatusBarTargetOf(items[*hit])} : std::nullopt;
+        return StatusBarAction::None;
     }
     StatusBarRelease Release(const std::vector<StatusBarItem>& items, POINT point, bool right)
     {
