@@ -336,7 +336,7 @@ struct SystemPanel::Impl
         }
         else
         {
-            controls = std::make_unique<SystemControlView>(data, settings);
+            controls = std::make_unique<SystemControlView>(data, settings, action);
             c::ScrollViewer scroll; scroll.MaxHeight(470); scroll.Content(controls->Root());
             scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
             root.Children().Append(scroll);
@@ -367,6 +367,8 @@ struct SystemPanel::Impl
         int top = settings.position == DockPosition::Bottom ? anchor.top - height - static_cast<int>(6 * scale) : anchor.bottom + static_cast<int>(6 * scale);
         left = std::clamp(left, static_cast<int>(info.rcWork.left), static_cast<int>(info.rcWork.right) - width);
         top = std::clamp(top, static_cast<int>(info.rcWork.top), static_cast<int>(info.rcWork.bottom) - height);
+        RECT previous{}; GetWindowRect(window, &previous);
+        if (showing && previous.left == left && previous.top == top && previous.right == left + width && previous.bottom == top + height) return;
         SetWindowPos(window, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
         runtime.ResizeToClient();
         if (appearance.glassEnabled)
@@ -433,8 +435,8 @@ struct SystemPanel::Impl
             else if (message == WM_CLOSE || (message == WM_KEYDOWN && wp == VK_ESCAPE)) { self->Hide(); return 0; }
             else if (message == WM_TIMER && wp == 1 && self->showing)
             {
-                if (self->controls) self->controls->Refresh();
-                else if (self->calendar) self->calendar->Refresh();
+                if (self->controls) { self->controls->Refresh(); self->Arrange(); }
+                else if (self->calendar) { self->calendar->Refresh(); self->Arrange(); }
                 else self->RefreshTray();
             }
             else if (message == WM_DPICHANGED || message == WM_DISPLAYCHANGE) self->Hide();

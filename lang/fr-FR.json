@@ -1956,5 +1956,10 @@
     "statusBar.leftItems": "Gauche",
     "statusBar.centerItems": "Centre",
     "statusBar.rightItems": "Droite",
-    "statusBar.organizeTray": "Organiser la zone de notification"
+    "statusBar.organizeTray": "Organiser la zone de notification",
+    "controlCenter.overview": "Retour à la vue d’ensemble",
+    "controlCenter.loading": "Chargement de l’état…",
+    "controlCenter.unavailable": "Indisponible",
+    "controlCenter.on": "Activé",
+    "controlCenter.off": "Désactivé"
 }

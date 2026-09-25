@@ -1956,5 +1956,10 @@
     "statusBar.leftItems": "左侧",
     "statusBar.centerItems": "中间",
     "statusBar.rightItems": "右侧",
-    "statusBar.organizeTray": "整理托盘"
+    "statusBar.organizeTray": "整理托盘",
+    "controlCenter.overview": "返回概览",
+    "controlCenter.loading": "正在获取状态…",
+    "controlCenter.unavailable": "不可用",
+    "controlCenter.on": "已开启",
+    "controlCenter.off": "已关闭"
 }

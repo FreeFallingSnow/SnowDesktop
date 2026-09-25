@@ -1956,5 +1956,10 @@
     "statusBar.leftItems": "左側",
     "statusBar.centerItems": "中央",
     "statusBar.rightItems": "右側",
-    "statusBar.organizeTray": "トレイの整理"
+    "statusBar.organizeTray": "トレイの整理",
+    "controlCenter.overview": "概要に戻る",
+    "controlCenter.loading": "状態を取得中…",
+    "controlCenter.unavailable": "利用できません",
+    "controlCenter.on": "オン",
+    "controlCenter.off": "オフ"
 }

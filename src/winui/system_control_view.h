@@ -1,6 +1,6 @@
 #pragma once
 #include "../system_controls.h"
-#include "../status_bar_settings.h"
+#include "../status_bar.h"
 #include <winrt/Microsoft.UI.Xaml.h>
 #include <memory>
 
@@ -11,7 +11,7 @@ class SystemControlView
 {
 public:
     SystemControlView(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data,
-        const StatusBarSettings& settings);
+        const StatusBarSettings& settings, StatusBarAction initial = StatusBarAction::ControlCenter);
     ~SystemControlView();
     winrt::Microsoft::UI::Xaml::FrameworkElement Root() const;
     void Refresh();

@@ -1956,5 +1956,10 @@
     "statusBar.leftItems": "Left",
     "statusBar.centerItems": "Center",
     "statusBar.rightItems": "Right",
-    "statusBar.organizeTray": "Organize tray"
+    "statusBar.organizeTray": "Organize tray",
+    "controlCenter.overview": "Back to overview",
+    "controlCenter.loading": "Loading status…",
+    "controlCenter.unavailable": "Unavailable",
+    "controlCenter.on": "On",
+    "controlCenter.off": "Off"
 }

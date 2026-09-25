@@ -1956,5 +1956,10 @@
     "statusBar.leftItems": "왼쪽",
     "statusBar.centerItems": "가운데",
     "statusBar.rightItems": "오른쪽",
-    "statusBar.organizeTray": "트레이 정리"
+    "statusBar.organizeTray": "트레이 정리",
+    "controlCenter.overview": "개요로 돌아가기",
+    "controlCenter.loading": "상태를 가져오는 중…",
+    "controlCenter.unavailable": "사용할 수 없음",
+    "controlCenter.on": "켜짐",
+    "controlCenter.off": "꺼짐"
 }

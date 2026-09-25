@@ -1956,5 +1956,10 @@
     "statusBar.leftItems": "Esquerda",
     "statusBar.centerItems": "Centro",
     "statusBar.rightItems": "Direita",
-    "statusBar.organizeTray": "Organizar bandeja"
+    "statusBar.organizeTray": "Organizar bandeja",
+    "controlCenter.overview": "Voltar à visão geral",
+    "controlCenter.loading": "Carregando status…",
+    "controlCenter.unavailable": "Indisponível",
+    "controlCenter.on": "Ativado",
+    "controlCenter.off": "Desativado"
 }

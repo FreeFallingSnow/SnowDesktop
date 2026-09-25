@@ -1956,5 +1956,10 @@
     "statusBar.leftItems": "Links",
     "statusBar.centerItems": "Mitte",
     "statusBar.rightItems": "Rechts",
-    "statusBar.organizeTray": "Infobereich anordnen"
+    "statusBar.organizeTray": "Infobereich anordnen",
+    "controlCenter.overview": "Zur Übersicht",
+    "controlCenter.loading": "Status wird geladen…",
+    "controlCenter.unavailable": "Nicht verfügbar",
+    "controlCenter.on": "Ein",
+    "controlCenter.off": "Aus"
 }
