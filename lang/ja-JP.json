@@ -1950,5 +1950,11 @@
     "controlCenter.toggle": "再生／一時停止",
     "controlCenter.next": "次の曲",
   "statusBar.menu.settings": "ステータスバーの設定",
-  "statusBar.menu.hide": "ステータスバーをオフにする"
+  "statusBar.menu.hide": "ステータスバーをオフにする",
+    "statusBar.menu": "メニュー",
+    "statusBar.quickSearch": "クイック検索",
+    "statusBar.leftItems": "左側",
+    "statusBar.centerItems": "中央",
+    "statusBar.rightItems": "右側",
+    "statusBar.organizeTray": "トレイの整理"
 }

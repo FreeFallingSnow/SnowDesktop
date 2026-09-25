@@ -1950,5 +1950,11 @@
     "controlCenter.toggle": "Wiedergabe / Pause",
     "controlCenter.next": "Nächster Titel",
   "statusBar.menu.settings": "Statusleisteneinstellungen",
-  "statusBar.menu.hide": "Statusleiste ausschalten"
+  "statusBar.menu.hide": "Statusleiste ausschalten",
+    "statusBar.menu": "Menü",
+    "statusBar.quickSearch": "Schnellsuche",
+    "statusBar.leftItems": "Links",
+    "statusBar.centerItems": "Mitte",
+    "statusBar.rightItems": "Rechts",
+    "statusBar.organizeTray": "Infobereich anordnen"
 }

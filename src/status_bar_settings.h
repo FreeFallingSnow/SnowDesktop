@@ -17,6 +17,7 @@ struct StatusBarSettings
     DockMonitorScope monitorScope = DockMonitorScope::First;
     float scale = 1.0f;
     SurfaceTheme theme;
+    bool menu = true, quickSearch = true;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
     bool cpu = false, memory = false, gpu = false, traffic = false;
@@ -24,12 +25,16 @@ struct StatusBarSettings
     bool bluetoothControls = true, mediaControls = true, powerControls = true;
     std::vector<std::string> pinnedTrayItems;
     std::vector<std::string> trayOrder;
+    std::vector<std::string> leftOrder = {"menu", "quickSearch"};
+    std::vector<std::string> rightOrder = {"tray", "cpu", "memory", "gpu", "traffic", "network", "volume", "battery", "controlCenter"};
     friend bool operator==(const StatusBarSettings&, const StatusBarSettings&) = default;
 };
 
 template<class Visitor> void VisitStatusBarFlags(Visitor visit)
 {
     visit("enabled", &StatusBarSettings::enabled);
+    visit("menu", &StatusBarSettings::menu);
+    visit("quickSearch", &StatusBarSettings::quickSearch);
     visit("clock", &StatusBarSettings::clock);
     visit("tray", &StatusBarSettings::tray);
     visit("network", &StatusBarSettings::network);
@@ -56,6 +61,18 @@ inline void NormalizeStatusBarSettings(StatusBarSettings& value)
         value.position = DockPosition::Top;
     value.monitorScope = static_cast<DockMonitorScope>(std::clamp(static_cast<int>(value.monitorScope), 0, 2));
     value.scale = std::isfinite(value.scale) ? std::clamp(value.scale, .75f, 3.0f) : 1.0f;
+    const StatusBarSettings defaults;
+    const auto normalizeOrder = [](auto& items, const auto& supported) {
+        std::vector<std::string> result;
+        for (const auto& item : items)
+            if (std::find(supported.begin(), supported.end(), item) != supported.end() &&
+                std::find(result.begin(), result.end(), item) == result.end()) result.push_back(item);
+        for (const auto& item : supported)
+            if (std::find(result.begin(), result.end(), item) == result.end()) result.push_back(item);
+        items = std::move(result);
+    };
+    normalizeOrder(value.leftOrder, defaults.leftOrder);
+    normalizeOrder(value.rightOrder, defaults.rightOrder);
     for (auto* items : { &value.pinnedTrayItems, &value.trayOrder })
     {
         std::vector<std::string> normalized;
@@ -102,6 +119,7 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
         if (const auto* field = input.Find(key))
         {
             if (!field->IsArray() || field->array.size() > 512) { valid = false; return; }
+            list.clear();
             for (const auto& item : field->array)
                 if (!item.IsString() || item.string.size() > 4096) valid = false;
                 else list.push_back(item.string);
@@ -109,6 +127,8 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
     };
     readList("pinnedTrayItems", value.pinnedTrayItems);
     readList("trayOrder", value.trayOrder);
+    readList("leftOrder", value.leftOrder);
+    readList("rightOrder", value.rightOrder);
     NormalizeStatusBarSettings(value);
     if (valid) output = std::move(value);
     return valid;
@@ -151,6 +171,8 @@ inline std::string EncodeStatusBarSettings(StatusBarSettings value)
     };
     writeList("pinnedTrayItems", value.pinnedTrayItems);
     writeList("trayOrder", value.trayOrder);
+    writeList("leftOrder", value.leftOrder);
+    writeList("rightOrder", value.rightOrder);
     text << '}';
     return text.str();
 }

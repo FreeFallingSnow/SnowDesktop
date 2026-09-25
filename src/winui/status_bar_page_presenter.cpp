@@ -11,12 +11,20 @@ struct StatusBarPagePresenter::Impl
 {
     DockPagePresenter::LocalizeCallback localize;
     DockPageActions actions;
-    muxc::StackPanel root, basic, contents, controls;
+    muxc::StackPanel root, basic, contents, controls, leftItems, centerItems, rightItems;
     muxc::ComboBox edge, monitors;
     muxc::Slider scale;
     SettingRow edgeRow, monitorsRow, scaleRow;
-    muxc::TextBlock contentsTitle, controlsTitle;
-    struct Toggle { std::string key, focus; bool StatusBarSettings::* member; muxc::ToggleSwitch control; SettingRow row; };
+    muxc::TextBlock contentsTitle, controlsTitle, leftTitle, centerTitle, rightTitle;
+    struct Toggle
+    {
+        std::string key, focus, item;
+        bool StatusBarSettings::* member;
+        muxc::ToggleSwitch control;
+        muxc::Button earlier{nullptr}, later{nullptr};
+        SettingRow row;
+        int zone = 0;
+    };
     std::vector<std::unique_ptr<Toggle>> toggles;
     std::vector<std::function<void()>> revoke;
     StatusBarSettings value;
@@ -37,11 +45,39 @@ struct StatusBarPagePresenter::Impl
         actions.updateGeneral(generation, commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
             [edit = std::move(edit)](GeneralSettings& settings) { edit(settings.statusBar); });
     }
-    void ToggleRow(muxc::StackPanel panel, const char* key, const char* focus, bool StatusBarSettings::* member)
+    void ToggleRow(muxc::StackPanel panel, const char* key, const char* focus, bool StatusBarSettings::* member, int zone = 0)
     {
         auto toggle = std::make_unique<Toggle>();
         toggle->key = key; toggle->focus = focus; toggle->member = member;
-        toggle->row.Initialize(toggle->control);
+        toggle->zone = zone;
+        toggle->item = std::string(key).substr(std::string("statusBar.").size());
+        muxc::StackPanel buttons; buttons.Orientation(muxc::Orientation::Horizontal); buttons.Spacing(6);
+        buttons.Children().Append(toggle->control);
+        if (zone)
+        {
+            toggle->earlier = muxc::Button(); toggle->later = muxc::Button();
+            for (auto direction : {-1, 1})
+            {
+                auto button = direction < 0 ? toggle->earlier : toggle->later;
+                muxc::FontIcon arrow; arrow.Glyph(direction < 0 ? L"\uE70E" : L"\uE70D"); arrow.FontSize(12);
+                button.Content(arrow);
+                button.Padding({6, 4, 6, 4});
+                const auto item = toggle->item;
+                const auto click = button.Click([this, zone, item, direction](const auto&, const auto&) {
+                    Emit([zone, item, direction](auto& settings) {
+                        auto& order = zone == 1 ? settings.leftOrder : settings.rightOrder;
+                        const auto found = std::find(order.begin(), order.end(), item);
+                        if (found == order.end()) return;
+                        const auto index = found - order.begin(), next = index + direction;
+                        if (next >= 0 && next < static_cast<std::ptrdiff_t>(order.size())) std::iter_swap(found, order.begin() + next);
+                    });
+                    Sync();
+                });
+                revoke.push_back([button, click] { button.Click(click); });
+                buttons.Children().Append(button);
+            }
+        }
+        toggle->row.Initialize(buttons);
         toggle->row.SetControlAlignment(mux::HorizontalAlignment::Right);
         panel.Children().Append(toggle->row.root);
         auto control = toggle->control;
@@ -62,16 +98,23 @@ struct StatusBarPagePresenter::Impl
         contentsTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         controlsTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         contents.Children().Append(contentsTitle); controls.Children().Append(controlsTitle);
-        ToggleRow(contents, "statusBar.clock", "statusBar.contents", &StatusBarSettings::clock);
-        ToggleRow(contents, "statusBar.tray", "statusBar.tray", &StatusBarSettings::tray);
-        ToggleRow(contents, "statusBar.network", "statusBar.network", &StatusBarSettings::network);
-        ToggleRow(contents, "statusBar.volume", "statusBar.volume", &StatusBarSettings::volume);
-        ToggleRow(contents, "statusBar.battery", "statusBar.battery", &StatusBarSettings::battery);
-        ToggleRow(contents, "statusBar.controlCenter", "statusBar.controlCenter", &StatusBarSettings::controlCenter);
-        ToggleRow(contents, "statusBar.cpu", "statusBar.cpu", &StatusBarSettings::cpu);
-        ToggleRow(contents, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory);
-        ToggleRow(contents, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu);
-        ToggleRow(contents, "statusBar.traffic", "statusBar.traffic", &StatusBarSettings::traffic);
+        for (auto heading : {leftTitle, centerTitle, rightTitle}) heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        contents.Children().Append(leftTitle); contents.Children().Append(leftItems);
+        contents.Children().Append(centerTitle); contents.Children().Append(centerItems);
+        contents.Children().Append(rightTitle); contents.Children().Append(rightItems);
+        for (auto panel : {leftItems, centerItems, rightItems}) panel.Spacing(8);
+        ToggleRow(leftItems, "statusBar.menu", "statusBar.menu", &StatusBarSettings::menu, 1);
+        ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch, 1);
+        ToggleRow(centerItems, "statusBar.clock", "statusBar.contents", &StatusBarSettings::clock);
+        ToggleRow(rightItems, "statusBar.tray", "statusBar.tray", &StatusBarSettings::tray, 2);
+        ToggleRow(rightItems, "statusBar.network", "statusBar.network", &StatusBarSettings::network, 2);
+        ToggleRow(rightItems, "statusBar.volume", "statusBar.volume", &StatusBarSettings::volume, 2);
+        ToggleRow(rightItems, "statusBar.battery", "statusBar.battery", &StatusBarSettings::battery, 2);
+        ToggleRow(rightItems, "statusBar.controlCenter", "statusBar.controlCenter", &StatusBarSettings::controlCenter, 2);
+        ToggleRow(rightItems, "statusBar.cpu", "statusBar.cpu", &StatusBarSettings::cpu, 2);
+        ToggleRow(rightItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory, 2);
+        ToggleRow(rightItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu, 2);
+        ToggleRow(rightItems, "statusBar.traffic", "statusBar.traffic", &StatusBarSettings::traffic, 2);
         ToggleRow(controls, "statusBar.audioControls", "statusBar.controls", &StatusBarSettings::audioControls);
         ToggleRow(controls, "statusBar.brightnessControls", "statusBar.brightness", &StatusBarSettings::brightnessControls);
         ToggleRow(controls, "statusBar.wifiControls", "statusBar.wifi", &StatusBarSettings::wifiControls);
@@ -117,12 +160,39 @@ struct StatusBarPagePresenter::Impl
         for (auto& toggle : toggles) toggle->control.IsOn(value.*(toggle->member));
         edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
         if (!scaleDirty) scale.Value(value.scale * 100.);
+        for (const auto zone : {1, 2})
+        {
+            auto panel = zone == 1 ? leftItems : rightItems;
+            const auto& order = zone == 1 ? value.leftOrder : value.rightOrder;
+            for (std::size_t index = 0; index < order.size(); ++index)
+                for (auto& toggle : toggles) if (toggle->zone == zone && toggle->item == order[index])
+                {
+                    std::uint32_t previous = 0;
+                    if (panel.Children().IndexOf(toggle->row.root, previous) && previous != index)
+                    {
+                        panel.Children().RemoveAt(previous);
+                        panel.Children().InsertAt(static_cast<std::uint32_t>(index), toggle->row.root);
+                    }
+                    toggle->earlier.IsEnabled(index > 0); toggle->later.IsEnabled(index + 1 < order.size());
+                }
+        }
         syncing = false;
     }
     void Localize()
     {
         syncing = true;
-        for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
+        for (auto& toggle : toggles)
+        {
+            toggle->row.SetText(L(toggle->key));
+            if (toggle->zone) for (auto direction : {-1, 1})
+            {
+                auto button = direction < 0 ? toggle->earlier : toggle->later;
+                const auto label = L(direction < 0 ? "statusBar.moveEarlier" : "statusBar.moveLater") + L" · " + L(toggle->key);
+                mux::Automation::AutomationProperties::SetName(button, label);
+                muxc::ToolTipService::SetToolTip(button, winrt::box_value(label));
+            }
+        }
+        leftTitle.Text(L("statusBar.leftItems")); centerTitle.Text(L("statusBar.centerItems")); rightTitle.Text(L("statusBar.rightItems"));
         edgeRow.SetText(L("statusBar.position")); monitorsRow.SetText(L("settings.dock.monitor"));
         scaleRow.SetText(L("statusBar.scale"));
         edge.Items().Clear(); monitors.Items().Clear();

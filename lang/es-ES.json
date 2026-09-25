@@ -1950,5 +1950,11 @@
     "controlCenter.toggle": "Reproducir / pausar",
     "controlCenter.next": "Pista siguiente",
   "statusBar.menu.settings": "Ajustes de la barra de estado",
-  "statusBar.menu.hide": "Desactivar barra de estado"
+  "statusBar.menu.hide": "Desactivar barra de estado",
+    "statusBar.menu": "Menú",
+    "statusBar.quickSearch": "Búsqueda rápida",
+    "statusBar.leftItems": "Izquierda",
+    "statusBar.centerItems": "Centro",
+    "statusBar.rightItems": "Derecha",
+    "statusBar.organizeTray": "Organizar bandeja"
 }

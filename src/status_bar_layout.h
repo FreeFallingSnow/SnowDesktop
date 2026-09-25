@@ -9,15 +9,23 @@ namespace snowdesktop
 // Center the clock on the monitor. Preserve rightmost controls at narrow
 // widths; omit whole overflow items instead of partial, ambiguous targets.
 inline std::vector<RECT> StatusBarHorizontalLayout(LONG width, LONG height,
-    LONG padding, LONG leftWidth, LONG clockWidth, std::span<const LONG> rightWidths)
+    LONG padding, std::span<const LONG> leftWidths, LONG clockWidth, std::span<const LONG> rightWidths)
 {
     const LONG end = std::max(0L, width - padding);
     clockWidth = std::clamp(clockWidth, 0L, std::max(0L, width - 2 * padding));
     const LONG center = (width - clockWidth) / 2;
-    std::vector<RECT> result(2 + rightWidths.size());
-    if (clockWidth) result[1] = {center, 0, center + clockWidth, height};
-    const LONG leftEnd = std::min(padding + leftWidth, clockWidth ? center - padding : end);
-    if (leftEnd > padding) result[0] = {padding, 0, leftEnd, height};
+    std::vector<RECT> result(leftWidths.size() + 1 + rightWidths.size());
+    if (clockWidth) result[leftWidths.size()] = {center, 0, center + clockWidth, height};
+    LONG leftEnd = padding;
+    for (std::size_t i = 0; i < leftWidths.size(); ++i)
+    {
+        const LONG extent = std::max(0L, leftWidths[i]);
+        if (extent > 0 && leftEnd + extent <= (clockWidth ? center - padding : end))
+        {
+            result[i] = {leftEnd, 0, leftEnd + extent, height};
+            leftEnd += extent;
+        }
+    }
     const LONG minimum = clockWidth ? center + clockWidth + padding : leftEnd + padding;
     LONG cursor = end;
     for (std::size_t i = rightWidths.size(); i > 0; --i)
@@ -25,10 +33,16 @@ inline std::vector<RECT> StatusBarHorizontalLayout(LONG width, LONG height,
         const LONG extent = std::max(0L, rightWidths[i - 1]);
         if (extent > 0 && cursor - extent >= minimum)
         {
-            result[i + 1] = {cursor - extent, 0, cursor, height};
+            result[leftWidths.size() + i] = {cursor - extent, 0, cursor, height};
             cursor -= extent;
         }
     }
     return result;
+}
+inline std::vector<RECT> StatusBarHorizontalLayout(LONG width, LONG height,
+    LONG padding, LONG leftWidth, LONG clockWidth, std::span<const LONG> rightWidths)
+{
+    return StatusBarHorizontalLayout(width, height, padding,
+        std::span<const LONG>(&leftWidth, 1), clockWidth, rightWidths);
 }
 }

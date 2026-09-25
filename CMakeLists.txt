@@ -356,6 +356,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/system_panel.h
     src/winui/system_control_view.cpp
     src/winui/system_control_view.h
+    src/winui/system_calendar_view.cpp
+    src/winui/system_calendar_view.h
     src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h

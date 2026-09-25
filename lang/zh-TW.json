@@ -1950,5 +1950,11 @@
     "controlCenter.toggle": "播放／暫停",
     "controlCenter.next": "下一首",
   "statusBar.menu.settings": "狀態列設定",
-  "statusBar.menu.hide": "關閉狀態列"
+  "statusBar.menu.hide": "關閉狀態列",
+    "statusBar.menu": "選單",
+    "statusBar.quickSearch": "快速搜尋",
+    "statusBar.leftItems": "左側",
+    "statusBar.centerItems": "中間",
+    "statusBar.rightItems": "右側",
+    "statusBar.organizeTray": "整理系統匣"
 }

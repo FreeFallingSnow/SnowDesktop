@@ -962,6 +962,15 @@ int main(int argc, char** argv)
             std::array<LONG, 3>{60, 80, 32});
         Check(narrow[1].left == 110 && IsRectEmpty(&narrow[3]) && narrow[4].right == 392 && narrow[0].right < narrow[1].left,
             "narrow bars keep the clock and last system control visible without overlapping targets");
+        const auto buttons = snowdesktop::StatusBarHorizontalLayout(400, 32, 12,
+            std::array<LONG, 2>{32, 32}, 180, std::array<LONG, 2>{48, 32});
+        Check(buttons[0].left == 12 && buttons[0].right == buttons[1].left && buttons[1].right == 76 &&
+                buttons[2].left == 110 && buttons[2].right == 290 && buttons[4].right == 388,
+            "separate menu and search hit targets must fit before the centered clock");
+        const auto noClock = snowdesktop::StatusBarHorizontalLayout(220, 32, 12,
+            std::array<LONG, 2>{32, 32}, 0, std::array<LONG, 2>{100, 32});
+        Check(IsRectEmpty(&noClock[2]) && IsRectEmpty(&noClock[3]) && noClock[4].left == 176,
+            "disabled clock releases its area while overflow controls cannot cover left actions");
         reservation.Remove(); reservation.Remove();
         Check(std::count(messages.begin(), messages.end(), static_cast<DWORD>(ABM_REMOVE)) == 1,
             "closing an AppBar releases its reservation exactly once");

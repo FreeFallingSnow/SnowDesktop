@@ -1950,5 +1950,11 @@
     "controlCenter.toggle": "Play / pause",
     "controlCenter.next": "Next track",
   "statusBar.menu.settings": "Status bar settings",
-  "statusBar.menu.hide": "Turn off status bar"
+  "statusBar.menu.hide": "Turn off status bar",
+    "statusBar.menu": "Menu",
+    "statusBar.quickSearch": "Quick search",
+    "statusBar.leftItems": "Left",
+    "statusBar.centerItems": "Center",
+    "statusBar.rightItems": "Right",
+    "statusBar.organizeTray": "Organize tray"
 }

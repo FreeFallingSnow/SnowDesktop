@@ -40,6 +40,9 @@ int main()
         value.statusBar.position = DockPosition::Bottom;
         value.statusBar.monitorScope = DockMonitorScope::All;
         value.statusBar.scale = 1.5f;
+        value.statusBar.menu = false;
+        value.statusBar.leftOrder = {"quickSearch", "menu"};
+        std::reverse(value.statusBar.rightOrder.begin(), value.statusBar.rightOrder.end());
         value.statusBar.pinnedTrayItems = {"C:\\测试\\app.exe|42", "guid:\"test\""};
         value.statusBar.trayOrder = {"guid:\"test\"", "C:\\测试\\app.exe|42"};
         value.statusBar.theme.mode = 4;
@@ -57,6 +60,13 @@ int main()
         NormalizeStatusBarSettings(value.statusBar);
         Check(value.statusBar.position == DockPosition::Top && value.statusBar.pinnedTrayItems.size() == 2,
             "retired side positions migrate to the top without losing tray preferences");
+        value.statusBar.leftOrder = {"quickSearch", "unknown", "quickSearch"};
+        value.statusBar.rightOrder = {"volume", "clock", "menu", "volume"};
+        NormalizeStatusBarSettings(value.statusBar);
+        Check(value.statusBar.leftOrder == std::vector<std::string>{"quickSearch", "menu"} &&
+                value.statusBar.rightOrder.front() == "volume" && value.statusBar.rightOrder.size() == 9 &&
+                std::find(value.statusBar.rightOrder.begin(), value.statusBar.rightOrder.end(), "clock") == value.statusBar.rightOrder.end(),
+            "saved bar order excludes invalid or duplicate items and restores supported missing entries");
     }
     {
         using namespace snowdesktop::shell_extensions;

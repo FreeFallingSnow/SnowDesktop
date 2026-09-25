@@ -1950,5 +1950,11 @@
     "controlCenter.toggle": "재생 / 일시 정지",
     "controlCenter.next": "다음 곡",
   "statusBar.menu.settings": "상태 표시줄 설정",
-  "statusBar.menu.hide": "상태 표시줄 끄기"
+  "statusBar.menu.hide": "상태 표시줄 끄기",
+    "statusBar.menu": "메뉴",
+    "statusBar.quickSearch": "빠른 검색",
+    "statusBar.leftItems": "왼쪽",
+    "statusBar.centerItems": "가운데",
+    "statusBar.rightItems": "오른쪽",
+    "statusBar.organizeTray": "트레이 정리"
 }

@@ -170,7 +170,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             if (const auto self = weak.lock(); self && !self->closed) { self->sections.at(key).open = true; self->Demand(key, true); self->Refresh(); }
         });
         section.expander.Collapsed([weak, key](const auto&, const auto&) {
-            if (const auto self = weak.lock()) { self->sections.at(key).open = false; self->Demand(key, false); }
+            if (const auto self = weak.lock(); self && !self->closed) { self->sections.at(key).open = false; self->Demand(key, false); }
         });
         root.Children().Append(section.expander); if (expanded) Demand(key, true);
     }
@@ -428,7 +428,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     {
         if (closed) return; closed = true;
         if (dialog) { dialog.Hide(); dialog = nullptr; }
-        data->RemoveConsumer(Consumer); sections.clear(); root.Children().Clear();
+        data->RemoveConsumer(Consumer); root.Children().Clear(); sections.clear();
     }
 };
 SystemControlView::SystemControlView(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data, const StatusBarSettings& settings)

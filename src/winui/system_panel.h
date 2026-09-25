@@ -1,5 +1,6 @@
 #pragma once
 #include "../status_bar.h"
+#include "system_calendar_view.h"
 #include <memory>
 
 namespace snowdesktop::winui
@@ -10,7 +11,7 @@ class SystemPanel
 {
 public:
     using SettingsChanged = std::function<void(const StatusBarSettings&)>;
-    explicit SystemPanel(SettingsChanged changed);
+    explicit SystemPanel(SettingsChanged changed, SystemCalendarActions calendar = {});
     ~SystemPanel();
     void Show(StatusBarAction action, HWND owner, RECT anchor,
         const PersonalizationSettings& appearance, const StatusBarSettings& settings,

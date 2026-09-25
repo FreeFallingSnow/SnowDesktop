@@ -37,6 +37,7 @@ std::wstring DisplayName(const tray::Icon& icon)
 struct SystemPanel::Impl
 {
     SettingsChanged changed;
+    SystemCalendarActions calendarActions;
     WinUiRuntime runtime;
     DesktopBackdropCompositor backdrop;
     HWND window = nullptr, owner = nullptr;
@@ -50,8 +51,10 @@ struct SystemPanel::Impl
     x::FrameworkElement content{nullptr};
     c::Border frame{nullptr};
     c::StackPanel body{nullptr};
+    c::Grid trayGrid{nullptr};
     c::TextBlock notice{nullptr};
     std::unique_ptr<SystemControlView> controls;
+    std::unique_ptr<SystemCalendarView> calendar;
     struct Row
     {
         tray::Icon icon;
@@ -62,8 +65,8 @@ struct SystemPanel::Impl
     };
     std::vector<std::shared_ptr<Row>> rows;
     std::uint64_t revision = 0;
-    bool showing = false, rebuilding = false, hiding = false;
-    explicit Impl(SettingsChanged callback) : changed(std::move(callback)) {}
+    bool showing = false, rebuilding = false, hiding = false, managingTray = false;
+    Impl(SettingsChanged callback, SystemCalendarActions dates) : changed(std::move(callback)), calendarActions(std::move(dates)) {}
     ~Impl()
     {
         Hide();
@@ -151,7 +154,7 @@ struct SystemPanel::Impl
     void AddTrayRow(tray::Icon icon)
     {
         auto row = std::make_shared<Row>(); row->icon = std::move(icon);
-        c::Grid grid; grid.ColumnSpacing(8);
+        c::Grid grid; grid.ColumnSpacing(6);
         for (int i = 0; i < 4; ++i)
         {
             c::ColumnDefinition column;
@@ -160,18 +163,28 @@ struct SystemPanel::Impl
         }
         row->activate = c::Button(); row->activate.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         c::StackPanel label; label.Orientation(c::Orientation::Horizontal); label.Spacing(10);
-        row->image = c::Image(); row->image.Width(22); row->image.Height(22); Image(row);
-        row->title = Text(DisplayName(row->icon).c_str()); row->title.MaxWidth(200);
-        label.Children().Append(row->image); label.Children().Append(row->title);
-        row->activate.Content(label);
+        row->image = c::Image(); row->image.Width(20); row->image.Height(20); Image(row);
+        if (managingTray)
+        {
+            row->title = Text(DisplayName(row->icon).c_str()); row->title.MaxWidth(150);
+            row->title.TextTrimming(x::TextTrimming::CharacterEllipsis); row->title.MaxLines(1);
+            label.Children().Append(row->image); label.Children().Append(row->title);
+            row->activate.Content(label);
+        }
+        else
+        {
+            row->activate.Content(row->image); row->activate.Width(40); row->activate.Height(40);
+            row->activate.Padding({8, 8, 8, 8}); row->activate.BorderThickness({0, 0, 0, 0});
+            row->activate.Background(m::SolidColorBrush(Color(0, 0, 0, 0)));
+        }
         a::AutomationProperties::SetName(row->activate, DisplayName(row->icon));
         c::ToolTipService::SetToolTip(row->activate, winrt::box_value(row->icon.tip));
         const std::weak_ptr<Row> weak = row;
-        row->activate.PointerPressed([this, weak](const auto&, const x::Input::PointerRoutedEventArgs& args) {
+        row->activate.AddHandler(x::UIElement::PointerPressedEvent(), winrt::box_value(x::Input::PointerEventHandler([this, weak](const auto&, const x::Input::PointerRoutedEventArgs& args) {
             const auto row = weak.lock(); if (!row) return;
             if (args.GetCurrentPoint(row->activate).Properties().IsLeftButtonPressed())
             { row->pointer = true; Activate(row, tray::Activation::LeftDown); }
-        });
+        })), true);
         row->activate.Click([this, weak](const auto&, const auto&) {
             const auto row = weak.lock(); if (!row) return;
             Activate(row, row->pointer ? tray::Activation::LeftUp : tray::Activation::Keyboard); row->pointer = false;
@@ -188,6 +201,13 @@ struct SystemPanel::Impl
         });
         row->activate.PointerEntered([this, weak](const auto&, const auto&) { if (const auto row = weak.lock()) Activate(row, tray::Activation::Hover); });
         row->activate.PointerExited([this, weak](const auto&, const auto&) { if (const auto row = weak.lock()) Activate(row, tray::Activation::Leave); });
+        if (!managingTray)
+        {
+            const auto index = static_cast<int>(rows.size());
+            if (index % 5 == 0) trayGrid.RowDefinitions().Append(c::RowDefinition());
+            c::Grid::SetRow(row->activate, index / 5); c::Grid::SetColumn(row->activate, index % 5);
+            trayGrid.Children().Append(row->activate); rows.push_back(row); return;
+        }
         grid.Children().Append(row->activate);
         c::CheckBox pin; pin.Content(winrt::box_value(_LW("statusBar.pin")));
         pin.IsChecked(std::find(settings.pinnedTrayItems.begin(), settings.pinnedTrayItems.end(), row->icon.persistentKey) != settings.pinnedTrayItems.end());
@@ -228,7 +248,7 @@ struct SystemPanel::Impl
             for (std::size_t i = 0; i < rows.size(); ++i)
             {
                 rows[i]->icon = std::move(state.icons[i]); Image(rows[i]);
-                rows[i]->title.Text(DisplayName(rows[i]->icon));
+                if (rows[i]->title) rows[i]->title.Text(DisplayName(rows[i]->icon));
                 a::AutomationProperties::SetName(rows[i]->activate, DisplayName(rows[i]->icon));
                 c::ToolTipService::SetToolTip(rows[i]->activate, winrt::box_value(rows[i]->icon.tip));
             }
@@ -236,14 +256,24 @@ struct SystemPanel::Impl
         else
         {
             rebuilding = true; body.Children().Clear(); rows.clear();
+            trayGrid = c::Grid(); trayGrid.ColumnSpacing(8); trayGrid.RowSpacing(8);
+            trayGrid.HorizontalAlignment(x::HorizontalAlignment::Center);
+            for (int column = 0; column < 5; ++column)
+            {
+                c::ColumnDefinition definition; definition.Width(x::GridLengthHelper::Auto());
+                trayGrid.ColumnDefinitions().Append(definition);
+            }
+            if (!managingTray) body.Children().Append(trayGrid);
             for (auto& icon : state.icons) AddTrayRow(std::move(icon));
             rebuilding = false;
+            if (showing) Arrange();
         }
         notice.Text(state.connected && !state.degraded && !rows.empty() ? L"" : _LW("statusBar.trayUnavailable"));
     }
     void Build()
     {
         controls.reset();
+        calendar.reset();
         rows.clear();
         frame = c::Border(); frame.Padding({12, 12, 12, 12});
         const double radius = appearance.cornerRadius;
@@ -286,17 +316,23 @@ struct SystemPanel::Impl
         notice = Text(L"");
         if (action == StatusBarAction::Calendar)
         {
-            c::CalendarView calendar; calendar.SelectionMode(c::CalendarViewSelectionMode::Single);
-            calendar.SetDisplayDate(winrt::clock::now()); root.Children().Append(calendar);
+            calendar = std::make_unique<SystemCalendarView>(calendarActions);
+            root.Children().Append(calendar->Root());
         }
         else if (action == StatusBarAction::Tray)
         {
             c::ScrollViewer scroll; scroll.MaxHeight(410); scroll.Content(body);
             scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
             root.Children().Append(scroll); root.Children().Append(notice);
+            c::StackPanel toolbar; toolbar.Spacing(8); toolbar.Orientation(c::Orientation::Horizontal);
+            c::Button organize; organize.Content(c::SymbolIcon(c::Symbol::Edit));
+            a::AutomationProperties::SetName(organize, _LW("statusBar.organizeTray"));
+            c::ToolTipService::SetToolTip(organize, winrt::box_value(_LW("statusBar.organizeTray")));
+            organize.Click([this](const auto&, const auto&) { managingTray = !managingTray; RefreshTray(true); });
+            toolbar.Children().Append(organize);
             c::Button native; native.Content(winrt::box_value(_LW("statusBar.nativeTray")));
             native.Click([this](const auto&, const auto&) { auto service = tray; Hide(); if (service) service->OpenNativeTray(); });
-            root.Children().Append(native); RefreshTray(true);
+            toolbar.Children().Append(native); root.Children().Append(toolbar); RefreshTray(true);
         }
         else
         {
@@ -305,8 +341,44 @@ struct SystemPanel::Impl
             scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
             root.Children().Append(scroll);
         }
-        frame.Child(root); content = frame;
+        c::ScrollViewer viewport;
+        viewport.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
+        viewport.VerticalScrollBarVisibility(c::ScrollBarVisibility::Auto);
+        MONITORINFO monitorInfo{sizeof(monitorInfo)};
+        if (GetMonitorInfoW(monitor, &monitorInfo))
+            viewport.MaxHeight((std::max)(80., (monitorInfo.rcWork.bottom - monitorInfo.rcWork.top) * 96. / GetDpiForWindow(owner) - 24.));
+        viewport.Content(root); frame.Child(viewport); content = frame;
         if (!runtime.Attach(window, frame)) throw winrt::hresult_error(E_FAIL, runtime.LastError());
+    }
+    void Arrange()
+    {
+        if (!content || !window) return;
+        MONITORINFO info{sizeof(info)}; if (!GetMonitorInfoW(monitor, &info)) return;
+        const double scale = GetDpiForWindow(owner) / 96.;
+        const double requested = action == StatusBarAction::Calendar ? 400 : action == StatusBarAction::Tray && !managingTray ? 320 : 440;
+        const double availableWidth = (info.rcWork.right - info.rcWork.left) / scale;
+        const double availableHeight = (info.rcWork.bottom - info.rcWork.top) / scale;
+        const float widthDip = static_cast<float>((std::min)(requested, availableWidth));
+        content.Measure({widthDip, static_cast<float>(availableHeight)});
+        const int width = static_cast<int>(std::ceil(widthDip * scale));
+        const int height = static_cast<int>(std::ceil((std::min)(availableHeight,
+            (std::max)(128., static_cast<double>(content.DesiredSize().Height))) * scale));
+        int left = action == StatusBarAction::Calendar ? (anchor.left + anchor.right - width) / 2 : anchor.right - width;
+        int top = settings.position == DockPosition::Bottom ? anchor.top - height - static_cast<int>(6 * scale) : anchor.bottom + static_cast<int>(6 * scale);
+        left = std::clamp(left, static_cast<int>(info.rcWork.left), static_cast<int>(info.rcWork.right) - width);
+        top = std::clamp(top, static_cast<int>(info.rcWork.top), static_cast<int>(info.rcWork.bottom) - height);
+        SetWindowPos(window, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
+        runtime.ResizeToClient();
+        if (appearance.glassEnabled)
+        {
+            if (!backdrop.IsAvailable()) backdrop.InitializePopup(window, showing, false);
+            backdrop.Reattach(window); backdrop.BeginFrame(true);
+            backdrop.AddPanel({0, 0, width, height}, appearance.cornerRadius * static_cast<float>(scale),
+                appearance.glassBlurRadius * static_cast<float>(scale), reinterpret_cast<std::uintptr_t>(this));
+            backdrop.EndFrame();
+            if (showing) backdrop.ShowPopupWindowPair(window);
+        }
+        else backdrop.Reset();
     }
     void Hide()
     {
@@ -314,6 +386,7 @@ struct SystemPanel::Impl
         hiding = true;
         showing = false;
         try { if (controls) controls->Close(); } catch (...) {}
+        try { if (calendar) calendar->Close(); } catch (...) {}
         // The visual tree still owns its event handlers until Build replaces
         // the page. Keep their controller alive while the popup is hidden.
         try
@@ -360,7 +433,9 @@ struct SystemPanel::Impl
             else if (message == WM_CLOSE || (message == WM_KEYDOWN && wp == VK_ESCAPE)) { self->Hide(); return 0; }
             else if (message == WM_TIMER && wp == 1 && self->showing)
             {
-                if (self->controls) self->controls->Refresh(); else self->RefreshTray();
+                if (self->controls) self->controls->Refresh();
+                else if (self->calendar) self->calendar->Refresh();
+                else self->RefreshTray();
             }
             else if (message == WM_DPICHANGED || message == WM_DISPLAYCHANGE) self->Hide();
         }
@@ -368,7 +443,7 @@ struct SystemPanel::Impl
         return DefWindowProcW(window, message, wp, lp);
     }
 };
-SystemPanel::SystemPanel(SettingsChanged changed) : impl_(std::make_unique<Impl>(std::move(changed))) {}
+SystemPanel::SystemPanel(SettingsChanged changed, SystemCalendarActions calendar) : impl_(std::make_unique<Impl>(std::move(changed), std::move(calendar))) {}
 SystemPanel::~SystemPanel() = default;
 void SystemPanel::Hide() { impl_->Hide(); }
 void SystemPanel::HideForMonitor(HMONITOR monitor) { if (impl_->monitor == monitor) impl_->Hide(); }
@@ -389,28 +464,20 @@ void SystemPanel::Show(StatusBarAction action, HWND owner, RECT anchor,
     self.monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{sizeof(info)}; if (!GetMonitorInfoW(self.monitor, &info)) return;
     const double scale = GetDpiForWindow(owner) / 96.;
-    const int width = (std::min)(static_cast<int>(480 * scale), static_cast<int>(info.rcWork.right - info.rcWork.left));
-    const int height = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 430 : 560) * scale), static_cast<int>(info.rcWork.bottom - info.rcWork.top));
-    int left = anchor.right - width, top = anchor.bottom;
-    if (settings.position == DockPosition::Bottom) top = anchor.top - height;
-    if (settings.position == DockPosition::Left) left = anchor.right;
-    if (settings.position == DockPosition::Right) left = anchor.left - width;
+    const int width = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 400 : action == StatusBarAction::Tray ? 320 : 440) * scale), static_cast<int>(info.rcWork.right - info.rcWork.left));
+    const int height = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 640 : 560) * scale), static_cast<int>(info.rcWork.bottom - info.rcWork.top));
+    int left = action == StatusBarAction::Calendar ? (anchor.left + anchor.right - width) / 2 : anchor.right - width;
+    int top = anchor.bottom + static_cast<int>(6 * scale);
+    if (settings.position == DockPosition::Bottom) top = anchor.top - height - static_cast<int>(6 * scale);
     left = std::clamp(left, static_cast<int>(info.rcWork.left), static_cast<int>(info.rcWork.right) - width);
     top = std::clamp(top, static_cast<int>(info.rcWork.top), static_cast<int>(info.rcWork.bottom) - height);
     // This application-level popup outlives individual monitor AppBars. An
     // HWND owner would destroy its Island implicitly when that bar is removed.
     SetWindowPos(self.window, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
     try { self.Build(); } catch (...) { self.Hide(); return; }
-    if (appearance.glassEnabled)
-    {
-        if (!self.backdrop.IsAvailable()) self.backdrop.InitializePopup(self.window, true, false);
-        self.backdrop.Reattach(self.window); self.backdrop.BeginFrame(true);
-        self.backdrop.AddPanel({0, 0, width, height}, appearance.cornerRadius * static_cast<float>(scale),
-            appearance.glassBlurRadius * static_cast<float>(scale), reinterpret_cast<std::uintptr_t>(&self));
-        self.backdrop.EndFrame(); self.backdrop.ShowPopupWindowPair(self.window);
-    }
-    else self.backdrop.Reset();
+    self.Arrange();
     self.showing = true;
+    if (appearance.glassEnabled) self.backdrop.ShowPopupWindowPair(self.window);
     self.backdrop.SetPopupWindowPairZOrder(self.window, HWND_TOPMOST, true);
     ShowWindow(self.window, SW_SHOW); SetForegroundWindow(self.window); SetTimer(self.window, 1, 500, nullptr);
 }

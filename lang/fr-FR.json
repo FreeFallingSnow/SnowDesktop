@@ -1950,5 +1950,11 @@
     "controlCenter.toggle": "Lecture / pause",
     "controlCenter.next": "Titre suivant",
   "statusBar.menu.settings": "Paramètres de la barre d’état",
-  "statusBar.menu.hide": "Désactiver la barre d’état"
+  "statusBar.menu.hide": "Désactiver la barre d’état",
+    "statusBar.menu": "Menu",
+    "statusBar.quickSearch": "Recherche rapide",
+    "statusBar.leftItems": "Gauche",
+    "statusBar.centerItems": "Centre",
+    "statusBar.rightItems": "Droite",
+    "statusBar.organizeTray": "Organiser la zone de notification"
 }

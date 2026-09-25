@@ -249,6 +249,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme, "personalization.statusBarTheme", "settings.nav.statusBar", "settings.personalization.theme"},
     {SettingsPage::StatusBar, "statusBar.tray", "statusBar.tray", "settings.nav.statusBar"},
     {SettingsPage::StatusBar, "statusBar.controls", "statusBar.controlCenter", "settings.nav.statusBar"},
+    {SettingsPage::StatusBar, "statusBar.menu", "statusBar.menu", "statusBar.leftItems"},
+    {SettingsPage::StatusBar, "statusBar.quickSearch", "statusBar.quickSearch", "statusBar.leftItems"},
     {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description"},
     {SettingsPage::General, "start.fileGroup", "start.fileGroup.title", "start.fileGroup.description"},
     {SettingsPage::General, "start.dockPin", "start.dockPin.title", "start.dockPin.description"},
