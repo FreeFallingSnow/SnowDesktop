@@ -102,6 +102,11 @@ int main(int argc, char** argv)
              {"backup.json", "snowbackup_manifest", "layout_storage::SaveDocument", "atomic_file::WriteAll"}},
             {"src/winui/backup_data_page_backend.cpp", "void CompleteQueuedReplacement", "void Finish(",
              {"FlushPending(", "FlushAll("}},
+            // The worker may commit restored files, but only the later model
+            // rebuild callback may publish a successful restore notice.
+            {"src/winui/backup_data_page_backend.cpp", "if (completion.result.layoutRestore && completion.result.ok)",
+             "if (completion.result.cancelled)",
+             {"SetNotice(BackupDataNoticeSeverity::Success"}},
             {"src/winui/backup_data_page_backend.cpp", "void Deactivate() noexcept", "BackupDataPageBackend::BackupDataPageBackend(",
              {".join(", "WaitForSingleObject("}},
             {"src/app/app_settings_apply.cpp", "DesktopApp::SetTemporaryGridInitialization",
