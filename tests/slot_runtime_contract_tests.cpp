@@ -2905,32 +2905,32 @@ void TestPopupDwellControllerHandlesCandidateChanges()
 void TestPassivePopupHoverTiming()
 {
     PopupHoverController controller;
-    Check(!controller.Pending() && !controller.Consume(1000),
+    Check(!controller.Pending() && !controller.Consume(1000, 600),
         "no opener cannot trigger a popup");
     controller.Track(L"collection:a", 100);
     controller.Track(L"collection:a", 650);
-    Check(!controller.Consume(699) && controller.Consume(700) &&
-            !controller.Consume(2000),
+    Check(!controller.Consume(699, 600) && controller.Consume(700, 600) &&
+            !controller.Consume(2000, 600),
         "a continuous hover opens once at 600 ms, even while moving inside the opener");
     controller.Track(L"dock:monitor1:folder", 2000);
     controller.Track(L"dock:monitor2:folder", 2500);
-    Check(!controller.Consume(2600) && controller.Consume(3100),
+    Check(!controller.Consume(2600, 600) && controller.Consume(3100, 600),
         "the same Dock source on another monitor starts a fresh dwell");
     controller.Track(L"collection:b", 4000);
     controller.SuppressUntilLeave();
     controller.Track(L"collection:b", 4600);
-    Check(!controller.Consume(5000),
+    Check(!controller.Consume(5000, 600),
         "clicking or dismissing suppresses the hovered opener until leave");
     controller.Track(L"", 5100);
     controller.Track(L"collection:b", 5200);
-    Check(!controller.Consume(5799) && controller.Consume(5800),
+    Check(!controller.Consume(5799, 600) && controller.Consume(5800, 600),
         "reentering a suppressed opener requires the full delay");
     controller.Track(L"collection:c", 6000);
     controller.Reset();
-    Check(!controller.Consume(9000),
+    Check(!controller.Consume(9000, 600),
         "disabling hover, leaving the surface or occlusion cancels pending opening");
     controller.Track(L"dock:folder", MAXDWORD - 200);
-    Check(!controller.Consume(398) && controller.Consume(399),
+    Check(!controller.Consume(398, 600) && controller.Consume(399, 600),
         "hover timing survives the Windows tick counter wrapping");
 }
 }

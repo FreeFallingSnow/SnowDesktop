@@ -1,6 +1,7 @@
 {
   "app.settings.popup_hover_open": "悬停延时展开弹窗",
-  "app.settings.popup_hover_open_hint": "鼠标在 Dock 文件夹、集合图标或桌面集合的展开入口停留 600 毫秒后，自动展开弹窗。",
+  "app.settings.popup_hover_delay": "悬停延时",
+  "app.settings.popup_hover_open_hint": "鼠标在 Dock 文件夹、集合图标或桌面集合的展开入口停留指定时间后，自动展开弹窗。",
   "app.widget.removal.title": "删除组件？",
   "app.widget.removal.content": "删除“{0}”将清除该组件实例保存的数据。此操作无法撤销。",
   "settings.contextMenu.inspectDesktop": "检查桌面菜单",

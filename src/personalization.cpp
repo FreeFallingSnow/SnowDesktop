@@ -367,9 +367,10 @@ bool LoadPersonalization(
     }
     if (ReadDoubleField(text, "gradientEndA", v)) s.gradientEndA = (float)v;
     s.panelGradient = {};
-    JsonValue gradientDocument;
-    if (ParseJson(text, gradientDocument))
-        if (const auto* gradient = gradientDocument.Find("panelGradient"))
+    JsonValue document;
+    const bool documentParsed = ParseJson(text, document);
+    if (documentParsed)
+        if (const auto* gradient = document.Find("panelGradient"))
             if (!snowdesktop::DecodePanelGradient(*gradient, s.panelGradient)) return false;
     if (ReadDoubleField(text, "barHeight", v)) s.barHeight = (float)v;
     if (ReadDoubleField(text, "categorizedTabHeight", v))
@@ -413,6 +414,10 @@ bool LoadPersonalization(
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
     s.popupHoverOpen = false;
     ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
+    s.popupHoverDelayMs = kDefaultPopupHoverDelayMs;
+    if (documentParsed)
+        if (const auto* delay = document.Find("popupHoverDelayMs"); delay && delay->IsNumber())
+            s.popupHoverDelayMs = NormalizePopupHoverDelayMs(delay->number);
     bool b = false;
     if (ReadBoolField(text, "glassEnabled", b)) s.glassEnabled = b;
     if (ReadDoubleField(text, "glassBlurRadius", v)) s.glassBlurRadius = (float)v;
@@ -458,6 +463,7 @@ bool LoadPersonalization(
         const float barHeight = s.barHeight;
         const bool titleBarOnTop = s.scrollableTitleBarOnTop;
         const bool popupHoverOpen = s.popupHoverOpen;
+        const float popupHoverDelayMs = s.popupHoverDelayMs;
         const float categorizedTabHeight =
             s.categorizedTabHeight;
         const float luaWidgetContentRowHeight =
@@ -471,6 +477,7 @@ bool LoadPersonalization(
         s.barHeight = barHeight;
         s.scrollableTitleBarOnTop = titleBarOnTop;
         s.popupHoverOpen = popupHoverOpen;
+        s.popupHoverDelayMs = popupHoverDelayMs;
         s.categorizedTabHeight =
             categorizedTabHeight;
         s.luaWidgetContentRowHeight = luaWidgetContentRowHeight;
@@ -553,6 +560,8 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << (s.showGroupTabCounts ? "true" : "false") << ",\n";
     file << "  \"popupHoverOpen\": "
          << (s.popupHoverOpen ? "true" : "false") << ",\n";
+    file << "  \"popupHoverDelayMs\": "
+         << NormalizePopupHoverDelayMs(s.popupHoverDelayMs) << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
     file << "  \"contextMenuStyle\": "

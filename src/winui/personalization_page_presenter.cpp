@@ -193,6 +193,7 @@ struct PersonalizationPagePresenter::Impl
     muxc::ToggleSwitch popupHoverOpen{nullptr};
     SettingRow popupHoverOpenRow;
     winrt::event_token popupHoverOpenToken{};
+    ContinuousControl popupHoverDelayMs;
 
     SettingRow presetRow;
     SettingRow quickNavigationThemeRow;
@@ -204,7 +205,7 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 11> continuousControls = {
+    std::array<ContinuousControl*, 12> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
@@ -216,6 +217,7 @@ struct PersonalizationPagePresenter::Impl
         &barHeight,
         &categorizedTabHeight,
         &luaWidgetContentRowHeight,
+        &popupHoverDelayMs,
     };
     std::array<ColorControl*, 2> colorControls = {
         &backgroundColor,
@@ -480,6 +482,12 @@ struct PersonalizationPagePresenter::Impl
         popupHoverOpenRow.Initialize(popupHoverOpen);
         popupHoverOpenRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         layoutCard.content.Children().Append(popupHoverOpenRow.root);
+        InitializeContinuousControl(popupHoverDelayMs,
+            &PersonalizationSettings::popupHoverDelayMs,
+            kMinimumPopupHoverDelayMs, kMaximumPopupHoverDelayMs,
+            100.0, 1.0, kDefaultPopupHoverDelayMs);
+        SetUnit(popupHoverDelayMs, L"ms");
+        layoutCard.content.Children().Append(popupHoverDelayMs.row.root);
     }
 
     void InitializeColorControl(
@@ -611,6 +619,7 @@ struct PersonalizationPagePresenter::Impl
                         const bool counts = settings.showCategoryTabCounts;
                         const bool groupCounts = settings.showGroupTabCounts;
                         const bool hoverOpen = settings.popupHoverOpen;
+                        const float hoverDelayMs = settings.popupHoverDelayMs;
                         const int menu = settings.contextMenuStyle;
                         settings = MakeAppearancePreset(preset);
                         settings.cornerRadius = corner;
@@ -622,6 +631,7 @@ struct PersonalizationPagePresenter::Impl
                         settings.showCategoryTabCounts = counts;
                         settings.showGroupTabCounts = groupCounts;
                         settings.popupHoverOpen = hoverOpen;
+                        settings.popupHoverDelayMs = hoverDelayMs;
                         settings.contextMenuStyle = menu;
                     });
             });
@@ -718,6 +728,7 @@ struct PersonalizationPagePresenter::Impl
             });
         popupHoverOpenToken = popupHoverOpen.Toggled(
             [this](const auto&, const auto&) {
+                UpdateDependentStates();
                 const bool enabled = popupHoverOpen.IsOn();
                 Emit(SettingsUpdateMode::PreviewAndCommit,
                     [enabled](PersonalizationSettings& settings) {
@@ -969,6 +980,7 @@ struct PersonalizationPagePresenter::Impl
         gradientEndAlpha.row.root.Visibility(visible(gradientToggle.IsOn()));
         blurRadius.row.root.Visibility(visible(glassToggle.IsOn()));
         acrylicRow.root.Visibility(visible(glassToggle.IsOn()));
+        popupHoverDelayMs.row.root.Visibility(visible(popupHoverOpen.IsOn()));
     }
 
     void SetCardText(
@@ -1157,9 +1169,11 @@ struct PersonalizationPagePresenter::Impl
         popupHoverOpenRow.SetText(
             L("app.settings.popup_hover_open", L"Open popups on hover"),
             L("app.settings.popup_hover_open_hint",
-                L"Hover over a Dock folder or collection, or a collection's expand button, for 600 ms to open its popup."));
+                L"Hover over a Dock folder or collection, or a collection's expand button, to open its popup after the configured delay."));
         muxa::AutomationProperties::SetName(
             popupHoverOpen, popupHoverOpenRow.label.Text());
+        SetContinuousText(popupHoverDelayMs,
+            "app.settings.popup_hover_delay", L"Hover delay");
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
         muxa::AutomationProperties::SetName(
@@ -1285,6 +1299,11 @@ struct PersonalizationPagePresenter::Impl
             return showGroupTabCounts;
         if (id == "personalization.popupHoverOpen")
             return popupHoverOpen;
+        if (id == "personalization.popupHoverDelayMs")
+        {
+            if (!popupHoverOpen.IsOn()) return popupHoverOpen;
+            return popupHoverDelayMs.slider;
+        }
         if (id == "personalization.barHeight")
             return barHeight.slider;
         if (id == "personalization.scrollableTitleBarOnTop")

@@ -49,10 +49,10 @@ int main()
         const auto close = [&] { ++closes; outgoing.Close(700); };
         const auto open = [&] {
             Check(outgoing.IsHidden(), "new popup cannot replace visible outgoing content");
-            Check(hover.Consume(900), "waiting for close retains the completed hover delay");
+            Check(hover.Consume(900, 600), "waiting for close retains the completed hover delay");
             ++opens;
         };
-        Check(hover.IsReady(700) && !OpenAfterClose(outgoing, true, close, open) &&
+        Check(hover.IsReady(700, 600) && !OpenAfterClose(outgoing, true, close, open) &&
                 outgoing.IsClosing() && closes == 1 && opens == 0 && hover.Pending(),
             "mature hover starts the old popup's close before publishing another source");
         outgoing.Advance(790);
@@ -79,17 +79,41 @@ int main()
     {
         PopupHoverController hover;
         hover.Track(L"collection:b", 100);
-        Check(hover.IsReady(700), "a switch can start after the dwell delay");
+        Check(hover.IsReady(700, 600), "a switch can start after the dwell delay");
         hover.Reset();
-        Check(!hover.IsReady(900) && !hover.Consume(900),
+        Check(!hover.IsReady(900, 600) && !hover.Consume(900, 600),
             "leaving or disabling hover during close cancels replacement opening");
         hover.Track(L"collection:b", 1000);
-        Check(hover.IsReady(1600), "reentry must complete another dwell");
+        Check(hover.IsReady(1600, 600), "reentry must complete another dwell");
         hover.SuppressUntilLeave();
-        Check(!hover.IsReady(1800), "clicking during close cancels the pending hover switch");
+        Check(!hover.IsReady(1800, 600), "clicking during close cancels the pending hover switch");
         hover.Track(L"collection:c", 1900);
-        Check(!hover.IsReady(2400) && hover.IsReady(2500),
+        Check(!hover.IsReady(2400, 600) && hover.IsReady(2500, 600),
             "moving to a third opener during close requires its own full dwell");
+    }
+
+    // A configured dwell must govern both readiness and opening, including
+    // values on either side of the former fixed 600 ms threshold.
+    for (const DWORD delay : {100u, 1200u, 3000u})
+    {
+        PopupHoverController hover;
+        hover.Track(L"dock:custom-delay", 100);
+        Check(!hover.IsReady(100 + delay - 1, delay) &&
+                !hover.Consume(100 + delay - 1, delay),
+            "a configured hover delay must not open early");
+        Check(hover.IsReady(100 + delay, delay) &&
+                hover.Consume(100 + delay, delay) &&
+                !hover.Consume(100 + delay + 1, delay),
+            "a configured hover delay opens exactly once at its threshold");
+    }
+    {
+        PopupHoverController hover;
+        hover.Track(L"collection:updated-delay", 100);
+        Check(!hover.IsReady(800, 1200) && hover.IsReady(800, 300),
+            "changing the setting updates the pending hover's threshold");
+        hover.Track(L"collection:other", 800);
+        Check(!hover.IsReady(1099, 300) && hover.IsReady(1100, 300),
+            "a different opener still needs its own configured delay");
     }
 
     State state;

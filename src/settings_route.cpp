@@ -33,6 +33,7 @@ bool IsWidgetLayoutFocus(std::string_view focusId) noexcept
         focusId == "personalization.barHeight" ||
         focusId == "personalization.scrollableTitleBarOnTop" ||
         focusId == "personalization.popupHoverOpen" ||
+        focusId == "personalization.popupHoverDelayMs" ||
         focusId == "personalization.showGroupTabCounts";
 }
 

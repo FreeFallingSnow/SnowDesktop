@@ -1,6 +1,7 @@
 {
   "app.settings.popup_hover_open": "マウスを重ねてポップアップを開く",
-  "app.settings.popup_hover_open_hint": "Dock のフォルダーやコレクション、またはデスクトップのコレクションの展開ボタンにマウスを 600 ミリ秒重ねると、ポップアップを開きます。",
+  "app.settings.popup_hover_delay": "マウスを重ねてから開くまでの時間",
+  "app.settings.popup_hover_open_hint": "Dock のフォルダーやコレクション、またはデスクトップのコレクションの展開ボタンにマウスを重ねると、設定した待ち時間の後にポップアップを開きます。",
   "app.widget.removal.title": "ウィジェットを削除しますか？",
   "app.widget.removal.content": "「{0}」を削除すると、このウィジェットに保存されたデータが消去されます。この操作は元に戻せません。",
   "settings.contextMenu.inspectDesktop": "デスクトップメニューを確認",

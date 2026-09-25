@@ -388,6 +388,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "app.settings.group_show_count", "app.settings.group_show_count_hint"},
     {SettingsPage::AppearanceWidgets, "personalization.popupHoverOpen",
         "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint"},
+    {SettingsPage::AppearanceWidgets, "personalization.popupHoverDelayMs",
+        "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint"},
     {SettingsPage::DesktopCategories,
         "desktop.categoryCounts",
         "app.settings.category_show_count",

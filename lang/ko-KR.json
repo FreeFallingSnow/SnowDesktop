@@ -1,6 +1,7 @@
 {
   "app.settings.popup_hover_open": "마우스를 올려 팝업 열기",
-  "app.settings.popup_hover_open_hint": "Dock의 폴더나 컬렉션 또는 바탕 화면 컬렉션의 펼치기 버튼에 마우스를 600밀리초 동안 올리면 팝업이 열립니다.",
+  "app.settings.popup_hover_delay": "마우스 올리기 대기 시간",
+  "app.settings.popup_hover_open_hint": "Dock의 폴더나 컬렉션 또는 바탕 화면 컬렉션의 펼치기 버튼에 마우스를 올리면 설정한 대기 시간 후에 팝업이 열립니다.",
   "app.widget.removal.title": "위젯을 삭제할까요?",
   "app.widget.removal.content": "“{0}”을(를) 삭제하면 이 위젯 인스턴스에 저장된 데이터가 지워집니다. 이 작업은 되돌릴 수 없습니다.",
   "settings.contextMenu.inspectDesktop": "바탕 화면 메뉴 확인",

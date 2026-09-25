@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <utility>
 
 std::wstring GetDataFilePath(const wchar_t* filename)
 {
@@ -365,7 +366,10 @@ int main()
     savedAppearance.scrollableTitleBarOnTop = true;
     Check(!savedAppearance.popupHoverOpen,
         "popup hover opening defaults off for new profiles");
+    Check(savedAppearance.popupHoverDelayMs == 600.0f,
+        "new profiles retain the original 600 ms hover delay");
     savedAppearance.popupHoverOpen = true;
+    savedAppearance.popupHoverDelayMs = 1200.0f;
     savedAppearance.showCategoryTabCounts = false;
     savedAppearance.panelGradient.enabled = true;
     savedAppearance.panelGradient.angle = 45;
@@ -387,6 +391,7 @@ int main()
             loadedAppearance.showGroupTabCounts &&
             loadedAppearance.scrollableTitleBarOnTop &&
             loadedAppearance.popupHoverOpen &&
+            loadedAppearance.popupHoverDelayMs == 1200.0f &&
             !loadedAppearance.showCategoryTabCounts &&
             !loadedAppearance.glassEnabled && loadedAppearance.panelGradient == savedAppearance.panelGradient &&
             loadedAppearance.gradientEndA == savedAppearance.gradientEndA,
@@ -401,6 +406,7 @@ int main()
             appearance.showGroupTabCounts = enabled;
             appearance.scrollableTitleBarOnTop = enabled;
             appearance.popupHoverOpen = enabled;
+            appearance.popupHoverDelayMs = 1400.0f;
             appearance.showCategoryTabCounts = !enabled;
             loadedAppearance.showGroupTabCounts = !enabled;
             Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
@@ -408,6 +414,7 @@ int main()
                     loadedAppearance.showGroupTabCounts == enabled &&
                     loadedAppearance.scrollableTitleBarOnTop == enabled &&
                     loadedAppearance.popupHoverOpen == enabled &&
+                    loadedAppearance.popupHoverDelayMs == 1400.0f &&
                     loadedAppearance.showCategoryTabCounts == !enabled,
                 "group count preference survives acrylic preset refresh independently from category counts");
         }
@@ -453,11 +460,13 @@ int main()
     migratedGlass.showGroupTabCounts = true;
     migratedGlass.scrollableTitleBarOnTop = true;
     migratedGlass.popupHoverOpen = true;
+    migratedGlass.popupHoverDelayMs = 2200.0f;
     migratedGlass.panelGradient = savedAppearance.panelGradient;
     Check(LoadPersonalization(personalizationPath.c_str(), migratedGlass) &&
             !migratedGlass.showGroupTabCounts &&
             !migratedGlass.scrollableTitleBarOnTop &&
             !migratedGlass.popupHoverOpen &&
+            migratedGlass.popupHoverDelayMs == 600.0f &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
                 kDefaultEdgeHighlightWidth &&
@@ -466,6 +475,31 @@ int main()
             migratedGlass.widgetBorderWidth == 1.0f &&
             migratedGlass.widgetBorderAlpha == 0.0f && !migratedGlass.panelGradient.enabled,
         "legacy glass appearance migrates to an independent edge highlight");
+    // Loading old, hand-edited or out-of-range profiles must never turn the
+    // delay into an immediate popup or a practically infinite wait.
+    for (const auto& [serialized, expected] : {
+            std::pair{"-100", 100.0f}, std::pair{"99999", 3000.0f},
+            std::pair{"1e300", 3000.0f}, std::pair{"\"invalid\"", 600.0f},
+            std::pair{"450.4", 450.0f}})
+    {
+        {
+            std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
+            fixture << "{\"popupHoverDelayMs\":" << serialized << "}";
+        }
+        Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance.popupHoverDelayMs == expected,
+            "persisted hover delay is bounded and invalid values use the default");
+    }
+    for (const auto& [requested, expected] : {
+            std::pair{-1.0f, 100.0f}, std::pair{9999.0f, 3000.0f}})
+    {
+        auto appearance = savedAppearance;
+        appearance.popupHoverDelayMs = requested;
+        Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
+                LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+                loadedAppearance.popupHoverDelayMs == expected,
+            "saved hover delay respects the supported range");
+    }
     {
         std::ofstream legacyOpaque(
             personalizationPath, std::ios::binary | std::ios::trunc);

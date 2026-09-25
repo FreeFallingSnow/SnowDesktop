@@ -1,6 +1,7 @@
 {
   "app.settings.popup_hover_open": "Abrir ventanas emergentes al pasar el cursor",
-  "app.settings.popup_hover_open_hint": "Mantén el cursor durante 600 ms sobre una carpeta o colección del Dock, o sobre el botón para expandir una colección del escritorio, para abrir su ventana emergente.",
+  "app.settings.popup_hover_delay": "Retraso al pasar el cursor",
+  "app.settings.popup_hover_open_hint": "Mantén el cursor sobre una carpeta o colección del Dock, o sobre el botón para expandir una colección del escritorio, para abrir su ventana emergente tras el tiempo de espera configurado.",
   "app.widget.removal.title": "¿Eliminar el componente?",
   "app.widget.removal.content": "Al eliminar «{0}», se borrarán los datos guardados por esta instancia del componente. Esta acción no se puede deshacer.",
   "settings.contextMenu.inspectDesktop": "Examinar menú del escritorio",

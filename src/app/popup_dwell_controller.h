@@ -60,8 +60,6 @@ private:
 class PopupHoverController
 {
 public:
-    static constexpr DWORD DelayMs = 600;
-
     void Track(const std::wstring& token, DWORD now)
     {
         if (token_ == token) return;
@@ -70,14 +68,14 @@ public:
         consumed_ = false;
     }
 
-    bool IsReady(DWORD now) const
+    bool IsReady(DWORD now, DWORD delayMs) const
     {
-        return Pending() && now - startedAt_ >= DelayMs;
+        return Pending() && now - startedAt_ >= delayMs;
     }
 
-    bool Consume(DWORD now)
+    bool Consume(DWORD now, DWORD delayMs)
     {
-        if (!IsReady(now)) return false;
+        if (!IsReady(now, delayMs)) return false;
         consumed_ = true;
         return true;
     }

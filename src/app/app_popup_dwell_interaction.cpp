@@ -111,7 +111,9 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         CancelPopupHover(true);
         return;
     }
-    if (allowOpen && popupHoverController_.IsReady(now))
+    const DWORD delayMs = static_cast<DWORD>(NormalizePopupHoverDelayMs(
+        personalizationSettings_.popupHoverDelayMs));
+    if (allowOpen && popupHoverController_.IsReady(now, delayMs))
     {
         snowdesktop::popup_animation_rules::OpenAfterClose(
             popupAnimation_, GetOpenPopupWidget() != nullptr,
@@ -119,8 +121,8 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
                 pendingCollectionPopupOpen_.reset();
                 BeginCollectionPopupClose(false);
             },
-            [this, now, folderIndex, widgetIndex, point] {
-                if (!popupHoverController_.Consume(now)) return;
+            [this, now, delayMs, folderIndex, widgetIndex, point] {
+                if (!popupHoverController_.Consume(now, delayMs)) return;
                 CancelPopupHover(true);
                 HideDockWindowPreview();
                 if (folderIndex < dockEntries_.size()) OpenDockFolderPopupAt(folderIndex, point);

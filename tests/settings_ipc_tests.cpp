@@ -142,6 +142,7 @@ void TestCodec()
     settings.values.personalization.showGroupTabCounts = true;
     settings.values.personalization.scrollableTitleBarOnTop = true;
     settings.values.personalization.popupHoverOpen = true;
+    settings.values.personalization.popupHoverDelayMs = 1700.0f;
     settings.values.personalization.showCategoryTabCounts = false;
     settings.values.personalization.panelGradient.angle = 213;
     settings.values.personalization.panelGradient.stops.insert(
@@ -162,6 +163,7 @@ void TestCodec()
     Check(restored.values.personalization.showGroupTabCounts &&
             restored.values.personalization.scrollableTitleBarOnTop &&
             restored.values.personalization.popupHoverOpen &&
+            restored.values.personalization.popupHoverDelayMs == 1700.0f &&
             !restored.values.personalization.showCategoryTabCounts,
         "group tab counts cross the settings process boundary independently from category counts");
     for (const int style : {5, 6})

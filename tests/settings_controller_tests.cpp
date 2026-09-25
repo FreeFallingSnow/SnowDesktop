@@ -289,6 +289,12 @@ void TestRoutes()
     Check(popupHover.page == SettingsPage::AppearanceWidgets &&
             popupHover.focusId == "personalization.popupHoverOpen",
         "hover popup search and deep links reach widget layout settings");
+    const auto popupHoverDelay = CanonicalizeSettingsRoute(
+        SettingsRoute::ForPage(SettingsPage::Personalization,
+            "personalization.popupHoverDelayMs"));
+    Check(popupHoverDelay.page == SettingsPage::AppearanceWidgets &&
+            popupHoverDelay.focusId == "personalization.popupHoverDelayMs",
+        "hover delay search reaches the same widget layout section as its switch");
     const auto titleBarPosition = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.scrollableTitleBarOnTop"));

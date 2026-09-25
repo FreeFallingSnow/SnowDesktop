@@ -8,6 +8,8 @@
 #pragma once
 
 #include <d2d1_1.h>
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include "panel_gradient.h"
 
@@ -32,6 +34,18 @@ inline constexpr float kMinimumWidgetBorderWidth = 0.5f;
 inline constexpr float kMaximumWidgetBorderWidth = 4.0f;
 inline constexpr float kDefaultEdgeHighlightWidth = 2.0f;
 inline constexpr float kDefaultEdgeHighlightStrength = 0.75f;
+
+inline constexpr float kDefaultPopupHoverDelayMs = 600.0f;
+inline constexpr float kMinimumPopupHoverDelayMs = 100.0f;
+inline constexpr float kMaximumPopupHoverDelayMs = 3000.0f;
+
+inline float NormalizePopupHoverDelayMs(double delay)
+{
+    if (!std::isfinite(delay)) return kDefaultPopupHoverDelayMs;
+    return static_cast<float>(std::round(std::clamp(delay,
+        static_cast<double>(kMinimumPopupHoverDelayMs),
+        static_cast<double>(kMaximumPopupHoverDelayMs))));
+}
 
 /** @brief Clamp a persisted four-theme selection without changing its wire values. */
 constexpr int NormalizeFourThemeSelection(int selection)
@@ -167,6 +181,7 @@ struct PersonalizationSettings
     bool showGroupTabCounts = false;
     // Open Dock folder/collection and desktop collection popups after hover.
     bool popupHoverOpen = false;
+    float popupHoverDelayMs = kDefaultPopupHoverDelayMs;
 
     int backgroundPreset = 0;
     /** @brief 独立的组件圆角半径，不属于主题预设。 */

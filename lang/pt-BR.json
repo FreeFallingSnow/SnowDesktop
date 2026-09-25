@@ -1,6 +1,7 @@
 {
   "app.settings.popup_hover_open": "Abrir pop-ups ao passar o mouse",
-  "app.settings.popup_hover_open_hint": "Mantenha o ponteiro por 600 ms sobre uma pasta ou coleção do Dock, ou sobre o botão de expansão de uma coleção da área de trabalho, para abrir o pop-up.",
+  "app.settings.popup_hover_delay": "Tempo de espera ao passar o mouse",
+  "app.settings.popup_hover_open_hint": "Mantenha o ponteiro sobre uma pasta ou coleção do Dock, ou sobre o botão de expansão de uma coleção da área de trabalho, para abrir o pop-up após o tempo de espera configurado.",
   "app.widget.removal.title": "Excluir componente?",
   "app.widget.removal.content": "Excluir “{0}” apagará os dados salvos por esta instância do componente. Esta ação não pode ser desfeita.",
   "settings.contextMenu.inspectDesktop": "Inspecionar menu da área de trabalho",
