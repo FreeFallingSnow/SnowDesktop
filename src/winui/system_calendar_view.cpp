@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <winrt/Windows.Globalization.h>
 #include <winrt/Windows.Globalization.DateTimeFormatting.h>
+#include <winrt/Windows.UI.Xaml.Interop.h>
 
 namespace snowdesktop::winui
 {
@@ -75,6 +76,13 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
         month.Language(winrt::to_hstring(Locale::Instance().GetEffectiveLanguage()));
         month.CalendarIdentifier(L"GregorianCalendar"); month.SelectionMode(c::CalendarViewSelectionMode::Single);
         month.HorizontalAlignment(x::HorizontalAlignment::Stretch); month.MinWidth(280); month.MinHeight(260); month.Height(280);
+        // The stock 40-DIP day minimum makes a 280-DIP calendar show only four
+        // weeks. Keep all six weeks visible without inflating this small popup.
+        x::Style days(winrt::xaml_typename<c::CalendarViewDayItem>());
+        days.Setters().Append(x::Setter(x::FrameworkElement::MinHeightProperty(), winrt::box_value(28.)));
+        month.CalendarViewDayItemStyle(days); month.DayItemFontSize(12);
+        month.Background(x::Media::SolidColorBrush(winrt::Windows::UI::Color{0, 0, 0, 0}));
+        month.BorderThickness({0, 0, 0, 0});
         month.NumberOfWeeksInView(6);
         month.SetDisplayDate(PickerDate(selected)); month.SelectedDates().Append(PickerDate(selected));
         c::Grid::SetColumn(month, 1); dates.Children().Append(month); root.Children().Append(dates);

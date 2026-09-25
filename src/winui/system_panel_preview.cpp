@@ -11,6 +11,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.Globalization.h>
 
 namespace snowdesktop::winui
 {
@@ -54,6 +55,33 @@ struct ComScope
     HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ~ComScope() { if (SUCCEEDED(result)) CoUninitialize(); }
 };
+void CheckMonthFits(const x::DependencyObject& element, const x::Controls::CalendarView& month = nullptr,
+    bool* foundLastDay = nullptr)
+{
+    if (const auto calendar = element.try_as<x::Controls::CalendarView>())
+    {
+        bool found = false;
+        for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(calendar); ++i)
+            CheckMonthFits(x::Media::VisualTreeHelper::GetChild(calendar, i), calendar, &found);
+        if (!found) throw std::runtime_error("calendar preview clipped the last day of the fixture month");
+        return;
+    }
+    if (month)
+        if (const auto day = element.try_as<x::Controls::CalendarViewDayItem>())
+        {
+            winrt::Windows::Globalization::Calendar date;
+            date.ChangeCalendarSystem(L"GregorianCalendar"); date.SetDateTime(day.Date());
+            if (date.Year() == 2026 && date.Month() == 9 && date.Day() == 30)
+            {
+                const auto bounds = day.TransformToVisual(month).TransformBounds(
+                    {0, 0, static_cast<float>(day.ActualWidth()), static_cast<float>(day.ActualHeight())});
+                *foundLastDay = bounds.Width > 0 && bounds.Height > 0 && bounds.Y >= 0 &&
+                    bounds.Y + bounds.Height <= month.ActualHeight() + 1;
+            }
+        }
+    for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(element); ++i)
+        CheckMonthFits(x::Media::VisualTreeHelper::GetChild(element, i), month, foundLastDay);
+}
 }
 native_component_preview::Result ExportCalendarPanelPreview(
     const native_component_preview::Request& request, PersonalizationSettings appearance)
@@ -134,6 +162,9 @@ native_component_preview::Result ExportCalendarPanelPreview(
             const auto renderHeight = static_cast<int>(std::lround(height / rasterScale));
             Await(bitmap.RenderAsync(frame, renderWidth, renderHeight));
             const auto buffer = Await(bitmap.GetPixelsAsync());
+            // Check the real visual tree as well as outer pixels. A valid PNG
+            // and rounded frame must not mask missing dates inside the month.
+            CheckMonthFits(frame);
             // Allow one-pixel rounding at a fractional rasterization scale.
             // Reject a stale layout or missing pixels; retain the real size in
             // both the image and its metadata rather than stretching it.

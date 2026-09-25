@@ -25,9 +25,9 @@
 | 满电、充电、接电状态 | `43b94d67` 已编译，待离线与电池实测 | 区分充电、满电接电、未充电接电、无电池与未知 |
 | 最右通知按钮打开 Windows 通知栏 | `43b94d67` 已编译，待交互验收 | Win11 通知中心／Win10 操作中心 |
 | 控制中心参考 Windows／macOS／MyDockFinder／Linux／Android，稳定优先 | 已有唯一面板，布局仍待完善 | 唯一面板，常用开关、滑条和设备详情；无复杂多弹窗 |
-| 顶栏不用 WinUI，顶栏和面板均支持离线渲染 | 顶栏已原生；控制中心仍用原计划的 WinUI，离线渲染待接入 | 栏体不初始化 XAML；面板共享宿主与主题，生产绘制路径可离线验收 |
-| 弹窗四角，尤其底部圆角 | 待主题裁剪及离线检查 | 透明角像素／主题与裁剪离线测试 |
-| 日历参考图：压缩左侧当日信息、月历、日程；管理跳转设置页 | 待简化现有日历布局 | 不在弹窗重复实现日程 CRUD 编辑器 |
+| 顶栏不用 WinUI，顶栏和面板均支持离线渲染 | 顶栏已原生；日历已复用实际 WinUI 控件离线导出，其他面板／栏体仍待接入 | 栏体不初始化 XAML；面板共享宿主与主题，生产绘制路径可离线验收 |
+| 弹窗四角，尤其底部圆角 | 共用主题边框及窗口区域已接入；日历浅深色 PNG 四角已目检，玻璃与桌面仍待验证 | 透明角像素／主题与裁剪离线测试 |
+| 日历参考图：压缩左侧当日信息、月历、日程；管理跳转设置页 | 紧凑当日区、完整六周月历、只读日程和管理跳转已实现；两种主题／DPI 离线图片已检查 | 设置跳转及真实日程交互仍待实机；不重复实现日程 CRUD 编辑器 |
 | 设置只保留左按钮与信息区显示开关；控制中心不配置细项 | `43b94d67` 已编译，待设置界面验收 | 折叠分组，移除独立网络／音量／电量和控制能力开关 |
 | 缩放数值、恢复默认、控件右对齐；排序不可用 | `43b94d67` 已编译，待设置界面验收 | 沿用其他页 NumberBox／Slider／Reset；移除失效排序 |
 | 主题在主题与材质页，全局／独立／自定义 | 已有实现 | 浅／深／高对比、弹窗主题统一 |
@@ -53,7 +53,9 @@
 
 ## 离线面板预览
 
-`snowwidget preview-native calendar-panel <输出目录> --appearance light --locale zh-CN --dpi 96 --transparent --canvas-width 1000 --canvas-height 1000 --padding 24 --host <SnowDesktop.exe>` 使用生产 `SystemCalendarView` 和 `CreateSystemPanelFrame`，计划输出空日程与有日程两张 PNG。该显式目标不属于旧 `all` 集合，不改变已有目标及参数；旧宿主不支持新目标。预览在独立离屏渲染窗口运行，不创建桌面宿主／AppBar、不连接托盘或读取用户日程，使用固定日期和示例日程。控件通过 WinUI `RenderTargetBitmap` 导出；目前只支持 light／dark，桌面玻璃模糊不属于此 XAML 导出范围，玻璃预设会明确拒绝。首次标准构建通过，但实际运行因位图尺寸检查失败，尚无成功图片，不能作为视觉验收。
+`snowwidget preview-native calendar-panel <输出目录> --appearance light --locale zh-CN --dpi 96 --transparent --canvas-width 1000 --canvas-height 1000 --padding 24 --host <SnowDesktop.exe>` 使用生产 `SystemCalendarView` 和 `CreateSystemPanelFrame`，输出空日程与有日程两张 PNG。该显式目标不属于旧 `all` 集合，不改变已有目标及参数；旧宿主不支持新目标。预览在独立离屏渲染窗口运行，不创建桌面宿主／AppBar、不连接托盘或读取用户日程，使用固定日期和示例日程。控件通过 WinUI `RenderTargetBitmap` 导出；目前只支持 light／dark，桌面玻璃模糊不属于此 XAML 导出范围，玻璃预设会明确拒绝。
+
+离线检查使用真实月历视觉树确认固定月份最后一天完整可见，像素检查四个透明圆角、预期宽度和日程引起的高度变化。该检查不代表日程管理跳转、桌面焦点、高对比度、玻璃模糊、窗口区域或其他面板均已验收。
 
 ## 证据与检查点
 
@@ -75,6 +77,9 @@
 - 2026-09-26 最新候选：`scripts/build.bat --reload-shell` 退出 0，无编译／链接警告（`13-regression-build.log`）；定向 `dock_and_window_rules`、`builtin_widget_source_contract`、`test_selection` 3/3 通过（9.98 秒）。`scripts/test.bat full` **120/120 通过**，165.08 秒，退出 0，无编译／链接警告；完整日志 `13-full-tests.log`，JUnit `test-run-5aef9dda91f0418abf5ab4c92f07544f.xml`。输入快照为 `13-validation-inputs.json` 和 `13-final-validation-inputs.json`。完整测试的聚合构建重新链接了相同生产源码：标准构建宿主 SHA256 `7410c8d6655ecde4774487132079b687513e5a9214d6ff73964468bededa3650`，最终宿主 `a499ae71678aad50b61631883d973ad975bce9d5df70639866fc5647689f3cab`；最终 Hook `6b2f04c978639411fc97575d8e6572cbc50dda8c8a43c153595b154ea8dbd527`。生产采集与协议源码未变，托盘真实链路引用上一候选有效结果；本轮未再次广播重注册。空白点击关闭与真实面板外观仍待用户反馈。
 
 2026-09-26 日历简化候选：日历改为压缩当日信息、月历和只读日程，管理入口进入现有设置；新增共享弹窗边框和离线 `calendar-panel` 目标。`scripts/build.bat` 增量重试退出 0，无编译／链接警告（`14-calendar-build-retry.log`；首次失败的 SDK 属性名和头文件问题记录于 `14-calendar-build.log`）。实际预览在 `panel.bitmap` 失败，未产生图片。定向筛选实际命中 4 项，3/4 通过，`widget_author_preview_cli` 在同一尺寸检查失败；6.02 秒，CTest 退出 8，外层退出 1（`14-calendar-tests.log`，JUnit `test-run-1599914e453845babb71204342917ef7.xml`）。记录输入 `14-validation-inputs.json`；此候选未运行完整测试，也未实机验收，先保存编译通过的尝试再继续定位。
+
+- 日历最终候选：`e55f54bd` 保存首次编译通过／渲染失败；`b4e96c6b` 记录实际请求 520×406、返回 780×609 的 150% 缩放证据；`353ec2cd` 导出成功但目检发现月末裁切。本次按默认日期格最小高度 40 DIP 定位，将日期格调整为 28 DIP，复用官方模板与主题并移除内层背景框；相同示例已完整显示六周日期及日程。实际视觉树检查月份最后一天，外层像素检查四角、宽度和日程高度，方形底角像素变异被拒绝。图片位于 `calendar-render-17/`（浅色中文 96 DPI、深色英文 144 DPI；各含空／有日程），不是桌面截图。
+- 本候选 `scripts/build.bat` 退出 0，无编译／链接警告（`17-calendar-build-retry.log`；首次缺 Interop 头文件的编译失败保留在 `17-calendar-build.log`）。定向 `widget_author_preview_cli|calendar_service|localization_contract|settings_controller` **4/4 通过**，54.93 秒，退出 0（日志命名为 `16-calendar-tests.log`，实际绑定本候选）。`scripts/test.bat full` **120/120 通过**，170.38 秒，退出 0，无编译／链接警告（`17-full-tests.log`，JUnit `test-run-43555b30d28f4c64bdd8e99ea857b44e.xml`）。输入快照 `17-validation-inputs.json`／`17-final-validation-inputs.json`；最终宿主 SHA256 `7e4e5a7d8066223e72f7e24775f65b1aae82d5febc9f39638ebf4c4bb5432dec`，Hook SHA256 `dc8e41c993e8f632aeebf500aba79f2fd81d60a76fa261cdb848449162b59da7`。日历选择／设置跳转、桌面焦点、窗口区域、高对比与玻璃仍待实机；其他面板和栏体的离线绘制仍未接入。
 
 ## YASB 参考边界
 
