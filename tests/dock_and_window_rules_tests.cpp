@@ -536,6 +536,34 @@ void CheckPopupWindowPairZOrderTransitions()
             pairMatches(true),
         "a later manual summon can promote the Dock pair after desktop protection ends");
 
+    // Explorer's predecessor can still be topmost while its desktop/taskbar
+    // order changes. The requested desktop band must win over that anchor.
+    Check(SetWindowPos(separator, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, backdrop, separator, false, origin, size) && pairMatches(false),
+        "a topmost desktop anchor must not leave a dismissed Dock pair topmost");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, separator, false, origin, size) && pairMatches(false),
+        "a later desktop refresh must not promote a normal pair through a topmost anchor");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, nullptr, HWND_TOPMOST, true, origin, size) &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, nullptr, separator, false, origin, size) &&
+            !snowdesktop::popup_window_pair_z_order::IsTopmost(content),
+        "transparent Dock dismissal must also reject a topmost desktop anchor");
+    HWND expiredAnchor = CreateWindowExW(extendedStyle, L"STATIC", L"expired-anchor",
+        WS_POPUP, 0, 0, 32, 32, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(expiredAnchor && DestroyWindow(expiredAnchor), "prepare an expired desktop anchor");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true, origin, size) &&
+            snowdesktop::popup_window_pair_z_order::Apply(
+                content, backdrop, expiredAnchor, false, origin, size) && pairMatches(false),
+        "an expired desktop anchor must not prevent explicit Dock demotion");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_TOPMOST, true, origin, size) && pairMatches(true),
+        "the Dock pair remains summonable after desktop anchor fallback");
+
     const auto isAbove = [](HWND upper, HWND lower) {
         for (HWND current = upper; current;
              current = GetWindow(current, GW_HWNDNEXT))
