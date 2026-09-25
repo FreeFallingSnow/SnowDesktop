@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 219> kHostFeatures = {
+constexpr std::array<std::string_view, 225> kHostFeatures = {
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",
@@ -30,6 +30,12 @@ constexpr std::array<std::string_view, 219> kHostFeatures = {
     "control.textArea",
     "control.textInput",
     "data.app.indexStatus",
+    "data.audio.devices",
+    "data.audio.input.volume",
+    "data.system.display.brightness",
+    "data.network.wifi",
+    "data.bluetooth.devices",
+    "data.system.power.plans",
     "data.audio.output.analysis",
     "data.audio.output.default",
     "data.audio.output.volume",
@@ -311,8 +317,26 @@ kSystemFunctionContracts = {{
         kFormatRelativeTimeParameters, "string" },
     { "l10n.formatList", "l10n.format", kFormatListParameters, "string" },
 }};
-constexpr std::array<SystemDataTopicContract, 25>
+constexpr std::array<SystemDataTopicContract, 31>
 kSystemDataTopicContracts = {{
+    { "audio.devices", "data.audio.devices", "audio.devices.read",
+        1000, 10000, 2000, false, false, "SnowDataSubscribeOptions",
+        "SnowAudioDevicesDataValue" },
+    { "audio.input.volume", "data.audio.input.volume", "audio.input.read",
+        1000, 10000, 2000, false, false, "SnowDataSubscribeOptions",
+        "SnowAudioInputVolumeDataValue" },
+    { "system.display.brightness", "data.system.display.brightness", "system.display.read",
+        2000, 10000, 2000, false, false, "SnowDataSubscribeOptions",
+        "SnowDisplayBrightnessDataValue" },
+    { "network.wifi", "data.network.wifi", "network.wifi.read",
+        2000, 10000, 0, true, false, "SnowDataSubscribeOptions",
+        "SnowWifiDataValue" },
+    { "bluetooth.devices", "data.bluetooth.devices", "bluetooth.read",
+        2000, 10000, 0, true, false, "SnowDataSubscribeOptions",
+        "SnowBluetoothDevicesDataValue" },
+    { "system.power.plans", "data.system.power.plans", "system.power.read",
+        2000, 10000, 2000, false, false, "SnowDataSubscribeOptions",
+        "SnowPowerPlansDataValue" },
     { "system.cpu", "data.system.cpu", "system.performance.read",
         500, 5000, 2000, false, false, "SnowDataSubscribeOptions",
         "SnowCpuDataValue" },

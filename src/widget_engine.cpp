@@ -1,3 +1,4 @@
+#include "widget_system_control_data.h"
 #include "background_work.h"
 /**
  * @file widget_engine.cpp
@@ -3335,6 +3336,35 @@ static bool ReadInteractionValue(lua_State* state, int index,
     return true;
 }
 
+// Values originate from the bounded native device providers, never Lua input.
+static void PushSystemControlJson(lua_State* state, const JsonValue& value)
+{
+    switch (value.type)
+    {
+    case JsonValue::Type::Null: lua_pushnil(state); break;
+    case JsonValue::Type::Boolean: lua_pushboolean(state, value.boolean); break;
+    case JsonValue::Type::Number: lua_pushnumber(state, value.number); break;
+    case JsonValue::Type::String:
+        lua_pushlstring(state, value.string.data(), value.string.size()); break;
+    case JsonValue::Type::Array:
+        lua_createtable(state, static_cast<int>(value.array.size()), 0);
+        for (std::size_t i = 0; i < value.array.size(); ++i)
+        {
+            PushSystemControlJson(state, value.array[i]);
+            lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
+        }
+        break;
+    case JsonValue::Type::Object:
+        lua_createtable(state, 0, static_cast<int>(value.object.size()));
+        for (const auto& [key, child] : value.object)
+        {
+            PushSystemControlJson(state, child);
+            lua_setfield(state, -2, key.c_str());
+        }
+        break;
+    }
+}
+
 static void PushInteractionValue(lua_State* state,
     const snowdesktop::widget_runtime::InteractionValue& value)
 {
@@ -4673,6 +4703,12 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_setfield(state, -2, "error");
     }
     if (!available) return;
+    if (snowdesktop::widget_runtime::IsSystemControlDataTopic(snapshot->topic))
+    {
+        PushSystemControlJson(state, snapshot->systemControl);
+        lua_setfield(state, -2, "value");
+        return;
+    }
 
     lua_createtable(state, 0, 6);
     if (snapshot->topic == "system.cpu")
@@ -22681,8 +22717,14 @@ WidgetEngine::RuntimeGetDataSnapshot(
         result.available = true;
         result.stale = false;
         result.timestampMs = timestampNow;
+        if (snowdesktop::widget_runtime::IsSystemControlDataTopic(result.topic))
+            result.systemControl = snowdesktop::widget_runtime::PreviewSystemControlData(
+                result.topic, previewState == LuaWidgetPreviewDataState::Empty);
         if (previewState == LuaWidgetPreviewDataState::Empty)
+        {
+            if (result.topic == "audio.input.volume") result.available = false;
             return result;
+        }
         if (result.topic == "system.cpu")
         {
             result.cpu.available = true;
@@ -23228,6 +23270,23 @@ WidgetEngine::RuntimeGetDataSnapshot(
             result.error = snapshot->error;
             setFreshness(snapshot->timestampMs);
         }
+    }
+    else if (snowdesktop::widget_runtime::IsSystemControlDataTopic(result.topic))
+    {
+        const auto snapshot = widgetSystemDataProvider_->Controls()->Current(result.topic);
+        if (snapshot)
+        {
+            result.systemControl = snapshot->value;
+            result.available = snapshot->available;
+            result.error = snapshot->error;
+            setFreshness(snapshot->timestampMs);
+            if (result.topic == "audio.input.volume" && result.available)
+            {
+                result.systemControl.object["minimum"] = snowdesktop::system_control::json::Number(0);
+                result.systemControl.object["maximum"] = snowdesktop::system_control::json::Number(1);
+            }
+        }
+        else result.warmingUp = true;
     }
     else if (result.topic == "audio.output.analysis")
     {

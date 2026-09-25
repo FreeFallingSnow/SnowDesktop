@@ -1804,6 +1804,38 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 `available=false,error="notPresent"`。这两个 topic 只读取 endpoint 元数据与主音量，
 不会启动 loopback、取得 PCM 或暴露原生 endpoint ID；预览使用固定模拟设备。
 
+1.0.8.0 新增以下设备状态主题，沿用 `data.subscribe` 和 API v2。组件必须同时声明
+`minHostVersion: "1.0.8.0"`，并通过 `widget.hasFeature("data.<主题>")` 检测功能；同版本
+早期构建可能缺少这些 feature。必需能力放入 `requiredFeatures`，可选能力缺失时隐藏
+对应入口，不调用未知主题。新主题不改变旧音量、媒体主题及其权限。
+
+| 主题 / feature（前缀 `data.`） | 读取权限 | value |
+| --- | --- | --- |
+| `audio.devices` | `audio.devices.read` | `devices[]`：`id/name/direction/state/isDefault/available`，输入与输出端点 |
+| `audio.input.volume` | `audio.input.read` | `endpointId/volume/muted/minimum/maximum`，默认麦克风音量，不采集录音 |
+| `system.display.brightness` | `system.display.read` | `monitors[]`：`id/name/kind/available/brightness?/error?`；亮度为 0–100 |
+| `network.wifi` | `network.wifi.read` | `interfaces[]`，各网卡独立的开关、网络与保存配置列表 |
+| `bluetooth.devices` | `bluetooth.read` | `radios[]`、已配对 `devices[]`，连接能力与可选电量 |
+| `system.power.plans` | `system.power.read` | `plans[]/activePlanId/modeSupported/acMode?/dcMode?` 与可选电池状态 |
+
+输入/输出设备和麦克风的读取权限独立于音量控制。Wi-Fi、蓝牙权限涉及网络名称与设备
+标识，按个人数据申请；`network.internet` 或 `audio.output.read` 不隐含这些权限。
+字段类型见随附 Lua 类型库。所有 ID 只作为所属主题的设备令牌使用，不解析其格式；
+亮度端点 ID 与显示拓扑 ID 不等价。移除设备后应丢弃旧 ID，重新读取列表。
+
+订阅 Wi-Fi 只读取 Windows 缓存，不触发主动扫描；网卡 `networks` 包含
+`id/ssid/signal/security/connected/connectable/profileName?`，`profiles` 包含
+`name/managed`。不提供已保存密码。无线/位置权限拒绝返回 `accessDenied`；不要把
+空列表或缺失字段显示为“无线已关闭”。企业认证和受策略管理的配置交给 Windows。
+蓝牙只列已配对设备，`canConnect/canDisconnect` 表示本机后端支持的操作；不支持的
+设备管理和新配对交给系统设置，电量未知时省略 `batteryPercent`。
+
+这些主题与原生控制中心共享同一设备采样，不因增加组件重复扫描。音频主题最短
+1000 ms，其余最短 2000 ms；隐藏与卸载遵循订阅生命周期，Wi-Fi/蓝牙无消费者时
+立即释放订阅。`available=false` 时不返回伪造的 0 值；逐设备也须检查 `available`。
+离线预览使用固定设备、网络和电量，不访问真实硬件；empty 预览使用空设备列表，
+麦克风状态为不可用。
+
 `audio.output.analysis` 使用独立 WASAPI loopback 线程。默认 value 返回 128 点
 `waveform`、64 个 `spectrum` bin、`rms/peak/silent/deviceChanged`、不透明
 `endpointId` 及源 `sampleRate/channels`。waveform 已下混为 mono 且限制在 -1–1，

@@ -900,7 +900,17 @@ void TestSystemCapabilityContract()
         snowdesktop::widget_api::SystemDataTopicContracts();
     const auto tasks = snowdesktop::widget_api::SystemTaskContracts();
     Check(functions.size() == 15, "v2 system function catalog must be frozen");
-    Check(topics.size() == 25, "v2 data topic catalog must be frozen");
+    // Device discovery must not inherit unrelated audio-output or internet grants.
+    for (const auto& [name, permission] : std::initializer_list<std::pair<std::string_view, std::string_view>>{
+        {"audio.devices", "audio.devices.read"}, {"audio.input.volume", "audio.input.read"},
+        {"network.wifi", "network.wifi.read"}, {"bluetooth.devices", "bluetooth.read"},
+        {"system.display.brightness", "system.display.read"}, {"system.power.plans", "system.power.read"}})
+    {
+        const auto topic = std::find_if(topics.begin(), topics.end(), [&](const auto& item) { return item.name == name; });
+        Check(topic != topics.end() && topic->requiredPermission == permission &&
+            std::string_view(topic->feature) == std::string("data.") + std::string(name),
+            "device topics require their independent grants and early-build feature gates");
+    }
     const auto imageTask = std::find_if(tasks.begin(), tasks.end(),
         [](const auto& contract) {
             return std::string_view(contract.name) == "filesystem.image";

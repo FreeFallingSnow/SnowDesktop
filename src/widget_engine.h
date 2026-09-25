@@ -433,6 +433,7 @@ struct LuaWidgetDataSnapshot
         audioOutputDefault;
     snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot
         audioOutputVolume;
+    JsonValue systemControl;
     snowdesktop::widget_runtime::WidgetAudioAnalysisDataSnapshot
         audioAnalysis;
     snowdesktop::widget_runtime::WidgetMediaSessionsDataSnapshot

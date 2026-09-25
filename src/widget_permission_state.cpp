@@ -7,6 +7,14 @@ namespace snowdesktop::widget
 namespace
 {
 constexpr std::array kPermissionDescriptors = {
+    WidgetPermissionDescriptor{ "audio.devices.read", PermissionRiskClass::SystemStatus,
+        "app.settings.widgets_permission_audio_devices_read" },
+    WidgetPermissionDescriptor{ "audio.input.read", PermissionRiskClass::SystemStatus,
+        "app.settings.widgets_permission_audio_input_read" },
+    WidgetPermissionDescriptor{ "network.wifi.read", PermissionRiskClass::PersonalData,
+        "app.settings.widgets_permission_network_wifi_read" },
+    WidgetPermissionDescriptor{ "bluetooth.read", PermissionRiskClass::PersonalData,
+        "app.settings.widgets_permission_bluetooth_read" },
     WidgetPermissionDescriptor{ "ui.input", PermissionRiskClass::Basic,
         "app.settings.widgets_permission_ui_input" },
     WidgetPermissionDescriptor{ "ui.contextMenu", PermissionRiskClass::Basic,

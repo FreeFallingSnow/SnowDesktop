@@ -666,13 +666,13 @@ std::filesystem::path CreateEnvironmentFixture(
   "slug": "preview-environment-fixture",
   "version": "1.0.0",
   "entry": "main.lua",
-  "minHostVersion": "1.0.1.0",
+  "minHostVersion": "1.0.8.0",
   "name": "Preview environment fixture",
   "description": "Validates the authoring preview context.",
   "author": "SnowDesktop",
   "license": "MIT",
   "defaultSize": {"columns": 2, "rows": 1},
-  "permissions": ["system.performance.read"],
+  "permissions": ["system.performance.read", "audio.devices.read", "audio.input.read", "system.display.read", "network.wifi.read", "bluetooth.read", "system.power.read"],
   "requiredFeatures": [
     "draw.immediate",
     "draw.marqueeText",
@@ -683,7 +683,9 @@ std::filesystem::path CreateEnvironmentFixture(
     "ui.semanticMetrics.rowUnit",
     "widget.context",
     "data.subscribe",
-    "data.system.cpu"
+    "data.system.cpu",
+    "data.audio.devices", "data.audio.input.volume", "data.system.display.brightness",
+    "data.network.wifi", "data.bluetooth.devices", "data.system.power.plans"
   ]
 })json");
     Write(source / L"main.lua", R"lua(
@@ -744,6 +746,37 @@ return widget.define({
             "stale preview data state was not injected")
         assert(snapshot.timestamp == 1785662998999,
             "preview data timestamp did not use the virtual clock")
+        -- Exercise the real Lua serializer and preview subscription path. These
+        -- assertions must remain independent of this machine's actual hardware.
+        local function deviceValue(topic)
+            assert(widget.hasFeature("data." .. topic), "device feature missing")
+            local subscription = data.subscribe(topic)
+            local value = subscription:value()
+            assert(value.available and value.stale and type(value.value) == "table",
+                "device preview bypassed the snapshot envelope: " .. topic)
+            subscription:unsubscribe()
+            return value.value
+        end
+        local devices = deviceValue("audio.devices").devices
+        assert(#devices == 2 and devices[1].id == "audio-output-preview" and
+            devices[2].direction == "input", "preview leaked the machine's endpoints")
+        local microphone = deviceValue("audio.input.volume")
+        assert(microphone.endpointId == devices[2].id and microphone.volume == 0.75 and
+            microphone.muted == false and microphone.minimum == 0 and microphone.maximum == 1,
+            "microphone state lost its ID, range or false boolean")
+        local monitors = deviceValue("system.display.brightness").monitors
+        assert(#monitors == 1 and monitors[1].available and monitors[1].brightness == 65,
+            "brightness preview must not query DDC/WMI")
+        local wifi = deviceValue("network.wifi").interfaces
+        assert(#wifi == 1 and wifi[1].id == "wifi-preview" and
+            wifi[1].networks[1].ssid == "Preview Network" and
+            wifi[1].profiles[1].managed == false, "Wi-Fi preview must not scan the machine")
+        local bluetooth = deviceValue("bluetooth.devices")
+        assert(bluetooth.radios[1].id == "bluetooth-radio-preview" and
+            bluetooth.devices[1].batteryPercent == 76, "Bluetooth preview is not deterministic")
+        local power = deviceValue("system.power.plans")
+        assert(power.activePlanId == power.plans[1].id and power.onAC == false,
+            "power preview must not read the current plan")
         return {}
     end,
     render = function()

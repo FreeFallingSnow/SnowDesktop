@@ -1449,6 +1449,93 @@ function animation.cancelFrame(id) end
 ---@field minimum number Currently 0.0.
 ---@field maximum number Currently 1.0.
 
+---@class SnowAudioDevice
+---@field id string Opaque endpoint ID; use as a token, never parse it.
+---@field name string
+---@field direction 'input'|'output'
+---@field state 'active'|'disabled'|'unplugged'|'notPresent'
+---@field isDefault boolean
+---@field available boolean
+
+---@class SnowAudioDevicesDataValue
+---@field devices SnowAudioDevice[] Includes inactive endpoints with available=false.
+
+---@class SnowAudioInputVolumeDataValue: SnowAudioOutputVolumeDataValue
+
+---@class SnowBrightnessMonitor
+---@field id string Brightness endpoint token, distinct from display.topology IDs.
+---@field name string
+---@field kind 'internal'|'ddc'
+---@field available boolean
+---@field brightness? number 0..100; omitted for unsupported hardware.
+---@field error? string
+
+---@class SnowDisplayBrightnessDataValue
+---@field monitors SnowBrightnessMonitor[] Empty when no supported display path exists.
+
+---@class SnowWifiNetwork
+---@field id string Network token scoped to its interface; do not persist or parse.
+---@field ssid string Display name; may be empty for hidden networks.
+---@field signal number 0..100.
+---@field security 'open'|'wpa2'|'wpa3'|'system'
+---@field connected boolean
+---@field connectable boolean Windows assessment, not a guarantee of authentication success.
+---@field profileName? string Saved profile name. No passwords are exposed.
+
+---@class SnowWifiProfile
+---@field name string
+---@field managed boolean Policy-managed profiles must be managed in Windows.
+
+---@class SnowWifiInterface
+---@field id string Adapter token; select one explicitly for every Wi-Fi control task.
+---@field name string
+---@field connected boolean
+---@field enabled? boolean Software radio status, omitted when unavailable.
+---@field hardwareEnabled? boolean Hardware radio status, omitted when unavailable.
+---@field available boolean
+---@field error? string Includes accessDenied for Windows wireless/location restrictions.
+---@field networks SnowWifiNetwork[] Cached discovery results; subscription does not scan.
+---@field profiles SnowWifiProfile[]
+
+---@class SnowWifiDataValue
+---@field interfaces SnowWifiInterface[]
+
+---@class SnowBluetoothRadio
+---@field id string Radio token.
+---@field name string
+---@field enabled boolean
+---@field available boolean
+
+---@class SnowBluetoothDevice
+---@field id string Device token; may change after unpairing or reconnecting hardware.
+---@field name string
+---@field address string Device address; requires the separate Bluetooth read permission.
+---@field paired boolean
+---@field connected boolean
+---@field lowEnergy boolean
+---@field canConnect boolean Unsupported device management belongs in Windows Settings.
+---@field canDisconnect boolean
+---@field batteryPercent? number 0..100; omitted if the device does not expose it.
+
+---@class SnowBluetoothDevicesDataValue
+---@field radios SnowBluetoothRadio[]
+---@field devices SnowBluetoothDevice[] Paired devices only; this subscription does not pair or discover new devices.
+
+---@class SnowPowerPlan
+---@field id string Plan token.
+---@field name string
+---@field active boolean
+
+---@class SnowPowerPlansDataValue
+---@field plans SnowPowerPlan[]
+---@field activePlanId string
+---@field modeSupported boolean
+---@field acMode? 'balanced'|'efficiency'|'performance'|'unknown'
+---@field dcMode? 'balanced'|'efficiency'|'performance'|'unknown'
+---@field batteryPresent? boolean Omitted when Windows cannot report power status.
+---@field onAC? boolean
+---@field batteryPercent? number
+
 ---@class SnowAudioOutputAnalysisDataValue
 ---@field waveform? number[] Requested normalized mono points in -1.0..1.0; omitted when not selected.
 ---@field spectrum? number[] Requested normalized magnitude bins in 0.0..1.0; omitted when not selected.
@@ -1594,6 +1681,12 @@ data = {}
 ---@overload fun(topic: 'system.display.topology', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayTopologyDataValue>
 ---@overload fun(topic: 'system.display.current', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayCurrentDataValue>
 ---@overload fun(topic: 'audio.output.default', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputDefaultDataValue>
+---@overload fun(topic: 'audio.devices', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioDevicesDataValue>
+---@overload fun(topic: 'audio.input.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioInputVolumeDataValue>
+---@overload fun(topic: 'system.display.brightness', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowDisplayBrightnessDataValue>
+---@overload fun(topic: 'network.wifi', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowWifiDataValue>
+---@overload fun(topic: 'bluetooth.devices', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowBluetoothDevicesDataValue>
+---@overload fun(topic: 'system.power.plans', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerPlansDataValue>
 ---@overload fun(topic: 'audio.output.volume', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowAudioOutputVolumeDataValue>
 ---@overload fun(topic: 'audio.output.analysis', options?: SnowAudioAnalysisSubscribeOptions): SnowDataSubscription<SnowAudioOutputAnalysisDataValue>
 ---@overload fun(topic: 'media.sessions', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMediaSessionsDataValue>

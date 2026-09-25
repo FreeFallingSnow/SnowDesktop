@@ -1588,6 +1588,8 @@ int main()
         "403e9f91-33dd-4c20-9b11-c476074e3a3a",
         "\"system.storage.read\", \"system.display.read\", "
         "\"audio.output.read\", \"audio.output.analyze\", "
+        "\"audio.devices.read\", \"audio.input.read\", "
+        "\"network.wifi.read\", \"bluetooth.read\", "
         "\"audio.output.control\", \"app.discovery\", \"app.launch\", "
         "\"shell.launch\", \"network.internet\", \"network.local\", "
         "\"notification.post\", \"clipboard.read\", "

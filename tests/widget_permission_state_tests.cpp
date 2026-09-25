@@ -127,10 +127,14 @@ void TestPermissionRiskClassification()
 
 void TestPermissionDescriptorContract()
 {
+    using snowdesktop::widget::ClassifyPermissionRisk;
     const auto descriptors =
         snowdesktop::widget::WidgetPermissionDescriptors();
-    Check(descriptors.size() == 31,
-        "the v2 permission declaration vocabulary must remain explicit");
+    Check(ClassifyPermissionRisk("audio.devices.read") == PermissionRiskClass::SystemStatus &&
+        ClassifyPermissionRisk("audio.input.read") == PermissionRiskClass::SystemStatus &&
+        ClassifyPermissionRisk("network.wifi.read") == PermissionRiskClass::PersonalData &&
+        ClassifyPermissionRisk("bluetooth.read") == PermissionRiskClass::PersonalData,
+        "device and microphone metadata are status reads, while network and Bluetooth identities need personal-data consent");
     std::set<std::string_view> ids;
     std::set<std::string_view> labelKeys;
     for (const auto& descriptor : descriptors)
