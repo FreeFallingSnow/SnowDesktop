@@ -2280,10 +2280,8 @@ if (BUILD_TESTING)
             src/menu_builtin_icon.cpp
             src/modern_menu.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES gdi32 imm32 ole32 user32 windowscodecs
-        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopTaskbarHook>"
+        LINK_LIBRARIES comctl32 gdi32 imm32 ole32 user32 windowscodecs
         LABELS integration ui)
-    add_dependencies(SnowDesktopModernMenuInteractionTests SnowDesktopTaskbarHook)
 
     snowdesktop_add_test(
         SnowDesktopComponentPreviewTests

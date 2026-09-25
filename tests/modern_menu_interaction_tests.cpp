@@ -511,9 +511,9 @@ struct IsolatedMenuDesktop
 
 } // namespace
 
-void RunTrayFocusWindowTests(const wchar_t* hookPath);
+void RunTrayFocusWindowTests();
 
-int wmain(int argc, wchar_t** argv)
+int wmain()
 {
     // Regression: asynchronous Shell entries belong immediately above More,
     // in a final group after all ordinary host actions.
@@ -543,8 +543,7 @@ int wmain(int argc, wchar_t** argv)
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.
     IsolatedMenuDesktop isolatedDesktop;
-    Expect(argc == 2, "production Hook path is provided for isolated focus tests");
-    RunTrayFocusWindowTests(argv[1]);
+    RunTrayFocusWindowTests();
     CheckStatusBarKeyboardMessages();
     using snowdesktop::modern_menu::Appearance;
     using snowdesktop::modern_menu::appearance_rules::ResolveForWindows;
