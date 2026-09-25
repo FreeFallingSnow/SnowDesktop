@@ -89,6 +89,8 @@
 
 - `67a68421` 保存设备页可见范围候选。随后离线渲染在移除画刷过渡后重新进入控件原有视觉状态，不触发 `IsChecked`／点击操作；浅深色实际首页图片已正确出现选中背景，19 号图片保留为失败对照。`scripts/build.bat` 退出 0，无编译／链接警告（`20-controls-build.log`）；显式 `control-panel` 浅色 zh-CN 96 DPI／深色 en-US 144 DPI 各输出 8 状态，均退出 0（`20-render.log`，`controls-render-20/`）。本候选暂未重跑 CTest／全量，待补充像素回归；不沿用 19 号 CTest 为本次执行。输入绑定 `20-validation-inputs.json`，宿主 SHA256 `a68340d1650f9ef0560ade4fe962295bbf4fcbbd8b35d65cf7d7b6100903b6c5`。
 
+- `a9007432` 保存离线选中捕获。新增无线按钮像素回归的首次定向构建成功，但 CTest 1/1 失败（6.33 秒，退出 8／外层 1；`21-controls-tests.log`）。原始 19 号浅深色图被预期拒绝，20 号正确图片也被误拒绝：断言错误要求不可用按钮背景 alpha > 240，实际浅色为 210、深色为 109，这是主题透明度，不是渲染失败（`read-radio-pixels.py` 输出、`21-radio-negative.log`）。先记录编译通过但测试失败的独立尝试，再修正该断言；不得把这次测试当作产品问题复现或通过。
+
 ## YASB 参考边界
 
 固定来源、复用范围及许可见 [third_party/yasb/README.md](../third_party/yasb/README.md)。不能把它的私有协议当作 Microsoft 稳定 API。

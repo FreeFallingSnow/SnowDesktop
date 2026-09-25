@@ -1101,6 +1101,30 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
     }
 }
 
+void CheckControlRadioPixels(const std::filesystem::path& overviewPath,
+    const std::filesystem::path& unavailablePath)
+{
+    const auto overview = ReadPng(overviewPath), unavailable = ReadPng(unavailablePath);
+    const auto active = PanelPixels(overview), disabled = PanelPixels(unavailable);
+    Check(!IsRectEmpty(&active) && !IsRectEmpty(&disabled), "control overview has visible pixels");
+    // Sample empty interiors of both top radio tiles, away from labels and
+    // edges. The previous RTB captured white text on the unselected light fill
+    // (or black text on dark fill), despite IsChecked being true. Compare the
+    // two actual states rather than hard-coding the user's system accent.
+    for (const double offset : {32., 240.})
+    {
+        const auto sample = [offset](const RgbaBitmap& bitmap, const RECT& bounds) {
+            const double scale = (bounds.right - bounds.left) / 440.;
+            return PixelAt(bitmap, static_cast<UINT>(std::lround(bounds.left + offset * scale)),
+                static_cast<UINT>(std::lround(bounds.top + 32 * scale)));
+        };
+        const auto checked = sample(overview, active), neutral = sample(unavailable, disabled);
+        const int difference = std::abs(static_cast<int>(checked[0]) - neutral[0]) +
+            std::abs(static_cast<int>(checked[1]) - neutral[1]) + std::abs(static_cast<int>(checked[2]) - neutral[2]);
+        Check(checked[3] > 240 && neutral[3] > 240 && difference >= 96,
+            "checked radio tiles visibly differ from the unavailable neutral background");
+    }
+}
 void TestControlPanelPreview(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& temporary)
 {
@@ -1114,6 +1138,7 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
         if (exitCode != 0) std::cerr << json << '\n';
         Check(exitCode == 0 && json.find("\"ok\":true") != std::string::npos,
             "real control pages render without device mutations or leaking subscriptions");
+        CheckControlRadioPixels(output / L"control-panel-overview.png", output / L"control-panel-unavailable.png");
         LONG overviewHeight = 0;
         for (const auto* page : {L"overview", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable"})
         {
@@ -1139,6 +1164,11 @@ int wmain(int argc, wchar_t** argv) try
         return 1;
     }
     ComApartment apartment;
+    if (argc == 4 && std::wstring_view(argv[1]) == L"--check-control-radio-pixels")
+    {
+        CheckControlRadioPixels(argv[2], argv[3]);
+        return 0;
+    }
     Check(argc == 4,
         "test receives snowwidget, SnowDesktop, and repository root");
     TestProcessTimeout(std::filesystem::absolute(argv[0]));
