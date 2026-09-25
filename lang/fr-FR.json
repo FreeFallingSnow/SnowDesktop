@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "Alimentation",
     "statusBar.popupThemeHint": "Le centre de contrôle, la zone de notification et le calendrier utilisent le thème des fenêtres contextuelles défini dans Apparence.",
     "statusBar.registrationFailed": "La barre d’état n’a pas pu réserver d’espace à l’écran et reste masquée. Réessayez lorsque l’Explorateur Windows sera prêt.",
-    "statusBar.muted": "Muet"
+    "statusBar.muted": "Muet",
+  "statusBar.nativeTray": "Ouvrir la zone de notification Windows",
+  "statusBar.pin": "Épingler",
+  "statusBar.moveEarlier": "Déplacer avant",
+  "statusBar.moveLater": "Déplacer après",
+  "statusBar.trayUnavailable": "Certaines icônes peuvent être indisponibles ici. Vous pouvez utiliser la zone de notification Windows."
 }

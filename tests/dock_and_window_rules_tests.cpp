@@ -80,6 +80,7 @@ namespace identityRules = snowdesktop::dock_app_identity_rules;
 
 int RunDesktopBackdropCompositorTests();
 int RunNativeTaskbarTests();
+int RunTrayModelTests();
 
 namespace
 {
@@ -985,6 +986,7 @@ int main(int argc, char** argv)
     CheckPopupPairRefreshDoesNotRepositionStableWindows();
     failures += RunDesktopBackdropCompositorTests();
     failures += RunNativeTaskbarTests();
+    failures += RunTrayModelTests();
     CheckAdaptiveRenameEditor();
     CheckMenuProtectedHostPositionChanges();
     CheckDockWindowPreviewLateOwnerPromotion();

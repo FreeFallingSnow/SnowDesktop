@@ -146,7 +146,7 @@ try {
     $namespace.AddNamespace(
         "m", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
     if (@($deployment.files).Count -ne 9 -or
-        @($deployment.notices).Count -ne 7 -or
+        @($deployment.notices).Count -ne 8 -or
         $xml.SelectNodes(
             "/m:Package/m:Extensions/m:Extension", $namespace).Count -ne 1 -or
         $xml.SelectSingleNode(
@@ -176,7 +176,11 @@ try {
         -not (Test-Path -LiteralPath (Join-Path $payload `
             "licenses\WindowsML-NOTICE.txt") -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $payload `
-            "licenses\WebView2-NOTICE.txt") -PathType Leaf)) {
+            "licenses\WebView2-NOTICE.txt") -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $payload `
+            "licenses\YASB-LICENSE.txt") -PathType Leaf) -or
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $payload "licenses\YASB-LICENSE.txt"))) -cne
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $RepositoryRoot "third_party\yasb\LICENSE")))) {
         throw "Deployment integration assertions failed."
     }
     Write-Host "Deployment manifest integration checks passed."

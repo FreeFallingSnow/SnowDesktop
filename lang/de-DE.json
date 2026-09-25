@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "Energie",
     "statusBar.popupThemeHint": "Kontrollzentrum, Infobereich und Kalender verwenden das Popup-Design unter Darstellung.",
     "statusBar.registrationFailed": "Die Statusleiste konnte keinen Bildschirmbereich reservieren und bleibt ausgeblendet. Versuchen Sie es erneut, sobald der Windows-Explorer bereit ist.",
-    "statusBar.muted": "Stumm"
+    "statusBar.muted": "Stumm",
+  "statusBar.nativeTray": "Windows-Infobereich öffnen",
+  "statusBar.pin": "Anheften",
+  "statusBar.moveEarlier": "Nach vorne verschieben",
+  "statusBar.moveLater": "Nach hinten verschieben",
+  "statusBar.trayUnavailable": "Einige Symbole sind hier möglicherweise nicht verfügbar. Verwenden Sie den Windows-Infobereich."
 }

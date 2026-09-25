@@ -1668,7 +1668,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             const bool settingsMessageHandled = settingsWindow_ &&
                 (settingsWindow_->PreTranslateMessage(&msg) ||
                     settingsWindow_->ProcessTabNavigation(&msg));
-            if (!settingsMessageHandled)
+            const bool systemPanelMessageHandled = !settingsMessageHandled && systemPanel_ && systemPanel_->PreTranslateMessage(&msg);
+            if (!settingsMessageHandled && !systemPanelMessageHandled)
             {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);

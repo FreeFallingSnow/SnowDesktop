@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "电源",
     "statusBar.popupThemeHint": "控制中心、托盘和日历使用“外观”中的弹窗主题。",
     "statusBar.registrationFailed": "状态栏无法注册屏幕占位，已保持隐藏。请在 Windows 资源管理器就绪后重试。",
-    "statusBar.muted": "已静音"
+    "statusBar.muted": "已静音",
+  "statusBar.nativeTray": "打开 Windows 托盘",
+  "statusBar.pin": "固定",
+  "statusBar.moveEarlier": "向前移动",
+  "statusBar.moveLater": "向后移动",
+  "statusBar.trayUnavailable": "部分图标可能尚未接入，可使用 Windows 原生托盘。"
 }

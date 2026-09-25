@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "Energía",
     "statusBar.popupThemeHint": "El centro de control, la bandeja y el calendario usan el tema de ventanas emergentes de Apariencia.",
     "statusBar.registrationFailed": "La barra de estado no pudo reservar espacio en la pantalla y permanecerá oculta. Inténtalo de nuevo cuando el Explorador de Windows esté listo.",
-    "statusBar.muted": "Silenciado"
+    "statusBar.muted": "Silenciado",
+  "statusBar.nativeTray": "Abrir el área de notificación de Windows",
+  "statusBar.pin": "Fijar",
+  "statusBar.moveEarlier": "Mover antes",
+  "statusBar.moveLater": "Mover después",
+  "statusBar.trayUnavailable": "Es posible que algunos iconos no estén disponibles aquí. Puedes usar el área de notificación de Windows."
 }

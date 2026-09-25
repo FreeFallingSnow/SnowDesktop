@@ -5,18 +5,34 @@ void DesktopApp::SyncStatusBar()
     if (!systemDataProvider_ || !dcompDevice_ || !dwriteFactory_) return;
     if (!generalSettings_.statusBar.enabled)
     {
+        if (systemPanel_) systemPanel_->Hide();
         statusBar_.reset();
         return;
     }
     if (!statusBar_)
     {
         statusBar_ = std::make_unique<snowdesktop::StatusBar>(systemDataProvider_,
-            [this](snowdesktop::StatusBarAction action, HWND, RECT) {
+            [this](snowdesktop::StatusBarAction action, HWND owner, RECT anchor) {
                 using Action = snowdesktop::StatusBarAction;
                 if (action == Action::Settings)
                     ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::StatusBar));
+                else if (statusBar_ && !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)))
+                {
+                    if (!systemPanel_)
+                        systemPanel_ = std::make_unique<snowdesktop::winui::SystemPanel>([this](const auto& changed) {
+                            if (!settingsController_) return;
+                            auto settings = settingsController_->Snapshot()->values.general;
+                            // The popup owns only tray preferences. Do not overwrite
+                            // a concurrent settings-page edit with its old snapshot.
+                            settings.statusBar.pinnedTrayItems = changed.pinnedTrayItems;
+                            settings.statusBar.trayOrder = changed.trayOrder;
+                            settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+                        });
+                    systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
+                        statusBar_->Tray(), systemDataProvider_);
+                }
             },
-            [](HMONITOR) {},
+            [this](HMONITOR monitor) { if (systemPanel_) systemPanel_->HideForMonitor(monitor); },
             [this](const std::wstring& error) {
                 WriteDiagnosticLogEntry(error.c_str());
                 MessageBoxW(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);

@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "電源",
     "statusBar.popupThemeHint": "控制中心、系統匣和行事曆使用「外觀」中的彈出視窗佈景主題。",
     "statusBar.registrationFailed": "狀態列無法註冊螢幕保留空間，已保持隱藏。請在 Windows 檔案總管就緒後重試。",
-    "statusBar.muted": "已靜音"
+    "statusBar.muted": "已靜音",
+  "statusBar.nativeTray": "開啟 Windows 系統匣",
+  "statusBar.pin": "釘選",
+  "statusBar.moveEarlier": "向前移動",
+  "statusBar.moveLater": "向後移動",
+  "statusBar.trayUnavailable": "部分圖示可能尚未接入，可使用 Windows 原生系統匣。"
 }

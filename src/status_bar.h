@@ -12,6 +12,7 @@ struct ID2D1DeviceContext;
 namespace snowdesktop
 {
 namespace widget_runtime { class WidgetSystemDataProvider; }
+namespace tray { class Service; }
 enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings };
 struct StatusBarMonitor
 {
@@ -37,6 +38,7 @@ public:
         IDCompositionDesktopDevice* composition, IDWriteFactory* text);
     void Close();
     bool IsFullscreen(HMONITOR monitor) const;
+    std::shared_ptr<tray::Service> Tray() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

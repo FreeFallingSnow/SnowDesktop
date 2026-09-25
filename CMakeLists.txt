@@ -156,6 +156,10 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_dock_layout.cpp
     src/app/app_status_bar.cpp
     src/status_bar.cpp
+    src/tray_service.cpp
+    src/tray_model.cpp
+    src/tray_service.h
+    src/taskbar_hook/tray_protocol.h
     src/status_bar.h
     src/status_bar_settings.h
     src/status_bar_appbar.h
@@ -335,6 +339,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
     src/winui/status_bar_page_presenter.cpp
+    src/winui/system_panel.cpp
+    src/winui/system_panel.h
     src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
@@ -626,6 +632,8 @@ if (MSVC)
 
     add_library(SnowDesktopTaskbarHook SHARED
         src/taskbar_hook/taskbar_hook.cpp
+        src/taskbar_hook/tray_collector.cpp
+        src/taskbar_hook/tray_protocol.h
         src/taskbar_hook/taskbar_native.cpp
         src/taskbar_hook/taskbar_classic_surface.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
@@ -2169,6 +2177,8 @@ if (BUILD_TESTING)
             src/taskbar_hook/taskbar_classic_surface.cpp
             ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
+            tests/tray_model_tests.cpp
+            src/tray_model.cpp
             src/app/desktop_backdrop_compositor.cpp
             src/l10n.cpp
             src/dock_window_preview.cpp

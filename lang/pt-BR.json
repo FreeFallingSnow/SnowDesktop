@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "Energia",
     "statusBar.popupThemeHint": "A central de controle, a bandeja e o calendário usam o tema de janelas pop-up em Aparência.",
     "statusBar.registrationFailed": "A barra de status não conseguiu reservar espaço na tela e permanecerá oculta. Tente novamente quando o Explorador de Arquivos estiver pronto.",
-    "statusBar.muted": "Sem som"
+    "statusBar.muted": "Sem som",
+  "statusBar.nativeTray": "Abrir a área de notificação do Windows",
+  "statusBar.pin": "Fixar",
+  "statusBar.moveEarlier": "Mover para antes",
+  "statusBar.moveLater": "Mover para depois",
+  "statusBar.trayUnavailable": "Alguns ícones podem não estar disponíveis aqui. Você pode usar a área de notificação do Windows."
 }

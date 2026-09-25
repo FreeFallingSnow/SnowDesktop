@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "Power",
     "statusBar.popupThemeHint": "Control center, tray and calendar use the popup theme in Appearance.",
     "statusBar.registrationFailed": "The status bar could not reserve screen space. It will remain hidden. Please try again after Windows Explorer is ready.",
-    "statusBar.muted": "Muted"
+    "statusBar.muted": "Muted",
+  "statusBar.nativeTray": "Open Windows notification area",
+  "statusBar.pin": "Pin",
+  "statusBar.moveEarlier": "Move earlier",
+  "statusBar.moveLater": "Move later",
+  "statusBar.trayUnavailable": "Some icons may be unavailable here. You can use the Windows notification area."
 }

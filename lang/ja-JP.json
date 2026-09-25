@@ -1904,5 +1904,10 @@
     "statusBar.powerControls": "電源",
     "statusBar.popupThemeHint": "コントロールセンター、トレイ、カレンダーには「外観」のポップアップテーマを使用します。",
     "statusBar.registrationFailed": "ステータスバーの表示領域を確保できないため、非表示のままにします。Windows エクスプローラーの準備ができてから再試行してください。",
-    "statusBar.muted": "ミュート"
+    "statusBar.muted": "ミュート",
+  "statusBar.nativeTray": "Windows の通知領域を開く",
+  "statusBar.pin": "固定",
+  "statusBar.moveEarlier": "前に移動",
+  "statusBar.moveLater": "後に移動",
+  "statusBar.trayUnavailable": "一部のアイコンはここに表示されない場合があります。Windows の通知領域をご利用ください。"
 }
