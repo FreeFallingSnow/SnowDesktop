@@ -105,4 +105,3 @@ CLI 的兼容目录；每份 Skill 自带 `bin\snowwidget.exe`，并提供 `capa
 `profile.bat` 是默认关闭的性能采集入口。`status` 查询当前宿主能力，
 `capture -Seconds 60` 采集并生成 JSON/CSV，`start` / `stop -Session ...`
 支持异步自动化控制，`report` / `compare` 支持离线分析。
-参见 [性能调试说明](../docs/performance_debugging.md)。
