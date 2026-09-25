@@ -953,7 +953,7 @@ int main(int argc, char** argv)
             "status bar must use the final Shell-approved rectangle");
         Check(reservation.Registered(), "hiding a registered bar must not require removing its reservation");
         reservation.Remove(); reservation.Remove();
-        Check(std::count(messages.begin(), messages.end(), ABM_REMOVE) == 1,
+        Check(std::count(messages.begin(), messages.end(), static_cast<DWORD>(ABM_REMOVE)) == 1,
             "closing an AppBar releases its reservation exactly once");
         messages.clear();
         snowdesktop::StatusBarAppBar rejected([&](DWORD message, APPBARDATA&) -> UINT_PTR {

@@ -44,6 +44,8 @@ int main()
         value.statusBar.trayOrder = {"guid:\"test\"", "C:\\测试\\app.exe|42"};
         value.statusBar.theme.mode = 4;
         value.statusBar.theme.customized = true;
+        value.statusBar.theme.appearance.backgroundPreset = kAppearancePresetCustom;
+        value.statusBar.theme.appearance.widgetBgR = .35f;
         const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopStatusBar-" + std::to_wstring(GetCurrentProcessId()) + L".json");
         GeneralSettings restored;
         Check(SaveGeneralSettings(path.c_str(), value) && LoadGeneralSettings(path.c_str(), restored) &&
