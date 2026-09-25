@@ -377,18 +377,31 @@ struct StatusBar::Impl
             paintDirty = true;
             surface.Reset();
         }
-        void ActivateItem(std::size_t index)
+        void DismissSurfaces()
         {
-            if (fullscreen || index >= items.size() || items[index].action == StatusBarAction::None || IsRectEmpty(&items[index].bounds) || !owner.activate) return;
-            RECT anchor = items[index].bounds;
+            keyboardFocusVisible = false;
+            ClearHover(); interaction.CancelPointer();
+            paintDirty = true; Paint();
+            const auto onActivated = owner.activate;
+            if (!fullscreen && onActivated)
+                onActivated(StatusBarAction::Dismiss, hwnd, appbar.Bounds());
+        }
+        void ActivateItem(std::optional<std::size_t> index, bool context = false)
+        {
+            const auto invocation = ResolveStatusBarInvocation(items, index, context);
+            if (fullscreen || !invocation || !owner.activate) return;
+            RECT anchor = invocation->bounds;
             MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
-            if (items[index].icon && owner.tray)
+            if (invocation->isTray)
             {
-                owner.tray->SetGeometry(items[index].icon->key, anchor);
-                owner.tray->Activate(items[index].icon->key, tray::Activation::Keyboard, {anchor.left, anchor.top});
+                if (owner.tray)
+                {
+                    owner.tray->SetGeometry(invocation->trayKey, anchor);
+                    owner.tray->Activate(invocation->trayKey, invocation->trayAction, {anchor.left, anchor.top});
+                }
                 return;
             }
-            const auto action = items[index].action;
+            const auto action = invocation->action;
             ClearHover();
             paintDirty = true; Paint();
             auto onActivated = owner.activate;
@@ -436,6 +449,14 @@ struct StatusBar::Impl
                 }
                 return 0;
             }
+            if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN || message == WM_CONTEXTMENU)
+            {
+                if (DispatchStatusBarKeyboard(message, wp, lp, (GetKeyState(VK_SHIFT) & 0x8000) != 0,
+                    self->interaction, self->items,
+                    [&] { self->keyboardFocusVisible = true; self->ClearHover(); self->paintDirty = true; self->Paint(); },
+                    [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
+                    [&] { self->DismissSurfaces(); })) return 0;
+            }
             switch (message)
             {
             case kPlace: self->Place(); return 0;
@@ -479,12 +500,7 @@ struct StatusBar::Impl
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
                 if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN) == StatusBarAction::Dismiss)
                 {
-                    self->keyboardFocusVisible = false;
-                    self->ClearHover();
-                    self->paintDirty = true; self->Paint();
-                    const auto onActivated = self->owner.activate;
-                    if (!self->fullscreen && onActivated)
-                        onActivated(StatusBarAction::Dismiss, window, self->appbar.Bounds());
+                    self->DismissSurfaces();
                     return 0;
                 }
                 const UINT trayMessage = message == WM_LBUTTONDBLCLK && !doubleClick ? WM_LBUTTONDOWN : message;
@@ -512,15 +528,11 @@ struct StatusBar::Impl
             case WM_CONTEXTMENU:
             {
                 POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-                self->keyboardFocusVisible = point.x == -1 && point.y == -1;
-                if (point.x != -1 || point.y != -1)
-                {
-                    ScreenToClient(window, &point);
-                    for (const auto& item : self->items)
-                        if (item.icon && PtInRect(&item.bounds, point)) return 0;
-                }
-                if (point.x == -1 && point.y == -1) point = {self->appbar.Bounds().left, self->appbar.Bounds().bottom};
-                else ClientToScreen(window, &point);
+                self->keyboardFocusVisible = false;
+                ScreenToClient(window, &point);
+                for (const auto& item : self->items)
+                    if (item.icon && PtInRect(&item.bounds, point)) return 0;
+                ClientToScreen(window, &point);
                 auto onActivated = self->owner.activate;
                 if (onActivated) onActivated(StatusBarAction::Menu, window, {point.x, point.y, point.x, point.y});
                 return 0;
@@ -589,16 +601,6 @@ struct StatusBar::Impl
                 self->ClearHover(); self->interaction.CancelPointer();
                 self->paintDirty = true; self->Paint();
                 break;
-            case WM_KEYDOWN:
-                self->keyboardFocusVisible = true;
-                if (wp == VK_RETURN || wp == VK_SPACE)
-                { if (self->interaction.focused) self->ActivateItem(*self->interaction.focused); return 0; }
-                else if (!self->items.empty() && (wp == VK_RIGHT || wp == VK_DOWN || wp == VK_TAB || wp == VK_LEFT || wp == VK_UP))
-                {
-                    const bool backward = wp == VK_LEFT || wp == VK_UP || (wp == VK_TAB && (GetKeyState(VK_SHIFT) & 0x8000));
-                    self->interaction.MoveFocus(self->items, backward);
-                }
-                self->paintDirty = true; self->Paint(); return 0;
             }
             return DefWindowProcW(window, message, wp, lp);
         }

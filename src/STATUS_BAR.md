@@ -153,6 +153,15 @@
 - blank-negative-31/ 使用生产交互头文件与同一独立矩形测试：恢复“等抬起才关闭”的隔离变异退出 1，触发立即关闭／不重复分发两项预期失败；新实现退出 0，/W4 /WX 编译通过。菜单集成使用真实菜单窗口与嵌套消息循环，验证空白按下隐藏菜单且取消后的抬起不激活；未替代应用级搜索／面板关闭或实际桌面鼠标端到端验收。
 - 输入绑定 31-before-full-validation-inputs.json／31-final-validation-inputs.json；最终宿主 SHA256 34dd391b17718226a3ff02539e0a6b19d93ec6264a4b0c3c215eaf37b73f8666，Hook 757dbacae9ba50a19a5e8afd5f3c824bf65061607fc351c9be9aeb78baace816。实际桌面窗口未启动／自动操作，用户原场景仍须手动确认；托盘键盘入口等其他开放项保持。
 
+### 托盘键盘候选（32）
+
+- 上一轮空白按下关闭已保存为 `aeaeda62`，属于已产生代码与验证证据的进展；本轮继续键盘菜单入口审查。栏体此前吞掉所有 WM_KEYDOWN，WM_CONTEXTMENU 的键盘分支固定打开栏体菜单，Enter／空格重复消息也会再次激活。原生 HWND 与隔离窗口现在共用键盘分发和目标解析：保留 Windows 默认键处理，按聚焦身份将托盘上下文交给原应用，使用图标自身矩形；内置按钮仍打开栏体菜单。Escape 复用空白关闭入口；按住激活键只执行一次，方向键继续允许连续移动。
+- 根据 [WM_CONTEXTMENU](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-contextmenu) 与 [Shell_NotifyIcon](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)，旧版键盘操作使用完整右键按下／抬起；version 3 保留完整 ID，version 4 保留有符号屏幕锚点与打包 ID。固定 YASB 源码的 mouse handlers 不证明键盘行为；本次为自主实现，并更新参考边界。编辑前已公告对第三方托盘键盘回调的行为调整，未修改 Lua API v2、feature 或配置。
+- 独立 Win32 探针确认 Shift＋F10 通过 DefWindowProc 产生 sign-extended (-1,-1)，单纯 SendMessage 的 Apps 抬键不代表 OS 原始输入路径（32-win32-key-probe.log，探索性探针退出 1）。生产解析同时接受两种坐标扩展方式；正式回归用真实 Shift＋F10 默认处理与文档规定的 Apps 上下文消息，替换原始键盘输入边界，不注入全局按键。键盘状态仅改测试线程并恢复。
+- scripts/build.bat 退出 0、无编译／链接警告（32-keyboard-build.log）。定向窗口规则／菜单交互 **2/2 通过**，13.62 秒（32-keyboard-tests.log；test-run-2db418ca77a64de9b75a8d1d8daf7f05.xml）。完整 scripts/test.bat full **120/120 通过**，196.56 秒，退出 0，无编译／链接警告（32-full-tests.log；test-run-57b2d31c2f2c4aaebf7e6b43a8d8d8f4.xml）。
+- keyboard-negative-32/ 使用生产头文件、回调实现及原测试函数，正确窗口／回调两组退出 0；错误上下文类型、重复激活、吞掉默认按键、缺失右键按下、误发左键手势五个隔离变异均退出 1 并触发相应失败断言；全部 /W4 /WX 编译通过。Windows 真实 Shift＋F10、缺失／隐藏焦点和 Escape 已覆盖，Apps 原始键盘路径仍只验证其文档消息入口。
+- 输入绑定 32-before-full-validation-inputs.json／32-final-validation-inputs.json；最终宿主 SHA256 667faeaf3a6b4af46be1257b9dd8ab422ded4d9e9f4f400dd2438b8177600050，Hook 60752e6aa7b59359f0b9259087a30a3c92c4fe03fdaae1630686eb417f9808d1。未启动或自动操作桌面宿主；NIM_SETFOCUS 的焦点返回、第三方应用菜单以及桌面键盘操作仍待处理／实机验收，不能由上述消息验证代替。采集端仍忽略 NIM_SETFOCUS，服务没有返回至原始栏体／弹窗的事件路由；后续需带代次、目标与前台检查，避免抢焦点。
+
 ## YASB 参考边界
 
 固定来源、复用范围及许可见 [third_party/yasb/README.md](../third_party/yasb/README.md)。不能把它的私有协议当作 Microsoft 稳定 API。

@@ -31,6 +31,15 @@ Windows notification-area fallback. It does not distribute YASB's Qt code.
 Windows stock-icon fixtures; it never starts the desktop host or collector and
 does not replace real Explorer or third-party menu acceptance.
 
+Keyboard routing is SnowDesktop's own implementation, checked against
+[WM_CONTEXTMENU](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-contextmenu)
+and [Shell_NotifyIcon](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw).
+Keyboard context requests use the focused icon's bounds, not the bar's origin.
+Version 3/4 icons receive distinct context and keyboard-selection callbacks;
+legacy keyboard gestures send a complete right-button down/up pair. The pinned
+YASB widget's mouse handlers are not evidence of keyboard or focus-return
+support. NIM_SETFOCUS return routing remains a separate outstanding task.
+
 The `Shell_NotifyIconGetRect` compatibility reply is an origin followed by a
 width/height pair. Returning a second corner would offset native app menus.
 An opt-in real-Explorer regression is available through

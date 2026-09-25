@@ -59,6 +59,24 @@ int RunTrayModelTests()
     const auto old = Callbacks(icons.front(), Activation::RightUp, {40, 50});
     check(old.size() == 1 && old[0].wp == 0x12345678 && old[0].lp == WM_RBUTTONUP,
         "legacy callback retains its full 32-bit icon ID");
+    for (const auto activation : {Activation::Keyboard, Activation::ContextKeyboard})
+    {
+        const auto legacy = Callbacks(icons.front(), activation, {-1900, -30});
+        check(legacy.size() == 2 && legacy[0].wp == 0x12345678 && legacy[1].wp == 0x12345678 &&
+            legacy[0].lp == WM_RBUTTONDOWN && legacy[1].lp == WM_RBUTTONUP,
+            "legacy keyboard activation and context menus receive the complete documented right-button gesture");
+    }
+    icons.front().version = NOTIFYICON_VERSION;
+    const auto v3Context = Callbacks(icons.front(), Activation::ContextKeyboard, {-1900, -30});
+    const auto v3Select = Callbacks(icons.front(), Activation::Keyboard, {-1900, -30});
+    check(v3Context.size() == 1 && v3Context[0].wp == 0x12345678 && v3Context[0].lp == WM_CONTEXTMENU &&
+        v3Select.size() == 1 && v3Select[0].wp == 0x12345678 && v3Select[0].lp == NIN_KEYSELECT,
+        "version 3 distinguishes keyboard activation from context menus without truncating its icon ID");
+    icons.front().version = NOTIFYICON_VERSION_4;
+    const auto v4Context = Callbacks(icons.front(), Activation::ContextKeyboard, {-1900, -30});
+    check(v4Context.size() == 1 && HIWORD(v4Context[0].lp) == 0x5678 && LOWORD(v4Context[0].lp) == WM_CONTEXTMENU &&
+        GET_X_LPARAM(v4Context[0].wp) == -1900 && GET_Y_LPARAM(v4Context[0].wp) == -30,
+        "version 4 context menu receives one packed callback at its actual signed anchor");
     event.operation = NIM_DELETE; Apply(icons, event);
     event.operation = NIM_SETVERSION;
     check(!Apply(icons, event) && icons.empty(), "late version updates cannot resurrect deleted icons");

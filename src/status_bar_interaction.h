@@ -94,4 +94,62 @@ private:
     struct Pressed { bool active = false; std::optional<StatusBarTarget> target; } left_, right_;
     std::optional<StatusBarTarget> lastLeft_;
 };
+
+struct StatusBarInvocation
+{
+    StatusBarAction action = StatusBarAction::None;
+    bool isTray = false;
+    std::string trayKey;
+    tray::Activation trayAction = tray::Activation::Keyboard;
+    RECT bounds{};
+};
+inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
+    const std::vector<StatusBarItem>& items, std::optional<std::size_t> index, bool context)
+{
+    if (!index || *index >= items.size()) return {};
+    const auto& item = items[*index];
+    if (item.action == StatusBarAction::None || IsRectEmpty(&item.bounds)) return {};
+    return StatusBarInvocation{context ? StatusBarAction::Menu : item.action,
+        item.icon.has_value(), item.icon ? item.icon->key : std::string{},
+        context ? tray::Activation::ContextKeyboard : tray::Activation::Keyboard, item.bounds};
+}
+
+// Shared native message routing. Leave unhandled keys to Windows: DefWindowProc
+// generates Shift+F10 context requests; Apps requests come from keyboard input.
+// Callbacks are also used by an isolated HWND test, without a desktop AppBar.
+template<class ShowFocus, class Invoke, class Dismiss>
+bool DispatchStatusBarKeyboard(UINT message, WPARAM key, LPARAM bits, bool shift,
+    StatusBarInteraction& state, const std::vector<StatusBarItem>& items,
+    ShowFocus&& showFocus, Invoke&& invoke, Dismiss&& dismiss)
+{
+    if (message == WM_CONTEXTMENU)
+    {
+        if (static_cast<DWORD>(bits) != 0xffffffffu) return false;
+        showFocus();
+        invoke(true);
+        return true;
+    }
+    if (message != WM_KEYDOWN && message != WM_SYSKEYDOWN) return false;
+    const bool repeat = (bits & (LPARAM{1} << 30)) != 0;
+    if (message == WM_SYSKEYDOWN && (key != VK_F10 || (bits & (LPARAM{1} << 29)))) return false;
+    if (key == VK_F10) return shift && repeat;
+    if (message != WM_KEYDOWN) return false;
+    if (key == VK_RETURN || key == VK_SPACE)
+    {
+        if (!repeat) { showFocus(); invoke(false); }
+        return true;
+    }
+    if (key == VK_ESCAPE)
+    {
+        if (!repeat) dismiss();
+        return true;
+    }
+    if (key == VK_RIGHT || key == VK_DOWN || key == VK_TAB || key == VK_LEFT || key == VK_UP)
+    {
+        state.MoveFocus(items, key == VK_LEFT || key == VK_UP || (key == VK_TAB && shift));
+        showFocus();
+        return true;
+    }
+    return false;
+}
 }

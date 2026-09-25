@@ -61,13 +61,18 @@ std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT a
     case Activation::DoubleClick: add(WM_LBUTTONDBLCLK); break;
     case Activation::RightDown: if (icon.version < NOTIFYICON_VERSION) add(WM_RBUTTONDOWN); break;
     case Activation::RightUp:
-    case Activation::ContextKeyboard:
         if (icon.version >= NOTIFYICON_VERSION) add(WM_CONTEXTMENU);
         else add(WM_RBUTTONUP);
         break;
+    case Activation::ContextKeyboard:
+        if (icon.version >= NOTIFYICON_VERSION) add(WM_CONTEXTMENU);
+        else { add(WM_RBUTTONDOWN); add(WM_RBUTTONUP); }
+        break;
     case Activation::Keyboard:
         if (icon.version >= NOTIFYICON_VERSION) add(NIN_KEYSELECT);
-        else { add(WM_LBUTTONDOWN); add(WM_LBUTTONUP); }
+        // Pre-version-3 keyboard activation uses the legacy context gesture,
+        // as documented by Shell_NotifyIcon; it is not a synthetic left click.
+        else { add(WM_RBUTTONDOWN); add(WM_RBUTTONUP); }
         break;
     case Activation::Hover:
         add(WM_MOUSEMOVE);
