@@ -544,6 +544,9 @@ void CheckPopupWindowPairZOrderTransitions()
                 content, backdrop, separator, false, origin, size) && pairMatches(false),
         "a topmost desktop anchor must not leave a dismissed Dock pair topmost");
     Check(snowdesktop::popup_window_pair_z_order::Apply(
+            content, backdrop, HWND_NOTOPMOST, false, origin, size) && pairMatches(false),
+        "prepare a normal Dock pair independently of the topmost-anchor regression");
+    Check(snowdesktop::popup_window_pair_z_order::Apply(
             content, backdrop, separator, false, origin, size) && pairMatches(false),
         "a later desktop refresh must not promote a normal pair through a topmost anchor");
     Check(snowdesktop::popup_window_pair_z_order::Apply(
