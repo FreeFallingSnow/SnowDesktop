@@ -179,6 +179,7 @@ set(SNOWDESKTOP_SOURCES
     src/taskbar_hook/tray_protocol.h
     src/status_bar.h
     src/status_bar_shell_shortcut.h
+    src/status_bar_interaction.h
     src/status_bar_settings.h
     src/status_bar_appbar.h
     src/app/app_dock_menu.cpp

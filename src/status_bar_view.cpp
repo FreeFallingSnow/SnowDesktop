@@ -108,12 +108,6 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
         return a.text == b.text && a.glyph == b.glyph;
     });
 }
-std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)
-{
-    for (std::size_t index = 0; index < items.size(); ++index)
-        if (PtInRect(&items[index].bounds, point)) return index;
-    return {};
-}
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
     UINT w, UINT h, float scale, const PersonalizationSettings& a, const StatusBarPalette& palette,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused)

@@ -1,5 +1,6 @@
 #include "status_bar.h"
 #include "status_bar_view.h"
+#include "status_bar_interaction.h"
 #include "status_bar_appbar.h"
 #include "widget_system_data_provider.h"
 #include "app/desktop_backdrop_compositor.h"
@@ -128,13 +129,13 @@ struct StatusBar::Impl
         StatusBarVolumeWheel volumeWheel;
         std::uint64_t volumeTask = 0;
         std::vector<StatusBarItem> items;
-        std::size_t focused = 0;
+        StatusBarInteraction interaction;
         bool keyboardFocusVisible = false;
-        std::optional<std::size_t> hovered;
         explicit Window(Impl& value) : owner(value) {}
         ~Window()
         {
             closing = true;
+            ClearHover(); interaction.CancelPointer();
             liveBars.erase(hwnd);
             if (owner.hidden) owner.hidden(monitor);
             if (hwnd) KillTimer(hwnd, kClockTimer);
@@ -149,8 +150,26 @@ struct StatusBar::Impl
             queued = true;
             PostMessageW(hwnd, kPlace, 0, 0);
         }
+        void ClearHover()
+        {
+            if (tooltip)
+            {
+                SendMessageW(tooltip, TTM_POP, 0, 0);
+                TOOLINFOW tool{sizeof(tool)}; tool.hwnd = hwnd; tool.uId = reinterpret_cast<UINT_PTR>(hwnd);
+                tool.lpszText = const_cast<wchar_t*>(L"");
+                SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+            }
+            tooltipState.Leave();
+            if (!hoveredTray.empty() && owner.tray)
+            {
+                POINT screen{}; GetCursorPos(&screen);
+                owner.tray->Activate(hoveredTray, tray::Activation::Leave, screen);
+            }
+            hoveredTray.clear(); interaction.hovered.reset();
+        }
         void Hide()
         {
+            ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
             if (tooltip)
             {
                 SendMessageW(tooltip, TTM_POP, 0, 0);
@@ -214,8 +233,11 @@ struct StatusBar::Impl
             GetWindowRect(hwnd, &previous);
             const bool moved = !EqualRect(&rect, &previous);
             if (moved)
+            {
+                ClearHover(); interaction.CancelPointer();
                 SetWindowPos(hwnd, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                     SWP_NOACTIVATE | SWP_NOZORDER);
+            }
             if ((moved || appearanceDirty) && owner.appearance.glassEnabled && !HighContrast())
             {
                 if (!backdrop.IsAvailable()) backdrop.InitializePopup(hwnd, !fullscreen, false);
@@ -254,6 +276,14 @@ struct StatusBar::Impl
             if (closing || painting || fullscreen || failed || !IsWindowVisible(hwnd) || !owner.composition || !owner.text) return;
             auto previousItems = std::move(items);
             BuildItems();
+            if (interaction.Reconcile(previousItems, items))
+            {
+                ClearHover();
+                for (const auto& old : previousItems) if (old.icon && owner.tray &&
+                    std::none_of(items.begin(), items.end(), [&](const auto& item) {
+                        return item.icon && item.icon->key == old.icon->key;
+                    })) owner.tray->SetGeometry(old.icon->key, {});
+            }
             const bool same = SameStatusBarContent(items, previousItems);
             if (same && !paintDirty)
             {
@@ -314,8 +344,8 @@ struct StatusBar::Impl
             const StatusBarPalette palette{hc, SystemColor(COLOR_WINDOW), SystemColor(COLOR_WINDOWTEXT),
                 SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
-                dpi / 96.f * owner.settings.scale, a, palette, hovered,
-                keyboardFocusVisible && GetFocus() == hwnd, focused);
+                dpi / 96.f * owner.settings.scale, a, palette, interaction.hovered,
+                keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd, interaction.focused.value_or(0));
             for (const auto& item : items) if (item.icon && owner.tray)
             {
                 RECT screen = item.bounds;
@@ -359,8 +389,7 @@ struct StatusBar::Impl
                 return;
             }
             const auto action = items[index].action;
-            hovered.reset(); tooltipState.Leave();
-            SendMessageW(tooltip, TTM_POP, 0, 0);
+            ClearHover();
             paintDirty = true; Paint();
             auto onActivated = owner.activate;
             onActivated(action, hwnd, anchor);
@@ -445,19 +474,31 @@ struct StatusBar::Impl
             case WM_LBUTTONDOWN:
             case WM_LBUTTONDBLCLK:
             case WM_RBUTTONDOWN:
-            case WM_RBUTTONUP:
-                if (self->TrayMouse(message, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return 0;
+            {
+                const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
+                self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN);
+                const UINT trayMessage = message == WM_LBUTTONDBLCLK && !doubleClick ? WM_LBUTTONDOWN : message;
+                if (self->TrayMouse(trayMessage, point)) return 0;
                 break;
+            }
+            case WM_RBUTTONUP:
+            {
+                const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                if (!self->interaction.Release(self->items, point, true).accepted) return 0;
+                if (self->TrayMouse(message, point)) return 0;
+                break;
+            }
             case WM_LBUTTONUP:
             {
                 if (self->keyboardFocusVisible)
                 { self->keyboardFocusVisible = false; self->paintDirty = true; self->Paint(); }
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                const auto released = self->interaction.Release(self->items, point, false);
+                if (!released.accepted) return 0;
                 if (self->TrayMouse(message, point)) return 0;
-                if (const auto index = HitTestStatusBarItems(self->items, point))
-                { self->ActivateItem(*index); return 0; }
-                self->hovered.reset(); self->tooltipState.Leave();
-                SendMessageW(self->tooltip, TTM_POP, 0, 0);
+                if (released.item) { self->ActivateItem(*released.item); return 0; }
+                self->ClearHover();
                 self->paintDirty = true; self->Paint();
                 const auto onActivated = self->owner.activate;
                 if (!self->fullscreen && onActivated)
@@ -495,7 +536,7 @@ struct StatusBar::Impl
                     if (item.icon) hoveredKey = item.icon->key;
                     break;
                 }
-                if (hover != self->hovered) { self->hovered = hover; self->paintDirty = true; self->Paint(); }
+                if (hover != self->interaction.hovered) { self->interaction.hovered = hover; self->paintDirty = true; }
                 if (hoveredKey != self->hoveredTray && self->owner.tray)
                 {
                     POINT screen = point; ClientToScreen(window, &screen);
@@ -510,6 +551,9 @@ struct StatusBar::Impl
                     SendMessageW(self->tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
                 }
                 TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);
+                // A snapshot can change inside Paint. Reconcile then clears the
+                // old tooltip after this event, never reinstating stale text.
+                if (self->paintDirty) self->Paint();
                 break;
             }
             case WM_MOUSEWHEEL:
@@ -536,23 +580,19 @@ struct StatusBar::Impl
                 break;
             }
             case WM_MOUSELEAVE:
-                self->tooltipState.Leave();
-                if (!self->hoveredTray.empty() && self->owner.tray) self->owner.tray->Activate(self->hoveredTray, tray::Activation::Leave, {});
-                self->hoveredTray.clear();
-                self->hovered.reset(); self->paintDirty = true; self->Paint();
-                SendMessageW(self->tooltip, TTM_POP, 0, 0);
+            case WM_CANCELMODE:
+            case WM_CAPTURECHANGED:
+                self->ClearHover(); self->interaction.CancelPointer();
+                self->paintDirty = true; self->Paint();
                 break;
             case WM_KEYDOWN:
                 self->keyboardFocusVisible = true;
-                if (wp == VK_RETURN || wp == VK_SPACE) { self->ActivateItem(self->focused); return 0; }
+                if (wp == VK_RETURN || wp == VK_SPACE)
+                { if (self->interaction.focused) self->ActivateItem(*self->interaction.focused); return 0; }
                 else if (!self->items.empty() && (wp == VK_RIGHT || wp == VK_DOWN || wp == VK_TAB || wp == VK_LEFT || wp == VK_UP))
                 {
                     const bool backward = wp == VK_LEFT || wp == VK_UP || (wp == VK_TAB && (GetKeyState(VK_SHIFT) & 0x8000));
-                    for (std::size_t count = 0; count < self->items.size(); ++count)
-                    {
-                        self->focused = (self->focused + (backward ? self->items.size() - 1 : 1)) % self->items.size();
-                        if (self->items[self->focused].action != StatusBarAction::None && !IsRectEmpty(&self->items[self->focused].bounds)) break;
-                    }
+                    self->interaction.MoveFocus(self->items, backward);
                 }
                 self->paintDirty = true; self->Paint(); return 0;
             }

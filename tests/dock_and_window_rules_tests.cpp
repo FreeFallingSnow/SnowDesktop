@@ -37,6 +37,7 @@
 #include "status_bar_appbar.h"
 #include "status_bar_layout.h"
 #include "status_bar_presentation.h"
+#include "status_bar_interaction.h"
 #include "floating_popup_rules.h"
 #include "drag_visual_rules.h"
 #include "ole_drag_rules.h"
@@ -958,11 +959,79 @@ void CheckAdaptiveRenameEditor()
     UnregisterClassW(className, windowClass.hInstance);
 }
 
+void CheckStatusBarInteraction()
+{
+    using namespace snowdesktop;
+    // Fixed, independent target rectangles exercise the same state used by
+    // the native HWND. No Explorer callback or user input is synthesized.
+    const auto item = [](const char* key, StatusBarAction action, RECT rect, bool tray) {
+        StatusBarItem value{}; value.key = key; value.action = action; value.bounds = rect;
+        if (tray) { value.icon.emplace(); value.icon->key = key; value.key = "tray"; }
+        return value;
+    };
+    const std::vector<StatusBarItem> before{
+        item("menu", StatusBarAction::SystemMenu, {0, 0, 32, 32}, false),
+        item("menu", StatusBarAction::Tray, {64, 0, 96, 32}, true),
+        item("sync", StatusBarAction::Tray, {96, 0, 128, 32}, true),
+        item("controlCenter", StatusBarAction::ControlCenter, {160, 0, 296, 32}, false)};
+    auto reordered = before;
+    std::swap(reordered[1], reordered[2]);
+    reordered[1].bounds = {64, 0, 96, 32}; reordered[2].bounds = {96, 0, 128, 32};
+    StatusBarInteraction state;
+    state.focused = 1; state.hovered = 1;
+    state.Press(before, {70, 16}, false);
+    state.Press(before, {70, 16}, true);
+    Check(state.Reconcile(before, reordered) && state.focused == 2 && !state.hovered,
+        "tray reorder preserves keyboard identity and dismisses the stationary pointer's old hover");
+    Check(!state.Release(reordered, {70, 16}, false).accepted && !state.Release(reordered, {70, 16}, true).accepted,
+        "tray reorder between press and release cannot click or context-click a replacement application");
+    auto removed = reordered; removed.erase(removed.begin() + 2);
+    Check(state.Reconcile(reordered, removed) && !state.focused,
+        "removed keyboard target leaves no implicit replacement for Enter to activate");
+    state.MoveFocus(removed, false);
+    Check(state.focused == 0, "explicit navigation can choose a new target after the focused icon disappears");
+    state.focused.reset(); state.MoveFocus(removed, true);
+    Check(state.focused == 2, "backward navigation without a target starts at the last visible control");
+    removed[1].bounds = {}; state.focused = 0; state.MoveFocus(removed, false);
+    Check(state.focused == 2, "keyboard traversal skips icons omitted by a narrow layout");
+    state.Reconcile(removed, {});
+    Check(!state.focused && !state.hovered, "empty models retain no stale focus or hover index");
+
+    auto updated = before;
+    updated[1].icon->tip = L"new tip"; updated[1].icon->pixels = {0xff112233};
+    state.focused = 1; state.hovered = 1;
+    Check(!state.Reconcile(before, updated) && state.focused == 1 && state.hovered == 1,
+        "tooltip and bitmap refreshes do not reset the active pointer or keyboard target");
+    state.Press(before, {170, 16}, false);
+    state.Reconcile(before, reordered);
+    const auto control = state.Release(reordered, {170, 16}, false);
+    Check(control.accepted && control.item == 3, "unrelated tray changes do not swallow a stable control button click");
+    state.Press(before, {70, 16}, false);
+    state.Reconcile(before, reordered);
+    const auto moved = state.Release(reordered, {102, 16}, false);
+    Check(moved.accepted && moved.item == 2, "a moved target can receive its own matching release");
+    Check(state.IsDoubleClickTarget(reordered, {102, 16}) && !state.IsDoubleClickTarget(reordered, {70, 16}),
+        "double-click delivery belongs to the previously clicked identity, not its old slot");
+    state.Press(before, {70, 16}, false);
+    Check(!state.Release(before, {12, 16}, false).accepted,
+        "tray identities cannot alias a built-in menu button with the same textual key");
+    state.Press(before, {40, 16}, false);
+    const auto blank = state.Release(before, {40, 16}, false);
+    Check(blank.accepted && !blank.item, "a complete blank-area click still dismisses status bar surfaces");
+    Check(!state.Release(before, {40, 16}, false).accepted, "unpaired release cannot dismiss or activate a surface");
+    state.Press(before, {40, 16}, false);
+    Check(!state.Release(before, {70, 16}, false).accepted, "dragging from blank space into an icon is not a click");
+    state.Press(before, {70, 16}, false); state.Press(before, {70, 16}, true);
+    state.CancelPointer();
+    Check(!state.Release(before, {70, 16}, false).accepted && !state.Release(before, {70, 16}, true).accepted &&
+        !state.IsDoubleClickTarget(before, {70, 16}), "hide, leave and capture cancellation discard pending gestures");
+}
 } // namespace
 
 int main(int argc, char** argv)
 {
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
+    CheckStatusBarInteraction();
     {
         snowdesktop::StatusBarTooltipState tooltip;
         Check(tooltip.Enter("cpu", L"CPU 9%"), "entering a different item installs its tooltip");

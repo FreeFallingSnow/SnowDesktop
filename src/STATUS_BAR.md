@@ -136,6 +136,15 @@
 - scripts/build.bat 退出 0、无编译／链接警告（29-intent-build.log）。最终输入 scripts/test.bat full **120/120 通过**，191.58 秒，退出 0、无编译／链接警告（29-full-tests.log；test-run-56addd5cf57b4ff0b6579b3086396e76.xml）。第一候选 e9d8011c 的定向 4/4 与负向证据仍适用于未变的调度器、内容比较和离线预览；最终全量另外覆盖了本次入口移动后的输入。证据绑定 29-before-full-validation-inputs.json／29-final-validation-inputs.json；宿主 SHA256 e46b7406229f4892cac974e1445ae964dc128b8e783829f553d4ecc2f028a011，Hook 0b2c965373a908655d2ac79658811dbb6a4132b30fc54f83e6326e2c8b68f73e。
 - 系统快捷键、Windows 通知、空白关闭及菜单／搜索焦点仍待桌面实机，自动检查不能证明 Shell 接受按键；其余原始计划开放项继续保留。代码复查还发现托盘固定项动态插入／排序后悬停仍按索引定位，需后续检查其身份对应（推导风险，未实机复现）。
 
+
+- 动态目标审查：栏体原本将悬停和键盘焦点保存为数组索引，鼠标抬起直接命中当前列表；托盘增删／重排可能把旧提示、焦点或按键释放交给新位置的另一应用。现有固定宽度及绘制设施可以继续复用，不增加界面入口或配置。
+- 共享 StatusBarInteraction 已编译并通过下述逻辑／渲染回归：键盘按身份重定位、被移除时清空；目标顺序变化清理原生提示及 Leave 回调；左右键按下／抬起和双击按身份配对。空白完整点击保留关闭路由，隐藏、移出与捕获取消清理未完成手势，已移除固定项清除旧屏幕矩形。target-negative-30/ 已确认正确实现通过、旧索引／残留悬停／释放给替换图标／跨图标双击四种变异失败，标准构建与整体回归证据见下一项，桌面实际交互仍待验证。
+
+
+- 动态目标候选验证：scripts/build.bat 退出 0、无编译／链接警告（30-target-build.log）。定向 scripts/test.bat name "^(dock_and_window_rules|modern_menu_interaction|widget_author_preview_cli)$" **3/3 通过**，91.09 秒（30-target-tests.log；test-run-3e1174ab271240908ee32ab48544729a.xml）。完整 scripts/test.bat full **120/120 通过**，196.79 秒，退出 0、无编译／链接警告（30-full-tests.log；test-run-6423f0d31f3646c98313ac80d977b95d.xml）。
+- 同一生产交互状态配合独立矩形夹具，验证增删／排序后的键盘身份、清空焦点、隐藏项跳过、左右键目标核对、双击身份、空白点击及取消；生产原生渲染路径继续通过实际 PNG 回归。target-negative-30/ 中四种错误变异分别触发确定失败，无模拟 Explorer 菜单或真实输入。模型证据不代表 Windows 实际鼠标消息时序与第三方菜单焦点已经验收。输入绑定 30-before-full-validation-inputs.json／30-final-validation-inputs.json；宿主 SHA256 b14594f2249d689a856db9ee97d643c05a834a7ac6d1be157d8d3e8022c72d45，Hook f8d6496b75e7e9b22defdaebef1cdd2545ee271cf5946b9154187877a4f5c111。
+- 后续键盘入口审查：当前栏体 WM_CONTEXTMENU 的键盘分支仍直接打开栏体菜单，应将聚焦托盘图标的上下文操作交给原应用。tray::Activation::ContextKeyboard 后端已有，但本轮没有改变该入口；后续补齐可达性与回调验证。玻璃、设备、Lua 写任务、AMD 原始样本等原始开放项保持。
+
 ## YASB 参考边界
 
 固定来源、复用范围及许可见 [third_party/yasb/README.md](../third_party/yasb/README.md)。不能把它的私有协议当作 Microsoft 稳定 API。
