@@ -1,5 +1,6 @@
 #include "tray_service.h"
 #include "deployment_context.h"
+#include "diagnostic_log.h"
 #include <map>
 #include <thread>
 
@@ -86,8 +87,9 @@ struct Service::Impl
         }
         MemoryBarrier(); InterlockedIncrement(&state.geometrySequence);
     }
-    std::shared_ptr<Connection> Connect(DWORD& error)
+    std::shared_ptr<Connection> Connect(DWORD& error, const wchar_t*& stage)
     {
+        stage = L"findExplorer";
         auto result = std::make_shared<Connection>();
         result->window = FindWindowW(L"Shell_TrayWnd", nullptr);
         DWORD shellProcess = 0, candidateProcess = 0;
@@ -109,13 +111,16 @@ struct Service::Impl
         DWORD explorer = 0;
         const DWORD thread = GetWindowThreadProcessId(result->window, &explorer);
         if (!thread) { error = ERROR_FILE_NOT_FOUND; return {}; }
+        stage = L"openExplorer";
         result->explorer = OpenProcess(SYNCHRONIZE, FALSE, explorer);
         if (!result->explorer) { error = GetLastError(); return {}; }
         const auto pid = GetCurrentProcessId();
+        stage = L"createMapping";
         result->mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
             sizeof(SharedState), ObjectName(pid, L"State").c_str());
-        if (!result->mapping || GetLastError() == ERROR_ALREADY_EXISTS)
-        { error = ERROR_ALREADY_EXISTS; return {}; }
+        if (!result->mapping) { error = GetLastError(); return {}; }
+        if (GetLastError() == ERROR_ALREADY_EXISTS) { error = ERROR_ALREADY_EXISTS; return {}; }
+        stage = L"mapView";
         result->shared = static_cast<SharedState*>(MapViewOfFile(result->mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
         if (!result->shared) { error = GetLastError(); return {}; }
         new(result->shared) SharedState;
@@ -125,18 +130,24 @@ struct Service::Impl
         GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user);
         state.ownerCreation = static_cast<std::uint64_t>(creation.dwHighDateTime) << 32 | creation.dwLowDateTime;
         InterlockedExchange64(&state.epoch, static_cast<LONG64>(GetTickCount64()) + 1);
+        stage = L"createSignal";
         result->signal = CreateEventW(nullptr, FALSE, FALSE, ObjectName(pid, L"Signal").c_str());
+        if (!result->signal) { error = GetLastError(); return {}; }
+        stage = L"loadHook";
         result->module = LoadLibraryExW(deployment::GetTaskbarHookPath().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         if (!result->module || !result->signal) { error = GetLastError(); return {}; }
+        stage = L"installHook";
         const auto proc = reinterpret_cast<HOOKPROC>(GetProcAddress(result->module, "SnowDesktopTrayHookProc"));
         HHOOK hook = proc ? SetWindowsHookExW(WH_CALLWNDPROC, proc, result->module, thread) : nullptr;
         if (!hook) { error = GetLastError(); return {}; }
         DWORD_PTR ignored = 0;
+        stage = L"attachMessage";
         const bool delivered = SendMessageTimeoutW(result->window, RegisterWindowMessageW(kAttachMessage),
             pid, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored) != 0;
         if (!delivered) error = GetLastError();
         UnhookWindowsHookEx(hook);
         if (!delivered) return {};
+        stage = L"collectorReady";
         HANDLE handles[]{stop, result->explorer, result->signal};
         const auto deadline = GetTickCount64() + 3000;
         while (!Read(state.ready) && GetTickCount64() < deadline)
@@ -151,6 +162,7 @@ struct Service::Impl
             // Worker readiness is set before optional bootstrap in the collector.
             error = ERROR_TIMEOUT; return {};
         }
+        stage = L"connected";
         error = ERROR_SUCCESS;
         return result;
     }
@@ -165,10 +177,20 @@ struct Service::Impl
     }
     void Run(std::stop_token token)
     {
+        DWORD reportedError = MAXDWORD;
+        std::wstring reportedStage;
         while (!token.stop_requested())
         {
             DWORD error = 0;
-            auto current = Connect(error);
+            const wchar_t* stage = L"start";
+            auto current = Connect(error, stage);
+            if (error != reportedError || reportedStage != stage)
+            {
+                wchar_t message[256]{};
+                swprintf_s(message, L"Tray connection stage=%s error=%lu pid=%lu", stage, error, GetCurrentProcessId());
+                WriteDiagnosticLogEntry(message);
+                reportedError = error; reportedStage = stage;
+            }
             {
                 std::lock_guard guard(mutex);
                 snapshot.connected = current != nullptr; snapshot.degraded = !current;
@@ -181,6 +203,8 @@ struct Service::Impl
             LONG lost = 0;
             unsigned resyncAttempts = 0;
             ULONGLONG lastResync = 0;
+            const auto connectedAt = GetTickCount64();
+            bool reportedCollection = false;
             HANDLE handles[]{stop, current->explorer, current->signal};
             while (!token.stop_requested())
             {
@@ -194,6 +218,14 @@ struct Service::Impl
                         for (auto& icon : snapshot.icons) ResolveApplication(icon);
                         ++snapshot.revision;
                     }
+                }
+                if (!reportedCollection && GetTickCount64() - connectedAt >= 5000)
+                {
+                    std::lock_guard guard(mutex);
+                    wchar_t message[256]{};
+                    swprintf_s(message, L"Tray collection icons=%zu received=%ld decoded=%ld rejected=%ld lastSize=%ld resync=%ld",
+                        snapshot.icons.size(), Read(state.received), Read(state.decoded), Read(state.rejected), Read(state.lastSize), Read(state.resync));
+                    WriteDiagnosticLogEntry(message); reportedCollection = true;
                 }
                 if (Read(state.resync) != lost && GetTickCount64() - lastResync >= 3000)
                 {

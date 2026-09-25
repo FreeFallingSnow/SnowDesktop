@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "Uhr, Infobereich und Systemsteuerung am oberen oder unteren Bildschirmrand anzeigen.",
     "statusBar.enabled": "Statusleiste aktivieren",
     "statusBar.position": "Bildschirmrand",
-    "statusBar.scale": "Skalierung (%)",
+    "statusBar.scale": "Skalierung",
     "statusBar.contents": "Angezeigte Elemente",
     "statusBar.clock": "Datum und Uhrzeit",
     "statusBar.tray": "Infobereich",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "Nächster Titel",
   "statusBar.menu.settings": "Statusleisteneinstellungen",
   "statusBar.menu.hide": "Statusleiste ausschalten",
-    "statusBar.menu": "Menü",
+    "statusBar.menu": "Systemmenü",
     "statusBar.quickSearch": "Schnellsuche",
     "statusBar.leftItems": "Links",
     "statusBar.centerItems": "Mitte",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "Status wird geladen…",
     "controlCenter.unavailable": "Nicht verfügbar",
     "controlCenter.on": "Ein",
-    "controlCenter.off": "Aus"
+    "controlCenter.off": "Aus",
+  "statusBar.information": "Informationsbereich",
+  "statusBar.charging": "Wird geladen",
+  "statusBar.fullyCharged": "Vollständig geladen",
+  "statusBar.pluggedIn": "Netzbetrieb",
+  "statusBar.notifications": "Benachrichtigungscenter",
+  "statusBar.taskManager": "Task-Manager",
+  "statusBar.terminal": "Terminal",
+  "statusBar.systemSettings": "Systemeinstellungen"
 }

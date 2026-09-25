@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "화면 위쪽이나 아래쪽에 시계, 트레이 및 시스템 제어를 표시합니다.",
     "statusBar.enabled": "상태 표시줄 사용",
     "statusBar.position": "화면 가장자리",
-    "statusBar.scale": "배율 (%)",
+    "statusBar.scale": "배율",
     "statusBar.contents": "표시 항목",
     "statusBar.clock": "날짜 및 시간",
     "statusBar.tray": "시스템 트레이",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "다음 곡",
   "statusBar.menu.settings": "상태 표시줄 설정",
   "statusBar.menu.hide": "상태 표시줄 끄기",
-    "statusBar.menu": "메뉴",
+    "statusBar.menu": "시스템 메뉴",
     "statusBar.quickSearch": "빠른 검색",
     "statusBar.leftItems": "왼쪽",
     "statusBar.centerItems": "가운데",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "상태를 가져오는 중…",
     "controlCenter.unavailable": "사용할 수 없음",
     "controlCenter.on": "켜짐",
-    "controlCenter.off": "꺼짐"
+    "controlCenter.off": "꺼짐",
+  "statusBar.information": "정보 영역",
+  "statusBar.charging": "충전 중",
+  "statusBar.fullyCharged": "충전 완료",
+  "statusBar.pluggedIn": "전원 연결됨",
+  "statusBar.notifications": "알림 센터",
+  "statusBar.taskManager": "작업 관리자",
+  "statusBar.terminal": "터미널",
+  "statusBar.systemSettings": "시스템 설정"
 }

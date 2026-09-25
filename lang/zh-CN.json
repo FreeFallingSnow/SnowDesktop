@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "在屏幕顶部或底部显示时间、托盘和系统控制。",
     "statusBar.enabled": "启用状态栏",
     "statusBar.position": "屏幕边缘",
-    "statusBar.scale": "缩放（%）",
+    "statusBar.scale": "缩放",
     "statusBar.contents": "栏内显示",
     "statusBar.clock": "日期与时间",
     "statusBar.tray": "系统托盘",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "下一首",
   "statusBar.menu.settings": "状态栏设置",
   "statusBar.menu.hide": "关闭状态栏",
-    "statusBar.menu": "菜单",
+    "statusBar.menu": "系统菜单",
     "statusBar.quickSearch": "快捷搜索",
     "statusBar.leftItems": "左侧",
     "statusBar.centerItems": "中间",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "正在获取状态…",
     "controlCenter.unavailable": "不可用",
     "controlCenter.on": "已开启",
-    "controlCenter.off": "已关闭"
+    "controlCenter.off": "已关闭",
+  "statusBar.information": "信息区",
+  "statusBar.charging": "正在充电",
+  "statusBar.fullyCharged": "已充满",
+  "statusBar.pluggedIn": "已接通电源",
+  "statusBar.notifications": "通知中心",
+  "statusBar.taskManager": "任务管理器",
+  "statusBar.terminal": "终端",
+  "statusBar.systemSettings": "系统设置"
 }

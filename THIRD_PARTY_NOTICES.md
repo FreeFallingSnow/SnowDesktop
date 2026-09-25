@@ -63,6 +63,18 @@ Windows ML 2.1.74 and WebView2 1.0.3719.77 licenses and third-party notices are
 copied the same way, along with the Microsoft.Windows.CppWinRT 3.0.260818.1 MIT
 license.
 
+## YASB references and adapted portions
+
+YASB references and adapted portions are documented separately in
+[`third_party/yasb/README.md`](third_party/yasb/README.md), pinned to
+`d6d1e6d553b0aac34fd5fb34928d3ca82b8d055f`. Copyright (c) 2024 amnweb and
+Copyright (c) 2021 denBot. Its MIT notice is retained in
+[`third_party/yasb/LICENSE`](third_party/yasb/LICENSE) and distributed as
+`YASB-LICENSE.txt`. The adapted private tray wire structures and Bluetooth
+control approach are identified there; SnowDesktop's IPC, task service and
+native presentation are separate implementations. The About page links to
+the pinned upstream source.
+
 ## TranslucentTB-derived portions
 
 SnowDesktop contains modified portions derived from TranslucentTB at upstream

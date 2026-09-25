@@ -28,8 +28,8 @@ SnowDesktop's embedded Regular font:
 | `pages.svg` | Table Multiple 24 Regular + Filled |
 | `categories.svg` | Collections 24 Regular + Filled |
 | `dock.svg` | Dock Row 24 Regular + Filled |
-| `taskbar.svg` | Panel Bottom 20 Regular + Filled |
-| `status-bar.svg` | Window Header Horizontal 20 Regular + Filled |
+| `taskbar.svg` | Panel Bottom Contract 20 Regular + Filled |
+| `status-bar.svg` | Panel Top Contract 20 Regular + Filled |
 | `widgets.svg` | Apps 24 Regular + Filled |
 | `backup.svg` | Cloud Arrow Up 24 Regular + Filled |
 | `about.svg` | Info 24 Regular + Filled |

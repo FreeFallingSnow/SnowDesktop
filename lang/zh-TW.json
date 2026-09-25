@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "在螢幕頂端或底端顯示時間、系統匣和系統控制。",
     "statusBar.enabled": "啟用狀態列",
     "statusBar.position": "螢幕邊緣",
-    "statusBar.scale": "縮放（%）",
+    "statusBar.scale": "縮放",
     "statusBar.contents": "列內顯示",
     "statusBar.clock": "日期與時間",
     "statusBar.tray": "系統匣",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "下一首",
   "statusBar.menu.settings": "狀態列設定",
   "statusBar.menu.hide": "關閉狀態列",
-    "statusBar.menu": "選單",
+    "statusBar.menu": "系統選單",
     "statusBar.quickSearch": "快速搜尋",
     "statusBar.leftItems": "左側",
     "statusBar.centerItems": "中間",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "正在取得狀態…",
     "controlCenter.unavailable": "無法使用",
     "controlCenter.on": "已開啟",
-    "controlCenter.off": "已關閉"
+    "controlCenter.off": "已關閉",
+  "statusBar.information": "資訊區",
+  "statusBar.charging": "充電中",
+  "statusBar.fullyCharged": "已充滿",
+  "statusBar.pluggedIn": "已接上電源",
+  "statusBar.notifications": "通知中心",
+  "statusBar.taskManager": "工作管理員",
+  "statusBar.terminal": "終端機",
+  "statusBar.systemSettings": "系統設定"
 }

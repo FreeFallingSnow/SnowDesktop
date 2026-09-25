@@ -55,6 +55,7 @@ struct SharedState
     DWORD geometryCount = 0;
     Geometry geometries[kGeometries]{};
     Event events[kCapacity]{};
+    volatile LONG received = 0, decoded = 0, rejected = 0, lastSize = 0;
 };
 inline LONG Read(volatile LONG& value) { return InterlockedCompareExchange(&value, 0, 0); }
 inline LONG64 Read(volatile LONG64& value) { return InterlockedCompareExchange64(&value, 0, 0); }

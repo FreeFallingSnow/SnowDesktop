@@ -15,4 +15,7 @@ inline constexpr wchar_t kBattery[] = L"\uF1CD"; // battery_9_20_regular
 inline constexpr wchar_t kCharging[] = L"\uF1CF"; // battery_charge_20_regular
 inline constexpr wchar_t kTray[] = L"\uF2A2"; // chevron_down_16_regular
 inline constexpr wchar_t kControls[] = L"\uF586"; // options_16_regular
+inline constexpr wchar_t kBatteryFull[] = L"\uE143"; // battery_10_20_regular
+inline constexpr wchar_t kBatteryPlug[] = L"\uE145"; // battery_checkmark_20_regular
+inline constexpr wchar_t kNotifications[] = L"\uF114"; // alert_20_regular
 }

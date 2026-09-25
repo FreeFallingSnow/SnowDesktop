@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "Mostra o relógio, a bandeja e os controles do sistema na parte superior ou inferior da tela.",
     "statusBar.enabled": "Ativar barra de status",
     "statusBar.position": "Borda da tela",
-    "statusBar.scale": "Escala (%)",
+    "statusBar.scale": "Escala",
     "statusBar.contents": "Itens exibidos",
     "statusBar.clock": "Data e hora",
     "statusBar.tray": "Bandeja do sistema",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "Próxima faixa",
   "statusBar.menu.settings": "Configurações da barra de status",
   "statusBar.menu.hide": "Desativar barra de status",
-    "statusBar.menu": "Menu",
+    "statusBar.menu": "Menu do sistema",
     "statusBar.quickSearch": "Pesquisa rápida",
     "statusBar.leftItems": "Esquerda",
     "statusBar.centerItems": "Centro",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "Carregando status…",
     "controlCenter.unavailable": "Indisponível",
     "controlCenter.on": "Ativado",
-    "controlCenter.off": "Desativado"
+    "controlCenter.off": "Desativado",
+  "statusBar.information": "Área de informações",
+  "statusBar.charging": "Carregando",
+  "statusBar.fullyCharged": "Carga completa",
+  "statusBar.pluggedIn": "Conectado à energia",
+  "statusBar.notifications": "Central de notificações",
+  "statusBar.taskManager": "Gerenciador de Tarefas",
+  "statusBar.terminal": "Terminal",
+  "statusBar.systemSettings": "Configurações do sistema"
 }

@@ -11,19 +11,19 @@ struct StatusBarPagePresenter::Impl
 {
     DockPagePresenter::LocalizeCallback localize;
     DockPageActions actions;
-    muxc::StackPanel root, basic, contents, controls, leftItems, centerItems, rightItems;
+    muxc::StackPanel root, basic, leftItems, infoItems;
+    muxc::Expander leftSection, infoSection;
     muxc::ComboBox edge, monitors;
     muxc::Slider scale;
+    muxc::NumberBox scaleNumber;
+    muxc::Button scaleReset;
     SettingRow edgeRow, monitorsRow, scaleRow;
-    muxc::TextBlock contentsTitle, controlsTitle, leftTitle, centerTitle, rightTitle;
     struct Toggle
     {
         std::string key, focus, item;
         bool StatusBarSettings::* member;
         muxc::ToggleSwitch control;
-        muxc::Button earlier{nullptr}, later{nullptr};
         SettingRow row;
-        int zone = 0;
     };
     std::vector<std::unique_ptr<Toggle>> toggles;
     std::vector<std::function<void()>> revoke;
@@ -45,39 +45,12 @@ struct StatusBarPagePresenter::Impl
         actions.updateGeneral(generation, commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
             [edit = std::move(edit)](GeneralSettings& settings) { edit(settings.statusBar); });
     }
-    void ToggleRow(muxc::StackPanel panel, const char* key, const char* focus, bool StatusBarSettings::* member, int zone = 0)
+    void ToggleRow(muxc::StackPanel panel, const char* key, const char* focus, bool StatusBarSettings::* member)
     {
         auto toggle = std::make_unique<Toggle>();
         toggle->key = key; toggle->focus = focus; toggle->member = member;
-        toggle->zone = zone;
-        toggle->item = std::string(key).substr(std::string("statusBar.").size());
-        muxc::StackPanel buttons; buttons.Orientation(muxc::Orientation::Horizontal); buttons.Spacing(6);
-        buttons.Children().Append(toggle->control);
-        if (zone)
-        {
-            toggle->earlier = muxc::Button(); toggle->later = muxc::Button();
-            for (auto direction : {-1, 1})
-            {
-                auto button = direction < 0 ? toggle->earlier : toggle->later;
-                muxc::FontIcon arrow; arrow.Glyph(direction < 0 ? L"\uE70E" : L"\uE70D"); arrow.FontSize(12);
-                button.Content(arrow);
-                button.Padding({6, 4, 6, 4});
-                const auto item = toggle->item;
-                const auto click = button.Click([this, zone, item, direction](const auto&, const auto&) {
-                    Emit([zone, item, direction](auto& settings) {
-                        auto& order = zone == 1 ? settings.leftOrder : settings.rightOrder;
-                        const auto found = std::find(order.begin(), order.end(), item);
-                        if (found == order.end()) return;
-                        const auto index = found - order.begin(), next = index + direction;
-                        if (next >= 0 && next < static_cast<std::ptrdiff_t>(order.size())) std::iter_swap(found, order.begin() + next);
-                    });
-                    Sync();
-                });
-                revoke.push_back([button, click] { button.Click(click); });
-                buttons.Children().Append(button);
-            }
-        }
-        toggle->row.Initialize(buttons);
+        toggle->control.MinWidth(0);
+        toggle->row.Initialize(toggle->control);
         toggle->row.SetControlAlignment(mux::HorizontalAlignment::Right);
         panel.Children().Append(toggle->row.root);
         auto control = toggle->control;
@@ -87,40 +60,55 @@ struct StatusBarPagePresenter::Impl
         revoke.push_back([control, token] { control.Toggled(token); });
         toggles.push_back(std::move(toggle));
     }
+    void ScaleChanged(double percent)
+    {
+        if (syncing || closed || !active || !std::isfinite(percent)) return;
+        percent = presenter_controls::QuantizeNumericValue(percent, 75, 300, 5);
+        syncing = true; scale.Value(percent); scaleNumber.Value(percent); syncing = false;
+        scaleReset.IsEnabled(percent != 100); scaleDirty = true; scalePreview.Queue(percent);
+    }
     Impl(DockPagePresenter::LocalizeCallback callback, const mux::Style& style) : localize(std::move(callback))
     {
         root.Spacing(8);
-        basic = Card(style); contents = Card(style); controls = Card(style);
+        basic = Card(style);
         ToggleRow(basic, "statusBar.enabled", "statusBar.enable", &StatusBarSettings::enabled);
-        edgeRow.Initialize(edge); monitorsRow.Initialize(monitors); scaleRow.Initialize(scale);
+        edgeRow.Initialize(edge); monitorsRow.Initialize(monitors);
+        edge.Width(200); monitors.Width(200);
+        edgeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        monitorsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        muxc::Grid editor; editor.ColumnSpacing(8);
+        for (int index = 0; index < 4; ++index)
+        {
+            muxc::ColumnDefinition column;
+            column.Width(index == 0 ? mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star) : mux::GridLengthHelper::Auto());
+            editor.ColumnDefinitions().Append(column);
+        }
+        scale.Minimum(75); scale.Maximum(300); scale.StepFrequency(5);
+        scale.VerticalAlignment(mux::VerticalAlignment::Center);
+        scaleNumber.Minimum(75); scaleNumber.Maximum(300); scaleNumber.SmallChange(5); scaleNumber.LargeChange(25);
+        scaleNumber.Width(92); scaleNumber.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        muxc::TextBlock unit; unit.Text(L"%"); unit.VerticalAlignment(mux::VerticalAlignment::Center); unit.Opacity(.72);
+        scaleReset.VerticalAlignment(mux::VerticalAlignment::Center);
+        editor.Children().Append(scale);
+        muxc::Grid::SetColumn(scaleNumber, 1); editor.Children().Append(scaleNumber);
+        muxc::Grid::SetColumn(unit, 2); editor.Children().Append(unit);
+        muxc::Grid::SetColumn(scaleReset, 3); editor.Children().Append(scaleReset);
+        scaleRow.Initialize(editor);
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) basic.Children().Append(row);
-        scale.Minimum(75); scale.Maximum(300); scale.StepFrequency(5); scale.Width(300);
-        contentsTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        controlsTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        contents.Children().Append(contentsTitle); controls.Children().Append(controlsTitle);
-        for (auto heading : {leftTitle, centerTitle, rightTitle}) heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        contents.Children().Append(leftTitle); contents.Children().Append(leftItems);
-        contents.Children().Append(centerTitle); contents.Children().Append(centerItems);
-        contents.Children().Append(rightTitle); contents.Children().Append(rightItems);
-        for (auto panel : {leftItems, centerItems, rightItems}) panel.Spacing(8);
-        ToggleRow(leftItems, "statusBar.menu", "statusBar.menu", &StatusBarSettings::menu, 1);
-        ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch, 1);
-        ToggleRow(centerItems, "statusBar.clock", "statusBar.contents", &StatusBarSettings::clock);
-        ToggleRow(rightItems, "statusBar.tray", "statusBar.tray", &StatusBarSettings::tray, 2);
-        ToggleRow(rightItems, "statusBar.network", "statusBar.network", &StatusBarSettings::network, 2);
-        ToggleRow(rightItems, "statusBar.volume", "statusBar.volume", &StatusBarSettings::volume, 2);
-        ToggleRow(rightItems, "statusBar.battery", "statusBar.battery", &StatusBarSettings::battery, 2);
-        ToggleRow(rightItems, "statusBar.controlCenter", "statusBar.controlCenter", &StatusBarSettings::controlCenter, 2);
-        ToggleRow(rightItems, "statusBar.cpu", "statusBar.cpu", &StatusBarSettings::cpu, 2);
-        ToggleRow(rightItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory, 2);
-        ToggleRow(rightItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu, 2);
-        ToggleRow(rightItems, "statusBar.traffic", "statusBar.traffic", &StatusBarSettings::traffic, 2);
-        ToggleRow(controls, "statusBar.audioControls", "statusBar.controls", &StatusBarSettings::audioControls);
-        ToggleRow(controls, "statusBar.brightnessControls", "statusBar.brightness", &StatusBarSettings::brightnessControls);
-        ToggleRow(controls, "statusBar.wifiControls", "statusBar.wifi", &StatusBarSettings::wifiControls);
-        ToggleRow(controls, "statusBar.bluetoothControls", "statusBar.bluetooth", &StatusBarSettings::bluetoothControls);
-        ToggleRow(controls, "statusBar.mediaControls", "statusBar.media", &StatusBarSettings::mediaControls);
-        ToggleRow(controls, "statusBar.powerControls", "statusBar.power", &StatusBarSettings::powerControls);
+        for (auto section : {leftSection, infoSection})
+        {
+            section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            root.Children().Append(section);
+        }
+        leftItems.Spacing(12); infoItems.Spacing(12);
+        leftSection.Content(leftItems); infoSection.Content(infoItems);
+        ToggleRow(leftItems, "statusBar.menu", "statusBar.menu", &StatusBarSettings::menu);
+        ToggleRow(leftItems, "statusBar.quickSearch", "statusBar.quickSearch", &StatusBarSettings::quickSearch);
+        ToggleRow(infoItems, "statusBar.cpu", "statusBar.cpu", &StatusBarSettings::cpu);
+        ToggleRow(infoItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory);
+        ToggleRow(infoItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu);
+        ToggleRow(infoItems, "statusBar.traffic", "statusBar.traffic", &StatusBarSettings::traffic);
         auto token = edge.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = edge.SelectedIndex();
             if (selected >= 0) Emit([selected](auto& settings) { settings.position = static_cast<DockPosition>(selected); });
@@ -134,17 +122,21 @@ struct StatusBarPagePresenter::Impl
         scalePreview.Initialize([this](double percent) {
             Emit([percent](auto& settings) { settings.scale = static_cast<float>(percent / 100.); }, false);
         });
-        token = scale.ValueChanged([this](const auto&, const auto&) {
-            if (syncing || closed || !active) return;
-            scaleDirty = true; scalePreview.Queue(scale.Value());
-        });
+        token = scale.ValueChanged([this](const auto&, const auto&) { ScaleChanged(scale.Value()); });
         revoke.push_back([control = scale, token] { control.ValueChanged(token); });
-        const auto pointer = scale.PointerReleased([this](const auto&, const auto&) { Flush(); });
-        revoke.push_back([control = scale, pointer] { control.PointerReleased(pointer); });
-        const auto focus = scale.LostFocus([this](const auto&, const auto&) { Flush(); });
-        revoke.push_back([control = scale, focus] { control.LostFocus(focus); });
-        const auto key = scale.KeyUp([this](const auto&, const auto&) { Flush(); });
-        revoke.push_back([control = scale, key] { control.KeyUp(key); });
+        token = scaleNumber.ValueChanged([this](const auto&, const auto&) { ScaleChanged(scaleNumber.Value()); });
+        revoke.push_back([control = scaleNumber, token] { control.ValueChanged(token); });
+        token = scaleReset.Click([this](const auto&, const auto&) { ScaleChanged(100); Flush(); });
+        revoke.push_back([control = scaleReset, token] { control.Click(token); });
+        for (mux::UIElement control : {scale.as<mux::UIElement>(), scaleNumber.as<mux::UIElement>()})
+        {
+            const auto pointer = control.PointerReleased([this](const auto&, const auto&) { Flush(); });
+            revoke.push_back([control, pointer] { control.PointerReleased(pointer); });
+            const auto focus = control.LostFocus([this](const auto&, const auto&) { Flush(); });
+            revoke.push_back([control, focus] { control.LostFocus(focus); });
+            const auto key = control.KeyUp([this](const auto&, const auto&) { Flush(); });
+            revoke.push_back([control, key] { control.KeyUp(key); });
+        }
         Localize();
     }
     void Flush()
@@ -159,46 +151,27 @@ struct StatusBarPagePresenter::Impl
         syncing = true;
         for (auto& toggle : toggles) toggle->control.IsOn(value.*(toggle->member));
         edge.SelectedIndex(static_cast<int>(value.position)); monitors.SelectedIndex(static_cast<int>(value.monitorScope));
-        if (!scaleDirty) scale.Value(value.scale * 100.);
-        for (const auto zone : {1, 2})
+        if (!scaleDirty)
         {
-            auto panel = zone == 1 ? leftItems : rightItems;
-            const auto& order = zone == 1 ? value.leftOrder : value.rightOrder;
-            for (std::size_t index = 0; index < order.size(); ++index)
-                for (auto& toggle : toggles) if (toggle->zone == zone && toggle->item == order[index])
-                {
-                    std::uint32_t previous = 0;
-                    if (panel.Children().IndexOf(toggle->row.root, previous) && previous != index)
-                    {
-                        panel.Children().RemoveAt(previous);
-                        panel.Children().InsertAt(static_cast<std::uint32_t>(index), toggle->row.root);
-                    }
-                    toggle->earlier.IsEnabled(index > 0); toggle->later.IsEnabled(index + 1 < order.size());
-                }
+            const double percent = presenter_controls::QuantizeNumericValue(value.scale * 100., 75, 300, 5);
+            scale.Value(percent); scaleNumber.Value(percent); scaleReset.IsEnabled(percent != 100);
         }
         syncing = false;
     }
     void Localize()
     {
         syncing = true;
-        for (auto& toggle : toggles)
-        {
-            toggle->row.SetText(L(toggle->key));
-            if (toggle->zone) for (auto direction : {-1, 1})
-            {
-                auto button = direction < 0 ? toggle->earlier : toggle->later;
-                const auto label = L(direction < 0 ? "statusBar.moveEarlier" : "statusBar.moveLater") + L" · " + L(toggle->key);
-                mux::Automation::AutomationProperties::SetName(button, label);
-                muxc::ToolTipService::SetToolTip(button, winrt::box_value(label));
-            }
-        }
-        leftTitle.Text(L("statusBar.leftItems")); centerTitle.Text(L("statusBar.centerItems")); rightTitle.Text(L("statusBar.rightItems"));
+        for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
+        leftSection.Header(winrt::box_value(L("statusBar.leftItems")));
+        infoSection.Header(winrt::box_value(L("statusBar.information")));
+        presenter_controls::ConfigureRestoreDefaultButton(scaleReset, L("app.settings.restore_default"));
+        mux::Automation::AutomationProperties::SetName(scale, L("statusBar.scale"));
+        mux::Automation::AutomationProperties::SetName(scaleNumber, L("statusBar.scale"));
         edgeRow.SetText(L("statusBar.position")); monitorsRow.SetText(L("settings.dock.monitor"));
         scaleRow.SetText(L("statusBar.scale"));
         edge.Items().Clear(); monitors.Items().Clear();
         for (auto key : {"app.dock.bottom", "app.dock.top"}) edge.Items().Append(winrt::box_value(L(key)));
         for (auto key : {"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"}) monitors.Items().Append(winrt::box_value(L(key)));
-        contentsTitle.Text(L("statusBar.contents")); controlsTitle.Text(L("statusBar.controlCenter"));
         syncing = false; Sync();
     }
     void Close()

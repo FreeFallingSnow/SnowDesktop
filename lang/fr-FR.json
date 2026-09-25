@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "Afficher l’horloge, la zone de notification et les commandes système en haut ou en bas de l’écran.",
     "statusBar.enabled": "Activer la barre d’état",
     "statusBar.position": "Bord de l’écran",
-    "statusBar.scale": "Échelle (%)",
+    "statusBar.scale": "Échelle",
     "statusBar.contents": "Éléments affichés",
     "statusBar.clock": "Date et heure",
     "statusBar.tray": "Zone de notification",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "Titre suivant",
   "statusBar.menu.settings": "Paramètres de la barre d’état",
   "statusBar.menu.hide": "Désactiver la barre d’état",
-    "statusBar.menu": "Menu",
+    "statusBar.menu": "Menu système",
     "statusBar.quickSearch": "Recherche rapide",
     "statusBar.leftItems": "Gauche",
     "statusBar.centerItems": "Centre",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "Chargement de l’état…",
     "controlCenter.unavailable": "Indisponible",
     "controlCenter.on": "Activé",
-    "controlCenter.off": "Désactivé"
+    "controlCenter.off": "Désactivé",
+  "statusBar.information": "Zone d’informations",
+  "statusBar.charging": "En charge",
+  "statusBar.fullyCharged": "Charge complète",
+  "statusBar.pluggedIn": "Branché sur secteur",
+  "statusBar.notifications": "Centre de notifications",
+  "statusBar.taskManager": "Gestionnaire des tâches",
+  "statusBar.terminal": "Terminal",
+  "statusBar.systemSettings": "Paramètres système"
 }

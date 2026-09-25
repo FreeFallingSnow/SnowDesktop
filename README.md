@@ -73,6 +73,7 @@ Microsoft Windows App SDK 2.4.0 和 Microsoft.Windows.CppWinRT 3.0.260818.1，
 - Dear ImGui（仅创意工坊管理器）
 - Lua 5.4（脚本引擎）
 - Fluent System Icons Regular（现代右键菜单与组件菜单图标）
+- [YASB](https://github.com/amnweb/yasb)（MIT；状态栏托盘和系统控制参考，固定版本与复用范围见 [说明](third_party/yasb/README.md)）
 - Font Awesome 6 Free（组件兼容图标）
 - WinHTTP（Lua HTTP 运行时）
 

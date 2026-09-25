@@ -1106,6 +1106,7 @@ private:
     /** @brief 为目标显示器上的 Dock 预留工作区并计算各自绘制区域。 */
     void ApplyDockWorkAreaReservation();
     void SyncStatusBar();
+    void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor);
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */
     bool SynchronizeDockContainerAreas();
     DockContainer* GetDockContainer() const;

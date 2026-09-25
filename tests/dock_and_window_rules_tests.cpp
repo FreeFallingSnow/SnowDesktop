@@ -36,6 +36,7 @@
 #include "floating_dock_rules.h"
 #include "status_bar_appbar.h"
 #include "status_bar_layout.h"
+#include "status_bar_presentation.h"
 #include "floating_popup_rules.h"
 #include "drag_visual_rules.h"
 #include "ole_drag_rules.h"
@@ -936,6 +937,22 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    {
+        snowdesktop::StatusBarTooltipState tooltip;
+        Check(tooltip.Enter("cpu", L"CPU 9%"), "entering a different item installs its tooltip");
+        const auto* text = tooltip.text.data();
+        Check(!tooltip.Enter("cpu", L"CPU 10%") && tooltip.text.data() == text && tooltip.text == L"CPU 9%",
+            "repeated pointer/sample updates do not replace or restart a visible tooltip");
+        tooltip.Leave();
+        Check(tooltip.Enter("cpu", L"CPU 10%") && tooltip.text == L"CPU 10%", "reentering uses the current sample");
+        snowdesktop::StatusBarVolumeWheel wheel;
+        Check(!wheel.Move(60, .5) && wheel.Move(60, .5).value() == .52 && wheel.Move(120, .5).value() == .54,
+            "high-resolution wheel steps accumulate against the pending target before device readback");
+        Check(wheel.Move(12000, .5).value() == 1 && wheel.Move(-24000, .5).value() == 0,
+            "volume wheel clamps both endpoints");
+        Check(snowdesktop::StatusBarRate(1048576) == L"1.0 MiB/s" && snowdesktop::StatusBarRate(0) == L"0.0 B/s",
+            "traffic formatting stays compact as units change without integer overflow");
+    }
     {
         // Exercise the production Shell boundary with approved geometry,
         // including a taskbar occupying part of a non-primary monitor.

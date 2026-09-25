@@ -202,6 +202,8 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
         const auto* copy = reinterpret_cast<const COPYDATASTRUCT*>(lp);
         if (copy->dwData == 1)
         {
+            InterlockedIncrement(&self.shared->received);
+            InterlockedExchange(&self.shared->lastSize, static_cast<LONG>(copy->cbData));
             // Decode into a stack-local wire copy. Pixel conversion and all IPC
             // are on Worker; the UI callback only keeps an independent HICON.
             ShellTrayData wire{};
@@ -210,6 +212,7 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
             if (copy->cbData <= sizeof(wire) && CopyBytes(copy->lpData, &wire, copy->cbData) &&
                 Decode(&wire, copy->cbData, decoded, icon))
             {
+                InterlockedIncrement(&self.shared->decoded);
                 Pending pending;
                 pending.epoch = static_cast<std::uint64_t>(Read(self.shared->epoch));
                 pending.operation = decoded.operation; pending.flags = decoded.flags;
@@ -221,7 +224,8 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 if (icon) pending.icon = CopyIcon(icon);
                 self.Push(pending);
             }
-            else if (copy->cbData >= sizeof(DWORD) * 2 && wire.operation != NIM_SETFOCUS) self.Lost();
+            else if (copy->cbData >= sizeof(DWORD) * 2 && wire.operation != NIM_SETFOCUS)
+            { InterlockedIncrement(&self.shared->rejected); self.Lost(); }
         }
         else if (copy->dwData == 3 && copy->cbData == sizeof(IconIdentifier32))
         {

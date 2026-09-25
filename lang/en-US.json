@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "Show the clock, tray and system controls at the top or bottom of the screen.",
     "statusBar.enabled": "Enable status bar",
     "statusBar.position": "Screen edge",
-    "statusBar.scale": "Scale (%)",
+    "statusBar.scale": "Scale",
     "statusBar.contents": "Bar contents",
     "statusBar.clock": "Date and time",
     "statusBar.tray": "System tray",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "Next track",
   "statusBar.menu.settings": "Status bar settings",
   "statusBar.menu.hide": "Turn off status bar",
-    "statusBar.menu": "Menu",
+    "statusBar.menu": "System menu",
     "statusBar.quickSearch": "Quick search",
     "statusBar.leftItems": "Left",
     "statusBar.centerItems": "Center",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "Loading status…",
     "controlCenter.unavailable": "Unavailable",
     "controlCenter.on": "On",
-    "controlCenter.off": "Off"
+    "controlCenter.off": "Off",
+  "statusBar.information": "Information area",
+  "statusBar.charging": "Charging",
+  "statusBar.fullyCharged": "Fully charged",
+  "statusBar.pluggedIn": "Plugged in",
+  "statusBar.notifications": "Notification center",
+  "statusBar.taskManager": "Task Manager",
+  "statusBar.terminal": "Terminal",
+  "statusBar.systemSettings": "System settings"
 }

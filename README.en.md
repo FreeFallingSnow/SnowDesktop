@@ -75,6 +75,7 @@ normally first. To clear the lock automatically, use
 - Dear ImGui (Workshop Manager only)
 - Lua 5.4 (script engine)
 - Fluent System Icons Regular (modern context-menu and widget-menu icons)
+- [YASB](https://github.com/amnweb/yasb) (MIT; references for tray and system controls; see [pinned version and adaptation scope](third_party/yasb/README.md))
 - Font Awesome 6 Free (backward-compatible widget icons)
 - WinHTTP (Lua HTTP runtime)
 

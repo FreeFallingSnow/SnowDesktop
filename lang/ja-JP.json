@@ -1888,7 +1888,7 @@
     "settings.page.statusBar.description": "画面の上端または下端に時計、トレイ、システムコントロールを表示します。",
     "statusBar.enabled": "ステータスバーを有効にする",
     "statusBar.position": "画面の端",
-    "statusBar.scale": "拡大率（%）",
+    "statusBar.scale": "表示倍率",
     "statusBar.contents": "表示項目",
     "statusBar.clock": "日付と時刻",
     "statusBar.tray": "システムトレイ",
@@ -1955,7 +1955,7 @@
     "controlCenter.next": "次の曲",
   "statusBar.menu.settings": "ステータスバーの設定",
   "statusBar.menu.hide": "ステータスバーをオフにする",
-    "statusBar.menu": "メニュー",
+    "statusBar.menu": "システムメニュー",
     "statusBar.quickSearch": "クイック検索",
     "statusBar.leftItems": "左側",
     "statusBar.centerItems": "中央",
@@ -1965,5 +1965,13 @@
     "controlCenter.loading": "状態を取得中…",
     "controlCenter.unavailable": "利用できません",
     "controlCenter.on": "オン",
-    "controlCenter.off": "オフ"
+    "controlCenter.off": "オフ",
+  "statusBar.information": "情報エリア",
+  "statusBar.charging": "充電中",
+  "statusBar.fullyCharged": "充電完了",
+  "statusBar.pluggedIn": "電源に接続",
+  "statusBar.notifications": "通知センター",
+  "statusBar.taskManager": "タスク マネージャー",
+  "statusBar.terminal": "ターミナル",
+  "statusBar.systemSettings": "システム設定"
 }
