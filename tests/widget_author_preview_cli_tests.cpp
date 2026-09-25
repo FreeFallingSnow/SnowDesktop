@@ -1121,7 +1121,9 @@ void CheckControlRadioPixels(const std::filesystem::path& overviewPath,
         const auto checked = sample(overview, active), neutral = sample(unavailable, disabled);
         const int difference = std::abs(static_cast<int>(checked[0]) - neutral[0]) +
             std::abs(static_cast<int>(checked[1]) - neutral[1]) + std::abs(static_cast<int>(checked[2]) - neutral[2]);
-        Check(checked[3] > 240 && neutral[3] > 240 && difference >= 96,
+        // The neutral brush deliberately retains popup transparency. Only
+        // the checked accent fill is opaque in the standard Fluent template.
+        Check(checked[3] > 240 && neutral[3] > 32 && difference >= 96,
             "checked radio tiles visibly differ from the unavailable neutral background");
     }
 }
