@@ -67,6 +67,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unordered_map>
 
@@ -408,7 +409,7 @@ LRESULT CALLBACK PairRefreshProbeProc(HWND window, UINT message, WPARAM wp, LPAR
     return DefWindowProcW(window, message, wp, lp);
 }
 
-void CheckPopupPairRefreshDoesNotRepositionStableWindows()
+void CheckPopupPairRefreshOnCurrentDesktop()
 {
     namespace pair = snowdesktop::popup_window_pair_z_order;
     constexpr wchar_t className[] = L"SnowDesktop.PairRefreshProbe";
@@ -469,6 +470,29 @@ void CheckPopupPairRefreshDoesNotRepositionStableWindows()
     if (backdrop) DestroyWindow(backdrop);
     if (content) DestroyWindow(content);
     UnregisterClassW(className, wc.hInstance);
+}
+
+void CheckPopupPairRefreshDoesNotRepositionStableWindows()
+{
+    // A private, never-activated desktop guarantees that the content window
+    // is the last topmost window. Inserting its helper after it used to leave
+    // the helper non-topmost; unrelated desktop apps masked that failure.
+    std::thread([] {
+        HDESK originalDesktop = GetThreadDesktop(GetCurrentThreadId());
+        const std::wstring desktopName = L"SnowDesktop.PairRefresh." +
+            std::to_wstring(GetCurrentProcessId());
+        HDESK desktop = CreateDesktopW(desktopName.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+        const bool isolated = desktop && SetThreadDesktop(desktop);
+        Check(isolated, "create isolated desktop for deterministic popup band transitions");
+        if (!isolated)
+        {
+            if (desktop) CloseDesktop(desktop);
+            return;
+        }
+        CheckPopupPairRefreshOnCurrentDesktop();
+        Check(SetThreadDesktop(originalDesktop) != FALSE, "restore window test thread desktop");
+        Check(CloseDesktop(desktop) != FALSE, "release isolated popup desktop");
+    }).join();
 }
 
 void CheckPopupWindowPairZOrderTransitions()

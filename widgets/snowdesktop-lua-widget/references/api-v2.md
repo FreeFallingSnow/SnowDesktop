@@ -1809,14 +1809,14 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 早期构建可能缺少这些 feature。必需能力放入 `requiredFeatures`，可选能力缺失时隐藏
 对应入口，不调用未知主题。新主题不改变旧音量、媒体主题及其权限。
 
-| 主题 / feature（前缀 `data.`） | 读取权限 | value |
-| --- | --- | --- |
-| `audio.devices` | `audio.devices.read` | `devices[]`：`id/name/direction/state/isDefault/available`，输入与输出端点 |
-| `audio.input.volume` | `audio.input.read` | `endpointId/volume/muted/minimum/maximum`，默认麦克风音量，不采集录音 |
-| `system.display.brightness` | `system.display.read` | `monitors[]`：`id/name/kind/available/brightness?/error?`；亮度为 0–100 |
-| `network.wifi` | `network.wifi.read` | `interfaces[]`，各网卡独立的开关、网络与保存配置列表 |
-| `bluetooth.devices` | `bluetooth.read` | `radios[]`、已配对 `devices[]`，连接能力与可选电量 |
-| `system.power.plans` | `system.power.read` | `plans[]/activePlanId/modeSupported/acMode?/dcMode?` 与可选电池状态 |
+| 主题 | feature | 读取权限 | value |
+| --- | --- | --- | --- |
+| `audio.devices` | `data.audio.devices` | `audio.devices.read` | `devices[]`：`id/name/direction/state/isDefault/available`，输入与输出端点 |
+| `audio.input.volume` | `data.audio.input.volume` | `audio.input.read` | `endpointId/volume/muted/minimum/maximum`，默认麦克风音量，不采集录音 |
+| `system.display.brightness` | `data.system.display.brightness` | `system.display.read` | `monitors[]`：`id/name/kind/available/brightness?/error?`；亮度为 0–100 |
+| `network.wifi` | `data.network.wifi` | `network.wifi.read` | `interfaces[]`，各网卡独立的开关、网络与保存配置列表 |
+| `bluetooth.devices` | `data.bluetooth.devices` | `bluetooth.read` | `radios[]`、已配对 `devices[]`，连接能力与可选电量 |
+| `system.power.plans` | `data.system.power.plans` | `system.power.read` | `plans[]/activePlanId/modeSupported/acMode?/dcMode?` 与可选电池状态 |
 
 输入/输出设备和麦克风的读取权限独立于音量控制。Wi-Fi、蓝牙权限涉及网络名称与设备
 标识，按个人数据申请；`network.internet` 或 `audio.output.read` 不隐含这些权限。

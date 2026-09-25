@@ -126,8 +126,12 @@ try {
                 Check ($names -contains "shell_file_operation_worker_network_preflight") "automatic $mode must retain preflight regressions"
             }
         }
-        else {
+        elseif ($mode -eq "name") {
             Check ($names.Count -eq 1 -and $names[0] -eq "shell_file_operation_worker") "explicit $mode selection must include manual Shell diagnostics"
+        }
+        else {
+            Check ($names -contains "shell_file_operation_worker" -and
+                $names -contains "tray_live_integration" -and $manual.Count -eq $selected.Count) "explicit manual label must include both Shell diagnostics and exclude automatic tests"
         }
         Set-Inventory @($built)
         Invoke-FilteredTests @options
