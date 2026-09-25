@@ -732,9 +732,14 @@ void TestIndependentConsumerLifetime()
     Check(provider.ActiveTopicCount() == 1 &&
             provider.EffectiveInterval("system.cpu") == 250ms,
         "multiple consumers must share one fastest schedule");
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (provider.ResourceHistory("system.cpu").empty() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(10ms);
+    Check(!provider.ResourceHistory("system.cpu").empty(), "shared sampler publishes native chart history");
     provider.RemoveConsumer("statusBar");
     Check(provider.Running() && provider.EffectiveInterval("system.cpu") == 500ms,
         "removing the fastest consumer must restore the next interval");
+    Check(!provider.ResourceHistory("system.cpu").empty(), "remaining consumers retain shared history");
     provider.RemoveConsumer("widgets");
     Check(provider.Running() && provider.ActiveTopicCount() == 1,
         "widget engine shutdown must preserve native consumers");
@@ -742,9 +747,41 @@ void TestIndependentConsumerLifetime()
     provider.RemoveConsumer("controlCenter");
     Check(!provider.Running() && provider.ActiveTopicCount() == 0,
         "the final consumer releases the worker");
+    Check(provider.ResourceHistory("system.cpu").empty(), "the final consumer releases chart history");
     Check(!provider.StartTopic("", "system.cpu", 1000ms) &&
             !provider.StartTopic("statusBar", "unknown", 1000ms),
         "invalid demand must not create resources");
+}
+
+void TestResourceHistory()
+{
+    using snowdesktop::widget_runtime::WidgetResourceHistory;
+    WidgetResourceHistory history;
+    history.Append("cpu", {}, {1000, 0., {}});
+    history.Append("cpu", {}, {1050, 25., {}});
+    auto points = history.Read("cpu");
+    Check(points.size() == 1 && points[0].primary == 25., "fast consumers retain at most one latest point per second");
+    history.Append("cpu", {}, {2000, {}, {}});
+    history.Append("cpu", {}, {3000, 0., {}});
+    points = history.Read("cpu");
+    Check(points.size() == 3 && !points[1].primary && points[2].primary == 0., "invalid readings remain gaps and valid zero remains data");
+    history.Append("cpu", {}, {4000, std::numeric_limits<double>::quiet_NaN(), -1.});
+    Check(!history.Read("cpu").back().primary && !history.Read("cpu").back().secondary,
+        "NaN and negative readings cannot poison graph geometry");
+    for (int i = 5; i <= 100; ++i) history.Append("cpu", {}, {i * 1000, 30., {}});
+    points = history.Read("cpu");
+    Check(points.size() == 61 && points.front().timestampMs == 40000,
+        "history is time-bounded to one minute regardless of subscription duration");
+    history.Append("cpu", {}, {300000, 50., {}});
+    Check(history.Read("cpu").size() == 1, "resume does not retain a misleading old curve");
+    history.Append("cpu", {}, {1000, 10., {}});
+    Check(history.Read("cpu").size() == 1 && history.Read("cpu")[0].primary == 10., "clock rollback begins a new timeline");
+    history.Append("gpu", "a", {1000, 10., {}}); history.Append("gpu", "b", {1000, 80., {}});
+    history.Retain("gpu", {"b"});
+    Check(history.Read("gpu", "a").empty() && history.Read("gpu", "b")[0].primary == 80. && !history.Read("cpu").empty(),
+        "GPU topology changes remove only the absent adapter's history");
+    history.Clear("gpu");
+    Check(history.Read("gpu", "b").empty() && !history.Read("cpu").empty(), "topic teardown does not erase other resources");
 }
 }
 
@@ -763,6 +800,7 @@ int main()
     TestTopicLifecycleAndSampling();
     TestStopAll();
     TestIndependentConsumerLifetime();
+    TestResourceHistory();
     std::cout << "widget system data provider tests passed\n";
     return 0;
 }

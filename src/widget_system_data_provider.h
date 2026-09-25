@@ -4,6 +4,7 @@
 #include "widget_data_semantic_debounce.h"
 #include "widget_network_traffic.h"
 #include "widget_runtime_image.h"
+#include "widget_resource_history.h"
 
 #include <atomic>
 #include <chrono>
@@ -139,6 +140,11 @@ struct WidgetGpuAdapterDataSnapshot
     std::uint64_t dedicatedUsedBytes = 0;
     std::uint64_t sharedMemoryBytes = 0;
     std::uint64_t sharedUsedBytes = 0;
+    // Native presentation validity. These do not change the existing Lua JSON
+    // contract; a future optional capability can expose independent validity.
+    bool usageAvailable = false;
+    bool dedicatedUsageAvailable = false;
+    bool sharedUsageAvailable = false;
 };
 
 struct WidgetGpuDataSnapshot
@@ -386,6 +392,7 @@ public:
     std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
     std::optional<WidgetGpuDataSnapshot> Gpu() const;
+    std::vector<WidgetResourcePoint> ResourceHistory(std::string_view topic, std::string_view adapterId = {}) const;
     std::optional<WidgetStorageVolumesDataSnapshot> StorageVolumes() const;
     std::optional<WidgetStorageIoDataSnapshot> StorageIo() const;
     std::optional<WidgetDisplayTopologyDataSnapshot> DisplayTopology() const;
@@ -465,6 +472,7 @@ private:
     WidgetNetworkStatusDebouncer networkStatusDebouncer_;
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::optional<WidgetGpuDataSnapshot> gpu_;
+    WidgetResourceHistory resourceHistory_;
     std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;
     std::optional<WidgetStorageIoDataSnapshot> storageIo_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayTopology_;

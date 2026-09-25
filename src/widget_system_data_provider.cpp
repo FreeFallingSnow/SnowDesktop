@@ -761,6 +761,7 @@ bool WidgetSystemDataProvider::StartTopic(std::string_view consumer,
         if (existing == schedules_.end())
         {
             schedules_.emplace(key, TopicSchedule{ interval, now });
+            resourceHistory_.Clear(topic);
             if (topic == CpuTopic) resetCpuBaseline_.store(true);
             if (topic == ProcessSummaryTopic)
                 resetProcessBaseline_.store(true);
@@ -833,6 +834,7 @@ bool WidgetSystemDataProvider::StopTopic(
         removed = schedules_.erase(std::string(topic)) > 0;
         if (!removed) return false;
         semanticDebouncers_.erase(std::string(topic));
+        resourceHistory_.Clear(topic);
         if (topic == MediaArtworkTopic) mediaArtwork_.reset();
         if (topic == ProcessSummaryTopic) processSummary_.reset();
         if (topic == CpuTopic) resetCpuBaseline_.store(true);
@@ -888,6 +890,7 @@ void WidgetSystemDataProvider::StopAll()
     {
         std::scoped_lock lock(mutex_);
         schedules_.clear();
+        resourceHistory_.Clear();
         demands_.clear();
         changedTopics_.clear();
         semanticDebouncers_.clear();
@@ -917,6 +920,13 @@ void WidgetSystemDataProvider::StopAll()
     networkTrafficSampler_.Reset();
     CloseGpuQuery();
     CloseStorageIoQuery();
+}
+
+std::vector<WidgetResourcePoint> WidgetSystemDataProvider::ResourceHistory(
+    std::string_view topic, std::string_view adapterId) const
+{
+    std::scoped_lock lock(mutex_);
+    return resourceHistory_.Read(topic, adapterId);
 }
 
 std::optional<WidgetCpuDataSnapshot>
@@ -1675,6 +1685,7 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
                 {
                     const auto percent = usage.UsagePercent(entry.luid);
                     entry.snapshot.usagePercent = percent.value_or(0.0);
+                    entry.snapshot.usageAvailable = percent.has_value();
                     utilizationAvailable = utilizationAvailable || percent.has_value();
                 }
             }
@@ -1732,6 +1743,8 @@ WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
                     continue;
                 entry.snapshot.dedicatedUsedBytes = dedicated->second;
                 entry.snapshot.sharedUsedBytes = shared->second;
+                entry.snapshot.dedicatedUsageAvailable = true;
+                entry.snapshot.sharedUsageAvailable = true;
                 memoryUsageAvailable = true;
             }
         }
@@ -2231,6 +2244,8 @@ void WidgetSystemDataProvider::PublishCpu(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(CpuTopic))) return;
+    resourceHistory_.Append(CpuTopic, {}, {snapshot.timestampMs,
+        snapshot.available && !snapshot.warmingUp ? std::optional<double>(snapshot.usagePercent) : std::nullopt, {}});
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), cpu_,
         semanticDebouncers_[std::string(CpuTopic)]);
     snapshot.revision = cpu_ ? cpu_->revision + 1 : 1;
@@ -2243,6 +2258,8 @@ void WidgetSystemDataProvider::PublishMemory(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(MemoryTopic))) return;
+    resourceHistory_.Append(MemoryTopic, {}, {snapshot.timestampMs,
+        snapshot.available && snapshot.totalBytes ? std::optional<double>(100. * snapshot.usedBytes / snapshot.totalBytes) : std::nullopt, {}});
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), memory_,
         semanticDebouncers_[std::string(MemoryTopic)]);
     snapshot.revision = memory_ ? memory_->revision + 1 : 1;
@@ -2292,6 +2309,10 @@ void WidgetSystemDataProvider::PublishNetworkTraffic(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(NetworkTrafficTopic))) return;
+    const bool valid = snapshot.available && !snapshot.warmingUp;
+    resourceHistory_.Append(NetworkTrafficTopic, {}, {snapshot.timestampMs,
+        valid ? std::optional<double>(static_cast<double>(snapshot.downloadBytesPerSecond)) : std::nullopt,
+        valid ? std::optional<double>(static_cast<double>(snapshot.uploadBytesPerSecond)) : std::nullopt});
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
         networkTraffic_,
         semanticDebouncers_[std::string(NetworkTrafficTopic)]);
@@ -2305,6 +2326,14 @@ void WidgetSystemDataProvider::PublishGpu(
 {
     std::scoped_lock lock(mutex_);
     if (!schedules_.contains(std::string(GpuTopic))) return;
+    std::vector<std::string> identities;
+    for (const auto& adapter : snapshot.adapters)
+    {
+        identities.push_back(adapter.id);
+        resourceHistory_.Append(GpuTopic, adapter.id, {snapshot.timestampMs,
+            adapter.usageAvailable && !snapshot.warmingUp ? std::optional<double>(adapter.usagePercent) : std::nullopt, {}});
+    }
+    resourceHistory_.Retain(GpuTopic, identities);
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), gpu_,
         semanticDebouncers_[std::string(GpuTopic)]);
     snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;

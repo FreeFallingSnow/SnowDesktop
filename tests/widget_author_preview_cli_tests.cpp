@@ -1224,6 +1224,53 @@ void TestTrayPanelPreview(const std::filesystem::path& snowwidget,
     }
 }
 
+void TestResourcePanelPreview(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& temporary)
+{
+    for (const bool dark : {false, true})
+    {
+        const auto output = temporary / (dark ? L"resources-dark" : L"resources-light");
+        const auto [exitCode, json] = Run(snowwidget, {L"preview-native", L"resource-panel", output.wstring(),
+            L"--appearance", dark ? L"dark" : L"light", L"--dpi", dark ? L"144" : L"96",
+            L"--locale", dark ? L"en-US" : L"zh-CN", L"--transparent",
+            L"--canvas-width", L"1000", L"--canvas-height", L"1000", L"--padding", L"24", L"--host", host.wstring()});
+        if (exitCode != 0) std::cerr << json << '\n';
+        Check(exitCode == 0 && json.find("\"ok\":true") != std::string::npos,
+            "real resource panels render and validate missing samples, GPU selection and shared-demand cleanup");
+        for (const auto* page : {L"cpu", L"memory", L"gpu", L"traffic", L"idle", L"warming", L"unavailable", L"gap", L"gpu-partial"})
+        {
+            const auto bitmap = ReadPng(output / (std::wstring(L"resource-panel-") + page + L".png"));
+            const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;
+            Check(std::abs(bounds.right - bounds.left - 440 * scale) <= 1 &&
+                bounds.bottom - bounds.top >= 320 * scale && bounds.bottom - bounds.top < 530 * scale,
+                "resource metrics and history fit a compact shared-theme popup");
+            Check(HasFourRoundedCorners(bitmap, bounds), "resource panels preserve all four corners");
+        }
+        auto cpu = ReadPng(output / L"resource-panel-cpu.png");
+        const auto idle = ReadPng(output / L"resource-panel-idle.png");
+        const auto bounds = PanelPixels(cpu), idleBounds = PanelPixels(idle);
+        const double scale = (bounds.right - bounds.left) / 440.;
+        Check(EqualRect(&bounds, &idleBounds), "utilization changes do not resize the resource popup");
+        // Only inspect the plot area, away from card text. Geometry existence
+        // alone would pass if a compositor-only trace vanished in the PNG.
+        const auto differs = [&] {
+            unsigned changed = 0;
+            for (LONG y = bounds.top + static_cast<LONG>(110 * scale); y < bounds.top + static_cast<LONG>(245 * scale); ++y)
+                for (LONG x = bounds.left + static_cast<LONG>(20 * scale); x < bounds.right - static_cast<LONG>(20 * scale); ++x)
+                    if (PixelAt(cpu, x, y) != PixelAt(idle, x, y)) ++changed;
+            return changed > 100;
+        };
+        Check(differs(), "nonzero resource samples visibly change the actual rendered curve");
+        for (LONG y = bounds.top + static_cast<LONG>(110 * scale); y < bounds.top + static_cast<LONG>(245 * scale); ++y)
+            for (LONG x = bounds.left + static_cast<LONG>(20 * scale); x < bounds.right - static_cast<LONG>(20 * scale); ++x)
+            {
+                const auto pixel = PixelAt(idle, x, y);
+                std::copy(pixel.begin(), pixel.end(), cpu.pixels.begin() + (static_cast<std::size_t>(y) * cpu.width + x) * 4);
+            }
+        Check(!differs(), "a frozen-curve output mutation is rejected");
+    }
+}
+
 int wmain(int argc, wchar_t** argv) try
 {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
@@ -1253,6 +1300,7 @@ int wmain(int argc, wchar_t** argv) try
     TestCalendarPanelPreview(snowwidget, host, temporary.path);
     TestControlPanelPreview(snowwidget, host, temporary.path);
     TestTrayPanelPreview(snowwidget, host, temporary.path);
+    TestResourcePanelPreview(snowwidget, host, temporary.path);
     TestTextControlFontSizing(snowwidget, host, temporary.path);
     const auto tooltipRoot = temporary.path / L"tooltip";
     std::filesystem::create_directory(tooltipRoot);

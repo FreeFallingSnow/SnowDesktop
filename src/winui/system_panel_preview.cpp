@@ -4,6 +4,9 @@
 #include "system_calendar_view.h"
 #include "system_control_view.h"
 #include "system_tray_view.h"
+#include "system_resource_view.h"
+#include "system_resource_preview.h"
+#include <winrt/Microsoft.UI.Xaml.Shapes.h>
 #include "../widget_system_control_data.h"
 #include <set>
 #include "winui_runtime.h"
@@ -322,6 +325,7 @@ native_component_preview::Result ExportSystemPanelPreview(
         ShowWindow(host.window, SW_SHOWNOACTIVATE);
         const bool controlPanel = request.component == "control-panel";
         const bool trayPanel = request.component == "tray-panel";
+        const bool resourcePanel = request.component == "resource-panel";
         const auto controlState = std::make_shared<ControlPreviewState>();
         std::unique_ptr<SystemControlView> controls;
         unsigned layoutChanges = 0;
@@ -330,6 +334,7 @@ native_component_preview::Result ExportSystemPanelPreview(
         const std::vector<std::string> presets = controlPanel ?
             std::vector<std::string>{"overview", "audio", "brightness", "wifi", "bluetooth", "media", "power", "unavailable"} :
             trayPanel ? std::vector<std::string>{"grid", "updated", "manage", "empty", "connecting", "unavailable"} :
+            resourcePanel ? std::vector<std::string>{"cpu", "memory", "gpu", "traffic", "idle", "warming", "unavailable", "gap", "gpu-partial"} :
             std::vector<std::string>{"empty", "agenda"};
         for (const auto& preset : presets)
         {
@@ -337,9 +342,11 @@ native_component_preview::Result ExportSystemPanelPreview(
             auto frame = CreateSystemPanelFrame(appearance);
             std::unique_ptr<SystemCalendarView> calendar;
             std::unique_ptr<SystemTrayView> trayView;
+            std::unique_ptr<SystemResourceView> resources;
+            std::shared_ptr<ResourcePreviewState> resourceState;
             auto trayState = std::make_shared<TrayPreviewState>();
             tray::Snapshot traySnapshot;
-            float widthDip = controlPanel ? 440.f : trayPanel ? 280.f : 520.f;
+            float widthDip = controlPanel || resourcePanel ? 440.f : trayPanel ? 280.f : 520.f;
             if (controls)
             {
                 controlState->unavailable = preset == "unavailable";
@@ -366,6 +373,14 @@ native_component_preview::Result ExportSystemPanelPreview(
                 }
                 trayView->Refresh(traySnapshot); frame.Child(trayView->Root());
             }
+            else if (resourcePanel)
+            {
+                resourceState = ResourcePreviewFixture(preset);
+                const auto action = preset == "memory" ? StatusBarAction::Memory : preset == "gpu" || preset == "gpu-partial" ?
+                    StatusBarAction::Gpu : preset == "traffic" ? StatusBarAction::Traffic : StatusBarAction::Cpu;
+                resources = std::make_unique<SystemResourceView>(ResourcePreviewSource(resourceState), action, [&] { ++layoutChanges; });
+                frame.Child(resources->Root());
+            }
             else
             {
             SystemCalendarActions actions;
@@ -386,6 +401,11 @@ native_component_preview::Result ExportSystemPanelPreview(
             auto loadedEvent = frame.Loaded(winrt::auto_revoke, [&](const auto&, const auto&) { loaded = true; });
             if (!host.runtime.Attach(host.window, frame)) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
             PumpUntil([&] { return loaded; }); loadedEvent.revoke();
+            if (resourcePanel && preset == "gpu-partial")
+            {
+                FindPreviewElement(frame, L"resource.adapter").as<x::Controls::ComboBox>().SelectedIndex(1);
+                frame.UpdateLayout();
+            }
             if (trayPanel && preset == "manage")
             {
                 const auto before = layoutChanges;
@@ -433,7 +453,35 @@ native_component_preview::Result ExportSystemPanelPreview(
             const auto buffer = Await(bitmap.GetPixelsAsync());
             // Check the real visual tree as well as outer pixels. A valid PNG
             // and rounded frame must not mask missing dates inside the month.
-            if (!controlPanel && !trayPanel) CheckMonthFits(frame);
+            if (!controlPanel && !trayPanel && !resourcePanel) CheckMonthFits(frame);
+            if (resourcePanel)
+            {
+                const auto trace = FindPreviewElement(frame, L"resource.primary").as<x::Shapes::Path>();
+                const auto geometry = trace.Data().as<x::Media::PathGeometry>();
+                const bool missing = preset == "warming" || preset == "unavailable" || preset == "gpu-partial";
+                const auto expectedFigures = missing ? 0u : preset == "gap" ? 3u : 1u;
+                if (geometry.Figures().Size() != expectedFigures)
+                    throw std::runtime_error("resource graph bridged missing samples or omitted a valid trace: " + preset);
+                const auto value = FindPreviewElement(frame, L"resource.value.0").as<x::Controls::TextBlock>();
+                if ((missing && value.Text() != L"—") || (preset == "idle" && value.Text() != L"0%"))
+                    throw std::runtime_error("resource panel conflated a valid zero with unavailable data");
+                const auto chart = FindPreviewElement(frame, L"resource.chart");
+                if (chart.ActualWidth() < 400 || chart.ActualHeight() != 128)
+                    throw std::runtime_error("resource chart has invalid measured bounds");
+                for (int i = 0; i < (preset == "memory" || preset == "gpu" || preset == "gpu-partial" || preset == "traffic" ? 4 : 2); ++i)
+                {
+                    const auto id = L"resource.value." + std::to_wstring(i);
+                    const auto metric = FindPreviewElement(frame, id.c_str());
+                    const auto bounds = metric.TransformToVisual(frame).TransformBounds({0, 0,
+                        static_cast<float>(metric.ActualWidth()), static_cast<float>(metric.ActualHeight())});
+                    if (bounds.Width < 100 || bounds.Y + bounds.Height > frame.ActualHeight())
+                        throw std::runtime_error("resource metric card clipped its value");
+                }
+                resources->Refresh(); frame.UpdateLayout();
+                if (trace.Data() != geometry) throw std::runtime_error("unchanged resource snapshot rebuilt its graph");
+                if (resourceState->subscriptions.size() != 1)
+                    throw std::runtime_error("resource panel subscribed to unrelated sampling topics");
+            }
             if (trayPanel)
             {
                 const auto notice = FindPreviewElement(frame, L"tray.notice").as<x::Controls::TextBlock>();
@@ -491,6 +539,18 @@ native_component_preview::Result ExportSystemPanelPreview(
             result.outputs.push_back({request.component, preset, path, false, false, false, false, false, false,
                 static_cast<int>(std::lround(appearance.cornerRadius * request.dpi / 96.)), width, height, left, top});
             if (trayView && preset == "grid") CheckTrayUpdates(*trayView, traySnapshot, trayState, layoutChanges);
+            if (resources)
+            {
+                if (preset == "gpu")
+                {
+                    FindPreviewElement(frame, L"resource.adapter").as<x::Controls::ComboBox>().SelectedIndex(1);
+                    if (FindPreviewElement(frame, L"resource.value.0").as<x::Controls::TextBlock>().Text() != L"61%")
+                        throw std::runtime_error("GPU selection did not switch its reading and history immediately");
+                }
+                resources->Close(); const auto reads = resourceState->reads; resources->Refresh();
+                if (!resourceState->subscriptions.empty() || resourceState->closed != 1 || resourceState->reads != reads)
+                    throw std::runtime_error("closed resource panel retained sampling demand or read its old source");
+            }
             host.runtime.Detach();
             if (controls) frame.Child().as<x::Controls::ScrollViewer>().Content(nullptr);
             frame.Child(nullptr);

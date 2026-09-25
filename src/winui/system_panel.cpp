@@ -2,6 +2,7 @@
 #include "system_panel.h"
 #include "system_control_view.h"
 #include "system_tray_view.h"
+#include "system_resource_view.h"
 #include "system_panel_surface.h"
 #include "winui_runtime.h"
 #include "../tray_service.h"
@@ -34,6 +35,7 @@ struct SystemPanel::Impl
     std::unique_ptr<SystemControlView> controls;
     std::unique_ptr<SystemCalendarView> calendar;
     std::unique_ptr<SystemTrayView> trayView;
+    std::unique_ptr<SystemResourceView> resources;
     std::uint64_t revision = 0;
     bool showing = false, hiding = false;
     double regionRadius = -1;
@@ -42,7 +44,7 @@ struct SystemPanel::Impl
     {
         Hide();
         backdrop.Reset();
-        runtime.Detach(); trayView.reset(); controls.reset(); calendar.reset(); frame = nullptr; content = nullptr;
+        runtime.Detach(); resources.reset(); trayView.reset(); controls.reset(); calendar.reset(); frame = nullptr; content = nullptr;
         if (window) DestroyWindow(window);
         window = nullptr;
         runtime.Shutdown();
@@ -88,6 +90,7 @@ struct SystemPanel::Impl
         controls.reset();
         calendar.reset();
         trayView.reset();
+        resources.reset();
         frame = CreateSystemPanelFrame(appearance);
         c::StackPanel root; root.Spacing(12);
         if (action == StatusBarAction::Calendar)
@@ -103,6 +106,11 @@ struct SystemPanel::Impl
             actions.native = [this] { auto service = tray; Hide(); if (service) service->OpenNativeTray(); };
             trayView = std::make_unique<SystemTrayView>(std::move(actions), settings, [this] { if (showing) Arrange(); });
             root.Children().Append(trayView->Root()); RefreshTray(true);
+        }
+        else if (IsSystemResourceAction(action))
+        {
+            resources = std::make_unique<SystemResourceView>(data, action, [this] { if (showing) Arrange(); });
+            root.Children().Append(resources->Root());
         }
         else
         {
@@ -162,6 +170,7 @@ struct SystemPanel::Impl
         try { if (controls) controls->Close(); } catch (...) {}
         try { if (calendar) calendar->Close(); } catch (...) {}
         try { if (trayView) trayView->Close(); } catch (...) {}
+        try { if (resources) resources->Close(); } catch (...) {}
         // The visual tree still owns its event handlers until Build replaces
         // the page. Keep their controller alive while the popup is hidden.
         try
@@ -210,6 +219,7 @@ struct SystemPanel::Impl
             {
                 if (self->controls) { self->controls->Refresh(); self->Arrange(); }
                 else if (self->calendar) { self->calendar->Refresh(); self->Arrange(); }
+                else if (self->resources) self->resources->Refresh();
                 else self->RefreshTray();
             }
             else if (message == WM_DPICHANGED || message == WM_DISPLAYCHANGE) self->Hide();

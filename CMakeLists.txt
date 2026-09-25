@@ -358,6 +358,9 @@ set(SNOWDESKTOP_SOURCES
     src/winui/system_control_view.h
     src/winui/system_tray_view.cpp
     src/winui/system_tray_view.h
+    src/winui/system_resource_view.cpp
+    src/winui/system_resource_view.h
+    src/winui/system_resource_preview.h
     src/winui/system_calendar_view.cpp
     src/winui/system_calendar_view.h
     src/winui/system_panel_surface.cpp
@@ -1845,6 +1848,10 @@ if (BUILD_TESTING)
         LABELS authoring integration lua preview render widget)
     add_dependencies(SnowDesktopWidgetAuthorPreviewCliTests
         snowwidget SnowDesktop)
+    # Actual authoring plus calendar/control/tray/resource rendering measured
+    # 57 seconds before resource fixtures were added. Keep a bounded budget
+    # with headroom for all real XAML hosts, rather than the default 60 seconds.
+    set_tests_properties(widget_author_preview_cli PROPERTIES TIMEOUT 90)
 
     snowdesktop_add_test(
         SnowDesktopWidgetViewTreeTests

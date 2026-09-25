@@ -269,27 +269,27 @@ struct StatusBar::Impl
             if (s.cpu)
             {
                 const auto value = owner.data->Cpu();
-                add("cpu", L"CPU " + (value && value->available && !value->warmingUp ? Percent(value->usagePercent) : L"—"), StatusBarAction::None);
+                add("cpu", L"CPU " + (value && value->available && !value->warmingUp ? Percent(value->usagePercent) : L"—"), StatusBarAction::Cpu);
             }
             if (s.memory)
             {
                 const auto value = owner.data->Memory();
                 add("memory", _LW("statusBar.memory") + std::wstring(L" ") + (value && value->available && value->totalBytes ?
-                    Percent(100. * value->usedBytes / value->totalBytes) : L"—"), StatusBarAction::None);
+                    Percent(100. * value->usedBytes / value->totalBytes) : L"—"), StatusBarAction::Memory);
             }
             if (s.gpu)
             {
                 const auto value = owner.data->Gpu();
                 double maximum = 0;
                 if (value) for (const auto& adapter : value->adapters) maximum = std::max(maximum, adapter.usagePercent);
-                add("gpu", L"GPU " + (value && value->available && !value->warmingUp ? Percent(maximum) : L"—"), StatusBarAction::None);
+                add("gpu", L"GPU " + (value && value->available && !value->warmingUp ? Percent(maximum) : L"—"), StatusBarAction::Gpu);
             }
             if (s.traffic)
             {
                 const auto value = owner.data->NetworkTraffic();
                 add("traffic", value && value->available && !value->warmingUp ?
                     L"↓ " + StatusBarRate(value->downloadBytesPerSecond) +
-                    L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::None);
+                    L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::Traffic);
             }
             {
                 if (owner.tray)
