@@ -47,7 +47,7 @@ See the [official edition comparison](https://snowdesktop.com/compare/) for deta
   - **Widget management and Lua extensions**: Install widgets from local packages, enable or disable them, apply updates, and switch back to a retained older version. You can also write your own widgets in Lua.
 - 🎨 **Personalization**:
   - **Themes and styles**: Choose light or dark themes, and adjust widget and Dock colors, transparency, rounded corners, and backgrounds with glass or acrylic effects.
-  - **Windows 11 taskbar**: On Windows 11, customize the system taskbar with transparent, dark, light, or glass styles and adjust the light or dark appearance of its icons and text. Set rules to change its look automatically: keep it transparent until an app window is visible or maximized, for example, or apply a chosen style when Start, Search, or Task View opens. App window rules are evaluated separately for each display.
+  - **System taskbar**: Adjust taskbar colors, transparency, and glass effects.
 - 💾 **Backup and migration**: Back up and restore SnowDesktop layouts, settings, widget packages, and widget data.
 
 ## 🛠️ Build
