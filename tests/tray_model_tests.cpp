@@ -80,6 +80,10 @@ int RunTrayModelTests()
     RECT rect{};
     check(LookupGeometry(*state, a, rect) && rect.left == -1920 && rect.bottom == -20,
         "native menu lookup uses actual signed screen rectangle");
+    const auto origin = GeometryReply(1, rect), extent = GeometryReply(2, rect);
+    check(GET_X_LPARAM(origin) == -1920 && GET_Y_LPARAM(origin) == -50 &&
+        LOWORD(extent) == 30 && HIWORD(extent) == 30,
+        "Shell rectangle lookup returns signed origin followed by width and height, not the second corner");
     InterlockedIncrement(&state->geometrySequence);
     check(!LookupGeometry(*state, a, rect), "Explorer does not wait while the host writes geometry");
     return failures;

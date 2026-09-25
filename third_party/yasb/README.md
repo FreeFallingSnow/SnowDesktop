@@ -21,6 +21,17 @@ envelope at 8192 bytes, copies at most the known structure, and validates field
 bounds before use. Truncated, oversized or unsupported-operation packets are
 rejected; native notification-area access remains available.
 
+The `Shell_NotifyIconGetRect` compatibility reply is an origin followed by a
+width/height pair. Returning a second corner would offset native app menus.
+An opt-in real-Explorer regression is available through
+`scripts/test.bat name "^tray_live_integration$"` after closing SnowDesktop.
+It uses the production collector and service with a separate hidden fixture
+process, validating registration, dynamic icons, hidden state, rectangle lookup,
+v4/legacy callbacks, removal, teardown and reconnect. It only invokes its own
+fixture icon. The test broadcasts `TaskbarCreated` and keeps a temporary Hook
+copy pinned until Explorer exits; it never restarts Explorer itself. No Explorer
+session or an active desktop host is reported as an environment skip, not a pass.
+
 `src/system_control_bluetooth.cpp` adapts the KS reconnect/disconnect approach
 and Bluetooth battery property identification from
 `src/core/widgets/services/bluetooth/bluetooth_audio.py` and `bluetooth_api.py`.

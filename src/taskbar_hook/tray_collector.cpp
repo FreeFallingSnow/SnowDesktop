@@ -237,7 +237,7 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 GetWindowThreadProcessId(reinterpret_cast<HWND>(identity.window), &identity.process);
                 RECT rect{};
                 if (LookupGeometry(*self.shared, identity, rect))
-                    return wire.message == 1 ? MAKELONG(rect.left, rect.top) : MAKELONG(rect.right, rect.bottom);
+                    return GeometryReply(wire.message, rect);
             }
         }
     }

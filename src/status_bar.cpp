@@ -141,6 +141,7 @@ struct StatusBar::Impl
         std::uint64_t volumeTask = 0;
         std::vector<Item> items;
         std::size_t focused = 0;
+        bool keyboardFocusVisible = false;
         std::optional<std::size_t> hovered;
         explicit Window(Impl& value) : owner(value) {}
         ~Window()
@@ -485,7 +486,7 @@ struct StatusBar::Impl
                         }
                         if (!item.text.empty()) context->DrawText(item.text.c_str(), static_cast<UINT32>(item.text.size()), format.Get(), textRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     }
-                    if (GetFocus() == hwnd && &item == &items[std::min(focused, items.size() - 1)])
+                    if (keyboardFocusVisible && GetFocus() == hwnd && &item == &items[std::min(focused, items.size() - 1)])
                         context->DrawRoundedRectangle(inset, brush.Get(), 1.f);
                 }
             }
@@ -616,6 +617,8 @@ struct StatusBar::Impl
                 break;
             case WM_LBUTTONUP:
             {
+                if (self->keyboardFocusVisible)
+                { self->keyboardFocusVisible = false; self->paintDirty = true; self->Paint(); }
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 if (self->TrayMouse(message, point)) return 0;
                 for (std::size_t index = 0; index < self->items.size(); ++index)
@@ -631,6 +634,7 @@ struct StatusBar::Impl
             case WM_CONTEXTMENU:
             {
                 POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                self->keyboardFocusVisible = point.x == -1 && point.y == -1;
                 if (point.x != -1 || point.y != -1)
                 {
                     ScreenToClient(window, &point);
@@ -706,6 +710,7 @@ struct StatusBar::Impl
                 SendMessageW(self->tooltip, TTM_POP, 0, 0);
                 break;
             case WM_KEYDOWN:
+                self->keyboardFocusVisible = true;
                 if (wp == VK_RETURN || wp == VK_SPACE) { self->ActivateItem(self->focused); return 0; }
                 else if (!self->items.empty() && (wp == VK_RIGHT || wp == VK_DOWN || wp == VK_TAB || wp == VK_LEFT || wp == VK_UP))
                 {

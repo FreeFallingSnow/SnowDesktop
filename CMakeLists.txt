@@ -2198,17 +2198,28 @@ if (BUILD_TESTING)
             ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
             tests/tray_model_tests.cpp
+            tests/tray_live_tests.cpp
             src/tray_model.cpp
+            src/tray_service.cpp
             src/app/desktop_backdrop_compositor.cpp
             src/l10n.cpp
             src/dock_window_preview.cpp
             src/dock_window_transition.cpp
             src/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES comctl32 d2d1 d3d11 dcomp dwrite dwmapi dxgi dxguid gdi32 ole32 runtimeobject shcore user32 windowsapp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dcomp dwrite dwmapi dxgi dxguid gdi32 ole32 runtimeobject shell32 shcore user32 windowsapp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
+    add_dependencies(SnowDesktopDockAndWindowRulesTests SnowDesktopTaskbarHook)
+    # Explicit opt-in: this real-Shell diagnostic registers only its own fixture
+    # icon and broadcasts TaskbarCreated, never launching the desktop host.
+    add_test(NAME tray_live_integration
+        COMMAND SnowDesktopDockAndWindowRulesTests --tray-live "$<TARGET_FILE:SnowDesktopTaskbarHook>")
+    set_tests_properties(tray_live_integration PROPERTIES
+        TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDockAndWindowRulesTests>"
+        LABELS "integration;shell;tray;manual")
 
     snowdesktop_add_test(
         SnowDesktopDesktopDropCacheTests

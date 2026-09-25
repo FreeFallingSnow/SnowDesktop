@@ -83,6 +83,7 @@ namespace identityRules = snowdesktop::dock_app_identity_rules;
 int RunDesktopBackdropCompositorTests();
 int RunNativeTaskbarTests();
 int RunTrayModelTests();
+int TryRunTrayLiveTests();
 
 namespace
 {
@@ -937,6 +938,7 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
     {
         snowdesktop::StatusBarTooltipState tooltip;
         Check(tooltip.Enter("cpu", L"CPU 9%"), "entering a different item installs its tooltip");

@@ -157,6 +157,12 @@ inline bool Decode(const void* bytes, std::size_t size, Notification& output, HI
     return true;
 }
 struct Callback { WPARAM wp = 0; LPARAM lp = 0; };
+inline LRESULT GeometryReply(DWORD message, const RECT& rect)
+{
+    // Shell_NotifyIconGetRect asks for origin, then extent, not two corners.
+    return message == 1 ? MAKELONG(rect.left, rect.top) :
+        MAKELONG(rect.right - rect.left, rect.bottom - rect.top);
+}
 inline Callback MakeCallback(DWORD version, DWORD id, UINT message, POINT anchor)
 {
     if (version >= NOTIFYICON_VERSION_4)
