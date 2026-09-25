@@ -150,6 +150,50 @@
 - 公开校验清单只列本次实际上传的发行文件，单独生成到版本目录的 `github-release/` 下，保留版本根目录包含全部构建产物的校验清单。发布后核对线上标题、附件集合和哈希。
 - 用户告知已手动修正线上 Release 后，只读核对现状，不得自动覆盖其修改或重新上传已移除的附件。
 
+## Steam 更新定位与发布记录
+
+### 定位上次正式更新
+
+- 审阅“上次 Steam 正式更新以来”的改动时，先确定 Steam `public` 分支实际生效的 Build ID，
+  不得把上一个 `version.json` 版本号、最近的 Git 标签或 `main` 提交、最近的测试分支上传、
+  更新公告日期直接当作审阅起点。同一应用版本可能多次更新 `public`。
+- 优先查 Steamworks 分支状态或使用 SteamCMD 刷新 app info 后读取目标 App ID 的 `public`
+  Build ID，记录查询时间、App ID、Build ID 和原始证据路径。使用 SteamCMD 时遵守下文的
+  客户端恢复规则。私有测试分支可能不出现在 `app_info_print` 中，不能因查不到就推断其状态。
+- 用该 Build ID 精确匹配成功的 SteamPipe 回执或 Steamworks 发布记录，再核对目标分支、
+  Depot Manifest ID、包清单的 `runtimeBuildId`、哈希及打包时的 `sourceCommit`。若构建先上传
+  到 `internal-dev`、后提升到 `public`，须核对提升或之后的 `public` 只读回查，不能因测试
+  分支回执中有相同 Build ID 就直接认定它已正式发布。
+- 若用户所说的“更新”指公开公告，还应把公告发布时间与 `public` 构建生效记录对应；公告
+  本身不能单独证明 Build ID 或源码提交。证据无法唯一对应时，明确报告不确定项，不得猜测起点。
+- 例如 2026-09-25 查得 `public` Build ID `25480127`；其成功上传回执
+  `artifacts/v1.0.7.0/steam-test-20260923-be46633e/receipt.json` 对应源码
+  `be46633e72d15a3bdb611fe8e42e94c2cee22ef1`，且
+  `artifacts/v1.0.7.0/steam-test-20260923-0e50995b/before-app-info.log` 中的后续
+  `public` 回查出现该 Build ID，
+  因而当次审阅从该源码提交之后开始。此例仅用于说明定位方法，不是以后审阅的固定基线。
+- 确认基线后，按“已发布源码提交（不含）至指定目标提交（含）”审阅 Git 差异；分别列出
+  已上测试分支、尚未发布和未提交的改动，不得将测试分支或本地改动写成正式更新内容。
+
+### 每次发布的 Git 记录
+
+- 每次实际将构建设为 Steam `public` 正式分支或 `internal-dev` 测试分支的生效构建后，
+  分别新增**一条独立的 Git Commit**记录该次结果。即使仅提升现有 Build、没有文件变更，
+  也使用空 Commit；预览、仅上传但未生效、失败的操作不得记作成功发布。记录提交不得混入
+  下一轮源码改动，也不得改写被发布的源码提交。
+- 记录提交位于对应的 `release/vA.B.C.D` 开发分支；若该版本分支已完成合并并按规则停用，
+  则追加到独立的 `steam/publication-log` 记录分支。不得为记录 Steam 发布而在 `main`
+  增加第二条版本提交，也不得借记录提交自动推送任何分支。
+- 首行遵守双语规范，例如 `chore(steam): 记录 public Build 25480127 发布 / Record public Build 25480127 publication`；
+  测试分支把 `public` 换成 `internal-dev`。正文中英双语记录实际生效时间、App ID、分支、
+  Steam Build ID、被发布包的源码提交、Depot Manifest ID、`runtimeBuildId`、包或清单哈希、
+  发布与回查证据路径、实际验证结果及待验证事项。被发布源码提交是打包时的 `sourceCommit`，
+  不是这条事后发布记录 Commit 的哈希。
+- `public` 的生效结论须有 `public` 分支回查或等价 Steamworks 证据；私有分支无法独立回查时，
+  如实写明已核对的 `SetLive` 脚本和 SteamPipe 成功回执，不得声称查到了私有分支当前状态。
+  每次交付发布结果时，向用户提供新记录 Commit 的哈希及完整首行，并同时给出被发布源码提交
+  和 Steam Build ID，避免把发布记录 Commit 误认为发行包源码。
+
 ## SteamCMD 使用后的客户端恢复
 
 - Agent 使用 SteamCMD 登录账号执行上传、预览或远端版本查询后，必须在整批操作结束时恢复
