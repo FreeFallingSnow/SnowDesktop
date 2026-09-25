@@ -16,6 +16,7 @@
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Globalization.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 
 namespace snowdesktop::winui
 {
@@ -129,11 +130,28 @@ void CheckMonthFits(const x::DependencyObject& element, const x::Controls::Calen
 // An offscreen RenderTargetBitmap must capture resting control states, not
 // the first frame of compositor brush fades. Keep the actual stock templates
 // and final state values; only complete their animation in this preview tree.
-void CompletePreviewAnimations(const x::DependencyObject& element)
+void RemovePreviewBrushTransitions(const x::DependencyObject& element)
 {
     if (const auto presenter = element.try_as<x::Controls::ContentPresenter>()) presenter.BackgroundTransition(nullptr);
     if (const auto border = element.try_as<x::Controls::Border>()) border.BackgroundTransition(nullptr);
     if (const auto panel = element.try_as<x::Controls::Panel>()) panel.BackgroundTransition(nullptr);
+    for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(element); ++i)
+        RemovePreviewBrushTransitions(x::Media::VisualTreeHelper::GetChild(element, i));
+}
+void CompletePreviewAnimations(const x::DependencyObject& element)
+{
+    // Re-enter the same logical state after removing implicit brush fades.
+    // Clearing BackgroundTransition alone does not end an already running
+    // compositor brush transition. Do not toggle IsChecked or call Click:
+    // those can dispatch real user actions from the production view.
+    if (const auto toggle = element.try_as<x::Controls::Primitives::ToggleButton>())
+    {
+        const auto checked = toggle.IsChecked();
+        const wchar_t* state = checked ? (checked.Value() ? L"Checked" : L"Normal") : L"Indeterminate";
+        if (!toggle.IsEnabled()) state = checked && checked.Value() ? L"CheckedDisabled" : L"Disabled";
+        x::VisualStateManager::GoToState(toggle, L"Pressed", false);
+        x::VisualStateManager::GoToState(toggle, state, false);
+    }
     if (const auto framework = element.try_as<x::FrameworkElement>())
         for (const auto& group : x::VisualStateManager::GetVisualStateGroups(framework))
             if (const auto state = group.CurrentState())
@@ -240,7 +258,7 @@ native_component_preview::Result ExportSystemPanelPreview(
             result.stage = "panel.bitmap";
             if (controlPanel)
             {
-                CompletePreviewAnimations(frame); frame.UpdateLayout();
+                RemovePreviewBrushTransitions(frame); CompletePreviewAnimations(frame); frame.UpdateLayout();
                 // These fixtures contain only one device/network per section.
                 // All commands must fit; outer PNG bounds alone miss a clipped
                 // settings button at the end of a short device list.

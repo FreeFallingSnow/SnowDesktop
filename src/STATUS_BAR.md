@@ -53,7 +53,7 @@
 
 ## 离线面板预览
 
-控制中心本轮收敛为无线开关、带数值的音量／亮度滑条、媒体和电源入口；子页按设备、状态和操作分组。新增显式 `control-panel` CLI 目标，原有 `all` 与 Lua API 不变。该目标使用生产 `SystemControlView`，仅在设备服务边界替换固定数据，禁止执行真实设备控制／打开设置；验证切页立即请求尺寸更新、Wi-Fi 页之外不扫描、关闭清理订阅。当前已编译并输出 16 张浅深色／不同 DPI 图片；音频和 Wi-Fi 短设备列表底部入口已完整显示，增加真实滚动范围检查。无线按钮的离线选中背景仍未正确导出，整体视觉验收未完成。
+控制中心本轮收敛为无线开关、带数值的音量／亮度滑条、媒体和电源入口；子页按设备、状态和操作分组。新增显式 `control-panel` CLI 目标，原有 `all` 与 Lua API 不变。该目标使用生产 `SystemControlView`，仅在设备服务边界替换固定数据，禁止执行真实设备控制／打开设置；验证切页立即请求尺寸更新、Wi-Fi 页之外不扫描、关闭清理订阅。当前已编译并输出 16 张浅深色／不同 DPI 图片；音频和 Wi-Fi 短设备列表底部入口已完整显示，增加真实滚动范围检查。无线按钮现已在浅深色离线图中显示实际选中背景；继续补充此处像素回归及稳定候选全量。玻璃、高对比度和桌面交互尚未验收。
 
 `snowwidget preview-native calendar-panel <输出目录> --appearance light --locale zh-CN --dpi 96 --transparent --canvas-width 1000 --canvas-height 1000 --padding 24 --host <SnowDesktop.exe>` 使用生产 `SystemCalendarView` 和 `CreateSystemPanelFrame`，输出空日程与有日程两张 PNG。该显式目标不属于旧 `all` 集合，不改变已有目标及参数；旧宿主不支持新目标。预览在独立离屏渲染窗口运行，不创建桌面宿主／AppBar、不连接托盘或读取用户日程，使用固定日期和示例日程。控件通过 WinUI `RenderTargetBitmap` 导出；目前只支持 light／dark，桌面玻璃模糊不属于此 XAML 导出范围，玻璃预设会明确拒绝。
 
@@ -86,6 +86,8 @@
 - 控制中心首轮候选：生产视图整理常用开关、滑条、媒体与设备子页，增加只替换设备边界的实际控件离线 `control-panel` 目标。`scripts/build.bat` 退出 0，无编译／链接警告（`18-controls-build.log`）；定向 `widget_author_preview_cli|widget_system_data_provider|localization_contract|settings_controller` **4/4 通过**，60.72 秒，退出 0（`18-controls-tests.log`，JUnit `test-run-634ffc40d88242fd9f282976427d585d.xml`）。16 张实际控件图片位于 `controls-render-18/`，目检仍发现选中无线按钮背景未稳定、长子页底部入口裁切，保持开放；不将 PNG 生成或外框断言视作视觉通过。本候选未运行全量和实机；输入绑定 `18-final-validation-inputs.json`，最终宿主 SHA256 `24de2fb9d5f357495aca65c6e4b9eafc19178e165160ea89dd101d074a3c35a3`。
 
 - `1459e787` 保存控制中心首轮。后续将设备页视口上限调整到 540 DIP（仍受实际屏幕工作区限制），没有位置权限错误时收起空错误行和位置设置按钮，避免占用常用控制空间；保持实际模板，仅在离线树完成 Storyboard 动画。`scripts/build.bat` 退出 0，无编译／链接警告（`19-controls-build.log`）；相关 6/6 测试通过，63.71 秒，退出 0（`19-controls-tests.log`）。其中 `modern_menu_interaction` 检查显式关闭正在运行的菜单循环，`dock_and_window_rules` 覆盖状态栏基础交互规则；这些并非用户桌面空白点击端到端验收。浅深色图片 `controls-render-19/` 已确认音频／Wi-Fi 底部入口不裁切，控件树检查短列表不存在额外滚动；首页无线选中背景仍异常，继续定位。未运行本候选全量或实机；输入绑定 `19-final-validation-inputs.json`，宿主 SHA256 `58e57bec947230a4e18e84b030065678a7b6245c91899c7fc6d1a01da542b270`。
+
+- `67a68421` 保存设备页可见范围候选。随后离线渲染在移除画刷过渡后重新进入控件原有视觉状态，不触发 `IsChecked`／点击操作；浅深色实际首页图片已正确出现选中背景，19 号图片保留为失败对照。`scripts/build.bat` 退出 0，无编译／链接警告（`20-controls-build.log`）；显式 `control-panel` 浅色 zh-CN 96 DPI／深色 en-US 144 DPI 各输出 8 状态，均退出 0（`20-render.log`，`controls-render-20/`）。本候选暂未重跑 CTest／全量，待补充像素回归；不沿用 19 号 CTest 为本次执行。输入绑定 `20-validation-inputs.json`，宿主 SHA256 `a68340d1650f9ef0560ade4fe962295bbf4fcbbd8b35d65cf7d7b6100903b6c5`。
 
 ## YASB 参考边界
 
