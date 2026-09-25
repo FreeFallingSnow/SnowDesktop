@@ -129,7 +129,20 @@ message(STATUS
 set(SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION "2.4.0")
 set(SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION "3.0.260818.1")
 
+set(SNOWDESKTOP_SYSTEM_CONTROL_SOURCES
+    src/system_controls.cpp
+    src/system_control_windows.cpp
+    src/system_control_audio.cpp
+    src/system_control_power.cpp
+    src/system_control_brightness.cpp
+    src/system_control_wifi.cpp
+    src/system_control_bluetooth.cpp
+    src/system_control_media.cpp)
+set(SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES
+    dxva2 wlanapi powrprof setupapi oleaut32 wbemuuid)
+
 set(SNOWDESKTOP_SOURCES
+    ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
     src/main.cpp
     src/auto_start_manager.cpp
     src/auto_start_manager.h
@@ -882,6 +895,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
+    ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
     comctl32 d2d1 d3d11 dbghelp dcomp dwmapi dwrite dxgi dxguid gdi32 msimg32
@@ -1315,9 +1329,11 @@ if (BUILD_TESTING)
         widget_system_data_provider
         SOURCES
             tests/widget_system_data_provider_tests.cpp
+            tests/system_controls_tests.cpp
             src/widget_system_data_provider.cpp
+            ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 dxgi dxguid iphlpapi ole32 pdh propsys runtimeobject shcore user32 windowsapp windowscodecs
+        LINK_LIBRARIES ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES} advapi32 dxgi dxguid iphlpapi ole32 pdh propsys runtimeobject shcore user32 windowsapp windowscodecs
         LABELS contract data system widget)
 
     snowdesktop_add_test(

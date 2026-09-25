@@ -90,6 +90,22 @@ struct Service::Impl
     {
         auto result = std::make_shared<Connection>();
         result->window = FindWindowW(L"Shell_TrayWnd", nullptr);
+        DWORD shellProcess = 0, candidateProcess = 0;
+        GetWindowThreadProcessId(GetShellWindow(), &shellProcess);
+        GetWindowThreadProcessId(result->window, &candidateProcess);
+        if (!shellProcess || candidateProcess != shellProcess)
+        {
+            struct Search { DWORD process; HWND window = nullptr; } search{shellProcess};
+            EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+                auto& match = *reinterpret_cast<Search*>(parameter);
+                DWORD process = 0; GetWindowThreadProcessId(window, &process);
+                wchar_t name[64]{}; GetClassNameW(window, name, 64);
+                if (process == match.process && wcscmp(name, L"Shell_TrayWnd") == 0)
+                { match.window = window; return FALSE; }
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&search));
+            result->window = search.window;
+        }
         DWORD explorer = 0;
         const DWORD thread = GetWindowThreadProcessId(result->window, &explorer);
         if (!thread) { error = ERROR_FILE_NOT_FOUND; return {}; }
@@ -162,7 +178,8 @@ struct Service::Impl
             if (!current) { WaitForSingleObject(stop, 2000); continue; }
             Reregister(current);
             auto& state = *current->shared;
-            LONG lost = Read(state.resync);
+            LONG lost = 0;
+            unsigned resyncAttempts = 0;
             ULONGLONG lastResync = 0;
             HANDLE handles[]{stop, current->explorer, current->signal};
             while (!token.stop_requested())
@@ -181,10 +198,16 @@ struct Service::Impl
                 if (Read(state.resync) != lost && GetTickCount64() - lastResync >= 3000)
                 {
                     lost = Read(state.resync); lastResync = GetTickCount64();
-                    InterlockedIncrement64(&state.epoch);
-                    { std::lock_guard guard(mutex); snapshot.icons.clear(); snapshot.degraded = true;
-                        geometries.clear(); PublishGeometries(); ++snapshot.revision; }
-                    Reregister(current);
+                    { std::lock_guard guard(mutex); snapshot.degraded = true; ++snapshot.revision; }
+                    // A persistent unknown Shell layout must not cause endless
+                    // system-wide re-registration broadcasts.
+                    if (resyncAttempts++ < 3)
+                    {
+                        InterlockedIncrement64(&state.epoch);
+                        { std::lock_guard guard(mutex); snapshot.icons.clear();
+                            geometries.clear(); PublishGeometries(); ++snapshot.revision; }
+                        Reregister(current);
+                    }
                 }
                 {
                     std::lock_guard guard(mutex);

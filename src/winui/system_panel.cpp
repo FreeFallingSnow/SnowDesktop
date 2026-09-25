@@ -304,6 +304,12 @@ struct SystemPanel::Impl
     }
     void Hide()
     {
+        if (frame && frame.XamlRoot())
+            try
+            {
+                for (const auto& popup : m::VisualTreeHelper::GetOpenPopupsForXamlRoot(frame.XamlRoot())) popup.IsOpen(false);
+            }
+            catch (...) {}
         showing = false;
         if (window)
         {

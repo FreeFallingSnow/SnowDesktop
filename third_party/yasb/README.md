@@ -17,5 +17,12 @@ IPC are processed on a worker, with no pipe waits in Explorer's window thread.
 The private wire format is not a Microsoft compatibility contract. Unknown
 payloads are rejected; native notification-area access remains available.
 
-Other modules may consult this pinned source for system controls. Any further
-adaptation must be recorded here; its individual dependency licenses also apply.
+`src/system_control_bluetooth.cpp` adapts the KS reconnect/disconnect approach
+and Bluetooth battery property identification from
+`src/core/widgets/services/bluetooth/bluetooth_audio.py` and `bluetooth_api.py`.
+It resolves devices by their system identity and MAC, never by display name.
+`src/system_control_power.cpp` references the mode GUIDs and dynamic API support
+checks from `src/core/widgets/services/power_mode/power_mode_api.py`.
+The native implementations use Windows SDK declarations and do not distribute
+YASB's Python dependencies. Device execution, cancellation and state readback
+are implemented in SnowDesktop's shared control service.

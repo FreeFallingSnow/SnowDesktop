@@ -3,6 +3,7 @@
 #include "widget_storage_usage.h"
 #include "performance_trace.h"
 #include "widget_media_contract.h"
+#include "audio_endpoint_identity.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -268,19 +269,6 @@ std::string OpaqueDisplayId(std::wstring_view deviceName)
         hash *= prime;
     }
     return "display-" + std::to_string(hash);
-}
-
-std::string OpaqueAudioEndpointId(std::wstring_view endpointId)
-{
-    constexpr std::uint64_t offset = 14695981039346656037ull;
-    constexpr std::uint64_t prime = 1099511628211ull;
-    std::uint64_t hash = offset;
-    for (const wchar_t character : endpointId)
-    {
-        hash ^= static_cast<std::uint16_t>(character);
-        hash *= prime;
-    }
-    return "audio-output-" + std::to_string(hash);
 }
 
 std::string BoundedMediaString(std::wstring_view value)

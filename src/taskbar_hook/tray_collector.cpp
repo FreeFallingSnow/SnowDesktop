@@ -152,9 +152,15 @@ DWORD WINAPI Worker(void* parameter)
     InterlockedExchange(&self->shared->ready, 1);
     SetEvent(self->signal);
     BootstrapClassic(*self);
+    LONG64 epoch = Read(self->shared->epoch);
     HANDLE handles[]{self->owner, self->wake};
     while (!Read(self->stopping) && !Read(self->shared->stop))
     {
+        if (Read(self->shared->epoch) != epoch)
+        {
+            epoch = Read(self->shared->epoch);
+            BootstrapClassic(*self);
+        }
         Pending pending;
         while (self->Pop(pending))
         {

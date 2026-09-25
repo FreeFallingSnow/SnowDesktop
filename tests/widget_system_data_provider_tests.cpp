@@ -748,8 +748,11 @@ void TestIndependentConsumerLifetime()
 }
 }
 
+void TestSystemControls();
+
 int main()
 {
+    TestSystemControls();
     TestNetworkInterfaceTrafficDeltas();
     TestPhysicalDiskBusyTime();
     TestGpuEngineUsageAggregation();
