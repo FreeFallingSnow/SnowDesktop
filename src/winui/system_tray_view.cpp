@@ -6,6 +6,7 @@
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 
 namespace snowdesktop::winui
 {
@@ -37,7 +38,7 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
         c::SymbolIcon fallback{c::Symbol::AllApps};
         c::ToolTip tip;
         c::TextBlock title;
-        c::CheckBox pin;
+        c::Primitives::ToggleButton pin;
         c::Button earlier, later;
         bool pointer = false, updating = false;
     };
@@ -208,7 +209,14 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
             row->title.VerticalAlignment(x::VerticalAlignment::Center); label.Children().Append(row->title);
             row->activate.HorizontalAlignment(x::HorizontalAlignment::Stretch);
             row->activate.HorizontalContentAlignment(x::HorizontalAlignment::Stretch); row->activate.Content(label);
-            row->pin.Content(winrt::box_value(_LW("statusBar.pin"))); c::Grid::SetColumn(row->pin, 1);
+            // A standard toggle with a static pin stays legible in both the
+            // live compositor and offline XAML capture. No animated checkbox
+            // glyph or custom control template is needed.
+            row->pin.Content(c::SymbolIcon(c::Symbol::Pin));
+            row->pin.Width(32); row->pin.Height(32); row->pin.Padding({6, 6, 6, 6});
+            row->pin.VerticalAlignment(x::VerticalAlignment::Center);
+            c::ToolTipService::SetToolTip(row->pin, winrt::box_value(_LW("statusBar.pin")));
+            c::Grid::SetColumn(row->pin, 1);
             a::AutomationProperties::SetAutomationId(row->pin, winrt::to_hstring("tray.pin." + icon.key));
             row->container.Children().Append(row->pin);
             for (const auto& button : {row->earlier, row->later}) { Subtle(button); button.Width(32); button.Height(32); button.Padding({6, 6, 6, 6}); }

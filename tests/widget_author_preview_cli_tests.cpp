@@ -1176,12 +1176,45 @@ void TestTrayPanelPreview(const std::filesystem::path& snowwidget,
         LONG gridHeight = 0;
         for (const auto* page : {L"grid", L"updated", L"manage", L"empty", L"connecting", L"unavailable"})
         {
-            const auto bitmap = ReadPng(output / (std::wstring(L"tray-panel-") + page + L".png"));
+            auto bitmap = ReadPng(output / (std::wstring(L"tray-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;
             const bool manage = std::wstring_view(page) == L"manage";
             Check(std::abs(bounds.right - bounds.left - (manage ? 440 : 280) * scale / 2) <= 1,
                 "tray grid is compact and management expands to accommodate its controls");
             Check(HasFourRoundedCorners(bitmap, bounds), "tray panel preserves all four corners");
+            if (manage)
+            {
+                // The 32-DIP pin column starts at x=319; the first row starts
+                // at y=61. Both states must contain an actual pin glyph, not
+                // just a colored square (the former animated checkbox RTB).
+                const double dpiScale = (bounds.right - bounds.left) / 440.;
+                for (const int rowY : {65, 109})
+                {
+                    const auto px = [&](int x) { return static_cast<UINT>(std::lround(bounds.left + x * dpiScale)); };
+                    const auto py = [&](int y) { return static_cast<UINT>(std::lround(bounds.top + y * dpiScale)); };
+                    const auto background = PixelAt(bitmap, px(324), py(rowY + 5));
+                    const auto hasPin = [&] {
+                        unsigned ink = 0;
+                        for (UINT y = py(rowY + 10); y < py(rowY + 22); ++y)
+                            for (UINT x = px(329); x < px(341); ++x)
+                            {
+                                const auto pixel = PixelAt(bitmap, x, y);
+                                const int difference = std::abs(static_cast<int>(pixel[0]) - background[0]) +
+                                    std::abs(static_cast<int>(pixel[1]) - background[1]) + std::abs(static_cast<int>(pixel[2]) - background[2]);
+                                if (difference > 120) ++ink;
+                            }
+                        return ink >= 12;
+                    };
+                    Check(hasPin(), "selected and unselected tray buttons visibly contain a pin glyph");
+                    // A missing-glyph output mutation must be rejected, even
+                    // though the rounded panel and colored button still exist.
+                    for (UINT y = py(rowY + 10); y < py(rowY + 22); ++y)
+                        for (UINT x = px(329); x < px(341); ++x)
+                            std::copy(background.begin(), background.end(), bitmap.pixels.begin() +
+                                (static_cast<std::size_t>(y) * bitmap.width + x) * 4);
+                    Check(!hasPin(), "missing pin-glyph output mutation is rejected");
+                }
+            }
             if (std::wstring_view(page) == L"grid") gridHeight = bounds.bottom - bounds.top;
             if (std::wstring_view(page) == L"updated") Check(bounds.bottom - bounds.top == gridHeight,
                 "dynamic icon updates keep the tray grid dimensions stable");
