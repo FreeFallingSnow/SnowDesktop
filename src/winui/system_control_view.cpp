@@ -9,9 +9,11 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
+#include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
 #include <map>
+#include <cmath>
 
 namespace snowdesktop::winui
 {
@@ -36,7 +38,14 @@ c::TextBlock Text(std::wstring_view value)
 { c::TextBlock text; text.Text(value); text.TextWrapping(x::TextWrapping::Wrap); return text; }
 void Name(const x::DependencyObject& object, std::wstring_view value)
 { x::Automation::AutomationProperties::SetName(object, value); }
-void Settings(const wchar_t* uri) { ShellExecuteW(nullptr, L"open", uri, nullptr, nullptr, SW_SHOWNORMAL); }
+c::StackPanel Group(c::StackPanel parent, const wchar_t* title = nullptr)
+{
+    auto card = x::Markup::XamlReader::Load(L"<Border xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Background='{ThemeResource CardBackgroundFillColorDefaultBrush}' CornerRadius='8' Padding='12' />").as<c::Border>();
+    c::StackPanel content; content.Spacing(10);
+    if (title) { auto heading = Text(title); heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); content.Children().Append(heading); }
+    card.Child(content); parent.Children().Append(card); return content;
+}
+
 }
 struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
 {
@@ -45,16 +54,18 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         std::string topic, key, title;
         c::StackPanel panel{nullptr};
         c::Button tile{nullptr};
+        c::Primitives::ToggleButton radio{nullptr};
         c::TextBlock summary{nullptr};
         std::vector<std::function<void()>> updates;
         bool open = false;
     };
-    std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data;
-    std::shared_ptr<system_control::Service> service;
+    SystemControlViewSource source;
     c::StackPanel root;
     c::StackPanel overview, details, navigation;
     c::Grid tiles;
     Section overviewAudio, overviewBrightness;
+    Section overviewMedia;
+    c::TextBlock batterySummary;
     c::TextBlock detailTitle;
     c::InfoBar status;
     c::ContentDialog dialog{nullptr};
@@ -62,11 +73,12 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     std::string interfaceId, mediaId, quickBrightnessId;
     system_control::ControlFeedback feedback;
     std::function<void()> layoutChanged;
-    bool updating = false, closed = false, scanOnArrival = false;
+    bool updating = false, closed = false, scanOnArrival = false, layoutDirty = false;
     static constexpr const char* Consumer = "controlCenter";
-    explicit Impl(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> provider) : data(std::move(provider)), service(data->Controls()) {}
+    explicit Impl(SystemControlViewSource inputs) : source(std::move(inputs)) {}
+    void Settings(const wchar_t* uri) { source.settings(uri); }
     JsonValue Current(const char* topic) const
-    { const auto value = service->Current(topic); return value && value->available ? value->value : j::Object(); }
+    { const auto value = source.current(topic); return value && value->available ? value->value : j::Object(); }
     JsonValue Find(const char* topic, const char* collection, const std::string& id) const
     {
         const auto value = Current(topic);
@@ -74,7 +86,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         return j::Object();
     }
     void Notify(const char* key, bool error)
-    { status.Message(_LW(key)); status.Severity(error ? c::InfoBarSeverity::Error : c::InfoBarSeverity::Informational); status.IsOpen(true); }
+    { layoutDirty = !status.IsOpen() || status.Message() != _LW(key); status.Message(_LW(key)); status.Severity(error ? c::InfoBarSeverity::Error : c::InfoBarSeverity::Informational); status.IsOpen(true); }
     c::Button Button(c::StackPanel parent, const wchar_t* label, std::function<void()> action)
     {
         c::Button button; button.Content(winrt::box_value(label)); Name(button, label);
@@ -103,7 +115,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     {
         if (closed) return;
         auto feedbackKey = system_control::ControlFeedback::Key(*request);
-        const auto id = service->Start(Consumer, std::move(*request));
+        const auto id = source.start(std::move(*request));
         feedback.Track(std::move(feedbackKey), id);
         if (!id) Notify("controlCenter.failed", true);
         else { status.IsOpen(false); }
@@ -140,7 +152,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         dialog.ShowAsync();
     }
     c::ComboBox Choice(Section& section, const wchar_t* label, const std::vector<std::pair<std::string, std::wstring>>& choices,
-        std::function<std::string()> selected, std::function<void(std::string)> change)
+        std::function<std::string()> selected, std::function<void(std::string)> change, c::StackPanel parent = nullptr)
     {
         c::ComboBox combo; combo.Header(winrt::box_value(label)); combo.HorizontalAlignment(x::HorizontalAlignment::Stretch); Name(combo, label);
         std::vector<std::string> ids;
@@ -153,60 +165,103 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         section.updates.push_back([combo, ids, selected] {
             const auto value = selected(); const auto found = std::find(ids.begin(), ids.end(), value);
             combo.SelectedIndex(found == ids.end() ? -1 : static_cast<int>(found - ids.begin()));
-        }); section.panel.Children().Append(combo); return combo;
+        }); (parent ? parent : section.panel).Children().Append(combo); return combo;
     }
     void Slider(Section& section, const wchar_t* label, std::function<std::optional<double>()> read,
-        std::function<void(double)> write)
+        std::function<void(double)> write, c::StackPanel parent = nullptr, std::string detail = {})
     {
-        c::Slider slider; slider.Header(winrt::box_value(label)); slider.Minimum(0); slider.Maximum(100); slider.StepFrequency(1); Name(slider, label);
+        c::StackPanel block; block.Spacing(2);
+        c::Grid heading;
+        c::ColumnDefinition titleColumn; titleColumn.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
+        c::ColumnDefinition valueColumn; valueColumn.Width(x::GridLengthHelper::FromPixels(48));
+        heading.ColumnDefinitions().Append(titleColumn); heading.ColumnDefinitions().Append(valueColumn);
+        auto title = Text(label); title.FontSize(12); title.Opacity(.75); heading.Children().Append(title);
+        c::TextBlock percent; percent.FontSize(12); percent.TextAlignment(x::TextAlignment::Right); c::Grid::SetColumn(percent, 1);
+        heading.Children().Append(percent); block.Children().Append(heading);
+        c::Grid track; track.ColumnSpacing(10);
+        track.ColumnDefinitions().Append(c::ColumnDefinition());
+        c::ColumnDefinition detailColumn; detailColumn.Width(x::GridLengthHelper::Auto()); track.ColumnDefinitions().Append(detailColumn);
+        c::Slider slider; slider.Minimum(0); slider.Maximum(100); slider.StepFrequency(1); Name(slider, label);
+        track.Children().Append(slider); block.Children().Append(track);
         auto dragging = std::make_shared<bool>(false); const auto weak = weak_from_this();
+        if (!detail.empty())
+        {
+            c::StackPanel commands;
+            auto more = Button(commands, label, [weak, detail] { if (auto self = weak.lock()) self->Select(detail); });
+            more.Content(c::SymbolIcon(c::Symbol::Forward)); more.Padding({8, 6, 8, 6});
+            commands.VerticalAlignment(x::VerticalAlignment::Center); c::Grid::SetColumn(commands, 1); track.Children().Append(commands);
+        }
         slider.AddHandler(x::UIElement::PointerPressedEvent(), winrt::box_value(x::Input::PointerEventHandler(
             [dragging](const auto&, const auto&) { *dragging = true; })), true);
         slider.AddHandler(x::UIElement::PointerReleasedEvent(), winrt::box_value(x::Input::PointerEventHandler(
             [dragging](const auto&, const auto&) { *dragging = false; })), true);
         slider.PointerCaptureLost([dragging](const auto&, const auto&) { *dragging = false; });
-        slider.ValueChanged([weak, write](const auto&, const c::Primitives::RangeBaseValueChangedEventArgs& args) {
+        slider.ValueChanged([weak, write, percent](const auto&, const c::Primitives::RangeBaseValueChangedEventArgs& args) {
+            percent.Text(std::to_wstring(static_cast<int>(std::lround(args.NewValue()))) + L"%");
             if (const auto self = weak.lock(); self && !self->updating && !self->closed) write(args.NewValue());
         });
-        section.updates.push_back([slider, dragging, read] { const auto value = read(); slider.IsEnabled(value.has_value()); if (value && !*dragging) slider.Value(*value); });
-        section.panel.Children().Append(slider);
+        section.updates.push_back([slider, percent, dragging, read] {
+            const auto value = read(); slider.IsEnabled(value.has_value());
+            if (value && !*dragging) slider.Value(*value);
+            percent.Text(value ? std::to_wstring(static_cast<int>(std::lround(slider.Value()))) + L"%" : L"—");
+        });
+        (parent ? parent : section.panel).Children().Append(block);
     }
-    void Toggle(Section& section, const wchar_t* label, std::function<std::optional<bool>()> read, std::function<void(bool)> write)
+    void Toggle(Section& section, const wchar_t* label, std::function<std::optional<bool>()> read, std::function<void(bool)> write, c::StackPanel parent = nullptr)
     {
-        c::ToggleSwitch toggle; toggle.Header(winrt::box_value(label)); Name(toggle, label); const auto weak = weak_from_this();
+        auto commands = Row(parent ? parent : section.panel, Text(label));
+        c::ToggleSwitch toggle; toggle.OnContent(winrt::box_value(L"")); toggle.OffContent(winrt::box_value(L"")); toggle.MinWidth(0);
+        Name(toggle, label); const auto weak = weak_from_this();
         toggle.Toggled([weak, write](const auto& sender, const auto&) {
             if (const auto self = weak.lock(); self && !self->updating && !self->closed) write(sender.template as<c::ToggleSwitch>().IsOn());
         });
         section.updates.push_back([toggle, read] { const auto value = read(); toggle.IsEnabled(value.has_value()); if (value) toggle.IsOn(*value); });
-        section.panel.Children().Append(toggle);
+        commands.Children().Append(toggle);
     }
     void Fallback(Section& section, const wchar_t* uri)
-    { Button(section.panel, _LW("settings.taskbar.systemSettings.open"), [uri] { Settings(uri); }); }
+    { Button(section.panel, _LW("settings.taskbar.systemSettings.open"), [this, uri] { Settings(uri); }); }
+    std::optional<std::pair<std::string, bool>> Radio(const std::string& key) const
+    {
+        const auto state = Current(key == "wifi" ? "network.wifi" : "bluetooth.devices");
+        const auto& radios = Items(state, key == "wifi" ? "interfaces" : "radios");
+        for (const auto& radio : radios)
+            if (j::Flag(radio, "available") && (key != "wifi" || interfaceId.empty() || j::String(radio, "id") == interfaceId))
+                return std::pair(j::String(radio, "id"), j::Flag(radio, "enabled"));
+        return std::nullopt;
+    }
     void AddSection(const char* id, const char* title, const char* topic, const wchar_t* glyph)
     {
         auto& section = sections[id]; section.topic = topic; section.title = title;
-        section.panel = c::StackPanel(); section.panel.Spacing(8);
-        section.panel.Visibility(x::Visibility::Collapsed);
-        details.Children().Append(section.panel);
-        c::StackPanel label; label.Spacing(4);
-        c::StackPanel heading; heading.Orientation(c::Orientation::Horizontal); heading.Spacing(8);
+        section.panel = c::StackPanel(); section.panel.Spacing(12);
+        section.panel.Visibility(x::Visibility::Collapsed); details.Children().Append(section.panel);
+        section.summary = Text(_LW("controlCenter.loading")); section.summary.FontSize(12); section.summary.Opacity(.75);
+        section.summary.MaxLines(1); section.summary.TextTrimming(x::TextTrimming::CharacterEllipsis);
+        Demand(id);
+        const std::string key(id);
+        if (key != "wifi" && key != "bluetooth") return;
+        c::StackPanel tile; tile.Spacing(6);
+        c::Grid buttons; buttons.ColumnSpacing(1);
+        buttons.ColumnDefinitions().Append(c::ColumnDefinition());
+        c::ColumnDefinition tail; tail.Width(x::GridLengthHelper::FromPixels(36)); buttons.ColumnDefinitions().Append(tail);
+        section.radio = c::Primitives::ToggleButton(); section.radio.MinHeight(56);
+        section.radio.HorizontalAlignment(x::HorizontalAlignment::Stretch); Name(section.radio, _LW(title));
+        c::StackPanel heading; heading.Spacing(8); heading.Orientation(c::Orientation::Horizontal);
         c::FontIcon icon; icon.Glyph(glyph); icon.FontSize(18); heading.Children().Append(icon);
-        auto caption = Text(_LW(title)); caption.FontSize(14); caption.MaxLines(1); caption.TextTrimming(x::TextTrimming::CharacterEllipsis);
-        heading.Children().Append(caption); label.Children().Append(heading);
-        section.summary = Text(_LW("controlCenter.loading")); section.summary.FontSize(12); section.summary.Opacity(.7);
-        section.summary.MaxLines(1); section.summary.TextTrimming(x::TextTrimming::CharacterEllipsis); label.Children().Append(section.summary);
-        section.tile = c::Button(); section.tile.Content(label); section.tile.Padding({12, 10, 12, 10});
-        section.tile.HorizontalAlignment(x::HorizontalAlignment::Stretch); section.tile.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
-        section.tile.MinHeight(72); Name(section.tile, _LW(title));
-        const int index = static_cast<int>(sections.size()) - 1;
-        if (index % 2 == 0) tiles.RowDefinitions().Append(c::RowDefinition());
-        c::Grid::SetRow(section.tile, index / 2); c::Grid::SetColumn(section.tile, index % 2);
-        tiles.Children().Append(section.tile);
-        const auto weak = weak_from_this(); const std::string key(id);
-        section.tile.Click([weak, key](const auto&, const auto&) {
-            if (const auto self = weak.lock(); self && !self->closed) self->Select(key);
+        auto caption = Text(_LW(title)); caption.FontSize(14); caption.MaxLines(1); heading.Children().Append(caption);
+        section.radio.Content(heading); buttons.Children().Append(section.radio);
+        section.tile = c::Button(); section.tile.Content(c::SymbolIcon(c::Symbol::Forward)); section.tile.Padding({8, 8, 8, 8});
+        section.tile.HorizontalAlignment(x::HorizontalAlignment::Stretch); section.tile.VerticalAlignment(x::VerticalAlignment::Stretch);
+        Name(section.tile, _LW(title)); c::Grid::SetColumn(section.tile, 1); buttons.Children().Append(section.tile);
+        tile.Children().Append(buttons); tile.Children().Append(section.summary);
+        c::Grid::SetColumn(tile, static_cast<int>(tiles.Children().Size())); tiles.Children().Append(tile);
+        const auto weak = weak_from_this();
+        section.tile.Click([weak, key](const auto&, const auto&) { if (auto self = weak.lock(); self && !self->closed) self->Select(key); });
+        section.radio.Click([weak, key](const auto&, const auto&) {
+            if (auto self = weak.lock(); self && !self->closed && !self->updating)
+                if (const auto radio = self->Radio(key))
+                    self->Start(key == "wifi" ? "network.wifi.setRadio" : "bluetooth.setRadio",
+                        {{key == "wifi" ? "interfaceId" : "radioId", radio->first}, {"enabled", radio->second ? "0" : "1"}});
         });
-        Demand(key);
     }
     void Demand(const std::string& key)
     {
@@ -215,11 +270,10 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (key == "media")
         {
             topics = {"media.sessions"};
-            if (sections.at(key).open) topics.push_back("media.artwork");
-            else data->StopTopic(Consumer, "media.artwork");
+            topics.push_back("media.artwork");
         }
         for (const auto& topic : topics)
-            data->StartTopic(Consumer, topic, std::chrono::milliseconds(key == "audio" || key == "media" ? 500 : 2000));
+            source.subscribe(topic, std::chrono::milliseconds(key == "audio" || key == "media" ? 500 : 2000));
     }
     void Select(const std::string& selected)
     {
@@ -257,14 +311,14 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (settings.brightnessControls) AddSection("brightness", "statusBar.brightnessControls", "system.display.brightness", L"\uE706");
         if (settings.mediaControls) AddSection("media", "statusBar.mediaControls", "media.sessions", L"\uE768");
         if (settings.powerControls) AddSection("power", "statusBar.powerControls", "system.power.plans", L"\uE7E8");
-        overviewAudio.panel = c::StackPanel(); overviewBrightness.panel = c::StackPanel();
+        auto levels = Group(overview);
+        overviewAudio.panel = levels; overviewBrightness.panel = levels;
         if (settings.audioControls)
         {
             Slider(overviewAudio, _LW("statusBar.volume"), [this]() -> std::optional<double> {
-                const auto snapshot = service->Current("audio.output.volume");
+                const auto snapshot = source.current("audio.output.volume");
                 return snapshot && snapshot->available ? std::optional(j::Numeric(snapshot->value, "volume") * 100) : std::nullopt;
-            }, [this](double level) { Start("audio.output.setVolume", {{"volume", std::to_string(level / 100)}}); });
-            overview.Children().Append(overviewAudio.panel);
+            }, [this](double level) { Start("audio.output.setVolume", {{"volume", std::to_string(level / 100)}}); }, nullptr, "audio");
         }
         if (settings.brightnessControls)
         {
@@ -276,20 +330,25 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
                 });
                 if (supported != monitors.end()) quickBrightnessId = j::String(*supported, "id");
                 return supported == monitors.end() ? std::nullopt : std::optional(j::Numeric(*supported, "brightness"));
-            }, [this](double level) { if (!quickBrightnessId.empty()) Start("system.display.setBrightness", {{"monitorId", quickBrightnessId}, {"brightness", std::to_string(level)}}); });
-            overview.Children().Append(overviewBrightness.panel);
+            }, [this](double level) { if (!quickBrightnessId.empty()) Start("system.display.setBrightness", {{"monitorId", quickBrightnessId}, {"brightness", std::to_string(level)}}); }, nullptr, "brightness");
         }
+        if (settings.mediaControls) { overviewMedia.panel = Group(overview); Media(overviewMedia, true); }
+        const auto footer = Row(overview, batterySummary);
+        auto power = Button(footer, _LW("statusBar.powerControls"), [weak] { if (auto self = weak.lock()) self->Select("power"); });
+        c::FontIcon powerIcon; powerIcon.Glyph(L"\uE7E8"); powerIcon.FontSize(16); power.Content(powerIcon);
+        auto system = Button(footer, _LW("statusBar.systemSettings"), [this] { Settings(L"ms-settings:"); });
+        system.Content(c::SymbolIcon(c::Symbol::Setting));
         Select(initial == StatusBarAction::Audio ? "audio" : initial == StatusBarAction::Network ? "wifi" : initial == StatusBarAction::Power ? "power" : "");
     }
     void Summaries()
     {
         for (auto& [key, section] : sections)
         {
-            const auto state = service->Current(section.topic);
+            const auto state = source.current(section.topic);
             std::wstring label = _LW(!state ? "controlCenter.loading" : !state->available ? "controlCenter.unavailable" : "controlCenter.off");
             if (key == "media")
             {
-                const auto media = data->MediaSessions();
+                const auto media = source.media();
                 label = media && media->available && !media->sessions.empty() ? Wide(media->sessions.front().title) : _LW("controlCenter.unavailable");
             }
             else if (state && state->available)
@@ -332,15 +391,23 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
                     for (const auto& plan : Items(value, "plans")) if (j::Flag(plan, "active")) { label += Wide(j::String(plan, "name")); break; }
                 }
             }
-            section.summary.Text(label);
-            Name(section.tile, std::wstring(_LW(section.title.c_str())) + L" · " + label);
-            c::ToolTipService::SetToolTip(section.tile, winrt::box_value(label));
+            if (section.summary.Text() != label)
+            {
+                section.summary.Text(label);
+                if (section.tile) { Name(section.tile, std::wstring(_LW(section.title.c_str())) + L" · " + label); c::ToolTipService::SetToolTip(section.tile, winrt::box_value(label)); }
+            }
+            if (section.radio) { const auto radio = Radio(key); section.radio.IsEnabled(radio.has_value()); section.radio.IsChecked(radio && radio->second); }
         }
         for (const auto& update : overviewAudio.updates) update();
         for (const auto& update : overviewBrightness.updates) update();
+        if (overviewMedia.panel) { Media(overviewMedia, true); for (const auto& update : overviewMedia.updates) update(); }
+        const auto power = Current("system.power.plans");
+        const auto* battery = power.Find("batteryPercent");
+        batterySummary.Text(j::Flag(power, "batteryPresent") && battery && battery->IsNumber() ?
+            std::wstring(_LW("statusBar.battery")) + L" " + std::to_wstring(static_cast<int>(battery->number)) + L"%" : _LW("statusBar.powerControls"));
     }
     bool Begin(Section& section, const std::string& key)
-    { if (section.key == key) return false; section.key = key; section.updates.clear(); section.panel.Children().Clear(); return true; }
+    { if (section.key == key) return false; layoutDirty = true; section.key = key; section.updates.clear(); section.panel.Children().Clear(); return true; }
     void Audio(Section& section)
     {
         const auto value = Current("audio.devices"); const auto& devices = Items(value, "devices");
@@ -348,19 +415,20 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (!Begin(section, "audio:" + identity)) return;
         for (const auto* direction : {"output", "input"})
         {
+            const auto group = Group(section.panel);
             const std::string prefix = std::string("audio.") + direction;
             std::vector<std::pair<std::string, std::wstring>> choices;
             for (const auto& item : devices) if (j::Flag(item, "available") && j::String(item, "direction") == direction)
                 choices.emplace_back(j::String(item, "id"), Wide(j::String(item, "name")));
             Choice(section, _LW(direction == std::string("output") ? "controlCenter.output" : "controlCenter.input"), choices,
                 [this, prefix] { return j::String(Current((prefix + ".volume").c_str()), "endpointId"); },
-                [this, prefix](const auto& id) { Start(prefix + ".selectDevice", {{"endpointId", id}}); });
+                [this, prefix](const auto& id) { Start(prefix + ".selectDevice", {{"endpointId", id}}); }, group);
             Slider(section, _LW("statusBar.volume"), [this, prefix]() -> std::optional<double> {
-                const auto state = service->Current(prefix + ".volume"); return state && state->available ? std::optional(j::Numeric(state->value, "volume") * 100) : std::nullopt;
-            }, [this, prefix](double level) { Start(prefix + ".setVolume", {{"volume", std::to_string(level / 100)}}); });
+                const auto state = source.current(prefix + ".volume"); return state && state->available ? std::optional(j::Numeric(state->value, "volume") * 100) : std::nullopt;
+            }, [this, prefix](double level) { Start(prefix + ".setVolume", {{"volume", std::to_string(level / 100)}}); }, group);
             Toggle(section, _LW("controlCenter.mute"), [this, prefix]() -> std::optional<bool> {
-                const auto state = service->Current(prefix + ".volume"); return state && state->available ? std::optional(j::Flag(state->value, "muted")) : std::nullopt;
-            }, [this, prefix](bool muted) { Start(prefix + ".setMute", {{"muted", muted ? "1" : "0"}}); });
+                const auto state = source.current(prefix + ".volume"); return state && state->available ? std::optional(j::Flag(state->value, "muted")) : std::nullopt;
+            }, [this, prefix](bool muted) { Start(prefix + ".setMute", {{"muted", muted ? "1" : "0"}}); }, group);
         }
         Fallback(section, L"ms-settings:sound");
     }
@@ -370,13 +438,16 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (!Begin(section, "brightness:" + Identity(monitors))) return;
         for (const auto& monitor : monitors)
         {
+            const auto group = Group(section.panel);
             const auto id = j::String(monitor, "id");
             Slider(section, Wide(j::String(monitor, "name")).c_str(), [this, id]() -> std::optional<double> {
                 const auto item = Find("system.display.brightness", "monitors", id);
                 return j::Flag(item, "available") ? std::optional(j::Numeric(item, "brightness")) : std::nullopt;
-            }, [this, id](double level) { Start("system.display.setBrightness", {{"monitorId", id}, {"brightness", std::to_string(level)}}); });
+            }, [this, id](double level) { Start("system.display.setBrightness", {{"monitorId", id}, {"brightness", std::to_string(level)}}); }, group);
         }
-        section.panel.Children().Append(Text(_LW("controlCenter.unsupportedHint"))); Fallback(section, L"ms-settings:display");
+        if (monitors.empty() || std::any_of(monitors.begin(), monitors.end(), [](const auto& item) { return !j::Flag(item, "available"); }))
+            section.panel.Children().Append(Text(_LW("controlCenter.unsupportedHint")));
+        Fallback(section, L"ms-settings:display");
     }
     JsonValue WifiInterface() const { return Find("network.wifi", "interfaces", interfaceId); }
     void HiddenNetwork()
@@ -413,22 +484,25 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (!Begin(section, "wifi:" + Identity(interfaces) + interfaceId + Identity(networks) + Identity(profiles, "name"))) return;
         std::vector<std::pair<std::string, std::wstring>> adapters;
         for (const auto& item : interfaces) adapters.emplace_back(j::String(item, "id"), Wide(j::String(item, "name")));
+        const auto adapterGroup = Group(section.panel);
         Choice(section, _LW("controlCenter.adapter"), adapters, [this] { return interfaceId; }, [this](const auto& id) {
             interfaceId = id; scanOnArrival = true; sections.at("wifi").key.clear(); Refresh();
-        });
+        }, adapterGroup);
         Toggle(section, _LW("statusBar.wifiControls"), [this]() -> std::optional<bool> {
             const auto item = WifiInterface(); const auto* enabled = item.Find("enabled"); return enabled && enabled->IsBoolean() ? std::optional(enabled->boolean) : std::nullopt;
-        }, [this](bool enabled) { Start("network.wifi.setRadio", {{"interfaceId", interfaceId}, {"enabled", enabled ? "1" : "0"}}); });
-        const auto scan = Button(section.panel, _LW("controlCenter.scan"), [this] { Start("network.wifi.scan", {{"interfaceId", interfaceId}}); });
+        }, [this](bool enabled) { Start("network.wifi.setRadio", {{"interfaceId", interfaceId}, {"enabled", enabled ? "1" : "0"}}); }, adapterGroup);
+        const auto scan = Button(adapterGroup, _LW("controlCenter.scan"), [this] { Start("network.wifi.scan", {{"interfaceId", interfaceId}}); });
         section.updates.push_back([this, scan] { scan.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
-        c::TextBlock error = Text(L""); section.panel.Children().Append(error);
+        c::TextBlock error = Text(L""); adapterGroup.Children().Append(error);
         section.updates.push_back([this, error] { const auto state = WifiInterface(); error.Text(j::String(state, "error") == "accessDenied" ? _LW("controlCenter.locationDenied") : L""); });
+        const auto available = Group(section.panel, _LW("controlCenter.availableNetworks"));
+        if (networks.empty()) available.Children().Append(Text(_LW("controlCenter.unavailable")));
         for (const auto& network : networks)
         {
             const auto id = j::String(network, "id");
             auto text = Text(Wide(j::String(network, "ssid")));
             c::ToolTipService::SetToolTip(text, winrt::box_value(Wide(j::String(network, "ssid"))));
-            auto row = Row(section.panel, text);
+            auto row = Row(available, text);
             const auto button = Button(row, _LW("controlCenter.connect"), [this, id] {
                 const auto current = WifiInterface();
                 for (const auto& item : Items(current, "networks")) if (j::String(item, "id") == id)
@@ -450,11 +524,11 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
                 }
             });
         }
-        if (!profiles.empty()) section.panel.Children().Append(Text(_LW("controlCenter.savedNetworks")));
+        const auto saved = profiles.empty() ? c::StackPanel(nullptr) : Group(section.panel, _LW("controlCenter.savedNetworks"));
         for (const auto& profile : profiles)
         {
             const auto name = j::String(profile, "name");
-            auto row = Row(section.panel, Text(Wide(name)));
+            auto row = Row(saved, Text(Wide(name)));
             Button(row, _LW("controlCenter.connect"), [this, name] { Start("network.wifi.connect", {{"interfaceId", interfaceId}, {"profileName", name}}); });
             if (!j::Flag(profile, "managed"))
             {
@@ -466,23 +540,27 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         const auto hidden = Button(section.panel, _LW("controlCenter.hiddenNetwork"), [this] { HiddenNetwork(); });
         section.updates.push_back([this, hidden] { hidden.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
         Fallback(section, L"ms-settings:network-wifi");
-        Button(section.panel, _LW("controlCenter.locationSettings"), [] { Settings(L"ms-settings:privacy-location"); });
+        Button(section.panel, _LW("controlCenter.locationSettings"), [this] { Settings(L"ms-settings:privacy-location"); });
     }
     void Bluetooth(Section& section)
     {
         const auto value = Current("bluetooth.devices"); const auto& radios = Items(value, "radios"); const auto& devices = Items(value, "devices");
         if (!Begin(section, "bluetooth:" + Identity(radios) + Identity(devices))) return;
+        const auto radioGroup = Group(section.panel);
+        if (radios.empty()) radioGroup.Children().Append(Text(_LW("controlCenter.unavailable")));
         for (const auto& radio : radios)
         {
             const auto id = j::String(radio, "id");
             Toggle(section, Wide(j::String(radio, "name")).c_str(), [this, id]() -> std::optional<bool> {
                 const auto item = Find("bluetooth.devices", "radios", id); return j::Flag(item, "available") ? std::optional(j::Flag(item, "enabled")) : std::nullopt;
-            }, [this, id](bool enabled) { Start("bluetooth.setRadio", {{"radioId", id}, {"enabled", enabled ? "1" : "0"}}); });
+            }, [this, id](bool enabled) { Start("bluetooth.setRadio", {{"radioId", id}, {"enabled", enabled ? "1" : "0"}}); }, radioGroup);
         }
+        const auto deviceGroup = Group(section.panel, _LW("controlCenter.devices"));
+        if (devices.empty()) deviceGroup.Children().Append(Text(_LW("controlCenter.unavailable")));
         for (const auto& device : devices)
         {
             const auto id = j::String(device, "id"); const auto text = Text(Wide(j::String(device, "name")));
-            auto row = Row(section.panel, text);
+            auto row = Row(deviceGroup, text);
             const auto button = Button(row, _LW("controlCenter.connect"), [this, id] {
                 const auto item = Find("bluetooth.devices", "devices", id);
                 if (!j::Flag(item, "canConnect")) Settings(L"ms-settings:bluetooth");
@@ -503,45 +581,70 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (!Begin(section, "power:" + Identity(plans) + (j::Flag(value, "modeSupported") ? "1" : "0"))) return;
         std::vector<std::pair<std::string, std::wstring>> choices;
         for (const auto& plan : plans) choices.emplace_back(j::String(plan, "id"), Wide(j::String(plan, "name")));
+        const auto plansGroup = Group(section.panel);
         Choice(section, _LW("controlCenter.powerPlan"), choices, [this] { return j::String(Current("system.power.plans"), "activePlanId"); },
-            [this](const auto& id) { Start("system.power.setPlan", {{"planId", id}}); });
+            [this](const auto& id) { Start("system.power.setPlan", {{"planId", id}}); }, plansGroup);
         if (j::Flag(value, "modeSupported")) Choice(section, _LW("controlCenter.powerMode"),
             {{"efficiency", _LW("controlCenter.efficiency")}, {"balanced", _LW("controlCenter.balanced")}, {"performance", _LW("controlCenter.performance")}},
             [this] { const auto state = Current("system.power.plans"); return j::String(state, j::Flag(state, "onAC") ? "acMode" : "dcMode"); },
-            [this](const auto& mode) { Start("system.power.setMode", {{"mode", mode}}); });
-        const auto battery = Text(L""); section.panel.Children().Append(battery);
+            [this](const auto& mode) { Start("system.power.setMode", {{"mode", mode}}); }, plansGroup);
+        const auto battery = Text(L""); plansGroup.Children().Append(battery);
         section.updates.push_back([this, battery] { const auto state = Current("system.power.plans"); const auto* level = state.Find("batteryPercent");
             battery.Text(level && level->IsNumber() ? std::wstring(_LW("statusBar.battery")) + L" " + std::to_wstring(static_cast<int>(level->number)) + L"%" : L""); });
+        c::Grid commands; commands.ColumnSpacing(8); commands.RowSpacing(8);
+        commands.ColumnDefinitions().Append(c::ColumnDefinition()); commands.ColumnDefinitions().Append(c::ColumnDefinition());
+        commands.RowDefinitions().Append(c::RowDefinition()); commands.RowDefinitions().Append(c::RowDefinition());
+        int index = 0;
         for (const auto* action : {"lock", "sleep", "restart", "shutdown"})
         {
             const std::string task = std::string("system.power.") + action;
-            Button(section.panel, _LW((std::string("controlCenter.") + action).c_str()), [this, task] { Start(task); });
+            c::StackPanel cell;
+            auto command = Button(cell, _LW((std::string("controlCenter.") + action).c_str()), [this, task] { Start(task); });
+            command.HorizontalAlignment(x::HorizontalAlignment::Stretch); command.Height(40);
+            c::Grid::SetRow(cell, index / 2); c::Grid::SetColumn(cell, index % 2); commands.Children().Append(cell); ++index;
         }
+        section.panel.Children().Append(commands);
         Fallback(section, L"ms-settings:powersleep");
     }
-    void Media(Section& section)
+    void Media(Section& section, bool compact = false)
     {
-        const auto snapshot = data->MediaSessions(); std::string key;
+        const auto snapshot = source.media(); std::string key;
         if (snapshot) for (const auto& item : snapshot->sessions) key += item.id + ":";
         if (!Begin(section, "media:" + key)) return;
         std::vector<std::pair<std::string, std::wstring>> choices;
         if (snapshot) for (const auto& item : snapshot->sessions) choices.emplace_back(item.id, Wide(item.sourceName));
         if (snapshot && (mediaId.empty() || std::none_of(snapshot->sessions.begin(), snapshot->sessions.end(), [this](const auto& item) { return item.id == mediaId; })))
             mediaId = snapshot->sessions.empty() ? std::string{} : snapshot->sessions.front().id;
-        Choice(section, _LW("statusBar.mediaControls"), choices, [this] { return mediaId; }, [this](const auto& id) { mediaId = id; Refresh(); });
-        c::Image art; art.Height(100); art.Stretch(x::Media::Stretch::Uniform); section.panel.Children().Append(art);
-        auto token = std::make_shared<std::string>(); const auto title = Text(L""); section.panel.Children().Append(title);
-        section.updates.push_back([this, art, token, title] {
-            if (const auto state = data->MediaSessions()) for (const auto& item : state->sessions) if (item.id == mediaId) title.Text(Wide(item.title + "\n" + item.artist));
-            const auto image = data->MediaArtwork();
-            if (!image || !image->available || !image->pixels || image->sessionId != mediaId) { art.Source(nullptr); token->clear(); return; }
-            if (*token == image->resourceToken) return; *token = image->resourceToken;
+        if (!compact && choices.size() > 1)
+            Choice(section, _LW("statusBar.mediaControls"), choices, [this] { return mediaId; }, [this](const auto& id) { mediaId = id; Refresh(); });
+        c::Grid track; track.ColumnSpacing(12);
+        c::ColumnDefinition cover; cover.Width(x::GridLengthHelper::FromPixels(64)); track.ColumnDefinitions().Append(cover);
+        track.ColumnDefinitions().Append(c::ColumnDefinition());
+        c::Grid coverBox; coverBox.Width(64); coverBox.Height(64);
+        c::FontIcon fallback; fallback.Glyph(L"\uE8D6"); fallback.FontSize(28); fallback.Opacity(.6); coverBox.Children().Append(fallback);
+        c::Image art; art.Width(64); art.Height(64); art.Stretch(x::Media::Stretch::UniformToFill); coverBox.Children().Append(art); track.Children().Append(coverBox);
+        c::StackPanel description; description.Spacing(4); description.VerticalAlignment(x::VerticalAlignment::Center); c::Grid::SetColumn(description, 1);
+        auto title = Text(L""); title.MaxLines(2); title.TextTrimming(x::TextTrimming::CharacterEllipsis);
+        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); description.Children().Append(title);
+        auto artist = Text(L""); artist.FontSize(12); artist.Opacity(.7); artist.MaxLines(1); artist.TextTrimming(x::TextTrimming::CharacterEllipsis); description.Children().Append(artist);
+        track.Children().Append(description); section.panel.Children().Append(track);
+        auto token = std::make_shared<std::string>();
+        section.updates.push_back([this, art, fallback, token, title, artist] {
+            std::wstring heading = _LW("controlCenter.unavailable"), subtitle;
+            if (const auto state = source.media()) for (const auto& item : state->sessions) if (item.id == mediaId)
+            { heading = Wide(item.title); subtitle = Wide(item.artist.empty() ? item.sourceName : item.artist); }
+            if (title.Text() != heading) title.Text(heading);
+            if (artist.Text() != subtitle) artist.Text(subtitle);
+            const auto image = source.artwork();
+            if (!image || !image->available || !image->pixels || image->sessionId != mediaId)
+            { if (!token->empty()) art.Source(nullptr); token->clear(); fallback.Visibility(x::Visibility::Visible); return; }
+            if (*token == image->resourceToken) return;
             const auto& pixels = *image->pixels;
             if (!widget_runtime::IsValidWidgetRuntimeImage(pixels)) return;
             x::Media::Imaging::WriteableBitmap bitmap(static_cast<int>(pixels.width), static_cast<int>(pixels.height)); BYTE* bytes = nullptr;
             winrt::check_hresult(bitmap.PixelBuffer().as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
             for (std::uint32_t row = 0; row < pixels.height; ++row) std::memcpy(bytes + row * pixels.width * 4, pixels.bgraPremultiplied.data() + row * pixels.stride, pixels.width * 4);
-            bitmap.Invalidate(); art.Source(bitmap);
+            bitmap.Invalidate(); art.Source(bitmap); *token = image->resourceToken; fallback.Visibility(x::Visibility::Collapsed);
         });
         c::StackPanel playback; playback.Orientation(c::Orientation::Horizontal); playback.Spacing(12);
         playback.HorizontalAlignment(x::HorizontalAlignment::Center); section.panel.Children().Append(playback);
@@ -549,18 +652,21 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         {
             const std::string task = std::string("media.") + action;
             const auto button = Button(playback, _LW((std::string("controlCenter.") + action).c_str()), [this, task] { Start(task, {{"sessionId", mediaId}}); });
-            button.Content(c::SymbolIcon(task == "media.previous" ? c::Symbol::Previous : task == "media.next" ? c::Symbol::Next : c::Symbol::Play));
-            button.Width(52); button.Height(40);
-            section.updates.push_back([this, button, task] {
+            c::SymbolIcon glyph(task == "media.previous" ? c::Symbol::Previous : task == "media.next" ? c::Symbol::Next : c::Symbol::Play);
+            button.Content(glyph); button.Width(48); button.Height(36);
+            section.updates.push_back([this, button, glyph, task] {
                 bool enabled = false;
-                if (const auto state = data->MediaSessions()) for (const auto& item : state->sessions) if (item.id == mediaId)
+                if (const auto state = source.media()) for (const auto& item : state->sessions) if (item.id == mediaId)
                 {
                     enabled = task == "media.previous" ? item.controls.canPrevious : task == "media.next" ? item.controls.canNext : item.controls.canPlayPause;
-                    if (task == "media.toggle") button.Content(c::SymbolIcon(item.playbackStatus == "playing" ? c::Symbol::Pause : c::Symbol::Play));
+                    if (task == "media.toggle")
+                    { const auto icon = item.playbackStatus == "playing" ? c::Symbol::Pause : c::Symbol::Play; if (glyph.Symbol() != icon) glyph.Symbol(icon); }
                 }
                 button.IsEnabled(enabled);
             });
         }
+        if (compact && choices.size() > 1)
+            Button(section.panel, _LW("statusBar.mediaControls"), [this] { Select("media"); });
     }
     void Refresh()
     {
@@ -579,7 +685,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             else if (key == "media") Media(section);
             for (const auto& update : section.updates) update();
         }
-        for (const auto& completion : service->DrainCompletions(Consumer))
+        for (const auto& completion : source.completions())
         {
             if (!feedback.Take(completion.id)) continue;
             if (completion.error == "canceled") continue;
@@ -588,21 +694,44 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
                 completion.error == "timeout" ? "controlCenter.timeout" : completion.error == "passwordRequired" ? "controlCenter.invalidPassword" :
                 completion.error == "systemSettingsRequired" || completion.error == "actionUnsupported" ? "controlCenter.unsupportedHint" : "controlCenter.failed", !completion.ok);
         }
+        if (layoutDirty) { layoutDirty = false; if (layoutChanged) layoutChanged(); }
     }
     void Close()
     {
         if (closed) return; closed = true;
         feedback.Clear();
         if (dialog) { dialog.Hide(); dialog = nullptr; }
-        data->RemoveConsumer(Consumer); root.Children().Clear(); sections.clear();
+        source.close(); root.Children().Clear(); sections.clear();
     }
 };
+namespace
+{
+SystemControlViewSource DeviceSource(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data)
+{
+    auto service = data->Controls();
+    SystemControlViewSource source;
+    source.current = [service](std::string_view topic) { return service->Current(topic); };
+    source.start = [service](Request request) { return service->Start("controlCenter", std::move(request)); };
+    source.completions = [service] { return service->DrainCompletions("controlCenter"); };
+    source.subscribe = [data](std::string topic, std::chrono::milliseconds period) { data->StartTopic("controlCenter", topic, period); };
+    source.unsubscribe = [data](std::string_view topic) { data->StopTopic("controlCenter", std::string(topic)); };
+    source.close = [data] { data->RemoveConsumer("controlCenter"); };
+    source.media = [data] { return data->MediaSessions(); };
+    source.artwork = [data] { return data->MediaArtwork(); };
+    source.settings = [](const wchar_t* uri) { ShellExecuteW(nullptr, L"open", uri, nullptr, nullptr, SW_SHOWNORMAL); };
+    return source;
+}
+}
 SystemControlView::SystemControlView(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data,
     const StatusBarSettings& settings, StatusBarAction initial, std::function<void()> layoutChanged)
-    : impl_(std::make_shared<Impl>(std::move(data)))
+    : SystemControlView(DeviceSource(std::move(data)), settings, initial, std::move(layoutChanged)) {}
+SystemControlView::SystemControlView(SystemControlViewSource source,
+    const StatusBarSettings& settings, StatusBarAction initial, std::function<void()> layoutChanged)
+    : impl_(std::make_shared<Impl>(std::move(source)))
 { impl_->Build(settings, initial); impl_->layoutChanged = std::move(layoutChanged); }
 SystemControlView::~SystemControlView() { impl_->Close(); }
 x::FrameworkElement SystemControlView::Root() const { return impl_->root; }
 void SystemControlView::Refresh() { impl_->Refresh(); }
+void SystemControlView::Select(std::string_view section) { impl_->Select(std::string(section)); }
 void SystemControlView::Close() { impl_->Close(); }
 }

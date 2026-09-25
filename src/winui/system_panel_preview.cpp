@@ -2,6 +2,9 @@
 #include "system_panel_preview.h"
 #include "system_panel_surface.h"
 #include "system_calendar_view.h"
+#include "system_control_view.h"
+#include "../widget_system_control_data.h"
+#include <set>
 #include "winui_runtime.h"
 #include "../l10n.h"
 #include "../data_paths.h"
@@ -55,6 +58,46 @@ struct ComScope
     HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ~ComScope() { if (SUCCEEDED(result)) CoUninitialize(); }
 };
+struct ControlPreviewState
+{
+    bool unavailable = false;
+    std::set<std::string> subscriptions;
+    unsigned scans = 0;
+};
+SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> state)
+{
+    SystemControlViewSource source;
+    source.current = [state](std::string_view topic) -> std::optional<system_control::Snapshot> {
+        auto value = widget_runtime::PreviewSystemControlData(topic, state->unavailable);
+        if (topic == "audio.output.volume") ParseJson(R"({"endpointId":"audio-output-preview","volume":0.42,"muted":false})", value);
+        return system_control::Snapshot{!state->unavailable, std::move(value), state->unavailable ? "unavailable" : "", 0, 1};
+    };
+    source.start = [state](system_control::Request request) -> std::uint64_t {
+        if (request.name != "network.wifi.scan" || request.arguments.at("interfaceId") != "wifi-preview")
+            throw std::runtime_error("offline control view unexpectedly dispatched a device mutation");
+        return ++state->scans; // Only the explicit Wi-Fi detail page may request a scan.
+    };
+    source.completions = [] { return std::vector<system_control::Completion>{}; };
+    source.subscribe = [state](std::string topic, std::chrono::milliseconds) { state->subscriptions.insert(std::move(topic)); };
+    source.unsubscribe = [state](std::string_view topic) { state->subscriptions.erase(std::string(topic)); };
+    source.close = [state] { state->subscriptions.clear(); };
+    source.settings = [](const wchar_t*) { throw std::runtime_error("offline view must not launch Windows Settings"); };
+    source.media = [state]() -> std::optional<widget_runtime::WidgetMediaSessionsDataSnapshot> {
+        widget_runtime::WidgetMediaSessionsDataSnapshot result; result.available = !state->unavailable;
+        if (!state->unavailable)
+        {
+            widget_runtime::WidgetMediaSessionDataSnapshot session;
+            session.id = "media-preview"; session.sourceName = "Snow Music";
+            session.title = _L("app.widget_preview.api.calendar_publish"); session.artist = "Snow Music";
+            session.playbackStatus = "playing"; session.current = true;
+            session.controls.canPrevious = session.controls.canNext = session.controls.canPlayPause = true;
+            result.currentSessionId = session.id; result.sessions.push_back(std::move(session));
+        }
+        return result;
+    };
+    source.artwork = [] { return std::optional<widget_runtime::WidgetMediaArtworkDataSnapshot>{}; };
+    return source;
+}
 void CheckMonthFits(const x::DependencyObject& element, const x::Controls::CalendarView& month = nullptr,
     bool* foundLastDay = nullptr)
 {
@@ -83,7 +126,7 @@ void CheckMonthFits(const x::DependencyObject& element, const x::Controls::Calen
         CheckMonthFits(x::Media::VisualTreeHelper::GetChild(element, i), month, foundLastDay);
 }
 }
-native_component_preview::Result ExportCalendarPanelPreview(
+native_component_preview::Result ExportSystemPanelPreview(
     const native_component_preview::Request& request, PersonalizationSettings appearance)
 {
     native_component_preview::Result result; result.request = request;
@@ -93,7 +136,7 @@ native_component_preview::Result ExportCalendarPanelPreview(
         // RenderTargetBitmap captures XAML, not the compositor's desktop blur.
         // Keep that unsupported boundary explicit instead of exporting fake glass.
         if (appearance.glassEnabled || appearance.acrylicEnabled)
-            throw std::runtime_error("calendar-panel currently supports light/dark XAML surfaces; desktop blur requires separate compositor verification");
+            throw std::runtime_error("system panel preview currently supports light/dark XAML surfaces; desktop blur requires separate compositor verification");
         if (request.contentOnly) { appearance.widgetAlpha = 0; appearance.widgetBorderAlpha = 0; }
         result.stage = "panel.locale";
         const auto languageDirectory = std::filesystem::path(GetExecutableDirectoryPath()) / L"lang";
@@ -109,18 +152,41 @@ native_component_preview::Result ExportCalendarPanelPreview(
         // An isolated render window, never a DesktopApp, AppBar or Shell hook.
         // RTB supports offscreen content provided it is attached and not collapsed.
         host.window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
-            L"STATIC", L"SnowDesktop offline calendar render", WS_POPUP,
+            L"STATIC", L"SnowDesktop offline panel render", WS_POPUP,
             -32000, -32000, 900, 900, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!host.window) winrt::throw_last_error();
         ShowWindow(host.window, SW_SHOWNOACTIVATE);
-        constexpr float widthDip = 520;
-        for (const bool populated : {false, true})
+        const bool controlPanel = request.component == "control-panel";
+        const float widthDip = controlPanel ? 440.f : 520.f;
+        const auto controlState = std::make_shared<ControlPreviewState>();
+        std::unique_ptr<SystemControlView> controls;
+        unsigned layoutChanges = 0;
+        if (controlPanel) controls = std::make_unique<SystemControlView>(PreviewControls(controlState),
+            StatusBarSettings{}, StatusBarAction::ControlCenter, [&] { ++layoutChanges; });
+        const std::vector<std::string> presets = controlPanel ?
+            std::vector<std::string>{"overview", "audio", "brightness", "wifi", "bluetooth", "media", "power", "unavailable"} :
+            std::vector<std::string>{"empty", "agenda"};
+        for (const auto& preset : presets)
         {
             result.stage = "panel.tree";
+            auto frame = CreateSystemPanelFrame(appearance);
+            std::unique_ptr<SystemCalendarView> calendar;
+            if (controls)
+            {
+                controlState->unavailable = preset == "unavailable";
+                const auto before = layoutChanges;
+                controls->Select(preset == "overview" || preset == "unavailable" ? "" : preset);
+                if (layoutChanges == before) throw std::runtime_error("control page switch did not request immediate measurement");
+                x::Controls::ScrollViewer scroll; scroll.MaxHeight(470); scroll.Content(controls->Root());
+                scroll.HorizontalScrollBarVisibility(x::Controls::ScrollBarVisibility::Disabled);
+                frame.Child(scroll);
+            }
+            else
+            {
             SystemCalendarActions actions;
             actions.today = [] { return std::string("2026-09-26"); };
             actions.manage = [] {}; // Preview never opens settings or changes events.
-            actions.events = [populated](const std::string& date) {
+            actions.events = [populated = preset == "agenda"](const std::string& date) {
                 std::vector<calendar::CalendarEvent> events;
                 if (!populated) return events;
                 calendar::CalendarEvent first; first.id = "preview-brunch"; first.revision = 1;
@@ -129,8 +195,8 @@ native_component_preview::Result ExportCalendarPanelPreview(
                 second.date = date; second.title = _L("app.widget_preview.api.calendar_publish"); second.allDay = true;
                 events.push_back(std::move(first)); events.push_back(std::move(second)); return events;
             };
-            SystemCalendarView calendar(std::move(actions));
-            auto frame = CreateSystemPanelFrame(appearance); frame.Child(calendar.Root());
+            calendar = std::make_unique<SystemCalendarView>(std::move(actions)); frame.Child(calendar->Root());
+            }
             bool loaded = false;
             auto loadedEvent = frame.Loaded(winrt::auto_revoke, [&](const auto&, const auto&) { loaded = true; });
             if (!host.runtime.Attach(host.window, frame)) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
@@ -152,7 +218,7 @@ native_component_preview::Result ExportCalendarPanelPreview(
             int width = static_cast<int>(std::ceil(frame.ActualWidth() * request.dpi / 96.));
             int height = static_cast<int>(std::ceil(frame.ActualHeight() * request.dpi / 96.));
             if (width + request.padding * 2 > request.canvasWidth || height + request.padding * 2 > request.canvasHeight)
-                throw std::runtime_error("preview canvas is too small for the calendar panel");
+                throw std::runtime_error("preview canvas is too small for the system panel");
             result.stage = "panel.bitmap";
             x::Media::Imaging::RenderTargetBitmap bitmap;
             // WinUI's island rasterizer applies the XamlRoot scale to these
@@ -164,7 +230,7 @@ native_component_preview::Result ExportCalendarPanelPreview(
             const auto buffer = Await(bitmap.GetPixelsAsync());
             // Check the real visual tree as well as outer pixels. A valid PNG
             // and rounded frame must not mask missing dates inside the month.
-            CheckMonthFits(frame);
+            if (!controlPanel) CheckMonthFits(frame);
             // Allow one-pixel rounding at a fractional rasterization scale.
             // Reject a stale layout or missing pixels; retain the real size in
             // both the image and its metadata rather than stretching it.
@@ -172,7 +238,7 @@ native_component_preview::Result ExportCalendarPanelPreview(
             if (renderedWidth <= 0 || renderedHeight <= 0 ||
                 std::abs(renderedWidth - width) > 1 || std::abs(renderedHeight - height) > 1 ||
                 buffer.Length() != static_cast<unsigned>(renderedWidth * renderedHeight * 4))
-                throw std::runtime_error("calendar bitmap mismatch: requested=" + std::to_string(width) + "x" +
+                throw std::runtime_error("panel bitmap mismatch: requested=" + std::to_string(width) + "x" +
                     std::to_string(height) + ", returned=" + std::to_string(renderedWidth) + "x" +
                     std::to_string(renderedHeight) + ", bytes=" + std::to_string(buffer.Length()));
             width = renderedWidth; height = renderedHeight;
@@ -196,13 +262,20 @@ native_component_preview::Result ExportCalendarPanelPreview(
                     composed |= (std::min)(255u, ((source >> shift) & 255) + ((((destination >> shift) & 255) * inverse + 127) / 255)) << shift;
                 destination = composed;
             }
-            const std::string preset = populated ? "agenda" : "empty";
-            const auto path = request.outputDirectory / ("calendar-panel-" + preset + ".png");
+            const auto path = request.outputDirectory / (request.component + "-" + preset + ".png");
             result.stage = "panel.png";
             if (!preview_png::Save(path, canvas.width, canvas.height, canvas.pixels, result.error)) return result;
-            result.outputs.push_back({"calendar-panel", preset, path, false, false, false, false, false, false,
+            result.outputs.push_back({request.component, preset, path, false, false, false, false, false, false,
                 static_cast<int>(std::lround(appearance.cornerRadius * request.dpi / 96.)), width, height, left, top});
             host.runtime.Detach();
+            if (controls) frame.Child().as<x::Controls::ScrollViewer>().Content(nullptr);
+            frame.Child(nullptr);
+        }
+        if (controls)
+        {
+            controls->Close();
+            if (!controlState->subscriptions.empty() || controlState->scans != 1)
+                throw std::runtime_error("offline control lifecycle left subscriptions or scanned outside the Wi-Fi page");
         }
         result.ok = true; result.stage = "complete";
     }

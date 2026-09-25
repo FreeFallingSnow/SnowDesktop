@@ -47,7 +47,7 @@ void PrintUsage()
            " [--background image-file]"
            " [--content-only]"
            " [--storage key=value] [--host SnowDesktop.exe]\n"
-        << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|calendar-panel|all> <output-directory>"
+        << "  snowwidget preview-native <collection|collection-group|file-group|file-categories|folder-mapping|calendar-panel|control-panel|all> <output-directory>"
            " [--dpi N] [--locale CODE]"
            " [--appearance dark|light|glass-dark|glass-light|acrylic-dark|acrylic-light]"
            " [--background image-file]"
@@ -526,7 +526,7 @@ int wmain(int argc, wchar_t** argv)
              component != L"collection-group" &&
              component != L"file-group" &&
              component != L"file-categories" &&
-              component != L"folder-mapping" && component != L"calendar-panel" && component != L"all"))
+              component != L"folder-mapping" && component != L"calendar-panel" && component != L"control-panel" && component != L"all"))
         {
             std::cerr << "{\"ok\":false,\"error\":\"preview-native requires a supported component or all and an output directory\"}\n";
             return 2;

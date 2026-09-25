@@ -1101,6 +1101,35 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
     }
 }
 
+void TestControlPanelPreview(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& temporary)
+{
+    for (const bool dark : {false, true})
+    {
+        const auto output = temporary / (dark ? L"controls-dark" : L"controls-light");
+        const auto [exitCode, json] = Run(snowwidget, {L"preview-native", L"control-panel", output.wstring(),
+            L"--appearance", dark ? L"dark" : L"light", L"--dpi", dark ? L"144" : L"96",
+            L"--locale", dark ? L"en-US" : L"zh-CN", L"--transparent",
+            L"--canvas-width", L"1000", L"--canvas-height", L"1000", L"--padding", L"24", L"--host", host.wstring()});
+        if (exitCode != 0) std::cerr << json << '\n';
+        Check(exitCode == 0 && json.find("\"ok\":true") != std::string::npos,
+            "real control pages render without device mutations or leaking subscriptions");
+        LONG overviewHeight = 0;
+        for (const auto* page : {L"overview", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable"})
+        {
+            const auto bitmap = ReadPng(output / (std::wstring(L"control-panel-") + page + L".png"));
+            const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;
+            Check(std::abs(bounds.right - bounds.left - 440 * scale / 2) <= 1 &&
+                bounds.bottom - bounds.top >= 128 * scale / 2 && bounds.bottom - bounds.top <= 550 * scale / 2,
+                "control pages retain shared width and size their content within the popup viewport");
+            Check(HasFourRoundedCorners(bitmap, bounds), "all control subpages preserve the bottom corners");
+            if (std::wstring_view(page) == L"overview") overviewHeight = bounds.bottom - bounds.top;
+            if (std::wstring_view(page) == L"media") Check(bounds.bottom - bounds.top < overviewHeight - 80,
+                "switching to a short control page shrinks the actual rendered panel immediately");
+        }
+    }
+}
+
 int wmain(int argc, wchar_t** argv) try
 {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
@@ -1123,6 +1152,7 @@ int wmain(int argc, wchar_t** argv) try
 
     TemporaryDirectory temporary;
     TestCalendarPanelPreview(snowwidget, host, temporary.path);
+    TestControlPanelPreview(snowwidget, host, temporary.path);
     TestTextControlFontSizing(snowwidget, host, temporary.path);
     const auto tooltipRoot = temporary.path / L"tooltip";
     std::filesystem::create_directory(tooltipRoot);

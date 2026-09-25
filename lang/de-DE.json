@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "Netzwerkadapter",
     "controlCenter.scan": "Netzwerke suchen",
     "controlCenter.locationDenied": "Windows hat den WLAN- oder Standortzugriff verweigert. Prüfen Sie die Standorteinstellungen.",
+    "controlCenter.availableNetworks": "Verfügbare Netzwerke",
+    "controlCenter.devices": "Geräte",
     "controlCenter.savedNetworks": "Gespeicherte Netzwerke",
     "controlCenter.forget": "Entfernen",
     "controlCenter.locationSettings": "Standorteinstellungen",

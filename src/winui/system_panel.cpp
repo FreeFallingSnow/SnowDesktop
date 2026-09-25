@@ -282,7 +282,7 @@ struct SystemPanel::Impl
         c::StackPanel root; root.Spacing(12);
         auto title = Text(_LW(action == StatusBarAction::Tray ? "statusBar.tray" : action == StatusBarAction::Calendar ? "statusBar.clock" : "statusBar.controlCenter"));
         title.FontSize(20); title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        if (action != StatusBarAction::Calendar) root.Children().Append(title);
+        if (action == StatusBarAction::Tray) root.Children().Append(title);
         body = c::StackPanel(); body.Spacing(6);
         notice = Text(L"");
         if (action == StatusBarAction::Calendar)

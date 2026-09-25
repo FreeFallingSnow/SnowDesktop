@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "네트워크 어댑터",
     "controlCenter.scan": "네트워크 검색",
     "controlCenter.locationDenied": "Windows에서 Wi-Fi 또는 위치 액세스를 거부했습니다. 위치 설정을 확인하세요.",
+    "controlCenter.availableNetworks": "사용 가능한 네트워크",
+    "controlCenter.devices": "기기",
     "controlCenter.savedNetworks": "저장된 네트워크",
     "controlCenter.forget": "삭제",
     "controlCenter.locationSettings": "위치 설정",

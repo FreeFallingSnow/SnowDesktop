@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "Network adapter",
     "controlCenter.scan": "Scan networks",
     "controlCenter.locationDenied": "Windows denied Wi-Fi or location access. Check Location settings.",
+    "controlCenter.availableNetworks": "Available networks",
+    "controlCenter.devices": "Devices",
     "controlCenter.savedNetworks": "Saved networks",
     "controlCenter.forget": "Forget",
     "controlCenter.locationSettings": "Location settings",

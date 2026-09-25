@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "網路介面卡",
     "controlCenter.scan": "掃描網路",
     "controlCenter.locationDenied": "Windows 拒絕了 Wi-Fi 或位置存取，請檢查位置設定。",
+    "controlCenter.availableNetworks": "可用網路",
+    "controlCenter.devices": "裝置",
     "controlCenter.savedNetworks": "已儲存網路",
     "controlCenter.forget": "忘記",
     "controlCenter.locationSettings": "位置設定",

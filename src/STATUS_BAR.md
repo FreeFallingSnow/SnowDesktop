@@ -53,6 +53,8 @@
 
 ## 离线面板预览
 
+控制中心本轮收敛为无线开关、带数值的音量／亮度滑条、媒体和电源入口；子页按设备、状态和操作分组。新增显式 `control-panel` CLI 目标，原有 `all` 与 Lua API 不变。该目标使用生产 `SystemControlView`，仅在设备服务边界替换固定数据，禁止执行真实设备控制／打开设置；验证切页立即请求尺寸更新、Wi-Fi 页之外不扫描、关闭清理订阅。当前已编译并输出 16 张浅深色／不同 DPI 图片，但无线按钮的离线选中颜色及长页面底部入口仍待调整，尚不能算视觉验收。
+
 `snowwidget preview-native calendar-panel <输出目录> --appearance light --locale zh-CN --dpi 96 --transparent --canvas-width 1000 --canvas-height 1000 --padding 24 --host <SnowDesktop.exe>` 使用生产 `SystemCalendarView` 和 `CreateSystemPanelFrame`，输出空日程与有日程两张 PNG。该显式目标不属于旧 `all` 集合，不改变已有目标及参数；旧宿主不支持新目标。预览在独立离屏渲染窗口运行，不创建桌面宿主／AppBar、不连接托盘或读取用户日程，使用固定日期和示例日程。控件通过 WinUI `RenderTargetBitmap` 导出；目前只支持 light／dark，桌面玻璃模糊不属于此 XAML 导出范围，玻璃预设会明确拒绝。
 
 离线检查使用真实月历视觉树确认固定月份最后一天完整可见，像素检查四个透明圆角、预期宽度和日程引起的高度变化。该检查不代表日程管理跳转、桌面焦点、高对比度、玻璃模糊、窗口区域或其他面板均已验收。
@@ -80,6 +82,8 @@
 
 - 日历最终候选：`e55f54bd` 保存首次编译通过／渲染失败；`b4e96c6b` 记录实际请求 520×406、返回 780×609 的 150% 缩放证据；`353ec2cd` 导出成功但目检发现月末裁切。本次按默认日期格最小高度 40 DIP 定位，将日期格调整为 28 DIP，复用官方模板与主题并移除内层背景框；相同示例已完整显示六周日期及日程。实际视觉树检查月份最后一天，外层像素检查四角、宽度和日程高度，方形底角像素变异被拒绝。图片位于 `calendar-render-17/`（浅色中文 96 DPI、深色英文 144 DPI；各含空／有日程），不是桌面截图。
 - 本候选 `scripts/build.bat` 退出 0，无编译／链接警告（`17-calendar-build-retry.log`；首次缺 Interop 头文件的编译失败保留在 `17-calendar-build.log`）。定向 `widget_author_preview_cli|calendar_service|localization_contract|settings_controller` **4/4 通过**，54.93 秒，退出 0（日志命名为 `16-calendar-tests.log`，实际绑定本候选）。`scripts/test.bat full` **120/120 通过**，170.38 秒，退出 0，无编译／链接警告（`17-full-tests.log`，JUnit `test-run-43555b30d28f4c64bdd8e99ea857b44e.xml`）。输入快照 `17-validation-inputs.json`／`17-final-validation-inputs.json`；最终宿主 SHA256 `7e4e5a7d8066223e72f7e24775f65b1aae82d5febc9f39638ebf4c4bb5432dec`，Hook SHA256 `dc8e41c993e8f632aeebf500aba79f2fd81d60a76fa261cdb848449162b59da7`。日历选择／设置跳转、桌面焦点、窗口区域、高对比与玻璃仍待实机；其他面板和栏体的离线绘制仍未接入。
+
+- 控制中心首轮候选：生产视图整理常用开关、滑条、媒体与设备子页，增加只替换设备边界的实际控件离线 `control-panel` 目标。`scripts/build.bat` 退出 0，无编译／链接警告（`18-controls-build.log`）；定向 `widget_author_preview_cli|widget_system_data_provider|localization_contract|settings_controller` **4/4 通过**，60.72 秒，退出 0（`18-controls-tests.log`，JUnit `test-run-634ffc40d88242fd9f282976427d585d.xml`）。16 张实际控件图片位于 `controls-render-18/`，目检仍发现选中无线按钮背景未稳定、长子页底部入口裁切，保持开放；不将 PNG 生成或外框断言视作视觉通过。本候选未运行全量和实机；输入绑定 `18-final-validation-inputs.json`，最终宿主 SHA256 `24de2fb9d5f357495aca65c6e4b9eafc19178e165160ea89dd101d074a3c35a3`。
 
 ## YASB 参考边界
 

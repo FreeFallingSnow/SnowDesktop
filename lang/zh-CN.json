@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "网络适配器",
     "controlCenter.scan": "扫描网络",
     "controlCenter.locationDenied": "Windows 拒绝了 Wi-Fi 或位置访问，请检查位置设置。",
+    "controlCenter.availableNetworks": "可用网络",
+    "controlCenter.devices": "设备",
     "controlCenter.savedNetworks": "已保存网络",
     "controlCenter.forget": "忘记",
     "controlCenter.locationSettings": "位置设置",

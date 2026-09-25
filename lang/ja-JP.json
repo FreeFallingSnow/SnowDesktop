@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "ネットワークアダプター",
     "controlCenter.scan": "ネットワークをスキャン",
     "controlCenter.locationDenied": "Windows が Wi-Fi または位置情報へのアクセスを拒否しました。位置情報の設定を確認してください。",
+    "controlCenter.availableNetworks": "利用可能なネットワーク",
+    "controlCenter.devices": "デバイス",
     "controlCenter.savedNetworks": "保存済みネットワーク",
     "controlCenter.forget": "削除",
     "controlCenter.locationSettings": "位置情報の設定",

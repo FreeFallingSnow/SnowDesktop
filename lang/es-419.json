@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "Adaptador de red",
     "controlCenter.scan": "Buscar redes",
     "controlCenter.locationDenied": "Windows denegó el acceso a Wi-Fi o a la ubicación. Revisa la configuración de ubicación.",
+    "controlCenter.availableNetworks": "Redes disponibles",
+    "controlCenter.devices": "Dispositivos",
     "controlCenter.savedNetworks": "Redes guardadas",
     "controlCenter.forget": "Olvidar",
     "controlCenter.locationSettings": "Configuración de ubicación",

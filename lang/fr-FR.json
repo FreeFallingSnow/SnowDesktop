@@ -1939,6 +1939,8 @@
     "controlCenter.adapter": "Carte réseau",
     "controlCenter.scan": "Rechercher des réseaux",
     "controlCenter.locationDenied": "Windows a refusé l'accès au Wi-Fi ou à la localisation. Vérifiez les paramètres de localisation.",
+    "controlCenter.availableNetworks": "Réseaux disponibles",
+    "controlCenter.devices": "Appareils",
     "controlCenter.savedNetworks": "Réseaux enregistrés",
     "controlCenter.forget": "Oublier",
     "controlCenter.locationSettings": "Paramètres de localisation",
