@@ -14,8 +14,12 @@ from `src/core/widgets/services/systray/hook/trayhook.cpp` and
 SnowDesktop's collector, bounded queue, shared memory protocol, lifecycle and
 host presentation are separate implementations. In particular, icon pixels and
 IPC are processed on a worker, with no pipe waits in Explorer's window thread.
-The private wire format is not a Microsoft compatibility contract. Unknown
-payloads are rejected; native notification-area access remains available.
+The private wire format is not a Microsoft compatibility contract. Like the
+pinned YASB receiver, the decoder accepts a known prefix with opaque trailing
+bytes (1484-byte packets were observed on Windows 11). SnowDesktop caps the
+envelope at 8192 bytes, copies at most the known structure, and validates field
+bounds before use. Truncated, oversized or unsupported-operation packets are
+rejected; native notification-area access remains available.
 
 `src/system_control_bluetooth.cpp` adapts the KS reconnect/disconnect approach
 and Bluetooth battery property identification from

@@ -3393,6 +3393,7 @@ private:
     std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         systemDataProvider_;
     std::unique_ptr<snowdesktop::StatusBar> statusBar_;
+    snowdesktop::UiScheduleToken statusBarActivationToken_ = 0;
     std::unique_ptr<snowdesktop::winui::SystemPanel> systemPanel_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     std::unique_ptr<snowdesktop::widget_runtime::IWidgetSettingsBackend>

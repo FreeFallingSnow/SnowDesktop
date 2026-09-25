@@ -2,6 +2,7 @@
 #include "system_control_view.h"
 #include "../widget_system_data_provider.h"
 #include "../l10n.h"
+#include "../system_control_feedback.h"
 #include <shellapi.h>
 #include <robuffer.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -59,6 +60,8 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     c::ContentDialog dialog{nullptr};
     std::map<std::string, Section> sections;
     std::string interfaceId, mediaId, quickBrightnessId;
+    system_control::ControlFeedback feedback;
+    std::function<void()> layoutChanged;
     bool updating = false, closed = false, scanOnArrival = false;
     static constexpr const char* Consumer = "controlCenter";
     explicit Impl(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> provider) : data(std::move(provider)), service(data->Controls()) {}
@@ -99,7 +102,9 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     void Submit(const std::shared_ptr<Request>& request)
     {
         if (closed) return;
+        auto feedbackKey = system_control::ControlFeedback::Key(*request);
         const auto id = service->Start(Consumer, std::move(*request));
+        feedback.Track(std::move(feedbackKey), id);
         if (!id) Notify("controlCenter.failed", true);
         else { status.IsOpen(false); }
     }
@@ -232,6 +237,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (detail && selected == "wifi") scanOnArrival = true;
         status.IsOpen(false);
         Refresh();
+        if (layoutChanged) layoutChanged();
     }
     void Build(const StatusBarSettings& settings, StatusBarAction initial)
     {
@@ -575,8 +581,9 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         }
         for (const auto& completion : service->DrainCompletions(Consumer))
         {
+            if (!feedback.Take(completion.id)) continue;
             if (completion.error == "canceled") continue;
-            if (completion.ok) continue;
+            if (completion.ok) { status.IsOpen(false); continue; }
             Notify(completion.error == "accessDenied" ? "controlCenter.accessDenied" :
                 completion.error == "timeout" ? "controlCenter.timeout" : completion.error == "passwordRequired" ? "controlCenter.invalidPassword" :
                 completion.error == "systemSettingsRequired" || completion.error == "actionUnsupported" ? "controlCenter.unsupportedHint" : "controlCenter.failed", !completion.ok);
@@ -585,12 +592,15 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     void Close()
     {
         if (closed) return; closed = true;
+        feedback.Clear();
         if (dialog) { dialog.Hide(); dialog = nullptr; }
         data->RemoveConsumer(Consumer); root.Children().Clear(); sections.clear();
     }
 };
-SystemControlView::SystemControlView(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data, const StatusBarSettings& settings, StatusBarAction initial)
-    : impl_(std::make_shared<Impl>(std::move(data))) { impl_->Build(settings, initial); }
+SystemControlView::SystemControlView(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data,
+    const StatusBarSettings& settings, StatusBarAction initial, std::function<void()> layoutChanged)
+    : impl_(std::make_shared<Impl>(std::move(data)))
+{ impl_->Build(settings, initial); impl_->layoutChanged = std::move(layoutChanged); }
 SystemControlView::~SystemControlView() { impl_->Close(); }
 x::FrameworkElement SystemControlView::Root() const { return impl_->root; }
 void SystemControlView::Refresh() { impl_->Refresh(); }

@@ -1,4 +1,5 @@
 #include "system_control_windows.h"
+#include "system_control_feedback.h"
 #include <physicalmonitorenumerationapi.h>
 #include <highlevelmonitorconfigurationapi.h>
 #include <wbemidl.h>
@@ -171,13 +172,20 @@ public:
                 if (FAILED(status) || !output) return Status(FAILED(status) ? status : E_FAIL);
                 Variant returned; output->Get(L"ReturnValue", 0, &returned.value, nullptr, nullptr);
                 if (returned.Number() != 0) return Error(static_cast<DWORD>(returned.Number()), "controlRejected");
-                for (const auto& actual : Query(L"SELECT * FROM WmiMonitorBrightness WHERE Active = TRUE", cancel))
-                {
-                    Variant actualId, actualLevel; actual->Get(L"InstanceName", 0, &actualId.value, nullptr, nullptr);
-                    actual->Get(L"CurrentBrightness", 0, &actualLevel.value, nullptr, nullptr);
-                    if (actualId.Text() == instanceName && std::abs(actualLevel.Number() - target) <= 2) return {true, {}, 0};
-                }
-                return Error(ERROR_INVALID_STATE, "stateMismatch");
+                const Cancellation settling{cancel.canceled, (std::min)(cancel.deadline,
+                    std::chrono::steady_clock::now() + std::chrono::seconds(3))};
+                return ConfirmBrightness(level.value.bVal, 2, settling, [&]() -> BrightnessReadback {
+                    for (const auto& actual : Query(L"SELECT * FROM WmiMonitorBrightness WHERE Active = TRUE", settling))
+                    {
+                        Variant actualId, actualLevel; actual->Get(L"InstanceName", 0, &actualId.value, nullptr, nullptr);
+                        actual->Get(L"CurrentBrightness", 0, &actualLevel.value, nullptr, nullptr);
+                        if (actualId.Text() != instanceName) continue;
+                        const auto value = actualLevel.Number();
+                        if (value < 0 || value > 100) return {{}, Error(ERROR_INVALID_DATA)};
+                        return {static_cast<double>(value), {}};
+                    }
+                    return {{}, Error(ERROR_NOT_FOUND, "deviceGone")};
+                }, BrightnessReadbackPause);
             }
             return Error(ERROR_NOT_FOUND, "deviceGone");
         }
@@ -189,8 +197,13 @@ public:
         if (cancel.Stop()) return cancel.Failure();
         const auto level = found->minimum + static_cast<DWORD>((found->maximum - found->minimum) * target / 100.0 + 0.5);
         if (!SetMonitorBrightness(found->physical, level)) return Error(GetLastError());
-        if (!GetMonitorBrightness(found->physical, &found->minimum, &current, &found->maximum)) return Error(GetLastError());
-        return std::abs(static_cast<double>(current) - level) <= 1 ? Result{true, {}, 0} : Error(ERROR_INVALID_STATE, "stateMismatch");
+        const Cancellation settling{cancel.canceled, (std::min)(cancel.deadline,
+            std::chrono::steady_clock::now() + std::chrono::seconds(3))};
+        return ConfirmBrightness(level, 1, settling, [&]() -> BrightnessReadback {
+            if (!GetMonitorBrightness(found->physical, &found->minimum, &current, &found->maximum))
+                return {{}, Error(GetLastError())};
+            return {static_cast<double>(current), {}};
+        }, BrightnessReadbackPause);
     }
     void Release(std::string_view) override { std::lock_guard guard(mutex_); Clear(); }
 };

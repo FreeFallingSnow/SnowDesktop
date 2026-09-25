@@ -118,20 +118,25 @@ struct IconIdentifier32
 };
 #pragma pack(pop)
 static_assert(sizeof(NotifyIcon32) == 956);
+// Modern Explorer packets can append opaque data (1484 bytes observed on
+// Windows 11). Decode only the known prefix, with a bounded envelope; the
+// trailer is neither copied on Explorer's UI thread nor interpreted here.
+inline constexpr std::size_t kMaxNotificationBytes = 8192;
 
 inline bool Decode(const void* bytes, std::size_t size, Notification& output, HICON& icon)
 {
     constexpr auto minimum = offsetof(ShellTrayData, icon) + offsetof(NotifyIcon32, tip);
-    if (!bytes || size < minimum || size > sizeof(ShellTrayData)) return false;
+    if (!bytes || size < minimum || size > kMaxNotificationBytes) return false;
     ShellTrayData wire{};
-    std::memcpy(&wire, bytes, size);
+    std::memcpy(&wire, bytes, (std::min)(size, sizeof(wire)));
     if (wire.operation != NIM_ADD && wire.operation != NIM_MODIFY &&
         wire.operation != NIM_DELETE && wire.operation != NIM_SETVERSION) return false;
     const auto& data = wire.icon;
     if (data.size < offsetof(NotifyIcon32, tip) || data.size > sizeof(NOTIFYICONDATAW)) return false;
     // The header may retain the caller's native cbSize while the payload uses
     // 32-bit handles. Bounds come from COPYDATA, never from that native size.
-    const auto available = (std::min)(static_cast<std::size_t>(data.size), size - offsetof(ShellTrayData, icon));
+    const auto available = (std::min)({static_cast<std::size_t>(data.size),
+        size - offsetof(ShellTrayData, icon), sizeof(NotifyIcon32)});
     const auto contains = [&](std::size_t end) { return available >= end; };
     if ((data.flags & NIF_GUID) && !contains(offsetof(NotifyIcon32, guid) + sizeof(GUID))) return false;
     if ((data.flags & NIF_STATE) && !contains(offsetof(NotifyIcon32, stateMask) + sizeof(DWORD))) return false;

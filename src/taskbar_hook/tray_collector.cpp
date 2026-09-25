@@ -209,7 +209,8 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
             ShellTrayData wire{};
             Notification decoded;
             HICON icon = nullptr;
-            if (copy->cbData <= sizeof(wire) && CopyBytes(copy->lpData, &wire, copy->cbData) &&
+            if (copy->cbData <= kMaxNotificationBytes &&
+                CopyBytes(copy->lpData, &wire, (std::min)(static_cast<std::size_t>(copy->cbData), sizeof(wire))) &&
                 Decode(&wire, copy->cbData, decoded, icon))
             {
                 InterlockedIncrement(&self.shared->decoded);

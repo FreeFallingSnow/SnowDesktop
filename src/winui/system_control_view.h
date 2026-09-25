@@ -11,7 +11,8 @@ class SystemControlView
 {
 public:
     SystemControlView(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data,
-        const StatusBarSettings& settings, StatusBarAction initial = StatusBarAction::ControlCenter);
+        const StatusBarSettings& settings, StatusBarAction initial = StatusBarAction::ControlCenter,
+        std::function<void()> layoutChanged = {});
     ~SystemControlView();
     winrt::Microsoft::UI::Xaml::FrameworkElement Root() const;
     void Refresh();

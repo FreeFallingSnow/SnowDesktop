@@ -336,7 +336,7 @@ struct SystemPanel::Impl
         }
         else
         {
-            controls = std::make_unique<SystemControlView>(data, settings, action);
+            controls = std::make_unique<SystemControlView>(data, settings, action, [this] { if (showing) Arrange(); });
             c::ScrollViewer scroll; scroll.MaxHeight(470); scroll.Content(controls->Root());
             scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
             root.Children().Append(scroll);

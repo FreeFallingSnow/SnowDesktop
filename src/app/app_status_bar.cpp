@@ -4,17 +4,32 @@
 
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
+    using Action = snowdesktop::StatusBarAction;
+    uiAnimationScheduler_.Cancel(statusBarActivationToken_);
+    statusBarActivationToken_ = 0;
+    // The no-activate bar does not cause WM_ACTIVATE on an open surface.
+    // A blank-area click must therefore explicitly dismiss it, including any
+    // replacement action still waiting for a nested menu loop to unwind.
+    if (action == Action::Dismiss)
+    {
+        snowdesktop::modern_menu::DismissActive();
+        if (systemPanel_) systemPanel_->Hide();
+        CloseQuickNavigation();
+        return;
+    }
     // A bar click can arrive inside the menu's nested message loop. Wait until
     // menu focus restoration has finished before opening another surface.
     if (snowdesktop::modern_menu::IsActive())
     {
         snowdesktop::modern_menu::DismissActive();
-        uiAnimationScheduler_.ScheduleOnce(1, [this, action, owner, anchor](auto) {
-            if (statusBar_ && IsWindow(owner)) ActivateStatusBar(action, owner, anchor);
+        statusBarActivationToken_ = uiAnimationScheduler_.ScheduleOnce(1, [this, action, owner, anchor](auto token) {
+            if (token != statusBarActivationToken_) return;
+            statusBarActivationToken_ = 0;
+            if (statusBar_ && IsWindow(owner) && !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)))
+                ActivateStatusBar(action, owner, anchor);
         });
         return;
     }
-    using Action = snowdesktop::StatusBarAction;
     if (action == Action::None) return;
     const bool systemControls = action == Action::ControlCenter && (GetKeyState(VK_CONTROL) & 0x8000);
     if (action == Action::Notifications || systemControls)
@@ -143,6 +158,8 @@ void DesktopApp::SyncStatusBar()
     if (!systemDataProvider_ || !dcompDevice_ || !dwriteFactory_) return;
     if (!generalSettings_.statusBar.enabled)
     {
+        uiAnimationScheduler_.Cancel(statusBarActivationToken_);
+        statusBarActivationToken_ = 0;
         if (systemPanel_) systemPanel_->Hide();
         statusBar_.reset();
         return;

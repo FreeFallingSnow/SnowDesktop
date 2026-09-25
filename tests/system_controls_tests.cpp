@@ -1,4 +1,5 @@
 #include "system_controls.h"
+#include "system_control_feedback.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -98,10 +99,42 @@ void HostOnlyCredentialsAndConfirmation()
     Require(moved.View() == L"private", "host secret can be transferred without serialization"); moved.Clear();
     Require(moved.View().empty(), "host secret clears after completion");
 }
+void BrightnessSettlingAndStaleFeedback()
+{
+    Cancellation cancel{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
+    unsigned reads = 0, pauses = 0;
+    auto result = ConfirmBrightness(70, 2, cancel, [&]() -> BrightnessReadback {
+        return {++reads < 3 ? 30. : 70., {}};
+    }, [&] { ++pauses; });
+    Require(result.ok && reads == 3 && pauses == 2, "delayed brightness readback must settle before reporting success");
+    reads = pauses = 0;
+    result = ConfirmBrightness(70, 2, cancel, [&]() -> BrightnessReadback {
+        ++reads; return {30., {}};
+    }, [&] { ++pauses; });
+    Require(!result.ok && result.error == "stateMismatch" && reads == 20 && pauses == 19,
+        "accepted writes without matching readback must fail within the bounded attempt count");
+    result = ConfirmBrightness(70, 2, cancel, [&]() -> BrightnessReadback { return {30., {}}; },
+        [&] { cancel.canceled->store(true); });
+    Require(!result.ok && result.error == "canceled", "replacement slider requests cancel brightness settling");
+    cancel.canceled->store(false);
+    result = ConfirmBrightness(70, 2, cancel, []() -> BrightnessReadback { return {{}, {false, "deviceGone", 1167}}; },
+        [] { Require(false, "device removal must not be retried"); });
+    Require(result.error == "deviceGone", "device removal remains a distinct failed result");
+    ControlFeedback feedback;
+    Request a; a.name = "system.display.setBrightness"; a.arguments = {{"monitorId", "a"}, {"brightness", "30"}};
+    const auto key = ControlFeedback::Key(a); feedback.Track(key, 1);
+    a.arguments["brightness"] = "70"; feedback.Track(ControlFeedback::Key(a), 2);
+    a.arguments["monitorId"] = "b"; feedback.Track(ControlFeedback::Key(a), 3);
+    Require(!feedback.Take(1) && feedback.Take(3) && feedback.Take(2) && !feedback.Take(2),
+        "queued old failures cannot override new controls, and different displays retain independent results");
+    feedback.Track(key, 4); feedback.Clear();
+    Require(!feedback.Take(4), "closed panels discard late control feedback");
+}
 }
 void TestSystemControls()
 {
     SharedSourceAndRelease();
     ControlQueueCancellationAndReadback();
     HostOnlyCredentialsAndConfirmation();
+    BrightnessSettlingAndStaleFeedback();
 }

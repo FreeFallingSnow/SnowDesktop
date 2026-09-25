@@ -4,7 +4,7 @@ namespace snowdesktop::status_bar_glyphs
 {
 // Official Fluent System Icons Regular glyphs, pinned with the embedded font:
 // microsoft/fluentui-system-icons@21d5d02f724be2aaf586564775fff73a18a76eb6.
-inline constexpr wchar_t kMenu[] = L"\uE85F"; // navigation_16_regular
+inline constexpr wchar_t kMenu[] = L"\uF132"; // apps_16_regular
 inline constexpr wchar_t kSearch[] = L"\uEA7C"; // search_16_regular
 inline constexpr wchar_t kWifi[] = L"\uF8AC"; // wifi_1_20_regular
 inline constexpr wchar_t kEthernet[] = L"\uE999"; // plug_connected_20_regular

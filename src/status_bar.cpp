@@ -619,7 +619,13 @@ struct StatusBar::Impl
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 if (self->TrayMouse(message, point)) return 0;
                 for (std::size_t index = 0; index < self->items.size(); ++index)
-                    if (PtInRect(&self->items[index].bounds, point)) { self->ActivateItem(index); break; }
+                    if (PtInRect(&self->items[index].bounds, point)) { self->ActivateItem(index); return 0; }
+                self->hovered.reset(); self->tooltipState.Leave();
+                SendMessageW(self->tooltip, TTM_POP, 0, 0);
+                self->paintDirty = true; self->Paint();
+                const auto onActivated = self->owner.activate;
+                if (!self->fullscreen && onActivated)
+                    onActivated(StatusBarAction::Dismiss, window, self->appbar.Bounds());
                 return 0;
             }
             case WM_CONTEXTMENU:

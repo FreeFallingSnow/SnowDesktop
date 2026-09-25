@@ -25,7 +25,19 @@ int RunTrayModelTests()
         "truncated GUID payload must be rejected");
     wire.icon.size = sizeof(NOTIFYICONDATAW);
     check(Decode(&wire, sizeof(wire), notification, copied), "native caller size may exceed serialized handle width");
-    check(!Decode(&wire, sizeof(wire) + 1, notification, copied), "unknown extended layouts must be rejected");
+    // The reported zero-icon failure used 1484-byte Windows packets. Their
+    // known prefix must survive arbitrary trailer bytes; never interpret them.
+    std::array<std::byte, 1484> extended;
+    extended.fill(std::byte{0xa5});
+    std::memcpy(extended.data(), &wire, sizeof(wire));
+    check(Decode(extended.data(), extended.size(), notification, copied) &&
+        notification.identity.guid == wire.icon.guid && notification.identity.window == 42 &&
+        notification.callback == WM_APP + 9 && std::wstring(notification.tip) == L"Dynamic icon",
+        "extended Explorer packets retain icon identity, callback and tooltip");
+    check(!Decode(extended.data(), kMaxNotificationBytes + 1, notification, copied),
+        "oversized packets are rejected before reading any data");
+    check(!Decode(extended.data(), offsetof(ShellTrayData, icon) + offsetof(NotifyIcon32, guid), notification, copied),
+        "a declared GUID still requires the complete known prefix");
 
     std::vector<Icon> icons;
     Event event; static_cast<Notification&>(event) = notification;
