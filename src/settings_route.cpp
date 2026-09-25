@@ -224,6 +224,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::LargeIcon:
     case SettingsPage::Calendar:
     case SettingsPage::ContextMenu:
+    case SettingsPage::StatusBar:
         break;
     default:
         return false;
@@ -266,6 +267,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::LargeIcon: return "large-icon";
     case SettingsPage::Calendar: return "calendar";
     case SettingsPage::ContextMenu: return "context-menu";
+    case SettingsPage::StatusBar: return "status-bar";
     }
     return "home";
 }

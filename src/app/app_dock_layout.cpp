@@ -135,6 +135,7 @@ void DesktopApp::ApplyDockWorkAreaReservation()
 
     dockAreas_.clear();
     dockWorkAreaReservationApplied_ = false;
+    SyncStatusBar();
     if (!generalSettings_.dockEnabled || gridPages_.empty()) return;
 
     const bool reserveDesktopWorkArea =

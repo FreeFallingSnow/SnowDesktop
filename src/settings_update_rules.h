@@ -40,6 +40,7 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.quickNavigationAppearance == after.quickNavigationAppearance &&
         before.collectionPopupAppearance == after.collectionPopupAppearance &&
         before.dockEnabled == after.dockEnabled &&
+        before.statusBar == after.statusBar &&
         before.animationMode == after.animationMode &&
         before.popupAnimationEffect == after.popupAnimationEffect &&
         before.animationSpeed == after.animationSpeed &&

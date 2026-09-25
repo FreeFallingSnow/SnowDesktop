@@ -32,6 +32,27 @@ void Check(bool condition, const char* message)
 int main()
 {
     {
+        GeneralSettings value;
+        Check(!value.statusBar.enabled && value.statusBar.position == DockPosition::Top &&
+                value.statusBar.monitorScope == DockMonitorScope::First && value.statusBar.theme.mode == -1,
+            "new and migrated settings must keep the bar off and follow the global theme");
+        value.statusBar.enabled = true;
+        value.statusBar.position = DockPosition::Right;
+        value.statusBar.monitorScope = DockMonitorScope::All;
+        value.statusBar.scale = 1.5f;
+        value.statusBar.pinnedTrayItems = {"C:\\测试\\app.exe|42", "guid:\"test\""};
+        value.statusBar.trayOrder = {"guid:\"test\"", "C:\\测试\\app.exe|42"};
+        value.statusBar.theme.mode = 4;
+        value.statusBar.theme.customized = true;
+        const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopStatusBar-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings restored;
+        Check(SaveGeneralSettings(path.c_str(), value) && LoadGeneralSettings(path.c_str(), restored) &&
+                restored.statusBar == value.statusBar,
+            "status bar geometry, theme and stable tray identities must survive persistence");
+        std::error_code error;
+        std::filesystem::remove(path, error);
+    }
+    {
         using namespace snowdesktop::shell_extensions;
         const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopMenuPreferences-" + std::to_wstring(GetCurrentProcessId()) + L".json");
         GeneralSettings saved, loaded;

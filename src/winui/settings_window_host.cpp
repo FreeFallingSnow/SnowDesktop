@@ -242,6 +242,13 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "start.move", "start.move.title", "start.move.description"},
     {SettingsPage::General, "start.collectionGroup", "start.collectionGroup.title", "start.collectionGroup.description"},
     {SettingsPage::General, "start.files", "start.files.title", "start.files.description"},
+    {SettingsPage::StatusBar, "statusBar.enable", "statusBar.enabled", "settings.page.statusBar.description"},
+    {SettingsPage::StatusBar, "statusBar.position", "statusBar.position", "settings.nav.statusBar"},
+    {SettingsPage::StatusBar, "statusBar.monitor", "settings.dock.monitor", "settings.nav.statusBar"},
+    {SettingsPage::StatusBar, "statusBar.scale", "statusBar.scale", "settings.nav.statusBar"},
+    {SettingsPage::StatusBar, "statusBar.theme", "settings.personalization.theme", "settings.nav.statusBar"},
+    {SettingsPage::StatusBar, "statusBar.tray", "statusBar.tray", "settings.nav.statusBar"},
+    {SettingsPage::StatusBar, "statusBar.controls", "statusBar.controlCenter", "settings.nav.statusBar"},
     {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description"},
     {SettingsPage::General, "start.fileGroup", "start.fileGroup.title", "start.fileGroup.description"},
     {SettingsPage::General, "start.dockPin", "start.dockPin.title", "start.dockPin.description"},
@@ -1260,6 +1267,8 @@ struct SettingsWindowHost::Impl
                     return L("settings.nav.dock");
                 case SettingsPage::Taskbar:
                     return L("settings.nav.taskbar");
+                case SettingsPage::StatusBar:
+                    return L("settings.nav.statusBar");
                 case SettingsPage::Widgets:
                     return L("app.settings.widgets");
                 case SettingsPage::BackupAndData:

@@ -8,6 +8,7 @@
 #include "animation_performance_page_presenter.h"
 #include "desktop_page_presenter.h"
 #include "dock_page_presenter.h"
+#include "status_bar_page_presenter.h"
 #include "general_page_presenter.h"
 #include "calendar_page_presenter.h"
 #include "context_menu_page_presenter.h"
@@ -304,6 +305,7 @@ private:
         personalizationPage_;
     std::unique_ptr<snowdesktop::winui::DesktopPagePresenter> desktopPage_;
     std::unique_ptr<snowdesktop::winui::DockPagePresenter> dockPage_;
+    std::unique_ptr<snowdesktop::winui::StatusBarPagePresenter> statusBarPage_;
     std::unique_ptr<snowdesktop::winui::AnimationPerformancePagePresenter> animationPage_;
     std::unique_ptr<snowdesktop::winui::HomeAboutPagePresenter>
         homeAboutPage_;

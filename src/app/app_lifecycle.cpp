@@ -12,6 +12,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    statusBar_.reset();
     // The shared service is constructed before the caches its asynchronous
     // scans use. Stop it before CRT static destruction reverses that order.
     snowdesktop::shell_extensions::SharedMenuService().Shutdown();

@@ -15,6 +15,7 @@
 #include "dock_layout_settings.h"
 #include "surface_theme.h"
 #include "shell_extension_settings.h"
+#include "status_bar_settings.h"
 
 struct GeneralSettings
 {
@@ -42,6 +43,7 @@ struct GeneralSettings
     snowdesktop::SurfaceTheme quickNavigationAppearance;
     snowdesktop::SurfaceTheme collectionPopupAppearance;
     bool dockEnabled = kDefaultDockEnabled;
+    snowdesktop::StatusBarSettings statusBar;
     bool widgetDeveloperToolsEnabled = false;
     int animationMode = 0;
     int popupAnimationEffect = 2;

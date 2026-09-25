@@ -38,6 +38,12 @@ HANDLE CurrentProcessHandle()
 void TestCodec()
 {
     GeneralSettings extensions;
+    extensions.statusBar.enabled = true;
+    extensions.statusBar.position = DockPosition::Left;
+    extensions.statusBar.monitorScope = DockMonitorScope::All;
+    extensions.statusBar.pinnedTrayItems = {"guid:test"};
+    Check(Unpack<GeneralSettings>(Pack(extensions)).statusBar == extensions.statusBar,
+        "settings process must preserve status bar preferences across its wire boundary");
     extensions.shellExtensions = {true, {{"handler:{test}", "compress", "压缩", snowdesktop::shell_extensions::Placement::Root}}};
     extensions.shellExtensions.hidden = {{"verb:sevenzip", snowdesktop::shell_extensions::Context::Folder},
         {"verb:editor", snowdesktop::shell_extensions::Context::Desktop}};

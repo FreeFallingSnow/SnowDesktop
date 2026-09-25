@@ -1174,6 +1174,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snowdesktop::widget_runtime::WidgetSystemDataProvider>();
     widgetEngine_ = std::make_unique<WidgetEngine>();
     widgetEngine_->SetSystemDataProvider(systemDataProvider_);
+    SyncStatusBar();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {
         widgetEngine_->SetDesktopSnapshotProvider([this]() {

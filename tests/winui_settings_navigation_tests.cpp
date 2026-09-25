@@ -217,6 +217,18 @@ int main()
     TestInvalidRoutes();
     TestLargeIconParentNavigation();
     TestNavigationFeedbackLifetime();
+    {
+        SettingsShellNavigationState bars;
+        Check(bars.Navigate(SettingsRoute::ForPage(SettingsPage::DockAndTaskbar, "taskbar.theme")) &&
+                bars.Route().page == SettingsPage::Taskbar,
+            "moving the taskbar in navigation must preserve legacy taskbar routes");
+        Check(bars.Navigate(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.enable")) &&
+                bars.Route().page == SettingsPage::StatusBar && SettingsPageKey(bars.Route().page) == "status-bar",
+            "the appended status bar destination must support focus and stable route keys");
+        const auto back = bars.GoBack();
+        Check(back && back->page == SettingsPage::Taskbar,
+            "desktop bar pages must preserve navigation history");
+    }
     if (failures != 0)
     {
         std::cerr << failures << " WinUI settings navigation check(s) failed\n";

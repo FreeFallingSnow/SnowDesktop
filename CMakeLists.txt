@@ -154,6 +154,11 @@ set(SNOWDESKTOP_SOURCES
     src/app/app_dock_drop.cpp
     src/app/app_dock_launch.cpp
     src/app/app_dock_layout.cpp
+    src/app/app_status_bar.cpp
+    src/status_bar.cpp
+    src/status_bar.h
+    src/status_bar_settings.h
+    src/status_bar_appbar.h
     src/app/app_dock_menu.cpp
     src/app/app_dock_model.cpp
     src/app/app_dock_render.cpp
@@ -329,6 +334,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.cpp
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
+    src/winui/status_bar_page_presenter.cpp
+    src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
     src/winui/context_menu_page_presenter.cpp

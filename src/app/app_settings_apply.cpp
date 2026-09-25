@@ -976,6 +976,7 @@ public:
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             if (app_.dockSettings_.systemTaskbarFollowPersonalization)
                 app_.RefreshSystemTaskbarAppearance(false);
             app_.InvalidateAllWidgetSlots();
@@ -994,6 +995,7 @@ public:
                 app_.dockSettings_.systemTaskbarAlignment;
             app_.dockSettings_ = snapshot.values.dock;
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
@@ -1059,6 +1061,7 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             app_.ApplyDesktopPassthroughHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
@@ -1070,6 +1073,7 @@ public:
         {
             app_.dockSettings_ = snapshot.values.dock;
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             NormalizeDockSettings(app_.dockSettings_);
             app_.ApplyFloatingDockHotkey();
             return snowdesktop::SettingsActionResult::Success(domains);
@@ -1113,6 +1117,7 @@ public:
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             app_.RefreshSystemTaskbarAppearance(false);
             app_.InvalidateAllWidgetSlots();
         }
@@ -1120,6 +1125,7 @@ public:
         {
             app_.dockSettings_ = requestedDockSettings;
             app_.ApplyPersistentDockHostAppearance();
+            app_.SyncStatusBar();
             app_.ApplyAnimationPreferences();
             if (app_.widgetEngine_)
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
@@ -1144,6 +1150,7 @@ public:
                 app_.generalSettings_.language,
                 snapshot.values.general.language) != 0;
             app_.generalSettings_ = snapshot.values.general;
+            app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             Locale::Instance().SetLanguage(app_.generalSettings_.language);
             app_.ApplyAnimationPreferences();
@@ -1899,6 +1906,7 @@ void DesktopApp::LoadGeneralSettingsAndApply()
     GeneralSettings settings;
     LoadGeneralSettings(GetGeneralSettingsPath().c_str(), settings);
     generalSettings_ = settings;
+    SyncStatusBar();
     snowdesktop::shell_extensions::SharedMenuService().Configure(generalSettings_.shellExtensions);
     if (widgetEngine_) widgetEngine_->SetCalendarDisplayPreferences(generalSettings_.calendarDisplay);
     ApplyAnimationPreferences();

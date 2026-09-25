@@ -34,6 +34,7 @@
 #include "desktop_window_discovery_rules.h"
 #include "desktop_keyboard_rules.h"
 #include "floating_dock_rules.h"
+#include "status_bar_appbar.h"
 #include "floating_popup_rules.h"
 #include "drag_visual_rules.h"
 #include "ole_drag_rules.h"
@@ -933,6 +934,47 @@ void CheckAdaptiveRenameEditor()
 
 int main(int argc, char** argv)
 {
+    {
+        // Exercise the production Shell boundary with approved geometry,
+        // including a taskbar occupying part of a non-primary monitor.
+        std::vector<DWORD> messages;
+        snowdesktop::StatusBarAppBar reservation([&](DWORD message, APPBARDATA& data) -> UINT_PTR {
+            messages.push_back(message);
+            if (message == ABM_QUERYPOS) data.rc.left = -1880;
+            if (message == ABM_SETPOS) data.rc.right = -20;
+            return TRUE;
+        });
+        const HWND window = reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
+        Check(reservation.Place(window, WM_APP + 1, ABE_TOP, 48, {-1920, 0, 0, 1080}),
+            "status bar must register before negotiating its monitor edge");
+        const RECT approved = reservation.Bounds();
+        Check(messages == std::vector<DWORD>{ABM_NEW, ABM_QUERYPOS, ABM_SETPOS} &&
+                approved.left == -1880 && approved.right == -20 && approved.bottom == 48,
+            "status bar must use the final Shell-approved rectangle");
+        Check(reservation.Registered(), "hiding a registered bar must not require removing its reservation");
+        reservation.Remove(); reservation.Remove();
+        Check(std::count(messages.begin(), messages.end(), ABM_REMOVE) == 1,
+            "closing an AppBar releases its reservation exactly once");
+        messages.clear();
+        snowdesktop::StatusBarAppBar rejected([&](DWORD message, APPBARDATA&) -> UINT_PTR {
+            messages.push_back(message); return FALSE;
+        });
+        Check(!rejected.Place(window, WM_APP + 1, ABE_LEFT, 48, {0, 0, 1920, 1080}) &&
+                !rejected.Registered() && messages == std::vector<DWORD>{ABM_NEW},
+            "registration failure must not negotiate or show an overlay substitute");
+        using snowdesktop::StatusBarFullscreenClient;
+        Check(StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, false, false) &&
+                !StatusBarFullscreenClient({1920, 32, 4480, 1400}, {1920, 0, 4480, 1440}, true, false, false, false) &&
+                !StatusBarFullscreenClient({0, 0, 1920, 1080}, {1920, 0, 4480, 1440}, true, false, false, false) &&
+                !StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, true, false),
+            "fullscreen detection must exclude maximized, other-monitor and cloaked windows");
+        RECT left{-1920, 0, 0, 1080}, right = left, bottom = left;
+        snowdesktop::StatusBarAppBar::SetThickness(left, ABE_LEFT, 72);
+        snowdesktop::StatusBarAppBar::SetThickness(right, ABE_RIGHT, 72);
+        snowdesktop::StatusBarAppBar::SetThickness(bottom, ABE_BOTTOM, 48);
+        Check(left.right == -1848 && right.left == -72 && bottom.top == 1032,
+            "side and bottom placements preserve the selected monitor's origin");
+    }
     CheckDockRefreshContinuity();
     CheckDesktopPassthrough();
     CheckClipboardPasteEffects();

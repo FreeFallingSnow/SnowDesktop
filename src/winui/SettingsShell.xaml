@@ -178,11 +178,13 @@
                 <NavigationViewItem x:Name="DesktopItem" Tag="desktop" />
                 <NavigationViewItem x:Name="PagesItem" Tag="desktop-pages" />
                 <NavigationViewItem x:Name="CategoriesItem" Tag="desktop-categories" />
-                <NavigationViewItem x:Name="DockItem" Tag="dock" />
-                <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />
                 <NavigationViewItem x:Name="ContextMenuItem" Tag="context-menu" />
                 <NavigationViewItem x:Name="CalendarItem" Tag="calendar" />
+                <NavigationViewItemHeader x:Name="DesktopBarsHeader" />
+                <NavigationViewItem x:Name="DockItem" Tag="dock" />
+                <NavigationViewItem x:Name="StatusBarItem" Tag="status-bar" />
+                <NavigationViewItem x:Name="TaskbarItem" Tag="taskbar" />
                 <NavigationViewItemHeader x:Name="DataHeader" />
                 <NavigationViewItem x:Name="BackupItem" Tag="backup-and-data" />
             </NavigationView.MenuItems>

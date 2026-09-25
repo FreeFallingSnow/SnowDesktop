@@ -459,6 +459,13 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::Taskbar:
         ensureDock();
         break;
+    case SettingsPage::StatusBar:
+        if (!statusBarPage_)
+        {
+            statusBarPage_ = std::make_unique<snowdesktop::winui::StatusBarPagePresenter>(localize, cardStyle());
+            statusBarPage_->SetActions(dockPageActions_);
+        }
+        break;
     case SettingsPage::Widgets:
     case SettingsPage::DeveloperTools:
         ensureWidgets();
@@ -560,6 +567,8 @@ void SettingsShell::Close() noexcept
     personalizationPage_.reset();
     desktopPage_.reset();
     dockPage_.reset();
+    if (statusBarPage_) statusBarPage_->Close();
+    statusBarPage_.reset();
     animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
@@ -665,6 +674,8 @@ void SettingsShell::ReleaseSessionResources() noexcept
     personalizationPage_.reset();
     desktopPage_.reset();
     dockPage_.reset();
+    if (statusBarPage_) statusBarPage_->Close();
+    statusBarPage_.reset();
     animationPage_.reset();
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
@@ -707,11 +718,13 @@ void SettingsShell::RefreshLocalizedText()
         winrt::box_value(Localize("settings.nav.group.desktopShell")));
     DataHeader().Content(
         winrt::box_value(Localize("settings.nav.group.data")));
+    DesktopBarsHeader().Content(winrt::box_value(Localize("settings.nav.group.desktopBars")));
     DesktopItem().Content(winrt::box_value(Localize("settings.nav.desktop")));
     PagesItem().Content(winrt::box_value(Localize("settings.nav.pages")));
     CategoriesItem().Content(
         winrt::box_value(Localize("settings.nav.categories")));
     DockItem().Content(winrt::box_value(Localize("settings.nav.dock")));
+    StatusBarItem().Content(winrt::box_value(Localize("settings.nav.statusBar")));
     TaskbarItem().Content(winrt::box_value(Localize("settings.nav.taskbar")));
     WidgetsItem().Content(winrt::box_value(Localize("app.settings.widgets")));
     BackupItem().Content(winrt::box_value(Localize("app.settings.backup")));
@@ -748,6 +761,7 @@ void SettingsShell::RefreshLocalizedText()
         desktopPage_->RefreshLocalizedText();
     if (dockPage_)
         dockPage_->RefreshLocalizedText();
+    if (statusBarPage_) statusBarPage_->RefreshLocalizedText();
     if (animationPage_)
         animationPage_->RefreshLocalizedText();
     if (homeAboutPage_)
@@ -929,6 +943,7 @@ void SettingsShell::SetDockPageActions(
     snowdesktop::winui::DockPageActions actions)
 {
     dockPageActions_ = std::move(actions);
+    if (statusBarPage_) statusBarPage_->SetActions(dockPageActions_);
     if (dockPage_)
         dockPage_->SetActions(dockPageActions_);
     if (animationPage_)
@@ -1227,6 +1242,7 @@ void SettingsShell::SuspendInteraction() noexcept
         if (animationPage_)
             animationPage_->Deactivate();
         if (calendarPage_) calendarPage_->Deactivate();
+        if (statusBarPage_) statusBarPage_->Deactivate();
         if (contextMenuPage_) contextMenuPage_->Deactivate();
         if (homeAboutPage_)
             homeAboutPage_->Deactivate();
@@ -1288,6 +1304,7 @@ bool SettingsShell::ApplySnapshot(
             desktopPage_->ApplySnapshot(snapshot);
         if (dockPage_)
             dockPage_->ApplySnapshot(snapshot);
+        if (statusBarPage_) statusBarPage_->ApplySnapshot(snapshot);
         if (animationPage_)
             animationPage_->ApplySnapshot(snapshot);
         if (homeAboutPage_)
@@ -1755,7 +1772,7 @@ void SettingsShell::HookEvents()
                      SettingsPage::AppearanceIconBeautification,
                      SettingsPage::Desktop, SettingsPage::DesktopPages,
                      SettingsPage::DesktopCategories,
-                     SettingsPage::Dock, SettingsPage::Taskbar,
+                     SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
                      SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::ContextMenu,
                      SettingsPage::BackupAndData, SettingsPage::About,
                      SettingsPage::DeveloperTools, SettingsPage::Debug})
@@ -2008,6 +2025,8 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/categories.svg", L"\xE8B7"},
         IconDescriptor{DockItem(),
             L"ms-appx:///Assets/Settings/Icons/dock.svg", L"\xEBC8"},
+        IconDescriptor{StatusBarItem(),
+            L"ms-appx:///Assets/Settings/Icons/status-bar.svg", L"\xE737"},
         IconDescriptor{TaskbarItem(),
             L"ms-appx:///Assets/Settings/Icons/taskbar.svg", L"\xEBC8"},
         IconDescriptor{ContextMenuItem(), L"ms-appx:///Assets/Settings/Icons/context-menu.svg", L"\xE700"},
@@ -2169,6 +2188,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::AnimationPerformance)
         animationPage_->Deactivate();
     if (calendarPage_ && pageRoute.page != SettingsPage::Calendar) calendarPage_->Deactivate();
+    if (statusBarPage_ && pageRoute.page != SettingsPage::StatusBar) statusBarPage_->Deactivate();
     if (contextMenuPage_ && pageRoute.page != SettingsPage::ContextMenu) contextMenuPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
         (renderedPageRoute_->page == SettingsPage::Home ||
@@ -2494,6 +2514,16 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "taskbar.dynamic.visibleWindow",
                 "taskbar.dynamic.maximizedWindow",
                 "taskbar.dynamic.shellUi"});
+        }
+        break;
+    case SettingsPage::StatusBar:
+        if (statusBarPage_)
+        {
+            PageCards().Children().Append(statusBarPage_->Content());
+            statusBarPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
+                RegisterFocusTarget(std::move(id), element);
+            });
+            statusBarPage_->Activate();
         }
         break;
     case SettingsPage::DockAndTaskbar:
@@ -2874,6 +2904,7 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     case SettingsPage::AnimationPerformance: return Localize("settings.nav.animation");
     case SettingsPage::Dock: return Localize("settings.nav.dock");
     case SettingsPage::Taskbar: return Localize("settings.nav.taskbar");
+    case SettingsPage::StatusBar: return Localize("settings.nav.statusBar");
     case SettingsPage::DockAndTaskbar:
         return Localize("settings.nav.dock");
     case SettingsPage::Widgets: return Localize("app.settings.widgets");
@@ -2918,6 +2949,8 @@ std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
         return Localize("settings.page.dock.description");
     case SettingsPage::Taskbar:
         return Localize("settings.page.taskbar.description");
+    case SettingsPage::StatusBar:
+        return Localize("settings.page.statusBar.description");
     case SettingsPage::Widgets:
         return Localize("settings.page.widgets.description");
     case SettingsPage::WidgetSettings:
@@ -2958,6 +2991,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::Dock:
     case SettingsPage::DockAndTaskbar: return DockItem();
     case SettingsPage::Taskbar: return TaskbarItem();
+    case SettingsPage::StatusBar: return StatusBarItem();
     case SettingsPage::Widgets:
     case SettingsPage::WidgetSettings: return WidgetsItem();
     case SettingsPage::BackupAndData: return BackupItem();

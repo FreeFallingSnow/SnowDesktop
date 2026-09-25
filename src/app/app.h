@@ -48,6 +48,7 @@
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "navigation_settings.h"
 #include "general_settings.h"
+#include "../status_bar.h"
 #include "desktop_passthrough_indicator.h"
 #include "shell_extension_menu.h"
 #include "display_topology_refresh.h"
@@ -1103,6 +1104,7 @@ private:
     void RebuildContainersAndItems();
     /** @brief 为目标显示器上的 Dock 预留工作区并计算各自绘制区域。 */
     void ApplyDockWorkAreaReservation();
+    void SyncStatusBar();
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */
     bool SynchronizeDockContainerAreas();
     DockContainer* GetDockContainer() const;
@@ -3388,6 +3390,7 @@ private:
     std::unique_ptr<snowdesktop::SettingsController> settingsController_;
     std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         systemDataProvider_;
+    std::unique_ptr<snowdesktop::StatusBar> statusBar_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     std::unique_ptr<snowdesktop::widget_runtime::IWidgetSettingsBackend>
         widgetSettingsBackend_;

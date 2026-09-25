@@ -45,6 +45,12 @@ SD_IPC_FIELDS(shell_extensions::HiddenItem, v.id, v.context);
 SD_IPC_FIELDS(shell_extensions::Rule, v.id, v.category, v.shown);
 SD_IPC_FIELDS(shell_extensions::LocationOverride, v.id, v.context, v.visibility);
 SD_IPC_FIELDS(shell_extensions::Preferences, v.enabled, v.selections, v.hidden, v.shown, v.rulesVersion, v.rules, v.overrides);
+SD_IPC_FIELDS(StatusBarSettings,
+    v.enabled, v.position, v.monitorScope, v.scale, v.theme,
+    v.clock, v.tray, v.network, v.volume, v.battery, v.controlCenter,
+    v.cpu, v.memory, v.gpu, v.traffic, v.audioControls, v.brightnessControls,
+    v.wifiControls, v.bluetoothControls, v.mediaControls, v.powerControls,
+    v.pinnedTrayItems, v.trayOrder);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
@@ -52,7 +58,7 @@ SD_IPC_FIELDS(GeneralSettings,
     v.quickNavTheme, v.collectionPopupTheme, v.dockEnabled, v.widgetDeveloperToolsEnabled,
     v.calendarDisplay, v.language, v.animationMode, v.popupAnimationEffect, v.animationSpeed,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
-    v.quickNavigationAppearance, v.collectionPopupAppearance, v.shellExtensions);
+    v.quickNavigationAppearance, v.collectionPopupAppearance, v.shellExtensions, v.statusBar);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions);
 SD_IPC_FIELDS(CategorySettings,

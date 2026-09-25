@@ -152,6 +152,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.quickNavigationAppearance)) return false;
     if (const auto* value = appearanceDocument.Find("collectionPopupAppearance"))
         if (!snowdesktop::DecodeSurfaceTheme(*value, settings.collectionPopupAppearance)) return false;
+    if (const auto* value = appearanceDocument.Find("statusBar"))
+        if (!snowdesktop::DecodeStatusBarSettings(*value, settings.statusBar)) return false;
     ReadStringField(text, "language", settings.language, sizeof(settings.language));
     ReadIntField(text, "animationMode", settings.animationMode);
     ReadIntField(text, "popupAnimationEffect", settings.popupAnimationEffect);
@@ -171,12 +173,14 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
 {
     const auto quickAppearance = snowdesktop::EncodeSurfaceTheme(settings.quickNavigationAppearance);
     const auto popupAppearance = snowdesktop::EncodeSurfaceTheme(settings.collectionPopupAppearance);
-    if (quickAppearance.empty() || popupAppearance.empty()) return false;
+    const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
+    if (quickAppearance.empty() || popupAppearance.empty() || statusBar.empty()) return false;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) return false;
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
     file << "{\n";
+    file << "  \"statusBar\": " << statusBar << ",\n";
     file << "  \"shellExtensions\": " << snowdesktop::shell_extensions::WritePreferences(settings.shellExtensions) << ",\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
