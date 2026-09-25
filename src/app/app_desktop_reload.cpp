@@ -781,6 +781,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         // A failed initial read is not an empty desktop. Preserve the loaded
         // placement records and let the existing Shell refresh path retry.
         reloading_ = false;
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
         RequestShellRefresh();
         return;
     }
@@ -1015,7 +1017,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
 
     if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
-    snowdesktop::startup_diagnostics::Call(L"SaveLayoutSlots", [&] { SaveLayoutSlots(); });
+    if (!layoutReload_.Pending())
+        snowdesktop::startup_diagnostics::Call(L"SaveLayoutSlots", [&] { SaveLayoutSlots(); });
     if (snapshot) snapshot->saveMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();
     RebuildContainersAndItems();
@@ -1032,8 +1035,25 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     InvalidateRect(hwnd_, nullptr, TRUE);
     // Also drains a disk reload performed by StartInitialShellRead. Ordinary
     // Shell refreshes must not reset an active floating Dock input session.
-    layoutReload_.ApplyAfterRebuild(
-        [this] { SynchronizeReloadedLayoutSettings(); });
+    if (!incremental && snapshot && snapshot->desktopComplete)
+        layoutReload_.MarkCompleteModel();
+    const auto synchronized = layoutReload_.ApplyAfterRebuild(
+        [this] { return SynchronizeReloadedLayoutSettings(); });
+    if (synchronized == snowdesktop::layout_reload::SynchronizeResult::Succeeded)
+    {
+        const ULONGLONG saveStarted = GetTickCount64();
+        const bool saved = SaveLayoutSlots();
+        if (snapshot) snapshot->saveMs += GetTickCount64() - saveStarted;
+        CompleteLayoutRestore(saved
+            ? snowdesktop::SettingsActionResult::Success()
+            : snowdesktop::SettingsActionResult::Failure(
+                  _LW("settings.backup.restoreLayout.commitFailed")));
+    }
+    else if (synchronized == snowdesktop::layout_reload::SynchronizeResult::Failed)
+    {
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
+    }
 }
 
 void DesktopApp::EnqueueIconLoad(IconLoadTask task)

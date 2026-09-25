@@ -617,6 +617,8 @@ void DesktopApp::RefreshShellItemsAsync()
             shellReloadPending_ = false;
             shellDockFolderPopupRefreshPending_ = false;
             WriteDiagnosticLogEntry(L"Shell refresh read failed; retaining current model");
+            CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+                _LW("settings.backup.restoreLayout.commitFailed")));
             return; // Retry on a new event, not in an unbounded timer loop.
         }
         if (snapshot->foldersOnly)
@@ -682,7 +684,11 @@ void DesktopApp::RefreshShellItemsAsync()
         snapshot->desktopComplete = snowdesktop::shell_refresh::Read(request, *snapshot);
         return snapshot;
     }, [this, revision = *revision](auto result) {
-        if (shellRefreshRevision_.Finish(revision) && result) readyShellRefresh_ = std::move(result);
+        const bool current = shellRefreshRevision_.Finish(revision);
+        if (current && result) readyShellRefresh_ = std::move(result);
+        else if (current)
+            CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+                _LW("settings.backup.restoreLayout.commitFailed")));
         shellReloadPending_ = true;
         if (hwnd_) SetTimer(hwnd_, kShellChangeTimerId, 1, nullptr);
     }, completionWindow, kBackgroundShellReadyMessage);
@@ -690,6 +696,8 @@ void DesktopApp::RefreshShellItemsAsync()
     {
         shellRefreshRevision_.Finish(*revision);
         shellReloadPending_ = false;
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
         return;
     }
     shellReloadPending_ = true;
@@ -730,6 +738,8 @@ void DesktopApp::StartInitialShellRead()
     {
         shellRefreshRevision_.Finish(*revision);
         WriteDiagnosticLogEntry(L"Startup Shell reader could not start", DiagnosticLogLevel::Warning);
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
     }
 }
 
@@ -805,6 +815,8 @@ void DesktopApp::PollInitialShellRead(std::chrono::milliseconds budget)
         WriteDiagnosticLogEntry(
             L"Startup Shell read failed; saved layout retained, retry on next refresh",
             DiagnosticLogLevel::Warning);
+        CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.commitFailed")));
         return;
     }
     shellMetadataCache_ = std::move(snapshot->metadata);

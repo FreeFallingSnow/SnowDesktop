@@ -1980,18 +1980,28 @@ int main(int argc, char** argv)
             hotkeyRegistered = policy.registerHotkey;
             settingsMirror = dockEnabled;
             ++synchronizations;
+            return true;
         };
 
         reload.Request(); // Enter temporary initialization: saved Dock is off.
         reload.ApplyAfterRebuild(synchronize); // Old model is still displayed.
-        Check(pointerMonitor && settingsMirror && synchronizations == 0,
-            "requesting a layout read must not apply the previous Dock settings");
+        Check(reload.Pending() && pointerMonitor && settingsMirror &&
+                synchronizations == 0,
+            "a queued disk replacement must block old-model saves and mirror changes");
         reload.Request(false); // A partial startup snapshot must retain the request.
         Check(reload.ApplyPendingRead([&] { dockEnabled = false; }),
             "a partial startup snapshot must consume the queued disk reload");
         Check(pointerMonitor && synchronizations == 0,
             "loading layout values must wait for container rebuild before input changes");
-        reload.ApplyAfterRebuild(synchronize);
+        Check(reload.ApplyAfterRebuild(synchronize) ==
+                snowdesktop::layout_reload::SynchronizeResult::Pending &&
+                reload.Pending(),
+            "a partial Shell snapshot must not release the layout write barrier");
+        reload.MarkCompleteModel();
+        Check(reload.ApplyAfterRebuild(synchronize) ==
+                snowdesktop::layout_reload::SynchronizeResult::Succeeded &&
+                !reload.Pending(),
+            "a complete rebuilt model and synchronized mirror release the write barrier");
         Check(!pointerMonitor && !hotkeyRegistered && !settingsMirror,
             "entering a cleared layout must retire Dock input after rebuilding");
 
@@ -2005,6 +2015,7 @@ int main(int argc, char** argv)
         reload.Request(false);
         Check(!reload.ApplyPendingRead([&] { dockEnabled = false; }),
             "the next snapshot must not reload or overwrite an already loaded layout");
+        reload.MarkCompleteModel();
         reload.ApplyAfterRebuild(synchronize);
         Check(pointerMonitor && settingsMirror && hotkeyRegistered == summonEnabled &&
                 synchronizations == 2,
@@ -2015,15 +2026,32 @@ int main(int argc, char** argv)
 
         reload.Request();
         reload.ApplyPendingRead([&] { dockEnabled = false; });
+        reload.MarkCompleteModel();
         reload.ApplyAfterRebuild([&] {
             synchronize();
             reload.Request(); // A callback can queue the next layout replacement.
+            return true;
         });
         Check(reload.ApplyPendingRead([&] { dockEnabled = true; }),
             "synchronization must retain a reentrant layout replacement request");
+        reload.MarkCompleteModel();
         reload.ApplyAfterRebuild(synchronize);
         Check(pointerMonitor && settingsMirror && synchronizations == 4,
             "each completed replacement must apply its own final Dock settings");
+
+        reload.Request();
+        Check(reload.Pending(),
+            "a failed Shell read must leave the restored document protected from exit saves");
+        reload.ApplyPendingRead([&] { dockEnabled = false; });
+        reload.MarkCompleteModel();
+        Check(reload.ApplyAfterRebuild([] { return false; }) ==
+                snowdesktop::layout_reload::SynchronizeResult::Failed &&
+                reload.Pending(),
+            "a failed settings mirror must keep the restored layout write barrier");
+        Check(reload.ApplyAfterRebuild(synchronize) ==
+                snowdesktop::layout_reload::SynchronizeResult::Succeeded &&
+                !reload.Pending() && !settingsMirror,
+            "a later successful synchronization may finish the pending restore");
     }
     Check(floatingDock::ShouldUseFloatingDockLogicalForeground(
             true, true, false, true) &&
@@ -6164,7 +6192,7 @@ int main(int argc, char** argv)
             // merely requesting it unregisters dismissal using the old layout
             // when leaving temporary grid initialization (Dock off -> on).
             // This is a negative boundary, not proof of desktop interaction.
-            {"src/app/app_settings_apply.cpp", "snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings()",
+            {"src/app/app_settings_apply.cpp", "snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings(",
              "snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(",
              {"ApplyFloatingDockHotkey(", "SynchronizeGeneral(", "SynchronizeDesktop(",
               "SynchronizeDock(", "SynchronizeReloadedLayoutSettings("}},

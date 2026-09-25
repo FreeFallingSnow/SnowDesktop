@@ -850,8 +850,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             widgets_[index].id, widgets_[index].packageId);
     };
     settingsHostOptions.backupDataPage.commitLayoutRestore = [this](
-        snowdesktop::winui::LayoutRestorePayload payload) {
-        return CommitLayoutRestore(std::move(payload));
+        snowdesktop::winui::LayoutRestorePayload payload,
+        std::function<void(snowdesktop::SettingsActionResult)> completion) {
+        return CommitLayoutRestore(std::move(payload), std::move(completion));
     };
     settingsHostOptions.backupDataPage.allowDataOperations = [this]() {
         return initializationExperimentDirectory_.empty()

@@ -1430,10 +1430,13 @@ private:
     void ShutdownSettingsInfrastructure() noexcept;
     /** Commit a validated layout backup on the application STA. */
     snowdesktop::SettingsActionResult CommitLayoutRestore(
-        snowdesktop::winui::LayoutRestorePayload payload);
-    snowdesktop::SettingsActionResult ReloadLayoutAndSynchronizeSettings();
+        snowdesktop::winui::LayoutRestorePayload payload,
+        std::function<void(snowdesktop::SettingsActionResult)> completion);
+    snowdesktop::SettingsActionResult ReloadLayoutAndSynchronizeSettings(
+        std::function<void(snowdesktop::SettingsActionResult)> completion = {});
     void ReloadLayoutStateFromDisk();
-    void SynchronizeReloadedLayoutSettings();
+    bool SynchronizeReloadedLayoutSettings();
+    void CompleteLayoutRestore(snowdesktop::SettingsActionResult result);
     snowdesktop::SettingsActionResult SetTemporaryGridInitialization(bool enabled);
     snowdesktop::SettingsActionResult ChangeDebugProfile(const snowdesktop::SettingsHostActions::Request& request);
     std::wstring GetActiveWidgetStoragePath() const;
@@ -3762,6 +3765,7 @@ private:
     bool shellReloadPending_ = false;
     snowdesktop::shell_refresh::FolderRefreshScope shellRefreshScope_;
     snowdesktop::layout_reload::State layoutReload_;
+    std::function<void(snowdesktop::SettingsActionResult)> layoutRestoreCompletion_;
     snowdesktop::shell_refresh::Revision shellRefreshRevision_;
     snowdesktop::shell_refresh::MetadataCache shellMetadataCache_;
     std::shared_ptr<snowdesktop::shell_refresh::Snapshot> readyShellRefresh_;

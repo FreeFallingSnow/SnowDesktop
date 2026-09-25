@@ -81,11 +81,14 @@ struct BackupDataPageBackendOptions
         const std::filesystem::path& path)> openPath;
 
     /**
-     * Atomically replace the live layout on the application STA, reload the
-     * desktop model and synchronize the SettingsController mirror. The worker
-     * never writes application-owned live files directly.
+     * Atomically replace the live layout on the application STA and queue its
+     * Shell reload. A successful return means accepted; completion reports
+     * whether the model rebuild and settings mirror actually finished. The
+     * worker never writes application-owned live files directly.
      */
-    std::function<SettingsActionResult(LayoutRestorePayload payload)>
+    std::function<SettingsActionResult(
+        LayoutRestorePayload payload,
+        std::function<void(SettingsActionResult)> completion)>
         commitLayoutRestore;
 
     std::function<SettingsActionResult()> allowDataOperations;

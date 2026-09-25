@@ -822,6 +822,10 @@ void DesktopApp::LoadLayoutSlots()
  */
 bool DesktopApp::SaveLayoutSlots()
 {
+    // A backup may already be on disk while Shell still shows the old model.
+    // Exit and unrelated settings commits must not overwrite that document.
+    if (layoutReload_.Pending())
+        return false;
     // Do not replace a loaded layout with incomplete startup/enumeration state.
     if (!desktopItemsReady_ || gridPages_.empty())
         return false;

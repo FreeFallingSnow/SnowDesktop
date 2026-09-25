@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cwctype>
 #include <mutex>
+#include <utility>
 
 namespace
 {
@@ -610,11 +611,13 @@ std::wstring DesktopApp::BuildAnimationDiagnosticsStatus() const
 }
 
 snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
-    snowdesktop::winui::LayoutRestorePayload payload)
+    snowdesktop::winui::LayoutRestorePayload payload,
+    std::function<void(snowdesktop::SettingsActionResult)> completion)
 {
     using snowdesktop::SettingsActionResult;
 
     if (!settingsController_ || exitRequested_ || reloading_ ||
+        layoutReload_.Pending() || layoutRestoreCompletion_ ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() || dragSession_.HasContext() ||
         dragDropController_.IsTransportActive())
     {
@@ -730,16 +733,16 @@ snowdesktop::SettingsActionResult DesktopApp::CommitLayoutRestore(
         firstPageMonitorId_.clear();
         lastPageMonitorId_.clear();
     }
-    return ReloadLayoutAndSynchronizeSettings();
+    return ReloadLayoutAndSynchronizeSettings(std::move(completion));
 }
 
-void DesktopApp::SynchronizeReloadedLayoutSettings()
+bool DesktopApp::SynchronizeReloadedLayoutSettings()
 {
     // LoadLayoutSlots owns dockEnabled and the layout portion of DockSettings.
     // Reconcile input only after those values have actually been loaded and
     // containers rebuilt, including reloads requested during startup reads.
     ApplyFloatingDockHotkey();
-    if (!settingsController_) return;
+    if (!settingsController_) return false;
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;
     desktop.iconSpacingScale = iconSpacingScale_;
@@ -768,12 +771,24 @@ void DesktopApp::SynchronizeReloadedLayoutSettings()
         floatingDockHotkeyRegistered_,
         generalSynchronized && desktopSynchronized && dockSynchronized);
     WriteDiagnosticLogEntry(state);
+    return generalSynchronized && desktopSynchronized && dockSynchronized;
 }
 
-snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings()
+void DesktopApp::CompleteLayoutRestore(snowdesktop::SettingsActionResult result)
+{
+    auto completion = std::exchange(layoutRestoreCompletion_, {});
+    if (completion) completion(std::move(result));
+}
+
+snowdesktop::SettingsActionResult DesktopApp::ReloadLayoutAndSynchronizeSettings(
+    std::function<void(snowdesktop::SettingsActionResult)> completion)
 {
     // This only queues a Shell read. Runtime input and settings mirrors must
     // follow the disk load and model rebuild, not this request.
+    if (layoutReload_.Pending() || layoutRestoreCompletion_)
+        return snowdesktop::SettingsActionResult::Failure(
+            _LW("settings.backup.restoreLayout.busy"));
+    layoutRestoreCompletion_ = std::move(completion);
     ReloadItems(true);
     return snowdesktop::SettingsActionResult::Success();
 }
@@ -786,6 +801,7 @@ snowdesktop::SettingsActionResult DesktopApp::ChangeDebugProfile(
     using Result = snowdesktop::SettingsActionResult;
     const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
     if (!snapshot || !snapshot->sessionActive || exitRequested_ || reloading_ ||
+        layoutReload_.Pending() || layoutRestoreCompletion_ ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
         dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
         snowdesktop::winui::HasPendingBackupDataWork() || snapshot->externalReplacementPending)
@@ -852,6 +868,7 @@ snowdesktop::SettingsActionResult DesktopApp::SetTemporaryGridInitialization(boo
         return SettingsActionResult::Success();
     const auto snapshot = settingsController_ ? settingsController_->Snapshot() : nullptr;
     if (!settingsController_ || exitRequested_ || reloading_ ||
+        layoutReload_.Pending() || layoutRestoreCompletion_ ||
         shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
         dragSession_.HasContext() || dragDropController_.IsTransportActive() ||
         snowdesktop::winui::HasPendingBackupDataWork() ||
