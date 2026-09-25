@@ -1087,7 +1087,7 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
             auto bitmap = ReadPng(output / (agenda ? L"calendar-panel-agenda.png" : L"calendar-panel-empty.png"));
             const auto bounds = PanelPixels(bitmap);
             const int scale = dark ? 3 : 2; // Twice the scale, no measured bounds in the expectation.
-            Check(bounds.right - bounds.left == 520 * scale / 2 && bounds.bottom - bounds.top >= 320 * scale / 2 &&
+            Check(std::abs(bounds.right - bounds.left - 520 * scale / 2) <= 1 && bounds.bottom - bounds.top >= 320 * scale / 2 &&
                 bounds.bottom - bounds.top <= 530 * scale / 2, "calendar uses a compact two-column panel within its canvas");
             Check(HasFourRoundedCorners(bitmap, bounds), "calendar panel preserves all four corners including the bottom edge");
             if (!agenda) emptyHeight = bounds.bottom - bounds.top;

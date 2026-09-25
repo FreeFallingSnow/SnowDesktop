@@ -112,17 +112,34 @@ native_component_preview::Result ExportCalendarPanelPreview(
             const double windowScale = GetDpiForWindow(host.window) / 96.;
             SetWindowPos(host.window, nullptr, 0, 0, static_cast<int>(std::ceil(widthDip * windowScale)),
                 static_cast<int>(std::ceil(heightDip * windowScale)), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-            host.runtime.ResizeToClient(); frame.UpdateLayout();
-            const int width = static_cast<int>(std::ceil(widthDip * request.dpi / 96.));
-            const int height = static_cast<int>(std::ceil(heightDip * request.dpi / 96.));
+            host.runtime.ResizeToClient();
+            // SiteBridge sizing is dispatched asynchronously. UpdateLayout by
+            // itself can still arrange against the initial 900-pixel island.
+            const double layoutHeight = std::ceil(heightDip * windowScale) / windowScale;
+            PumpUntil([&] {
+                frame.UpdateLayout();
+                return std::abs(frame.ActualWidth() - widthDip) < .51 / windowScale &&
+                    std::abs(frame.ActualHeight() - layoutHeight) < .51 / windowScale;
+            });
+            int width = static_cast<int>(std::ceil(frame.ActualWidth() * request.dpi / 96.));
+            int height = static_cast<int>(std::ceil(frame.ActualHeight() * request.dpi / 96.));
             if (width + request.padding * 2 > request.canvasWidth || height + request.padding * 2 > request.canvasHeight)
                 throw std::runtime_error("preview canvas is too small for the calendar panel");
             result.stage = "panel.bitmap";
             x::Media::Imaging::RenderTargetBitmap bitmap;
             Await(bitmap.RenderAsync(frame, width, height));
             const auto buffer = Await(bitmap.GetPixelsAsync());
-            if (bitmap.PixelWidth() != width || bitmap.PixelHeight() != height || buffer.Length() != static_cast<unsigned>(width * height * 4))
-                throw std::runtime_error("calendar render returned incomplete pixels");
+            // Allow one-pixel rounding at a fractional rasterization scale.
+            // Reject a stale layout or missing pixels; retain the real size in
+            // both the image and its metadata rather than stretching it.
+            const int renderedWidth = bitmap.PixelWidth(), renderedHeight = bitmap.PixelHeight();
+            if (renderedWidth <= 0 || renderedHeight <= 0 ||
+                std::abs(renderedWidth - width) > 1 || std::abs(renderedHeight - height) > 1 ||
+                buffer.Length() != static_cast<unsigned>(renderedWidth * renderedHeight * 4))
+                throw std::runtime_error("calendar bitmap mismatch: requested=" + std::to_string(width) + "x" +
+                    std::to_string(height) + ", returned=" + std::to_string(renderedWidth) + "x" +
+                    std::to_string(renderedHeight) + ", bytes=" + std::to_string(buffer.Length()));
+            width = renderedWidth; height = renderedHeight;
             BYTE* bytes = nullptr;
             winrt::check_hresult(buffer.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
             widget_preview::Wallpaper canvas;
