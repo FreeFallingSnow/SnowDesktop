@@ -104,5 +104,77 @@ int RunTrayModelTests()
         "Shell rectangle lookup returns signed origin followed by width and height, not the second corner");
     InterlockedIncrement(&state->geometrySequence);
     check(!LookupGeometry(*state, a, rect), "Explorer does not wait while the host writes geometry");
+
+    // NIM_SETFOCUS carries identity only, never changes the icon model. Test
+    // GUID-only callers and truncated legacy data without reading image bytes.
+    wire.operation = NIM_SETFOCUS;
+    wire.icon.flags = NIF_GUID | NIF_ICON | NIF_TIP | NIF_STATE;
+    wire.icon.window = 0; wire.icon.icon = 0xffffffffu;
+    check(Decode(&wire, sizeof(wire), notification, copied) && !copied &&
+        notification.flags == NIF_GUID && !notification.tip[0] && !notification.callback,
+        "focus requests cannot copy stale icons or mutate notification fields");
+    check(!Decode(&wire, offsetof(ShellTrayData, icon) + offsetof(NotifyIcon32, guid), notification, copied),
+        "GUID focus requests require a complete GUID");
+    wire.icon.flags = NIF_STATE | NIF_ICON; wire.icon.window = 40; wire.icon.id = 2;
+    check(Decode(&wire, offsetof(ShellTrayData, icon) + offsetof(NotifyIcon32, tip), notification, copied) &&
+        !copied && notification.flags == 0, "legacy focus reads identity without requiring irrelevant state bytes");
+
+    FocusTicket ticket;
+    ticket.epoch = 123; ticket.serial = 9; ticket.origin = 70; ticket.source = 71;
+    ticket.identity = a; ticket.started = 100;
+    state->epoch = 123;
+    WriteFocusTicket(*state, ticket);
+    FocusTicket readTicket;
+    check(ReadFocusTicket(*state, a, readTicket) && readTicket.serial == 9 &&
+        !ReadFocusTicket(*state, b, readTicket), "only the active icon incarnation can request focus");
+    check(ClaimFocusTicket(*state, ticket) && !ClaimFocusTicket(*state, ticket), "a focus ticket can be claimed only once");
+    state->epoch = 124;
+    check(!ReadFocusTicket(*state, a, readTicket), "reconnection rejects a ticket from the old generation");
+    state->epoch = 123; InterlockedIncrement(&state->focusSequence);
+    check(!ReadFocusTicket(*state, a, readTicket), "Explorer never spins while focus state is being changed");
+    InterlockedIncrement(&state->focusSequence);
+    ticket.identity.guid = wire.icon.guid; WriteFocusTicket(*state, ticket);
+    Identity guidOnly{}; guidOnly.guid = wire.icon.guid;
+    check(ReadFocusTicket(*state, guidOnly, readTicket), "GUID-only NIM_SETFOCUS finds the registered icon");
+    guidOnly.window = a.window; guidOnly.process = b.process;
+    check(!ReadFocusTicket(*state, guidOnly, readTicket), "GUID focus cannot name a reused HWND from another process");
+
+    FocusReturnTracker focus;
+    const auto reply = [&] {
+        Notification result; result.operation = NIM_SETFOCUS; result.epoch = ticket.epoch;
+        result.identity = ticket.identity; result.focusSerial = ticket.serial; result.focusForeground = 40;
+        return result;
+    };
+    auto focusEvent = reply();
+    focus.Arm(ticket, "player");
+    check(!focus.Arrive(focusEvent, 124, 40) && !focus.Arrive(focusEvent, 123, 50),
+        "wrong generation or changed foreground cannot deliver a return");
+    auto replaced = focusEvent; ++replaced.identity.window;
+    check(!focus.Arrive(replaced, 123, 40), "a re-registered GUID cannot consume a previous HWND's return");
+    check(focus.Arrive(focusEvent, 123, 40) && !focus.Arrive(focusEvent, 123, 40), "valid reply is delivered once");
+    check(!focus.Take(71, 9, 123, 40) && !focus.Take(70, 8, 123, 40) && focus.Current(),
+        "old window messages cannot consume a newer pending return");
+    const auto delivered = focus.Take(70, 9, 123, 40);
+    check(delivered && delivered->key == "player" && !focus.Current() && !focus.Take(70, 9, 123, 40),
+        "UI consumes one return to the original bar, not a reopened popup");
+    focus.Arm(ticket, "player"); focus.Arrive(focusEvent, 123, 40);
+    check(!focus.Take(70, 9, 123, 50) && !focus.Current(), "foreground switching after delivery rejects and clears the request");
+    focus.Arm(ticket, "player"); focus.Arrive(focusEvent, 123, 40);
+    check(!focus.Take(70, 9, 124, 40), "reconnection between posting and dispatch also rejects the return");
+    focus.Arm(ticket, "player");
+    check(!focus.ObserveForeground(50, 30, 99, false) &&
+        !focus.ObserveForeground(70, 20, 101, false) &&
+        !focus.ObserveForeground(71, 20, 102, false) &&
+        !focus.ObserveForeground(41, a.process, 103, false) &&
+        !focus.ObserveForeground(80, 30, 104, true),
+        "old events, origin, source, owning app and the claimed native return preserve the active gesture");
+    check(focus.ObserveForeground(50, 30, 105, false) && !focus.Arrive(focusEvent, 123, 40),
+        "switching to another app cancels a pending request even if the user later returns");
+    ticket.started = 0xfffffff0u; focus.Arm(ticket, "player");
+    check(focus.ObserveForeground(50, 30, 5, false), "tick-count wrap does not disable foreground cancellation");
+    ticket.started = 100; ++ticket.serial; focus.Arm(ticket, "new player");
+    check(!focus.Arrive(focusEvent, 123, 40), "a new user gesture invalidates the prior reply");
+    focus.Cancel();
+    check(!focus.Arrive(reply(), 123, 40), "blank dismissal and hide cannot be undone by a queued return");
     return failures;
 }

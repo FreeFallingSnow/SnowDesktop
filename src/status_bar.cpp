@@ -32,14 +32,18 @@ namespace snowdesktop
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43;
+constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44;
 constexpr UINT_PTR kClockTimer = 1;
 std::map<HWND, bool> liveBars; // All access, including out-of-context hooks, on the UI thread.
-void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD, HWND, LONG object, LONG, DWORD, DWORD)
+void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD event, HWND target, LONG object, LONG, DWORD, DWORD time)
 {
     if (object != OBJID_WINDOW) return;
     for (auto& [window, pending] : liveBars)
+    {
+        if (event == EVENT_SYSTEM_FOREGROUND)
+            PostMessageW(window, kForeground, reinterpret_cast<WPARAM>(target), static_cast<LPARAM>(time));
         if (!pending) pending = PostMessageW(window, kFullscreen, 0, 0) != FALSE;
+    }
 }
 bool HighContrast()
 {
@@ -135,6 +139,7 @@ struct StatusBar::Impl
         ~Window()
         {
             closing = true;
+            if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
             ClearHover(); interaction.CancelPointer();
             liveBars.erase(hwnd);
             if (owner.hidden) owner.hidden(monitor);
@@ -169,6 +174,7 @@ struct StatusBar::Impl
         }
         void Hide()
         {
+            if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
             ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
             if (tooltip)
             {
@@ -379,6 +385,7 @@ struct StatusBar::Impl
         }
         void DismissSurfaces()
         {
+            if (owner.tray) owner.tray->CancelFocusReturn();
             keyboardFocusVisible = false;
             ClearHover(); interaction.CancelPointer();
             paintDirty = true; Paint();
@@ -397,11 +404,12 @@ struct StatusBar::Impl
                 if (owner.tray)
                 {
                     owner.tray->SetGeometry(invocation->trayKey, anchor);
-                    owner.tray->Activate(invocation->trayKey, invocation->trayAction, {anchor.left, anchor.top});
+                    owner.tray->Activate(invocation->trayKey, invocation->trayAction, {anchor.left, anchor.top}, {hwnd, hwnd});
                 }
                 return;
             }
             const auto action = invocation->action;
+            if (owner.tray) owner.tray->CancelFocusReturn();
             ClearHover();
             paintDirty = true; Paint();
             auto onActivated = owner.activate;
@@ -421,10 +429,24 @@ struct StatusBar::Impl
                     message == WM_LBUTTONUP ? tray::Activation::LeftUp :
                     message == WM_LBUTTONDBLCLK ? tray::Activation::DoubleClick :
                     message == WM_RBUTTONDOWN ? tray::Activation::RightDown : tray::Activation::RightUp;
-                owner.tray->Activate(item.icon->key, action, point);
+                owner.tray->Activate(item.icon->key, action, point, {hwnd, hwnd});
                 return true;
             }
             return false;
+        }
+        void ReturnTrayFocus(std::uint64_t serial)
+        {
+            if (!owner.tray) return;
+            if (fullscreen || closing || failed || !IsWindowVisible(hwnd))
+            { owner.tray->CancelFocusReturn(hwnd); return; }
+            const auto delivery = owner.tray->TakeFocusReturn(hwnd, serial);
+            if (!delivery) return;
+            Paint(); // Reconcile pending icon removal/reordering before choosing a target.
+            const auto index = FindStatusBarTrayFocus(items, delivery->key);
+            if (!index || !tray::RestoreFocus(*delivery)) return;
+            interaction.focused = index;
+            keyboardFocusVisible = delivery->ticket.keyboard != 0;
+            ClearHover(); paintDirty = true; Paint();
         }
         static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
         {
@@ -437,6 +459,8 @@ struct StatusBar::Impl
             }
             if (!self) return DefWindowProcW(window, message, wp, lp);
             if (self->closing) return DefWindowProcW(window, message, wp, lp);
+            if (message == tray::FocusReturnMessage())
+            { self->ReturnTrayFocus(static_cast<std::uint64_t>(wp)); return 0; }
             if (message == self->owner.taskbarCreated)
             {
                 DWORD pid = 0;
@@ -453,13 +477,19 @@ struct StatusBar::Impl
             {
                 if (DispatchStatusBarKeyboard(message, wp, lp, (GetKeyState(VK_SHIFT) & 0x8000) != 0,
                     self->interaction, self->items,
-                    [&] { self->keyboardFocusVisible = true; self->ClearHover(); self->paintDirty = true; self->Paint(); },
+                    [&] {
+                        if (self->owner.tray) self->owner.tray->CancelFocusReturn();
+                        self->keyboardFocusVisible = true; self->ClearHover(); self->paintDirty = true; self->Paint();
+                    },
                     [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
                     [&] { self->DismissSurfaces(); })) return 0;
             }
             switch (message)
             {
             case kPlace: self->Place(); return 0;
+            case kForeground:
+                if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
+                return 0;
             case kFullscreen:
                 if (auto found = liveBars.find(window); found != liveBars.end()) found->second = false;
                 self->CheckFullscreen(); return 0;
@@ -498,6 +528,7 @@ struct StatusBar::Impl
             {
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
+                if (self->owner.tray) self->owner.tray->CancelFocusReturn();
                 if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN) == StatusBarAction::Dismiss)
                 {
                     self->DismissSurfaces();
@@ -533,6 +564,7 @@ struct StatusBar::Impl
                 for (const auto& item : self->items)
                     if (item.icon && PtInRect(&item.bounds, point)) return 0;
                 ClientToScreen(window, &point);
+                if (self->owner.tray) self->owner.tray->CancelFocusReturn();
                 auto onActivated = self->owner.activate;
                 if (onActivated) onActivated(StatusBarAction::Menu, window, {point.x, point.y, point.x, point.y});
                 return 0;
@@ -733,6 +765,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
                 std::pair{EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE},
                 std::pair{EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED}})
             if (auto hook = SetWinEventHook(range.first, range.second, nullptr, WindowEvent, 0, 0,
-                    WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)) self.hooks.push_back(hook);
+                    WINEVENT_OUTOFCONTEXT | (range.first == EVENT_SYSTEM_FOREGROUND ? 0 : WINEVENT_SKIPOWNPROCESS)))
+                self.hooks.push_back(hook);
 }
 }

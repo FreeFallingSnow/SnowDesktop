@@ -176,6 +176,7 @@ set(SNOWDESKTOP_SOURCES
     src/tray_service.cpp
     src/tray_model.cpp
     src/tray_service.h
+    src/tray_focus.h
     src/taskbar_hook/tray_protocol.h
     src/status_bar.h
     src/status_bar_shell_shortcut.h
@@ -2274,12 +2275,15 @@ if (BUILD_TESTING)
         modern_menu_interaction
         SOURCES
             tests/modern_menu_interaction_tests.cpp
+            tests/tray_focus_tests.cpp
             src/menu_icon_render.cpp
             src/menu_builtin_icon.cpp
             src/modern_menu.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES gdi32 imm32 ole32 user32 windowscodecs
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopTaskbarHook>"
         LABELS integration ui)
+    add_dependencies(SnowDesktopModernMenuInteractionTests SnowDesktopTaskbarHook)
 
     snowdesktop_add_test(
         SnowDesktopComponentPreviewTests

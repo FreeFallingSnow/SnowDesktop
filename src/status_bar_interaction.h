@@ -103,6 +103,19 @@ struct StatusBarInvocation
     tray::Activation trayAction = tray::Activation::Keyboard;
     RECT bounds{};
 };
+inline std::optional<std::size_t> FindStatusBarTrayFocus(
+    const std::vector<StatusBarItem>& items, const std::string& key)
+{
+    std::optional<std::size_t> overflow;
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        const auto& item = items[i];
+        if (IsRectEmpty(&item.bounds)) continue;
+        if (item.icon && item.icon->key == key) return i;
+        if (!item.icon && item.action == StatusBarAction::Tray) overflow = i;
+    }
+    return overflow;
+}
 inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
     const std::vector<StatusBarItem>& items, std::optional<std::size_t> index, bool context)
 {

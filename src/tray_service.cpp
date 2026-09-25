@@ -59,6 +59,8 @@ struct Service::Impl
     Snapshot snapshot;
     std::shared_ptr<Connection> connection;
     std::map<std::string, Geometry> geometries;
+    FocusReturnTracker focus;
+    std::uint64_t focusSerial = 0;
     HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::jthread worker;
     Impl()
@@ -86,6 +88,20 @@ struct Service::Impl
             state.geometries[state.geometryCount++] = geometry;
         }
         MemoryBarrier(); InterlockedIncrement(&state.geometrySequence);
+    }
+    void PublishFocus()
+    {
+        if (connection && connection->shared)
+            WriteFocusTicket(*connection->shared, focus.Current() ? focus.Current()->ticket : FocusTicket{});
+    }
+    void CancelFocus() { focus.Cancel(); PublishFocus(); }
+    bool FocusIconExists() const
+    {
+        const auto* pending = focus.Current();
+        return pending && std::any_of(snapshot.icons.begin(), snapshot.icons.end(), [&](const auto& icon) {
+            return icon.key == pending->key && !(icon.state & NIS_HIDDEN) &&
+                SameFocusIdentity(icon.identity, pending->ticket.identity);
+        });
     }
     std::shared_ptr<Connection> Connect(DWORD& error, const wchar_t*& stage)
     {
@@ -195,7 +211,7 @@ struct Service::Impl
                 std::lock_guard guard(mutex);
                 snapshot.connected = current != nullptr; snapshot.degraded = !current;
                 snapshot.error = error; snapshot.icons.clear(); ++snapshot.revision;
-                connection = current; geometries.clear();
+                connection = current; geometries.clear(); CancelFocus();
             }
             if (!current) { WaitForSingleObject(stop, 2000); continue; }
             Reregister(current);
@@ -213,6 +229,18 @@ struct Service::Impl
                 {
                     if (event.epoch != static_cast<std::uint64_t>(Read(state.epoch))) continue;
                     std::lock_guard guard(mutex);
+                    if (event.operation == NIM_SETFOCUS)
+                    {
+                        if (FocusIconExists() && focus.Arrive(event, static_cast<std::uint64_t>(Read(state.epoch)),
+                            reinterpret_cast<std::uint64_t>(GetForegroundWindow())))
+                        {
+                            const auto origin = reinterpret_cast<HWND>(focus.Current()->ticket.origin);
+                            if (!PostMessageW(origin, FocusReturnMessage(), static_cast<WPARAM>(event.focusSerial), 0)) CancelFocus();
+                        }
+                        continue;
+                    }
+                    if (focus.Current() && (event.operation == NIM_ADD || event.operation == NIM_DELETE) &&
+                        SameIdentity(event.identity, focus.Current()->ticket.identity)) CancelFocus();
                     if (Apply(snapshot.icons, event))
                     {
                         for (auto& icon : snapshot.icons) ResolveApplication(icon);
@@ -237,7 +265,7 @@ struct Service::Impl
                     {
                         InterlockedIncrement64(&state.epoch);
                         { std::lock_guard guard(mutex); snapshot.icons.clear();
-                            geometries.clear(); PublishGeometries(); ++snapshot.revision; }
+                            geometries.clear(); PublishGeometries(); CancelFocus(); ++snapshot.revision; }
                         Reregister(current);
                     }
                 }
@@ -249,13 +277,14 @@ struct Service::Impl
                         return !pid || pid != icon.identity.process;
                     });
                     if (previous != snapshot.icons.size()) ++snapshot.revision;
+                    if (focus.Current() && !FocusIconExists()) CancelFocus();
                 }
                 const DWORD result = WaitForMultipleObjects(3, handles, FALSE, 1000);
                 if (result == WAIT_OBJECT_0 || result == WAIT_OBJECT_0 + 1) break;
             }
             {
                 std::lock_guard guard(mutex);
-                connection.reset(); snapshot.icons.clear(); snapshot.connected = false; ++snapshot.revision;
+                CancelFocus(); connection.reset(); snapshot.icons.clear(); snapshot.connected = false; ++snapshot.revision;
             }
             current.reset();
         }
@@ -275,7 +304,7 @@ void Service::SetGeometry(const std::string& key, RECT rect)
 }
 void Service::ClearGeometries()
 { std::lock_guard guard(impl_->mutex); impl_->geometries.clear(); impl_->PublishGeometries(); }
-bool Service::Activate(const std::string& key, Activation action, POINT anchor)
+bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin)
 {
     Icon icon;
     {
@@ -287,11 +316,70 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor)
     DWORD pid = 0;
     const HWND target = reinterpret_cast<HWND>(icon.identity.window);
     if (!GetWindowThreadProcessId(target, &pid) || pid != icon.identity.process || !icon.callback) return false;
-    if (action != Activation::Hover && action != Activation::Leave) AllowSetForegroundWindow(pid);
+    const bool gesture = action != Activation::Hover && action != Activation::Leave;
+    std::uint64_t serial = 0;
+    if (gesture)
+    {
+        DWORD originProcess = 0, sourceProcess = 0;
+        GetWindowThreadProcessId(origin.target, &originProcess);
+        if (!origin.source) origin.source = origin.target;
+        GetWindowThreadProcessId(origin.source, &sourceProcess);
+        std::lock_guard guard(impl_->mutex);
+        impl_->CancelFocus();
+        if (impl_->connection && impl_->snapshot.connected && originProcess == GetCurrentProcessId() &&
+            sourceProcess == originProcess && IsWindowVisible(origin.target) && IsWindowVisible(origin.source))
+        {
+            FocusTicket ticket;
+            ticket.epoch = static_cast<std::uint64_t>(Read(impl_->connection->shared->epoch));
+            ticket.serial = serial = ++impl_->focusSerial;
+            ticket.origin = reinterpret_cast<std::uint64_t>(origin.target);
+            ticket.source = reinterpret_cast<std::uint64_t>(origin.source);
+            ticket.identity = icon.identity; ticket.started = GetTickCount();
+            ticket.keyboard = action == Activation::Keyboard || action == Activation::ContextKeyboard;
+            impl_->focus.Arm(ticket, key);
+            if (impl_->FocusIconExists()) impl_->PublishFocus();
+            else { impl_->CancelFocus(); return false; }
+        }
+    }
+    if (gesture) AllowSetForegroundWindow(pid);
     bool accepted = true;
     for (const auto callback : Callbacks(icon, action, anchor))
         accepted = SendNotifyMessageW(target, icon.callback, callback.wp, callback.lp) != FALSE && accepted;
+    if (!accepted && serial)
+    {
+        std::lock_guard guard(impl_->mutex);
+        if (impl_->focus.Current() && impl_->focus.Current()->ticket.serial == serial) impl_->CancelFocus();
+    }
     return accepted;
+}
+void Service::CancelFocusReturn(HWND origin)
+{
+    std::lock_guard guard(impl_->mutex);
+    if (!origin || (impl_->focus.Current() && impl_->focus.Current()->ticket.origin == reinterpret_cast<std::uint64_t>(origin)))
+        impl_->CancelFocus();
+}
+void Service::ObserveForeground(HWND window, DWORD eventTime)
+{
+    DWORD process = 0; GetWindowThreadProcessId(window, &process);
+    std::lock_guard guard(impl_->mutex);
+    const bool nativeReturn = impl_->connection && impl_->focus.Current() && window == impl_->connection->window &&
+        static_cast<std::uint64_t>(Read(impl_->connection->shared->focusClaimed)) == impl_->focus.Current()->ticket.serial;
+    if (impl_->focus.ObserveForeground(reinterpret_cast<std::uint64_t>(window), process, eventTime, nativeReturn)) impl_->PublishFocus();
+}
+std::optional<FocusDelivery> Service::TakeFocusReturn(HWND origin, std::uint64_t serial)
+{
+    DWORD process = 0; GetWindowThreadProcessId(origin, &process);
+    std::lock_guard guard(impl_->mutex);
+    const auto* pending = impl_->focus.Current();
+    if (!pending || pending->ticket.origin != reinterpret_cast<std::uint64_t>(origin) ||
+        pending->ticket.serial != serial) return {};
+    if (!impl_->connection || !impl_->FocusIconExists() || process != GetCurrentProcessId() || !IsWindowVisible(origin))
+    { impl_->CancelFocus(); return {}; }
+    auto result = impl_->focus.Take(reinterpret_cast<std::uint64_t>(origin), serial,
+        static_cast<std::uint64_t>(Read(impl_->connection->shared->epoch)),
+        reinterpret_cast<std::uint64_t>(GetForegroundWindow()));
+    impl_->PublishFocus();
+    return result;
 }
 void Service::OpenNativeTray()
 {

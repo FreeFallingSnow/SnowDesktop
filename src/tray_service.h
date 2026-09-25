@@ -1,5 +1,5 @@
 #pragma once
-#include "taskbar_hook/tray_protocol.h"
+#include "tray_focus.h"
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -29,6 +29,7 @@ std::string Key(const Identity& identity);
 bool Apply(std::vector<Icon>& icons, const Event& event);
 enum class Activation { LeftDown, LeftUp, DoubleClick, RightDown, RightUp, Keyboard, ContextKeyboard, Hover, Leave };
 std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT anchor);
+struct FocusOrigin { HWND target = nullptr, source = nullptr; };
 
 class Service
 {
@@ -40,7 +41,10 @@ public:
     Snapshot Current() const;
     void SetGeometry(const std::string& key, RECT rect);
     void ClearGeometries();
-    bool Activate(const std::string& key, Activation action, POINT anchor);
+    bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {});
+    void CancelFocusReturn(HWND origin = nullptr);
+    void ObserveForeground(HWND window, DWORD eventTime);
+    std::optional<FocusDelivery> TakeFocusReturn(HWND origin, std::uint64_t serial);
     void OpenNativeTray();
 private:
     struct Impl;

@@ -38,7 +38,18 @@ Keyboard context requests use the focused icon's bounds, not the bar's origin.
 Version 3/4 icons receive distinct context and keyboard-selection callbacks;
 legacy keyboard gestures send a complete right-button down/up pair. The pinned
 YASB widget's mouse handlers are not evidence of keyboard or focus-return
-support. NIM_SETFOCUS return routing remains a separate outstanding task.
+support. SnowDesktop separately handles NIM_SETFOCUS with one user-operation
+ticket, icon incarnation and collector generation checks. A return goes to the
+original bar (the pinned icon or existing overflow entry), without reopening a
+closed popup. Blank dismissal, hiding, reconnecting and changing foreground
+invalidate pending requests. The Windows boundary rechecks foreground and
+visibility, using the documented
+[foreground permission](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow)
+and [activation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow)
+rules; denied or unmatched requests retain native fallback. The bundled host
+and collector use private IPC v2 and must be updated together; component Lua
+API v2 is unchanged. Isolated-window tests do not establish real Explorer or
+third-party menu focus acceptance.
 
 The `Shell_NotifyIconGetRect` compatibility reply is an origin followed by a
 width/height pair. Returning a second corner would offset native app menus.

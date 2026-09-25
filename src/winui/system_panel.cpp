@@ -74,8 +74,9 @@ struct SystemPanel::Impl
         tray->SetGeometry(icon.key, screen);
         POINT point{}; GetCursorPos(&point);
         if (activation == tray::Activation::Keyboard || activation == tray::Activation::ContextKeyboard)
-            point = {screen.left, screen.bottom};
-        return tray->Activate(icon.key, activation, point);
+            point = {screen.left, screen.top};
+        const auto service = tray; // The app's callback may deactivate this popup.
+        return service->Activate(icon.key, activation, point, {owner, window});
     }
     void RefreshTray(bool force = false)
     {

@@ -10,12 +10,12 @@
 
 namespace snowdesktop::tray
 {
-inline constexpr DWORD kMagic = 0x53445452, kVersion = 1;
+inline constexpr DWORD kMagic = 0x53445452, kVersion = 2;
 inline constexpr std::size_t kCapacity = 128, kGeometries = 512, kIconSize = 64;
-inline constexpr wchar_t kAttachMessage[] = L"SnowDesktop.Tray.Attach.v1";
-inline constexpr wchar_t kDetachMessage[] = L"SnowDesktop.Tray.Detach.v1";
+inline constexpr wchar_t kAttachMessage[] = L"SnowDesktop.Tray.Attach.v2";
+inline constexpr wchar_t kDetachMessage[] = L"SnowDesktop.Tray.Detach.v2";
 inline std::wstring ObjectName(DWORD owner, const wchar_t* suffix)
-{ return L"Local\\SnowDesktop.Tray.v1." + std::to_wstring(owner) + L"." + suffix; }
+{ return L"Local\\SnowDesktop.Tray.v2." + std::to_wstring(owner) + L"." + suffix; }
 
 struct Identity
 {
@@ -32,6 +32,7 @@ inline bool SameIdentity(const Identity& a, const Identity& b)
 struct Notification
 {
     std::uint64_t epoch = 0;
+    std::uint64_t focusSerial = 0, focusForeground = 0;
     DWORD operation = 0, flags = 0, callback = 0, state = 0, stateMask = 0, version = 0;
     Identity identity;
     wchar_t tip[128]{};
@@ -42,6 +43,27 @@ struct Event : Notification
     std::array<std::uint32_t, kIconSize * kIconSize> pixels{}; // premultiplied BGRA
 };
 struct Geometry { Identity identity; RECT rect{}; };
+struct FocusTicket
+{
+    std::uint64_t epoch = 0, serial = 0, origin = 0, source = 0;
+    Identity identity;
+    DWORD started = 0, keyboard = 0;
+};
+inline bool SameFocusIdentity(const Identity& a, const Identity& b)
+{ return SameIdentity(a, b) && a.window == b.window && a.id == b.id && a.process == b.process; }
+inline bool MatchesFocusRequest(const Identity& registered, const Identity& request)
+{
+    if (!HasGuid(request.guid)) return SameFocusIdentity(registered, request);
+    // NIF_GUID callers may specify only their GUID. A supplied HWND must still
+    // belong to the registered incarnation of that application.
+    return registered.guid == request.guid && (!request.window ||
+        (registered.window == request.window && registered.process == request.process));
+}
+inline bool FocusForegroundAllowed(const FocusTicket& ticket, std::uint64_t window, DWORD process)
+{
+    return window && (window == ticket.origin || window == ticket.source ||
+        (process && process == ticket.identity.process));
+}
 // A single Explorer worker produces events; one host worker consumes them.
 // Geometry has the reverse ownership and a non-blocking seqlock reader.
 struct SharedState
@@ -54,11 +76,38 @@ struct SharedState
     volatile LONG geometrySequence = 0;
     DWORD geometryCount = 0;
     Geometry geometries[kGeometries]{};
+    volatile LONG focusSequence = 0;
+    alignas(8) volatile LONG64 focusClaimed = 0;
+    FocusTicket focus;
     Event events[kCapacity]{};
     volatile LONG received = 0, decoded = 0, rejected = 0, lastSize = 0;
 };
 inline LONG Read(volatile LONG& value) { return InterlockedCompareExchange(&value, 0, 0); }
 inline LONG64 Read(volatile LONG64& value) { return InterlockedCompareExchange64(&value, 0, 0); }
+inline void WriteFocusTicket(SharedState& state, const FocusTicket& ticket)
+{
+    InterlockedIncrement(&state.focusSequence);
+    state.focus = ticket;
+    MemoryBarrier(); InterlockedIncrement(&state.focusSequence);
+}
+inline bool ReadFocusTicket(SharedState& state, const Identity& identity, FocusTicket& result)
+{
+    const LONG before = Read(state.focusSequence);
+    if (before & 1) return false;
+    const auto ticket = state.focus;
+    MemoryBarrier();
+    if (before != Read(state.focusSequence) || !ticket.serial || !ticket.origin ||
+        ticket.epoch != static_cast<std::uint64_t>(Read(state.epoch)) ||
+        !MatchesFocusRequest(ticket.identity, identity)) return false;
+    result = ticket;
+    return true;
+}
+inline bool ClaimFocusTicket(SharedState& state, const FocusTicket& ticket)
+{
+    const auto previous = Read(state.focusClaimed);
+    return previous < static_cast<LONG64>(ticket.serial) &&
+        InterlockedCompareExchange64(&state.focusClaimed, static_cast<LONG64>(ticket.serial), previous) == previous;
+}
 inline bool Publish(SharedState& state, const Event& event)
 {
     const LONG write = Read(state.write);
@@ -130,7 +179,7 @@ inline bool Decode(const void* bytes, std::size_t size, Notification& output, HI
     ShellTrayData wire{};
     std::memcpy(&wire, bytes, (std::min)(size, sizeof(wire)));
     if (wire.operation != NIM_ADD && wire.operation != NIM_MODIFY &&
-        wire.operation != NIM_DELETE && wire.operation != NIM_SETVERSION) return false;
+        wire.operation != NIM_DELETE && wire.operation != NIM_SETVERSION && wire.operation != NIM_SETFOCUS) return false;
     const auto& data = wire.icon;
     if (data.size < offsetof(NotifyIcon32, tip) || data.size > sizeof(NOTIFYICONDATAW)) return false;
     // The header may retain the caller's native cbSize while the payload uses
@@ -139,12 +188,14 @@ inline bool Decode(const void* bytes, std::size_t size, Notification& output, HI
         size - offsetof(ShellTrayData, icon), sizeof(NotifyIcon32)});
     const auto contains = [&](std::size_t end) { return available >= end; };
     if ((data.flags & NIF_GUID) && !contains(offsetof(NotifyIcon32, guid) + sizeof(GUID))) return false;
-    if ((data.flags & NIF_STATE) && !contains(offsetof(NotifyIcon32, stateMask) + sizeof(DWORD))) return false;
+    if (wire.operation != NIM_SETFOCUS && (data.flags & NIF_STATE) && !contains(offsetof(NotifyIcon32, stateMask) + sizeof(DWORD))) return false;
     if (wire.operation == NIM_SETVERSION && !contains(offsetof(NotifyIcon32, version) + sizeof(DWORD))) return false;
     output = {};
     output.operation = wire.operation; output.flags = data.flags;
     output.identity.window = data.window; output.identity.id = data.id;
     if (data.flags & NIF_GUID) output.identity.guid = data.guid;
+    // This operation only identifies an icon; ignore stale image/state bits.
+    if (wire.operation == NIM_SETFOCUS) { output.flags &= NIF_GUID; icon = nullptr; return true; }
     output.callback = data.callback; output.state = data.state;
     output.stateMask = data.stateMask; output.version = data.version;
     if (data.flags & NIF_TIP)

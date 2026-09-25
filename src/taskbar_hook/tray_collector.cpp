@@ -30,16 +30,17 @@ struct Collector
     }
     void Lost()
     { InterlockedIncrement(&shared->resync); SetEvent(signal); }
-    void Push(Pending event)
+    bool Push(Pending event)
     {
         if (!TryAcquireSRWLockExclusive(&lock))
-        { if (event.icon) DestroyIcon(event.icon); Lost(); return; }
+        { if (event.icon) DestroyIcon(event.icon); Lost(); return false; }
         const auto next = (head + 1) % queue.size();
         const bool full = next == tail;
         if (!full) { queue[head] = event; head = next; }
         ReleaseSRWLockExclusive(&lock);
         if (full) { if (event.icon) DestroyIcon(event.icon); Lost(); }
         else SetEvent(wake);
+        return !full;
     }
     bool Pop(Pending& event)
     {
@@ -167,11 +168,7 @@ DWORD WINAPI Worker(void* parameter)
             if (pending.epoch == static_cast<std::uint64_t>(Read(self->shared->epoch)))
             {
                 Event event;
-                event.epoch = pending.epoch; event.operation = pending.operation;
-                event.flags = pending.flags; event.callback = pending.callback;
-                event.state = pending.state; event.stateMask = pending.stateMask;
-                event.version = pending.version; event.identity = pending.identity;
-                std::copy_n(pending.tip, std::size(event.tip), event.tip);
+                static_cast<Notification&>(event) = pending;
                 Pixels(pending.icon, event);
                 Publish(*self->shared, event);
                 SetEvent(self->signal);
@@ -221,11 +218,42 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 pending.stateMask = decoded.stateMask; pending.version = decoded.version;
                 pending.identity = decoded.identity;
                 GetWindowThreadProcessId(reinterpret_cast<HWND>(pending.identity.window), &pending.identity.process);
+                if (pending.operation == NIM_SETFOCUS)
+                {
+                    FocusTicket ticket;
+                    HWND foreground = GetForegroundWindow();
+                    DWORD process = 0, originProcess = 0;
+                    GetWindowThreadProcessId(foreground, &process);
+                    if (!ReadFocusTicket(*self.shared, pending.identity, ticket) ||
+                        !FocusForegroundAllowed(ticket, reinterpret_cast<std::uint64_t>(foreground), process))
+                        return DefSubclassProc(window, message, wp, lp);
+                    const auto origin = reinterpret_cast<HWND>(ticket.origin);
+                    GetWindowThreadProcessId(origin, &originProcess);
+                    if (originProcess != self.shared->owner || !IsWindowVisible(origin) ||
+                        !ClaimFocusTicket(*self.shared, ticket)) return DefSubclassProc(window, message, wp, lp);
+                    // Grant permission from Explorer without waiting for the
+                    // host. If required, let the native tray regain foreground
+                    // first; an unsupported return retains the native behavior.
+                    bool nativeHandled = false;
+                    LRESULT nativeResult = TRUE;
+                    if (!AllowSetForegroundWindow(self.shared->owner))
+                    {
+                        nativeHandled = true;
+                        nativeResult = DefSubclassProc(window, message, wp, lp);
+                        foreground = GetForegroundWindow();
+                        if (foreground != window || !AllowSetForegroundWindow(self.shared->owner)) return nativeResult;
+                    }
+                    pending.focusSerial = ticket.serial;
+                    pending.focusForeground = reinterpret_cast<std::uint64_t>(foreground);
+                    pending.identity = ticket.identity;
+                    if (self.Push(pending)) return nativeResult;
+                    return nativeHandled ? nativeResult : DefSubclassProc(window, message, wp, lp);
+                }
                 std::copy_n(decoded.tip, std::size(pending.tip), pending.tip);
                 if (icon) pending.icon = CopyIcon(icon);
                 self.Push(pending);
             }
-            else if (copy->cbData >= sizeof(DWORD) * 2 && wire.operation != NIM_SETFOCUS)
+            else if (copy->cbData >= sizeof(DWORD) * 2)
             { InterlockedIncrement(&self.shared->rejected); self.Lost(); }
         }
         else if (copy->dwData == 3 && copy->cbData == sizeof(IconIdentifier32))
