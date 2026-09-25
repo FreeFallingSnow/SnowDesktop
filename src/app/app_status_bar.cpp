@@ -7,7 +7,6 @@
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
     using Action = snowdesktop::StatusBarAction;
-    action = snowdesktop::ResolveStatusBarClick(action, (GetKeyState(VK_CONTROL) & 0x8000) != 0);
     uiAnimationScheduler_.Cancel(statusBarActivationToken_);
     statusBarActivationToken_ = 0;
     // The no-activate bar does not cause WM_ACTIVATE on an open surface.
@@ -173,6 +172,9 @@ void DesktopApp::SyncStatusBar()
     {
         statusBar_ = std::make_unique<snowdesktop::StatusBar>(systemDataProvider_,
             [this](snowdesktop::StatusBarAction action, HWND owner, RECT anchor) {
+                // Sample once at the input boundary. Deferred activation must
+                // not reinterpret either an ordinary click or a Ctrl click.
+                action = snowdesktop::ResolveStatusBarClick(action, (GetKeyState(VK_CONTROL) & 0x8000) != 0);
                 ActivateStatusBar(action, owner, anchor);
             },
             [this](HMONITOR monitor) { if (systemPanel_) systemPanel_->HideForMonitor(monitor); },
