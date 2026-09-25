@@ -2,6 +2,7 @@
 #include "ui_animation_scheduler_rules.h"
 #include "animation_settings.h"
 #include "popup_animation_rules.h"
+#include "status_bar_shell_shortcut.h"
 
 #include <windows.h>
 
@@ -51,10 +52,107 @@ bool PumpMessagesUntil(Predicate done, DWORD timeoutMilliseconds = 3000)
     }
     return done();
 }
+
+void TestStatusBarShellShortcuts()
+{
+    using namespace snowdesktop;
+    using Action = StatusBarAction;
+    using Result = StatusBarShortcutResult;
+    // No global keyboard injection: only the OS key-state/input boundaries are
+    // replaced. Production scheduling, cancellation and INPUT construction run.
+    const auto request = ResolveStatusBarClick(Action::ControlCenter, true);
+    Check(request == Action::SystemControlCenter && ResolveStatusBarClick(request, false) == request,
+        "Ctrl click intent survives release while a nested menu unwinds");
+    Check(ResolveStatusBarClick(Action::ControlCenter, false) == Action::ControlCenter &&
+        ResolveStatusBarClick(Action::Dismiss, true) == Action::Dismiss,
+        "ordinary click opens the local panel and blank click still dismisses with Ctrl held");
+
+    UiAnimationScheduler scheduler;
+    Check(scheduler.Initialize(), "status bar shortcut scheduler initializes");
+    int held = VK_CONTROL;
+    bool current = true;
+    std::vector<std::vector<INPUT>> batches;
+    UINT sentCount = 4;
+    std::vector<Result> outcomes;
+    const auto queue = [&](WORD key, UINT timeout = 5000) {
+        return ScheduleStatusBarShellShortcut(scheduler, key, {
+            [&](int code) { return code == held; },
+            [&](UINT count, INPUT* input, int size) {
+                Check(size == sizeof(INPUT), "shortcut uses the native INPUT size");
+                batches.emplace_back(input, input + count);
+                return count == 4 ? sentCount : count;
+            },
+            [&](auto) { return current; },
+            [&](auto, Result result) { outcomes.push_back(result); }}, timeout);
+    };
+    const auto expectChord = [&](WORD key) {
+        Check(batches.size() == 1 && batches.front().size() == 4,
+            "system surface gets exactly one complete chord, with no modifier restoration");
+        const auto& input = batches.front();
+        const WORD keys[]{VK_LWIN, key, key, VK_LWIN};
+        const DWORD flags[]{KEYEVENTF_EXTENDEDKEY, 0, KEYEVENTF_KEYUP, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP};
+        for (std::size_t i = 0; i < 4; ++i)
+            Check(input[i].type == INPUT_KEYBOARD && input[i].ki.wVk == keys[i] && input[i].ki.dwFlags == flags[i],
+                "system shortcut has balanced Windows/key presses and releases");
+        Check(outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
+            "successful shortcut reports once and leaves no polling timer");
+    };
+
+    queue('A');
+    for (const int key : {VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, 0x41})
+    {
+        held = key;
+        WaitAndDispatch(scheduler);
+        Check(batches.empty() && outcomes.empty(), "physically held modifiers or chord key prevent injection");
+    }
+    held = 0;
+    WaitAndDispatch(scheduler);
+    expectChord('A');
+    batches.clear(); outcomes.clear();
+    queue('N'); WaitAndDispatch(scheduler); expectChord('N');
+    batches.clear(); outcomes.clear();
+
+    held = VK_CONTROL;
+    const auto cancelled = queue('A');
+    WaitAndDispatch(scheduler);
+    scheduler.Cancel(cancelled); // Same token used by blank clicks and bar disable.
+    held = 0; scheduler.DispatchDue();
+    Check(batches.empty() && outcomes.empty() && !scheduler.HasScheduledWork(),
+        "blank click or shutdown cancels the pending shortcut before release");
+    queue('A'); current = false; WaitAndDispatch(scheduler);
+    Check(batches.empty() && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
+        "changed foreground, hidden owner or fullscreen guard cancels without input");
+    current = true; outcomes.clear();
+    queue('A', 0); WaitAndDispatch(scheduler);
+    Check(batches.empty() && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
+        "expired shortcut never opens a system panel after the user moved on");
+    outcomes.clear();
+
+    for (UINT partial = 0; partial < 4; ++partial)
+    {
+        sentCount = partial;
+        queue('A'); WaitAndDispatch(scheduler);
+        Check(outcomes == std::vector<Result>{Result::Failed} && !scheduler.HasScheduledWork(),
+            "input refusal or partial insertion is failure, never a successful system toggle");
+        Check(batches.size() == (partial ? 2u : 1u), "failed chord is not retried");
+        if (partial)
+        {
+            const auto& recovery = batches.back();
+            Check(recovery.size() == (partial == 2 ? 2u : 1u) && recovery.back().ki.wVk == VK_LWIN,
+                "partial input releases the injected Windows key");
+            for (const auto& input : recovery)
+                Check((input.ki.dwFlags & KEYEVENTF_KEYUP) != 0 &&
+                    (input.ki.wVk == VK_LWIN || input.ki.wVk == 'A'),
+                    "recovery only releases unmatched synthetic presses");
+        }
+        batches.clear(); outcomes.clear();
+    }
+}
 }
 
 int main()
 {
+    TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&
         motion::ResolveEnabled(motion::FollowSystem, true) &&

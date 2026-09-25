@@ -2,10 +2,12 @@
 #include "system_controls.h"
 #include "modern_menu.h"
 #include "../status_bar_view.h"
+#include "../status_bar_shell_shortcut.h"
 
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
     using Action = snowdesktop::StatusBarAction;
+    action = snowdesktop::ResolveStatusBarClick(action, (GetKeyState(VK_CONTROL) & 0x8000) != 0);
     uiAnimationScheduler_.Cancel(statusBarActivationToken_);
     statusBarActivationToken_ = 0;
     // The no-activate bar does not cause WM_ACTIVATE on an open surface.
@@ -32,18 +34,31 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         return;
     }
     if (action == Action::None) return;
-    const bool systemControls = action == Action::ControlCenter && (GetKeyState(VK_CONTROL) & 0x8000);
+    const bool systemControls = action == Action::SystemControlCenter;
     if (action == Action::Notifications || systemControls)
     {
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
-        INPUT input[4]{};
-        for (auto& item : input) item.type = INPUT_KEYBOARD;
         const WORD key = systemControls || IsClassicSystemTaskbar() ? 'A' : 'N';
-        input[0].ki.wVk = VK_LWIN; input[1].ki.wVk = key;
-        input[2].ki.wVk = key; input[2].ki.dwFlags = KEYEVENTF_KEYUP;
-        input[3].ki.wVk = VK_LWIN; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
-        if (SendInput(4, input, sizeof(INPUT)) != 4) MessageBeep(MB_ICONWARNING);
+        const HWND foreground = GetForegroundWindow();
+        statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, key, {
+            [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
+            [](UINT count, INPUT* input, int size) { return SendInput(count, input, size); },
+            [this, owner, anchor, foreground](auto token) {
+                return token == statusBarActivationToken_ && statusBar_ && IsWindow(owner) && IsWindowVisible(owner) &&
+                    GetForegroundWindow() == foreground &&
+                    !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST));
+            },
+            [this](auto token, snowdesktop::StatusBarShortcutResult result) {
+                if (token != statusBarActivationToken_) return;
+                statusBarActivationToken_ = 0;
+                if (result == snowdesktop::StatusBarShortcutResult::Failed || result == snowdesktop::StatusBarShortcutResult::TimedOut)
+                {
+                    WriteDiagnosticLogEntry(result == snowdesktop::StatusBarShortcutResult::Failed ?
+                        L"StatusBar system shortcut input failed" : L"StatusBar system shortcut modifier release timed out");
+                    MessageBeep(MB_ICONWARNING);
+                }
+            }});
     }
     else if (action == Action::SystemMenu)
     {

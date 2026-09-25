@@ -166,6 +166,18 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto saved = tooltip.text;
                 Require(!tooltip.Enter("controlCenter", Item(BuildStatusBarItems(settings, identical), "controlCenter").tip) && tooltip.text == saved,
                     "sampling would reset the visible tooltip");
+                auto changedTray = data;
+                changedTray.tray.front().tip = L"New tray tooltip";
+                changedTray.tray.front().application = L"New application label";
+                Require(SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
+                    "tray tooltip metadata would repaint the bar");
+                changedTray.tray.front().pixels.front() ^= 0x0000ffff;
+                Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
+                    "a changed tray bitmap would be skipped");
+                changedTray = data;
+                changedTray.tray.front().state |= NIS_HIDDEN;
+                Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
+                    "hiding a pinned tray icon would leave its pixels visible");
             }
             std::optional<std::size_t> hover;
             if (preset == "hover" || preset == "high-contrast")

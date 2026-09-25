@@ -100,9 +100,12 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
 bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vector<StatusBarItem>& right)
 {
     return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin(), [](const auto& a, const auto& b) {
-        return a.key == b.key && a.left == b.left && a.text == b.text && a.glyph == b.glyph && a.action == b.action &&
-            a.icon.has_value() == b.icon.has_value() && (!a.icon || (a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
-                a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels));
+        if (a.key != b.key || a.left != b.left || a.action != b.action || a.icon.has_value() != b.icon.has_value()) return false;
+        // Pinned tray items paint only their pixels; text is tooltip metadata.
+        // Keep refreshing that metadata without invalidating the DComp surface.
+        if (a.icon) return a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
+            a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
+        return a.text == b.text && a.glyph == b.glyph;
     });
 }
 std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)
