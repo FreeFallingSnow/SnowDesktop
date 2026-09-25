@@ -127,7 +127,12 @@ native_component_preview::Result ExportCalendarPanelPreview(
                 throw std::runtime_error("preview canvas is too small for the calendar panel");
             result.stage = "panel.bitmap";
             x::Media::Imaging::RenderTargetBitmap bitmap;
-            Await(bitmap.RenderAsync(frame, width, height));
+            // WinUI's island rasterizer applies the XamlRoot scale to these
+            // dimensions. Convert from requested output pixels exactly once.
+            const double rasterScale = frame.XamlRoot().RasterizationScale();
+            const auto renderWidth = static_cast<int>(std::lround(width / rasterScale));
+            const auto renderHeight = static_cast<int>(std::lround(height / rasterScale));
+            Await(bitmap.RenderAsync(frame, renderWidth, renderHeight));
             const auto buffer = Await(bitmap.GetPixelsAsync());
             // Allow one-pixel rounding at a fractional rasterization scale.
             // Reject a stale layout or missing pixels; retain the real size in
