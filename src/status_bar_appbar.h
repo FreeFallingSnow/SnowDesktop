@@ -47,10 +47,11 @@ public:
     }
     void Remove()
     {
-        if (registered_) send_(ABM_REMOVE, data_);
+        const bool registered = registered_;
         registered_ = false;
         positioned_ = false;
         approved_ = {};
+        if (registered) send_(ABM_REMOVE, data_);
     }
     // Explorer lost its registrations; do not remove another generation's bar.
     void ExplorerRestarted() { registered_ = false; positioned_ = false; }

@@ -89,10 +89,13 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
     bool Subscribe(std::string consumer, std::string topic, std::chrono::milliseconds interval);
-    void Unsubscribe(std::string_view consumer, std::string_view topic);
+    bool Unsubscribe(std::string_view consumer, std::string_view topic);
     void RemoveConsumer(std::string_view consumer);
     std::optional<Snapshot> Current(std::string_view topic) const;
     std::vector<std::string> DrainChangedTopics();
+    std::size_t ActiveTopicCount() const;
+    std::optional<std::chrono::milliseconds> EffectiveInterval(std::string_view topic) const;
+    void StopAll();
     std::uint64_t Start(std::string consumer, Request request);
     bool Cancel(std::uint64_t id);
     std::vector<Completion> DrainCompletions(std::string_view consumer);

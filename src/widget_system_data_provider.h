@@ -1,4 +1,5 @@
 #pragma once
+#include "system_controls.h"
 
 #include "widget_data_semantic_debounce.h"
 #include "widget_network_traffic.h"
@@ -376,6 +377,7 @@ public:
     std::optional<std::chrono::milliseconds> EffectiveInterval(
         std::string_view topic) const;
     void StopAll();
+    std::shared_ptr<system_control::Service> Controls() const { return controls_; }
 
     std::optional<WidgetCpuDataSnapshot> Cpu() const;
     std::optional<WidgetMemoryDataSnapshot> Memory() const;
@@ -422,8 +424,6 @@ private:
     WidgetStorageVolumesDataSnapshot SampleStorageVolumes();
     WidgetStorageIoDataSnapshot SampleStorageIo();
     WidgetDisplayTopologyDataSnapshot SampleDisplayTopology();
-    WidgetAudioOutputDefaultDataSnapshot SampleAudioOutputDefault();
-    WidgetAudioOutputVolumeDataSnapshot SampleAudioOutputVolume();
     WidgetMediaSessionsDataSnapshot SampleMediaSessions(
         bool includeArtwork = false);
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
@@ -437,10 +437,6 @@ private:
     void PublishStorageIo(WidgetStorageIoDataSnapshot snapshot);
     void PublishDisplayTopology(WidgetDisplayTopologyDataSnapshot snapshot);
     void PublishDisplayCurrent(WidgetDisplayTopologyDataSnapshot snapshot);
-    void PublishAudioOutputDefault(
-        WidgetAudioOutputDefaultDataSnapshot snapshot);
-    void PublishAudioOutputVolume(
-        WidgetAudioOutputVolumeDataSnapshot snapshot);
     void PublishMediaSessions(WidgetMediaSessionsDataSnapshot snapshot);
     void PublishMediaCurrent(const WidgetMediaSessionsDataSnapshot& snapshot);
     void PublishMediaTimeline(const WidgetMediaSessionsDataSnapshot& snapshot);
@@ -451,6 +447,7 @@ private:
     void CloseStorageIoQuery();
 
     mutable std::mutex mutex_;
+    std::shared_ptr<system_control::Service> controls_ = std::make_shared<system_control::Service>();
     // Serializes worker creation/join without holding the snapshot mutex.
     mutable std::mutex lifecycleMutex_;
     std::condition_variable condition_;
@@ -472,8 +469,6 @@ private:
     std::optional<WidgetStorageIoDataSnapshot> storageIo_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayTopology_;
     std::optional<WidgetDisplayTopologyDataSnapshot> displayCurrent_;
-    std::optional<WidgetAudioOutputDefaultDataSnapshot> audioOutputDefault_;
-    std::optional<WidgetAudioOutputVolumeDataSnapshot> audioOutputVolume_;
     std::optional<WidgetMediaSessionsDataSnapshot> mediaSessions_;
     std::optional<WidgetMediaCurrentDataSnapshot> mediaCurrent_;
     std::optional<WidgetMediaTimelineDataSnapshot> mediaTimeline_;

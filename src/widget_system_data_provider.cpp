@@ -3,7 +3,6 @@
 #include "widget_storage_usage.h"
 #include "performance_trace.h"
 #include "widget_media_contract.h"
-#include "audio_endpoint_identity.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -466,48 +465,6 @@ std::int64_t TimeSpanMilliseconds(winrt::Windows::Foundation::TimeSpan value)
     return std::chrono::duration_cast<std::chrono::milliseconds>(value).count();
 }
 
-std::string AudioDeviceState(DWORD state)
-{
-    if ((state & DEVICE_STATE_ACTIVE) != 0) return "active";
-    if ((state & DEVICE_STATE_DISABLED) != 0) return "disabled";
-    if ((state & DEVICE_STATE_UNPLUGGED) != 0) return "unplugged";
-    if ((state & DEVICE_STATE_NOTPRESENT) != 0) return "notPresent";
-    return "unknown";
-}
-
-Microsoft::WRL::ComPtr<IMMDevice> DefaultRenderEndpoint(
-    std::string& error)
-{
-    error.clear();
-    Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&enumerator))))
-    {
-        error = "audioEnumeratorUnavailable";
-        return {};
-    }
-    Microsoft::WRL::ComPtr<IMMDevice> endpoint;
-    const HRESULT status = enumerator->GetDefaultAudioEndpoint(
-        eRender, eMultimedia, &endpoint);
-    if (FAILED(status) || !endpoint)
-    {
-        error = status == HRESULT_FROM_WIN32(ERROR_NOT_FOUND)
-            ? "notPresent" : "audioEndpointUnavailable";
-        return {};
-    }
-    return endpoint;
-}
-
-std::string OpaqueEndpointId(IMMDevice* endpoint)
-{
-    if (!endpoint) return {};
-    LPWSTR rawId = nullptr;
-    if (FAILED(endpoint->GetId(&rawId)) || !rawId) return {};
-    const std::string result = OpaqueAudioEndpointId(rawId);
-    CoTaskMemFree(rawId);
-    return result;
-}
-
 struct DisplayTargetMetadata
 {
     std::wstring friendlyName;
@@ -761,7 +718,7 @@ WidgetSystemDataProvider::~WidgetSystemDataProvider()
 bool WidgetSystemDataProvider::SupportsTopic(
     std::string_view topic) noexcept
 {
-    return topic == CpuTopic || topic == MemoryTopic ||
+    return system_control::SupportsTopic(topic) || topic == CpuTopic || topic == MemoryTopic ||
         topic == ProcessSummaryTopic ||
         topic == PowerTopic || topic == NetworkStatusTopic ||
         topic == NetworkTrafficTopic || topic == GpuTopic ||
@@ -786,6 +743,8 @@ bool WidgetSystemDataProvider::StartTopic(std::string_view consumer,
         return false;
 
     std::scoped_lock lifecycleLock(lifecycleMutex_);
+    if (system_control::SupportsTopic(topic))
+        return controls_->Subscribe(std::string(consumer), std::string(topic), interval);
     bool startWorker = false;
     {
         std::scoped_lock lock(mutex_);
@@ -846,6 +805,7 @@ bool WidgetSystemDataProvider::StopTopic(
     std::string_view consumer, std::string_view topic)
 {
     std::scoped_lock lifecycleLock(lifecycleMutex_);
+    if (system_control::SupportsTopic(topic)) return controls_->Unsubscribe(consumer, topic);
     bool removed = false;
     bool stopWorker = false;
     {
@@ -901,6 +861,7 @@ bool WidgetSystemDataProvider::StopTopic(
 
 void WidgetSystemDataProvider::RemoveConsumer(std::string_view consumer)
 {
+    controls_->RemoveConsumer(consumer);
     std::vector<std::string> topics;
     {
         std::scoped_lock lock(mutex_);
@@ -913,6 +874,7 @@ void WidgetSystemDataProvider::RemoveConsumer(std::string_view consumer)
 std::optional<std::chrono::milliseconds>
 WidgetSystemDataProvider::EffectiveInterval(std::string_view topic) const
 {
+    if (system_control::SupportsTopic(topic)) return controls_->EffectiveInterval(topic);
     std::scoped_lock lock(mutex_);
     const auto schedule = schedules_.find(std::string(topic));
     if (schedule == schedules_.end()) return std::nullopt;
@@ -922,6 +884,7 @@ WidgetSystemDataProvider::EffectiveInterval(std::string_view topic) const
 void WidgetSystemDataProvider::StopAll()
 {
     std::scoped_lock lifecycleLock(lifecycleMutex_);
+    controls_->StopAll();
     {
         std::scoped_lock lock(mutex_);
         schedules_.clear();
@@ -1036,15 +999,21 @@ WidgetSystemDataProvider::DisplayCurrent() const
 std::optional<WidgetAudioOutputDefaultDataSnapshot>
 WidgetSystemDataProvider::AudioOutputDefault() const
 {
-    std::scoped_lock lock(mutex_);
-    return audioOutputDefault_;
+    const auto state = controls_->Current(AudioOutputDefaultTopic); if (!state) return {};
+    WidgetAudioOutputDefaultDataSnapshot result;
+    result.available = state->available; result.error = state->error; result.timestampMs = state->timestampMs; result.revision = state->revision;
+    result.id = system_control::json::String(state->value, "id"); result.name = system_control::json::String(state->value, "name");
+    result.state = system_control::json::String(state->value, "state"); return result;
 }
 
 std::optional<WidgetAudioOutputVolumeDataSnapshot>
 WidgetSystemDataProvider::AudioOutputVolume() const
 {
-    std::scoped_lock lock(mutex_);
-    return audioOutputVolume_;
+    const auto state = controls_->Current(AudioOutputVolumeTopic); if (!state) return {};
+    WidgetAudioOutputVolumeDataSnapshot result;
+    result.available = state->available; result.error = state->error; result.timestampMs = state->timestampMs; result.revision = state->revision;
+    result.endpointId = system_control::json::String(state->value, "endpointId"); result.volume = system_control::json::Numeric(state->value, "volume");
+    result.muted = system_control::json::Flag(state->value, "muted"); return result;
 }
 
 std::optional<WidgetMediaSessionsDataSnapshot>
@@ -1082,6 +1051,7 @@ WidgetSystemDataProvider::DrainChangedTopics()
     std::vector<std::string> result(
         changedTopics_.begin(), changedTopics_.end());
     changedTopics_.clear();
+    const auto controls = controls_->DrainChangedTopics(); result.insert(result.end(), controls.begin(), controls.end());
     std::sort(result.begin(), result.end());
     return result;
 }
@@ -1089,7 +1059,7 @@ WidgetSystemDataProvider::DrainChangedTopics()
 bool WidgetSystemDataProvider::Running() const noexcept
 {
     std::scoped_lock lock(lifecycleMutex_);
-    return worker_.joinable();
+    return worker_.joinable() || controls_->ActiveTopicCount() != 0;
 }
 
 bool WidgetSystemDataProvider::GpuResourcesActive() const noexcept
@@ -1105,7 +1075,7 @@ bool WidgetSystemDataProvider::StorageIoResourcesActive() const noexcept
 std::size_t WidgetSystemDataProvider::ActiveTopicCount() const
 {
     std::scoped_lock lock(mutex_);
-    return schedules_.size();
+    return schedules_.size() + controls_->ActiveTopicCount();
 }
 
 void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
@@ -1192,10 +1162,6 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishDisplayTopology(SampleDisplayTopology());
             else if (topic == DisplayCurrentTopic)
                 PublishDisplayCurrent(SampleDisplayTopology());
-            else if (topic == AudioOutputDefaultTopic)
-                PublishAudioOutputDefault(SampleAudioOutputDefault());
-            else if (topic == AudioOutputVolumeTopic)
-                PublishAudioOutputVolume(SampleAudioOutputVolume());
         }
         if (mediaDue && !stopToken.stop_requested())
         {
@@ -2118,87 +2084,6 @@ WidgetSystemDataProvider::SampleDisplayTopology()
     return snapshot;
 }
 
-WidgetAudioOutputDefaultDataSnapshot
-WidgetSystemDataProvider::SampleAudioOutputDefault()
-{
-    performance::Scope performanceScope("shared.system", "SampleAudioOutputDefault");
-    WidgetAudioOutputDefaultDataSnapshot snapshot;
-    snapshot.timestampMs = TimestampMilliseconds();
-    std::string error;
-    auto endpoint = DefaultRenderEndpoint(error);
-    if (!endpoint)
-    {
-        snapshot.error = std::move(error);
-        return snapshot;
-    }
-    snapshot.id = OpaqueEndpointId(endpoint.Get());
-    DWORD state = 0;
-    if (FAILED(endpoint->GetState(&state)))
-    {
-        snapshot.error = "audioEndpointStateUnavailable";
-        return snapshot;
-    }
-    snapshot.state = AudioDeviceState(state);
-
-    Microsoft::WRL::ComPtr<IPropertyStore> properties;
-    if (SUCCEEDED(endpoint->OpenPropertyStore(STGM_READ, &properties)) &&
-        properties)
-    {
-        PROPVARIANT value{};
-        PropVariantInit(&value);
-        if (SUCCEEDED(properties->GetValue(
-                PKEY_Device_FriendlyName, &value)) &&
-            value.vt == VT_LPWSTR && value.pwszVal)
-        {
-            snapshot.name = WideToUtf8(value.pwszVal);
-        }
-        PropVariantClear(&value);
-    }
-    snapshot.available = !snapshot.id.empty();
-    if (!snapshot.available)
-        snapshot.error = "audioEndpointIdentityUnavailable";
-    return snapshot;
-}
-
-WidgetAudioOutputVolumeDataSnapshot
-WidgetSystemDataProvider::SampleAudioOutputVolume()
-{
-    performance::Scope performanceScope("shared.system", "SampleAudioOutputVolume");
-    WidgetAudioOutputVolumeDataSnapshot snapshot;
-    snapshot.timestampMs = TimestampMilliseconds();
-    std::string error;
-    auto endpoint = DefaultRenderEndpoint(error);
-    if (!endpoint)
-    {
-        snapshot.error = std::move(error);
-        return snapshot;
-    }
-    snapshot.endpointId = OpaqueEndpointId(endpoint.Get());
-    Microsoft::WRL::ComPtr<IAudioEndpointVolume> volume;
-    if (FAILED(endpoint->Activate(__uuidof(IAudioEndpointVolume),
-            CLSCTX_INPROC_SERVER, nullptr,
-            reinterpret_cast<void**>(volume.GetAddressOf()))) || !volume)
-    {
-        snapshot.error = "audioVolumeUnavailable";
-        return snapshot;
-    }
-    float scalar = 0.0f;
-    BOOL muted = FALSE;
-    if (FAILED(volume->GetMasterVolumeLevelScalar(&scalar)) ||
-        FAILED(volume->GetMute(&muted)))
-    {
-        snapshot.error = "audioVolumeUnavailable";
-        return snapshot;
-    }
-    snapshot.available = !snapshot.endpointId.empty();
-    snapshot.volume = std::clamp(
-        static_cast<double>(scalar), 0.0, 1.0);
-    snapshot.muted = muted != FALSE;
-    if (!snapshot.available)
-        snapshot.error = "audioEndpointIdentityUnavailable";
-    return snapshot;
-}
-
 WidgetMediaSessionsDataSnapshot
 WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
 {
@@ -2478,34 +2363,6 @@ void WidgetSystemDataProvider::PublishDisplayCurrent(
         ? displayCurrent_->revision + 1 : 1;
     displayCurrent_ = std::move(snapshot);
     changedTopics_.insert(std::string(DisplayCurrentTopic));
-}
-
-void WidgetSystemDataProvider::PublishAudioOutputDefault(
-    WidgetAudioOutputDefaultDataSnapshot snapshot)
-{
-    std::scoped_lock lock(mutex_);
-    if (!schedules_.contains(std::string(AudioOutputDefaultTopic))) return;
-    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
-        audioOutputDefault_,
-        semanticDebouncers_[std::string(AudioOutputDefaultTopic)]);
-    snapshot.revision = audioOutputDefault_
-        ? audioOutputDefault_->revision + 1 : 1;
-    audioOutputDefault_ = std::move(snapshot);
-    changedTopics_.insert(std::string(AudioOutputDefaultTopic));
-}
-
-void WidgetSystemDataProvider::PublishAudioOutputVolume(
-    WidgetAudioOutputVolumeDataSnapshot snapshot)
-{
-    std::scoped_lock lock(mutex_);
-    if (!schedules_.contains(std::string(AudioOutputVolumeTopic))) return;
-    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot),
-        audioOutputVolume_,
-        semanticDebouncers_[std::string(AudioOutputVolumeTopic)]);
-    snapshot.revision = audioOutputVolume_
-        ? audioOutputVolume_->revision + 1 : 1;
-    audioOutputVolume_ = std::move(snapshot);
-    changedTopics_.insert(std::string(AudioOutputVolumeTopic));
 }
 
 void WidgetSystemDataProvider::PublishMediaSessions(

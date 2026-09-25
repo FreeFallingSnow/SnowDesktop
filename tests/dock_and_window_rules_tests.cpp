@@ -35,6 +35,7 @@
 #include "desktop_keyboard_rules.h"
 #include "floating_dock_rules.h"
 #include "status_bar_appbar.h"
+#include "status_bar_layout.h"
 #include "floating_popup_rules.h"
 #include "drag_visual_rules.h"
 #include "ole_drag_rules.h"
@@ -953,6 +954,14 @@ int main(int argc, char** argv)
                 approved.left == -1880 && approved.right == -20 && approved.bottom == 48,
             "status bar must use the final Shell-approved rectangle");
         Check(reservation.Registered(), "hiding a registered bar must not require removing its reservation");
+        const auto layout = snowdesktop::StatusBarHorizontalLayout(1920, 32, 8, 110, 180,
+            std::array<LONG, 3>{60, 80, 32});
+        Check(layout[1].left == 870 && layout[1].right == 1050 && layout[4].right == 1912 && layout[0].left == 8,
+            "clock is centered on the screen with independent left and right groups");
+        const auto narrow = snowdesktop::StatusBarHorizontalLayout(400, 32, 8, 110, 180,
+            std::array<LONG, 3>{60, 80, 32});
+        Check(narrow[1].left == 110 && IsRectEmpty(&narrow[3]) && narrow[4].right == 392 && narrow[0].right < narrow[1].left,
+            "narrow bars keep the clock and last system control visible without overlapping targets");
         reservation.Remove(); reservation.Remove();
         Check(std::count(messages.begin(), messages.end(), static_cast<DWORD>(ABM_REMOVE)) == 1,
             "closing an AppBar releases its reservation exactly once");

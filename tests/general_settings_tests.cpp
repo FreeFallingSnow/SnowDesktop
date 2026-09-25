@@ -37,7 +37,7 @@ int main()
                 value.statusBar.monitorScope == DockMonitorScope::First && value.statusBar.theme.mode == -1,
             "new and migrated settings must keep the bar off and follow the global theme");
         value.statusBar.enabled = true;
-        value.statusBar.position = DockPosition::Right;
+        value.statusBar.position = DockPosition::Bottom;
         value.statusBar.monitorScope = DockMonitorScope::All;
         value.statusBar.scale = 1.5f;
         value.statusBar.pinnedTrayItems = {"C:\\测试\\app.exe|42", "guid:\"test\""};
@@ -53,6 +53,10 @@ int main()
             "status bar geometry, theme and stable tray identities must survive persistence");
         std::error_code error;
         std::filesystem::remove(path, error);
+        value.statusBar.position = DockPosition::Right;
+        NormalizeStatusBarSettings(value.statusBar);
+        Check(value.statusBar.position == DockPosition::Top && value.statusBar.pinnedTrayItems.size() == 2,
+            "retired side positions migrate to the top without losing tray preferences");
     }
     {
         using namespace snowdesktop::shell_extensions;

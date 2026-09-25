@@ -297,7 +297,7 @@ Service::Service(std::shared_ptr<Backend> backend) : impl_(std::make_unique<Impl
 Service::~Service() { Shutdown(); }
 bool Service::Subscribe(std::string consumer, std::string topic, std::chrono::milliseconds interval)
 {
-    if (consumer.empty() || !SupportsTopic(topic) || interval < std::chrono::milliseconds(100) || interval > std::chrono::seconds(60)) return false;
+    if (consumer.empty() || !SupportsTopic(topic) || interval < std::chrono::milliseconds(10) || interval > std::chrono::hours(24)) return false;
     std::lock_guard guard(impl_->mutex);
     if (impl_->stopping) return false;
     impl_->demands[topic].consumers[std::move(consumer)] = interval;
@@ -308,16 +308,14 @@ bool Service::Subscribe(std::string consumer, std::string topic, std::chrono::mi
     if (!impl_->sampler.joinable()) impl_->sampler = std::jthread([this](std::stop_token token) { impl_->Samples(token); });
     impl_->changed.notify_all(); return true;
 }
-void Service::Unsubscribe(std::string_view consumer, std::string_view topic)
+bool Service::Unsubscribe(std::string_view consumer, std::string_view topic)
 {
     std::lock_guard guard(impl_->mutex);
     const auto found = impl_->demands.find(std::string(topic));
-    if (found != impl_->demands.end())
-    {
-        found->second.consumers.erase(std::string(consumer));
-        if (found->second.consumers.empty()) impl_->demands.erase(found);
-    }
+    if (found == impl_->demands.end() || !found->second.consumers.erase(std::string(consumer))) return false;
+    if (found->second.consumers.empty()) impl_->demands.erase(found);
     impl_->changed.notify_all();
+    return true;
 }
 void Service::RemoveConsumer(std::string_view consumer)
 {
@@ -340,6 +338,20 @@ std::vector<std::string> Service::DrainChangedTopics()
 {
     std::lock_guard guard(impl_->mutex);
     std::vector<std::string> result(impl_->changedTopics.begin(), impl_->changedTopics.end()); impl_->changedTopics.clear(); return result;
+}
+std::size_t Service::ActiveTopicCount() const { std::lock_guard guard(impl_->mutex); return impl_->demands.size(); }
+std::optional<std::chrono::milliseconds> Service::EffectiveInterval(std::string_view topic) const
+{
+    std::lock_guard guard(impl_->mutex); const auto found = impl_->demands.find(std::string(topic));
+    if (found == impl_->demands.end()) return {};
+    auto result = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::hours(24));
+    for (const auto& [consumer, interval] : found->second.consumers) { (void)consumer; result = (std::min)(result, interval); }
+    return result;
+}
+void Service::StopAll()
+{
+    // Host lifecycle operation, serialized with provider start/stop calls.
+    auto backend = impl_->backend; Shutdown(); impl_ = std::make_unique<Impl>(std::move(backend));
 }
 std::uint64_t Service::Start(std::string consumer, Request request)
 {
@@ -392,6 +404,7 @@ void Service::Shutdown()
     }
     if (impl_->sampler.joinable()) impl_->sampler.join();
     for (auto& executor : impl_->executors) if (executor.joinable()) executor.join();
+    for (const auto* source : {"audio", "brightness", "wifi", "bluetooth", "power", "media"}) impl_->backend->Release(source);
     impl_->pending.clear(); impl_->active.clear();
 }
 }

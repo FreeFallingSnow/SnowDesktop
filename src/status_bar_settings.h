@@ -50,7 +50,10 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
 
 inline void NormalizeStatusBarSettings(StatusBarSettings& value)
 {
-    value.position = static_cast<DockPosition>(std::clamp(static_cast<int>(value.position), 0, 3));
+    // Earlier development builds accepted side bars. Retain their other
+    // preferences while migrating unsupported positions to the top edge.
+    if (value.position != DockPosition::Bottom && value.position != DockPosition::Top)
+        value.position = DockPosition::Top;
     value.monitorScope = static_cast<DockMonitorScope>(std::clamp(static_cast<int>(value.monitorScope), 0, 2));
     value.scale = std::isfinite(value.scale) ? std::clamp(value.scale, .75f, 3.0f) : 1.0f;
     for (auto* items : { &value.pinnedTrayItems, &value.trayOrder })

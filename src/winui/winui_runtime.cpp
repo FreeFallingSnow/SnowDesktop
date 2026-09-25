@@ -230,6 +230,21 @@ bool WinUiRuntime::Attach(
         return false;
     }
 
+    // Keep the Island/site alive when a persistent popup replaces its page.
+    if (impl_->xamlSource && impl_->parentWindow == parentWindow)
+    {
+        try
+        {
+            impl_->xamlSource.Content(content);
+            ResizeToClient();
+            return true;
+        }
+        catch (const winrt::hresult_error& error)
+        {
+            impl_->SetError(L"Replace XAML Island content", error.code());
+            return false;
+        }
+    }
     Detach();
     impl_->lastError.clear();
     impl_->parentWindow = parentWindow;
@@ -293,36 +308,40 @@ void WinUiRuntime::Detach() noexcept
     if (!impl_->OnOwnerThread())
         return;
 
-    if (impl_->xamlSource)
+    // Close() may dispatch window/focus messages. Remove the shared reference
+    // before invoking platform teardown so reentrant Detach is a no-op.
+    auto source = std::exchange(impl_->xamlSource, nullptr);
+    const auto token = std::exchange(impl_->takeFocusRequestedToken, {});
+    const bool hadBackdrop = std::exchange(impl_->systemBackdropEnabled, false);
+    const bool siteAlive = impl_->islandWindow && IsWindow(impl_->islandWindow);
+    impl_->islandWindow = nullptr;
+    impl_->lastFocusedWindow = nullptr;
+    if (source)
     {
         // Clear the backdrop while the Island still owns a valid site. This is
         // deliberately separate from the remaining best-effort cleanup so a
         // platform failure here cannot skip Content(nullptr) or Close().
         try
         {
-            impl_->xamlSource.SystemBackdrop(muxm::SystemBackdrop{nullptr});
+            if (hadBackdrop && siteAlive)
+                source.SystemBackdrop(muxm::SystemBackdrop{nullptr});
         }
         catch (...)
         {
         }
-        impl_->systemBackdropEnabled = false;
-
-        if (impl_->takeFocusRequestedToken.value != 0)
+        if (token.value != 0)
         {
             try
             {
-                impl_->xamlSource.TakeFocusRequested(
-                    impl_->takeFocusRequestedToken);
+                source.TakeFocusRequested(token);
             }
             catch (...)
             {
             }
         }
-        impl_->takeFocusRequestedToken = {};
-
         try
         {
-            impl_->xamlSource.Content(nullptr);
+            if (siteAlive) source.Content(nullptr);
         }
         catch (...)
         {
@@ -330,15 +349,12 @@ void WinUiRuntime::Detach() noexcept
 
         try
         {
-            impl_->xamlSource.Close();
+            source.Close();
         }
         catch (...)
         {
         }
     }
-    impl_->xamlSource = nullptr;
-    impl_->islandWindow = nullptr;
-    impl_->lastFocusedWindow = nullptr;
 
     if (impl_->addedControlParentStyle && impl_->parentWindow &&
         IsWindow(impl_->parentWindow))

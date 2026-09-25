@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "system_panel.h"
+#include "system_control_view.h"
 #include "winui_runtime.h"
 #include "../tray_service.h"
 #include "../widget_system_data_provider.h"
@@ -50,6 +51,7 @@ struct SystemPanel::Impl
     c::Border frame{nullptr};
     c::StackPanel body{nullptr};
     c::TextBlock notice{nullptr};
+    std::unique_ptr<SystemControlView> controls;
     struct Row
     {
         tray::Icon icon;
@@ -60,11 +62,12 @@ struct SystemPanel::Impl
     };
     std::vector<std::shared_ptr<Row>> rows;
     std::uint64_t revision = 0;
-    bool showing = false, rebuilding = false;
+    bool showing = false, rebuilding = false, hiding = false;
     explicit Impl(SettingsChanged callback) : changed(std::move(callback)) {}
     ~Impl()
     {
         Hide();
+        backdrop.Reset();
         runtime.Detach(); rows.clear(); body = nullptr; notice = nullptr; frame = nullptr; content = nullptr;
         if (window) DestroyWindow(window);
         window = nullptr;
@@ -76,7 +79,8 @@ struct SystemPanel::Impl
     }
     bool Ensure()
     {
-        if (window) return true;
+        if (window && IsWindow(window)) return true;
+        window = nullptr;
         if (!runtime.Initialize()) return false;
         WNDCLASSEXW cls{sizeof(cls)};
         cls.lpfnWndProc = Procedure; cls.hInstance = GetModuleHandleW(nullptr);
@@ -239,7 +243,8 @@ struct SystemPanel::Impl
     }
     void Build()
     {
-        runtime.Detach(); rows.clear();
+        controls.reset();
+        rows.clear();
         frame = c::Border(); frame.Padding({12, 12, 12, 12});
         const double radius = appearance.cornerRadius;
         frame.CornerRadius({radius, radius, radius, radius});
@@ -295,22 +300,28 @@ struct SystemPanel::Impl
         }
         else
         {
-            // Control sections are supplied by the shared system service in the
-            // next batch. Keep this host independent of Explorer collection.
-            root.Children().Append(body);
+            controls = std::make_unique<SystemControlView>(data, settings);
+            c::ScrollViewer scroll; scroll.MaxHeight(470); scroll.Content(controls->Root());
+            scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
+            root.Children().Append(scroll);
         }
         frame.Child(root); content = frame;
         if (!runtime.Attach(window, frame)) throw winrt::hresult_error(E_FAIL, runtime.LastError());
     }
     void Hide()
     {
-        if (frame && frame.XamlRoot())
-            try
-            {
-                for (const auto& popup : m::VisualTreeHelper::GetOpenPopupsForXamlRoot(frame.XamlRoot())) popup.IsOpen(false);
-            }
-            catch (...) {}
+        if (hiding) return;
+        hiding = true;
         showing = false;
+        try { if (controls) controls->Close(); } catch (...) {}
+        // The visual tree still owns its event handlers until Build replaces
+        // the page. Keep their controller alive while the popup is hidden.
+        try
+        {
+            if (frame && frame.XamlRoot())
+                for (const auto& popup : m::VisualTreeHelper::GetOpenPopupsForXamlRoot(frame.XamlRoot())) popup.IsOpen(false);
+        }
+        catch (...) {}
         if (window)
         {
             KillTimer(window, 1); backdrop.HidePopupWindowPair(window); backdrop.SetPopupTopmost(false);
@@ -318,6 +329,8 @@ struct SystemPanel::Impl
         }
         if (data) data->RemoveConsumer("systemPanel");
         data.reset(); tray.reset();
+        owner = nullptr;
+        hiding = false;
     }
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
@@ -328,12 +341,27 @@ struct SystemPanel::Impl
             self->window = window; SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
         }
         if (!self) return DefWindowProcW(window, message, wp, lp);
+        if (message == WM_DESTROY)
+        {
+            self->Hide();
+            self->backdrop.Reset();
+            self->runtime.Detach();
+        }
+        if (message == WM_NCDESTROY)
+        {
+            SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+            self->window = nullptr;
+            return DefWindowProcW(window, message, wp, lp);
+        }
         try
         {
             self->runtime.HandleWindowMessage(message, wp, lp);
             if (message == WM_ACTIVATE && LOWORD(wp) == WA_INACTIVE && self->showing) self->Hide();
             else if (message == WM_CLOSE || (message == WM_KEYDOWN && wp == VK_ESCAPE)) { self->Hide(); return 0; }
-            else if (message == WM_TIMER && wp == 1 && self->showing) self->RefreshTray();
+            else if (message == WM_TIMER && wp == 1 && self->showing)
+            {
+                if (self->controls) self->controls->Refresh(); else self->RefreshTray();
+            }
             else if (message == WM_DPICHANGED || message == WM_DISPLAYCHANGE) self->Hide();
         }
         catch (...) { self->Hide(); }
@@ -369,7 +397,8 @@ void SystemPanel::Show(StatusBarAction action, HWND owner, RECT anchor,
     if (settings.position == DockPosition::Right) left = anchor.left - width;
     left = std::clamp(left, static_cast<int>(info.rcWork.left), static_cast<int>(info.rcWork.right) - width);
     top = std::clamp(top, static_cast<int>(info.rcWork.top), static_cast<int>(info.rcWork.bottom) - height);
-    SetWindowLongPtrW(self.window, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(owner));
+    // This application-level popup outlives individual monitor AppBars. An
+    // HWND owner would destroy its Island implicitly when that bar is removed.
     SetWindowPos(self.window, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
     try { self.Build(); } catch (...) { self.Hide(); return; }
     if (appearance.glassEnabled)

@@ -13,7 +13,7 @@ namespace snowdesktop
 {
 namespace widget_runtime { class WidgetSystemDataProvider; }
 namespace tray { class Service; }
-enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings };
+enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu };
 struct StatusBarMonitor
 {
     std::wstring id;
