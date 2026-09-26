@@ -47,7 +47,9 @@ struct SystemPanel::Impl
     UiAnimationScheduler* scheduler = nullptr;
     UiScheduleToken animationToken = 0;
     quick_navigation_animation_rules::State slide;
-    m::TranslateTransform translation;
+    // The panel is constructed before the lazy WinUI runtime is initialized.
+    // Creating a XAML object here throws on the first status-bar click.
+    m::TranslateTransform translation{nullptr};
     Impl(SettingsChanged callback, SystemCalendarActions dates, std::function<bool(std::string_view, POINT)> drop,
         UiAnimationScheduler* timing)
         : changed(std::move(callback)), dropOutside(std::move(drop)), calendarActions(std::move(dates)), scheduler(timing) {}
@@ -56,6 +58,7 @@ struct SystemPanel::Impl
         Hide();
         backdrop.Reset();
         runtime.Detach(); resources.reset(); trayView.reset(); controls.reset(); calendar.reset(); frame = nullptr; content = nullptr;
+        translation = nullptr;
         if (window) DestroyWindow(window);
         window = nullptr;
         runtime.Shutdown();
@@ -106,7 +109,7 @@ struct SystemPanel::Impl
         trayView.reset();
         resources.reset();
         frame = CreateSystemPanelFrame(appearance);
-        translation.Y(0); frame.RenderTransform(translation);
+        translation = m::TranslateTransform(); frame.RenderTransform(translation);
         c::StackPanel root; root.Spacing(12);
         if (action == StatusBarAction::Calendar)
         {
@@ -194,7 +197,7 @@ struct SystemPanel::Impl
     }
     void ApplyAnimation()
     {
-        if (!frame || !window) return;
+        if (!frame || !window || !translation) return;
         RECT client{}; GetClientRect(window, &client);
         const float eased = quick_navigation_animation_rules::EaseInOutSmooth(slide.GetVisual().progress);
         const float y = (settings.position == DockPosition::Bottom ? 1.f : -1.f) * (1.f - eased) * client.bottom;
@@ -239,7 +242,8 @@ struct SystemPanel::Impl
         if (hiding) return;
         if (animate && showing) { Animate(false); return; }
         if (scheduler) scheduler->Cancel(animationToken);
-        animationToken = 0; slide.ResetHidden(); translation.Y(0);
+        animationToken = 0; slide.ResetHidden();
+        if (translation) translation.Y(0);
         hiding = true;
         showing = false;
         contextProcess = 0;

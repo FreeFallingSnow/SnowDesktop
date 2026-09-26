@@ -1010,7 +1010,9 @@ void SystemControlView::SetViewportHeight(double height)
     }
     // Media uses additional space. Only the monitor's actual height may force
     // the primary device list to shrink; adding music must not halve it.
-    const double budget = std::floor(std::min(SystemControlViewportHeight + mediaHeight, height));
+    // Leave two DIPs for the independent XAML and native-pixel rounding steps;
+    // the window's rasterization scale can differ from an offline output DPI.
+    const double budget = std::floor(std::min(SystemControlViewportHeight + mediaHeight, height)) - 2;
     const double available = std::max(48., budget - std::max(64., chrome));
     if (impl_->bodyScroll.MaxHeight() != available) impl_->bodyScroll.MaxHeight(available);
     // Use the composed cards to account for theme borders, margins and XAML's

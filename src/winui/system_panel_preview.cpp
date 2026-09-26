@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "system_panel_preview.h"
+#include "system_panel.h"
 #include "system_panel_surface.h"
 #include "system_calendar_view.h"
 #include "system_control_view.h"
@@ -442,6 +443,13 @@ native_component_preview::Result ExportSystemPanelPreview(
         Locale::Instance().SetLanguage(request.locale.c_str());
         ComScope com; winrt::check_hresult(com.result);
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        result.stage = "panel.cold-lifecycle";
+        {
+            // Exercise the real first-click constructor before XAML startup.
+            // Do not Show: no live popup, desktop host, AppBar or device service.
+            SystemPanel cold([](const StatusBarSettings&) {});
+            cold.Hide(); cold.HideForMonitor(nullptr);
+        }
         PreviewHost host;
         result.stage = "panel.runtime";
         if (!host.runtime.Initialize()) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
@@ -571,7 +579,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                     throw std::runtime_error("tray drop fixture did not unpin the icon");
             }
             frame.Measure({widthDip, 1000});
-            const float heightDip = std::ceil(frame.DesiredSize().Height);
+            const float heightDip = frame.DesiredSize().Height;
             const double windowScale = GetDpiForWindow(host.window) / 96.;
             SetWindowPos(host.window, nullptr, 0, 0, static_cast<int>(std::ceil(widthDip * windowScale)),
                 static_cast<int>(std::ceil(heightDip * windowScale)), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -587,7 +595,8 @@ native_component_preview::Result ExportSystemPanelPreview(
             int width = static_cast<int>(std::ceil(frame.ActualWidth() * request.dpi / 96.));
             int height = static_cast<int>(std::ceil(frame.ActualHeight() * request.dpi / 96.));
             if (width + request.padding * 2 > request.canvasWidth || height + request.padding * 2 > request.canvasHeight)
-                throw std::runtime_error("preview canvas is too small for the system panel");
+                throw std::runtime_error("preview canvas is too small for the system panel: " + preset + " " +
+                    std::to_string(width) + "x" + std::to_string(height) + " DIP height=" + std::to_string(heightDip));
             result.stage = "panel.bitmap";
             if (controlPanel || trayPanel)
             {
