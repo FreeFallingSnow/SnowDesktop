@@ -1139,6 +1139,13 @@ int main(int argc, char** argv)
                 !rejected.Registered() && messages == std::vector<DWORD>{ABM_NEW},
             "registration failure must not negotiate or show an overlay substitute");
         using snowdesktop::StatusBarFullscreenClient;
+        using snowdesktop::StatusBarFullscreenCandidate;
+        Check(StatusBarFullscreenCandidate(WS_POPUP,0,false,false) &&
+                !StatusBarFullscreenCandidate(WS_OVERLAPPEDWINDOW,0,true,false) &&
+                !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_NOACTIVATE,false,false) &&
+                !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_TRANSPARENT,false,false) &&
+                !StatusBarFullscreenCandidate(WS_POPUP,0,false,true),
+            "fullscreen candidates exclude inactive overlays, shell helpers and decorated maximized windows");
         Check(StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, false, false) &&
                 !StatusBarFullscreenClient({1920, 32, 4480, 1400}, {1920, 0, 4480, 1440}, true, false, false, false) &&
                 !StatusBarFullscreenClient({0, 0, 1920, 1080}, {1920, 0, 4480, 1440}, true, false, false, false) &&
@@ -4479,6 +4486,14 @@ int main(int argc, char** argv)
             floatingDock::ShouldShowPersistentDockHost(
               true, true, true, false, true, false),
         "summon-only mode must hide idle Hosts but retain every manually or passively floating Host");
+    Check(floatingDock::ShouldShowMergedStatusBarDockHost(true, false, false, false) &&
+            floatingDock::ShouldShowMergedStatusBarDockHost(true, true, true, false) &&
+            !floatingDock::ShouldShowMergedStatusBarDockHost(true, false, true, false),
+        "merged Dock stays beside the visible bar but fullscreen permits only explicit promotion");
+    for (bool fullscreen : {false, true})
+        Check(!floatingDock::ShouldShowMergedStatusBarDockHost(true, true, fullscreen, true) &&
+                !floatingDock::ShouldShowMergedStatusBarDockHost(false, true, fullscreen, false),
+            "merged Dock promotion must preserve passthrough and inactive-host hiding");
     Check(floatingDock::ShouldStartSystemShowDesktopLayerGuard(
               true, true, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(

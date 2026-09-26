@@ -1125,9 +1125,10 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
             auto bitmap = ReadPng(output / (agenda ? L"calendar-panel-agenda.png" : L"calendar-panel-empty.png"));
             const auto bounds = PanelPixels(bitmap);
             const double scale = dark ? 1.5 : 1.;
+            const double calendarWidth = dark ? 952. / scale : 900.;
             Check(FitsNativePanelCanvas(bitmap, bounds), "calendar remains centered inside its independent padded canvas");
-            Check(HasNativePanelSize(bounds, scale, 520, 320, 530),
-                "calendar uses a compact two-column panel including its one-pixel border");
+            Check(HasNativePanelSize(bounds, scale, calendarWidth, 300, 952. / scale),
+                "calendar uses a wide three-column panel and adapts to the independent available width");
             Check(HasFourRoundedCorners(bitmap, bounds), "calendar panel preserves all four corners including the bottom edge");
             if (!agenda) emptyHeight = bounds.bottom - bounds.top;
             else Check(bounds.bottom - bounds.top > emptyHeight + 16, "agenda rows contribute to actual panel measurement");
@@ -1138,7 +1139,7 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
             Check(!HasFourRoundedCorners(bitmap, bounds), "square bottom-corner mutation is rejected");
             auto enlarged = bounds;
             enlarged.left -= 8; enlarged.right += 8;
-            Check(!HasNativePanelSize(enlarged, scale, 520, 320, 530),
+            Check(!HasNativePanelSize(enlarged, scale, calendarWidth, 300, 952. / scale),
                 "border allowance does not accept an oversized calendar");
             bitmap.pixels[(static_cast<std::size_t>(bitmap.height / 2) * bitmap.width) * 4 + 3] = 255;
             Check(!FitsNativePanelCanvas(bitmap, PanelPixels(bitmap)),
@@ -1292,13 +1293,13 @@ void TestResourcePanelPreview(const std::filesystem::path& snowwidget,
         // alone would pass if a compositor-only trace vanished in the PNG.
         const auto differs = [&] {
             unsigned changed = 0;
-            for (LONG y = bounds.top + static_cast<LONG>(90 * scale); y < bounds.top + static_cast<LONG>(205 * scale); ++y)
+            for (LONG y = bounds.top + static_cast<LONG>(8 * scale); y < bounds.top + static_cast<LONG>(148 * scale); ++y)
                 for (LONG x = bounds.left + static_cast<LONG>(20 * scale); x < bounds.right - static_cast<LONG>(20 * scale); ++x)
                     if (PixelAt(cpu, x, y) != PixelAt(idle, x, y)) ++changed;
             return changed > 100;
         };
         Check(differs(), "nonzero resource samples visibly change the actual rendered curve");
-        for (LONG y = bounds.top + static_cast<LONG>(90 * scale); y < bounds.top + static_cast<LONG>(205 * scale); ++y)
+        for (LONG y = bounds.top + static_cast<LONG>(8 * scale); y < bounds.top + static_cast<LONG>(148 * scale); ++y)
             for (LONG x = bounds.left + static_cast<LONG>(20 * scale); x < bounds.right - static_cast<LONG>(20 * scale); ++x)
             {
                 const auto pixel = PixelAt(idle, x, y);
@@ -1336,19 +1337,37 @@ void TestStatusBarPreview(const std::filesystem::path& snowwidget,
         Check(narrow.right - narrow.left == 640 * scale && scaled.bottom - scaled.top == 48 * scale,
             "narrow and scaled bars preserve their requested geometry");
         const auto full = read(L"full"), charging = read(L"charging"), unavailable = read(L"unavailable");
-        const RECT power{bounds.right - 120 * scale, bounds.top + 3 * scale,
-            bounds.right - 92 * scale, bounds.bottom - 3 * scale};
-        // Focus on the battery glyph, not the percentage, so a missing charging
-        // symbol cannot pass merely because the fixture text differs.
+        const auto chargingLow = read(L"charging-low"), lowBattery = read(L"low-battery");
+        const RECT power{bounds.right - 76 * scale, bounds.top + 3 * scale,
+            bounds.right - 48 * scale, bounds.bottom - 3 * scale};
+        // The compact control group is three 28-DIP cells plus 8 DIP padding;
+        // the separate notification cell and outer padding follow it.
+        // Only inspect the battery cell so changed network/notification states
+        // cannot substitute for a missing fill level or charging bolt.
         unsigned powerDifferences = 0;
+        unsigned chargeLevelDifferences = 0, greenPixels = 0, lowRedPixels = 0;
         for (LONG y = power.top; y < power.bottom; ++y)
             for (LONG x = power.left; x < power.right; ++x)
+            {
                 if (PixelAt(full, x, y) != PixelAt(charging, x, y)) ++powerDifferences;
-        Check(powerDifferences > 10 && unavailable.pixels != normal.pixels,
-            "full, charging and unavailable states have distinguishable native output");
+                if (PixelAt(chargingLow, x, y) != PixelAt(charging, x, y)) ++chargeLevelDifferences;
+                const auto green = PixelAt(charging, x, y), red = PixelAt(lowBattery, x, y);
+                if (green[1] > green[0] + 20 && green[1] > green[2] + 20) ++greenPixels;
+                if (red[0] > red[1] + 20 && red[0] > red[2] + 20) ++lowRedPixels;
+            }
+        Check(powerDifferences > 10 && chargeLevelDifferences > 4 && greenPixels > 5 && lowRedPixels > 5 && unavailable.pixels != normal.pixels,
+            "battery levels, green charging bolt, low warning and unknown states reach native pixels without percentage text");
+        const RECT network{bounds.right - 132 * scale, bounds.top + 3 * scale,
+            bounds.right - 104 * scale, bounds.bottom - 3 * scale};
+        const auto wifiOff = read(L"wifi-off"), offline = read(L"offline");
+        Check(CountDifferingPixels(normal, full, network) > 10 &&
+                CountDifferingPixels(normal, lowBattery, network) > 5 &&
+                CountDifferingPixels(wifiOff, offline, network) > 5 &&
+                CountDifferingPixels(offline, unavailable, network) > 5,
+            "wired, Wi-Fi signal levels, radio-off, offline and unknown states have distinct network-cell pixels");
         unsigned coloredTrayPixels = 0;
         for (LONG y = bounds.top + 3 * scale; y < bounds.bottom - 3 * scale; ++y)
-            for (LONG x = bounds.right - 276 * scale; x < bounds.right - 212 * scale; ++x)
+            for (LONG x = bounds.right - 232 * scale; x < bounds.right - 168 * scale; ++x)
             {
                 const auto pixel = PixelAt(normal, x, y);
                 if (*std::max_element(pixel.begin(), pixel.begin() + 3) - *std::min_element(pixel.begin(), pixel.begin() + 3) > 30)

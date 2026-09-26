@@ -137,7 +137,10 @@ public:
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
     void SetReservedArea(RECT area);
+    // Stable layout relationship, including while the bar is fullscreen-hidden.
     bool IsMergedWithStatusBar() const;
+    // Visual sharing ends while fullscreen; a summoned Dock draws its own chrome.
+    bool SharesStatusBarAppearance() const;
     bool IsMagnificationAnimating() const;
     bool AdvanceMagnificationAnimation(double nowMilliseconds);
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const

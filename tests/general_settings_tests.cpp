@@ -45,16 +45,35 @@ int main()
         Check(!value.statusBar.enabled && value.statusBar.position == DockPosition::Top &&
                 value.statusBar.monitorScope == DockMonitorScope::First && value.statusBar.theme.mode == -1,
             "new and migrated settings must keep the bar off and follow the global theme");
-        Check(!firstEnable.shellUi.enabled && !firstEnable.maximizedWindow.enabled && !firstEnable.visibleWindow.enabled,
+        Check(!firstEnable.noWindow.enabled && !firstEnable.maximizedWindow.enabled,
             "legacy status bar settings without scene rules must retain the default appearance in every scene");
         JsonValue legacyJson; StatusBarSettings legacy;
         ParseJson("{\"theme\":{\"mode\":4,\"customized\":true,\"appearance\":{\"backgroundR\":0.125,\"opacity\":0.42}},"
             "\"pinnedTrayItems\":[\"guid:legacy\"]}", legacyJson);
         Check(DecodeStatusBarSettings(legacyJson, legacy) && legacy.theme.mode == 4 && legacy.theme.customized &&
             legacy.pinnedTrayItems == std::vector<std::string>{"guid:legacy"} &&
-            ResolveStatusBarAppearance(legacy, PersonalizationSettings{}, {true, true, true}).widgetAlpha == .42f &&
+            ResolveStatusBarAppearance(legacy, PersonalizationSettings{}, {true, true}).widgetAlpha == .42f &&
             legacy.theme.appearance.widgetBgR == .125f,
-            "old custom themes and tray identities survive migration even while all scenes are active");
+            "old custom themes and tray identities survive migration even with conflicting scene observations");
+        for (const auto* version : {"", "\"sceneRulesVersion\":1,"})
+        {
+            JsonValue oldScenes; StatusBarSettings migrated, reloaded;
+            Check(ParseJson(std::string("{") + version +
+                    "\"theme\":{\"mode\":1,\"appearance\":{}},\"shellUi\":{\"enabled\":true,\"theme\":{\"mode\":5,\"appearance\":{}}},"
+                    "\"visibleWindow\":{\"enabled\":true,\"theme\":{\"mode\":3,\"appearance\":{}}},"
+                    "\"maximizedWindow\":{\"enabled\":true,\"theme\":{\"mode\":0,\"appearance\":{}}}}", oldScenes) &&
+                DecodeStatusBarSettings(oldScenes, migrated), "old scene schemas can be migrated explicitly");
+            Check(!migrated.noWindow.enabled && migrated.legacyShellUi.enabled && migrated.legacyVisibleWindow.enabled &&
+                migrated.legacyShellUi.theme.mode == 5 && migrated.legacyVisibleWindow.theme.mode == 3 &&
+                ResolveStatusBarAppearance(migrated, PersonalizationSettings{}, {true, false}) == MakeAppearancePreset(kAppearancePresetLight) &&
+                ResolveStatusBarAppearance(migrated, PersonalizationSettings{}, {}) == MakeAppearancePreset(kAppearancePresetLight) &&
+                ResolveStatusBarAppearance(migrated, PersonalizationSettings{}, {false, true}) == MakeAppearancePreset(kAppearancePresetDark),
+                "retired scenes remain inert and must never become an enabled no-window rule; maximized keeps its meaning");
+            JsonValue saved;
+            Check(ParseJson(EncodeStatusBarSettings(migrated), saved) && saved.Find("sceneRulesVersion") &&
+                saved.Find("sceneRulesVersion")->number == 2 && DecodeStatusBarSettings(saved, reloaded) && reloaded == migrated,
+                "migration writes the new schema while preserving retired rule values for compatibility");
+        }
         value.statusBar.enabled = true;
         value.statusBar.position = DockPosition::Bottom;
         value.statusBar.monitorScope = DockMonitorScope::All;
@@ -68,13 +87,15 @@ int main()
         value.statusBar.theme.customized = true;
         value.statusBar.theme.appearance.backgroundPreset = kAppearancePresetCustom;
         value.statusBar.theme.appearance.widgetBgR = .35f;
-        value.statusBar.shellUi.enabled = true;
-        value.statusBar.shellUi.theme.mode = 6;
+        value.statusBar.noWindow.enabled = true;
+        value.statusBar.noWindow.theme.mode = kStatusBarThemeTransparentDarkText;
+        value.statusBar.legacyShellUi.enabled = true;
+        value.statusBar.legacyShellUi.theme.mode = 6;
         value.statusBar.maximizedWindow.enabled = true;
         value.statusBar.maximizedWindow.theme.mode = -1;
-        value.statusBar.visibleWindow.theme.mode = 4;
-        value.statusBar.visibleWindow.theme.customized = true;
-        value.statusBar.visibleWindow.theme.appearance.widgetBgB = .73f;
+        value.statusBar.legacyVisibleWindow.theme.mode = 4;
+        value.statusBar.legacyVisibleWindow.theme.customized = true;
+        value.statusBar.legacyVisibleWindow.theme.appearance.widgetBgB = .73f;
         const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopStatusBar-" + std::to_wstring(GetCurrentProcessId()) + L".json");
         GeneralSettings restored;
         Check(SaveGeneralSettings(path.c_str(), value) && LoadGeneralSettings(path.c_str(), restored) &&
@@ -82,9 +103,9 @@ int main()
             "status bar geometry, default and active or disabled scene themes, and tray identities must survive persistence");
         std::error_code error;
         std::filesystem::remove(path, error);
-        const std::array<int, 8> expectedPresets{-1, kAppearancePresetDark, kAppearancePresetLight,
+        const std::array<int, 7> expectedPresets{-1, kAppearancePresetDark, kAppearancePresetLight,
             kAppearancePresetGlassDark, kAppearancePresetGlassLight, kAppearancePresetAcrylicDark,
-            kAppearancePresetAcrylicLight, kAppearancePresetCustom};
+            kAppearancePresetAcrylicLight};
         for (std::size_t i = 0; i < StatusBarThemeModes.size(); ++i)
         {
             StatusBarSettings preset; preset.theme.mode = StatusBarThemeModes[i];
@@ -93,46 +114,65 @@ int main()
             Check(ParseJson(EncodeStatusBarSettings(preset), encoded) && DecodeStatusBarSettings(encoded, decoded) &&
                 decoded.theme.mode == preset.theme.mode && decoded.theme.customized == preset.theme.customized &&
                 decoded.theme.appearance.widgetBgR == .125f && StatusBarThemeSelection(decoded.theme.mode) == static_cast<int>(i),
-                "all six status bar presets, global and custom survive persistence with stable legacy modes");
+                "all status bar presets, global and custom survive persistence with stable legacy modes");
             if (i > 0 && i < 7)
                 Check(ResolveStatusBarAppearance(decoded.theme, MakeAppearancePreset(kAppearancePresetLight)) == MakeAppearancePreset(expectedPresets[i]),
                     "bar preset matches the corresponding global material");
+            if (preset.theme.mode == 7 || preset.theme.mode == 8)
+            {
+                const auto transparent = ResolveStatusBarAppearance(decoded.theme, PersonalizationSettings{});
+                Check(transparent.backgroundPreset == kAppearancePresetTaskbarTransparent && transparent.widgetAlpha == 0 &&
+                    transparent.widgetBorderAlpha == 0 && transparent.gradientEndA == 0 &&
+                    !transparent.glassEnabled && !transparent.acrylicEnabled && !transparent.widgetEdgeHighlightEnabled &&
+                    !transparent.panelGradient.enabled && transparent.contentTheme == (preset.theme.mode == 7 ? 1 : 0),
+                    "transparent presets clear all background effects and retain independent dark or light text");
+            }
+        }
+        for (const int mode : {5, 6, 7, 8})
+        {
+            JsonValue barOnly; SurfaceTheme popup;
+            ParseJson("{\"mode\":" + std::to_string(mode) + "}", barOnly);
+            Check(!DecodeSurfaceTheme(barOnly, popup), "status bar presets must not broaden the popup theme contract");
         }
         for (const auto* json : {"{\"shellUi\":true}", "{\"maximizedWindow\":{\"enabled\":1}}",
-            "{\"visibleWindow\":{\"theme\":{\"mode\":7}}}"})
+            "{\"visibleWindow\":{\"theme\":{\"mode\":9}}}", "{\"noWindow\":{\"enabled\":1}}",
+            "{\"sceneRulesVersion\":3}", "{\"sceneRulesVersion\":\"2\"}"})
         {
             JsonValue invalid; ParseJson(json, invalid);
             auto unchanged = value.statusBar;
             Check(!DecodeStatusBarSettings(invalid, unchanged) && unchanged == value.statusBar,
                 "invalid scene settings must fail atomically without replacing valid preferences");
         }
-        // Independent expectations protect priority and global-vs-default semantics:
-        // all three scenes may match, while a disabled higher rule must fall through.
+        // Empty and maximized are mutually exclusive on a real display. An
+        // inconsistent observation must never apply the empty-display rule.
         StatusBarSettings scenes;
         scenes.theme.mode = 1;
-        scenes.shellUi.enabled = scenes.maximizedWindow.enabled = scenes.visibleWindow.enabled = true;
-        scenes.shellUi.theme.mode = 5;
+        scenes.noWindow.enabled = scenes.maximizedWindow.enabled = true;
+        scenes.noWindow.theme.mode = 5;
         scenes.maximizedWindow.theme.mode = 0;
-        scenes.visibleWindow.theme.mode = 3;
         const auto global = MakeAppearancePreset(kAppearancePresetGlassLight);
         const auto savedScenes = scenes;
-        Check(ResolveStatusBarAppearance(scenes, global, {true, true, true}) == MakeAppearancePreset(kAppearancePresetGlassDark),
-            "system UI overrides maximized and ordinary visible applications");
-        Check(ResolveStatusBarAppearance(scenes, global, {false, true, true}) == MakeAppearancePreset(kAppearancePresetDark),
-            "maximized applications override ordinary visible applications");
-        Check(ResolveStatusBarAppearance(scenes, global, {false, false, true}) == MakeAppearancePreset(kAppearancePresetAcrylicLight),
-            "visible application scene selects its own full global preset");
+        Check(ResolveStatusBarAppearance(scenes, global, {true, false}) == MakeAppearancePreset(kAppearancePresetGlassDark),
+            "an observed empty display selects its own full global preset");
+        Check(ResolveStatusBarAppearance(scenes, global, {false, true}) == MakeAppearancePreset(kAppearancePresetDark) &&
+            ResolveStatusBarAppearance(scenes, global, {true, true}) == MakeAppearancePreset(kAppearancePresetDark),
+            "a maximized application selects its rule even if the empty observation is inconsistent");
         Check(ResolveStatusBarAppearance(scenes, global, {}) == MakeAppearancePreset(kAppearancePresetLight) && scenes == savedScenes,
-            "ending every scene restores the saved default without rewriting preferences");
-        scenes.shellUi.enabled = false;
-        Check(ResolveStatusBarAppearance(scenes, global, {true, true, true}) == MakeAppearancePreset(kAppearancePresetDark),
-            "disabled higher-priority scenes must fall through to the next enabled match");
+            "ordinary windows or an unknown observation use the saved default without rewriting preferences");
+        scenes.maximizedWindow.enabled = false;
+        Check(ResolveStatusBarAppearance(scenes, global, {true, true}) == MakeAppearancePreset(kAppearancePresetLight),
+            "a disabled maximized rule cannot accidentally activate the no-window rule");
+        scenes.noWindow.enabled = false;
+        Check(ResolveStatusBarAppearance(scenes, global, {true, false}) == MakeAppearancePreset(kAppearancePresetLight),
+            "disabled no-window override returns to the independent bar default");
+        scenes.maximizedWindow.enabled = true;
         scenes.maximizedWindow.theme.mode = -1;
-        Check(ResolveStatusBarAppearance(scenes, global, {false, true, true}) == global,
+        Check(ResolveStatusBarAppearance(scenes, global, {false, true}) == global,
             "a scene following global must use global appearance rather than the independent bar default");
-        scenes.visibleWindow.theme.mode = 4;
-        scenes.visibleWindow.theme.appearance.widgetAlpha = .43f;
-        Check(ResolveStatusBarAppearance(scenes, global, {false, false, true}) == scenes.visibleWindow.theme.appearance,
+        scenes.noWindow.enabled = true;
+        scenes.noWindow.theme.mode = 4;
+        scenes.noWindow.theme.appearance.widgetAlpha = .43f;
+        Check(ResolveStatusBarAppearance(scenes, global, {true, false}) == scenes.noWindow.theme.appearance,
             "a custom scene keeps its independent material values");
         value.statusBar.position = DockPosition::Right;
         NormalizeStatusBarSettings(value.statusBar);

@@ -6,8 +6,25 @@
 // License: third_party/fluentui-system-icons/LICENSE. No Filled font is shipped.
 #include <d2d1.h>
 #include <wrl/client.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
 namespace snowdesktop
 {
+enum class StatusBarBatteryTone { Normal, Charging, Low, Saver };
+// Official Regular font levels preserve the outline and the charging bolt.
+// Supplementary code points must be drawn as complete UTF-16 strings.
+inline constexpr std::array<const wchar_t*, 11> StatusBarBatteryGlyphs{
+    L"\uF1BB", L"\uF1BD", L"\uF1BF", L"\uF1C1", L"\uF1C3", L"\uF1C5",
+    L"\uF1C7", L"\uF1C9", L"\uF1CB", L"\uF1CD", L"\uE143"};
+inline constexpr std::array<const wchar_t*, 11> StatusBarChargingGlyphs{
+    L"\U000F0AAB", L"\U000F0AAC", L"\U000F0AAE", L"\U000F0AAF", L"\U000F0AB0", L"\U000F0AB1",
+    L"\U000F0AB2", L"\U000F0AB3", L"\U000F0AB4", L"\U000F0AB5", L"\U000F0AAD"};
+inline int StatusBarBatteryLevel(double percent)
+{
+    if (!std::isfinite(percent) || percent < 0 || percent > 100) return -1;
+    return std::clamp(static_cast<int>(std::lround(percent)) / 10, percent > 0 ? 1 : 0, 10);
+}
 inline constexpr wchar_t ChargingBatteryPath[] = L"M6.2334 6.17578C5.81383 7.00817 6.41657 7.99587 7.35352 7.9961H8V9.66602C8.00001 11.0629 9.88418 11.5187 10.5176 10.2666L12.7656 5.82031C12.902 5.54975 12.9288 5.2637 12.873 5H16C17.6569 5 19 6.34315 19 8C19.5523 8 20 8.44772 20 9V11C20 11.5523 19.5523 12 19 12L18.9961 12.1543C18.9158 13.7394 17.6051 15 16 15H3C1.34315 15 7.02247e-06 13.6569 0 12V8C6.44266e-08 6.34315 1.34315 5 3 5H6.82812L6.2334 6.17578ZM9.37305 2.18164C9.52978 1.87172 9.99775 1.98294 9.99805 2.33008V5.00098H11.6445C11.8346 5.00098 11.9578 5.20151 11.8721 5.3711L9.62402 9.81641C9.46715 10.1262 9.00001 10.0143 9 9.66699V6.99707H7.35254C7.16285 6.99684 7.03973 6.79635 7.125 6.62696L9.37305 2.18164Z";
 inline Microsoft::WRL::ComPtr<ID2D1PathGeometry> CreateChargingBatteryGeometry(ID2D1Factory* factory)
 {

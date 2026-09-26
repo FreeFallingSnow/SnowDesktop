@@ -29,14 +29,18 @@ struct Node
     float fontSize = 14, value = 0;
     bool enabled = true, selected = false, accent = false, centered = false, bold = false;
     bool outlined = false, secondary = false, charging = false;
-    bool wrap = false, joinLeft = false, joinRight = false;
+    bool wrap = false, joinLeft = false, joinRight = false, switchStyle = false;
     std::shared_ptr<const Image> image;
     std::vector<std::vector<D2D1_POINT_2F>> paths;
+    // Style belongs to each continuous sample segment, including after gaps.
+    std::vector<bool> dashedPaths;
+    bool fillPaths = false, chartGrid = true;
     bool Interactive() const;
 };
 struct Palette
 {
     D2D1_COLOR_F text{}, secondary{}, accent{}, accentText{}, hover{}, control{}, stroke{};
+    float cornerRadius = 10;
 };
 struct Scene
 {

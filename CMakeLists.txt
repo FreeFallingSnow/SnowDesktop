@@ -173,6 +173,8 @@ set(SNOWDESKTOP_SOURCES
     src/status_bar_preview.cpp
     src/status_bar_preview.h
     src/status_bar.cpp
+    src/status_bar_notification.cpp
+    src/status_bar_notification.h
     src/tray_service.cpp
     src/tray_menu_placement.cpp
     src/tray_menu_placement.h

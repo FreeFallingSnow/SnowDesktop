@@ -2,6 +2,8 @@
 #include "system_control_feedback.h"
 #include "system_control_bluetooth_sampling.h"
 #include "system_control_wifi_presentation.h"
+#include "system_control_wifi_sampling.h"
+#include "system_control_audio_presentation.h"
 #include "system_control_windows.h"
 #include <chrono>
 #include <condition_variable>
@@ -24,10 +26,17 @@ struct FakeBackend final : Backend
     unsigned samples = 0, released = 0, executed = 0;
     bool blockSample = false, sampleEntered = false, wifiEntered = false;
     std::string lastVolume;
+    std::string planReadback, taskError = "deviceGone";
+    bool planAvailable = true;
     std::map<std::string, Snapshot> Sample(std::string_view source, const Cancellation& cancel) override
     {
         std::unique_lock guard(mutex); ++samples; sampleEntered = true; changed.notify_all();
         while (blockSample && !cancel.Stop()) changed.wait_for(guard, 10ms);
+        if (source == "power")
+        {
+            auto value = json::Object(); value.object["activePlanId"] = json::Text(planReadback);
+            return {{"system.power.plans", {planAvailable, std::move(value), {}, 0, 0}}};
+        }
         if (source != "audio") return {};
         auto value = json::Object(); value.object["volume"] = json::Number(0.25);
         return {{"audio.output.volume", {true, value, {}, 0, 0}}, {"audio.devices", {true, json::Object(), {}, 0, 0}}};
@@ -42,7 +51,7 @@ struct FakeBackend final : Backend
             return cancel.Failure();
         }
         if (request.name == "audio.output.setVolume") lastVolume = request.arguments.at("volume");
-        changed.notify_all(); return {false, "deviceGone", 1167};
+        changed.notify_all(); return {false, taskError, 1167};
     }
     void Release(std::string_view) override { std::lock_guard guard(mutex); ++released; changed.notify_all(); }
     template<class Predicate> void Wait(Predicate predicate, const char* message)
@@ -101,6 +110,8 @@ struct LifecycleBackend final : Backend
     bool holdExecute = false, holdReadback = false, holdRelease = false;
     std::string slowSource;
     bool holdFirstSample = false;
+    bool publishReadback = false;
+    std::shared_ptr<std::atomic_bool> executionCancellation;
     void Enter(const std::string& source)
     {
         Require(users[source] == 0, "sampling, execution and release must not overlap for one physical source");
@@ -122,13 +133,20 @@ struct LifecycleBackend final : Backend
         }
         if (source == "brightness" && executions[source])
             Await(guard, [&] { return !holdReadback; }, "readback gate was not released");
-        --users[source]; changed.notify_all(); return {};
+        --users[source]; changed.notify_all();
+        if (publishReadback && source == "brightness")
+            return {{"system.display.brightness", {true, json::Object(), {}, 0, 0}}};
+        return {};
     }
-    Result Execute(const Request& request, const Cancellation&) override
+    Result Execute(const Request& request, const Cancellation& cancel) override
     {
         const std::string source(Source(request.name)); std::unique_lock guard(mutex); Enter(source);
         resources.insert(source); ++executions[source]; changed.notify_all();
-        if (source == "brightness") Await(guard, [&] { return !holdExecute; }, "execution gate was not released");
+        if (source == "brightness")
+        {
+            executionCancellation = cancel.canceled;
+            Await(guard, [&] { return !holdExecute; }, "execution gate was not released");
+        }
         --users[source]; changed.notify_all(); return {false, "deviceGone", 1167};
     }
     void Release(std::string_view name) override
@@ -329,6 +347,171 @@ void BrightnessSettlingAndStaleFeedback()
     feedback.Track(key, 4); feedback.Clear();
     Require(!feedback.Take(4), "closed panels discard late control feedback");
 }
+void AudioPresentationKeepsRealEndpoints()
+{
+    Require(AudioEndpointName("  Speakers  ", "Adapter", "Device") == "Speakers", "the actual endpoint name takes precedence");
+    Require(AudioEndpointName(" \t", " Audio Adapter ", " Speakers ") == "Speakers (Audio Adapter)",
+        "unnamed active endpoints fall back to real adapter and device properties");
+    Require(AudioEndpointName({}, {}, " Microphone ") == "Microphone" &&
+        AudioEndpointName({}, "Virtual Audio", {}) == "Virtual Audio", "either reliable fallback name keeps a usable endpoint visible");
+    auto value = json::Object(), devices = json::Array();
+    const auto device = [](const char* id, const char* name, const char* state, bool available, bool isDefault, const char* direction = "output") {
+        auto item = json::Object(); item.object["id"] = json::Text(id); item.object["name"] = json::Text(name);
+        item.object["state"] = json::Text(state); item.object["available"] = json::Boolean(available);
+        item.object["isDefault"] = json::Boolean(isDefault); item.object["direction"] = json::Text(direction); return item;
+    };
+    devices.array = {device("old", "Speakers", "unplugged", false, false),
+        device("disabled", "Speakers", "disabled", false, false), device("missing", "Speakers", "notPresent", false, false),
+        device("live", "Speakers", "active", true, false), device("live", "Speakers", "active", true, true),
+        device("other-live", "Speakers", "active", true, false), device("virtual", "Virtual Audio", "active", true, false),
+        device("nameless", " \t", "active", true, false), device("wrong-availability", "Device", "active", false, false),
+        device("microphone", "Microphone", "active", true, true, "input")};
+    value.object["devices"] = devices;
+    const auto output = AudioPresentationDevices(value, "output"), input = AudioPresentationDevices(value, "input");
+    Require(output.size() == 3 && json::String(output.front(), "id") == "live" && json::Flag(output.front(), "isDefault"),
+        "only active usable named endpoints are presented and duplicate identities merge their default state");
+    Require(json::String(output[1], "id") == "other-live" && json::String(output[2], "id") == "virtual" &&
+        input.size() == 1 && json::String(input.front(), "id") == "microphone", "same-name real and virtual endpoints remain independently selectable in their own direction");
+    Require(value.Find("devices")->array.size() == 10, "presentation filtering preserves the public inactive-endpoint data contract");
+}
+void WifiOffStillHasManageableInterface()
+{
+    auto value = json::Object(); value.object["id"] = json::Text("adapter"); value.object["connected"] = json::Boolean(true);
+    unsigned networkReads = 0;
+    const auto failNetworks = [&]() -> WifiNetworksReadback { ++networkReads; return {json::Array(), "accessDenied", false}; };
+    SampleWifiInterface(value, [] { return WifiRadioReadback{true, false, true, {}}; }, failNetworks);
+    Require(json::Flag(value, "available") && !json::Flag(value, "enabled") && json::Flag(value, "hardwareEnabled") &&
+        !json::Flag(value, "connected") && !value.Find("error") && networkReads == 0 && json::String(value, "id") == "adapter",
+        "software radio off must keep a usable switch and identity without attempting unavailable network enumeration");
+    SampleWifiInterface(value, [] { return WifiRadioReadback{true, true, true, {}}; }, failNetworks);
+    Require(json::Flag(value, "available") && json::Flag(value, "enabled") && json::String(value, "error") == "accessDenied" && networkReads == 1,
+        "network-list denial remains visible without disabling the independently readable radio");
+    SampleWifiInterface(value, [] { return WifiRadioReadback{false, false, false, "accessDenied"}; }, failNetworks);
+    Require(!json::Flag(value, "available") && !value.Find("enabled") && json::String(value, "error") == "accessDenied" && networkReads == 1,
+        "actual radio access failure must not reuse stale switch state or become a successful off state");
+    unsigned radioReads = 0;
+    SampleWifiInterface(value, [&] { return WifiRadioReadback{true, ++radioReads == 1, true, {}}; },
+        [] { return WifiNetworksReadback{json::Array(), "unavailable", true}; });
+    Require(radioReads == 2 && json::Flag(value, "available") && !json::Flag(value, "enabled") && !value.Find("error"),
+        "power-state-invalid during network enumeration rereads the changed radio instead of declaring missing hardware");
+    SampleWifiInterface(value, [] { return WifiRadioReadback{false, false, false, "actionUnsupported"}; }, failNetworks);
+    Require(!json::Flag(value, "available") && json::String(value, "error") == "actionUnsupported" && networkReads == 1,
+        "a radio with no controllable PHY stays unavailable");
+}
+void ControlReadbackMustReallySettle()
+{
+    Cancellation cancel{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
+    unsigned reads = 0, pauses = 0;
+    auto result = ConfirmControlValue(0.8, 0.02, cancel, [&]() -> ControlReadback {
+        ++reads; if (reads == 1) return {{}, {false, "unavailable", 123}};
+        return {reads == 2 ? 0.4 : 0.8, {}};
+    }, [&] { ++pauses; });
+    Require(result.ok && reads == 3 && pauses == 2, "a temporary read failure and delayed audio value settle before success is reported");
+    reads = pauses = 0;
+    result = ConfirmControlValue(1, 0, cancel, [&]() -> ControlReadback {
+        ++reads; return {{}, {false, "unavailable", 123}};
+    }, [&] { ++pauses; });
+    Require(!result.ok && result.error == "unavailable" && result.platformCode == 123 && reads == 20 && pauses == 19,
+        "persistently failed readback retains its real error instead of treating an accepted write as success");
+    result = ConfirmControlValue(1, 0, cancel, []() -> ControlReadback { return {{}, {false, "accessDenied", 5}}; },
+        [] { Require(false, "access denial must not be retried"); });
+    Require(!result.ok && result.error == "accessDenied", "readback access denial remains an immediate real failure");
+}
+void NewSliderCancelsExecutingOldTarget()
+{
+    auto backend = std::make_shared<LifecycleBackend>(); backend->holdExecute = true;
+    Service service(backend); std::mutex mutex; std::condition_variable changed; unsigned wakes = 0;
+    service.SetWake([&] { std::lock_guard guard(mutex); ++wakes; changed.notify_all(); });
+    const auto first = service.Start("panel", BrightnessRequest());
+    backend->Wait([&] { return backend->executions["brightness"] == 1; }, "old slider request enters controlled execution gate");
+    auto request = BrightnessRequest(); request.arguments["brightness"] = "80";
+    const auto key = ControlFeedback::Key(request);
+    const auto second = service.Start("panel", std::move(request));
+    Require(first && second && first != second, "replacement slider receives a distinct identity");
+    {
+        std::lock_guard guard(backend->mutex);
+        Require(backend->executionCancellation && backend->executionCancellation->load(),
+            "replacement must cancel the already executing old slider, not only pending requests");
+        backend->holdExecute = false; backend->changed.notify_all();
+    }
+    std::vector<Completion> completions;
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (completions.size() < 2 && std::chrono::steady_clock::now() < deadline)
+    {
+        auto batch = service.DrainCompletions("panel"); completions.insert(completions.end(), batch.begin(), batch.end());
+        if (completions.size() == 2) break;
+        std::unique_lock guard(mutex); changed.wait_until(guard, deadline, [&] { return wakes != 0; }); wakes = 0;
+    }
+    Require(completions.size() == 2, "both replaced and current slider tasks finish");
+    ControlFeedback feedback; feedback.Track(key, first); feedback.Track(key, second);
+    unsigned acceptedFeedback = 0;
+    for (const auto& completion : completions)
+    {
+        if (completion.id == first) Require(!completion.ok && completion.error == "canceled" && !feedback.Take(completion.id),
+            "obsolete slider execution cannot flash its previous failure");
+        else if (feedback.Take(completion.id))
+        { ++acceptedFeedback; Require(completion.id == second && !completion.ok && completion.error == "deviceGone", "newest genuine device failure remains reportable"); }
+    }
+    Require(acceptedFeedback == 1, "only the newest slider result supplies UI feedback");
+    service.SetWake({}); service.Shutdown();
+}
+void CancellationDuringReadbackDiscardsOldState()
+{
+    auto backend = std::make_shared<LifecycleBackend>(); backend->holdReadback = true; backend->publishReadback = true;
+    Service service(backend);
+    const auto id = service.Start("panel", BrightnessRequest());
+    backend->Wait([&] { return backend->samples["brightness"] == 1; }, "old task reaches controlled readback gate");
+    Require(service.Cancel(id), "readback can be canceled after the OS action has returned");
+    { std::lock_guard guard(backend->mutex); backend->holdReadback = false; backend->changed.notify_all(); }
+    backend->Wait([&] { return backend->releases["brightness"] == 1; }, "canceled readback finishes and releases its source");
+    const auto completions = service.DrainCompletions("panel");
+    Require(completions.size() == 1 && completions.front().id == id && completions.front().error == "canceled" &&
+        !service.Current("system.display.brightness"), "late readback of a canceled task neither publishes old state nor leaks the previous failure to UI");
+    service.Shutdown();
+}
+void FreshReadbackOnlyConfirmsTheRequestedTarget()
+{
+    for (const auto* error : {"stateMismatch", "accessDenied", "timeout", "deviceGone"})
+    {
+        auto backend = std::make_shared<FakeBackend>(); backend->planReadback = "chosen-plan"; backend->taskError = error;
+        Service service(backend); Request request; request.name = "system.power.setPlan"; request.arguments["planId"] = "chosen-plan";
+        const auto id = service.Start("panel", std::move(request));
+        backend->Wait([&] { return backend->released > 0; }, "finished plan task releases after its fresh readback");
+        const auto completed = service.DrainCompletions("panel");
+        Require(completed.size() == 1 && completed.front().id == id, "readback reconciliation preserves task identity");
+        if (std::string_view(error) == "stateMismatch") Require(completed.front().ok && completed.front().error.empty(),
+            "the new backend sample may prove a previously unsettled plan reached its actual target");
+        else Require(!completed.front().ok && completed.front().error == error,
+            "matching sampled state cannot erase an actual rejection, timeout or device-removal error");
+        service.Shutdown();
+    }
+    for (const bool available : {true, false})
+    {
+        auto backend = std::make_shared<FakeBackend>(); backend->planReadback = available ? "different-plan" : "chosen-plan";
+        backend->planAvailable = available; backend->taskError = "stateMismatch";
+        Service service(backend); Request request; request.name = "system.power.setPlan"; request.arguments["planId"] = "chosen-plan";
+        Require(service.Start("panel", std::move(request)) != 0, "readback mismatch scenario starts");
+        backend->Wait([&] { return backend->released > 0; }, "unconfirmed plan task finishes");
+        const auto completed = service.DrainCompletions("panel");
+        Require(completed.size() == 1 && !completed.front().ok && completed.front().error == "stateMismatch",
+            "different targets and failed samples cannot turn a mismatch into success");
+        service.Shutdown();
+    }
+    auto monitor = json::Object(), value = json::Object(), monitors = json::Array();
+    monitor.object["id"] = json::Text("other-monitor"); monitor.object["available"] = json::Boolean(true);
+    monitor.object["brightness"] = json::Number(60); monitors.array.push_back(monitor); value.object["monitors"] = monitors;
+    std::map<std::string, Snapshot> snapshots{{"system.display.brightness", {true, value, {}, 0, 0}}};
+    auto request = BrightnessRequest();
+    Require(!ControlReadbackMatches(request, snapshots), "a matching number on another monitor is not confirmation");
+    snapshots.begin()->second.value.object["monitors"].array.front().object["id"] = json::Text("monitor");
+    Require(ControlReadbackMatches(request, snapshots), "fresh matching brightness belongs to the explicit monitor identity");
+    snapshots.begin()->second.error = "unavailable";
+    Require(!ControlReadbackMatches(request, snapshots), "errored snapshots cannot confirm even when their retained payload matches");
+    request.name = "audio.output.setVolume"; request.arguments = {{"volume", "0.8"}};
+    value = json::Object(); value.object["volume"] = json::Number(0.8); value.object["endpointId"] = json::Text("replacement-endpoint");
+    snapshots = {{"audio.output.volume", {true, value, {}, 0, 0}}};
+    Require(!ControlReadbackMatches(request, snapshots), "unbound default-volume requests cannot claim another endpoint's matching state");
+}
 void BluetoothPowerAndDeviceReadFailures()
 {
     Cancellation cancel{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
@@ -391,4 +574,10 @@ void TestSystemControls()
     HostOnlyCredentialsAndConfirmation();
     BrightnessSettlingAndStaleFeedback();
     BluetoothPowerAndDeviceReadFailures();
+    AudioPresentationKeepsRealEndpoints();
+    WifiOffStillHasManageableInterface();
+    ControlReadbackMustReallySettle();
+    NewSliderCancelsExecutingOldTarget();
+    CancellationDuringReadbackDiscardsOldState();
+    FreshReadbackOnlyConfirmsTheRequestedTarget();
 }

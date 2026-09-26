@@ -87,4 +87,13 @@ inline bool StatusBarFullscreenClient(RECT client, RECT monitor, bool visible,
         client.left <= monitor.left && client.top <= monitor.top &&
         client.right >= monitor.right && client.bottom >= monitor.bottom;
 }
+
+inline bool StatusBarFullscreenCandidate(LONG_PTR style, LONG_PTR extendedStyle,
+    bool maximized, bool shellWindow)
+{
+    // Full-screen-sized desktop/HUD helpers and ordinary decorated maximized
+    // windows do not own the monitor's full-screen presentation.
+    return !shellWindow && !(extendedStyle & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) &&
+        !(maximized && (style & WS_CAPTION) == WS_CAPTION);
+}
 }

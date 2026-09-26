@@ -312,8 +312,13 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     if (host.container && host.container->IsMergedWithStatusBar())
     {
         const bool visible = ShouldShowPersistentDockHost(host);
-        host.backdrop.SetPopupWindowPairZOrder(host.hwnd, visible ? HWND_TOPMOST : HWND_NOTOPMOST, visible);
-        return;
+        if (!visible || host.container->SharesStatusBarAppearance())
+        {
+            host.backdrop.SetPopupWindowPairZOrder(host.hwnd, visible ? HWND_TOPMOST : HWND_NOTOPMOST, visible);
+            return;
+        }
+        // A fullscreen summon uses the normal Dock/menu band. Do not raise the
+        // hidden bar, and do not let a hidden passive host reach the show path.
     }
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;

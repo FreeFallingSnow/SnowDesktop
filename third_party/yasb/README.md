@@ -93,3 +93,28 @@ checks from `src/core/widgets/services/power_mode/power_mode_api.py`.
 The native implementations use Windows SDK declarations and do not distribute
 YASB's Python dependencies. Device execution, cancellation and state readback
 are implemented in SnowDesktop's shared control service.
+
+`src/status_bar_notification.cpp` references the WNF state identifiers and the
+notification-count payload in `src/core/widgets/services/dnd/dnd_api.py` and
+`src/core/widgets/services/notifications/windows_notification.py` at the same
+pinned commit. It performs two read-only, fixed-size state queries behind one
+process-wide five-second cache; it has no per-monitor listeners, COM objects,
+worker threads, notification-content access or notification mutation.
+The private WNF ABI is not a Microsoft compatibility contract. Missing native
+exports, unsupported Windows families, query failures, non-four-byte payloads
+and unknown active-profile levels remain unavailable; failed refreshes replace
+previous successful data rather than keeping stale values. Windows 10's unread
+badge count and Windows 11's notification-center total have separate fields.
+The latter must not be presented as an unread count.
+
+Unlike the pinned YASB DND reader's `UserSelectedProfile`, this read-only module
+uses the currently active quiet-hours profile state, including automatic rules.
+Its known levels (off, priority, alarms) and query ABI were cross-checked against
+the original [active-profile demonstration](https://gist.github.com/riverar/980120d7e3a13ed8b1d665cf974c8e31)
+and [System Informer's native declaration](https://github.com/winsiderss/phnt/blob/master/ntexapi.h).
+Only the ABI facts are used; their implementation code is not incorporated.
+Microsoft's [notification listener](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/app-notifications/notification-listener)
+requires notification-content access and is not enabled for this status-only
+indicator. No public Lua API or notification-access capability is added.
+The private state mapping still requires Windows-version runtime acceptance;
+source comparison and unit fixtures do not establish system compatibility.

@@ -4,8 +4,11 @@
 
 namespace snowdesktop
 {
-// Keep the persisted 0..4 modes unchanged when inserting glass choices.
-inline constexpr std::array<int, 8> StatusBarThemeModes{-1, 0, 1, 5, 6, 2, 3, 4};
+// Keep every existing persisted mode stable when adding transparent choices.
+inline constexpr int kStatusBarThemeTransparentDarkText = 7;
+inline constexpr int kStatusBarThemeTransparentLightText = 8;
+inline constexpr std::array<int, 10> StatusBarThemeModes{-1, 0, 1, 5, 6, 2, 3,
+    kStatusBarThemeTransparentDarkText, kStatusBarThemeTransparentLightText, 4};
 inline int StatusBarThemeSelection(int mode)
 {
     const auto found = std::find(StatusBarThemeModes.begin(), StatusBarThemeModes.end(), mode);
@@ -18,6 +21,20 @@ inline PersonalizationSettings ResolveStatusBarAppearance(const SurfaceTheme& th
 {
     if (theme.mode < 0) return global;
     if (theme.mode == 4) return theme.appearance;
+    if (theme.mode == kStatusBarThemeTransparentDarkText || theme.mode == kStatusBarThemeTransparentLightText)
+    {
+        // Match the taskbar's transparent material while choosing text contrast
+        // explicitly; leave all glass, gradients and edge effects disabled.
+        auto appearance = MakeAppearancePreset(theme.mode == kStatusBarThemeTransparentDarkText ?
+            kAppearancePresetLight : kAppearancePresetDark);
+        appearance.backgroundPreset = kAppearancePresetTaskbarTransparent;
+        appearance.widgetBgR = appearance.widgetBgG = appearance.widgetBgB = appearance.widgetAlpha = 0;
+        appearance.widgetBorderR = appearance.widgetBorderG = appearance.widgetBorderB = appearance.widgetBorderAlpha = 0;
+        appearance.gradientEndA = 0;
+        appearance.glassEnabled = appearance.acrylicEnabled = appearance.widgetEdgeHighlightEnabled = false;
+        appearance.panelGradient.enabled = false;
+        return appearance;
+    }
     if (theme.mode == 5 || theme.mode == 6)
         return MakeAppearancePreset(theme.mode == 5 ? kAppearancePresetGlassDark : kAppearancePresetGlassLight);
     return MakeAppearancePreset(AppearancePresetFromFourThemeSelection(theme.mode));
@@ -27,17 +44,15 @@ inline PersonalizationSettings ResolveStatusBarAppearance(const SurfaceTheme& th
 // transient scene never changes the user's default or saved custom appearance.
 struct StatusBarSceneState
 {
-    bool shellUi = false;
+    bool noWindow = false;
     bool maximizedWindow = false;
-    bool visibleWindow = false;
 };
 
 inline const SurfaceTheme& ResolveStatusBarSceneTheme(const StatusBarSettings& settings,
     const StatusBarSceneState& state)
 {
-    if (settings.shellUi.enabled && state.shellUi) return settings.shellUi.theme;
     if (settings.maximizedWindow.enabled && state.maximizedWindow) return settings.maximizedWindow.theme;
-    if (settings.visibleWindow.enabled && state.visibleWindow) return settings.visibleWindow.theme;
+    if (settings.noWindow.enabled && state.noWindow && !state.maximizedWindow) return settings.noWindow.theme;
     return settings.theme;
 }
 

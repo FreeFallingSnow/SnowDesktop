@@ -114,7 +114,10 @@ bool DesktopApp::ShouldShowPersistentDockHost(
     const PersistentDockHost& host) const
 {
     if (host.container && host.container->IsMergedWithStatusBar())
-        return host.active && statusBar_ && !statusBar_->IsFullscreen(host.monitor) && !desktopPassthroughActive_;
+        return statusBar_ && host.monitor && statusBar_->MergedDockArea(host.monitor) &&
+            snowdesktop::floating_dock_rules::ShouldShowMergedStatusBarDockHost(
+                host.active, host.promoted, statusBar_->IsFullscreen(host.monitor),
+                desktopPassthroughActive_);
     return snowdesktop::floating_dock_rules::
         ShouldShowPersistentDockHost(
             host.active,

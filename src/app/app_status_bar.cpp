@@ -8,6 +8,24 @@
 #include "../taskbar_monitor.h"
 #include "../taskbar_hook/taskbar_native.h"
 
+snowdesktop::TrayDragFeedback DesktopApp::MakeStatusBarTrayDragFeedback()
+{
+    return {
+        [this](HWND owner, const snowdesktop::tray::Icon& icon, POINT screen, UINT size) {
+            return BeginTrayDragPreview(owner, icon, screen, size);
+        },
+        [this](std::string_view key, POINT screen) {
+            const bool bar = statusBar_ && statusBar_->PreviewTrayDrop(key, screen);
+            const bool panel = systemPanel_ && systemPanel_->PreviewTrayDrop(key, screen);
+            UpdateTrayDragPreview(screen, bar || panel);
+        },
+        [this] {
+            EndTrayDragPreview();
+            if (statusBar_) statusBar_->PreviewTrayDrop({}, {});
+            if (systemPanel_) systemPanel_->PreviewTrayDrop({}, {});
+        }};
+}
+
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
     using Action = snowdesktop::StatusBarAction;
@@ -89,15 +107,20 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         if (systemPanel_) systemPanel_->Hide();
         HMENU menu = CreatePopupMenu();
         if (!menu) return;
+        PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
         const char* labels[]{"statusBar.taskManager", "statusBar.terminal", "statusBar.systemSettings",
             "controlCenter.lock", "controlCenter.sleep", "controlCenter.restart", "controlCenter.shutdown"};
+        // Fluent Regular 20 glyphs from the same embedded, pinned font as Dock.
+        const wchar_t* icons[]{L"\uE49D",L"\uEE6F",L"\uF6A9",L"\uE78F",L"\uEB2D",L"\uF13D",L"\uF60E"};
         for (UINT index = 0; index < std::size(labels); ++index)
         {
             if (index == 3) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, index + 1, _LW(labels[index]));
+            SetMenuItemIcon(menu,index+1,icons[index],MenuIconFont::FluentRegular);
         }
         const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
         DestroyMenu(menu);
+        ClearMenuIcons();
         if (command >= 1 && command <= 3)
         {
             const wchar_t* target = command == 1 ? L"taskmgr.exe" : command == 2 ? L"wt.exe" : L"ms-settings:";
@@ -121,10 +144,14 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         if (systemPanel_) systemPanel_->Hide();
         HMENU menu = CreatePopupMenu();
         if (!menu) return;
+        PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
         AppendMenuW(menu, MF_STRING, 1, _LW("statusBar.menu.settings"));
         AppendMenuW(menu, MF_STRING, 2, _LW("statusBar.taskManager"));
+        SetMenuItemIcon(menu,1,L"\uF6A9",MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu,2,L"\uE49D",MenuIconFont::FluentRegular);
         const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
         DestroyMenu(menu);
+        ClearMenuIcons();
         if (command == 1) ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::StatusBar));
         else if (command == 2)
         {
@@ -176,6 +203,10 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
                         false, 0, &appearance, false, 0, scale);
                     brushCache_.clear(); brushCacheContext_ = nullptr;
                 });
+        systemPanel_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
+        systemPanel_->SetNativeControlsHandler([this](HWND source, RECT location) {
+            ActivateStatusBar(Action::SystemControlCenter, source, location);
+        });
         systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
             statusBar_->Tray(), systemDataProvider_);
     }
@@ -236,10 +267,14 @@ void DesktopApp::SyncStatusBar()
                 InvalidateDockRects();
             }
         });
+        statusBar_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
+        statusBar_->SetGraphicsFailureHandler([this](HRESULT error) {
+            (void)RequestGraphicsDeviceRecovery(L"StatusBar", error);
+        });
         statusBar_->SetSceneProvider([this](HMONITOR monitor) {
             snowdesktop::StatusBarSceneState scene;
             const auto& settings = generalSettings_.statusBar;
-            if (!settings.shellUi.enabled && !settings.maximizedWindow.enabled && !settings.visibleWindow.enabled)
+            if (!settings.noWindow.enabled && !settings.maximizedWindow.enabled)
                 return scene;
             // StartDockForegroundMonitor already owns these observations even
             // when Dock/taskbar styling is disabled. The taskbar's own timer
@@ -250,6 +285,7 @@ void DesktopApp::SyncStatusBar()
             const bool dirty = systemTaskbarWindowStateChangedTick_.load() != systemTaskbarWindowStateObservedTick_;
             const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
             if (systemTaskbarWindowScanTick_ == 0 ||
+                (systemTaskbarMonitorWindowStates_.empty() && now - systemTaskbarWindowScanTick_ >= 1500) ||
                 (!taskbarObserverActive &&
                     ((dirty && now - systemTaskbarWindowScanTick_ >= 250) ||
                         now - systemTaskbarWindowScanTick_ >= 1500)))
@@ -257,20 +293,14 @@ void DesktopApp::SyncStatusBar()
                 RefreshSystemTaskbarWindowState();
                 systemTaskbarWindowScanTick_ = now;
             }
+            // Empty entries are published only after successful window and
+            // monitor observations. A missing entry remains unknown/default.
             if (const auto found = systemTaskbarMonitorWindowStates_.find(monitor);
                 found != systemTaskbarMonitorWindowStates_.end())
             {
-                scene.visibleWindow = found->second.visible;
+                scene.noWindow = !found->second.visible && !found->second.maximized;
                 scene.maximizedWindow = found->second.maximized;
             }
-            scene.shellUi = snowdesktop::dock_settings_rules::ShouldRevealTaskbarForShellPanel(
-                taskbarObserverActive && systemTaskbarTaskViewActive_, systemTaskbarShellUiActive_,
-                monitor == systemTaskbarShellUiMonitor_);
-            if (taskbarObserverActive)
-                for (const HWND taskbar : systemTaskbarWindows_)
-                    if (IsWindow(taskbar) && snowdesktop::taskbar_monitor::Resolve(taskbar) == monitor &&
-                        GetPropW(taskbar, snowdesktop::taskbar_hook::native::kContextMenuProperty))
-                    { scene.shellUi = true; break; }
             return scene;
         });
     }

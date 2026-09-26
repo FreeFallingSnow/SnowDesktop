@@ -329,6 +329,15 @@ bool DockContainer::IsMergedWithStatusBar() const
     return merged && EqualRect(&screen, &*merged);
 }
 
+bool DockContainer::SharesStatusBarAppearance() const
+{
+    if (!IsMergedWithStatusBar()) return false;
+    RECT screen = area_;
+    OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
+    const auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL);
+    return monitor && !app_->statusBar_->IsFullscreen(monitor);
+}
+
 void DockContainer::RefreshEntryGroupCounts() const
 {
     const std::uint64_t generation =
@@ -1933,7 +1942,7 @@ void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
 
 void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
-    if (!context || IsMergedWithStatusBar()) return;
+    if (!context || SharesStatusBarAppearance()) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
     PersonalizationSettings p = PersonalizationSettings::DarkPreset();
     if (app_ && app_->renderingFloatingDock_)
@@ -2014,7 +2023,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
     const bool lt = [this] {
-        if (!IsMergedWithStatusBar()) return app_->CurrentDockAppearance().contentTheme == 1;
+        if (!SharesStatusBarAppearance()) return app_->CurrentDockAppearance().contentTheme == 1;
         RECT screen = area_;
         OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
         return app_->statusBar_->AppearanceForMonitor(

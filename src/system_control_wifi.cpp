@@ -1,4 +1,6 @@
 #include "system_control_windows.h"
+#include "system_control_wifi_sampling.h"
+#include "system_control_feedback.h"
 #include <wlanapi.h>
 #include <condition_variable>
 #include <cstring>
@@ -119,23 +121,23 @@ public:
             const auto& entry = list->InterfaceInfo[i]; auto item = json::Object();
             item.object["id"] = json::Text(Guid(entry.InterfaceGuid)); item.object["name"] = json::Text(Utf8(entry.strInterfaceDescription));
             item.object["connected"] = json::Boolean(entry.isState == wlan_interface_state_connected);
-            WlanMemory radio;
-            DWORD queryStatus = Query(wlan.handle, entry.InterfaceGuid, wlan_intf_opcode_radio_state, radio);
-            if (!queryStatus)
-            {
-                const auto* state = radio.As<WLAN_RADIO_STATE>(); bool software = false, hardware = false;
+            SampleWifiInterface(item, [&]() -> WifiRadioReadback {
+                WlanMemory radio;
+                const auto queryStatus = Query(wlan.handle, entry.InterfaceGuid, wlan_intf_opcode_radio_state, radio);
+                if (queryStatus) return {false, false, false, queryStatus == ERROR_ACCESS_DENIED ? "accessDenied" : "unavailable"};
+                const auto* state = radio.As<WLAN_RADIO_STATE>();
+                if (!state || !state->dwNumberOfPhys) return {false, false, false, "actionUnsupported"};
+                bool software = false, hardware = false;
                 for (DWORD p = 0; p < state->dwNumberOfPhys && p < WLAN_MAX_PHY_INDEX; ++p)
                 { software |= state->PhyRadioState[p].dot11SoftwareRadioState == dot11_radio_state_on; hardware |= state->PhyRadioState[p].dot11HardwareRadioState == dot11_radio_state_on; }
-                item.object["enabled"] = json::Boolean(software); item.object["hardwareEnabled"] = json::Boolean(hardware);
-            }
-            WlanMemory networks; auto entries = json::Array();
-            // Read cached results only. Active scans are explicit tasks.
-            queryStatus = WlanGetAvailableNetworkList(wlan.handle, &entry.InterfaceGuid,
-                WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_MANUAL_HIDDEN_PROFILES, nullptr, networks.Out<WLAN_AVAILABLE_NETWORK_LIST>());
-            item.object["available"] = json::Boolean(queryStatus == ERROR_SUCCESS);
-            if (queryStatus) item.object["error"] = json::Text(queryStatus == ERROR_ACCESS_DENIED ? "accessDenied" : "unavailable");
-            else
-            {
+                return {true, software, hardware, {}};
+            }, [&]() -> WifiNetworksReadback {
+                WlanMemory networks; auto entries = json::Array();
+                // Read cached results only. Active scans are explicit tasks.
+                const auto queryStatus = WlanGetAvailableNetworkList(wlan.handle, &entry.InterfaceGuid,
+                    WLAN_AVAILABLE_NETWORK_INCLUDE_ALL_MANUAL_HIDDEN_PROFILES, nullptr, networks.Out<WLAN_AVAILABLE_NETWORK_LIST>());
+                if (queryStatus) return {std::move(entries), queryStatus == ERROR_ACCESS_DENIED ? "accessDenied" : "unavailable",
+                    queryStatus == ERROR_NDIS_DOT11_POWER_STATE_INVALID};
                 const auto* available = networks.As<WLAN_AVAILABLE_NETWORK_LIST>();
                 for (DWORD n = 0; n < available->dwNumberOfItems && n < 512; ++n)
                 {
@@ -147,8 +149,8 @@ public:
                     if (network.strProfileName[0]) entryValue.object["profileName"] = json::Text(Utf8(network.strProfileName));
                     entries.array.push_back(std::move(entryValue));
                 }
-            }
-            item.object["networks"] = std::move(entries);
+                return {std::move(entries), {}, false};
+            });
             WlanMemory profiles; auto saved = json::Array();
             if (WlanGetProfileList(wlan.handle, &entry.InterfaceGuid, nullptr, profiles.Out<WLAN_PROFILE_INFO_LIST>()) == ERROR_SUCCESS)
             {
@@ -181,7 +183,7 @@ public:
             WlanMemory radio; status = Query(wlan.handle, id, wlan_intf_opcode_radio_state, radio); if (status) return Error(status);
             const auto desired = Argument(request, "enabled") == "1" ? dot11_radio_state_on : dot11_radio_state_off;
             const auto* state = radio.As<WLAN_RADIO_STATE>();
-            if (!state->dwNumberOfPhys) return Error(ERROR_NOT_SUPPORTED, "actionUnsupported");
+            if (!state || !state->dwNumberOfPhys) return Error(ERROR_NOT_SUPPORTED, "actionUnsupported");
             for (DWORD p = 0; p < state->dwNumberOfPhys && p < WLAN_MAX_PHY_INDEX; ++p)
             {
                 if (cancel.Stop()) return cancel.Failure();
@@ -189,11 +191,15 @@ public:
                 status = WlanSetInterface(wlan.handle, &id, wlan_intf_opcode_radio_state, sizeof(phy), &phy, nullptr);
                 if (status) return Error(status);
             }
-            WlanMemory actual; status = Query(wlan.handle, id, wlan_intf_opcode_radio_state, actual); if (status) return Error(status);
-            const auto* readback = actual.As<WLAN_RADIO_STATE>();
-            for (DWORD p = 0; p < readback->dwNumberOfPhys && p < WLAN_MAX_PHY_INDEX; ++p)
-                if (readback->PhyRadioState[p].dot11SoftwareRadioState != desired) return Error(ERROR_INVALID_STATE, "stateMismatch");
-            return {true, {}, 0};
+            return ConfirmControlValue(1, 0, cancel, [&]() -> ControlReadback {
+                WlanMemory actual; const auto read = Query(wlan.handle, id, wlan_intf_opcode_radio_state, actual);
+                if (read) return {{}, Error(read)};
+                const auto* readback = actual.As<WLAN_RADIO_STATE>();
+                if (!readback || !readback->dwNumberOfPhys) return {{}, Error(ERROR_NOT_FOUND, "deviceGone")};
+                for (DWORD p = 0; p < readback->dwNumberOfPhys && p < WLAN_MAX_PHY_INDEX; ++p)
+                    if (readback->PhyRadioState[p].dot11SoftwareRadioState != desired) return {0., {}};
+                return {1., {}};
+            }, ControlReadbackPause);
         }
         if (request.name == "network.wifi.forget")
         {

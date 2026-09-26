@@ -10,6 +10,7 @@
 #include <shellapi.h>
 #include <wrl/client.h>
 #include <cmath>
+#include <utility>
 
 namespace snowdesktop
 {
@@ -20,6 +21,52 @@ std::wstring Percent(double value)
 {
     return std::isfinite(value) && value >= 0 && value <= 100 ?
         std::to_wstring(static_cast<int>(std::lround(value))) + L"%" : L"—";
+}
+std::pair<std::wstring, std::wstring> NetworkVisual(const StatusBarSnapshot& snapshot)
+{
+    using namespace status_bar_glyphs;
+    const auto& network = snapshot.network;
+    if (!network || !network->available)
+        return {kUnknown, _LW("statusBar.networkUnknown")};
+    const bool connected = network->connectivity == "internet" || network->connectivity == "local";
+    if (connected && network->transport == "ethernet")
+        return {kEthernet, std::wstring(_LW("statusBar.ethernet")) + L"  " + _LW("controlCenter.connected")};
+    const auto* interfaces = snapshot.wifi && snapshot.wifi->available ? snapshot.wifi->value.Find("interfaces") : nullptr;
+    bool allRadiosOff = interfaces && interfaces->IsArray() && !interfaces->array.empty();
+    std::optional<double> signal;
+    unsigned connectedNetworks = 0;
+    if (interfaces && interfaces->IsArray()) for (const auto& adapter : interfaces->array)
+    {
+        const auto* available = adapter.Find("available");
+        const auto* enabled = adapter.Find("enabled");
+        const auto* hardware = adapter.Find("hardwareEnabled");
+        const bool known = available && available->IsBoolean() && available->boolean &&
+            enabled && enabled->IsBoolean() && hardware && hardware->IsBoolean();
+        allRadiosOff = allRadiosOff && known && (!enabled->boolean || !hardware->boolean);
+        const auto* networks = adapter.Find("networks");
+        if (!known || !enabled->boolean || !hardware->boolean ||
+            !system_control::json::Flag(adapter, "connected") || !networks || !networks->IsArray()) continue;
+        for (const auto& item : networks->array) if (system_control::json::Flag(item, "connected"))
+        {
+            ++connectedNetworks;
+            const auto* quality = item.Find("signal");
+            if (quality && quality->IsNumber() && std::isfinite(quality->number) && quality->number >= 0 && quality->number <= 100)
+                signal = quality->number;
+        }
+    }
+    if (connected && network->transport == "wifi")
+    {
+        // The status snapshot has no adapter ID. Multiple connected adapters
+        // cannot be assigned a primary signal without guessing.
+        if (connectedNetworks != 1 || !signal) return {kUnknown, _LW("statusBar.wifiSignalUnknown")};
+        return {*signal < 25 ? kWifiLow : *signal < 50 ? kWifiMedium : *signal < 75 ? kWifiGood : kWifi,
+            L"Wi-Fi  " + Percent(*signal)};
+    }
+    if (connected) return {kNetwork, std::wstring(_LW("statusBar.network")) + L"  " + _LW("controlCenter.connected")};
+    if (network->connectivity == "none")
+        return allRadiosOff ? std::pair<std::wstring, std::wstring>{kWifiOff, _LW("statusBar.wifiOff")} :
+            std::pair<std::wstring, std::wstring>{kOffline, _LW("statusBar.networkOffline")};
+    return {kUnknown, _LW("statusBar.networkUnknown")};
 }
 }
 std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const StatusBarSnapshot& snapshot)
@@ -78,21 +125,20 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         }
         add("tray", L"", StatusBarAction::Tray, kTray);
     }
-    const auto network = snapshot.network;
     const auto audio = snapshot.audio;
     const auto power = snapshot.power;
-    const std::wstring glyphs = std::wstring(!network || !network->available || network->connectivity == "none" ? kOffline :
-        network->transport == "ethernet" ? kEthernet : kWifi) +
-        (audio && audio->muted ? kMuted : !audio || !audio->available || audio->volume <= 0 ? kSpeakerZero :
-            audio->volume < .5 ? kSpeakerLow : kSpeaker) +
-        (power && power->available ? (power->charging ? kCharging : power->acPower ? kBatteryPlug :
-            power->batteryPercent >= 99.5 ? kBatteryFull : kBattery) : kEthernet);
-    add("controlCenter", power && power->available ? Percent(power->batteryPercent) : L"—", StatusBarAction::ControlCenter);
-    items.back().glyph = glyphs;
+    const auto [networkGlyph, networkTip] = NetworkVisual(snapshot);
+    add("controlCenter", L"", StatusBarAction::ControlCenter);
     auto& control = items.back();
-    control.controlTips[0] = std::wstring(_LW("statusBar.network")) + L"  " +
-        (network && network->available ? _LW(network->connectivity == "none" ?
-            "controlCenter.off" : "controlCenter.connected") : L"—");
+    const int batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
+    control.controlGlyphs = {networkGlyph,
+        audio && audio->available && audio->muted ? kMuted : !audio || !audio->available || audio->volume <= 0 ? kSpeakerZero :
+            audio->volume < .5 ? kSpeakerLow : kSpeaker,
+        batteryLevel < 0 ? kUnknown : (power->charging ? StatusBarChargingGlyphs : StatusBarBatteryGlyphs)[static_cast<std::size_t>(batteryLevel)]};
+    if (batteryLevel >= 0)
+        control.batteryTone = power->charging ? StatusBarBatteryTone::Charging : power->batteryPercent <= 20 ? StatusBarBatteryTone::Low :
+            power->saver ? StatusBarBatteryTone::Saver : StatusBarBatteryTone::Normal;
+    control.controlTips[0] = networkTip;
     control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
         (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
     control.controlTips[2] = std::wstring(_LW("statusBar.battery")) + L"  —";
@@ -102,7 +148,19 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             power->acPower ? "statusBar.pluggedIn" : "statusBar.battery")) + L"  " + Percent(power->batteryPercent);
     // Left: launch buttons and information. Right: tray and system controls.
     // Old experimental rightOrder values cannot split this group.
-    add("notifications", L"", StatusBarAction::Notifications, kNotifications);
+    const auto& notifications = snapshot.notifications;
+    const auto* notificationGlyph = kNotifications;
+    const auto* notificationTip = "statusBar.notifications";
+    if (notifications.quiet.value_or(false))
+    { notificationGlyph = kNotificationsQuiet; notificationTip = "statusBar.notificationsQuiet"; }
+    else if (notifications.unreadCount && *notifications.unreadCount > 0)
+    { notificationGlyph = kNotificationsPending; notificationTip = "statusBar.notificationsPending"; }
+    else if (notifications.totalCount && *notifications.totalCount > 0)
+    { notificationGlyph = kNotificationsPresent; notificationTip = "statusBar.notificationsPresent"; }
+    else if (!notifications.unreadCount && !notifications.totalCount)
+    { notificationGlyph = kUnknown; notificationTip = "statusBar.notificationsUnknown"; }
+    add("notifications", L"", StatusBarAction::Notifications, notificationGlyph);
+    items.back().tip = _LW(notificationTip);
     return items;
 }
 
@@ -114,7 +172,7 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
         // Keep refreshing that metadata without invalidating the DComp surface.
         if (a.icon) return a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
             a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
-        return a.text == b.text && a.glyph == b.glyph;
+        return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs && a.batteryTone == b.batteryTone;
     });
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
@@ -128,11 +186,13 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4), &brush);
     ComPtr<IDWriteTextFormat> format;
 
-    text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+    text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &format);
     ComPtr<IDWriteTextFormat> iconFormat;
-    iconFormat.Attach(CreateFluentTextFormat(text, 16.f * scale));
-    if (!format || !brush || !iconFormat) return E_FAIL;
+    iconFormat.Attach(CreateFluentTextFormat(text, 18.f * scale));
+    ComPtr<IDWriteTextFormat> batteryFormat;
+    batteryFormat.Attach(CreateFluentTextFormat(text, 20.f * scale));
+    if (!format || !brush || !iconFormat || !batteryFormat) return E_FAIL;
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     if (format && brush)
     {
@@ -206,27 +266,24 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 auto textRect = rect;
                 if (item.key == "controlCenter" && iconFormat)
                 {
-                    for (std::size_t part = 0; part < item.glyph.size(); ++part)
+                    for (std::size_t part = 0; part < item.controlGlyphs.size(); ++part)
                     {
                         const float left = rect.left + (4 + 28.f * static_cast<float>(part)) * scale;
-                        if (item.glyph[part] == status_bar_glyphs::kCharging[0])
+                        const auto color = brush->GetColor();
+                        if (part == 2 && !hc)
                         {
-                            ComPtr<ID2D1Factory> factory; context->GetFactory(&factory);
-                            if (const auto geometry = CreateChargingBatteryGeometry(factory.Get()))
-                            {
-                                D2D1_MATRIX_3X2_F previous; context->GetTransform(&previous);
-                                const auto color = brush->GetColor();
-                                if (!hc) brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0x107c10 : 0x6ccb5f));
-                                context->SetTransform(D2D1::Matrix3x2F::Scale(.8f * scale, .8f * scale) *
-                                    D2D1::Matrix3x2F::Translation(left + 6 * scale, (rect.top + rect.bottom) / 2 - 8 * scale) * previous);
-                                context->FillGeometry(geometry.Get(), brush.Get());
-                                context->SetTransform(previous); brush->SetColor(color); continue;
-                            }
+                            if (item.batteryTone == StatusBarBatteryTone::Charging)
+                                brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0x107c10 : 0x6ccb5f));
+                            else if (item.batteryTone == StatusBarBatteryTone::Low)
+                                brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0xc42b1c : 0xff8585));
+                            else if (item.batteryTone == StatusBarBatteryTone::Saver)
+                                brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0x9d5d00 : 0xffcf66));
                         }
-                        context->DrawText(&item.glyph[part], 1, iconFormat.Get(),
+                        const auto& glyph = item.controlGlyphs[part];
+                        context->DrawText(glyph.c_str(), static_cast<UINT32>(glyph.size()), part == 2 ? batteryFormat.Get() : iconFormat.Get(),
                             D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        brush->SetColor(color);
                     }
-                    textRect.left += 88 * scale; textRect.right -= 6 * scale;
                 }
                 else if (!item.glyph.empty() && iconFormat)
                 {

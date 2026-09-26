@@ -377,7 +377,12 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
     if (gesture)
     {
         foregroundGranted = AllowSetForegroundWindow(pid) != FALSE;
-        impl_->menuPlacement.Arm(target, anchor, geometry, action == Activation::LeftUp || action == Activation::RightUp);
+        RECT barBounds{};
+        DWORD originProcess = 0; GetWindowThreadProcessId(origin.target, &originProcess);
+        if (originProcess == GetCurrentProcessId() && IsWindowVisible(origin.target))
+            GetWindowRect(origin.target, &barBounds);
+        impl_->menuPlacement.Arm(target, anchor, geometry,
+            action == Activation::LeftUp || action == Activation::RightUp, barBounds);
     }
     bool accepted = true;
     DWORD error = ERROR_SUCCESS;

@@ -1,5 +1,6 @@
 #include "settings_ipc_channel.h"
 #include "settings_ipc_values.h"
+#include "status_bar_appearance.h"
 #include "winui/home_about_ipc_values.h"
 #include "large_icon_edit_rules.h"
 #include "settings_process.h"
@@ -46,15 +47,27 @@ void TestCodec()
     extensions.statusBar.quickSearch = false;
     extensions.statusBar.leftOrder = {"quickSearch", "menu"};
     std::reverse(extensions.statusBar.rightOrder.begin(), extensions.statusBar.rightOrder.end());
-    extensions.statusBar.shellUi.enabled = true;
-    extensions.statusBar.shellUi.theme.mode = 5;
+    extensions.statusBar.noWindow.enabled = true;
+    extensions.statusBar.noWindow.theme.mode = snowdesktop::kStatusBarThemeTransparentDarkText;
+    extensions.statusBar.legacyShellUi.enabled = true;
+    extensions.statusBar.legacyShellUi.theme.mode = 5;
     extensions.statusBar.maximizedWindow.enabled = true;
     extensions.statusBar.maximizedWindow.theme.mode = -1;
-    extensions.statusBar.visibleWindow.theme.mode = 4;
-    extensions.statusBar.visibleWindow.theme.customized = true;
-    extensions.statusBar.visibleWindow.theme.appearance.widgetAlpha = .37f;
+    extensions.statusBar.legacyVisibleWindow.theme.mode = 4;
+    extensions.statusBar.legacyVisibleWindow.theme.customized = true;
+    extensions.statusBar.legacyVisibleWindow.theme.appearance.widgetAlpha = .37f;
     Check(Unpack<GeneralSettings>(Pack(extensions)).statusBar == extensions.statusBar,
-        "settings process must preserve default and active or disabled status bar scene preferences across its wire boundary");
+        "settings process must preserve new active rules and retired scene data across its wire boundary");
+    snowdesktop::VisitStatusBarAppearanceRules([&](const char*, auto member) {
+        for (const bool enabled : {false, true})
+        {
+            auto changed = extensions;
+            (changed.statusBar.*member).enabled = enabled;
+            (changed.statusBar.*member).theme.mode = snowdesktop::kStatusBarThemeTransparentLightText;
+            Check(Unpack<GeneralSettings>(Pack(changed)).statusBar == changed.statusBar,
+                "both active scene overrides and transparent themes survive IPC without changing legacy data");
+        }
+    });
     snowdesktop::VisitStatusBarFlags([&](const char*, auto member) {
         auto changed = extensions; changed.statusBar.*member = !(changed.statusBar.*member);
         Check(Unpack<GeneralSettings>(Pack(changed)).statusBar == changed.statusBar,
@@ -341,9 +354,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 24 omitted the status bar menu/search flags and saved order.
+        // Version 25 omitted the no-window scene rule.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{24},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{25},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
@@ -352,7 +365,7 @@ void TestRetiredUpdateProtocol()
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers without status bar flags disconnect before dispatch");
+            "settings peers without the no-window rule disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);

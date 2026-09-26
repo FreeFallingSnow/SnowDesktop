@@ -23,6 +23,9 @@ public:
     void UpdateSettings(const StatusBarSettings&);
     bool PreTranslateMessage(MSG*);
     bool DropTrayIcon(std::string_view,POINT);
+    bool PreviewTrayDrop(std::string_view,POINT);
+    void SetTrayDragFeedback(TrayDragFeedback);
+    void SetNativeControlsHandler(std::function<void(HWND,RECT)>);
 private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };

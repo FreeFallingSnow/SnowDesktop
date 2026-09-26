@@ -65,7 +65,9 @@ bool Scene::SameContent(const Scene& other)const
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
             a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.bold!=b.bold||a.outlined!=b.outlined||
-            a.secondary!=b.secondary||a.charging!=b.charging||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
+            a.secondary!=b.secondary||a.charging!=b.charging||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
+            a.switchStyle!=b.switchStyle||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
+            bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
         if(a.image&&a.image!=b.image&&(a.image->width!=b.image->width||a.image->height!=b.image->height||
             a.image->stride!=b.image->stride||a.image->pixels!=b.image->pixels))return false;
         for(std::size_t p=0;p<a.paths.size();++p)
@@ -200,6 +202,8 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
 {
     if (!dc || !factory) return E_INVALIDARG;
     ComPtr<ID2D1SolidColorBrush> brush; HRESULT hr = dc->CreateSolidColorBrush(p.text, &brush); if (FAILED(hr)) return hr;
+    ComPtr<ID2D1Factory> geometryFactory;dc->GetFactory(&geometryFactory);
+    ComPtr<ID2D1StrokeStyle> dashed;
     std::map<std::tuple<float,bool,bool,bool,bool>,ComPtr<IDWriteTextFormat>> formats;
     auto color = [&](D2D1_COLOR_F value, bool enabled = true) { if (!enabled) value.a *= .4f; brush->SetColor(value); };
     auto text = [&](std::wstring_view value, D2D1_RECT_F r, float size, D2D1_COLOR_F ink, bool bold, bool center, bool glyph, bool wrap=false) {
@@ -223,7 +227,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         const auto r = n.bounds;
         const bool hot = n.id == hovered && n.Interactive(), down = n.id == pressed && n.Interactive();
         const bool fill = n.role == Role::Button || n.role == Role::Toggle || n.role == Role::Card || n.selected || hot || down;
-        if (fill)
+        if (fill && !n.switchStyle)
         {
             color(n.accent || (n.role == Role::Toggle && n.selected) ? p.accent : hot || down ? p.hover : p.control, n.enabled);
             const float radius = n.role == Role::Card ? 10.f : 7.f;
@@ -245,6 +249,19 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         if (n.role == Role::Separator) { color(p.stroke); dc->DrawLine({r.left, r.top}, {r.right, r.top}, brush.Get(), 1); }
         else if (n.role == Role::Scrollbar)
         {color(p.secondary);dc->FillRoundedRectangle(D2D1::RoundedRect(r,2,2),brush.Get());}
+        else if (n.role == Role::Toggle && n.switchStyle)
+        {
+            const float width=(std::min)(40.f,r.right-r.left-4),height=20;
+            const float left=n.text.empty()?(r.left+r.right-width)/2:r.right-width-4;
+            const auto track=D2D1::RectF(left,(r.top+r.bottom-height)/2,left+width,(r.top+r.bottom+height)/2);
+            color(n.selected?p.accent:hot||down?p.hover:p.control,n.enabled);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(track,10,10),brush.Get());
+            if(!n.selected){color(p.secondary,n.enabled);dc->DrawRoundedRectangle(D2D1::RoundedRect(track,10,10),brush.Get(),1);}
+            color(n.selected?p.accentText:p.text,n.enabled);
+            dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(n.selected?track.right-10:track.left+10,(track.top+track.bottom)/2),6,6),brush.Get());
+            auto labelInk=p.text;if(!n.enabled)labelInk.a*=.4f;
+            text(n.text,{r.left,r.top,track.left-12,r.bottom},n.fontSize,labelInk,n.bold,false,false);
+        }
         else if (n.role == Role::Slider)
         {
             const auto geometry=native_controls::Slider(r,10,4,n.value,false);
@@ -255,11 +272,42 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         }
         else if (n.role == Role::Chart)
         {
-            color(p.stroke);
-            for (int i=0;i<=6;++i) { const float at=r.left+(r.right-r.left)*i/6; dc->DrawLine({at,r.top},{at,r.bottom},brush.Get(),.5f); }
-            for (int i=0;i<=4;++i) { const float at=r.top+(r.bottom-r.top)*i/4; dc->DrawLine({r.left,at},{r.right,at},brush.Get(),.5f); }
-            color(p.accent);
-            for (const auto& path : n.paths) for (std::size_t i=1;i<path.size();++i) dc->DrawLine(path[i-1],path[i],brush.Get(),2);
+            ComPtr<ID2D1RoundedRectangleGeometry> clip;
+            auto frame=r;
+            for(const auto& card:scene.cards)if(r.left>=card.left&&r.right<=card.right&&r.bottom>card.top&&r.top<card.bottom){frame=card;break;}
+            const float radius=std::isfinite(p.cornerRadius)?std::clamp(p.cornerRadius,0.f,(std::min)(frame.right-frame.left,frame.bottom-frame.top)/2):0;
+            dc->PushAxisAlignedClip(r,D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            if(n.chartGrid&&SUCCEEDED(geometryFactory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(frame,radius,radius),&clip)))
+                dc->PushLayer(D2D1::LayerParameters(frame,clip.Get()),nullptr);
+            if(n.chartGrid)
+            {
+                auto grid=p.stroke;grid.a*=.45f;color(grid);
+                for (int i=0;i<=6;++i) { const float at=r.left+(r.right-r.left)*i/6; dc->DrawLine({at,r.top},{at,r.bottom},brush.Get(),.5f); }
+                for (int i=0;i<=4;++i) { const float at=r.top+(r.bottom-r.top)*i/4; dc->DrawLine({r.left,at},{r.right,at},brush.Get(),.5f); }
+            }
+            for(std::size_t index=0;index<n.paths.size();++index)
+            {
+                const auto& path=n.paths[index];if(path.size()<2)continue;
+                auto geometry=[&](bool area) {
+                    ComPtr<ID2D1PathGeometry> result;ComPtr<ID2D1GeometrySink> sink;
+                    if(FAILED(geometryFactory->CreatePathGeometry(&result))||FAILED(result->Open(&sink)))return ComPtr<ID2D1PathGeometry>{};
+                    sink->BeginFigure(path.front(),area?D2D1_FIGURE_BEGIN_FILLED:D2D1_FIGURE_BEGIN_HOLLOW);
+                    sink->AddLines(path.data()+1,static_cast<UINT32>(path.size()-1));
+                    if(area){sink->AddLine({path.back().x,r.bottom});sink->AddLine({path.front().x,r.bottom});}
+                    sink->EndFigure(area?D2D1_FIGURE_END_CLOSED:D2D1_FIGURE_END_OPEN);
+                    if(FAILED(sink->Close()))return ComPtr<ID2D1PathGeometry>{};return result;
+                };
+                if(n.fillPaths)if(const auto area=geometry(true)){auto tint=p.accent;tint.a*=.10f;color(tint);dc->FillGeometry(area.Get(),brush.Get());}
+                const bool dash=index<n.dashedPaths.size()&&n.dashedPaths[index];
+                if(dash&&!dashed)
+                {
+                    auto style=D2D1::StrokeStyleProperties();style.dashStyle=D2D1_DASH_STYLE_DASH;
+                    style.startCap=style.endCap=style.dashCap=D2D1_CAP_STYLE_ROUND;
+                    geometryFactory->CreateStrokeStyle(style,nullptr,0,&dashed);
+                }
+                if(const auto line=geometry(false)){color(p.accent);dc->DrawGeometry(line.Get(),brush.Get(),1.5f,dash?dashed.Get():nullptr);}
+            }
+            if(clip)dc->PopLayer();dc->PopAxisAlignedClip();
         }
         else
         {
@@ -267,7 +315,6 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
             const bool iconOnly = n.text.empty();
             if(n.charging)
             {
-                ComPtr<ID2D1Factory> geometryFactory;dc->GetFactory(&geometryFactory);
                 if(auto geometry=CreateChargingBatteryGeometry(geometryFactory.Get()))
                 {
                     D2D1_MATRIX_3X2_F previous;dc->GetTransform(&previous);
@@ -293,10 +340,10 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 const auto glyphRect = iconOnly ? r : D2D1::RectF(r.left+10,r.top,r.left+38,r.bottom);
                 text(n.glyph,glyphRect,18,ink,false,true,true); if (!iconOnly) label.left += 44;
             }
-            else if (n.role != Role::Text) label.left += 12;
+            else if (n.role != Role::Text && !n.centered) label.left += 12;
             if (!iconOnly)
             {
-                label.right -= n.role == Role::Text ? 0 : 12;
+                label.right -= n.role == Role::Text || n.centered ? 0 : 12;
                 if (!n.detail.empty())
                 {
                     const float mid=(r.top+r.bottom)/2;

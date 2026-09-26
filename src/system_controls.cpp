@@ -1,4 +1,5 @@
 #include "system_controls.h"
+#include "system_control_feedback.h"
 #include <windows.h>
 #include <objbase.h>
 #include <algorithm>
@@ -163,12 +164,12 @@ struct Service::Impl
             }
         return result;
     }
-    void Publish(std::map<std::string, Snapshot> values)
+    void Publish(std::map<std::string, Snapshot> values, const Cancellation* cancel = nullptr)
     {
         Wake notify;
         {
             std::lock_guard guard(mutex);
-            if (stopping) return;
+            if (stopping || (cancel && cancel->Canceled())) return;
             for (auto& [topic, value] : values)
             {
                 value.timestampMs = Timestamp(); value.revision = ++revision;
@@ -250,6 +251,7 @@ struct Service::Impl
         Wake notify;
         {
             std::lock_guard guard(mutex);
+            if (work->cancel.Canceled()) result = work->cancel.Failure();
             active.erase(work->id);
             const std::string source(Source(work->request.name));
             busySources.erase(source);
@@ -305,7 +307,10 @@ struct Service::Impl
                 if (!token.stop_requested() && !work->cancel.Canceled() && Source(work->request.name) != "media")
                 {
                     const std::string source(Source(work->request.name));
-                    Publish(Sample(source, {work->cancel.canceled, Clock::now() + std::chrono::seconds(5)}));
+                    auto readback = Sample(source, {work->cancel.canceled, Clock::now() + std::chrono::seconds(5)});
+                    if (!work->cancel.Canceled() && !result.ok && result.error == "stateMismatch" && ControlReadbackMatches(work->request, readback))
+                        result = {true, {}, 0};
+                    Publish(std::move(readback), &work->cancel);
                     std::lock_guard guard(mutex);
                     const auto sources = Sources();
                     const auto demand = sources.find(source);
@@ -387,9 +392,14 @@ std::uint64_t Service::Start(std::string consumer, Request request)
     work->request = std::move(request);
     work->cancel = {std::make_shared<std::atomic_bool>(false), Clock::now() + std::chrono::seconds(40)};
     work->ready = Clock::now() + (Slider(work->request.name) ? std::chrono::milliseconds(100) : std::chrono::milliseconds(0));
-    if (Slider(work->request.name)) for (const auto& queued : impl_->pending)
-        if (queued->consumer == work->consumer && queued->request.name == work->request.name &&
-            Target(queued->request) == Target(work->request)) queued->cancel.canceled->store(true);
+    if (Slider(work->request.name)) for (const auto& [id, previous] : impl_->active)
+    {
+        (void)id;
+        // A replacement must also stop an executing request's settling loop.
+        // Otherwise the newest slider value waits behind an obsolete target.
+        if (previous->consumer == work->consumer && previous->request.name == work->request.name &&
+            Target(previous->request) == Target(work->request)) previous->cancel.canceled->store(true);
+    }
     impl_->active[work->id] = work; impl_->pending.push_back(work);
     if (!impl_->sampler.joinable()) impl_->sampler = std::jthread([this](std::stop_token token) { impl_->Samples(token); });
     if (impl_->executors.empty()) for (unsigned index = 0; index < 3; ++index)

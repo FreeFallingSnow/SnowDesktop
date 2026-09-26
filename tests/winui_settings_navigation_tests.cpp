@@ -237,6 +237,15 @@ int main()
         const auto statusTheme = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.theme"));
         Check(statusTheme.page == SettingsPage::StatusBar && statusTheme.focusId == "statusBar.theme",
             "the status bar theme route must remain on the status bar page");
+        for (const auto* focus : {"statusBar.shellUi", "statusBar.visibleWindow"})
+        {
+            const auto retired = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, focus));
+            Check(retired.page == SettingsPage::StatusBar && retired.focusId == "statusBar.theme",
+                "retired scene links open the default editor rather than reversing visible-window semantics");
+        }
+        const auto noWindow = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.noWindow"));
+        Check(noWindow.page == SettingsPage::StatusBar && noWindow.focusId == "statusBar.noWindow",
+            "the no-window scene has an independent focus destination");
     }
     if (failures != 0)
     {

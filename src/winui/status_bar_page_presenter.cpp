@@ -210,9 +210,8 @@ struct StatusBarPagePresenter::Impl
         Title(rulesTitle); scenarios.Children().Append(rulesTitle);
         rulesHint.TextWrapping(mux::TextWrapping::Wrap); rulesHint.Opacity(.72);
         scenarios.Children().Append(rulesHint);
-        InitializeRule(scenarios, "app.settings.taskbar_dynamic_shell_ui", "statusBar.shellUi", &StatusBarSettings::shellUi);
-        InitializeRule(scenarios, "app.settings.taskbar_dynamic_maximized_window", "statusBar.maximizedWindow", &StatusBarSettings::maximizedWindow);
-        InitializeRule(scenarios, "app.settings.taskbar_dynamic_visible_window", "statusBar.visibleWindow", &StatusBarSettings::visibleWindow);
+        InitializeRule(scenarios, "statusBar.noWindow", "statusBar.noWindow", &StatusBarSettings::noWindow);
+        InitializeRule(scenarios, "statusBar.maximizedWindow", "statusBar.maximizedWindow", &StatusBarSettings::maximizedWindow);
         auto token = edge.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = edge.SelectedIndex();
             if (selected >= 0) Emit([selected](auto& settings) { settings.position = static_cast<DockPosition>(selected); });
@@ -285,7 +284,7 @@ struct StatusBarPagePresenter::Impl
         control.combo.Items().Clear();
         for (const auto key : {"app.settings.taskbar_follow_global", "app.settings.dark", "app.settings.light",
             "app.settings.dark_glass", "app.settings.light_glass", "app.settings.dark_acrylic",
-            "app.settings.light_acrylic", "app.settings.custom"})
+            "app.settings.light_acrylic", "statusBar.transparentDarkText", "statusBar.transparentLightText", "app.settings.custom"})
             control.combo.Items().Append(winrt::box_value(L(key)));
         control.editor->RefreshLocalizedText();
     }
@@ -303,7 +302,7 @@ struct StatusBarPagePresenter::Impl
         scaleRow.SetText(L("statusBar.scale"));
         defaultThemeTitle.Text(L("statusBar.defaultAppearance"));
         rulesTitle.Text(L("settings.taskbar.scenarioOverrides"));
-        rulesHint.Text(L("settings.taskbar.scenarioOverrides.description"));
+        rulesHint.Text(L("statusBar.scenarioOverrides.description"));
         LocalizeTheme(defaultTheme);
         mux::Automation::AutomationProperties::SetName(defaultTheme.combo, defaultThemeTitle.Text());
         for (auto& rule : rules)

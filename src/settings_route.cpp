@@ -77,6 +77,9 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
         route.page = SettingsPage::StatusBar;
         route.focusId = "statusBar.theme";
     }
+    if (route.page == SettingsPage::StatusBar &&
+        (route.focusId == "statusBar.shellUi" || route.focusId == "statusBar.visibleWindow"))
+        route.focusId = "statusBar.theme";
     if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
         route.focusId == "personalization.contextMenu") route.page = SettingsPage::ContextMenu;
     if (route.page == SettingsPage::Home)

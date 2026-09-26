@@ -1,5 +1,7 @@
 #include "system_control_windows.h"
 #include "audio_endpoint_identity.h"
+#include "system_control_audio_presentation.h"
+#include "system_control_feedback.h"
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -38,11 +40,15 @@ std::string Name(IMMDevice* endpoint)
 {
     ComPtr<IPropertyStore> properties;
     if (FAILED(endpoint->OpenPropertyStore(STGM_READ, &properties))) return {};
-    PROPVARIANT value{};
-    std::string result;
-    if (SUCCEEDED(properties->GetValue(PKEY_Device_FriendlyName, &value)) && value.vt == VT_LPWSTR && value.pwszVal)
-        result = Utf8(value.pwszVal);
-    PropVariantClear(&value); return result;
+    const auto read = [&](REFPROPERTYKEY key) {
+        PROPVARIANT value{}; std::string result;
+        if (SUCCEEDED(properties->GetValue(key, &value)) && value.vt == VT_LPWSTR && value.pwszVal)
+            result = Utf8(value.pwszVal);
+        PropVariantClear(&value); return result;
+    };
+    auto name = AudioEndpointName(read(PKEY_Device_FriendlyName));
+    if (!name.empty()) return name;
+    return AudioEndpointName({}, read(PKEY_DeviceInterface_FriendlyName), read(PKEY_Device_DeviceDesc));
 }
 ComPtr<IMMDeviceEnumerator> Enumerator()
 {
@@ -134,8 +140,12 @@ public:
             // Match the multimedia endpoint used by existing API v2 volume tasks.
             for (const auto role : {eConsole, eMultimedia, eCommunications})
             { const auto status = policy->SetDefaultEndpoint(chosen.c_str(), role); if (FAILED(status)) return Status(status); }
-            if (FAILED(enumerator->GetDefaultAudioEndpoint(flow, eMultimedia, &endpoint))) return Error(ERROR_NOT_FOUND, "deviceGone");
-            return RawId(endpoint.Get()) == chosen ? Result{true, {}, 0} : Error(ERROR_INVALID_STATE, "stateMismatch");
+            return ConfirmControlValue(1, 0, cancel, [&]() -> ControlReadback {
+                ComPtr<IMMDevice> actual;
+                const auto read = enumerator->GetDefaultAudioEndpoint(flow, eMultimedia, &actual);
+                if (FAILED(read)) return {{}, Status(read)};
+                return {RawId(actual.Get()) == chosen ? 1.0 : 0.0, {}};
+            }, ControlReadbackPause);
         }
         if (FAILED(enumerator->GetDefaultAudioEndpoint(flow, eMultimedia, &endpoint))) return Error(ERROR_NOT_FOUND, "deviceGone");
         ComPtr<IAudioEndpointVolume> control;
@@ -147,14 +157,17 @@ public:
             const float target = static_cast<float>(std::clamp(Numeric(request, "volume"), 0.0, 1.0));
             status = control->SetMasterVolumeLevelScalar(target, nullptr);
             if (FAILED(status)) return Status(status);
-            float actual = 0; status = control->GetMasterVolumeLevelScalar(&actual);
-            if (FAILED(status)) return Status(status);
-            return std::abs(actual - target) <= 0.02f ? Result{true, {}, 0} : Error(ERROR_INVALID_STATE, "stateMismatch");
+            return ConfirmControlValue(target, 0.02, cancel, [&]() -> ControlReadback {
+                float actual = 0; const auto read = control->GetMasterVolumeLevelScalar(&actual);
+                return FAILED(read) ? ControlReadback{{}, Status(read)} : ControlReadback{actual, {}};
+            }, ControlReadbackPause);
         }
         const BOOL target = Argument(request, "muted") == "1";
         status = control->SetMute(target, nullptr); if (FAILED(status)) return Status(status);
-        BOOL actual = FALSE; status = control->GetMute(&actual); if (FAILED(status)) return Status(status);
-        return actual == target ? Result{true, {}, 0} : Error(ERROR_INVALID_STATE, "stateMismatch");
+        return ConfirmControlValue(target ? 1.0 : 0.0, 0, cancel, [&]() -> ControlReadback {
+            BOOL actual = FALSE; const auto read = control->GetMute(&actual);
+            return FAILED(read) ? ControlReadback{{}, Status(read)} : ControlReadback{actual ? 1.0 : 0.0, {}};
+        }, ControlReadbackPause);
     }
     void Release(std::string_view) override {}
 };

@@ -29,7 +29,10 @@ struct StatusBarSettings
     DockMonitorScope monitorScope = DockMonitorScope::First;
     float scale = 1.0f;
     SurfaceTheme theme;
-    StatusBarAppearanceRule shellUi, maximizedWindow, visibleWindow;
+    StatusBarAppearanceRule noWindow, maximizedWindow;
+    // Retired scenes are read and round-tripped under their original JSON keys
+    // only. Never reinterpret "has visible windows" as "has no windows".
+    StatusBarAppearanceRule legacyShellUi, legacyVisibleWindow;
     bool menu = true, quickSearch = true;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
@@ -45,9 +48,15 @@ struct StatusBarSettings
 
 template<class Visitor> void VisitStatusBarAppearanceRules(Visitor visit)
 {
-    visit("shellUi", &StatusBarSettings::shellUi);
+    visit("noWindow", &StatusBarSettings::noWindow);
     visit("maximizedWindow", &StatusBarSettings::maximizedWindow);
-    visit("visibleWindow", &StatusBarSettings::visibleWindow);
+}
+
+template<class Visitor> void VisitStatusBarStoredAppearanceRules(Visitor visit)
+{
+    VisitStatusBarAppearanceRules(visit);
+    visit("shellUi", &StatusBarSettings::legacyShellUi);
+    visit("visibleWindow", &StatusBarSettings::legacyVisibleWindow);
 }
 
 template<class Visitor> void VisitStatusBarFlags(Visitor visit)
@@ -109,6 +118,10 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
     if (!input.IsObject()) return false;
     StatusBarSettings value;
     bool valid = true;
+    // Missing/1 is the old three-scene schema. Preserve its retired data, keep
+    // maximizedWindow unchanged and leave the new noWindow rule disabled.
+    if (const auto* version = input.Find("sceneRulesVersion"))
+        if (!version->IsNumber() || (version->number != 1 && version->number != 2)) return false;
     VisitStatusBarFlags([&](const char* key, auto member) {
         if (const auto* field = input.Find(key))
         {
@@ -135,7 +148,7 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
     }
     if (const auto* field = input.Find("theme"))
         valid = DecodeSurfaceTheme(*field, value.theme, true) && valid;
-    VisitStatusBarAppearanceRules([&](const char* key, auto member) {
+    VisitStatusBarStoredAppearanceRules([&](const char* key, auto member) {
         if (const auto* field = input.Find(key))
         {
             if (!field->IsObject()) { valid = false; return; }
@@ -175,11 +188,11 @@ inline std::string EncodeStatusBarSettings(StatusBarSettings value)
     if (theme.empty()) return {};
     std::ostringstream text;
     text.imbue(std::locale::classic());
-    text << "{\"position\":" << static_cast<int>(value.position)
+    text << "{\"sceneRulesVersion\":2,\"position\":" << static_cast<int>(value.position)
          << ",\"monitorScope\":" << static_cast<int>(value.monitorScope)
          << ",\"scale\":" << value.scale << ",\"theme\":" << theme;
     bool valid = true;
-    VisitStatusBarAppearanceRules([&](const char* key, auto member) {
+    VisitStatusBarStoredAppearanceRules([&](const char* key, auto member) {
         const auto& rule = value.*member;
         const auto encoded = EncodeSurfaceTheme(rule.theme, true);
         if (encoded.empty()) { valid = false; return; }

@@ -94,6 +94,16 @@ inline bool ShouldShowPersistentDockHost(
                     keepWhenDesktopHidden)));
 }
 
+// A merged layout keeps its AppBar slot during fullscreen. Only an explicit
+// promotion may reveal the Dock there; passive drag reveal is not sufficient.
+inline bool ShouldShowMergedStatusBarDockHost(
+    bool active, bool manuallyPromoted, bool fullscreen,
+    bool desktopPassthroughActive)
+{
+    return active && !desktopPassthroughActive &&
+        (!fullscreen || manuallyPromoted);
+}
+
 inline bool ShouldPassivelyRevealDockForDragAtEdge(
     bool pointerInEdgeProjection,
     bool internalDragActive,

@@ -47,7 +47,8 @@ struct PreviewState
     std::vector<system_control::Completion> completions;
     std::set<std::string> subscriptions;
     std::vector<std::pair<std::string, std::string>> muteRequests;
-    unsigned scans = 0, closes = 0, reads = 0, trayChanges = 0;
+    unsigned scans = 0, closes = 0, reads = 0, trayChanges = 0, nativeControls = 0;
+    std::set<std::string> requestedDates;
     StatusBarSettings savedTraySettings;
     tray::Snapshot tray;
     wr::WidgetCpuDataSnapshot cpu;
@@ -201,6 +202,7 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
     source.unsubscribe = [state](std::string_view topic) { state->subscriptions.erase(std::string(topic)); };
     source.close = [state] { ++state->closes; state->subscriptions.clear(); };
     source.settings = [](const wchar_t*) { throw std::runtime_error("offline panel must not launch Windows Settings"); };
+    source.nativeControls = [state] { ++state->nativeControls; };
     source.prompt = [](system_control::Request&) -> bool { throw std::runtime_error("offline panel must not show confirmation or credential prompts"); };
     source.media = [state]() -> std::optional<wr::WidgetMediaSessionsDataSnapshot> {
         ++state->reads;
@@ -236,7 +238,7 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
         return days.front().fullDate;
     };
     source.calendar.events = [state](const std::string& date) {
-        ++state->reads; state->requestedDate = date;
+        ++state->reads; state->requestedDate = date;state->requestedDates.insert(date);
         std::vector<calendar::CalendarEvent> events;
         if (!state->agenda) return events;
         calendar::CalendarEvent first; first.id = "preview-brunch"; first.revision = 1;
@@ -470,6 +472,38 @@ void CheckTrayInput(const ui::Scene& scene)
         "a removed tray application retained a captured drag action");
 }
 
+void CheckTrayDropTargets(const tray::Snapshot& fixture)
+{
+    auto state=std::make_shared<PreviewState>();state->tray=fixture;
+    for(int i=8;i<28;++i){auto icon=fixture.icons.front();icon.key=icon.persistentKey="preview-"+std::to_string(i);state->tray.icons.push_back(std::move(icon));}
+    StatusBarSettings settings;settings.pinnedTrayItems={"preview-0"};
+    SystemPanelModel model(FixtureSource(state),settings,StatusBarAction::Tray);model.Refresh(96);
+    const auto clip=model.ScrollViewport();const ui::Node* last=nullptr;std::vector<std::string> after;
+    for(const auto& n:model.View().nodes)if(n.id.starts_with("tray:"))
+    {
+        if(n.bounds.top<clip.bottom&&n.bounds.bottom>clip.top)last=&n;
+        else if(last&&n.bounds.top>=clip.bottom)after.push_back(n.id.substr(5));
+    }
+    Require(last&&after.size()>1,"tray stale-target fixture has no offscreen insertion candidates");
+    const auto lastKey=last->id.substr(5);const auto stale=after.front(),next=after[1];
+    std::erase_if(state->tray.icons,[&](const auto& icon){return icon.key==stale;});
+    const D2D1_POINT_2F point{model.View().width-1,clip.bottom-1};
+    const auto indicator=model.TrayDropIndicator("preview-0",point);
+    Require(indicator&&indicator->right-indicator->left==2&&state->trayChanges==0&&model.Settings().pinnedTrayItems==settings.pinnedTrayItems,
+        "tray drop preview mutated settings or lost its exact insertion indicator");
+    Require(!model.TrayDropIndicator("missing",point)&&!model.TrayDropIndicator("preview-7",point)&&
+        !model.TrayDropIndicator("preview-0",{model.View().width+1,point.y}),"invalid tray identities or points were advertised as acceptable drops");
+    Require(model.Drop("preview-0",point)&&state->trayChanges==1,"advertised tray insertion could not be committed");
+    const auto& order=state->savedTraySettings.trayOrder;
+    const auto at=[&](const std::string& key){return std::find(order.begin(),order.end(),key);};
+    Require(at(lastKey)<at("preview-0")&&at("preview-0")<at(next),"removed offscreen tray target silently changed a local insertion to global append");
+    auto empty=std::make_shared<PreviewState>();empty->tray=fixture;empty->tray.icons.resize(1);
+    SystemPanelModel emptyModel(FixtureSource(empty),settings,StatusBarAction::Tray);
+    const auto target=emptyModel.TrayDropIndicator("preview-0",{16,16});
+    Require(target&&target->right-target->left>2&&emptyModel.Drop("preview-0",{16,16})&&empty->savedTraySettings.pinnedTrayItems.empty(),
+        "empty overflow grid did not advertise and accept the same visible unpin target");
+}
+
 void CheckLogicalFocus()
 {
     ui::Scene scene;scene.width=160;scene.height=80;
@@ -593,7 +627,7 @@ void CheckModelScrolling()
     const auto percentage=std::to_wstring(static_cast<int>(std::lround(pending.value*100)))+L"%";
     Require(volumeRequests.size()==1&&std::abs(volumeRequests.front()-(previous+.005f))<.0001f&&
         std::abs(pending.value-volumeRequests.front())<.0001f&&pending.tooltip.find(percentage)!=std::wstring::npos&&
-        pending.tooltip.find(_LW("controlCenter.working"))!=std::wstring::npos&&pending.accessibilityLabel==_LW("statusBar.volume")&&
+        pending.tooltip.find(_LW("controlCenter.working"))==std::wstring::npos&&pending.accessibilityLabel==_LW("statusBar.volume")&&
         !stableName.empty()&&name()==stableName&&stableName.find('%')==std::string::npos,
         "fractional volume wheel input lost its pending percentage or replaced the stable UIA name with transient feedback");
 }
@@ -611,6 +645,86 @@ void CheckCalendarNames(const ui::Scene& scene)
     };
     Require(name(september)=="2026-09-01"&&name(october)=="2026-10-01",
         "same-number calendar days lack distinct full year/month/date accessibility names");
+}
+
+void CheckFeedbackLayouts()
+{
+    auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+    auto source=FixtureSource(state);const auto read=source.current;
+    source.current=[read](std::string_view topic) {
+        auto result=read(topic);
+        if(result&&topic=="audio.devices")
+        {
+            auto& devices=result->value.object["devices"].array;const auto original=devices.front();
+            devices.push_back(original);
+            auto historical=original;historical.object["id"]=j::Text("historical");historical.object["state"]=j::Text("notPresent");devices.push_back(historical);
+            auto unnamed=original;unnamed.object["id"]=j::Text("unnamed");unnamed.object["name"]=j::Text("  ");devices.push_back(unnamed);
+            auto virtualDevice=original;virtualDevice.object["id"]=j::Text("virtual-output");virtualDevice.object["name"]=j::Text("Virtual Output");devices.push_back(virtualDevice);
+        }
+        return result;
+    };
+    SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
+    Require(model.Invoke("system.settings")&&state->nativeControls==1,"overview settings button did not use the native control-center boundary");
+    model.Select("audio");CheckLayout(model.View());
+    Require(model.View().Find("audio.output.device:virtual-output")&&!model.View().Find("audio.output.device:historical")&&
+        !model.View().Find("audio.output.device:unnamed"),"audio presentation exposed stale/unnamed devices or filtered a real virtual endpoint");
+    for(const auto* page:{"wifi","bluetooth"})
+    {
+        model.Select(page);const auto radio="radio:"+std::string(page);const auto& toggle=Node(model.View(),radio);
+        Require(toggle.switchStyle&&toggle.role==ui::Role::Toggle,"detail page omitted its real switch control");
+        ui::Input input;input.Sync(model.View());Require(input.Focus(radio),"detail switch lost keyboard focus");
+        const auto action=model.HandleKey(input,VK_SPACE,false);
+        Require(action.kind==ui::InputResult::Kind::Invoke&&action.id==radio,"detail switch lost keyboard activation identity");
+        const auto regions=input.AccessibilityRegions();const auto semantic=std::find_if(regions.begin(),regions.end(),[&](const auto& r){return input.Identity(r.key)==radio;});
+        Require(semantic!=regions.end()&&semantic->accessibilityRole=="switch"&&semantic->checked==toggle.selected,"detail switch lost its UIA role or checked state");
+        const auto prefix=std::string(page)=="wifi"?"wifi.network:":"bluetooth.device:";
+        const auto row=std::find_if(model.View().nodes.begin(),model.View().nodes.end(),[prefix](const auto& n){return n.id.starts_with(prefix);});
+        Require(row!=model.View().nodes.end(),"expandable device fixture has no row");
+        const auto id=row->id;const auto key=id.substr(std::string_view(prefix).size());const auto command=std::string(page)+".connect:"+key;
+        Require(!model.View().Find(command)&&model.Invoke(id)&&model.View().Find(command),"device row did not expand without dispatching a device mutation");
+        CheckLayout(model.View());
+        Require(model.Invoke(id)&&!model.View().Find(command),"device row could not collapse its actions");
+        input.Sync(model.View());Require(input.Focus("footer.settings"),"compact settings footer lost keyboard focus");
+        const auto footer=model.HandleKey(input,VK_RETURN,false);
+        Require(footer.kind==ui::InputResult::Kind::Invoke&&footer.id=="footer.settings","compact footer lost its settings action identity");
+    }
+}
+
+void CheckCalendarResponsive()
+{
+    auto state=std::make_shared<PreviewState>();state->agenda=true;
+    SystemPanelModel model(FixtureSource(state),{},StatusBarAction::Calendar);
+    for(const float width:{900.f,700.f,420.f,260.f})
+    {
+        model.Refresh(300,width);model.Scroll(-model.MaximumScroll());CheckLayout(model.View());
+        const auto& scene=model.View();Require(scene.width<=width,"calendar exceeded its monitor width budget");
+        for(const auto& node:scene.nodes)Require(node.bounds.left>=0&&node.bounds.right<=width,"responsive calendar content overflowed horizontally");
+        const auto month=Node(scene,"calendar.month").bounds,today=Node(scene,"calendar.day").bounds,agenda=Node(scene,"calendar.selected").bounds;
+        if(width>=820)Require(today.right<=month.left&&agenda.left>Node(scene,"date:2026-09-27").bounds.right,"wide calendar did not use today/month/agenda columns");
+        else if(width>=560)Require(today.right<=month.left&&agenda.top>Node(scene,"date:2026-09-30").bounds.bottom,"medium calendar did not move agenda below its month");
+        else Require(month.top>today.bottom&&agenda.top>month.bottom,"narrow calendar did not stack its content");
+        Require(model.MaximumScroll()>0,"short calendar viewport lost scroll access to agenda");
+        model.Reveal("calendar.manage");const auto& manage=Node(model.View(),"calendar.manage");
+        Require(!HasArea(manage.clip)||(manage.bounds.top>=manage.clip.top&&manage.bounds.bottom<=manage.clip.bottom),"calendar action could not be revealed in a short viewport");
+        if(width>=820)
+        {
+            const auto originalDay=Node(model.View(),"date:2026-09-27").bounds;
+            model.Scroll(model.MaximumScroll());const auto movedDay=Node(model.View(),"date:2026-09-27").bounds;
+            const float offset=model.ScrollOffset();ui::Input input;input.Sync(model.View());Require(input.Focus("date:2026-09-27"),"fixed month lost keyboard focus");
+            model.Reveal(input.Focused());
+            Require(originalDay.top==movedDay.top&&originalDay.bottom==movedDay.bottom&&model.ScrollOffset()==offset&&
+                model.ScrollViewport().left>originalDay.right,"wide agenda scrolling moved the month or focusing the fixed month reset agenda scroll");
+        }
+        model.Refresh(300);Require(model.View().width<=width,"internal refresh forgot its monitor width budget");
+    }
+    state->agenda=false;model.Refresh(300,900);
+    Require(model.MaximumScroll()==0&&!model.View().Find("scrollbar"),"a fixed month created scrolling for an empty short agenda");
+    for(const auto* date:{"0001-01-01","9999-12-31"})
+    {
+        auto boundary=FixtureSource(std::make_shared<PreviewState>());boundary.calendar.today=[date]{return date;};
+        SystemPanelModel edge(std::move(boundary),{},StatusBarAction::Calendar);
+        Require(!Node(edge.View(),date[0]=='0'?"calendar.previous":"calendar.next").enabled,"calendar navigation escaped the supported date range");
+    }
 }
 
 std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
@@ -707,6 +821,38 @@ void CheckSelectedDetailContrast(ID2D1Device* device,IDWriteFactory* text,
             "selected detail text did not use high-contrast accent foreground, or plain detail lost its secondary color");
     }
 }
+
+void CheckChartAndSwitchPixels(ID2D1Device* device,IDWriteFactory* text,
+    native_component_preview::Request request,const PersonalizationSettings& appearance,const SystemPanel::Background& background)
+{
+    request.canvasWidth=240;request.canvasHeight=160;request.dpi=96;request.transparent=request.contentOnly=true;
+    ui::Scene scene;scene.width=240;scene.height=160;
+    for(int row=0;row<3;++row)
+    {
+        ui::Node chart;chart.id="trace:"+std::to_string(row);chart.role=ui::Role::Chart;chart.chartGrid=false;
+        chart.bounds={8,8+row*24.f,232,32+row*24.f};chart.paths={{{12,16+row*24.f},{228,16+row*24.f}}};
+        chart.dashedPaths={row==1};chart.fillPaths=row==2;scene.nodes.push_back(std::move(chart));
+    }
+    for(int on=0;on<2;++on)
+    {
+        ui::Node toggle;toggle.id="switch:"+std::to_string(on);toggle.role=ui::Role::Toggle;toggle.switchStyle=true;toggle.selected=on!=0;
+        toggle.bounds={16+on*112.f,108,64+on*112.f,144};scene.nodes.push_back(std::move(toggle));
+    }
+    const auto pixels=Render(device,text,request,scene,appearance,background,{},0,0);
+    const auto alpha=[&](int x,int y){return pixels[static_cast<std::size_t>(y)*240+static_cast<std::size_t>(x)]>>24;};
+    unsigned solid=0,dash=0,gaps=0;
+    for(int x=20;x<220;++x){if(alpha(x,16)>80)++solid;if(alpha(x,40)>80)++dash;else ++gaps;}
+    Require(solid>190&&dash>30&&gaps>30,"resource upload and download rendered as the same stroke instead of real solid/dashed traces");
+    Require(alpha(100,72)>0&&alpha(100,72)<80&&alpha(100,64)>80,"resource chart lost its light area fill or obscured its trace");
+    Require(alpha(24,110)==0&&alpha(136,110)==0&&alpha(30,126)>80&&alpha(162,126)>80,
+        "detail switches rendered as full tiles or omitted their state-positioned thumbs");
+    ui::Scene rounded;rounded.width=240;rounded.height=160;rounded.cards={{0,0,240,160}};
+    ui::Node full;full.id="full-chart";full.role=ui::Role::Chart;full.bounds={0,0,240,90};full.fillPaths=true;full.paths={{{0,0},{240,0}}};rounded.nodes.push_back(std::move(full));
+    auto roundedAppearance=appearance;roundedAppearance.cornerRadius=72;
+    const auto cornerPixels=Render(device,text,request,rounded,roundedAppearance,background,{},0,0);
+    Require(cornerPixels[20*240+10]==0&&(cornerPixels[20*240+120]>>24)>0,
+        "full-width chart paint escaped the popup theme radius in the offline renderer");
+}
 }
 
 native_component_preview::Result ExportSystemPanelPreview(const native_component_preview::Request& request,
@@ -724,6 +870,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             "native panel offline previews support light and dark; live compositor blur is not captured");
         const float scale = static_cast<float>(request.dpi)/96.f;
         const float available = static_cast<float>(request.canvasHeight-2*request.padding)/scale;
+        const float availableWidth = static_cast<float>(request.canvasWidth-2*request.padding)/scale;
         Require(scale > 0 && available >= 200, "system panel preview canvas is too short");
         widget_preview::Wallpaper stage;
         if (!request.backgroundImage.empty())
@@ -771,7 +918,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 preset == "gpu" || preset == "gpu-partial" ? StatusBarAction::Gpu :
                 preset == "traffic" ? StatusBarAction::Traffic : StatusBarAction::Cpu;
             SystemPanelModel model(FixtureSource(state),settings,action);
-            model.Refresh(available);
+            model.Refresh(available,availableWidth);
             if (controls)
                 model.Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" || preset == "media-empty" ? "" :
                     !state->manySection.empty() ? state->manySection : preset);
@@ -789,8 +936,11 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             }
             if (calendarPanel)
             {
-                Require(model.Invoke("date:2026-09-27") && Node(model.View(),"calendar.day").text == L"27" &&
-                    state->requestedDate == "2026-09-27", "calendar selection did not update date and agenda together");
+                state->requestedDates.clear();
+                Require(model.Invoke("date:2026-09-27") && Node(model.View(),"calendar.day").text == L"26" &&
+                    Node(model.View(),"calendar.selected").text==L"2026-09-27"&&Node(model.View(),"date:2026-09-27").outlined&&
+                    Node(model.View(),"date:2026-09-26").selected&&state->requestedDates==std::set<std::string>{"2026-09-27","2026-09-28","2026-09-29"},
+                    "calendar selection changed today or failed to update its selected and nearby agenda");
                 Require(model.Invoke("calendar.today") && Node(model.View(),"calendar.day").text == L"26",
                     "calendar today did not restore the fixed fixture date");
             }
@@ -799,8 +949,8 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (calendarPanel)
                 for (const auto& node : scene.nodes)
                     if (node.id.starts_with("date:"))
-                        Require(node.bounds.top >= 0 && node.bounds.bottom <= scene.height,
-                            "preview canvas clips the complete calendar month");
+                        Require((node.bounds.top>=0&&node.bounds.bottom<=scene.height)||scene.Find("scrollbar"),
+                            "a constrained calendar month has no scroll affordance");
             if (controls) CheckControls(model,state,preset);
             if (trayPanel)
             {
@@ -815,6 +965,11 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 const auto& chart = Node(scene,"resource.chart");
                 Require(chart.paths.size() == (missing ? 0u : preset == "gap" ? 3u : preset == "traffic" ? 2u : 1u),
                     "resource graph bridged unavailable samples or omitted a valid trace");
+                Require(chart.bounds.left==0&&chart.bounds.top==0&&chart.bounds.right==scene.width&&chart.fillPaths&&
+                    Node(scene,"resource.title").bounds.top>=chart.bounds.bottom&&chart.dashedPaths.size()==chart.paths.size(),
+                    "resource chart lost its full-width top position, fill or per-segment channel style");
+                if(preset=="traffic")Require(!chart.dashedPaths.front()&&chart.dashedPaths.back()&&
+                    Node(scene,"resource.legend:1").dashedPaths==std::vector<bool>{true},"upload trace or its legend is not dashed");
                 const auto value = Node(scene,"resource.card:0").text;
                 Require((!missing || value == L"—") && (preset != "idle" || value == L"0%"),
                     "resource panel conflated a valid zero with unavailable data");
@@ -844,6 +999,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 CheckClosedCallbacks();
                 CheckLogicalFocus();
                 CheckModelScrolling();
+                CheckFeedbackLayouts();
                 CheckSplitOpacity(device,text,request,appearance,background);
                 CheckSelectedDetailContrast(device,text,request,appearance,background);
                 CheckControlInput(model,state,available);
@@ -852,10 +1008,12 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 Require(model.View().cards.size() == 1 && model.View().height <= withMedia && !model.View().Find("media.title"),
                     "ended media kept its card or reserved empty space");
             }
-            if (trayPanel && preset == "grid") CheckTrayInput(model.View());
+            if (trayPanel && preset == "grid") { CheckTrayInput(model.View());CheckTrayDropTargets(trayFixture); }
+            if (calendarPanel && preset == "agenda") CheckCalendarResponsive();
             if (resources && preset == "gpu")
                 Require(model.Invoke("gpu.select") && model.Invoke("gpu:gpu-preview-1") &&
                     Node(model.View(),"resource.card:0").text == L"61%", "GPU selection did not switch reading and history");
+            if(resources&&preset=="cpu")CheckChartAndSwitchPixels(device,text,request,appearance,background);
             model.Close(); const auto reads = state->reads; model.Refresh(available); model.Close();
             Require(state->subscriptions.empty() && state->closes == 1 && state->reads == reads,
                 "closed native panel retained subscriptions or read its old source");

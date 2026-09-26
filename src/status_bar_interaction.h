@@ -3,6 +3,34 @@
 
 namespace snowdesktop
 {
+struct StatusBarTrayDrop
+{
+    bool pinned = true;
+    std::string before;
+    RECT indicator{};
+};
+// Resolve against rendered hit rectangles. Pinned icons share the "tray"
+// presentation key with overflow; only the icon-less button means unpin.
+inline std::optional<StatusBarTrayDrop> ResolveStatusBarTrayDrop(
+    const std::vector<StatusBarItem>& items, POINT point, LONG inset, LONG stroke)
+{
+    StatusBarTrayDrop result;
+    const auto overflow=std::find_if(items.begin(),items.end(),[&](const auto& item) {
+        return !item.icon&&item.key=="tray"&&PtInRect(&item.bounds,point);
+    });
+    for(const auto& item:items) if(item.icon&&!IsRectEmpty(&item.bounds))
+    {
+        result.indicator={item.bounds.right-stroke/2,item.bounds.top+inset,item.bounds.right+stroke-stroke/2,item.bounds.bottom-inset};
+        if(point.x<(item.bounds.left+item.bounds.right)/2)
+        {result.before=item.icon->key;result.indicator.left=item.bounds.left-stroke/2;result.indicator.right=result.indicator.left+stroke;break;}
+    }
+    if(overflow!=items.end()) {result.pinned=false;result.indicator=overflow->bounds;}
+    else if(IsRectEmpty(&result.indicator))
+        for(const auto& item:items)if(!item.icon&&(item.key=="tray"||item.key=="controlCenter")&&!IsRectEmpty(&item.bounds))
+        {result.indicator={item.bounds.left-stroke,item.bounds.top+inset,item.bounds.left,item.bounds.bottom-inset};break;}
+    if(IsRectEmpty(&result.indicator))return {};
+    return result;
+}
 struct StatusBarTarget
 {
     std::string key;

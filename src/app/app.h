@@ -46,6 +46,7 @@
 #include "website_icon.h"
 #include "large_icon_motion.h"
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
+namespace snowdesktop::tray { struct Icon; }
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "../status_bar.h"
@@ -1107,6 +1108,7 @@ private:
     void ApplyDockWorkAreaReservation();
     void SyncStatusBar();
     void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor);
+    snowdesktop::TrayDragFeedback MakeStatusBarTrayDragFeedback();
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */
     bool SynchronizeDockContainerAreas();
     DockContainer* GetDockContainer() const;
@@ -1127,6 +1129,14 @@ private:
     bool RenderDragPreviewCompositionFrame(
         const RECT& desktopBounds);
     void SyncDragPreviewWindow();
+    // Tray pointer capture reuses the desktop/Dock presentation window without
+    // manufacturing an Item or starting a desktop/OLE drag session.
+    bool BeginTrayDragPreview(HWND captureOwner, const snowdesktop::tray::Icon& icon,
+        POINT screen, UINT iconSizePx);
+    void UpdateTrayDragPreview(POINT screen, bool accepted);
+    void EndTrayDragPreview();
+    void SyncTrayDragPreviewWindow();
+    bool RenderTrayDragPreviewFrame();
     void ApplyDragPreviewLayerPolicy();
     bool IsDragPresentationOnlyWindow(HWND window) const;
     HWND ResolveWindowBelowDragPreviewAt(
@@ -3826,6 +3836,15 @@ private:
     std::vector<RECT> dragPreviewItemBounds_;
     std::uint64_t dragPreviewRenderRevision_ = 0;
     bool dragPreviewCompositionPaintInProgress_ = false;
+    struct TrayDragPreview
+    {
+        HWND captureOwner = nullptr;
+        POINT screen{};
+        UINT width = 0, height = 0, iconSize = 0;
+        std::vector<std::uint32_t> pixels;
+        bool accepted = false, dirty = true;
+    };
+    std::optional<TrayDragPreview> trayDragPreview_;
     ComPtr<IDCompositionTarget> floatingPopupDcompTarget_;
     ComPtr<IDCompositionVisual2> floatingPopupDcompVisual_;
     ComPtr<IDCompositionSurface> floatingPopupDcompSurface_;

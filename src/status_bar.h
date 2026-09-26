@@ -14,7 +14,15 @@ struct ID2D1DeviceContext;
 namespace snowdesktop
 {
 namespace widget_runtime { class WidgetSystemDataProvider; }
-namespace tray { class Service; }
+namespace tray { class Service; struct Icon; }
+// One application-owned drag surface shared with Dock. Only the captured
+// source starts/ends it; both destinations independently preview a drop.
+struct TrayDragFeedback
+{
+    std::function<bool(HWND, const tray::Icon&, POINT, UINT)> begin;
+    std::function<void(std::string_view, POINT)> move;
+    std::function<void()> end;
+};
 enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter };
 struct StatusBarMonitor
 {
@@ -49,10 +57,13 @@ public:
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);
     bool DropTrayIcon(std::string_view key, POINT screen);
+    bool PreviewTrayDrop(std::string_view key, POINT screen);
+    void SetTrayDragFeedback(TrayDragFeedback feedback);
     std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);
     // Application-owned window observations; must not enable taskbar effects.
     void SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider);
+    void SetGraphicsFailureHandler(std::function<void(HRESULT)> handler);
     PersonalizationSettings AppearanceForMonitor(HMONITOR monitor) const;
 private:
     struct Impl;

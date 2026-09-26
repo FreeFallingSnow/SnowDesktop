@@ -1,6 +1,9 @@
 #include "status_bar_preview.h"
 #include "status_bar_presentation.h"
 #include "status_bar_layout.h"
+#include "status_bar_glyphs.h"
+#include "status_bar_interaction.h"
+#include "tray_order.h"
 #include "preview_png_writer.h"
 #include "widget_preview_stage.h"
 #include <dwrite.h>
@@ -9,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <limits>
 
 namespace snowdesktop
 {
@@ -23,6 +27,28 @@ void Require(HRESULT result)
 {
     if (FAILED(result)) throw std::runtime_error("native status bar rendering failed: " + std::to_string(result));
 }
+system_control::Snapshot WifiFixture(bool enabled, std::optional<double> signal)
+{
+    using namespace system_control;
+    auto adapter = json::Object();
+    adapter.object["available"] = json::Boolean(true);
+    adapter.object["enabled"] = json::Boolean(enabled);
+    adapter.object["hardwareEnabled"] = json::Boolean(true);
+    adapter.object["connected"] = json::Boolean(signal.has_value());
+    auto networks = json::Array();
+    if (signal)
+    {
+        auto network = json::Object();
+        network.object["connected"] = json::Boolean(true);
+        network.object["signal"] = json::Number(*signal);
+        networks.array.push_back(std::move(network));
+    }
+    adapter.object["networks"] = std::move(networks);
+    Snapshot result; result.available = true; result.value = json::Object();
+    auto interfaces = json::Array(); interfaces.array.push_back(std::move(adapter));
+    result.value.object["interfaces"] = std::move(interfaces);
+    return result;
+}
 StatusBarSnapshot Fixture()
 {
     StatusBarSnapshot data;
@@ -35,6 +61,8 @@ StatusBarSnapshot Fixture()
     data.traffic.emplace(); data.traffic->available = true; data.traffic->warmingUp = false;
     data.traffic->downloadBytesPerSecond = 2500; data.traffic->uploadBytesPerSecond = 800;
     data.network.emplace(); data.network->available = true; data.network->connectivity = "internet"; data.network->transport = "wifi";
+    data.wifi = WifiFixture(true, 86);
+    data.notifications.quiet = false; data.notifications.unreadCount = 0;
     data.audio.emplace(); data.audio->available = true; data.audio->volume = .45;
     data.power.emplace(); data.power->available = true; data.power->batteryPercent = 58;
     // Explicit fixture icons: never enumerate applications or connect a Hook.
@@ -78,7 +106,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         "narrow status bar removed essential controls");
     std::vector<RECT> rectangles;
     ComPtr<IDWriteTextFormat> font;
-    Require(text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+    Require(text->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &font));
     font->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     for (std::size_t i = 0; i < items.size(); ++i)
@@ -144,7 +172,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         if (request.transparent || request.contentOnly)
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width) * stage.height); }
         Require(!stage.pixels.empty(), "cannot create status bar preview background");
-        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged"})
+        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged"})
         {
             auto data = source; StatusBarSettings settings;
             settings.cpu = settings.memory = settings.gpu = settings.traffic =
@@ -159,10 +187,15 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 data.traffic->downloadBytesPerSecond = data.traffic->uploadBytesPerSecond = 999ull << 40;
                 data.clock = L"2026/09/26   11:59";
             }
-            if (preset == "full") { data.power->batteryPercent = 100; data.power->acPower = true; }
-            if (preset == "charging") { data.power->charging = true; data.power->acPower = true; }
+            if (preset == "full") { data.power->batteryPercent = 100; data.power->acPower = true; data.network->transport = "ethernet"; }
+            if (preset == "charging" || preset == "charging-low") { data.power->charging = true; data.power->acPower = true; }
+            if (preset == "charging-low" || preset == "low-battery") data.power->batteryPercent = 10;
+            if (preset == "low-battery") data.wifi = WifiFixture(true, 14);
+            if (preset == "wifi-off" || preset == "offline")
+            { data.network->connectivity = "none"; data.wifi = WifiFixture(preset == "offline", {}); }
+            if (preset == "high-contrast") data.notifications.quiet = true;
             if (preset == "unavailable")
-            { data.power->available = false; data.network->available = false; data.audio->available = false; }
+            { data.power->available = false; data.network->available = false; data.audio->available = false; data.notifications = {}; }
             const float scale = dpiScale * settings.scale;
             const int width = preset == "narrow" ? static_cast<int>(640 * dpiScale) : fullWidth;
             const int height = static_cast<int>(std::lround((preset == "merged" ? 64 : 32) * scale));
@@ -194,6 +227,51 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
                     "hiding a pinned tray icon would leave its pixels visible");
                 const auto& control = Item(items, "controlCenter");
+                Require(control.text.empty() && control.controlTips[2].find(L"58%") != std::wstring::npos,
+                    "battery percentage belongs in its tooltip, not in the compact bar");
+                auto changedBattery = data; changedBattery.power->batteryPercent = 59;
+                Require(SameStatusBarContent(items, BuildStatusBarItems(settings, changedBattery)),
+                    "a percentage within the same battery level should update the tooltip without repainting");
+                changedBattery.power->batteryPercent = 10;
+                const auto low = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
+                Require(low.controlGlyphs[2] != control.controlGlyphs[2] && low.batteryTone == StatusBarBatteryTone::Low,
+                    "low battery must change both the fill level and warning color");
+                changedBattery.power->batteryPercent = std::numeric_limits<double>::quiet_NaN();
+                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2] == status_bar_glyphs::kUnknown,
+                    "unknown battery level must not be drawn as an empty or full battery");
+                auto changedNetwork = data; changedNetwork.wifi.reset();
+                Require(Item(BuildStatusBarItems(settings, changedNetwork), "controlCenter").controlGlyphs[0] == status_bar_glyphs::kUnknown,
+                    "missing Wi-Fi signal must not be replaced by a fabricated signal level");
+                changedNetwork.wifi = data.wifi;
+                auto& adapters = changedNetwork.wifi->value.object["interfaces"].array;
+                const auto secondAdapter = adapters.front(); adapters.push_back(secondAdapter);
+                Require(Item(BuildStatusBarItems(settings, changedNetwork), "controlCenter").controlGlyphs[0] == status_bar_glyphs::kUnknown,
+                    "multiple connected Wi-Fi adapters cannot invent a primary adapter signal");
+                changedNetwork.network->transport = "ethernet";
+                Require(Item(BuildStatusBarItems(settings, changedNetwork), "controlCenter").controlGlyphs[0] == status_bar_glyphs::kEthernet,
+                    "a wired connection must not depend on Wi-Fi availability");
+                changedNetwork.network->transport = "cellular";
+                Require(Item(BuildStatusBarItems(settings, changedNetwork), "controlCenter").controlGlyphs[0] == status_bar_glyphs::kNetwork,
+                    "other connected transports must not impersonate Wi-Fi");
+                changedNetwork.network->connectivity = "none";
+                changedNetwork.wifi = WifiFixture(false, {});
+                Require(Item(BuildStatusBarItems(settings, changedNetwork), "controlCenter").controlGlyphs[0] == status_bar_glyphs::kWifiOff,
+                    "confirmed radio-off state has a separate icon from a disconnected network");
+                changedNetwork.wifi->value.object["interfaces"].array[0].object.erase("enabled");
+                Require(Item(BuildStatusBarItems(settings, changedNetwork), "controlCenter").controlGlyphs[0] == status_bar_glyphs::kOffline,
+                    "unknown radio state must not claim that Wi-Fi is switched off");
+                auto notification = data; notification.notifications.unreadCount = 2;
+                const auto pending = Item(BuildStatusBarItems(settings, notification), "notifications");
+                notification.notifications.unreadCount.reset(); notification.notifications.totalCount = 2;
+                const auto present = Item(BuildStatusBarItems(settings, notification), "notifications");
+                Require(pending.glyph != present.glyph && pending.tip != present.tip,
+                    "total notifications must not be reported as unread notifications");
+                notification.notifications.quiet = true;
+                Require(Item(BuildStatusBarItems(settings, notification), "notifications").glyph == status_bar_glyphs::kNotificationsQuiet,
+                    "Do not disturb must override the notification count indicator");
+                notification.notifications = {};
+                Require(Item(BuildStatusBarItems(settings, notification), "notifications").glyph != Item(items, "notifications").glyph,
+                    "an unknown notification count must not appear as a confirmed empty notification center");
                 Require(control.controlTips[0] != control.controlTips[1] && control.controlTips[1] != control.controlTips[2],
                     "control center glyphs must expose separate network, volume and battery tips");
                 identical.audio->volume = .9;
@@ -230,6 +308,30 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 scale, appearance, palette, hover, false, 0, preset == "merged");
             const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
             CheckLayout(text, items, width, height, scale, preset == "merged");
+            if(preset=="normal")
+            {
+                // The production rendered rectangles feed the same resolver
+                // used by drag previews and commits. Same presentation key
+                // must not turn an icon-to-icon reorder into an unpin.
+                const auto pinned=std::find_if(items.begin(),items.end(),[](const auto& item){return item.icon&&!IsRectEmpty(&item.bounds);});
+                Require(pinned!=items.end(),"tray reorder fixture has no visible pinned icon");
+                const auto insertion=ResolveStatusBarTrayDrop(items,{pinned->bounds.left+1,height/2},5,2);
+                Require(insertion&&insertion->pinned&&insertion->before==pinned->icon->key,"dropping on a pinned icon must reorder instead of unpinning");
+                auto dropped=settings;tray::Snapshot snapshot;snapshot.icons=data.tray;
+                const auto key=data.tray.back().key;
+                Require(tray::PlaceIcon(dropped,snapshot,key,insertion->pinned,insertion->before)&&
+                    dropped.trayOrder.front()==data.tray.back().persistentKey&&dropped.pinnedTrayItems.size()==2,
+                    "tray reorder must preserve both pins and persist the requested order");
+                const auto saved=dropped;
+                snapshot.icons.erase(snapshot.icons.begin());
+                Require(!tray::PlaceIcon(dropped,snapshot,key,true,insertion->before)&&dropped==saved,
+                    "a removed insertion target must cancel without changing tray order or pins");
+                snapshot.icons=data.tray;
+                const auto& overflow=Item(items,"tray");
+                const auto folded=ResolveStatusBarTrayDrop(items,{overflow.bounds.left+1,height/2},5,2);
+                Require(folded&&!folded->pinned&&tray::PlaceIcon(dropped,snapshot,key,folded->pinned,folded->before)&&
+                    dropped.pinnedTrayItems.size()==1,"only the overflow button must unpin the dragged icon");
+            }
             if (preset == "information" && width >= 1800 * scale)
                 for (const auto* key : {"cpu", "memory", "gpu", "traffic"})
                     Require(!IsRectEmpty(&Item(items, key).bounds), "information disappeared despite sufficient status bar width");

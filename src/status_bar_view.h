@@ -2,6 +2,8 @@
 #include "status_bar.h"
 #include "tray_service.h"
 #include "widget_system_data_provider.h"
+#include "status_bar_battery.h"
+#include "status_bar_notification.h"
 #include <d2d1_1.h>
 #include <optional>
 #include <array>
@@ -18,6 +20,8 @@ struct StatusBarItem
     std::wstring glyph, tip;
     bool left = false;
     std::array<std::wstring, 3> controlTips;
+    std::array<std::wstring, 3> controlGlyphs;
+    StatusBarBatteryTone batteryTone = StatusBarBatteryTone::Normal;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.
@@ -29,6 +33,8 @@ struct StatusBarSnapshot
     std::optional<widget_runtime::WidgetGpuDataSnapshot> gpu;
     std::optional<widget_runtime::WidgetNetworkTrafficDataSnapshot> traffic;
     std::optional<widget_runtime::WidgetNetworkStatusDataSnapshot> network;
+    std::optional<system_control::Snapshot> wifi;
+    status_bar_notification::Snapshot notifications;
     std::optional<widget_runtime::WidgetAudioOutputVolumeDataSnapshot> audio;
     std::optional<widget_runtime::WidgetPowerDataSnapshot> power;
     std::vector<tray::Icon> tray;

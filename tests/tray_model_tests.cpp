@@ -1,6 +1,7 @@
 #include "tray_service.h"
 #include "tray_order.h"
 #include "tray_menu_placement.h"
+#include "status_bar_notification.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -12,6 +13,54 @@ int RunTrayModelTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
+    {
+        // Status-only notification sampling must distinguish unavailable data,
+        // an actual zero, and Windows 11 totals from Windows 10 unread badges.
+        // Use the production decoder/cache with synthetic native query replies;
+        // this test never requests access to the machine's notifications.
+        namespace notice = snowdesktop::status_bar_notification;
+        const notice::detail::WordReply off{0, 4, 0}, priority{0, 4, 1}, alarms{0, 4, 2}, count{0, 4, 7};
+        const auto disabled = notice::detail::Decode(10, 19045, off, off);
+        check(disabled.quiet == false && disabled.unreadCount == 0 && !disabled.totalCount,
+            "valid off and zero notification values remain known rather than unavailable");
+        const auto win10 = notice::detail::Decode(10, 19045, priority, count);
+        const auto win11 = notice::detail::Decode(10, 26100, alarms, count);
+        check(win10.quiet == true && win10.unreadCount == 7 && !win10.totalCount &&
+            win11.quiet == true && !win11.unreadCount && win11.totalCount == 7,
+            "active quiet profiles and total-versus-unread count meanings remain distinct");
+        const auto unknownProfile = notice::detail::Decode(10, 26100, {0, 4, 3}, count);
+        check(!unknownProfile.quiet && unknownProfile.totalCount == 7,
+            "an unknown active profile does not suppress a separately valid notification count");
+        for (const notice::detail::WordReply invalid : {
+            notice::detail::WordReply{-1, 4, 0}, notice::detail::WordReply{0, 0, 0}, notice::detail::WordReply{0, 8, 0}})
+        {
+            const auto unknown = notice::detail::Decode(10, 26100, invalid, invalid);
+            check(!unknown.quiet && !unknown.unreadCount && !unknown.totalCount,
+                "native failures, empty states and changed payload sizes never manufacture false or zero");
+            const auto partial = notice::detail::Decode(10, 26100, off, invalid);
+            check(partial.quiet == false && !partial.totalCount,
+                "a failed count does not turn a valid quiet-off sample into unknown");
+        }
+        const auto unsupported = notice::detail::Decode(11, 30000, priority, count);
+        check(!unsupported.quiet && !unsupported.unreadCount && !unsupported.totalCount,
+            "an unsupported Windows family cannot inherit a guessed private-state mapping");
+        notice::detail::Cache cache;
+        unsigned reads = 0;
+        auto next = win11;
+        const auto read = [&] { ++reads; return next; };
+        check(cache.Get(0, read).totalCount == 7 && reads == 1,
+            "the first cache sample executes even when the controlled clock starts at zero");
+        next = {};
+        check(cache.Get(4999, read).totalCount == 7 && reads == 1,
+            "repeated monitor paints share the existing five-second sample");
+        const auto failedRefresh = cache.Get(5000, read);
+        check(reads == 2 && !failedRefresh.quiet && !failedRefresh.unreadCount && !failedRefresh.totalCount,
+            "a failed refresh clears a successful cached value instead of reporting stale success");
+        next = disabled;
+        const auto restored = cache.Get(10000, read);
+        check(reads == 3 && restored.quiet == false && restored.unreadCount == 0 && !restored.totalCount,
+            "sampling recovers after failure and can report a newly valid zero");
+    }
     // Private payloads are untrusted. Truncation must not manufacture valid
     // GUIDs or version numbers from adjacent process memory.
     ShellTrayData wire{};
@@ -176,6 +225,7 @@ int RunTrayModelTests()
         const auto arm = [&] { placement.Arm(99, {-1870, 50}, {-1920, 32, 0, 1080}, 100); };
         MenuPopupObservation popup{1, 99, EVENT_OBJECT_SHOW, 101, WS_POPUP, WS_EX_TOOLWINDOW,
             {-1900, -260, -1700, 60}, true, false, true};
+        popup.targetRelated = true; popup.owner = 7; popup.thread = 9;
         popup.style |= WS_BORDER; // A menu border is not an application caption.
         arm(); const auto corrected = placement.Observe(popup, 102);
         check(corrected && corrected->x == -1900 && corrected->y == 32,
@@ -191,9 +241,9 @@ int RunTrayModelTests()
         check(!placement.Observe(popup, 102), "a normal application window is never corrected");
         popup.style = WS_POPUP; popup.notificationWindow = true;
         check(!placement.Observe(popup, 102), "the notification owner HWND itself is never moved");
-        popup.notificationWindow = false; popup.owned = false;
-        check(!placement.Observe(popup, 102), "an unowned custom popup cannot be mistaken for a tray menu");
-        popup.owned = true; popup.bounds = {-900, -260, -700, 60};
+        popup.notificationWindow = false; popup.targetRelated = false;
+        check(!placement.Observe(popup, 102), "an unrelated same-process tool window cannot be mistaken for a tray menu");
+        popup.targetRelated = true; popup.bounds = {-900, -260, -700, 60};
         check(!placement.Observe(popup, 102), "a distant popup from the same process is not a gesture candidate");
         popup.bounds = {-1900, -260, -1700, 60}; popup.eventTime = 99;
         check(!placement.Observe(popup, 102), "events queued before the user gesture are ignored");
@@ -203,6 +253,34 @@ int RunTrayModelTests()
         check(!placement.Observe(popup, 102), "cancellation prevents delayed popup movement");
         placement.Arm(99, {-1870, 50}, {-1920, 32, 0, 1080}, 0xfffffff0u); popup.eventTime = 3;
         check(placement.Observe(popup, 5).has_value(), "tick-count wrap preserves the bounded placement lifetime");
+
+        // Some custom menu frameworks issue SHOW before final geometry and
+        // have no WS_EX_TOOLWINDOW. Exercise the real event policy without
+        // discovering or moving a third-party HWND.
+        arm(); popup.eventTime = 101; popup.extendedStyle = 0;
+        popup.bounds = {0, 0, 0, 0};
+        check(!placement.Observe(popup, 102), "an unfinished menu SHOW is remembered without moving it");
+        popup.event = EVENT_OBJECT_LOCATIONCHANGE; popup.bounds = {-1900, -260, -1700, 60};
+        const auto lateLayout = placement.Observe(popup, 103);
+        check(lateLayout && lateLayout->y == 32,
+            "a related new custom menu's final geometry is corrected without requiring a tool-window flag");
+        popup.owner = 8;
+        check(!placement.Observe(popup, 104), "an owner change invalidates a bound menu before movement");
+        popup.owner = 7;
+        check(!placement.Observe(popup, 105), "an invalidated HWND cannot rejoin with location-only events");
+        arm(); popup.event = EVENT_OBJECT_SHOW; popup.bounds = {-1900, -1100, -1700, 60};
+        const auto tall = placement.Observe(popup, 102);
+        check(tall && tall->y == 32, "a taller-than-work-area menu exposes its top without being resized");
+        arm(); popup.bounds = {-1920, -80, 0, 1080};
+        check(!placement.Observe(popup, 102), "a fullscreen-sized borderless popup is not moved as a menu");
+        placement.Arm(99, {-1870, 50}, {-1920, 0, 0, 1080}, 100, {-1920, 0, 0, 44});
+        popup.bounds = {-1900, -260, -1700, 60};
+        const auto belowOverlay = placement.Observe(popup, 102);
+        check(belowOverlay && belowOverlay->y == 44,
+            "an overlay status bar is excluded even when it does not reserve the monitor work area");
+        popup.event = EVENT_OBJECT_HIDE; placement.Observe(popup, 103);
+        popup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        check(!placement.Observe(popup, 104), "a hidden menu loses its location-change binding");
     }
 
     auto state = std::make_unique<SharedState>();

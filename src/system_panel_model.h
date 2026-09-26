@@ -30,6 +30,7 @@ struct SystemPanelSource
     std::function<void(std::string_view)> unsubscribe;
     std::function<void()> close;
     std::function<void(const wchar_t*)> settings;
+    std::function<void()> nativeControls;
     std::function<bool(system_control::Request&)> prompt;
     std::function<std::optional<widget_runtime::WidgetMediaSessionsDataSnapshot>()> media;
     std::function<std::optional<widget_runtime::WidgetMediaArtworkDataSnapshot>()> artwork;
@@ -51,10 +52,11 @@ class SystemPanelModel
 public:
     SystemPanelModel(SystemPanelSource, StatusBarSettings, StatusBarAction);
     ~SystemPanelModel();
-    void Refresh(float availableHeight = 800);
+    void Refresh(float availableHeight = 800, float availableWidth = 0);
     void Select(std::string page);
     bool Invoke(std::string_view id, std::optional<float> value = {});
     bool Drop(std::string_view key, D2D1_POINT_2F);
+    std::optional<D2D1_RECT_F> TrayDropIndicator(std::string_view key, D2D1_POINT_2F) const;
     void Scroll(float delta);
     bool Reveal(std::string_view id);
     native_ui::InputResult HandleKey(native_ui::Input&, unsigned key, bool shift);
@@ -74,7 +76,7 @@ private:
     StatusBarSettings settings_;
     StatusBarAction action_;
     native_ui::Scene scene_;
-    std::string page_, interface_, network_, gpu_, media_, date_, month_;
+    std::string page_, interface_, network_, bluetooth_, gpu_, media_, date_, month_;
     std::map<std::string,std::function<void(std::optional<float>)>> actions_;
     system_control::ControlFeedback feedback_;
     struct PendingValue { std::uint64_t task = 0; float value = 0; std::string target; };
@@ -84,7 +86,7 @@ private:
     std::set<std::string> subscriptions_;
     std::uint64_t lastStarted_ = 0;
     std::wstring error_;
-    float available_ = 800, scroll_ = 0, maxScroll_ = 0, bodyStart_ = 0;
+    float available_ = 800, availableWidth_ = 960, scroll_ = 0, maxScroll_ = 0, bodyStart_ = 0, bodyLeft_ = 0;
     D2D1_RECT_F scrollViewport_{};
     bool closed_ = false, scan_ = false;
     JsonValue Current(const char*) const;
@@ -105,9 +107,11 @@ private:
     void Calendar();
     void Resources();
     void Tray();
+    struct TrayDropTarget { StatusBarSettings settings; D2D1_RECT_F indicator{}; };
+    std::optional<TrayDropTarget> ResolveTrayDrop(std::string_view, D2D1_POINT_2F) const;
     void Radio(std::string_view, D2D1_RECT_F, bool compact);
     void Volume(std::string_view, float&);
     void Footer(const wchar_t*, float&);
-    void Finish(float bodyEnd, bool withMedia);
+    void Finish(float bodyEnd, bool withMedia, float minimumBodyHeight = 0);
 };
 }
