@@ -26,6 +26,10 @@
 - 50 号 `scripts/build.bat` 退出 0，Release 宿主生成，无编译／链接警告（`50-build.log`）；本轮预检无占用，未重启 Shell。尚待渲染、回归及实机。
 - 50 号浅色通过，深色长列表仍越界；控制画布高度的诊断确认临界取整影响，已独立记录失败。51 号预留 XAML／原生像素两次取整余量，并移除离线渲染多余的 DIP 整数上取整（生产按物理像素取整），不改变越界检查。
 - 51 号同时处理本次首次点击崩溃：13:22:30 的 PID 16104 转储与保存 EXE／PDB 匹配，CDB 确认调用栈是 `TranslateTransform` 在 `SystemPanel::Impl` 构造中激活（`click-crash-51/dump-analysis.log`）。`scripts/build.bat --reload-shell` 退出 0，无编译／链接警告（`51-reload-build.log`）；已预告并停止占用宿主、重载 Explorer，未重新启动桌面宿主。冷生命周期、渲染和完整回归待运行。
+- 51 号最终证据（代码 `b2b7fe33`）：冷构造／Hide／销毁、浅色中文 96 DPI 和深色英文 144 DPI 各 **13 个生产状态**通过；输出及麦克风静音／恢复、音量保留与设备不可用检查通过，声音页没有独立静音行；长列表在原始 1000×1000 画布内完整保留卡片边界。独立卡片／无媒体收起检查通过，旧内嵌音乐图片被同一双卡片检查拒绝（`51-render.log`、`51-card-negative.log`）。
+- 定向 **4/4 通过**，60.66 秒（`51-tests.log`，JUnit `6c28f6bd473d4528bd514644aec592ef`），无编译／链接警告。首轮完整测试 **119/120 通过、test_selection 超时**（`51-full-tests.log`，176.80 秒，退出 1）；诊断 PowerShell 的只读线程栈出现 `WNetGetConnectionW → NetUseGetInfo → RPC` 等待，原始失败保留，未修改网络映射、测试代码或超时门槛。首个探针路径错误不计作测试通过，后续诊断和栈分别保留在 `51-selection-trace*.log`／`51-selection-startup-stack.log`。
+- 超时项单独核对 **1/1 通过**，1.58 秒（`51-selector-check.log`，JUnit `a3499f1106c14ee8b6dd926562d8b115`）；同源码重新执行 `scripts/test.bat full` 最终 **120/120 通过**，155.23 秒，退出 0，无编译／链接警告（`51-full2-tests.log`，JUnit `04f5aa8e03b247f1a3fbafa91ffb76b4`）。1389 个跟踪／新增源码输入及 EXE 哈希在全量前后不变；完整构建重链接了 Hook，最终产物哈希见 `51-final-evidence.log`，不声称其二进制未变。验证输入绑定 `51-before-full2-validation-inputs.json`／`51-after-full2-validation-inputs.json`。
+- 点击状态栏的原桌面场景仍待用户复验；这次冷初始化异常与此前未定位的鼠标卡顿／约 400 MiB 私有提交分开记录。真实音频设备、桌面玻璃动画、微信／WPS 菜单仍待原场景验收。任务未整体关闭。
 
 ### 当前集中候选（46，自动验证通过，桌面实机待验证）
 
