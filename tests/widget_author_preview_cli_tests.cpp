@@ -1276,26 +1276,29 @@ void TestResourcePanelPreview(const std::filesystem::path& snowwidget,
             const auto bitmap = ReadPng(output / (std::wstring(L"resource-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;
             Check(FitsNativePanelCanvas(bitmap, bounds), "resource panels stay centered inside the independent padded canvas");
-            Check(HasNativePanelSize(bounds, scale, 440, 320, 530),
+            // CPU has a single row of metrics; the other sources have two.
+            // Keep the compactness/overflow bound without requiring padding to
+            // preserve an obsolete XAML minimum height.
+            Check(HasNativePanelSize(bounds, scale, 440, 300, 530),
                 "resource metrics and history fit a compact shared-theme popup");
             Check(HasFourRoundedCorners(bitmap, bounds), "resource panels preserve all four corners");
         }
         auto cpu = ReadPng(output / L"resource-panel-cpu.png");
         const auto idle = ReadPng(output / L"resource-panel-idle.png");
         const auto bounds = PanelPixels(cpu), idleBounds = PanelPixels(idle);
-        const double scale = (bounds.right - bounds.left) / 440.;
+        const double scale = dark ? 1.5 : 1.;
         Check(EqualRect(&bounds, &idleBounds), "utilization changes do not resize the resource popup");
         // Only inspect the plot area, away from card text. Geometry existence
         // alone would pass if a compositor-only trace vanished in the PNG.
         const auto differs = [&] {
             unsigned changed = 0;
-            for (LONG y = bounds.top + static_cast<LONG>(110 * scale); y < bounds.top + static_cast<LONG>(245 * scale); ++y)
+            for (LONG y = bounds.top + static_cast<LONG>(90 * scale); y < bounds.top + static_cast<LONG>(205 * scale); ++y)
                 for (LONG x = bounds.left + static_cast<LONG>(20 * scale); x < bounds.right - static_cast<LONG>(20 * scale); ++x)
                     if (PixelAt(cpu, x, y) != PixelAt(idle, x, y)) ++changed;
             return changed > 100;
         };
         Check(differs(), "nonzero resource samples visibly change the actual rendered curve");
-        for (LONG y = bounds.top + static_cast<LONG>(110 * scale); y < bounds.top + static_cast<LONG>(245 * scale); ++y)
+        for (LONG y = bounds.top + static_cast<LONG>(90 * scale); y < bounds.top + static_cast<LONG>(205 * scale); ++y)
             for (LONG x = bounds.left + static_cast<LONG>(20 * scale); x < bounds.right - static_cast<LONG>(20 * scale); ++x)
             {
                 const auto pixel = PixelAt(idle, x, y);
