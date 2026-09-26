@@ -75,7 +75,7 @@ void TestGpuEngineUsageAggregation()
         L"luid_0x0_0x12ab_phys_0_eng_4294967296_engtype_3D",
         L"luid_0x100000000_0x12ab_phys_0_eng_0_engtype_3D",
         L"luid_0x0_0x12ab_phys_0_eng_0junk_engtype_3D",
-        L"luid_0x0_0x12ab_phys_0_eng_0_engtype_" })
+        L"luid_0x0_0x12ab_phys_0_eng_0_engtype" })
         usage.AddSample(malformed, 100.0);
     usage.AddSample(nullptr, 100.0);
     Check(usage.UsagePercent(0x12ab) == 80.0,
@@ -102,6 +102,23 @@ void TestGpuEngineUsageAggregation()
         engines.front().type == L"3D" && engines.front().samples == 3 && engines.front().rawTotal == 120 &&
         engines.front().usagePercent == 100,
         "diagnostic engine details retain the unclamped sum and exact engine behind the displayed maximum");
+
+    // Actual PDH instance names from Intel Graphics; these rows are valid
+    // even though Windows supplies no display type after the final marker.
+    WidgetGpuUsageAccumulator unnamed;
+    constexpr auto noType = L"pid_4_luid_0x00000000_0x0001B650_phys_0_eng_10_engtype_";
+    unnamed.AddSample(noType, 0);
+    Check(unnamed.UsagePercent(0x1b650) == 0,
+        "an unnamed numbered engine is a valid idle measurement, not unavailable");
+    unnamed.AddSample(noType, 35);
+    unnamed.AddSample(L"pid_20_luid_0x00000000_0x0001B650_phys_0_eng_10_engtype_", 45);
+    unnamed.AddSample(L"pid_4_luid_0x00000000_0x0001B650_phys_0_eng_11_engtype_", 60);
+    unnamed.AddSample(L"pid_4_luid_0x00000000_0x0001B650_phys_0_eng_2_engtype_3D", 25);
+    const auto unnamedDetails = unnamed.Engines(0x1b650);
+    Check(unnamed.UsagePercent(0x1b650) == 80 && unnamedDetails.size() == 3 &&
+        unnamedDetails[1].index == 10 && unnamedDetails[1].type.empty() &&
+        unnamedDetails[1].rawTotal == 80 && unnamedDetails[1].samples == 3,
+        "unnamed engines preserve distinct numeric identities and participate in the busiest-engine result");
 }
 
 void TestGpuCounterValidityAndReuse()

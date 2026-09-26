@@ -1,5 +1,4 @@
 #pragma once
-#include "widget_gpu_usage.h"
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -42,19 +41,9 @@ struct WidgetGpuDataSnapshot
     std::uint64_t revision = 0;
     std::string error;
 };
-inline bool ApplyWidgetGpuMemory(std::vector<WidgetGpuAdapterDataSnapshot>& adapters,
-    const WidgetGpuMemoryAccumulator& dedicated, const WidgetGpuMemoryAccumulator& shared)
-{
-    bool anyComplete = false;
-    for (auto& adapter : adapters)
-    {
-        const auto local = dedicated.UsageBytes(adapter.luid), system = shared.UsageBytes(adapter.luid);
-        adapter.dedicatedUsageAvailable = local.has_value(); adapter.dedicatedUsedBytes = local.value_or(0);
-        adapter.sharedUsageAvailable = system.has_value(); adapter.sharedUsedBytes = system.value_or(0);
-        anyComplete = anyComplete || (local.has_value() && system.has_value());
-    }
-    return anyComplete;
-}
+class WidgetGpuMemoryAccumulator;
+bool ApplyWidgetGpuMemory(std::vector<WidgetGpuAdapterDataSnapshot>& adapters,
+    const WidgetGpuMemoryAccumulator& dedicated, const WidgetGpuMemoryAccumulator& shared);
 struct WidgetGpuRawCounter
 {
     std::wstring instance;

@@ -8,6 +8,19 @@
 
 namespace snowdesktop::widget_runtime
 {
+bool ApplyWidgetGpuMemory(std::vector<WidgetGpuAdapterDataSnapshot>& adapters,
+    const WidgetGpuMemoryAccumulator& dedicated, const WidgetGpuMemoryAccumulator& shared)
+{
+    bool anyComplete = false;
+    for (auto& adapter : adapters)
+    {
+        const auto local = dedicated.UsageBytes(adapter.luid), system = shared.UsageBytes(adapter.luid);
+        adapter.dedicatedUsageAvailable = local.has_value(); adapter.dedicatedUsedBytes = local.value_or(0);
+        adapter.sharedUsageAvailable = system.has_value(); adapter.sharedUsedBytes = system.value_or(0);
+        anyComplete = anyComplete || (local.has_value() && system.has_value());
+    }
+    return anyComplete;
+}
 namespace
 {
 using Clock = std::chrono::steady_clock;

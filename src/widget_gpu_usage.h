@@ -45,12 +45,14 @@ public:
             !ReadNumber(name, L"_0x", 16, low) ||
             !ReadNumber(name, L"_phys_", 10, physical) ||
             !ReadNumber(name, L"_eng_", 10, engine) ||
-            !name.starts_with(L"_engtype_") || name.size() <= 9)
+            !name.starts_with(L"_engtype_"))
             return;
 
         const auto luid = (static_cast<std::uint64_t>(high) << 32) | low;
         auto& engineUsage = usageByEngine_[{ luid, physical, engine }];
         engineUsage.luid = luid; engineUsage.physical = physical; engineUsage.index = engine;
+        // Some Windows adapters expose valid numbered engines with no type
+        // label. Identity comes from the LUID/physical/index tuple above.
         if (!engineUsage.samples) engineUsage.type = name.substr(9);
         ++engineUsage.samples;
         engineUsage.rawTotal = usagePercent > std::numeric_limits<double>::max() - engineUsage.rawTotal ?
