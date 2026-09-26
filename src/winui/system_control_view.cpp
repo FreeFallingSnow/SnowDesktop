@@ -18,6 +18,7 @@
 #include <winrt/Windows.System.h>
 #include <map>
 #include <cmath>
+#include <limits>
 
 namespace snowdesktop::winui
 {
@@ -639,7 +640,8 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         Fallback(section, L"ms-settings:network-wifi");
         const auto scan = Button(section.footerCommands, _LW("controlCenter.scan"), [this] { Start("network.wifi.scan", {{"interfaceId", interfaceId}}); });
         c::FontIcon scanIcon; scanIcon.Glyph(L"\uE72C"); scanIcon.FontSize(18); scan.Content(scanIcon);
-        scan.Width(36); scan.Height(36); c::ToolTipService::SetToolTip(scan, winrt::box_value(_LW("controlCenter.scan")));
+        scan.Width(36); scan.Height(36); scan.Padding({8, 8, 8, 8});
+        c::ToolTipService::SetToolTip(scan, winrt::box_value(_LW("controlCenter.scan")));
         x::Automation::AutomationProperties::SetAutomationId(scan, L"control.wifi.scan");
         section.updates.push_back([this, scan] { scan.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
         c::TextBlock error = Text(_LW("controlCenter.locationDenied")); error.Visibility(x::Visibility::Collapsed);
@@ -709,7 +711,8 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         section.updates.push_back([this, hidden] { hidden.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
         const auto location = Button(section.footerCommands, _LW("controlCenter.locationSettings"), [this] { Settings(L"ms-settings:privacy-location"); });
         c::FontIcon locationIcon; locationIcon.Glyph(L"\uE707"); locationIcon.FontSize(18); location.Content(locationIcon);
-        location.Width(36); location.Height(36); c::ToolTipService::SetToolTip(location, winrt::box_value(_LW("controlCenter.locationSettings")));
+        location.Width(36); location.Height(36); location.Padding({8, 8, 8, 8});
+        c::ToolTipService::SetToolTip(location, winrt::box_value(_LW("controlCenter.locationSettings")));
         location.Visibility(x::Visibility::Collapsed);
         section.updates.push_back([this, error, location] {
             const auto visibility = j::String(WifiInterface(), "error") == "accessDenied" ? x::Visibility::Visible : x::Visibility::Collapsed;
@@ -768,6 +771,9 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
                 const auto* action = _LW(!j::Flag(item, "canConnect") ? "settings.taskbar.systemSettings.open" :
                     j::Flag(item, "connected") ? "controlCenter.disconnect" : "controlCenter.connect");
                 if (!j::Flag(item, "canConnect")) button.Content(Chevron()); else button.Content(winrt::box_value(action));
+                button.MinWidth(j::Flag(item, "canConnect") ? 92 : 36);
+                button.Width(j::Flag(item, "canConnect") ? std::numeric_limits<double>::quiet_NaN() : 36);
+                button.Padding({8, 6, 8, 6});
                 Name(button, std::wstring(action) + L" · " + label); c::ToolTipService::SetToolTip(button, winrt::box_value(action));
             });
         }
@@ -963,14 +969,17 @@ void SystemControlView::Select(std::string_view section) { impl_->Select(std::st
 void SystemControlView::SetViewportHeight(double height)
 {
     const float width = static_cast<float>(impl_->cards.ActualWidth() > 0 ? impl_->cards.ActualWidth() : 440);
-    double chrome = 40;
+    double chrome = 8, mediaHeight = 0;
     for (const auto& part : {x::FrameworkElement(impl_->navigation), x::FrameworkElement(impl_->footers),
         x::FrameworkElement(impl_->status), x::FrameworkElement(impl_->mediaFrame)})
     {
         if (part.Visibility() != x::Visibility::Visible || (part == impl_->status && !impl_->status.IsOpen())) continue;
         part.Measure({width, 1000}); chrome += part.DesiredSize().Height;
+        if (part == impl_->mediaFrame) mediaHeight = part.DesiredSize().Height;
     }
-    const double available = std::max(48., std::min(SystemControlViewportHeight, height) - std::max(96., chrome));
+    // Media uses additional space. Only the monitor's actual height may force
+    // the primary device list to shrink; adding music must not halve it.
+    const double available = std::max(48., std::min(SystemControlViewportHeight + mediaHeight, height) - std::max(64., chrome));
     if (impl_->bodyScroll.MaxHeight() != available) impl_->bodyScroll.MaxHeight(available);
 }
 void SystemControlView::Close() { impl_->Close(); }

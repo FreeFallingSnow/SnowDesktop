@@ -442,7 +442,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                 controls->ApplyAppearance(appearance);
                 frame.Background(nullptr); frame.BorderThickness({0, 0, 0, 0});
                 frame.Padding({0, 0, 0, 0}); frame.Child(controls->Root());
-                controls->SetViewportHeight(SystemControlViewportHeight);
+                controls->SetViewportHeight((request.canvasHeight - request.padding * 2) * 96. / request.dpi);
             }
             else if (trayPanel)
             {
@@ -495,7 +495,7 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (calendar) CheckCalendarSelection(frame, *calendar, calendarState, preset == "agenda");
             if (controls)
             {
-                controls->SetViewportHeight(SystemControlViewportHeight);
+                controls->SetViewportHeight((request.canvasHeight - request.padding * 2) * 96. / request.dpi);
                 const auto radio = FindPreviewElement(frame, L"control.radio.bluetooth").as<x::Controls::Primitives::ToggleButton>();
                 if (radio.IsEnabled() == controlState->unavailable ||
                     (radio.IsEnabled() && radio.IsChecked().Value() != controlState->bluetoothOn))
@@ -671,6 +671,13 @@ native_component_preview::Result ExportSystemPanelPreview(
                         static_cast<float>(scan.ActualWidth()), static_cast<float>(scan.ActualHeight())});
                     if (footer.ActualHeight() > 40 || button.X + button.Width < footer.ActualWidth() - 1)
                         throw std::runtime_error("Wi-Fi footer is stacked or scan is not right aligned");
+                    const auto icon = scan.as<x::Controls::Button>().Content().as<x::Controls::FontIcon>();
+                    const auto glyph = icon.TransformToVisual(scan).TransformBounds({0, 0,
+                        static_cast<float>(icon.ActualWidth()), static_cast<float>(icon.ActualHeight())});
+                    const auto padding = scan.as<x::Controls::Button>().Padding();
+                    if (glyph.X < padding.Left || glyph.X + glyph.Width > scan.ActualWidth() - padding.Right + .5 ||
+                        glyph.Width + .5 < icon.FontSize())
+                        throw std::runtime_error("scan icon is clipped by its button padding");
                 }
             }
             if (controlPanel && (preset == "audio" || preset == "wifi" || preset == "audio-many" || preset == "wifi-many" || preset == "bluetooth-many"))

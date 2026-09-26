@@ -1165,7 +1165,7 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
             const auto bitmap = ReadPng(output / (std::wstring(L"control-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;
             Check(std::abs(bounds.right - bounds.left - 440 * scale / 2) <= 1 &&
-                bounds.bottom - bounds.top >= 128 * scale / 2 && bounds.bottom - bounds.top <= 590 * scale / 2,
+                bounds.bottom - bounds.top >= 128 * scale / 2 && bounds.bottom - bounds.top <= (std::min)(740 * scale / 2, 952),
                 "control pages retain shared width and size their content within the popup viewport");
             Check(HasFourRoundedCorners(bitmap, bounds), "all control subpages preserve the bottom corners");
             std::vector<RECT> cards;
