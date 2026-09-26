@@ -1925,6 +1925,7 @@
     "controlCenter.output": "Output device",
     "controlCenter.input": "Microphone",
     "controlCenter.mute": "Mute",
+    "controlCenter.unmute": "Unmute",
     "controlCenter.passwordHint": "Enter the network password. Leave blank for an open network. The password is handled only by SnowDesktop.",
     "controlCenter.password": "Password",
     "controlCenter.confirmForget": "Forget this saved network and its credentials?",

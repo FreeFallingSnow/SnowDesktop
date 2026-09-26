@@ -195,7 +195,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         }); (parent ? parent : section.panel).Children().Append(combo); return combo;
     }
     void Slider(Section& section, const wchar_t* label, std::function<std::optional<double>()> read,
-        std::function<void(double)> write, c::StackPanel parent = nullptr, std::string detail = {})
+        std::function<void(double)> write, c::StackPanel parent = nullptr, std::string detail = {}, std::string audioPrefix = {})
     {
         c::StackPanel block; block.Spacing(2);
         c::Grid heading;
@@ -206,17 +206,51 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         c::TextBlock percent; percent.FontSize(12); percent.TextAlignment(x::TextAlignment::Right); c::Grid::SetColumn(percent, 1);
         heading.Children().Append(percent); block.Children().Append(heading);
         c::Grid track; track.ColumnSpacing(10);
+        if (!audioPrefix.empty())
+        { c::ColumnDefinition leadingColumn; leadingColumn.Width(x::GridLengthHelper::Auto()); track.ColumnDefinitions().Append(leadingColumn); }
         track.ColumnDefinitions().Append(c::ColumnDefinition());
         c::ColumnDefinition detailColumn; detailColumn.Width(x::GridLengthHelper::Auto()); track.ColumnDefinitions().Append(detailColumn);
         c::Slider slider; slider.Minimum(0); slider.Maximum(100); slider.StepFrequency(1); Name(slider, label);
+        c::Grid::SetColumn(slider, audioPrefix.empty() ? 0 : 1);
         track.Children().Append(slider); block.Children().Append(track);
         auto dragging = std::make_shared<bool>(false); const auto weak = weak_from_this();
+        if (!audioPrefix.empty())
+        {
+            c::StackPanel commands; commands.VerticalAlignment(x::VerticalAlignment::Center);
+            auto mute = Button(commands, _LW("controlCenter.mute"), [weak, audioPrefix] {
+                if (const auto self = weak.lock())
+                {
+                    const auto state = self->source.current(audioPrefix + ".volume");
+                    if (state && state->available)
+                        self->Start(audioPrefix + ".setMute", {{"muted", j::Flag(state->value, "muted") ? "0" : "1"}});
+                }
+            });
+            mute.Width(36); mute.Height(36); mute.Padding({8, 8, 8, 8});
+            c::FontIcon icon; icon.FontFamily(x::Media::FontFamily(L"Segoe Fluent Icons, Segoe MDL2 Assets")); icon.FontSize(18);
+            mute.Content(icon); track.Children().Append(commands);
+            const auto id = std::string("control.") + (detail.empty() ? "" : "overview.") + audioPrefix;
+            x::Automation::AutomationProperties::SetAutomationId(mute, winrt::to_hstring(id + ".mute"));
+            x::Automation::AutomationProperties::SetAutomationId(slider, winrt::to_hstring(id + ".volume"));
+            section.updates.push_back([this, mute, icon, audioPrefix] {
+                const auto state = source.current(audioPrefix + ".volume");
+                const bool available = state && state->available, input = audioPrefix == "audio.input";
+                const bool muted = available && j::Flag(state->value, "muted");
+                mute.IsEnabled(available);
+                // Official Segoe glyphs: Microphone / MicOff2 and Volume / Mute.
+                const auto glyph = input ? (muted ? L"\uF781" : L"\uE720") : (muted ? L"\uE74F" : L"\uE767");
+                if (icon.Glyph() != glyph) icon.Glyph(glyph);
+                const std::wstring action = std::wstring(_LW(input ? "controlCenter.input" : "controlCenter.output")) + L" · " +
+                    _LW(!available ? "controlCenter.unavailable" : muted ? "controlCenter.unmute" : "controlCenter.mute");
+                if (x::Automation::AutomationProperties::GetName(mute) != action)
+                { Name(mute, action); c::ToolTipService::SetToolTip(mute, winrt::box_value(action)); }
+            });
+        }
         if (!detail.empty())
         {
             c::StackPanel commands;
             auto more = Button(commands, label, [weak, detail] { if (auto self = weak.lock()) self->Select(detail); });
             more.Content(Chevron()); more.Padding({8, 6, 8, 6});
-            commands.VerticalAlignment(x::VerticalAlignment::Center); c::Grid::SetColumn(commands, 1); track.Children().Append(commands);
+            commands.VerticalAlignment(x::VerticalAlignment::Center); c::Grid::SetColumn(commands, audioPrefix.empty() ? 1 : 2); track.Children().Append(commands);
         }
         slider.AddHandler(x::UIElement::PointerPressedEvent(), winrt::box_value(x::Input::PointerEventHandler(
             [dragging](const auto&, const auto&) { *dragging = true; })), true);
@@ -403,7 +437,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             Slider(overviewAudio, _LW("statusBar.volume"), [this]() -> std::optional<double> {
                 const auto snapshot = source.current("audio.output.volume");
                 return snapshot && snapshot->available ? std::optional(j::Numeric(snapshot->value, "volume") * 100) : std::nullopt;
-            }, [this](double level) { Start("audio.output.setVolume", {{"volume", std::to_string(level / 100)}}); }, nullptr, "audio");
+            }, [this](double level) { Start("audio.output.setVolume", {{"volume", std::to_string(level / 100)}}); }, nullptr, "audio", "audio.output");
         }
         if (settings.brightnessControls)
         {
@@ -573,10 +607,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             });
             Slider(section, _LW("statusBar.volume"), [this, prefix]() -> std::optional<double> {
                 const auto state = source.current(prefix + ".volume"); return state && state->available ? std::optional(j::Numeric(state->value, "volume") * 100) : std::nullopt;
-            }, [this, prefix](double level) { Start(prefix + ".setVolume", {{"volume", std::to_string(level / 100)}}); }, group);
-            Toggle(section, _LW("controlCenter.mute"), [this, prefix]() -> std::optional<bool> {
-                const auto state = source.current(prefix + ".volume"); return state && state->available ? std::optional(j::Flag(state->value, "muted")) : std::nullopt;
-            }, [this, prefix](bool muted) { Start(prefix + ".setMute", {{"muted", muted ? "1" : "0"}}); }, group);
+            }, [this, prefix](double level) { Start(prefix + ".setVolume", {{"volume", std::to_string(level / 100)}}); }, group, {}, prefix);
         }
         Fallback(section, L"ms-settings:sound");
     }

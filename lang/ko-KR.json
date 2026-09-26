@@ -1925,6 +1925,7 @@
     "controlCenter.output": "출력 장치",
     "controlCenter.input": "마이크",
     "controlCenter.mute": "음소거",
+    "controlCenter.unmute": "음소거 해제",
     "controlCenter.passwordHint": "네트워크 암호를 입력하세요. 개방형 네트워크는 비워 둘 수 있습니다. 암호는 SnowDesktop에서만 처리합니다.",
     "controlCenter.password": "암호",
     "controlCenter.confirmForget": "이 저장된 네트워크와 자격 증명을 삭제할까요?",

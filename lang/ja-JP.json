@@ -1925,6 +1925,7 @@
     "controlCenter.output": "出力デバイス",
     "controlCenter.input": "マイク",
     "controlCenter.mute": "ミュート",
+    "controlCenter.unmute": "ミュート解除",
     "controlCenter.passwordHint": "ネットワークパスワードを入力してください。オープンネットワークでは空欄にできます。パスワードは SnowDesktop のみが扱います。",
     "controlCenter.password": "パスワード",
     "controlCenter.confirmForget": "この保存済みネットワークと認証情報を削除しますか？",

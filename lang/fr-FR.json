@@ -1925,6 +1925,7 @@
     "controlCenter.output": "Périphérique de sortie",
     "controlCenter.input": "Microphone",
     "controlCenter.mute": "Couper le son",
+    "controlCenter.unmute": "Rétablir le son",
     "controlCenter.passwordHint": "Saisissez le mot de passe du réseau. Laissez vide pour un réseau ouvert. Seul SnowDesktop traite le mot de passe.",
     "controlCenter.password": "Mot de passe",
     "controlCenter.confirmForget": "Oublier ce réseau enregistré et ses identifiants ?",

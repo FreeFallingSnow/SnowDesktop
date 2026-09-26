@@ -1925,6 +1925,7 @@
     "controlCenter.output": "Dispositivo de saída",
     "controlCenter.input": "Microfone",
     "controlCenter.mute": "Silenciar",
+    "controlCenter.unmute": "Ativar som",
     "controlCenter.passwordHint": "Digite a senha da rede. Deixe em branco para uma rede aberta. A senha é tratada apenas pelo SnowDesktop.",
     "controlCenter.password": "Senha",
     "controlCenter.confirmForget": "Esquecer esta rede salva e suas credenciais?",

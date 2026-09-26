@@ -72,6 +72,9 @@ struct ControlPreviewState
     bool unavailable = false;
     bool bluetoothOn = true;
     bool emptyMedia = false;
+    bool allowMute = false, outputMuted = false, inputMuted = false;
+    std::vector<std::pair<std::string, std::string>> muteRequests;
+    std::vector<system_control::Completion> completions;
     std::string manySection;
     std::set<std::string> subscriptions;
     unsigned scans = 0;
@@ -87,6 +90,8 @@ SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> sta
             value.object["devices"].array.clear();
         }
         if (topic == "audio.output.volume") ParseJson(R"({"endpointId":"audio-output-preview","volume":0.42,"muted":false})", value);
+        if (topic == "audio.output.volume" || topic == "audio.input.volume")
+            value.object["muted"] = system_control::json::Boolean(topic == "audio.output.volume" ? state->outputMuted : state->inputMuted);
         if (topic == "system.power.plans" && !state->unavailable)
         {
             value.object["onAC"] = system_control::json::Boolean(true);
@@ -117,11 +122,21 @@ SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> sta
         return system_control::Snapshot{!state->unavailable, std::move(value), state->unavailable ? "unavailable" : "", 0, 1};
     };
     source.start = [state](system_control::Request request) -> std::uint64_t {
+        if (state->allowMute && (request.name == "audio.output.setMute" || request.name == "audio.input.setMute"))
+        {
+            const auto muted = request.arguments.at("muted");
+            if (muted != "0" && muted != "1") throw std::runtime_error("invalid offline mute argument");
+            state->muteRequests.emplace_back(request.name, muted);
+            (request.name == "audio.output.setMute" ? state->outputMuted : state->inputMuted) = muted == "1";
+            const auto id = 100 + state->muteRequests.size();
+            system_control::Completion completed; completed.id = id; completed.ok = true;
+            state->completions.push_back(completed); return id;
+        }
         if (request.name != "network.wifi.scan" || request.arguments.at("interfaceId") != "wifi-preview")
             throw std::runtime_error("offline control view unexpectedly dispatched a device mutation");
         return ++state->scans; // Only the explicit Wi-Fi detail page may request a scan.
     };
-    source.completions = [] { return std::vector<system_control::Completion>{}; };
+    source.completions = [state] { return std::exchange(state->completions, {}); };
     source.subscribe = [state](std::string topic, std::chrono::milliseconds) { state->subscriptions.insert(std::move(topic)); };
     source.unsubscribe = [state](std::string_view topic) { state->subscriptions.erase(std::string(topic)); };
     source.close = [state] { state->subscriptions.clear(); };
@@ -198,6 +213,42 @@ void InvokePreviewElement(const x::FrameworkElement& element)
     if (!element) throw std::runtime_error("tray preview command is missing");
     auto peer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(element);
     peer.GetPattern(x::Automation::Peers::PatternInterface::Invoke).as<x::Automation::Provider::IInvokeProvider>().Invoke();
+}
+void CheckAudioMute(const x::FrameworkElement& frame, SystemControlView& view,
+    const std::shared_ptr<ControlPreviewState>& state, bool overview)
+{
+    // Invoke the production buttons; only the hardware boundary is replaced.
+    // Wrong device routing, changing volume instead of mute, and refresh-driven
+    // writes must all fail independently of the glyph/layout implementation.
+    const auto prefix = overview ? L"control.overview.audio.output" : L"control.audio.output";
+    std::vector<std::pair<std::wstring, std::string>> targets{{prefix, "audio.output.setMute"}};
+    if (!overview) targets.emplace_back(L"control.audio.input", "audio.input.setMute");
+    for (const auto& [id, task] : targets)
+    {
+        const auto mute = FindPreviewElement(frame, (id + L".mute").c_str()).as<x::Controls::Button>();
+        const auto slider = FindPreviewElement(frame, (id + L".volume").c_str()).as<x::Controls::Slider>();
+        const auto initialLevel = slider.Value();
+        const auto initialGlyph = mute.Content().as<x::Controls::FontIcon>().Glyph();
+        const auto initialName = x::Automation::AutomationProperties::GetName(mute);
+        state->allowMute = true;
+        for (const auto* expected : {"1", "0"})
+        {
+            const auto before = state->muteRequests.size();
+            InvokePreviewElement(mute);
+            PumpUntil([&] { return state->muteRequests.size() > before; });
+            if (state->muteRequests.size() != before + 1 || state->muteRequests.back() != std::pair(task, std::string(expected)))
+                throw std::runtime_error("audio mute button targeted the wrong device or state");
+            view.Refresh(); frame.UpdateLayout();
+            const bool muted = std::string_view(expected) == "1";
+            if (slider.Value() != initialLevel || !slider.IsEnabled() ||
+                (mute.Content().as<x::Controls::FontIcon>().Glyph() != initialGlyph) != muted ||
+                (x::Automation::AutomationProperties::GetName(mute) != initialName) != muted)
+                throw std::runtime_error("mute changed the volume or failed to update its icon and accessible action");
+            if ((task == "audio.output.setMute" && state->inputMuted) || (task == "audio.input.setMute" && state->outputMuted))
+                throw std::runtime_error("mute affected the other audio direction");
+        }
+        state->allowMute = false;
+    }
 }
 struct CalendarPreviewState
 {
@@ -500,6 +551,8 @@ native_component_preview::Result ExportSystemPanelPreview(
                 if (radio.IsEnabled() == controlState->unavailable ||
                     (radio.IsEnabled() && radio.IsChecked().Value() != controlState->bluetoothOn))
                     throw std::runtime_error("Bluetooth off must remain enabled, and unavailable hardware must remain disabled");
+                if (FindPreviewElement(frame, L"control.overview.audio.output.mute").as<x::Controls::Button>().IsEnabled() == controlState->unavailable)
+                    throw std::runtime_error("mute button availability does not follow its audio device");
                 const auto detail = FindPreviewElement(frame, L"control.detail.bluetooth").as<x::Controls::Button>();
                 if (static_cast<bool>(detail.Style()) != (controlState->bluetoothOn && !controlState->unavailable) ||
                     detail.Content().as<x::Controls::FontIcon>().Glyph() != L"\uE76C" ||
@@ -541,7 +594,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                 RemovePreviewBrushTransitions(frame); CompletePreviewAnimations(frame); frame.UpdateLayout();
                 const auto scroll = FindPreviewType<x::Controls::ScrollViewer>(frame.Child());
                 if (scroll.ScrollableHeight() > 1 && (!controlPanel ||
-                    (preset != "audio" && preset != "power" && !preset.ends_with("-many"))))
+                    (preset != "power" && !preset.ends_with("-many"))))
                     throw std::runtime_error("panel preview clipped commands in its short fixture: " + preset);
                 if (controlPanel && preset.ends_with("-many") && scroll.ScrollableHeight() <= 20)
                     throw std::runtime_error("long device list did not create a bounded scroll viewport");
@@ -716,6 +769,7 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (!preview_png::Save(path, canvas.width, canvas.height, canvas.pixels, result.error)) return result;
             result.outputs.push_back({request.component, preset, path, false, false, false, false, false, false,
                 static_cast<int>(std::lround(appearance.cornerRadius * request.dpi / 96.)), width, height, left, top});
+            if (controls && (preset == "overview" || preset == "audio")) CheckAudioMute(frame, *controls, controlState, preset == "overview");
             if (controls && preset == "overview")
             {
                 const auto card = FindPreviewElement(frame, L"control.card.main");

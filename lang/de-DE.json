@@ -1925,6 +1925,7 @@
     "controlCenter.output": "Ausgabegerät",
     "controlCenter.input": "Mikrofon",
     "controlCenter.mute": "Stummschalten",
+    "controlCenter.unmute": "Stummschaltung aufheben",
     "controlCenter.passwordHint": "Geben Sie das Netzwerkkennwort ein. Bei offenen Netzwerken kann das Feld leer bleiben. Nur SnowDesktop verarbeitet das Kennwort.",
     "controlCenter.password": "Kennwort",
     "controlCenter.confirmForget": "Dieses gespeicherte Netzwerk samt Zugangsdaten entfernen?",

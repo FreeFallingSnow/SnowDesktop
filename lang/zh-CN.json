@@ -1925,6 +1925,7 @@
     "controlCenter.output": "输出设备",
     "controlCenter.input": "麦克风",
     "controlCenter.mute": "静音",
+    "controlCenter.unmute": "取消静音",
     "controlCenter.passwordHint": "请输入网络密码，开放网络可留空。密码仅由 SnowDesktop 处理。",
     "controlCenter.password": "密码",
     "controlCenter.confirmForget": "忘记此已保存网络及其凭据？",
