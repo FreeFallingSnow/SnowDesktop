@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../system_panel_model.h"
 #include "system_controls.h"
 #include "modern_menu.h"
 #include "../status_bar_view.h"

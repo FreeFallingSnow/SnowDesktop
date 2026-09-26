@@ -1,10 +1,11 @@
 #pragma once
-#include "system_panel_model.h"
+#include "status_bar.h"
 #include "ui_animation_scheduler.h"
 #include <dcomp.h>
 
 namespace snowdesktop
 {
+struct SystemCalendarActions;
 class SystemPanel
 {
 public:

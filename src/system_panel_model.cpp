@@ -187,9 +187,9 @@ void SystemPanelModel::Overview(float& y)
     for(std::size_t i=0;i<radios.size();++i)
     {
         const auto& key=radios[i];const float left=16+static_cast<float>(i)*(radioWidth+8);
-        Radio(key,Rect(left,y,radioWidth-32,64),false);
+        Radio(key,Rect(left,y,radioWidth-32,64),false);scene_.nodes.back().joinRight=true;
         auto& more=Add(key+".more",ui::Role::Button,Rect(left+radioWidth-32,y,32,64),L"",L"\uE76C");
-        more.accent=scene_.Find("radio:"+key)->selected;more.tooltip=_LW(key=="bluetooth"?"statusBar.bluetoothControls":"statusBar.wifiControls");
+        more.accent=scene_.Find("radio:"+key)->selected;more.joinLeft=true;more.tooltip=_LW(key=="bluetooth"?"statusBar.bluetoothControls":"statusBar.wifiControls");
         Command(key+".more",[this,key]{Select(key);});
     }
     if(!radios.empty())y+=82;
@@ -416,14 +416,14 @@ void SystemPanelModel::Calendar()
         n.enabled=i?month->year<9999||month->month<12:month->year>1||month->month>1;
         Command(id,[this,i]{const auto d=calendar::CalendarService::GetDateInfo(month_);if(!d)return;int m=d->month+(i?1:-1),year=d->year;if(m<1){m=12;--year;}if(m>12){m=1;++year;}if(year>=1&&year<=9999){month_=Date(year,m,1);scroll_=0;}});
     }
-    SYSTEMTIME time{};time.wYear=static_cast<WORD>(info->year);time.wMonth=static_cast<WORD>(info->month);time.wDay=static_cast<WORD>(info->day);wchar_t weekday[96]{};GetDateFormatEx(LOCALE_NAME_USER_DEFAULT,0,&time,L"dddd",weekday,96,nullptr);
+    SYSTEMTIME time{};time.wYear=static_cast<WORD>(info->year);time.wMonth=static_cast<WORD>(info->month);time.wDay=static_cast<WORD>(info->day);wchar_t weekday[96]{};const auto locale=Wide(Locale::Instance().GetEffectiveLanguage());GetDateFormatEx(locale.c_str(),0,&time,L"dddd",weekday,96,nullptr);
     Add("calendar.weekday",ui::Role::Text,Rect(16,78,116,30),weekday).centered=true;
     auto& day=Add("calendar.day",ui::Role::Text,Rect(16,108,116,76),std::to_wstring(info->day));day.fontSize=54;day.bold=day.centered=true;
     Add("calendar.date",ui::Role::Text,Rect(16,192,116,24),std::to_wstring(info->year)+L" / "+std::to_wstring(info->month)).centered=true;
     if(source_.calendar.secondaryDate)
     {
         const auto text=Wide(source_.calendar.secondaryDate(date_));
-        if(!text.empty()){auto& secondary=Add("calendar.secondary",ui::Role::Text,Rect(12,222,124,70),text);secondary.fontSize=12;secondary.centered=true;}
+        if(!text.empty()){auto& secondary=Add("calendar.secondary",ui::Role::Text,Rect(12,222,124,70),text);secondary.fontSize=12;secondary.centered=secondary.wrap=true;}
     }
     const int offset=(month->weekday+5)%7;const float cell=50;
     for(int i=0;i<7;++i)
@@ -440,7 +440,7 @@ void SystemPanelModel::Calendar()
         n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;n.tooltip=Wide(*date);
         Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";});
     }
-    float y=310;Add("calendar.selected",ui::Role::Text,Rect(16,y,330,36),Wide(date_)).bold=true;Add("calendar.manage",ui::Role::Button,Rect(390,y,114,36),_LW("statusBar.manageCalendar"));Command("calendar.manage",[this]{if(source_.calendar.manage)source_.calendar.manage();});y+=48;
+    float y=310;Add("calendar.selected",ui::Role::Text,Rect(16,y,330,36),Wide(date_)).bold=true;Add("calendar.manage",ui::Role::Button,Rect(354,y,150,36),_LW("statusBar.manageCalendar"));Command("calendar.manage",[this]{if(source_.calendar.manage)source_.calendar.manage();});y+=48;
     const auto events=source_.calendar.events?source_.calendar.events(date_):std::vector<calendar::CalendarEvent>{};
     if(events.empty()){Add("calendar.empty",ui::Role::Text,Rect(16,y,488,40),_LW("settings.calendar.empty"));y+=48;}
     for(const auto& e:events){wchar_t when[32]{};swprintf_s(when,L"%02d:%02d",e.startMinutes/60,e.startMinutes%60);auto& n=Add("event:"+e.id,ui::Role::Card,Rect(16,y,488,56),Wide(e.title));n.detail=e.allDay?_LW("settings.calendar.allDay"):when;y+=64;}

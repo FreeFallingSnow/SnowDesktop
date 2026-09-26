@@ -29,6 +29,7 @@ struct Node
     float fontSize = 14, value = 0;
     bool enabled = true, selected = false, accent = false, centered = false, bold = false;
     bool outlined = false, secondary = false, charging = false;
+    bool wrap = false, joinLeft = false, joinRight = false;
     std::shared_ptr<const Image> image;
     std::vector<std::vector<D2D1_POINT_2F>> paths;
     bool Interactive() const;

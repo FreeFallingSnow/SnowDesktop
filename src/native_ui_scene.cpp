@@ -61,7 +61,7 @@ bool Scene::SameContent(const Scene& other)const
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||
             a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.bold!=b.bold||a.outlined!=b.outlined||
-            a.secondary!=b.secondary||a.charging!=b.charging||bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
+            a.secondary!=b.secondary||a.charging!=b.charging||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
         if(a.image&&a.image!=b.image&&(a.image->width!=b.image->width||a.image->height!=b.image->height||
             a.image->stride!=b.image->stride||a.image->pixels!=b.image->pixels))return false;
         for(std::size_t p=0;p<a.paths.size();++p)
@@ -100,6 +100,7 @@ void Input::Sync(const Scene& scene)
             r.checked=n.selected;r.events["change"].id=r.key;
         }
         else if(n.Interactive()){r.events["click"].id=r.key;r.events["contextMenu"].id=r.key;r.capturePointer=n.id.starts_with("tray:");}
+        if(r.capturePointer){r.events["pointerMove"].id=r.key;r.events["pointerUp"].id=r.key;}
         if(!regions_.Submit(std::move(r),error)){regions_.AbortFrame();throw std::runtime_error(error);}
     }
     regions_.CommitFrame();identities_=std::move(identities);
@@ -167,17 +168,17 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
 {
     if (!dc || !factory) return E_INVALIDARG;
     ComPtr<ID2D1SolidColorBrush> brush; HRESULT hr = dc->CreateSolidColorBrush(p.text, &brush); if (FAILED(hr)) return hr;
-    std::map<std::tuple<float,bool,bool,bool>,ComPtr<IDWriteTextFormat>> formats;
+    std::map<std::tuple<float,bool,bool,bool,bool>,ComPtr<IDWriteTextFormat>> formats;
     auto color = [&](D2D1_COLOR_F value, bool enabled = true) { if (!enabled) value.a *= .4f; brush->SetColor(value); };
-    auto text = [&](std::wstring_view value, D2D1_RECT_F r, float size, D2D1_COLOR_F ink, bool bold, bool center, bool glyph) {
+    auto text = [&](std::wstring_view value, D2D1_RECT_F r, float size, D2D1_COLOR_F ink, bool bold, bool center, bool glyph, bool wrap=false) {
         if (value.empty() || r.right <= r.left || r.bottom <= r.top) return;
-        auto& format=formats[{size,bold,center,glyph}];
+        auto& format=formats[{size,bold,center,glyph,wrap}];
         if(!format)
         {
         if (FAILED(factory->CreateTextFormat(glyph ? L"Segoe MDL2 Assets" : L"Segoe UI", nullptr,
             bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return;
-        format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP); format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        format->SetWordWrapping(wrap?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP); format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         format->SetTextAlignment(center ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
         ComPtr<IDWriteInlineObject> ellipsis; factory->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
         DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0}; format->SetTrimming(&trimming, ellipsis.Get());
@@ -194,6 +195,8 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         {
             color(n.accent || (n.role == Role::Toggle && n.selected) ? p.accent : hot || down ? p.hover : p.control, n.enabled);
             dc->FillRoundedRectangle(D2D1::RoundedRect(r, n.role == Role::Card ? 10.f : 7.f, n.role == Role::Card ? 10.f : 7.f), brush.Get());
+            if(n.joinLeft)dc->FillRectangle({r.left,r.top,r.left+7,r.bottom},brush.Get());
+            if(n.joinRight)dc->FillRectangle({r.right-7,r.top,r.right,r.bottom},brush.Get());
         }
         if(n.outlined){color(p.accent);auto outline=r;outline.left+=1;outline.top+=1;outline.right-=1;outline.bottom-=1;dc->DrawRoundedRectangle(D2D1::RoundedRect(outline,7,7),brush.Get(),2);}
         auto ink = (n.accent || (n.role == Role::Toggle && n.selected)) ? p.accentText : n.secondary?p.secondary:p.text;
@@ -258,7 +261,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                     auto secondary=p.secondary; if(!n.enabled)secondary.a*=.4f;
                     text(n.detail,{label.left,mid+1,label.right,r.bottom-4},12,secondary,false,n.centered,false);
                 }
-                else text(n.text,label,n.fontSize,ink,n.bold,n.centered,false);
+                else text(n.text,label,n.fontSize,ink,n.bold,n.centered,false,n.wrap);
             }
         }
         if (!n.id.empty() && n.id == focused && n.Interactive())

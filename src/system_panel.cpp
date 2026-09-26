@@ -1,4 +1,5 @@
 #include "system_panel.h"
+#include "system_panel_model.h"
 #include "app/desktop_backdrop_compositor.h"
 #include "quick_navigation_animation_rules.h"
 #include "animation_settings.h"

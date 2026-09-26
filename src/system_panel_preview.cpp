@@ -1,4 +1,5 @@
 #include "system_panel_preview.h"
+#include "system_panel_model.h"
 #include "calendar_display.h"
 #include "l10n.h"
 #include "preview_png_writer.h"
