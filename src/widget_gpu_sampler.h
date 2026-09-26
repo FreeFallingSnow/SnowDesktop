@@ -23,8 +23,7 @@ struct WidgetGpuAdapterDataSnapshot
     std::uint64_t dedicatedUsedBytes = 0;
     std::uint64_t sharedMemoryBytes = 0;
     std::uint64_t sharedUsedBytes = 0;
-    // Internal validity and diagnostic details. Existing Lua fields remain
-    // unchanged until exposed through an explicitly versioned capability.
+    // Per-channel validity is opt-in through data.system.gpu.details.
     bool usageAvailable = false;
     bool dedicatedUsageAvailable = false;
     bool sharedUsageAvailable = false;

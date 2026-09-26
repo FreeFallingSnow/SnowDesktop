@@ -1760,6 +1760,26 @@ GPU；adapter `id` 在同一 Windows 会话内不随枚举顺序改变，不能�
 最后一个 GPU 订阅释放后会关闭 PDH
 query，不会因 CPU、内存或网络仍有订阅而继续采样 GPU。
 
+1.0.8.0 新增可选 feature `data.system.gpu.details`。同版本早期构建可能没有此能力，
+必须先用 `widget.hasFeature("data.system.gpu.details")` 检测，才能传入
+`data.subscribe("system.gpu", { includeDetails = true })`；参数只接受 boolean，默认 false。
+API v2、原有权限和采样频率不变，普通订阅保持上述整体有效性及原有字段。
+详情订阅复用相同采集，在已识别到适配器时即可返回 `available=true` 和 `value.adapters`，
+即使部分或全部计数器暂不可用；权限拒绝、无设备、无快照仍不返回 value。
+`warmingUp`、`stale`、`error` 继续报告采样状态。每项额外包含：
+
+- `usageAvailable`：占用读数是否有效，预热期间为 false。
+- `dedicatedUsageAvailable`、`sharedUsageAvailable`：两个显存 used 字段分别是否有效。
+  false 时不可使用相应数值；true 的 0 是测得的空闲／零用量。容量仍来自 DXGI，不能因 used 不可用就把容量误认成 0。
+- `engines`：有效占用区间的数组，包含 `physicalIndex`、`engineIndex`、`type`、`usagePercent`。
+  身份使用适配器 id＋两个编号；类型仅为显示标签，允许为空或重复。预热或占用无效时数组为空。
+
+这些新增字段只在 includeDetails=true 时出现。新组件设置 `minHostVersion="1.0.8.0"`，
+并将 feature 列入 optionalFeatures 后检测；缺少能力时使用旧订阅，不传新参数。
+指定 GPU 应匹配 id，不按数组下标或名称；重启后的 id 可能改变，保留失效选择并提示重新选择，不能静默改选另一块卡。
+全部 GPU 的占用是所有有效适配器的最大值，显存是有效适配器的 used／容量之和；有缺失项时应明确标记部分数据。
+该能力不增加设备扫描、PDH 查询或采样线程，原始计数器和状态码使用独立 gpu-diagnostics CLI 导出。
+
 网络 status value 包含 `connectivity`（`none/local/internet`）、`transport`
 （`none/ethernet/wifi/cellular/other`）、`costKnown/metered/roaming/overLimit`。
 宿主会对 status 的语义变化做两次连续采样确认：首次状态立即发布，后续只有连续两次

@@ -825,7 +825,10 @@ bool WidgetSystemDataProvider::StopTopic(
         if (topic == NetworkStatusTopic)
             networkStatusDebouncer_.Reset();
         if (topic == GpuTopic)
+        {
+            gpuDetails_.reset();
             closeGpuRequested_.store(true);
+        }
         if (topic == StorageIoTopic)
             closeStorageIoRequested_.store(true);
         ++configurationGeneration_;
@@ -877,6 +880,7 @@ void WidgetSystemDataProvider::StopAll()
         networkStatusDebouncer_.Reset();
         mediaArtwork_.reset();
         processSummary_.reset();
+        gpuDetails_.reset();
         ++configurationGeneration_;
     }
     resetCpuBaseline_.store(true);
@@ -952,10 +956,10 @@ WidgetSystemDataProvider::NetworkTraffic() const
 }
 
 std::optional<WidgetGpuDataSnapshot>
-WidgetSystemDataProvider::Gpu() const
+WidgetSystemDataProvider::Gpu(bool includeDetails) const
 {
     std::scoped_lock lock(mutex_);
-    return gpu_;
+    return includeDetails ? gpuDetails_ : gpu_;
 }
 
 std::optional<WidgetStorageVolumesDataSnapshot>
@@ -2083,6 +2087,10 @@ void WidgetSystemDataProvider::PublishGpu(
             adapter.usageAvailable && !snapshot.warmingUp ? std::optional<double>(adapter.usagePercent) : std::nullopt, {}});
     }
     resourceHistory_.Retain(GpuTopic, identities);
+    // Detailed consumers must see this sample's validity, including the first
+    // failed read. Preserve the legacy envelope debounce for old subscribers.
+    snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;
+    gpuDetails_ = snapshot;
     snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), gpu_,
         semanticDebouncers_[std::string(GpuTopic)]);
     snapshot.revision = gpu_ ? gpu_->revision + 1 : 1;

@@ -1253,7 +1253,7 @@ public:
                 audioAnalysis = {}, std::string eventId = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
-        std::uint64_t subscriptionId) const;
+        std::uint64_t subscriptionId, bool includeGpuDetails = false) const;
 
     /**
      * @brief 添加一条运行时日志

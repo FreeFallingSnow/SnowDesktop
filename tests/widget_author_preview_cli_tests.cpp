@@ -685,6 +685,7 @@ std::filesystem::path CreateEnvironmentFixture(
     "widget.context",
     "data.subscribe",
     "data.system.cpu",
+    "data.system.gpu", "data.system.gpu.details",
     "data.audio.devices", "data.audio.input.volume", "data.system.display.brightness",
     "data.network.wifi", "data.bluetooth.devices", "data.system.power.plans"
   ]
@@ -759,6 +760,21 @@ return widget.define({
             return value.value
         end
         local devices = deviceValue("audio.devices").devices
+        assert(widget.hasFeature("data.system.gpu.details"), "GPU details feature missing")
+        assert(not pcall(data.subscribe, "system.cpu", {includeDetails = true}) and
+            not pcall(data.subscribe, "system.gpu", {includeDetails = 1}), "GPU option must be typed and topic-specific")
+        local oldGpu = data.subscribe("system.gpu")
+        local gpu = data.subscribe("system.gpu", {includeDetails = true})
+        local oldSnapshot, gpuSnapshot = oldGpu:value(), gpu:value()
+        assert(oldSnapshot.value.adapters[1].engines == nil and
+            oldSnapshot.value.adapters[1].usageAvailable == nil, "legacy GPU payload changed")
+        local adapter = gpuSnapshot.value.adapters[1]
+        assert(gpuSnapshot.available and gpuSnapshot.stale and adapter.id == "adapter-1" and
+            adapter.usageAvailable and adapter.dedicatedUsageAvailable and adapter.sharedUsageAvailable and
+            #adapter.engines == 2 and adapter.engines[1].usagePercent == 38 and
+            adapter.engines[2].engineIndex == 1, "GPU details must reach the actual preview serializer")
+        oldGpu:unsubscribe(); gpu:unsubscribe()
+        assert(gpu:value().available == false and gpu:value().value == nil, "closed details subscription leaked its last payload")
         assert(#devices == 2 and devices[1].id == "audio-output-preview" and
             devices[2].direction == "input", "preview leaked the machine's endpoints")
         local microphone = deviceValue("audio.input.volume")

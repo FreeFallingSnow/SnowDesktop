@@ -1357,6 +1357,19 @@ function animation.cancelFrame(id) end
 ---@field dedicatedUsedBytes integer PDH Dedicated Usage assigned by adapter LUID.
 ---@field sharedMemoryBytes integer
 ---@field sharedUsedBytes integer PDH Shared Usage assigned by adapter LUID.
+---@field usageAvailable? boolean With includeDetails: whether usagePercent is a measured value for this adapter. False during warm-up.
+---@field dedicatedUsageAvailable? boolean With includeDetails: whether dedicatedUsedBytes is valid (zero can be valid).
+---@field sharedUsageAvailable? boolean With includeDetails: whether sharedUsedBytes is valid independently of dedicated memory.
+---@field engines? SnowGpuEngineDataValue[] With includeDetails: valid engine intervals, empty when usage is unavailable or warming up.
+
+---@class SnowGpuEngineDataValue
+---@field physicalIndex integer Physical GPU index within this adapter.
+---@field engineIndex integer Engine number within the physical GPU. Combine both indices for identity; never group by type.
+---@field type string Display label; may be empty or shared by multiple engines.
+---@field usagePercent number Process contributions summed for this engine and clamped to 0..100.
+
+---@class SnowGpuSubscribeOptions: SnowDataSubscribeOptions
+---@field includeDetails? boolean Requires data.system.gpu.details (host 1.0.8.0; also feature-check earlier builds). Defaults to false. When true, available means adapter topology is present; check per-adapter validity before using counters. No additional sampling.
 
 ---@class SnowGpuDataValue
 ---@field adapters SnowGpuAdapterDataValue[]
@@ -1672,7 +1685,7 @@ data = {}
 ---@overload fun(topic: 'system.cpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowCpuDataValue>
 ---@overload fun(topic: 'system.memory', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowMemoryDataValue>
 ---@overload fun(topic: 'process.summary', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowProcessSummaryDataValue>
----@overload fun(topic: 'system.gpu', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowGpuDataValue>
+---@overload fun(topic: 'system.gpu', options?: SnowGpuSubscribeOptions): SnowDataSubscription<SnowGpuDataValue>
 ---@overload fun(topic: 'system.power', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowPowerDataValue>
 ---@overload fun(topic: 'system.network.status', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkStatusDataValue>
 ---@overload fun(topic: 'system.network.traffic', options?: SnowDataSubscribeOptions): SnowDataSubscription<SnowNetworkTrafficDataValue>

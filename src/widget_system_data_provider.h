@@ -366,7 +366,7 @@ public:
     std::optional<WidgetPowerDataSnapshot> Power() const;
     std::optional<WidgetNetworkStatusDataSnapshot> NetworkStatus() const;
     std::optional<WidgetNetworkTrafficDataSnapshot> NetworkTraffic() const;
-    std::optional<WidgetGpuDataSnapshot> Gpu() const;
+    std::optional<WidgetGpuDataSnapshot> Gpu(bool includeDetails = false) const;
     std::vector<WidgetResourcePoint> ResourceHistory(std::string_view topic, std::string_view adapterId = {}) const;
     std::optional<WidgetStorageVolumesDataSnapshot> StorageVolumes() const;
     std::optional<WidgetStorageIoDataSnapshot> StorageIo() const;
@@ -446,6 +446,7 @@ private:
     WidgetNetworkStatusDebouncer networkStatusDebouncer_;
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::optional<WidgetGpuDataSnapshot> gpu_;
+    std::optional<WidgetGpuDataSnapshot> gpuDetails_;
     WidgetResourceHistory resourceHistory_;
     std::optional<WidgetStorageVolumesDataSnapshot> storageVolumes_;
     std::optional<WidgetStorageIoDataSnapshot> storageIo_;

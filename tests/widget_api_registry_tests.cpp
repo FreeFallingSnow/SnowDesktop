@@ -334,6 +334,7 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.display.current") &&
             snowdesktop::widget_api::SupportsFeature("data.system.gpu") &&
+            snowdesktop::widget_api::SupportsFeature("data.system.gpu.details") &&
             snowdesktop::widget_api::SupportsFeature("data.system.memory") &&
             snowdesktop::widget_api::SupportsFeature(
                 "data.system.network.status") &&

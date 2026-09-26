@@ -20,7 +20,7 @@ namespace snowdesktop::widget_api
 namespace
 {
 constexpr std::uint32_t kCurrentApiVersion = 2;
-constexpr std::array<std::string_view, 225> kHostFeatures = {
+constexpr std::array<std::string_view, 226> kHostFeatures = {
     "animation.frame",
     "calendar.annotations",
     "calendar.dateMath",
@@ -56,6 +56,7 @@ constexpr std::array<std::string_view, 225> kHostFeatures = {
     "data.system.display.topology",
     "data.system.display.current",
     "data.system.gpu",
+    "data.system.gpu.details",
     "data.system.memory",
     "data.system.network.status",
     "data.system.network.traffic",
@@ -347,7 +348,7 @@ kSystemDataTopicContracts = {{
         1000, 10000, 0, true, false, "SnowDataSubscribeOptions",
         "SnowProcessSummaryDataValue" },
     { "system.gpu", "data.system.gpu", "system.performance.read",
-        1000, 5000, 2000, false, false, "SnowDataSubscribeOptions",
+        1000, 5000, 2000, false, false, "SnowGpuSubscribeOptions",
         "SnowGpuDataValue" },
     { "system.power", "data.system.power", "system.power.read",
         2000, 10000, 2000, false, false, "SnowDataSubscribeOptions",

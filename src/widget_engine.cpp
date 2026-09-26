@@ -1,4 +1,5 @@
 #include "widget_system_control_data.h"
+#include "widget_gpu_lua.h"
 #include "background_work.h"
 /**
  * @file widget_engine.cpp
@@ -4495,6 +4496,7 @@ struct LuaDataSubscriptionHandle
 {
     WidgetEngine* engine = nullptr;
     std::uint64_t id = 0;
+    bool includeGpuDetails = false;
 };
 
 constexpr char kDataSubscriptionHandleMetatable[] =
@@ -4681,10 +4683,12 @@ static void PushCalendarDataEventValue(lua_State* state,
 
 static void PushDataSnapshotEnvelope(lua_State* state,
     const std::optional<LuaWidgetDataSnapshot>& snapshot,
-    const char* missingError = "unsubscribed")
+    const char* missingError = "unsubscribed", bool includeGpuDetails = false)
 {
     lua_createtable(state, 0, 7);
-    const bool available = snapshot && snapshot->available;
+    const bool available = snapshot && (snapshot->available ||
+        (includeGpuDetails && snapshot->topic == "system.gpu" &&
+            snowdesktop::widget_runtime::WidgetGpuValueAvailable(snapshot->gpu, true)));
     lua_pushboolean(state, available);
     lua_setfield(state, -2, "available");
     lua_pushboolean(state, !snapshot || snapshot->stale);
@@ -4827,32 +4831,7 @@ static void PushDataSnapshotEnvelope(lua_State* state,
     }
     else if (snapshot->topic == "system.gpu")
     {
-        lua_createtable(state,
-            static_cast<int>(snapshot->gpu.adapters.size()), 0);
-        int adapterIndex = 1;
-        for (const auto& adapter : snapshot->gpu.adapters)
-        {
-            lua_createtable(state, 0, 7);
-            lua_pushlstring(state, adapter.id.data(), adapter.id.size());
-            lua_setfield(state, -2, "id");
-            lua_pushlstring(state, adapter.name.data(), adapter.name.size());
-            lua_setfield(state, -2, "name");
-            lua_pushnumber(state, adapter.usagePercent);
-            lua_setfield(state, -2, "usagePercent");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.dedicatedMemoryBytes));
-            lua_setfield(state, -2, "dedicatedMemoryBytes");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.dedicatedUsedBytes));
-            lua_setfield(state, -2, "dedicatedUsedBytes");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.sharedMemoryBytes));
-            lua_setfield(state, -2, "sharedMemoryBytes");
-            lua_pushinteger(state, static_cast<lua_Integer>(
-                adapter.sharedUsedBytes));
-            lua_setfield(state, -2, "sharedUsedBytes");
-            lua_rawseti(state, -2, adapterIndex++);
-        }
+        snowdesktop::widget_runtime::PushWidgetGpuAdapters(state, snapshot->gpu, includeGpuDetails);
         lua_setfield(state, -2, "adapters");
     }
     else if (snapshot->topic == "system.storage.volumes")
@@ -5153,7 +5132,7 @@ static int lua_DataSubscriptionValue(lua_State* state)
         return 1;
     }
     PushDataSnapshotEnvelope(
-        state, handle->engine->RuntimeGetDataSnapshot(handle->id));
+        state, handle->engine->RuntimeGetDataSnapshot(handle->id, handle->includeGpuDetails), "unsubscribed", handle->includeGpuDetails);
     return 1;
 }
 
@@ -5212,6 +5191,7 @@ static int lua_DataSubscribe(lua_State* state)
         topicValue == "audio.output.analysis";
     lua_Integer maxAgeMs = audioAnalysisTopic ? 33 : 1000;
     bool maxAgeSpecified = false;
+    bool includeGpuDetails = false;
     bool updateHzSpecified = false;
     bool waveformPointsSpecified = false;
     bool spectrumBinsSpecified = false;
@@ -5246,7 +5226,8 @@ static int lua_DataSubscribe(lua_State* state)
             const bool audio = audioAnalysisTopic &&
                 (key == "features" || key == "updateHz" ||
                     key == "waveformPoints" || key == "spectrumBins");
-            if (!common && !calendar && !filesystem && !audio)
+            const bool gpu = topicValue == "system.gpu" && key == "includeDetails";
+            if (!common && !calendar && !filesystem && !audio && !gpu)
             {
                 return luaL_error(state,
                     "data.subscribe: option '%.*s' is not valid for topic '%s'",
@@ -5255,6 +5236,14 @@ static int lua_DataSubscribe(lua_State* state)
             }
             lua_pop(state, 1);
         }
+        lua_getfield(state, 2, "includeDetails");
+        if (!lua_isnil(state, -1))
+        {
+            if (!lua_isboolean(state, -1))
+                return luaL_error(state, "data.subscribe: includeDetails must be a boolean");
+            includeGpuDetails = lua_toboolean(state, -1) != 0;
+        }
+        lua_pop(state, 1);
         lua_getfield(state, 2, "maxAgeMs");
         if (!lua_isnil(state, -1))
         {
@@ -5505,7 +5494,7 @@ static int lua_DataSubscribe(lua_State* state)
 
     auto* handle = static_cast<LuaDataSubscriptionHandle*>(
         lua_newuserdata(state, sizeof(LuaDataSubscriptionHandle)));
-    *handle = { d2d->engine, result.id };
+    *handle = { d2d->engine, result.id, includeGpuDetails };
     luaL_getmetatable(state, kDataSubscriptionHandleMetatable);
     lua_setmetatable(state, -2);
     return 1;
@@ -22679,7 +22668,7 @@ bool WidgetEngine::RuntimeUnsubscribeData(
 
 std::optional<LuaWidgetDataSnapshot>
 WidgetEngine::RuntimeGetDataSnapshot(
-    std::uint64_t subscriptionId) const
+    std::uint64_t subscriptionId, bool includeGpuDetails) const
 {
     if (subscriptionId == 0 || !dataBroker_) return std::nullopt;
     const auto binding = dataBroker_->SubscriptionSnapshot(subscriptionId);
@@ -22802,6 +22791,11 @@ WidgetEngine::RuntimeGetDataSnapshot(
                     8ull * 1024 * 1024 * 1024,
                     1ull * 1024 * 1024 * 1024 }
             };
+            auto& adapter = result.gpu.adapters.front();
+            adapter.usageAvailable = true;
+            adapter.dedicatedUsageAvailable = true;
+            adapter.sharedUsageAvailable = true;
+            adapter.engines = { { 0, 0, "3D", 38.0, 38.0, 2 }, { 0, 1, "Copy", 4.0, 4.0, 1 } };
         }
         else if (result.topic == "system.storage.volumes")
         {
@@ -23163,7 +23157,7 @@ WidgetEngine::RuntimeGetDataSnapshot(
     }
     else if (result.topic == "system.gpu")
     {
-        const auto snapshot = widgetSystemDataProvider_->Gpu();
+        const auto snapshot = widgetSystemDataProvider_->Gpu(includeGpuDetails);
         if (snapshot)
         {
             result.gpu = *snapshot;

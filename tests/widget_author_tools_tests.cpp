@@ -2,6 +2,11 @@
 #include "widget_package.h"
 #include "widget_api_registry.h"
 #include "gpu_diagnostics.h"
+#include "widget_gpu_lua.h"
+extern "C" {
+#include <lauxlib.h>
+#include <lualib.h>
+}
 #include "json_value.h"
 #include "test_temporary_directory.h"
 #include <fstream>
@@ -22,6 +27,55 @@ void Check(bool condition, const char* message)
     if (condition) return;
     std::cerr << "FAILED: " << message << '\n';
     std::exit(1);
+}
+
+void TestGpuLuaDetails()
+{
+    using namespace snowdesktop::widget_runtime;
+    WidgetGpuDataSnapshot snapshot;
+    snapshot.warmingUp = false;
+    WidgetGpuAdapterDataSnapshot idle;
+    idle.id = "idle"; idle.name = "same name"; idle.usageAvailable = true;
+    idle.sharedUsageAvailable = true; idle.sharedUsedBytes = 9007199254740993ull;
+    idle.engines = { { 0, 2, "", 0, 0, 1 }, { 1, 2, "", 0, 0, 2 } };
+    WidgetGpuAdapterDataSnapshot missing;
+    missing.id = "missing"; missing.name = idle.name; missing.usagePercent = 99;
+    missing.dedicatedUsageAvailable = true; missing.dedicatedUsedBytes = 0;
+    snapshot.adapters = { idle, missing };
+    Check(!WidgetGpuValueAvailable(snapshot, false) && WidgetGpuValueAvailable(snapshot, true) &&
+        !WidgetGpuValueAvailable({}, true), "details expose topology without changing legacy availability or inventing devices");
+    auto* state = luaL_newstate();
+    Check(state != nullptr, "GPU serialization Lua state is created");
+    luaL_openlibs(state);
+    PushWidgetGpuAdapters(state, snapshot, false); lua_setglobal(state, "legacy");
+    PushWidgetGpuAdapters(state, snapshot, true); lua_setglobal(state, "details");
+    snapshot.warmingUp = true;
+    PushWidgetGpuAdapters(state, snapshot, true); lua_setglobal(state, "warming");
+    const int result = luaL_dostring(state, R"lua(
+        local count = 0
+        for _ in pairs(legacy[1]) do count = count + 1 end
+        assert(count == 7 and legacy[1].usageAvailable == nil and legacy[1].engines == nil,
+            "old subscribers retain exactly their existing adapter fields")
+        assert(legacy[1].sharedUsedBytes == 9007199254740993 and math.type(legacy[1].sharedUsedBytes) == "integer",
+            "64-bit memory counters must not round through a floating point value")
+        assert(details[1].id == "idle" and details[2].id == "missing" and details[1].name == details[2].name,
+            "same-name adapters must retain distinct identities")
+        assert(details[1].usageAvailable == true and details[1].usagePercent == 0 and
+            details[2].usageAvailable == false and details[2].usagePercent == 99,
+            "valid idle and invalid stale counters must remain distinguishable")
+        assert(details[1].dedicatedUsageAvailable == false and details[1].sharedUsageAvailable == true and
+            details[2].dedicatedUsageAvailable == true and details[2].dedicatedUsedBytes == 0 and
+            details[2].sharedUsageAvailable == false, "memory channels have independent validity")
+        assert(#details[1].engines == 2 and details[1].engines[1].type == "" and
+            details[1].engines[1].engineIndex == 2 and details[1].engines[2].physicalIndex == 1 and
+            details[1].engines[2].usagePercent == 0, "engine identity must not depend on type labels")
+        assert(#details[2].engines == 0 and warming[1].usageAvailable == false and #warming[1].engines == 0 and
+            warming[1].sharedUsageAvailable == true, "warm-up hides usage engines without hiding valid memory")
+    )lua");
+    const std::string error = result == LUA_OK ? "" : lua_tostring(state, -1);
+    lua_close(state);
+    if (!error.empty()) std::cerr << error << '\n';
+    Check(result == LUA_OK, "production GPU serialization preserves legacy and detailed data contracts");
 }
 
 void TestGpuDiagnostics()
@@ -141,6 +195,7 @@ int main()
 {
     TestPermissionReport();
     TestGpuDiagnostics();
+    TestGpuLuaDetails();
     Check(snowdesktop::widget_api::SupportsFeature("widget.confirmRemoval"),
         "host advertises removal confirmation for protected components");
     std::cout << "widget author tools tests passed\n";
