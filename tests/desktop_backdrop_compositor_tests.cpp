@@ -2,6 +2,7 @@
 #include "app/desktop_backdrop_update_rules.h"
 
 #include <roapi.h>
+#include <d2d1_1helper.h>
 
 #include <array>
 #include <iostream>
@@ -89,6 +90,63 @@ int RunDesktopBackdropCompositorTests()
     if (!check(content.handle && otherContent.handle,
             "backdrop integration creates only its own hidden popup windows"))
         return failures;
+
+    {
+        // Status-bar control and media cards move without another AddPanel /
+        // EndFrame during each animation frame. Exercise those production
+        // commits directly, with only test-owned windows kept hidden.
+        PopupWindow cardsContent;
+        DesktopBackdropCompositor cardsGlass;
+        if (!check(cardsContent.handle &&
+                cardsGlass.InitializePopup(cardsContent.handle, false, false),
+                "card-animation fixture creates its own hidden backdrop target"))
+            return failures;
+        cardsGlass.BeginFrame(true);
+        check(cardsGlass.AddPanel({16, 20, 304, 132}, 12, 24, 31001) &&
+                cardsGlass.AddPanel({16, 148, 304, 212}, 12, 24, 31002),
+            "two independent cards register before animation starts");
+        cardsGlass.EndFrame(false);
+        const HWND cardsHelper = GetWindow(cardsContent.handle, GW_HWNDNEXT);
+        if (!check(cardsGlass.IsBackdropWindow(cardsHelper),
+                "card-animation assertions address only this fixture's helper HWND"))
+            return failures;
+        const auto regionMatches = [&](POINT first, POINT second, POINT gap,
+            POINT retired) {
+            HRGN region = CreateRectRgn(0, 0, 0, 0);
+            const bool matches = region && GetWindowRgn(cardsHelper, region) != ERROR &&
+                PtInRegion(region, first.x, first.y) &&
+                PtInRegion(region, second.x, second.y) &&
+                !PtInRegion(region, gap.x, gap.y) &&
+                !PtInRegion(region, retired.x, retired.y) &&
+                !PtInRegion(region, 8, 80);
+            if (region) DeleteObject(region);
+            return matches;
+        };
+        check(regionMatches({40, 24}, {40, 180}, {40, 140}, {40, 8}),
+            "initial cards have separate regions and a transparent gap");
+        check(cardsGlass.SetPanelTransform(31001,
+                D2D1::Matrix4x4F::Translation(0, -18, 0), {16, 2, 304, 114}) &&
+                cardsGlass.SetPanelTransform(31002,
+                    D2D1::Matrix4x4F::Translation(0, -18, 0), {16, 130, 304, 194}),
+            "animation updates both card transforms without collecting a new frame");
+        cardsGlass.CommitVisualChanges();
+        check(regionMatches({40, 8}, {40, 140}, {40, 122}, {40, 204}),
+            "ordinary visual commit moves both glass regions, preserves their gap and removes old pixels");
+        check(cardsGlass.SetPanelTransform(31001,
+                D2D1::Matrix4x4F::Translation(0, 12, 0), {16, 32, 304, 144}) &&
+                cardsGlass.SetPanelTransform(31002,
+                    D2D1::Matrix4x4F::Translation(0, 12, 0), {16, 160, 304, 224}),
+            "a later pose dirties the retained cards again");
+        check(cardsGlass.CommitVisualChangesAndNotify(
+                cardsContent.handle, kCommitCompleted, 200) &&
+                WaitForCommit(cardsContent.handle, 200),
+            "notified card-animation commit completes through the real dispatcher");
+        check(regionMatches({40, 40}, {40, 218}, {40, 152}, {40, 8}),
+            "notified visual commit also moves the region and retains the inter-card gap");
+        check(!IsWindowVisible(cardsContent.handle) && !IsWindowVisible(cardsHelper) &&
+                cardsGlass.PanelCount() == 2 && cardsGlass.BlurFactoryCount() == 1,
+            "card-animation checks never show windows or accumulate retained panels and blur factories");
+    }
 
     {
         PopupWindow startupContent;

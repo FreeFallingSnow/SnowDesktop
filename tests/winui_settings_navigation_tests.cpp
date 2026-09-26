@@ -228,6 +228,15 @@ int main()
         const auto back = bars.GoBack();
         Check(back && back->page == SettingsPage::Taskbar,
             "desktop bar pages must preserve navigation history");
+        for (const auto page : {SettingsPage::Personalization, SettingsPage::AppearanceTheme})
+        {
+            const auto legacy = CanonicalizeSettingsRoute(SettingsRoute::ForPage(page, "personalization.statusBarTheme"));
+            Check(legacy.page == SettingsPage::StatusBar && legacy.focusId == "statusBar.theme",
+                "legacy status bar theme links must open the relocated editor");
+        }
+        const auto statusTheme = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.theme"));
+        Check(statusTheme.page == SettingsPage::StatusBar && statusTheme.focusId == "statusBar.theme",
+            "the status bar theme route must remain on the status bar page");
     }
     if (failures != 0)
     {

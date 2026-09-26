@@ -3,6 +3,9 @@
 #include "modern_menu.h"
 #include "../status_bar_view.h"
 #include "../status_bar_shell_shortcut.h"
+#include "../dock_settings_rules.h"
+#include "../taskbar_monitor.h"
+#include "../taskbar_hook/taskbar_native.h"
 
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
@@ -14,6 +17,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     // replacement action still waiting for a nested menu loop to unwind.
     if (action == Action::Dismiss)
     {
+        quickNavigationPostCloseAction_ = {};
         snowdesktop::modern_menu::DismissActive();
         if (systemPanel_) systemPanel_->Hide();
         CloseQuickNavigation();
@@ -33,6 +37,25 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         return;
     }
     if (action == Action::None) return;
+    const auto resume = [this, action, owner, anchor] {
+        if (!exitRequested_ && generalSettings_.statusBar.enabled && statusBar_ && IsWindow(owner) &&
+            IsWindowVisible(owner) && !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)))
+            ActivateStatusBar(action, owner, anchor);
+    };
+    if (action != Action::QuickSearch && (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden()))
+    {
+        quickNavigationPostCloseAction_ = resume;
+        if (quickNavigationOpen_) CloseQuickNavigation();
+        return;
+    }
+    const bool externalSurface = action == Action::SystemMenu || action == Action::Menu ||
+        action == Action::QuickSearch || action == Action::Settings ||
+        action == Action::Notifications || action == Action::SystemControlCenter;
+    if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
+    {
+        systemPanel_->CloseThen(resume);
+        return;
+    }
     const bool systemControls = action == Action::SystemControlCenter;
     if (action == Action::Notifications || systemControls)
     {
@@ -119,7 +142,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     else if (statusBar_ && !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)))
     {
         if (!systemPanel_)
-            systemPanel_ = std::make_unique<snowdesktop::winui::SystemPanel>([this](const auto& changed) {
+            systemPanel_ = std::make_unique<snowdesktop::SystemPanel>([this](const auto& changed) {
                 if (!settingsController_) return;
                 auto settings = settingsController_->Snapshot()->values.general;
                 // The popup owns only tray preferences. Do not overwrite
@@ -130,7 +153,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
                 uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
                     if (settingsController_) (void)settingsController_->FlushPending();
                 });
-            }, snowdesktop::winui::SystemCalendarActions{
+            }, snowdesktop::SystemCalendarActions{
                 [this](const std::string& date) {
                     return widgetEngine_ ? widgetEngine_->RuntimeCalendarEvents(date, date) :
                         std::vector<snowdesktop::calendar::CalendarEvent>{};
@@ -144,7 +167,14 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
                     return !days.empty() && days.front().calendarAvailable ? days.front().fullDate : std::string{};
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
-                }, &uiAnimationScheduler_);
+                }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),
+                [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
+                    DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,
+                        D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+                        D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
+                        false, 0, &appearance, false, 0, scale);
+                    brushCache_.clear(); brushCacheContext_ = nullptr;
+                });
         systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
             statusBar_->Tray(), systemDataProvider_);
     }
@@ -153,6 +183,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
 void DesktopApp::SyncStatusBar()
 {
     if (!systemDataProvider_ || !dcompDevice_ || !dwriteFactory_) return;
+    if (systemPanel_) systemPanel_->UpdateSettings(generalSettings_.statusBar);
     if (!generalSettings_.statusBar.enabled)
     {
         uiAnimationScheduler_.Cancel(statusBarActivationToken_);
@@ -198,7 +229,48 @@ void DesktopApp::SyncStatusBar()
         statusBar_->SetDockChanged([this](bool geometry) {
             if (exitRequested_) return;
             if (geometry) ScheduleDisplayTopologyRefresh();
-            else UpdatePersistentDockHostVisibility();
+            else
+            {
+                UpdatePersistentDockHostVisibility();
+                InvalidateDockRects();
+            }
+        });
+        statusBar_->SetSceneProvider([this](HMONITOR monitor) {
+            snowdesktop::StatusBarSceneState scene;
+            const auto& settings = generalSettings_.statusBar;
+            if (!settings.shellUi.enabled && !settings.maximizedWindow.enabled && !settings.visibleWindow.enabled)
+                return scene;
+            // StartDockForegroundMonitor already owns these observations even
+            // when Dock/taskbar styling is disabled. The taskbar's own timer
+            // maintains the cache while its controls are active. Otherwise the
+            // first bar consumes dirty observations for all monitors together.
+            // Never enable the Explorer appearance hook to obtain this state.
+            const DWORD now = GetTickCount();
+            const bool dirty = systemTaskbarWindowStateChangedTick_.load() != systemTaskbarWindowStateObservedTick_;
+            const bool taskbarObserverActive = IsSystemTaskbarHookRequired(dockSettings_);
+            if (systemTaskbarWindowScanTick_ == 0 ||
+                (!taskbarObserverActive &&
+                    ((dirty && now - systemTaskbarWindowScanTick_ >= 250) ||
+                        now - systemTaskbarWindowScanTick_ >= 1500)))
+            {
+                RefreshSystemTaskbarWindowState();
+                systemTaskbarWindowScanTick_ = now;
+            }
+            if (const auto found = systemTaskbarMonitorWindowStates_.find(monitor);
+                found != systemTaskbarMonitorWindowStates_.end())
+            {
+                scene.visibleWindow = found->second.visible;
+                scene.maximizedWindow = found->second.maximized;
+            }
+            scene.shellUi = snowdesktop::dock_settings_rules::ShouldRevealTaskbarForShellPanel(
+                taskbarObserverActive && systemTaskbarTaskViewActive_, systemTaskbarShellUiActive_,
+                monitor == systemTaskbarShellUiMonitor_);
+            if (taskbarObserverActive)
+                for (const HWND taskbar : systemTaskbarWindows_)
+                    if (IsWindow(taskbar) && snowdesktop::taskbar_monitor::Resolve(taskbar) == monitor &&
+                        GetPropW(taskbar, snowdesktop::taskbar_hook::native::kContextMenuProperty))
+                    { scene.shellUi = true; break; }
+            return scene;
         });
     }
     auto order = BuildMonitorRenderOrder();
@@ -236,5 +308,12 @@ void DesktopApp::SyncStatusBar()
         }
     }
     statusBar_->Configure(generalSettings_.statusBar, personalizationSettings_, monitors,
-        dcompDevice_.Get(), dwriteFactory_.Get());
+        dcompDevice_.Get(), dwriteFactory_.Get(), &collectionPopupAppearance_,
+        [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
+            DrawWidgetPanelBackground(context, frame, appearance.cornerRadius * scale,
+                D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+                D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
+                false, 0, &appearance, false, 0, scale);
+            brushCache_.clear(); brushCacheContext_ = nullptr;
+        });
 }

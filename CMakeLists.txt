@@ -174,6 +174,13 @@ set(SNOWDESKTOP_SOURCES
     src/status_bar_preview.h
     src/status_bar.cpp
     src/tray_service.cpp
+    src/tray_menu_placement.cpp
+    src/tray_menu_placement.h
+    src/native_tooltip.cpp
+    src/native_tooltip.h
+    src/native_tooltip_content.h
+    src/native_tooltip_state.h
+    src/native_control_geometry.h
     src/tray_model.cpp
     src/tray_service.h
     src/tray_focus.h
@@ -359,21 +366,14 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
     src/winui/status_bar_page_presenter.cpp
-    src/winui/system_panel.cpp
-    src/winui/system_panel.h
-    src/winui/system_control_view.cpp
-    src/winui/system_control_view.h
-    src/winui/system_tray_view.cpp
-    src/winui/system_tray_view.h
-    src/winui/system_resource_view.cpp
-    src/winui/system_resource_view.h
-    src/winui/system_resource_preview.h
-    src/winui/system_calendar_view.cpp
-    src/winui/system_calendar_view.h
-    src/winui/system_panel_surface.cpp
-    src/winui/system_panel_surface.h
-    src/winui/system_panel_preview.cpp
-    src/winui/system_panel_preview.h
+    src/native_ui_scene.cpp
+    src/native_ui_scene.h
+    src/system_panel.cpp
+    src/system_panel.h
+    src/system_panel_model.cpp
+    src/system_panel_model.h
+    src/system_panel_preview.cpp
+    src/system_panel_preview.h
     src/winui/status_bar_page_presenter.h
     src/winui/calendar_page_presenter.cpp
     src/winui/calendar_page_presenter.h
@@ -2228,6 +2228,7 @@ if (BUILD_TESTING)
             tests/tray_live_tests.cpp
             src/tray_model.cpp
             src/tray_service.cpp
+            src/tray_menu_placement.cpp
             src/app/desktop_backdrop_compositor.cpp
             src/l10n.cpp
             src/dock_window_preview.cpp

@@ -12,6 +12,9 @@ namespace snowdesktop::tray
 {
 inline constexpr DWORD kMagic = 0x53445452, kVersion = 2;
 inline constexpr std::size_t kCapacity = 128, kGeometries = 512, kIconSize = 64;
+// Optional collector supplement, not a Shell_NotifyIcon command. An older
+// receiver safely ignores it; the shared-memory layout remains unchanged.
+inline constexpr DWORD kBootstrapIcon = 0x53440001;
 inline constexpr wchar_t kAttachMessage[] = L"SnowDesktop.Tray.Attach.v2";
 inline constexpr wchar_t kDetachMessage[] = L"SnowDesktop.Tray.Detach.v2";
 inline std::wstring ObjectName(DWORD owner, const wchar_t* suffix)
@@ -137,7 +140,7 @@ inline bool LookupGeometry(SharedState& state, const Identity& identity, RECT& r
     if (count > kGeometries) return false;
     bool found = false;
     for (DWORD i = 0; i < count; ++i)
-        if (SameIdentity(state.geometries[i].identity, identity))
+        if (MatchesFocusRequest(state.geometries[i].identity, identity))
         { result = state.geometries[i].rect; found = true; break; }
     MemoryBarrier();
     return before == Read(state.geometrySequence) && found && !IsRectEmpty(&result);

@@ -358,6 +358,7 @@ struct DesktopBackdropCompositor::Impl
     bool collectingFrame = false;
     bool blurFactoriesDirty = false;
     bool available = false;
+    bool transformedRegionDirty = false;
     bool popupMode = false;
     bool popupTopmost = false;
     bool visible = true;
@@ -1569,6 +1570,7 @@ bool DesktopBackdropCompositor::SetPanelTransform(std::uintptr_t ownerKey,
             matrix._21, matrix._22, matrix._23, matrix._24,
             matrix._31, matrix._32, matrix._33, matrix._34,
             matrix._41, matrix._42, matrix._43, matrix._44 });
+        if (!EqualRect(&found->regionFrame, &projectedFrame)) impl_->transformedRegionDirty = true;
         found->regionFrame = projectedFrame;
         return true;
     }
@@ -1683,13 +1685,24 @@ bool DesktopBackdropCompositor::SetVisualOpacity(
 void DesktopBackdropCompositor::CommitVisualChanges()
 {
     if (impl_)
+    {
+        if (impl_->transformedRegionDirty)
+        {
+            impl_->transformedRegionDirty = !impl_->SyncPanelWindowRegion();
+        }
         impl_->RequestCommit();
+    }
 }
 
 bool DesktopBackdropCompositor::
 CommitVisualChangesAndNotify(
     HWND notifyWindow, UINT message, WPARAM token)
 {
+    if (impl_ && impl_->transformedRegionDirty)
+    {
+        if (!impl_->SyncPanelWindowRegion()) return false;
+        impl_->transformedRegionDirty = false;
+    }
     return impl_ && impl_->RequestCommitAndNotify(
         notifyWindow, message, token);
 }

@@ -1,6 +1,7 @@
 #include "tray_service.h"
 #include "deployment_context.h"
 #include "diagnostic_log.h"
+#include "tray_menu_placement.h"
 #include <map>
 #include <thread>
 
@@ -45,7 +46,8 @@ struct Connection
         if (shared)
         {
             InterlockedExchange(&shared->stop, 1);
-            if (window) PostMessageW(window, RegisterWindowMessageW(kDetachMessage), shared->owner, 0);
+            if (window) PostMessageW(window, RegisterWindowMessageW(kDetachMessage), shared->owner,
+                static_cast<LPARAM>(Read(shared->epoch)));
             UnmapViewOfFile(shared);
         }
         for (HANDLE handle : {mapping, signal, explorer}) if (handle) CloseHandle(handle);
@@ -60,6 +62,7 @@ struct Service::Impl
     std::shared_ptr<Connection> connection;
     std::map<std::string, Geometry> geometries;
     FocusReturnTracker focus;
+    MenuPlacementGuard menuPlacement;
     std::uint64_t focusSerial = 0;
     HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::jthread worker;
@@ -95,6 +98,17 @@ struct Service::Impl
             WriteFocusTicket(*connection->shared, focus.Current() ? focus.Current()->ticket : FocusTicket{});
     }
     void CancelFocus() { focus.Cancel(); PublishFocus(); }
+    void PruneGeometries()
+    {
+        const auto previous = geometries.size();
+        std::erase_if(geometries, [&](const auto& pair) {
+            return std::none_of(snapshot.icons.begin(), snapshot.icons.end(), [&](const auto& icon) {
+                return icon.key == pair.first && !(icon.state & NIS_HIDDEN) &&
+                    SameFocusIdentity(icon.identity, pair.second.identity);
+            });
+        });
+        if (previous != geometries.size()) PublishGeometries();
+    }
     bool FocusIconExists() const
     {
         const auto* pending = focus.Current();
@@ -211,7 +225,7 @@ struct Service::Impl
                 std::lock_guard guard(mutex);
                 snapshot.connected = current != nullptr; snapshot.degraded = !current;
                 snapshot.error = error; snapshot.icons.clear(); ++snapshot.revision;
-                connection = current; geometries.clear(); CancelFocus();
+                connection = current; geometries.clear(); CancelFocus(); menuPlacement.Cancel();
             }
             if (!current) { WaitForSingleObject(stop, 2000); continue; }
             Reregister(current);
@@ -251,8 +265,13 @@ struct Service::Impl
                 {
                     std::lock_guard guard(mutex);
                     wchar_t message[256]{};
-                    swprintf_s(message, L"Tray collection icons=%zu received=%ld decoded=%ld rejected=%ld lastSize=%ld resync=%ld",
-                        snapshot.icons.size(), Read(state.received), Read(state.decoded), Read(state.rejected), Read(state.lastSize), Read(state.resync));
+                    const auto hidden = std::count_if(snapshot.icons.begin(), snapshot.icons.end(),
+                        [](const auto& icon) { return (icon.state & NIS_HIDDEN) != 0; });
+                    const auto incomplete = std::count_if(snapshot.icons.begin(), snapshot.icons.end(),
+                        [](const auto& icon) { return !icon.callback || icon.pixels.empty(); });
+                    swprintf_s(message, L"Tray collection icons=%zu hidden=%zu incomplete=%zu received=%ld decoded=%ld rejected=%ld lastSize=%ld resync=%ld",
+                        snapshot.icons.size(), static_cast<std::size_t>(hidden), static_cast<std::size_t>(incomplete),
+                        Read(state.received), Read(state.decoded), Read(state.rejected), Read(state.lastSize), Read(state.resync));
                     WriteDiagnosticLogEntry(message); reportedCollection = true;
                 }
                 if (Read(state.resync) != lost && GetTickCount64() - lastResync >= 3000)
@@ -264,8 +283,11 @@ struct Service::Impl
                     if (resyncAttempts++ < 3)
                     {
                         InterlockedIncrement64(&state.epoch);
-                        { std::lock_guard guard(mutex); snapshot.icons.clear();
-                            geometries.clear(); PublishGeometries(); CancelFocus(); ++snapshot.revision; }
+                        // Re-registration is a supplement, not an authoritative
+                        // empty snapshot. Some applications do not re-add after
+                        // a synthetic TaskbarCreated; preserve their live icons.
+                        { std::lock_guard guard(mutex);
+                            CancelFocus(); menuPlacement.Cancel(); ++snapshot.revision; }
                         Reregister(current);
                     }
                 }
@@ -277,14 +299,18 @@ struct Service::Impl
                         return !pid || pid != icon.identity.process;
                     });
                     if (previous != snapshot.icons.size()) ++snapshot.revision;
-                    if (focus.Current() && !FocusIconExists()) CancelFocus();
+                    if (!snapshot.degraded && Read(state.rejected))
+                    { snapshot.degraded = true; ++snapshot.revision; }
+                    PruneGeometries();
+                    if (focus.Current() && !FocusIconExists()) { CancelFocus(); menuPlacement.Cancel(); }
                 }
+                if (!Read(state.ready) || !IsWindow(current->window)) break;
                 const DWORD result = WaitForMultipleObjects(3, handles, FALSE, 1000);
                 if (result == WAIT_OBJECT_0 || result == WAIT_OBJECT_0 + 1) break;
             }
             {
                 std::lock_guard guard(mutex);
-                CancelFocus(); connection.reset(); snapshot.icons.clear(); snapshot.connected = false; ++snapshot.revision;
+                CancelFocus(); menuPlacement.Cancel(); connection.reset(); snapshot.icons.clear(); snapshot.connected = false; ++snapshot.revision;
             }
             current.reset();
         }
@@ -307,11 +333,14 @@ void Service::ClearGeometries()
 bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin)
 {
     Icon icon;
+    RECT geometry{};
     {
         std::lock_guard guard(impl_->mutex);
         const auto found = std::find_if(impl_->snapshot.icons.begin(), impl_->snapshot.icons.end(), [&](const auto& item) { return item.key == key; });
-        if (found == impl_->snapshot.icons.end()) return false;
+        if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return false;
         icon = *found;
+        if (const auto bounds = impl_->geometries.find(key); bounds != impl_->geometries.end() &&
+            SameFocusIdentity(bounds->second.identity, icon.identity)) geometry = bounds->second.rect;
     }
     DWORD pid = 0;
     const HWND target = reinterpret_cast<HWND>(icon.identity.window);
@@ -341,22 +370,43 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
             else { impl_->CancelFocus(); return false; }
         }
     }
-    if (gesture) AllowSetForegroundWindow(pid);
+    if ((action == Activation::Keyboard || action == Activation::ContextKeyboard) && !IsRectEmpty(&geometry))
+        anchor = {geometry.left + (geometry.right - geometry.left) / 2,
+            geometry.top + (geometry.bottom - geometry.top) / 2};
+    bool foregroundGranted = true;
+    if (gesture)
+    {
+        foregroundGranted = AllowSetForegroundWindow(pid) != FALSE;
+        impl_->menuPlacement.Arm(target, anchor, geometry, action == Activation::LeftUp || action == Activation::RightUp);
+    }
     bool accepted = true;
+    DWORD error = ERROR_SUCCESS;
     for (const auto callback : Callbacks(icon, action, anchor))
-        accepted = SendNotifyMessageW(target, icon.callback, callback.wp, callback.lp) != FALSE && accepted;
+    {
+        if (!SendNotifyMessageW(target, icon.callback, callback.wp, callback.lp))
+        { accepted = false; error = GetLastError(); }
+    }
+    if (gesture && action != Activation::LeftDown && action != Activation::RightDown)
+    {
+        wchar_t message[192]{};
+        swprintf_s(message, L"Tray activation action=%u version=%lu geometry=%u foregroundGrant=%u accepted=%u error=%lu",
+            static_cast<unsigned>(action), icon.version, IsRectEmpty(&geometry) ? 0u : 1u,
+            foregroundGranted ? 1u : 0u, accepted ? 1u : 0u, error);
+        WriteDiagnosticLogEntry(message, accepted ? DiagnosticLogLevel::Debug : DiagnosticLogLevel::Warning);
+    }
     if (!accepted && serial)
     {
         std::lock_guard guard(impl_->mutex);
         if (impl_->focus.Current() && impl_->focus.Current()->ticket.serial == serial) impl_->CancelFocus();
     }
+    if (!accepted) impl_->menuPlacement.Cancel();
     return accepted;
 }
 void Service::CancelFocusReturn(HWND origin)
 {
     std::lock_guard guard(impl_->mutex);
     if (!origin || (impl_->focus.Current() && impl_->focus.Current()->ticket.origin == reinterpret_cast<std::uint64_t>(origin)))
-        impl_->CancelFocus();
+    { impl_->CancelFocus(); impl_->menuPlacement.Cancel(); }
 }
 void Service::ObserveForeground(HWND window, DWORD eventTime)
 {
@@ -364,7 +414,8 @@ void Service::ObserveForeground(HWND window, DWORD eventTime)
     std::lock_guard guard(impl_->mutex);
     const bool nativeReturn = impl_->connection && impl_->focus.Current() && window == impl_->connection->window &&
         static_cast<std::uint64_t>(Read(impl_->connection->shared->focusClaimed)) == impl_->focus.Current()->ticket.serial;
-    if (impl_->focus.ObserveForeground(reinterpret_cast<std::uint64_t>(window), process, eventTime, nativeReturn)) impl_->PublishFocus();
+    if (impl_->focus.ObserveForeground(reinterpret_cast<std::uint64_t>(window), process, eventTime, nativeReturn))
+    { impl_->PublishFocus(); impl_->menuPlacement.Cancel(); }
 }
 std::optional<FocusDelivery> Service::TakeFocusReturn(HWND origin, std::uint64_t serial)
 {
@@ -379,6 +430,7 @@ std::optional<FocusDelivery> Service::TakeFocusReturn(HWND origin, std::uint64_t
         static_cast<std::uint64_t>(Read(impl_->connection->shared->epoch)),
         reinterpret_cast<std::uint64_t>(GetForegroundWindow()));
     impl_->PublishFocus();
+    impl_->menuPlacement.Cancel();
     return result;
 }
 void Service::OpenNativeTray()

@@ -98,6 +98,9 @@ void RunTrayFocusWindowTests()
     const auto readyDeadline = GetTickCount64() + 4000;
     while (!Read(state->ready) && GetTickCount64() < readyDeadline) WaitForSingleObject(signal, 50);
     Require(Read(state->ready) == 1, "real collector worker starts on isolated shell");
+    // A delayed worker teardown from the previous connection must not detach
+    // this generation. The following real focus round-trip detects detachment.
+    SendMessageW(shell, RegisterWindowMessageW(kDetachMessage), pid, 122);
 
     FocusTicket ticket;
     ticket.epoch = 123; ticket.serial = 1; ticket.origin = reinterpret_cast<std::uint64_t>(bar);
@@ -178,7 +181,7 @@ void RunTrayFocusWindowTests()
     Require(!FindStatusBarTrayFocus(items, "player"), "missing visible tray target never chooses an unrelated button");
 
     InterlockedExchange(&state->stop, 1);
-    SendMessageW(shell, RegisterWindowMessageW(kDetachMessage), pid, 0);
+    SendMessageW(shell, RegisterWindowMessageW(kDetachMessage), pid, static_cast<LPARAM>(Read(state->epoch)));
     for (const auto window : {other, app, bar, shell}) DestroyWindow(window);
     UnregisterClassW(definition.lpszClassName, definition.hInstance);
     // The collector's independent mapping remains valid until its worker exits.

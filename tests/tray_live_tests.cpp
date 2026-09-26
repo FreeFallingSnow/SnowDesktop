@@ -63,6 +63,8 @@ LRESULT CALLBACK ClientProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
         else if (wp == 3) { Notify(NIM_DELETE); present = false; }
         else if (wp == 4) { Add(); iconData.uVersion = 0; Notify(NIM_SETVERSION); }
         else if (wp == 5) PostQuitMessage(0);
+        else if (wp == 6)
+        { iconData.uFlags = NIF_GUID | NIF_STATE; iconData.dwStateMask = NIS_HIDDEN; iconData.dwState = 0; Notify(NIM_MODIFY); }
         return 1;
     }
     if (message == WM_TIMER)
@@ -168,6 +170,9 @@ int TryRunTrayLiveTests()
             Check(Await([&]{auto icon=find(service.Current());return icon && icon->tip==L"SnowDesktop updated tray fixture" && icon->pixels!=original.pixels;}),"modify updates tooltip and dynamic pixels");
             fixture.Command(2);
             Check(Await([&]{auto icon=find(service.Current());return icon && (icon->state & NIS_HIDDEN);}),"hidden state arrives without dropping icon");
+            Check(!service.Activate(original.key,Activation::Keyboard,{136,56}),"hidden icon rejects stale activation");
+            fixture.Command(6);
+            Check(Await([&]{auto icon=find(service.Current());return icon && !(icon->state & NIS_HIDDEN);}),"visible state restores the existing icon");
             const RECT rect{120,40,152,72}; service.SetGeometry(original.key,rect);
             NOTIFYICONIDENTIFIER identifier{};identifier.cbSize=sizeof(identifier);identifier.hWnd=fixture.value->window;identifier.uID=77;identifier.guidItem=kIconGuid;
             RECT actual{}; HRESULT result=Shell_NotifyIconGetRect(&identifier,&actual);

@@ -7,7 +7,7 @@
 #include "preview_png_writer.h"
 #include "utils.h"
 #include "widget_preview_stage.h"
-#include "winui/system_panel_preview.h"
+#include "system_panel_preview.h"
 #include "status_bar_preview.h"
 
 #include <shellapi.h>
@@ -303,6 +303,17 @@ DesktopApp::ExportNativeComponentPreviews(
         result.error = "cannot initialize the native component renderer";
         return result;
     }
+
+    if (request.component == "calendar-panel" || request.component == "control-panel" ||
+        request.component == "tray-panel" || request.component == "resource-panel")
+        return ExportSystemPanelPreview(request, d2dDevice_.Get(), dwriteFactory_.Get(), appearance,
+            [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& style, float scale) {
+                DrawWidgetPanelBackground(context, frame, style.cornerRadius * scale,
+                    D2D1::ColorF(style.widgetBgR, style.widgetBgG, style.widgetBgB, style.widgetAlpha),
+                    D2D1::ColorF(style.widgetBorderR, style.widgetBorderG, style.widgetBorderB, style.widgetBorderAlpha),
+                    false, 0, &style, false, 0, scale);
+                brushCache_.clear(); brushCacheContext_ = nullptr;
+            });
 
     if (request.component == "status-bar")
         return ExportStatusBarPreview(request, d2dDevice_.Get(), dwriteFactory_.Get(), appearance,
@@ -673,13 +684,8 @@ int TryRunHostCommand(HINSTANCE instance, bool& handled)
         return 1;
     }
 
-    if (request.component == "calendar-panel" || request.component == "control-panel" || request.component == "tray-panel" || request.component == "resource-panel")
-        result = winui::ExportSystemPanelPreview(request, ignoredAppearance);
-    else
-    {
-        DesktopApp app;
-        result = app.ExportNativeComponentPreviews(request);
-    }
+    DesktopApp app;
+    result = app.ExportNativeComponentPreviews(request);
     WriteResultFile(resultPath, result);
     releaseArguments();
     return result.ok ? 0 : 1;

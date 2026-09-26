@@ -1042,17 +1042,40 @@ int main(int argc, char** argv)
     CheckStatusBarInteraction();
     {
         snowdesktop::StatusBarTooltipState tooltip;
-        Check(tooltip.Enter("cpu", L"CPU 9%"), "entering a different item installs its tooltip");
-        const auto* text = tooltip.text.data();
-        Check(!tooltip.Enter("cpu", L"CPU 10%") && tooltip.text.data() == text && tooltip.text == L"CPU 9%",
-            "repeated pointer/sample updates do not replace or restart a visible tooltip");
+        Check(tooltip.Enter("cpu", L"CPU 9%", {}, 100, 400), "entering a different item installs its tooltip");
+        Check(!tooltip.Enter("cpu", L"CPU 10%", {}, 300, 400) && tooltip.text == L"CPU 10%" && tooltip.readyAt == 500,
+            "fresh data updates stationary tooltip content without postponing its original hover deadline");
+        Check(!tooltip.Enter("cpu", L"CPU 11%", {}, 700, 400) && tooltip.text == L"CPU 11%" && tooltip.readyAt == 500,
+            "an already visible tooltip accepts data without starting a second hover delay");
         tooltip.Leave();
-        Check(tooltip.Enter("cpu", L"CPU 10%") && tooltip.text == L"CPU 10%", "reentering uses the current sample");
+        Check(tooltip.key.empty() && tooltip.text.empty() && tooltip.readyAt == 0,
+            "capture, removal and menu dismissal discard the target and its delayed show");
+        Check(tooltip.Enter("cpu", L"CPU 10%", {}, 900, 400) && tooltip.text == L"CPU 10%" && tooltip.readyAt == 1300,
+            "reentering uses the current sample and a new deadline");
+        using snowdesktop::NativeTooltipPlacement;
+        const auto topTip = snowdesktop::PlaceNativeTooltip({900, 0, 980, 32}, {200, 40}, {0, 32, 1000, 800},
+            NativeTooltipPlacement::Below, 6, 4);
+        Check(topTip.left == 796 && topTip.top == 38 && topTip.right == 996 && topTip.bottom == 78,
+            "top-bar tooltip stays below the bar and within its monitor's right edge");
+        const auto bottomTip = snowdesktop::PlaceNativeTooltip({-100, 768, -20, 800}, {200, 40}, {-1000, 0, 0, 768},
+            NativeTooltipPlacement::Above, 6, 4);
+        Check(bottomTip.left == -204 && bottomTip.top == 722 && bottomTip.right == -4 && bottomTip.bottom == 762,
+            "bottom-bar tooltip uses its negative-origin monitor and faces the desktop");
+        const auto flipped = snowdesktop::PlaceNativeTooltip({20, 50, 60, 70}, {500, 200}, {0, 0, 120, 300},
+            NativeTooltipPlacement::Above, 6, 4);
+        Check(flipped.left == 4 && flipped.right == 116 && flipped.top == 76 && flipped.bottom == 276,
+            "oversize tooltip clamps width and flips when the requested side cannot fit");
         snowdesktop::StatusBarVolumeWheel wheel;
         Check(!wheel.Move(60, .5) && wheel.Move(60, .5).value() == .52 && wheel.Move(120, .5).value() == .54,
             "high-resolution wheel steps accumulate against the pending target before device readback");
         Check(wheel.Move(12000, .5).value() == 1 && wheel.Move(-24000, .5).value() == 0,
             "volume wheel clamps both endpoints");
+        wheel.Started(11, "speakers");
+        wheel.Move(120, .5); wheel.Started(12, "speakers");
+        Check(!wheel.Complete(11) && wheel.pending && wheel.task == 12,
+            "a late coalesced request completion cannot erase the latest unconfirmed wheel target");
+        Check(wheel.Complete(12) && !wheel.pending && wheel.task == 0 && std::abs(wheel.Move(120, .43).value() - .45) < .0001,
+            "after device readback, both success and failure return the next wheel step to actual volume");
         Check(snowdesktop::StatusBarRate(1048576) == L"1.0 MiB/s" && snowdesktop::StatusBarRate(0) == L"0.0 B/s",
             "traffic formatting stays compact as units change without integer overflow");
     }

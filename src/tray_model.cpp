@@ -19,28 +19,64 @@ std::string Key(const Identity& identity)
 }
 bool Apply(std::vector<Icon>& icons, const Event& event)
 {
+    const bool bootstrap = event.operation == kBootstrapIcon;
     auto found = std::find_if(icons.begin(), icons.end(), [&](const auto& icon) { return SameIdentity(icon.identity, event.identity); });
+    if (bootstrap && std::any_of(icons.begin(), icons.end(), [&](const auto& icon) {
+        return icon.identity.window == event.identity.window && icon.identity.process == event.identity.process &&
+            icon.identity.id == event.identity.id;
+    })) return false; // Never overwrite authoritative GUID/version/state data.
     if (event.operation == NIM_DELETE)
     {
-        if (found == icons.end()) return false;
+        if (found == icons.end() || (event.identity.window &&
+            (event.identity.window != found->identity.window || event.identity.process != found->identity.process))) return false;
         icons.erase(found); return true;
     }
-    if (event.operation != NIM_ADD && event.operation != NIM_MODIFY && event.operation != NIM_SETVERSION) return false;
+    if (!bootstrap && event.operation != NIM_ADD && event.operation != NIM_MODIFY && event.operation != NIM_SETVERSION) return false;
+    if (event.operation == NIM_SETVERSION && event.version > NOTIFYICON_VERSION_4) return false;
+    const bool image = (event.flags & NIF_ICON) && event.width && event.height &&
+        event.width <= kIconSize && event.height <= kIconSize;
+    const bool owner = event.identity.window && event.identity.process;
+    // Classic toolbar supplementation does not expose GUIDs. Upgrade its
+    // provisional HWND identity when the authoritative registration arrives.
+    if (found == icons.end() && owner && HasGuid(event.identity.guid) &&
+        (event.operation == NIM_ADD || event.operation == NIM_MODIFY))
+        found = std::find_if(icons.begin(), icons.end(), [&](const auto& icon) {
+            return !HasGuid(icon.identity.guid) && icon.identity.window == event.identity.window &&
+                icon.identity.id == event.identity.id && icon.identity.process == event.identity.process;
+        });
     if (found == icons.end())
     {
-        // A version-only update cannot resurrect an icon removed in this epoch.
-        if (event.operation != NIM_ADD || icons.size() >= kGeometries) return false;
+        // An application already running at attachment may answer the
+        // re-registration request with a complete MODIFY. Partial changes and
+        // version-only packets cannot manufacture a new actionable icon.
+        if (!owner || icons.size() >= kGeometries || (!bootstrap && event.operation != NIM_ADD &&
+            !(event.operation == NIM_MODIFY && image && (event.flags & NIF_MESSAGE) && event.callback))) return false;
         icons.emplace_back(); found = icons.end() - 1;
-        found->key = Key(event.identity);
-        if (HasGuid(event.identity.guid)) found->persistentKey = found->key;
+        found->identity = event.identity;
     }
-    found->identity = event.identity;
-    if (event.operation == NIM_SETVERSION) { found->version = event.version; return true; }
-    if (event.operation == NIM_ADD) found->version = 0;
+    else if (owner && (found->identity.window != event.identity.window || found->identity.process != event.identity.process))
+    {
+        // Only registration may rebind a GUID to another owner. Do not inherit
+        // a previous process's image, callback, version or resolved path.
+        if (event.operation != NIM_ADD) return false;
+        *found = Icon{};
+        found->identity = event.identity;
+    }
+    // GUID-only MODIFY/SETVERSION deliberately omit HWND and uID. Preserve
+    // the live owner's callback destination instead of erasing its identity.
+    if (owner) found->identity = event.identity;
+    found->key = Key(found->identity);
+    if (HasGuid(found->identity.guid)) found->persistentKey = found->key;
+    if (event.operation == NIM_SETVERSION)
+    {
+        found->version = event.version; return true;
+    }
+    // A duplicate ADD is observed even when Explorer rejects it because the
+    // icon already exists. It must not silently downgrade a v4 registration.
     if (event.flags & NIF_MESSAGE) found->callback = event.callback;
     if (event.flags & NIF_TIP) found->tip.assign(event.tip, wcsnlen_s(event.tip, std::size(event.tip)));
     if (event.flags & NIF_STATE) found->state = (found->state & ~event.stateMask) | (event.state & event.stateMask);
-    if ((event.flags & NIF_ICON) && event.width && event.height && event.width <= kIconSize && event.height <= kIconSize)
+    if (image)
     {
         found->width = event.width; found->height = event.height;
         found->pixels.assign(event.pixels.begin(), event.pixels.begin() + event.width * event.height);

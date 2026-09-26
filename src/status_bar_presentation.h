@@ -1,4 +1,5 @@
 #pragma once
+#include "native_tooltip_state.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -32,6 +33,8 @@ struct StatusBarVolumeWheel
 {
     int remainder = 0;
     std::optional<double> pending;
+    std::uint64_t task = 0;
+    std::string endpoint;
     std::optional<double> Move(int delta, double sampled)
     {
         remainder += delta;
@@ -41,19 +44,17 @@ struct StatusBarVolumeWheel
         pending = std::clamp(pending.value_or(sampled) + steps * .02, 0., 1.);
         return pending;
     }
-    void Reset() { remainder = 0; pending.reset(); }
-};
-// Repeated WM_MOUSEMOVE notifications must not restart the tooltip delay or
-// replace its backing string. Sample updates leave the visible tooltip intact.
-struct StatusBarTooltipState
-{
-    std::string key;
-    std::wstring text;
-    bool Enter(std::string next, std::wstring label)
+    void Started(std::uint64_t id, std::string device)
     {
-        if (key == next) return false;
-        key = std::move(next); text = std::move(label); return true;
+        task = id; endpoint = std::move(device);
+        if (!id) Reset();
     }
-    void Leave() { key.clear(); text.clear(); }
+    bool Complete(std::uint64_t id)
+    {
+        if (!task || id != task) return false;
+        Reset(); return true;
+    }
+    void Reset() { remainder = 0; pending.reset(); task = 0; endpoint.clear(); }
 };
+using StatusBarTooltipState = NativeTooltipState;
 }

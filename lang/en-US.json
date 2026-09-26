@@ -1696,6 +1696,8 @@
     "appearance.quickPanelCard": "Quick panel theme",
     "appearance.popupCard": "Popup theme",
     "appearance.openTaskbar": "Open taskbar settings",
+    "appearance.openStatusBar": "Open status bar settings",
+    "statusBar.defaultAppearance": "Default status bar appearance",
     "appearance.followGlobalPreset": "Global theme preset (default)",
   "appearance.text": "Text",
   "largeIcon.followComponentRadius": "Follow component corner radius",

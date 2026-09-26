@@ -14,6 +14,8 @@
  */
 
 #include "widget_engine.h"
+#include "native_control_geometry.h"
+#include "native_tooltip_content.h"
 #include "widget_menu_catalogue.h"
 #include "widget_filesystem_drop.h"
 #include "widget_button_fill.h"
@@ -18379,58 +18381,23 @@ static void DrawWidgetViewNode(D2DState* state,
             : 0.0f;
         const float thumbRadius = std::min(8.0f, std::max(3.0f,
             std::min(node.frame.width, node.frame.height) * 0.3f));
-        const auto content = snowdesktop::widget_runtime::
-            ViewNodeContentRect(node);
-        const float mainLength = vertical
-            ? content.height : content.width;
-        const float inset = std::min(thumbRadius,
-            std::max(0.0f, mainLength * 0.5f));
         const float trackThickness = std::min(4.0f,
             vertical ? node.frame.width : node.frame.height);
-        D2D1_RECT_F trackRect{};
-        if (vertical)
-        {
-            const float x = state->widgetRect.left + content.x +
-                content.width * 0.5f;
-            trackRect = D2D1::RectF(x - trackThickness * 0.5f,
-                state->widgetRect.top + content.y + inset,
-                x + trackThickness * 0.5f,
-                state->widgetRect.top + content.y + content.height - inset);
-        }
-        else
-        {
-            const float y = state->widgetRect.top + content.y +
-                content.height * 0.5f;
-            trackRect = D2D1::RectF(
-                state->widgetRect.left + content.x + inset,
-                y - trackThickness * 0.5f,
-                state->widgetRect.left + content.x + content.width - inset,
-                y + trackThickness * 0.5f);
-        }
-        const float trackRadius = trackThickness * 0.5f;
+        const auto content = snowdesktop::widget_runtime::ViewNodeContentRect(node);
+        const auto geometry = snowdesktop::native_controls::Slider(
+            D2D1::RectF(state->widgetRect.left + content.x, state->widgetRect.top + content.y,
+                state->widgetRect.left + content.x + content.width,
+                state->widgetRect.top + content.y + content.height),
+            thumbRadius, trackThickness, normalized, vertical);
+        const auto& trackRect = geometry.track;
+        const auto& fillRect = geometry.fill;
+        const auto& thumb = geometry.thumb;
+        const float trackRadius = geometry.trackRadius;
         if (ID2D1SolidColorBrush* track = GetCachedBrush(state,
                 static_cast<int>(style.background.value_or(0xFFFFFF)),
                 opacity * (style.background ? 1.0f : 0.22f)))
             state->ctx->FillRoundedRectangle(D2D1::RoundedRect(
                 trackRect, trackRadius, trackRadius), track);
-        D2D1_RECT_F fillRect = trackRect;
-        D2D1_POINT_2F thumb{};
-        if (vertical)
-        {
-            const float y = trackRect.bottom - normalized *
-                (trackRect.bottom - trackRect.top);
-            fillRect.top = y;
-            thumb = D2D1::Point2F(
-                (trackRect.left + trackRect.right) * 0.5f, y);
-        }
-        else
-        {
-            const float x = trackRect.left + normalized *
-                (trackRect.right - trackRect.left);
-            fillRect.right = x;
-            thumb = D2D1::Point2F(x,
-                (trackRect.top + trackRect.bottom) * 0.5f);
-        }
         const std::uint32_t fillColor =
             style.foreground.value_or(0x4C9AFF);
         if (ID2D1SolidColorBrush* fill = GetCachedBrush(state,
@@ -18994,41 +18961,11 @@ static void DrawWidgetViewTooltip(D2DState* state,
         DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_WRAP);
     const std::wstring title = Utf8ToWideLocal(region->tooltipTitle);
     const std::wstring body = Utf8ToWideLocal(region->tooltip);
-    std::wstring text;
-    text.reserve(title.size() + body.size() + 1);
-    if (!title.empty())
-    {
-        text += title;
-        text.push_back(L'\n');
-    }
-    text += body;
-    if (!format || text.empty()) return;
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(state->dwrite->CreateTextLayout(text.data(),
-            static_cast<UINT32>(text.size()), format,
-            std::max(1.0f, maximumWidth - 16.0f),
-            std::max(1.0f, maximumHeight - 12.0f), &layout)) || !layout)
-        return;
-    if (!title.empty())
-    {
-        const DWRITE_TEXT_RANGE titleRange{
-            0, static_cast<UINT32>(title.size()) };
-        layout->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, titleRange);
-        layout->SetFontSize(14.0f, titleRange);
-    }
-    DWRITE_TRIMMING trimming{};
-    trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
-    ComPtr<IDWriteInlineObject> ellipsis;
-    if (SUCCEEDED(state->dwrite->CreateEllipsisTrimmingSign(
-            format, &ellipsis)) && ellipsis)
-        layout->SetTrimming(&trimming, ellipsis.Get());
-    DWRITE_TEXT_METRICS metrics{};
-    if (FAILED(layout->GetMetrics(&metrics))) return;
-    const float width = std::min(maximumWidth,
-        std::max(32.0f, std::ceil(metrics.widthIncludingTrailingWhitespace) +
-            16.0f));
-    const float height = std::min(maximumHeight,
-        std::max(24.0f, std::ceil(metrics.height) + 12.0f));
+    snowdesktop::NativeTooltipTextLayout measured;
+    if (!format || FAILED(snowdesktop::MeasureNativeTooltip(state->dwrite,
+        format, title, body, maximumWidth, maximumHeight, measured))) return;
+    const auto& layout = measured.layout;
+    const float width = measured.width, height = measured.height;
     const auto& shape = region->shape;
     const bool circle = shape.type ==
         snowdesktop::widget_runtime::InteractionShapeType::Circle;

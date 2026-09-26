@@ -10,6 +10,18 @@
 
 namespace snowdesktop
 {
+struct StatusBarAppearanceRule
+{
+    bool enabled = false;
+    SurfaceTheme theme = [] {
+        SurfaceTheme value;
+        // Panel appearance persistence stores material fields, not a preset ID.
+        value.appearance.backgroundPreset = kAppearancePresetCustom;
+        return value;
+    }();
+    friend bool operator==(const StatusBarAppearanceRule&, const StatusBarAppearanceRule&) = default;
+};
+
 struct StatusBarSettings
 {
     bool enabled = false;
@@ -17,6 +29,7 @@ struct StatusBarSettings
     DockMonitorScope monitorScope = DockMonitorScope::First;
     float scale = 1.0f;
     SurfaceTheme theme;
+    StatusBarAppearanceRule shellUi, maximizedWindow, visibleWindow;
     bool menu = true, quickSearch = true;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
@@ -29,6 +42,13 @@ struct StatusBarSettings
     std::vector<std::string> rightOrder = {"tray", "cpu", "memory", "gpu", "traffic", "network", "volume", "battery", "controlCenter"};
     friend bool operator==(const StatusBarSettings&, const StatusBarSettings&) = default;
 };
+
+template<class Visitor> void VisitStatusBarAppearanceRules(Visitor visit)
+{
+    visit("shellUi", &StatusBarSettings::shellUi);
+    visit("maximizedWindow", &StatusBarSettings::maximizedWindow);
+    visit("visibleWindow", &StatusBarSettings::visibleWindow);
+}
 
 template<class Visitor> void VisitStatusBarFlags(Visitor visit)
 {
@@ -115,6 +135,20 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
     }
     if (const auto* field = input.Find("theme"))
         valid = DecodeSurfaceTheme(*field, value.theme, true) && valid;
+    VisitStatusBarAppearanceRules([&](const char* key, auto member) {
+        if (const auto* field = input.Find(key))
+        {
+            if (!field->IsObject()) { valid = false; return; }
+            auto& rule = value.*member;
+            if (const auto* enabled = field->Find("enabled"))
+            {
+                if (!enabled->IsBoolean()) valid = false;
+                else rule.enabled = enabled->boolean;
+            }
+            if (const auto* theme = field->Find("theme"))
+                valid = DecodeSurfaceTheme(*theme, rule.theme, true) && valid;
+        }
+    });
     const auto readList = [&](const char* key, auto& list) {
         if (const auto* field = input.Find(key))
         {
@@ -144,6 +178,15 @@ inline std::string EncodeStatusBarSettings(StatusBarSettings value)
     text << "{\"position\":" << static_cast<int>(value.position)
          << ",\"monitorScope\":" << static_cast<int>(value.monitorScope)
          << ",\"scale\":" << value.scale << ",\"theme\":" << theme;
+    bool valid = true;
+    VisitStatusBarAppearanceRules([&](const char* key, auto member) {
+        const auto& rule = value.*member;
+        const auto encoded = EncodeSurfaceTheme(rule.theme, true);
+        if (encoded.empty()) { valid = false; return; }
+        text << ",\"" << key << "\":{\"enabled\":" << (rule.enabled ? "true" : "false")
+             << ",\"theme\":" << encoded << '}';
+    });
+    if (!valid) return {};
     VisitStatusBarFlags([&](const char* key, auto member) {
         text << ",\"" << key << "\":" << (value.*member ? "true" : "false");
     });

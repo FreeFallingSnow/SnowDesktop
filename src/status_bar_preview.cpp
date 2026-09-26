@@ -176,10 +176,11 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 identical.audio->volume = .49;
                 Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "tooltip-only changes would repaint the bar");
                 StatusBarTooltipState tooltip;
-                Require(tooltip.Enter("controlCenter", Item(items, "controlCenter").tip), "tooltip did not enter its target");
-                const auto saved = tooltip.text;
-                Require(!tooltip.Enter("controlCenter", Item(BuildStatusBarItems(settings, identical), "controlCenter").tip) && tooltip.text == saved,
-                    "sampling would reset the visible tooltip");
+                Require(tooltip.Enter("controlCenter/1", Item(items, "controlCenter").controlTips[1], {}, 100, 400), "tooltip did not enter its target");
+                const auto currentTip = Item(BuildStatusBarItems(settings, identical), "controlCenter").controlTips[1];
+                Require(!tooltip.Enter("controlCenter/1", currentTip, {}, 800, 400) &&
+                    tooltip.text == currentTip && tooltip.readyAt == 500,
+                    "stationary tooltip must update volume without resetting its hover delay");
                 auto changedTray = data;
                 changedTray.tray.front().tip = L"New tray tooltip";
                 changedTray.tray.front().application = L"New application label";

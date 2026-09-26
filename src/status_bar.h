@@ -1,5 +1,5 @@
 #pragma once
-#include "status_bar_settings.h"
+#include "status_bar_appearance.h"
 #include <windows.h>
 #include <functional>
 #include <memory>
@@ -38,7 +38,9 @@ public:
     // UI-thread only. Monitor order is resolved by the application's page roles.
     void Configure(StatusBarSettings settings, const PersonalizationSettings& global,
         const std::vector<StatusBarMonitor>& monitors,
-        IDCompositionDesktopDevice* composition, IDWriteFactory* text);
+        IDCompositionDesktopDevice* composition, IDWriteFactory* text,
+        const PersonalizationSettings* tooltipAppearance = nullptr,
+        DrawBackground drawTooltipBackground = {});
     void Close();
     bool IsFullscreen(HMONITOR monitor) const;
     std::shared_ptr<tray::Service> Tray() const;
@@ -47,6 +49,9 @@ public:
     bool DropTrayIcon(std::string_view key, POINT screen);
     std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);
+    // Application-owned window observations; must not enable taskbar effects.
+    void SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider);
+    PersonalizationSettings AppearanceForMonitor(HMONITOR monitor) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

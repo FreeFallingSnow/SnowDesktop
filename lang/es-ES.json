@@ -1696,6 +1696,8 @@
     "appearance.quickPanelCard": "Tema del panel rápido",
     "appearance.popupCard": "Tema de las ventanas emergentes",
     "appearance.openTaskbar": "Abrir ajustes de la barra de tareas",
+    "appearance.openStatusBar": "Abrir la configuración de la barra de estado",
+    "statusBar.defaultAppearance": "Apariencia predeterminada de la barra de estado",
     "appearance.followGlobalPreset": "Preajuste del tema global (predeterminado)",
   "appearance.text": "Texto",
   "largeIcon.followComponentRadius": "Usar el radio de esquina de los componentes",

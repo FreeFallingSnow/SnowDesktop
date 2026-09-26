@@ -1,5 +1,4 @@
 #include "pch.h"
-#include "../status_bar_appearance.h"
 
 #include "personalization_page_presenter.h"
 #include "settings_presenter_controls.h"
@@ -148,13 +147,13 @@ struct PersonalizationPagePresenter::Impl
 
     SettingsCard themeCard;
     SettingsCard themeTargetsCard;
-    SettingsCard popupThemeCard, dockThemeCard, statusBarThemeCard, taskbarLinkCard;
-    std::shared_ptr<PanelAppearanceEditor> quickAppearanceEditor, popupAppearanceEditor, dockAppearanceEditor, statusBarAppearanceEditor;
-    muxc::ComboBox dockAppearanceCombo{nullptr}, statusBarAppearanceCombo{nullptr};
-    muxc::HyperlinkButton taskbarLink{nullptr};
+    SettingsCard popupThemeCard, dockThemeCard, statusBarLinkCard, taskbarLinkCard;
+    std::shared_ptr<PanelAppearanceEditor> quickAppearanceEditor, popupAppearanceEditor, dockAppearanceEditor;
+    muxc::ComboBox dockAppearanceCombo{nullptr};
+    muxc::HyperlinkButton taskbarLink{nullptr}, statusBarLink{nullptr};
     SettingRow taskbarThemeRow;
-    SettingRow dockAppearanceRow, statusBarAppearanceRow;
-    winrt::event_token dockAppearanceToken{}, statusBarAppearanceToken{}, taskbarLinkToken{};
+    SettingRow dockAppearanceRow, statusBarThemeRow;
+    winrt::event_token dockAppearanceToken{}, statusBarLinkToken{}, taskbarLinkToken{};
     PersonalizationSettings currentGlobalAppearance;
     std::uint64_t dockRevision = 0;
     SettingsCard widgetAppearanceCard;
@@ -439,18 +438,12 @@ struct PersonalizationPagePresenter::Impl
                     [value](auto& settings) { settings.customAppearance = value; });
             });
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
-        InitializeCard(statusBarThemeCard, cardStyle, themeRoot);
-        statusBarAppearanceCombo = muxc::ComboBox{};
-        statusBarAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        statusBarAppearanceCombo.MaxWidth(520.0);
-        statusBarAppearanceRow.Initialize(statusBarAppearanceCombo);
-        statusBarThemeCard.content.Children().Append(statusBarAppearanceRow.root);
-        statusBarAppearanceEditor = PanelAppearanceEditor::Create(localize,
-            [this](const auto& value, bool commit) {
-                EmitGeneral(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
-                    [value](auto& settings) { settings.statusBar.theme.appearance = value; settings.statusBar.theme.customized = true; });
-            });
-        statusBarThemeCard.content.Children().Append(statusBarAppearanceEditor->Content());
+        InitializeCard(statusBarLinkCard, cardStyle, themeRoot);
+        statusBarLink = muxc::HyperlinkButton{};
+        statusBarLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        statusBarThemeRow.Initialize(statusBarLink);
+        statusBarThemeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        statusBarLinkCard.content.Children().Append(statusBarThemeRow.root);
         InitializeCard(taskbarLinkCard, cardStyle, themeRoot);
         taskbarLink = muxc::HyperlinkButton{};
         taskbarLink.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -662,22 +655,9 @@ struct PersonalizationPagePresenter::Impl
                 if (index > 0) settings.appearancePreset = kPresetIds[index - 1];
             });
         });
-        statusBarAppearanceToken = statusBarAppearanceCombo.SelectionChanged([this](const auto&, const auto&) {
-            if (!CanEmit()) return;
-            statusBarAppearanceEditor->Flush();
-            const int index = statusBarAppearanceCombo.SelectedIndex();
-            if (index < 0 || index >= static_cast<int>(StatusBarThemeModes.size())) return;
-            const auto global = currentGlobalAppearance;
-            EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [index, global](auto& settings) {
-                auto& theme = settings.statusBar.theme;
-                const int mode = StatusBarThemeModes[static_cast<std::size_t>(index)];
-                if (mode == 4 && !theme.customized)
-                {
-                    theme.appearance = ResolveStatusBarAppearance(theme, global);
-                    theme.customized = true;
-                }
-                theme.mode = mode;
-            });
+        statusBarLinkToken = statusBarLink.Click([this](const auto&, const auto&) {
+            if (!closed && active && actions.navigate)
+                actions.navigate(SettingsRoute::ForPage(SettingsPage::StatusBar, "statusBar.theme"));
         });
         taskbarLinkToken = taskbarLink.Click([this](auto const&, auto const&) {
             if (!closed && active && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Taskbar));
@@ -1079,8 +1059,9 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
         SetCardText(popupThemeCard, "appearance.popupCard", L"Popup theme");
         SetCardText(dockThemeCard, "settings.dock.dock", L"Dock");
-        SetCardText(statusBarThemeCard, "settings.nav.statusBar", L"Status bar");
-        statusBarAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
+        SetCardText(statusBarLinkCard, "settings.nav.statusBar", L"Status bar");
+        statusBarLink.Content(winrt::box_value(L("appearance.openStatusBar", L"Open status bar settings")));
+        statusBarThemeRow.SetText(L("app.settings.theme", L"Theme"));
         SetCardText(taskbarLinkCard, "settings.dock.taskbar", L"Taskbar");
         taskbarLink.Content(winrt::box_value(L("appearance.openTaskbar", L"Open taskbar settings")));
         dockAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
@@ -1090,7 +1071,7 @@ struct PersonalizationPagePresenter::Impl
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
             {"app.settings.dark_acrylic", L"Dark acrylic"}, {"app.settings.light_acrylic", L"Light acrylic"},
             {"app.settings.custom", L"Custom"}});
-        quickAppearanceEditor->RefreshLocalizedText(); popupAppearanceEditor->RefreshLocalizedText(); dockAppearanceEditor->RefreshLocalizedText(); statusBarAppearanceEditor->RefreshLocalizedText();
+        quickAppearanceEditor->RefreshLocalizedText(); popupAppearanceEditor->RefreshLocalizedText(); dockAppearanceEditor->RefreshLocalizedText();
         SetCardText(widgetAppearanceCard,
             "app.settings.component_bg", L"Widget Appearance");
         SetCardText(contextMenuCard,
@@ -1124,15 +1105,6 @@ struct PersonalizationPagePresenter::Impl
         };
         ReplaceComboItems(quickNavigationThemeCombo, themeChoices);
         ReplaceComboItems(collectionPopupThemeCombo, themeChoices);
-        ReplaceComboItems(statusBarAppearanceCombo, {
-            {"app.settings.taskbar_follow_global", L"Follow global theme"},
-            {"app.settings.dark", L"Dark"},
-            {"app.settings.light", L"Light"},
-            {"app.settings.dark_glass", L"Dark glass"},
-            {"app.settings.light_glass", L"Light glass"},
-            {"app.settings.dark_acrylic", L"Dark Acrylic"},
-            {"app.settings.light_acrylic", L"Light Acrylic"},
-            {"app.settings.custom", L"Custom"}});
         muxa::AutomationProperties::SetName(quickNavigationThemeCombo,
             quickNavigationThemeRow.label.Text());
         muxa::AutomationProperties::SetName(collectionPopupThemeCombo,
@@ -1273,10 +1245,6 @@ struct PersonalizationPagePresenter::Impl
         {
             quickAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, currentGlobalAppearance, snapshot.values.general.quickNavTheme, true), newGeneration);
             popupAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.collectionPopupAppearance, currentGlobalAppearance, snapshot.values.general.collectionPopupTheme, false), newGeneration);
-            const auto& statusTheme = snapshot.values.general.statusBar.theme;
-            statusBarAppearanceCombo.SelectedIndex(StatusBarThemeSelection(statusTheme.mode));
-            statusBarAppearanceEditor->SetValue(ResolveStatusBarAppearance(statusTheme, currentGlobalAppearance), newGeneration);
-            statusBarAppearanceEditor->Content().Visibility(statusTheme.mode == 4 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
         }
@@ -1300,7 +1268,7 @@ struct PersonalizationPagePresenter::Impl
             id == "personalization.globalTheme")
             return presetCombo;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
-        if (id == "personalization.statusBarTheme") return statusBarAppearanceCombo;
+        if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
         if (id == "personalization.backgroundColor")
             return backgroundColor.editor.button;
@@ -1406,7 +1374,7 @@ struct PersonalizationPagePresenter::Impl
     {
         try
         {
-            quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush(); statusBarAppearanceEditor->Flush();
+            quickAppearanceEditor->Flush(); popupAppearanceEditor->Flush(); dockAppearanceEditor->Flush();
             if (panelGradientEditor) panelGradientEditor->Flush();
             for (ContinuousControl* control : continuousControls)
                 Commit(*control);
@@ -1425,8 +1393,8 @@ struct PersonalizationPagePresenter::Impl
             CommitContinuousEdits();
         active = false;
         closed = true;
-        quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close(); statusBarAppearanceEditor->Close();
-        dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarAppearanceCombo.SelectionChanged(statusBarAppearanceToken); taskbarLink.Click(taskbarLinkToken);
+        quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
+        dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken);
         try
         {
             presetCombo.SelectionChanged(presetToken);

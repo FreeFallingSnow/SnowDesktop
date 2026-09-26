@@ -45,6 +45,16 @@ int main()
         Check(!value.statusBar.enabled && value.statusBar.position == DockPosition::Top &&
                 value.statusBar.monitorScope == DockMonitorScope::First && value.statusBar.theme.mode == -1,
             "new and migrated settings must keep the bar off and follow the global theme");
+        Check(!firstEnable.shellUi.enabled && !firstEnable.maximizedWindow.enabled && !firstEnable.visibleWindow.enabled,
+            "legacy status bar settings without scene rules must retain the default appearance in every scene");
+        JsonValue legacyJson; StatusBarSettings legacy;
+        ParseJson("{\"theme\":{\"mode\":4,\"customized\":true,\"appearance\":{\"backgroundR\":0.125,\"opacity\":0.42}},"
+            "\"pinnedTrayItems\":[\"guid:legacy\"]}", legacyJson);
+        Check(DecodeStatusBarSettings(legacyJson, legacy) && legacy.theme.mode == 4 && legacy.theme.customized &&
+            legacy.pinnedTrayItems == std::vector<std::string>{"guid:legacy"} &&
+            ResolveStatusBarAppearance(legacy, PersonalizationSettings{}, {true, true, true}).widgetAlpha == .42f &&
+            legacy.theme.appearance.widgetBgR == .125f,
+            "old custom themes and tray identities survive migration even while all scenes are active");
         value.statusBar.enabled = true;
         value.statusBar.position = DockPosition::Bottom;
         value.statusBar.monitorScope = DockMonitorScope::All;
@@ -58,11 +68,18 @@ int main()
         value.statusBar.theme.customized = true;
         value.statusBar.theme.appearance.backgroundPreset = kAppearancePresetCustom;
         value.statusBar.theme.appearance.widgetBgR = .35f;
+        value.statusBar.shellUi.enabled = true;
+        value.statusBar.shellUi.theme.mode = 6;
+        value.statusBar.maximizedWindow.enabled = true;
+        value.statusBar.maximizedWindow.theme.mode = -1;
+        value.statusBar.visibleWindow.theme.mode = 4;
+        value.statusBar.visibleWindow.theme.customized = true;
+        value.statusBar.visibleWindow.theme.appearance.widgetBgB = .73f;
         const auto path = std::filesystem::temp_directory_path() / (L"SnowDesktopStatusBar-" + std::to_wstring(GetCurrentProcessId()) + L".json");
         GeneralSettings restored;
         Check(SaveGeneralSettings(path.c_str(), value) && LoadGeneralSettings(path.c_str(), restored) &&
                 restored.statusBar == value.statusBar,
-            "status bar geometry, theme and stable tray identities must survive persistence");
+            "status bar geometry, default and active or disabled scene themes, and tray identities must survive persistence");
         std::error_code error;
         std::filesystem::remove(path, error);
         const std::array<int, 8> expectedPresets{-1, kAppearancePresetDark, kAppearancePresetLight,
@@ -81,6 +98,42 @@ int main()
                 Check(ResolveStatusBarAppearance(decoded.theme, MakeAppearancePreset(kAppearancePresetLight)) == MakeAppearancePreset(expectedPresets[i]),
                     "bar preset matches the corresponding global material");
         }
+        for (const auto* json : {"{\"shellUi\":true}", "{\"maximizedWindow\":{\"enabled\":1}}",
+            "{\"visibleWindow\":{\"theme\":{\"mode\":7}}}"})
+        {
+            JsonValue invalid; ParseJson(json, invalid);
+            auto unchanged = value.statusBar;
+            Check(!DecodeStatusBarSettings(invalid, unchanged) && unchanged == value.statusBar,
+                "invalid scene settings must fail atomically without replacing valid preferences");
+        }
+        // Independent expectations protect priority and global-vs-default semantics:
+        // all three scenes may match, while a disabled higher rule must fall through.
+        StatusBarSettings scenes;
+        scenes.theme.mode = 1;
+        scenes.shellUi.enabled = scenes.maximizedWindow.enabled = scenes.visibleWindow.enabled = true;
+        scenes.shellUi.theme.mode = 5;
+        scenes.maximizedWindow.theme.mode = 0;
+        scenes.visibleWindow.theme.mode = 3;
+        const auto global = MakeAppearancePreset(kAppearancePresetGlassLight);
+        const auto savedScenes = scenes;
+        Check(ResolveStatusBarAppearance(scenes, global, {true, true, true}) == MakeAppearancePreset(kAppearancePresetGlassDark),
+            "system UI overrides maximized and ordinary visible applications");
+        Check(ResolveStatusBarAppearance(scenes, global, {false, true, true}) == MakeAppearancePreset(kAppearancePresetDark),
+            "maximized applications override ordinary visible applications");
+        Check(ResolveStatusBarAppearance(scenes, global, {false, false, true}) == MakeAppearancePreset(kAppearancePresetAcrylicLight),
+            "visible application scene selects its own full global preset");
+        Check(ResolveStatusBarAppearance(scenes, global, {}) == MakeAppearancePreset(kAppearancePresetLight) && scenes == savedScenes,
+            "ending every scene restores the saved default without rewriting preferences");
+        scenes.shellUi.enabled = false;
+        Check(ResolveStatusBarAppearance(scenes, global, {true, true, true}) == MakeAppearancePreset(kAppearancePresetDark),
+            "disabled higher-priority scenes must fall through to the next enabled match");
+        scenes.maximizedWindow.theme.mode = -1;
+        Check(ResolveStatusBarAppearance(scenes, global, {false, true, true}) == global,
+            "a scene following global must use global appearance rather than the independent bar default");
+        scenes.visibleWindow.theme.mode = 4;
+        scenes.visibleWindow.theme.appearance.widgetAlpha = .43f;
+        Check(ResolveStatusBarAppearance(scenes, global, {false, false, true}) == scenes.visibleWindow.theme.appearance,
+            "a custom scene keeps its independent material values");
         value.statusBar.position = DockPosition::Right;
         NormalizeStatusBarSettings(value.statusBar);
         Check(value.statusBar.position == DockPosition::Top && value.statusBar.pinnedTrayItems.size() == 2,

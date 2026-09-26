@@ -1696,6 +1696,8 @@
     "appearance.quickPanelCard": "Design des Schnellzugriffspanels",
     "appearance.popupCard": "Popup-Design",
     "appearance.openTaskbar": "Taskleisteneinstellungen öffnen",
+    "appearance.openStatusBar": "Statusleisteneinstellungen öffnen",
+    "statusBar.defaultAppearance": "Standarddarstellung der Statusleiste",
     "appearance.followGlobalPreset": "Voreinstellung des globalen Designs (Standard)",
   "appearance.text": "Text",
   "largeIcon.followComponentRadius": "Komponenten-Eckenradius übernehmen",

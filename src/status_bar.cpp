@@ -13,6 +13,7 @@
 #include "status_bar_layout.h"
 #include "status_bar_glyphs.h"
 #include "status_bar_presentation.h"
+#include "native_tooltip.h"
 #include "system_controls.h"
 #include "utils.h"
 
@@ -21,7 +22,6 @@
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <shellscalingapi.h>
-#include <commctrl.h>
 #include <windowsx.h>
 #include <wrl/client.h>
 #include <array>
@@ -129,12 +129,11 @@ struct StatusBar::Impl
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
+        PersonalizationSettings appearance;
         HRESULT lastPaintError = S_OK;
         std::string hoveredTray;
-        HWND tooltip = nullptr;
-        StatusBarTooltipState tooltipState;
-        StatusBarVolumeWheel volumeWheel;
-        std::uint64_t volumeTask = 0;
+        NativeTooltip tooltip;
+        std::optional<std::size_t> tooltipControlPart;
         std::vector<StatusBarItem> items;
         StatusBarInteraction interaction;
         bool keyboardFocusVisible = false;
@@ -150,7 +149,7 @@ struct StatusBar::Impl
             liveBars.erase(hwnd);
             if (owner.hidden) owner.hidden(monitor);
             if (hwnd) KillTimer(hwnd, kClockTimer);
-            if (tooltip) DestroyWindow(tooltip);
+            tooltip.Close();
             appbar.Remove();
             backdrop.Reset();
             if (hwnd) DestroyWindow(hwnd);
@@ -161,16 +160,22 @@ struct StatusBar::Impl
             queued = true;
             PostMessageW(hwnd, kPlace, 0, 0);
         }
+        bool UpdateAppearance()
+        {
+            const auto scene = owner.sceneProvider ? owner.sceneProvider(monitor) : StatusBarSceneState{};
+            const auto next = ResolveStatusBarAppearance(owner.settings, owner.globalAppearance, scene);
+            if (next == appearance) return false;
+            appearance = next;
+            appearanceDirty = backgroundDirty = paintDirty = true;
+            // The merged Dock paints content on another HWND, but consumes
+            // this exact resolved appearance instead of resolving a default.
+            if (mergedDockHeight && owner.dockChanged) owner.dockChanged(false);
+            return true;
+        }
         void ClearHover()
         {
-            if (tooltip)
-            {
-                SendMessageW(tooltip, TTM_POP, 0, 0);
-                TOOLINFOW tool{sizeof(tool)}; tool.hwnd = hwnd; tool.uId = reinterpret_cast<UINT_PTR>(hwnd);
-                tool.lpszText = const_cast<wchar_t*>(L"");
-                SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
-            }
-            tooltipState.Leave();
+            tooltip.Hide();
+            tooltipControlPart.reset();
             if (!hoveredTray.empty() && owner.tray)
             {
                 POINT screen{}; GetCursorPos(&screen);
@@ -178,17 +183,43 @@ struct StatusBar::Impl
             }
             hoveredTray.clear(); interaction.hovered.reset();
         }
+        void SyncTooltip(bool immediate = false)
+        {
+            if (closing || fullscreen || failed || !IsWindowVisible(hwnd) || GetCapture() ||
+                !interaction.hovered || *interaction.hovered >= items.size())
+            { tooltip.Hide(); return; }
+            const auto& item = items[*interaction.hovered];
+            auto body = item.icon ? (item.icon->tip.empty() ? item.icon->application : item.icon->tip) : item.tip;
+            auto key = item.icon ? "tray/" + item.icon->key : "bar/" + item.key;
+            RECT anchor = item.bounds;
+            if (item.key == "controlCenter" && tooltipControlPart)
+            {
+                const auto part = *tooltipControlPart;
+                key += "/" + std::to_string(part); body = item.controlTips[part];
+                const float scale = dpi / 96.f * owner.settings.scale;
+                if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(32 * scale)));
+                else if (part == 1)
+                {
+                    anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(60 * scale)));
+                    anchor.left += static_cast<LONG>(std::lround(32 * scale));
+                }
+                else anchor.left += static_cast<LONG>(std::lround(60 * scale));
+                if (part == 1 && owner.volumeWheel.pending)
+                    body = std::wstring(_LW("statusBar.volume")) + L"  " +
+                        std::to_wstring(static_cast<int>(std::lround(*owner.volumeWheel.pending * 100))) +
+                        L"%\n" + _LW("controlCenter.working");
+            }
+            MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
+            tooltip.SetTarget(std::move(key), std::move(body), anchor,
+                owner.settings.position == DockPosition::Bottom ? NativeTooltipPlacement::Above : NativeTooltipPlacement::Below,
+                immediate);
+        }
         void Hide()
         {
             pressedTray.clear(); trayDragging = false;
             if (GetCapture() == hwnd) ReleaseCapture();
             if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
             ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
-            if (tooltip)
-            {
-                SendMessageW(tooltip, TTM_POP, 0, 0);
-                SetWindowPos(tooltip, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
-            }
             for (const auto& item : items) if (item.icon && owner.tray)
                 owner.tray->SetGeometry(item.icon->key, {});
             backdrop.HidePopupWindowPair(hwnd);
@@ -211,11 +242,10 @@ struct StatusBar::Impl
             if (fullscreen || failed || !appbar.Registered()) return;
             if (!IsWindowVisible(hwnd) || !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST))
             {
-                SetWindowPos(tooltip, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 backdrop.SetPopupWindowPairZOrder(hwnd, HWND_TOPMOST, true);
                 SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-                if (owner.appearance.glassEnabled && !HighContrast()) backdrop.ShowPopupWindowPair(hwnd);
+                if (appearance.glassEnabled && !HighContrast()) backdrop.ShowPopupWindowPair(hwnd);
                 paintDirty = true;
                 if (mergedDockHeight && owner.dockChanged) owner.dockChanged(false);
             }
@@ -226,6 +256,7 @@ struct StatusBar::Impl
             queued = false;
             if (closing || placing) return;
             placing = true;
+            UpdateAppearance();
             MONITORINFO info{sizeof(info)};
             if (!GetMonitorInfoW(monitor, &info)) { placing = false; Hide(); return; }
             UINT dpiY = 96;
@@ -254,17 +285,17 @@ struct StatusBar::Impl
                 SetWindowPos(hwnd, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                     SWP_NOACTIVATE | SWP_NOZORDER);
             }
-            if ((moved || appearanceDirty) && owner.appearance.glassEnabled && !HighContrast())
+            if ((moved || appearanceDirty) && appearance.glassEnabled && !HighContrast())
             {
                 if (!backdrop.IsAvailable()) backdrop.InitializePopup(hwnd, !fullscreen, false);
                 backdrop.Reattach(hwnd);
                 backdrop.BeginFrame(true);
                 backdrop.AddPanel({0, 0, rect.right - rect.left, rect.bottom - rect.top},
-                    0, owner.appearance.glassBlurRadius * dpi / 96.f,
+                    0, appearance.glassBlurRadius * dpi / 96.f,
                     reinterpret_cast<std::uintptr_t>(this));
                 backdrop.EndFrame();
             }
-            else if (appearanceDirty && (!owner.appearance.glassEnabled || HighContrast())) backdrop.Reset();
+            else if (appearanceDirty && (!appearance.glassEnabled || HighContrast())) backdrop.Reset();
             paintDirty = paintDirty || moved || appearanceDirty;
             backgroundDirty = backgroundDirty || moved || appearanceDirty;
             appearanceDirty = false;
@@ -283,6 +314,12 @@ struct StatusBar::Impl
             snapshot.cpu = owner.data->Cpu(); snapshot.memory = owner.data->Memory();
             snapshot.gpu = owner.data->Gpu(); snapshot.traffic = owner.data->NetworkTraffic();
             snapshot.network = owner.data->NetworkStatus(); snapshot.audio = owner.data->AudioOutputVolume();
+            if (owner.volumeWheel.task && (!snapshot.audio || !snapshot.audio->available ||
+                owner.volumeWheel.endpoint != snapshot.audio->endpointId))
+            {
+                owner.data->Controls()->Cancel(owner.volumeWheel.task);
+                owner.volumeWheel.Reset();
+            }
             snapshot.power = owner.data->Power();
             if (owner.tray) snapshot.tray = owner.tray->Current().icons;
             items = BuildStatusBarItems(owner.settings, snapshot);
@@ -305,6 +342,7 @@ struct StatusBar::Impl
             if (same && !paintDirty)
             {
                 for (std::size_t i = 0; i < items.size(); ++i) items[i].bounds = previousItems[i].bounds;
+                SyncTooltip();
                 return;
             }
             RECT client{};
@@ -327,7 +365,7 @@ struct StatusBar::Impl
                 width = w; height = h;
                 backgroundDirty = true;
             }
-            const auto& a = owner.appearance;
+            const auto& a = appearance;
             const bool hc = HighContrast();
             if (backgroundDirty)
             {
@@ -379,7 +417,7 @@ struct StatusBar::Impl
                 contentVisual->SetContent(surface.Get());
                 const auto commit = owner.composition->Commit();
                 if (FAILED(commit)) PaintError(commit);
-                else { paintDirty = false; lastPaintError = S_OK; }
+                else { paintDirty = false; lastPaintError = S_OK; SyncTooltip(); }
             }
             else PaintError(result);
         }
@@ -506,10 +544,13 @@ struct StatusBar::Impl
             case kPlace: self->Place(); return 0;
             case kForeground:
                 if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
+                if (self->UpdateAppearance()) self->QueuePlace();
                 return 0;
             case kFullscreen:
                 if (auto found = liveBars.find(window); found != liveBars.end()) found->second = false;
-                self->CheckFullscreen(); return 0;
+                self->CheckFullscreen();
+                if (self->UpdateAppearance()) self->QueuePlace();
+                return 0;
             case kAppBar:
                 if (wp == ABN_POSCHANGED) self->QueuePlace();
                 else if (wp == ABN_FULLSCREENAPP) PostMessageW(window, kFullscreen, 0, 0);
@@ -517,9 +558,13 @@ struct StatusBar::Impl
             case WM_TIMER:
                 if (wp == kClockTimer)
                 {
+                    // One service consumer and one pending audio target across
+                    // all bars: the first monitor must not drain another's result.
                     for (const auto& completion : self->owner.data->Controls()->DrainCompletions("statusBarVolume"))
-                        if (completion.id == self->volumeTask) { self->volumeTask = 0; self->volumeWheel.Reset(); }
-                    self->CheckFullscreen(); self->Paint();
+                        self->owner.volumeWheel.Complete(completion.id);
+                    self->CheckFullscreen();
+                    if (self->UpdateAppearance()) self->QueuePlace();
+                    else self->Paint();
                 }
                 return 0;
             case WM_DPICHANGED:
@@ -545,6 +590,7 @@ struct StatusBar::Impl
             {
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
+                self->ClearHover();
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
                 if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN) == StatusBarAction::Dismiss)
                 {
@@ -601,6 +647,7 @@ struct StatusBar::Impl
                     if (item.icon && PtInRect(&item.bounds, point)) return 0;
                 ClientToScreen(window, &point);
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
+                self->ClearHover();
                 auto onActivated = self->owner.activate;
                 if (onActivated) onActivated(StatusBarAction::Menu, window, {point.x, point.y, point.x, point.y});
                 return 0;
@@ -619,18 +666,15 @@ struct StatusBar::Impl
                 }
                 std::string hoveredKey;
                 std::optional<std::size_t> hover;
-                std::string tooltipKey;
-                std::wstring tooltipText;
+                self->tooltipControlPart.reset();
                 for (const auto& item : self->items) if (PtInRect(&item.bounds, point))
                 {
                     hover = static_cast<std::size_t>(&item - self->items.data());
-                    tooltipText = item.icon ? (item.icon->tip.empty() ? item.icon->application : item.icon->tip) : item.tip;
-                    tooltipKey = item.icon ? item.icon->key : item.key;
                     if (item.key == "controlCenter")
                     {
                         const auto part = StatusBarControlPart((point.x - item.bounds.left) /
                             (self->dpi / 96.f * self->owner.settings.scale));
-                        tooltipKey += std::to_string(part); tooltipText = item.controlTips[part];
+                        self->tooltipControlPart = part;
                     }
                     if (item.icon) hoveredKey = item.icon->key;
                     break;
@@ -643,16 +687,11 @@ struct StatusBar::Impl
                     if (!hoveredKey.empty()) self->owner.tray->Activate(hoveredKey, tray::Activation::Hover, screen);
                     self->hoveredTray = std::move(hoveredKey);
                 }
-                if (self->tooltipState.Enter(std::move(tooltipKey), std::move(tooltipText)))
-                {
-                    TOOLINFOW tool{sizeof(tool)}; tool.hwnd = window; tool.uId = reinterpret_cast<UINT_PTR>(window);
-                    tool.lpszText = self->tooltipState.text.data();
-                    SendMessageW(self->tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
-                }
                 TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);
                 // A snapshot can change inside Paint. Reconcile then clears the
                 // old tooltip after this event, never reinstating stale text.
                 if (self->paintDirty) self->Paint();
+                else self->SyncTooltip();
                 break;
             }
             case WM_MOUSEWHEEL:
@@ -666,13 +705,19 @@ struct StatusBar::Impl
                         if (StatusBarControlPart(x) != 1) return 0;
                         const auto sample = self->owner.data->AudioOutputVolume();
                         if (!sample || !sample->available) return 0;
-                        if (const auto target = self->volumeWheel.Move(GET_WHEEL_DELTA_WPARAM(wp), sample->volume))
+                        auto& wheel = self->owner.volumeWheel;
+                        if (wheel.task && wheel.endpoint != sample->endpointId)
+                        { self->owner.data->Controls()->Cancel(wheel.task); wheel.Reset(); }
+                        if (const auto target = wheel.Move(GET_WHEEL_DELTA_WPARAM(wp), sample->volume))
                         {
                             system_control::Request request;
                             request.name = "audio.output.setVolume";
                             request.arguments["volume"] = std::to_string(*target);
-                            self->volumeTask = self->owner.data->Controls()->Start("statusBarVolume", std::move(request));
-                            if (!self->volumeTask) self->volumeWheel.Reset();
+                            wheel.Started(self->owner.data->Controls()->Start("statusBarVolume", std::move(request)), sample->endpointId);
+                            self->interaction.hovered = static_cast<std::size_t>(&item - self->items.data());
+                            self->tooltipControlPart = 1;
+                            self->SyncTooltip(true);
+                            TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);
                         }
                         return 0;
                     }
@@ -697,11 +742,15 @@ struct StatusBar::Impl
     Hidden hidden;
     Error error;
     DrawBackground drawBackground;
+    DrawBackground drawTooltipBackground;
     std::function<void(const StatusBarSettings&)> trayChanged;
     std::function<bool(std::string_view, POINT)> dropOutside;
     std::function<void(bool)> dockChanged;
+    std::function<StatusBarSceneState(HMONITOR)> sceneProvider;
     StatusBarSettings settings;
-    PersonalizationSettings appearance;
+    PersonalizationSettings globalAppearance;
+    PersonalizationSettings tooltipAppearance;
+    StatusBarVolumeWheel volumeWheel;
     ComPtr<IDCompositionDesktopDevice> composition;
     ComPtr<IDWriteFactory> text;
     std::map<std::wstring, std::unique_ptr<Window>> windows;
@@ -739,6 +788,7 @@ struct StatusBar::Impl
         hooks.clear();
         windows.clear();
         tray.reset();
+        volumeWheel.Reset();
         if (data) { data->RemoveConsumer("statusBar"); data->Controls()->RemoveConsumer("statusBarVolume"); }
     }
     void Demand(const char* topic, bool enabled, int interval = 1000)
@@ -760,6 +810,24 @@ void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)
 { impl_->trayChanged = std::move(changed); impl_->dropOutside = std::move(dropOutside); }
 bool StatusBar::DropTrayIcon(std::string_view key, POINT screen) { return impl_->Drop(key, screen); }
 void StatusBar::SetDockChanged(std::function<void(bool)> changed) { impl_->dockChanged = std::move(changed); }
+void StatusBar::SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider)
+{
+    impl_->sceneProvider = std::move(provider);
+    for (auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->UpdateAppearance()) window->QueuePlace();
+    }
+}
+PersonalizationSettings StatusBar::AppearanceForMonitor(HMONITOR monitor) const
+{
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor) return window->appearance;
+    }
+    return ResolveStatusBarAppearance(impl_->settings.theme, impl_->globalAppearance);
+}
 std::optional<RECT> StatusBar::MergedDockArea(HMONITOR monitor) const
 {
     for (const auto& [id, window] : impl_->windows)
@@ -785,14 +853,16 @@ bool StatusBar::IsFullscreen(HMONITOR monitor) const
 }
 void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSettings& global,
     const std::vector<StatusBarMonitor>& monitors,
-    IDCompositionDesktopDevice* composition, IDWriteFactory* text)
+    IDCompositionDesktopDevice* composition, IDWriteFactory* text,
+    const PersonalizationSettings* tooltipAppearance, DrawBackground drawTooltipBackground)
 {
     NormalizeStatusBarSettings(settings);
     auto& self = *impl_;
-    const auto appearance = ResolveStatusBarAppearance(settings.theme, global);
-    const bool changed = settings != self.settings || appearance != self.appearance;
+    const bool changed = settings != self.settings || global != self.globalAppearance;
     self.settings = std::move(settings);
-    self.appearance = appearance;
+    self.globalAppearance = global;
+    self.tooltipAppearance = tooltipAppearance ? *tooltipAppearance : global;
+    self.drawTooltipBackground = std::move(drawTooltipBackground);
     if (self.composition.Get() != composition)
     {
         for (auto& [id, window] : self.windows)
@@ -842,19 +912,14 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
                 continue;
             }
             liveBars.emplace(window->hwnd, false);
-            window->tooltip = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
-                WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                window->hwnd, nullptr, cls.hInstance, nullptr);
-            TOOLINFOW tool{sizeof(tool)};
-            tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS; tool.hwnd = window->hwnd;
-            tool.uId = reinterpret_cast<UINT_PTR>(window->hwnd); tool.lpszText = window->tooltipState.text.data();
-            SendMessageW(window->tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
             SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
         }
         window->monitor = monitor.monitor;
+        window->tooltip.Configure(window->hwnd, composition, text, self.tooltipAppearance, self.drawTooltipBackground);
         const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight;
         window->mergedDockHeight = monitor.mergedDockHeight;
+        window->UpdateAppearance();
         window->appearanceDirty = window->appearanceDirty || changed || mergedChanged;
         window->paintDirty = window->paintDirty || changed || mergedChanged;
         if (mergedChanged && self.dockChanged) self.dockChanged(true);

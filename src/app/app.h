@@ -49,7 +49,7 @@ namespace snowdesktop::large_icon_renderer { struct CardResources; }
 #include "navigation_settings.h"
 #include "general_settings.h"
 #include "../status_bar.h"
-#include "../winui/system_panel.h"
+#include "../system_panel.h"
 #include "desktop_passthrough_indicator.h"
 #include "shell_extension_menu.h"
 #include "display_topology_refresh.h"
@@ -3394,7 +3394,7 @@ private:
         systemDataProvider_;
     std::unique_ptr<snowdesktop::StatusBar> statusBar_;
     snowdesktop::UiScheduleToken statusBarActivationToken_ = 0;
-    std::unique_ptr<snowdesktop::winui::SystemPanel> systemPanel_;
+    std::unique_ptr<snowdesktop::SystemPanel> systemPanel_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     std::unique_ptr<snowdesktop::widget_runtime::IWidgetSettingsBackend>
         widgetSettingsBackend_;

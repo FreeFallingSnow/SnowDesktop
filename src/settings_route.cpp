@@ -71,10 +71,11 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
-    if (route.page == SettingsPage::StatusBar && route.focusId == "statusBar.theme")
+    if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
+        route.focusId == "personalization.statusBarTheme")
     {
-        route.page = SettingsPage::AppearanceTheme;
-        route.focusId = "personalization.statusBarTheme";
+        route.page = SettingsPage::StatusBar;
+        route.focusId = "statusBar.theme";
     }
     if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
         route.focusId == "personalization.contextMenu") route.page = SettingsPage::ContextMenu;

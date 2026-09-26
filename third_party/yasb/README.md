@@ -21,11 +21,11 @@ envelope at 8192 bytes, copies at most the known structure, and validates field
 bounds before use. Truncated, oversized or unsupported-operation packets are
 rejected; native notification-area access remains available.
 
-The compact overflow grid in `src/winui/system_tray_view.cpp` also references
+The compact overflow grid in `src/system_panel_model.cpp` also references
 `src/core/widgets/services/systray/systray_popup.py` and `systray_widget.py` at the
 same pinned commit: pinned icons stay in the bar, unpinned icons appear in the
-popup, and layout follows the visible icon set. SnowDesktop uses its own WinUI
-controls and stable image/tooltip updates, with direct drag pinning and ordering.
+popup, and layout follows the visible icon set. SnowDesktop uses its own native
+Direct2D controls and self-drawn tooltips, with direct drag pinning and ordering.
 Known system volume/network/battery GUIDs from `src/core/widgets/yasb/systray.py`
 are filtered only in presentation because the control-center button already
 shows these states; collection and saved preferences are preserved.
@@ -58,6 +58,20 @@ Mouse right-click callbacks follow the pinned `systray_widget.py` sequence:
 raw button down/up for all versions, plus `WM_CONTEXTMENU` for version 3/4.
 This retains applications that still handle mouse callbacks after declaring a
 newer icon version. WeChat's actual menu remains a desktop acceptance item.
+
+Complete MODIFY events may recover an icon missed during startup. GUID-only
+updates retain its existing owner and callback identity; classic primary and
+overflow toolbars can supply bootstrap pixels without guessing reserved fields
+as version or visibility flags. Reconnection retains live-owner icons while
+requesting re-registration, and reports degraded collection when completeness
+cannot be established. Applications that neither re-register nor emit complete
+updates remain a compatibility limitation.
+
+`src/tray_menu_placement.cpp` is SnowDesktop's own bounded compatibility guard
+for menus placed outside the monitor by their application. It observes only
+the activated process for 1.5 seconds and at most three placement corrections;
+it does not enumerate or move ordinary application windows. Real WPS/Douyin
+menu placement is still a runtime acceptance item.
 
 The `Shell_NotifyIconGetRect` compatibility reply is an origin followed by a
 width/height pair. Returning a second corner would offset native app menus.

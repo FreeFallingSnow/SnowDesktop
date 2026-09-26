@@ -46,8 +46,15 @@ void TestCodec()
     extensions.statusBar.quickSearch = false;
     extensions.statusBar.leftOrder = {"quickSearch", "menu"};
     std::reverse(extensions.statusBar.rightOrder.begin(), extensions.statusBar.rightOrder.end());
+    extensions.statusBar.shellUi.enabled = true;
+    extensions.statusBar.shellUi.theme.mode = 5;
+    extensions.statusBar.maximizedWindow.enabled = true;
+    extensions.statusBar.maximizedWindow.theme.mode = -1;
+    extensions.statusBar.visibleWindow.theme.mode = 4;
+    extensions.statusBar.visibleWindow.theme.customized = true;
+    extensions.statusBar.visibleWindow.theme.appearance.widgetAlpha = .37f;
     Check(Unpack<GeneralSettings>(Pack(extensions)).statusBar == extensions.statusBar,
-        "settings process must preserve status bar preferences across its wire boundary");
+        "settings process must preserve default and active or disabled status bar scene preferences across its wire boundary");
     snowdesktop::VisitStatusBarFlags([&](const char*, auto member) {
         auto changed = extensions; changed.statusBar.*member = !(changed.statusBar.*member);
         Check(Unpack<GeneralSettings>(Pack(changed)).statusBar == changed.statusBar,

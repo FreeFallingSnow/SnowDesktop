@@ -2013,8 +2013,13 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderEnd = folderBegin + folderCount;
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
-    const bool lt = ((IsMergedWithStatusBar() ? snowdesktop::ResolveStatusBarAppearance(
-        app_->generalSettings_.statusBar.theme, app_->CurrentPersonalization()) : app_->CurrentDockAppearance()).contentTheme == 1);
+    const bool lt = [this] {
+        if (!IsMergedWithStatusBar()) return app_->CurrentDockAppearance().contentTheme == 1;
+        RECT screen = area_;
+        OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
+        return app_->statusBar_->AppearanceForMonitor(
+            MonitorFromRect(&screen, MONITOR_DEFAULTTONULL)).contentTheme == 1;
+    }();
     std::wstring hoveredTitle;
     const RECT magnificationFocus =
         ResolveMagnificationFocusRect(app_->lastMousePoint_);

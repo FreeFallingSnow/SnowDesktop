@@ -1696,6 +1696,8 @@
     "appearance.quickPanelCard": "クイックパネルのテーマ",
     "appearance.popupCard": "ポップアップのテーマ",
     "appearance.openTaskbar": "タスクバー設定を開く",
+    "appearance.openStatusBar": "ステータスバーの設定を開く",
+    "statusBar.defaultAppearance": "ステータスバーの既定の外観",
     "appearance.followGlobalPreset": "全体のテーマに対応するプリセット（既定）",
   "appearance.text": "文字",
   "largeIcon.followComponentRadius": "コンポーネントの角丸設定に従う",

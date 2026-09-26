@@ -115,35 +115,62 @@ void BootstrapClassic(Collector& collector)
 {
     // Optional compatibility supplement. Read only Explorer-owned toolbars;
     // private pointers are copied with ReadProcessMemory, never dereferenced.
-    EnumChildWindows(collector.window, [](HWND child, LPARAM parameter) -> BOOL {
-        auto& self = *reinterpret_cast<Collector*>(parameter);
+    struct Scan { Collector& collector; ULONGLONG deadline; } scan{collector, GetTickCount64() + 1500};
+    const auto collect = [](HWND child, LPARAM parameter) -> BOOL {
+        auto& context = *reinterpret_cast<Scan*>(parameter);
+        auto& self = context.collector;
+        if (GetTickCount64() >= context.deadline || Read(self.stopping) || Read(self.shared->stop)) return FALSE;
+        DWORD process = 0; GetWindowThreadProcessId(child, &process);
+        if (process != GetCurrentProcessId()) return TRUE;
         wchar_t name[64]{}; GetClassNameW(child, name, 64);
         if (wcscmp(name, L"ToolbarWindow32") != 0) return TRUE;
+        bool notificationArea = false;
+        for (HWND parent = GetParent(child); parent; parent = GetParent(parent))
+        {
+            GetClassNameW(parent, name, 64);
+            if (wcscmp(name, L"TrayNotifyWnd") == 0 || wcscmp(name, L"NotifyIconOverflowWindow") == 0)
+            { notificationArea = true; break; }
+            if (parent == self.window) break;
+        }
+        if (!notificationArea) return TRUE;
         DWORD_PTR result = 0;
-        if (!SendMessageTimeoutW(child, TB_BUTTONCOUNT, 0, 0, SMTO_ABORTIFHUNG, 200, &result)) return TRUE;
+        if (!SendMessageTimeoutW(child, TB_BUTTONCOUNT, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &result)) return TRUE;
         const auto count = (std::min)(result, static_cast<DWORD_PTR>(512));
-        for (DWORD_PTR i = 0; i < count && !Read(self.stopping) && !Read(self.shared->stop); ++i)
+        for (DWORD_PTR i = 0; i < count && GetTickCount64() < context.deadline &&
+            !Read(self.stopping) && !Read(self.shared->stop); ++i)
         {
             TBBUTTON button{};
             if (!SendMessageTimeoutW(child, TB_GETBUTTON, i, reinterpret_cast<LPARAM>(&button),
-                    SMTO_ABORTIFHUNG, 200, &result) || !result || !button.dwData) continue;
-            struct ClassicItem { HWND window; UINT id, callback, state, version; HICON icon; } item{};
-            if (!CopyBytes(reinterpret_cast<void*>(button.dwData), &item, sizeof(item)) || !IsWindow(item.window)) continue;
+                    SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &result) || !result || !button.dwData) continue;
+            struct ClassicItem { HWND window; UINT id, callback, reserved[2]; HICON icon; } item{};
+            if (!CopyBytes(reinterpret_cast<void*>(button.dwData), &item, sizeof(item)) ||
+                !IsWindow(item.window) || item.callback < WM_USER || item.callback > 0xffff) continue;
             Event event;
             event.epoch = static_cast<std::uint64_t>(Read(self.shared->epoch));
-            event.operation = NIM_ADD;
-            event.flags = NIF_MESSAGE | NIF_ICON | NIF_STATE;
+            event.operation = kBootstrapIcon;
+            event.flags = NIF_MESSAGE | NIF_ICON;
             event.identity.window = reinterpret_cast<std::uint64_t>(item.window); event.identity.id = item.id;
             GetWindowThreadProcessId(item.window, &event.identity.process);
-            event.callback = item.callback; event.state = item.state; event.stateMask = NIS_HIDDEN;
+            event.callback = item.callback;
+            // The private reserved words and toolbar hidden flag are not the
+            // registration version or NIS_HIDDEN. Only wire events supply those.
             if (auto copy = CopyIcon(item.icon)) { Pixels(copy, event); DestroyIcon(copy); }
-            Publish(*self.shared, event);
-            event.operation = NIM_SETVERSION; event.version = item.version;
-            Publish(*self.shared, event);
+            if (!event.width || !event.height || !event.identity.process) continue;
+            if (!Publish(*self.shared, event)) break;
+            SetEvent(self.signal); // Let the host drain while supplementation runs.
         }
-        SetEvent(self.signal);
         return TRUE;
-    }, reinterpret_cast<LPARAM>(&collector));
+    };
+    EnumChildWindows(collector.window, collect, reinterpret_cast<LPARAM>(&scan));
+    // Older Explorer keeps overflow in a separate top-level notification-area
+    // window. Enumerate only that exact class owned by this Explorer process.
+    HWND overflow = nullptr;
+    while (GetTickCount64() < scan.deadline &&
+        (overflow = FindWindowExW(nullptr, overflow, L"NotifyIconOverflowWindow", nullptr)))
+    {
+        DWORD process = 0; GetWindowThreadProcessId(overflow, &process);
+        if (process == GetCurrentProcessId()) EnumChildWindows(overflow, collect, reinterpret_cast<LPARAM>(&scan));
+    }
 }
 
 DWORD WINAPI Worker(void* parameter)
@@ -179,15 +206,19 @@ DWORD WINAPI Worker(void* parameter)
     }
     // The subclass owns another shared_ptr until its UI thread detaches. It
     // stays valid even if a hung Explorer delays this message past our exit.
-    PostMessageW(self->window, RegisterWindowMessageW(kDetachMessage), self->shared->owner, 0);
+    InterlockedExchange(&self->shared->ready, 0); SetEvent(self->signal);
+    PostMessageW(self->window, RegisterWindowMessageW(kDetachMessage), self->shared->owner,
+        static_cast<LPARAM>(Read(self->shared->epoch)));
     return 0;
 }
 
 LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data)
 {
     auto* holder = reinterpret_cast<std::shared_ptr<Collector>*>(data);
-    auto& self = **holder;
-    if ((message == RegisterWindowMessageW(kDetachMessage) && wp == self.shared->owner) || message == WM_NCDESTROY)
+    const auto keepAlive = *holder;
+    auto& self = *keepAlive;
+    if ((message == RegisterWindowMessageW(kDetachMessage) && wp == self.shared->owner &&
+            lp == static_cast<LPARAM>(Read(self.shared->epoch))) || message == WM_NCDESTROY)
     {
         InterlockedExchange(&self.stopping, 1); SetEvent(self.wake);
         RemoveWindowSubclass(window, Procedure, kSubclass);
@@ -251,10 +282,21 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 }
                 std::copy_n(decoded.tip, std::size(pending.tip), pending.tip);
                 if (icon) pending.icon = CopyIcon(icon);
-                self.Push(pending);
+                // Capture the image while its sender still owns it, then use
+                // Explorer's result before accepting state/version/deletion.
+                // Duplicate ADD remains a useful registration supplement after
+                // our synthetic TaskbarCreated; the model preserves its version.
+                const LRESULT nativeResult = DefSubclassProc(window, message, wp, lp);
+                if (nativeResult || pending.operation == NIM_ADD) self.Push(pending);
+                else if (pending.icon) DestroyIcon(pending.icon);
+                return nativeResult;
             }
             else if (copy->cbData >= sizeof(DWORD) * 2)
-            { InterlockedIncrement(&self.shared->rejected); self.Lost(); }
+            {
+                // Unsupported private packets cannot be repaired by making
+                // every application register again. Keep known icons intact.
+                InterlockedIncrement(&self.shared->rejected);
+            }
         }
         else if (copy->dwData == 3 && copy->cbData == sizeof(IconIdentifier32))
         {
@@ -279,7 +321,8 @@ void Attach(HWND window, DWORD owner)
     {
         auto& current = **reinterpret_cast<std::shared_ptr<Collector>*>(existing);
         if (current.shared->owner != owner || Read(current.shared->stop))
-            PostMessageW(window, RegisterWindowMessageW(kDetachMessage), current.shared->owner, 0);
+            PostMessageW(window, RegisterWindowMessageW(kDetachMessage), current.shared->owner,
+                static_cast<LPARAM>(Read(current.shared->epoch)));
         return;
     }
     auto self = std::make_shared<Collector>();

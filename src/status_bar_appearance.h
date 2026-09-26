@@ -1,5 +1,5 @@
 #pragma once
-#include "surface_theme.h"
+#include "status_bar_settings.h"
 #include <array>
 
 namespace snowdesktop
@@ -21,5 +21,29 @@ inline PersonalizationSettings ResolveStatusBarAppearance(const SurfaceTheme& th
     if (theme.mode == 5 || theme.mode == 6)
         return MakeAppearancePreset(theme.mode == 5 ? kAppearancePresetGlassDark : kAppearancePresetGlassLight);
     return MakeAppearancePreset(AppearancePresetFromFourThemeSelection(theme.mode));
+}
+
+// Supply the taskbar monitor's state for the bar's own display. Resolving a
+// transient scene never changes the user's default or saved custom appearance.
+struct StatusBarSceneState
+{
+    bool shellUi = false;
+    bool maximizedWindow = false;
+    bool visibleWindow = false;
+};
+
+inline const SurfaceTheme& ResolveStatusBarSceneTheme(const StatusBarSettings& settings,
+    const StatusBarSceneState& state)
+{
+    if (settings.shellUi.enabled && state.shellUi) return settings.shellUi.theme;
+    if (settings.maximizedWindow.enabled && state.maximizedWindow) return settings.maximizedWindow.theme;
+    if (settings.visibleWindow.enabled && state.visibleWindow) return settings.visibleWindow.theme;
+    return settings.theme;
+}
+
+inline PersonalizationSettings ResolveStatusBarAppearance(const StatusBarSettings& settings,
+    const PersonalizationSettings& global, const StatusBarSceneState& state)
+{
+    return ResolveStatusBarAppearance(ResolveStatusBarSceneTheme(settings, state), global);
 }
 }

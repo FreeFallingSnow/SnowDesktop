@@ -1,5 +1,6 @@
 #include "tray_service.h"
 #include "tray_order.h"
+#include "tray_menu_placement.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -120,15 +121,99 @@ int RunTrayModelTests()
     Identity a{}, b{}; a.window = b.window = 40; a.id = b.id = 2; a.process = 10; b.process = 11;
     check(!SameIdentity(a, b) && Key(a) != Key(b), "reused window and icon IDs from another process do not collide");
 
+    {
+        std::vector<Icon> registrations;
+        Event registration;
+        registration.operation = NIM_ADD; registration.identity = {wire.icon.guid, 42, 7, 99};
+        registration.flags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        registration.callback = WM_APP + 9; registration.width = registration.height = 1;
+        registration.pixels[0] = 0xff112233; wcscpy_s(registration.tip, L"Original");
+        check(Apply(registrations, registration), "registration fixture enters through the production model");
+        Event version = registration; version.operation = NIM_SETVERSION; version.version = 4;
+        Apply(registrations, version);
+        check(Apply(registrations, registration) && registrations.front().version == 4,
+            "duplicate ADD after TaskbarCreated cannot downgrade a live v4 callback");
+        Event partial; partial.operation = NIM_MODIFY; partial.identity.guid = registration.identity.guid;
+        partial.flags = NIF_TIP; wcscpy_s(partial.tip, L"Updated");
+        check(Apply(registrations, partial) && SameFocusIdentity(registrations.front().identity, registration.identity) &&
+            registrations.front().version == 4 && registrations.front().tip == L"Updated",
+            "GUID-only modification keeps callback HWND, process, ID and version");
+        partial.operation = NIM_SETVERSION; partial.version = 3;
+        check(Apply(registrations, partial) && registrations.front().version == 3 &&
+            registrations.front().identity.window == 42, "GUID-only version update preserves its registered owner");
+        partial.identity.window = 400; partial.identity.process = 100;
+        check(!Apply(registrations, partial) && registrations.front().identity.window == 42,
+            "a stale owner cannot change a re-registered GUID version");
+        partial.operation = NIM_DELETE;
+        check(!Apply(registrations, partial) && registrations.size() == 1,
+            "a stale explicit owner cannot delete another incarnation of a GUID");
+        Event supplement = registration; supplement.operation = kBootstrapIcon; supplement.identity.guid = {};
+        check(!Apply(registrations, supplement) && registrations.size() == 1 && registrations.front().version == 3,
+            "classic supplementation cannot duplicate or downgrade an authoritative GUID icon");
+        registrations.clear();
+        check(Apply(registrations, supplement) && Apply(registrations, registration) && registrations.size() == 1 &&
+            registrations.front().key == Key(registration.identity),
+            "the wire GUID upgrades a provisional classic identity without leaving a duplicate");
+        registrations.front().application = L"old process"; registrations.front().version = 4;
+        Event replacement = registration; replacement.identity.window = 400; replacement.identity.process = 100;
+        replacement.flags = NIF_TIP;
+        check(Apply(registrations, replacement) && registrations.front().version == 0 &&
+            !registrations.front().callback && registrations.front().pixels.empty() && registrations.front().application.empty(),
+            "a new GUID owner cannot inherit stale callback, version, pixels or executable identity");
+        registrations.clear(); partial = registration; partial.operation = NIM_MODIFY; partial.flags = NIF_TIP;
+        check(!Apply(registrations, partial) && registrations.empty(), "an unknown partial MODIFY cannot manufacture an icon");
+        partial.flags = registration.flags;
+        check(Apply(registrations, partial) && registrations.size() == 1 && registrations.front().callback == WM_APP + 9,
+            "complete MODIFY registration supplements an icon that existed before collector attachment");
+        partial.operation = 0x53440002;
+        check(!Apply(registrations, partial) && registrations.size() == 1,
+            "unknown optional collector operation is ignored without changing the model");
+    }
+    {
+        // Bounds correction must never become a general application-window
+        // mover. Exercise the same candidate policy as the live WinEvent hook.
+        MenuPlacementSession placement;
+        const auto arm = [&] { placement.Arm(99, {-1870, 50}, {-1920, 32, 0, 1080}, 100); };
+        MenuPopupObservation popup{1, 99, EVENT_OBJECT_SHOW, 101, WS_POPUP, WS_EX_TOOLWINDOW,
+            {-1900, -260, -1700, 60}, true, false, true};
+        popup.style |= WS_BORDER; // A menu border is not an application caption.
+        arm(); const auto corrected = placement.Observe(popup, 102);
+        check(corrected && corrected->x == -1900 && corrected->y == 32,
+            "a nearby new popup fits the clicked monitor work area with signed coordinates");
+        for (unsigned i = 0; i < 2; ++i)
+        { popup.event = EVENT_OBJECT_LOCATIONCHANGE; check(placement.Observe(popup, 103 + i).has_value(), "bounded correction allows a menu layout retry"); }
+        check(!placement.Observe(popup, 106), "a popup that fights placement is not moved indefinitely");
+        arm();
+        check(!placement.Observe(popup, 102), "location-only events cannot nominate existing windows");
+        popup.event = EVENT_OBJECT_SHOW; popup.process = 100;
+        check(!placement.Observe(popup, 102), "another application's popup is never corrected");
+        popup.process = 99; popup.style |= WS_CAPTION;
+        check(!placement.Observe(popup, 102), "a normal application window is never corrected");
+        popup.style = WS_POPUP; popup.notificationWindow = true;
+        check(!placement.Observe(popup, 102), "the notification owner HWND itself is never moved");
+        popup.notificationWindow = false; popup.owned = false;
+        check(!placement.Observe(popup, 102), "an unowned custom popup cannot be mistaken for a tray menu");
+        popup.owned = true; popup.bounds = {-900, -260, -700, 60};
+        check(!placement.Observe(popup, 102), "a distant popup from the same process is not a gesture candidate");
+        popup.bounds = {-1900, -260, -1700, 60}; popup.eventTime = 99;
+        check(!placement.Observe(popup, 102), "events queued before the user gesture are ignored");
+        popup.eventTime = 101;
+        check(!placement.Observe(popup, 1600) && !placement.Active(1600), "placement expires after its short fixed lifetime");
+        arm(); placement.Cancel();
+        check(!placement.Observe(popup, 102), "cancellation prevents delayed popup movement");
+        placement.Arm(99, {-1870, 50}, {-1920, 32, 0, 1080}, 0xfffffff0u); popup.eventTime = 3;
+        check(placement.Observe(popup, 5).has_value(), "tick-count wrap preserves the bounded placement lifetime");
+    }
+
     auto state = std::make_unique<SharedState>();
-    event.epoch = 123;
+    event.epoch = 123; event.operation = kBootstrapIcon;
     for (std::size_t i = 0; i < kCapacity - 1; ++i) { event.identity.id = static_cast<DWORD>(i); check(Publish(*state, event), "bounded queue accepts available slots"); }
     check(!Publish(*state, event) && Read(state->resync) == 1, "overflow requests resynchronization instead of blocking Explorer");
     for (std::size_t i = 0; i < kCapacity - 1; ++i)
     {
         Event received;
-        check(Consume(*state, received) && received.identity.id == i && received.epoch == 123,
-            "queue retains event order and generation");
+        check(Consume(*state, received) && received.identity.id == i && received.epoch == 123 &&
+            received.operation == kBootstrapIcon, "queue retains optional supplement operation, order and generation");
     }
     check(!Consume(*state, event), "empty queue never returns stale data");
     state->geometryCount = 1; state->geometries[0] = {a, {-1920, -50, -1890, -20}};
@@ -139,6 +224,13 @@ int RunTrayModelTests()
     check(GET_X_LPARAM(origin) == -1920 && GET_Y_LPARAM(origin) == -50 &&
         LOWORD(extent) == 30 && HIWORD(extent) == 30,
         "Shell rectangle lookup returns signed origin followed by width and height, not the second corner");
+    auto geometryOwner = a; geometryOwner.guid = wire.icon.guid;
+    state->geometries[0].identity = geometryOwner;
+    Identity geometryRequest{}; geometryRequest.guid = wire.icon.guid;
+    check(LookupGeometry(*state, geometryRequest, rect), "GUID-only native geometry query resolves the registered icon");
+    geometryRequest.window = a.window; geometryRequest.process = b.process;
+    check(!LookupGeometry(*state, geometryRequest, rect), "a reused owner cannot read another GUID incarnation's geometry");
+    state->geometries[0].identity = a;
     InterlockedIncrement(&state->geometrySequence);
     check(!LookupGeometry(*state, a, rect), "Explorer does not wait while the host writes geometry");
 

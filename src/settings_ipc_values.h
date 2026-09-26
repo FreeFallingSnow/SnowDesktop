@@ -26,6 +26,7 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
+SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
 SD_IPC_FIELDS(DockSettings,
@@ -50,7 +51,8 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.clock, v.tray, v.network, v.volume, v.battery, v.controlCenter,
     v.cpu, v.memory, v.gpu, v.traffic, v.audioControls, v.brightnessControls,
     v.wifiControls, v.bluetoothControls, v.mediaControls, v.powerControls,
-    v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.leftOrder, v.rightOrder);
+    v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.leftOrder, v.rightOrder,
+    v.shellUi, v.maximizedWindow, v.visibleWindow);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
