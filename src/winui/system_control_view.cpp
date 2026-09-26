@@ -245,6 +245,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         c::ColumnDefinition tail; tail.Width(x::GridLengthHelper::FromPixels(36)); buttons.ColumnDefinitions().Append(tail);
         section.radio = c::Primitives::ToggleButton(); section.radio.MinHeight(56);
         section.radio.HorizontalAlignment(x::HorizontalAlignment::Stretch); Name(section.radio, _LW(title));
+        x::Automation::AutomationProperties::SetAutomationId(section.radio, winrt::to_hstring("control.radio." + key));
         c::StackPanel heading; heading.Spacing(8); heading.Orientation(c::Orientation::Horizontal);
         c::FontIcon icon; icon.Glyph(glyph); icon.FontSize(18); heading.Children().Append(icon);
         auto caption = Text(_LW(title)); caption.FontSize(14); caption.MaxLines(1); heading.Children().Append(caption);

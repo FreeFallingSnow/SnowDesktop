@@ -1,6 +1,7 @@
 #include "general_settings.h"
 #include "personalization.h"
 #include "dock_gradient_storage.h"
+#include "status_bar_appearance.h"
 
 #include <windows.h>
 
@@ -200,6 +201,22 @@ int main()
         Check(ResolveSurfaceTheme(theme, global, 0, false).contentTheme == 0,
             "legacy surface keeps its old override for a custom global theme");
         theme.mode = -1;
+        auto bar = SurfaceTheme{};
+        bar.customized = true; bar.appearance.widgetAlpha = .13f;
+        for (const int preset : {kAppearancePresetDark, kAppearancePresetLight, kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+                kAppearancePresetAcrylicDark, kAppearancePresetAcrylicLight})
+        {
+            const auto actualGlobal = MakeAppearancePreset(preset);
+            Check(ResolveStatusBarAppearance(bar, actualGlobal) == actualGlobal,
+                "bar follow mode preserves the complete global preset instead of substituting a popup preset");
+        }
+        global.panelGradient.enabled = true; global.panelGradient.angle = 42;
+        global.widgetAlpha = .37f;
+        Check(ResolveStatusBarAppearance(bar, global) == global,
+            "bar follows custom global changes even when an old independent appearance is retained");
+        bar.mode = 4;
+        Check(ResolveStatusBarAppearance(bar, global) == bar.appearance,
+            "explicit custom bar appearance stays independent");
         global.panelGradient.enabled = true;
         global.panelGradient.angle = 123;
         Check(IsCustomSurfaceTheme(theme, global) && ResolveSurfaceTheme(theme, global, 0, true) == global,

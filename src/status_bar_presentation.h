@@ -12,8 +12,8 @@ namespace snowdesktop
 // localized memory label is reserved using its widest percentage separately.
 inline float StatusBarFixedWidth(std::string_view key)
 {
-    if (key == "cpu" || key == "gpu") return 80.f;
-    if (key == "traffic") return 208.f;
+    if (key == "cpu" || key == "gpu") return 68.f;
+    if (key == "traffic") return 152.f;
     if (key == "controlCenter") return 136.f;
     return 0.f;
 }

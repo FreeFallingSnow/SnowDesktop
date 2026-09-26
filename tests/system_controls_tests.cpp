@@ -1,5 +1,6 @@
 #include "system_controls.h"
 #include "system_control_feedback.h"
+#include "system_control_bluetooth_sampling.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -130,6 +131,39 @@ void BrightnessSettlingAndStaleFeedback()
     feedback.Track(key, 4); feedback.Clear();
     Require(!feedback.Take(4), "closed panels discard late control feedback");
 }
+void BluetoothPowerAndDeviceReadFailures()
+{
+    Cancellation cancel{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
+    BluetoothCollection radios;
+    auto radio = json::Object(); radio.object["id"] = json::Text("radio-a");
+    radio.object["available"] = json::Boolean(true); radio.object["enabled"] = json::Boolean(false);
+    radios.items.array.push_back(radio);
+    unsigned deviceReads = 0;
+    const auto peersFail = [&] { ++deviceReads; return BluetoothCollection{json::Array(), "unavailable"}; };
+    auto result = SampleBluetooth([&] { return radios; }, peersFail, cancel);
+    Require(result.available && result.error.empty() && deviceReads == 0 &&
+        json::Flag(result.value.Find("radios")->array.front(), "available") &&
+        !json::Flag(result.value.Find("radios")->array.front(), "enabled"),
+        "radio off remains available without trying unavailable peer enumeration");
+    radios.items.array.front().object["enabled"] = json::Boolean(true);
+    result = SampleBluetooth([&] { return radios; }, peersFail, cancel);
+    Require(result.available && result.error == "unavailable" && deviceReads == 1 &&
+        json::String(result.value.Find("radios")->array.front(), "id") == "radio-a",
+        "paired-device failures cannot discard a successfully read radio identity");
+    radios.items.array.front().object["available"] = json::Boolean(false);
+    result = SampleBluetooth([&] { return radios; }, peersFail, cancel);
+    Require(result.available && deviceReads == 1 && !json::Flag(result.value.Find("radios")->array.front(), "available"),
+        "hardware disabled radios are not advertised as controllable");
+    result = SampleBluetooth([] { return BluetoothCollection{json::Array(), "accessDenied"}; }, peersFail, cancel);
+    Require(!result.available && result.error == "accessDenied" && deviceReads == 1,
+        "denied radio access remains unavailable instead of reusing a previous radio");
+    result = SampleBluetooth([] { return BluetoothCollection{}; }, peersFail, cancel);
+    Require(result.available && result.value.Find("radios")->array.empty() && deviceReads == 1,
+        "device removal publishes an empty radio list");
+    cancel.canceled->store(true);
+    result = SampleBluetooth([&] { return radios; }, peersFail, cancel);
+    Require(!result.available && result.error == "canceled" && deviceReads == 1, "canceled Bluetooth reads are never published as successful");
+}
 }
 void TestSystemControls()
 {
@@ -137,4 +171,5 @@ void TestSystemControls()
     ControlQueueCancellationAndReadback();
     HostOnlyCredentialsAndConfirmation();
     BrightnessSettlingAndStaleFeedback();
+    BluetoothPowerAndDeviceReadFailures();
 }

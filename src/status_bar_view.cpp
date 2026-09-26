@@ -39,27 +39,27 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     if (s.cpu)
     {
         const auto value = snapshot.cpu;
-        add("cpu", L"CPU " + (value && value->available && !value->warmingUp ? Percent(value->usagePercent) : L"—"), StatusBarAction::Cpu);
+        add("cpu", L"CPU " + (value && value->available && !value->warmingUp ? Percent(value->usagePercent) : L"—"), StatusBarAction::Cpu, L"", true);
     }
     if (s.memory)
     {
         const auto value = snapshot.memory;
         add("memory", _LW("statusBar.memory") + std::wstring(L" ") + (value && value->available && value->totalBytes ?
-            Percent(100. * value->usedBytes / value->totalBytes) : L"—"), StatusBarAction::Memory);
+            Percent(100. * value->usedBytes / value->totalBytes) : L"—"), StatusBarAction::Memory, L"", true);
     }
     if (s.gpu)
     {
         const auto value = snapshot.gpu;
         double maximum = 0;
         if (value) for (const auto& adapter : value->adapters) maximum = std::max(maximum, adapter.usagePercent);
-        add("gpu", L"GPU " + (value && value->available && !value->warmingUp ? Percent(maximum) : L"—"), StatusBarAction::Gpu);
+        add("gpu", L"GPU " + (value && value->available && !value->warmingUp ? Percent(maximum) : L"—"), StatusBarAction::Gpu, L"", true);
     }
     if (s.traffic)
     {
         const auto value = snapshot.traffic;
         add("traffic", value && value->available && !value->warmingUp ?
             L"↓ " + StatusBarRate(value->downloadBytesPerSecond) +
-            L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::Traffic);
+             L" ↑ " + StatusBarRate(value->uploadBytesPerSecond) : L"↓ — ↑ —", StatusBarAction::Traffic, L"", true);
     }
     {
         if (!snapshot.tray.empty())
@@ -91,7 +91,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         items.back().tip += L"\n" + std::wstring(_LW(power->charging ? "statusBar.charging" :
             power->acPower && power->batteryPercent >= 99.5 ? "statusBar.fullyCharged" :
             power->acPower ? "statusBar.pluggedIn" : "statusBar.battery")) + L"  " + Percent(power->batteryPercent);
-    // Fixed semantic zones: information, tray, one system control group.
+    // Left: launch buttons and information. Right: tray and system controls.
     // Old experimental rightOrder values cannot split this group.
     add("notifications", L"", StatusBarAction::Notifications, kNotifications);
     return items;
@@ -141,7 +141,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             DWRITE_TEXT_METRICS metrics{};
             if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
                     format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-            return std::clamp(metrics.widthIncludingTrailingWhitespace + (item.glyph.empty() ? 16.f : 36.f) * scale, 32.f * scale, 260.f * scale);
+            const float paddingDip = item.key == "memory" ? 12.f : item.glyph.empty() ? 16.f : 36.f;
+            return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 32.f * scale, 260.f * scale);
         };
         LONG centerWidth = 0;
         std::vector<LONG> leftWidths, rightWidths;

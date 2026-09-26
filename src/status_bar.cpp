@@ -1,4 +1,5 @@
 #include "status_bar.h"
+#include "status_bar_appearance.h"
 #include "status_bar_view.h"
 #include "status_bar_interaction.h"
 #include "status_bar_appbar.h"
@@ -690,7 +691,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
 {
     NormalizeStatusBarSettings(settings);
     auto& self = *impl_;
-    const auto appearance = ResolveSurfaceTheme(settings.theme, global, 0, false);
+    const auto appearance = ResolveStatusBarAppearance(settings.theme, global);
     const bool changed = settings != self.settings || appearance != self.appearance;
     self.settings = std::move(settings);
     self.appearance = appearance;

@@ -1159,7 +1159,7 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
             "real control pages render without device mutations or leaking subscriptions");
         CheckControlRadioPixels(output / L"control-panel-overview.png", output / L"control-panel-unavailable.png");
         LONG overviewHeight = 0;
-        for (const auto* page : {L"overview", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable"})
+        for (const auto* page : {L"overview", L"bluetooth-off", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable"})
         {
             const auto bitmap = ReadPng(output / (std::wstring(L"control-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;

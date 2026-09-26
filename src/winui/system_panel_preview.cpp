@@ -69,6 +69,7 @@ struct ComScope
 struct ControlPreviewState
 {
     bool unavailable = false;
+    bool bluetoothOn = true;
     std::set<std::string> subscriptions;
     unsigned scans = 0;
 };
@@ -77,6 +78,11 @@ SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> sta
     SystemControlViewSource source;
     source.current = [state](std::string_view topic) -> std::optional<system_control::Snapshot> {
         auto value = widget_runtime::PreviewSystemControlData(topic, state->unavailable);
+        if (topic == "bluetooth.devices" && !state->unavailable && !state->bluetoothOn)
+        {
+            value.object["radios"].array.front().object["enabled"] = system_control::json::Boolean(false);
+            value.object["devices"].array.clear();
+        }
         if (topic == "audio.output.volume") ParseJson(R"({"endpointId":"audio-output-preview","volume":0.42,"muted":false})", value);
         return system_control::Snapshot{!state->unavailable, std::move(value), state->unavailable ? "unavailable" : "", 0, 1};
     };
@@ -332,7 +338,7 @@ native_component_preview::Result ExportSystemPanelPreview(
         if (controlPanel) controls = std::make_unique<SystemControlView>(PreviewControls(controlState),
             StatusBarSettings{}, StatusBarAction::ControlCenter, [&] { ++layoutChanges; });
         const std::vector<std::string> presets = controlPanel ?
-            std::vector<std::string>{"overview", "audio", "brightness", "wifi", "bluetooth", "media", "power", "unavailable"} :
+            std::vector<std::string>{"overview", "bluetooth-off", "audio", "brightness", "wifi", "bluetooth", "media", "power", "unavailable"} :
             trayPanel ? std::vector<std::string>{"grid", "updated", "manage", "empty", "connecting", "unavailable"} :
             resourcePanel ? std::vector<std::string>{"cpu", "memory", "gpu", "traffic", "idle", "warming", "unavailable", "gap", "gpu-partial"} :
             std::vector<std::string>{"empty", "agenda"};
@@ -350,8 +356,9 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (controls)
             {
                 controlState->unavailable = preset == "unavailable";
+                controlState->bluetoothOn = preset != "bluetooth-off";
                 const auto before = layoutChanges;
-                controls->Select(preset == "overview" || preset == "unavailable" ? "" : preset);
+                controls->Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" ? "" : preset);
                 if (layoutChanges == before) throw std::runtime_error("control page switch did not request immediate measurement");
                 x::Controls::ScrollViewer scroll; scroll.MaxHeight(SystemControlViewportHeight); scroll.Content(controls->Root());
                 scroll.HorizontalScrollBarVisibility(x::Controls::ScrollBarVisibility::Disabled);
@@ -401,6 +408,13 @@ native_component_preview::Result ExportSystemPanelPreview(
             auto loadedEvent = frame.Loaded(winrt::auto_revoke, [&](const auto&, const auto&) { loaded = true; });
             if (!host.runtime.Attach(host.window, frame)) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
             PumpUntil([&] { return loaded; }); loadedEvent.revoke();
+            if (controls)
+            {
+                const auto radio = FindPreviewElement(frame, L"control.radio.bluetooth").as<x::Controls::Primitives::ToggleButton>();
+                if (radio.IsEnabled() == controlState->unavailable ||
+                    (radio.IsEnabled() && radio.IsChecked().Value() != controlState->bluetoothOn))
+                    throw std::runtime_error("Bluetooth off must remain enabled, and unavailable hardware must remain disabled");
+            }
             if (resourcePanel && preset == "gpu-partial")
             {
                 FindPreviewElement(frame, L"resource.adapter").as<x::Controls::ComboBox>().SelectedIndex(1);

@@ -1849,6 +1849,11 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 空列表或缺失字段显示为“无线已关闭”。企业认证和受策略管理的配置交给 Windows。
 蓝牙只列已配对设备，`canConnect/canDisconnect` 表示本机后端支持的操作；不支持的
 设备管理和新配对交给系统设置，电量未知时省略 `batteryPercent`。
+关闭的无线电仍以 `available=true, enabled=false` 出现在 `radios[]`，可请求重新开启；
+硬件禁用或状态未知的无线电其 `available=false`。关闭时不扫描设备，`devices[]` 为空。
+已成功读取无线电、但已配对设备列表读取失败时，保留 `radios[]`，信封 `available=true`
+且现有 `error` 报告失败，不能据此把空 `devices[]` 当成没有配对设备。
+无线电本身读取被拒绝、取消或超时仍报告不可用，不沿用旧身份。字段和 API v2 保持兼容。
 
 这些主题与原生控制中心共享同一设备采样，不因增加组件重复扫描。音频主题最短
 1000 ms，其余最短 2000 ms；隐藏与卸载遵循订阅生命周期，Wi-Fi/蓝牙无消费者时

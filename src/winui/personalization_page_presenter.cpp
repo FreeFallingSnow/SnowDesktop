@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "../status_bar_appearance.h"
 
 #include "personalization_page_presenter.h"
 #include "settings_presenter_controls.h"
@@ -671,7 +672,7 @@ struct PersonalizationPagePresenter::Impl
                 auto& theme = settings.statusBar.theme;
                 if (index == 5 && !theme.customized)
                 {
-                    theme.appearance = ResolveSurfaceTheme(theme, global, 0, false);
+                    theme.appearance = ResolveStatusBarAppearance(theme, global);
                     theme.customized = true;
                 }
                 theme.mode = index - 1;
@@ -1122,7 +1123,13 @@ struct PersonalizationPagePresenter::Impl
         };
         ReplaceComboItems(quickNavigationThemeCombo, themeChoices);
         ReplaceComboItems(collectionPopupThemeCombo, themeChoices);
-        ReplaceComboItems(statusBarAppearanceCombo, themeChoices);
+        ReplaceComboItems(statusBarAppearanceCombo, {
+            {"app.settings.taskbar_follow_global", L"Follow global theme"},
+            {"app.settings.dark", L"Dark"},
+            {"app.settings.light", L"Light"},
+            {"app.settings.dark_acrylic", L"Dark Acrylic"},
+            {"app.settings.light_acrylic", L"Light Acrylic"},
+            {"app.settings.custom", L"Custom"}});
         muxa::AutomationProperties::SetName(quickNavigationThemeCombo,
             quickNavigationThemeRow.label.Text());
         muxa::AutomationProperties::SetName(collectionPopupThemeCombo,
@@ -1265,8 +1272,8 @@ struct PersonalizationPagePresenter::Impl
             popupAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.collectionPopupAppearance, currentGlobalAppearance, snapshot.values.general.collectionPopupTheme, false), newGeneration);
             const auto& statusTheme = snapshot.values.general.statusBar.theme;
             statusBarAppearanceCombo.SelectedIndex(std::clamp(statusTheme.mode + 1, 0, 5));
-            statusBarAppearanceEditor->SetValue(ResolveSurfaceTheme(statusTheme, currentGlobalAppearance, 0, false), newGeneration);
-            statusBarAppearanceEditor->Content().Visibility(IsCustomSurfaceTheme(statusTheme, currentGlobalAppearance) ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+            statusBarAppearanceEditor->SetValue(ResolveStatusBarAppearance(statusTheme, currentGlobalAppearance), newGeneration);
+            statusBarAppearanceEditor->Content().Visibility(statusTheme.mode == 4 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
         }

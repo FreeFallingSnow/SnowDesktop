@@ -1,4 +1,5 @@
 #include "system_control_windows.h"
+#include "system_control_bluetooth_sampling.h"
 #include <mmdeviceapi.h>
 #include <devicetopology.h>
 #include <ks.h>
@@ -105,12 +106,11 @@ class Bluetooth final : public Backend
         { std::lock_guard guard(mutex_); if (cache_.size() > 256) cache_.clear(); cache_[mac] = result; }
         return result;
     }
-public:
-    std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation& cancel) override
+    BluetoothCollection ReadRadios(const Cancellation& cancel)
     {
         try
         {
-            auto value = json::Object(); auto radios = json::Array(); auto devices = json::Array();
+            auto radios = json::Array();
             for (const auto& info : Await(DeviceInformation::FindAllAsync(Radio::GetDeviceSelector()), cancel))
             {
                 if (cancel.Stop()) break;
@@ -118,10 +118,21 @@ public:
                 if (!radio || radio.Kind() != RadioKind::Bluetooth) continue;
                 auto item = json::Object(); item.object["id"] = json::Text(winrt::to_string(info.Id()));
                 item.object["name"] = json::Text(winrt::to_string(radio.Name()));
-                item.object["enabled"] = json::Boolean(radio.State() == RadioState::On);
-                item.object["available"] = json::Boolean(radio.State() != RadioState::Disabled && radio.State() != RadioState::Unknown);
+                const auto state = radio.State();
+                item.object["enabled"] = json::Boolean(state == RadioState::On);
+                item.object["available"] = json::Boolean(state == RadioState::On || state == RadioState::Off);
                 radios.array.push_back(std::move(item));
             }
+            return {std::move(radios), {}};
+        }
+        catch (const winrt::hresult_error& error)
+        { return {json::Array(), cancel.Stop() ? cancel.Failure().error : error.code() == E_ACCESSDENIED ? "accessDenied" : "unavailable"}; }
+    }
+    BluetoothCollection ReadDevices(const Cancellation& cancel)
+    {
+        try
+        {
+            auto devices = json::Array();
             std::set<std::uint64_t> seen;
             for (const bool le : {false, true})
             {
@@ -152,11 +163,16 @@ public:
                     devices.array.push_back(std::move(item));
                 }
             }
-            value.object["radios"] = std::move(radios); value.object["devices"] = std::move(devices);
-            return {{"bluetooth.devices", Value(std::move(value))}};
+            return {std::move(devices), {}};
         }
         catch (const winrt::hresult_error& error)
-        { return {{"bluetooth.devices", Missing(error.code() == E_ACCESSDENIED ? "accessDenied" : cancel.Stop() ? cancel.Failure().error : "unavailable")}}; }
+        { return {json::Array(), cancel.Stop() ? cancel.Failure().error : error.code() == E_ACCESSDENIED ? "accessDenied" : "unavailable"}; }
+    }
+public:
+    std::map<std::string, Snapshot> Sample(std::string_view, const Cancellation& cancel) override
+    {
+        return {{"bluetooth.devices", SampleBluetooth([&] { return ReadRadios(cancel); },
+            [&] { return ReadDevices(cancel); }, cancel)}};
     }
     Result Execute(const Request& request, const Cancellation& cancel) override
     {

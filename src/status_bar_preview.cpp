@@ -84,6 +84,14 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
     {
         const auto& item = items[i]; const auto& r = item.bounds;
         if (IsRectEmpty(&r)) continue;
+        if (item.key == "cpu" || item.key == "memory" || item.key == "gpu" || item.key == "traffic")
+        {
+            Require(item.left && r.right < clock.bounds.left && r.left >= Item(items, "quickSearch").bounds.right,
+                "system information must follow the launch buttons on the left");
+            if (item.key != "memory")
+                Require(r.right - r.left <= (item.key == "traffic" ? 152 : 68) * scale + 1,
+                    "system information wastes horizontal space");
+        }
         Require(r.left >= 0 && r.top == 0 && r.right <= width && r.bottom == height, "status bar item escaped its viewport");
         Require(HitTestStatusBarItems(items, {(r.left + r.right) / 2, height / 2}) == i,
             "status bar hit target does not match its rendered item");
