@@ -948,6 +948,8 @@ string(JSON SNOWDESKTOP_WIDGET_SKILL_REVISION GET
 
 add_executable(snowwidget
     tools/snowwidget/main.cpp
+    tools/snowwidget/gpu_diagnostics.cpp
+    src/widget_gpu_sampler.cpp
     src/widget_author_lint.cpp
     src/widget_author_permissions.cpp
     src/widget_author_test.cpp
@@ -963,7 +965,7 @@ add_executable(snowwidget
     src/widget_view_contract_json.cpp)
 target_compile_features(snowwidget PRIVATE cxx_std_20)
 target_include_directories(snowwidget PRIVATE src)
-target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32)
+target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32 pdh dxgi)
 target_compile_definitions(snowwidget PRIVATE
     SNOWDESKTOP_VERSION="${SNOWDESKTOP_VERSION}"
     SNOWDESKTOP_WIDGET_SKILL_REVISION=${SNOWDESKTOP_WIDGET_SKILL_REVISION})
@@ -1835,15 +1837,17 @@ if (BUILD_TESTING)
         widget_author_tools
         SOURCES
             tests/widget_author_tools_tests.cpp
+            tools/snowwidget/gpu_diagnostics.cpp
+            src/widget_gpu_sampler.cpp
             src/widget_author_permissions.cpp
             src/widget_api_registry.cpp
             src/widget_logical_slot.cpp
             src/widget_package.cpp
             src/widget_permission_broker.cpp
             src/widget_permission_state.cpp
-        INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopLua bcrypt ole32
-        LABELS authoring contract permission security widget)
+        INCLUDE_DIRECTORIES src tools/snowwidget
+        LINK_LIBRARIES SnowDesktopLua bcrypt ole32 pdh dxgi
+        LABELS authoring contract data permission security widget)
 
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests

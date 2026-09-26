@@ -47,7 +47,7 @@
 
 - 技术范围以用户原文为准：原计划控制中心使用 WinUI，后续明确要求“顶栏不用 WinUI”和顶栏／面板支持离线渲染；不把这自动扩大为必须重写所有弹窗。栏体保持原生绘制，当前面板仍共享现有 WinUI 宿主；后续优先处理布局、圆角、日历简化、信息曲线及离线验收。
 - 共享设备服务已接入原生界面；六个 Lua 数据主题由 `ccfdd996` 引入（API v2、feature 门控）。十九个新增控制任务、独立写权限和可信手势／宿主确认尚未完成。
-- AMD GPU 90%：问题机器原始样本仍未取得。35 号候选已接入拓扑缓存、独立显存有效性、PDH 缓冲复用及内部按需原始诊断；当前 NVIDIA／Intel 实测已取得，但不是 AMD 对照。36 号候选已纳入类型名称为空的合法编号引擎，并用真实原始行与负向对照验证解析，标准构建和完整测试通过。用户可用诊断入口、Lua 可选详情能力和系统监控适配器选择仍待完成，不得声称已校准。
+- AMD GPU 90%：问题机器原始样本仍未取得。35 号候选已接入拓扑缓存、独立显存有效性、PDH 缓冲复用及内部按需原始诊断；当前 NVIDIA／Intel 实测已取得，但不是 AMD 对照。36 号候选已纳入类型名称为空的合法编号引擎，并用真实原始行与负向对照验证解析，标准构建和完整测试通过。37 号已接入用户可用 gpu-diagnostics 导出入口并完成实际 CLI 采样，完整回归待稳定测试输入；Lua 可选详情能力和系统监控适配器选择仍待完成，不得声称 AMD 已校准。
 - 最新标准构建通过；本轮完整测试 120/120 通过，先前的三项失败已处理并保留原始失败记录。后续代码变化须按依赖更新证据，不能直接沿用本次结果。
 - 首版不承载任意 Lua 顶栏布局、不做自有通知历史。系统通知使用 Windows 入口。
 
@@ -218,3 +218,13 @@
 - **scripts/build.bat 退出 0，无编译／链接警告**（36-gpu-build.log）；**scripts/test.bat full 120/120 通过**，196.97 秒，退出 0、无编译／链接警告（36-full-tests.log；test-run-cfea2cda201749fa86d9e7e24c1a4c7b.xml）。包含栏体及各 WinUI 弹窗实际离线绘制回归；未再次触发真实 Explorer 诊断，GPU 改动没有修改托盘生产源码或协议。
 - 输入绑定 36-before-full-validation-inputs.json／36-final-validation-inputs.json，并核对完整测试前后全部源码／资源哈希一致。最终宿主 SHA256 9922366a28324806137dafc88fb8ba7536a30a56380d784f22670493cfc214cc，Hook SHA256 6af226574c891b28cdc1de864e79ca9c316d4c656f8ab6a997d0fc387f2a422e。公共诊断入口、Lua 可选引擎详情、系统监控适配器选择、AMD 原始对照、宿主 CPU／唤醒、真实热插拔／睡眠与桌面交互仍未完成。
 - 依据：[微软 GPU 任务管理器说明](https://devblogs.microsoft.com/directx/gpus-in-the-task-manager/)规定最忙引擎口径；[PDH 数组文档](https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhgetformattedcounterarrayw)要求对不足缓冲重新以零尺寸探测；[IsCurrent](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgifactory1-iscurrent)与可选[适配器变化事件](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_6/nf-dxgi1_6-idxgifactory7-registeradapterschangedevent)用于拓扑失效；[QueryUnbiasedInterruptTime](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-queryunbiasedinterrupttime)不包含睡眠／休眠，用于区分实际挂起与普通长采样间隔。空类型名称依据本机真实 PDH 样本，不声称文档保证未公开实例格式。
+
+### GPU 按需诊断 CLI 检查点（37）
+
+- 已在编辑前公告新增 snowwidget gpu-diagnostics <new-output.jsonl> [--samples N] [--interval-ms N]；capabilities.commands 及 gpuDiagnostics.schemaVersion=1／format=jsonl 可检测，CLI protocolVersion 与 Lua API v2 不变，旧参数／主题未修改。不提高 Lua minHostVersion；旧工具与同版本早期构建须检测命令，不按版本号猜测支持。
+- 新入口复用生产采集器但独立运行，记录自身时间与间隔；没有声称读取了桌面显示同一帧。默认 11 次／1000 ms，包含首个预热；限制 2–120 次、250–5000 ms、计划等待不超过 120 秒，OS 采样耗时另计。新文件独占创建，最多 64 MiB；逐行记录 metadata、sample、summary，保存版本／自身哈希／Windows 构建、原始与格式化计数器、状态码、逐引擎合计与最终适配器读数。64 位身份、FILETIME、原始整数与字节数以十进制字符串保精度；无效值为 null，有效零值保留。
+- [CLI 文档](../tools/snowwidget/README.md)说明边界、退出码、Ctrl+C 后的部分记录和 AMD 同时段对照方式。导出成功代表文件采集完成，不能替代计数器有效性或 AMD 问题验证。
+- scripts/build.bat **退出 0，无编译／链接警告**（37-gpu-build.log）。定向 widget_author_tools／widget_api_registry／widget_system_data_provider **3/3 通过**，1.88 秒，退出 0，无编译／链接警告（37-gpu-tests.log；test-run-db33b7515a6d4a7189fc3c642f5f6a6f.xml）。
+- 37-live.py 实际调用构建后的 snowwidget：capabilities 与 --version 正确；含中文／空格的新文件成功写入 4 个样本，3 个有可用占用，6 个有效适配器区间与计数器合计一致。输出 metadata 自身 SHA256 与实际 exe 一致，再次写同一路径退出 1 且原文件哈希不变；5 种错误参数退出 2 且无输出文件。原始记录与证据在 gpu-cli-37/，标准 CLI SHA256 cae5e90442ff9c40885154343dd0295c957d0054223618f0b751d05c34fc8ef7；主 CLI 与分发 Skill 中副本哈希一致。
+- 当前保存已编译代码后，下一轮收紧新文件测试的失败清理：现有 Check 使用 exit，若其断言失败会跳过临时目录析构，应先退出文件作用域再断言。随后执行负向对照与稳定输入全量；此检查点没有运行 37 号全量，不将 36 号完整测试算成本次。
+- 输入绑定 37-final-validation-inputs.json。AMD 原始机器与任务管理器同时间对照、Lua 可选详情、系统监控适配器选择、Lua 写任务与桌面交互等剩余项保持开放。
