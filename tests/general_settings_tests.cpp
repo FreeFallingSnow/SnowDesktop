@@ -71,9 +71,11 @@ int main()
         for (std::size_t i = 0; i < StatusBarThemeModes.size(); ++i)
         {
             StatusBarSettings preset; preset.theme.mode = StatusBarThemeModes[i];
+            preset.theme.appearance.widgetBgR = .125f;
             JsonValue encoded; StatusBarSettings decoded;
             Check(ParseJson(EncodeStatusBarSettings(preset), encoded) && DecodeStatusBarSettings(encoded, decoded) &&
-                decoded.theme == preset.theme && StatusBarThemeSelection(decoded.theme.mode) == static_cast<int>(i),
+                decoded.theme.mode == preset.theme.mode && decoded.theme.customized == preset.theme.customized &&
+                decoded.theme.appearance.widgetBgR == .125f && StatusBarThemeSelection(decoded.theme.mode) == static_cast<int>(i),
                 "all six status bar presets, global and custom survive persistence with stable legacy modes");
             if (i > 0 && i < 7)
                 Check(ResolveStatusBarAppearance(decoded.theme, MakeAppearancePreset(kAppearancePresetLight)) == MakeAppearancePreset(expectedPresets[i]),

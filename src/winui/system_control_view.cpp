@@ -11,6 +11,7 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
@@ -506,17 +507,20 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             for (const auto& item : devices) if (j::Flag(item, "available") && j::String(item, "direction") == direction)
                 choices.emplace_back(j::String(item, "id"), Wide(j::String(item, "name")));
             c::ListView endpoints; endpoints.SelectionMode(c::ListViewSelectionMode::Single);
+            endpoints.ItemContainerTransitions(x::Media::Animation::TransitionCollection());
+            x::Automation::AutomationProperties::SetAutomationId(endpoints, winrt::to_hstring("control.audio.devices." + std::string(direction)));
             endpoints.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
             c::ScrollViewer::SetVerticalScrollBarVisibility(endpoints, c::ScrollBarVisibility::Disabled);
             c::ScrollViewer::SetVerticalScrollMode(endpoints, c::ScrollMode::Disabled);
             for (const auto& [id, label] : choices)
             {
-                (void)id;
                 c::ListViewItem entry; entry.Padding({10, 12, 10, 12}); entry.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+                entry.ContentTransitions(x::Media::Animation::TransitionCollection());
                 c::Grid row; row.ColumnSpacing(12); c::ColumnDefinition glyph; glyph.Width(x::GridLengthHelper::FromPixels(20));
                 row.ColumnDefinitions().Append(glyph); row.ColumnDefinitions().Append(c::ColumnDefinition());
                 c::FontIcon icon; icon.Glyph(direction == std::string("output") ? L"\uE767" : L"\uE720"); icon.FontSize(18);
                 row.Children().Append(icon); auto name = Text(label); name.MaxLines(2); c::Grid::SetColumn(name, 1); row.Children().Append(name);
+                x::Automation::AutomationProperties::SetAutomationId(name, winrt::to_hstring("control.audio.label." + id));
                 entry.Content(row); endpoints.Items().Append(entry);
             }
             if (choices.empty()) group.Children().Append(Text(_LW("controlCenter.unavailable")));
@@ -607,6 +611,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         c::TextBlock error = Text(_LW("controlCenter.locationDenied")); error.Visibility(x::Visibility::Collapsed);
         section.panel.Children().Append(error);
         c::ListView available; available.SelectionMode(c::ListViewSelectionMode::Single);
+        available.ItemContainerTransitions(x::Media::Animation::TransitionCollection());
         available.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         c::ScrollViewer::SetVerticalScrollMode(available, c::ScrollMode::Disabled);
         c::ScrollViewer::SetVerticalScrollBarVisibility(available, c::ScrollBarVisibility::Disabled);
@@ -621,11 +626,13 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             const auto id = j::String(network, "id");
             networkIds.push_back(id);
             c::ListViewItem entry; entry.Padding({10, 12, 10, 12}); entry.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+            entry.ContentTransitions(x::Media::Animation::TransitionCollection());
             c::Grid row; row.ColumnSpacing(12); c::ColumnDefinition glyph; glyph.Width(x::GridLengthHelper::FromPixels(24));
             row.ColumnDefinitions().Append(glyph); row.ColumnDefinitions().Append(c::ColumnDefinition());
             c::FontIcon signal; signal.Glyph(L"\uE701"); signal.FontSize(22); signal.VerticalAlignment(x::VerticalAlignment::Top); row.Children().Append(signal);
             c::StackPanel content; content.Spacing(4); c::Grid::SetColumn(content, 1); row.Children().Append(content);
             auto text = Text(Wide(j::String(network, "ssid"))); text.MaxLines(2); content.Children().Append(text);
+            x::Automation::AutomationProperties::SetAutomationId(text, winrt::to_hstring("control.wifi.label." + id));
             auto summary = Text(L""); summary.FontSize(12); summary.Opacity(.7); content.Children().Append(summary);
             const auto button = Button(content, _LW("controlCenter.connect"), [this, id] {
                 for (const auto& item : WifiNetworks()) if (j::String(item, "id") == id)

@@ -792,7 +792,7 @@ return widget.define({
         assert(bluetooth.radios[1].id == "bluetooth-radio-preview" and
             bluetooth.devices[1].batteryPercent == 76, "Bluetooth preview is not deterministic")
         local power = deviceValue("system.power.plans")
-        assert(power.activePlanId == power.plans[1].id and power.onAC == false,
+        assert(power.activePlanId == power.plans[1].id and power.onAC == false and power.charging == false,
             "power preview must not read the current plan")
         return {}
     end,

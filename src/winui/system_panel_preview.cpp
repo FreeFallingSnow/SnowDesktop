@@ -85,6 +85,11 @@ SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> sta
             value.object["devices"].array.clear();
         }
         if (topic == "audio.output.volume") ParseJson(R"({"endpointId":"audio-output-preview","volume":0.42,"muted":false})", value);
+        if (topic == "system.power.plans" && !state->unavailable)
+        {
+            value.object["onAC"] = system_control::json::Boolean(true);
+            value.object["charging"] = system_control::json::Boolean(true);
+        }
         return system_control::Snapshot{!state->unavailable, std::move(value), state->unavailable ? "unavailable" : "", 0, 1};
     };
     source.start = [state](system_control::Request request) -> std::uint64_t {
@@ -600,6 +605,25 @@ native_component_preview::Result ExportSystemPanelPreview(
             else canvas = widget_preview::GenerateWallpaper(request.canvasWidth, request.canvasHeight, appearance.contentTheme == 1);
             const int left = (canvas.width - width) / 2, top = (canvas.height - height) / 2;
             const auto* pixels = reinterpret_cast<const std::uint32_t*>(bytes);
+            if (controlPanel && (preset == "audio" || preset == "wifi"))
+            {
+                const auto label = FindPreviewElement(frame, preset == "audio" ?
+                    L"control.audio.label.audio-output-preview" : L"control.wifi.label.network-preview");
+                if (!label) throw std::runtime_error("device row has no visible label");
+                const auto rect = label.TransformToVisual(frame).TransformBounds({0, 0,
+                    static_cast<float>(label.ActualWidth()), static_cast<float>(label.ActualHeight())});
+                const double scale = width / frame.ActualWidth();
+                unsigned ink = 0;
+                for (int y = std::max(0, static_cast<int>(std::floor(rect.Y * scale))); y < std::min(height, static_cast<int>(std::ceil((rect.Y + rect.Height) * scale))); ++y)
+                    for (int col = std::max(0, static_cast<int>(std::floor(rect.X * scale))); col < std::min(width, static_cast<int>(std::ceil((rect.X + rect.Width) * scale))); ++col)
+                    {
+                        const auto pixel = pixels[y * width + col];
+                        const auto brightness = ((pixel & 255) + ((pixel >> 8) & 255) + ((pixel >> 16) & 255)) / 3;
+                        if ((pixel >> 24) >= 128 && (appearance.contentTheme == 1 ? brightness < 140 : brightness > 180)) ++ink;
+                    }
+                if (ink < 24 * scale * scale)
+                    throw std::runtime_error("device label is invisible or still in its entrance animation: " + preset);
+            }
             for (int y = 0; y < height; ++y) for (int col = 0; col < width; ++col)
             {
                 const auto source = pixels[y * width + col];
@@ -618,7 +642,8 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (trayView && preset == "grid") CheckTrayUpdates(*trayView, traySnapshot, trayState, layoutChanges);
             if (controls && (preset == "audio" || preset == "wifi"))
             {
-                const auto list = FindPreviewType<x::Controls::ListView>(frame);
+                const auto list = FindPreviewElement(frame, preset == "audio" ? L"control.audio.devices.output" :
+                    L"control.wifi.networks").try_as<x::Controls::ListView>();
                 if (!list) throw std::runtime_error("device page omitted its selection list");
                 releasedDeviceLists.push_back(winrt::make_weak(list));
             }

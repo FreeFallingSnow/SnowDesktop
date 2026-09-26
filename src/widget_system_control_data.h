@@ -36,7 +36,7 @@ inline JsonValue PreviewSystemControlData(std::string_view topic, bool empty = f
     else if (topic == "system.power.plans")
         source = empty ? R"({"plans":[],"activePlanId":"","modeSupported":false,"batteryPresent":false})" : R"({
             "plans":[{"id":"power-plan-preview","name":"Preview Balanced","active":true}],"activePlanId":"power-plan-preview",
-            "modeSupported":true,"acMode":"balanced","dcMode":"balanced","batteryPresent":true,"onAC":true,"batteryPercent":73,"charging":true})";
+            "modeSupported":true,"acMode":"balanced","dcMode":"balanced","batteryPresent":true,"onAC":false,"batteryPercent":73,"charging":false})";
     JsonValue value;
     (void)ParseJson(source, value);
     return value;
