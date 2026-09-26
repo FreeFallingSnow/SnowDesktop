@@ -24,6 +24,7 @@
 - `b2c4a63e` 检查结论：定向测试在 GeneralSettingsTests 编译阶段失败，新增用例缺少 `snowdesktop::` 命名空间，未执行 CTest，不计为通过。栏体 13 状态、日历、紧凑托盘和资源面板的浅深色导出成功；控制面板只导出 overview，预览收尾仍按旧 ScrollViewer 根节点转换而报 E_NOINTERFACE（`44-render-controls.py.log`），后续页未验证。审查另发现新音频／Wi-Fi ListView 的 SelectionChanged 捕获自身形成引用环，需要去掉强自引用；这不是用户卡顿的已确认原因。下一候选集中处理这些验证发现。
 - 45 号集中调整：去掉列表事件的强自引用，改从事件 sender 读取选择；离线预览追加关闭后实际列表弱引用释放检查。同步移除预览旧根节点转换、补齐测试命名空间，合并侧区预留增至 480 DIP，使普通宽屏可同时容纳四类信息；窄屏仍整项避让。待本轮构建和测试。
 - 45 号 `scripts/build.bat` 退出 0，无编译／链接警告（`45-batch-build.log`）。预检宿主未运行、Explorer 未加载 Hook，无需再次重启 Shell；后续渲染及回归仍待执行。
+- 45 号检查：定向 **5/7 通过、2/7 失败**，无编译／链接警告（`45-batch-tests.log`，CTest 58.84 秒）。设置用例错误比较未持久化的完整 PersonalizationSettings；Lua 预览则发现充电夹具把旧 onAC=false 改为 true，需恢复旧字段并将原生充电样本隔离。IPC 测试实际属于 settings_controller，下一轮选择修正。控制页、栏体浅深色导出与列表销毁检查通过，但目检音频／Wi-Fi 行文字仍处于进入动画初帧，尚不能视为视觉通过；46 号将禁用这些列表进入动画并增加文字像素断言。
 
 ## 用户反馈清单
 
