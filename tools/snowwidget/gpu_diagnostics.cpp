@@ -239,4 +239,3 @@ int Run(int argc, wchar_t** argv, std::string_view version)
     catch (const std::exception& e) { return Error(e.what(), 1); }
 }
 }
-

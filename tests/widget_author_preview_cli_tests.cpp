@@ -2,6 +2,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 #include "test_temporary_directory.h"
+#include "json_value.h"
 
 #include <algorithm>
 #include <array>
@@ -1340,6 +1341,42 @@ void TestStatusBarPreview(const std::filesystem::path& snowwidget,
     }
 }
 
+void TestGpuDiagnosticsCli(const std::filesystem::path& tool, const std::filesystem::path& directory)
+{
+    // Exercise the shipped dispatch/capability boundary without collecting
+    // hardware counters: every diagnostic invocation below must reject first.
+    const auto [capabilityExit, capabilities] = Run(tool, {L"capabilities"}, 10000);
+    JsonValue metadata;
+    Check(capabilityExit == 0 && ParseJson(capabilities, metadata), "CLI capabilities are valid JSON");
+    const auto* protocol = metadata.Find("protocolVersion");
+    const auto* commands = metadata.Find("commands");
+    const auto* diagnostics = metadata.Find("gpuDiagnostics");
+    Check(protocol && protocol->number == 2 && commands && commands->IsArray() && diagnostics &&
+        diagnostics->Find("schemaVersion") && diagnostics->Find("schemaVersion")->number == 1 &&
+        diagnostics->Find("format") && diagnostics->Find("format")->string == "jsonl",
+        "GPU diagnostics are advertised additively without changing the CLI protocol");
+    for (const auto name : {"api-contract", "system-contract", "view-contract", "preview", "preview-native", "gpu-diagnostics"})
+        Check(std::any_of(commands->array.begin(), commands->array.end(), [&](const auto& item) { return item.string == name; }),
+            "new diagnostics preserve existing capability-discovered commands");
+    const auto [missingExit, missingJson] = Run(tool, {L"gpu-diagnostics"}, 10000);
+    JsonValue error;
+    Check(missingExit == 2 && ParseJson(missingJson, error) && error.Find("ok") && !error.Find("ok")->boolean &&
+        error.Find("error") && error.Find("error")->string.find("new output file") != std::string::npos,
+        "advertised diagnostic dispatch returns its structured argument error");
+    const auto destination = directory / L"GPU capture.jsonl";
+    const auto [invalidExit, invalidJson] = Run(tool,
+        {L"gpu-diagnostics", destination.wstring(), L"--samples", L"1"}, 10000);
+    Check(invalidExit == 2 && ParseJson(invalidJson, error) && !std::filesystem::exists(destination),
+        "invalid diagnostic options do not create output files");
+    { std::ofstream file(destination, std::ios::binary); file << "existing evidence"; }
+    const auto [existingExit, existingJson] = Run(tool,
+        {L"gpu-diagnostics", destination.wstring(), L"--samples", L"2"}, 10000);
+    std::ifstream file(destination, std::ios::binary);
+    const std::string contents((std::istreambuf_iterator<char>(file)), {});
+    Check(existingExit == 1 && ParseJson(existingJson, error) && contents == "existing evidence",
+        "the actual CLI preserves existing diagnostic files");
+}
+
 int wmain(int argc, wchar_t** argv) try
 {
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
@@ -1366,6 +1403,7 @@ int wmain(int argc, wchar_t** argv) try
         "SnowDesktop preview host exists");
 
     TemporaryDirectory temporary;
+    TestGpuDiagnosticsCli(snowwidget, temporary.path);
     TestCalendarPanelPreview(snowwidget, host, temporary.path);
     TestControlPanelPreview(snowwidget, host, temporary.path);
     TestTrayPanelPreview(snowwidget, host, temporary.path);

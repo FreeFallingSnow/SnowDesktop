@@ -94,15 +94,21 @@ void TestGpuDiagnostics()
     Check(ParseJson(SerializeSample(0, sample, diagnostic), record) &&
         field(field(record,"adapters").array[1],"usagePercent").IsNull(), "warming usage cannot be presented as current measured usage");
 
-    snowdesktop::test::TemporaryDirectory temporary;
-    const auto existing = temporary.path / L"existing capture.jsonl";
-    { std::ofstream file(existing, std::ios::binary); file << "keep existing evidence"; }
-    std::vector<std::wstring> args{L"snowwidget", L"gpu-diagnostics", existing.wstring(), L"--samples", L"2"};
-    std::vector<wchar_t*> argv;
-    for (auto& arg : args) argv.push_back(arg.data());
-    Check(Run(static_cast<int>(argv.size()), argv.data(), "test") == 1, "existing output refuses the real command path before GPU capture");
-    std::ifstream file(existing, std::ios::binary);
-    std::string kept((std::istreambuf_iterator<char>(file)), {});
+    int exitCode = 0;
+    std::string kept;
+    {
+        snowdesktop::test::TemporaryDirectory temporary;
+        const auto existing = temporary.path / L"existing capture.jsonl";
+        { std::ofstream file(existing, std::ios::binary); file << "keep existing evidence"; }
+        std::vector<std::wstring> args{L"snowwidget", L"gpu-diagnostics", existing.wstring(), L"--samples", L"2"};
+        std::vector<wchar_t*> argv;
+        for (auto& arg : args) argv.push_back(arg.data());
+        exitCode = Run(static_cast<int>(argv.size()), argv.data(), "test");
+        std::ifstream file(existing, std::ios::binary);
+        kept.assign(std::istreambuf_iterator<char>(file), {});
+    }
+    // Check exits the process on failure, so release the owned fixture first.
+    Check(exitCode == 1, "existing output refuses the real command path before GPU capture");
     Check(kept == "keep existing evidence", "diagnostic capture never truncates existing output");
 }
 

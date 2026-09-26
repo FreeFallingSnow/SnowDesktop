@@ -1853,6 +1853,7 @@ if (BUILD_TESTING)
         SnowDesktopWidgetAuthorPreviewCliTests
         widget_author_preview_cli
         SOURCES tests/widget_author_preview_cli_tests.cpp
+        INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 windowscodecs
         COMMAND_ARGUMENTS
             "$<TARGET_FILE:snowwidget>"

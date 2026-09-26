@@ -17,4 +17,3 @@ std::string SerializeSample(unsigned index, const widget_runtime::WidgetGpuDataS
     const widget_runtime::WidgetGpuDiagnosticSample& diagnostic);
 int Run(int argc, wchar_t** argv, std::string_view version);
 }
-
