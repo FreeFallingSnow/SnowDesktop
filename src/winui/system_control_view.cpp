@@ -1010,8 +1010,15 @@ void SystemControlView::SetViewportHeight(double height)
     }
     // Media uses additional space. Only the monitor's actual height may force
     // the primary device list to shrink; adding music must not halve it.
-    const double available = std::max(48., std::min(SystemControlViewportHeight + mediaHeight, height) - std::max(64., chrome));
+    const double budget = std::floor(std::min(SystemControlViewportHeight + mediaHeight, height));
+    const double available = std::max(48., budget - std::max(64., chrome));
     if (impl_->bodyScroll.MaxHeight() != available) impl_->bodyScroll.MaxHeight(available);
+    // Use the composed cards to account for theme borders, margins and XAML's
+    // layout rounding. Summing child measurements alone can undercount chrome
+    // and leave the lower card outside a short/high-DPI monitor's work area.
+    impl_->cards.Measure({width, 10000});
+    const double overflow = impl_->cards.DesiredSize().Height - budget;
+    if (overflow > 0) impl_->bodyScroll.MaxHeight(std::max(48., available - std::ceil(overflow)));
 }
 void SystemControlView::Close() { impl_->Close(); }
 }
