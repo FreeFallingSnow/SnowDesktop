@@ -6,6 +6,7 @@
 #include "system_controls.h"
 #include "system_control_feedback.h"
 #include "widget_system_data_provider.h"
+#include "widget_scroll_rules.h"
 #include <functional>
 #include <map>
 #include <set>
@@ -55,6 +56,11 @@ public:
     bool Invoke(std::string_view id, std::optional<float> value = {});
     bool Drop(std::string_view key, D2D1_POINT_2F);
     void Scroll(float delta);
+    bool Reveal(std::string_view id);
+    native_ui::InputResult HandleKey(native_ui::Input&, unsigned key, bool shift);
+    void Wheel(D2D1_POINT_2F point, float notches);
+    widget_scroll_rules::ScrollbarAxisGeometry ScrollbarGeometry() const;
+    void DragScrollbar(int startOffset, int pointerDelta);
     void UpdateSettings(const StatusBarSettings&);
     float ScrollOffset() const { return scroll_; }
     float MaximumScroll() const { return maxScroll_; }

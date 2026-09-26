@@ -5,6 +5,7 @@
 #include "preview_png_writer.h"
 #include "widget_preview_stage.h"
 #include "widget_system_control_data.h"
+#include "widget_view_accessibility.h"
 
 #include <d2d1_1helper.h>
 #include <shellapi.h>
@@ -469,10 +470,153 @@ void CheckTrayInput(const ui::Scene& scene)
         "a removed tray application retained a captured drag action");
 }
 
+void CheckLogicalFocus()
+{
+    ui::Scene scene;scene.width=160;scene.height=80;
+    ui::Node first;first.id="first";first.role=ui::Role::Button;first.bounds={8,8,152,36};first.clip={0,0,160,80};first.text=L"Visible";
+    scene.nodes.push_back(first);
+    auto disabled=first;disabled.id="disabled";disabled.enabled=false;disabled.bounds={8,88,152,116};scene.nodes.push_back(disabled);
+    auto slider=first;slider.id="offscreen-slider";slider.role=ui::Role::Slider;slider.bounds={8,128,152,156};slider.value=.5f;
+    slider.text.clear();slider.tooltip=L"50%";slider.accessibilityLabel=L"Speaker volume";scene.nodes.push_back(slider);
+    // The logical list may exceed the shared pointer bank's 256-region limit.
+    // Only the first row is visible, so this must remain usable without changing
+    // any public component limit or making hidden rows receive pointer input.
+    for(unsigned i=0;i<300;++i)
+    {
+        auto row=first;row.id="offscreen-"+std::to_string(i);const float top=168+40.f*static_cast<float>(i);
+        row.bounds={8,top,152,top+28};scene.nodes.push_back(std::move(row));
+    }
+    ui::Input input;input.Sync(scene);
+    input.Key(scene,VK_TAB,false);Require(input.Focused()=="first","Tab missed the first logical control");
+    input.Key(scene,VK_TAB,false);Require(input.Focused()==slider.id,"Tab skipped an offscreen control or focused a disabled row");
+    input.Sync(scene);Require(input.Focused()==slider.id,"clipping cleared logical keyboard focus");
+    input.Key(scene,VK_TAB,true);Require(input.Focused()=="first","Shift+Tab did not follow the complete logical order");
+    Require(input.Focus(slider.id)&&!input.Focus(disabled.id),"programmatic focus rejected an offscreen control or accepted a disabled row");
+    const auto up=input.Key(scene,VK_UP,false),right=input.Key(scene,VK_RIGHT,false);
+    const auto down=input.Key(scene,VK_DOWN,false),left=input.Key(scene,VK_LEFT,false);
+    Require(up.kind==ui::InputResult::Kind::Value&&up.id==slider.id&&std::abs(up.value-.52f)<.0001f&&up.value==right.value&&
+        down.kind==ui::InputResult::Kind::Value&&std::abs(down.value-.48f)<.0001f&&down.value==left.value,
+        "vertical slider keys did not use the shared range-control step");
+    auto endpoint=scene;endpoint.nodes[2].value=1;
+    const auto upper=input.Key(endpoint,VK_UP,false);endpoint.nodes[2].value=0;const auto lower=input.Key(endpoint,VK_DOWN,false);
+    Require(upper.kind==ui::InputResult::Kind::Value&&upper.value==1&&lower.kind==ui::InputResult::Kind::Value&&lower.value==0,
+        "a slider limit returned an unhandled key that could scroll its parent");
+    const auto regions=input.AccessibilityRegions();
+    Require(regions.size()==scene.nodes.size(),"offscreen semantic nodes were limited to the pointer viewport or region cap");
+    const auto region=std::find_if(regions.begin(),regions.end(),[&](const auto& r){return input.Identity(r.key)==slider.id;});
+    Require(region!=regions.end()&&region->accessibilityLabel=="Speaker volume","explicit stable accessibility name lost to a changing value tooltip");
+    std::vector<wr::ViewAccessibilityNode> nodes;std::string error;
+    Require(wr::CollectInteractionAccessibilityNodes({*region},scene.width,scene.height,region->key,nodes,error)&&
+        nodes.size()==1&&nodes.front().offscreen&&nodes.front().focusable&&nodes.front().focused,
+        "offscreen logical focus did not retain its UIA offscreen state");
+    auto renamed=scene;renamed.nodes[2].accessibilityLabel=L"Headphone volume";
+    Require(!scene.SameContent(renamed),"accessibility-only name changes were omitted from scene invalidation");
+    Require(!input.Press(scene,{20,140})&&input.Release(scene,{20,140}).kind==ui::InputResult::Kind::None,
+        "a completely clipped slider received physical pointer input");
+    Require(input.Focus("offscreen-299"),"the last control beyond 256 logical nodes cannot be focused");
+    input.Key(scene,VK_TAB,false);Require(input.Focused()=="first","complete logical Tab order did not wrap");
+    input.Key(scene,VK_TAB,true);Require(input.Focused()=="offscreen-299","reverse logical Tab order lost its last node");
+    auto removed=scene;removed.nodes.pop_back();input.Sync(removed);
+    Require(input.Focused().empty(),"a deleted logical target kept keyboard focus");
+    Require(input.Focus(slider.id),"slider focus fixture failed");removed.nodes[2].enabled=false;input.Sync(removed);
+    Require(input.Focused().empty()&&input.Key(removed,VK_UP,false).kind==ui::InputResult::Kind::None,
+        "a disabled offscreen slider retained keyboard actions");
+    auto captured=scene;captured.nodes[0].role=ui::Role::Slider;captured.nodes[0].value=.5f;
+    Require(input.Press(captured,{20,20}),"capture clipping fixture could not press its visible slider");
+    captured.nodes[0].bounds={8,-60,152,-32};input.Sync(captured);
+    Require(input.Pressed().empty()&&input.Release(captured,{20,20}).kind==ui::InputResult::Kind::None,
+        "scrolling a captured control out of view retained its pending pointer command");
+}
+
+void CheckModelScrolling()
+{
+    auto state=std::make_shared<PreviewState>();state->manySection="audio";state->emptyMedia=true;
+    auto source=FixtureSource(state);const auto originalStart=source.start;std::vector<float> volumeRequests;
+    source.start=[&volumeRequests,originalStart](system_control::Request request)->std::uint64_t {
+        if(request.name!="audio.output.setVolume")return originalStart(std::move(request));
+        volumeRequests.push_back(std::stof(request.arguments.at("volume")));
+        return 1000+static_cast<std::uint64_t>(volumeRequests.size()); // Intentionally no completion/readback yet.
+    };
+    SystemPanelModel model(std::move(source),StatusBarSettings{},StatusBarAction::ControlCenter);
+    model.Refresh(320);model.Select("audio");
+    const auto& scene=model.View();
+    const auto offscreen=std::find_if(scene.nodes.rbegin(),scene.nodes.rend(),[](const auto& node){
+        return node.Interactive()&&HasArea(node.clip)&&node.bounds.top>=node.clip.bottom;
+    });
+    Require(offscreen!=scene.nodes.rend()&&model.MaximumScroll()>0,"audio scroll fixture has no offscreen action");
+    const auto target=offscreen->id;const auto limit=scene.nodes.size()+1;
+    ui::Input input;
+    for(std::size_t i=0;i<limit&&input.Focused()!=target;++i)
+    {
+        Require(model.HandleKey(input,VK_TAB,false).kind==ui::InputResult::Kind::None,"Tab dispatched a device action");
+        if(!input.Focused().empty())
+        {
+            const auto& focused=Node(model.View(),input.Focused());
+            Require(!HasArea(focused.clip)||(focused.bounds.top>=focused.clip.top-.01f&&focused.bounds.bottom<=focused.clip.bottom+.01f),
+                "production Tab routing left logical focus outside the scroll viewport");
+        }
+    }
+    Require(input.Focused()==target&&model.ScrollOffset()>0,"Tab never revealed the last offscreen audio action");
+    const auto volumeId="audio.output.volume:"+state->outputEndpoint;
+    model.Reveal(volumeId);input.Sync(model.View());Require(input.Focus(volumeId),"audio slider could not regain logical focus");
+    const float offset=model.ScrollOffset(),value=Node(model.View(),volumeId).value;
+    const auto up=model.HandleKey(input,VK_UP,false),down=model.HandleKey(input,VK_DOWN,false);
+    Require(up.kind==ui::InputResult::Kind::Value&&down.kind==ui::InputResult::Kind::Value&&up.id==volumeId&&down.id==volumeId&&
+        std::abs(up.value-std::clamp(value+.02f,0.f,1.f))<.0001f&&std::abs(down.value-std::clamp(value-.02f,0.f,1.f))<.0001f&&model.ScrollOffset()==offset,
+        "production Up/Down routing scrolled instead of adjusting the focused slider");
+    Require(input.Focus("back"),"scroll navigation fixture lost its fixed header");
+    model.HandleKey(input,VK_END,false);Require(model.ScrollOffset()==model.MaximumScroll(),"End did not reach the device-list bottom");
+    model.HandleKey(input,VK_HOME,false);Require(model.ScrollOffset()==0,"Home did not return to the device-list top");
+    model.HandleKey(input,VK_NEXT,false);Require(model.ScrollOffset()>0,"PageDown did not scroll the device list");
+    model.HandleKey(input,VK_HOME,false);
+    const auto clip=model.ScrollViewport();model.Wheel({1,clip.top+1},-.25f);
+    Require(model.ScrollOffset()>0&&model.ScrollOffset()<42,"a quarter wheel notch was discarded or treated as a full notch");
+    model.Scroll(-model.MaximumScroll());const auto geometry=model.ScrollbarGeometry();
+    Require(geometry.CanDrag(),"scrollbar fixture has no thumb travel");
+    const auto back=VisibleCenter(model.View(),"back");Require(input.Press(model.View(),back),"scrollbar cancellation fixture could not press its header");
+    input.Cancel();model.DragScrollbar(0,geometry.ThumbTravel());
+    Require(std::abs(model.ScrollOffset()-model.MaximumScroll())<=1&&
+        input.Release(model.View(),back).kind==ui::InputResult::Kind::None,
+        "scrollbar endpoint/cancellation dispatched a previous control or missed the end");
+    model.DragScrollbar(geometry.maximum,-geometry.ThumbTravel());
+    Require(model.ScrollOffset()==0&&state->muteRequests.empty()&&state->scans==0&&volumeRequests.empty(),
+        "scrollbar travel did not return to the start or dispatched an unrelated device command");
+    model.Reveal(volumeId);input.Sync(model.View());
+    const auto name=[&] {
+        const auto regions=input.AccessibilityRegions();
+        const auto found=std::find_if(regions.begin(),regions.end(),[&](const auto& r){return input.Identity(r.key)==volumeId;});
+        Require(found!=regions.end(),"volume UIA node disappeared");return found->accessibilityLabel;
+    };
+    const auto stableName=name();const float previous=Node(model.View(),volumeId).value;
+    model.Wheel(VisibleCenter(model.View(),volumeId),.25f);model.Refresh(320);input.Sync(model.View());
+    const auto& pending=Node(model.View(),volumeId);
+    const auto percentage=std::to_wstring(static_cast<int>(std::lround(pending.value*100)))+L"%";
+    Require(volumeRequests.size()==1&&std::abs(volumeRequests.front()-(previous+.005f))<.0001f&&
+        std::abs(pending.value-volumeRequests.front())<.0001f&&pending.tooltip.find(percentage)!=std::wstring::npos&&
+        pending.tooltip.find(_LW("controlCenter.working"))!=std::wstring::npos&&pending.accessibilityLabel==_LW("statusBar.volume")&&
+        !stableName.empty()&&name()==stableName&&stableName.find('%')==std::string::npos,
+        "fractional volume wheel input lost its pending percentage or replaced the stable UIA name with transient feedback");
+}
+
+void CheckCalendarNames(const ui::Scene& scene)
+{
+    const std::string september="date:2026-09-01",october="date:2026-10-01";
+    Require(Node(scene,september).text==Node(scene,october).text,"calendar name fixture does not share a displayed day number");
+    ui::Input input;input.Sync(scene);std::vector<wr::ViewAccessibilityNode> nodes;std::string error;
+    Require(wr::CollectInteractionAccessibilityNodes(input.AccessibilityRegions(),scene.width,scene.height,{},nodes,error),
+        "calendar semantic nodes could not be collected");
+    const auto name=[&](const std::string& id) {
+        const auto found=std::find_if(nodes.begin(),nodes.end(),[&](const auto& n){return input.Identity(n.key)==id;});
+        Require(found!=nodes.end(),"calendar date is missing from UIA");return found->name;
+    };
+    Require(name(september)=="2026-09-01"&&name(october)=="2026-10-01",
+        "same-number calendar days lack distinct full year/month/date accessibility names");
+}
+
 std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     const native_component_preview::Request& request, const ui::Scene& scene,
     const PersonalizationSettings& appearance, const SystemPanel::Background& background,
-    const widget_preview::Wallpaper& stage, int left, int top)
+    const widget_preview::Wallpaper& stage, int left, int top,const ui::Palette* palette=nullptr)
 {
     const float scale = static_cast<float>(request.dpi) / 96.f;
     ComPtr<ID2D1DeviceContext> context; Require(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&context));
@@ -495,7 +639,7 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
                 static_cast<LONG>(std::lround(card.right*scale)),static_cast<LONG>(std::lround(card.bottom*scale))},appearance,scale);
     context->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*
         D2D1::Matrix3x2F::Translation(static_cast<float>(left),static_cast<float>(top)));
-    const auto contentResult = ui::Draw(context.Get(),text,scene,SystemPanelPalette(appearance));
+    const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance));
     const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
     ComPtr<ID2D1Bitmap1> readback;
     Require(context->CreateBitmap(size,nullptr,0,D2D1::BitmapProperties1(
@@ -531,6 +675,37 @@ void CheckSplitOpacity(ID2D1Device* device, IDWriteFactory* text,
     };
     Require(sample(105) == sample(117) && sample(105) == sample(122) && sample(105) == sample(135),
         "translucent split control overdraw changed opacity at its inner join");
+}
+
+void CheckSelectedDetailContrast(ID2D1Device* device,IDWriteFactory* text,
+    native_component_preview::Request request,const PersonalizationSettings& appearance,const SystemPanel::Background& background)
+{
+    request.canvasWidth=240;request.canvasHeight=232;request.dpi=96;request.transparent=request.contentOnly=true;
+    ui::Scene scene;scene.width=240;scene.height=232;
+    ui::Node button;button.id="accent";button.role=ui::Role::Button;button.bounds={8,8,232,72};button.text=L"Selected";button.detail=L"Readable detail";button.accent=true;
+    scene.nodes.push_back(button);
+    button.id="toggle";button.role=ui::Role::Toggle;button.bounds={8,80,232,144};button.accent=false;button.selected=true;scene.nodes.push_back(button);
+    button.id="plain";button.role=ui::Role::Button;button.bounds={8,152,232,216};button.selected=false;scene.nodes.push_back(button);
+    ui::Node thumb;thumb.id="decorative-thumb";thumb.role=ui::Role::Scrollbar;thumb.bounds={235,16,237,64};thumb.enabled=false;scene.nodes.push_back(thumb);
+    const ui::Palette palette{D2D1::ColorF(0xffffff),D2D1::ColorF(0xff00ff),D2D1::ColorF(0x0000ff),
+        D2D1::ColorF(0xffff00),D2D1::ColorF(0x202020),D2D1::ColorF(0x000000),D2D1::ColorF(0x00ff00)};
+    const auto pixels=Render(device,text,request,scene,appearance,background,{},0,0,&palette);
+    Require(pixels[40*240+235]==0xffff00ffu,"scrollbar thumb lost its solid secondary foreground through disabled opacity");
+    ui::Input input;input.Sync(scene);
+    Require(!input.Focus(thumb.id)&&input.AccessibilityRegions().size()==3,"decorative scrollbar entered keyboard or accessibility control order");
+    for(int row=0;row<3;++row)
+    {
+        unsigned accentInk=0,secondaryInk=0;
+        for(int y=45+row*72;y<67+row*72;++y)for(int x=20;x<218;++x)
+        {
+            const auto pixel=pixels[static_cast<std::size_t>(y)*240+static_cast<std::size_t>(x)];
+            const unsigned red=(pixel>>16)&255,green=(pixel>>8)&255,blue=pixel&255;
+            if(red>80&&green>80&&std::abs(static_cast<int>(red)-static_cast<int>(green))<8)++accentInk;
+            if(red>80&&blue>80&&green<16)++secondaryInk;
+        }
+        Require(row<2?accentInk>8&&secondaryInk==0:secondaryInk>8&&accentInk==0,
+            "selected detail text did not use high-contrast accent foreground, or plain detail lost its secondary color");
+    }
 }
 }
 
@@ -620,6 +795,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                     "calendar today did not restore the fixed fixture date");
             }
             const auto& scene = model.View(); CheckLayout(scene);
+            if (calendarPanel) CheckCalendarNames(scene);
             if (calendarPanel)
                 for (const auto& node : scene.nodes)
                     if (node.id.starts_with("date:"))
@@ -666,7 +842,10 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (controls && preset == "overview")
             {
                 CheckClosedCallbacks();
+                CheckLogicalFocus();
+                CheckModelScrolling();
                 CheckSplitOpacity(device,text,request,appearance,background);
+                CheckSelectedDetailContrast(device,text,request,appearance,background);
                 CheckControlInput(model,state,available);
                 const float withMedia = model.View().height;
                 state->emptyMedia = true; model.Refresh(available);

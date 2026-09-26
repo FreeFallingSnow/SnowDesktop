@@ -147,7 +147,60 @@ bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
 }
 void SystemPanelModel::Select(std::string page)
 { if(closed_)return;page_=std::move(page);scroll_=0;scan_=page_=="wifi";error_.clear();Refresh(available_); }
-void SystemPanelModel::Scroll(float delta){if(closed_||!std::isfinite(delta))return;scroll_=std::clamp(scroll_+delta,0.f,maxScroll_);Refresh(available_);}
+void SystemPanelModel::Scroll(float delta)
+{
+    if(closed_||!std::isfinite(delta))return;
+    const float next=std::clamp(scroll_+delta,0.f,maxScroll_);
+    if(next==scroll_)return;
+    scroll_=next;Refresh(available_);
+}
+bool SystemPanelModel::Reveal(std::string_view id)
+{
+    const auto* node=scene_.Find(id);
+    if(closed_||!node||node->clip.bottom<=node->clip.top||maxScroll_<=0)return false;
+    const auto& clip=node->clip;
+    const float delta=node->bounds.top<clip.top?node->bounds.top-clip.top:
+        node->bounds.bottom>clip.bottom?(std::min)(node->bounds.top-clip.top,node->bounds.bottom-clip.bottom):0.f;
+    const auto previous=scroll_;Scroll(delta);return previous!=scroll_;
+}
+ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool shift)
+{
+    if(closed_)return {};
+    auto result=input.Key(scene_,key,shift);
+    // A slider owns its direction and range keys, including at either limit.
+    // Otherwise a list can scroll without triggering a device control.
+    if(result.kind==ui::InputResult::Kind::None)
+    {
+        const float page=(std::max)(42.f,scrollViewport_.bottom-scrollViewport_.top-32);
+        if(key==VK_UP||key==VK_DOWN)Scroll(key==VK_UP?-42.f:42.f);
+        else if(key==VK_PRIOR||key==VK_NEXT)Scroll(key==VK_PRIOR?-page:page);
+        else if(key==VK_HOME||key==VK_END)Scroll(key==VK_HOME?-scroll_:maxScroll_-scroll_);
+    }
+    if(key==VK_TAB||result.kind!=ui::InputResult::Kind::None)Reveal(input.Focused());
+    input.Sync(scene_);return result;
+}
+void SystemPanelModel::Wheel(D2D1_POINT_2F point,float notches)
+{
+    if(closed_||!std::isfinite(notches)||notches==0)return;
+    const auto* node=scene_.Hit(point);
+    if(node&&node->role==ui::Role::Slider)
+    {
+        const auto next=std::clamp(node->value+notches*.02f,0.f,1.f);
+        if(next!=node->value)Invoke(node->id,next);
+    }
+    else Scroll(-notches*42.f);
+}
+widget_scroll_rules::ScrollbarAxisGeometry SystemPanelModel::ScrollbarGeometry() const
+{
+    const auto extent=static_cast<int>(std::lround(scrollViewport_.bottom-scrollViewport_.top));
+    return widget_scroll_rules::ResolveScrollbarAxisGeometry(
+        static_cast<int>(std::lround(scrollViewport_.top)),static_cast<int>(std::lround(scrollViewport_.bottom)),
+        extent+static_cast<int>(std::lround(maxScroll_)),extent,static_cast<int>(std::lround(scroll_)));
+}
+void SystemPanelModel::DragScrollbar(int startOffset,int pointerDelta)
+{
+    Scroll(static_cast<float>(widget_scroll_rules::ApplyScrollbarThumbDrag(startOffset,pointerDelta,ScrollbarGeometry()))-scroll_);
+}
 void SystemPanelModel::UpdateSettings(const StatusBarSettings& settings)
 {
     if(closed_||(settings_.trayOrder==settings.trayOrder&&settings_.pinnedTrayItems==settings.pinnedTrayItems))return;
@@ -195,7 +248,7 @@ void SystemPanelModel::Volume(std::string_view direction,float& y)
     mute.enabled=valid;mute.tooltip=label+L" · "+_LW(muted?"controlCenter.unmute":"controlCenter.mute");
     Command(prefix+".mute",[this,prefix,endpoint]{const auto s=source_.current?source_.current(prefix+".volume"):std::nullopt;if(s&&s->available&&j::String(s->value,"endpointId")==endpoint&&InRange(Number(s->value,"volume")))Start(prefix+".setMute",{{"muted",j::Flag(s->value,"muted")?"0":"1"}});});
     const auto sliderId=prefix+".volume:"+endpoint;
-    auto& slider=Add(sliderId,ui::Role::Slider,Rect(58,y,scene_.width-(page_.empty()?116:74),40));slider.enabled=valid;slider.value=volume;slider.tooltip=label;
+    auto& slider=Add(sliderId,ui::Role::Slider,Rect(58,y,scene_.width-(page_.empty()?116:74),40));slider.enabled=valid;slider.value=volume;slider.tooltip=slider.accessibilityLabel=label;
     sliderTargets_[sliderId]=valid?endpoint:std::string{};valueControls_[prefix+".value"]=sliderId;
     actions_[sliderId]=[this,prefix,endpoint](auto value){const auto s=source_.current?source_.current(prefix+".volume"):std::nullopt;if(value&&s&&s->available&&j::String(s->value,"endpointId")==endpoint&&InRange(Number(s->value,"volume")))Start(prefix+".setVolume",{{"volume",std::to_string(*value)}});};
     if(page_.empty()){Add("audio.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.audioControls");Command("audio.more",[this]{Select("audio");});}y+=50;
@@ -225,7 +278,7 @@ void SystemPanelModel::Overview(float& y)
     Add("brightness.value",ui::Role::Text,Rect(scene_.width-68,y,52,22),valid?Percent(level):L"—").fontSize=12;y+=24;
     Add("brightness.icon",ui::Role::Text,Rect(12,y,40,40),L"",L"\uE706");
     const auto sliderId="brightness.level:"+id;
-    auto& slider=Add(sliderId,ui::Role::Slider,Rect(58,y,scene_.width-116,40));slider.enabled=valid;slider.value=level/100;slider.tooltip=_LW("statusBar.brightnessControls");
+    auto& slider=Add(sliderId,ui::Role::Slider,Rect(58,y,scene_.width-116,40));slider.enabled=valid;slider.value=level/100;slider.tooltip=slider.accessibilityLabel=_LW("statusBar.brightnessControls");
     sliderTargets_[sliderId]=valid?id:std::string{};valueControls_["brightness.value"]=sliderId;
     actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};
     Add("brightness.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.brightnessControls");Command("brightness.more",[this]{Select("brightness");});y+=54;
@@ -268,7 +321,7 @@ void SystemPanelModel::Brightness(float& y)
         Add("display:"+id,ui::Role::Text,Rect(16,y,scene_.width-90,34),Wide(j::String(m,"name")),L"\uE7F4");
         Add("display.value:"+id,ui::Role::Text,Rect(scene_.width-68,y,52,34),valid?Percent(Number(m,"brightness")):L"—");y+=38;
         const auto sliderId="display.level:"+id;
-        auto& slider=Add(sliderId,ui::Role::Slider,Rect(16,y,scene_.width-32,40));slider.enabled=valid;slider.value=valid?static_cast<float>(Number(m,"brightness")/100):0;slider.tooltip=Wide(j::String(m,"name"));
+        auto& slider=Add(sliderId,ui::Role::Slider,Rect(16,y,scene_.width-32,40));slider.enabled=valid;slider.value=valid?static_cast<float>(Number(m,"brightness")/100):0;slider.tooltip=slider.accessibilityLabel=Wide(j::String(m,"name"))+L" · "+_LW("statusBar.brightnessControls");
         sliderTargets_[sliderId]=valid?id:std::string{};valueControls_["display.value:"+id]=sliderId;
         actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};y+=58;
     }
@@ -361,7 +414,7 @@ void SystemPanelModel::Finish(float bodyEnd,bool withMedia)
     const auto clip=Rect(0,bodyStart_,scene_.width,(std::max)(0.f,end-bodyStart_-8));scrollViewport_=clip;
     for(auto& n:scene_.nodes)if(n.bounds.top>=bodyStart_){n.clip=clip;n.bounds.top-=scroll_;n.bounds.bottom-=scroll_;for(auto& path:n.paths)for(auto& p:path)p.y-=scroll_;}
     scene_.cards.push_back(Rect(0,0,scene_.width,end));scene_.height=end;
-    if(maxScroll_>0){const float railHeight=(std::min)(24.f,clip.bottom-clip.top);auto& rail=Add("scrollbar",ui::Role::Card,Rect(scene_.width-4,clip.top+(clip.bottom-clip.top-railHeight)*scroll_/maxScroll_,2,railHeight));rail.enabled=false;}
+    if(maxScroll_>0){const auto axis=ScrollbarGeometry();Add("scrollbar",ui::Role::Scrollbar,Rect(scene_.width-4,static_cast<float>(axis.thumbStart),2,static_cast<float>(axis.ThumbExtent())));}
     if(mediaHeight){float y=end+20;Media(y);scene_.cards.push_back(Rect(0,end+8,scene_.width,mediaHeight));scene_.height=end+8+mediaHeight;}
 }
 void SystemPanelModel::Refresh(float availableHeight)
@@ -395,7 +448,7 @@ void SystemPanelModel::Refresh(float availableHeight)
     for(auto& node:scene_.nodes)
     {
         if(const auto found=pendingValues_.find(node.id);found!=pendingValues_.end())
-        {node.value=found->second.value;node.tooltip=Percent(node.value*100)+L" · "+_LW("controlCenter.working");}
+        {node.value=found->second.value;node.tooltip=node.accessibilityLabel+L" · "+Percent(node.value*100)+L" · "+_LW("controlCenter.working");}
         if(const auto control=valueControls_.find(node.id);control!=valueControls_.end())
             if(const auto found=pendingValues_.find(control->second);found!=pendingValues_.end())node.text=Percent(found->second.value*100);
     }
@@ -461,7 +514,7 @@ void SystemPanelModel::Calendar()
         const auto date=calendar::CalendarService::AddDays(month_,i-offset);if(!date)continue;
         const auto d=calendar::CalendarService::GetDateInfo(*date);if(!d)continue;
         auto& n=Add("date:"+*date,ui::Role::ListItem,Rect(150+(i%7)*cell,94+(i/7)*34.f,46,30),std::to_wstring(d->day));
-        n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;n.tooltip=Wide(*date);
+        n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;n.tooltip=n.accessibilityLabel=Wide(*date);
         Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";});
     }
     float y=310;Add("calendar.selected",ui::Role::Text,Rect(16,y,330,36),Wide(date_)).bold=true;Add("calendar.manage",ui::Role::Button,Rect(354,y,150,36),_LW("statusBar.manageCalendar"));Command("calendar.manage",[this]{const auto manage=source_.calendar.manage;if(manage)manage();});y+=48;

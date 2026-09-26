@@ -155,6 +155,7 @@ struct SystemPanel::Impl
     std::shared_ptr<PromptState> promptState;
     std::shared_ptr<PanelLifetime> lifetime=std::make_shared<PanelLifetime>();
     bool paintDirty=true;
+    bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
     D2D1_POINT_2F dragPoint{};
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;TrayMenuRetention context;WPARAM closeGeneration=0;
     Impl(SettingsChanged c,SystemCalendarActions dates,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timing,IDCompositionDesktopDevice* graphics,IDWriteFactory* fonts,Background draw)
@@ -164,7 +165,7 @@ struct SystemPanel::Impl
     {
         if(window&&target&&visual)return true;if(window){tooltip.Close();if(accessibility)accessibility->DetachWindow(window);DestroyWindow(window);window=nullptr;}if(!composition||!text)return false;WNDCLASSEXW cls{sizeof(cls)};cls.lpfnWndProc=Procedure;cls.hInstance=GetModuleHandleW(nullptr);cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.lpszClassName=L"SnowDesktop.NativeSystemPanel";cls.style=CS_DBLCLKS;RegisterClassExW(&cls);
         window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOREDIRECTIONBITMAP,cls.lpszClassName,L"",WS_POPUP,0,0,1,1,nullptr,nullptr,cls.hInstance,this);if(!window)return false;
-        accessibility=std::make_unique<WidgetAccessibilityProviderHost>([this]{return Accessible();},[this](const auto&,const auto& id){if(!showing||closing||modal||slide.IsAnimating()||!input.Focus(id))return false;SetFocus(window);Paint();if(accessibility)accessibility->RefreshEvents();return true;},[this](const auto& request){return AccessibleAction(request);});
+        accessibility=std::make_unique<WidgetAccessibilityProviderHost>([this]{return Accessible();},[this](const auto&,const auto& id){if(!showing||closing||modal||slide.IsAnimating()||!model||!input.Focus(id))return false;if(model->Reveal(id))Arrange();SetFocus(window);Paint();if(accessibility)accessibility->RefreshEvents();return true;},[this](const auto& request){return AccessibleAction(request);});
         accessibility->AttachWindow(window);
         return SUCCEEDED(composition->CreateTargetForHwnd(window,FALSE,&target))&&SUCCEEDED(composition->CreateVisual(&visual))&&SUCCEEDED(target->SetRoot(visual.Get()));
     }
@@ -187,7 +188,17 @@ struct SystemPanel::Impl
         snapshot.name=_L(current->action==StatusBarAction::Calendar?"statusBar.clock":current->action==StatusBarAction::Tray?"statusBar.tray":"statusBar.controlCenter");snapshot.bounds={0,0,width,height};
         const auto regions=input.AccessibilityRegions();std::string focus;
         for(const auto& r:regions)if(GetFocus()==window&&input.Identity(r.key)==input.Focused())focus=r.key;
-        wr::CollectInteractionAccessibilityNodes(regions,model->View().width,model->View().height,focus,snapshot.nodes,snapshot.error);
+        // The Lua collector's per-frame limit remains unchanged. A native
+        // device list includes offscreen items, collected in bounded batches.
+        constexpr auto batchSize=wr::WidgetInteractionRegions::kMaximumRegions;
+        for(std::size_t first=0;first<regions.size();first+=batchSize)
+        {
+            const auto last=(std::min)(regions.size(),first+batchSize);
+            std::vector<wr::InteractionRegion> batch(regions.begin()+static_cast<std::ptrdiff_t>(first),regions.begin()+static_cast<std::ptrdiff_t>(last));
+            std::vector<wr::ViewAccessibilityNode> nodes;
+            if(!wr::CollectInteractionAccessibilityNodes(batch,model->View().width,model->View().height,focus,nodes,snapshot.error)){snapshot.nodes.clear();return {std::move(snapshot)};}
+            for(auto& node:nodes)snapshot.nodes.push_back(std::move(node));
+        }
         for(auto& node:snapshot.nodes)
         {
             node.key=input.Identity(node.key);node.bounds.x*=scale;node.bounds.y*=scale;node.bounds.width*=scale;node.bounds.height*=scale;
@@ -206,6 +217,7 @@ struct SystemPanel::Impl
         if(request.nodeKey=="panel.scroll"&&request.kind==LuaWidgetAccessibilityActionKind::SetScrollOffset)
         {if(!std::isfinite(request.numericValue))return false;model->Scroll(static_cast<float>(request.numericValue)-model->ScrollOffset());Arrange();Paint();if(accessibility)accessibility->RefreshEvents();return true;}
         const auto* node=model->View().Find(request.nodeKey);if(!node||!node->Interactive())return false;
+        if(model->Reveal(request.nodeKey)){Arrange();node=model->View().Find(request.nodeKey);if(!node||!node->Interactive())return false;}
         ui::InputResult result;result.id=node->id;
         switch(request.kind)
         {
@@ -238,14 +250,14 @@ struct SystemPanel::Impl
             if(!showing&&!destroying&&(pending||afterClose))PostMessageW(window,kOpenPending,++closeGeneration,0);
             return result&&!state->cancelled&&showing&&!closing&&model==activeModel;
         };
-        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};paintDirty=true;
+        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};scrollbarDragging=false;paintDirty=true;
         model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);showing=true;closing=false;Arrange();Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);SetTimer(window,1,500,nullptr);
     }
     void Arrange()
     {
         if(!model||!current)return;MONITORINFO info{sizeof(info)};if(!GetMonitorInfoW(monitor,&info))return;
         const auto previousScene=model->View();model->Refresh((info.rcWork.bottom-info.rcWork.top)/scale-12);const auto& scene=model->View();
-        const bool contentChanged=!previousScene.SameContent(scene);paintDirty|=contentChanged;input.Sync(scene);if(input.Pressed().empty()&&GetCapture()==window)ReleaseCapture();
+        const bool contentChanged=!previousScene.SameContent(scene);paintDirty|=contentChanged;input.Sync(scene);if(scrollbarDragging&&!model->ScrollbarGeometry().CanDrag())scrollbarDragging=false;if(input.Pressed().empty()&&!scrollbarDragging&&GetCapture()==window)ReleaseCapture();
         const int w=static_cast<int>(std::ceil(scene.width*scale)),h=static_cast<int>(std::ceil(scene.height*scale));
         const auto& a=current->anchor;const int left=std::clamp<int>(current->action==StatusBarAction::Calendar?(a.left+a.right-w)/2:a.right-w,static_cast<int>(info.rcWork.left),static_cast<int>((std::max)(info.rcWork.left,info.rcWork.right-w)));
         const int top=std::clamp<int>(current->settings.position==DockPosition::Bottom?a.top-h-static_cast<int>(6*scale):a.bottom+static_cast<int>(6*scale),static_cast<int>(info.rcWork.top),static_cast<int>((std::max)(info.rcWork.top,info.rcWork.bottom-h)));
@@ -310,7 +322,7 @@ struct SystemPanel::Impl
     void FinishClose(){HideNow();if(!destroying&&!modal&&(pending||afterClose))PostMessageW(window,kOpenPending,++closeGeneration,0);}
     void HideNow()
     {
-        if(scheduler)scheduler->Cancel(animationToken);animationToken=0;showing=closing=false;input.Cancel();hovered.clear();Tip(nullptr);if(GetCapture()==window)ReleaseCapture();
+        if(scheduler)scheduler->Cancel(animationToken);animationToken=0;showing=closing=false;input.Cancel();scrollbarDragging=false;hovered.clear();Tip(nullptr);if(GetCapture()==window)ReleaseCapture();
         if(model)model->Close();CancelPrompt();
         if(window){KillTimer(window,1);backdrop.HidePopupWindowPair(window);backdrop.SetPopupTopmost(false);ShowWindow(window,SW_HIDE);}
         if(current&&current->tray&&model){current->tray->CancelFocusReturn(current->owner);for(const auto& n:model->View().nodes)if(n.id.starts_with("tray:"))current->tray->SetGeometry(n.id.substr(5),{});}
@@ -365,21 +377,39 @@ struct SystemPanel::Impl
                     if(foreground!=w&&foreground!=self->current->owner&&!self->context.Active(foreground)){self->Animate(false);return 0;}
                     if((foreground==w||foreground==self->current->owner)&&GetTickCount64()-self->context.started>=1500)self->context.Reset();
                 }
-                if(self->input.Pressed().empty()&&!self->modal){self->Arrange();if(self->paintDirty)self->Paint();}
+                if(self->input.Pressed().empty()&&!self->scrollbarDragging&&!self->modal){self->Arrange();if(self->paintDirty)self->Paint();}
                 return 0;
             }
             // Opening uses translated visuals; controls become interactive only
             // once their drawn, hit-test and accessibility coordinates coincide.
             if(self->slide.IsAnimating()&&((m>=WM_MOUSEFIRST&&m<=WM_MOUSELAST)||m==WM_KEYDOWN))return 0;
-            if(m==WM_LBUTTONDOWN||m==WM_RBUTTONDOWN){self->context.Reset();self->tooltip.Hide();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};if(self->input.Press(self->model->View(),p,m==WM_RBUTTONDOWN)){SetCapture(w);SetFocus(w);self->Paint();}return 0;}
+            if(m==WM_LBUTTONDOWN||m==WM_RBUTTONDOWN)
+            {
+                self->context.Reset();self->tooltip.Hide();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};
+                const auto axis=self->model->ScrollbarGeometry();const auto viewport=self->model->ScrollViewport();
+                if(m==WM_LBUTTONDOWN&&axis.CanDrag()&&p.x>=self->model->View().width-12&&p.x<self->model->View().width&&p.y>=viewport.top&&p.y<viewport.bottom)
+                {
+                    self->input.Cancel();SetFocus(w);
+                    if(p.y>=axis.thumbStart&&p.y<axis.thumbEnd)
+                    {self->scrollbarDragging=true;self->scrollbarPointerStart=static_cast<int>(std::lround(p.y));self->scrollbarOffsetStart=static_cast<int>(std::lround(self->model->ScrollOffset()));SetCapture(w);}
+                    else{self->model->Scroll((p.y<axis.thumbStart?-1.f:1.f)*(viewport.bottom-viewport.top));self->Arrange();self->Paint();}
+                    return 0;
+                }
+                if(self->input.Press(self->model->View(),p,m==WM_RBUTTONDOWN)){SetCapture(w);SetFocus(w);self->Paint();}return 0;
+            }
             if(m==WM_MOUSEMOVE)
             {
                 const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
+                if(self->scrollbarDragging){self->model->DragScrollbar(self->scrollbarOffsetStart,static_cast<int>(std::lround(p.y))-self->scrollbarPointerStart);self->Arrange();self->Paint();return 0;}
                 if(!self->input.Pressed().empty()){self->Result(self->input.Move(self->model->View(),p),screen);if(life->alive&&self->input.Dragging()){self->dragPoint=p;self->Tip(nullptr);SetCursor(LoadCursorW(nullptr,IDC_SIZEALL));self->Paint();}return 0;}
                 const auto* node=self->model->View().Hit(p,false);self->Tip(node);const auto id=node?node->id:std::string{};if(id!=self->hovered){self->hovered=id;self->Paint();}TRACKMOUSEEVENT t{sizeof(t),TME_LEAVE,w,0};TrackMouseEvent(&t);return 0;
             }
             if(m==WM_MOUSELEAVE){self->Tip(nullptr);self->hovered.clear();self->Paint();return 0;}
-            if(m==WM_LBUTTONUP||m==WM_RBUTTONUP){const auto result=self->input.Release(self->model->View(),{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale},m==WM_RBUTTONUP);ReleaseCapture();POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);self->Result(result,screen);if(life->alive)self->Paint();return 0;}
+            if(m==WM_LBUTTONUP||m==WM_RBUTTONUP)
+            {
+                if(self->scrollbarDragging){if(m==WM_LBUTTONUP){self->model->DragScrollbar(self->scrollbarOffsetStart,static_cast<int>(std::lround(GET_Y_LPARAM(lp)/self->scale))-self->scrollbarPointerStart);self->scrollbarDragging=false;ReleaseCapture();self->Arrange();self->Paint();}return 0;}
+                const auto result=self->input.Release(self->model->View(),{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale},m==WM_RBUTTONUP);ReleaseCapture();POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);self->Result(result,screen);if(life->alive)self->Paint();return 0;
+            }
             if(m==WM_LBUTTONDBLCLK)
             {
                 const auto* node=self->model->View().Hit({GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale});
@@ -392,18 +422,14 @@ struct SystemPanel::Impl
                 }
                 return 0;
             }
-            if(m==WM_CAPTURECHANGED||m==WM_CANCELMODE){self->input.Cancel();return 0;}
-            if(m==WM_MOUSEWHEEL){POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;const auto* n=activeModel->View().Hit({point.x/self->scale,point.y/self->scale});if(n&&n->role==ui::Role::Slider)activeModel->Invoke(n->id,std::clamp(n->value+GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*.02f,0.f,1.f));else activeModel->Scroll(-GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*42.f);if(life->alive){self->Arrange();self->Paint();}return 0;}
+            if(m==WM_CAPTURECHANGED||m==WM_CANCELMODE){self->input.Cancel();self->scrollbarDragging=false;if(m==WM_CANCELMODE&&GetCapture()==w)ReleaseCapture();return 0;}
+            if(m==WM_MOUSEWHEEL){if(self->scrollbarDragging||!self->input.Pressed().empty())return 0;POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);auto activeModel=self->model;activeModel->Wheel({point.x/self->scale,point.y/self->scale},static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA);if(life->alive){self->Arrange();self->Paint();}return 0;}
             if(m==WM_SETFOCUS||m==WM_KILLFOCUS){self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
             if(m==WM_KEYDOWN)
             {
                 if(wp==VK_ESCAPE){self->pending.reset();self->Animate(false);return 0;}
-                if(wp==VK_PRIOR||wp==VK_NEXT||wp==VK_UP||wp==VK_DOWN)
-                {
-                    const auto clip=self->model->ScrollViewport();const float amount=(wp==VK_PRIOR||wp==VK_NEXT)?(std::max)(42.f,clip.bottom-clip.top-32):42.f;
-                    self->model->Scroll((wp==VK_PRIOR||wp==VK_UP)?-amount:amount);self->Arrange();self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();return 0;
-                }
-                const auto result=self->input.Key(self->model->View(),static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);POINT p{};
+                self->input.Cancel();self->scrollbarDragging=false;if(GetCapture()==w)ReleaseCapture();
+                const auto result=self->model->HandleKey(self->input,static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);self->Arrange();POINT p{};
                 if(const auto* n=self->model->View().Find(result.id)){p={static_cast<LONG>(n->bounds.left*self->scale),static_cast<LONG>(n->bounds.bottom*self->scale)};ClientToScreen(w,&p);}
                 self->Result(result,p,true);if(life->alive){self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}return 0;
             }

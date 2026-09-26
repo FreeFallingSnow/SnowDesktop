@@ -16,9 +16,13 @@ namespace
 bool Contains(D2D1_RECT_F r, D2D1_POINT_2F p)
 { return p.x >= r.left && p.y >= r.top && p.x < r.right && p.y < r.bottom; }
 bool HasClip(D2D1_RECT_F r) { return r.right > r.left && r.bottom > r.top; }
+bool Overlaps(D2D1_RECT_F a,D2D1_RECT_F b)
+{return a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;}
+bool ControlRole(Role role)
+{return role==Role::Button||role==Role::Toggle||role==Role::Slider||role==Role::ListItem||role==Role::Icon;}
 }
 bool Node::Interactive() const
-{ return enabled && !id.empty() && (role == Role::Button || role == Role::Toggle || role == Role::Slider || role == Role::ListItem || role == Role::Icon); }
+{ return enabled && !id.empty() && ControlRole(role); }
 const Node* Scene::Find(std::string_view id) const
 {
     const auto it = std::find_if(nodes.begin(), nodes.end(), [&](const auto& n) { return n.id == id; });
@@ -58,7 +62,7 @@ bool Scene::SameContent(const Scene& other)const
     {
         const auto& a=nodes[i];const auto& b=other.nodes[i];
         if(a.id!=b.id||a.role!=b.role||!SameRect(a.bounds,b.bounds)||!SameRect(a.clip,b.clip)||
-            a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||
+            a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
             a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.bold!=b.bold||a.outlined!=b.outlined||
             a.secondary!=b.secondary||a.charging!=b.charging||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
@@ -76,17 +80,19 @@ bool Scene::SameContent(const Scene& other)const
 void Input::Sync(const Scene& scene)
 {
     regions_.BeginFrame();std::map<std::string,std::string> identities;std::string error;
+    std::vector<widget_runtime::InteractionRegion> semantics;
+    std::vector<std::string> focusable;
+    widget_runtime::WidgetInteractionRegions validation;validation.BeginFrame();std::size_t validated=0;
     for(const auto& n:scene.nodes)
     {
-        if(n.id.empty()||n.role==Role::Separator||n.role==Role::Chart||n.id=="scrollbar")continue;
-        if(HasClip(n.clip)&&(n.bounds.bottom<=n.clip.top||n.bounds.top>=n.clip.bottom))continue;
+        if(n.id.empty()||n.role==Role::Separator||n.role==Role::Chart||n.role==Role::Scrollbar)continue;
         widget_runtime::InteractionRegion r;r.key=RegionKey(n.id);
         if(!identities.emplace(r.key,n.id).second){regions_.AbortFrame();throw std::runtime_error("native scene identity collision");}
         r.shape={widget_runtime::InteractionShapeType::Rect,n.bounds.left,n.bounds.top,n.bounds.right-n.bounds.left,n.bounds.bottom-n.bounds.top,0};
         if(HasClip(n.clip))r.clip=widget_runtime::InteractionClipRect{n.clip.left,n.clip.top,n.clip.right-n.clip.left,n.clip.bottom-n.clip.top};
         r.enabled=n.enabled;r.focusable=n.Interactive();r.tooltip=Utf8(n.tooltip);
-        r.accessibilityLabel=Utf8(n.text.empty()?n.tooltip:n.text);
-        r.accessibilityValue=Utf8(n.detail);r.accessibilityRole=n.Interactive()?"button":"text";
+        r.accessibilityLabel=Utf8(!n.accessibilityLabel.empty()?n.accessibilityLabel:n.text.empty()?n.tooltip:n.text);
+        r.accessibilityValue=Utf8(n.detail);r.accessibilityRole=ControlRole(n.role)?"button":"text";
         if(n.role==Role::Slider)
         {
             r.controlKind=widget_runtime::InteractionControlKind::Slider;r.accessibilityRole="slider";
@@ -99,20 +105,38 @@ void Input::Sync(const Scene& scene)
             r.controlKind=widget_runtime::InteractionControlKind::Toggle;r.accessibilityRole="switch";
             r.checked=n.selected;r.events["change"].id=r.key;
         }
-        else if(n.Interactive()){r.events["click"].id=r.key;r.events["contextMenu"].id=r.key;r.capturePointer=n.id.starts_with("tray:");}
+        else if(ControlRole(n.role)){r.events["click"].id=r.key;r.events["contextMenu"].id=r.key;r.capturePointer=n.id.starts_with("tray:");}
         if(r.capturePointer){r.events["pointerMove"].id=r.key;r.events["pointerUp"].id=r.key;}
-        if(!regions_.Submit(std::move(r),error)){regions_.AbortFrame();throw std::runtime_error(error);}
+        const bool visible=Overlaps(n.bounds,{0,0,scene.width,scene.height})&&(!HasClip(n.clip)||Overlaps(n.bounds,n.clip));
+        if(visible)
+        {
+            if(!regions_.Submit(r,error)){regions_.AbortFrame();throw std::runtime_error(error);}
+        }
+        else
+        {
+            // Validate the same metadata contract without filling the bounded
+            // pointer bank with a whole device list outside the viewport.
+            if(validated==widget_runtime::WidgetInteractionRegions::kMaximumRegions)
+            {validation.AbortFrame();validation.BeginFrame();validated=0;}
+            if(!validation.Submit(r,error)){regions_.AbortFrame();throw std::runtime_error(error);}
+            ++validated;
+        }
+        if(n.Interactive())focusable.push_back(n.id);
+        semantics.push_back(std::move(r));
     }
-    regions_.CommitFrame();identities_=std::move(identities);
-    if(!focused_.empty()&&!regions_.IsKeyboardFocusable(RegionKey(focused_)))focused_.clear();
+    validation.AbortFrame();regions_.CommitFrame();identities_=std::move(identities);
+    semanticRegions_=std::move(semantics);focusable_=std::move(focusable);
+    if(!focused_.empty()&&std::find(focusable_.begin(),focusable_.end(),focused_)==focusable_.end())focused_.clear();
+    const auto* pressed=scene.Find(Pressed());
+    if(!pressed||!pressed->Interactive())Cancel();
 }
 std::string Input::Pressed()const
 {const auto it=identities_.find(regions_.PressedKey());return it==identities_.end()?std::string{}:it->second;}
 std::string Input::Identity(std::string_view key)const
 {const auto it=identities_.find(std::string(key));return it==identities_.end()?std::string{}:it->second;}
 bool Input::Focus(std::string_view id)
-{if(!regions_.IsKeyboardFocusable(RegionKey(id)))return false;focused_=id;return true;}
-std::vector<widget_runtime::InteractionRegion> Input::AccessibilityRegions()const{return regions_.AccessibilityRegions();}
+{if(std::find(focusable_.begin(),focusable_.end(),id)==focusable_.end())return false;focused_=id;return true;}
+std::vector<widget_runtime::InteractionRegion> Input::AccessibilityRegions()const{return semanticRegions_;}
 InputResult Input::Resolve(const std::optional<widget_runtime::InteractionResolvedAction>& action)const
 {
     if(!action)return {};
@@ -123,7 +147,7 @@ bool Input::Press(const Scene& scene,D2D1_POINT_2F p,bool right)
 {
     Cancel();Sync(scene);const auto pressed=regions_.PointerDown(p.x,p.y,right?2:1);
     const auto it=identities_.find(pressed.targetKey);if(it==identities_.end())return false;
-    focused_=it->second;origin_=p;right_=right;return true;
+    Focus(it->second);origin_=p;right_=right;return true;
 }
 InputResult Input::Move(const Scene& scene,D2D1_POINT_2F p)
 {
@@ -149,14 +173,22 @@ InputResult Input::Key(const Scene& scene,unsigned key,bool shift)
     Sync(scene);
     if(key==VK_TAB)
     {
-        const auto ids=regions_.KeyboardFocusableKeys();if(ids.empty()){focused_.clear();return {};}
-        const auto it=std::find(ids.begin(),ids.end(),RegionKey(focused_));
-        const auto index=it==ids.end()?(shift?ids.size()-1:0):(static_cast<std::size_t>(it-ids.begin())+(shift?ids.size()-1:1))%ids.size();
-        focused_=identities_.at(ids[index]);return {};
+        if(focusable_.empty()){focused_.clear();return {};}
+        const auto it=std::find(focusable_.begin(),focusable_.end(),focused_);
+        const auto index=it==focusable_.end()?(shift?focusable_.size()-1:0):(static_cast<std::size_t>(it-focusable_.begin())+(shift?focusable_.size()-1:1))%focusable_.size();
+        focused_=focusable_[index];return {};
     }
-    if(!regions_.IsKeyboardFocusable(RegionKey(focused_)))return {};
-    if(key==VK_LEFT||key==VK_RIGHT)return Resolve(regions_.ResolveKeyboardStep(RegionKey(focused_),key==VK_LEFT?-1:1));
-    if(key==VK_HOME||key==VK_END)return Resolve(regions_.ResolveRangeValue(RegionKey(focused_),key==VK_HOME?0.f:1.f));
+    if(focused_.empty())return {};
+    if(key==VK_LEFT||key==VK_RIGHT||key==VK_UP||key==VK_DOWN||key==VK_HOME||key==VK_END)
+    {
+        const auto regionKey=RegionKey(focused_);
+        const auto it=std::find_if(semanticRegions_.begin(),semanticRegions_.end(),[&](const auto& r){return r.key==regionKey;});
+        if(it==semanticRegions_.end()||it->controlKind!=widget_runtime::InteractionControlKind::Slider)return {};
+        widget_runtime::WidgetInteractionRegions keyboard;keyboard.BeginFrame();std::string error;
+        if(!keyboard.Submit(*it,error)){keyboard.AbortFrame();throw std::runtime_error(error);}keyboard.CommitFrame();
+        if(key==VK_HOME||key==VK_END)return Resolve(keyboard.ResolveRangeValue(regionKey,key==VK_HOME?0.f:1.f));
+        return Resolve(keyboard.ResolveKeyboardStep(regionKey,key==VK_LEFT||key==VK_DOWN?-1:1));
+    }
     if(key==VK_RETURN||key==VK_SPACE)return {InputResult::Kind::Invoke,focused_};
     if(key==VK_APPS||(key==VK_F10&&shift))return {InputResult::Kind::Context,focused_};
     return {};
@@ -211,6 +243,8 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         auto ink = (n.accent || (n.role == Role::Toggle && n.selected)) ? p.accentText : n.secondary?p.secondary:p.text;
         if (!n.enabled) ink.a *= .4f;
         if (n.role == Role::Separator) { color(p.stroke); dc->DrawLine({r.left, r.top}, {r.right, r.top}, brush.Get(), 1); }
+        else if (n.role == Role::Scrollbar)
+        {color(p.secondary);dc->FillRoundedRectangle(D2D1::RoundedRect(r,2,2),brush.Get());}
         else if (n.role == Role::Slider)
         {
             const auto geometry=native_controls::Slider(r,10,4,n.value,false);
@@ -267,7 +301,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 {
                     const float mid=(r.top+r.bottom)/2;
                     text(n.text,{label.left,r.top+4,label.right,mid+3},n.fontSize,ink,n.bold,n.centered,false);
-                    auto secondary=p.secondary; if(!n.enabled)secondary.a*=.4f;
+                    auto secondary=n.accent||(n.role==Role::Toggle&&n.selected)?p.accentText:p.secondary; if(!n.enabled)secondary.a*=.4f;
                     text(n.detail,{label.left,mid+1,label.right,r.bottom-4},12,secondary,false,n.centered,false);
                 }
                 else text(n.text,label,n.fontSize,ink,n.bold,n.centered,false,n.wrap);

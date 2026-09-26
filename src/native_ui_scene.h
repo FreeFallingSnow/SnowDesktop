@@ -14,7 +14,7 @@ namespace snowdesktop::native_ui
 {
 // Host-internal controls. No XAML, device service, HWND ownership or Lua API.
 // A renderer and input controller consume the same immutable hit rectangles.
-enum class Role { Text, Button, Toggle, Slider, ListItem, Icon, Card, Separator, Chart, Image };
+enum class Role { Text, Button, Toggle, Slider, ListItem, Icon, Card, Separator, Chart, Image, Scrollbar };
 struct Image
 {
     unsigned width = 0, height = 0, stride = 0;
@@ -25,7 +25,7 @@ struct Node
     std::string id;
     Role role = Role::Text;
     D2D1_RECT_F bounds{}, clip{};
-    std::wstring text, detail, glyph, tooltip;
+    std::wstring text, detail, glyph, tooltip, accessibilityLabel;
     float fontSize = 14, value = 0;
     bool enabled = true, selected = false, accent = false, centered = false, bold = false;
     bool outlined = false, secondary = false, charging = false;
@@ -62,7 +62,10 @@ public:
     InputResult Key(const Scene&, unsigned key, bool shift);
     void Cancel();
     void Sync(const Scene&);
+    // Logical focus includes clipped nodes; the host reveals Focused() before
+    // drawing focus or dispatching an action. Pointer input remains clipped.
     bool Focus(std::string_view);
+    // Includes offscreen nodes. Host UIA collection may need bounded batches.
     std::vector<widget_runtime::InteractionRegion> AccessibilityRegions() const;
     std::string Identity(std::string_view regionKey) const;
     std::string Pressed() const;
@@ -70,6 +73,8 @@ public:
     bool Dragging() const { return dragging_; }
 private:
     widget_runtime::WidgetInteractionRegions regions_;
+    std::vector<widget_runtime::InteractionRegion> semanticRegions_;
+    std::vector<std::string> focusable_;
     std::map<std::string, std::string> identities_;
     std::string focused_;
     D2D1_POINT_2F origin_{};
