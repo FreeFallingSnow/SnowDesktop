@@ -3,6 +3,7 @@
 
 #include "widget_data_semantic_debounce.h"
 #include "widget_network_traffic.h"
+#include "widget_gpu_sampler.h"
 #include "widget_runtime_image.h"
 #include "widget_resource_history.h"
 
@@ -126,32 +127,6 @@ struct WidgetNetworkTrafficDataSnapshot
     std::uint64_t sentBytes = 0;
     std::uint64_t downloadBytesPerSecond = 0;
     std::uint64_t uploadBytesPerSecond = 0;
-    std::int64_t timestampMs = 0;
-    std::uint64_t revision = 0;
-    std::string error;
-};
-
-struct WidgetGpuAdapterDataSnapshot
-{
-    std::string id;
-    std::string name;
-    double usagePercent = 0.0;
-    std::uint64_t dedicatedMemoryBytes = 0;
-    std::uint64_t dedicatedUsedBytes = 0;
-    std::uint64_t sharedMemoryBytes = 0;
-    std::uint64_t sharedUsedBytes = 0;
-    // Native presentation validity. These do not change the existing Lua JSON
-    // contract; a future optional capability can expose independent validity.
-    bool usageAvailable = false;
-    bool dedicatedUsageAvailable = false;
-    bool sharedUsageAvailable = false;
-};
-
-struct WidgetGpuDataSnapshot
-{
-    bool available = false;
-    bool warmingUp = true;
-    std::vector<WidgetGpuAdapterDataSnapshot> adapters;
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;
     std::string error;
@@ -448,8 +423,7 @@ private:
     void PublishMediaCurrent(const WidgetMediaSessionsDataSnapshot& snapshot);
     void PublishMediaTimeline(const WidgetMediaSessionsDataSnapshot& snapshot);
     void PublishMediaArtwork(const WidgetMediaSessionsDataSnapshot& snapshot);
-    bool InitializeGpuQuery();
-    void CloseGpuQuery();
+    void CloseGpuResources();
     bool InitializeStorageIoQuery();
     void CloseStorageIoQuery();
 
@@ -500,10 +474,7 @@ private:
     std::unordered_map<std::string, std::uint64_t> previousProcessCpuTimes_;
     Clock::time_point previousProcessSample_{};
     WidgetNetworkTrafficSampler networkTrafficSampler_;
-    void* gpuQuery_ = nullptr;
-    void* gpuUtilizationCounter_ = nullptr;
-    void* gpuDedicatedUsageCounter_ = nullptr;
-    void* gpuSharedUsageCounter_ = nullptr;
+    WidgetGpuSampler gpuSampler_;
     void* storageIoQuery_ = nullptr;
     void* storageReadCounter_ = nullptr;
     void* storageWriteCounter_ = nullptr;

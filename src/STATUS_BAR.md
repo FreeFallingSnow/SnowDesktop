@@ -47,7 +47,7 @@
 
 - 技术范围以用户原文为准：原计划控制中心使用 WinUI，后续明确要求“顶栏不用 WinUI”和顶栏／面板支持离线渲染；不把这自动扩大为必须重写所有弹窗。栏体保持原生绘制，当前面板仍共享现有 WinUI 宿主；后续优先处理布局、圆角、日历简化、信息曲线及离线验收。
 - 共享设备服务已接入原生界面；六个 Lua 数据主题由 `ccfdd996` 引入（API v2、feature 门控）。十九个新增控制任务、独立写权限和可信手势／宿主确认尚未完成。
-- AMD GPU 90%：原始实机样本仍未取得；GPU 拓扑缓存、按适配器／引擎有效性、PDH 缓冲复用、诊断与系统监控选择仍待处理。不得声称已校准。
+- AMD GPU 90%：问题机器原始样本仍未取得。35 号候选已接入拓扑缓存、独立显存有效性、PDH 缓冲复用及内部按需原始诊断；当前 NVIDIA／Intel 实测已取得，但不是 AMD 对照。原始样本发现旧解析拒绝类型名称为空的合法编号引擎，下一轮处理。用户可用诊断入口、Lua 可选详情能力和系统监控适配器选择仍待完成，不得声称已校准。
 - 最新标准构建通过；本轮完整测试 120/120 通过，先前的三项失败已处理并保留原始失败记录。后续代码变化须按依赖更新证据，不能直接沿用本次结果。
 - 首版不承载任意 Lua 顶栏布局、不做自有通知历史。系统通知使用 Windows 入口。
 
@@ -187,3 +187,15 @@
 - 新版宿主／Hook 协议另行执行 scripts/test.bat name "^tray_live_integration$"：**1/1 通过**，0.80 秒（34-live-tests.log；test-run-c7cf07a6e57e48258f5e8b77124f0ab7.xml）。真实 Explorer 连接、先启动应用的重报、动态图标、隐藏标记、矩形、v4／旧回调、删除与同宿主重连全部通过；仅调用测试进程自己的图标，未启动桌面宿主，未操作第三方菜单，未重启 Explorer。该测试没有触发真实 NIM_SETFOCUS，不外推其前台行为。
 - 输入绑定 34-before-full-validation-inputs.json／34-final-validation-inputs.json；最终宿主 SHA256 4be18010ea5b371c646fa5850f801688e13284d2e7b91ac344cbbdbeebe3f276，Hook SHA256 b2239682e7515266c48c8055d982fc6dbea2db19f6e18dd22569cc922044f5a2。空白点击关闭、第三方菜单焦点、玻璃／设备、Lua 写任务、AMD 样本等原始开放项保持；自动检查与用户实机验收分别记录。
 - 真实 Explorer 诊断使用的 DLL 由定向测试构建再次链接，相同生产输入；实际临时副本与 .build/Release/SnowDesktopTaskbarHook.dll 哈希一致：7aeeb15efa62e9d5130256c5b8ff9836aae0492103f12a1923cdabc226364368。上条 Hook 哈希为标准构建的 Runtime 副本，两者分别保留，不能混作同一二进制。完整原始诊断输出保留在 34-live-raw.log。
+
+### GPU 采集缓存与有效性候选（35）
+
+- 从共享 provider 提取 WidgetGpuSampler，原生界面与 Lua 继续复用同一订阅采样；最后 GPU 消费者离开时释放查询、设备拓扑及缓冲。DXGI 拓扑使用 IsCurrent 与可用的适配器变化事件失效，复用 PDH 查询／数组；挂起前后的 wall／unbiased 时间差触发基线重建，普通长间隔不视作挂起。真实热插拔和系统休眠仍待硬件验收。
+- 专用／共享显存按完整 LUID 独立记录有效性，不因另一项缺失丢弃已知读数。整卡仍采用同一物理引擎多进程求和、整卡取最忙引擎；内部保留引擎身份、未截断合计与样本数，仅明确请求时复制原始计数器。Lua API v2、现有 JSON 字段不变；本轮尚未增加公共诊断 CLI／可选详情 feature。
+- scripts/test.bat name "^widget_system_data_provider$" **1/1 通过**，1.99 秒，退出 0（35-gpu-tests.log；test-run-081fd7aa32df43e3bcc0d70fcc4d6589.xml），编译目标 SnowDesktopWidgetSystemDataProviderTests 无警告。复用生产缓冲与合计函数，替换的仅是 PDH 读数组返回值／尺寸边界；覆盖部分失败、全 LUID、不可信扩容尺寸、有界重试、零值／溢出和挂起判断。gpu-negative-35/ 四个隔离变体分别恢复耦合显存、每次分配、不重新探测尺寸、长间隔误判，均命中预期断言退出 1；正确副本退出 0，/W4 /WX 编译无警告。
+- 生产 sampler 的 12 次真实只读采样保存于 35-live-raw.jsonl／35-live-summary.json：前 10 次查询创建 1 次、拓扑刷新 1 次、数组扩容 6 次后不再增长；第 11 次显式重置查询并预热，第 12 次恢复。第 10 次关闭诊断即无诊断对象，Reset 后资源和统计清空。该探针直接链接生产 sampler，未启动桌面宿主。
+- 本机 DXGI 列出 NVIDIA GeForce RTX 5070 Ti Laptop GPU／Intel Graphics，以及两个同名 NVIDIA 条目；分别使用 LUID 106542／112208／168939／163941。后两个无占用或显存计数器，仍为不可用，不借用同名条目。实测样本不能代表 AMD 90% 问题机器；可选机器／型号问题尚未收到回答。
+- 真实样本检查发现已有解析会拒绝 pid_4_luid_0x00000000_0x0001B650_phys_0_eng_10_engtype_ 等类型名称为空的合法编号引擎；每个有效间隔有 6 条，本轮均为有效 0，当前显示最大值未受其影响。原始记录 35-empty-engine.json；若这些引擎存在负载则可能漏算，保持开放并在下一候选修正，不能以现有测试通过关闭。
+- 35-compare.py 从 c0a072dc 提取原有生产采样方法及原有累加器，与新生产 sampler 使用相同 /O2 选项、逐秒交替顺序采样；排除首次预热的 11 次耗时中位数为旧 3798 us／新 1291 us。数据序列非同一瞬间且系统同时编译，不能外推节省比例；GetThreadTimes 粒度不足以可靠比较单次 CPU，宿主占用／唤醒尚未测量。35-baseline-raw.jsonl 的早期日志包含序列化耗时，不与此基准混算。
+- scripts/build.bat --reload-shell **退出 0**，无编译／链接警告（35-gpu-build.log）；Shell 重载的 cmd timeout 因重定向 stdin 报不支持输入，后续 Explorer 启动与标准构建继续完成，该提示不是编译错误。完整测试留待上述新发现处理后的稳定输入，未将 34 号全量作为本次全量。
+- 输入绑定 35-final-validation-inputs.json；宿主 SHA256 2674ee654941dcd17a33d5df3072bf5655abe19976a0b2e9f488385904d6dce4，Hook SHA256 7aeeb15efa62e9d5130256c5b8ff9836aae0492103f12a1923cdabc226364368。此轮仅调整共享采集，不改变面板绘制和托盘链路；桌面交互、真实 AMD、设备恢复、公共诊断和剩余 Lua 写任务等开放项仍保留。

@@ -459,6 +459,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_app_task_executor.cpp
     src/widget_system_settings.cpp
     src/widget_system_data_provider.cpp
+    src/widget_gpu_sampler.cpp
     src/widget_audio_analysis_provider.cpp
     src/widget_draw_geometry.cpp
     src/widget_background_cache.cpp
@@ -1351,6 +1352,7 @@ if (BUILD_TESTING)
             tests/widget_system_data_provider_tests.cpp
             tests/system_controls_tests.cpp
             src/widget_system_data_provider.cpp
+            src/widget_gpu_sampler.cpp
             ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES} advapi32 dxgi dxguid iphlpapi ole32 pdh propsys runtimeobject shcore user32 windowsapp windowscodecs

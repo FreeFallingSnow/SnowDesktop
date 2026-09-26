@@ -172,26 +172,6 @@ std::string OpaqueProcessId(DWORD processId,
     return "process-" + std::to_string(hash);
 }
 
-std::uint64_t LuidKey(const LUID& luid)
-{
-    return (static_cast<std::uint64_t>(
-                static_cast<std::uint32_t>(luid.HighPart)) << 32) |
-        static_cast<std::uint32_t>(luid.LowPart);
-}
-
-std::optional<std::uint64_t> ParseGpuLuid(const wchar_t* instance)
-{
-    if (!instance) return std::nullopt;
-    const wchar_t* marker = wcsstr(instance, L"luid_0x");
-    if (!marker) return std::nullopt;
-    unsigned long high = 0;
-    unsigned long low = 0;
-    if (swscanf_s(marker, L"luid_0x%lx_0x%lx", &high, &low) != 2)
-        return std::nullopt;
-    return (static_cast<std::uint64_t>(high) << 32) |
-        static_cast<std::uint32_t>(low);
-}
-
 std::string OpaqueVolumeId(const wchar_t* root, bool resolveVolumeName)
 {
     wchar_t volumeName[MAX_PATH + 1]{};
@@ -918,7 +898,7 @@ void WidgetSystemDataProvider::StopAll()
     previousProcessCpuTimes_.clear();
     previousProcessSample_ = {};
     networkTrafficSampler_.Reset();
-    CloseGpuQuery();
+    CloseGpuResources();
     CloseStorageIoQuery();
 }
 
@@ -1102,7 +1082,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
     while (!stopToken.stop_requested())
     {
         if (closeGpuRequested_.exchange(false))
-            CloseGpuQuery();
+            CloseGpuResources();
         if (closeStorageIoRequested_.exchange(false))
             CloseStorageIoQuery();
         std::vector<std::string> dueTopics;
@@ -1192,7 +1172,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
                 PublishMediaArtwork(snapshot);
         }
     }
-    CloseGpuQuery();
+    CloseGpuResources();
     CloseStorageIoQuery();
     if (apartmentInitialized)
         winrt::uninit_apartment();
@@ -1524,248 +1504,17 @@ WidgetSystemDataProvider::SampleNetworkTraffic()
     return snapshot;
 }
 
-bool WidgetSystemDataProvider::InitializeGpuQuery()
+void WidgetSystemDataProvider::CloseGpuResources()
 {
-    CloseGpuQuery();
-    HQUERY query = nullptr;
-    if (PdhOpenQueryW(nullptr, 0, &query) != ERROR_SUCCESS)
-        return false;
-    HCOUNTER counter = nullptr;
-    HCOUNTER dedicatedUsageCounter = nullptr;
-    HCOUNTER sharedUsageCounter = nullptr;
-    if (PdhAddEnglishCounterW(query,
-            L"\\GPU Engine(*)\\Utilization Percentage",
-            0, &counter) != ERROR_SUCCESS ||
-        PdhAddEnglishCounterW(query,
-            L"\\GPU Adapter Memory(*)\\Dedicated Usage",
-            0, &dedicatedUsageCounter) != ERROR_SUCCESS ||
-        PdhAddEnglishCounterW(query,
-            L"\\GPU Adapter Memory(*)\\Shared Usage",
-            0, &sharedUsageCounter) != ERROR_SUCCESS)
-    {
-        if (sharedUsageCounter) PdhRemoveCounter(sharedUsageCounter);
-        if (dedicatedUsageCounter) PdhRemoveCounter(dedicatedUsageCounter);
-        if (counter) PdhRemoveCounter(counter);
-        PdhCloseQuery(query);
-        return false;
-    }
-    if (PdhCollectQueryData(query) != ERROR_SUCCESS)
-    {
-        PdhRemoveCounter(sharedUsageCounter);
-        PdhRemoveCounter(dedicatedUsageCounter);
-        PdhRemoveCounter(counter);
-        PdhCloseQuery(query);
-        return false;
-    }
-    gpuQuery_ = query;
-    gpuUtilizationCounter_ = counter;
-    gpuDedicatedUsageCounter_ = dedicatedUsageCounter;
-    gpuSharedUsageCounter_ = sharedUsageCounter;
-    gpuResourcesActive_.store(true);
-    return true;
-}
-
-void WidgetSystemDataProvider::CloseGpuQuery()
-{
-    if (gpuSharedUsageCounter_)
-    {
-        PdhRemoveCounter(
-            reinterpret_cast<HCOUNTER>(gpuSharedUsageCounter_));
-        gpuSharedUsageCounter_ = nullptr;
-    }
-    if (gpuDedicatedUsageCounter_)
-    {
-        PdhRemoveCounter(
-            reinterpret_cast<HCOUNTER>(gpuDedicatedUsageCounter_));
-        gpuDedicatedUsageCounter_ = nullptr;
-    }
-    if (gpuUtilizationCounter_)
-    {
-        PdhRemoveCounter(
-            reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_));
-        gpuUtilizationCounter_ = nullptr;
-    }
-    if (gpuQuery_)
-    {
-        PdhCloseQuery(reinterpret_cast<HQUERY>(gpuQuery_));
-        gpuQuery_ = nullptr;
-    }
+    gpuSampler_.Reset();
     gpuResourcesActive_.store(false);
 }
 
 WidgetGpuDataSnapshot WidgetSystemDataProvider::SampleGpu()
 {
     performance::Scope performanceScope("shared.system", "SampleGpu");
-    struct AdapterEntry
-    {
-        std::uint64_t luid = 0;
-        WidgetGpuAdapterDataSnapshot snapshot;
-    };
-
-    WidgetGpuDataSnapshot snapshot;
-    snapshot.timestampMs = TimestampMilliseconds();
-    std::vector<AdapterEntry> adapters;
-    Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
-    {
-        snapshot.error = "GPU adapter enumeration failed";
-        snapshot.warmingUp = false;
-        return snapshot;
-    }
-    for (UINT index = 0; ; ++index)
-    {
-        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
-        if (factory->EnumAdapters1(index, &adapter) == DXGI_ERROR_NOT_FOUND)
-            break;
-        if (!adapter) continue;
-        DXGI_ADAPTER_DESC1 description{};
-        if (FAILED(adapter->GetDesc1(&description)) ||
-            (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
-            continue;
-
-        AdapterEntry entry;
-        entry.luid = LuidKey(description.AdapterLuid);
-        entry.snapshot.id = WidgetGpuAdapterId(entry.luid);
-        entry.snapshot.name = WideToUtf8(description.Description);
-        entry.snapshot.dedicatedMemoryBytes =
-            description.DedicatedVideoMemory;
-        entry.snapshot.sharedMemoryBytes =
-            description.SharedSystemMemory;
-        adapters.push_back(std::move(entry));
-    }
-    if (adapters.empty())
-    {
-        snapshot.error = "notPresent";
-        snapshot.warmingUp = false;
-        return snapshot;
-    }
-    const bool initializeQuery = resetGpuBaseline_.exchange(false) ||
-        !gpuQuery_ || !gpuUtilizationCounter_ ||
-        !gpuDedicatedUsageCounter_ || !gpuSharedUsageCounter_;
-    if (initializeQuery)
-    {
-        if (!InitializeGpuQuery())
-        {
-            snapshot.error = "GPU utilization sampling unavailable";
-            snapshot.warmingUp = false;
-        }
-    }
-    else if (PdhCollectQueryData(
-                 reinterpret_cast<HQUERY>(gpuQuery_)) == ERROR_SUCCESS)
-    {
-        bool utilizationAvailable = false;
-        bool memoryUsageAvailable = false;
-        DWORD bufferBytes = 0;
-        DWORD itemCount = 0;
-        PDH_STATUS status = PdhGetFormattedCounterArrayW(
-            reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_),
-            PDH_FMT_DOUBLE, &bufferBytes, &itemCount, nullptr);
-        if (status == PDH_MORE_DATA && bufferBytes > 0)
-        {
-            std::vector<std::byte> buffer(bufferBytes);
-            auto* items = reinterpret_cast<
-                PPDH_FMT_COUNTERVALUE_ITEM_W>(buffer.data());
-            status = PdhGetFormattedCounterArrayW(
-                reinterpret_cast<HCOUNTER>(gpuUtilizationCounter_),
-                PDH_FMT_DOUBLE, &bufferBytes, &itemCount, items);
-            if (status == ERROR_SUCCESS)
-            {
-                WidgetGpuUsageAccumulator usage;
-                for (DWORD index = 0; index < itemCount; ++index)
-                {
-                    if (items[index].FmtValue.CStatus !=
-                            PDH_CSTATUS_VALID_DATA &&
-                        items[index].FmtValue.CStatus !=
-                            PDH_CSTATUS_NEW_DATA)
-                        continue;
-                    usage.AddSample(items[index].szName,
-                        items[index].FmtValue.doubleValue);
-                }
-                for (auto& entry : adapters)
-                {
-                    const auto percent = usage.UsagePercent(entry.luid);
-                    entry.snapshot.usagePercent = percent.value_or(0.0);
-                    entry.snapshot.usageAvailable = percent.has_value();
-                    utilizationAvailable = utilizationAvailable || percent.has_value();
-                }
-            }
-        }
-
-        const auto readMemoryUsage = [](void* counter,
-            std::unordered_map<std::uint64_t, std::uint64_t>& byLuid) {
-            DWORD bytes = 0;
-            DWORD count = 0;
-            PDH_STATUS status = PdhGetFormattedCounterArrayW(
-                reinterpret_cast<HCOUNTER>(counter), PDH_FMT_LARGE,
-                &bytes, &count, nullptr);
-            if (status != PDH_MORE_DATA || bytes == 0)
-                return false;
-            std::vector<std::byte> buffer(bytes);
-            auto* values = reinterpret_cast<
-                PPDH_FMT_COUNTERVALUE_ITEM_W>(buffer.data());
-            status = PdhGetFormattedCounterArrayW(
-                reinterpret_cast<HCOUNTER>(counter), PDH_FMT_LARGE,
-                &bytes, &count, values);
-            if (status != ERROR_SUCCESS)
-                return false;
-            for (DWORD index = 0; index < count; ++index)
-            {
-                if (values[index].FmtValue.CStatus !=
-                        PDH_CSTATUS_VALID_DATA &&
-                    values[index].FmtValue.CStatus !=
-                        PDH_CSTATUS_NEW_DATA)
-                    continue;
-                const auto luid = ParseGpuLuid(values[index].szName);
-                if (!luid || values[index].FmtValue.largeValue < 0)
-                    continue;
-                byLuid[*luid] += static_cast<std::uint64_t>(
-                    values[index].FmtValue.largeValue);
-            }
-            return !byLuid.empty();
-        };
-        std::unordered_map<std::uint64_t, std::uint64_t>
-            dedicatedUsageByLuid;
-        std::unordered_map<std::uint64_t, std::uint64_t>
-            sharedUsageByLuid;
-        memoryUsageAvailable = readMemoryUsage(
-                gpuDedicatedUsageCounter_, dedicatedUsageByLuid) &&
-            readMemoryUsage(
-                gpuSharedUsageCounter_, sharedUsageByLuid);
-        if (memoryUsageAvailable)
-        {
-            memoryUsageAvailable = false;
-            for (auto& entry : adapters)
-            {
-                const auto dedicated = dedicatedUsageByLuid.find(entry.luid);
-                const auto shared = sharedUsageByLuid.find(entry.luid);
-                if (dedicated == dedicatedUsageByLuid.end() ||
-                    shared == sharedUsageByLuid.end())
-                    continue;
-                entry.snapshot.dedicatedUsedBytes = dedicated->second;
-                entry.snapshot.sharedUsedBytes = shared->second;
-                entry.snapshot.dedicatedUsageAvailable = true;
-                entry.snapshot.sharedUsageAvailable = true;
-                memoryUsageAvailable = true;
-            }
-        }
-
-        snapshot.available = utilizationAvailable && memoryUsageAvailable;
-        snapshot.warmingUp = false;
-        if (!utilizationAvailable)
-            snapshot.error = "GPU utilization sampling unavailable";
-        else if (!memoryUsageAvailable)
-            snapshot.error = "GPU memory sampling unavailable";
-    }
-    else
-    {
-        snapshot.error = "GPU utilization sampling failed";
-        snapshot.warmingUp = false;
-        CloseGpuQuery();
-    }
-
-    snapshot.adapters.reserve(adapters.size());
-    for (auto& entry : adapters)
-        snapshot.adapters.push_back(std::move(entry.snapshot));
+    auto snapshot = gpuSampler_.Sample(resetGpuBaseline_.exchange(false));
+    gpuResourcesActive_.store(gpuSampler_.Active());
     return snapshot;
 }
 

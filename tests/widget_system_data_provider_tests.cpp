@@ -1,5 +1,6 @@
 #include "widget_system_data_provider.h"
 #include "widget_gpu_usage.h"
+#include "widget_gpu_counter_buffer.h"
 #include "widget_storage_usage.h"
 
 #include <chrono>
@@ -96,6 +97,81 @@ void TestGpuEngineUsageAggregation()
     Check(snowdesktop::widget_runtime::WidgetGpuAdapterId(0x1000012abull) !=
             snowdesktop::widget_runtime::WidgetGpuAdapterId(0x12ab),
         "adapter identities must retain the full session LUID");
+    const auto engines = usage.Engines(0x12ab);
+    Check(engines.size() == 5 && engines.front().physical == 0 && engines.front().index == 0 &&
+        engines.front().type == L"3D" && engines.front().samples == 3 && engines.front().rawTotal == 120 &&
+        engines.front().usagePercent == 100,
+        "diagnostic engine details retain the unclamped sum and exact engine behind the displayed maximum");
+}
+
+void TestGpuCounterValidityAndReuse()
+{
+    using namespace snowdesktop::widget_runtime;
+    WidgetGpuMemoryAccumulator dedicated, shared;
+    dedicated.AddSample(L"luid_0x0_0x12ab_phys_0", 1024);
+    dedicated.AddSample(L"luid_0x0_0x12ab_phys_1", 512);
+    shared.AddSample(L"luid_0x1_0x12ab_phys_0", 0);
+    for (const auto* malformed : {L"_Total", L"luid_0x100000000_0x12ab_phys_0",
+        L"luid_0x0_0x12ab_phys_-1", L"luid_0x0_0x12ab_phys_0trailer"})
+        dedicated.AddSample(malformed, 999999);
+    dedicated.AddSample(L"luid_0x0_0x12ab_phys_0", -1);
+    std::vector<WidgetGpuAdapterDataSnapshot> adapters(3);
+    adapters[0].luid = 0x12ab; adapters[1].luid = 0x1000012abull; adapters[2].luid = 5;
+    Check(!ApplyWidgetGpuMemory(adapters, dedicated, shared) &&
+        adapters[0].dedicatedUsageAvailable && adapters[0].dedicatedUsedBytes == 1536 &&
+        !adapters[0].sharedUsageAvailable && !adapters[1].dedicatedUsageAvailable &&
+        adapters[1].sharedUsageAvailable && adapters[1].sharedUsedBytes == 0 &&
+        !adapters[2].dedicatedUsageAvailable && !adapters[2].sharedUsageAvailable,
+        "one missing memory counter must not discard the other or borrow it from another adapter");
+    shared.AddSample(L"luid_0x0_0x12ab_phys_0", 256);
+    Check(ApplyWidgetGpuMemory(adapters, dedicated, shared) && adapters[0].sharedUsedBytes == 256,
+        "complete-memory availability requires both values on the same LUID");
+    WidgetGpuMemoryAccumulator overflow;
+    for (unsigned i = 0; i < 3; ++i)
+        overflow.AddSample(L"luid_0x0_0x12ab_phys_0", std::numeric_limits<std::int64_t>::max());
+    overflow.AddSample(L"luid_0x0_0x12ab_phys_0", 0);
+    Check(!overflow.UsageBytes(0x12ab), "overflow remains unavailable instead of wrapping or being revived by another row");
+    ApplyWidgetGpuMemory(adapters, overflow, shared);
+    Check(!adapters[0].dedicatedUsageAvailable && adapters[0].sharedUsageAvailable,
+        "counter failure invalidates only its own previous sample");
+
+    // Exercise the exact buffer routine used by all six PDH formatted/raw
+    // arrays. The fake changes only the OS return sizes/statuses, including
+    // Windows' documented unreliable size after an undersized-buffer call.
+    WidgetGpuCounterBuffer buffer;
+    DWORD required = 64;
+    unsigned calls = 0, probes = 0;
+    void* previous = nullptr;
+    const auto read = [&](DWORD* bytes, DWORD* count, void* values) -> PDH_STATUS {
+        ++calls;
+        if (!values) { ++probes; *bytes = required; return PDH_MORE_DATA; }
+        if (*bytes < required) { *bytes = 1; return PDH_MORE_DATA; }
+        previous = values; *count = 2; *bytes = required;
+        static_cast<std::uint64_t*>(values)[0] = 42;
+        return ERROR_SUCCESS;
+    };
+    Check(buffer.ReadArray(read) == ERROR_SUCCESS && buffer.Count() == 2 &&
+        buffer.Items<std::uint64_t>()[0] == 42 && calls == 2 && probes == 1 && buffer.Growths() == 1,
+        "initial counter array probes, allocates and reads the actual result");
+    const auto* allocated = previous;
+    calls = probes = 0;
+    Check(buffer.ReadArray(read) == ERROR_SUCCESS && calls == 1 && probes == 0 &&
+        previous == allocated && buffer.Growths() == 1, "stable topology reuses the allocation without another size probe");
+    calls = probes = 0; required = 128;
+    Check(buffer.ReadArray(read) == ERROR_SUCCESS && buffer.Count() == 2 && calls == 3 && probes == 1 && buffer.Growths() == 2,
+        "growing instance lists re-probe with null rather than trusting the unusable returned size");
+    Check(buffer.ReadArray([](DWORD*, DWORD*, void*) { return PDH_CSTATUS_NO_INSTANCE; }) == PDH_CSTATUS_NO_INSTANCE &&
+        buffer.Count() == 0, "missing counters cannot reuse stale array entries from the previous interval");
+    calls = 0;
+    const auto unstable = [&](DWORD* bytes, DWORD*, void* values) -> PDH_STATUS {
+        ++calls; *bytes = values ? 1 : 256; return PDH_MORE_DATA;
+    };
+    Check(buffer.ReadArray(unstable) == PDH_MORE_DATA && buffer.Count() == 0 && calls == 6,
+        "a continuously changing provider has a bounded retry budget");
+    Check(!WidgetGpuResumed(1000, 900, 61000, 60900) &&
+        WidgetGpuResumed(1000, 900, 61000, 1900) &&
+        !WidgetGpuResumed(0, 0, 61000, 1000),
+        "resume detection distinguishes actual suspend from a long sampling interval or the first sample");
 }
 
 void TestNetworkInterfaceTrafficDeltas()
@@ -793,6 +869,7 @@ int main()
     TestNetworkInterfaceTrafficDeltas();
     TestPhysicalDiskBusyTime();
     TestGpuEngineUsageAggregation();
+    TestGpuCounterValidityAndReuse();
     TestCurrentDisplayMatching();
     TestSampledDataEnvelopeDebounce();
     TestMediaArtworkTransitionDropsUnconfirmedImage();
