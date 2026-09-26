@@ -804,6 +804,23 @@ StatusBar::StatusBar(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> d
     : impl_(std::make_unique<Impl>(std::move(data), std::move(activate), std::move(hidden), std::move(error), std::move(drawBackground))) {}
 StatusBar::~StatusBar() { Close(); }
 void StatusBar::Close() { impl_->Close(); }
+void StatusBar::ReleaseGraphicsResources()
+{
+    auto& self = *impl_;
+    for (auto& [id, window] : self.windows)
+    {
+        (void)id;
+        if (!window) continue;
+        window->Hide();
+        window->tooltip.Close();
+        window->backdrop.Reset();
+        if (window->target) (void)window->target->SetRoot(nullptr);
+        window->surface.Reset(); window->backgroundSurface.Reset();
+        window->contentVisual.Reset(); window->visual.Reset(); window->target.Reset();
+        window->appearanceDirty = window->backgroundDirty = window->paintDirty = true;
+    }
+    self.composition.Reset(); self.text.Reset();
+}
 std::shared_ptr<tray::Service> StatusBar::Tray() const { return impl_->tray; }
 void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
     std::function<bool(std::string_view, POINT)> dropOutside)
@@ -864,17 +881,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
     self.tooltipAppearance = tooltipAppearance ? *tooltipAppearance : global;
     self.drawTooltipBackground = std::move(drawTooltipBackground);
     if (self.composition.Get() != composition)
-    {
-        for (auto& [id, window] : self.windows)
-        {
-            (void)id;
-            if (!window) continue;
-            window->surface.Reset(); window->backgroundSurface.Reset();
-            window->contentVisual.Reset(); window->visual.Reset(); window->target.Reset();
-            window->backgroundDirty = true;
-            window->paintDirty = true;
-        }
-    }
+        ReleaseGraphicsResources();
     self.composition = composition; self.text = text;
     if (!self.settings.enabled || monitors.empty()) { self.Close(); return; }
     if (!self.tray) self.tray = std::make_shared<tray::Service>();

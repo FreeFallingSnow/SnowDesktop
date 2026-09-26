@@ -141,7 +141,10 @@ struct Service::Impl
     std::shared_ptr<std::atomic_bool> sampleCanceled = std::make_shared<std::atomic_bool>(false);
     std::jthread sampler;
     std::vector<std::jthread> executors;
-    std::set<std::string> executingSources;
+    // Reserve one physical source across Sample, Execute/readback and Release.
+    // Backend locks are not an ownership boundary: a release queued before an
+    // executor's readback could otherwise close and then recreate its resources.
+    std::set<std::string> busySources;
     Wake wake;
     std::uint64_t next = 0, revision = 0;
     bool stopping = false;
@@ -190,39 +193,56 @@ struct Service::Impl
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         while (!token.stop_requested())
         {
-            std::vector<std::string> work, release;
+            std::string source;
+            bool release = false;
             {
                 std::unique_lock guard(mutex);
                 if (stopping) break;
                 const auto sources = Sources();
-                for (auto it = due.begin(); it != due.end();)
+                const auto now = Clock::now();
+                const auto readyControl = [&](std::string_view key) {
+                    return std::any_of(pending.begin(), pending.end(), [&](const auto& task) {
+                        return Source(task->request.name) == key &&
+                            (task->ready <= now || task->cancel.Stop());
+                    });
+                };
+                for (auto it = due.begin(); it != due.end(); ++it)
                 {
-                    if (!sources.contains(it->first)) { release.push_back(it->first); it = due.erase(it); }
-                    else ++it;
+                    if (!sources.contains(it->first) && !busySources.contains(it->first) && !readyControl(it->first))
+                    { source = it->first; release = true; due.erase(it); break; }
                 }
                 auto nextDue = Clock::time_point::max();
-                const auto now = Clock::now();
-                for (const auto& [source, interval] : sources)
+                auto selectedDue = Clock::time_point::max();
+                for (const auto& [key, interval] : sources)
                 {
-                    auto& time = due[source];
-                    if (time <= now) { work.push_back(source); time = now + interval; }
+                    (void)interval;
+                    // Slow samples can leave their next deadline overdue. Give
+                    // ready/canceled controls the next turn instead of sampling
+                    // continuously until those requests reach their deadline.
+                    if (busySources.contains(key) || readyControl(key)) continue;
+                    auto& time = due[key];
+                    if (!release && time <= now && time < selectedDue) { source = key; selectedDue = time; }
                     nextDue = (std::min)(nextDue, time);
                 }
-                if (work.empty() && release.empty())
+                if (source.empty())
                 {
                     if (nextDue == Clock::time_point::max()) changed.wait(guard);
                     else changed.wait_until(guard, nextDue);
                     continue;
                 }
+                if (!release) due[source] = now + sources.at(source);
+                busySources.insert(source);
             }
-            for (const auto& source : release) backend->Release(source);
-            for (const auto& source : work)
-            {
-                if (token.stop_requested()) break;
+            if (release) backend->Release(source);
+            else if (!token.stop_requested())
                 Publish(Sample(source, {sampleCanceled, Clock::now() + std::chrono::seconds(5)}));
+            {
+                std::lock_guard guard(mutex);
+                busySources.erase(source);
             }
+            changed.notify_all();
         }
-        for (const auto* source : {"audio", "brightness", "wifi", "bluetooth", "power"}) backend->Release(source);
+        // Shutdown releases only after both sampling and executors have joined.
         if (SUCCEEDED(apartment)) CoUninitialize();
     }
     void Finish(const std::shared_ptr<Work>& work, Result result)
@@ -231,7 +251,11 @@ struct Service::Impl
         {
             std::lock_guard guard(mutex);
             active.erase(work->id);
-            executingSources.erase(std::string(Source(work->request.name)));
+            const std::string source(Source(work->request.name));
+            busySources.erase(source);
+            // A direct task may have no subscription. Keep its cleanup visible
+            // to the sampler even when the last consumer left during readback.
+            due.try_emplace(source, Clock::now());
             if (work->generation == generations[work->consumer])
             {
                 auto& values = completed[work->consumer];
@@ -256,7 +280,7 @@ struct Service::Impl
                 auto nextDue = Clock::time_point::max();
                 for (auto it = pending.begin(); it != pending.end(); ++it)
                 {
-                    if (executingSources.contains(std::string(Source((*it)->request.name)))) continue;
+                    if (busySources.contains(std::string(Source((*it)->request.name)))) continue;
                     if ((*it)->ready <= Clock::now() || (*it)->cancel.Stop()) { selected = it; break; }
                     nextDue = (std::min)(nextDue, (*it)->ready);
                 }
@@ -267,7 +291,7 @@ struct Service::Impl
                     continue;
                 }
                 work = std::move(*selected); pending.erase(selected);
-                executingSources.insert(std::string(Source(work->request.name)));
+                busySources.insert(std::string(Source(work->request.name)));
             }
             Result result;
             if (work->cancel.Stop()) result = work->cancel.Failure();
@@ -278,10 +302,10 @@ struct Service::Impl
                 if (work->cancel.Stop()) result = work->cancel.Failure();
                 // Read actual state even after a rejected request. An OS API may
                 // time out after applying part of a device transition.
-                if (!token.stop_requested() && Source(work->request.name) != "media")
+                if (!token.stop_requested() && !work->cancel.Canceled() && Source(work->request.name) != "media")
                 {
                     const std::string source(Source(work->request.name));
-                    Publish(Sample(source, {sampleCanceled, Clock::now() + std::chrono::seconds(5)}));
+                    Publish(Sample(source, {work->cancel.canceled, Clock::now() + std::chrono::seconds(5)}));
                     std::lock_guard guard(mutex);
                     const auto sources = Sources();
                     const auto demand = sources.find(source);
@@ -367,6 +391,7 @@ std::uint64_t Service::Start(std::string consumer, Request request)
         if (queued->consumer == work->consumer && queued->request.name == work->request.name &&
             Target(queued->request) == Target(work->request)) queued->cancel.canceled->store(true);
     impl_->active[work->id] = work; impl_->pending.push_back(work);
+    if (!impl_->sampler.joinable()) impl_->sampler = std::jthread([this](std::stop_token token) { impl_->Samples(token); });
     if (impl_->executors.empty()) for (unsigned index = 0; index < 3; ++index)
         impl_->executors.emplace_back([this](std::stop_token token) { impl_->Execute(token); });
     impl_->changed.notify_all(); return work->id;

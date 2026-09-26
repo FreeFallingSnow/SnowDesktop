@@ -407,7 +407,7 @@ private:
     WidgetStorageIoDataSnapshot SampleStorageIo();
     WidgetDisplayTopologyDataSnapshot SampleDisplayTopology();
     WidgetMediaSessionsDataSnapshot SampleMediaSessions(
-        bool includeArtwork = false);
+        bool includeArtwork, std::stop_token stopToken);
     void PublishCpu(WidgetCpuDataSnapshot snapshot);
     void PublishMemory(WidgetMemoryDataSnapshot snapshot);
     void PublishProcessSummary(WidgetProcessSummaryDataSnapshot snapshot);

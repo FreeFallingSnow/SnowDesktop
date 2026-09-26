@@ -75,7 +75,14 @@ SystemPanelModel::SystemPanelModel(SystemPanelSource source,StatusBarSettings se
     Refresh();
 }
 SystemPanelModel::~SystemPanelModel(){Close();}
-void SystemPanelModel::Close(){if(closed_)return;closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();subscriptions_.clear();if(source_.close)source_.close();source_={};}
+void SystemPanelModel::Close()
+{
+    if(closed_)return;
+    closed_=true;actions_.clear();feedback_.Clear();pendingValues_.clear();sliderTargets_.clear();valueControls_.clear();subscriptions_.clear();lastStarted_=0;
+    // A close callback may pump messages. Detach all effects before calling it,
+    // and keep its callable alive even if the callback re-enters Close().
+    auto close=std::move(source_.close);source_={};if(close)close();
+}
 void SystemPanelModel::SyncSubscriptions()
 {
     std::set<std::string> needed;
@@ -104,10 +111,22 @@ void SystemPanelModel::Start(std::string task,system_control::Arguments args)
     if(closed_||!source_.start)return;
     system_control::Request request;request.name=std::move(task);request.arguments=std::move(args);
     const bool hiddenNetwork = request.name == "network.wifi.connect" && request.arguments.contains("hidden");
-    if((hiddenNetwork||system_control::RequiresConfirmation(request.name)||system_control::RequiresPasswordPrompt(request))&&(!source_.prompt||!source_.prompt(request)))return;
-    const auto key=system_control::ControlFeedback::Key(request);const auto id=source_.start(std::move(request));feedback_.Track(key,id);lastStarted_=id;
+    if(hiddenNetwork||system_control::RequiresConfirmation(request.name)||system_control::RequiresPasswordPrompt(request))
+    {
+        const auto prompt=source_.prompt;
+        if(!prompt||!prompt(request))return;
+    }
+    // Confirmation runs a nested message loop: dismissal can invalidate this
+    // model while Invoke() deliberately retains its lifetime.
+    if(closed_||!source_.start)return;
+    const auto start=source_.start;
+    const auto key=system_control::ControlFeedback::Key(request);const auto id=start(std::move(request));
+    if(closed_)return;
+    feedback_.Track(key,id);lastStarted_=id;
     error_=id?L"":_LW("controlCenter.failed");
 }
+void SystemPanelModel::OpenSettings(const wchar_t* uri)
+{if(closed_)return;const auto open=source_.settings;if(open)open(uri);}
 ui::Node& SystemPanelModel::Add(std::string id,ui::Role role,D2D1_RECT_F rect,std::wstring text,std::wstring glyph)
 { ui::Node node;node.id=std::move(id);node.role=role;node.bounds=rect;node.text=std::move(text);node.glyph=std::move(glyph);node.tooltip=node.text;scene_.nodes.push_back(std::move(node));return scene_.nodes.back(); }
 void SystemPanelModel::Command(std::string id,std::function<void()> fn)
@@ -120,7 +139,9 @@ bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
     if(value)*value=std::clamp(*value,0.f,1.f);
     const auto it=actions_.find(key);if(it==actions_.end())return false;
     const auto target=sliderTargets_.contains(key)?sliderTargets_.at(key):std::string{};
+    // Navigation/close rebuilds or clears actions_ during the call.
     const auto fn=it->second;lastStarted_=0;fn(value);
+    if(closed_)return false;
     if(value){if(lastStarted_)pendingValues_[key]={lastStarted_,*value,target};else pendingValues_.erase(key);}
     Refresh(available_);return true;
 }
@@ -142,7 +163,7 @@ void SystemPanelModel::Header(std::wstring title)
 void SystemPanelModel::Footer(const wchar_t* uri,float& y)
 {
     Add("footer.settings",ui::Role::Button,Rect(16,y,scene_.width-32,36),_LW("settings.taskbar.systemSettings.open"),L"\uE713");
-    const auto target=std::wstring(uri);Command("footer.settings",[this,target]{if(source_.settings)source_.settings(target.c_str());});y+=48;
+    const auto target=std::wstring(uri);Command("footer.settings",[this,target]{OpenSettings(target.c_str());});y+=48;
 }
 void SystemPanelModel::Radio(std::string_view key,D2D1_RECT_F rect,bool compact)
 {
@@ -219,7 +240,7 @@ void SystemPanelModel::Overview(float& y)
     batteryNode.charging=valid&&j::Flag(power,"charging");
     Add("power.more",ui::Role::Icon,Rect(scene_.width-100,y,36,36),L"",L"\uE7E8").tooltip=_LW("statusBar.powerControls");Command("power.more",[this]{Select("power");});
     }
-    Add("system.settings",ui::Role::Icon,Rect(scene_.width-52,y,36,36),L"",L"\uE713").tooltip=_LW("statusBar.systemSettings");Command("system.settings",[this]{if(source_.settings)source_.settings(L"ms-settings:");});y+=48;
+    Add("system.settings",ui::Role::Icon,Rect(scene_.width-52,y,36,36),L"",L"\uE713").tooltip=_LW("statusBar.systemSettings");Command("system.settings",[this]{OpenSettings(L"ms-settings:");});y+=48;
 }
 void SystemPanelModel::Audio(float& y)
 {
@@ -264,7 +285,7 @@ void SystemPanelModel::WifiPage(float& y)
     Radio("wifi",Rect(scene_.width-54,10,40,36),true);
     const auto current=Wifi();const auto networks=system_control::WifiPresentationNetworks(current);
     if(j::String(current,"error")=="accessDenied")
-    {Add("wifi.denied",ui::Role::Text,Rect(16,y,scene_.width-32,44),_LW("controlCenter.locationDenied")).fontSize=12;y+=48;Add("wifi.location",ui::Role::Button,Rect(16,y,scene_.width-32,36),_LW("controlCenter.locationSettings"));Command("wifi.location",[this]{if(source_.settings)source_.settings(L"ms-settings:privacy-location");});y+=44;}
+    {Add("wifi.denied",ui::Role::Text,Rect(16,y,scene_.width-32,44),_LW("controlCenter.locationDenied")).fontSize=12;y+=48;Add("wifi.location",ui::Role::Button,Rect(16,y,scene_.width-32,36),_LW("controlCenter.locationSettings"));Command("wifi.location",[this]{OpenSettings(L"ms-settings:privacy-location");});y+=44;}
     for(const auto& n:networks)
     {
         const auto id=j::String(n,"id"),profile=j::String(n,"profileName");const bool connected=j::Flag(n,"connected"),open=id==network_||connected;
@@ -273,7 +294,7 @@ void SystemPanelModel::WifiPage(float& y)
         if(open)
         {
             auto& button=Add("wifi.connect:"+id,ui::Role::Button,Rect(scene_.width-150,y,134,36),_LW(connected?"controlCenter.disconnect":"controlCenter.connect"));button.enabled=connected||j::Flag(n,"connectable");
-            const auto security=j::String(n,"security");Command(button.id,[this,id,profile,connected,security]{if(connected)Start("network.wifi.disconnect",{{"interfaceId",interface_}});else if(!profile.empty())Start("network.wifi.connect",{{"interfaceId",interface_},{"profileName",profile}});else if(security=="system"){if(source_.settings)source_.settings(L"ms-settings:network-wifi");}else Start("network.wifi.connect",{{"interfaceId",interface_},{"networkId",id}});});
+            const auto security=j::String(n,"security");Command(button.id,[this,id,profile,connected,security]{if(connected)Start("network.wifi.disconnect",{{"interfaceId",interface_}});else if(!profile.empty())Start("network.wifi.connect",{{"interfaceId",interface_},{"profileName",profile}});else if(security=="system")OpenSettings(L"ms-settings:network-wifi");else Start("network.wifi.connect",{{"interfaceId",interface_},{"networkId",id}});});
             if(!profile.empty()){auto& forget=Add("wifi.forget:"+id,ui::Role::Icon,Rect(16,y,36,36),L"",L"\uE74D");forget.tooltip=_LW("controlCenter.forget");Command(forget.id,[this,profile]{Start("network.wifi.forget",{{"interfaceId",interface_},{"profileName",profile}});});}y+=44;
         }
     }
@@ -295,7 +316,7 @@ void SystemPanelModel::Bluetooth(float& y)
         auto& row=Add("bluetooth.device:"+id,ui::Role::ListItem,Rect(8,y,scene_.width-16,62),Wide(j::String(d,"name")),L"\uE702");
         row.enabled=powered;
         row.detail=_LW(connected?"controlCenter.connected":"controlCenter.connect");if(const auto* level=d.Find("batteryPercent");level&&level->IsNumber())row.detail+=L" · "+Percent(level->number);row.selected=connected;
-        Command(row.id,[this,id,connected,supported]{if(supported)Start(connected?"bluetooth.disconnect":"bluetooth.connect",{{"deviceId",id}});else if(source_.settings)source_.settings(L"ms-settings:bluetooth");});y+=66;
+        Command(row.id,[this,id,connected,supported]{if(supported)Start(connected?"bluetooth.disconnect":"bluetooth.connect",{{"deviceId",id}});else OpenSettings(L"ms-settings:bluetooth");});y+=66;
     }
     if(devices.empty()){Add("bluetooth.empty",ui::Role::Text,Rect(16,y,scene_.width-32,52),_LW(!available?"controlCenter.unavailable":!powered?"controlCenter.off":"controlCenter.noDevices"));y+=60;}Footer(L"ms-settings:bluetooth",y);
 }
@@ -393,8 +414,11 @@ bool SystemPanelModel::Drop(std::string_view key,D2D1_POINT_2F p)
 {
     if(closed_||action_!=StatusBarAction::Tray||p.x<0||p.x>=scene_.width||p.y<0||p.y>=scene_.height||!source_.tray)return false;
     std::string before;for(const auto& n:scene_.nodes)if(n.id.starts_with("tray:")&&(p.y<n.bounds.top||(p.y<n.bounds.bottom&&p.x<(n.bounds.left+n.bounds.right)/2))){before=n.id.substr(5);break;}
-    if(!tray::PlaceIcon(settings_,source_.tray(),key,false,before))return false;
-    if(source_.trayChanged)source_.trayChanged(settings_);Refresh(available_);return true;
+    const auto readTray=source_.tray;const auto snapshot=readTray();
+    if(closed_||!tray::PlaceIcon(settings_,snapshot,key,false,before))return false;
+    const auto changed=source_.trayChanged;if(changed)changed(settings_);
+    if(closed_)return true;
+    Refresh(available_);return true;
 }
 void SystemPanelModel::Calendar()
 {
@@ -440,7 +464,7 @@ void SystemPanelModel::Calendar()
         n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;n.tooltip=Wide(*date);
         Command(n.id,[this,date=*date]{date_=date;month_=date.substr(0,7)+"-01";});
     }
-    float y=310;Add("calendar.selected",ui::Role::Text,Rect(16,y,330,36),Wide(date_)).bold=true;Add("calendar.manage",ui::Role::Button,Rect(354,y,150,36),_LW("statusBar.manageCalendar"));Command("calendar.manage",[this]{if(source_.calendar.manage)source_.calendar.manage();});y+=48;
+    float y=310;Add("calendar.selected",ui::Role::Text,Rect(16,y,330,36),Wide(date_)).bold=true;Add("calendar.manage",ui::Role::Button,Rect(354,y,150,36),_LW("statusBar.manageCalendar"));Command("calendar.manage",[this]{const auto manage=source_.calendar.manage;if(manage)manage();});y+=48;
     const auto events=source_.calendar.events?source_.calendar.events(date_):std::vector<calendar::CalendarEvent>{};
     if(events.empty()){Add("calendar.empty",ui::Role::Text,Rect(16,y,488,40),_LW("settings.calendar.empty"));y+=48;}
     for(const auto& e:events){wchar_t when[32]{};swprintf_s(when,L"%02d:%02d",e.startMinutes/60,e.startMinutes%60);auto& n=Add("event:"+e.id,ui::Role::Card,Rect(16,y,488,56),Wide(e.title));n.detail=e.allDay?_LW("settings.calendar.allDay"):when;y+=64;}

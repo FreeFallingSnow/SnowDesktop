@@ -344,6 +344,34 @@ void CheckMute(SystemPanelModel& model, const std::shared_ptr<PreviewState>& sta
     state->allowMute = false;
 }
 
+void CheckClosedCallbacks()
+{
+    // A native confirmation runs a nested message loop: closing or replacing
+    // the panel during it must invalidate the old action before it can submit.
+    auto state = std::make_shared<PreviewState>();
+    auto source = FixtureSource(state);
+    SystemPanelModel* active = nullptr;
+    unsigned starts = 0, prompts = 0;
+    source.start = [&](system_control::Request) { ++starts; return std::uint64_t{1}; };
+    source.prompt = [&](system_control::Request&) { ++prompts; active->Close(); return true; };
+    SystemPanelModel model(std::move(source), {}, StatusBarAction::ControlCenter);
+    active = &model; model.Select("power");
+    Require(!model.Invoke("power.shutdown") && prompts == 1 && starts == 0 && state->closes == 1,
+        "closed confirmation submitted an obsolete action or closed its source twice");
+    const auto reads = state->reads;
+    model.Refresh(); model.Close();
+    Require(state->reads == reads && state->subscriptions.empty() && state->closes == 1,
+        "closed confirmation resumed subscriptions");
+
+    auto nextState = std::make_shared<PreviewState>();
+    auto nextSource = FixtureSource(nextState);
+    nextSource.calendar.manage = [&] { active->Close(); };
+    SystemPanelModel next(std::move(nextSource), {}, StatusBarAction::Calendar);
+    active = &next;
+    Require(!next.Invoke("calendar.manage") && nextState->closes == 1,
+        "reentrant settings callback retained a closed model");
+}
+
 D2D1_POINT_2F VisibleCenter(const ui::Scene& scene, std::string_view id)
 {
     const auto& node = Node(scene,id);
@@ -481,6 +509,29 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     Require(readback->Unmap());
     return pixels;
 }
+
+void CheckSplitOpacity(ID2D1Device* device, IDWriteFactory* text,
+    native_component_preview::Request request, const PersonalizationSettings& appearance,
+    const SystemPanel::Background& background)
+{
+    // Independent pixel check for the known translucent seam overdraw. Omit
+    // wallpaper/material so arbitrary user preview backgrounds cannot affect it.
+    request.transparent = request.contentOnly = true;
+    ui::Scene scene; scene.width = 200; scene.height = 80;
+    ui::Node button; button.id = "split.main"; button.role = ui::Role::Button;
+    button.bounds = {20,20,120,68}; button.joinRight = true;
+    scene.nodes.push_back(button);
+    button.id = "split.more"; button.bounds = {120,20,168,68};
+    button.joinRight = false; button.joinLeft = true; scene.nodes.push_back(button);
+    const auto pixels = Render(device,text,request,scene,appearance,background,{},0,0);
+    const float scale = request.dpi/96.f;
+    const auto sample = [&](float x) {
+        return pixels[static_cast<std::size_t>(std::lround(32*scale))*request.canvasWidth +
+            static_cast<std::size_t>(std::lround(x*scale))];
+    };
+    Require(sample(105) == sample(117) && sample(105) == sample(122) && sample(105) == sample(135),
+        "translucent split control overdraw changed opacity at its inner join");
+}
 }
 
 native_component_preview::Result ExportSystemPanelPreview(const native_component_preview::Request& request,
@@ -614,6 +665,8 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (controls && (preset == "overview" || preset == "audio")) CheckMute(model,state,preset == "overview");
             if (controls && preset == "overview")
             {
+                CheckClosedCallbacks();
+                CheckSplitOpacity(device,text,request,appearance,background);
                 CheckControlInput(model,state,available);
                 const float withMedia = model.View().height;
                 state->emptyMedia = true; model.Refresh(available);

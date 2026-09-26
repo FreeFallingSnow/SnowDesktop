@@ -42,6 +42,8 @@ public:
         const PersonalizationSettings* tooltipAppearance = nullptr,
         DrawBackground drawTooltipBackground = {});
     void Close();
+    // Release a lost device without unregistering the AppBar or sampling demands.
+    void ReleaseGraphicsResources();
     bool IsFullscreen(HMONITOR monitor) const;
     std::shared_ptr<tray::Service> Tray() const;
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,

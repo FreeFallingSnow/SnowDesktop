@@ -1,4 +1,5 @@
 #include "widget_system_data_provider.h"
+#include "system_control_windows.h"
 #include "widget_gpu_usage.h"
 #include "widget_storage_usage.h"
 #include "performance_trace.h"
@@ -290,7 +291,8 @@ std::uint64_t MediaArtworkIdentity(std::string_view sessionId,
 WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
     const winrt::Windows::Storage::Streams::IRandomAccessStreamReference&
         reference,
-    std::string sessionId, std::int64_t timestampMs)
+    std::string sessionId, std::int64_t timestampMs,
+    const system_control::Cancellation& cancel)
 {
     using namespace winrt::Windows::Storage::Streams;
     WidgetMediaArtworkDataSnapshot snapshot;
@@ -303,7 +305,8 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
     }
     try
     {
-        const auto stream = reference.OpenReadAsync().get();
+        if (cancel.Stop()) throw winrt::hresult_canceled();
+        const auto stream = system_control::windows::Await(reference.OpenReadAsync(), cancel);
         if (!stream)
         {
             snapshot.error = "artworkReadFailed";
@@ -324,7 +327,8 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
         DataReader reader(stream.GetInputStreamAt(0));
         const std::uint32_t expected =
             static_cast<std::uint32_t>(encodedSize);
-        if (reader.LoadAsync(expected).get() != expected)
+        if (cancel.Stop()) throw winrt::hresult_canceled();
+        if (system_control::windows::Await(reader.LoadAsync(expected), cancel) != expected)
         {
             snapshot.error = "artworkReadFailed";
             return snapshot;
@@ -332,6 +336,7 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
         std::vector<std::uint8_t> encoded(expected);
         reader.ReadBytes(encoded);
         reader.Close();
+        if (cancel.Stop()) throw winrt::hresult_canceled();
 
         Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
         if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
@@ -418,6 +423,7 @@ WidgetMediaArtworkDataSnapshot DecodeMediaArtwork(
     }
     catch (...)
     {
+        if (cancel.Stop()) throw;
         snapshot.error = "artworkReadFailed";
     }
     return snapshot;
@@ -1162,7 +1168,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
             const bool artworkDue = std::find(
                 dueTopics.begin(), dueTopics.end(),
                 MediaArtworkTopic) != dueTopics.end();
-            const auto snapshot = SampleMediaSessions(artworkDue);
+            const auto snapshot = SampleMediaSessions(artworkDue, stopToken);
+            if (stopToken.stop_requested()) break;
             if (std::find(dueTopics.begin(), dueTopics.end(),
                     MediaSessionsTopic) != dueTopics.end())
                 PublishMediaSessions(snapshot);
@@ -1851,21 +1858,27 @@ WidgetSystemDataProvider::SampleDisplayTopology()
 }
 
 WidgetMediaSessionsDataSnapshot
-WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
+WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_token stopToken)
 {
     performance::Scope performanceScope("shared.system", "SampleMediaSessions");
     using namespace winrt::Windows::Media::Control;
     WidgetMediaSessionsDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();
     snapshot.artwork.timestampMs = snapshot.timestampMs;
+    // All metadata and artwork reads share one deadline. StopTopic's worker
+    // join must not wait for a stalled player's outstanding WinRT operation.
+    const system_control::Cancellation cancel{
+        std::make_shared<std::atomic_bool>(false), Clock::now() + std::chrono::seconds(5)};
+    std::stop_callback stopped(stopToken, [flag = cancel.canceled] { flag->store(true); });
     try
     {
+        if (cancel.Stop()) throw winrt::hresult_canceled();
         thread_local GlobalSystemMediaTransportControlsSessionManager manager{
             nullptr };
         if (!manager)
         {
-            manager = GlobalSystemMediaTransportControlsSessionManager::
-                RequestAsync().get();
+            manager = system_control::windows::Await(
+                GlobalSystemMediaTransportControlsSessionManager::RequestAsync(), cancel);
         }
         if (!manager)
         {
@@ -1877,6 +1890,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
         const auto sessions = manager.GetSessions();
         std::unordered_map<std::wstring, std::size_t> sourceOccurrences;
         const auto appendSession = [&](const auto& session, bool current) {
+            if (cancel.Stop()) throw winrt::hresult_canceled();
             if (!session || snapshot.sessions.size() >=
                     MaximumExposedMediaSessions)
                 return;
@@ -1930,13 +1944,15 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
 
             try
             {
-                const auto properties =
-                    session.TryGetMediaPropertiesAsync().get();
+                if (cancel.Stop()) throw winrt::hresult_canceled();
+                const auto properties = system_control::windows::Await(
+                    session.TryGetMediaPropertiesAsync(), cancel);
                 value.title = BoundedMediaString(properties.Title());
                 value.artist = BoundedMediaString(properties.Artist());
                 value.album = BoundedMediaString(properties.AlbumTitle());
                 if (current && includeArtwork)
                 {
+                    if (cancel.Stop()) throw winrt::hresult_canceled();
                     const std::uint64_t mediaIdentity = MediaArtworkIdentity(
                         value.id, value.title, value.artist, value.album);
                     const auto previous = MediaArtwork();
@@ -1950,13 +1966,14 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
                     {
                         snapshot.artwork = DecodeMediaArtwork(
                             properties.Thumbnail(), value.id,
-                            snapshot.timestampMs);
+                            snapshot.timestampMs, cancel);
                         snapshot.artwork.mediaIdentity = mediaIdentity;
                     }
                 }
             }
             catch (...)
             {
+                if (cancel.Stop()) throw;
                 // One source may withhold metadata without invalidating the
                 // session list, playback state, controls, or timeline.
                 if (current && includeArtwork)
@@ -1978,6 +1995,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork)
             if (currentSession && session == currentSession) continue;
             appendSession(session, false);
         }
+        if (cancel.Stop()) throw winrt::hresult_canceled();
         snapshot.available = true;
         if (includeArtwork && snapshot.artwork.error.empty() &&
             !snapshot.artwork.available)

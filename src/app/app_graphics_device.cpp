@@ -343,6 +343,10 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
 {
     // Run only at the outer message-pump boundary, after every BeginDraw has
     // unwound. Keep Lua instances, layout and user state intact.
+    uiAnimationScheduler_.Cancel(statusBarActivationToken_);
+    statusBarActivationToken_ = 0;
+    systemPanel_.reset();
+    if (statusBar_) statusBar_->ReleaseGraphicsResources();
     if (dockWindowTransition_)
     {
         dockWindowTransition_->SetPresentationCallback({});
@@ -453,6 +457,7 @@ void DesktopApp::ProcessGraphicsDeviceRecovery()
             ? L"Graphics recovery desktop HWND recreated"
             : L"Graphics recovery waiting for desktop host recreation");
     }
+    SyncStatusBar();
     const auto repaint = [](HWND window) {
         if (window && IsWindow(window)) InvalidateRect(window, nullptr, FALSE);
     };

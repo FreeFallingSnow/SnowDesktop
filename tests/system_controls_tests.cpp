@@ -2,11 +2,14 @@
 #include "system_control_feedback.h"
 #include "system_control_bluetooth_sampling.h"
 #include "system_control_wifi_presentation.h"
+#include "system_control_windows.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <set>
+#include <thread>
 
 namespace
 {
@@ -86,6 +89,197 @@ void ControlQueueCancellationAndReadback()
     service.RemoveConsumer("widget");
     service.SetWake({}); service.Shutdown();
     Require(service.DrainCompletions("widget").empty(), "destroyed components must not receive late task results");
+}
+// Deliberately does not serialize backend calls: the production service must
+// keep Release exclusive even when an OS call is still returning after cancel.
+struct LifecycleBackend final : Backend
+{
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::map<std::string,unsigned> samples, executions, releases, releaseEntries, users;
+    std::set<std::string> resources;
+    bool holdExecute = false, holdReadback = false, holdRelease = false;
+    std::string slowSource;
+    bool holdFirstSample = false;
+    void Enter(const std::string& source)
+    {
+        Require(users[source] == 0, "sampling, execution and release must not overlap for one physical source");
+        ++users[source];
+    }
+    template<class Predicate> void Await(std::unique_lock<std::mutex>& guard, Predicate predicate, const char* message)
+    { Require(changed.wait_for(guard, 3s, predicate), message); }
+    template<class Predicate> void Wait(Predicate predicate, const char* message)
+    { std::unique_lock guard(mutex); Await(guard, predicate, message); }
+    std::map<std::string, Snapshot> Sample(std::string_view name, const Cancellation&) override
+    {
+        const std::string source(name); std::unique_lock guard(mutex); Enter(source);
+        resources.insert(source); ++samples[source]; changed.notify_all();
+        if (source == slowSource)
+        {
+            if (samples[source] == 1)
+                Await(guard, [&] { return !holdFirstSample; }, "slow sample gate was not released");
+            else Require(executions[source] != 0, "an overdue sample cannot run again before an already-ready control");
+        }
+        if (source == "brightness" && executions[source])
+            Await(guard, [&] { return !holdReadback; }, "readback gate was not released");
+        --users[source]; changed.notify_all(); return {};
+    }
+    Result Execute(const Request& request, const Cancellation&) override
+    {
+        const std::string source(Source(request.name)); std::unique_lock guard(mutex); Enter(source);
+        resources.insert(source); ++executions[source]; changed.notify_all();
+        if (source == "brightness") Await(guard, [&] { return !holdExecute; }, "execution gate was not released");
+        --users[source]; changed.notify_all(); return {false, "deviceGone", 1167};
+    }
+    void Release(std::string_view name) override
+    {
+        const std::string source(name); std::unique_lock guard(mutex); Enter(source);
+        ++releaseEntries[source]; changed.notify_all();
+        if (source == "brightness") Await(guard, [&] { return !holdRelease; }, "release gate was not released");
+        resources.erase(source); ++releases[source]; --users[source]; changed.notify_all();
+    }
+};
+Request BrightnessRequest()
+{ Request request; request.name = "system.display.setBrightness"; request.arguments = {{"monitorId", "monitor"}, {"brightness", "60"}}; return request; }
+void LastConsumerDuringExecutionAndReadback(bool removeConsumer)
+{
+    auto backend = std::make_shared<LifecycleBackend>();
+    backend->holdExecute = true; backend->holdReadback = !removeConsumer;
+    Service service(backend);
+    Require(service.Subscribe("panel", "system.display.brightness", 60s), "brightness source subscribes");
+    backend->Wait([&] { return backend->samples["brightness"] == 1 && !backend->users["brightness"]; }, "initial brightness sample finishes");
+    Require(service.Start("panel", BrightnessRequest()) != 0, "brightness request starts");
+    backend->Wait([&] { return backend->executions["brightness"] == 1; }, "brightness execution reaches the gate");
+    if (removeConsumer) service.RemoveConsumer("panel");
+    else Require(service.Unsubscribe("panel", "system.display.brightness"), "page switch drops brightness demand");
+    // Observing a second source proves the sampler processed the changed demand
+    // while brightness was held. No timing sleep is used to infer that ordering.
+    Require(service.Subscribe("probe", "system.power.plans", 60s), "independent source subscribes");
+    backend->Wait([&] { return backend->samples["power"] == 1; }, "sampler processes last-consumer removal");
+    {
+        std::lock_guard guard(backend->mutex);
+        Require(!backend->releases["brightness"], "last consumer cannot release an executing source");
+        backend->holdExecute = false; backend->changed.notify_all();
+    }
+    if (!removeConsumer)
+    {
+        backend->Wait([&] { return backend->samples["brightness"] == 2; }, "failed request enters actual readback");
+        service.Invalidate("power");
+        backend->Wait([&] { return backend->samples["power"] == 2; }, "sampler runs while readback is held");
+        std::lock_guard guard(backend->mutex);
+        Require(!backend->releases["brightness"], "last consumer cannot release during readback");
+        backend->holdReadback = false; backend->changed.notify_all();
+    }
+    backend->Wait([&] { return backend->releases["brightness"] == 1 && !backend->resources.contains("brightness"); },
+        "the final executor must release resources recreated by readback without a remaining subscriber");
+    if (removeConsumer)
+    {
+        std::lock_guard guard(backend->mutex);
+        Require(backend->samples["brightness"] == 1, "removed consumers do not start a new readback");
+    }
+    service.RemoveConsumer("probe"); service.Shutdown();
+}
+void NewSubscriberDuringRelease()
+{
+    auto backend = std::make_shared<LifecycleBackend>(); Service service(backend);
+    Require(service.Subscribe("old", "system.display.brightness", 60s), "old brightness consumer subscribes");
+    backend->Wait([&] { return backend->samples["brightness"] == 1 && !backend->users["brightness"]; }, "initial source sample finishes");
+    { std::lock_guard guard(backend->mutex); backend->holdRelease = true; }
+    service.RemoveConsumer("old");
+    backend->Wait([&] { return backend->releaseEntries["brightness"] == 1; }, "last consumer enters resource release");
+    Require(service.Subscribe("new", "system.display.brightness", 60s), "new consumer subscribes during release");
+    Require(service.Start("new", BrightnessRequest()) != 0, "new action queues during release");
+    Request audio; audio.name = "audio.output.setMute"; audio.arguments["muted"] = "0";
+    Require(service.Start("other", std::move(audio)) != 0, "different source starts while brightness releases");
+    backend->Wait([&] { return backend->executions["audio"] == 1; }, "source release does not hold the service lock or block another device");
+    {
+        std::lock_guard guard(backend->mutex);
+        Require(!backend->executions["brightness"] && backend->samples["brightness"] == 1,
+            "a new subscriber cannot use resources while their release is in progress");
+        backend->holdRelease = false; backend->changed.notify_all();
+    }
+    backend->Wait([&] { return backend->executions["brightness"] == 1 && backend->samples["brightness"] >= 2 && !backend->users["brightness"]; },
+        "new subscriber proceeds after release and reads actual state");
+    {
+        std::lock_guard guard(backend->mutex);
+        Require(backend->releases["brightness"] == 1 && backend->resources.contains("brightness"),
+            "the new consumer keeps its resources after readback");
+    }
+    service.RemoveConsumer("new");
+    backend->Wait([&] { return backend->releases["brightness"] == 2 && !backend->resources.contains("brightness"); }, "replacement consumer also releases its resources");
+    service.Shutdown();
+}
+void DirectTaskWithoutSubscriptionReleases()
+{
+    auto backend = std::make_shared<LifecycleBackend>(); Service service(backend);
+    Request request; request.name = "audio.output.setMute"; request.arguments["muted"] = "1";
+    Require(service.Start("direct", std::move(request)) != 0, "unsubscribed control request starts");
+    backend->Wait([&] { return backend->releases["audio"] == 1 && !backend->resources.contains("audio"); },
+        "a direct task without any sampling subscription still releases its backend");
+    { std::lock_guard guard(backend->mutex); Require(backend->samples["audio"] == 1, "unsubscribed failed requests retain one actual readback"); }
+    service.Shutdown();
+}
+void SlowSampleYieldsToReadyControl()
+{
+    auto backend = std::make_shared<LifecycleBackend>();
+    backend->slowSource = "audio"; backend->holdFirstSample = true;
+    Service service(backend);
+    Require(service.Subscribe("panel", "audio.output.volume", 10ms), "fast sampling source subscribes");
+    backend->Wait([&] { return backend->samples["audio"] == 1; }, "slow sample enters its controlled gate");
+    Request request; request.name = "audio.output.setMute"; request.arguments["muted"] = "1";
+    Require(service.Start("panel", std::move(request)) != 0, "ready control queues behind the held sample");
+    // Force the scheduled deadline to be overdue while Sample owns the source.
+    // This is the scheduling state of a sample slower than its interval, without
+    // guessing scheduler progress from a sleep or depending on clock granularity.
+    service.Invalidate("audio");
+    { std::lock_guard guard(backend->mutex); backend->holdFirstSample = false; backend->changed.notify_all(); }
+    backend->Wait([&] { return backend->executions["audio"] == 1; }, "overdue sampling yields to the ready control");
+    service.RemoveConsumer("panel"); service.Shutdown();
+}
+struct AsyncProbe
+{
+    std::mutex mutex; std::condition_variable changed;
+    winrt::Windows::Foundation::AsyncStatus status = winrt::Windows::Foundation::AsyncStatus::Started;
+    unsigned polls = 0, cancels = 0, results = 0;
+};
+struct StalledAsyncOperation
+{
+    std::shared_ptr<AsyncProbe> probe;
+    auto Status() const
+    { std::lock_guard guard(probe->mutex); ++probe->polls; probe->changed.notify_all(); return probe->status; }
+    void Cancel() const
+    { std::lock_guard guard(probe->mutex); ++probe->cancels; } // Deliberately never completes.
+    int GetResults() const
+    { std::lock_guard guard(probe->mutex); ++probe->results; return 17; }
+};
+void CancellableWinRtSamplingWait()
+{
+    auto probe = std::make_shared<AsyncProbe>();
+    Cancellation budget{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
+    bool canceled = false, finished = false;
+    std::jthread worker([&](std::stop_token token) {
+        std::stop_callback stopped(token, [flag = budget.canceled] { flag->store(true); });
+        try { (void)snowdesktop::system_control::windows::Await(StalledAsyncOperation{probe}, budget); }
+        catch (const winrt::hresult_canceled&) { canceled = true; }
+        { std::lock_guard guard(probe->mutex); finished = true; probe->changed.notify_all(); }
+    });
+    { std::unique_lock guard(probe->mutex); Require(probe->changed.wait_for(guard, 3s, [&] { return probe->polls != 0; }), "WinRT waiter enters a stalled operation"); }
+    worker.request_stop();
+    { std::unique_lock guard(probe->mutex); Require(probe->changed.wait_for(guard, 3s, [&] { return finished; }), "stopping the worker must finish a stalled WinRT wait"); }
+    worker.join();
+    Require(canceled && probe->cancels == 1 && !probe->results, "worker stop cancels without waiting for the WinRT operation to acknowledge cancellation");
+    probe = std::make_shared<AsyncProbe>(); probe->status = winrt::Windows::Foundation::AsyncStatus::Completed;
+    budget = {std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
+    Require(snowdesktop::system_control::windows::Await(StalledAsyncOperation{probe}, budget) == 17 && probe->results == 1,
+        "completed WinRT operations return their actual result");
+    // Later operations receive the same deadline, rather than restarting a
+    // per-operation timeout for every session or thumbnail read in the batch.
+    probe = std::make_shared<AsyncProbe>(); budget.deadline = std::chrono::steady_clock::now() - 1ms;
+    canceled = false;
+    try { (void)snowdesktop::system_control::windows::Await(StalledAsyncOperation{probe}, budget); }
+    catch (const winrt::hresult_canceled&) { canceled = true; }
+    Require(canceled && probe->cancels == 1 && !probe->results && budget.Failure().error == "timeout",
+        "the shared sampling deadline cancels a later operation without fabricating results");
 }
 void HostOnlyCredentialsAndConfirmation()
 {
@@ -188,6 +382,12 @@ void TestSystemControls()
     }
     SharedSourceAndRelease();
     ControlQueueCancellationAndReadback();
+    LastConsumerDuringExecutionAndReadback(true);
+    LastConsumerDuringExecutionAndReadback(false);
+    NewSubscriberDuringRelease();
+    DirectTaskWithoutSubscriptionReleases();
+    SlowSampleYieldsToReadyControl();
+    CancellableWinRtSamplingWait();
     HostOnlyCredentialsAndConfirmation();
     BrightnessSettlingAndStaleFeedback();
     BluetoothPowerAndDeviceReadFailures();

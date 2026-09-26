@@ -85,6 +85,7 @@ private:
     JsonValue Wifi() const;
     void SyncSubscriptions();
     void Start(std::string, system_control::Arguments = {});
+    void OpenSettings(const wchar_t*);
     native_ui::Node& Add(std::string, native_ui::Role, D2D1_RECT_F, std::wstring = {}, std::wstring = {});
     void Command(std::string, std::function<void()>);
     void Header(std::wstring);

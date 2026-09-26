@@ -1084,10 +1084,31 @@ bool HasFourRoundedCorners(const RgbaBitmap& bitmap, const RECT& bounds)
     return PixelAt(bitmap, static_cast<UINT>((bounds.left + bounds.right) / 2), static_cast<UINT>(bounds.top + 1))[3] > 32 &&
         PixelAt(bitmap, static_cast<UINT>((bounds.left + bounds.right) / 2), static_cast<UINT>(bounds.bottom - 2))[3] > 32;
 }
+bool FitsNativePanelCanvas(const RgbaBitmap& bitmap, const RECT& bounds)
+{
+    // These previews request a 1000 px independent canvas with 24 px padding.
+    // The production D2D background centers its hairline on the frame edge,
+    // so antialiased border pixels may extend by one physical pixel per edge.
+    constexpr LONG canvas = 1000, padding = 24, borderOutset = 1;
+    return bitmap.width == static_cast<UINT>(canvas) && bitmap.height == static_cast<UINT>(canvas) && !IsRectEmpty(&bounds) &&
+        bounds.left >= padding - borderOutset && bounds.top >= padding - borderOutset &&
+        bounds.right <= canvas - padding + borderOutset && bounds.bottom <= canvas - padding + borderOutset &&
+        std::abs(bounds.left + bounds.right - canvas) <= 1 &&
+        std::abs(bounds.top + bounds.bottom - canvas) <= 1;
+}
+bool HasNativePanelSize(const RECT& bounds, double scale, double widthDip,
+    double minimumHeightDip, double maximumHeightDip)
+{
+    const LONG width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
+    // Keep layout limits independent of renderer metadata; only the two
+    // outside border pixels are additional to the allowed content extent.
+    return width >= widthDip * scale - 1 && width <= widthDip * scale + 2 &&
+        height >= minimumHeightDip * scale && height <= maximumHeightDip * scale + 2;
+}
 void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& temporary)
 {
-    // Real shared XAML view/frame, clock and calendar storage replaced only at
+    // Real shared native scene/background, clock and calendar storage replaced only at
     // their input boundary. Never launch desktop services or read user events.
     for (const bool dark : {false, true})
     {
@@ -1103,9 +1124,10 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
         {
             auto bitmap = ReadPng(output / (agenda ? L"calendar-panel-agenda.png" : L"calendar-panel-empty.png"));
             const auto bounds = PanelPixels(bitmap);
-            const int scale = dark ? 3 : 2; // Twice the scale, no measured bounds in the expectation.
-            Check(std::abs(bounds.right - bounds.left - 520 * scale / 2) <= 1 && bounds.bottom - bounds.top >= 320 * scale / 2 &&
-                bounds.bottom - bounds.top <= 530 * scale / 2, "calendar uses a compact two-column panel within its canvas");
+            const double scale = dark ? 1.5 : 1.;
+            Check(FitsNativePanelCanvas(bitmap, bounds), "calendar remains centered inside its independent padded canvas");
+            Check(HasNativePanelSize(bounds, scale, 520, 320, 530),
+                "calendar uses a compact two-column panel including its one-pixel border");
             Check(HasFourRoundedCorners(bitmap, bounds), "calendar panel preserves all four corners including the bottom edge");
             if (!agenda) emptyHeight = bounds.bottom - bounds.top;
             else Check(bounds.bottom - bounds.top > emptyHeight + 16, "agenda rows contribute to actual panel measurement");
@@ -1114,6 +1136,13 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
             const auto bottomLeft = (static_cast<std::size_t>(bounds.bottom - 1) * bitmap.width + bounds.left) * 4 + 3;
             bitmap.pixels[bottomLeft] = 255;
             Check(!HasFourRoundedCorners(bitmap, bounds), "square bottom-corner mutation is rejected");
+            auto enlarged = bounds;
+            enlarged.left -= 8; enlarged.right += 8;
+            Check(!HasNativePanelSize(enlarged, scale, 520, 320, 530),
+                "border allowance does not accept an oversized calendar");
+            bitmap.pixels[(static_cast<std::size_t>(bitmap.height / 2) * bitmap.width) * 4 + 3] = 255;
+            Check(!FitsNativePanelCanvas(bitmap, PanelPixels(bitmap)),
+                "a pixel escaping the padded calendar canvas is rejected");
         }
     }
 }
@@ -1125,9 +1154,8 @@ void CheckControlRadioPixels(const std::filesystem::path& overviewPath,
     const auto active = PanelPixels(overview), disabled = PanelPixels(unavailable);
     Check(!IsRectEmpty(&active) && !IsRectEmpty(&disabled), "control overview has visible pixels");
     // Sample empty interiors of both top radio tiles, away from labels and
-    // edges. The previous RTB captured white text on the unselected light fill
-    // (or black text on dark fill), despite IsChecked being true. Compare the
-    // two actual states rather than hard-coding the user's system accent.
+    // edges. A lost checked-state fill can leave white text on a neutral light
+    // tile. Compare the two rendered states without hard-coding system accent.
     for (const double offset : {32., 240.})
     {
         const auto sample = [offset](const RgbaBitmap& bitmap, const RECT& bounds) {
@@ -1138,8 +1166,8 @@ void CheckControlRadioPixels(const std::filesystem::path& overviewPath,
         const auto checked = sample(overview, active), neutral = sample(unavailable, disabled);
         const int difference = std::abs(static_cast<int>(checked[0]) - neutral[0]) +
             std::abs(static_cast<int>(checked[1]) - neutral[1]) + std::abs(static_cast<int>(checked[2]) - neutral[2]);
-        // The neutral brush deliberately retains popup transparency. Only
-        // the checked accent fill is opaque in the standard Fluent template.
+        // The checked fill must remain opaque and visibly distinct even when
+        // the neutral brush retains popup transparency.
         Check(checked[3] > 240 && neutral[3] > 32 && difference >= 96,
             "checked radio tiles visibly differ from the unavailable neutral background");
     }
@@ -1159,13 +1187,15 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
             "real control pages render without device mutations or leaking subscriptions");
         CheckControlRadioPixels(output / L"control-panel-overview.png", output / L"control-panel-unavailable.png");
         LONG overviewHeight = 0;
+        std::vector<std::uint8_t> overviewPixels;
         for (const auto* page : {L"overview", L"bluetooth-off", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable",
             L"audio-many", L"wifi-many", L"bluetooth-many", L"media-empty"})
         {
             const auto bitmap = ReadPng(output / (std::wstring(L"control-panel-") + page + L".png"));
-            const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;
-            Check(std::abs(bounds.right - bounds.left - 440 * scale / 2) <= 1 &&
-                bounds.bottom - bounds.top >= 128 * scale / 2 && bounds.bottom - bounds.top <= (std::min)(740 * scale / 2, 952),
+            const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;
+            const bool longList = std::wstring_view(page).ends_with(L"-many");
+            Check(FitsNativePanelCanvas(bitmap, bounds), "control pages stay centered in the independent padded canvas");
+            Check(HasNativePanelSize(bounds, scale, 440, 128, longList ? 952 / scale : (std::min)(740., 952 / scale)),
                 "control pages retain shared width and size their content within the popup viewport");
             Check(HasFourRoundedCorners(bitmap, bounds), "all control subpages preserve the bottom corners");
             std::vector<RECT> cards;
@@ -1178,12 +1208,17 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
                 if (!filled && inside) cards.back().bottom = y;
                 inside = filled;
             }
-            const bool hasMedia = std::wstring_view(page) != L"media" && std::wstring_view(page) != L"unavailable" && std::wstring_view(page) != L"media-empty";
+            const bool hasMedia = std::wstring_view(page) != L"unavailable" && std::wstring_view(page) != L"media-empty";
             Check(cards.size() == (hasMedia ? 2u : 1u), "media is a separate lower card and absent sessions leave no placeholder");
+            if (hasMedia) Check(cards[1].top - cards[0].bottom >= 8 * scale - 2,
+                "media retains its separate gap below the scrollable control card");
             for (const auto& card : cards)
                 Check(HasFourRoundedCorners(bitmap, card), "both control and media cards retain four rounded corners");
-            if (std::wstring_view(page) == L"overview") overviewHeight = bounds.bottom - bounds.top;
-            if (std::wstring_view(page) == L"media") Check(bounds.bottom - bounds.top < overviewHeight - 80,
+            if (std::wstring_view(page) == L"overview")
+            { overviewHeight = bounds.bottom - bounds.top; overviewPixels = bitmap.pixels; }
+            if (std::wstring_view(page) == L"media") Check(bitmap.pixels == overviewPixels,
+                "the legacy media preset renders the overview without a separate detail page");
+            if (std::wstring_view(page) == L"bluetooth") Check(bounds.bottom - bounds.top < overviewHeight - 80 * scale,
                 "switching to a short control page shrinks the actual rendered panel immediately");
         }
     }
@@ -1209,8 +1244,9 @@ void TestTrayPanelPreview(const std::filesystem::path& snowwidget,
         for (const auto* page : {L"grid", L"updated", L"manage", L"empty", L"connecting", L"unavailable"})
         {
             auto bitmap = ReadPng(output / (std::wstring(L"tray-panel-") + page + L".png"));
-            const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;
-            Check(std::abs(bounds.right - bounds.left - 208 * scale / 2) <= 1,
+            const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;
+            Check(FitsNativePanelCanvas(bitmap, bounds), "tray grid stays centered inside the independent padded canvas");
+            Check(HasNativePanelSize(bounds, scale, 208, 32, 160),
                 "tray grid remains compact after drag unpinning without a separate management page");
             Check(HasFourRoundedCorners(bitmap, bounds), "tray panel preserves all four corners");
             if (std::wstring_view(page) == L"grid") gridHeight = bounds.bottom - bounds.top;
@@ -1239,8 +1275,8 @@ void TestResourcePanelPreview(const std::filesystem::path& snowwidget,
         {
             const auto bitmap = ReadPng(output / (std::wstring(L"resource-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;
-            Check(std::abs(bounds.right - bounds.left - 440 * scale) <= 1 &&
-                bounds.bottom - bounds.top >= 320 * scale && bounds.bottom - bounds.top < 530 * scale,
+            Check(FitsNativePanelCanvas(bitmap, bounds), "resource panels stay centered inside the independent padded canvas");
+            Check(HasNativePanelSize(bounds, scale, 440, 320, 530),
                 "resource metrics and history fit a compact shared-theme popup");
             Check(HasFourRoundedCorners(bitmap, bounds), "resource panels preserve all four corners");
         }

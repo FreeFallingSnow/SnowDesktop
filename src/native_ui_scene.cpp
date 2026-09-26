@@ -194,9 +194,18 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         if (fill)
         {
             color(n.accent || (n.role == Role::Toggle && n.selected) ? p.accent : hot || down ? p.hover : p.control, n.enabled);
-            dc->FillRoundedRectangle(D2D1::RoundedRect(r, n.role == Role::Card ? 10.f : 7.f, n.role == Role::Card ? 10.f : 7.f), brush.Get());
-            if(n.joinLeft)dc->FillRectangle({r.left,r.top,r.left+7,r.bottom},brush.Get());
-            if(n.joinRight)dc->FillRectangle({r.right-7,r.top,r.right,r.bottom},brush.Get());
+            const float radius = n.role == Role::Card ? 10.f : 7.f;
+            auto fillBounds = r;
+            if (n.joinLeft || n.joinRight)
+            {
+                // Clip an extended rounded shape instead of filling twice:
+                // translucent controls must have uniform opacity at the join.
+                dc->PushAxisAlignedClip(r, D2D1_ANTIALIAS_MODE_ALIASED);
+                if (n.joinLeft) fillBounds.left -= radius;
+                if (n.joinRight) fillBounds.right += radius;
+            }
+            dc->FillRoundedRectangle(D2D1::RoundedRect(fillBounds, radius, radius), brush.Get());
+            if (n.joinLeft || n.joinRight) dc->PopAxisAlignedClip();
         }
         if(n.outlined){color(p.accent);auto outline=r;outline.left+=1;outline.top+=1;outline.right-=1;outline.bottom-=1;dc->DrawRoundedRectangle(D2D1::RoundedRect(outline,7,7),brush.Get(),2);}
         auto ink = (n.accent || (n.role == Role::Toggle && n.selected)) ? p.accentText : n.secondary?p.secondary:p.text;
