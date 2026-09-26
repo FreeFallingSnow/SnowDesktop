@@ -22,6 +22,8 @@
 - 初步独立证据：`42-ipc-repro.py after` 使用与旧版失败样本相同的 Pack/Unpack 输入，结果由开关被还原为 true 改为两项均 false，退出 0；不是设置窗口交互验收。`44-negative.py` 正确 GPU 展示函数退出 0，隔离副本恢复原始重复列表时以“duplicate GPU presentation”退出 1；两次探针编译 `/W4 /WX` 通过。标准构建、生产渲染与整体回归结果尚待补充。
 - `scripts/build.bat --reload-shell` 退出 0，Release 宿主生成，无编译／链接警告（`44-batch-build.log`）；输入绑定 `44-checkpoint-validation-inputs.json`。脚本的控制台等待出现 input-redirection 提示，但实际构建成功，不将此误作编译错误；生产控件渲染和回归尚未运行。按仓库规则先保存此编译候选，验证中如需调整再独立记录。
 - `b2c4a63e` 检查结论：定向测试在 GeneralSettingsTests 编译阶段失败，新增用例缺少 `snowdesktop::` 命名空间，未执行 CTest，不计为通过。栏体 13 状态、日历、紧凑托盘和资源面板的浅深色导出成功；控制面板只导出 overview，预览收尾仍按旧 ScrollViewer 根节点转换而报 E_NOINTERFACE（`44-render-controls.py.log`），后续页未验证。审查另发现新音频／Wi-Fi ListView 的 SelectionChanged 捕获自身形成引用环，需要去掉强自引用；这不是用户卡顿的已确认原因。下一候选集中处理这些验证发现。
+- 45 号集中调整：去掉列表事件的强自引用，改从事件 sender 读取选择；离线预览追加关闭后实际列表弱引用释放检查。同步移除预览旧根节点转换、补齐测试命名空间，合并侧区预留增至 480 DIP，使普通宽屏可同时容纳四类信息；窄屏仍整项避让。待本轮构建和测试。
+- 45 号 `scripts/build.bat` 退出 0，无编译／链接警告（`45-batch-build.log`）。预检宿主未运行、Explorer 未加载 Hook，无需再次重启 Shell；后续渲染及回归仍待执行。
 
 ## 用户反馈清单
 

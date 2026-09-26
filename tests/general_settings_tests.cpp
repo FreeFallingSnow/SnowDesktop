@@ -32,6 +32,7 @@ void Check(bool condition, const char* message)
 
 int main()
 {
+    using namespace snowdesktop;
     {
         GeneralSettings value;
         Check(!value.statusBar.cpu && !value.statusBar.memory && !value.statusBar.gpu && !value.statusBar.traffic,

@@ -522,10 +522,10 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             if (choices.empty()) group.Children().Append(Text(_LW("controlCenter.unavailable")));
             group.Children().Append(endpoints);
             const auto weak = weak_from_this();
-            endpoints.SelectionChanged([weak, endpoints, choices, prefix](const auto&, const auto&) {
+            endpoints.SelectionChanged([weak, choices, prefix](const auto& sender, const auto&) {
                 if (const auto self = weak.lock(); self && !self->closed && !self->updating)
                 {
-                    const int index = endpoints.SelectedIndex();
+                    const int index = sender.template as<c::ListView>().SelectedIndex();
                     if (index >= 0 && static_cast<std::size_t>(index) < choices.size())
                         self->Start(prefix + ".selectDevice", {{"endpointId", choices[index].first}});
                 }
@@ -656,10 +656,10 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         const auto selected = std::find(networkIds.begin(), networkIds.end(), wifiSelection);
         available.SelectedIndex(selected == networkIds.end() ? -1 : static_cast<int>(selected - networkIds.begin()));
         const auto weak = weak_from_this();
-        available.SelectionChanged([weak, available, networkIds](const auto&, const auto&) {
+        available.SelectionChanged([weak, networkIds](const auto& sender, const auto&) {
             if (const auto self = weak.lock(); self && !self->closed && !self->updating)
             {
-                const int index = available.SelectedIndex();
+                const int index = sender.template as<c::ListView>().SelectedIndex();
                 self->wifiSelection = index >= 0 && static_cast<std::size_t>(index) < networkIds.size() ? networkIds[index] : std::string{};
                 self->Refresh(); if (self->layoutChanged) self->layoutChanged();
             }

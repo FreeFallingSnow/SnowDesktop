@@ -10,7 +10,7 @@ namespace snowdesktop
 // normal layout, while the Dock uses its existing horizontal scrolling.
 inline RECT MergedStatusBarCenter(LONG width, LONG height, float scale)
 {
-    const auto side = static_cast<LONG>(std::clamp(400.f * scale, width * .22f, width * .42f));
+    const auto side = static_cast<LONG>(std::clamp(480.f * scale, width * .22f, width * .42f));
     return {side, 0, std::max(side, width - side), height};
 }
 // Center the clock on the monitor. Preserve rightmost controls at narrow

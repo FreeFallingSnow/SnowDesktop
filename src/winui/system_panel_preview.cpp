@@ -377,6 +377,7 @@ native_component_preview::Result ExportSystemPanelPreview(
         const bool resourcePanel = request.component == "resource-panel";
         const auto controlState = std::make_shared<ControlPreviewState>();
         std::unique_ptr<SystemControlView> controls;
+        std::vector<winrt::weak_ref<x::Controls::ListView>> releasedDeviceLists;
         unsigned layoutChanges = 0;
         if (controlPanel) controls = std::make_unique<SystemControlView>(PreviewControls(controlState),
             StatusBarSettings{}, StatusBarAction::ControlCenter, [&] { ++layoutChanges; });
@@ -615,6 +616,12 @@ native_component_preview::Result ExportSystemPanelPreview(
             result.outputs.push_back({request.component, preset, path, false, false, false, false, false, false,
                 static_cast<int>(std::lround(appearance.cornerRadius * request.dpi / 96.)), width, height, left, top});
             if (trayView && preset == "grid") CheckTrayUpdates(*trayView, traySnapshot, trayState, layoutChanges);
+            if (controls && (preset == "audio" || preset == "wifi"))
+            {
+                const auto list = FindPreviewType<x::Controls::ListView>(frame);
+                if (!list) throw std::runtime_error("device page omitted its selection list");
+                releasedDeviceLists.push_back(winrt::make_weak(list));
+            }
             if (resources)
             {
                 if (preset == "gpu")
@@ -628,7 +635,6 @@ native_component_preview::Result ExportSystemPanelPreview(
                     throw std::runtime_error("closed resource panel retained sampling demand or read its old source");
             }
             host.runtime.Detach();
-            if (controls) frame.Child().as<x::Controls::ScrollViewer>().Content(nullptr);
             frame.Child(nullptr);
         }
         if (controls)
@@ -636,6 +642,13 @@ native_component_preview::Result ExportSystemPanelPreview(
             controls->Close();
             if (!controlState->subscriptions.empty() || controlState->scans != 1)
                 throw std::runtime_error("offline control lifecycle left subscriptions or scanned outside the Wi-Fi page");
+            controls.reset();
+            // A list event must not capture the list itself. Drain deferred
+            // XAML releases and verify production pages become unreachable.
+            PumpUntil([&] {
+                return std::none_of(releasedDeviceLists.begin(), releasedDeviceLists.end(),
+                    [](const auto& list) { return static_cast<bool>(list.get()); });
+            });
         }
         result.ok = true; result.stage = "complete";
     }

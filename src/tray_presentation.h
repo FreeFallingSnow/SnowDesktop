@@ -1,5 +1,6 @@
 #pragma once
 #include "tray_service.h"
+#include <algorithm>
 
 namespace snowdesktop::tray
 {
