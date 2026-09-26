@@ -21,6 +21,7 @@
 - 离线 status-bar 预览追加 merged 样本，验证侧区不侵入中央，不把空出的区域冒充已渲染的真实 Dock。该命令输出数量增加，旧样本保留。设备、真实第三方菜单、多屏合并及玻璃动画仍需实机。
 - 初步独立证据：`42-ipc-repro.py after` 使用与旧版失败样本相同的 Pack/Unpack 输入，结果由开关被还原为 true 改为两项均 false，退出 0；不是设置窗口交互验收。`44-negative.py` 正确 GPU 展示函数退出 0，隔离副本恢复原始重复列表时以“duplicate GPU presentation”退出 1；两次探针编译 `/W4 /WX` 通过。标准构建、生产渲染与整体回归结果尚待补充。
 - `scripts/build.bat --reload-shell` 退出 0，Release 宿主生成，无编译／链接警告（`44-batch-build.log`）；输入绑定 `44-checkpoint-validation-inputs.json`。脚本的控制台等待出现 input-redirection 提示，但实际构建成功，不将此误作编译错误；生产控件渲染和回归尚未运行。按仓库规则先保存此编译候选，验证中如需调整再独立记录。
+- `b2c4a63e` 检查结论：定向测试在 GeneralSettingsTests 编译阶段失败，新增用例缺少 `snowdesktop::` 命名空间，未执行 CTest，不计为通过。栏体 13 状态、日历、紧凑托盘和资源面板的浅深色导出成功；控制面板只导出 overview，预览收尾仍按旧 ScrollViewer 根节点转换而报 E_NOINTERFACE（`44-render-controls.py.log`），后续页未验证。审查另发现新音频／Wi-Fi ListView 的 SelectionChanged 捕获自身形成引用环，需要去掉强自引用；这不是用户卡顿的已确认原因。下一候选集中处理这些验证发现。
 
 ## 用户反馈清单
 
