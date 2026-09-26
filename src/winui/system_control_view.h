@@ -33,6 +33,8 @@ public:
         StatusBarAction initial = StatusBarAction::ControlCenter, std::function<void()> layoutChanged = {});
     ~SystemControlView();
     winrt::Microsoft::UI::Xaml::FrameworkElement Root() const;
+    void ApplyAppearance(const PersonalizationSettings& appearance);
+    std::vector<RECT> CardBounds(double scale) const;
     void Refresh();
     void Select(std::string_view section);
     void SetViewportHeight(double height);

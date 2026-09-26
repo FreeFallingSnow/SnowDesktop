@@ -43,6 +43,7 @@ struct SystemPanel::Impl
     bool showing = false, hiding = false;
     DWORD contextProcess = 0;
     double regionRadius = -1;
+    std::vector<RECT> cardBounds;
     UiAnimationScheduler* scheduler = nullptr;
     UiScheduleToken animationToken = 0;
     quick_navigation_animation_rules::State slide;
@@ -132,6 +133,8 @@ struct SystemPanel::Impl
             controls = std::make_unique<SystemControlView>(data, settings, action, [this] { if (showing) Arrange(); });
             // Control pages own their body viewport and fixed header/footer.
             // Keep the scrollbar at the surface edge, outside content padding.
+            controls->ApplyAppearance(appearance);
+            frame.Background(nullptr); frame.BorderThickness({0, 0, 0, 0});
             frame.Padding({0, 0, 0, 0}); frame.Child(controls->Root()); content = frame;
             if (!runtime.Attach(window, frame)) throw winrt::hresult_error(E_FAIL, runtime.LastError());
             return;
@@ -165,16 +168,24 @@ struct SystemPanel::Impl
         top = std::clamp(top, static_cast<int>(info.rcWork.top), static_cast<int>(info.rcWork.bottom) - height);
         RECT previous{}; GetWindowRect(window, &previous);
         const double radius = appearance.cornerRadius * scale;
-        if (showing && regionRadius == radius && previous.left == left && previous.top == top && previous.right == left + width && previous.bottom == top + height) return;
+        // Arrange the measured tree now: the island's queued resize otherwise
+        // leaves a media card's old bounds in the native region for one frame.
+        content.Arrange({0, 0, static_cast<float>(width / scale), static_cast<float>(height / scale)});
+        auto nextCards = controls ? controls->CardBounds(scale) : std::vector<RECT>{{0, 0, width, height}};
+        const bool sameCards = nextCards.size() == cardBounds.size() && std::equal(nextCards.begin(), nextCards.end(), cardBounds.begin(),
+            [](const auto& a, const auto& b) { return EqualRect(&a, &b) != FALSE; });
+        if (showing && sameCards && regionRadius == radius && previous.left == left && previous.top == top && previous.right == left + width && previous.bottom == top + height) return;
+        cardBounds = std::move(nextCards);
         SetWindowPos(window, HWND_TOPMOST, left, top, width, height, SWP_NOACTIVATE);
         runtime.ResizeToClient();
-        if (UpdateSystemPanelRegion(window, width, height, radius)) regionRadius = radius;
+        if (UpdateSystemPanelRegion(window, width, height, radius, 0, cardBounds)) regionRadius = radius;
         if (appearance.glassEnabled)
         {
             if (!backdrop.IsAvailable()) backdrop.InitializePopup(window, showing, false);
             backdrop.Reattach(window); backdrop.BeginFrame(true);
-            backdrop.AddPanel({0, 0, width, height}, appearance.cornerRadius * static_cast<float>(scale),
-                appearance.glassBlurRadius * static_cast<float>(scale), reinterpret_cast<std::uintptr_t>(this));
+            for (std::size_t i = 0; i < cardBounds.size(); ++i)
+                backdrop.AddPanel(cardBounds[i], appearance.cornerRadius * static_cast<float>(scale),
+                    appearance.glassBlurRadius * static_cast<float>(scale), reinterpret_cast<std::uintptr_t>(this) + i);
             backdrop.EndFrame();
             if (showing) backdrop.ShowPopupWindowPair(window);
         }
@@ -190,13 +201,16 @@ struct SystemPanel::Impl
         const double scale = GetDpiForWindow(window) / 96.;
         translation.Y(y / scale);
         UpdateSystemPanelRegion(window, client.right, client.bottom, appearance.cornerRadius * scale,
-            static_cast<int>(std::lround(y)));
+            static_cast<int>(std::lround(y)), cardBounds);
         if (appearance.glassEnabled && backdrop.IsAvailable())
         {
             const LONG offset = static_cast<LONG>(std::lround(y));
-            RECT visible{0, std::max(0L, offset), client.right, std::min(client.bottom, client.bottom + offset)};
-            (void)backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this),
-                D2D1::Matrix4x4F::Translation(0, y, 0), visible);
+            for (std::size_t i = 0; i < cardBounds.size(); ++i)
+            {
+                RECT visible = cardBounds[i]; OffsetRect(&visible, 0, offset);
+                (void)backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this) + i,
+                    D2D1::Matrix4x4F::Translation(0, y, 0), visible);
+            }
             backdrop.CommitVisualChanges();
         }
     }

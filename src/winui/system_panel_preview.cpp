@@ -71,6 +71,8 @@ struct ControlPreviewState
 {
     bool unavailable = false;
     bool bluetoothOn = true;
+    bool emptyMedia = false;
+    std::string manySection;
     std::set<std::string> subscriptions;
     unsigned scans = 0;
 };
@@ -90,6 +92,28 @@ SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> sta
             value.object["onAC"] = system_control::json::Boolean(true);
             value.object["charging"] = system_control::json::Boolean(true);
         }
+        if (!state->unavailable && !state->manySection.empty())
+        {
+            auto* items = topic == "audio.devices" && state->manySection == "audio" ? &value.object["devices"].array :
+                topic == "bluetooth.devices" && state->manySection == "bluetooth" ? &value.object["devices"].array :
+                topic == "network.wifi" && state->manySection == "wifi" ? &value.object["interfaces"].array.front().object["networks"].array : nullptr;
+            if (items && !items->empty())
+            {
+                const char* label = state->manySection == "wifi" ? "ssid" : "name";
+                items->front().object[label] = system_control::json::Text(state->manySection == "wifi" ?
+                    "SnowDesktop Guest Network 5 GHz" : "SnowDesktop Studio — Wireless Headphones and Conference Audio Device");
+                const auto first = items->front();
+                for (int i = 1; i <= 12; ++i)
+                {
+                    auto item = first; item.object["id"] = system_control::json::Text(state->manySection + "-extra-" + std::to_string(i));
+                    item.object[label] = system_control::json::Text("Snow " + state->manySection + " " + std::to_string(i));
+                    item.object["connected"] = system_control::json::Boolean(false);
+                    item.object["isDefault"] = system_control::json::Boolean(false);
+                    if (state->manySection == "bluetooth") item.object["canConnect"] = system_control::json::Boolean(i % 2 == 0);
+                    items->push_back(std::move(item));
+                }
+            }
+        }
         return system_control::Snapshot{!state->unavailable, std::move(value), state->unavailable ? "unavailable" : "", 0, 1};
     };
     source.start = [state](system_control::Request request) -> std::uint64_t {
@@ -104,7 +128,7 @@ SystemControlViewSource PreviewControls(std::shared_ptr<ControlPreviewState> sta
     source.settings = [](const wchar_t*) { throw std::runtime_error("offline view must not launch Windows Settings"); };
     source.media = [state]() -> std::optional<widget_runtime::WidgetMediaSessionsDataSnapshot> {
         widget_runtime::WidgetMediaSessionsDataSnapshot result; result.available = !state->unavailable;
-        if (!state->unavailable)
+        if (!state->unavailable && !state->emptyMedia)
         {
             widget_runtime::WidgetMediaSessionDataSnapshot session;
             session.id = "media-preview"; session.sourceName = "Snow Music";
@@ -387,7 +411,8 @@ native_component_preview::Result ExportSystemPanelPreview(
         if (controlPanel) controls = std::make_unique<SystemControlView>(PreviewControls(controlState),
             StatusBarSettings{}, StatusBarAction::ControlCenter, [&] { ++layoutChanges; });
         const std::vector<std::string> presets = controlPanel ?
-            std::vector<std::string>{"overview", "bluetooth-off", "audio", "brightness", "wifi", "bluetooth", "media", "power", "unavailable"} :
+            std::vector<std::string>{"overview", "bluetooth-off", "audio", "brightness", "wifi", "bluetooth", "media", "power", "unavailable",
+                "audio-many", "wifi-many", "bluetooth-many", "media-empty"} :
             trayPanel ? std::vector<std::string>{"grid", "updated", "manage", "empty", "connecting", "unavailable"} :
             resourcePanel ? std::vector<std::string>{"cpu", "memory", "gpu", "traffic", "idle", "warming", "unavailable", "gap", "gpu-partial"} :
             std::vector<std::string>{"empty", "agenda"};
@@ -407,10 +432,17 @@ native_component_preview::Result ExportSystemPanelPreview(
             {
                 controlState->unavailable = preset == "unavailable";
                 controlState->bluetoothOn = preset != "bluetooth-off";
+                controlState->emptyMedia = preset == "media-empty";
+                const bool many = preset.ends_with("-many");
+                controlState->manySection = many ? preset.substr(0, preset.size() - 5) : "";
                 const auto before = layoutChanges;
-                controls->Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" ? "" : preset);
+                controls->Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" || preset == "media-empty" ? "" :
+                    many ? controlState->manySection : preset);
                 if (layoutChanges == before) throw std::runtime_error("control page switch did not request immediate measurement");
+                controls->ApplyAppearance(appearance);
+                frame.Background(nullptr); frame.BorderThickness({0, 0, 0, 0});
                 frame.Padding({0, 0, 0, 0}); frame.Child(controls->Root());
+                controls->SetViewportHeight(SystemControlViewportHeight);
             }
             else if (trayPanel)
             {
@@ -463,6 +495,7 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (calendar) CheckCalendarSelection(frame, *calendar, calendarState, preset == "agenda");
             if (controls)
             {
+                controls->SetViewportHeight(SystemControlViewportHeight);
                 const auto radio = FindPreviewElement(frame, L"control.radio.bluetooth").as<x::Controls::Primitives::ToggleButton>();
                 if (radio.IsEnabled() == controlState->unavailable ||
                     (radio.IsEnabled() && radio.IsChecked().Value() != controlState->bluetoothOn))
@@ -506,12 +539,12 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (controlPanel || trayPanel)
             {
                 RemovePreviewBrushTransitions(frame); CompletePreviewAnimations(frame); frame.UpdateLayout();
-                // These fixtures contain only one device/network per section.
-                // All commands must fit; outer PNG bounds alone miss a clipped
-                // settings button at the end of a short device list.
                 const auto scroll = FindPreviewType<x::Controls::ScrollViewer>(frame.Child());
-                if (scroll.ScrollableHeight() > 1 && (!controlPanel || (preset != "audio" && preset != "power")))
+                if (scroll.ScrollableHeight() > 1 && (!controlPanel ||
+                    (preset != "audio" && preset != "power" && !preset.ends_with("-many"))))
                     throw std::runtime_error("panel preview clipped commands in its short fixture: " + preset);
+                if (controlPanel && preset.ends_with("-many") && scroll.ScrollableHeight() <= 20)
+                    throw std::runtime_error("long device list did not create a bounded scroll viewport");
             }
             x::Media::Imaging::RenderTargetBitmap bitmap;
             // WinUI's island rasterizer applies the XamlRoot scale to these
@@ -605,14 +638,51 @@ native_component_preview::Result ExportSystemPanelPreview(
             else canvas = widget_preview::GenerateWallpaper(request.canvasWidth, request.canvasHeight, appearance.contentTheme == 1);
             const int left = (canvas.width - width) / 2, top = (canvas.height - height) / 2;
             const auto* pixels = reinterpret_cast<const std::uint32_t*>(bytes);
-            if (controlPanel && (preset == "audio" || preset == "wifi"))
+            if (controlPanel)
             {
-                const auto label = FindPreviewElement(frame, preset == "audio" ?
-                    L"control.audio.label.audio-output-preview" : L"control.wifi.label.network-preview");
+                const auto bounds = controls->CardBounds(width / frame.ActualWidth());
+                const bool media = preset != "media" && preset != "unavailable" && preset != "media-empty";
+                if (bounds.size() != (media ? 2u : 1u)) throw std::runtime_error("media card duplicated or left an empty placeholder");
+                if (media)
+                {
+                    const int y = (bounds[0].bottom + bounds[1].top) / 2;
+                    if (bounds[1].top - bounds[0].bottom < 6 || (pixels[y * width + width / 2] >> 24) != 0)
+                        throw std::runtime_error("media card must have a transparent gap below the controls");
+                    // The same native region function used by the live popup
+                    // must exclude that gap, including during its slide.
+                    for (const int offset : {0, -12, 12})
+                    {
+                        if (!UpdateSystemPanelRegion(host.window, width, height, appearance.cornerRadius * width / frame.ActualWidth(), offset, bounds))
+                            throw std::runtime_error("cannot set the production multi-card region");
+                        const auto region = CreateRectRgn(0, 0, 0, 0);
+                        if (!region) winrt::throw_last_error();
+                        const auto kind = GetWindowRgn(host.window, region);
+                        const bool gap = PtInRegion(region, width / 2, y + offset) != FALSE;
+                        const bool body = PtInRegion(region, width / 2, bounds[1].top + 20 + offset) != FALSE;
+                        DeleteObject(region);
+                        if (kind == ERROR || gap || !body) throw std::runtime_error("native media card region includes its gap or drops its body");
+                    }
+                }
+                if (preset == "wifi" || preset == "wifi-many")
+                {
+                    const auto footer = FindPreviewElement(frame, L"control.footer.network.wifi");
+                    const auto scan = FindPreviewElement(frame, L"control.wifi.scan");
+                    const auto button = scan.TransformToVisual(footer).TransformBounds({0, 0,
+                        static_cast<float>(scan.ActualWidth()), static_cast<float>(scan.ActualHeight())});
+                    if (footer.ActualHeight() > 40 || button.X + button.Width < footer.ActualWidth() - 1)
+                        throw std::runtime_error("Wi-Fi footer is stacked or scan is not right aligned");
+                }
+            }
+            if (controlPanel && (preset == "audio" || preset == "wifi" || preset == "audio-many" || preset == "wifi-many" || preset == "bluetooth-many"))
+            {
+                const auto label = FindPreviewElement(frame, preset.starts_with("audio") ? L"control.audio.label.audio-output-preview" :
+                    preset.starts_with("wifi") ? L"control.wifi.label.network-preview" : L"control.bluetooth.label.bluetooth-device-preview");
                 if (!label) throw std::runtime_error("device row has no visible label");
                 const auto rect = label.TransformToVisual(frame).TransformBounds({0, 0,
                     static_cast<float>(label.ActualWidth()), static_cast<float>(label.ActualHeight())});
                 const double scale = width / frame.ActualWidth();
+                if (rect.Width <= 40 || rect.X < 0 || rect.X + rect.Width > frame.ActualWidth() - 8)
+                    throw std::runtime_error("long device label escaped the panel content bounds");
                 unsigned ink = 0;
                 for (int y = std::max(0, static_cast<int>(std::floor(rect.Y * scale))); y < std::min(height, static_cast<int>(std::ceil((rect.Y + rect.Height) * scale))); ++y)
                     for (int col = std::max(0, static_cast<int>(std::floor(rect.X * scale))); col < std::min(width, static_cast<int>(std::ceil((rect.X + rect.Width) * scale))); ++col)
@@ -639,6 +709,16 @@ native_component_preview::Result ExportSystemPanelPreview(
             if (!preview_png::Save(path, canvas.width, canvas.height, canvas.pixels, result.error)) return result;
             result.outputs.push_back({request.component, preset, path, false, false, false, false, false, false,
                 static_cast<int>(std::lround(appearance.cornerRadius * request.dpi / 96.)), width, height, left, top});
+            if (controls && preset == "overview")
+            {
+                const auto card = FindPreviewElement(frame, L"control.card.main");
+                const auto before = layoutChanges;
+                controlState->emptyMedia = true; controls->Refresh(); frame.UpdateLayout();
+                if (FindPreviewElement(frame, L"control.card.media").Visibility() != x::Visibility::Collapsed ||
+                    layoutChanges == before || FindPreviewElement(frame, L"control.card.main") != card)
+                    throw std::runtime_error("ended media must collapse its card and resize without replacing the controls");
+                controlState->emptyMedia = false; controls->Refresh();
+            }
             if (trayView && preset == "grid") CheckTrayUpdates(*trayView, traySnapshot, trayState, layoutChanges);
             if (controls && (preset == "audio" || preset == "wifi"))
             {
@@ -665,7 +745,7 @@ native_component_preview::Result ExportSystemPanelPreview(
         if (controls)
         {
             controls->Close();
-            if (!controlState->subscriptions.empty() || controlState->scans != 1)
+            if (!controlState->subscriptions.empty() || controlState->scans != 2)
                 throw std::runtime_error("offline control lifecycle left subscriptions or scanned outside the Wi-Fi page");
             controls.reset();
             // A list event must not capture the list itself. Drain deferred

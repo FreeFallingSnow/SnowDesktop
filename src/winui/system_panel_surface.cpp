@@ -51,19 +51,25 @@ c::Border CreateSystemPanelFrame(const PersonalizationSettings& appearance)
         }
     return frame;
 }
-bool UpdateSystemPanelRegion(HWND window, int width, int height, double radius, int offsetY)
+bool UpdateSystemPanelRegion(HWND window, int width, int height, double radius, int offsetY, std::span<const RECT> cards)
 {
-    const int diameter = std::clamp(static_cast<int>(std::lround(radius * 2)), 0, (std::min)(width, height));
-    HRGN region = diameter > 0 ? CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter) :
-        CreateRectRgn(0, 0, width, height);
+    const RECT whole{0, 0, width, height};
+    if (cards.empty()) cards = std::span<const RECT>(&whole, 1);
+    HRGN region = CreateRectRgn(0, 0, 0, 0);
     if (!region) return false;
-    if (offsetY)
+    for (const auto& card : cards)
     {
-        OffsetRgn(region, 0, offsetY);
-        const auto clip = CreateRectRgn(0, 0, width, height);
-        if (!clip) { DeleteObject(region); return false; }
-        CombineRgn(region, region, clip, RGN_AND); DeleteObject(clip);
+        const int diameter = std::clamp(static_cast<int>(std::lround(radius * 2)), 0,
+            static_cast<int>((std::min)(card.right - card.left, card.bottom - card.top)));
+        const auto part = diameter > 0 ? CreateRoundRectRgn(card.left, card.top, card.right + 1, card.bottom + 1, diameter, diameter) :
+            CreateRectRgn(card.left, card.top, card.right, card.bottom);
+        if (!part) { DeleteObject(region); return false; }
+        CombineRgn(region, region, part, RGN_OR); DeleteObject(part);
     }
+    OffsetRgn(region, 0, offsetY);
+    const auto clip = CreateRectRgn(0, 0, width, height);
+    if (!clip) { DeleteObject(region); return false; }
+    CombineRgn(region, region, clip, RGN_AND); DeleteObject(clip);
     if (SetWindowRgn(window, region, FALSE)) return true; // User32 owns the region.
     DeleteObject(region); return false;
 }

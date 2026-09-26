@@ -1159,7 +1159,8 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
             "real control pages render without device mutations or leaking subscriptions");
         CheckControlRadioPixels(output / L"control-panel-overview.png", output / L"control-panel-unavailable.png");
         LONG overviewHeight = 0;
-        for (const auto* page : {L"overview", L"bluetooth-off", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable"})
+        for (const auto* page : {L"overview", L"bluetooth-off", L"audio", L"brightness", L"wifi", L"bluetooth", L"media", L"power", L"unavailable",
+            L"audio-many", L"wifi-many", L"bluetooth-many", L"media-empty"})
         {
             const auto bitmap = ReadPng(output / (std::wstring(L"control-panel-") + page + L".png"));
             const auto bounds = PanelPixels(bitmap); const int scale = dark ? 3 : 2;
@@ -1167,6 +1168,20 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
                 bounds.bottom - bounds.top >= 128 * scale / 2 && bounds.bottom - bounds.top <= 590 * scale / 2,
                 "control pages retain shared width and size their content within the popup viewport");
             Check(HasFourRoundedCorners(bitmap, bounds), "all control subpages preserve the bottom corners");
+            std::vector<RECT> cards;
+            bool inside = false;
+            const int middle = (bounds.left + bounds.right) / 2;
+            for (LONG y = bounds.top; y <= bounds.bottom; ++y)
+            {
+                const bool filled = y < bounds.bottom && PixelAt(bitmap, static_cast<UINT>(middle), static_cast<UINT>(y))[3] > 0;
+                if (filled && !inside) cards.push_back({bounds.left, y, bounds.right, y});
+                if (!filled && inside) cards.back().bottom = y;
+                inside = filled;
+            }
+            const bool hasMedia = std::wstring_view(page) != L"media" && std::wstring_view(page) != L"unavailable" && std::wstring_view(page) != L"media-empty";
+            Check(cards.size() == (hasMedia ? 2u : 1u), "media is a separate lower card and absent sessions leave no placeholder");
+            for (const auto& card : cards)
+                Check(HasFourRoundedCorners(bitmap, card), "both control and media cards retain four rounded corners");
             if (std::wstring_view(page) == L"overview") overviewHeight = bounds.bottom - bounds.top;
             if (std::wstring_view(page) == L"media") Check(bounds.bottom - bounds.top < overviewHeight - 80,
                 "switching to a short control page shrinks the actual rendered panel immediately");
