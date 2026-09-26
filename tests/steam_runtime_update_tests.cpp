@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -77,11 +78,31 @@ void Skip(const char* message, DWORD error = ERROR_SUCCESS)
 
 void WriteText(const std::filesystem::path& path, std::string_view text)
 {
+    const auto fail = [&](const char* stage) {
+        // Capture CRT evidence before path conversion or attribute queries can
+        // replace it. Attribute failures describe the follow-up probe only.
+        const int savedErrno = errno;
+        unsigned long savedDosErrno = 0;
+        (void)_get_doserrno(&savedDosErrno);
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        const DWORD attributeError = attributes == INVALID_FILE_ATTRIBUTES
+            ? GetLastError() : ERROR_SUCCESS;
+        const auto utf8 = path.u8string();
+        const std::string filename(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+        throw std::runtime_error(std::string("cannot write test file: stage=") + stage +
+            "; path=" + filename + "; errno=" + std::to_string(savedErrno) +
+            "; doserrno=" + std::to_string(savedDosErrno) +
+            (attributes == INVALID_FILE_ATTRIBUTES
+                ? "; attributes unavailable; attributeError=" + std::to_string(attributeError)
+                : "; attributes=" + std::to_string(attributes)));
+    };
     std::filesystem::create_directories(path.parent_path());
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open())
+        fail("open");
     stream.write(text.data(), static_cast<std::streamsize>(text.size()));
     if (!stream)
-        throw std::runtime_error("cannot write test file");
+        fail("write");
 }
 
 std::string ReadText(const std::filesystem::path& path)

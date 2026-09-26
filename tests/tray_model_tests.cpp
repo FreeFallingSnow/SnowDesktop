@@ -21,15 +21,15 @@ int RunTrayModelTests()
         namespace notice = snowdesktop::status_bar_notification;
         const notice::detail::WordReply off{0, 4, 0}, priority{0, 4, 1}, alarms{0, 4, 2}, count{0, 4, 7};
         const auto disabled = notice::detail::Decode(10, 19045, off, off);
-        check(disabled.quiet == false && disabled.unreadCount == 0 && !disabled.totalCount,
+        check(disabled.quiet == false && disabled.unreadCount == 0u && !disabled.totalCount,
             "valid off and zero notification values remain known rather than unavailable");
         const auto win10 = notice::detail::Decode(10, 19045, priority, count);
         const auto win11 = notice::detail::Decode(10, 26100, alarms, count);
-        check(win10.quiet == true && win10.unreadCount == 7 && !win10.totalCount &&
-            win11.quiet == true && !win11.unreadCount && win11.totalCount == 7,
+        check(win10.quiet == true && win10.unreadCount == 7u && !win10.totalCount &&
+            win11.quiet == true && !win11.unreadCount && win11.totalCount == 7u,
             "active quiet profiles and total-versus-unread count meanings remain distinct");
         const auto unknownProfile = notice::detail::Decode(10, 26100, {0, 4, 3}, count);
-        check(!unknownProfile.quiet && unknownProfile.totalCount == 7,
+        check(!unknownProfile.quiet && unknownProfile.totalCount == 7u,
             "an unknown active profile does not suppress a separately valid notification count");
         for (const notice::detail::WordReply invalid : {
             notice::detail::WordReply{-1, 4, 0}, notice::detail::WordReply{0, 0, 0}, notice::detail::WordReply{0, 8, 0}})
@@ -48,17 +48,17 @@ int RunTrayModelTests()
         unsigned reads = 0;
         auto next = win11;
         const auto read = [&] { ++reads; return next; };
-        check(cache.Get(0, read).totalCount == 7 && reads == 1,
+        check(cache.Get(0, read).totalCount == 7u && reads == 1,
             "the first cache sample executes even when the controlled clock starts at zero");
         next = {};
-        check(cache.Get(4999, read).totalCount == 7 && reads == 1,
+        check(cache.Get(4999, read).totalCount == 7u && reads == 1,
             "repeated monitor paints share the existing five-second sample");
         const auto failedRefresh = cache.Get(5000, read);
         check(reads == 2 && !failedRefresh.quiet && !failedRefresh.unreadCount && !failedRefresh.totalCount,
             "a failed refresh clears a successful cached value instead of reporting stale success");
         next = disabled;
         const auto restored = cache.Get(10000, read);
-        check(reads == 3 && restored.quiet == false && restored.unreadCount == 0 && !restored.totalCount,
+        check(reads == 3 && restored.quiet == false && restored.unreadCount == 0u && !restored.totalCount,
             "sampling recovers after failure and can report a newly valid zero");
     }
     // Private payloads are untrusted. Truncation must not manufacture valid

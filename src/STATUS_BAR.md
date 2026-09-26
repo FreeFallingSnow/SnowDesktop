@@ -11,6 +11,9 @@
 - 首轮 `scripts/build.bat --reload-shell` 退出 1：托盘定位候选的 `near` 成员与 Windows SDK 宏冲突，已改名为 `observedNearAnchor`。该轮无其他编译诊断，原始失败保留于 `56-native-build.log`。
 - 随后 `scripts/build.bat` **退出 0，无编译／链接警告**，Release 宿主已生成，日志 `56-native-build2.log`。第二轮预检宿主／Hook 均未占用，没有再次重启 Explorer。此时先保存编译节点；完整回归、离线渲染、拖放反例及原机复验仍待运行。
 - 新实现包含三列及窄屏日历、无线／蓝牙展开卡片、真实活动音频端点、图表顶部全宽及上传虚线、托盘跨窗反馈／事务、系统菜单图标、电池／网络／通知状态、两场景覆盖及透明预设。单屏空白根因、微信／PowerToys／WPS／抖音兼容、真实设备及玻璃仍未完成实机验证；400 MiB／卡顿与 AMD 问题不作已解决结论。
+- 56 源码节点 `e26bda38`：浅色中文 96 DPI／深色英文 144 DPI 共 **94 张生产原生图片**导出及内置回归通过（`56-render.log`）；已查看日历三列／窄屏、控制首页／无线／声音、蓝牙关闭、资源虚线和栏体电池。托盘隔离反例同一输入下，当前实现退出 0，恢复误取消固定退出 1／`ICON_DROP_MUST_KEEP_PIN`，恢复失效目标追加退出 4／`DELETED_TARGET_MUST_CANCEL`；三份探针编译零警告（`56-negative-*.log`）。
+- 首次完整回归 **119/120 通过**，180.16 秒、退出 1（`56-full-tests.log`，JUnit `9a4486bc01a44a4792fc33a572532164`）；`steam_runtime_update` 的临时文件写入异常未附路径。测试构建另有 C4389，源于新增通知计数断言的无符号／有符号比较，已使用匹配类型的字面量处理。只给原测试增加失败路径、open/write阶段和 errno／系统错误诊断，不加重试、不改成功语义。
+- `scripts/test.bat name "^(steam_runtime_update|dock_and_window_rules)$"` 定向 **2/2 通过**，22.71 秒、退出 0，零编译／链接警告（`56-targeted-tests.log`，JUnit `8f3911148a2c45a48b2c5090920c9f15`）。原临时文件异常此次未复现，根因未知，不记作修复；稳定输入的下一次全量尚待执行。宿主运行源码未因测试诊断变化。
 
 ### 原生输入集中候选 55（编译通过，验证待运行）
 
