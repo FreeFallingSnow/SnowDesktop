@@ -10,6 +10,7 @@
 - 自绘 Tooltip 支持音量目标值与实际回读、同目标原位更新；主题设置迁移、场景外观和合并 Dock 文本已接线。托盘身份／重连／完整更新补采与短时菜单纠偏已接入，跨栏拖动同步保存状态。
 - `scripts/build.bat --reload-shell` 首次失败：新模型缺少完整托盘类型包含、定位坐标 `int`／`LONG` 混用。两项已修正；最终 `scripts/build.bat` **退出 0，无编译／链接警告**，宿主生成于 `.build/Release/SnowDesktop.exe`，日志 `52-native-build2.log`。首次失败日志保留于 `52-native-build.log`。
 - 此提交时仅完成标准构建和静态审查；新的离线渲染／输入夹具、配置与托盘／合成器回归、完整测试均待运行。微信、PowerToys、WPS、抖音、真实设备、玻璃和桌面交互未实测；不声称 400 MB／卡顿或 AMD 问题已经解决。
+- 对 `9ac6574c` 的首次离线检查：栏体浅／深各 13、日历各 2、资源各 9 导出及内置检查通过；控制中心和托盘分别在 `panel.check.overview`／`panel.check.grid` 被真实输入契约拒绝（capture 缺少 pointerMove/pointerUp），整体候选未通过，不交付实机。视觉审阅同时发现日历第二历法长文本截断、英文管理按钮过窄、无线／蓝牙分体按钮内侧圆角接缝。记录 `52-render-*.log`，下一候选集中调整。
 
 当前范围、复用边界与实施顺序以 [STATUS_BAR_IMPLEMENTATION_PLAN.md](STATUS_BAR_IMPLEMENTATION_PLAN.md) 为准。整体梳理后已按用户授权分工实施托盘、主题、提示及原生面板；集中接线完成后统一构建和验证，不逐控件重复编译。新原生代码尚未编译，不是可测试候选。历史记录仅对应当时源码，不代表新迁移实现通过。
 
