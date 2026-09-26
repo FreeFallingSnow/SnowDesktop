@@ -309,6 +309,12 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         bool& active;
         ~LayerUpdateScope() { active = false; }
     } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
+    if (host.container && host.container->IsMergedWithStatusBar())
+    {
+        const bool visible = ShouldShowPersistentDockHost(host);
+        host.backdrop.SetPopupWindowPairZOrder(host.hwnd, visible ? HWND_TOPMOST : HWND_NOTOPMOST, visible);
+        return;
+    }
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
     const HWND navigationWindow =

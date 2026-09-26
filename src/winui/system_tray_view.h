@@ -13,7 +13,7 @@ struct SystemTrayActions
 {
     std::function<bool(const tray::Icon&, const winrt::Microsoft::UI::Xaml::FrameworkElement&, tray::Activation)> activate;
     std::function<void(const StatusBarSettings&)> changed;
-    std::function<void()> native;
+    std::function<bool(std::string_view, POINT)> dropOutside;
 };
 class SystemTrayView
 {
@@ -23,6 +23,7 @@ public:
     winrt::Microsoft::UI::Xaml::FrameworkElement Root() const;
     double PreferredWidth() const;
     void Refresh(tray::Snapshot snapshot);
+    bool Drop(std::string_view key, winrt::Windows::Foundation::Point point);
     void Close();
 private:
     struct Impl;

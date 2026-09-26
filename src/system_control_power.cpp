@@ -82,6 +82,8 @@ public:
         if (GetSystemPowerStatus(&battery))
         {
             value.object["batteryPresent"] = json::Boolean(battery.BatteryFlag != 255 && (battery.BatteryFlag & 128) == 0);
+            if (battery.BatteryFlag != 255 && (battery.BatteryFlag & 128) == 0)
+                value.object["charging"] = json::Boolean((battery.BatteryFlag & 8) != 0);
             if (battery.ACLineStatus != 255) value.object["onAC"] = json::Boolean(battery.ACLineStatus == 1);
             if (battery.BatteryLifePercent != 255) value.object["batteryPercent"] = json::Number(battery.BatteryLifePercent);
         }

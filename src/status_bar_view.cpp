@@ -1,7 +1,9 @@
 #include "status_bar_view.h"
 #include "status_bar_glyphs.h"
+#include "status_bar_battery.h"
 #include "status_bar_layout.h"
 #include "status_bar_presentation.h"
+#include "tray_presentation.h"
 #include "l10n.h"
 #include "utils.h"
 #include <dwrite.h>
@@ -70,7 +72,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             };
             std::stable_sort(icons.begin(), icons.end(), [&](const auto& left, const auto& right) { return rank(left) < rank(right); });
             for (auto& icon : icons)
-                if (!(icon.state & NIS_HIDDEN) && !icon.persistentKey.empty() &&
+                if (!(icon.state & NIS_HIDDEN) && !tray::DuplicatesControlCenter(icon) && !icon.persistentKey.empty() &&
                     std::find(s.pinnedTrayItems.begin(), s.pinnedTrayItems.end(), icon.persistentKey) != s.pinnedTrayItems.end())
                     items.push_back({icon.tip, StatusBarAction::Tray, {}, std::move(icon), "tray", {}, {}, false});
         }
@@ -80,15 +82,22 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     const auto audio = snapshot.audio;
     const auto power = snapshot.power;
     const std::wstring glyphs = std::wstring(!network || !network->available || network->connectivity == "none" ? kOffline :
-        network->transport == "ethernet" ? kEthernet : kWifi) + (audio && audio->muted ? kMuted : kSpeaker) +
+        network->transport == "ethernet" ? kEthernet : kWifi) +
+        (audio && audio->muted ? kMuted : !audio || !audio->available || audio->volume <= 0 ? kSpeakerZero :
+            audio->volume < .5 ? kSpeakerLow : kSpeaker) +
         (power && power->available ? (power->charging ? kCharging : power->acPower ? kBatteryPlug :
             power->batteryPercent >= 99.5 ? kBatteryFull : kBattery) : kEthernet);
     add("controlCenter", power && power->available ? Percent(power->batteryPercent) : L"—", StatusBarAction::ControlCenter);
     items.back().glyph = glyphs;
-    items.back().tip += L"\n" + std::wstring(_LW("statusBar.volume")) + L"  " +
+    auto& control = items.back();
+    control.controlTips[0] = std::wstring(_LW("statusBar.network")) + L"  " +
+        (network && network->available ? _LW(network->connectivity == "none" ?
+            "controlCenter.off" : "controlCenter.connected") : L"—");
+    control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
         (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
+    control.controlTips[2] = std::wstring(_LW("statusBar.battery")) + L"  —";
     if (power && power->available)
-        items.back().tip += L"\n" + std::wstring(_LW(power->charging ? "statusBar.charging" :
+        control.controlTips[2] = std::wstring(_LW(power->charging ? "statusBar.charging" :
             power->acPower && power->batteryPercent >= 99.5 ? "statusBar.fullyCharged" :
             power->acPower ? "statusBar.pluggedIn" : "statusBar.battery")) + L"  " + Percent(power->batteryPercent);
     // Left: launch buttons and information. Right: tray and system controls.
@@ -110,7 +119,7 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
     UINT w, UINT h, float scale, const PersonalizationSettings& a, const StatusBarPalette& palette,
-    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused)
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
     const bool hc = palette.highContrast;
@@ -147,9 +156,14 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         LONG centerWidth = 0;
         std::vector<LONG> leftWidths, rightWidths;
         for (const auto& item : items)
-            if (item.action == StatusBarAction::Calendar) centerWidth = static_cast<LONG>(std::ceil(extentOf(item)));
+            if (!mergedDock && item.action == StatusBarAction::Calendar) centerWidth = static_cast<LONG>(std::ceil(extentOf(item)));
             else if (item.left) leftWidths.push_back(static_cast<LONG>(std::ceil(extentOf(item))));
             else rightWidths.push_back(static_cast<LONG>(std::ceil(extentOf(item))));
+        if (mergedDock)
+        {
+            const auto center = MergedStatusBarCenter(static_cast<LONG>(w), static_cast<LONG>(h), scale);
+            centerWidth = center.right - center.left;
+        }
         const auto bounds = StatusBarHorizontalLayout(static_cast<LONG>(w), static_cast<LONG>(h),
             static_cast<LONG>(padding), leftWidths, centerWidth, rightWidths);
         std::size_t leftIndex = 0, rightIndex = leftWidths.size() + 1;
@@ -158,7 +172,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             D2D1::ColorF(a.contentTheme == 1 ? 0x000000 : 0xffffff, .08f), &hoverBrush);
         for (auto& item : items)
         {
-            const bool center = item.action == StatusBarAction::Calendar;
+            const bool center = !mergedDock && item.action == StatusBarAction::Calendar;
             item.bounds = bounds[item.left ? leftIndex++ : center ? leftWidths.size() : rightIndex++];
             if (IsRectEmpty(&item.bounds))
             {
@@ -195,6 +209,20 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     for (std::size_t part = 0; part < item.glyph.size(); ++part)
                     {
                         const float left = rect.left + (4 + 28.f * static_cast<float>(part)) * scale;
+                        if (item.glyph[part] == status_bar_glyphs::kCharging[0])
+                        {
+                            ComPtr<ID2D1Factory> factory; context->GetFactory(&factory);
+                            if (const auto geometry = CreateChargingBatteryGeometry(factory.Get()))
+                            {
+                                D2D1_MATRIX_3X2_F previous; context->GetTransform(&previous);
+                                const auto color = brush->GetColor();
+                                if (!hc) brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0x107c10 : 0x6ccb5f));
+                                context->SetTransform(D2D1::Matrix3x2F::Scale(.8f * scale, .8f * scale) *
+                                    D2D1::Matrix3x2F::Translation(left + 6 * scale, (rect.top + rect.bottom) / 2 - 8 * scale) * previous);
+                                context->FillGeometry(geometry.Get(), brush.Get());
+                                context->SetTransform(previous); brush->SetColor(color); continue;
+                            }
+                        }
                         context->DrawText(&item.glyph[part], 1, iconFormat.Get(),
                             D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     }

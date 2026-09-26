@@ -1,4 +1,5 @@
 #include "tray_service.h"
+#include "tray_order.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -77,6 +78,42 @@ int RunTrayModelTests()
     check(v4Context.size() == 1 && HIWORD(v4Context[0].lp) == 0x5678 && LOWORD(v4Context[0].lp) == WM_CONTEXTMENU &&
         GET_X_LPARAM(v4Context[0].wp) == -1900 && GET_Y_LPARAM(v4Context[0].wp) == -30,
         "version 4 context menu receives one packed callback at its actual signed anchor");
+    for (const DWORD version : {NOTIFYICON_VERSION, NOTIFYICON_VERSION_4})
+    {
+        icons.front().version = version;
+        const auto down = Callbacks(icons.front(), Activation::RightDown, {-1900, -30});
+        const auto up = Callbacks(icons.front(), Activation::RightUp, {-1900, -30});
+        check(down.size() == 1 && LOWORD(down[0].lp) == WM_RBUTTONDOWN && up.size() == 2 &&
+            LOWORD(up[0].lp) == WM_RBUTTONUP && LOWORD(up[1].lp) == WM_CONTEXTMENU,
+            "new-version mouse menus retain raw callbacks before the semantic context callback");
+    }
+    {
+        snowdesktop::StatusBarSettings settings;
+        settings.trayOrder = {"offline", "app-a", "app-b"};
+        settings.pinnedTrayItems = {"app-a"};
+        Snapshot state; Icon first, second;
+        first.key = "live-a"; first.persistentKey = "app-a";
+        second.key = "live-b"; second.persistentKey = "app-b";
+        state.icons = {first, second};
+        check(PlaceIcon(settings, state, "live-b", true, "live-a") &&
+            settings.trayOrder == std::vector<std::string>({"offline", "app-b", "app-a"}) &&
+            settings.pinnedTrayItems.size() == 2, "bar drop pins before a live icon and preserves offline identities");
+        check(PlaceIcon(settings, state, "live-a", false) && settings.pinnedTrayItems == std::vector<std::string>({"app-b"}),
+            "overflow drop unpins without deleting order preferences");
+        const auto saved = settings.trayOrder;
+        check(!PlaceIcon(settings, state, "deleted", true) && settings.trayOrder == saved,
+            "a removed icon cannot be persisted by a stale drag");
+        state.icons.front().state = NIS_HIDDEN;
+        check(!PlaceIcon(settings, state, "live-a", true), "hidden icons reject stale drag commits");
+        Icon system;
+        for (DWORD value = 0x7820ae73; value <= 0x7820ae75; ++value)
+        {
+            system.identity.guid = {value, 0x23e3, 0x4229, {0x82, 0xc1, 0xe4, 0x1c, 0xb6, 0x7d, 0x5b, 0x9c}};
+            check(DuplicatesControlCenter(system), "known system controls are omitted from tray presentation");
+            system.identity.guid.Data4[7] ^= 1;
+            check(!DuplicatesControlCenter(system), "a third-party lookalike GUID is not hidden");
+        }
+    }
     event.operation = NIM_DELETE; Apply(icons, event);
     event.operation = NIM_SETVERSION;
     check(!Apply(icons, event) && icons.empty(), "late version updates cannot resurrect deleted icons");

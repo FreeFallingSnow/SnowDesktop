@@ -42,8 +42,17 @@ void TestCodec()
     extensions.statusBar.position = DockPosition::Left;
     extensions.statusBar.monitorScope = DockMonitorScope::All;
     extensions.statusBar.pinnedTrayItems = {"guid:test"};
+    extensions.statusBar.menu = false;
+    extensions.statusBar.quickSearch = false;
+    extensions.statusBar.leftOrder = {"quickSearch", "menu"};
+    std::reverse(extensions.statusBar.rightOrder.begin(), extensions.statusBar.rightOrder.end());
     Check(Unpack<GeneralSettings>(Pack(extensions)).statusBar == extensions.statusBar,
         "settings process must preserve status bar preferences across its wire boundary");
+    snowdesktop::VisitStatusBarFlags([&](const char*, auto member) {
+        auto changed = extensions; changed.statusBar.*member = !(changed.statusBar.*member);
+        Check(Unpack<GeneralSettings>(Pack(changed)).statusBar == changed.statusBar,
+            "each status bar flag must survive the settings process boundary in both states");
+    });
     extensions.shellExtensions = {true, {{"handler:{test}", "compress", "压缩", snowdesktop::shell_extensions::Placement::Root}}};
     extensions.shellExtensions.hidden = {{"verb:sevenzip", snowdesktop::shell_extensions::Context::Folder},
         {"verb:editor", snowdesktop::shell_extensions::Context::Desktop}};
@@ -325,9 +334,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 10 had no guide return destination in SettingsRoute.
+        // Version 24 omitted the status bar menu/search flags and saved order.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{10},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{24},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
@@ -336,7 +345,7 @@ void TestRetiredUpdateProtocol()
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers without guide return routes disconnect before dispatch");
+            "settings peers without status bar flags disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);

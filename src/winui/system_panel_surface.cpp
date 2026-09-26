@@ -51,12 +51,19 @@ c::Border CreateSystemPanelFrame(const PersonalizationSettings& appearance)
         }
     return frame;
 }
-bool UpdateSystemPanelRegion(HWND window, int width, int height, double radius)
+bool UpdateSystemPanelRegion(HWND window, int width, int height, double radius, int offsetY)
 {
     const int diameter = std::clamp(static_cast<int>(std::lround(radius * 2)), 0, (std::min)(width, height));
     HRGN region = diameter > 0 ? CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter) :
         CreateRectRgn(0, 0, width, height);
     if (!region) return false;
+    if (offsetY)
+    {
+        OffsetRgn(region, 0, offsetY);
+        const auto clip = CreateRectRgn(0, 0, width, height);
+        if (!clip) { DeleteObject(region); return false; }
+        CombineRgn(region, region, clip, RGN_AND); DeleteObject(clip);
+    }
     if (SetWindowRgn(window, region, FALSE)) return true; // User32 owns the region.
     DeleteObject(region); return false;
 }

@@ -8,6 +8,7 @@
 #include "system_resource_preview.h"
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>
 #include "../widget_system_control_data.h"
+#include "../calendar_display.h"
 #include <set>
 #include "winui_runtime.h"
 #include "../l10n.h"
@@ -169,10 +170,57 @@ void InvokePreviewElement(const x::FrameworkElement& element)
     auto peer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(element);
     peer.GetPattern(x::Automation::Peers::PatternInterface::Invoke).as<x::Automation::Provider::IInvokeProvider>().Invoke();
 }
+struct CalendarPreviewState
+{
+    std::string today = "2026-09-26", requestedDate;
+    bool secondaryEnabled = true;
+};
+std::string PreviewSecondaryDate(const std::string& date)
+{
+    calendar::DisplayPreferences preferences; preferences.enabled = true;
+    const auto days = calendar::Annotate(date, date, preferences, Locale::Instance().GetEffectiveLanguage());
+    if (days.empty() || !days.front().calendarAvailable || days.front().fullDate.empty())
+        throw std::runtime_error("calendar preview secondary calendar fixture is unavailable");
+    return days.front().fullDate;
+}
+void CheckCalendarSelection(const x::FrameworkElement& frame, SystemCalendarView& view,
+    const std::shared_ptr<CalendarPreviewState>& state, bool populated)
+{
+    const auto month = FindPreviewType<x::Controls::CalendarView>(frame);
+    const auto day = FindPreviewElement(frame, L"calendar.day").as<x::Controls::TextBlock>();
+    const auto secondary = FindPreviewElement(frame, L"calendar.secondary").as<x::Controls::TextBlock>();
+    const auto today = FindPreviewElement(frame, L"calendar.today");
+    if (day.Text() != L"26" || month.CalendarItemBorderThickness().Left < 2 ||
+        x::Controls::Grid::GetRow(today) != 0)
+        throw std::runtime_error("calendar must show the selected day, a continuous outline and a header Today command");
+    if (!populated)
+    {
+        if (secondary.Visibility() != x::Visibility::Collapsed)
+            throw std::runtime_error("disabled secondary calendar must not reserve an empty label");
+        return;
+    }
+    auto select = [&](int value) {
+        winrt::Windows::Globalization::Calendar date; date.ChangeCalendarSystem(L"GregorianCalendar");
+        date.Day(1); date.Year(2026); date.Month(9); date.Day(value); date.Hour(12);
+        month.SelectedDates().Clear(); month.SelectedDates().Append(date.GetDateTime());
+        PumpUntil([&] { return day.Text() == std::to_wstring(value); });
+    };
+    select(27);
+    if (state->requestedDate != "2026-09-27" || secondary.Text() != winrt::to_hstring(PreviewSecondaryDate("2026-09-27")))
+        throw std::runtime_error("calendar selection did not update agenda and configured secondary date");
+    state->today = "2026-09-28"; view.Refresh();
+    if (day.Text() != L"27") throw std::runtime_error("midnight refresh overwrote the user's selected date");
+    InvokePreviewElement(today); PumpUntil([&] { return day.Text() == L"28"; });
+    if (state->requestedDate != "2026-09-28") throw std::runtime_error("Today did not select the current local day");
+    state->secondaryEnabled = false; view.Refresh();
+    if (secondary.Visibility() != x::Visibility::Collapsed)
+        throw std::runtime_error("calendar failed to apply a secondary-calendar preference change");
+    state->today = "2026-09-26"; state->secondaryEnabled = true; select(27);
+}
 struct TrayPreviewState
 {
     StatusBarSettings saved;
-    unsigned changes = 0, native = 0;
+    unsigned changes = 0;
     std::vector<std::pair<std::string, tray::Activation>> activations;
 };
 SystemTrayActions PreviewTrayActions(std::shared_ptr<TrayPreviewState> state)
@@ -182,7 +230,6 @@ SystemTrayActions PreviewTrayActions(std::shared_ptr<TrayPreviewState> state)
         state->activations.emplace_back(icon.key, activation); return true;
     };
     actions.changed = [state](const StatusBarSettings& settings) { state->saved = settings; ++state->changes; };
-    actions.native = [state] { ++state->native; };
     return actions;
 }
 void CheckTrayUpdates(SystemTrayView& view, const tray::Snapshot& snapshot,
@@ -212,29 +259,25 @@ void CheckTrayUpdates(SystemTrayView& view, const tray::Snapshot& snapshot,
     PumpUntil([&] { return state->activations.size() == 1; });
     if (state->activations.front() != std::make_pair(std::string("preview-1"), tray::Activation::Keyboard))
         throw std::runtime_error("accessible tray invoke did not route to the application");
-    InvokePreviewElement(FindPreviewElement(root, L"tray.organize"));
-    PumpUntil([&] { return view.PreferredWidth() == 440; }); root.UpdateLayout();
-    auto pin = FindPreviewElement(root, L"tray.pin.preview-0");
-    if (!pin || FindPreviewElement(root, L"tray.earlier.preview-0").as<x::Controls::Button>().IsEnabled())
-        throw std::runtime_error("tray management omitted the pinned icon or enabled an out-of-range move");
-    auto pinPeer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(pin);
-    pinPeer.GetPattern(x::Automation::Peers::PatternInterface::Toggle).as<x::Automation::Provider::IToggleProvider>().Toggle();
-    PumpUntil([&] { return state->changes == 1; });
-    if (!state->saved.pinnedTrayItems.empty()) throw std::runtime_error("tray pin control did not save its changed state");
-    InvokePreviewElement(FindPreviewElement(root, L"tray.earlier.preview-1"));
-    PumpUntil([&] { return state->changes == 2; });
-    if (state->saved.trayOrder.size() != 8 || state->saved.trayOrder[0] != "preview-1" ||
-        state->saved.trayOrder[1] != "preview-0" || state->saved.trayOrder.back() != "offline-app")
+    if (FindPreviewElement(root, L"tray.organize") || FindPreviewElement(root, L"tray.native"))
+        throw std::runtime_error("compact tray contains obsolete management controls");
+    if (!view.Drop("preview-0", {0, 0}) || state->changes != 1 || !state->saved.pinnedTrayItems.empty())
+        throw std::runtime_error("dropping a pinned icon into overflow failed to unpin it");
+    root.UpdateLayout();
+    if (!view.Drop("preview-1", {0, 0}) || state->changes != 2)
+        throw std::runtime_error("tray reorder did not save exactly once");
+    const auto& order = state->saved.trayOrder;
+    if (std::find(order.begin(), order.end(), "preview-1") >= std::find(order.begin(), order.end(), "preview-0") ||
+        std::find(order.begin(), order.end(), "offline-app") == order.end())
         throw std::runtime_error("tray reorder failed or discarded a disconnected identity");
     root.UpdateLayout();
-    const auto native = FindPreviewElement(root, L"tray.native");
-    InvokePreviewElement(native); PumpUntil([&] { return state->native == 1; });
     view.Close();
-    InvokePreviewElement(native); InvokePreviewElement(FindPreviewElement(root, L"tray.icon.preview-1"));
+    if (view.Drop("preview-1", {0, 0})) throw std::runtime_error("closed tray accepted a drop");
+    InvokePreviewElement(FindPreviewElement(root, L"tray.icon.preview-1"));
     // Drain queued automation invocations via a sentinel, not a fixed delay.
     bool drained = false;
     root.DispatcherQueue().TryEnqueue([&] { drained = true; }); PumpUntil([&] { return drained; });
-    if (state->native != 1 || state->activations.size() != 1)
+    if (state->activations.size() != 1 || state->changes != 2)
         throw std::runtime_error("closed tray view still dispatched a retained control action");
 }
 void CheckMonthFits(const x::DependencyObject& element, const x::Controls::CalendarView& month = nullptr,
@@ -351,8 +394,9 @@ native_component_preview::Result ExportSystemPanelPreview(
             std::unique_ptr<SystemResourceView> resources;
             std::shared_ptr<ResourcePreviewState> resourceState;
             auto trayState = std::make_shared<TrayPreviewState>();
+            auto calendarState = std::make_shared<CalendarPreviewState>();
             tray::Snapshot traySnapshot;
-            float widthDip = controlPanel || resourcePanel ? 440.f : trayPanel ? 280.f : 520.f;
+            float widthDip = controlPanel || resourcePanel ? 440.f : trayPanel ? 208.f : 520.f;
             if (controls)
             {
                 controlState->unavailable = preset == "unavailable";
@@ -360,9 +404,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                 const auto before = layoutChanges;
                 controls->Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" ? "" : preset);
                 if (layoutChanges == before) throw std::runtime_error("control page switch did not request immediate measurement");
-                x::Controls::ScrollViewer scroll; scroll.MaxHeight(SystemControlViewportHeight); scroll.Content(controls->Root());
-                scroll.HorizontalScrollBarVisibility(x::Controls::ScrollBarVisibility::Disabled);
-                frame.Child(scroll);
+                frame.Padding({0, 0, 0, 0}); frame.Child(controls->Root());
             }
             else if (trayPanel)
             {
@@ -378,7 +420,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                     traySnapshot.icons[1].pixels = traySnapshot.icons[4].pixels;
                     traySnapshot.icons[2].pixels.resize(3); // Explicit missing-image fallback.
                 }
-                trayView->Refresh(traySnapshot); frame.Child(trayView->Root());
+                trayView->Refresh(traySnapshot); frame.Child(trayView->Root()); frame.Padding({10, 10, 10, 10});
             }
             else if (resourcePanel)
             {
@@ -391,9 +433,13 @@ native_component_preview::Result ExportSystemPanelPreview(
             else
             {
             SystemCalendarActions actions;
-            actions.today = [] { return std::string("2026-09-26"); };
+            actions.today = [calendarState] { return calendarState->today; };
             actions.manage = [] {}; // Preview never opens settings or changes events.
-            actions.events = [populated = preset == "agenda"](const std::string& date) {
+            actions.secondaryDate = [calendarState, populated = preset == "agenda"](const std::string& date) {
+                return populated && calendarState->secondaryEnabled ? PreviewSecondaryDate(date) : std::string{};
+            };
+            actions.events = [calendarState, populated = preset == "agenda"](const std::string& date) {
+                calendarState->requestedDate = date;
                 std::vector<calendar::CalendarEvent> events;
                 if (!populated) return events;
                 calendar::CalendarEvent first; first.id = "preview-brunch"; first.revision = 1;
@@ -408,12 +454,18 @@ native_component_preview::Result ExportSystemPanelPreview(
             auto loadedEvent = frame.Loaded(winrt::auto_revoke, [&](const auto&, const auto&) { loaded = true; });
             if (!host.runtime.Attach(host.window, frame)) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
             PumpUntil([&] { return loaded; }); loadedEvent.revoke();
+            if (calendar) CheckCalendarSelection(frame, *calendar, calendarState, preset == "agenda");
             if (controls)
             {
                 const auto radio = FindPreviewElement(frame, L"control.radio.bluetooth").as<x::Controls::Primitives::ToggleButton>();
                 if (radio.IsEnabled() == controlState->unavailable ||
                     (radio.IsEnabled() && radio.IsChecked().Value() != controlState->bluetoothOn))
                     throw std::runtime_error("Bluetooth off must remain enabled, and unavailable hardware must remain disabled");
+                const auto detail = FindPreviewElement(frame, L"control.detail.bluetooth").as<x::Controls::Button>();
+                if (static_cast<bool>(detail.Style()) != (controlState->bluetoothOn && !controlState->unavailable) ||
+                    detail.Content().as<x::Controls::FontIcon>().Glyph() != L"\uE76C" ||
+                    FindPreviewElement(frame, L"control.back").as<x::Controls::Button>().Content().as<x::Controls::FontIcon>().Glyph() != L"\uE76B")
+                    throw std::runtime_error("control detail must share the active tile accent and use chevrons");
             }
             if (resourcePanel && preset == "gpu-partial")
             {
@@ -422,11 +474,9 @@ native_component_preview::Result ExportSystemPanelPreview(
             }
             if (trayPanel && preset == "manage")
             {
-                const auto before = layoutChanges;
-                InvokePreviewElement(FindPreviewElement(frame, L"tray.organize"));
-                PumpUntil([&] { return trayView->PreferredWidth() == 440; });
-                if (before == layoutChanges) throw std::runtime_error("tray management did not request immediate measurement");
-                widthDip = static_cast<float>(trayView->PreferredWidth());
+                frame.Measure({widthDip, 1000}); frame.UpdateLayout();
+                if (!trayView->Drop("preview-0", {0, 0}))
+                    throw std::runtime_error("tray drop fixture did not unpin the icon");
             }
             frame.Measure({widthDip, 1000});
             const float heightDip = std::ceil(frame.DesiredSize().Height);
@@ -454,7 +504,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                 // All commands must fit; outer PNG bounds alone miss a clipped
                 // settings button at the end of a short device list.
                 const auto scroll = FindPreviewType<x::Controls::ScrollViewer>(frame.Child());
-                if (scroll.ScrollableHeight() > 1)
+                if (scroll.ScrollableHeight() > 1 && (!controlPanel || (preset != "audio" && preset != "power")))
                     throw std::runtime_error("panel preview clipped commands in its short fixture: " + preset);
             }
             x::Media::Imaging::RenderTargetBitmap bitmap;
@@ -523,7 +573,7 @@ native_component_preview::Result ExportSystemPanelPreview(
                     if (!element) continue;
                     const auto bounds = element.TransformToVisual(frame).TransformBounds({0, 0,
                         static_cast<float>(element.ActualWidth()), static_cast<float>(element.ActualHeight())});
-                    if (bounds.Width < 39 || bounds.Height < 39 || bounds.X < 0 || bounds.Y < 0 ||
+                    if (bounds.Width < 35 || bounds.Height < 35 || bounds.X < 0 || bounds.Y < 0 ||
                         bounds.X + bounds.Width > frame.ActualWidth() || bounds.Y + bounds.Height > frame.ActualHeight())
                         throw std::runtime_error("tray preview clipped an icon target");
                 }

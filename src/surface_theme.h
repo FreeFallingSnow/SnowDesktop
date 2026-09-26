@@ -7,6 +7,8 @@ struct SurfaceTheme
 {
     // -2 preserves the old conditional override; -1 follows the global preset;
     // 0..3 are the existing four presets; 4 selects the independent appearance.
+    // Status bars additionally opt into 5/6 for dark/light glass. Popup callers
+    // retain their original four-preset codec and resolver.
     int mode = -1;
     bool customized = false;
     PersonalizationSettings appearance;
@@ -109,13 +111,13 @@ inline std::string EncodePanelAppearance(const PersonalizationSettings& value)
     return output.str();
 }
 
-inline bool DecodeSurfaceTheme(const JsonValue& input, SurfaceTheme& output)
+inline bool DecodeSurfaceTheme(const JsonValue& input, SurfaceTheme& output, bool includeGlass = false)
 {
     if (!input.IsObject()) return false;
     SurfaceTheme value;
     if (const auto* mode = input.Find("mode"))
     {
-        if (!mode->IsNumber() || mode->number < -2 || mode->number > 4 || std::floor(mode->number) != mode->number) return false;
+        if (!mode->IsNumber() || mode->number < -2 || mode->number > (includeGlass ? 6 : 4) || std::floor(mode->number) != mode->number) return false;
         value.mode = static_cast<int>(mode->number);
     }
     if (const auto* customized = input.Find("customized"))
@@ -129,10 +131,10 @@ inline bool DecodeSurfaceTheme(const JsonValue& input, SurfaceTheme& output)
     return true;
 }
 
-inline std::string EncodeSurfaceTheme(const SurfaceTheme& value)
+inline std::string EncodeSurfaceTheme(const SurfaceTheme& value, bool includeGlass = false)
 {
     const auto appearance = EncodePanelAppearance(value.appearance);
-    if (value.mode < -2 || value.mode > 4 || appearance.empty()) return {};
+    if (value.mode < -2 || value.mode > (includeGlass ? 6 : 4) || appearance.empty()) return {};
     return "{\"mode\":" + std::to_string(value.mode) + ",\"customized\":" + (value.customized ? "true" : "false") + ",\"appearance\":" + appearance + '}';
 }
 }

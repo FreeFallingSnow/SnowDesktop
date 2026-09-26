@@ -1,6 +1,7 @@
 #include "system_controls.h"
 #include "system_control_feedback.h"
 #include "system_control_bluetooth_sampling.h"
+#include "system_control_wifi_presentation.h"
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -91,8 +92,11 @@ void HostOnlyCredentialsAndConfirmation()
     auto backend = std::make_shared<FakeBackend>(); Service service(backend);
     Request connect; connect.name = "network.wifi.connect"; connect.arguments = {{"interfaceId", "adapter"}, {"ssid", "test"}, {"password", "secret"}};
     Require(service.Start("widget", std::move(connect)) == 0, "password is not a task argument");
-    Request shutdown; shutdown.name = "system.power.shutdown";
-    Require(service.Start("widget", std::move(shutdown)) == 0, "destructive task cannot bypass host confirmation");
+    for (const auto* task : {"system.power.shutdown", "system.power.restart", "system.power.sleep"})
+    {
+        Request request; request.name = task;
+        Require(service.Start("widget", std::move(request)) == 0, "power task cannot bypass host confirmation");
+    }
     Request volume; volume.name = "audio.output.setVolume"; volume.arguments["volume"] = "2";
     Require(ValidateRequest(volume), "existing finite out-of-range volume keeps clamp compatibility");
     volume.arguments["volume"] = "nan"; Require(!ValidateRequest(volume), "invalid numeric values cannot reach device APIs");
@@ -167,6 +171,21 @@ void BluetoothPowerAndDeviceReadFailures()
 }
 void TestSystemControls()
 {
+    {
+        auto adapter = json::Object(), networks = json::Array();
+        const auto network = [](const char* id, const char* name, bool connected, double signal) {
+            auto value = json::Object(); value.object["id"] = json::Text(id); value.object["ssid"] = json::Text(name);
+            value.object["connected"] = json::Boolean(connected); value.object["signal"] = json::Number(signal);
+            value.object["connectable"] = json::Boolean(true); return value;
+        };
+        networks.array = {network("wifi-open", "HIT-WLAN", false, 93), network("hidden", "", false, 90),
+            network("wifi-open", "HIT-WLAN", true, 85), network("wifi-secure", "HIT-WLAN", false, 80)};
+        adapter.object["networks"] = networks;
+        const auto visible = WifiPresentationNetworks(adapter);
+        Require(visible.size() == 2 && json::Flag(visible[0], "connected") && json::Numeric(visible[0], "signal") == 93 &&
+            json::String(visible[1], "id") == "wifi-secure", "Wi-Fi merges duplicate profiles, drops unnamed scans and retains distinct security identities");
+        Require(adapter.Find("networks")->array.size() == 4, "presentation filtering does not alter provider data");
+    }
     SharedSourceAndRelease();
     ControlQueueCancellationAndReadback();
     HostOnlyCredentialsAndConfirmation();

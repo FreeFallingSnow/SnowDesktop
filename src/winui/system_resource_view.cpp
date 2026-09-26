@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "system_resource_view.h"
 #include "../status_bar_presentation.h"
+#include "../widget_gpu_presentation.h"
 #include "../l10n.h"
 #include <winrt/Microsoft.UI.Xaml.Shapes.h>
 #include <cmath>
@@ -164,7 +165,13 @@ struct SystemResourceView::Impl : std::enable_shared_from_this<Impl>
     void SelectAdapter(const std::vector<wr::WidgetGpuAdapterDataSnapshot>& list)
     {
         std::vector<std::pair<std::string, std::string>> next;
-        for (const auto& item : list) next.emplace_back(item.id, item.name);
+        for (const auto& item : list)
+        {
+            auto name = item.name;
+            if (std::count_if(list.begin(), list.end(), [&](const auto& other) { return other.name == item.name; }) > 1)
+                name += " (" + item.id + ")";
+            next.emplace_back(item.id, std::move(name));
+        }
         if (next == adapters) return;
         selecting = true; adapters = std::move(next); adapter.Items().Clear();
         auto chosen = std::find_if(adapters.begin(), adapters.end(), [&](const auto& item) { return item.first == selected; });
@@ -206,7 +213,8 @@ struct SystemResourceView::Impl : std::enable_shared_from_this<Impl>
         {
             if (const auto value = source.gpu())
             {
-                warming = value->warmingUp; SelectAdapter(value->adapters);
+                const auto presented = wr::PresentGpuAdapters(value->adapters);
+                warming = value->warmingUp; SelectAdapter(presented);
                 const auto chosen = std::find_if(value->adapters.begin(), value->adapters.end(), [&](const auto& item) { return item.id == selected; });
                 if (chosen != value->adapters.end())
                 {

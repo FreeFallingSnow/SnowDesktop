@@ -1,5 +1,6 @@
 #include "widget_system_data_provider.h"
 #include "widget_gpu_usage.h"
+#include "widget_gpu_presentation.h"
 #include "widget_gpu_counter_buffer.h"
 #include "widget_storage_usage.h"
 
@@ -38,6 +39,17 @@ void Check(bool condition, const char* message)
 
 void TestGpuEngineUsageAggregation()
 {
+    {
+        using namespace snowdesktop::widget_runtime;
+        WidgetGpuAdapterDataSnapshot gpu; gpu.id = "luid-a"; gpu.luid = 1; gpu.name = "Discrete GPU"; gpu.usageAvailable = true;
+        auto alias = gpu; alias.id = "alias"; alias.luid = 0; alias.usageAvailable = false;
+        auto twin = gpu; twin.id = "luid-b"; twin.luid = 2;
+        auto repeated = gpu; repeated.id = "duplicate-source";
+        const auto visible = PresentGpuAdapters({alias, gpu, repeated, twin, alias});
+        Check(visible.size() == 2 && visible[0].id == "luid-a" && visible[1].id == "luid-b",
+            "GPU presentation merges aliases and duplicate LUIDs but retains two usable cards of the same model");
+        Check(PresentGpuAdapters({alias, alias}).size() == 1, "unavailable GPU aliases remain one explicit unavailable entry");
+    }
     using snowdesktop::widget_runtime::WidgetGpuUsageAccumulator;
     WidgetGpuUsageAccumulator usage;
     // These are PDH boundary samples consumed by SampleGpu, not per-adapter

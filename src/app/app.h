@@ -3600,6 +3600,7 @@ private:
     bool systemTaskbarTaskViewActive_ = false;
     UINT systemTaskbarTaskViewStateMsg_ = 0;
     std::vector<RECT> dockAreas_;
+    std::vector<RECT> dockReservedAreas_; // Excludes the AppBar's own reservation.
     bool dockWorkAreaReservationApplied_ = false;
     DockPosition dockWorkAreaReservationPosition_ =
         DockPosition::Bottom;

@@ -35,6 +35,7 @@ public:
     winrt::Microsoft::UI::Xaml::FrameworkElement Root() const;
     void Refresh();
     void Select(std::string_view section);
+    void SetViewportHeight(double height);
     void Close();
 private:
     struct Impl;

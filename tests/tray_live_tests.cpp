@@ -176,8 +176,8 @@ int TryRunTrayLiveTests()
             const POINT anchor{136,56};
             for(auto action:{Activation::LeftDown,Activation::LeftUp,Activation::DoubleClick,Activation::RightUp,Activation::Keyboard})
                 Check(service.Activate(original.key,action,anchor),"activation delivered to fixture only");
-            Check(Await([&]{return Read(fixture.value->count)>=6;}),"version 4 click callbacks arrive");
-            const UINT expected[]{WM_LBUTTONDOWN,WM_LBUTTONUP,NIN_SELECT,WM_LBUTTONDBLCLK,WM_CONTEXTMENU,NIN_KEYSELECT};
+            Check(Await([&]{return Read(fixture.value->count)>=7;}),"version 4 click callbacks arrive");
+            const UINT expected[]{WM_LBUTTONDOWN,WM_LBUTTONUP,NIN_SELECT,WM_LBUTTONDBLCLK,WM_RBUTTONUP,WM_CONTEXTMENU,NIN_KEYSELECT};
             for(unsigned i=0;i<std::size(expected);++i)
             {
                 const auto callback=fixture.value->callbacks[i];

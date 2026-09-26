@@ -73,7 +73,7 @@ std::string_view Source(std::string_view name)
     return {};
 }
 bool RequiresConfirmation(std::string_view name)
-{ return name == "network.wifi.forget" || name == "system.power.restart" || name == "system.power.shutdown"; }
+{ return name == "network.wifi.forget" || name == "system.power.sleep" || name == "system.power.restart" || name == "system.power.shutdown"; }
 bool RequiresPasswordPrompt(const Request& request)
 { return request.name == "network.wifi.connect" && !request.arguments.contains("profileName"); }
 bool ValidateRequest(const Request& request)

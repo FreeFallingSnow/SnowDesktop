@@ -34,6 +34,13 @@ int main()
 {
     {
         GeneralSettings value;
+        Check(!value.statusBar.cpu && !value.statusBar.memory && !value.statusBar.gpu && !value.statusBar.traffic,
+            "resource information starts disabled for a new profile");
+        StatusBarSettings firstEnable;
+        JsonValue minimal; ParseJson("{\"enabled\":true}", minimal);
+        Check(DecodeStatusBarSettings(minimal, firstEnable) && firstEnable.enabled &&
+            !firstEnable.cpu && !firstEnable.memory && !firstEnable.gpu && !firstEnable.traffic,
+            "enabling a bar with no information preferences must not turn information on");
         Check(!value.statusBar.enabled && value.statusBar.position == DockPosition::Top &&
                 value.statusBar.monitorScope == DockMonitorScope::First && value.statusBar.theme.mode == -1,
             "new and migrated settings must keep the bar off and follow the global theme");
@@ -57,6 +64,20 @@ int main()
             "status bar geometry, theme and stable tray identities must survive persistence");
         std::error_code error;
         std::filesystem::remove(path, error);
+        const std::array<int, 8> expectedPresets{-1, kAppearancePresetDark, kAppearancePresetLight,
+            kAppearancePresetGlassDark, kAppearancePresetGlassLight, kAppearancePresetAcrylicDark,
+            kAppearancePresetAcrylicLight, kAppearancePresetCustom};
+        for (std::size_t i = 0; i < StatusBarThemeModes.size(); ++i)
+        {
+            StatusBarSettings preset; preset.theme.mode = StatusBarThemeModes[i];
+            JsonValue encoded; StatusBarSettings decoded;
+            Check(ParseJson(EncodeStatusBarSettings(preset), encoded) && DecodeStatusBarSettings(encoded, decoded) &&
+                decoded.theme == preset.theme && StatusBarThemeSelection(decoded.theme.mode) == static_cast<int>(i),
+                "all six status bar presets, global and custom survive persistence with stable legacy modes");
+            if (i > 0 && i < 7)
+                Check(ResolveStatusBarAppearance(decoded.theme, MakeAppearancePreset(kAppearancePresetLight)) == MakeAppearancePreset(expectedPresets[i]),
+                    "bar preset matches the corresponding global material");
+        }
         value.statusBar.position = DockPosition::Right;
         NormalizeStatusBarSettings(value.statusBar);
         Check(value.statusBar.position == DockPosition::Top && value.statusBar.pinnedTrayItems.size() == 2,

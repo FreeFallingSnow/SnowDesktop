@@ -666,16 +666,17 @@ struct PersonalizationPagePresenter::Impl
             if (!CanEmit()) return;
             statusBarAppearanceEditor->Flush();
             const int index = statusBarAppearanceCombo.SelectedIndex();
-            if (index < 0 || index > 5) return;
+            if (index < 0 || index >= static_cast<int>(StatusBarThemeModes.size())) return;
             const auto global = currentGlobalAppearance;
             EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [index, global](auto& settings) {
                 auto& theme = settings.statusBar.theme;
-                if (index == 5 && !theme.customized)
+                const int mode = StatusBarThemeModes[static_cast<std::size_t>(index)];
+                if (mode == 4 && !theme.customized)
                 {
                     theme.appearance = ResolveStatusBarAppearance(theme, global);
                     theme.customized = true;
                 }
-                theme.mode = index - 1;
+                theme.mode = mode;
             });
         });
         taskbarLinkToken = taskbarLink.Click([this](auto const&, auto const&) {
@@ -1084,7 +1085,7 @@ struct PersonalizationPagePresenter::Impl
         taskbarLink.Content(winrt::box_value(L("appearance.openTaskbar", L"Open taskbar settings")));
         dockAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
         taskbarThemeRow.SetText(L("app.settings.theme", L"Theme"));
-        ReplaceComboItems(dockAppearanceCombo, {{"largeIcon.follow", L"Follow component theme"},
+        ReplaceComboItems(dockAppearanceCombo, {{"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
             {"app.settings.dark_acrylic", L"Dark acrylic"}, {"app.settings.light_acrylic", L"Light acrylic"},
@@ -1127,6 +1128,8 @@ struct PersonalizationPagePresenter::Impl
             {"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"},
             {"app.settings.light", L"Light"},
+            {"app.settings.dark_glass", L"Dark glass"},
+            {"app.settings.light_glass", L"Light glass"},
             {"app.settings.dark_acrylic", L"Dark Acrylic"},
             {"app.settings.light_acrylic", L"Light Acrylic"},
             {"app.settings.custom", L"Custom"}});
@@ -1271,7 +1274,7 @@ struct PersonalizationPagePresenter::Impl
             quickAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.quickNavigationAppearance, currentGlobalAppearance, snapshot.values.general.quickNavTheme, true), newGeneration);
             popupAppearanceEditor->SetValue(ResolveSurfaceTheme(snapshot.values.general.collectionPopupAppearance, currentGlobalAppearance, snapshot.values.general.collectionPopupTheme, false), newGeneration);
             const auto& statusTheme = snapshot.values.general.statusBar.theme;
-            statusBarAppearanceCombo.SelectedIndex(std::clamp(statusTheme.mode + 1, 0, 5));
+            statusBarAppearanceCombo.SelectedIndex(StatusBarThemeSelection(statusTheme.mode));
             statusBarAppearanceEditor->SetValue(ResolveStatusBarAppearance(statusTheme, currentGlobalAppearance), newGeneration);
             statusBarAppearanceEditor->Content().Visibility(statusTheme.mode == 4 ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             PatchGeneral(snapshot.values.general);

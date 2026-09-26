@@ -25,8 +25,11 @@ The compact overflow grid in `src/winui/system_tray_view.cpp` also references
 `src/core/widgets/services/systray/systray_popup.py` and `systray_widget.py` at the
 same pinned commit: pinned icons stay in the bar, unpinned icons appear in the
 popup, and layout follows the visible icon set. SnowDesktop uses its own WinUI
-controls and stable image/tooltip updates, with a separate pin/order view and
-Windows notification-area fallback. It does not distribute YASB's Qt code.
+controls and stable image/tooltip updates, with direct drag pinning and ordering.
+Known system volume/network/battery GUIDs from `src/core/widgets/yasb/systray.py`
+are filtered only in presentation because the control-center button already
+shows these states; collection and saved preferences are preserved.
+It does not distribute YASB's Qt code.
 `snowwidget preview-native tray-panel` renders this production view offline with
 Windows stock-icon fixtures; it never starts the desktop host or collector and
 does not replace real Explorer or third-party menu acceptance.
@@ -50,6 +53,11 @@ rules; denied or unmatched requests retain native fallback. The bundled host
 and collector use private IPC v2 and must be updated together; component Lua
 API v2 is unchanged. Isolated-window tests do not establish real Explorer or
 third-party menu focus acceptance.
+
+Mouse right-click callbacks follow the pinned `systray_widget.py` sequence:
+raw button down/up for all versions, plus `WM_CONTEXTMENU` for version 3/4.
+This retains applications that still handle mouse callbacks after declaring a
+newer icon version. WeChat's actual menu remains a desktop acceptance item.
 
 The `Shell_NotifyIconGetRect` compatibility reply is an origin followed by a
 width/height pair. Returning a second corner would offset native app menus.

@@ -1,5 +1,6 @@
 #include "status_bar_preview.h"
 #include "status_bar_presentation.h"
+#include "status_bar_layout.h"
 #include "preview_png_writer.h"
 #include "widget_preview_stage.h"
 #include <dwrite.h>
@@ -69,10 +70,10 @@ const StatusBarItem& Item(const std::vector<StatusBarItem>& items, std::string_v
     Require(found != items.end(), "a required status bar item is missing");
     return *found;
 }
-void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale)
+void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged)
 {
     const auto& clock = Item(items, "clock");
-    Require(std::abs(clock.bounds.left + clock.bounds.right - width) <= 1, "clock is not centered on the complete bar");
+    if (!merged) Require(std::abs(clock.bounds.left + clock.bounds.right - width) <= 1, "clock is not centered on the complete bar");
     Require(!IsRectEmpty(&Item(items, "controlCenter").bounds) && !IsRectEmpty(&Item(items, "notifications").bounds),
         "narrow status bar removed essential controls");
     std::vector<RECT> rectangles;
@@ -84,6 +85,11 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
     {
         const auto& item = items[i]; const auto& r = item.bounds;
         if (IsRectEmpty(&r)) continue;
+        if (merged)
+        {
+            const auto center = MergedStatusBarCenter(width, height, scale); RECT overlap{};
+            Require(!IntersectRect(&overlap, &r, &center), "merged bar controls cover the Dock center");
+        }
         if (item.key == "cpu" || item.key == "memory" || item.key == "gpu" || item.key == "traffic")
         {
             Require(item.left && r.right < clock.bounds.left && r.left >= Item(items, "quickSearch").bounds.right,
@@ -138,11 +144,11 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         if (request.transparent || request.contentOnly)
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width) * stage.height); }
         Require(!stage.pixels.empty(), "cannot create status bar preview background");
-        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat"})
+        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged"})
         {
             auto data = source; StatusBarSettings settings;
             settings.cpu = settings.memory = settings.gpu = settings.traffic =
-                preset == "information" || preset == "updated" || preset == "narrow";
+                preset == "information" || preset == "updated" || preset == "narrow" || preset == "merged";
             settings.pinnedTrayItems = {"bar-preview-0", "bar-preview-1"};
             if (preset == "scaled") settings.scale = 1.5f;
             if (preset == "bottom") settings.position = DockPosition::Bottom;
@@ -159,7 +165,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             { data.power->available = false; data.network->available = false; data.audio->available = false; }
             const float scale = dpiScale * settings.scale;
             const int width = preset == "narrow" ? static_cast<int>(640 * dpiScale) : fullWidth;
-            const int height = static_cast<int>(std::lround(32 * scale));
+            const int height = static_cast<int>(std::lround((preset == "merged" ? 64 : 32) * scale));
             Require(height + 2 * request.padding <= request.canvasHeight, "status bar preview canvas is too short");
             const int left = (request.canvasWidth - width) / 2, top = (request.canvasHeight - height) / 2;
             auto items = BuildStatusBarItems(settings, data);
@@ -167,7 +173,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "unchanged samples would repaint status bar content");
             if (preset == "normal")
             {
-                identical.audio->volume = .62;
+                identical.audio->volume = .49;
                 Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "tooltip-only changes would repaint the bar");
                 StatusBarTooltipState tooltip;
                 Require(tooltip.Enter("controlCenter", Item(items, "controlCenter").tip), "tooltip did not enter its target");
@@ -186,6 +192,11 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 changedTray.tray.front().state |= NIS_HIDDEN;
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
                     "hiding a pinned tray icon would leave its pixels visible");
+                const auto& control = Item(items, "controlCenter");
+                Require(control.controlTips[0] != control.controlTips[1] && control.controlTips[1] != control.controlTips[2],
+                    "control center glyphs must expose separate network, volume and battery tips");
+                identical.audio->volume = .9;
+                Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "volume level must change its speaker glyph");
             }
             std::optional<std::size_t> hover;
             if (preset == "hover" || preset == "high-contrast")
@@ -215,9 +226,9 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             }
             else if (!request.contentOnly) background(context.Get(), {0, 0, width, height}, appearance, scale, settings.position);
             const auto contentResult = DrawStatusBarContent(context.Get(), text, items, static_cast<UINT>(width), static_cast<UINT>(height),
-                scale, appearance, palette, hover);
+                scale, appearance, palette, hover, false, 0, preset == "merged");
             const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
-            CheckLayout(text, items, width, height, scale);
+            CheckLayout(text, items, width, height, scale, preset == "merged");
             if (preset == "information" && width >= 1800 * scale)
                 for (const auto* key : {"cpu", "memory", "gpu", "traffic"})
                     Require(!IsRectEmpty(&Item(items, key).bounds), "information disappeared despite sufficient status bar width");

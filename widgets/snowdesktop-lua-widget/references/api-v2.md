@@ -1838,6 +1838,10 @@ Windows 友好 `name` 和 `state`；`audio.output.volume` 包含匹配的 `endpo
 | `bluetooth.devices` | `data.bluetooth.devices` | `bluetooth.read` | `radios[]`、已配对 `devices[]`，连接能力与可选电量 |
 | `system.power.plans` | `data.system.power.plans` | `system.power.read` | `plans[]/activePlanId/modeSupported/acMode?/dcMode?` 与可选电池状态 |
 
+`system.power.plans.charging` 是追加的可选布尔字段。仅在电池存在且 Windows 已报告状态时提供；
+未知或无电池时省略。API v2、权限和原有字段保持不变，不要求提高旧组件的最低宿主版本；
+读取此字段的组件须区分 `nil` 和 `false`，对同版本早期宿主缺字段采用未知状态回退。
+
 输入/输出设备和麦克风的读取权限独立于音量控制。Wi-Fi、蓝牙权限涉及网络名称与设备
 标识，按个人数据申请；`network.internet` 或 `audio.output.read` 不隐含这些权限。
 字段类型见随附 Lua 类型库。所有 ID 只作为所属主题的设备令牌使用，不解析其格式；

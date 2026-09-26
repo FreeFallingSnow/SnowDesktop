@@ -114,7 +114,7 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
         value.scale = static_cast<float>(field->number);
     }
     if (const auto* field = input.Find("theme"))
-        valid = DecodeSurfaceTheme(*field, value.theme) && valid;
+        valid = DecodeSurfaceTheme(*field, value.theme, true) && valid;
     const auto readList = [&](const char* key, auto& list) {
         if (const auto* field = input.Find(key))
         {
@@ -137,7 +137,7 @@ inline bool DecodeStatusBarSettings(const JsonValue& input, StatusBarSettings& o
 inline std::string EncodeStatusBarSettings(StatusBarSettings value)
 {
     NormalizeStatusBarSettings(value);
-    const auto theme = EncodeSurfaceTheme(value.theme);
+    const auto theme = EncodeSurfaceTheme(value.theme, true);
     if (theme.empty()) return {};
     std::ostringstream text;
     text.imbue(std::locale::classic());

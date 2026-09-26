@@ -1,6 +1,7 @@
 #pragma once
 #include "../status_bar.h"
 #include "system_calendar_view.h"
+#include "../ui_animation_scheduler.h"
 #include <memory>
 
 namespace snowdesktop::winui
@@ -11,7 +12,8 @@ class SystemPanel
 {
 public:
     using SettingsChanged = std::function<void(const StatusBarSettings&)>;
-    explicit SystemPanel(SettingsChanged changed, SystemCalendarActions calendar = {});
+    explicit SystemPanel(SettingsChanged changed, SystemCalendarActions calendar = {},
+        std::function<bool(std::string_view, POINT)> dropOutside = {}, UiAnimationScheduler* scheduler = nullptr);
     ~SystemPanel();
     void Show(StatusBarAction action, HWND owner, RECT anchor,
         const PersonalizationSettings& appearance, const StatusBarSettings& settings,
@@ -20,6 +22,7 @@ public:
     void Hide();
     void HideForMonitor(HMONITOR monitor);
     bool PreTranslateMessage(MSG* message);
+    bool DropTrayIcon(std::string_view key, POINT screen);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

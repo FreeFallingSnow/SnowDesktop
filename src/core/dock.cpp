@@ -3,6 +3,7 @@
 #include "app.h"
 #include "constants.h"
 #include "../dock_magnification.h"
+#include "../status_bar_appearance.h"
 #include "../animation_settings.h"
 #include "slot.h"
 #include "../l10n.h"
@@ -319,6 +320,15 @@ bool DockContainer::IsEdgeAttached() const
     return app_ && app_->dockSettings_.edgeAttached;
 }
 
+bool DockContainer::IsMergedWithStatusBar() const
+{
+    if (!app_ || !app_->statusBar_) return false;
+    RECT screen = area_;
+    OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
+    const auto merged = app_->statusBar_->MergedDockArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL));
+    return merged && EqualRect(&screen, &*merged);
+}
+
 void DockContainer::RefreshEntryGroupCounts() const
 {
     const std::uint64_t generation =
@@ -546,6 +556,12 @@ RECT DockContainer::GetBounds() const
     const int desiredThickness = iconSize + spacing * 2;
     const int thickness = std::min(desiredThickness,
         vertical ? areaWidth : areaHeight);
+    if (IsMergedWithStatusBar())
+    {
+        const int left = area_.left + (areaWidth - length) / 2;
+        const int top = area_.top + (areaHeight - thickness) / 2;
+        return {left, top, left + length, top + thickness};
+    }
     if (IsEdgeAttached())
     {
         switch (app_->dockSettings_.position)
@@ -675,7 +691,7 @@ std::vector<RECT> DockContainer::GetElementBaseRects() const
 
 bool DockContainer::IsMagnificationSuppressed() const
 {
-    if (!app_)
+    if (!app_ || IsMergedWithStatusBar())
         return true;
     return snowdesktop::dock_magnification::
         ShouldSuppressMagnification(
@@ -1917,7 +1933,7 @@ void DockContainer::OnItemsDropped(const std::vector<Item*>& sourceItems, Contai
 
 void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
-    if (!context) return;
+    if (!context || IsMergedWithStatusBar()) return;
     RECT bounds = GetVisualPanelBounds(mousePt);
     PersonalizationSettings p = PersonalizationSettings::DarkPreset();
     if (app_ && app_->renderingFloatingDock_)
@@ -1997,7 +2013,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
     const size_t folderEnd = folderBegin + folderCount;
     const bool hasRecycleBin = count > 0 && app_ &&
         app_->IsRecycleBinDockEntry(entries_->back());
-    const bool lt = (app_->CurrentDockAppearance().contentTheme == 1);
+    const bool lt = ((IsMergedWithStatusBar() ? snowdesktop::ResolveStatusBarAppearance(
+        app_->generalSettings_.statusBar.theme, app_->CurrentPersonalization()) : app_->CurrentDockAppearance()).contentTheme == 1);
     std::wstring hoveredTitle;
     const RECT magnificationFocus =
         ResolveMagnificationFocusRect(app_->lastMousePoint_);

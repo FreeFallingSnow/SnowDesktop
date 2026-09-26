@@ -137,6 +137,7 @@ public:
     RECT GetDesktopItemVisualRect(
         size_t itemIndex, POINT pointer) const;
     void SetReservedArea(RECT area);
+    bool IsMergedWithStatusBar() const;
     bool IsMagnificationAnimating() const;
     bool AdvanceMagnificationAnimation(double nowMilliseconds);
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const

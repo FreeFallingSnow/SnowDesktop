@@ -6,6 +6,13 @@
 
 namespace snowdesktop
 {
+// Keep the center symmetric. Overflowing side items are omitted whole by the
+// normal layout, while the Dock uses its existing horizontal scrolling.
+inline RECT MergedStatusBarCenter(LONG width, LONG height, float scale)
+{
+    const auto side = static_cast<LONG>(std::clamp(400.f * scale, width * .22f, width * .42f));
+    return {side, 0, std::max(side, width - side), height};
+}
 // Center the clock on the monitor. Preserve rightmost controls at narrow
 // widths; omit whole overflow items instead of partial, ambiguous targets.
 inline std::vector<RECT> StatusBarHorizontalLayout(LONG width, LONG height,

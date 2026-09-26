@@ -3,6 +3,8 @@
 #include "../widget_system_data_provider.h"
 #include "../l10n.h"
 #include "../system_control_feedback.h"
+#include "../system_control_wifi_presentation.h"
+#include "../status_bar_battery.h"
 #include <shellapi.h>
 #include <robuffer.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -38,9 +40,14 @@ c::TextBlock Text(std::wstring_view value)
 { c::TextBlock text; text.Text(value); text.TextWrapping(x::TextWrapping::Wrap); return text; }
 void Name(const x::DependencyObject& object, std::wstring_view value)
 { x::Automation::AutomationProperties::SetName(object, value); }
+c::FontIcon Chevron(bool back = false)
+{
+    c::FontIcon icon; icon.FontFamily(x::Media::FontFamily(L"Segoe Fluent Icons, Segoe MDL2 Assets"));
+    icon.Glyph(back ? L"\uE76B" : L"\uE76C"); icon.FontSize(14); return icon;
+}
 c::StackPanel Group(c::StackPanel parent, const wchar_t* title = nullptr)
 {
-    auto card = x::Markup::XamlReader::Load(L"<Border xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Background='{ThemeResource CardBackgroundFillColorDefaultBrush}' CornerRadius='8' Padding='12' />").as<c::Border>();
+    auto card = x::Markup::XamlReader::Load(L"<Border xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' BorderBrush='{ThemeResource DividerStrokeColorDefaultBrush}' BorderThickness='0,1,0,0' Padding='0,12,0,0' />").as<c::Border>();
     c::StackPanel content; content.Spacing(10);
     if (title) { auto heading = Text(title); heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); content.Children().Append(heading); }
     card.Child(content); parent.Children().Append(card); return content;
@@ -53,24 +60,31 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     {
         std::string topic, key, title;
         c::StackPanel panel{nullptr};
+        c::StackPanel footer{nullptr};
         c::Button tile{nullptr};
         c::Primitives::ToggleButton radio{nullptr};
         c::TextBlock summary{nullptr};
         std::vector<std::function<void()>> updates;
         bool open = false;
+        std::optional<bool> accentApplied;
     };
     SystemControlViewSource source;
-    c::StackPanel root;
-    c::StackPanel overview, details, navigation;
+    c::Grid root, navigation;
+    c::StackPanel overview, details, footers;
+    c::ScrollViewer bodyScroll;
+    c::ToggleSwitch detailRadio;
     c::Grid tiles;
     Section overviewAudio, overviewBrightness;
     Section overviewMedia;
     c::TextBlock batterySummary;
+    c::Grid batteryGlyph;
+    c::FontIcon batteryNormal;
+    c::PathIcon batteryCharging;
     c::TextBlock detailTitle;
     c::InfoBar status;
     c::ContentDialog dialog{nullptr};
     std::map<std::string, Section> sections;
-    std::string interfaceId, mediaId, quickBrightnessId;
+    std::string interfaceId, mediaId, quickBrightnessId, activeSection, wifiSelection;
     system_control::ControlFeedback feedback;
     std::function<void()> layoutChanged;
     bool updating = false, closed = false, scanOnArrival = false, layoutDirty = false;
@@ -94,14 +108,19 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             if (const auto self = weak.lock(); self && !self->closed && !self->updating) action();
         }); parent.Children().Append(button); return button;
     }
-    c::StackPanel Row(c::StackPanel parent, c::TextBlock label)
+    c::StackPanel Row(c::StackPanel parent, c::TextBlock label, x::UIElement leading = nullptr)
     {
         c::Grid row; row.ColumnSpacing(8);
         c::ColumnDefinition content; content.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
         c::ColumnDefinition commands; commands.Width(x::GridLengthHelper::Auto());
         row.ColumnDefinitions().Append(content); row.ColumnDefinitions().Append(commands);
         label.MaxLines(2); label.TextTrimming(x::TextTrimming::CharacterEllipsis); label.VerticalAlignment(x::VerticalAlignment::Center);
-        row.Children().Append(label);
+        if (leading)
+        {
+            c::StackPanel heading; heading.Orientation(c::Orientation::Horizontal); heading.Spacing(6);
+            heading.Children().Append(leading); heading.Children().Append(label); row.Children().Append(heading);
+        }
+        else row.Children().Append(label);
         c::StackPanel buttons; buttons.Spacing(4); buttons.Orientation(c::Orientation::Horizontal); c::Grid::SetColumn(buttons, 1);
         row.Children().Append(buttons); parent.Children().Append(row); return buttons;
     }
@@ -135,6 +154,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         else
         {
             const char* key = request->name == "network.wifi.forget" ? "controlCenter.confirmForget" :
+                request->name == "system.power.sleep" ? "controlCenter.confirmSleep" :
                 request->name == "system.power.restart" ? "controlCenter.confirmRestart" : "controlCenter.confirmShutdown";
             fields.Children().Append(Text(_LW(key)));
             if (request->name == "network.wifi.forget") fields.Children().Append(Text(Wide(request->arguments.at("profileName"))));
@@ -188,7 +208,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         {
             c::StackPanel commands;
             auto more = Button(commands, label, [weak, detail] { if (auto self = weak.lock()) self->Select(detail); });
-            more.Content(c::SymbolIcon(c::Symbol::Forward)); more.Padding({8, 6, 8, 6});
+            more.Content(Chevron()); more.Padding({8, 6, 8, 6});
             commands.VerticalAlignment(x::VerticalAlignment::Center); c::Grid::SetColumn(commands, 1); track.Children().Append(commands);
         }
         slider.AddHandler(x::UIElement::PointerPressedEvent(), winrt::box_value(x::Input::PointerEventHandler(
@@ -219,7 +239,15 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         commands.Children().Append(toggle);
     }
     void Fallback(Section& section, const wchar_t* uri)
-    { Button(section.panel, _LW("settings.taskbar.systemSettings.open"), [this, uri] { Settings(uri); }); }
+    {
+        c::HyperlinkButton button; button.Content(winrt::box_value(_LW("settings.taskbar.systemSettings.open")));
+        button.Padding({0, 6, 0, 6}); button.HorizontalAlignment(x::HorizontalAlignment::Left);
+        const auto weak = weak_from_this();
+        button.Click([weak, uri](const auto&, const auto&) {
+            if (const auto self = weak.lock(); self && !self->closed) self->Settings(uri);
+        });
+        section.footer.Children().Append(button);
+    }
     std::optional<std::pair<std::string, bool>> Radio(const std::string& key) const
     {
         const auto state = Current(key == "wifi" ? "network.wifi" : "bluetooth.devices");
@@ -234,23 +262,28 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         auto& section = sections[id]; section.topic = topic; section.title = title;
         section.panel = c::StackPanel(); section.panel.Spacing(12);
         section.panel.Visibility(x::Visibility::Collapsed); details.Children().Append(section.panel);
+        section.footer = c::StackPanel(); section.footer.Spacing(8);
+        section.footer.Visibility(x::Visibility::Collapsed); footers.Children().Append(section.footer);
         section.summary = Text(_LW("controlCenter.loading")); section.summary.FontSize(12); section.summary.Opacity(.75);
         section.summary.MaxLines(1); section.summary.TextTrimming(x::TextTrimming::CharacterEllipsis);
         Demand(id);
         const std::string key(id);
         if (key != "wifi" && key != "bluetooth") return;
         c::StackPanel tile; tile.Spacing(6);
-        c::Grid buttons; buttons.ColumnSpacing(1);
+        c::Grid buttons;
         buttons.ColumnDefinitions().Append(c::ColumnDefinition());
         c::ColumnDefinition tail; tail.Width(x::GridLengthHelper::FromPixels(36)); buttons.ColumnDefinitions().Append(tail);
         section.radio = c::Primitives::ToggleButton(); section.radio.MinHeight(56);
+        section.radio.CornerRadius({4, 0, 0, 4});
         section.radio.HorizontalAlignment(x::HorizontalAlignment::Stretch); Name(section.radio, _LW(title));
         x::Automation::AutomationProperties::SetAutomationId(section.radio, winrt::to_hstring("control.radio." + key));
         c::StackPanel heading; heading.Spacing(8); heading.Orientation(c::Orientation::Horizontal);
         c::FontIcon icon; icon.Glyph(glyph); icon.FontSize(18); heading.Children().Append(icon);
         auto caption = Text(_LW(title)); caption.FontSize(14); caption.MaxLines(1); heading.Children().Append(caption);
         section.radio.Content(heading); buttons.Children().Append(section.radio);
-        section.tile = c::Button(); section.tile.Content(c::SymbolIcon(c::Symbol::Forward)); section.tile.Padding({8, 8, 8, 8});
+        section.tile = c::Button(); section.tile.Content(Chevron()); section.tile.Padding({8, 8, 8, 8});
+        section.tile.CornerRadius({0, 4, 4, 0});
+        x::Automation::AutomationProperties::SetAutomationId(section.tile, winrt::to_hstring("control.detail." + key));
         section.tile.HorizontalAlignment(x::HorizontalAlignment::Stretch); section.tile.VerticalAlignment(x::VerticalAlignment::Stretch);
         Name(section.tile, _LW(title)); c::Grid::SetColumn(section.tile, 1); buttons.Children().Append(section.tile);
         tile.Children().Append(buttons); tile.Children().Append(section.summary);
@@ -279,13 +312,18 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     void Select(const std::string& selected)
     {
         const bool detail = !selected.empty() && sections.contains(selected);
+        activeSection = detail ? selected : std::string{};
         overview.Visibility(detail ? x::Visibility::Collapsed : x::Visibility::Visible);
         navigation.Visibility(detail ? x::Visibility::Visible : x::Visibility::Collapsed);
         details.Visibility(detail ? x::Visibility::Visible : x::Visibility::Collapsed);
+        footers.Visibility(detail ? x::Visibility::Visible : x::Visibility::Collapsed);
+        detailRadio.Visibility(selected == "wifi" || selected == "bluetooth" ? x::Visibility::Visible : x::Visibility::Collapsed);
+        bodyScroll.ChangeView(nullptr, 0., nullptr, true);
         for (auto& [key, section] : sections)
         {
             section.open = detail && key == selected;
             section.panel.Visibility(section.open ? x::Visibility::Visible : x::Visibility::Collapsed);
+            section.footer.Visibility(section.open ? x::Visibility::Visible : x::Visibility::Collapsed);
             if (section.open) detailTitle.Text(_LW(section.title.c_str()));
             Demand(key);
         }
@@ -296,16 +334,40 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     }
     void Build(const StatusBarSettings& settings, StatusBarAction initial)
     {
-        root.Spacing(12); overview.Spacing(12); details.Spacing(8); status.IsClosable(true);
+        overview.Spacing(16); details.Spacing(8); status.IsClosable(true);
+        for (int i = 0; i < 4; ++i) { c::RowDefinition row; row.Height(x::GridLengthHelper::Auto()); root.RowDefinitions().Append(row); }
+        bodyScroll.MaxHeight(SystemControlViewportHeight - 96);
+        bodyScroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
+        bodyScroll.VerticalScrollBarVisibility(c::ScrollBarVisibility::Auto);
+        x::Automation::AutomationProperties::SetAutomationId(bodyScroll, L"control.scroll");
+        c::StackPanel body; body.Spacing(0); body.Margin({16, 0, 16, 12});
+        body.Children().Append(overview); body.Children().Append(details); bodyScroll.Content(body);
+        c::Grid::SetRow(bodyScroll, 1); root.Children().Append(bodyScroll);
+        footers.Margin({16, 8, 16, 12}); c::Grid::SetRow(footers, 2); root.Children().Append(footers);
+        status.Margin({16, 0, 16, 12}); c::Grid::SetRow(status, 3); root.Children().Append(status);
         tiles.RowSpacing(8); tiles.ColumnSpacing(8);
         tiles.ColumnDefinitions().Append(c::ColumnDefinition()); tiles.ColumnDefinitions().Append(c::ColumnDefinition());
-        overview.Children().Append(tiles); root.Children().Append(overview);
-        navigation.Orientation(c::Orientation::Horizontal); navigation.Spacing(8);
+        overview.Children().Append(tiles); overview.Margin({0, 16, 0, 0});
+        navigation.Margin({16, 10, 16, 12}); navigation.ColumnSpacing(8);
+        navigation.ColumnDefinitions().Append(c::ColumnDefinition());
+        c::ColumnDefinition trailing; trailing.Width(x::GridLengthHelper::Auto()); navigation.ColumnDefinitions().Append(trailing);
+        c::StackPanel heading; heading.Orientation(c::Orientation::Horizontal); heading.Spacing(8);
         const auto weak = weak_from_this();
-        auto back = Button(navigation, _LW("controlCenter.overview"), [weak] { if (const auto self = weak.lock()) self->Select({}); });
-        back.Content(c::SymbolIcon(c::Symbol::Back)); back.Padding({8, 6, 8, 6});
+        auto back = Button(heading, _LW("controlCenter.overview"), [weak] { if (const auto self = weak.lock()) self->Select({}); });
+        back.Content(Chevron(true)); back.Padding({8, 6, 8, 6});
+        x::Automation::AutomationProperties::SetAutomationId(back, L"control.back");
         detailTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); detailTitle.VerticalAlignment(x::VerticalAlignment::Center);
-        navigation.Children().Append(detailTitle); root.Children().Append(navigation); root.Children().Append(details); root.Children().Append(status);
+        heading.Children().Append(detailTitle); navigation.Children().Append(heading);
+        detailRadio.OnContent(winrt::box_value(L"")); detailRadio.OffContent(winrt::box_value(L"")); detailRadio.MinWidth(0);
+        detailRadio.VerticalAlignment(x::VerticalAlignment::Center); c::Grid::SetColumn(detailRadio, 1); navigation.Children().Append(detailRadio);
+        detailRadio.Toggled([weak](const auto&, const auto&) {
+            if (const auto self = weak.lock(); self && !self->closed && !self->updating &&
+                (self->activeSection == "wifi" || self->activeSection == "bluetooth"))
+                if (const auto radio = self->Radio(self->activeSection))
+                    self->Start(self->activeSection == "wifi" ? "network.wifi.setRadio" : "bluetooth.setRadio",
+                        {{self->activeSection == "wifi" ? "interfaceId" : "radioId", radio->first}, {"enabled", self->detailRadio.IsOn() ? "1" : "0"}});
+        });
+        root.Children().Append(navigation);
         if (settings.wifiControls) AddSection("wifi", "statusBar.wifiControls", "network.wifi", L"\uE701");
         if (settings.bluetoothControls) AddSection("bluetooth", "statusBar.bluetoothControls", "bluetooth.devices", L"\uE702");
         if (settings.audioControls) AddSection("audio", "statusBar.audioControls", "audio.devices", L"\uE767");
@@ -334,7 +396,12 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             }, [this](double level) { if (!quickBrightnessId.empty()) Start("system.display.setBrightness", {{"monitorId", quickBrightnessId}, {"brightness", std::to_string(level)}}); }, nullptr, "brightness");
         }
         if (settings.mediaControls) { overviewMedia.panel = Group(overview); Media(overviewMedia, true); }
-        const auto footer = Row(overview, batterySummary);
+        const std::wstring batteryMarkup = L"<PathIcon xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Width='20' Height='20' Foreground='{ThemeResource SystemFillColorSuccessBrush}' Data='" + std::wstring(ChargingBatteryPath) + L"'/>";
+        batteryCharging = x::Markup::XamlReader::Load(batteryMarkup).as<c::PathIcon>();
+        batteryNormal.FontSize(20); batteryNormal.Glyph(L"\uE83F");
+        batteryGlyph.Children().Append(batteryNormal); batteryGlyph.Children().Append(batteryCharging);
+        batteryGlyph.VerticalAlignment(x::VerticalAlignment::Center);
+        const auto footer = Row(overview, batterySummary, batteryGlyph);
         auto power = Button(footer, _LW("statusBar.powerControls"), [weak] { if (auto self = weak.lock()) self->Select("power"); });
         c::FontIcon powerIcon; powerIcon.Glyph(L"\uE7E8"); powerIcon.FontSize(16); power.Content(powerIcon);
         auto system = Button(footer, _LW("statusBar.systemSettings"), [this] { Settings(L"ms-settings:"); });
@@ -397,18 +464,35 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
                 section.summary.Text(label);
                 if (section.tile) { Name(section.tile, std::wstring(_LW(section.title.c_str())) + L" · " + label); c::ToolTipService::SetToolTip(section.tile, winrt::box_value(label)); }
             }
-            if (section.radio) { const auto radio = Radio(key); section.radio.IsEnabled(radio.has_value()); section.radio.IsChecked(radio && radio->second); }
+            if (section.radio)
+            {
+                const auto radio = Radio(key); const bool enabled = radio && radio->second;
+                section.radio.IsEnabled(radio.has_value()); section.radio.IsChecked(enabled);
+                if (section.accentApplied != enabled)
+                {
+                    x::Style style{nullptr};
+                    if (enabled)
+                        if (const auto app = x::Application::Current())
+                            if (const auto resource = app.Resources().TryLookup(winrt::box_value(L"AccentButtonStyle")))
+                                style = resource.try_as<x::Style>();
+                    section.tile.Style(style); section.accentApplied = enabled;
+                }
+            }
         }
         for (const auto& update : overviewAudio.updates) update();
         for (const auto& update : overviewBrightness.updates) update();
         if (overviewMedia.panel) { Media(overviewMedia, true); for (const auto& update : overviewMedia.updates) update(); }
         const auto power = Current("system.power.plans");
         const auto* battery = power.Find("batteryPercent");
-        batterySummary.Text(j::Flag(power, "batteryPresent") && battery && battery->IsNumber() ?
-            std::wstring(_LW("statusBar.battery")) + L" " + std::to_wstring(static_cast<int>(battery->number)) + L"%" : _LW("statusBar.powerControls"));
+        const bool present = j::Flag(power, "batteryPresent") && battery && battery->IsNumber();
+        batterySummary.Text(present ? std::to_wstring(static_cast<int>(battery->number)) + L"%" : _LW("statusBar.powerControls"));
+        batteryGlyph.Visibility(present ? x::Visibility::Visible : x::Visibility::Collapsed);
+        const bool charging = j::Flag(power, "charging");
+        batteryCharging.Visibility(charging ? x::Visibility::Visible : x::Visibility::Collapsed);
+        batteryNormal.Visibility(charging ? x::Visibility::Collapsed : x::Visibility::Visible);
     }
     bool Begin(Section& section, const std::string& key)
-    { if (section.key == key) return false; layoutDirty = true; section.key = key; section.updates.clear(); section.panel.Children().Clear(); return true; }
+    { if (section.key == key) return false; layoutDirty = true; section.key = key; section.updates.clear(); section.panel.Children().Clear(); if (section.footer) section.footer.Children().Clear(); return true; }
     void Audio(Section& section)
     {
         const auto value = Current("audio.devices"); const auto& devices = Items(value, "devices");
@@ -416,14 +500,41 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         if (!Begin(section, "audio:" + identity)) return;
         for (const auto* direction : {"output", "input"})
         {
-            const auto group = Group(section.panel);
+            const auto group = Group(section.panel, _LW(direction == std::string("output") ? "controlCenter.output" : "controlCenter.input"));
             const std::string prefix = std::string("audio.") + direction;
             std::vector<std::pair<std::string, std::wstring>> choices;
             for (const auto& item : devices) if (j::Flag(item, "available") && j::String(item, "direction") == direction)
                 choices.emplace_back(j::String(item, "id"), Wide(j::String(item, "name")));
-            Choice(section, _LW(direction == std::string("output") ? "controlCenter.output" : "controlCenter.input"), choices,
-                [this, prefix] { return j::String(Current((prefix + ".volume").c_str()), "endpointId"); },
-                [this, prefix](const auto& id) { Start(prefix + ".selectDevice", {{"endpointId", id}}); }, group);
+            c::ListView endpoints; endpoints.SelectionMode(c::ListViewSelectionMode::Single);
+            endpoints.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+            c::ScrollViewer::SetVerticalScrollBarVisibility(endpoints, c::ScrollBarVisibility::Disabled);
+            c::ScrollViewer::SetVerticalScrollMode(endpoints, c::ScrollMode::Disabled);
+            for (const auto& [id, label] : choices)
+            {
+                (void)id;
+                c::ListViewItem entry; entry.Padding({10, 12, 10, 12}); entry.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+                c::Grid row; row.ColumnSpacing(12); c::ColumnDefinition glyph; glyph.Width(x::GridLengthHelper::FromPixels(20));
+                row.ColumnDefinitions().Append(glyph); row.ColumnDefinitions().Append(c::ColumnDefinition());
+                c::FontIcon icon; icon.Glyph(direction == std::string("output") ? L"\uE767" : L"\uE720"); icon.FontSize(18);
+                row.Children().Append(icon); auto name = Text(label); name.MaxLines(2); c::Grid::SetColumn(name, 1); row.Children().Append(name);
+                entry.Content(row); endpoints.Items().Append(entry);
+            }
+            if (choices.empty()) group.Children().Append(Text(_LW("controlCenter.unavailable")));
+            group.Children().Append(endpoints);
+            const auto weak = weak_from_this();
+            endpoints.SelectionChanged([weak, endpoints, choices, prefix](const auto&, const auto&) {
+                if (const auto self = weak.lock(); self && !self->closed && !self->updating)
+                {
+                    const int index = endpoints.SelectedIndex();
+                    if (index >= 0 && static_cast<std::size_t>(index) < choices.size())
+                        self->Start(prefix + ".selectDevice", {{"endpointId", choices[index].first}});
+                }
+            });
+            section.updates.push_back([this, endpoints, choices, prefix] {
+                const auto id = j::String(Current((prefix + ".volume").c_str()), "endpointId");
+                const auto found = std::find_if(choices.begin(), choices.end(), [&](const auto& item) { return item.first == id; });
+                endpoints.SelectedIndex(found == choices.end() ? -1 : static_cast<int>(found - choices.begin()));
+            });
             Slider(section, _LW("statusBar.volume"), [this, prefix]() -> std::optional<double> {
                 const auto state = source.current(prefix + ".volume"); return state && state->available ? std::optional(j::Numeric(state->value, "volume") * 100) : std::nullopt;
             }, [this, prefix](double level) { Start(prefix + ".setVolume", {{"volume", std::to_string(level / 100)}}); }, group);
@@ -451,6 +562,7 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         Fallback(section, L"ms-settings:display");
     }
     JsonValue WifiInterface() const { return Find("network.wifi", "interfaces", interfaceId); }
+    std::vector<JsonValue> WifiNetworks() const { return system_control::WifiPresentationNetworks(WifiInterface()); }
     void HiddenNetwork()
     {
         if (dialog || interfaceId.empty() || !root.XamlRoot()) return;
@@ -480,33 +592,43 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
         const auto value = Current("network.wifi"); const auto& interfaces = Items(value, "interfaces");
         if (!interfaces.empty() && std::none_of(interfaces.begin(), interfaces.end(), [this](const auto& item) { return j::String(item, "id") == interfaceId; }))
             interfaceId = j::String(interfaces.front(), "id");
-        const auto current = WifiInterface(); const auto& networks = Items(current, "networks"); const auto& profiles = Items(current, "profiles");
+        const auto current = WifiInterface(); const auto networks = WifiNetworks();
         if (scanOnArrival && !interfaceId.empty()) { scanOnArrival = false; Start("network.wifi.scan", {{"interfaceId", interfaceId}}); }
-        if (!Begin(section, "wifi:" + Identity(interfaces) + interfaceId + Identity(networks) + Identity(profiles, "name"))) return;
+        if (!Begin(section, "wifi:" + Identity(interfaces) + interfaceId + Identity(networks))) return;
         std::vector<std::pair<std::string, std::wstring>> adapters;
         for (const auto& item : interfaces) adapters.emplace_back(j::String(item, "id"), Wide(j::String(item, "name")));
-        const auto adapterGroup = Group(section.panel);
-        Choice(section, _LW("controlCenter.adapter"), adapters, [this] { return interfaceId; }, [this](const auto& id) {
-            interfaceId = id; scanOnArrival = true; sections.at("wifi").key.clear(); Refresh();
-        }, adapterGroup);
-        Toggle(section, _LW("statusBar.wifiControls"), [this]() -> std::optional<bool> {
-            const auto item = WifiInterface(); const auto* enabled = item.Find("enabled"); return enabled && enabled->IsBoolean() ? std::optional(enabled->boolean) : std::nullopt;
-        }, [this](bool enabled) { Start("network.wifi.setRadio", {{"interfaceId", interfaceId}, {"enabled", enabled ? "1" : "0"}}); }, adapterGroup);
-        const auto scan = Button(adapterGroup, _LW("controlCenter.scan"), [this] { Start("network.wifi.scan", {{"interfaceId", interfaceId}}); });
+        if (adapters.size() > 1)
+            Choice(section, _LW("controlCenter.adapter"), adapters, [this] { return interfaceId; }, [this](const auto& id) {
+                interfaceId = id; wifiSelection.clear(); scanOnArrival = true; sections.at("wifi").key.clear(); Refresh();
+            });
+        Fallback(section, L"ms-settings:network-wifi");
+        const auto scan = Button(section.footer, _LW("controlCenter.scan"), [this] { Start("network.wifi.scan", {{"interfaceId", interfaceId}}); });
         section.updates.push_back([this, scan] { scan.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
         c::TextBlock error = Text(_LW("controlCenter.locationDenied")); error.Visibility(x::Visibility::Collapsed);
-        adapterGroup.Children().Append(error);
-        const auto available = Group(section.panel, _LW("controlCenter.availableNetworks"));
-        if (networks.empty()) available.Children().Append(Text(_LW("controlCenter.unavailable")));
+        section.panel.Children().Append(error);
+        c::ListView available; available.SelectionMode(c::ListViewSelectionMode::Single);
+        available.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+        c::ScrollViewer::SetVerticalScrollMode(available, c::ScrollMode::Disabled);
+        c::ScrollViewer::SetVerticalScrollBarVisibility(available, c::ScrollBarVisibility::Disabled);
+        x::Automation::AutomationProperties::SetAutomationId(available, L"control.wifi.networks");
+        section.panel.Children().Append(available);
+        std::vector<std::string> networkIds;
+        if (networks.empty()) section.panel.Children().Append(Text(_LW("controlCenter.unavailable")));
+        if (std::none_of(networks.begin(), networks.end(), [&](const auto& network) { return j::String(network, "id") == wifiSelection; }))
+            wifiSelection = !networks.empty() && j::Flag(networks.front(), "connected") ? j::String(networks.front(), "id") : std::string{};
         for (const auto& network : networks)
         {
             const auto id = j::String(network, "id");
-            auto text = Text(Wide(j::String(network, "ssid")));
-            c::ToolTipService::SetToolTip(text, winrt::box_value(Wide(j::String(network, "ssid"))));
-            auto row = Row(available, text);
-            const auto button = Button(row, _LW("controlCenter.connect"), [this, id] {
-                const auto current = WifiInterface();
-                for (const auto& item : Items(current, "networks")) if (j::String(item, "id") == id)
+            networkIds.push_back(id);
+            c::ListViewItem entry; entry.Padding({10, 12, 10, 12}); entry.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+            c::Grid row; row.ColumnSpacing(12); c::ColumnDefinition glyph; glyph.Width(x::GridLengthHelper::FromPixels(24));
+            row.ColumnDefinitions().Append(glyph); row.ColumnDefinitions().Append(c::ColumnDefinition());
+            c::FontIcon signal; signal.Glyph(L"\uE701"); signal.FontSize(22); signal.VerticalAlignment(x::VerticalAlignment::Top); row.Children().Append(signal);
+            c::StackPanel content; content.Spacing(4); c::Grid::SetColumn(content, 1); row.Children().Append(content);
+            auto text = Text(Wide(j::String(network, "ssid"))); text.MaxLines(2); content.Children().Append(text);
+            auto summary = Text(L""); summary.FontSize(12); summary.Opacity(.7); content.Children().Append(summary);
+            const auto button = Button(content, _LW("controlCenter.connect"), [this, id] {
+                for (const auto& item : WifiNetworks()) if (j::String(item, "id") == id)
                 {
                     if (j::Flag(item, "connected")) Start("network.wifi.disconnect", {{"interfaceId", interfaceId}});
                     else if (!j::String(item, "profileName").empty()) Start("network.wifi.connect", {{"interfaceId", interfaceId}, {"profileName", j::String(item, "profileName")}});
@@ -515,33 +637,36 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
                     return;
                 }
             });
-            section.updates.push_back([this, id, text, button] {
-                const auto current = WifiInterface();
-                for (const auto& item : Items(current, "networks")) if (j::String(item, "id") == id)
+            button.HorizontalAlignment(x::HorizontalAlignment::Right); button.MinWidth(128); button.Margin({0, 8, 0, 0});
+            entry.Content(row); available.Items().Append(entry);
+            section.updates.push_back([this, id, text, summary, button] {
+                for (const auto& item : WifiNetworks()) if (j::String(item, "id") == id)
                 {
-                    text.Text(Wide(j::String(item, "ssid")) + L"  " + std::to_wstring(static_cast<int>(j::Numeric(item, "signal"))) + L"%");
+                    const auto ssid = j::String(item, "ssid");
+                    text.Text(ssid.empty() ? _LW("controlCenter.hiddenNetwork") : Wide(ssid));
+                    summary.Text((j::Flag(item, "connected") ? std::wstring(_LW("controlCenter.connected")) + L" · " : L"") +
+                        (j::String(item, "security") == "open" ? std::wstring(_LW("controlCenter.openNetwork")) + L" · " : L"") +
+                        std::to_wstring(static_cast<int>(j::Numeric(item, "signal"))) + L"%");
                     button.Content(winrt::box_value(_LW(j::Flag(item, "connected") ? "controlCenter.disconnect" : "controlCenter.connect")));
+                    button.Visibility(id == wifiSelection ? x::Visibility::Visible : x::Visibility::Collapsed);
                     button.IsEnabled(j::Flag(item, "connectable") || j::Flag(item, "connected")); break;
                 }
             });
         }
-        const auto saved = profiles.empty() ? c::StackPanel(nullptr) : Group(section.panel, _LW("controlCenter.savedNetworks"));
-        for (const auto& profile : profiles)
-        {
-            const auto name = j::String(profile, "name");
-            auto row = Row(saved, Text(Wide(name)));
-            Button(row, _LW("controlCenter.connect"), [this, name] { Start("network.wifi.connect", {{"interfaceId", interfaceId}, {"profileName", name}}); });
-            if (!j::Flag(profile, "managed"))
+        const auto selected = std::find(networkIds.begin(), networkIds.end(), wifiSelection);
+        available.SelectedIndex(selected == networkIds.end() ? -1 : static_cast<int>(selected - networkIds.begin()));
+        const auto weak = weak_from_this();
+        available.SelectionChanged([weak, available, networkIds](const auto&, const auto&) {
+            if (const auto self = weak.lock(); self && !self->closed && !self->updating)
             {
-                auto forget = Button(row, _LW("controlCenter.forget"), [this, name] { Start("network.wifi.forget", {{"interfaceId", interfaceId}, {"profileName", name}}); });
-                forget.Content(c::SymbolIcon(c::Symbol::Delete)); forget.Padding({8, 6, 8, 6});
-                c::ToolTipService::SetToolTip(forget, winrt::box_value(_LW("controlCenter.forget")));
+                const int index = available.SelectedIndex();
+                self->wifiSelection = index >= 0 && static_cast<std::size_t>(index) < networkIds.size() ? networkIds[index] : std::string{};
+                self->Refresh(); if (self->layoutChanged) self->layoutChanged();
             }
-        }
+        });
         const auto hidden = Button(section.panel, _LW("controlCenter.hiddenNetwork"), [this] { HiddenNetwork(); });
         section.updates.push_back([this, hidden] { hidden.IsEnabled(!interfaceId.empty() && j::Flag(WifiInterface(), "enabled")); });
-        Fallback(section, L"ms-settings:network-wifi");
-        const auto location = Button(section.panel, _LW("controlCenter.locationSettings"), [this] { Settings(L"ms-settings:privacy-location"); });
+        const auto location = Button(section.footer, _LW("controlCenter.locationSettings"), [this] { Settings(L"ms-settings:privacy-location"); });
         location.Visibility(x::Visibility::Collapsed);
         section.updates.push_back([this, error, location] {
             const auto visibility = j::String(WifiInterface(), "error") == "accessDenied" ? x::Visibility::Visible : x::Visibility::Collapsed;
@@ -555,17 +680,20 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
     {
         const auto value = Current("bluetooth.devices"); const auto& radios = Items(value, "radios"); const auto& devices = Items(value, "devices");
         if (!Begin(section, "bluetooth:" + Identity(radios) + Identity(devices))) return;
-        const auto radioGroup = Group(section.panel);
-        if (radios.empty()) radioGroup.Children().Append(Text(_LW("controlCenter.unavailable")));
-        for (const auto& radio : radios)
+        if (radios.empty()) section.panel.Children().Append(Text(_LW("controlCenter.unavailable")));
+        if (radios.size() > 1) for (const auto& radio : radios)
         {
             const auto id = j::String(radio, "id");
             Toggle(section, Wide(j::String(radio, "name")).c_str(), [this, id]() -> std::optional<bool> {
                 const auto item = Find("bluetooth.devices", "radios", id); return j::Flag(item, "available") ? std::optional(j::Flag(item, "enabled")) : std::nullopt;
-            }, [this, id](bool enabled) { Start("bluetooth.setRadio", {{"radioId", id}, {"enabled", enabled ? "1" : "0"}}); }, radioGroup);
+            }, [this, id](bool enabled) { Start("bluetooth.setRadio", {{"radioId", id}, {"enabled", enabled ? "1" : "0"}}); });
         }
         const auto deviceGroup = Group(section.panel, _LW("controlCenter.devices"));
-        if (devices.empty()) deviceGroup.Children().Append(Text(_LW("controlCenter.unavailable")));
+        if (devices.empty())
+        {
+            const auto radio = Radio("bluetooth");
+            deviceGroup.Children().Append(Text(_LW(!radio ? "controlCenter.unavailable" : !radio->second ? "controlCenter.off" : "controlCenter.noDevices")));
+        }
         for (const auto& device : devices)
         {
             const auto id = j::String(device, "id"); const auto text = Text(Wide(j::String(device, "name")));
@@ -694,6 +822,11 @@ struct SystemControlView::Impl : std::enable_shared_from_this<Impl>
             else if (key == "media") Media(section);
             for (const auto& update : section.updates) update();
         }
+        if (activeSection == "wifi" || activeSection == "bluetooth")
+        {
+            const auto radio = Radio(activeSection); detailRadio.IsEnabled(radio.has_value()); detailRadio.IsOn(radio && radio->second);
+            Name(detailRadio, _LW(sections.at(activeSection).title.c_str()));
+        }
         for (const auto& completion : source.completions())
         {
             if (!feedback.Take(completion.id)) continue;
@@ -742,5 +875,12 @@ SystemControlView::~SystemControlView() { impl_->Close(); }
 x::FrameworkElement SystemControlView::Root() const { return impl_->root; }
 void SystemControlView::Refresh() { impl_->Refresh(); }
 void SystemControlView::Select(std::string_view section) { impl_->Select(std::string(section)); }
+void SystemControlView::SetViewportHeight(double height)
+{
+    const double chrome = impl_->navigation.ActualHeight() + impl_->footers.ActualHeight() +
+        (impl_->status.IsOpen() ? impl_->status.ActualHeight() : 0) + 64;
+    const double available = std::max(48., std::min(SystemControlViewportHeight, height) - std::max(96., chrome));
+    if (impl_->bodyScroll.MaxHeight() != available) impl_->bodyScroll.MaxHeight(available);
+}
 void SystemControlView::Close() { impl_->Close(); }
 }

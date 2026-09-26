@@ -59,10 +59,13 @@ std::vector<Callback> Callbacks(const Icon& icon, Activation activation, POINT a
         if (icon.version >= NOTIFYICON_VERSION) add(NIN_SELECT);
         break;
     case Activation::DoubleClick: add(WM_LBUTTONDBLCLK); break;
-    case Activation::RightDown: if (icon.version < NOTIFYICON_VERSION) add(WM_RBUTTONDOWN); break;
+    // Match YASB's mouse compatibility sequence: several applications opt in
+    // to v4 packing but still handle the raw right-button notification.
+    // Keyboard invocation remains a single semantic notification.
+    case Activation::RightDown: add(WM_RBUTTONDOWN); break;
     case Activation::RightUp:
+        add(WM_RBUTTONUP);
         if (icon.version >= NOTIFYICON_VERSION) add(WM_CONTEXTMENU);
-        else add(WM_RBUTTONUP);
         break;
     case Activation::ContextKeyboard:
         if (icon.version >= NOTIFYICON_VERSION) add(WM_CONTEXTMENU);

@@ -9,6 +9,8 @@
 #include "../widget_system_data_provider.h"
 #include "../app/desktop_backdrop_compositor.h"
 #include "../l10n.h"
+#include "../quick_navigation_animation_rules.h"
+#include "../animation_settings.h"
 #include <cmath>
 
 namespace snowdesktop::winui
@@ -19,6 +21,7 @@ namespace m = x::Media;
 struct SystemPanel::Impl
 {
     SettingsChanged changed;
+    std::function<bool(std::string_view, POINT)> dropOutside;
     SystemCalendarActions calendarActions;
     WinUiRuntime runtime;
     DesktopBackdropCompositor backdrop;
@@ -38,8 +41,15 @@ struct SystemPanel::Impl
     std::unique_ptr<SystemResourceView> resources;
     std::uint64_t revision = 0;
     bool showing = false, hiding = false;
+    DWORD contextProcess = 0;
     double regionRadius = -1;
-    Impl(SettingsChanged callback, SystemCalendarActions dates) : changed(std::move(callback)), calendarActions(std::move(dates)) {}
+    UiAnimationScheduler* scheduler = nullptr;
+    UiScheduleToken animationToken = 0;
+    quick_navigation_animation_rules::State slide;
+    m::TranslateTransform translation;
+    Impl(SettingsChanged callback, SystemCalendarActions dates, std::function<bool(std::string_view, POINT)> drop,
+        UiAnimationScheduler* timing)
+        : changed(std::move(callback)), dropOutside(std::move(drop)), calendarActions(std::move(dates)), scheduler(timing) {}
     ~Impl()
     {
         Hide();
@@ -76,6 +86,8 @@ struct SystemPanel::Impl
         if (activation == tray::Activation::Keyboard || activation == tray::Activation::ContextKeyboard)
             point = {screen.left, screen.top};
         const auto service = tray; // The app's callback may deactivate this popup.
+        if (activation == tray::Activation::RightDown || activation == tray::Activation::RightUp || activation == tray::Activation::ContextKeyboard)
+            contextProcess = icon.identity.process;
         return service->Activate(icon.key, activation, point, {owner, window});
     }
     void RefreshTray(bool force = false)
@@ -93,6 +105,7 @@ struct SystemPanel::Impl
         trayView.reset();
         resources.reset();
         frame = CreateSystemPanelFrame(appearance);
+        translation.Y(0); frame.RenderTransform(translation);
         c::StackPanel root; root.Spacing(12);
         if (action == StatusBarAction::Calendar)
         {
@@ -104,9 +117,10 @@ struct SystemPanel::Impl
             SystemTrayActions actions;
             actions.activate = [this](const auto& icon, const auto& element, auto activation) { return ActivateTray(icon, element, activation); };
             actions.changed = [this](const auto& value) { settings = value; if (changed) changed(value); };
-            actions.native = [this] { auto service = tray; Hide(); if (service) service->OpenNativeTray(); };
+            actions.dropOutside = dropOutside;
             trayView = std::make_unique<SystemTrayView>(std::move(actions), settings, [this] { if (showing) Arrange(); });
             root.Children().Append(trayView->Root()); RefreshTray(true);
+            frame.Padding({10, 10, 10, 10});
         }
         else if (IsSystemResourceAction(action))
         {
@@ -116,9 +130,11 @@ struct SystemPanel::Impl
         else
         {
             controls = std::make_unique<SystemControlView>(data, settings, action, [this] { if (showing) Arrange(); });
-            c::ScrollViewer scroll; scroll.MaxHeight(SystemControlViewportHeight); scroll.Content(controls->Root());
-            scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
-            root.Children().Append(scroll);
+            // Control pages own their body viewport and fixed header/footer.
+            // Keep the scrollbar at the surface edge, outside content padding.
+            frame.Padding({0, 0, 0, 0}); frame.Child(controls->Root()); content = frame;
+            if (!runtime.Attach(window, frame)) throw winrt::hresult_error(E_FAIL, runtime.LastError());
+            return;
         }
         c::ScrollViewer viewport;
         viewport.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
@@ -138,10 +154,11 @@ struct SystemPanel::Impl
         const double availableWidth = (info.rcWork.right - info.rcWork.left) / scale;
         const double availableHeight = (info.rcWork.bottom - info.rcWork.top) / scale;
         const float widthDip = static_cast<float>((std::min)(requested, availableWidth));
+        if (controls) controls->SetViewportHeight(availableHeight - 12);
         content.Measure({widthDip, static_cast<float>(availableHeight)});
         const int width = static_cast<int>(std::ceil(widthDip * scale));
         const int height = static_cast<int>(std::ceil((std::min)(availableHeight,
-            (std::max)(128., static_cast<double>(content.DesiredSize().Height))) * scale));
+            (std::max)(trayView ? 36. : 128., static_cast<double>(content.DesiredSize().Height))) * scale));
         int left = action == StatusBarAction::Calendar ? (anchor.left + anchor.right - width) / 2 : anchor.right - width;
         int top = settings.position == DockPosition::Bottom ? anchor.top - height - static_cast<int>(6 * scale) : anchor.bottom + static_cast<int>(6 * scale);
         left = std::clamp(left, static_cast<int>(info.rcWork.left), static_cast<int>(info.rcWork.right) - width);
@@ -162,12 +179,56 @@ struct SystemPanel::Impl
             if (showing) backdrop.ShowPopupWindowPair(window);
         }
         else backdrop.Reset();
+        if (slide.IsAnimating()) ApplyAnimation();
     }
-    void Hide()
+    void ApplyAnimation()
+    {
+        if (!frame || !window) return;
+        RECT client{}; GetClientRect(window, &client);
+        const float eased = quick_navigation_animation_rules::EaseInOutSmooth(slide.GetVisual().progress);
+        const float y = (settings.position == DockPosition::Bottom ? 1.f : -1.f) * (1.f - eased) * client.bottom;
+        const double scale = GetDpiForWindow(window) / 96.;
+        translation.Y(y / scale);
+        UpdateSystemPanelRegion(window, client.right, client.bottom, appearance.cornerRadius * scale,
+            static_cast<int>(std::lround(y)));
+        if (appearance.glassEnabled && backdrop.IsAvailable())
+        {
+            const LONG offset = static_cast<LONG>(std::lround(y));
+            RECT visible{0, std::max(0L, offset), client.right, std::min(client.bottom, client.bottom + offset)};
+            (void)backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(this),
+                D2D1::Matrix4x4F::Translation(0, y, 0), visible);
+            backdrop.CommitVisualChanges();
+        }
+    }
+    void Animate(bool opening)
+    {
+        if (scheduler) scheduler->Cancel(animationToken);
+        animationToken = 0;
+        if (!scheduler || animation::RuntimePopupEffect() == animation::NoEffect)
+        { if (opening) { slide.ShowImmediately(); ApplyAnimation(); } else Hide(); return; }
+        slide.Configure(quick_navigation_animation_rules::Effect::Fade, animation::RuntimeDurationScale());
+        const auto now = static_cast<std::uint64_t>(UiAnimationScheduler::MonotonicMilliseconds());
+        if (opening) { slide.ResetHidden(); slide.Open(now); }
+        else { showing = false; frame.IsHitTestVisible(false); slide.Close(now); }
+        ApplyAnimation();
+        if (!slide.IsAnimating()) { if (!opening) Hide(); return; }
+        animationToken = scheduler->StartAnimation(UiAnimationSurface::Popup, [this](double tick) {
+            slide.Advance(static_cast<std::uint64_t>(tick)); ApplyAnimation();
+            if (slide.IsAnimating()) return true;
+            animationToken = 0;
+            if (slide.IsHidden()) Hide();
+            return false;
+        });
+    }
+    void Hide(bool animate = false)
     {
         if (hiding) return;
+        if (animate && showing) { Animate(false); return; }
+        if (scheduler) scheduler->Cancel(animationToken);
+        animationToken = 0; slide.ResetHidden(); translation.Y(0);
         hiding = true;
         showing = false;
+        contextProcess = 0;
         try { if (controls) controls->Close(); } catch (...) {}
         try { if (calendar) calendar->Close(); } catch (...) {}
         try { if (trayView) trayView->Close(); } catch (...) {}
@@ -214,14 +275,31 @@ struct SystemPanel::Impl
         try
         {
             self->runtime.HandleWindowMessage(message, wp, lp);
-            if (message == WM_ACTIVATE && LOWORD(wp) == WA_INACTIVE && self->showing) self->Hide();
-            else if (message == WM_CLOSE || (message == WM_KEYDOWN && wp == VK_ESCAPE)) { self->Hide(); return 0; }
+            if (message == WM_ACTIVATE && LOWORD(wp) == WA_INACTIVE && self->showing)
+            {
+                DWORD process = 0; GetWindowThreadProcessId(reinterpret_cast<HWND>(lp), &process);
+                // The icon owner creates its own menu. Keep the overflow alive
+                // while that process owns activation; unrelated activation closes it.
+                if (!self->contextProcess || (process && process != self->contextProcess &&
+                    reinterpret_cast<HWND>(lp) != self->owner)) self->Hide(true);
+            }
+            else if (message == WM_CLOSE || (message == WM_KEYDOWN && wp == VK_ESCAPE)) { self->Hide(true); return 0; }
             else if (message == WM_TIMER && wp == 1 && self->showing)
             {
                 if (self->controls) { self->controls->Refresh(); self->Arrange(); }
                 else if (self->calendar) { self->calendar->Refresh(); self->Arrange(); }
                 else if (self->resources) self->resources->Refresh();
-                else self->RefreshTray();
+                else
+                {
+                    if (self->contextProcess)
+                    {
+                        const HWND foreground = GetForegroundWindow();
+                        DWORD process = 0; GetWindowThreadProcessId(foreground, &process);
+                        if (foreground != window && process && process != self->contextProcess && process != GetCurrentProcessId())
+                        { self->Hide(); return 0; }
+                    }
+                    self->RefreshTray();
+                }
             }
             else if (message == WM_DPICHANGED || message == WM_DISPLAYCHANGE) self->Hide();
         }
@@ -229,20 +307,32 @@ struct SystemPanel::Impl
         return DefWindowProcW(window, message, wp, lp);
     }
 };
-SystemPanel::SystemPanel(SettingsChanged changed, SystemCalendarActions calendar) : impl_(std::make_unique<Impl>(std::move(changed), std::move(calendar))) {}
+SystemPanel::SystemPanel(SettingsChanged changed, SystemCalendarActions calendar, std::function<bool(std::string_view, POINT)> dropOutside,
+    UiAnimationScheduler* scheduler)
+    : impl_(std::make_unique<Impl>(std::move(changed), std::move(calendar), std::move(dropOutside), scheduler)) {}
 SystemPanel::~SystemPanel() = default;
-void SystemPanel::Hide() { impl_->Hide(); }
+void SystemPanel::Hide() { impl_->Hide(true); }
 void SystemPanel::HideForMonitor(HMONITOR monitor) { if (impl_->monitor == monitor) impl_->Hide(); }
 bool SystemPanel::PreTranslateMessage(MSG* message)
 {
     return impl_->showing && (impl_->runtime.PreTranslateMessage(message) || impl_->runtime.ProcessTabNavigation(message));
+}
+bool SystemPanel::DropTrayIcon(std::string_view key, POINT screen)
+{
+    auto& self = *impl_;
+    if (!self.showing || !self.trayView || !self.content.XamlRoot()) return false;
+    ScreenToClient(self.window, &screen);
+    const auto scale = self.content.XamlRoot().RasterizationScale();
+    const auto point = self.content.TransformToVisual(self.trayView->Root()).TransformPoint(
+        {static_cast<float>(screen.x / scale), static_cast<float>(screen.y / scale)});
+    return self.trayView->Drop(key, point);
 }
 void SystemPanel::Show(StatusBarAction action, HWND owner, RECT anchor,
     const PersonalizationSettings& appearance, const StatusBarSettings& settings,
     std::shared_ptr<tray::Service> tray, std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data)
 {
     auto& self = *impl_;
-    if (self.showing && self.action == action && self.owner == owner) { self.Hide(); return; }
+    if (self.showing && self.action == action && self.owner == owner) { self.Hide(true); return; }
     self.Hide();
     if (!self.Ensure()) return;
     self.action = action; self.owner = owner; self.anchor = anchor; self.appearance = appearance;
@@ -250,7 +340,7 @@ void SystemPanel::Show(StatusBarAction action, HWND owner, RECT anchor,
     self.monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{sizeof(info)}; if (!GetMonitorInfoW(self.monitor, &info)) return;
     const double scale = GetDpiForWindow(owner) / 96.;
-    const int width = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 520 : action == StatusBarAction::Tray ? 280 : 440) * scale), static_cast<int>(info.rcWork.right - info.rcWork.left));
+    const int width = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 520 : action == StatusBarAction::Tray ? 208 : 440) * scale), static_cast<int>(info.rcWork.right - info.rcWork.left));
     const int height = (std::min)(static_cast<int>((action == StatusBarAction::Calendar ? 500 : 560) * scale), static_cast<int>(info.rcWork.bottom - info.rcWork.top));
     int left = action == StatusBarAction::Calendar ? (anchor.left + anchor.right - width) / 2 : anchor.right - width;
     int top = anchor.bottom + static_cast<int>(6 * scale);
@@ -263,6 +353,7 @@ void SystemPanel::Show(StatusBarAction action, HWND owner, RECT anchor,
     try { self.Build(); } catch (...) { self.Hide(); return; }
     self.Arrange();
     self.showing = true;
+    self.Animate(true);
     if (appearance.glassEnabled) self.backdrop.ShowPopupWindowPair(self.window);
     self.backdrop.SetPopupWindowPairZOrder(self.window, HWND_TOPMOST, true);
     ShowWindow(self.window, SW_SHOW); SetForegroundWindow(self.window); SetTimer(self.window, 1, 500, nullptr);

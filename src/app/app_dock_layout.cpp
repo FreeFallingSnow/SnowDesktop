@@ -87,7 +87,7 @@ void DesktopApp::ApplyDockWorkAreaReservation()
 {
     if (dockWorkAreaReservationApplied_)
     {
-        for (const RECT& dockArea : dockAreas_)
+        for (const RECT& dockArea : dockReservedAreas_)
         {
             for (auto& page : gridPages_)
             {
@@ -134,6 +134,7 @@ void DesktopApp::ApplyDockWorkAreaReservation()
     }
 
     dockAreas_.clear();
+    dockReservedAreas_.clear();
     dockWorkAreaReservationApplied_ = false;
     SyncStatusBar();
     if (!generalSettings_.dockEnabled || gridPages_.empty()) return;
@@ -173,6 +174,20 @@ void DesktopApp::ApplyDockWorkAreaReservation()
     {
         if (pageIndex >= gridPages_.size()) continue;
         GridPage& targetPage = gridPages_[pageIndex];
+        RECT screen = targetPage.bounds;
+        OffsetRect(&screen, virtualLeft_, virtualTop_);
+        if (statusBar_)
+        {
+            if (auto merged = statusBar_->MergedDockArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL)))
+            {
+                OffsetRect(&*merged, -virtualLeft_, -virtualTop_);
+                dockAreas_.push_back(*merged);
+                // rcWork already excludes this system-approved AppBar. Do not
+                // reserve the same strip again for the Dock or desktop grid.
+                ApplyIconSpacingToPage(targetPage);
+                continue;
+            }
+        }
         const RECT originalWorkArea = targetPage.workArea;
         const int width = std::max(1, static_cast<int>(
             originalWorkArea.right - originalWorkArea.left));
@@ -247,6 +262,7 @@ void DesktopApp::ApplyDockWorkAreaReservation()
         reserveEdge(targetPage, bestReserved, &dockArea);
         ApplyIconSpacingToPage(targetPage);
         if (!IsRectEmptyRect(dockArea)) dockAreas_.push_back(dockArea);
+        if (reserveDesktopWorkArea && !IsRectEmptyRect(dockArea)) dockReservedAreas_.push_back(dockArea);
 
         // DockContainer geometry still comes from dockArea when overlap is
         // allowed. Only restore the icon/widget work area so desktop content
@@ -258,7 +274,7 @@ void DesktopApp::ApplyDockWorkAreaReservation()
         }
     }
     dockWorkAreaReservationApplied_ =
-        reserveDesktopWorkArea && !dockAreas_.empty();
+        !dockReservedAreas_.empty();
     if (dockWorkAreaReservationApplied_)
         dockWorkAreaReservationPosition_ =
             dockSettings_.position;

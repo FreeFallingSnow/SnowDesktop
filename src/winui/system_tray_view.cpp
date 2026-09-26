@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "system_tray_view.h"
 #include "../l10n.h"
+#include "../tray_order.h"
+#include "../tray_presentation.h"
+#include <cmath>
 #include <robuffer.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.UI.Input.h>
@@ -37,10 +40,8 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
         c::Image image;
         c::SymbolIcon fallback{c::Symbol::AllApps};
         c::ToolTip tip;
-        c::TextBlock title;
-        c::Primitives::ToggleButton pin;
-        c::Button earlier, later;
-        bool pointer = false, updating = false;
+        winrt::Windows::Foundation::Point pressed{};
+        bool pointer = false, dragging = false, releasedPointer = false;
     };
     SystemTrayActions actions;
     StatusBarSettings settings;
@@ -49,9 +50,8 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
     c::StackPanel root;
     c::Grid grid;
     c::TextBlock notice;
-    c::Button organize;
     std::vector<std::shared_ptr<Row>> rows;
-    bool managing = false, closed = false;
+    bool closed = false;
 
     Impl(SystemTrayActions source, StatusBarSettings value, std::function<void()> layout)
         : actions(std::move(source)), settings(std::move(value)), layoutChanged(std::move(layout)) {}
@@ -62,48 +62,13 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
     }
     void Build()
     {
-        root.Spacing(12);
-        c::Grid heading;
-        c::ColumnDefinition titleColumn; titleColumn.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
-        c::ColumnDefinition editColumn; editColumn.Width(x::GridLengthHelper::Auto());
-        heading.ColumnDefinitions().Append(titleColumn); heading.ColumnDefinitions().Append(editColumn);
-        c::TextBlock title; title.Text(_LW("statusBar.tray")); title.FontSize(16);
-        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); title.VerticalAlignment(x::VerticalAlignment::Center);
-        heading.Children().Append(title);
-        Subtle(organize); organize.Width(32); organize.Height(32); organize.Padding({6, 6, 6, 6});
-        a::AutomationProperties::SetAutomationId(organize, L"tray.organize");
-        c::Grid::SetColumn(organize, 1); heading.Children().Append(organize);
-        const auto weak = weak_from_this();
-        organize.Click([weak](const auto&, const auto&) {
-            if (const auto self = weak.lock(); self && !self->closed)
-            {
-                self->managing = !self->managing;
-                self->rows.clear(); self->grid.Children().Clear();
-                self->UpdateHeader(); self->Present();
-                if (self->layoutChanged) self->layoutChanged();
-            }
-        });
-        root.Children().Append(heading);
+        root.Spacing(8);
         c::ScrollViewer scroll; scroll.MaxHeight(400); scroll.Content(grid);
         scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled);
         scroll.VerticalScrollBarVisibility(c::ScrollBarVisibility::Auto); root.Children().Append(scroll);
         notice.FontSize(13); notice.TextWrapping(x::TextWrapping::Wrap);
         a::AutomationProperties::SetAutomationId(notice, L"tray.notice"); root.Children().Append(notice);
-        c::HyperlinkButton native; native.Content(winrt::box_value(_LW("statusBar.nativeTray")));
-        native.FontSize(12); native.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        native.Padding({0, 4, 0, 4}); a::AutomationProperties::SetAutomationId(native, L"tray.native");
-        native.Click([weak](const auto&, const auto&) {
-            if (const auto self = weak.lock(); self && !self->closed)
-                if (const auto callback = self->actions.native) callback();
-        });
-        root.Children().Append(native); UpdateHeader(); Present();
-    }
-    void UpdateHeader()
-    {
-        const auto label = _LW(managing ? "statusBar.trayBack" : "statusBar.organizeTray");
-        organize.Content(c::SymbolIcon(managing ? c::Symbol::Back : c::Symbol::Edit));
-        a::AutomationProperties::SetName(organize, label);
-        c::ToolTipService::SetToolTip(organize, winrt::box_value(label));
+        Present();
     }
     void Notice(const wchar_t* value)
     {
@@ -144,14 +109,10 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
         const auto name = DisplayName(icon);
         if (initial || DisplayName(row->icon) != name)
         {
-            row->title.Text(name); row->tip.Content(winrt::box_value(name));
+            row->tip.Content(winrt::box_value(name));
             a::AutomationProperties::SetName(row->activate, name);
-            a::AutomationProperties::SetName(row->pin, std::wstring(_LW("statusBar.pin")) + L" " + name);
         }
         row->icon = icon;
-        row->updating = true;
-        row->pin.IsChecked(Pinned(icon)); row->pin.IsEnabled(!icon.persistentKey.empty());
-        row->updating = false;
     }
     void Save()
     {
@@ -160,28 +121,18 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
         // The owner may hide the view while handling a settings change.
         if (const auto callback = actions.changed) callback(settings);
     }
-    void Pin(const std::shared_ptr<Row>& row, bool pinned)
+    bool Drop(std::string_view key, winrt::Windows::Foundation::Point point)
     {
-        if (closed || row->icon.persistentKey.empty()) return;
-        std::erase(settings.pinnedTrayItems, row->icon.persistentKey);
-        if (pinned) settings.pinnedTrayItems.push_back(row->icon.persistentKey);
-        Save();
-    }
-    void Move(const std::shared_ptr<Row>& row, int delta)
-    {
-        if (closed || !managing || row->icon.persistentKey.empty()) return;
-        std::vector<std::string> order;
-        for (const auto& item : rows)
-            if (!item->icon.persistentKey.empty() && std::find(order.begin(), order.end(), item->icon.persistentKey) == order.end())
-                order.push_back(item->icon.persistentKey);
-        const auto found = std::find(order.begin(), order.end(), row->icon.persistentKey);
-        if (found == order.end()) return;
-        const auto index = found - order.begin(), next = index + delta;
-        if (next < 0 || next >= static_cast<std::ptrdiff_t>(order.size())) return;
-        std::iter_swap(order.begin() + index, order.begin() + next);
-        for (const auto& key : settings.trayOrder)
-            if (std::find(order.begin(), order.end(), key) == order.end()) order.push_back(key);
-        settings.trayOrder = std::move(order); Save();
+        if (closed || point.X < 0 || point.Y < 0 || point.X > root.ActualWidth() || point.Y > root.ActualHeight()) return false;
+        std::string before;
+        for (const auto& row : rows)
+        {
+            const auto rect = row->activate.TransformToVisual(root).TransformBounds({0, 0, 36, 36});
+            if (point.Y < rect.Y || (point.Y < rect.Y + rect.Height && point.X < rect.X + rect.Width / 2))
+            { before = row->icon.key; break; }
+        }
+        if (!tray::PlaceIcon(settings, snapshot, key, false, before)) return false;
+        Save(); return true;
     }
     std::shared_ptr<Row> Create(const tray::Icon& icon)
     {
@@ -189,50 +140,10 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
         row->image.Width(20); row->image.Height(20); row->fallback.Width(20); row->fallback.Height(20);
         c::Grid picture; picture.Width(20); picture.Height(20);
         picture.Children().Append(row->fallback); picture.Children().Append(row->image);
-        Subtle(row->activate); row->activate.Height(40); row->activate.Padding({8, 8, 8, 8});
+        Subtle(row->activate); row->activate.Width(36); row->activate.Height(36); row->activate.Padding({8, 8, 8, 8});
         a::AutomationProperties::SetAutomationId(row->activate, winrt::to_hstring("tray.icon." + icon.key));
         c::ToolTipService::SetToolTip(row->activate, row->tip);
-        if (managing)
-        {
-            row->container.ColumnSpacing(4);
-            for (int i = 0; i < 4; ++i)
-            {
-                c::ColumnDefinition column;
-                column.Width(i ? x::GridLengthHelper::Auto() : x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
-                row->container.ColumnDefinitions().Append(column);
-            }
-            c::Grid label; label.ColumnSpacing(10);
-            c::ColumnDefinition imageColumn; imageColumn.Width(x::GridLengthHelper::Auto());
-            label.ColumnDefinitions().Append(imageColumn); label.ColumnDefinitions().Append(c::ColumnDefinition());
-            label.Children().Append(picture); c::Grid::SetColumn(row->title, 1);
-            row->title.TextTrimming(x::TextTrimming::CharacterEllipsis); row->title.MaxLines(1);
-            row->title.VerticalAlignment(x::VerticalAlignment::Center); label.Children().Append(row->title);
-            row->activate.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-            row->activate.HorizontalContentAlignment(x::HorizontalAlignment::Stretch); row->activate.Content(label);
-            // A standard toggle with a static pin stays legible in both the
-            // live compositor and offline XAML capture. No animated checkbox
-            // glyph or custom control template is needed.
-            row->pin.Content(c::SymbolIcon(c::Symbol::Pin));
-            row->pin.Width(32); row->pin.Height(32); row->pin.Padding({6, 6, 6, 6});
-            row->pin.VerticalAlignment(x::VerticalAlignment::Center);
-            c::ToolTipService::SetToolTip(row->pin, winrt::box_value(_LW("statusBar.pin")));
-            c::Grid::SetColumn(row->pin, 1);
-            a::AutomationProperties::SetAutomationId(row->pin, winrt::to_hstring("tray.pin." + icon.key));
-            row->container.Children().Append(row->pin);
-            for (const auto& button : {row->earlier, row->later}) { Subtle(button); button.Width(32); button.Height(32); button.Padding({6, 6, 6, 6}); }
-            c::FontIcon up; up.Glyph(L"\uE70E"); up.FontSize(14);
-            c::FontIcon down; down.Glyph(L"\uE70D"); down.FontSize(14);
-            row->earlier.Content(up); row->later.Content(down);
-            a::AutomationProperties::SetName(row->earlier, _LW("statusBar.moveEarlier"));
-            a::AutomationProperties::SetName(row->later, _LW("statusBar.moveLater"));
-            c::ToolTipService::SetToolTip(row->earlier, winrt::box_value(_LW("statusBar.moveEarlier")));
-            c::ToolTipService::SetToolTip(row->later, winrt::box_value(_LW("statusBar.moveLater")));
-            a::AutomationProperties::SetAutomationId(row->earlier, winrt::to_hstring("tray.earlier." + icon.key));
-            a::AutomationProperties::SetAutomationId(row->later, winrt::to_hstring("tray.later." + icon.key));
-            c::Grid::SetColumn(row->earlier, 2); c::Grid::SetColumn(row->later, 3);
-            row->container.Children().Append(row->earlier); row->container.Children().Append(row->later);
-        }
-        else { row->activate.Width(40); row->activate.Content(picture); }
+        row->activate.Content(picture);
         row->container.Children().Append(row->activate);
         const auto weak = weak_from_this(); const std::weak_ptr<Row> item = row;
         row->activate.AddHandler(x::UIElement::PointerPressedEvent(), winrt::box_value(x::Input::PointerEventHandler(
@@ -240,16 +151,50 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
                 const auto self = weak.lock(); const auto row = item.lock(); if (!self || self->closed || !row) return;
                 if (args.GetCurrentPoint(row->activate).Properties().IsLeftButtonPressed())
                 {
-                    row->pointer = true;
-                    self->Activate(row, tray::Activation::LeftDown);
+                    row->pointer = true; row->dragging = false; row->releasedPointer = false;
+                    row->pressed = args.GetCurrentPoint(self->root).Position();
+                    row->activate.CapturePointer(args.Pointer()); args.Handled(true);
                 }
             })), true);
         row->activate.Click([weak, item](const auto&, const auto&) {
             const auto self = weak.lock(); const auto row = item.lock(); if (!self || self->closed || !row) return;
-            const bool pointer = std::exchange(row->pointer, false);
-            self->Activate(row, pointer ? tray::Activation::LeftUp : tray::Activation::Keyboard);
+            if (!row->pointer && !std::exchange(row->releasedPointer, false)) self->Activate(row, tray::Activation::Keyboard);
         });
-        row->activate.PointerCanceled([item](const auto&, const auto&) { if (const auto row = item.lock()) row->pointer = false; });
+        row->activate.AddHandler(x::UIElement::PointerMovedEvent(), winrt::box_value(x::Input::PointerEventHandler(
+            [weak, item](const auto&, const x::Input::PointerRoutedEventArgs& args) {
+                const auto self = weak.lock(); const auto row = item.lock(); if (!self || self->closed || !row || !row->pointer) return;
+                const auto point = args.GetCurrentPoint(self->root).Position();
+                if (std::abs(point.X - row->pressed.X) >= 8 || std::abs(point.Y - row->pressed.Y) >= 8)
+                { row->dragging = true; row->tip.IsOpen(false); row->activate.Opacity(.5); }
+                args.Handled(true);
+            })), true);
+        row->activate.AddHandler(x::UIElement::PointerReleasedEvent(), winrt::box_value(x::Input::PointerEventHandler(
+            [weak, item](const auto&, const x::Input::PointerRoutedEventArgs& args) {
+                const auto self = weak.lock(); const auto row = item.lock(); if (!self || self->closed || !row || !row->pointer) return;
+                row->pointer = false; row->releasedPointer = true; row->activate.Opacity(1);
+                const bool dragged = std::exchange(row->dragging, false);
+                row->activate.ReleasePointerCapture(args.Pointer()); args.Handled(true);
+                row->activate.DispatcherQueue().TryEnqueue([item] {
+                    if (const auto row = item.lock()) row->releasedPointer = false;
+                });
+                if (dragged)
+                {
+                    if (!self->Drop(row->icon.key, args.GetCurrentPoint(self->root).Position()) && self->actions.dropOutside)
+                    { POINT screen{}; GetCursorPos(&screen); self->actions.dropOutside(row->icon.key, screen); }
+                }
+                else
+                {
+                    const auto point = args.GetCurrentPoint(row->activate).Position();
+                    if (point.X >= 0 && point.Y >= 0 && point.X < row->activate.ActualWidth() && point.Y < row->activate.ActualHeight())
+                    { self->Activate(row, tray::Activation::LeftDown); self->Activate(row, tray::Activation::LeftUp); }
+                }
+            })), true);
+        row->activate.PointerCaptureLost([item](const auto&, const auto&) {
+            if (const auto row = item.lock()) { row->pointer = row->dragging = false; row->activate.Opacity(1); }
+        });
+        row->activate.PointerCanceled([item](const auto&, const auto&) {
+            if (const auto row = item.lock()) { row->pointer = row->dragging = false; row->activate.Opacity(1); }
+        });
         row->activate.DoubleTapped([weak, item](const auto&, const auto&) {
             if (const auto self = weak.lock()) if (const auto row = item.lock()) self->Activate(row, tray::Activation::DoubleClick);
         });
@@ -273,20 +218,15 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
                 if (const auto self = weak.lock()) self->Activate(row, tray::Activation::Leave);
             }
         });
-        const auto pinChanged = [weak, item](const auto&, const auto&) {
-            if (const auto self = weak.lock()) if (const auto row = item.lock(); row && !row->updating)
-                self->Pin(row, row->pin.IsChecked().Value());
-        };
-        row->pin.Checked(pinChanged); row->pin.Unchecked(pinChanged);
-        row->earlier.Click([weak, item](const auto&, const auto&) { if (const auto self = weak.lock()) if (const auto row = item.lock()) self->Move(row, -1); });
-        row->later.Click([weak, item](const auto&, const auto&) { if (const auto self = weak.lock()) if (const auto row = item.lock()) self->Move(row, 1); });
         Update(row, icon, true); return row;
     }
     void Present()
     {
         if (closed) return;
         auto icons = snapshot.icons;
-        std::erase_if(icons, [&](const auto& icon) { return (icon.state & NIS_HIDDEN) || (!managing && Pinned(icon)); });
+        std::erase_if(icons, [&](const auto& icon) {
+            return (icon.state & NIS_HIDDEN) || tray::DuplicatesControlCenter(icon) || Pinned(icon);
+        });
         const auto rank = [&](const auto& icon) { return std::find(settings.trayOrder.begin(), settings.trayOrder.end(), icon.persistentKey) - settings.trayOrder.begin(); };
         std::stable_sort(icons.begin(), icons.end(), [&](const auto& left, const auto& right) { return rank(left) < rank(right); });
         std::vector<std::shared_ptr<Row>> next;
@@ -297,32 +237,28 @@ struct SystemTrayView::Impl : std::enable_shared_from_this<Impl>
             else { Update(*found, icon, false); next.push_back(*found); }
         }
         const bool structureChanged = rows != next;
+        if (structureChanged)
+            for (const auto& row : rows)
+                if (std::find(next.begin(), next.end(), row) == next.end())
+                { row->pointer = row->dragging = false; row->activate.ReleasePointerCaptures(); row->tip.IsOpen(false); }
         rows = std::move(next);
         if (structureChanged)
         {
             grid.Children().Clear(); grid.ColumnDefinitions().Clear(); grid.RowDefinitions().Clear();
-            grid.ColumnSpacing(managing ? 0 : 8); grid.RowSpacing(managing ? 4 : 8);
-            grid.HorizontalAlignment(managing ? x::HorizontalAlignment::Stretch : x::HorizontalAlignment::Center);
-            for (int i = 0; i < (managing ? 1 : 5); ++i)
+            grid.ColumnSpacing(2); grid.RowSpacing(2);
+            grid.HorizontalAlignment(x::HorizontalAlignment::Center);
+            for (int i = 0; i < 5; ++i)
             {
-                c::ColumnDefinition column; column.Width(managing ? x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star) : x::GridLengthHelper::Auto());
+                c::ColumnDefinition column; column.Width(x::GridLengthHelper::Auto());
                 grid.ColumnDefinitions().Append(column);
             }
             for (std::size_t i = 0; i < rows.size(); ++i)
             {
-                const auto index = static_cast<int>(i), columns = managing ? 1 : 5;
+                const auto index = static_cast<int>(i), columns = 5;
                 if (index % columns == 0) grid.RowDefinitions().Append(c::RowDefinition());
                 c::Grid::SetRow(rows[i]->container, index / columns); c::Grid::SetColumn(rows[i]->container, index % columns);
                 grid.Children().Append(rows[i]->container);
             }
-        }
-        for (std::size_t i = 0; i < rows.size(); ++i)
-        {
-            const auto& row = rows[i];
-            const bool identified = !row->icon.persistentKey.empty();
-            const auto movable = [](const auto& other) { return !other->icon.persistentKey.empty(); };
-            row->earlier.IsEnabled(identified && std::any_of(rows.begin(), rows.begin() + i, movable));
-            row->later.IsEnabled(identified && std::any_of(rows.begin() + i + 1, rows.end(), movable));
         }
         Notice(snapshot.degraded ? _LW("statusBar.trayUnavailable") : !snapshot.connected ? _LW("statusBar.trayConnecting") : rows.empty() ? _LW("statusBar.trayEmpty") : L"");
         if (structureChanged && layoutChanged) layoutChanged();
@@ -332,11 +268,20 @@ SystemTrayView::SystemTrayView(SystemTrayActions actions, StatusBarSettings sett
     : impl_(std::make_shared<Impl>(std::move(actions), std::move(settings), std::move(layoutChanged))) { impl_->Build(); }
 SystemTrayView::~SystemTrayView() { Close(); }
 x::FrameworkElement SystemTrayView::Root() const { return impl_->root; }
-double SystemTrayView::PreferredWidth() const { return impl_->managing ? 440 : 280; }
+double SystemTrayView::PreferredWidth() const { return 208; }
+bool SystemTrayView::Drop(std::string_view key, winrt::Windows::Foundation::Point point) { return impl_->Drop(key, point); }
 void SystemTrayView::Refresh(tray::Snapshot snapshot)
 {
     if (impl_->closed) return;
     impl_->snapshot = std::move(snapshot); impl_->Present();
 }
-void SystemTrayView::Close() { impl_->closed = true; impl_->actions = {}; impl_->layoutChanged = {}; }
+void SystemTrayView::Close()
+{
+    impl_->closed = true; impl_->actions = {}; impl_->layoutChanged = {};
+    for (const auto& row : impl_->rows)
+    {
+        row->pointer = row->dragging = false;
+        row->activate.ReleasePointerCaptures(); row->activate.Opacity(1); row->tip.IsOpen(false);
+    }
+}
 }

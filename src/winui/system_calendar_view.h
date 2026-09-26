@@ -11,6 +11,7 @@ struct SystemCalendarActions
     std::function<std::vector<calendar::CalendarEvent>(const std::string&)> events;
     std::function<void()> manage;
     std::function<std::string()> today;
+    std::function<std::string(const std::string&)> secondaryDate;
 };
 class SystemCalendarView
 {

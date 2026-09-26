@@ -1548,6 +1548,7 @@ function animation.cancelFrame(id) end
 ---@field batteryPresent? boolean Omitted when Windows cannot report power status.
 ---@field onAC? boolean
 ---@field batteryPercent? number
+---@field charging? boolean Omitted when charging state is unknown or no battery is present; older hosts may omit it.
 
 ---@class SnowAudioOutputAnalysisDataValue
 ---@field waveform? number[] Requested normalized mono points in -1.0..1.0; omitted when not selected.

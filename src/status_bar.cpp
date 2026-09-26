@@ -8,6 +8,7 @@
 #include "panel_gradient_renderer.h"
 #include "l10n.h"
 #include "tray_service.h"
+#include "tray_order.h"
 #include "diagnostic_log.h"
 #include "status_bar_layout.h"
 #include "status_bar_glyphs.h"
@@ -123,6 +124,7 @@ struct StatusBar::Impl
         ComPtr<IDCompositionSurface> backgroundSurface;
         ComPtr<IDCompositionSurface> surface;
         UINT width = 0, height = 0, dpi = 96;
+        int mergedDockHeight = 0;
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         bool appearanceDirty = true, paintDirty = true, painting = false;
@@ -136,6 +138,9 @@ struct StatusBar::Impl
         std::vector<StatusBarItem> items;
         StatusBarInteraction interaction;
         bool keyboardFocusVisible = false;
+        std::string pressedTray;
+        POINT trayPress{};
+        bool trayDragging = false;
         explicit Window(Impl& value) : owner(value) {}
         ~Window()
         {
@@ -175,6 +180,8 @@ struct StatusBar::Impl
         }
         void Hide()
         {
+            pressedTray.clear(); trayDragging = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
             if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
             ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
             if (tooltip)
@@ -189,6 +196,7 @@ struct StatusBar::Impl
             SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
             if (owner.hidden) owner.hidden(monitor);
+            if (mergedDockHeight && owner.dockChanged) owner.dockChanged(false);
         }
         void CheckFullscreen()
         {
@@ -209,6 +217,7 @@ struct StatusBar::Impl
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                 if (owner.appearance.glassEnabled && !HighContrast()) backdrop.ShowPopupWindowPair(hwnd);
                 paintDirty = true;
+                if (mergedDockHeight && owner.dockChanged) owner.dockChanged(false);
             }
             Paint();
         }
@@ -223,8 +232,8 @@ struct StatusBar::Impl
             if (FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi, &dpiY))) dpi = 96;
             const UINT edge = Edge(owner.settings.position);
             const bool vertical = edge == ABE_LEFT || edge == ABE_RIGHT;
-            const int thickness = static_cast<int>(std::lround(
-                (vertical ? 48.f : 32.f) * owner.settings.scale * dpi / 96.f));
+            const int thickness = std::max(mergedDockHeight, static_cast<int>(std::lround(
+                (vertical ? 48.f : 32.f) * owner.settings.scale * dpi / 96.f)));
             const bool placed = appbar.Place(hwnd, kAppBar, edge, thickness, info.rcMonitor);
             if (!placed)
             {
@@ -262,6 +271,7 @@ struct StatusBar::Impl
             placing = false;
             CheckFullscreen();
             if (!fullscreen) Show();
+            if (moved && owner.dockChanged) owner.dockChanged(true);
         }
         void BuildItems()
         {
@@ -352,7 +362,8 @@ struct StatusBar::Impl
                 SystemColor(COLOR_HIGHLIGHT), SystemColor(COLOR_HIGHLIGHTTEXT)};
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
                 dpi / 96.f * owner.settings.scale, a, palette, interaction.hovered,
-                keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd, interaction.focused.value_or(0));
+                keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
+                interaction.focused.value_or(0), mergedDockHeight > 0);
             for (const auto& item : items) if (item.icon && owner.tray)
             {
                 RECT screen = item.bounds;
@@ -426,6 +437,11 @@ struct StatusBar::Impl
                 MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&geometry), 2);
                 owner.tray->SetGeometry(item.icon->key, geometry);
                 ClientToScreen(hwnd, &point);
+                if (message == WM_LBUTTONDOWN)
+                {
+                    pressedTray = item.icon->key; trayPress = point; trayDragging = false;
+                    SetCapture(hwnd); return true;
+                }
                 const auto action = message == WM_LBUTTONDOWN ? tray::Activation::LeftDown :
                     message == WM_LBUTTONUP ? tray::Activation::LeftUp :
                     message == WM_LBUTTONDBLCLK ? tray::Activation::DoubleClick :
@@ -548,6 +564,25 @@ struct StatusBar::Impl
             }
             case WM_LBUTTONUP:
             {
+                if (!self->pressedTray.empty())
+                {
+                    const auto key = std::exchange(self->pressedTray, {});
+                    const bool dragging = std::exchange(self->trayDragging, false);
+                    POINT screen{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}; ClientToScreen(window, &screen);
+                    ReleaseCapture(); self->interaction.CancelPointer();
+                    if (dragging)
+                    {
+                        if (!self->owner.Drop(key, screen) && self->owner.dropOutside) self->owner.dropOutside(key, screen);
+                    }
+                    else if (self->owner.tray && std::any_of(self->items.begin(), self->items.end(), [&](const auto& item) {
+                        return item.icon && item.icon->key == key && PtInRect(&item.bounds, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
+                    }))
+                    {
+                        self->owner.tray->Activate(key, tray::Activation::LeftDown, screen, {window, window});
+                        self->owner.tray->Activate(key, tray::Activation::LeftUp, screen, {window, window});
+                    }
+                    return 0;
+                }
                 if (self->keyboardFocusVisible)
                 { self->keyboardFocusVisible = false; self->paintDirty = true; self->Paint(); }
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
@@ -573,6 +608,15 @@ struct StatusBar::Impl
             case WM_MOUSEMOVE:
             {
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                if (!self->pressedTray.empty())
+                {
+                    POINT screen = point; ClientToScreen(window, &screen);
+                    const LONG threshold = MulDiv(8, static_cast<int>(self->dpi), 96);
+                    if (std::abs(screen.x - self->trayPress.x) >= threshold ||
+                        std::abs(screen.y - self->trayPress.y) >= threshold)
+                    { self->trayDragging = true; self->ClearHover(); }
+                    return 0;
+                }
                 std::string hoveredKey;
                 std::optional<std::size_t> hover;
                 std::string tooltipKey;
@@ -582,6 +626,12 @@ struct StatusBar::Impl
                     hover = static_cast<std::size_t>(&item - self->items.data());
                     tooltipText = item.icon ? (item.icon->tip.empty() ? item.icon->application : item.icon->tip) : item.tip;
                     tooltipKey = item.icon ? item.icon->key : item.key;
+                    if (item.key == "controlCenter")
+                    {
+                        const auto part = StatusBarControlPart((point.x - item.bounds.left) /
+                            (self->dpi / 96.f * self->owner.settings.scale));
+                        tooltipKey += std::to_string(part); tooltipText = item.controlTips[part];
+                    }
                     if (item.icon) hoveredKey = item.icon->key;
                     break;
                 }
@@ -613,7 +663,7 @@ struct StatusBar::Impl
                     if (item.key == "controlCenter" && PtInRect(&item.bounds, point))
                     {
                         const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * self->owner.settings.scale);
-                        if (x < 32 || x >= 60) return 0;
+                        if (StatusBarControlPart(x) != 1) return 0;
                         const auto sample = self->owner.data->AudioOutputVolume();
                         if (!sample || !sample->available) return 0;
                         if (const auto target = self->volumeWheel.Move(GET_WHEEL_DELTA_WPARAM(wp), sample->volume))
@@ -629,8 +679,11 @@ struct StatusBar::Impl
                 break;
             }
             case WM_MOUSELEAVE:
+                if (!self->pressedTray.empty()) return 0;
+                [[fallthrough]];
             case WM_CANCELMODE:
             case WM_CAPTURECHANGED:
+                self->pressedTray.clear(); self->trayDragging = false;
                 self->ClearHover(); self->interaction.CancelPointer();
                 self->paintDirty = true; self->Paint();
                 break;
@@ -644,6 +697,9 @@ struct StatusBar::Impl
     Hidden hidden;
     Error error;
     DrawBackground drawBackground;
+    std::function<void(const StatusBarSettings&)> trayChanged;
+    std::function<bool(std::string_view, POINT)> dropOutside;
+    std::function<void(bool)> dockChanged;
     StatusBarSettings settings;
     PersonalizationSettings appearance;
     ComPtr<IDCompositionDesktopDevice> composition;
@@ -651,6 +707,29 @@ struct StatusBar::Impl
     std::map<std::wstring, std::unique_ptr<Window>> windows;
     std::vector<HWINEVENTHOOK> hooks;
     UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    bool Drop(std::string_view key, POINT point)
+    {
+        if (!tray) return false;
+        for (const auto& [id, window] : windows)
+        {
+            if (window->fullscreen || !IsWindowVisible(window->hwnd)) continue;
+            RECT bounds{}; GetWindowRect(window->hwnd, &bounds);
+            if (!PtInRect(&bounds, point)) continue;
+            std::string before;
+            POINT local = point; ScreenToClient(window->hwnd, &local);
+            const bool overflow = std::any_of(window->items.begin(), window->items.end(), [&](const auto& item) {
+                return item.key == "tray" && PtInRect(&item.bounds, local);
+            });
+            for (const auto& item : window->items)
+                if (item.icon && local.x < (item.bounds.left + item.bounds.right) / 2)
+                { before = item.icon->key; break; }
+            if (!tray::PlaceIcon(settings, tray->Current(), key, !overflow, before)) return false;
+            const auto value = settings; const auto callback = trayChanged;
+            if (callback) callback(value);
+            return true;
+        }
+        return false;
+    }
     Impl(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> source,
         Activate action, Hidden hide, Error report, DrawBackground draw)
         : data(std::move(source)), activate(std::move(action)), hidden(std::move(hide)), error(std::move(report)), drawBackground(std::move(draw)) {}
@@ -676,6 +755,25 @@ StatusBar::StatusBar(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> d
 StatusBar::~StatusBar() { Close(); }
 void StatusBar::Close() { impl_->Close(); }
 std::shared_ptr<tray::Service> StatusBar::Tray() const { return impl_->tray; }
+void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
+    std::function<bool(std::string_view, POINT)> dropOutside)
+{ impl_->trayChanged = std::move(changed); impl_->dropOutside = std::move(dropOutside); }
+bool StatusBar::DropTrayIcon(std::string_view key, POINT screen) { return impl_->Drop(key, screen); }
+void StatusBar::SetDockChanged(std::function<void(bool)> changed) { impl_->dockChanged = std::move(changed); }
+std::optional<RECT> StatusBar::MergedDockArea(HMONITOR monitor) const
+{
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || !window->mergedDockHeight || window->failed ||
+            !window->appbar.Registered()) continue;
+        const auto bounds = window->appbar.Bounds();
+        auto center = MergedStatusBarCenter(bounds.right - bounds.left, bounds.bottom - bounds.top,
+            window->dpi / 96.f * impl_->settings.scale);
+        OffsetRect(&center, bounds.left, bounds.top); return center;
+    }
+    return {};
+}
 bool StatusBar::IsFullscreen(HMONITOR monitor) const
 {
     for (const auto& [id, window] : impl_->windows)
@@ -755,8 +853,11 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
         }
         window->monitor = monitor.monitor;
-        window->appearanceDirty = window->appearanceDirty || changed;
-        window->paintDirty = window->paintDirty || changed;
+        const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight;
+        window->mergedDockHeight = monitor.mergedDockHeight;
+        window->appearanceDirty = window->appearanceDirty || changed || mergedChanged;
+        window->paintDirty = window->paintDirty || changed || mergedChanged;
+        if (mergedChanged && self.dockChanged) self.dockChanged(true);
         window->QueuePlace();
     }
     if (self.hooks.empty())

@@ -4,7 +4,9 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
+#include <optional>
 
 struct IDCompositionDesktopDevice;
 struct IDWriteFactory;
@@ -18,6 +20,7 @@ struct StatusBarMonitor
 {
     std::wstring id;
     HMONITOR monitor = nullptr;
+    int mergedDockHeight = 0; // Physical pixels; zero means separate.
 };
 class StatusBar final
 {
@@ -39,6 +42,11 @@ public:
     void Close();
     bool IsFullscreen(HMONITOR monitor) const;
     std::shared_ptr<tray::Service> Tray() const;
+    void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
+        std::function<bool(std::string_view, POINT)> dropOutside);
+    bool DropTrayIcon(std::string_view key, POINT screen);
+    std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
+    void SetDockChanged(std::function<void(bool geometry)> changed);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

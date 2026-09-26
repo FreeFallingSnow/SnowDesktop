@@ -1091,6 +1091,20 @@ int main(int argc, char** argv)
             std::array<LONG, 2>{32, 32}, 0, std::array<LONG, 2>{100, 32});
         Check(IsRectEmpty(&noClock[2]) && IsRectEmpty(&noClock[3]) && noClock[4].left == 176,
             "disabled clock releases its area while overflow controls cannot cover left actions");
+        for (const LONG width : {640L, 1920L, 3840L})
+        {
+            const auto center = snowdesktop::MergedStatusBarCenter(width, 64, 1.f);
+            Check(center.right > center.left && std::abs(center.left + center.right - width) <= 1,
+                "merged Dock retains a symmetric nonempty central viewport at narrow and wide sizes");
+            const auto merged = snowdesktop::StatusBarHorizontalLayout(width, 64, 12,
+                std::array<LONG, 4>{32, 32, 68, 152}, center.right - center.left, std::array<LONG, 3>{160, 130, 32});
+            for (std::size_t i = 0; i < merged.size(); ++i)
+            {
+                if (i == 4) continue;
+                RECT overlap{};
+                Check(!IntersectRect(&overlap, &merged[i], &center), "merged side controls cannot cover the Dock viewport");
+            }
+        }
         reservation.Remove(); reservation.Remove();
         Check(std::count(messages.begin(), messages.end(), static_cast<DWORD>(ABM_REMOVE)) == 1,
             "closing an AppBar releases its reservation exactly once");

@@ -2,6 +2,7 @@
 #include "system_calendar_view.h"
 #include "../l10n.h"
 #include <cstdio>
+#include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Windows.Globalization.h>
 #include <winrt/Windows.Globalization.DateTimeFormatting.h>
 #include <winrt/Windows.UI.Xaml.Interop.h>
@@ -48,7 +49,7 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
     std::function<void()> layoutChanged;
     c::StackPanel root, agenda;
     c::CalendarView month;
-    c::TextBlock dateHeading, weekday, dayNumber, monthYear;
+    c::TextBlock dateHeading, weekday, dayNumber, monthYear, secondary;
     std::string today, selected;
     std::vector<calendar::CalendarEvent> events;
     bool closed = false;
@@ -63,6 +64,9 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
         c::ColumnDefinition summary; summary.Width(x::GridLengthHelper::FromPixels(104));
         c::ColumnDefinition calendar; calendar.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
         dates.ColumnDefinitions().Append(summary); dates.ColumnDefinitions().Append(calendar);
+        c::RowDefinition header; header.Height(x::GridLengthHelper::FromPixels(44));
+        c::RowDefinition body; body.Height(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
+        dates.RowDefinitions().Append(header); dates.RowDefinitions().Append(body);
         c::StackPanel current; current.Spacing(4); current.VerticalAlignment(x::VerticalAlignment::Center);
         weekday.FontSize(14); weekday.TextAlignment(x::TextAlignment::Center);
         dayNumber.FontSize(52); dayNumber.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -70,9 +74,16 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
         monthYear.FontSize(12); monthYear.Opacity(.7); monthYear.TextAlignment(x::TextAlignment::Center);
         monthYear.TextWrapping(x::TextWrapping::Wrap);
         current.Children().Append(weekday); current.Children().Append(dayNumber); current.Children().Append(monthYear);
+        secondary.FontSize(12); secondary.Opacity(.8); secondary.MaxLines(3);
+        secondary.TextWrapping(x::TextWrapping::Wrap); secondary.TextAlignment(x::TextAlignment::Center);
+        secondary.TextTrimming(x::TextTrimming::CharacterEllipsis); secondary.Margin({0, 4, 0, 0});
+        current.Children().Append(secondary);
+        x::Automation::AutomationProperties::SetAutomationId(dayNumber, L"calendar.day");
+        x::Automation::AutomationProperties::SetAutomationId(secondary, L"calendar.secondary");
         c::Button backToToday; backToToday.Content(winrt::box_value(_LW("app.widget.date_picker.today")));
-        backToToday.HorizontalAlignment(x::HorizontalAlignment::Center); backToToday.Margin({0, 12, 0, 0});
-        current.Children().Append(backToToday); dates.Children().Append(current);
+        backToToday.HorizontalAlignment(x::HorizontalAlignment::Center); backToToday.VerticalAlignment(x::VerticalAlignment::Center);
+        x::Automation::AutomationProperties::SetAutomationId(backToToday, L"calendar.today");
+        dates.Children().Append(backToToday); c::Grid::SetRow(current, 1); dates.Children().Append(current);
         month.Language(winrt::to_hstring(Locale::Instance().GetEffectiveLanguage()));
         month.CalendarIdentifier(L"GregorianCalendar"); month.SelectionMode(c::CalendarViewSelectionMode::Single);
         month.HorizontalAlignment(x::HorizontalAlignment::Stretch); month.MinWidth(280); month.MinHeight(260); month.Height(280);
@@ -83,9 +94,10 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
         month.CalendarViewDayItemStyle(days); month.DayItemFontSize(12);
         month.Background(x::Media::SolidColorBrush(winrt::Windows::UI::Color{0, 0, 0, 0}));
         month.BorderThickness({0, 0, 0, 0});
+        month.CalendarItemBorderThickness({2, 2, 2, 2});
         month.NumberOfWeeksInView(6);
         month.SetDisplayDate(PickerDate(selected)); month.SelectedDates().Append(PickerDate(selected));
-        c::Grid::SetColumn(month, 1); dates.Children().Append(month); root.Children().Append(dates);
+        c::Grid::SetColumn(month, 1); c::Grid::SetRowSpan(month, 2); dates.Children().Append(month); root.Children().Append(dates);
         c::Grid toolbar; toolbar.ColumnSpacing(12);
         c::ColumnDefinition main; main.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
         c::ColumnDefinition tail; tail.Width(x::GridLengthHelper::Auto());
@@ -108,6 +120,7 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
         backToToday.Click([weak](const auto&, const auto&) {
             if (auto self = weak.lock(); self && !self->closed)
             {
+                self->today = self->actions.today ? self->actions.today() : calendar::CalendarService::CurrentLocalNow().date;
                 self->month.SetDisplayDate(PickerDate(self->today));
                 self->month.SelectedDates().Clear(); self->month.SelectedDates().Append(PickerDate(self->today));
             }
@@ -124,14 +137,13 @@ struct SystemCalendarView::Impl : std::enable_shared_from_this<Impl>
     void Refresh(bool force = false)
     {
         if (closed) return;
-        const auto current = actions.today ? actions.today() : calendar::CalendarService::CurrentLocalNow().date;
-        if (force || current != today)
-        {
-            today = current;
-            weekday.Text(DateLabel(today, L"dayofweek.full"));
-            monthYear.Text(DateLabel(today, L"month.full year"));
-            if (const auto info = calendar::CalendarService::GetDateInfo(today)) dayNumber.Text(winrt::to_hstring(info->day));
-        }
+        today = actions.today ? actions.today() : calendar::CalendarService::CurrentLocalNow().date;
+        weekday.Text(DateLabel(selected, L"dayofweek.full"));
+        monthYear.Text(DateLabel(selected, L"month.full year"));
+        if (const auto info = calendar::CalendarService::GetDateInfo(selected)) dayNumber.Text(winrt::to_hstring(info->day));
+        const auto annotation = actions.secondaryDate ? actions.secondaryDate(selected) : std::string{};
+        secondary.Text(winrt::to_hstring(annotation));
+        secondary.Visibility(annotation.empty() ? x::Visibility::Collapsed : x::Visibility::Visible);
         auto next = actions.events ? actions.events(selected) : std::vector<calendar::CalendarEvent>{};
         if (!force && next.size() == events.size() && std::equal(next.begin(), next.end(), events.begin(),
             [](const auto& first, const auto& second) { return first.id == second.id && first.revision == second.revision; })) return;

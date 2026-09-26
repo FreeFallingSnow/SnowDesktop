@@ -1127,12 +1127,24 @@ void TestSteamWorkshopLocalCache()
         "a partially written Workshop cache never authorizes removals");
 }
 
+std::uint64_t BundledAuthoringRevision(const std::filesystem::path& repositoryRoot)
+{
+    std::ifstream file(repositoryRoot / L"widgets" / L"snowdesktop-lua-widget" / L"skill.json");
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    JsonValue manifest;
+    std::string error;
+    const bool valid = ParseJson(text, manifest, error) && JsonUnsigned(manifest, "revision") > 0;
+    Check(valid, "bundled authoring manifest has a positive revision");
+    return valid ? JsonUnsigned(manifest, "revision").value_or(0) : 0;
+}
+
 void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
     const std::filesystem::path& snowwidget)
 {
     TemporaryDirectory temporary;
     const auto bundled = repositoryRoot / L"widgets" /
         L"snowdesktop-lua-widget";
+    const auto expectedRevision = BundledAuthoringRevision(repositoryRoot);
     const std::array kinds = {
         AgentSkillTargetKind::Shared,
         AgentSkillTargetKind::Codex,
@@ -1152,7 +1164,7 @@ void TestAuthoringToolchain(const std::filesystem::path& repositoryRoot,
         auto status = InspectAgentSkill(
             bundled, snowwidget, target, error);
         Check(status.state == SkillInstallState::NotInstalled &&
-            status.bundledRevision == 13,
+            status.bundledRevision == expectedRevision,
             "each supported agent reports a clean not-installed state");
         Check(InstallOrUpdateAgentSkill(status, error),
             "Agent Skill installs transactionally into every selected root");
@@ -1179,6 +1191,7 @@ void TestRealPackageTool(const std::filesystem::path& executable,
     const auto stagingRoot = temporaryRoot.path / L"data" /
         L"SteamWorkshopManager" / L"staging" / L"packages";
     PackageTool tool(executable, stagingRoot);
+    const auto expectedRevision = BundledAuthoringRevision(repositoryRoot);
     const std::wstring capabilitiesCommand = L"\"" + executable.wstring() +
         L"\" capabilities";
     FILE* capabilitiesPipe = _wpopen(capabilitiesCommand.c_str(), L"rt");
@@ -1202,7 +1215,7 @@ void TestRealPackageTool(const std::filesystem::path& executable,
             capabilities.Find("authoringSkill") &&
             capabilities.Find("authoringSkill")->IsObject() &&
             JsonUnsigned(*capabilities.Find("authoringSkill"), "revision") ==
-                13u &&
+                expectedRevision &&
             capabilities.Find("executableSchemaVersions") &&
             capabilities.Find("executableSchemaVersions")->IsArray() &&
             capabilities.Find("executableSchemaVersions")->array.size() == 1 &&

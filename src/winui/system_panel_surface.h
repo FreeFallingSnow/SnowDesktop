@@ -6,5 +6,5 @@ namespace snowdesktop::winui
 {
 // Shared by the live popup and its offline visual-tree renderer.
 winrt::Microsoft::UI::Xaml::Controls::Border CreateSystemPanelFrame(const PersonalizationSettings& appearance);
-bool UpdateSystemPanelRegion(HWND window, int width, int height, double radius);
+bool UpdateSystemPanelRegion(HWND window, int width, int height, double radius, int offsetY = 0);
 }

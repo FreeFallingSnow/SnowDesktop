@@ -84,11 +84,11 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         }
         else if (command >= 4 && command <= 7)
         {
-            if (command >= 6 && MessageBoxW(owner, _LW(command == 6 ? "controlCenter.confirmRestart" : "controlCenter.confirmShutdown"),
+            if (command >= 5 && MessageBoxW(owner, _LW(command == 5 ? "controlCenter.confirmSleep" : command == 6 ? "controlCenter.confirmRestart" : "controlCenter.confirmShutdown"),
                     _LW(labels[command - 1]), MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) != IDOK) return;
             snowdesktop::system_control::Request request;
             const char* tasks[]{"system.power.lock", "system.power.sleep", "system.power.restart", "system.power.shutdown"};
-            request.name = tasks[command - 4]; request.hostConfirmed = command >= 6;
+            request.name = tasks[command - 4]; request.hostConfirmed = command >= 5;
             if (!systemDataProvider_->Controls()->Start("statusBarVolume", std::move(request))) MessageBeep(MB_ICONWARNING);
         }
     }
@@ -98,27 +98,14 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         HMENU menu = CreatePopupMenu();
         if (!menu) return;
         AppendMenuW(menu, MF_STRING, 1, _LW("statusBar.menu.settings"));
-        AppendMenuW(menu, MF_STRING, 2, _LW("settings.personalization.theme"));
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING | (generalSettings_.statusBar.position == DockPosition::Top ? MF_CHECKED : 0), 3, _LW("app.dock.top"));
-        AppendMenuW(menu, MF_STRING | (generalSettings_.statusBar.position == DockPosition::Bottom ? MF_CHECKED : 0), 4, _LW("app.dock.bottom"));
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, 5, _LW("statusBar.menu.hide"));
+        AppendMenuW(menu, MF_STRING, 2, _LW("statusBar.taskManager"));
         const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
         DestroyMenu(menu);
         if (command == 1) ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::StatusBar));
-        else if (command == 2) ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::AppearanceTheme, "personalization.statusBarTheme"));
-        else if (command >= 3 && command <= 5 && settingsController_)
+        else if (command == 2)
         {
-            auto settings = settingsController_->Snapshot()->values.general;
-            if (command == 5) settings.statusBar.enabled = false;
-            else settings.statusBar.position = command == 3 ? DockPosition::Top : DockPosition::Bottom;
-            // Preview updates are queued by the controller; the menu
-            // owner must not be destroyed inside its input callback.
-            settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
-            uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
-                if (settingsController_) (void)settingsController_->FlushPending();
-            });
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", L"taskmgr.exe", nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+                MessageBeep(MB_ICONWARNING);
         }
     }
     else if (action == Action::QuickSearch)
@@ -151,7 +138,13 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
                 [this] {
                     if (systemPanel_) systemPanel_->Hide();
                     ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Calendar, "calendar.events"));
-                }, {}});
+                }, {}, [this](const std::string& date) {
+                    if (!widgetEngine_) return std::string{};
+                    const auto& days = widgetEngine_->RuntimeCalendarAnnotations(date, date);
+                    return !days.empty() && days.front().calendarAvailable ? days.front().fullDate : std::string{};
+                }}, [this](std::string_view key, POINT screen) {
+                    return statusBar_ && statusBar_->DropTrayIcon(key, screen);
+                }, &uiAnimationScheduler_);
         systemPanel_->Show(action, owner, anchor, collectionPopupAppearance_, generalSettings_.statusBar,
             statusBar_->Tray(), systemDataProvider_);
     }
@@ -187,9 +180,26 @@ void DesktopApp::SyncStatusBar()
                 DrawWidgetPanelBackground(context, frame, 0,
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
-                snowdesktop::DrawStatusBarEdge(context, frame, appearance, scale, generalSettings_.statusBar.position);
+                 snowdesktop::DrawStatusBarEdge(context, frame, appearance, scale, generalSettings_.statusBar.position);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
+             });
+        statusBar_->SetTrayDragHandlers([this](const auto& changed) {
+            if (!settingsController_) return;
+            auto settings = settingsController_->Snapshot()->values.general;
+            settings.statusBar.pinnedTrayItems = changed.pinnedTrayItems;
+            settings.statusBar.trayOrder = changed.trayOrder;
+            settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+            uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
+                if (settingsController_) (void)settingsController_->FlushPending();
             });
+        }, [this](std::string_view key, POINT screen) {
+            return systemPanel_ && systemPanel_->DropTrayIcon(key, screen);
+        });
+        statusBar_->SetDockChanged([this](bool geometry) {
+            if (exitRequested_) return;
+            if (geometry) ScheduleDisplayTopologyRefresh();
+            else UpdatePersistentDockHostVisibility();
+        });
     }
     auto order = BuildMonitorRenderOrder();
     if (order.size() > 1)
@@ -200,13 +210,30 @@ void DesktopApp::SyncStatusBar()
             order.erase(order.begin(), order.end() - 1);
     }
     std::vector<snowdesktop::StatusBarMonitor> monitors;
+    auto dockOrder = BuildMonitorRenderOrder();
+    if (dockOrder.size() > 1)
+    {
+        if (dockSettings_.monitorScope == DockMonitorScope::First) dockOrder.resize(1);
+        else if (dockSettings_.monitorScope == DockMonitorScope::Last) dockOrder.erase(dockOrder.begin(), dockOrder.end() - 1);
+    }
     for (const auto index : order)
     {
         const auto& page = gridPages_[index];
         RECT screen = page.bounds;
         OffsetRect(&screen, virtualLeft_, virtualTop_);
         if (auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL))
-            monitors.push_back({page.monitorId, monitor});
+        {
+            int mergedHeight = 0;
+            if (generalSettings_.dockEnabled && dockSettings_.edgeAttached &&
+                dockSettings_.position == generalSettings_.statusBar.position &&
+                std::find(dockOrder.begin(), dockOrder.end(), index) != dockOrder.end())
+            {
+                const float scale = ClampDockScale(dockSettings_.thicknessScale);
+                mergedHeight = std::max(1, static_cast<int>(std::round(GetGridPageItemIconSize(page) * scale))) +
+                    2 * std::max(1, static_cast<int>(std::round(kDockSpacing * scale)));
+            }
+            monitors.push_back({page.monitorId, monitor, mergedHeight});
+        }
     }
     statusBar_->Configure(generalSettings_.statusBar, personalizationSettings_, monitors,
         dcompDevice_.Get(), dwriteFactory_.Get());

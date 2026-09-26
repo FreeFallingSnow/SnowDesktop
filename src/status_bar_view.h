@@ -4,6 +4,7 @@
 #include "widget_system_data_provider.h"
 #include <d2d1_1.h>
 #include <optional>
+#include <array>
 
 namespace snowdesktop
 {
@@ -16,6 +17,7 @@ struct StatusBarItem
     std::string key;
     std::wstring glyph, tip;
     bool left = false;
+    std::array<std::wstring, 3> controlTips;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.
@@ -38,6 +40,8 @@ struct StatusBarPalette
 };
 std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&);
 bool SameStatusBarContent(const std::vector<StatusBarItem>&, const std::vector<StatusBarItem>&);
+inline std::size_t StatusBarControlPart(float localDip)
+{ return localDip < 32 ? 0 : localDip < 60 ? 1 : 2; }
 inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)
 {
     for (std::size_t index = 0; index < items.size(); ++index)
@@ -46,7 +50,8 @@ inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<Status
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<StatusBarItem>&,
     UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
-    std::optional<std::size_t> hovered = {}, bool keyboardFocusVisible = false, std::size_t focused = 0);
+    std::optional<std::size_t> hovered = {}, bool keyboardFocusVisible = false, std::size_t focused = 0,
+    bool mergedDock = false);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition);
 }
