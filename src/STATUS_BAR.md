@@ -4,7 +4,7 @@
 
 ## 当前优先级
 
-### 用户反馈集中候选 56（编译通过，验证待运行）
+### 用户反馈集中候选 56（自动验证通过，实机待验）
 
 新增 Markdown 与配图已全部阅读，22 项反馈的优先级、责任与验收边界见 [STATUS_BAR_FEEDBACK_20260927.md](STATUS_BAR_FEEDBACK_20260927.md)。先处理单屏仅占位／全屏唤起、托盘和设备状态；面板布局、图标及主题同步集中修改。55 编译成功后已独立保存为 `490f1cbb`，不在本轮新反馈合入前重复运行中间全量。
 
@@ -14,6 +14,12 @@
 - 56 源码节点 `e26bda38`：浅色中文 96 DPI／深色英文 144 DPI 共 **94 张生产原生图片**导出及内置回归通过（`56-render.log`）；已查看日历三列／窄屏、控制首页／无线／声音、蓝牙关闭、资源虚线和栏体电池。托盘隔离反例同一输入下，当前实现退出 0，恢复误取消固定退出 1／`ICON_DROP_MUST_KEEP_PIN`，恢复失效目标追加退出 4／`DELETED_TARGET_MUST_CANCEL`；三份探针编译零警告（`56-negative-*.log`）。
 - 首次完整回归 **119/120 通过**，180.16 秒、退出 1（`56-full-tests.log`，JUnit `9a4486bc01a44a4792fc33a572532164`）；`steam_runtime_update` 的临时文件写入异常未附路径。测试构建另有 C4389，源于新增通知计数断言的无符号／有符号比较，已使用匹配类型的字面量处理。只给原测试增加失败路径、open/write阶段和 errno／系统错误诊断，不加重试、不改成功语义。
 - `scripts/test.bat name "^(steam_runtime_update|dock_and_window_rules)$"` 定向 **2/2 通过**，22.71 秒、退出 0，零编译／链接警告（`56-targeted-tests.log`，JUnit `8f3911148a2c45a48b2c5090920c9f15`）。原临时文件异常此次未复现，根因未知，不记作修复；稳定输入的下一次全量尚待执行。宿主运行源码未因测试诊断变化。
+
+- **56 最终自动证据**：运行实现 `e26bda38`、测试／诊断节点 `462579ef`。`scripts/test.bat full` **120/120 通过**，179.42 秒、退出 0，零编译／链接警告（`56-full2-tests.log`，JUnit `b89d7849484b4afa879389c75f55db05`）。首次临时文件失败的原因仍未知，原始失败与诊断均保留，没有增加重试或放宽断言。
+- `scripts/test.bat name tray_live_integration` **1/1 通过且未跳过**，0.64 秒测试时间（CTest 总计 0.66 秒）、退出 0、零警告（`56-tray-live.log`，JUnit `70f743e676dc414fb5dff2536335027c`）。使用生产 Service／Explorer Hook 与自有隐藏图标，重报、动态图像／提示、隐藏／恢复、Shell 矩形、v4／旧版回调、删除与释放／重连无重复均通过，完整输出保存于 `56-tray-live-output.log`。没有操作第三方应用菜单；诊断 Hook 安全固定在 Explorer 内，随其退出释放。
+- 全量前后 **1411 个输入哈希不变**，宿主 SHA256 `9222b2bb489765e343888b1e92b37dd9dea54f5a49e4510e6f7b6c35d1abf11a` 不变。标准宿主构建沿用 `56-native-build2.log`；之后仅变更测试断言／失败诊断，不改变宿主运行输入。绑定 `56-before-full2-validation-inputs.json`／`56-after-full2-validation-inputs.json`，摘要 `56-final-evidence.json`。
+- 94 张最终图片位于 `controls-render-56/`、`tray-render-56/`、`calendar-render-56/`、`resource-render-56/`、`bar-render-56/`。10 个独立预览进程采样峰值私有内存 **89.9–104.2 MiB**，每次导出约 1.28–1.83 秒（`56-offline-measurements.json`）；这不是完整宿主基准，也没有同场景旧 WinUI 对照，不作为 400 MiB／卡顿已解决或内存降幅的证据。
+- **仍待实机**：单屏占位但空白的根因、全屏唤起合并 Dock、多屏热插拔与图形恢复、真实拖影和第三方菜单（微信／PowerToys／WPS／抖音）、真实无线／蓝牙／音频／亮度、勿扰状态和玻璃动画。19 项 Lua 写任务与 AMD 原始样本仍在后续清单，整个计划未关闭。
 
 ### 原生输入集中候选 55（编译通过，验证待运行）
 
@@ -45,7 +51,7 @@
 - 全量前后 1405 个源码／资源输入及一个误生成的空临时文件哈希不变（`54-before-full-validation-inputs.json`／`54-after-full-validation-inputs.json`）；空文件已在收尾删除，不是运行或生成输入。宿主 SHA256 `28141d63aee79cb020f1a8df66c01b6b8cfc25bda30debc8fdf70faa357c5a79` 在全量前后不变；测试构建重链接了 Hook，不声称 Hook 二进制未变。最终产物及环境绑定 `54-final-validation-inputs.json`。
 - **待用户实机**：冷启动点开和关闭／停用、滚轮提示与焦点切换、四个第三方托盘应用及拖放、WPS／抖音菜单越界、玻璃动画、亮度／无线／蓝牙、图形恢复、多屏全屏与合并 Dock。AMD 原始样本和同时间对照尚未取得；Lua 缺失写任务仍在独立后续批次。此处只完成原生迁移的自动验收，不将整个任务标为完成。
 
-当前范围、复用边界与实施顺序以 [STATUS_BAR_IMPLEMENTATION_PLAN.md](STATUS_BAR_IMPLEMENTATION_PLAN.md) 为准。整体梳理后已按用户授权分工实施托盘、主题、提示及原生面板；54 号标准构建、离线、完整回归及自有图标的真实采集链已通过，桌面／硬件与第三方应用仍待验。历史记录仅对应当时源码，不代表新迁移实现通过。
+当前范围、复用边界与实施顺序以 [STATUS_BAR_IMPLEMENTATION_PLAN.md](STATUS_BAR_IMPLEMENTATION_PLAN.md) 为准。整体梳理后已按用户授权分工实施托盘、主题、提示及原生面板；56 号标准构建、离线、完整回归及自有图标的真实采集链已通过，桌面／硬件与第三方应用仍待验。历史记录仅对应当时源码，不代表新迁移实现通过。
 
 ### 最新实机反馈（52，后续实现待复验）
 
