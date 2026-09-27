@@ -26,11 +26,36 @@ snowdesktop::TrayDragFeedback DesktopApp::MakeStatusBarTrayDragFeedback()
         }};
 }
 
+void DesktopApp::CancelStatusBarActivation(HMONITOR monitor)
+{
+    if (!monitor || monitor == statusBarActivationMonitor_)
+    {
+        ++*statusBarActivationGeneration_;
+        uiAnimationScheduler_.Cancel(statusBarActivationToken_);
+        statusBarActivationToken_ = 0;
+        statusBarActivationMonitor_ = nullptr;
+    }
+    const HWND menu = snowdesktop::modern_menu::ActiveRootWindow();
+    if ((!monitor || monitor == statusBarMenuMonitor_) && statusBarMenuOwner_ &&
+        menu && GetWindow(menu, GW_OWNER) == statusBarMenuOwner_)
+        snowdesktop::modern_menu::DismissActive();
+    if ((!monitor || monitor == statusBarQuickNavigationMonitor_) &&
+        quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar)
+        CloseQuickNavigation();
+    if (systemPanel_)
+    {
+        if (monitor) systemPanel_->HideForMonitor(monitor);
+        else systemPanel_->Hide();
+    }
+}
+
 void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor)
 {
     using Action = snowdesktop::StatusBarAction;
     uiAnimationScheduler_.Cancel(statusBarActivationToken_);
     statusBarActivationToken_ = 0;
+    const auto generation = ++*statusBarActivationGeneration_;
+    statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     // The no-activate bar does not cause WM_ACTIVATE on an open surface.
     // A blank-area click must therefore explicitly dismiss it, including any
     // replacement action still waiting for a nested menu loop to unwind.
@@ -42,25 +67,52 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         CloseQuickNavigation();
         return;
     }
+    if (!statusBar_ || exitRequested_ || !generalSettings_.statusBar.enabled || !owner ||
+        !IsWindow(owner) || !IsWindowVisible(owner) ||
+        statusBar_->IsFullscreen(statusBarActivationMonitor_)) return;
+    const std::weak_ptr<std::uint64_t> lifetime = statusBarActivationGeneration_;
+    statusBar_->PostActivation(owner, [this, lifetime, generation, action, owner, anchor] {
+        const auto current = lifetime.lock();
+        if (!current || *current != generation) return;
+        ContinueStatusBarActivation(action, owner, anchor, generation);
+    });
+}
+
+void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action, HWND owner,
+    RECT anchor, std::uint64_t generation)
+{
+    using Action = snowdesktop::StatusBarAction;
+    const auto monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+    const std::weak_ptr<std::uint64_t> lifetime = statusBarActivationGeneration_;
+    const auto current = [this, lifetime, generation, owner, monitor] {
+        const auto state = lifetime.lock();
+        return state && *state == generation && !exitRequested_ &&
+            generalSettings_.statusBar.enabled && statusBar_ && IsWindow(owner) &&
+            IsWindowVisible(owner) && MonitorFromWindow(owner, MONITOR_DEFAULTTONULL) == monitor &&
+            !statusBar_->IsFullscreen(monitor);
+    };
+    if (!current() || action == Action::None) return;
+    const auto resume = [this, current, generation, action, owner, anchor] {
+        if (!current()) return;
+        statusBar_->PostActivation(owner, [this, current, generation, action, owner, anchor] {
+            if (current()) ContinueStatusBarActivation(action, owner, anchor, generation);
+        });
+    };
     // A bar click can arrive inside the menu's nested message loop. Wait until
     // menu focus restoration has finished before opening another surface.
     if (snowdesktop::modern_menu::IsActive())
     {
         snowdesktop::modern_menu::DismissActive();
-        statusBarActivationToken_ = uiAnimationScheduler_.ScheduleOnce(1, [this, action, owner, anchor](auto token) {
-            if (token != statusBarActivationToken_) return;
+        statusBarActivationToken_ = uiAnimationScheduler_.ScheduleInterval(16, [this, lifetime, current, resume](auto token) {
+            if (lifetime.expired()) return;
+            if (!current()) { uiAnimationScheduler_.Cancel(token); return; }
+            if (token != statusBarActivationToken_ || snowdesktop::modern_menu::IsActive()) return;
+            uiAnimationScheduler_.Cancel(token);
             statusBarActivationToken_ = 0;
-            if (statusBar_ && IsWindow(owner) && !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)))
-                ActivateStatusBar(action, owner, anchor);
+            resume();
         });
         return;
     }
-    if (action == Action::None) return;
-    const auto resume = [this, action, owner, anchor] {
-        if (!exitRequested_ && generalSettings_.statusBar.enabled && statusBar_ && IsWindow(owner) &&
-            IsWindowVisible(owner) && !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST)))
-            ActivateStatusBar(action, owner, anchor);
-    };
     if (action != Action::QuickSearch && (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden()))
     {
         quickNavigationPostCloseAction_ = resume;
@@ -85,12 +137,12 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, key, {
             [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
             [](UINT count, INPUT* input, int size) { return SendInput(count, input, size); },
-            [this, owner, anchor, foreground](auto token) {
-                return token == statusBarActivationToken_ && statusBar_ && IsWindow(owner) && IsWindowVisible(owner) &&
-                    GetForegroundWindow() == foreground &&
-                    !statusBar_->IsFullscreen(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST));
+            [this, current, foreground](auto token) {
+                return current() && token == statusBarActivationToken_ && GetForegroundWindow() == foreground;
             },
-            [this](auto token, snowdesktop::StatusBarShortcutResult result) {
+            [this, lifetime, generation](auto token, snowdesktop::StatusBarShortcutResult result) {
+                const auto state = lifetime.lock();
+                if (!state || *state != generation) return;
                 if (token != statusBarActivationToken_) return;
                 statusBarActivationToken_ = 0;
                 if (result == snowdesktop::StatusBarShortcutResult::Failed || result == snowdesktop::StatusBarShortcutResult::TimedOut)
@@ -118,9 +170,14 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
             AppendMenuW(menu, MF_STRING, index + 1, _LW(labels[index]));
             SetMenuItemIcon(menu,index+1,icons[index],MenuIconFont::FluentRegular);
         }
+        statusBarMenuMonitor_ = monitor;
+        statusBarMenuOwner_ = owner;
         const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
+        statusBarMenuMonitor_ = nullptr;
+        statusBarMenuOwner_ = nullptr;
         DestroyMenu(menu);
         ClearMenuIcons();
+        if (!current()) return;
         if (command >= 1 && command <= 3)
         {
             const wchar_t* target = command == 1 ? L"taskmgr.exe" : command == 2 ? L"wt.exe" : L"ms-settings:";
@@ -133,6 +190,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         {
             if (command >= 5 && MessageBoxW(owner, _LW(command == 5 ? "controlCenter.confirmSleep" : command == 6 ? "controlCenter.confirmRestart" : "controlCenter.confirmShutdown"),
                     _LW(labels[command - 1]), MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2) != IDOK) return;
+            if (!current()) return;
             snowdesktop::system_control::Request request;
             const char* tasks[]{"system.power.lock", "system.power.sleep", "system.power.restart", "system.power.shutdown"};
             request.name = tasks[command - 4]; request.hostConfirmed = command >= 5;
@@ -149,9 +207,14 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         AppendMenuW(menu, MF_STRING, 2, _LW("statusBar.taskManager"));
         SetMenuItemIcon(menu,1,L"\uF6A9",MenuIconFont::FluentRegular);
         SetMenuItemIcon(menu,2,L"\uE49D",MenuIconFont::FluentRegular);
+        statusBarMenuMonitor_ = monitor;
+        statusBarMenuOwner_ = owner;
         const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
+        statusBarMenuMonitor_ = nullptr;
+        statusBarMenuOwner_ = nullptr;
         DestroyMenu(menu);
         ClearMenuIcons();
+        if (!current()) return;
         if (command == 1) ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::StatusBar));
         else if (command == 2)
         {
@@ -163,7 +226,11 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     {
         if (systemPanel_) systemPanel_->Hide();
         if (quickNavigationOpen_) CloseQuickNavigation();
-        else OpenQuickNavigation(QuickNavigationInvocationSource::Pointer);
+        else
+        {
+            statusBarQuickNavigationMonitor_ = monitor;
+            OpenQuickNavigation(QuickNavigationInvocationSource::StatusBar);
+        }
     }
     else if (action == Action::Settings)
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::StatusBar));
@@ -193,6 +260,16 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
                     if (!widgetEngine_) return std::string{};
                     const auto& days = widgetEngine_->RuntimeCalendarAnnotations(date, date);
                     return !days.empty() && days.front().calendarAvailable ? days.front().fullDate : std::string{};
+                }, [this](const std::string& from, const std::string& to) {
+                    std::map<std::string, std::string> result;
+                    if (widgetEngine_)
+                        for (const auto& day : widgetEngine_->RuntimeCalendarAnnotations(from, to))
+                            if (day.calendarAvailable && !day.fullDate.empty())
+                                result.emplace(day.date, day.fullDate);
+                    return result;
+                }, [this] {
+                    const auto& display = generalSettings_.calendarDisplay;
+                    return std::string(display.enabled ? "1:" : "0:") + display.calendar;
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
                 }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),
@@ -218,9 +295,7 @@ void DesktopApp::SyncStatusBar()
     if (systemPanel_) systemPanel_->UpdateSettings(generalSettings_.statusBar);
     if (!generalSettings_.statusBar.enabled)
     {
-        uiAnimationScheduler_.Cancel(statusBarActivationToken_);
-        statusBarActivationToken_ = 0;
-        if (systemPanel_) systemPanel_->Hide();
+        CancelStatusBarActivation();
         statusBar_.reset();
         return;
     }
@@ -233,7 +308,7 @@ void DesktopApp::SyncStatusBar()
                 action = snowdesktop::ResolveStatusBarClick(action, (GetKeyState(VK_CONTROL) & 0x8000) != 0);
                 ActivateStatusBar(action, owner, anchor);
             },
-            [this](HMONITOR monitor) { if (systemPanel_) systemPanel_->HideForMonitor(monitor); },
+            [this](HMONITOR monitor) { CancelStatusBarActivation(monitor); },
             [this](const std::wstring& error) {
                 WriteDiagnosticLogEntry(error.c_str());
                 MessageBoxW(hwnd_, error.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
@@ -266,6 +341,23 @@ void DesktopApp::SyncStatusBar()
                 UpdatePersistentDockHostVisibility();
                 InvalidateDockRects();
             }
+        });
+        statusBar_->SetDockStateProvider([this](HMONITOR monitor) {
+            snowdesktop::StatusBarDockState state;
+            for (const auto& host : persistentDockHosts_)
+            {
+                if (!host || !host->active || host->monitor != monitor || !host->container ||
+                    !host->hwnd || !IsWindow(host->hwnd)) continue;
+                state.promoted = host->promoted;
+                if (host->container->IsMergedWithStatusBar() && IsWindowVisible(host->hwnd))
+                {
+                    state.window = host->hwnd;
+                    state.inputBounds = host->container->GetInteractiveBounds();
+                    OffsetRect(&state.inputBounds, virtualLeft_, virtualTop_);
+                }
+                break;
+            }
+            return state;
         });
         statusBar_->SetTrayDragFeedback(MakeStatusBarTrayDragFeedback());
         statusBar_->SetGraphicsFailureHandler([this](HRESULT error) {

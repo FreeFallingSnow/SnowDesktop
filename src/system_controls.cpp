@@ -122,7 +122,9 @@ struct Service::Impl
     struct Demand { std::map<std::string, std::chrono::milliseconds> consumers; };
     struct Work
     {
-        std::uint64_t id = 0, generation = 0;
+        std::uint64_t id = 0;
+        bool detached = false; // guarded by Impl::mutex; suppress late owner results
+        bool sourceReserved = false; // only the executor that acquired a source may release it
         std::string consumer;
         Request request;
         Cancellation cancel;
@@ -134,7 +136,6 @@ struct Service::Impl
     std::map<std::string, Demand> demands;
     std::map<std::string, Clock::time_point> due;
     std::map<std::string, Snapshot> snapshots;
-    std::map<std::string, std::uint64_t> generations;
     std::map<std::string, std::vector<Completion>> completed;
     std::set<std::string> changedTopics;
     std::deque<std::shared_ptr<Work>> pending;
@@ -254,11 +255,11 @@ struct Service::Impl
             if (work->cancel.Canceled()) result = work->cancel.Failure();
             active.erase(work->id);
             const std::string source(Source(work->request.name));
-            busySources.erase(source);
+            if (work->sourceReserved) busySources.erase(source);
             // A direct task may have no subscription. Keep its cleanup visible
             // to the sampler even when the last consumer left during readback.
-            due.try_emplace(source, Clock::now());
-            if (work->generation == generations[work->consumer])
+            if (work->sourceReserved) due.try_emplace(source, Clock::now());
+            if (!work->detached)
             {
                 auto& values = completed[work->consumer];
                 if (values.size() < 512) values.push_back({std::move(result), work->id});
@@ -282,8 +283,12 @@ struct Service::Impl
                 auto nextDue = Clock::time_point::max();
                 for (auto it = pending.begin(); it != pending.end(); ++it)
                 {
+                    // Cancellation needs no device access. Deliver it even if
+                    // an older OS call still owns this source.
+                    if ((*it)->cancel.Stop()) { selected = it; break; }
+                    nextDue = (std::min)(nextDue, (*it)->cancel.deadline);
                     if (busySources.contains(std::string(Source((*it)->request.name)))) continue;
-                    if ((*it)->ready <= Clock::now() || (*it)->cancel.Stop()) { selected = it; break; }
+                    if ((*it)->ready <= Clock::now()) { selected = it; break; }
                     nextDue = (std::min)(nextDue, (*it)->ready);
                 }
                 if (selected == pending.end())
@@ -293,7 +298,11 @@ struct Service::Impl
                     continue;
                 }
                 work = std::move(*selected); pending.erase(selected);
-                busySources.insert(std::string(Source(work->request.name)));
+                if (!work->cancel.Stop())
+                {
+                    busySources.insert(std::string(Source(work->request.name)));
+                    work->sourceReserved = true;
+                }
             }
             Result result;
             if (work->cancel.Stop()) result = work->cancel.Failure();
@@ -355,8 +364,10 @@ void Service::RemoveConsumer(std::string_view consumer)
         it->second.consumers.erase(key);
         if (it->second.consumers.empty()) it = impl_->demands.erase(it); else ++it;
     }
-    for (const auto& [id, work] : impl_->active) { (void)id; if (work->consumer == key) work->cancel.canceled->store(true); }
-    ++impl_->generations[key]; impl_->completed.erase(key); impl_->changed.notify_all();
+    // Mark the actual in-flight work instead of retaining every retired
+    // consumer name forever. Reusing a name cannot revive a detached result.
+    for (const auto& [id, work] : impl_->active) { (void)id; if (work->consumer == key) { work->detached = true; work->cancel.canceled->store(true); } }
+    impl_->completed.erase(key); impl_->changed.notify_all();
 }
 std::optional<Snapshot> Service::Current(std::string_view topic) const
 {
@@ -388,7 +399,7 @@ std::uint64_t Service::Start(std::string consumer, Request request)
     std::lock_guard guard(impl_->mutex);
     if (impl_->stopping || impl_->active.size() >= 256) return 0;
     auto work = std::make_shared<Impl::Work>(); work->id = ++impl_->next;
-    work->consumer = std::move(consumer); work->generation = impl_->generations[work->consumer];
+    work->consumer = std::move(consumer);
     work->request = std::move(request);
     work->cancel = {std::make_shared<std::atomic_bool>(false), Clock::now() + std::chrono::seconds(40)};
     work->ready = Clock::now() + (Slider(work->request.name) ? std::chrono::milliseconds(100) : std::chrono::milliseconds(0));

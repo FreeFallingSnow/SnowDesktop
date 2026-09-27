@@ -46,6 +46,7 @@
 #include "widget_notification_schedule_store.h"
 #include "widget_media_task_executor.h"
 #include "widget_audio_output_task_executor.h"
+#include "widget_system_control_tasks.h"
 #include "widget_clipboard_task_executor.h"
 #include "widget_filesystem_handle_store.h"
 #include "widget_filesystem_task_executor.h"
@@ -785,6 +786,8 @@ public:
      * @brief 关闭引擎，释放所有资源，卸载所有已加载的小部件
      */
     void Shutdown();
+    // Stop queued device work without destroying objects used by modal callbacks.
+    void BeginTaskShutdown();
 
     using DesktopSnapshotProvider = std::function<std::vector<LuaDesktopItemInfo>()>;
     using ApplicationSearchProvider = std::function<std::vector<LuaDesktopItemInfo>(const std::string&, int)>;
@@ -816,6 +819,9 @@ public:
     using WidgetTimerKillCallback = std::function<void(UINT_PTR timerId)>;
     using AudioAnalysisWakeCallback = std::function<void()>;
     using TaskWakeCallback = std::function<void()>;
+    using SystemControlPromptCallback = std::function<snowdesktop::system_control::Result(
+        snowdesktop::system_control::Request&, const std::wstring&, std::function<bool()>)>;
+    void SetSystemControlPromptCallback(SystemControlPromptCallback callback) { systemControlPromptCallback_ = std::move(callback); }
 
     /** @brief 设置桌面快照提供者回调 */
     void SetDesktopSnapshotProvider(DesktopSnapshotProvider provider) { desktopSnapshotProvider_ = std::move(provider); }
@@ -1838,6 +1844,8 @@ private:
     WidgetTimerKillCallback widgetTimerKillCallback_;   ///< 请求宿主关闭 widget 独立 timer
     AudioAnalysisWakeCallback audioAnalysisWakeCallback_;
     TaskWakeCallback taskWakeCallback_;
+    SystemControlPromptCallback systemControlPromptCallback_;
+    std::unique_ptr<snowdesktop::widget_runtime::WidgetSystemControlTasks> systemControlTasks_;
     bool applyingTaskBrokerActions_ = false;
     bool taskWakePending_ = false;
     std::unique_ptr<SystemSnapshotService> systemSnapshotService_;

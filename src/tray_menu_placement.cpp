@@ -28,27 +28,34 @@ void MenuPlacementSession::Arm(DWORD process, POINT anchor, RECT workArea, DWORD
 void MenuPlacementSession::Cancel() { process_ = 0; windows_ = {}; }
 bool MenuPlacementSession::Active(DWORD now) const
 { return process_ && static_cast<DWORD>(now - started_) < kLifetimeMs; }
+MenuPopupBindings MenuPlacementSession::Bindings() const
+{
+    MenuPopupBindings result{};
+    for (std::size_t i = 0; i < windows_.size(); ++i)
+        if (windows_[i].observedNearAnchor) result[i] = windows_[i].popup;
+    return result;
+}
 std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& popup, DWORD now)
 {
     if (!Active(now) || !popup.window || popup.process != process_ ||
         static_cast<LONG>(popup.eventTime - started_) < 0) return {};
     auto existing = std::find_if(windows_.begin(), windows_.end(),
-        [&](const auto& item) { return item.window == popup.window; });
+        [&](const auto& item) { return item.popup.window == popup.window; });
     if (popup.event == EVENT_OBJECT_HIDE)
     { if (existing != windows_.end()) *existing = {}; return {}; }
-    if (corrections_ >= 3) return {};
     if (!popup.visible || popup.notificationWindow || !(popup.style & WS_POPUP) ||
         (popup.style & (WS_CHILD | WS_THICKFRAME)) || (popup.style & WS_CAPTION) == WS_CAPTION ||
         (popup.extendedStyle & (WS_EX_APPWINDOW | WS_EX_TRANSPARENT)) ||
         (!popup.standardMenu && !popup.targetRelated)) return {};
     if (popup.event == EVENT_OBJECT_SHOW && existing == windows_.end())
     {
-        existing = std::find_if(windows_.begin(), windows_.end(), [](const auto& item) { return !item.window; });
+        existing = std::find_if(windows_.begin(), windows_.end(), [](const auto& item) { return !item.popup.window; });
         if (existing == windows_.end()) return {};
-        *existing = {popup.window, popup.owner, popup.thread, false};
+        *existing = {{popup.window, popup.owner, popup.process, popup.thread, popup.style, popup.extendedStyle, popup.standardMenu}, false};
     }
     else if (popup.event != EVENT_OBJECT_LOCATIONCHANGE || existing == windows_.end()) return {};
-    if (existing->owner != popup.owner || existing->thread != popup.thread)
+    if (existing->popup.owner != popup.owner || existing->popup.thread != popup.thread ||
+        existing->popup.style != popup.style || existing->popup.extendedStyle != popup.extendedStyle)
     { *existing = {}; return {}; }
     const auto width = static_cast<std::int64_t>(popup.bounds.right) - popup.bounds.left;
     const auto height = static_cast<std::int64_t>(popup.bounds.bottom) - popup.bounds.top;
@@ -66,6 +73,9 @@ std::optional<POINT> MenuPlacementSession::Observe(const MenuPopupObservation& p
             anchor_.y > static_cast<std::int64_t>(popup.bounds.bottom) + proximity) return {};
         existing->observedNearAnchor = true;
     }
+    // Retention still learns about a new menu after the movement budget is
+    // exhausted. That must not grant a fourth placement correction.
+    if (corrections_ >= 3) return {};
     // A tall custom menu cannot fit without resizing someone else's window.
     // Preserve its size and expose the top/left choices instead of rejecting
     // all correction and leaving the complete menu above the display.
@@ -89,6 +99,7 @@ struct MenuPlacementGuard::Impl
     HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::jthread worker;
     MenuPlacementSession session;
+    MenuPopupBindings popups{};
     HWND target = nullptr;
     DWORD targetThread = 0;
     HWINEVENTHOOK hook = nullptr;
@@ -146,6 +157,7 @@ struct MenuPlacementGuard::Impl
         }
         if (!GetWindowRect(window, &popup.bounds)) return;
         const auto position = active->session.Observe(popup, GetTickCount());
+        active->popups = active->session.Bindings();
         if (!position) return;
         // Recheck process/style at the mutation boundary. Never activate,
         // resize, change z-order, or move an unrelated/reused main HWND.
@@ -215,6 +227,7 @@ void MenuPlacementGuard::Arm(HWND target, POINT anchor, RECT iconBounds, bool co
         static_cast<DWORD>(now - impl_->request.started) < MenuPlacementSession::kLifetimeMs) return;
     if (IsRectEmpty(&iconBounds)) iconBounds = {anchor.x, anchor.y, anchor.x + 1, anchor.y + 1};
     impl_->request = {target, process, anchor, iconBounds, barBounds, now};
+    impl_->popups = {};
     const auto serial = ++impl_->requested;
     SetEvent(impl_->wake);
     // Install before notifying the app, so menus created by its first callback
@@ -225,6 +238,11 @@ void MenuPlacementGuard::Cancel()
 {
     std::lock_guard lock(impl_->mutex);
     if (!impl_->worker.joinable()) return;
-    impl_->request = {}; ++impl_->requested; SetEvent(impl_->wake);
+    impl_->request = {}; impl_->popups = {}; ++impl_->requested; SetEvent(impl_->wake);
+}
+MenuPopupBindings MenuPlacementGuard::Popups(HWND target) const
+{
+    std::lock_guard lock(impl_->mutex);
+    return target && impl_->request.target == target ? impl_->popups : MenuPopupBindings{};
 }
 }

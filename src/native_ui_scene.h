@@ -23,13 +23,16 @@ struct Image
 struct Node
 {
     std::string id;
+    // Related controls share their card's pointer highlight without changing
+    // their independent hit, keyboard or accessibility identities.
+    std::string hoverGroup;
     Role role = Role::Text;
     D2D1_RECT_F bounds{}, clip{};
     std::wstring text, detail, glyph, tooltip, accessibilityLabel;
     float fontSize = 14, value = 0;
     bool enabled = true, selected = false, accent = false, centered = false, bold = false;
-    bool outlined = false, secondary = false, charging = false;
-    bool wrap = false, joinLeft = false, joinRight = false, switchStyle = false;
+    bool outlined = false, secondary = false, charging = false, positiveGlyph = false;
+    bool wrap = false, joinLeft = false, joinRight = false, switchStyle = false, busy = false;
     std::shared_ptr<const Image> image;
     std::vector<std::vector<D2D1_POINT_2F>> paths;
     // Style belongs to each continuous sample segment, including after gaps.
@@ -41,6 +44,7 @@ struct Palette
 {
     D2D1_COLOR_F text{}, secondary{}, accent{}, accentText{}, hover{}, control{}, stroke{};
     float cornerRadius = 10;
+    bool highContrast = false;
 };
 struct Scene
 {

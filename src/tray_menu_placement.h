@@ -20,6 +20,14 @@ struct MenuPopupObservation
     std::uint64_t owner = 0;
     DWORD thread = 0;
 };
+struct MenuPopupBinding
+{
+    std::uint64_t window = 0, owner = 0;
+    DWORD process = 0, thread = 0;
+    LONG_PTR style = 0, extendedStyle = 0;
+    bool standardMenu = false;
+};
+using MenuPopupBindings = std::array<MenuPopupBinding, 4>;
 
 // Pure policy shared by the event hook and tray regressions. Only new SHOW
 // events become candidates, and their first usable geometry must be near the
@@ -32,14 +40,14 @@ public:
     void Cancel();
     bool Active(DWORD now) const;
     std::optional<POINT> Observe(const MenuPopupObservation& popup, DWORD now);
+    MenuPopupBindings Bindings() const;
 private:
     DWORD process_ = 0, started_ = 0;
     POINT anchor_{};
     RECT workArea_{};
     struct Candidate
     {
-        std::uint64_t window = 0, owner = 0;
-        DWORD thread = 0;
+        MenuPopupBinding popup;
         bool observedNearAnchor = false;
     };
     std::array<Candidate, 4> windows_{};
@@ -57,6 +65,9 @@ public:
     MenuPlacementGuard& operator=(const MenuPlacementGuard&) = delete;
     void Arm(HWND target, POINT anchor, RECT iconBounds, bool continuation, RECT barBounds = {});
     void Cancel();
+    // Read-only evidence from this gesture's short hook. Callers must recheck
+    // HWND identity and visibility; the hook is not kept alive by retention.
+    MenuPopupBindings Popups(HWND target) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

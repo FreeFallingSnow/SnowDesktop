@@ -82,8 +82,15 @@ struct Notifications
     Result Wait(const Cancellation& cancel)
     {
         std::unique_lock guard(mutex);
-        while (!complete && !cancel.Stop()) changed.wait_for(guard, std::chrono::milliseconds(100));
+        while (!complete && !cancel.Stop()) changed.wait_until(guard,
+            (std::min)(cancel.deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(100)));
         if (cancel.Stop()) return cancel.Failure();
+        return reason == 0 ? Result{true, {}, 0} : Error(reason, scanning ? "scanFailed" : "connectionFailed");
+    }
+    std::optional<Result> Outcome()
+    {
+        std::lock_guard guard(mutex);
+        if (!complete) return {};
         return reason == 0 ? Result{true, {}, 0} : Error(reason, scanning ? "scanFailed" : "connectionFailed");
     }
 };
@@ -214,6 +221,9 @@ public:
         }
         if (request.name == "network.wifi.disconnect")
         {
+            WlanMemory current;
+            if (Query(wlan.handle, id, wlan_intf_opcode_interface_state, current) == ERROR_SUCCESS &&
+                *current.As<WLAN_INTERFACE_STATE>() == wlan_interface_state_disconnected) return {true, {}, 0};
             status = WlanDisconnect(wlan.handle, &id, nullptr); if (status) return Error(status);
             while (!cancel.Stop())
             {
@@ -230,7 +240,10 @@ public:
         if (notifications.scanning)
         {
             status = WlanScan(wlan.handle, &id, nullptr, nullptr, nullptr); if (status) return Error(status);
-            return notifications.Wait(cancel);
+            // A missing notification must not reserve the WLAN source for the
+            // general forty-second task deadline. The service reads the cached
+            // network list after either completion or this bounded timeout.
+            return notifications.Wait(WifiScanCancellation(cancel));
         }
         if (request.name != "network.wifi.connect") return Error(ERROR_NOT_SUPPORTED, "actionUnsupported");
         std::wstring profile = Wide(Argument(request, "profileName")); bool created = false;
@@ -276,27 +289,41 @@ public:
             }
             xml.text += L"</security></MSM></WLANProfile>";
             DWORD reason = 0;
+            if (cancel.Stop()) return cancel.Failure();
             status = WlanSetProfile(wlan.handle, &id, WLAN_PROFILE_USER, xml.text.c_str(), nullptr, FALSE, nullptr, &reason);
             if (status) return Error(status, "profileRejected"); created = true;
         }
-        { std::lock_guard guard(notifications.mutex); notifications.profile = profile; }
+        { std::lock_guard guard(notifications.mutex); notifications.profile = profile; notifications.complete = false; notifications.reason = 0; }
         WLAN_CONNECTION_PARAMETERS parameters{}; parameters.wlanConnectionMode = wlan_connection_mode_profile;
         parameters.strProfile = profile.c_str(); parameters.dot11BssType = dot11_BSS_type_infrastructure;
         if (Argument(request, "hidden") == "1") parameters.dwFlags = WLAN_CONNECTION_HIDDEN_NETWORK;
-        status = WlanConnect(wlan.handle, &id, &parameters, nullptr);
-        Result result = status ? Error(status, "connectionFailed") : notifications.Wait(cancel);
-        if (result.ok)
+        const auto connectedToTarget = [&]() -> ControlReadback {
+            WlanMemory actual; const auto read = Query(wlan.handle, id, wlan_intf_opcode_current_connection, actual);
+            if (read == ERROR_INVALID_STATE) return {0., {}}; // not currently connected
+            if (read) return {{}, Error(read, read == ERROR_NOT_FOUND ? "deviceGone" : "unavailable")};
+            const auto* connection = actual.As<WLAN_CONNECTION_ATTRIBUTES>();
+            if (!connection) return {{}, Error(ERROR_INVALID_DATA)};
+            return {connection->isState == wlan_interface_state_connected &&
+                profile == std::wstring_view(connection->strProfileName,
+                    wcsnlen_s(connection->strProfileName, WLAN_MAX_NAME_LENGTH)) ? 1. : 0., {}};
+        };
+        Result result;
+        if (cancel.Stop()) result = cancel.Failure();
+        else
         {
-            WlanMemory actual; status = Query(wlan.handle, id, wlan_intf_opcode_current_connection, actual);
-            if (status) result = Error(status);
-            else
-            {
-                const auto* connection = actual.As<WLAN_CONNECTION_ATTRIBUTES>();
-                if (connection->isState != wlan_interface_state_connected || profile != connection->strProfileName)
-                    result = Error(ERROR_INVALID_STATE, "stateMismatch");
-            }
+            status = WlanConnect(wlan.handle, &id, &parameters, nullptr);
+            result = ConfirmNotifiedControl(cancel, connectedToTarget, [&]() -> std::optional<Result> {
+                return status ? std::optional(Error(status, "connectionFailed")) : notifications.Outcome();
+            }, ControlReadbackPause);
         }
-        if (!result.ok && created) WlanDeleteProfile(wlan.handle, &id, profile.c_str(), nullptr);
+        if (!result.ok && created)
+        {
+            // A canceled/late notification can arrive after the connection was
+            // established. Never delete a profile that is still in use, or one
+            // whose current state could not be read safely.
+            const auto actual = connectedToTarget();
+            if (actual.value && *actual.value == 0.) WlanDeleteProfile(wlan.handle, &id, profile.c_str(), nullptr);
+        }
         return result;
     }
     void Release(std::string_view) override {}

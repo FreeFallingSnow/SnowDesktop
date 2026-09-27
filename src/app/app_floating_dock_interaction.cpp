@@ -18,7 +18,6 @@ void DesktopApp::ShowFloatingDock(
         return;
     }
 
-    HideDockWindowPreview();
     const HMONITOR previouslySelectedMonitor =
         floatingDockMonitor_;
     HMONITOR targetMonitor = preferredMonitor;
@@ -29,6 +28,11 @@ void DesktopApp::ShowFloatingDock(
         targetMonitor = MonitorFromPoint(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
     }
+    // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
+    // the keyboard proxy can change foreground ownership. The bar remains
+    // registered; only this monitor's Dock may become visible.
+    if (statusBar_) statusBar_->PrepareDockReveal(targetMonitor);
+    HideDockWindowPreview();
     if (!SyncPersistentDockHost(targetMonitor))
     {
         WriteDiagnosticLogEntry(
@@ -36,6 +40,8 @@ void DesktopApp::ShowFloatingDock(
         MessageBeep(MB_ICONWARNING);
         return;
     }
+    if (statusBar_ && floatingDockHost_->monitor != targetMonitor)
+        statusBar_->PrepareDockReveal(floatingDockHost_->monitor);
 
     const bool hostWasVisible =
         IsWindowVisible(floatingDockHost_->hwnd) != FALSE;
@@ -47,6 +53,9 @@ void DesktopApp::ShowFloatingDock(
     floatingDockHost_->passiveRevealTick = 0;
     floatingDockHost_->passiveLeaveStartTick = 0;
     RefreshFloatingDockVisibilityState();
+    // Rebuild the independent Dock background/region for a fullscreen reveal,
+    // even when its stable merged placement has not changed.
+    UpdateFloatingDockWindowBounds(*floatingDockHost_, false, true);
     floatingDockLastPointerPresentTick_ = 0;
     bool revealFramePrepared = false;
     if (!hostWasVisible)

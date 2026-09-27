@@ -128,6 +128,20 @@ void TestPermissionRiskClassification()
 void TestPermissionDescriptorContract()
 {
     using snowdesktop::widget::ClassifyPermissionRisk;
+    const std::vector<std::string> controls = {"audio.devices.control", "audio.input.control",
+        "system.display.control", "network.wifi.control", "bluetooth.control",
+        "system.power.control", "system.power.action"};
+    for (const auto& permission : controls)
+        Check(ClassifyPermissionRisk(permission) == PermissionRiskClass::Modification &&
+            snowdesktop::widget::PermissionRequiresConsent(permission),
+            "every device and power write group needs an independent modification consent");
+    const std::vector<std::string> oldScopes = {"audio.output.control", "audio.devices.read", "audio.input.read",
+        "system.display.read", "network.wifi.read", "bluetooth.read", "system.power.read"};
+    const auto oldGrant = snowdesktop::widget::WidgetPermissionBroker::Evaluate(
+        PermissionDecisionState::Granted, oldScopes, controls, {}, oldScopes, {});
+    for (const auto& permission : controls)
+        Check(!snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(oldGrant.permissions, permission),
+            "old device reads or output-volume consent must never acquire new write privileges");
     const auto descriptors =
         snowdesktop::widget::WidgetPermissionDescriptors();
     Check(ClassifyPermissionRisk("audio.devices.read") == PermissionRiskClass::SystemStatus &&

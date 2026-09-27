@@ -1,10 +1,122 @@
 #pragma once
 #include "taskbar_hook/tray_protocol.h"
+#include "tray_menu_placement.h"
+#include <algorithm>
+#include <cwchar>
+#include <iterator>
 #include <optional>
 #include <utility>
 
 namespace snowdesktop::tray
 {
+enum class MenuForeground { Transition, Origin, TargetProcess, Unrelated };
+// A focus transition is not proof that an asynchronous tray callback has
+// finished opening its menu. Discovery is bounded; an observed live menu has
+// no arbitrary expiry while the user is interacting with it.
+class MenuRetentionTracker
+{
+public:
+    static constexpr DWORD kDiscoveryMs = 1500;
+    void Arm(DWORD now) { started_ = lastMenu_ = now; armed_ = true; observed_ = false; }
+    void Reset() { armed_ = observed_ = false; }
+    bool Armed() const { return armed_; }
+    bool ObservedMenu() const { return observed_; }
+    bool Retain(DWORD now, bool targetAlive, MenuForeground foreground, bool liveMenu)
+    {
+        if (!armed_) return false;
+        if (!targetAlive || foreground == MenuForeground::Unrelated) { Reset(); return false; }
+        if (liveMenu) { observed_ = true; lastMenu_ = now; return true; }
+        if (foreground == MenuForeground::Origin)
+        {
+            if (observed_ || static_cast<DWORD>(now - started_) >= kDiscoveryMs) Reset();
+            return true;
+        }
+        if (!observed_ && static_cast<DWORD>(now - started_) < kDiscoveryMs) return true;
+        // Native submenu replacement can briefly clear the active HWND/menu
+        // owner. It must neither start a closing animation nor renew discovery.
+        if (observed_ && foreground == MenuForeground::Transition &&
+            static_cast<DWORD>(now - lastMenu_) < 200) return true;
+        Reset(); return false;
+    }
+private:
+    DWORD started_ = 0, lastMenu_ = 0;
+    bool armed_ = false, observed_ = false;
+};
+// This state is armed before the first tray callback. WM_ACTIVATE may arrive
+// with no next HWND, or with a main window on a different thread from the menu.
+// Sample the concrete callback/menu threads and this gesture's SHOW evidence.
+struct MenuRetentionSession
+{
+    DWORD process=0,targetThread=0,menuThread=0;
+    HWND target=nullptr,menuOwner=nullptr,origin=nullptr,bar=nullptr;
+    MenuRetentionTracker tracker;
+    MenuPopupBindings popups{};
+    void Reset(){*this={};}
+    bool BelongsToTarget(HWND w)const
+    {DWORD pid=0;return w&&GetWindowThreadProcessId(w,&pid)&&pid==process;}
+    void Arm(HWND owner,DWORD pid,HWND source,HWND statusBar)
+    {
+        Reset();process=pid;
+        if(!BelongsToTarget(owner)){Reset();return;}
+        target=owner;targetThread=GetWindowThreadProcessId(owner,nullptr);origin=source;bar=statusBar;tracker.Arm(GetTickCount());
+    }
+    bool Related(HWND w)const
+    {
+        if(!BelongsToTarget(w))return false;
+        const auto root=GetAncestor(target,GA_ROOTOWNER);
+        for(unsigned depth=0;w&&depth<8;++depth)
+        {
+            if(!BelongsToTarget(w))break;
+            if(w==target||w==root||GetWindowThreadProcessId(w,nullptr)==targetThread)return true;
+            const auto next=GetWindow(w,GW_OWNER);if(next==w)break;w=next;
+        }
+        return false;
+    }
+    bool LivePopup(const MenuPopupBinding& binding)const
+    {
+        const auto w=reinterpret_cast<HWND>(binding.window);DWORD pid=0;
+        if(!w||binding.process!=process||GetWindowThreadProcessId(w,&pid)!=binding.thread||pid!=process||
+            !IsWindowVisible(w)||GetWindow(w,GW_OWNER)!=reinterpret_cast<HWND>(binding.owner)||
+            GetWindowLongPtrW(w,GWL_STYLE)!=binding.style||GetWindowLongPtrW(w,GWL_EXSTYLE)!=binding.extendedStyle)return false;
+        if(binding.owner&&!BelongsToTarget(reinterpret_cast<HWND>(binding.owner)))return false;
+        wchar_t name[64]{};GetClassNameW(w,name,static_cast<int>(std::size(name)));
+        return binding.standardMenu==(wcscmp(name,L"#32768")==0);
+    }
+    bool NativeMenu(DWORD thread,bool observedMenuThread=false,HWND expectedOwner=nullptr)
+    {
+        if(!thread)return false;
+        GUITHREADINFO info{sizeof(info)};
+        if(!GetGUIThreadInfo(thread,&info)||!(info.flags&(GUI_INMENUMODE|GUI_POPUPMENUMODE|GUI_SYSTEMMENUMODE))||
+            !BelongsToTarget(info.hwndMenuOwner)||GetWindowThreadProcessId(info.hwndMenuOwner,nullptr)!=thread||
+            (expectedOwner&&info.hwndMenuOwner!=expectedOwner)||
+            (!observedMenuThread&&!Related(info.hwndMenuOwner)))return false;
+        menuOwner=info.hwndMenuOwner;menuThread=thread;return true;
+    }
+    bool Active(HWND foreground,const MenuPopupBindings& observed)
+    {
+        if(!tracker.Armed())return false;
+        const bool targetAlive=BelongsToTarget(target)&&GetWindowThreadProcessId(target,nullptr)==targetThread;
+        const auto kind=!foreground?MenuForeground::Transition:
+            foreground==origin||foreground==bar?MenuForeground::Origin:
+            BelongsToTarget(foreground)?MenuForeground::TargetProcess:MenuForeground::Unrelated;
+        if(!targetAlive||kind==MenuForeground::Unrelated){Reset();return false;}
+        for(auto& binding:popups)if(binding.window&&!LivePopup(binding))binding={};
+        for(const auto& binding:observed)
+        {
+            if(!LivePopup(binding)||std::any_of(popups.begin(),popups.end(),[&](const auto& p){return p.window==binding.window;}))continue;
+            const auto slot=std::find_if(popups.begin(),popups.end(),[](const auto& p){return !p.window;});
+            if(slot!=popups.end())*slot=binding;
+        }
+        bool liveMenu=menuOwner&&BelongsToTarget(menuOwner)&&NativeMenu(menuThread,true,menuOwner);
+        if(!liveMenu){menuOwner=nullptr;menuThread=0;liveMenu=NativeMenu(targetThread);}
+        if(!liveMenu&&kind==MenuForeground::TargetProcess)liveMenu=NativeMenu(GetWindowThreadProcessId(foreground,nullptr));
+        for(const auto& binding:popups)if(binding.window)
+        {liveMenu=true;if(binding.standardMenu)NativeMenu(binding.thread,true);}
+        const bool retain=tracker.Retain(GetTickCount(),targetAlive,kind,liveMenu);
+        if(!tracker.Armed())Reset();
+        return retain;
+    }
+};
 struct FocusDelivery
 {
     FocusTicket ticket;

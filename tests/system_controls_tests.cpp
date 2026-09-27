@@ -5,6 +5,8 @@
 #include "system_control_wifi_sampling.h"
 #include "system_control_audio_presentation.h"
 #include "system_control_windows.h"
+#include "widget_system_control_tasks.h"
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -316,6 +318,205 @@ void HostOnlyCredentialsAndConfirmation()
     Require(moved.View() == L"private", "host secret can be transferred without serialization"); moved.Clear();
     Require(moved.View().empty(), "host secret clears after completion");
 }
+void WidgetControlArgumentsStayWithinTheirContract()
+{
+    using namespace snowdesktop::widget_runtime;
+    using Args = std::unordered_map<std::string, std::string>;
+    struct Case { const char* name; Args arguments; };
+    const Case cases[]{
+        {"audio.output.selectDevice", {{"endpointId", "output"}}},
+        {"audio.input.selectDevice", {{"endpointId", "input"}}},
+        {"audio.input.setVolume", {{"volume", "0.25"}}},
+        {"audio.input.setMute", {{"muted", "1"}}},
+        {"system.display.setBrightness", {{"monitorId", "display"}, {"brightness", "60"}}},
+        {"network.wifi.setRadio", {{"interfaceId", "adapter"}, {"enabled", "0"}}},
+        {"network.wifi.scan", {{"interfaceId", "adapter"}}},
+        {"network.wifi.connect", {{"interfaceId", "adapter"}, {"networkId", "network"}}},
+        {"network.wifi.disconnect", {{"interfaceId", "adapter"}}},
+        {"network.wifi.forget", {{"interfaceId", "adapter"}, {"profileName", "saved"}}},
+        {"bluetooth.setRadio", {{"radioId", "radio"}, {"enabled", "1"}}},
+        {"bluetooth.connect", {{"deviceId", "device"}}},
+        {"bluetooth.disconnect", {{"deviceId", "device"}}},
+        {"system.power.setPlan", {{"planId", "plan"}}},
+        {"system.power.setMode", {{"mode", "balanced"}}},
+        {"system.power.lock", {}}, {"system.power.sleep", {}},
+        {"system.power.restart", {}}, {"system.power.shutdown", {}}
+    };
+    for (const auto& item : cases)
+    {
+        Request request; request.hostConfirmed = true; request.password = Secret(L"stale-host-secret");
+        Require(MakeSystemControlRequest(item.name, item.arguments, request) && request.name == item.name &&
+            !request.hostConfirmed && request.password.View().empty(),
+            "the 19 widget controls convert only public parameters and never inherit host authorization or secrets");
+        unsigned liveCalls = 0;
+        const auto live = [&](Request& dispatched) {
+            ++liveCalls;
+            Require(&dispatched == &request, "live dispatch keeps the validated request and its host-only state");
+            return Result{false, "fixtureRejected", 123};
+        };
+        const auto preview = DispatchSystemControlTask(request, true, live);
+        Require(preview.ok && preview.error.empty() && preview.platformCode == 0 && liveCalls == 0,
+            "preview accepts each valid widget control without opening confirmation UI or entering the live executor");
+        const auto executed = DispatchSystemControlTask(request, false, live);
+        Require(!executed.ok && executed.error == "fixtureRejected" && executed.platformCode == 123 && liveCalls == 1,
+            "live control dispatch calls its executor exactly once and preserves its failure unchanged");
+        liveCalls = 0;
+        for (const auto* forbidden : {"password", "hostConfirmed", "unknown"})
+        {
+            request.arguments[forbidden] = "1";
+            const auto rejected = DispatchSystemControlTask(request, true, live);
+            Require(!rejected.ok && rejected.error == "invalidArguments" && liveCalls == 0,
+                "preview still rejects forbidden parameters before any live confirmation or system effect");
+            request.arguments.erase(forbidden);
+            auto supplied = item.arguments; supplied[forbidden] = "1";
+            Request invalid;
+            Require(!MakeSystemControlRequest(item.name, supplied, invalid),
+                "a widget cannot smuggle password, confirmation or unknown arguments into any control");
+        }
+    }
+    Request request;
+    Require(!IsSystemControlTask("audio.output.setVolume") && !IsSystemControlTask("audio.output.setMute") &&
+        !MakeSystemControlRequest("audio.output.setVolume", {{"volume", "0.5"}, {"endpointId", "other"}}, request) &&
+        !MakeSystemControlRequest("audio.output.setMute", {{"muted", "1"}}, request),
+        "existing output-volume tasks retain their old executor and cannot acquire device-selection power through the new bridge");
+    Require(!MakeSystemControlRequest("audio.input.setVolume", {{"volume", "0.5"}, {"endpointId", "other"}}, request) &&
+        !MakeSystemControlRequest("network.wifi.scan", {{"interfaceId", "adapter"}, {"deviceId", "other"}}, request),
+        "arguments known to another action are still forbidden for this action");
+    for (const auto* invalid : {"nan", "inf", "0.5suffix", "", " 0.5"})
+        Require(!MakeSystemControlRequest("audio.input.setVolume", {{"volume", invalid}}, request),
+            "non-finite, partial and empty control numbers cannot reach a device executor");
+    Require(MakeSystemControlRequest("audio.input.setVolume", {{"volume", "2"}}, request) &&
+        std::stod(request.arguments.at("volume")) == 1.0,
+        "input volume preserves finite clamp behavior without altering brightness bounds");
+    Require(!MakeSystemControlRequest("system.display.setBrightness", {{"monitorId", "display"}, {"brightness", "101"}}, request) &&
+        !MakeSystemControlRequest("audio.input.setMute", {{"muted", "true"}}, request),
+        "brightness range and canonical boolean encoding are enforced after Lua conversion");
+    Require(!MakeSystemControlRequest("system.power.setMode", {{"mode", "unknown"}}, request) &&
+        !MakeSystemControlRequest("bluetooth.connect", {{"deviceId", std::string(4097, 'x')}}, request) &&
+        !MakeSystemControlRequest("bluetooth.connect", {{"deviceId", std::string("a\0b", 3)}}, request),
+        "unknown power modes, oversized identities and embedded NULs are rejected");
+    for (const auto* target : {"networkId", "profileName", "ssid"})
+    {
+        Args arguments{{"interfaceId", "adapter"}, {target, "chosen"}};
+        if (std::string_view(target) == "ssid") arguments["security"] = "open";
+        Require(MakeSystemControlRequest("network.wifi.connect", arguments, request),
+            "each of the three exclusive Wi-Fi target forms remains usable");
+        for (const auto* second : {"networkId", "profileName", "ssid"}) if (std::string_view(second) != target)
+        {
+            auto ambiguous = arguments; ambiguous[second] = "another";
+            Require(!MakeSystemControlRequest("network.wifi.connect", ambiguous, request),
+                "a Wi-Fi control cannot choose between two conflicting target identities");
+        }
+    }
+    Require(!MakeSystemControlRequest("network.wifi.connect", {{"interfaceId", "adapter"}}, request) &&
+        !MakeSystemControlRequest("network.wifi.connect", {{"interfaceId", "adapter"}, {"ssid", "chosen"}}, request) &&
+        !MakeSystemControlRequest("network.wifi.connect", {{"interfaceId", "adapter"}, {"ssid", std::string(33, 'x')}, {"security", "open"}}, request) &&
+        !MakeSystemControlRequest("network.wifi.connect", {{"interfaceId", "adapter"}, {"ssid", "chosen"}, {"security", "unknown"}}, request),
+        "explicit SSIDs need supported security and the WLAN byte limit, and targetless connections are invalid");
+}
+void WidgetControlBridgeOwnsTaskLifetimes()
+{
+    using Bridge = snowdesktop::widget_runtime::WidgetSystemControlTasks;
+    const auto brightness = [](const char* target) { auto request = BrightnessRequest(); request.arguments["monitorId"] = target; return request; };
+    for (const bool forget : {false, true})
+    {
+        auto backend = std::make_shared<LifecycleBackend>(); backend->holdExecute = true;
+        auto service = std::make_shared<Service>(backend);
+        std::mutex mutex; std::condition_variable changed; unsigned wakes = 0;
+        service->SetWake([&] { std::lock_guard guard(mutex); ++wakes; changed.notify_all(); });
+        Bridge bridge(service);
+        Require(bridge.Start(1001, 11, brightness("first")), "widget bridge accepts a broker ID different from the service ID");
+        backend->Wait([&] { return backend->executions["brightness"] == 1; }, "bridge execution reaches a controllable gate");
+        Require(bridge.Start(1002, 11, brightness("second")) && !bridge.Start(1002, 22, brightness("duplicate")) &&
+            !bridge.Cancel(9999), "the same owner may have independent tasks, while duplicate and unknown broker IDs cannot affect them");
+        Request native; native.name = "system.power.setPlan"; native.arguments["planId"] = "native";
+        const auto nativeId = service->Start("native-panel-fixture", std::move(native));
+        Require(nativeId != 0, "native consumer shares the bridge service");
+        if (forget)
+        {
+            Require(bridge.Start(2001, 22, brightness("other-owner")), "another component owns its own queued task");
+            bridge.Forget(11);
+            Require(bridge.ActiveCount() == 1 && !bridge.Cancel(1001) && !bridge.Cancel(1002),
+                "forget cancels exactly the disposed owner's tasks");
+            Require(bridge.Start(1003, 11, brightness("new-generation")),
+                "a later owner generation can start while a canceled OS call is still returning");
+        }
+        else
+        {
+            Require(bridge.Cancel(1001) && bridge.ActiveCount() == 1,
+                "cancel translates a broker ID without dropping a sibling task for the same owner");
+        }
+        {
+            std::lock_guard guard(backend->mutex);
+            Require(backend->executionCancellation && backend->executionCancellation->load(),
+                "broker cancellation must reach the executing service task, not an unrelated numeric ID");
+            backend->holdExecute = false; backend->changed.notify_all();
+        }
+        std::vector<Bridge::Completion> completed;
+        const std::size_t expected = forget ? 4u : 2u;
+        const auto deadline = std::chrono::steady_clock::now() + 3s;
+        while (completed.size() < expected && std::chrono::steady_clock::now() < deadline)
+        {
+            auto batch = bridge.Drain(); completed.insert(completed.end(), batch.begin(), batch.end());
+            if (completed.size() == expected) break;
+            std::unique_lock guard(mutex); changed.wait_until(guard, deadline, [&] { return wakes != 0; }); wakes = 0;
+        }
+        Require(completed.size() == expected && bridge.ActiveCount() == 0,
+            "canceled and surviving widget tasks each finish exactly once under their broker IDs");
+        std::set<std::uint64_t> identities;
+        for (const auto& completion : completed)
+        {
+            const bool canceled = completion.id == 1001 || (forget && completion.id == 1002);
+            Require(identities.insert(completion.id).second && !completion.ok &&
+                completion.error == (canceled ? "canceled" : "deviceGone"),
+                "a canceled task's late backend failure cannot replace its cancellation or another owner's result");
+        }
+        const std::set<std::uint64_t> wanted = forget ? std::set<std::uint64_t>{1001, 1002, 1003, 2001} : std::set<std::uint64_t>{1001, 1002};
+        Require(identities == wanted && bridge.Drain().empty(), "service-generated IDs and duplicate late results never leak to widgets");
+        backend->Wait([&] { return backend->releases["power"] > 0; }, "native task completes independently of widget cancellation");
+        const auto nativeResults = service->DrainCompletions("native-panel-fixture");
+        Require(nativeResults.size() == 1 && nativeResults.front().id == nativeId && nativeResults.front().error == "deviceGone",
+            "draining widget results cannot steal another service consumer's completion");
+        service->SetWake({}); service->Shutdown();
+    }
+    auto backend = std::make_shared<LifecycleBackend>(); backend->holdExecute = true;
+    auto service = std::make_shared<Service>(backend);
+    {
+        Bridge bridge(service); Require(bridge.Start(3001, 33, brightness("destroyed")), "bridge destruction fixture starts");
+        backend->Wait([&] { return backend->executions["brightness"] == 1; }, "destruction fixture reaches execution");
+    }
+    {
+        std::lock_guard guard(backend->mutex);
+        Require(backend->executionCancellation && backend->executionCancellation->load(),
+            "destroying the bridge cancels its in-flight OS work before losing the ID mapping");
+        backend->holdExecute = false; backend->changed.notify_all();
+    }
+    service->Shutdown();
+}
+void ReusedConsumerCannotReceiveDetachedWork()
+{
+    auto backend = std::make_shared<LifecycleBackend>(); backend->holdExecute = true;
+    Service service(backend); std::mutex mutex; std::condition_variable changed; unsigned wakes = 0;
+    service.SetWake([&] { std::lock_guard guard(mutex); ++wakes; changed.notify_all(); });
+    const auto retired = service.Start("reused-consumer", BrightnessRequest());
+    backend->Wait([&] { return backend->executions["brightness"] == 1; }, "retired consumer is still inside its OS call");
+    service.RemoveConsumer("reused-consumer");
+    auto request = BrightnessRequest(); request.arguments["monitorId"] = "replacement-monitor";
+    const auto current = service.Start("reused-consumer", std::move(request));
+    Require(retired && current && retired != current, "same consumer name starts independent work before its retired call returns");
+    { std::lock_guard guard(backend->mutex); backend->holdExecute = false; backend->changed.notify_all(); }
+    std::vector<Completion> completed;
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (completed.empty() && std::chrono::steady_clock::now() < deadline)
+    {
+        completed = service.DrainCompletions("reused-consumer"); if (!completed.empty()) break;
+        std::unique_lock guard(mutex); changed.wait_until(guard, deadline, [&] { return wakes != 0; }); wakes = 0;
+    }
+    Require(completed.size() == 1 && completed.front().id == current && completed.front().error == "deviceGone",
+        "a detached old call cannot reappear in the new consumer's completion queue");
+    service.SetWake({}); service.Shutdown();
+    Require(service.DrainCompletions("reused-consumer").empty(), "no retired completion leaks after shutdown joins the old worker");
+}
 void BrightnessSettlingAndStaleFeedback()
 {
     Cancellation cancel{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 3s};
@@ -469,6 +670,85 @@ void CancellationDuringReadbackDiscardsOldState()
         !service.Current("system.display.brightness"), "late readback of a canceled task neither publishes old state nor leaks the previous failure to UI");
     service.Shutdown();
 }
+void QueuedCancellationDoesNotWaitForOrReleaseAnotherControl()
+{
+    auto backend = std::make_shared<LifecycleBackend>(); backend->holdExecute = true;
+    Service service(backend); std::mutex mutex; std::condition_variable changed; unsigned wakes = 0;
+    service.SetWake([&] { std::lock_guard guard(mutex); ++wakes; changed.notify_all(); });
+    Require(service.Start("busy", BrightnessRequest()) != 0, "source ownership fixture starts its old OS call");
+    backend->Wait([&] { return backend->executions["brightness"] == 1; }, "old OS call holds the physical source");
+    auto request = BrightnessRequest(); request.arguments["monitorId"] = "queued-monitor";
+    const auto queued = service.Start("queued", std::move(request));
+    Require(queued && service.Cancel(queued), "cancel a queued control while the same source is occupied");
+    std::vector<Completion> completed;
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (completed.empty() && std::chrono::steady_clock::now() < deadline)
+    {
+        completed = service.DrainCompletions("queued"); if (!completed.empty()) break;
+        std::unique_lock guard(mutex); changed.wait_until(guard, deadline, [&] { return wakes != 0; }); wakes = 0;
+    }
+    Require(completed.size() == 1 && completed.front().id == queued && completed.front().error == "canceled",
+        "queued cancellation clears pending without waiting for an unrelated in-flight OS call to return");
+    request = BrightnessRequest(); request.arguments["monitorId"] = "next-monitor";
+    Require(service.Start("next", std::move(request)) != 0, "another device still waits for the old source owner");
+    Request plan; plan.name = "system.power.setPlan"; plan.arguments["planId"] = "independent";
+    Require(service.Start("power", std::move(plan)) != 0, "an independent source remains executable");
+    backend->Wait([&] { return backend->releases["power"] > 0; }, "independent work finishes while the old source stays reserved");
+    {
+        std::lock_guard guard(backend->mutex);
+        Require(backend->executions["brightness"] == 1 && backend->users["brightness"] == 1,
+            "finishing a canceled queued task cannot unlock a source owned by another executor");
+        backend->holdExecute = false; backend->changed.notify_all();
+    }
+    backend->Wait([&] { return backend->executions["brightness"] == 2 && backend->releases["brightness"] > 0; },
+        "the remaining live task runs once after the original source owner finishes");
+    Require(service.DrainCompletions("queued").empty(), "canceled queued work cannot produce a second late completion");
+    service.SetWake({}); service.Shutdown();
+}
+void WirelessNotificationsNeedActualState()
+{
+    const auto now = std::chrono::steady_clock::now();
+    Cancellation cancel{std::make_shared<std::atomic_bool>(false), now + 40s};
+    Require(WifiScanCancellation(cancel, now).deadline == now + 4s &&
+        WifiScanCancellation({cancel.canceled, now + 1s}, now).deadline == now + 1s,
+        "scan notification waits cannot monopolize the source for forty seconds or extend caller deadlines");
+    unsigned reads = 0, pauses = 0;
+    auto result = ConfirmNotifiedControl(cancel, [&]() -> ControlReadback {
+        return {++reads == 3 ? 1. : 0., {}};
+    }, []() -> std::optional<Result> { return {}; }, [&] { ++pauses; });
+    Require(result.ok && reads == 3 && pauses == 2,
+        "a missing WLAN notification does not hide an actually established target connection");
+    reads = pauses = 0;
+    result = ConfirmNotifiedControl(cancel, [&]() -> ControlReadback { return {++reads == 2 ? 1. : 0., {}}; },
+        []() -> std::optional<Result> { return Result{false, "connectionFailed", 123}; }, [&] { ++pauses; });
+    Require(result.ok && reads == 2 && pauses == 1,
+        "a failed or early notification is reconciled only after the exact target actually becomes connected");
+    reads = pauses = 0;
+    result = ConfirmNotifiedControl(cancel, [&]() -> ControlReadback { ++reads; return {0., {}}; },
+        []() -> std::optional<Result> { return Result{false, "connectionFailed", 123}; }, [&] { ++pauses; });
+    Require(!result.ok && result.error == "connectionFailed" && result.platformCode == 123 && reads == 20 && pauses == 19,
+        "a genuinely failed connection keeps its reason after the bounded settling interval");
+    reads = pauses = 0;
+    result = ConfirmNotifiedControl(cancel, [&]() -> ControlReadback { ++reads; return {0., {}}; },
+        []() -> std::optional<Result> { return Result{true, {}, 0}; }, [&] { ++pauses; });
+    Require(!result.ok && result.error == "stateMismatch" && reads == 20 && pauses == 19,
+        "a success notification cannot stand in for connection to the requested target");
+    reads = 0;
+    result = ConfirmNotifiedControl(cancel, [&]() -> ControlReadback { ++reads; return {1., {}}; },
+        []() -> std::optional<Result> { return Result{false, "accessDenied", 5}; }, [] {});
+    Require(!result.ok && result.error == "accessDenied" && reads == 0,
+        "matching state cannot override a permission rejection");
+    cancel.canceled->store(true);
+    result = ConfirmNotifiedControl(cancel, [&]() -> ControlReadback { ++reads; return {1., {}}; },
+        []() -> std::optional<Result> { return {}; }, [] {});
+    Require(!result.ok && result.error == "canceled" && reads == 0,
+        "superseded or canceled connections cannot report success from late readback");
+    cancel.canceled->store(false); cancel.deadline = now - 1s;
+    result = ConfirmNotifiedControl(cancel, [&]() -> ControlReadback { ++reads; return {1., {}}; },
+        []() -> std::optional<Result> { return {}; }, [] {});
+    Require(!result.ok && result.error == "timeout" && reads == 0,
+        "a deadline with no completion evidence stays a timeout instead of an accepted-write success");
+}
 void FreshReadbackOnlyConfirmsTheRequestedTarget()
 {
     for (const auto* error : {"stateMismatch", "accessDenied", "timeout", "deviceGone"})
@@ -511,6 +791,13 @@ void FreshReadbackOnlyConfirmsTheRequestedTarget()
     value = json::Object(); value.object["volume"] = json::Number(0.8); value.object["endpointId"] = json::Text("replacement-endpoint");
     snapshots = {{"audio.output.volume", {true, value, {}, 0, 0}}};
     Require(!ControlReadbackMatches(request, snapshots), "unbound default-volume requests cannot claim another endpoint's matching state");
+    request.name = "network.wifi.setRadio"; request.arguments = {{"interfaceId", "adapter"}, {"enabled", "1"}};
+    auto adapter = json::Object(), interfaces = json::Array(); value = json::Object();
+    adapter.object["id"] = json::Text("adapter"); adapter.object["available"] = json::Boolean(true);
+    adapter.object["enabled"] = json::Boolean(true); interfaces.array.push_back(std::move(adapter)); value.object["interfaces"] = std::move(interfaces);
+    snapshots = {{"network.wifi", {true, value, {}, 0, 0}}};
+    Require(!ControlReadbackMatches(request, snapshots),
+        "a radio presentation flag meaning any PHY is on cannot prove that all requested PHY changes succeeded");
 }
 void BluetoothPowerAndDeviceReadFailures()
 {
@@ -572,6 +859,9 @@ void TestSystemControls()
     SlowSampleYieldsToReadyControl();
     CancellableWinRtSamplingWait();
     HostOnlyCredentialsAndConfirmation();
+    WidgetControlArgumentsStayWithinTheirContract();
+    WidgetControlBridgeOwnsTaskLifetimes();
+    ReusedConsumerCannotReceiveDetachedWork();
     BrightnessSettlingAndStaleFeedback();
     BluetoothPowerAndDeviceReadFailures();
     AudioPresentationKeepsRealEndpoints();
@@ -579,5 +869,7 @@ void TestSystemControls()
     ControlReadbackMustReallySettle();
     NewSliderCancelsExecutingOldTarget();
     CancellationDuringReadbackDiscardsOldState();
+    QueuedCancellationDoesNotWaitForOrReleaseAnotherControl();
+    WirelessNotificationsNeedActualState();
     FreshReadbackOnlyConfirmsTheRequestedTarget();
 }

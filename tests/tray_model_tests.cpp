@@ -233,8 +233,14 @@ int RunTrayModelTests()
         for (unsigned i = 0; i < 2; ++i)
         { popup.event = EVENT_OBJECT_LOCATIONCHANGE; check(placement.Observe(popup, 103 + i).has_value(), "bounded correction allows a menu layout retry"); }
         check(!placement.Observe(popup, 106), "a popup that fights placement is not moved indefinitely");
+        check(placement.Bindings()[0].window == popup.window,
+            "exhausting movement does not discard the concrete menu retention binding");
+        auto secondPopup = popup; secondPopup.window = 2; secondPopup.event = EVENT_OBJECT_SHOW;
+        check(!placement.Observe(secondPopup, 107) && placement.Bindings()[1].window == 2,
+            "a second real menu can be retained without extending the movement budget");
         arm();
         check(!placement.Observe(popup, 102), "location-only events cannot nominate existing windows");
+        check(!placement.Bindings()[0].window, "an old popup cannot acquire retention from location alone");
         popup.event = EVENT_OBJECT_SHOW; popup.process = 100;
         check(!placement.Observe(popup, 102), "another application's popup is never corrected");
         popup.process = 99; popup.style |= WS_CAPTION;
@@ -264,8 +270,11 @@ int RunTrayModelTests()
         const auto lateLayout = placement.Observe(popup, 103);
         check(lateLayout && lateLayout->y == 32,
             "a related new custom menu's final geometry is corrected without requiring a tool-window flag");
+        check(placement.Bindings()[0].window == popup.window,
+            "SHOW followed by final geometry also supplies non-activating menu retention");
         popup.owner = 8;
         check(!placement.Observe(popup, 104), "an owner change invalidates a bound menu before movement");
+        check(!placement.Bindings()[0].window, "an owner change also invalidates menu retention evidence");
         popup.owner = 7;
         check(!placement.Observe(popup, 105), "an invalidated HWND cannot rejoin with location-only events");
         arm(); popup.event = EVENT_OBJECT_SHOW; popup.bounds = {-1900, -1100, -1700, 60};
@@ -281,6 +290,40 @@ int RunTrayModelTests()
         popup.event = EVENT_OBJECT_HIDE; placement.Observe(popup, 103);
         popup.event = EVENT_OBJECT_LOCATIONCHANGE;
         check(!placement.Observe(popup, 104), "a hidden menu loses its location-change binding");
+        check(!placement.Bindings()[0].window, "a hidden menu is absent from retained popup evidence");
+    }
+    {
+        MenuRetentionTracker menu;
+        menu.Arm(100);
+        check(menu.Retain(101, true, MenuForeground::Transition, false) && menu.Armed(),
+            "WM_ACTIVATE without a next HWND cannot dismiss a tray callback before its menu opens");
+        check(menu.Retain(120, true, MenuForeground::Origin, false) && menu.Armed(),
+            "an asynchronous callback may still have the originating panel in foreground");
+        check(menu.Retain(200, true, MenuForeground::TargetProcess, true) &&
+            menu.Retain(60000, true, MenuForeground::TargetProcess, true),
+            "an actual menu remains usable after the discovery deadline");
+        check(!menu.Retain(60001, true, MenuForeground::TargetProcess, false) && !menu.Armed(),
+            "closing the bound menu ends retention instead of keeping an arbitrary app window");
+        menu.Arm(100); menu.Retain(200, true, MenuForeground::TargetProcess, true);
+        check(menu.Retain(201, true, MenuForeground::Origin, false) && !menu.Armed(),
+            "returning to the bar after a menu keeps the panel open without a stale retention ticket");
+        menu.Arm(100); menu.Retain(200, true, MenuForeground::TargetProcess, true);
+        check(menu.Retain(399, true, MenuForeground::Transition, false) &&
+            !menu.Retain(400, true, MenuForeground::Transition, false),
+            "a submenu handoff tolerates a short missing HWND without granting permanent retention");
+        menu.Arm(100);
+        check(!menu.Retain(1600, true, MenuForeground::TargetProcess, false),
+            "an unconfirmed same-process window only receives bounded discovery grace");
+        menu.Arm(100);
+        check(!menu.Retain(101, true, MenuForeground::Unrelated, true),
+            "switching to an unrelated app dismisses even while an old menu is visible");
+        menu.Arm(100);
+        check(!menu.Retain(101, false, MenuForeground::TargetProcess, true),
+            "a destroyed notification target invalidates retained menu evidence");
+        menu.Arm(0xfffffff0u);
+        check(menu.Retain(3, true, MenuForeground::Transition, false) &&
+            !menu.Retain(1484, true, MenuForeground::Transition, false),
+            "retention grace remains finite across the tick-count wrap");
     }
 
     auto state = std::make_unique<SharedState>();

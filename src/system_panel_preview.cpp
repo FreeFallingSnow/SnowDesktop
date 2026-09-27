@@ -47,7 +47,7 @@ struct PreviewState
     std::vector<system_control::Completion> completions;
     std::set<std::string> subscriptions;
     std::vector<std::pair<std::string, std::string>> muteRequests;
-    unsigned scans = 0, closes = 0, reads = 0, trayChanges = 0, nativeControls = 0;
+    unsigned scans = 0, closes = 0, reads = 0, trayChanges = 0, nativeControls = 0, calendarBatches = 0;
     std::set<std::string> requestedDates;
     StatusBarSettings savedTraySettings;
     tray::Snapshot tray;
@@ -239,6 +239,15 @@ SystemPanelSource FixtureSource(const std::shared_ptr<PreviewState>& state)
             "secondary calendar fixture is unavailable");
         return days.front().fullDate;
     };
+    source.calendar.secondaryDates = [state](const std::string& from,const std::string& to) {
+        ++state->calendarBatches;std::map<std::string,std::string> result;
+        if(!state->agenda)return result;
+        calendar::DisplayPreferences preferences;preferences.enabled=true;
+        for(const auto& day:calendar::Annotate(from,to,preferences,Locale::Instance().GetEffectiveLanguage()))
+            if(day.calendarAvailable)result[day.date]=day.fullDate;
+        return result;
+    };
+    source.calendar.secondaryRevision = [state] {return state->agenda?std::string("secondary-on"):std::string("secondary-off");};
     source.calendar.events = [state](const std::string& date) {
         ++state->reads; state->requestedDate = date;state->requestedDates.insert(date);
         std::vector<calendar::CalendarEvent> events;
@@ -665,7 +674,7 @@ void CheckPendingActions()
         if(wifi&&!started.empty())
         {
             const auto scans=started.size();
-            Require(Node(model.View(),"title").detail==_LW("controlCenter.working")&&!Node(model.View(),"wifi.scan").enabled&&
+            Require(Node(model.View(),"title").detail.empty()&&Node(model.View(),"wifi.scan").text==_LW("controlCenter.working")&&!Node(model.View(),"wifi.scan").enabled&&
                 !model.Invoke("wifi.scan")&&started.size()==scans,"page-entry scan lacked feedback or allowed a duplicate scan");
             complete(started.back().id,true);
         }
@@ -680,11 +689,16 @@ void CheckPendingActions()
         Require(model.Invoke(command)&&started.size()==count+1,"connect button did not start exactly one device task");
         const auto task=started.back().id;
         Require(!Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.working")&&
-            Node(model.View(),row).detail.find(_LW("controlCenter.working"))!=std::wstring::npos&&
+            Node(model.View(),row).detail.find(_LW("controlCenter.working"))==std::wstring::npos&&Node(model.View(),"title").detail.empty()&&
             model.View().height==height&&!model.View().Find("status.pending"),
             "connect input did not show immediate in-place feedback or shifted the whole device list");
         Require(!model.Invoke(command)&&started.size()==count+1,"repeated clicks dispatched duplicate connection tasks");
         model.Refresh();Require(!Node(model.View(),command).enabled,"ordinary refresh cleared the in-flight device guard");
+        Require(model.Invoke(row)&&!model.View().Find(command)&&Node(model.View(),row).detail==_LW("controlCenter.working"),
+            "collapsing an in-flight device hid all pending feedback");
+        expand();Require(Node(model.View(),command).text==_LW("controlCenter.working")&&
+            Node(model.View(),row).detail.find(_LW("controlCenter.working"))==std::wstring::npos,
+            "re-expanded device duplicated pending text instead of restoring its button feedback");
         complete(task,false);
         Require(Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.connect")&&
             model.View().Find("status"),"failed connection did not restore the true device state and actionable failure");
@@ -694,7 +708,8 @@ void CheckPendingActions()
             !model.View().Find("status"),"successful connection did not use the latest device readback");
         Require(model.Invoke(command),"disconnect fixture could not start");const auto stale=started.back().id;
         model.Select("audio");Require(!model.View().Find("status.pending"),"another page inherited unrelated pending feedback");
-        model.Select(page);expand();
+        const auto beforeReturn=started.size();model.Select(page);expand();
+        Require(started.size()==beforeReturn,"returning to an adapter with an in-flight connection queued an automatic scan");
         const auto returningCount=started.size();
         Require(!Node(model.View(),command).enabled&&!model.Invoke(command)&&started.size()==returningCount,
             "leaving and returning to the page bypassed the in-flight device guard");
@@ -705,13 +720,13 @@ void CheckPendingActions()
         for(const auto& scanTask:started)if(scanTask.name=="network.wifi.scan")complete(scanTask.id,true);
         const auto radio=std::string("radio:")+page;const auto actualRadio=Node(model.View(),radio).selected;
         const auto radioHeight=model.View().height;
-        Require(model.Invoke(radio)&&Node(model.View(),"title").detail==_LW("controlCenter.working")&&
+        Require(model.Invoke(radio)&&Node(model.View(),"title").detail.empty()&&Node(model.View(),radio).busy&&
             Node(model.View(),radio).selected==actualRadio&&!Node(model.View(),radio).enabled&&model.View().height==radioHeight,
             "compact switch lacked immediate visible feedback, shifted layout or optimistically changed device state");
         const auto radioTask=started.back().id;const auto radioCount=started.size();
         Require(!model.Invoke(radio)&&started.size()==radioCount,"compact switch dispatched a duplicate radio task");
         radioOn=false;complete(radioTask,true);
-        Require(Node(model.View(),radio).enabled&&!Node(model.View(),radio).selected&&Node(model.View(),"title").detail.empty(),
+        Require(Node(model.View(),radio).enabled&&!Node(model.View(),radio).selected&&!Node(model.View(),radio).busy&&Node(model.View(),"title").detail.empty(),
             "completed compact switch retained pending feedback or failed to show actual radio readback");
         radioOn=true;model.Refresh(); // A later external re-enable makes connection available again.
         Require(model.Invoke(command),"reappeared device could not start a new task");
@@ -733,7 +748,8 @@ void CheckCalendarNames(const ui::Scene& scene)
         const auto found=std::find_if(nodes.begin(),nodes.end(),[&](const auto& n){return input.Identity(n.key)==id;});
         Require(found!=nodes.end(),"calendar date is missing from UIA");return found->name;
     };
-    Require(name(september)=="2026-09-01"&&name(october)=="2026-10-01",
+    Require(name(september).starts_with("2026-09-01")&&name(october).starts_with("2026-10-01")&&
+        Node(scene,september).tooltip==Node(scene,september).accessibilityLabel,
         "same-number calendar days lack distinct full year/month/date accessibility names");
 }
 
@@ -805,14 +821,15 @@ void CheckCalendarResponsive()
         model.Refresh(300,width);model.Scroll(-model.MaximumScroll());CheckLayout(model.View());
         const auto& scene=model.View();Require(scene.width<=width,"calendar exceeded its monitor width budget");
         for(const auto& node:scene.nodes)Require(node.bounds.left>=0&&node.bounds.right<=width,"responsive calendar content overflowed horizontally");
-        const auto month=Node(scene,"calendar.month").bounds,today=Node(scene,"calendar.day").bounds,agenda=Node(scene,"calendar.selected").bounds;
-        if(width>=820)Require(today.right<=month.left&&agenda.left>Node(scene,"date:2026-09-27").bounds.right,"wide calendar did not use today/month/agenda columns");
-        else if(width>=560)Require(today.right<=month.left&&agenda.top>Node(scene,"date:2026-09-30").bounds.bottom,"medium calendar did not move agenda below its month");
-        else Require(month.top>today.bottom&&agenda.top>month.bottom,"narrow calendar did not stack its content");
+        const auto month=Node(scene,"calendar.month").bounds,agenda=Node(scene,"calendar.selected").bounds;
+        Require(!scene.Find("calendar.day")&&!scene.Find("calendar.todayLabel")&&month.left==16&&month.top==16,
+            "calendar retained the removed today summary or its reserved space");
+        if(width>=560)Require(agenda.left>Node(scene,"date:2026-09-27").bounds.right&&agenda.top==month.top,"wide calendar did not use month/agenda columns");
+        else Require(agenda.top>Node(scene,"date:2026-09-30").bounds.bottom,"narrow calendar did not move its agenda below the month");
         Require(model.MaximumScroll()>0,"short calendar viewport lost scroll access to agenda");
         model.Reveal("calendar.manage");const auto& manage=Node(model.View(),"calendar.manage");
         Require(!HasArea(manage.clip)||(manage.bounds.top>=manage.clip.top&&manage.bounds.bottom<=manage.clip.bottom),"calendar action could not be revealed in a short viewport");
-        if(width>=820)
+        if(width>=560)
         {
             const auto originalDay=Node(model.View(),"date:2026-09-27").bounds;
             model.Scroll(model.MaximumScroll());const auto movedDay=Node(model.View(),"date:2026-09-27").bounds;
@@ -825,6 +842,20 @@ void CheckCalendarResponsive()
     }
     state->agenda=false;model.Refresh(300,900);
     Require(model.MaximumScroll()==0&&!model.View().Find("scrollbar"),"a fixed month created scrolling for an empty short agenda");
+    const auto& empty=Node(model.View(),"calendar.empty");const auto viewport=model.ScrollViewport();
+    Require(empty.centered&&empty.bounds.left==Node(model.View(),"calendar.selected").bounds.left&&
+        empty.bounds.right==model.View().width-16&&empty.bounds.top==viewport.top&&empty.bounds.bottom==viewport.bottom,
+        "empty agenda is not centered in the visible content area to the right of the month");
+    state->agenda=true;model.Refresh(400,900);const auto batches=state->calendarBatches;
+    const auto fullSecondary=Node(model.View(),"calendar.selectedSecondary").text;
+    Require(Node(model.View(),"date:2026-09-26").tooltip.find(fullSecondary)!=std::wstring::npos,
+        "date hover omitted the full secondary calendar date");
+    model.Refresh(400);Require(model.Invoke("date:2026-09-27")&&state->calendarBatches==batches,
+        "unchanged month or selection rebuilt the same secondary calendar annotations");
+    state->agenda=false;model.Refresh(400);
+    Require(state->calendarBatches==batches+1&&!model.View().Find("calendar.selectedSecondary")&&
+        Node(model.View(),"date:2026-09-27").tooltip.find(L'\n')==std::wstring::npos,
+        "changed calendar preferences retained cached secondary date text");
     for(const auto* date:{"0001-01-01","9999-12-31"})
     {
         auto boundary=FixtureSource(std::make_shared<PreviewState>());boundary.calendar.today=[date]{return date;};
@@ -837,7 +868,7 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     const native_component_preview::Request& request, const ui::Scene& scene,
     const PersonalizationSettings& appearance, const SystemPanel::Background& background,
     const widget_preview::Wallpaper& stage, int left, int top,const ui::Palette* palette=nullptr,
-    std::string_view focused={})
+    std::string_view focused={},std::string_view hovered={})
 {
     const float scale = static_cast<float>(request.dpi) / 96.f;
     ComPtr<ID2D1DeviceContext> context; Require(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&context));
@@ -860,7 +891,7 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
                 static_cast<LONG>(std::lround(card.right*scale)),static_cast<LONG>(std::lround(card.bottom*scale))},appearance,scale);
     context->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*
         D2D1::Matrix3x2F::Translation(static_cast<float>(left),static_cast<float>(top)));
-    const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance),{},focused);
+    const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance),hovered,focused);
     const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
     ComPtr<ID2D1Bitmap1> readback;
     Require(context->CreateBitmap(size,nullptr,0,D2D1::BitmapProperties1(
@@ -873,6 +904,29 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
             mapped.bits+static_cast<std::size_t>(y)*mapped.pitch,static_cast<std::size_t>(request.canvasWidth)*4);
     Require(readback->Unmap());
     return pixels;
+}
+
+void CheckBatteryStates(ID2D1Device* device, IDWriteFactory* text,
+    native_component_preview::Request request,const PersonalizationSettings& appearance,const SystemPanel::Background& background)
+{
+    request.canvasWidth=240;request.canvasHeight=48;request.dpi=96;request.transparent=request.contentOnly=true;
+    auto state=std::make_shared<PreviewState>();auto source=FixtureSource(state);const auto read=source.current;
+    double percent=100;bool charging=true,known=true;
+    source.current=[&](auto topic){auto result=read(topic);if(result&&topic=="system.power.plans"){
+        result->value.object["batteryPresent"]=j::Boolean(known);result->value.object["batteryPercent"]=j::Number(percent);
+        result->value.object["charging"]=j::Boolean(charging);result->value.object["onAC"]=j::Boolean(true);}return result;};
+    SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
+    const auto capture=[&]{model.Refresh();ui::Scene scene;scene.width=240;scene.height=48;auto battery=Node(model.View(),"battery");battery.bounds={0,0,240,48};scene.nodes.push_back(battery);return Render(device,text,request,scene,appearance,background,{},0,0);};
+    const auto filling=capture();const auto chargingTip=Node(model.View(),"battery").tooltip;
+    Require(Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph,"100% while charging lost its charging state");
+    charging=false;const auto full=capture();
+    Require(!Node(model.View(),"battery").charging&&Node(model.View(),"battery").positiveGlyph&&
+        Node(model.View(),"battery").tooltip!=chargingTip&&full!=filling,"full battery remained indistinguishable from charging");
+    const auto green=[](const auto& pixels){return std::count_if(pixels.begin(),pixels.end(),[](auto p){return ((p>>8)&255)>((p>>16)&255)+30&&((p>>8)&255)>(p&255)+30;});};
+    Require(green(full)>8&&green(filling)>8,"charging/full battery did not render its green fill");
+    percent=80;const auto limited=capture();
+    Require(!Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&limited!=full,"AC charge limit was mislabeled as full/charging");
+    known=false;capture();Require(Node(model.View(),"battery").text==L"—"&&!Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph,"unknown battery rendered a confirmed level or state");
 }
 
 void CheckFocusModality(ID2D1Device* device, IDWriteFactory* text,
@@ -911,6 +965,43 @@ void CheckFocusModality(ID2D1Device* device, IDWriteFactory* text,
     scene.nodes[0].enabled=false;input.Sync(scene);
     Require(input.Focused().empty()&&input.VisibleFocus().empty()&&input.Key(scene,VK_RETURN,false).kind==ui::InputResult::Kind::None,
         "a disabled target retained visible focus or keyboard activation");
+}
+
+void CheckDeviceCardHover(ID2D1Device* device,IDWriteFactory* text,
+    native_component_preview::Request request,const PersonalizationSettings& appearance,const SystemPanel::Background& background)
+{
+    request.canvasWidth=440;request.canvasHeight=140;request.dpi=96;request.transparent=request.contentOnly=true;
+    for(const auto* page:{"wifi","bluetooth"})
+    {
+        const bool wifi=std::string_view(page)=="wifi";auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        SystemPanelModel model(FixtureSource(state),{},StatusBarAction::ControlCenter);model.Select(page);
+        const std::string suffix=wifi?"network-preview":"bluetooth-device-preview";
+        const std::string row=std::string(page)+(wifi?".network:":".device:")+suffix;
+        const std::string card=std::string(page)+".card:"+suffix,button=std::string(page)+".connect:"+suffix;
+        Require(model.Invoke(row),"card hover fixture did not expand");
+        ui::Scene scene;scene.width=440;scene.height=140;const float shift=10-Node(model.View(),card).bounds.top;
+        for(const auto& node:model.View().nodes)if(node.hoverGroup==card)
+        {
+            auto copy=node;copy.bounds.top+=shift;copy.bounds.bottom+=shift;copy.clip={};scene.nodes.push_back(std::move(copy));
+        }
+        const auto* gap=scene.Hit({20,90},false);
+        Require(gap&&gap->id==card,"expanded card padding lost its hover identity");
+        ui::Input input;input.Sync(scene);Require(input.Focus(row)&&input.Focus(button)&&!input.Focus(card),
+            "shared card hover changed row/button accessibility identities or made decoration focusable");
+        const auto idle=Render(device,text,request,scene,appearance,background,{},0,0);
+        const auto overRow=Render(device,text,request,scene,appearance,background,{},0,0,nullptr,{},row);
+        const auto overButton=Render(device,text,request,scene,appearance,background,{},0,0,nullptr,{},button);
+        const auto overGap=Render(device,text,request,scene,appearance,background,{},0,0,nullptr,{},card);
+        const std::size_t upper=30*440+20,lower=90*440+20;
+        Require(overRow[lower]!=idle[lower]&&overRow[upper]==overRow[lower]&&
+            overRow[lower]==overButton[lower]&&overRow[lower]==overGap[lower],
+            "expanded device hover highlighted only its title row or lost highlight over its actions/padding");
+        // Removing the production group must recreate the old title-only
+        // result, so a weak pixel oracle cannot pass this regression.
+        for(auto& node:scene.nodes)node.hoverGroup.clear();
+        const auto old=Render(device,text,request,scene,appearance,background,{},0,0,nullptr,{},row);
+        Require(old[lower]==idle[lower]&&old[lower]!=overRow[lower],"card hover oracle cannot distinguish the original partial highlight");
+    }
 }
 
 void CheckSplitOpacity(ID2D1Device* device, IDWriteFactory* text,
@@ -991,6 +1082,10 @@ void CheckChartAndSwitchPixels(ID2D1Device* device,IDWriteFactory* text,
     Require(alpha(100,72)>0&&alpha(100,72)<80&&alpha(100,64)>80,"resource chart lost its light area fill or obscured its trace");
     Require(alpha(24,110)==0&&alpha(136,110)==0&&alpha(30,126)>80&&alpha(162,126)>80,
         "detail switches rendered as full tiles or omitted their state-positioned thumbs");
+    scene.nodes[3].busy=true;scene.nodes[3].enabled=false;
+    const auto busy=Render(device,text,request,scene,appearance,background,{},0,0);
+    Require(!scene.nodes[3].selected&&busy[126*240+40]!=pixels[126*240+40],
+        "pending compact switch lacked a visible progress cue or changed its true checked state");
     ui::Scene rounded;rounded.width=240;rounded.height=160;rounded.cards={{0,0,240,160}};
     ui::Node full;full.id="full-chart";full.role=ui::Role::Chart;full.bounds={0,0,240,90};full.fillPaths=true;full.paths={{{0,0},{240,0}}};rounded.nodes.push_back(std::move(full));
     auto roundedAppearance=appearance;roundedAppearance.cornerRadius=72;
@@ -1085,11 +1180,12 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             if (calendarPanel)
             {
                 state->requestedDates.clear();
-                Require(model.Invoke("date:2026-09-27") && Node(model.View(),"calendar.day").text == L"26" &&
+                Require(model.Invoke("date:2026-09-27") && !model.View().Find("calendar.day") &&
                     Node(model.View(),"calendar.selected").text==L"2026-09-27"&&Node(model.View(),"date:2026-09-27").outlined&&
                     Node(model.View(),"date:2026-09-26").selected&&state->requestedDates==std::set<std::string>{"2026-09-27","2026-09-28","2026-09-29"},
                     "calendar selection changed today or failed to update its selected and nearby agenda");
-                Require(model.Invoke("calendar.today") && Node(model.View(),"calendar.day").text == L"26",
+                Require(model.Invoke("calendar.today") && Node(model.View(),"calendar.selected").text == L"2026-09-26"&&
+                    Node(model.View(),"date:2026-09-26").selected&&Node(model.View(),"date:2026-09-26").outlined,
                     "calendar today did not restore the fixed fixture date");
             }
             const auto& scene = model.View(); CheckLayout(scene);
@@ -1150,6 +1246,8 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 CheckPendingActions();
                 CheckFeedbackLayouts();
                 CheckFocusModality(device,text,request,appearance,background);
+                CheckBatteryStates(device,text,request,appearance,background);
+                CheckDeviceCardHover(device,text,request,appearance,background);
                 CheckSplitOpacity(device,text,request,appearance,background);
                 CheckSelectedDetailContrast(device,text,request,appearance,background);
                 CheckControlInput(model,state,available);

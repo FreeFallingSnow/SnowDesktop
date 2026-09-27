@@ -673,7 +673,8 @@ std::filesystem::path CreateEnvironmentFixture(
   "author": "SnowDesktop",
   "license": "MIT",
   "defaultSize": {"columns": 2, "rows": 1},
-  "permissions": ["system.performance.read", "audio.devices.read", "audio.input.read", "system.display.read", "network.wifi.read", "bluetooth.read", "system.power.read"],
+  "permissions": ["system.performance.read", "audio.devices.read", "audio.input.read", "system.display.read", "network.wifi.read", "bluetooth.read", "system.power.read",
+    "audio.output.control", "audio.devices.control", "audio.input.control", "system.display.control", "network.wifi.control", "bluetooth.control", "system.power.control"],
   "requiredFeatures": [
     "draw.immediate",
     "draw.marqueeText",
@@ -687,7 +688,9 @@ std::filesystem::path CreateEnvironmentFixture(
     "data.system.cpu",
     "data.system.gpu", "data.system.gpu.details",
     "data.audio.devices", "data.audio.input.volume", "data.system.display.brightness",
-    "data.network.wifi", "data.bluetooth.devices", "data.system.power.plans"
+    "data.network.wifi", "data.bluetooth.devices", "data.system.power.plans",
+    "task.audio.devices.control", "task.audio.input.control", "task.system.display.control",
+    "task.network.wifi.control", "task.bluetooth.control", "task.system.power.control", "task.system.power.action"
   ]
 })json");
     Write(source / L"main.lua", R"lua(
@@ -794,6 +797,63 @@ return widget.define({
         local power = deviceValue("system.power.plans")
         assert(power.activePlanId == power.plans[1].id and power.onAC == false and power.charging == false,
             "power preview must not read the current plan")
+        -- Real lua_TaskStart parsing runs even before the broker rejects this
+        -- setup callback's missing host gesture. Never relax that preview gate.
+        local controls = {
+            {"audio.output.selectDevice", {endpointId = "preview-output"}},
+            {"audio.input.selectDevice", {endpointId = "preview-input"}},
+            {"audio.input.setVolume", {volume = 2}},
+            {"audio.input.setMute", {muted = false}},
+            {"system.display.setBrightness", {monitorId = "preview-monitor", brightness = 75}},
+            {"network.wifi.setRadio", {interfaceId = "preview-interface", enabled = false}},
+            {"network.wifi.scan", {interfaceId = "preview-interface"}},
+            {"network.wifi.connect", {interfaceId = "preview-interface", networkId = "preview-network"}},
+            {"network.wifi.disconnect", {interfaceId = "preview-interface"}},
+            {"network.wifi.forget", {interfaceId = "preview-interface", profileName = "preview-profile"}},
+            {"bluetooth.setRadio", {radioId = "preview-radio", enabled = true}},
+            {"bluetooth.connect", {deviceId = "preview-device"}},
+            {"bluetooth.disconnect", {deviceId = "preview-device"}},
+            {"system.power.setPlan", {planId = "preview-plan"}},
+            {"system.power.setMode", {mode = "efficiency"}},
+            {"system.power.lock"}, {"system.power.sleep"},
+            {"system.power.restart"}, {"system.power.shutdown"},
+            {"audio.output.setVolume", {volume = -1}},
+            {"audio.output.setMute", {muted = true}},
+        }
+        for _, operation in ipairs(controls) do
+            local capability = system.capabilities(operation[1])
+            assert(capability.hostAvailable and capability.requiresTrustedGesture,
+                "missing control capability or gesture gate: " .. operation[1])
+            local taskId, taskError = task.start(operation[1], operation[2])
+            local expected = capability.permission == "system.power.action" and "permissionDenied" or "userGestureRequired"
+            assert(taskId == nil and taskError == expected,
+                "setup must not invoke devices or prompts: " .. operation[1] .. ": " .. tostring(taskError))
+        end
+        local invalid = {
+            {"audio.output.selectDevice", {endpointId = ""}},
+            {"audio.input.selectDevice", {endpointId = 42}},
+            {"audio.input.setVolume", {volume = "0.5"}},
+            {"audio.input.setVolume", {volume = 0/0}},
+            {"audio.input.setMute", {muted = 1}},
+            {"system.display.setBrightness", {monitorId = "m", brightness = 101}},
+            {"network.wifi.setRadio", {interfaceId = "w", enabled = "false"}},
+            {"network.wifi.scan", {interfaceId = "w", enabled = true}},
+            {"network.wifi.connect", {interfaceId = "w", networkId = "n", profileName = "p"}},
+            {"network.wifi.connect", {interfaceId = "w", ssid = "network"}},
+            {"network.wifi.connect", {interfaceId = "w", ssid = string.rep("x", 33), security = "open"}},
+            {"network.wifi.connect", {interfaceId = "w", ssid = "n", security = "enterprise"}},
+            {"network.wifi.connect", {interfaceId = "w", networkId = "n", password = "must-not-leave-lua"}},
+            {"network.wifi.forget", {interfaceId = "w", profileName = "p", hostConfirmed = true}},
+            {"bluetooth.connect", {deviceId = "d", enabled = true}},
+            {"system.power.setMode", {mode = "turbo"}},
+            {"system.power.shutdown", {force = true}},
+            {"audio.output.setVolume", {volume = "0.5"}},
+            {"audio.output.setMute", {muted = 1}},
+        }
+        for _, operation in ipairs(invalid) do
+            assert(not pcall(task.start, operation[1], operation[2]),
+                "invalid control arguments reached the broker: " .. operation[1])
+        end
         return {}
     end,
     render = function()
@@ -1125,10 +1185,10 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
             auto bitmap = ReadPng(output / (agenda ? L"calendar-panel-agenda.png" : L"calendar-panel-empty.png"));
             const auto bounds = PanelPixels(bitmap);
             const double scale = dark ? 1.5 : 1.;
-            const double calendarWidth = dark ? 952. / scale : 900.;
+            const double calendarWidth = dark ? 952. / scale : 720.;
             Check(FitsNativePanelCanvas(bitmap, bounds), "calendar remains centered inside its independent padded canvas");
             Check(HasNativePanelSize(bounds, scale, calendarWidth, 300, 952. / scale),
-                "calendar uses a wide three-column panel and adapts to the independent available width");
+                "calendar uses a compact month-and-agenda panel and adapts to the independent available width");
             Check(HasFourRoundedCorners(bitmap, bounds), "calendar panel preserves all four corners including the bottom edge");
             if (!agenda) emptyHeight = bounds.bottom - bounds.top;
             else Check(bounds.bottom - bounds.top > emptyHeight + 16, "agenda rows contribute to actual panel measurement");

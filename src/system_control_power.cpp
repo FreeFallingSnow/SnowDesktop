@@ -1,4 +1,5 @@
 #include "system_control_windows.h"
+#include "system_power_status.h"
 #include <powrprof.h>
 #include <mutex>
 #include <vector>
@@ -81,11 +82,12 @@ public:
         SYSTEM_POWER_STATUS battery{};
         if (GetSystemPowerStatus(&battery))
         {
-            value.object["batteryPresent"] = json::Boolean(battery.BatteryFlag != 255 && (battery.BatteryFlag & 128) == 0);
-            if (battery.BatteryFlag != 255 && (battery.BatteryFlag & 128) == 0)
-                value.object["charging"] = json::Boolean((battery.BatteryFlag & 8) != 0);
-            if (battery.ACLineStatus != 255) value.object["onAC"] = json::Boolean(battery.ACLineStatus == 1);
-            if (battery.BatteryLifePercent != 255) value.object["batteryPercent"] = json::Number(battery.BatteryLifePercent);
+            const auto state = DecodeSystemPowerStatus(battery.BatteryFlag,
+                battery.ACLineStatus, battery.BatteryLifePercent, battery.SystemStatusFlag);
+            if (state.batteryPresent) value.object["batteryPresent"] = json::Boolean(*state.batteryPresent);
+            if (state.charging) value.object["charging"] = json::Boolean(*state.charging);
+            if (state.onAC) value.object["onAC"] = json::Boolean(*state.onAC);
+            if (state.batteryPercent) value.object["batteryPercent"] = json::Number(*state.batteryPercent);
         }
         return {{"system.power.plans", Value(std::move(value))}};
     }

@@ -3,6 +3,7 @@
 #include "animation_settings.h"
 #include "popup_animation_rules.h"
 #include "status_bar_shell_shortcut.h"
+#include "status_bar_activation.h"
 
 #include <windows.h>
 
@@ -51,6 +52,73 @@ bool PumpMessagesUntil(Predicate done, DWORD timeoutMilliseconds = 3000)
         }
     }
     return done();
+}
+
+constexpr UINT kBarContinuation = WM_APP + 45;
+struct BarContinuationFixture
+{
+    snowdesktop::StatusBarActivationQueue queue;
+    int messages = 0;
+};
+LRESULT CALLBACK BarContinuationProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    auto* state = reinterpret_cast<BarContinuationFixture*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE)
+    {
+        state = static_cast<BarContinuationFixture*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+    }
+    if (message == kBarContinuation && state)
+    {
+        ++state->messages;
+        if (auto callback = state->queue.Take()) callback();
+        return 0;
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+void TestStatusBarContinuationDispatch()
+{
+    // No desktop/Shell surface: exercise the production single-slot queue on a
+    // real message-only HWND and preserve the scheduler's reentrancy boundary.
+    constexpr wchar_t name[] = L"SnowDesktop.StatusBarContinuationTest";
+    WNDCLASSW cls{}; cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = name; cls.lpfnWndProc = BarContinuationProc;
+    Check(RegisterClassW(&cls) != 0, "bar continuation fixture registers");
+    BarContinuationFixture state;
+    const HWND window = CreateWindowExW(0, name, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
+        nullptr, cls.hInstance, &state);
+    Check(window != nullptr, "bar continuation fixture is message-only");
+    snowdesktop::UiAnimationScheduler scheduler;
+    bool scheduling = false;
+    int delivered = 0, nestedDeadline = 0;
+    scheduler.ScheduleOnce(0, [&](auto) {
+        scheduling = true;
+        Check(state.queue.Post(window, kBarContinuation, [&] {
+            Check(!scheduling, "menu activation never runs in its scheduling callback");
+            ++delivered;
+            scheduler.ScheduleOnce(0, [&](auto) { ++nestedDeadline; });
+            scheduler.DispatchDue();
+        }), "scheduler posts activation to the bar HWND");
+        Check(delivered == 0, "posting does not synchronously enter a modal surface");
+        scheduling = false;
+    });
+    scheduler.DispatchDue();
+    Check(PumpMessagesUntil([&] { return delivered == 1; }) && nestedDeadline == 1,
+        "window-dispatched activation leaves the scheduler available to a nested menu loop");
+    state.queue.Post(window, kBarContinuation, [&] { delivered += 10; });
+    state.queue.Post(window, kBarContinuation, [&] { delivered += 100; });
+    Check(PumpMessagesUntil([&] { return state.messages == 2; }) && delivered == 101,
+        "rapid undelivered requests coalesce to one latest continuation");
+    state.queue.Post(window, kBarContinuation, [&] { delivered += 1000; });
+    state.queue.Cancel();
+    Check(PumpMessagesUntil([&] { return state.messages == 3; }) && delivered == 101,
+        "hiding cancels the callback even though its native message is already queued");
+    state.queue.Post(window, kBarContinuation, [&] { ++delivered; });
+    Check(PumpMessagesUntil([&] { return delivered == 102; }),
+        "a later explicit click after cancellation remains a new deliverable action");
+    DestroyWindow(window);
+    UnregisterClassW(name, cls.hInstance);
 }
 
 void TestStatusBarShellShortcuts()
@@ -152,6 +220,7 @@ void TestStatusBarShellShortcuts()
 
 int main()
 {
+    TestStatusBarContinuationDispatch();
     TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&

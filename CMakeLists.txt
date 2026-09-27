@@ -371,6 +371,7 @@ set(SNOWDESKTOP_SOURCES
     src/native_ui_scene.cpp
     src/native_ui_scene.h
     src/system_panel.cpp
+    src/system_control_prompt.cpp
     src/system_panel.h
     src/system_panel_model.cpp
     src/system_panel_model.h
@@ -454,6 +455,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget_notification_schedule_store.cpp
     src/widget_media_task_executor.cpp
     src/widget_audio_output_task_executor.cpp
+    src/widget_system_control_tasks.cpp
     src/widget_clipboard_task_executor.cpp
     src/widget_filesystem_handle_store.cpp
     src/widget_filesystem_task_executor.cpp
@@ -1355,6 +1357,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_system_data_provider_tests.cpp
             tests/system_controls_tests.cpp
+            src/widget_system_control_tasks.cpp
             src/widget_system_data_provider.cpp
             src/widget_gpu_sampler.cpp
             ${SNOWDESKTOP_SYSTEM_CONTROL_SOURCES}

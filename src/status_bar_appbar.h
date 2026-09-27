@@ -3,6 +3,7 @@
 #include <shellapi.h>
 #include <algorithm>
 #include <functional>
+#include <optional>
 
 namespace snowdesktop
 {
@@ -95,5 +96,43 @@ inline bool StatusBarFullscreenCandidate(LONG_PTR style, LONG_PTR extendedStyle,
     // windows do not own the monitor's full-screen presentation.
     return !shellWindow && !(extendedStyle & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) &&
         !(maximized && (style & WS_CAPTION) == WS_CAPTION);
+}
+
+// Shared by the production fullscreen observer and its lifecycle regression.
+// An explicit Dock summon may activate our input proxy and minimize an
+// exclusive-fullscreen application. That focus handoff must not reveal the
+// bar. Only retain the sampled source during this Dock's own interaction;
+// closing the Dock, switching applications or restoring the source to an
+// ordinary window ends the retention. nullopt is an observation failure.
+class StatusBarFullscreenState final
+{
+public:
+    bool Observe(std::optional<HWND> source, bool dockPromoted,
+        bool foregroundOwned, bool retainedSourceEligible)
+    {
+        if (!dockPromoted || !foregroundOwned || !retainedSourceEligible)
+            dockSource_ = nullptr;
+        if (source) source_ = *source;
+        return source_ != nullptr || dockSource_ != nullptr;
+    }
+    void BeginDockReveal() { if (source_) dockSource_ = source_; }
+    HWND DockSource() const { return dockSource_; }
+    HWND Source() const { return source_ ? source_ : dockSource_; }
+private:
+    HWND source_ = nullptr;
+    HWND dockSource_ = nullptr;
+};
+
+inline void ConstrainHiddenStatusBarPosition(bool hidden, WINDOWPOS& position)
+{
+    if (!hidden) return;
+    position.flags = (position.flags & ~SWP_SHOWWINDOW) | SWP_HIDEWINDOW | SWP_NOACTIVATE;
+    if (!(position.flags & SWP_NOZORDER)) position.hwndInsertAfter = HWND_NOTOPMOST;
+}
+
+inline bool StatusBarOwnsPointer(bool available, RECT client, RECT mergedDock, POINT point)
+{
+    return available && PtInRect(&client, point) &&
+        (IsRectEmpty(&mergedDock) || !PtInRect(&mergedDock, point));
 }
 }

@@ -893,6 +893,34 @@ std::filesystem::path FindSourceRoot()
     return {};
 }
 
+struct ControlTaskExpectation
+{
+    const char* name;
+    const char* permission;
+    const char* arguments;
+};
+constexpr ControlTaskExpectation kControlTasks[] = {
+    {"audio.output.selectDevice", "audio.devices.control", "SnowAudioDeviceArguments"},
+    {"audio.input.selectDevice", "audio.devices.control", "SnowAudioDeviceArguments"},
+    {"audio.input.setVolume", "audio.input.control", "SnowAudioInputVolumeArguments"},
+    {"audio.input.setMute", "audio.input.control", "SnowAudioInputMuteArguments"},
+    {"system.display.setBrightness", "system.display.control", "SnowDisplayBrightnessArguments"},
+    {"network.wifi.setRadio", "network.wifi.control", "SnowWifiRadioArguments"},
+    {"network.wifi.scan", "network.wifi.control", "SnowWifiInterfaceArguments"},
+    {"network.wifi.connect", "network.wifi.control", "SnowWifiConnectArguments"},
+    {"network.wifi.disconnect", "network.wifi.control", "SnowWifiInterfaceArguments"},
+    {"network.wifi.forget", "network.wifi.control", "SnowWifiForgetArguments"},
+    {"bluetooth.setRadio", "bluetooth.control", "SnowBluetoothRadioArguments"},
+    {"bluetooth.connect", "bluetooth.control", "SnowBluetoothDeviceArguments"},
+    {"bluetooth.disconnect", "bluetooth.control", "SnowBluetoothDeviceArguments"},
+    {"system.power.setPlan", "system.power.control", "SnowPowerPlanArguments"},
+    {"system.power.setMode", "system.power.control", "SnowPowerModeArguments"},
+    {"system.power.lock", "system.power.action", nullptr},
+    {"system.power.sleep", "system.power.action", nullptr},
+    {"system.power.restart", "system.power.action", nullptr},
+    {"system.power.shutdown", "system.power.action", nullptr},
+};
+
 void TestSystemCapabilityContract()
 {
     const auto functions =
@@ -901,6 +929,30 @@ void TestSystemCapabilityContract()
         snowdesktop::widget_api::SystemDataTopicContracts();
     const auto tasks = snowdesktop::widget_api::SystemTaskContracts();
     Check(functions.size() == 15, "v2 system function catalog must be frozen");
+    for (const auto& expected : kControlTasks)
+    {
+        const auto match = std::find_if(tasks.begin(), tasks.end(), [&](const auto& entry) {
+            return std::string_view(entry.name) == expected.name;
+        });
+        Check(match != tasks.end() && std::string_view(match->requiredPermission) == expected.permission &&
+            std::string_view(match->feature) == std::string("task.") + expected.permission &&
+            match->requiresTrustedGesture && match->maximumPerInstance ==
+                (std::string_view(expected.name)=="audio.input.setVolume"||std::string_view(expected.name)=="system.display.setBrightness"?4u:1u) &&
+            match->preview == snowdesktop::widget_api::SystemCapabilityPreview::NoSideEffects &&
+            std::string_view(match->resultType) == "SnowAcceptedTaskValue" &&
+            (expected.arguments ? match->argumentsType && std::string_view(match->argumentsType) == expected.arguments : !match->argumentsType),
+            "each shared control needs its independent grant, feature, strict arguments, gesture and preview boundary");
+    }
+    for (const auto* oldName : {"audio.output.setVolume", "audio.output.setMute"})
+    {
+        const auto match = std::find_if(tasks.begin(), tasks.end(), [&](const auto& entry) {
+            return std::string_view(entry.name) == oldName;
+        });
+        Check(match != tasks.end() && std::string_view(match->requiredPermission) == "audio.output.control" &&
+            std::string_view(match->feature) == "task.audio.output.control" && match->requiresTrustedGesture &&
+            std::string_view(match->resultType) == "SnowAudioOutputTaskValue",
+            "adding shared controls must preserve legacy output task grants and result types");
+    }
     // Device discovery must not inherit unrelated audio-output or internet grants.
     for (const auto& [name, permission] : std::initializer_list<std::pair<std::string_view, std::string_view>>{
         {"audio.devices", "audio.devices.read"}, {"audio.input.volume", "audio.input.read"},
@@ -1055,6 +1107,28 @@ void TestSystemCapabilityContract()
     snowdesktop::widget_api::RegisterLibrary(
         state, "system", systemFunctions, 2);
 
+    for (const auto& expected : kControlTasks)
+    {
+        lua_getglobal(state, "system");
+        lua_getfield(state, -1, "capabilities");
+        lua_pushstring(state, expected.name);
+        Check(lua_pcall(state, 1, 1, 0) == LUA_OK && lua_istable(state, -1),
+            "shared control must resolve through the public capability query");
+        lua_getfield(state, -1, "hostAvailable");
+        Check(lua_toboolean(state, -1) != 0, "registered control must advertise host support");
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "authorized");
+        Check(lua_toboolean(state, -1) == 0, "host support must not imply a device write grant");
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "permission");
+        Check(lua_isstring(state, -1) && std::string_view(lua_tostring(state, -1)) == expected.permission,
+            "public capability must expose the exact control permission");
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "requiresTrustedGesture");
+        Check(lua_toboolean(state, -1) != 0, "public capability must retain the trusted gesture requirement");
+        lua_pop(state, 3);
+    }
+
     lua_getglobal(state, "system");
     lua_getfield(state, -1, "capabilities");
     lua_pushliteral(state, "system.cpu");
@@ -1181,6 +1255,15 @@ void TestMachineReadableSystemContract()
         "audio.output.analysis");
     const JsonValue* request = findNamed(*tasks, "network.request");
     const JsonValue* format = findNamed(*functions, "time.format");
+    for (const auto& expected : kControlTasks)
+    {
+        const auto* entry = findNamed(*tasks, expected.name);
+        Check(entry && entry->Find("permission") && entry->Find("permission")->string == expected.permission &&
+            entry->Find("feature") && entry->Find("feature")->string == std::string("task.") + expected.permission &&
+            entry->Find("requiresTrustedGesture") && entry->Find("requiresTrustedGesture")->boolean &&
+            entry->Find("resultType") && entry->Find("resultType")->string == "SnowAcceptedTaskValue",
+            "offline system-contract must export every independent shared control gate");
+    }
     Check(format && format->Find("parameters") &&
             format->Find("parameters")->IsArray() &&
             format->Find("parameters")->array.size() == 2 &&

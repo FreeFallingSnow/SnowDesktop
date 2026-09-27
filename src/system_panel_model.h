@@ -19,6 +19,8 @@ struct SystemCalendarActions
     std::function<void()> manage;
     std::function<std::string()> today;
     std::function<std::string(const std::string&)> secondaryDate;
+    std::function<std::map<std::string,std::string>(const std::string&,const std::string&)> secondaryDates;
+    std::function<std::string()> secondaryRevision;
 };
 // All live effects live at this boundary; offline rendering supplies fixtures.
 struct SystemPanelSource
@@ -77,6 +79,8 @@ private:
     StatusBarAction action_;
     native_ui::Scene scene_;
     std::string page_, interface_, network_, bluetooth_, gpu_, media_, date_, month_;
+    std::string calendarAnnotationKey_;
+    std::map<std::string,std::string> calendarAnnotations_;
     std::map<std::string,std::function<void(std::optional<float>)>> actions_;
     system_control::ControlFeedback feedback_;
     struct PendingValue { std::uint64_t task = 0; float value = 0; std::string target; };

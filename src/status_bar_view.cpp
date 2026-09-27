@@ -113,9 +113,11 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     if (s.gpu)
     {
         const auto value = snapshot.gpu;
-        double maximum = 0;
-        if (value) for (const auto& adapter : value->adapters) maximum = std::max(maximum, adapter.usagePercent);
-        add("gpu", L"GPU " + (value && value->available && !value->warmingUp ? Percent(maximum) : L"—"), StatusBarAction::Gpu, L"", true);
+        std::optional<double> maximum;
+        if (value && !value->warmingUp) for (const auto& adapter : value->adapters)
+            if (adapter.usageAvailable && std::isfinite(adapter.usagePercent) && adapter.usagePercent >= 0 && adapter.usagePercent <= 100)
+                maximum = maximum ? std::max(*maximum, adapter.usagePercent) : adapter.usagePercent;
+        add("gpu", L"GPU " + (maximum ? Percent(*maximum) : L"—"), StatusBarAction::Gpu, L"", true);
     }
     if (s.traffic)
     {
@@ -144,22 +146,19 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     const auto [networkGlyph, networkTip] = NetworkVisual(snapshot);
     add("controlCenter", L"", StatusBarAction::ControlCenter);
     auto& control = items.back();
-    const int batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
+    const auto battery = power && power->available ? ResolveStatusBarBatteryVisual(
+        power->batteryPercent, power->charging, power->acPower, power->saver) : StatusBarBatteryVisual{};
     control.controlGlyphs = {networkGlyph,
         audio && audio->available && audio->muted ? kMuted : !audio || !audio->available || audio->volume <= 0 ? kSpeakerZero :
             audio->volume < .5 ? kSpeakerLow : kSpeaker,
-        batteryLevel < 0 ? kUnknown : (power->charging ? StatusBarChargingGlyphs : StatusBarBatteryGlyphs)[static_cast<std::size_t>(batteryLevel)]};
-    if (batteryLevel >= 0)
-        control.batteryTone = power->charging ? StatusBarBatteryTone::Charging : power->batteryPercent <= 20 ? StatusBarBatteryTone::Low :
-            power->saver ? StatusBarBatteryTone::Saver : StatusBarBatteryTone::Normal;
+        battery.glyph};
+    control.batteryTone = battery.tone;
     control.controlTips[0] = networkTip;
     control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
         (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
     control.controlTips[2] = std::wstring(_LW("statusBar.battery")) + L"  —";
     if (power && power->available)
-        control.controlTips[2] = std::wstring(_LW(power->charging ? "statusBar.charging" :
-            power->acPower && power->batteryPercent >= 99.5 ? "statusBar.fullyCharged" :
-            power->acPower ? "statusBar.pluggedIn" : "statusBar.battery")) + L"  " + Percent(power->batteryPercent);
+        control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
     return items;
 }
 
@@ -335,7 +334,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         const auto color = brush->GetColor();
                         if (part == 2 && !hc)
                         {
-                            if (item.batteryTone == StatusBarBatteryTone::Charging)
+                            if (item.batteryTone == StatusBarBatteryTone::Charging || item.batteryTone == StatusBarBatteryTone::FullyCharged)
                                 brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0x107c10 : 0x6ccb5f));
                             else if (item.batteryTone == StatusBarBatteryTone::Low)
                                 brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0xc42b1c : 0xff8585));

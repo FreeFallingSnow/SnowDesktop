@@ -4,11 +4,21 @@
 #include <iostream>
 #include <memory>
 #include <cstdlib>
+#include <future>
+#include <thread>
 
 namespace foreground_fixture
 {
 HWND current = nullptr;
 bool permission = true, activation = true, nativeReturn = false, nativePermission = false;
+DWORD menuThread = 0;
+HWND menuOwner = nullptr;
+BOOL WINAPI Gui(DWORD thread, LPGUITHREADINFO info)
+{
+    if (!menuOwner || thread != menuThread) return FALSE;
+    info->flags = GUI_INMENUMODE | GUI_POPUPMENUMODE;
+    info->hwndMenuOwner = menuOwner; return TRUE;
+}
 HWND WINAPI Get() { return current; }
 BOOL WINAPI Grant(DWORD) { return permission; }
 BOOL WINAPI Set(HWND window)
@@ -24,11 +34,15 @@ BOOL WINAPI Set(HWND window)
 #define AllowSetForegroundWindow foreground_fixture::Grant
 #define SetForegroundWindow foreground_fixture::Set
 #define RestoreFocus FixtureRestoreFocus
+#define GetGUIThreadInfo foreground_fixture::Gui
+#define MenuRetentionSession FixtureMenuRetentionSession
 #define SnowDesktopTrayHookProc FixtureTrayHookProc
 #include "tray_focus.h"
 #include "../src/taskbar_hook/tray_collector.cpp"
 #undef SnowDesktopTrayHookProc
 #undef RestoreFocus
+#undef MenuRetentionSession
+#undef GetGUIThreadInfo
 #undef SetForegroundWindow
 #undef AllowSetForegroundWindow
 #undef GetForegroundWindow
@@ -81,6 +95,43 @@ void RunTrayFocusWindowTests()
     foreground_fixture::current = app;
 
     const DWORD pid = GetCurrentProcessId();
+    // Keep real HWND/process/thread/visibility checks, replacing only native
+    // menu-loop introspection. Every window stays on this inactive desktop.
+    const auto desktop = GetThreadDesktop(GetCurrentThreadId());
+    const auto stopWindow = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Require(stopWindow != nullptr, "create isolated secondary-window stop event");
+    std::promise<HWND> created;auto readyWindow = created.get_future();
+    std::thread secondary([&] {
+        if (!SetThreadDesktop(desktop)) { created.set_value(nullptr); return; }
+        const auto mainWindow = CreateWindowW(L"STATIC", L"", WS_POPUP, 440, 100, 200, 100,
+            nullptr, nullptr, definition.hInstance, nullptr);
+        if (mainWindow) ShowWindow(mainWindow, SW_SHOWNOACTIVATE);
+        created.set_value(mainWindow);
+        if (mainWindow) { WaitForSingleObject(stopWindow, 10000); DestroyWindow(mainWindow); }
+    });
+    const auto mainOnOtherThread = readyWindow.get();
+    Require(mainOnOtherThread != nullptr, "create secondary app window on the isolated desktop");
+    FixtureMenuRetentionSession retention;
+    retention.Arm(app, pid, bar, bar);
+    Require(retention.Active(nullptr, {}) && retention.tracker.Armed(),
+        "a null activation handoff preserves the tray callback's discovery ticket");
+    foreground_fixture::menuOwner = app; foreground_fixture::menuThread = GetCurrentThreadId();
+    Require(retention.Active(mainOnOtherThread, {}) && retention.menuOwner == app &&
+        retention.menuThread != GetWindowThreadProcessId(mainOnOtherThread, nullptr),
+        "the callback thread's native menu is retained when the app foreground uses another thread");
+    foreground_fixture::menuOwner = nullptr;
+    Require(!retention.Active(mainOnOtherThread, {}), "a finished native menu releases its retention");
+    retention.Arm(app, pid, bar, bar);
+    MenuPopupBindings observed{};
+    observed[0] = {reinterpret_cast<std::uint64_t>(other), 0, pid, GetCurrentThreadId(),
+        GetWindowLongPtrW(other, GWL_STYLE), GetWindowLongPtrW(other, GWL_EXSTYLE), false};
+    Require(retention.Active(bar, observed) && retention.popups[0].window == observed[0].window,
+        "a newly observed non-activating popup is retained while the originating bar stays foreground");
+    ShowWindow(other, SW_HIDE);
+    Require(!retention.Active(mainOnOtherThread, observed), "a hidden popup cannot retain the panel using stale SHOW evidence");
+    ShowWindow(other, SW_SHOWNOACTIVATE);
+    SetEvent(stopWindow); secondary.join(); CloseHandle(stopWindow);
+
     const auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
         static_cast<DWORD>(sizeof(SharedState)), ObjectName(pid, L"State").c_str());
     Require(mapping && GetLastError() != ERROR_ALREADY_EXISTS, "create unique collector mapping");

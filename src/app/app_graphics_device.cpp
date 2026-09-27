@@ -343,8 +343,7 @@ void DesktopApp::ReleaseGraphicsDeviceResources()
 {
     // Run only at the outer message-pump boundary, after every BeginDraw has
     // unwound. Keep Lua instances, layout and user state intact.
-    uiAnimationScheduler_.Cancel(statusBarActivationToken_);
-    statusBarActivationToken_ = 0;
+    CancelStatusBarActivation();
     systemPanel_.reset();
     if (statusBar_) statusBar_->ReleaseGraphicsResources();
     if (dockWindowTransition_)

@@ -1963,7 +1963,8 @@ CPU、内存和 GPU 受 `system.performance.read` 保护，电源受 `system.pow
 `calendar.create`、`calendar.update`、`calendar.remove`、网络请求
 任务 `network.request`、外部链接动作 `shell.openUri`、受控设置动作
 `system.openSettings`、有界剪贴板任务 `clipboard.read/write/clear`，以及用户选择文件
-范围的 `filesystem.pickOpen/pickSave/pickFolder`。它们对应
+范围的 `filesystem.pickOpen/pickSave/pickFolder`。设备与电源扩展见下节；
+旧任务继续使用既有契约。基础任务对应
 feature ID `task.start`、`task.media.control`、`task.audio.output.control`、`task.app.search`、`task.app.launch`
 、`task.notification.show`、`task.notification.lifecycle`、`task.notification.schedule`、
 `task.notification.structured`、`task.notification.actions`、
@@ -1998,6 +1999,83 @@ local muteTask = task.start("audio.output.setMute", { muted = true })
 `audioEnumeratorUnavailable`、`audioEndpointUnavailable`、`audioVolumeUnavailable`、
 `audioControlRejected`、`permissionRevoked` 和 `canceled`。该权限不授予非默认设备、
 逐进程音频会话、默认设备切换或系统音频策略控制。
+
+#### 设备与电源写任务（宿主 1.0.8.0 起）
+
+以下十九项是 API v2 的增量任务，成功值统一为 `SnowAcceptedTaskValue`
+（`{ accepted = true }`），不改变上面两个输出音量任务的参数和结果契约。
+依赖这些任务的组件设置 `minHostVersion: "1.0.8.0"`，并检测对应 feature 或任务的
+`system.capabilities(name).hostAvailable`；同版本早期构建也可能尚无这些能力。
+每组需要独立申请表中的写权限，已有读取权限和 `audio.output.control` 均不隐含新权限。
+
+| 任务 | 严格参数 | 权限／feature |
+| --- | --- | --- |
+| `audio.output.selectDevice` | `{ endpointId: string }` | `audio.devices.control`／`task.audio.devices.control` |
+| `audio.input.selectDevice` | `{ endpointId: string }` | 同上 |
+| `audio.input.setVolume` | `{ volume: number }`，有限值由宿主截断到 0–1 | `audio.input.control`／`task.audio.input.control` |
+| `audio.input.setMute` | `{ muted: boolean }` | 同上 |
+| `system.display.setBrightness` | `{ monitorId: string, brightness: number }`，有限数值 0–100 | `system.display.control`／`task.system.display.control` |
+| `network.wifi.setRadio` | `{ interfaceId: string, enabled: boolean }` | `network.wifi.control`／`task.network.wifi.control` |
+| `network.wifi.scan` | `{ interfaceId: string }` | 同上 |
+| `network.wifi.connect` | `{ interfaceId, networkId?, profileName?, ssid?, hidden?, security? }`，见下文 | 同上 |
+| `network.wifi.disconnect` | `{ interfaceId: string }` | 同上 |
+| `network.wifi.forget` | `{ interfaceId: string, profileName: string }` | 同上，另需宿主确认 |
+| `bluetooth.setRadio` | `{ radioId: string, enabled: boolean }` | `bluetooth.control`／`task.bluetooth.control` |
+| `bluetooth.connect` | `{ deviceId: string }` | 同上 |
+| `bluetooth.disconnect` | `{ deviceId: string }` | 同上 |
+| `system.power.setPlan` | `{ planId: string }` | `system.power.control`／`task.system.power.control` |
+| `system.power.setMode` | `{ mode: "balanced" / "efficiency" / "performance" }` | 同上 |
+| `system.power.lock` | 无参数 | `system.power.action`／`task.system.power.action` |
+| `system.power.sleep` | 无参数，另需宿主确认 | 同上 |
+| `system.power.restart` | 无参数，另需宿主确认 | 同上 |
+| `system.power.shutdown` | 无参数，另需宿主确认 | 同上 |
+
+所有 ID 必须是对应读取主题返回的非空字符串。所有十九项，包括主动无线扫描，都要求
+当前可信用户手势；定时回调、采样回调和组件自行声称的手势不能提交写操作。参数必须保留
+真实 Lua 数字／布尔类型；未知键、字符串代替数字、`password`、`hostConfirmed`、任意 XML
+或系统命令都不接受。参数类型／格式错误在 `task.start` 同步抛出 Lua 错误，可用 `pcall`
+捕获；已创建任务的异步失败则由 `task.done` 报告。新任务默认每个实例同时一项；
+`audio.input.setVolume` 与 `system.display.setBrightness` 允许最多四项待处理请求，
+共享服务合并同一实例、同一目标的连续调节，旧任务会收到取消结果。组件仍应限制提交频率，
+并以最新任务和真实回读更新界面。原有输出音量任务的并发与参数契约不变。
+
+`network.wifi.connect` 必填 `interfaceId`，且 `networkId`、`profileName`、`ssid` 三者
+必须且只能提供一个非空字符串。`ssid` 是至多 32 字节的 UTF-8 字符串；直接指定它时必须
+提供 `security = "open" / "wpa2" / "wpa3"`。`hidden` 为可选布尔值。使用 `networkId`
+时宿主重新解析真实安全类型，不信任组件声称的安全性。保存的 `profileName` 使用现有凭据；
+组件应先订阅 `network.wifi`，取得近期缓存中的 interface／network ID；宿主用该缓存中的
+真实 SSID 和安全类型显示提示。缺少缓存或目标已消失时返回 `networkGone`，不能通过组件
+自报网络名称绕过校验。
+新网络所需密码由宿主对话框收集。开放网络不收集密码，不支持的认证交给系统设置。
+密码与确认结果不会进入 Lua、`task.done`、参数、日志或配置。忘记网络与睡眠／重启／关机
+还需宿主显示目标和操作并取得确认，组件不能绕过或定制确认内容。
+
+设备控制成功以实际执行和后端回读为依据，调用 `task.start` 返回任务 ID 只表示任务已创建；
+最新状态从原有读取主题获取，组件不要立即把请求值当成成功状态。扫描等待 Windows 的
+扫描完成通知，结果由后续 `network.wifi` 更新提供。锁屏／睡眠／重启／关机的 `accepted`
+仅表示 Windows 接受请求，不能证明电脑已进入目标状态；进程退出后也可能没有完成事件。
+真实设备消失、策略拒绝、不支持和读回不匹配会失败。通用失败包括 `permissionDenied`、
+`userGestureRequired`、`invalidArguments`、`permissionRevoked`、`canceled`；设备失败可包括
+`notPresent`、`unavailable`、`actionUnsupported`、`systemSettingsRequired`、`stateMismatch`
+和 `timeout`。宿主无法提供提示时返回 `confirmationUnavailable`，用户关闭或拒绝提示返回
+`userCanceled`；任务取消使用 `canceled`。不要解析平台错误数字或把未识别错误当成功。
+
+设备选择只接受相应方向的活动端点，并同时修改 console、multimedia、communications 默认
+角色；Windows 策略接口不可用时返回 `actionUnsupported`。麦克风音量／静音作用于执行时
+默认 multimedia 输入端点。亮度受显示器 WMI／DDC 支持限制。蓝牙连接／断开仅面向支持的
+已配对经典音频设备，必须检查 `canConnect/canDisconnect`，不能据此发起配对或通用 BLE
+连接。`setMode` 在系统支持且计划兼容时同时设置 AC／电池模式；没有休眠任务，重启／关机
+不会强制关闭其他应用。
+
+取消任务、组件销毁／重载、撤权和宿主关闭会清理未完成操作及确认。确认返回后宿主再次核验
+实例和授权，迟到结果不交给新实例。取消或超时不能撤销已经提交的系统动作，也不能保证
+强制中断同步驱动调用。预览在调用设备服务和宿主提示之前返回确定性模拟结果，不扫描网络、
+更改设备、收集密码或执行电源动作；预览成功不代表硬件验收。
+
+缺少对应 feature 时隐藏写入口；若用户点击设置入口，可在同一次可信手势中检查
+`system.openSettings` 的宿主支持和授权，再打开 `audio/display/network/bluetooth/power`
+中的对应页面。该降级入口也不可用时只显示读取状态。先发布包含完整契约的宿主，再发布
+依赖新任务的官方社区组件，不能只凭版本号或原生控制中心可用来判断 Lua 支持。
 
 `system.openSettings` 要求 `shell.launch` 和当前可信用户手势，只接受宿主固定枚举的
 `page`：`notifications/audio/display/network/bluetooth/power/storage/apps/personalization`。

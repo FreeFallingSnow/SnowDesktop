@@ -61,12 +61,12 @@ bool Scene::SameContent(const Scene& other)const
     for(std::size_t i=0;i<nodes.size();++i)
     {
         const auto& a=nodes[i];const auto& b=other.nodes[i];
-        if(a.id!=b.id||a.role!=b.role||!SameRect(a.bounds,b.bounds)||!SameRect(a.clip,b.clip)||
+        if(a.id!=b.id||a.hoverGroup!=b.hoverGroup||a.role!=b.role||!SameRect(a.bounds,b.bounds)||!SameRect(a.clip,b.clip)||
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
             a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.bold!=b.bold||a.outlined!=b.outlined||
-            a.secondary!=b.secondary||a.charging!=b.charging||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
-            a.switchStyle!=b.switchStyle||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
+            a.secondary!=b.secondary||a.charging!=b.charging||a.positiveGlyph!=b.positiveGlyph||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
+            a.switchStyle!=b.switchStyle||a.busy!=b.busy||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
             bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
         if(a.image&&a.image!=b.image&&(a.image->width!=b.image->width||a.image->height!=b.image->height||
             a.image->stride!=b.image->stride||a.image->pixels!=b.image->pixels))return false;
@@ -226,12 +226,17 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         }
         color(ink); dc->DrawTextW(value.data(), static_cast<UINT32>(value.size()), format.Get(), r, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     };
+    const auto* hoverNode=scene.Find(hovered);
+    const auto* pressedNode=scene.Find(pressed);
     for (const auto& n : scene.nodes)
     {
         if (HasClip(n.clip)) dc->PushAxisAlignedClip(n.clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         const auto r = n.bounds;
-        const bool hot = n.id == hovered && n.Interactive(), down = n.id == pressed && n.Interactive();
-        const bool fill = n.role == Role::Button || n.role == Role::Toggle || n.role == Role::Card || n.selected || hot || down;
+        const bool groupedCard=n.role==Role::Card&&!n.hoverGroup.empty();
+        const bool hot = groupedCard ? hoverNode&&hoverNode->hoverGroup==n.hoverGroup : n.id==hovered&&n.Interactive();
+        const bool down = groupedCard ? pressedNode&&pressedNode->hoverGroup==n.hoverGroup : n.id==pressed&&n.Interactive();
+        const bool sharedRow=n.role==Role::ListItem&&!n.hoverGroup.empty();
+        const bool fill = n.role == Role::Button || n.role == Role::Toggle || n.role == Role::Card || n.selected || ((hot || down)&&!sharedRow);
         if (fill && !n.switchStyle)
         {
             color(n.accent || (n.role == Role::Toggle && n.selected) ? p.accent : hot || down ? p.hover : p.control, n.enabled);
@@ -263,7 +268,14 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
             dc->FillRoundedRectangle(D2D1::RoundedRect(track,10,10),brush.Get());
             if(!n.selected){color(p.secondary,n.enabled);dc->DrawRoundedRectangle(D2D1::RoundedRect(track,10,10),brush.Get(),1);}
             color(n.selected?p.accentText:p.text,n.enabled);
-            dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(n.selected?track.right-10:track.left+10,(track.top+track.bottom)/2),6,6),brush.Get());
+            if(n.busy)
+            {
+                // A pending radio keeps its authoritative track color. Dots
+                // acknowledge the action without inventing a checked state.
+                for(int dot=-1;dot<=1;++dot)
+                    dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F((track.left+track.right)/2+dot*6.f,(track.top+track.bottom)/2),1.5f,1.5f),brush.Get());
+            }
+            else dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F(n.selected?track.right-10:track.left+10,(track.top+track.bottom)/2),6,6),brush.Get());
             auto labelInk=p.text;if(!n.enabled)labelInk.a*=.4f;
             text(n.text,{r.left,r.top,track.left-12,r.bottom},n.fontSize,labelInk,n.bold,false,false);
         }
@@ -324,7 +336,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 {
                     D2D1_MATRIX_3X2_F previous;dc->GetTransform(&previous);
                     dc->SetTransform(D2D1::Matrix3x2F::Translation(r.left+12,(r.top+r.bottom-20)/2)*previous);
-                    color(D2D1::ColorF(0x34c759));dc->FillGeometry(geometry.Get(),brush.Get());dc->SetTransform(previous);
+                    color(p.highContrast?ink:D2D1::ColorF(0x34c759));dc->FillGeometry(geometry.Get(),brush.Get());dc->SetTransform(previous);
                 }
                 label.left+=44;
             }
@@ -343,7 +355,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
             else if (!n.glyph.empty())
             {
                 const auto glyphRect = iconOnly ? r : D2D1::RectF(r.left+10,r.top,r.left+38,r.bottom);
-                text(n.glyph,glyphRect,18,ink,false,true,true); if (!iconOnly) label.left += 44;
+                text(n.glyph,glyphRect,18,n.positiveGlyph&&!p.highContrast?D2D1::ColorF(0x34c759):ink,false,true,true); if (!iconOnly) label.left += 44;
             }
             else if (n.role != Role::Text && !n.centered) label.left += 12;
             if (!iconOnly)

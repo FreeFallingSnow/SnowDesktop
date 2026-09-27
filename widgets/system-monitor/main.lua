@@ -23,6 +23,18 @@ local settings = {
         { key = "show_memory", label = l10n.tr("lua_widget.system_monitor.show_memory"), type = "bool", default = monitorSources.defaults.memory },
         { key = "show_gpu", label = l10n.tr("lua_widget.system_monitor.show_gpu"), type = "bool", default = monitorSources.defaults.gpu },
         { key = "show_vram", label = l10n.tr("lua_widget.system_monitor.show_vram"), type = "bool", default = monitorSources.defaults.vram },
+        {
+            key = "gpu_scope",
+            label = l10n.tr("lua_widget.system_monitor.gpu_scope"),
+            description = l10n.tr("lua_widget.system_monitor.gpu_selection_hint"),
+            type = "select",
+            default = "all",
+            options = { "all", "selected" },
+            optionLabels = {
+                l10n.tr("lua_widget.system_monitor.gpu_all"),
+                l10n.tr("lua_widget.system_monitor.gpu_selected"),
+            },
+        },
         { key = "show_network", label = l10n.tr("lua_widget.system_monitor.show_network"), type = "bool", default = monitorSources.defaults.network },
         { key = "show_battery", label = l10n.tr("lua_widget.system_monitor.show_battery"), type = "bool", default = monitorSources.defaults.battery },
         { key = "show_storage", label = l10n.tr("lua_widget.system_monitor.show_storage"), type = "bool", default = monitorSources.defaults.storage },
@@ -279,8 +291,23 @@ local function buildCards()
     local cpu, cpuState = subscriptionValue(subscriptions.cpu)
     local memory, memoryState = subscriptionValue(subscriptions.memory)
     local gpuValue, gpuState = subscriptionValue(subscriptions.gpu)
-    local gpu = monitorData.summarizeGpu(gpuValue)
+    local gpuSelected = storage.get("gpu_scope") == "selected"
+    local gpuId = gpuSelected and (storage.get("gpu_adapter_id") or "") or nil
+    local gpuDetails = widget.hasFeature("data.system.gpu.details")
+    local gpu = monitorData.summarizeGpu(gpuValue, gpuId, gpuDetails)
     if not gpu and not gpuState then gpuState = "notPresent" end
+    local gpuIdentity = gpuSelected and (gpu and gpu.name or
+        storage.get("gpu_adapter_name")) or
+        l10n.tr("lua_widget.system_monitor.gpu_all")
+    if gpuSelected and gpuId == "" then
+        gpuIdentity = l10n.tr("lua_widget.system_monitor.gpu_choose_hint")
+        gpuState = nil
+    elseif gpuSelected and not gpu then
+        gpuIdentity = l10n.formatList({
+            gpuIdentity or l10n.tr("lua_widget.system_monitor.gpu_selected"),
+            l10n.tr("lua_widget.system_monitor.gpu_choose_hint"),
+        })
+    end
     local powerPermission = widget.hasPermission("system.power.read")
     local networkPermission = widget.hasPermission("system.network.read")
     local storagePermission = widget.hasPermission("system.storage.read")
@@ -333,31 +360,49 @@ local function buildCards()
     end
 
     if showCard("gpu") then
-        local percent = gpu and clamp(gpu.usagePercent) or nil
+        local percent = gpu and gpu.usagePercent and clamp(gpu.usagePercent) or nil
+        local details = { gpuIdentity }
+        if gpu then
+            details[#details + 1] = l10n.tr(gpuDetails and
+                "lua_widget.system_monitor.gpu_busiest" or
+                "lua_widget.system_monitor.gpu_details_unavailable")
+            if not gpuSelected and gpu.busiestName then
+                details[#details + 1] = gpu.busiestName
+            end
+        end
         cards[#cards + 1] = {
             id = "gpu",
             title = "GPU",
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
             color = usageColor(percent or 0, palette),
-            sub = detailsWithStatus(gpu and gpu.name ~= "" and
-                gpu.name or nil, gpuState),
+            sub = detailsWithStatus(l10n.formatList(details),
+                gpuState or (gpu and gpuDetails and not percent and "unavailable")),
         }
     end
 
     if showCard("vram") then
         local total = gpu and gpu.dedicatedMemoryBytes or 0
-        local used = gpu and gpu.dedicatedUsedBytes or 0
-        local percent = total > 0 and clamp(used / total * 100) or nil
+        local used = gpu and gpu.dedicatedUsedBytes or nil
+        local percent = total > 0 and used and clamp(used / total * 100) or nil
+        local details = { gpuIdentity }
+        if gpu then
+            details[#details + 1] = l10n.tr(gpuDetails and
+                "lua_widget.system_monitor.gpu_vram_total" or
+                "lua_widget.system_monitor.gpu_details_unavailable")
+            if total > 0 then
+                details[#details + 1] = (used and formatBytes(used) or "—") ..
+                    " / " .. formatBytes(total)
+            end
+        end
         cards[#cards + 1] = {
             id = "vram",
             title = l10n.tr("lua_widget.system_monitor.vram"),
             value = percent and formatPercent(percent) or "—",
             progress = percent and percent / 100 or nil,
             color = usageColor(percent or 0, palette),
-            sub = detailsWithStatus(total > 0 and
-                (formatBytes(used) .. " / " .. formatBytes(total)) or nil,
-                gpuState),
+            sub = detailsWithStatus(l10n.formatList(details),
+                gpuState or (gpu and gpuDetails and not percent and "unavailable")),
         }
     end
 
@@ -587,6 +632,21 @@ local function event(_context, _model, value)
     if value.kind ~= "action" then return end
     if value.id == "system.refresh" then
         widget.invalidate()
+    elseif value.id == "system.gpu.all" then
+        storage.set("gpu_scope", "all")
+        widget.invalidate()
+    elseif value.id and value.id:sub(1, 18) == "system.gpu.select." then
+        local id = value.id:sub(19)
+        local gpuValue = subscriptionValue(subscriptions.gpu)
+        for _, choice in ipairs(monitorData.gpuChoices(gpuValue)) do
+            if choice.id == id then
+                storage.set("gpu_adapter_id", choice.id)
+                storage.set("gpu_adapter_name", choice.name)
+                storage.set("gpu_scope", "selected")
+                widget.invalidate()
+                break
+            end
+        end
     elseif value.id == "system.resetStyle" then
         storage.set("bg", tostring(style.bg))
         storage.set("border", tostring(style.border))
@@ -599,21 +659,72 @@ end
 
 local function menu(_context, _model, request)
     if request.id ~= "system.menu" then return nil end
-    return ui.menu({
+    local items = {}
+    if showCard("gpu") or showCard("vram") then
+        local selected = storage.get("gpu_scope") == "selected"
+        local selectedId = storage.get("gpu_adapter_id")
+        local gpuValue, gpuState = subscriptionValue(subscriptions.gpu)
+        local choices = monitorData.gpuChoices(gpuValue)
+        local gpuItems = {
+            { id = "system.gpu.all",
+                label = l10n.tr("lua_widget.system_monitor.gpu_all"),
+                checked = not selected },
+        }
+        local found = false
+        for _, choice in ipairs(choices) do
+            found = found or choice.id == selectedId
+            gpuItems[#gpuItems + 1] = {
+                id = "system.gpu.select." .. choice.id,
+                label = choice.label,
+                checked = selected and choice.id == selectedId,
+            }
+        end
+        if selected and selectedId and selectedId ~= "" and not found then
+            gpuItems[#gpuItems + 1] = {
+                id = "system.gpu.unavailable",
+                label = detailsWithStatus(storage.get("gpu_adapter_name") or
+                    l10n.tr("lua_widget.system_monitor.gpu_selected"),
+                    gpuState or "notPresent"),
+                enabled = false,
+            }
+        elseif #choices == 0 then
+            gpuItems[#gpuItems + 1] = {
+                id = "system.gpu.unavailable",
+                label = statusText(gpuState or "notPresent"), enabled = false,
+            }
+        end
+        if widget.hasFeature("interaction.contextMenu.submenu") then
+            items[#items + 1] = {
+                label = l10n.tr("lua_widget.system_monitor.gpu_choose"),
+                children = gpuItems,
+            }
+        else
+            -- Older hosts still expose selection as ordinary menu items.
+            items[#items + 1] = {
+                id = "system.gpu.heading",
+                label = l10n.tr("lua_widget.system_monitor.gpu_choose"),
+                enabled = false,
+            }
+            for _, item in ipairs(gpuItems) do items[#items + 1] = item end
+        end
+        items[#items + 1] = { type = "separator" }
+    end
+    items[#items + 1] =
         {
             id = "system.refresh",
             label = l10n.tr("lua_widget.system_monitor.refresh"),
             icon = fluent.refresh,
             iconFont = "fluent",
-        },
-        { type = "separator" },
+        }
+    items[#items + 1] = { type = "separator" }
+    items[#items + 1] =
         {
             id = "system.resetStyle",
             label = l10n.tr("lua_widget.common.reset_style"),
             icon = fluent.style,
             iconFont = "fluent",
-        },
-    })
+        }
+    return ui.menu(items)
 end
 
 local function dispose(_context, _model)

@@ -438,6 +438,8 @@ std::optional<FocusDelivery> Service::TakeFocusReturn(HWND origin, std::uint64_t
     impl_->menuPlacement.Cancel();
     return result;
 }
+MenuPopupBindings Service::MenuPopups(HWND target) const
+{ return impl_->menuPlacement.Popups(target); }
 void Service::OpenNativeTray()
 {
     // Win+B is the supported keyboard entry into the native notification area;

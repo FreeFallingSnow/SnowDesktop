@@ -3,6 +3,7 @@
 #include "widget_gpu_presentation.h"
 #include "widget_gpu_counter_buffer.h"
 #include "widget_storage_usage.h"
+#include "system_power_status.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -37,18 +38,62 @@ void Check(bool condition, const char* message)
     }
 }
 
+void TestPowerStatusTruth()
+{
+    using snowdesktop::DecodeSystemPowerStatus;
+    const auto unknown = DecodeSystemPowerStatus(255, 255, 100, 0);
+    Check(!unknown.batteryPresent && !unknown.charging && !unknown.batteryPercent && !unknown.onAC,
+        "unknown battery flags must not become a charging/full battery or a confirmed absent battery");
+    for (const auto flags : {128, 136})
+    {
+        const auto absent = DecodeSystemPowerStatus(static_cast<std::uint8_t>(flags), 1, 100, 0);
+        Check(absent.batteryPresent == false && absent.onAC == true && !absent.charging && !absent.batteryPercent,
+            "no-battery bit overrides both charging and a stale percentage");
+    }
+    for (const auto percent : {101, 254, 255})
+        Check(!DecodeSystemPowerStatus(1, 1, static_cast<std::uint8_t>(percent), 0).batteryPercent,
+            "invalid battery percentages must not be clamped into a full battery");
+    const auto charging = DecodeSystemPowerStatus(9, 1, 100, 1);
+    Check(charging.batteryPresent == true && charging.charging == true && charging.batteryPercent == 100 && charging.saver,
+        "the real charging bit remains authoritative at 100 percent");
+    const auto full = DecodeSystemPowerStatus(1, 1, 100, 0);
+    const auto limited = DecodeSystemPowerStatus(1, 1, 80, 0);
+    Check(full.charging == false && full.onAC == true && full.batteryPercent == 100 &&
+        limited.charging == false && limited.onAC == true && limited.batteryPercent == 80,
+        "AC online must preserve the distinction between charged and charge-limited states");
+    const auto offline = DecodeSystemPowerStatus(0, 0, 0, 0);
+    Check(offline.onAC == false && offline.charging == false && offline.batteryPercent == 0,
+        "a measured empty battery is valid data");
+    for (const auto ac : {2, 254, 255})
+    {
+        const auto value = DecodeSystemPowerStatus(8, static_cast<std::uint8_t>(ac), 50, 255);
+        Check(!value.onAC && value.charging == true && !value.saver,
+            "unknown AC/saver bytes must not override a known charging flag");
+    }
+}
+
 void TestGpuEngineUsageAggregation()
 {
     {
         using namespace snowdesktop::widget_runtime;
         WidgetGpuAdapterDataSnapshot gpu; gpu.id = "luid-a"; gpu.luid = 1; gpu.name = "Discrete GPU"; gpu.usageAvailable = true;
-        auto alias = gpu; alias.id = "alias"; alias.luid = 0; alias.usageAvailable = false;
+        auto alias = gpu; alias.id = "alias"; alias.usageAvailable = false;
         auto twin = gpu; twin.id = "luid-b"; twin.luid = 2;
         auto repeated = gpu; repeated.id = "duplicate-source";
         const auto visible = PresentGpuAdapters({alias, gpu, repeated, twin, alias});
         Check(visible.size() == 2 && visible[0].id == "luid-a" && visible[1].id == "luid-b",
             "GPU presentation merges aliases and duplicate LUIDs but retains two usable cards of the same model");
         Check(PresentGpuAdapters({alias, alias}).size() == 1, "unavailable GPU aliases remain one explicit unavailable entry");
+        twin.usageAvailable = false;
+        const auto partial = PresentGpuAdapters({gpu, twin});
+        Check(partial.size() == 2 && partial[1].id == "luid-b" && !partial[1].usageAvailable,
+            "a distinct same-model GPU remains selectable when its counters are unavailable");
+        gpu.usageAvailable = false;
+        Check(PresentGpuAdapters({gpu, twin}).size() == 2,
+            "warming same-model adapters must not collapse by name");
+        gpu.id.clear(); twin.id.clear();
+        Check(PresentGpuAdapters({gpu, twin}).size() == 2,
+            "empty strings are not equal GPU identities when their LUIDs differ");
     }
     using snowdesktop::widget_runtime::WidgetGpuUsageAccumulator;
     WidgetGpuUsageAccumulator usage;
@@ -898,6 +943,7 @@ int main()
     TestNetworkInterfaceTrafficDeltas();
     TestPhysicalDiskBusyTime();
     TestGpuEngineUsageAggregation();
+    TestPowerStatusTruth();
     TestGpuCounterValidityAndReuse();
     TestCurrentDisplayMatching();
     TestSampledDataEnvelopeDebounce();

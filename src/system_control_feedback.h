@@ -49,6 +49,43 @@ Result ConfirmBrightness(double target, double tolerance, const Cancellation& ca
 { return ConfirmControlValue(target, tolerance, cancel, std::forward<Read>(read), std::forward<Pause>(pause)); }
 inline void BrightnessReadbackPause() { ControlReadbackPause(); }
 
+// Notifications and device state can arrive in either order, and a driver can
+// omit the notification entirely. Only the exact target readback proves success.
+// Once a completion arrives, allow a bounded settling interval; cancellation
+// and permission/device failures still take precedence over matching state.
+template<class Read, class Observe, class Pause>
+Result ConfirmNotifiedControl(const Cancellation& cancel, Read&& read, Observe&& observe, Pause&& pause)
+{
+    unsigned settling = 0;
+    for (;;)
+    {
+        if (cancel.Stop()) return cancel.Failure();
+        const std::optional<Result> completed = observe();
+        if (cancel.Stop()) return cancel.Failure();
+        if (completed && !completed->ok && completed->error != "connectionFailed" &&
+            completed->error != "stateMismatch" && completed->error != "timeout" && completed->error != "unavailable")
+            return *completed;
+        const auto actual = read();
+        if (cancel.Stop()) return cancel.Failure();
+        if (actual.value && *actual.value == 1.0) return {true, {}, 0};
+        if (!actual.value && !actual.failure.error.empty() && actual.failure.error != "unavailable") return actual.failure;
+        if (completed && ++settling >= 20)
+        {
+            if (!completed->ok) return *completed;
+            return !actual.value && !actual.failure.error.empty() ? actual.failure : Result{false, "stateMismatch", 0};
+        }
+        pause();
+    }
+}
+
+inline Cancellation WifiScanCancellation(const Cancellation& cancel,
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now())
+{
+    // Native WLAN documents four seconds for scan_complete or a timeout before
+    // reading cached results: https://learn.microsoft.com/windows/win32/api/wlanapi/nf-wlanapi-wlanscan
+    return {cancel.canceled, (std::min)(cancel.deadline, started + std::chrono::seconds(4))};
+}
+
 // A delayed device transition can finish between the backend's last check and
 // the service's fresh readback. Only explicit targets can prove that outcome;
 // default-volume requests have no bound endpoint and must not borrow another
@@ -90,12 +127,8 @@ inline bool ControlReadbackMatches(const Request& request, const std::map<std::s
         return parsed.ec == std::errc{} && parsed.ptr == wanted.data() + wanted.size() && std::isfinite(target) &&
             level && level->IsNumber() && std::isfinite(level->number) && std::abs(level->number - target) <= 0.01;
     }
-    if (request.name == "network.wifi.setRadio")
-    {
-        const auto* actual = item(snapshot("network.wifi"), "interfaces", argument("interfaceId"));
-        const auto* enabled = actual ? actual->Find("enabled") : nullptr; const auto wanted = argument("enabled");
-        return enabled && enabled->IsBoolean() && (wanted == "0" || wanted == "1") && enabled->boolean == (wanted == "1");
-    }
+    // Wi-Fi's presentation value combines PHY states with OR. It cannot prove
+    // that every PHY accepted a radio change; only the WLAN backend can do so.
     if (request.name == "system.power.setPlan")
     {
         const auto* actual = snapshot("system.power.plans"); const auto id = argument("planId");

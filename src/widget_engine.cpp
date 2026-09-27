@@ -5526,7 +5526,48 @@ static int lua_TaskStart(lua_State* state)
         }
     }
 
-    if (snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
+    if (snowdesktop::widget_runtime::IsSystemControlTask(taskName))
+    {
+        using snowdesktop::widget_runtime::SystemControlArgumentKind;
+        if (hasArguments)
+        {
+            lua_pushnil(state);
+            while (lua_next(state, 2) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING)
+                    return luaL_error(state, "task.start: system control keys must be strings");
+                size_t size = 0; const auto* keyText = lua_tolstring(state, -2, &size);
+                if (!size || size > 128) return luaL_error(state, "task.start: invalid system control key");
+                const std::string key(keyText, size);
+                const auto kind = snowdesktop::widget_runtime::SystemControlArgumentType(key);
+                if (kind == SystemControlArgumentKind::Boolean && lua_type(state, -1) == LUA_TBOOLEAN)
+                    arguments[key] = lua_toboolean(state, -1) ? "1" : "0";
+                else if (kind == SystemControlArgumentKind::Number && lua_type(state, -1) == LUA_TNUMBER)
+                {
+                    const auto value = lua_tonumber(state, -1);
+                    if (!std::isfinite(value)) return luaL_error(state, "task.start: expected a finite number");
+                    char encoded[128]{};
+                    const auto formatted = std::to_chars(std::begin(encoded), std::end(encoded), value,
+                        std::chars_format::general, std::numeric_limits<double>::max_digits10);
+                    if (formatted.ec != std::errc{}) return luaL_error(state, "task.start: number cannot be encoded");
+                    arguments[key] = std::string(encoded, formatted.ptr);
+                }
+                else if (kind == SystemControlArgumentKind::Text && lua_type(state, -1) == LUA_TSTRING)
+                {
+                    const auto* text = lua_tolstring(state, -1, &size);
+                    if (!size || size > 4096) return luaL_error(state, "task.start: system control text must contain 1 to 4096 bytes");
+                    arguments[key] = std::string(text, size);
+                    if (!IsValidUtf8Local(arguments[key])) return luaL_error(state, "task.start: expected UTF-8 text");
+                }
+                else return luaL_error(state, "task.start: unknown system control argument or incorrect type");
+                lua_pop(state, 1);
+            }
+        }
+        snowdesktop::system_control::Request request;
+        if (!snowdesktop::widget_runtime::MakeSystemControlRequest(taskName, arguments, request))
+            return luaL_error(state, "task.start: invalid system control arguments");
+    }
+    else if (snowdesktop::widget_runtime::WidgetMediaTaskExecutor::
             SupportsAction(taskName))
     {
         const bool requiresValue = taskName == "media.seek" ||
@@ -12164,8 +12205,15 @@ void WidgetEngine::ReleaseWidgetDataSubscriptions(LuaWidget& widget)
     ApplyWidgetDataBrokerActions();
 }
 
+void WidgetEngine::BeginTaskShutdown()
+{
+    if (taskBroker_) taskBroker_->Shutdown();
+    systemControlTasks_.reset();
+}
+
 void WidgetEngine::InitializeWidgetTaskBroker()
 {
+    systemControlTasks_.reset();
     using snowdesktop::widget_runtime::TaskDescriptor;
     taskBroker_ = std::make_unique<
         snowdesktop::widget_runtime::WidgetTaskBroker>();
@@ -12374,6 +12422,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             if (std::exchange(pending, false) && wake) wake();
         }
     } dispatchScope{ applyingTaskBrokerActions_, taskWakePending_, taskWakeCallback_ };
+    if (systemControlTasks_)
+        for (auto& completion : systemControlTasks_->Drain())
+            (void)taskBroker_->Complete(completion.id, completion.ok, std::move(completion.error));
     if (mediaTaskExecutor_)
     {
         for (auto& completion : mediaTaskExecutor_->DrainCompletions())
@@ -12549,6 +12600,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 ? Utf8ToWideLocal(action.instanceId) : std::wstring{}, action.id);
         if (action.type == TaskBrokerActionType::Cancel)
         {
+            if (systemControlTasks_) (void)systemControlTasks_->Cancel(action.id);
             if (mediaTaskExecutor_)
                 (void)mediaTaskExecutor_->Cancel(action.id);
             if (audioOutputTaskExecutor_)
@@ -12602,6 +12654,48 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             continue;
         }
 
+        if (snowdesktop::widget_runtime::IsSystemControlTask(action.name))
+        {
+            snowdesktop::system_control::Request request;
+            if (!snowdesktop::widget_runtime::MakeSystemControlRequest(action.name, action.arguments, request))
+            {
+                (void)taskBroker_->Complete(action.id, false, "invalidArguments"); continue;
+            }
+            const auto dispatched = snowdesktop::widget_runtime::DispatchSystemControlTask(request, action.preview,
+                [&](snowdesktop::system_control::Request& liveRequest) -> snowdesktop::system_control::Result {
+                    const auto authorized = [this, id=action.id, token=action.ownerToken, name=action.name]() {
+                        if (!taskBroker_) return false;
+                        const auto task = taskBroker_->Snapshot(id);
+                        const auto permission = taskBroker_->RequiredPermission(name);
+                        const auto live = std::find_if(widgets_.begin(), widgets_.end(), [token](const auto& candidate) { return candidate.runtimeToken == token; });
+                        return task && !task->cancelRequested && task->ownerToken == token && live != widgets_.end() &&
+                            permission && snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(live->permissions, *permission);
+                    };
+                    if (!authorized())
+                        return {false, "permissionRevoked", 0};
+                    if (snowdesktop::system_control::RequiresConfirmation(liveRequest.name) || snowdesktop::system_control::RequiresPasswordPrompt(liveRequest))
+                    {
+                        if (!systemControlPromptCallback_)
+                            return {false, "confirmationUnavailable", 0};
+                        // Copy identity before the modal message loop can unload/reload its owner.
+                        const auto identity = Utf8ToWideLocal(owner->packageId) + L"\n" + owner->widgetId;
+                        snowdesktop::system_control::Result confirmed;
+                        try { confirmed = systemControlPromptCallback_(liveRequest, identity, authorized); }
+                        catch (...) { confirmed.error = "confirmationUnavailable"; }
+                        if (!confirmed.ok || !authorized())
+                            return {false, confirmed.error.empty() ? "canceled" : confirmed.error, 0};
+                    }
+                    if (!widgetSystemDataProvider_)
+                        return {false, "providerUnavailable", 0};
+                    if (!systemControlTasks_) systemControlTasks_ = std::make_unique<snowdesktop::widget_runtime::WidgetSystemControlTasks>(widgetSystemDataProvider_->Controls());
+                    if (!systemControlTasks_->Start(action.id, action.ownerToken, std::move(liveRequest)))
+                        return {false, "taskExecutorUnavailable", 0};
+                    return {true, {}, 0};
+            });
+            if (!dispatched.ok || action.preview)
+                (void)taskBroker_->Complete(action.id, dispatched.ok, dispatched.error);
+            continue;
+        }
         if (action.name == "app.search")
         {
             const auto query = action.arguments.find("query");
@@ -15013,6 +15107,7 @@ void WidgetEngine::ReleaseWidgetTasks(LuaWidget& widget,
     for (const std::uint64_t taskId : widget.taskIds)
     {
         (void)taskBroker_->Cancel(taskId, reason);
+        if (systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
         if (mediaTaskExecutor_)
             (void)mediaTaskExecutor_->Cancel(taskId);
         if (audioOutputTaskExecutor_)
@@ -15225,6 +15320,7 @@ void WidgetEngine::Shutdown()
     if (widgetAudioAnalysisProvider_)
         widgetAudioAnalysisProvider_->Stop();
     widgets_.clear();
+    systemControlTasks_.reset();
     widgetSystemDataProvider_.reset();
     widgetAudioAnalysisProvider_.reset();
     dataBroker_.reset();
@@ -25916,6 +26012,7 @@ bool WidgetEngine::RuntimeCancelTask(
     if (!snapshot || snapshot->ownerToken != widget.runtimeToken)
         return false;
     const bool canceled = taskBroker_->Cancel(taskId);
+    if (canceled && systemControlTasks_) (void)systemControlTasks_->Cancel(taskId);
     if (canceled && mediaTaskExecutor_)
         (void)mediaTaskExecutor_->Cancel(taskId);
     if (canceled && audioOutputTaskExecutor_)

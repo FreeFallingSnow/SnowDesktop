@@ -56,6 +56,7 @@
 #include "taskbar_hook/taskbar_autohide_rules.h"
 
 #include <dwrite.h>
+#include <windowsx.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -1034,12 +1035,110 @@ void CheckStatusBarInteraction()
     Check(!state.Release(before, {70, 16}, false).accepted && !state.Release(before, {70, 16}, true).accepted &&
         !state.IsDoubleClickTarget(before, {70, 16}), "hide, leave and capture cancellation discard pending gestures");
 }
+
+struct StatusBarVisibilityTestState
+{
+    bool hidden = true;
+    RECT dock{80, 8, 120, 56};
+};
+LRESULT CALLBACK StatusBarVisibilityTestProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    if (message == WM_NCCREATE)
+        SetWindowLongPtrW(window, GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+    const auto* state = reinterpret_cast<const StatusBarVisibilityTestState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (state && message == WM_WINDOWPOSCHANGING && lp)
+        snowdesktop::ConstrainHiddenStatusBarPosition(state->hidden, *reinterpret_cast<WINDOWPOS*>(lp));
+    if (state && message == WM_NCHITTEST)
+    {
+        POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ScreenToClient(window, &point);
+        RECT client{}; GetClientRect(window, &client);
+        return snowdesktop::StatusBarOwnsPointer(!state->hidden, client, state->dock, point) ? HTCLIENT : HTTRANSPARENT;
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+void CheckStatusBarFullscreenDockSession()
+{
+    using namespace snowdesktop;
+    const HWND fullWindow = reinterpret_cast<HWND>(static_cast<UINT_PTR>(41));
+    StatusBarFullscreenState firstMonitor, secondMonitor;
+    Check(firstMonitor.Observe(fullWindow, false, false, false),
+        "the summon boundary observes fullscreen before the Dock input proxy takes focus");
+    firstMonitor.BeginDockReveal();
+    Check(firstMonitor.Observe(HWND{}, true, true, true) && firstMonitor.Source() == fullWindow,
+        "an exclusive fullscreen source minimized by our Dock input proxy keeps its bar hidden");
+    firstMonitor.BeginDockReveal();
+    Check(firstMonitor.Observe(HWND{}, true, true, true),
+        "opening another associated Dock surface preserves an already retained fullscreen source");
+    Check(!secondMonitor.Observe(HWND{}, true, true, true),
+        "summoning on another monitor never inherits the first monitor's fullscreen source");
+    Check(firstMonitor.Observe(std::nullopt, true, true, true),
+        "a failed monitor or window observation cannot reveal the bar during the summon");
+    Check(!firstMonitor.Observe(HWND{}, true, true, false) && !firstMonitor.DockSource(),
+        "a source restored to an ordinary window, moved away or destroyed releases the summon hold");
+    firstMonitor.Observe(fullWindow, false, false, false); firstMonitor.BeginDockReveal();
+    Check(!firstMonitor.Observe(HWND{}, true, false, true),
+        "an external foreground switch releases fullscreen retention while Dock remains promoted");
+    firstMonitor.Observe(fullWindow, false, false, false); firstMonitor.BeginDockReveal();
+    Check(!firstMonitor.Observe(HWND{}, false, true, true),
+        "closing Dock releases retention without depending on a later foreground event");
+    Check(firstMonitor.Observe(fullWindow, false, false, false),
+        "closing Dock cannot reveal the bar when the fullscreen application remains visible");
+
+    WINDOWPOS attemptedReveal{};
+    attemptedReveal.hwndInsertAfter = HWND_TOPMOST;
+    attemptedReveal.flags = SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE;
+    ConstrainHiddenStatusBarPosition(true, attemptedReveal);
+    Check((attemptedReveal.flags & (SWP_HIDEWINDOW | SWP_NOACTIVATE)) == (SWP_HIDEWINDOW | SWP_NOACTIVATE) &&
+        !(attemptedReveal.flags & SWP_SHOWWINDOW) && attemptedReveal.hwndInsertAfter == HWND_NOTOPMOST,
+        "the production WINDOWPOS guard rejects SHOW/TOPMOST without unregistering the AppBar");
+    const RECT bar{0, 0, 1920, 64}, actualDock{810, 8, 1110, 56};
+    Check(!StatusBarOwnsPointer(true, bar, actualDock, {900, 24}) &&
+        StatusBarOwnsPointer(true, bar, actualDock, {800, 24}) &&
+        StatusBarOwnsPointer(true, bar, actualDock, {900, 4}),
+        "only the actual merged Dock input rectangle passes through, not its whole reserved viewport");
+    Check(!StatusBarOwnsPointer(false, bar, actualDock, {40, 24}) &&
+        StatusBarOwnsPointer(true, bar, {}, {900, 24}),
+        "hidden bars own no input while a missing Dock leaves normal bar background input intact");
+
+    // Real User32 positioning messages use the production guard. All fixture
+    // windows remain offscreen and no Shell AppBar reservation is registered.
+    constexpr wchar_t className[] = L"SnowDesktop.StatusBarVisibilityTest";
+    WNDCLASSW cls{}; cls.lpfnWndProc = StatusBarVisibilityTestProc;
+    cls.hInstance = GetModuleHandleW(nullptr); cls.lpszClassName = className;
+    Check(RegisterClassW(&cls) != 0, "the isolated status bar visibility fixture is registered");
+    StatusBarVisibilityTestState state;
+    const HWND hiddenBar = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, className, L"", WS_POPUP,
+        -32000, -32000, 200, 64, nullptr, nullptr, cls.hInstance, &state);
+    Check(hiddenBar != nullptr, "the offscreen bar fixture is created");
+    if (hiddenBar)
+    {
+        SetWindowPos(hiddenBar, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        Check(!IsWindowVisible(hiddenBar) && !snowdesktop::popup_window_pair_z_order::IsTopmost(hiddenBar),
+            "a real SHOW/TOPMOST transaction cannot expose the fullscreen-hidden bar");
+        state.hidden = false;
+        SetWindowPos(hiddenBar, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        Check(IsWindowVisible(hiddenBar) != FALSE, "the same registered bar can restore after fullscreen ends");
+        POINT dockPoint{100, 24}, barPoint{40, 24};
+        ClientToScreen(hiddenBar, &dockPoint); ClientToScreen(hiddenBar, &barPoint);
+        Check(SendMessageW(hiddenBar, WM_NCHITTEST, 0, MAKELPARAM(dockPoint.x, dockPoint.y)) == HTTRANSPARENT &&
+            SendMessageW(hiddenBar, WM_NCHITTEST, 0, MAKELPARAM(barPoint.x, barPoint.y)) == HTCLIENT,
+            "native hit testing gives the merged Dock its own input while preserving adjacent bar controls");
+        DestroyWindow(hiddenBar);
+    }
+    UnregisterClassW(className, cls.hInstance);
+}
 } // namespace
 
 int main(int argc, char** argv)
 {
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
     CheckStatusBarInteraction();
+    CheckStatusBarFullscreenDockSession();
     {
         snowdesktop::StatusBarTooltipState tooltip;
         Check(tooltip.Enter("cpu", L"CPU 9%", {}, 100, 400), "entering a different item installs its tooltip");

@@ -1,5 +1,6 @@
 #pragma once
 #include "tray_focus.h"
+#include "tray_menu_placement.h"
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -45,6 +46,7 @@ public:
     void CancelFocusReturn(HWND origin = nullptr);
     void ObserveForeground(HWND window, DWORD eventTime);
     std::optional<FocusDelivery> TakeFocusReturn(HWND origin, std::uint64_t serial);
+    MenuPopupBindings MenuPopups(HWND target) const;
     void OpenNativeTray();
 private:
     struct Impl;

@@ -736,7 +736,7 @@
 ---@field relatedRevision? integer Revision of relatedSlotId after the same transaction.
 ---@field source? 'pointer'|'keyboard'|'ime'|'commit'|'host.drop'|'host.picker'|'host.menu'|'host.keyboard'|string Host interaction source; host.* values identify slot.changed transactions.
 ---@field taskId? integer
----@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
+---@field task? 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'|string
 ---@field ok? boolean
 ---@field value? SnowMediaTaskValue|SnowAudioOutputTaskValue|SnowSystemSettingsTaskValue|SnowClipboardReadTaskValue|SnowFilesystemPickerTaskValue|SnowFilesystemMetadata|SnowFilesystemListTaskValue|SnowFilesystemImageTaskValue|SnowFilesystemReadTaskValue|SnowFilesystemWriteTaskValue|SnowAppSearchTaskValue|SnowItemSearchTaskValue|SnowNotificationTaskValue|SnowCalendarMutationTaskValue|SnowNetworkTaskValue|SnowStateValue
 ---@field error? string
@@ -1749,6 +1749,53 @@ function data.subscribe(topic, options) end
 ---@class SnowAudioOutputMuteArguments
 ---@field muted boolean Requested master mute state.
 
+-- The following device-write tasks require minHostVersion 1.0.8.0, their
+-- individual task.* feature, an independent control grant and a trusted gesture.
+-- Their task.done success value is SnowAcceptedTaskValue; preview has no side effects.
+---@class SnowAudioDeviceArguments
+---@field endpointId string Non-empty opaque active endpoint ID from audio.devices, matching the requested input/output direction.
+
+---@class SnowAudioInputVolumeArguments
+---@field volume number Finite scalar clamped by the host to 0.0 through 1.0 for the current default multimedia microphone.
+
+---@class SnowAudioInputMuteArguments
+---@field muted boolean Requested mute state for the current default multimedia microphone.
+
+---@class SnowDisplayBrightnessArguments
+---@field monitorId string Non-empty opaque ID from system.display.brightness.
+---@field brightness number Finite brightness from 0 through 100.
+
+---@class SnowWifiInterfaceArguments
+---@field interfaceId string Non-empty opaque interface ID from network.wifi.
+
+---@class SnowWifiRadioArguments: SnowWifiInterfaceArguments
+---@field enabled boolean Requested software radio state; hardware and policy can still reject it.
+
+---@class SnowWifiConnectArguments: SnowWifiInterfaceArguments
+---@field networkId? string Exactly one of networkId, profileName or ssid is required. Use a current network.wifi network ID.
+---@field profileName? string Saved profile on this interface; mutually exclusive with networkId and ssid.
+---@field ssid? string Non-empty UTF-8 SSID, at most 32 bytes; mutually exclusive with networkId and profileName.
+---@field hidden? boolean Whether this is a hidden network.
+---@field security? 'open'|'wpa2'|'wpa3' Required for a direct ssid target; networkId security is resolved again by the host.
+-- Passwords and confirmation flags are never accepted as Lua arguments. The host
+-- owns credential/confirmation dialogs; cancellation prevents submission.
+
+---@class SnowWifiForgetArguments: SnowWifiInterfaceArguments
+---@field profileName string Non-empty saved profile name. Requires a separate host confirmation.
+
+---@class SnowBluetoothRadioArguments
+---@field radioId string Non-empty opaque radio ID from bluetooth.devices.
+---@field enabled boolean Requested radio state.
+
+---@class SnowBluetoothDeviceArguments
+---@field deviceId string Non-empty paired device ID from bluetooth.devices; respect canConnect/canDisconnect.
+
+---@class SnowPowerPlanArguments
+---@field planId string Non-empty plan ID from system.power.plans.
+
+---@class SnowPowerModeArguments
+---@field mode 'balanced'|'efficiency'|'performance' Sets AC and battery modes together when supported.
+
 ---@class SnowSystemSettingsArguments
 ---@field page 'notifications'|'audio'|'display'|'network'|'bluetooth'|'power'|'storage'|'apps'|'personalization' Host-maintained settings page name.
 
@@ -1994,6 +2041,25 @@ task = {}
 ---@overload fun(name: 'media.setRepeat', arguments: SnowMediaRepeatArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.output.setVolume', arguments: SnowAudioOutputVolumeArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'audio.output.setMute', arguments: SnowAudioOutputMuteArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.output.selectDevice', arguments: SnowAudioDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.input.selectDevice', arguments: SnowAudioDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.input.setVolume', arguments: SnowAudioInputVolumeArguments): taskId: integer?, error: string?
+---@overload fun(name: 'audio.input.setMute', arguments: SnowAudioInputMuteArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.display.setBrightness', arguments: SnowDisplayBrightnessArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.setRadio', arguments: SnowWifiRadioArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.scan', arguments: SnowWifiInterfaceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.connect', arguments: SnowWifiConnectArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.disconnect', arguments: SnowWifiInterfaceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'network.wifi.forget', arguments: SnowWifiForgetArguments): taskId: integer?, error: string?
+---@overload fun(name: 'bluetooth.setRadio', arguments: SnowBluetoothRadioArguments): taskId: integer?, error: string?
+---@overload fun(name: 'bluetooth.connect', arguments: SnowBluetoothDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'bluetooth.disconnect', arguments: SnowBluetoothDeviceArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.setPlan', arguments: SnowPowerPlanArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.setMode', arguments: SnowPowerModeArguments): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.lock'): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.sleep'): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.restart'): taskId: integer?, error: string?
+---@overload fun(name: 'system.power.shutdown'): taskId: integer?, error: string?
 ---@overload fun(name: 'system.openSettings', arguments: SnowSystemSettingsArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'clipboard.read', arguments: SnowClipboardReadArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'clipboard.write', arguments: SnowClipboardWriteArguments): taskId: integer?, error: string?
@@ -2024,7 +2090,7 @@ task = {}
 ---@overload fun(name: 'calendar.remove', arguments: SnowCalendarRemoveArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'network.request', arguments: SnowNetworkRequestArguments): taskId: integer?, error: string?
 ---@overload fun(name: 'shell.openUri', arguments: SnowShellOpenUriArguments): taskId: integer?, error: string?
----@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
+---@param name 'media.play'|'media.pause'|'media.toggle'|'media.stop'|'media.next'|'media.previous'|'media.seek'|'media.setRate'|'media.setShuffle'|'media.setRepeat'|'audio.output.setVolume'|'audio.output.setMute'|'audio.output.selectDevice'|'audio.input.selectDevice'|'audio.input.setVolume'|'audio.input.setMute'|'system.display.setBrightness'|'network.wifi.setRadio'|'network.wifi.scan'|'network.wifi.connect'|'network.wifi.disconnect'|'network.wifi.forget'|'bluetooth.setRadio'|'bluetooth.connect'|'bluetooth.disconnect'|'system.power.setPlan'|'system.power.setMode'|'system.power.lock'|'system.power.sleep'|'system.power.restart'|'system.power.shutdown'|'system.openSettings'|'clipboard.read'|'clipboard.write'|'clipboard.clear'|'filesystem.pickOpen'|'filesystem.pickSave'|'filesystem.pickFolder'|'filesystem.stat'|'filesystem.list'|'filesystem.image'|'filesystem.read'|'filesystem.write'|'filesystem.release'|'app.search'|'app.launch'|'desktop.search'|'everything.search'|'shell.openItem'|'shell.revealItem'|'desktop.refresh'|'notification.show'|'notification.update'|'notification.dismiss'|'notification.schedule'|'notification.cancel'|'calendar.create'|'calendar.update'|'calendar.remove'|'network.request'|'shell.openUri'
 ---@param arguments? table Strict task-specific argument table.
 ---@return integer? taskId
 ---@return string? error

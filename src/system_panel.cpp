@@ -1,5 +1,6 @@
 #include "system_panel.h"
 #include "system_panel_model.h"
+#include "system_control_prompt.h"
 #include "app/desktop_backdrop_compositor.h"
 #include "quick_navigation_animation_rules.h"
 #include "animation_settings.h"
@@ -22,143 +23,11 @@ namespace wr=widget_runtime;
 namespace
 {
 constexpr UINT kOpenPending=WM_APP+211;
+constexpr UINT_PTR kTrayMenuTimer=2;
 bool HighContrast(){HIGHCONTRASTW h{sizeof(h)};SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(h),&h,0);return(h.dwFlags&HCF_HIGHCONTRASTON)!=0;}
 D2D1_COLOR_F SystemColor(int index){const auto c=GetSysColor(index);return D2D1::ColorF(GetRValue(c)/255.f,GetGValue(c)/255.f,GetBValue(c)/255.f);}
-struct PromptState { HWND window=nullptr;bool cancelled=false; };
+using PromptState=SystemControlPromptState;
 struct PanelLifetime { bool alive=true; };
-// A tray callback may activate another window before it enters a menu loop.
-// Only that short discovery interval is process-based; continued retention is
-// tied to a concrete menu owner or a nearby popup observed during the gesture.
-struct TrayMenuRetention
-{
-    DWORD process=0,menuThread=0,popupThread=0;
-    HWND target=nullptr,menuOwner=nullptr,popup=nullptr,popupOwner=nullptr,previousForeground=nullptr;
-    POINT anchor{};ULONGLONG started=0;
-    void Reset(){*this={};}
-    bool BelongsToTarget(HWND w)const
-    {DWORD pid=0;return w&&GetWindowThreadProcessId(w,&pid)&&pid==process;}
-    void Arm(HWND owner,DWORD pid,POINT point)
-    {
-        Reset();process=pid;
-        if(!BelongsToTarget(owner)){Reset();return;}
-        target=owner;anchor=point;started=GetTickCount64();previousForeground=GetForegroundWindow();
-    }
-    bool NearbyPopup(HWND w)const
-    {
-        if(w==target||w==previousForeground||!IsWindowVisible(w))return false;
-        const auto style=GetWindowLongPtrW(w,GWL_STYLE),extended=GetWindowLongPtrW(w,GWL_EXSTYLE);
-        if(!(style&WS_POPUP)||(style&WS_CHILD)||(style&WS_CAPTION)==WS_CAPTION||(style&WS_THICKFRAME)||
-            (extended&(WS_EX_APPWINDOW|WS_EX_TRANSPARENT))||!BelongsToTarget(w))return false;
-        // Several custom tray menus have no TOOLWINDOW bit and no owner. A
-        // bounded UI-thread/owner relation is stronger than that style hint.
-        const auto thread=GetWindowThreadProcessId(w,nullptr);
-        bool related=thread==GetWindowThreadProcessId(target,nullptr);
-        auto owner=GetWindow(w,GW_OWNER);const auto root=GetAncestor(target,GA_ROOTOWNER);
-        for(unsigned depth=0;owner&&!related&&depth<8;++depth)
-        {
-            if(!BelongsToTarget(owner))break;
-            related=owner==target||owner==root;
-            const auto next=GetWindow(owner,GW_OWNER);if(next==owner)break;owner=next;
-        }
-        if(!related)return false;
-        RECT rect{};if(!GetWindowRect(w,&rect)||IsRectEmpty(&rect))return false;
-        MONITORINFO monitor{sizeof(monitor)};
-        if(GetMonitorInfoW(MonitorFromPoint(anchor,MONITOR_DEFAULTTONEAREST),&monitor)&&
-            rect.right-rect.left>=monitor.rcMonitor.right-monitor.rcMonitor.left&&
-            rect.bottom-rect.top>=monitor.rcMonitor.bottom-monitor.rcMonitor.top)return false;
-        InflateRect(&rect,96,96);return PtInRect(&rect,anchor)!=FALSE;
-    }
-    bool Active(HWND foreground)
-    {
-        if(!process)return false;
-        if(!BelongsToTarget(target)||!BelongsToTarget(foreground)){Reset();return false;}
-        const auto age=GetTickCount64()-started;
-        const DWORD thread=GetWindowThreadProcessId(foreground,nullptr);
-        GUITHREADINFO info{sizeof(info)};
-        const bool nativeMenu=GetGUIThreadInfo(thread,&info)&&
-            (info.flags&(GUI_INMENUMODE|GUI_POPUPMENUMODE|GUI_SYSTEMMENUMODE))&&BelongsToTarget(info.hwndMenuOwner)&&
-            GetWindowThreadProcessId(info.hwndMenuOwner,nullptr)==thread;
-        if(menuOwner)
-        {
-            if(nativeMenu&&thread==menuThread&&info.hwndMenuOwner==menuOwner)return true;
-            Reset();return false;
-        }
-        if(popup)
-        {
-            if(!BelongsToTarget(popup)||!NearbyPopup(popup)||GetWindow(popup,GW_OWNER)!=popupOwner||
-                GetWindowThreadProcessId(popup,nullptr)!=popupThread||
-                (popupOwner&&!BelongsToTarget(popupOwner))||(foreground!=popup&&foreground!=popupOwner))
-            {Reset();return false;}
-            if(nativeMenu&&(info.hwndMenuOwner==popup||info.hwndMenuOwner==popupOwner))
-            {menuOwner=info.hwndMenuOwner;menuThread=thread;popup=nullptr;return true;}
-            // Discovery is time-bounded, retention belongs to this exact live
-            // popup. Do not close overflow beneath a menu that is still open.
-            return true;
-        }
-        if(age>=1500){Reset();return false;}
-        if(nativeMenu){menuOwner=info.hwndMenuOwner;menuThread=thread;return true;}
-        if(NearbyPopup(foreground)){popup=foreground;popupOwner=GetWindow(popup,GW_OWNER);popupThread=thread;}
-        return true;
-    }
-};
-struct Prompt
-{
-    system_control::Request& request;std::shared_ptr<PromptState> state;HWND password=nullptr,ssid=nullptr,security=nullptr;bool hidden=false,passwordForm=false;
-    static INT_PTR CALLBACK Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp)
-    {
-        auto* self=reinterpret_cast<Prompt*>(GetWindowLongPtrW(w,DWLP_USER));
-        if(m==WM_INITDIALOG)
-        {
-            self=reinterpret_cast<Prompt*>(lp);SetWindowLongPtrW(w,DWLP_USER,lp);
-            self->state->window=w;
-            if(self->state->cancelled){EndDialog(w,IDCANCEL);return TRUE;}
-            SetWindowTextW(w,_LW(self->hidden?"controlCenter.hiddenNetwork":"statusBar.controlCenter"));
-            const auto font=reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-            auto child=[&](DWORD ex,const wchar_t* cls,const wchar_t* text,DWORD style,int x,int y,int width,int height,int id){const auto h=CreateWindowExW(ex,cls,text,WS_CHILD|WS_VISIBLE|style,x,y,width,height,w,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return h;};
-            int y=16;
-            if(self->hidden)
-            {
-                child(0,L"STATIC",_LW("controlCenter.ssid"),0,16,y,330,20,0);y+=24;self->ssid=child(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,16,y,330,28,101);SendMessageW(self->ssid,EM_SETLIMITTEXT,32,0);y+=40;
-                child(0,L"STATIC",_LW("controlCenter.security"),0,16,y,330,20,0);y+=24;self->security=child(0,L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,16,y,330,120,102);
-                for(const auto* s:{_LW("controlCenter.openNetwork"),L"WPA2-Personal",L"WPA3-Personal"})SendMessageW(self->security,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(s));SendMessageW(self->security,CB_SETCURSEL,1,0);y+=40;
-            }
-            if(self->passwordForm)
-            {
-                child(0,L"STATIC",_LW("controlCenter.passwordHint"),0,16,y,330,36,0);y+=40;self->password=child(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_TABSTOP|ES_PASSWORD|ES_AUTOHSCROLL,16,y,330,28,103);SendMessageW(self->password,EM_SETLIMITTEXT,63,0);y+=44;
-            }
-            else
-            {
-                const auto& task=self->request.name;
-                const char* key=task=="network.wifi.forget"?"controlCenter.confirmForget":task=="system.power.sleep"?"controlCenter.confirmSleep":task=="system.power.restart"?"controlCenter.confirmRestart":"controlCenter.confirmShutdown";
-                child(0,L"STATIC",_LW(key),0,16,y,330,64,0);y+=76;
-            }
-            child(0,L"BUTTON",_LW("settings.dialog.cancel"),WS_TABSTOP|BS_DEFPUSHBUTTON,142,y,96,32,IDCANCEL);child(0,L"BUTTON",_LW("settings.dialog.confirm"),WS_TABSTOP|BS_PUSHBUTTON,250,y,96,32,IDOK);
-            SendMessageW(w,DM_SETDEFID,IDCANCEL,0);
-            RECT r{0,0,362,y+48};AdjustWindowRectEx(&r,static_cast<DWORD>(GetWindowLongPtrW(w,GWL_STYLE)),FALSE,0);SetWindowPos(w,nullptr,0,0,r.right-r.left,r.bottom-r.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);return TRUE;
-        }
-        if(!self)return FALSE;
-        if(m==WM_COMMAND&&(LOWORD(wp)==IDOK||LOWORD(wp)==IDCANCEL))
-        {
-            if(LOWORD(wp)==IDOK&&!self->state->cancelled)
-            {
-                if(self->hidden){wchar_t name[64]{};GetWindowTextW(self->ssid,name,64);char utf8[256]{};const int count=WideCharToMultiByte(CP_UTF8,0,name,-1,utf8,256,nullptr,nullptr);if(count<=1||count>33){SetFocus(self->ssid);return TRUE;}self->request.arguments["ssid"]=utf8;const auto selected=SendMessageW(self->security,CB_GETCURSEL,0,0);self->request.arguments["security"]=selected==0?"open":selected==2?"wpa3":"wpa2";}
-                if(self->password){wchar_t secret[64]{};GetWindowTextW(self->password,secret,64);self->request.password=system_control::Secret(secret);SecureZeroMemory(secret,sizeof(secret));SetWindowTextW(self->password,L"");}self->request.hostConfirmed=true;
-            }
-            EndDialog(w,self->state->cancelled?IDCANCEL:LOWORD(wp));return TRUE;
-        }
-        if(m==WM_NCDESTROY&&self->state->window==w)self->state->window=nullptr;
-        if(m==WM_CLOSE){EndDialog(w,IDCANCEL);return TRUE;}return FALSE;
-    }
-};
-bool Confirm(HWND owner,system_control::Request& request,const std::shared_ptr<PromptState>& state)
-{
-    const bool hidden=request.name=="network.wifi.connect"&&request.arguments.contains("hidden");
-    struct Template{DLGTEMPLATE dialog;WORD menu=0,cls=0,title=0;} form{};
-    form.dialog.style=WS_POPUP|WS_CAPTION|WS_SYSMENU|DS_MODALFRAME;form.dialog.cx=260;form.dialog.cy=hidden?250:130;
-    Prompt prompt{request,state,nullptr,nullptr,nullptr,hidden,hidden||system_control::RequiresPasswordPrompt(request)};
-    const auto result=DialogBoxIndirectParamW(GetModuleHandleW(nullptr),&form.dialog,owner,Prompt::Procedure,reinterpret_cast<LPARAM>(&prompt));
-    state->window=nullptr;return result==IDOK&&!state->cancelled;
-}
 }
 struct SystemPanel::Impl
 {
@@ -174,8 +43,8 @@ struct SystemPanel::Impl
     std::shared_ptr<PanelLifetime> lifetime=std::make_shared<PanelLifetime>();
     bool paintDirty=true;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
-    bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;
-    std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;TrayMenuRetention context;WPARAM closeGeneration=0;
+    bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;HWND retainedAbove=nullptr;
+    std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
     Impl(SettingsChanged c,SystemCalendarActions dates,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timing,IDCompositionDesktopDevice* graphics,IDWriteFactory* fonts,Background draw)
         :changed(std::move(c)),calendar(std::move(dates)),dropOutside(std::move(drop)),background(std::move(draw)),scheduler(timing),composition(graphics),text(fonts){}
     ~Impl(){lifetime->alive=false;destroying=true;HideNow();tooltip.Close();if(accessibility)accessibility->DetachWindow(window);backdrop.Reset();surface.Reset();visual.Reset();target.Reset();if(window)DestroyWindow(window);}
@@ -272,7 +141,8 @@ struct SystemPanel::Impl
             if(!life->alive||modal||!showing||closing)return false;
             tooltip.Hide();modal=true;const auto activeModel=model;
             const auto state=promptState=std::make_shared<PromptState>();
-            const bool result=Confirm(window,request,state);
+            const auto wifi=current&&current->data?current->data->Controls()->Current("network.wifi"):std::nullopt;
+            const bool result=ConfirmSystemControl(window,request,state,{},wifi?&*wifi:nullptr);
             if(!life->alive)return false;
             promptState.reset();modal=false;
             // A replacement is opened only after the dialog's nested loop has
@@ -294,7 +164,7 @@ struct SystemPanel::Impl
         std::vector<RECT> next;for(const auto& c:scene.cards)next.push_back({static_cast<LONG>(std::lround(c.left*scale)),static_cast<LONG>(std::lround(c.top*scale)),static_cast<LONG>(std::lround(c.right*scale)),static_cast<LONG>(std::lround(c.bottom*scale))});
         const bool shape=cards.size()!=next.size()||!std::equal(cards.begin(),cards.end(),next.begin(),[](const auto& x,const auto& y){return EqualRect(&x,&y);});cards=std::move(next);
         if(w!=width||h!=height){width=w;height=h;surface.Reset();paintDirty=true;}RECT previous{};GetWindowRect(window,&previous);const bool moved=previous.left!=left||previous.top!=top||previous.right!=left+w||previous.bottom!=top+h;
-        if(moved)SetWindowPos(window,HWND_TOPMOST,left,top,w,h,SWP_NOACTIVATE);
+        if(moved)SetWindowPos(window,nullptr,left,top,w,h,SWP_NOACTIVATE|SWP_NOZORDER);
         if(Glass()&&(moved||shape||!backdrop.IsAvailable()))
         {
             if(!backdrop.IsAvailable())backdrop.InitializePopup(window,true,false);
@@ -303,8 +173,8 @@ struct SystemPanel::Impl
             backdrop.EndFrame(false);Pose();
             // A rebuilt helper starts hidden even when the content HWND is
             // already shown. Restore the pair without changing keyboard focus.
-            backdrop.SetPopupTopmost(true);backdrop.SetVisible(showing);
-            if(showing)backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);
+            if(showing)SyncTrayMenuLayer(true);
+            backdrop.SetVisible(showing);
         }
         else if(!Glass())backdrop.Reset();if(moved||shape)Pose();if(moved||shape||contentChanged)PublishGeometry();
         if(!hovered.empty())Tip(scene.Find(hovered));
@@ -349,7 +219,7 @@ struct SystemPanel::Impl
     }
     void Animate(bool opening)
     {
-        if(!opening){EndDragFeedback();dropIndicator.reset();if(GetCapture()==window)ReleaseCapture();}
+        if(!opening){KillTimer(window,kTrayMenuTimer);EndDragFeedback();dropIndicator.reset();if(GetCapture()==window)ReleaseCapture();}
         if(!opening&&modal){if(model)model->Close();CancelPrompt();}
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;
         if(!scheduler||animation::RuntimePopupEffect()==animation::NoEffect){if(opening){slide.ShowImmediately();Pose();}else FinishClose();return;}
@@ -364,17 +234,38 @@ struct SystemPanel::Impl
         EndDragFeedback();dropIndicator.reset();
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;showing=closing=false;input.Cancel();scrollbarDragging=false;hovered.clear();Tip(nullptr);if(GetCapture()==window)ReleaseCapture();
         if(model)model->Close();CancelPrompt();
-        if(window){KillTimer(window,1);backdrop.HidePopupWindowPair(window);backdrop.SetPopupTopmost(false);ShowWindow(window,SW_HIDE);}
+        if(window){KillTimer(window,1);KillTimer(window,kTrayMenuTimer);backdrop.HidePopupWindowPair(window);backdrop.SetPopupTopmost(false);ShowWindow(window,SW_HIDE);}
         if(current&&current->tray&&model){current->tray->CancelFocusReturn(current->owner);for(const auto& n:model->View().nodes)if(n.id.starts_with("tray:"))current->tray->SetGeometry(n.id.substr(5),{});}
-        model.reset();current.reset();context.Reset();slide.ResetHidden();if(accessibility)accessibility->RefreshEvents();
+        model.reset();current.reset();context.Reset();retainedAbove=nullptr;slide.ResetHidden();if(accessibility)accessibility->RefreshEvents();
     }
     void Queue(Request request)
     {
         afterClose={};if(showing&&!closing&&current&&current->action==request.action&&current->owner==request.owner){pending.reset();Animate(false);return;}
         if(showing||closing||modal){pending=std::move(request);if(!closing)Animate(false);}else{pending.reset();++closeGeneration;Open(std::move(request));}
     }
-    void ArmContext(const std::string& key,POINT screen)
-    {context.Reset();if(current&&current->tray)for(const auto& i:current->tray->Current().icons)if(i.key==key){context.Arm(reinterpret_cast<HWND>(i.identity.window),i.identity.process,screen);break;}}
+    void ArmContext(const std::string& key)
+    {context.Reset();if(current&&current->tray)for(const auto& i:current->tray->Current().icons)if(i.key==key){context.Arm(reinterpret_cast<HWND>(i.identity.window),i.identity.process,window,current->owner);if(context.process)SetTimer(window,kTrayMenuTimer,50,nullptr);break;}}
+    void SyncTrayMenuLayer(bool force=false)
+    {
+        HWND above=nullptr;
+        for(const auto& binding:context.popups)if(context.LivePopup(binding)){above=reinterpret_cast<HWND>(binding.window);break;}
+        if(!force&&above==retainedAbove)return;
+        // Move only our own pair. A non-topmost custom menu otherwise remains
+        // covered by the overflow panel even after its focus is retained.
+        const bool topmost=!above||(GetWindowLongPtrW(above,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
+        backdrop.SetPopupWindowPairZOrder(window,above?above:HWND_TOPMOST,topmost,above);
+        retainedAbove=above;
+    }
+    bool RetainTrayMenu(HWND foreground)
+    {
+        if(!current||!current->tray)return false;
+        const bool wasObserved=context.tracker.ObservedMenu();
+        const bool retained=context.Active(foreground,current->tray->MenuPopups(context.target));
+        if(retained)SyncTrayMenuLayer();
+        if(!wasObserved&&context.tracker.ObservedMenu())WriteDiagnosticLogEntry(L"Tray overflow retained for the gesture's observed menu",DiagnosticLogLevel::Debug);
+        if(!context.process||context.tracker.ObservedMenu())KillTimer(window,kTrayMenuTimer);
+        return retained;
+    }
     void Result(ui::InputResult result,POINT screen,bool keyboard=false)
     {
         if(result.kind==ui::InputResult::Kind::None||!model||!current||modal||closing)return;
@@ -382,7 +273,7 @@ struct SystemPanel::Impl
         {
             const auto key=result.id.substr(5);if(result.kind==ui::InputResult::Kind::Drag){POINT local=screen;ScreenToClient(window,&local);const auto life=lifetime;auto activeModel=model;const bool dropped=activeModel->Drop(key,{local.x/scale,local.y/scale});if(!life->alive)return;if(!dropped&&model==activeModel&&dropOutside){const auto drop=dropOutside;drop(key,screen);}if(life->alive){Arrange();Paint();}return;}
             const auto life=lifetime;auto service=current->tray;const auto source=window,bar=current->owner;
-            ArmContext(key,screen);
+            ArmContext(key);
             bool accepted=false;
             if(keyboard)accepted=service->Activate(key,result.kind==ui::InputResult::Kind::Context?tray::Activation::ContextKeyboard:tray::Activation::Keyboard,screen,{bar,source});
             else{const bool right=result.kind==ui::InputResult::Kind::Context;const bool down=service->Activate(key,right?tray::Activation::RightDown:tray::Activation::LeftDown,screen,{bar,source});accepted=service->Activate(key,right?tray::Activation::RightUp:tray::Activation::LeftUp,screen,{bar,source})||down;}
@@ -406,17 +297,18 @@ struct SystemPanel::Impl
             if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->closing&&self->current&&reinterpret_cast<HWND>(lp)!=self->current->owner)
             {self->pending.reset();self->afterClose={};++self->closeGeneration;}
             if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->showing&&!self->closing)
-            {if(!self->context.Active(reinterpret_cast<HWND>(lp)))self->Animate(false);}
+            {if(!self->RetainTrayMenu(reinterpret_cast<HWND>(lp)))self->Animate(false);}
             if(!self->model||self->closing||self->modal)return DefWindowProcW(w,m,wp,lp);
             if(m==WM_THEMECHANGED||m==WM_SETTINGCHANGE){self->paintDirty=true;self->Arrange();self->Paint();return 0;}
-            if(m==WM_TIMER&&wp==1)
+            if(m==WM_TIMER&&(wp==1||wp==kTrayMenuTimer))
             {
                 if(self->context.process&&!self->modal)
                 {
                     const auto foreground=GetForegroundWindow();
-                    if(foreground!=w&&foreground!=self->current->owner&&!self->context.Active(foreground)){self->Animate(false);return 0;}
-                    if((foreground==w||foreground==self->current->owner)&&GetTickCount64()-self->context.started>=1500)self->context.Reset();
+                    if(!self->RetainTrayMenu(foreground)){self->Animate(false);return 0;}
                 }
+                else if(wp==kTrayMenuTimer)KillTimer(w,kTrayMenuTimer);
+                if(wp==kTrayMenuTimer)return 0;
                 if(self->input.Pressed().empty()&&!self->scrollbarDragging&&!self->modal){self->Arrange();if(self->paintDirty)self->Paint();}
                 return 0;
             }
@@ -426,7 +318,7 @@ struct SystemPanel::Impl
             if(m==WM_LBUTTONDOWN||m==WM_RBUTTONDOWN)
             {
                 const bool focusChanged=self->input.PointerInput();
-                self->context.Reset();self->tooltip.Hide();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};
+                self->context.Reset();KillTimer(w,kTrayMenuTimer);self->SyncTrayMenuLayer();self->tooltip.Hide();const D2D1_POINT_2F p{GET_X_LPARAM(lp)/self->scale,GET_Y_LPARAM(lp)/self->scale};
                 const auto axis=self->model->ScrollbarGeometry();const auto viewport=self->model->ScrollViewport();
                 if(m==WM_LBUTTONDOWN&&axis.CanDrag()&&p.x>=self->model->View().width-12&&p.x<self->model->View().width&&p.y>=viewport.top&&p.y<viewport.bottom)
                 {
@@ -460,7 +352,7 @@ struct SystemPanel::Impl
                 {
                     POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
                     const auto key=node->id.substr(5);const auto service=self->current->tray;const auto owner=self->current->owner;
-                    self->ArmContext(key,screen);const bool accepted=service->Activate(key,tray::Activation::DoubleClick,screen,{owner,w});
+                    self->ArmContext(key);const bool accepted=service->Activate(key,tray::Activation::DoubleClick,screen,{owner,w});
                     if(life->alive&&!accepted)self->context.Reset();
                 }
                 return 0;

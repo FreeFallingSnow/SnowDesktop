@@ -1,4 +1,5 @@
 local M = {}
+local gpuDetails = setmetatable({}, { __mode = "k" })
 
 M.defaults = {
     cpu = true, memory = true, gpu = true, vram = true,
@@ -32,16 +33,28 @@ local sources = {
 }
 
 function M.reconcile(handles, cardShown, hasFeature, hasPermission, subscribe)
+    local details = hasFeature("data.system.gpu.details") == true
+    if handles.gpu and gpuDetails[handles] ~= details then
+        handles.gpu:unsubscribe()
+        handles.gpu = nil
+    end
+    gpuDetails[handles] = details
     for _, source in ipairs(sources) do
         local wanted = (cardShown(source.card) or
             (source.sharedCard and cardShown(source.sharedCard))) and
             hasFeature("data." .. source.topic) and
             hasPermission(source.permission)
         if wanted and not handles[source.key] then
-            handles[source.key] = subscribe(source.topic, {
+            local options = {
                 maxAgeMs = source.age,
                 whenHidden = source.hidden or "throttle",
-            })
+            }
+            -- Old hosts reject unknown subscription options. Only request
+            -- per-channel validity and engine details after the feature probe.
+            if source.key == "gpu" and details then
+                options.includeDetails = true
+            end
+            handles[source.key] = subscribe(source.topic, options)
         elseif not wanted and handles[source.key] then
             handles[source.key]:unsubscribe()
             handles[source.key] = nil

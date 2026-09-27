@@ -6,6 +6,7 @@
 #include "tray_order.h"
 #include "preview_png_writer.h"
 #include "widget_preview_stage.h"
+#include "l10n.h"
 #include <dwrite.h>
 #include <shellapi.h>
 #include <wrl/client.h>
@@ -268,6 +269,47 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 changedBattery.power->batteryPercent = std::numeric_limits<double>::quiet_NaN();
                 Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2] == status_bar_glyphs::kUnknown,
                     "unknown battery level must not be drawn as an empty or full battery");
+                changedBattery.power->batteryPercent = 100; changedBattery.power->acPower = true;
+                const auto charged = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
+                Require(charged.batteryTone == StatusBarBatteryTone::FullyCharged &&
+                    charged.controlGlyphs[2] == status_bar_glyphs::kBatteryFull &&
+                    charged.controlTips[2].find(_LW("statusBar.fullyCharged")) != std::wstring::npos,
+                    "AC at 100 percent without charging must show a full battery and a fully charged tooltip");
+                changedBattery.power->charging = true;
+                const auto chargingFull = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
+                Require(chargingFull.batteryTone == StatusBarBatteryTone::Charging &&
+                    chargingFull.controlGlyphs[2] != charged.controlGlyphs[2] &&
+                    chargingFull.controlTips[2].find(_LW("statusBar.charging")) != std::wstring::npos &&
+                    !SameStatusBarContent(BuildStatusBarItems(settings, changedBattery),
+                        [&] { auto finished = changedBattery; finished.power->charging = false; return BuildStatusBarItems(settings, finished); }()),
+                    "finishing a charge at the same percentage must remove the bolt and repaint the battery");
+                changedBattery.power->charging = false; changedBattery.power->batteryPercent = 80;
+                const auto limited = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
+                Require(limited.batteryTone == StatusBarBatteryTone::Normal && limited.controlGlyphs[2] != charged.controlGlyphs[2] &&
+                    limited.controlTips[2].find(_LW("statusBar.pluggedIn")) != std::wstring::npos,
+                    "charge-limited AC state must retain its real fill without claiming charging or full");
+                changedBattery.power->batteryPercent = 99.9;
+                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2] != charged.controlGlyphs[2],
+                    "rounding the percentage must not claim the full battery level");
+                changedBattery.power->batteryPercent = 100; changedBattery.power->acPower = false;
+                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").batteryTone == StatusBarBatteryTone::Normal,
+                    "a full battery without confirmed AC must not claim fully charged on AC");
+                changedBattery.power->available = false; changedBattery.power->charging = true;
+                Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2] == status_bar_glyphs::kUnknown,
+                    "unavailable sampling must not retain a stale full charging icon");
+                auto gpuSettings = settings; gpuSettings.gpu = true;
+                auto gpuData = data; gpuData.gpu->available = false;
+                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"8%") != std::wstring::npos,
+                    "a missing memory channel must not hide valid GPU utilization");
+                gpuData.gpu->adapters.front().usageAvailable = false;
+                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"—") != std::wstring::npos,
+                    "missing GPU utilization must not manufacture zero percent");
+                gpuData.gpu->adapters.front().usageAvailable = true; gpuData.gpu->adapters.front().usagePercent = 0;
+                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"0%") != std::wstring::npos,
+                    "a measured idle GPU must remain distinguishable from a missing sample");
+                gpuData.gpu->adapters.front().usagePercent = std::numeric_limits<double>::quiet_NaN();
+                Require(Item(BuildStatusBarItems(gpuSettings, gpuData), "gpu").text.find(L"—") != std::wstring::npos,
+                    "a nonfinite GPU sample must not be promoted to a valid zero");
                 auto changedNetwork = data; changedNetwork.wifi.reset();
                 Require(Item(BuildStatusBarItems(settings, changedNetwork), "controlCenter").controlGlyphs[0] == status_bar_glyphs::kUnknown,
                     "missing Wi-Fi signal must not be replaced by a fabricated signal level");

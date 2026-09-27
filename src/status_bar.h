@@ -30,6 +30,12 @@ struct StatusBarMonitor
     HMONITOR monitor = nullptr;
     int mergedDockHeight = 0; // Physical pixels; zero means separate.
 };
+struct StatusBarDockState
+{
+    bool promoted = false;
+    HWND window = nullptr; // Visible merged content window, never owned by bar.
+    RECT inputBounds{}; // Screen pixels, only for a visible merged Dock.
+};
 class StatusBar final
 {
 public:
@@ -53,6 +59,12 @@ public:
     // Release a lost device without unregistering the AppBar or sampling demands.
     void ReleaseGraphicsResources();
     bool IsFullscreen(HMONITOR monitor) const;
+    // Coalesce a UI continuation on its live bar HWND. The callback is run
+    // from window dispatch, never inside the shared animation scheduler.
+    bool PostActivation(HWND owner, std::function<void()> callback);
+    // UI-thread summon boundary: sample before any Dock window/focus changes.
+    void PrepareDockReveal(HMONITOR monitor);
+    void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
     std::shared_ptr<tray::Service> Tray() const;
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);

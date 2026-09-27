@@ -12,7 +12,9 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    if(systemDataProvider_)systemDataProvider_->Controls()->SetWake({});
     systemPanel_.reset();
+    CancelStatusBarActivation();
     statusBar_.reset();
     // The shared service is constructed before the caches its asynchronous
     // scans use. Stop it before CRT static destruction reverses that order.
@@ -1065,6 +1067,9 @@ void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
     exitRequested_ = true;
+    // A confirmation may be pumping messages inside task dispatch. Invalidate
+    // tasks now, keeping the engine alive until that modal stack has unwound.
+    if (widgetEngine_) widgetEngine_->BeginTaskShutdown();
     WriteDiagnosticLogEntry((L"Application exit begin: pid=" +
         std::to_wstring(GetCurrentProcessId()) + L" restart=" +
         std::to_wstring(preparedRestart_ != nullptr)).c_str());

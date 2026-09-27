@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../system_control_prompt.h"
 #include "dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
 #include "startup_diagnostics.h"
@@ -1376,6 +1377,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             [this](const LuaWidgetFilePickerRequest& request) {
                 return ShowLuaWidgetFilePicker(hwnd_, request);
             });
+        widgetEngine_->SetSystemControlPromptCallback([this](auto& request, const auto& identity, auto valid) {
+            const auto state=std::make_shared<snowdesktop::SystemControlPromptState>();
+            state->valid=[this,valid=std::move(valid)] { return !exitRequested_ && valid(); };
+            const auto wifi=systemDataProvider_?systemDataProvider_->Controls()->Current("network.wifi"):std::nullopt;
+            const bool accepted=snowdesktop::ConfirmSystemControl(controlHwnd_?controlHwnd_:hwnd_,request,state,identity,wifi?&*wifi:nullptr);
+            return snowdesktop::system_control::Result{accepted,state->error,0};
+        });
         widgetEngine_->SetLogicalSlotPickerCallback(
             [this](const LogicalSlotPickerRequest& request) {
                 return OpenLuaLogicalSlotPicker(request);
@@ -1388,6 +1396,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                     (void)PostMessageW(widgetAudioWakeWindow,
                         kWidgetTaskWakeMessage, 0, 0);
             });
+        systemDataProvider_->Controls()->SetWake([widgetAudioWakeWindow] {
+            if(widgetAudioWakeWindow)(void)PostMessageW(widgetAudioWakeWindow,kWidgetTaskWakeMessage,0,0);
+        });
         widgetEngine_->SetAudioAnalysisWakeCallback(
             [widgetAudioWakeWindow]() {
                 if (widgetAudioWakeWindow)

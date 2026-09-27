@@ -442,10 +442,17 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
 
 bool DesktopApp::ShouldKeepFloatingPopupTopmostForShellMenu() const
 {
-    return IsCollectionPopupHostedByFloatingWindow() &&
+    const bool fullscreenDock = floatingDockHost_ && floatingDockHost_->active &&
+        floatingDockHost_->promoted && floatingDockHost_->hwnd &&
+        IsWindowVisible(floatingDockHost_->hwnd) && statusBar_ &&
+        statusBar_->IsFullscreen(floatingDockHost_->monitor);
+    // Demoting a fullscreen-summoned Dock also leaves its native Shell menu
+    // behind a topmost fullscreen application. The tracker must join the same
+    // band, just like a menu opened from the floating collection popup.
+    return fullscreenDock || (IsCollectionPopupHostedByFloatingWindow() &&
         floatingPopupHwnd_ &&
         IsWindow(floatingPopupHwnd_) &&
-        IsWindowVisible(floatingPopupHwnd_);
+        IsWindowVisible(floatingPopupHwnd_));
 }
 
 void DesktopApp::BeginShellPopupMenuLayer()

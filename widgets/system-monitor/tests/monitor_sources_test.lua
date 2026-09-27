@@ -29,6 +29,7 @@ return {
         f.reconcile()
         assert(f.created["system.gpu"] == 1)
         assert(f.handles.gpu.options.whenHidden == "pause")
+        assert(f.handles.gpu.options.includeDetails == true)
         f.cards.gpu = false
         f.reconcile()
         assert(f.handles.gpu and not f.removed["system.gpu"])
@@ -51,6 +52,23 @@ return {
         assert(next(f.handles) == nil)
         assert(f.removed["system.network.traffic"] == 1)
         assert(f.removed["system.network.status"] == 1)
+    end,
+    ["GPU details are probed and an environment change replaces the options"] = function()
+        local f = fixture()
+        f.cards.vram = true
+        f.missing["data.system.gpu.details"] = true
+        f.reconcile()
+        assert(f.handles.gpu.options.includeDetails == nil)
+        f.missing["data.system.gpu.details"] = nil
+        f.reconcile()
+        assert(f.removed["system.gpu"] == 1 and f.created["system.gpu"] == 2)
+        assert(f.handles.gpu.options.includeDetails == true)
+        f.reconcile()
+        assert(f.created["system.gpu"] == 2)
+        f.missing["data.system.gpu.details"] = true
+        f.reconcile()
+        assert(f.removed["system.gpu"] == 2 and f.created["system.gpu"] == 3)
+        assert(f.handles.gpu.options.includeDetails == nil)
     end,
     ["permission and capability changes reconcile active sources"] = function()
         local f = fixture()

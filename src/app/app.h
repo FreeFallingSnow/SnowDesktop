@@ -296,6 +296,7 @@ enum class QuickNavigationInvocationSource
     Pointer,
     DockSearch,
     Hotkey,
+    StatusBar,
 };
 
 struct DockAppIdentity
@@ -1108,6 +1109,9 @@ private:
     void ApplyDockWorkAreaReservation();
     void SyncStatusBar();
     void ActivateStatusBar(snowdesktop::StatusBarAction action, HWND owner, RECT anchor);
+    void ContinueStatusBarActivation(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
+        std::uint64_t generation);
+    void CancelStatusBarActivation(HMONITOR monitor = nullptr);
     snowdesktop::TrayDragFeedback MakeStatusBarTrayDragFeedback();
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */
     bool SynchronizeDockContainerAreas();
@@ -3404,6 +3408,11 @@ private:
         systemDataProvider_;
     std::unique_ptr<snowdesktop::StatusBar> statusBar_;
     snowdesktop::UiScheduleToken statusBarActivationToken_ = 0;
+    std::shared_ptr<std::uint64_t> statusBarActivationGeneration_ = std::make_shared<std::uint64_t>(0);
+    HMONITOR statusBarActivationMonitor_ = nullptr;
+    HMONITOR statusBarMenuMonitor_ = nullptr;
+    HWND statusBarMenuOwner_ = nullptr;
+    HMONITOR statusBarQuickNavigationMonitor_ = nullptr;
     std::unique_ptr<snowdesktop::SystemPanel> systemPanel_;
     std::unique_ptr<WidgetEngine> widgetEngine_;
     std::unique_ptr<snowdesktop::widget_runtime::IWidgetSettingsBackend>

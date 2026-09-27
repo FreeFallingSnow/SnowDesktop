@@ -1,6 +1,7 @@
 #include "widget_system_data_provider.h"
 #include "system_control_windows.h"
 #include "widget_gpu_usage.h"
+#include "system_power_status.h"
 #include "widget_storage_usage.h"
 #include "performance_trace.h"
 #include "widget_media_contract.h"
@@ -1397,22 +1398,23 @@ WidgetPowerDataSnapshot WidgetSystemDataProvider::SamplePower()
         snapshot.error = "Power sampling failed";
         return snapshot;
     }
-    snapshot.acPower = status.ACLineStatus == 1;
-    snapshot.charging = (status.BatteryFlag & 8) != 0;
-    snapshot.saver = status.SystemStatusFlag != 0;
-    if (status.BatteryFlag == 128)
+    const auto state = DecodeSystemPowerStatus(status.BatteryFlag,
+        status.ACLineStatus, status.BatteryLifePercent, status.SystemStatusFlag);
+    snapshot.acPower = state.onAC.value_or(false);
+    snapshot.charging = state.charging.value_or(false);
+    snapshot.saver = state.saver;
+    if (state.batteryPresent == false)
     {
         snapshot.error = "notPresent";
         return snapshot;
     }
-    if (status.BatteryLifePercent == 255)
+    if (!state.batteryPercent)
     {
         snapshot.error = "temporarilyUnavailable";
         return snapshot;
     }
     snapshot.available = true;
-    snapshot.batteryPercent = std::clamp(
-        static_cast<double>(status.BatteryLifePercent), 0.0, 100.0);
+    snapshot.batteryPercent = *state.batteryPercent;
     if (status.BatteryLifeTime != static_cast<DWORD>(-1))
     {
         snapshot.estimatedRemainingSeconds =

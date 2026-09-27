@@ -657,20 +657,32 @@ UINT DesktopApp::ShowModernMenu(
     options.onTextChanged = std::move(onTextChanged);
     options.onHover = std::move(onHover);
     ConfigureModernMenuEventPump(options);
+    RECT popupSourceBounds{};
     const bool floatingPopupHostVisible =
         ShouldShowFloatingPopupWindow() &&
         floatingPopupHwnd_ &&
         IsWindow(floatingPopupHwnd_) &&
-        IsWindowVisible(floatingPopupHwnd_);
-    const bool floatingDockHostWindowVisible =
-        floatingDockHost_ &&
-        floatingDockHwnd_ &&
-        IsWindow(floatingDockHwnd_) &&
-        IsWindowVisible(floatingDockHwnd_);
+        IsWindowVisible(floatingPopupHwnd_) &&
+        (owner == floatingPopupHwnd_ ||
+            (GetWindowRect(floatingPopupHwnd_, &popupSourceBounds) && PtInRect(&popupSourceBounds, screenPoint)));
+    // A pointer can select another monitor while a menu is being prepared.
+    // Bind Z-order ownership to the actual source surface, not the last
+    // globally selected Dock. The menu keeps this HWND for its whole session.
+    const PersistentDockHost* menuDockHost = nullptr;
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !host->active || !host->container || !host->hwnd ||
+            !IsWindow(host->hwnd) || !IsWindowVisible(host->hwnd)) continue;
+        RECT inputBounds = host->container->GetInteractiveBounds();
+        OffsetRect(&inputBounds, virtualLeft_, virtualTop_);
+        if (owner == host->hwnd || PtInRect(&inputBounds, screenPoint))
+        { menuDockHost = host.get(); break; }
+    }
+    const bool floatingDockHostWindowVisible = menuDockHost != nullptr;
     const bool floatingDockHostEffectivelyFloating =
-        floatingDockHost_ &&
+        menuDockHost &&
         IsPersistentDockHostEffectivelyFloating(
-            *floatingDockHost_);
+            *menuDockHost);
     const HWND zOrderOwner =
         snowdesktop::floating_popup_rules::
             ResolveMenuZOrderOwner(
@@ -678,7 +690,7 @@ UINT DesktopApp::ShowModernMenu(
                 floatingPopupHwnd_,
                 floatingDockHostWindowVisible,
                 floatingDockHostEffectivelyFloating,
-                floatingDockHwnd_);
+                menuDockHost ? menuDockHost->hwnd : nullptr);
     if (floatingDockHostWindowVisible &&
         !floatingDockHostEffectivelyFloating)
     {
@@ -768,6 +780,10 @@ UINT DesktopApp::ShowModernMenu(
             });
         extensions->Attach(items, options, kContextMoreCommand);
     }
+    // A status-bar session may use a floating host as its native z-order owner.
+    // Retain that exact owner so hiding a different monitor never dismisses it.
+    if (statusBarMenuOwner_ == owner && statusBarMenuMonitor_)
+        statusBarMenuOwner_ = options.zOrderOwner ? options.zOrderOwner : options.owner;
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
     if (result.command == kContextManageMenuCommand)
