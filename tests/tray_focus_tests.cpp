@@ -75,8 +75,7 @@ LRESULT CALLBACK ShellFixture(HWND window, UINT message, WPARAM wp, LPARAM lp)
     return DefWindowProcW(window, message, wp, lp);
 }
 
-void CheckRetainedMenuHit(HWND app, HWND bar, HWND other, HWND differentThreadMenu,
-    ATOM menuClass)
+void CheckRetainedMenuHit(HWND app, HWND bar, HWND other, HWND differentThreadMenu)
 {
     using namespace snowdesktop::tray;
     FixtureMenuRetentionSession session;
@@ -88,11 +87,11 @@ void CheckRetainedMenuHit(HWND app, HWND bar, HWND other, HWND differentThreadMe
     Require(session.Active(app, {}) && session.menuOwner == app && !session.popups[0].window,
         "a live native menu survives discovery without any placement binding");
 
-    // This process-local #32768 class is a real HWND type/ownership boundary
-    // substitute, not a TrackPopupMenu or third-party runtime acceptance test.
+    // Use the existing system #32768 class for real HWND type/ownership checks;
+    // this is not a TrackPopupMenu or third-party runtime acceptance test.
     // It is created after discovery has expired, like a delayed submenu.
-    const auto submenu = CreateWindowW(MAKEINTATOM(menuClass), L"", WS_POPUP,
-        280, 250, 160, 80, app, nullptr, GetModuleHandleW(nullptr), nullptr);
+    const auto submenu = CreateWindowW(L"#32768", L"", WS_POPUP,
+        280, 250, 160, 80, app, nullptr, nullptr, nullptr);
     Require(submenu != nullptr, "create isolated late native-menu type fixture");
     ShowWindow(submenu, SW_SHOWNOACTIVATE);
     wchar_t actualClass[32]{};
@@ -173,12 +172,9 @@ void RunTrayFocusWindowTests()
     // Keep real HWND/process/thread/visibility checks, replacing only native
     // menu-loop introspection. Every window stays on this inactive desktop.
     const auto desktop = GetThreadDesktop(GetCurrentThreadId());
-    WNDCLASSW menuDefinition{};
-    menuDefinition.hInstance = definition.hInstance;
-    menuDefinition.lpszClassName = L"#32768";
-    menuDefinition.lpfnWndProc = DefWindowProcW;
-    const auto menuClass = RegisterClassW(&menuDefinition);
-    Require(menuClass != 0, "register isolated native-menu type substitute");
+    WNDCLASSEXW menuDefinition{sizeof(menuDefinition)};
+    Require(GetClassInfoExW(nullptr, L"#32768", &menuDefinition) && menuDefinition.lpfnWndProc,
+        "the existing system native-menu class is available on the private desktop");
     const auto stopWindow = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     Require(stopWindow != nullptr, "create isolated secondary-window stop event");
     std::promise<std::pair<HWND, HWND>> created;auto readyWindow = created.get_future();
@@ -187,8 +183,8 @@ void RunTrayFocusWindowTests()
         const auto mainWindow = CreateWindowW(L"STATIC", L"", WS_POPUP, 440, 100, 200, 100,
             nullptr, nullptr, definition.hInstance, nullptr);
         if (mainWindow) ShowWindow(mainWindow, SW_SHOWNOACTIVATE);
-        const auto menuWindow = CreateWindowW(MAKEINTATOM(menuClass), L"", WS_POPUP,
-            640, 100, 160, 80, mainWindow, nullptr, definition.hInstance, nullptr);
+        const auto menuWindow = CreateWindowW(L"#32768", L"", WS_POPUP,
+            640, 100, 160, 80, mainWindow, nullptr, nullptr, nullptr);
         if (menuWindow) ShowWindow(menuWindow, SW_SHOWNOACTIVATE);
         created.set_value({mainWindow, menuWindow});
         WaitForSingleObject(stopWindow, 10000);
@@ -216,9 +212,8 @@ void RunTrayFocusWindowTests()
     ShowWindow(other, SW_HIDE);
     Require(!retention.Active(mainOnOtherThread, observed), "a hidden popup cannot retain the panel using stale SHOW evidence");
     ShowWindow(other, SW_SHOWNOACTIVATE);
-    CheckRetainedMenuHit(app, bar, other, menuOnOtherThread, menuClass);
+    CheckRetainedMenuHit(app, bar, other, menuOnOtherThread);
     SetEvent(stopWindow); secondary.join(); CloseHandle(stopWindow);
-    UnregisterClassW(MAKEINTATOM(menuClass), definition.hInstance);
 
     const auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
         static_cast<DWORD>(sizeof(SharedState)), ObjectName(pid, L"State").c_str());
