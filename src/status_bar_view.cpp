@@ -326,7 +326,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         const auto color = brush->GetColor();
                         if (part == 2 && !hc)
                         {
-                            if (item.batteryTone == StatusBarBatteryTone::Charging || item.batteryTone == StatusBarBatteryTone::FullyCharged)
+                            if (item.batteryPluggedIn || item.batteryTone == StatusBarBatteryTone::Charging || item.batteryTone == StatusBarBatteryTone::FullyCharged)
                                 brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0x107c10 : 0x6ccb5f));
                             else if (item.batteryTone == StatusBarBatteryTone::Low)
                                 brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0xc42b1c : 0xff8585));

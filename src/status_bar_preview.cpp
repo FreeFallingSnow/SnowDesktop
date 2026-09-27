@@ -324,7 +324,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     chargingFull.controlTips[2].find(_LW("statusBar.charging")) != std::wstring::npos &&
                     !SameStatusBarContent(BuildStatusBarItems(settings, changedBattery),
                         [&] { auto finished = changedBattery; finished.power->charging = false; return BuildStatusBarItems(settings, finished); }()),
-                    "finishing a charge at the same percentage must remove the bolt and repaint the battery");
+                    "finishing a charge at the same percentage must refresh its full status without dropping AC");
                 changedBattery.power->charging = false; changedBattery.power->batteryPercent = 80;
                 const auto limited = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
                 Require(limited.batteryTone == StatusBarBatteryTone::Normal && limited.batteryPluggedIn && limited.controlGlyphs[2] != charged.controlGlyphs[2] &&

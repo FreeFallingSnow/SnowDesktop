@@ -1710,7 +1710,7 @@ void CheckBatteryStates(ID2D1Device* device, IDWriteFactory* text,
     Require(Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph,"100% while charging lost its charging state");
     charging=false;const auto full=capture();
     Require(!Node(model.View(),"battery").charging&&Node(model.View(),"battery").positiveGlyph&&Node(model.View(),"battery").pluggedIn&&
-        Node(model.View(),"battery").tooltip!=chargingTip&&full!=filling,"full battery remained indistinguishable from charging");
+        Node(model.View(),"battery").tooltip!=chargingTip&&full==filling,"AC and charging must share the bolt while their status tooltips remain distinct");
     const auto green=[](const auto& pixels){return std::count_if(pixels.begin(),pixels.end(),[](auto p){return ((p>>8)&255)>((p>>16)&255)+30&&((p>>8)&255)>(p&255)+30;});};
     Require(green(full)>8&&green(filling)>8,"charging/full battery did not render its green fill");
     const auto isGreen=[](auto pixel){return ((pixel>>8)&255)>((pixel>>16)&255)+30&&((pixel>>8)&255)>(pixel&255)+30;};

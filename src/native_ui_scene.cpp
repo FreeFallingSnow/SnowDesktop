@@ -341,7 +341,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 const auto frame=D2D1::RectF(r.left,(r.top+r.bottom-20)/2,r.left+20,(r.top+r.bottom+20)/2);
                 if(std::isfinite(n.value)&&n.value>=0&&n.value<=1)
                     DrawStatusBarBattery(dc,brush.Get(),frame,n.value*100,n.charging,n.pluggedIn,ink,
-                        (n.charging||n.positiveGlyph)&&!p.highContrast?D2D1::ColorF(0x34c759):ink);
+                        (n.pluggedIn||n.charging||n.positiveGlyph)&&!p.highContrast?D2D1::ColorF(0x34c759):ink);
                 else text(n.glyph,frame,18,ink,false,true,true);
                 label.left+=32;
             }
