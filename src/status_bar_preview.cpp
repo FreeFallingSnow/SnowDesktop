@@ -455,6 +455,28 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 std::memcpy(pixels.data() + static_cast<std::size_t>(y) * request.canvasWidth,
                     mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(request.canvasWidth) * 4);
             readback->Unmap();
+            if (preset == "full" || preset == "charging")
+            {
+                // User-visible contract: green is the charge inside the
+                // battery, while the outline remains the neutral foreground.
+                const auto& control = Item(items, "controlCenter");
+                const float glyphLeft = left + control.bounds.left + 64 * scale;
+                const float glyphTop = top + (height - 20 * scale) / 2;
+                const int expected = appearance.contentTheme == 1 ? 0x20 : 0xf4;
+                int neutralOutline = 0, greenFill = 0;
+                for (int py = static_cast<int>(glyphTop + 7 * scale); py < glyphTop + 13 * scale; ++py)
+                    for (int px = static_cast<int>(glyphLeft); px < glyphLeft + 17 * scale; ++px)
+                    {
+                        const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                        const int r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
+                        if (px < glyphLeft + 2 * scale && (pixel >> 24) > 32 &&
+                            std::abs(r - expected) < 70 && std::abs(r - g) < 12 && std::abs(g - b) < 12) ++neutralOutline;
+                        if (px >= glyphLeft + 3 * scale && px < glyphLeft + 6 * scale &&
+                            g > r + 25 && g > b + 15) ++greenFill;
+                    }
+                Require(neutralOutline > 0 && greenFill > 0,
+                    "charging and full batteries need a neutral outline and a green interior");
+            }
             if (preset == "normal") normalPixels = pixels;
             if (preset == "repeat") Require(pixels == normalPixels, "identical status bar input produces visible frame differences");
             const auto path = request.outputDirectory / ("status-bar-" + preset + ".png");

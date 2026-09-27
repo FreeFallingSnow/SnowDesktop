@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../system_panel_model.h"
+#include "../system_calendar_editor.h"
 #include "system_controls.h"
 #include "modern_menu.h"
 #include "../status_bar_view.h"
@@ -270,6 +271,23 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 }, [this] {
                     const auto& display = generalSettings_.calendarDisplay;
                     return std::string(display.enabled ? "1:" : "0:") + display.calendar;
+                }, [this](HWND editorOwner,snowdesktop::calendar::CalendarEvent& event,const PersonalizationSettings& appearance,
+                    std::shared_ptr<snowdesktop::SystemControlPromptState> state) {
+                    if(exitRequested_||!widgetEngine_)return false;
+                    const auto valid=state->valid;
+                    state->valid=[this,valid]{return !exitRequested_&&widgetEngine_&&(!valid||valid());};
+                    snowdesktop::SystemCalendarEditorActions actions;
+                    actions.save=[this](const auto& draft) {
+                        return draft.id.empty()?widgetEngine_->RuntimeCalendarCreate(draft):
+                            widgetEngine_->RuntimeCalendarUpdate(draft.id,draft.revision,draft);
+                    };
+                    actions.current=[this](const auto& original) -> std::optional<snowdesktop::calendar::CalendarEvent> {
+                        for(const auto& current:widgetEngine_->RuntimeCalendarEvents(original.date,original.date))
+                            if(current.id==original.id)return current;
+                        return {};
+                    };
+                    actions.remove=[this](const auto& id){return widgetEngine_->RuntimeCalendarRemove(id);};
+                    return snowdesktop::ShowSystemCalendarEditor(editorOwner,event,appearance,state,std::move(actions));
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
                 }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),

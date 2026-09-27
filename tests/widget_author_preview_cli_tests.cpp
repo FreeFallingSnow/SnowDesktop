@@ -2274,6 +2274,36 @@ int wmain(int argc, wchar_t** argv) try
     CheckPng(pomodoroOutput);
     CheckPomodoroPrimaryActionCentered(pomodoroOutput);
 
+    // Load the actual built-in entry and its modules through WidgetEngine's
+    // production sandbox. Pure helper tests alone do not exercise setup,
+    // persisted GPU selection, rendering, or the component's dispose hook.
+    const auto monitorSource = repository / L"widgets" / L"system-monitor";
+    std::vector<RgbaBitmap> monitorPreviews;
+    for (const auto* selection : { L"all", L"adapter-1", L"missing-adapter" })
+    {
+        const std::wstring selectedId(selection);
+        const auto monitorOutput = temporary.path /
+            (L"system-monitor-" + selectedId + L".png");
+        const auto [monitorExit, monitorJson] = Run(snowwidget, {
+            L"preview", monitorSource.wstring(), monitorOutput.wstring(),
+            L"--dpi", L"96", L"--locale", L"en-US", L"--theme", L"dark",
+            L"--data-state", L"ready", L"--columns", L"3", L"--rows", L"2",
+            L"--storage", selectedId == L"all" ? L"gpu_scope=all" :
+                L"gpu_scope=selected",
+            L"--storage", L"gpu_adapter_id=" + selectedId,
+            L"--storage", L"gpu_adapter_name=Saved GPU",
+            L"--host", host.wstring() });
+        if (monitorExit != 0) std::cerr << monitorJson << '\n';
+        Check(monitorExit == 0 &&
+                monitorJson.find("\"ok\":true") != std::string::npos,
+            "System Monitor loads and renders GPU selection in the production sandbox");
+        CheckPng(monitorOutput);
+        monitorPreviews.push_back(ReadPng(monitorOutput));
+    }
+    Check(monitorPreviews[0].pixels != monitorPreviews[1].pixels &&
+            monitorPreviews[1].pixels != monitorPreviews[2].pixels,
+        "System Monitor distinguishes all GPUs, the selected GPU, and an unavailable saved GPU");
+
     const auto environmentSource =
         CreateEnvironmentFixture(temporary.path);
     const auto environmentOutput = temporary.path / L"environment.png";

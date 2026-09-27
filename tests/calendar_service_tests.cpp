@@ -1,5 +1,6 @@
 #include "calendar_service.h"
 #include "calendar_display.h"
+#include "system_calendar_editor_state.h"
 
 #include <windows.h>
 
@@ -35,6 +36,49 @@ void Write(
         std::ios::binary | std::ios::trunc);
     file << text;
 }
+void CheckNativeCalendarEditor(const std::filesystem::path& root)
+{
+    using snowdesktop::SystemCalendarEditorState;
+    using snowdesktop::ParseCalendarEditorTime;
+    Expect(ParseCalendarEditorTime(L"00:00")==0&&ParseCalendarEditorTime(L"23:59")==1439&&
+        !ParseCalendarEditorTime(L"24:00")&&!ParseCalendarEditorTime(L"09:60")&&!ParseCalendarEditorTime(L"9:05"),
+        "native editor parses HH:mm without accepting impossible or partial times");
+    CalendarService service(root/L"native-editor"/L"calendar.json");Expect(service.Load(),"native editor test store loads");
+    int writes=0;bool authorized=true;
+    SystemCalendarEditorState editor;
+    editor.valid=[&]{return authorized;};
+    editor.actions.save=[&](const CalendarEvent& event){++writes;return event.id.empty()?service.Create(event):service.Update(event.id,event.revision,event);};
+    editor.actions.current=[&](const CalendarEvent& event){return service.EventById(event.id);};
+    editor.actions.remove=[&](const std::string& id){++writes;return service.Remove(id);};
+    CalendarEvent draft;draft.title="Popup draft";draft.date="2026-09-27";draft.startMinutes=540;draft.endMinutes=600;draft.notes="Keep this text";
+    Expect(editor.Save(draft)&&editor.draft.revision==1&&service.EventById(editor.draft.id).has_value(),
+        "native editor creates through the shared calendar service");
+    editor.original=editor.draft;draft=editor.draft;draft.title="Changed directly";draft.date="2026-09-28";
+    Expect(editor.Save(draft)&&editor.draft.revision==2&&service.EventById(editor.draft.id)->date=="2026-09-28",
+        "native editor edits and reschedules the original revision");
+    editor.original=editor.draft;draft=editor.draft;
+    auto external=draft;external.title="External edit";Expect(service.Update(external.id,external.revision,external).ok,"external calendar change succeeds");
+    draft.title="Unsaved title";draft.notes="Do not discard after conflict";
+    Expect(!editor.Save(draft)&&editor.error=="conflict"&&editor.draft.title==draft.title&&editor.draft.notes==draft.notes&&editor.original.revision==2,
+        "conflict preserves the user's entire draft and original revision");
+    const int beforeDelete=writes;
+    Expect(!editor.Remove()&&editor.error=="conflict"&&writes==beforeDelete&&service.EventById(external.id).has_value(),
+        "delete confirmation cannot delete a concurrently changed event");
+    editor.original=*service.EventById(external.id);
+    authorized=false;
+    Expect(!editor.Save(draft)&&!editor.Remove()&&writes==beforeDelete,
+        "a closed popup cannot commit either a save or a confirmed deletion");
+    authorized=true;
+    const auto realSave=editor.actions.save;
+    editor.actions.save=[](const CalendarEvent&){return snowdesktop::calendar::MutationResult{false,{},0,"write_failed"};};
+    Expect(!editor.Save(draft)&&editor.draft.title==draft.title&&editor.draft.notes==draft.notes&&service.EventById(external.id)->title=="External edit",
+        "persistence failure keeps the draft and stored event intact");
+    editor.actions.save=realSave;
+    editor.actions.current=[&](const CalendarEvent& event){authorized=false;return service.EventById(event.id);};
+    Expect(!editor.Remove()&&writes==beforeDelete,"revocation during delete lookup is rechecked before mutation");
+    authorized=true;editor.actions.current=[&](const CalendarEvent& event){return service.EventById(event.id);};
+    Expect(editor.Remove()&&editor.deleted&&!service.EventById(external.id),"confirmed current revision can be deleted through the shared backend");
+}
 }
 
 int main()
@@ -46,6 +90,7 @@ int main()
     std::error_code error;
     std::filesystem::remove_all(root, error);
     std::filesystem::create_directories(root);
+    CheckNativeCalendarEditor(root);
 
     const auto leap =
         CalendarService::GetDateInfo("2024-02-29");

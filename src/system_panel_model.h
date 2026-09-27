@@ -13,6 +13,7 @@
 
 namespace snowdesktop
 {
+struct SystemControlPromptState;
 struct SystemCalendarActions
 {
     std::function<std::vector<calendar::CalendarEvent>(const std::string&)> events;
@@ -21,6 +22,8 @@ struct SystemCalendarActions
     std::function<std::string(const std::string&)> secondaryDate;
     std::function<std::map<std::string,std::string>(const std::string&,const std::string&)> secondaryDates;
     std::function<std::string()> secondaryRevision;
+    std::function<bool(HWND,calendar::CalendarEvent&,const PersonalizationSettings&,
+        std::shared_ptr<SystemControlPromptState>)> edit;
 };
 // All live effects live at this boundary; offline rendering supplies fixtures.
 struct SystemPanelSource
@@ -126,6 +129,7 @@ private:
     void Power(float&);
     void Media(float&);
     void Calendar();
+    void EditCalendar(calendar::CalendarEvent);
     void Resources();
     void Tray();
     struct TrayDropTarget { StatusBarSettings settings; D2D1_RECT_F indicator{}; };

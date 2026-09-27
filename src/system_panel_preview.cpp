@@ -1,5 +1,6 @@
 #include "system_panel_preview.h"
 #include "system_panel_model.h"
+#include "system_calendar_editor.h"
 #include "calendar_display.h"
 #include "l10n.h"
 #include "preview_png_writer.h"
@@ -585,6 +586,13 @@ void CheckModelScrolling()
     SystemPanelModel model(std::move(source),StatusBarSettings{},StatusBarAction::ControlCenter);
     model.Refresh(320);model.Select("audio");
     const auto& scene=model.View();
+    for(const auto* direction:{"output","input"})
+    {
+        const std::string prefix=std::string("audio.")+direction+".volume:";
+        const auto slider=std::find_if(scene.nodes.begin(),scene.nodes.end(),[&](const auto& node){return node.id.starts_with(prefix);});
+        Require(slider!=scene.nodes.end()&&slider->bounds.top>=slider->clip.top&&slider->bounds.bottom<=slider->clip.bottom,
+            "many audio devices pushed everyday speaker/microphone volume controls out of the initial viewport");
+    }
     const auto offscreen=std::find_if(scene.nodes.rbegin(),scene.nodes.rend(),[](const auto& node){
         return node.Interactive()&&HasArea(node.clip)&&node.bounds.top>=node.clip.bottom;
     });
@@ -674,7 +682,8 @@ void CheckPendingActions()
         if(wifi&&!started.empty())
         {
             const auto scans=started.size();
-            Require(Node(model.View(),"title").detail.empty()&&Node(model.View(),"wifi.scan").text==_LW("controlCenter.working")&&!Node(model.View(),"wifi.scan").enabled&&
+            Require(Node(model.View(),"title").detail.empty()&&Node(model.View(),"wifi.scan").text.empty()&&Node(model.View(),"wifi.scan").busy&&
+                Node(model.View(),"wifi.scan").tooltip.find(_LW("controlCenter.working"))!=std::wstring::npos&&!Node(model.View(),"wifi.scan").enabled&&
                 !model.Invoke("wifi.scan")&&started.size()==scans,"page-entry scan lacked feedback or allowed a duplicate scan");
             complete(started.back().id,true);
         }
@@ -753,6 +762,46 @@ void CheckCalendarNames(const ui::Scene& scene)
         "same-number calendar days lack distinct full year/month/date accessibility names");
 }
 
+void CheckCalendarManagement()
+{
+    const auto state=std::make_shared<PreviewState>();auto source=FixtureSource(state);
+    std::vector<calendar::CalendarEvent> events;int mode=0,calls=0;SystemPanelModel* active=nullptr;
+    source.calendar.events=[&](const std::string& date){std::vector<calendar::CalendarEvent> result;for(const auto& event:events)if(event.date==date)result.push_back(event);return result;};
+    source.calendar.edit=[&](HWND,calendar::CalendarEvent& event,const PersonalizationSettings&,std::shared_ptr<SystemControlPromptState> lifetime){
+        ++calls;Require(lifetime&&lifetime->valid&&lifetime->valid(),"calendar editor was opened without a live owner");
+        if(mode==0){event.date="2030-01-01";return false;}
+        if(mode==1){Require(event.id.empty()&&event.date=="2026-09-26","calendar add lost the selected date");event.id="direct-event";event.revision=1;event.title="Direct event";events.push_back(event);return true;}
+        if(mode==2){Require(event.id=="direct-event"&&event.revision==1,"calendar edit did not receive the displayed event revision");event.title="Changed here";event.date="2026-09-28";event.revision=2;events.front()=event;return true;}
+        if(mode==3){events.clear();return true;}
+        active->Close();Require(!lifetime->valid(),"closed calendar left its modal write capability valid");return true;
+    };
+    SystemPanelModel model(std::move(source),{},StatusBarAction::Calendar);active=&model;model.Refresh(800,720);
+    Require(model.Invoke("calendar.add")&&Node(model.View(),"calendar.selected").text==L"2026-09-26"&&events.empty(),"canceling calendar editor changed the selected date or data");
+    mode=1;Require(model.Invoke("calendar.add")&&model.View().Find("event:2026-09-26:direct-event"),"calendar add did not refresh its own agenda");
+    mode=2;Require(model.Invoke("event:2026-09-26:direct-event")&&Node(model.View(),"calendar.selected").text==L"2026-09-28"&&
+        Node(model.View(),"event:2026-09-28:direct-event").text==L"Changed here","editing in the popup did not follow the saved event date");
+    mode=3;Require(model.Invoke("event:2026-09-28:direct-event")&&model.View().Find("calendar.empty")&&events.empty(),"deletion did not restore the agenda empty state");
+    mode=4;Require(!model.Invoke("calendar.add")&&calls==5&&state->closes==1,"modal completion revived a closed calendar model");
+}
+void CheckCalendarEditorVisuals(const native_component_preview::Request& request,
+    native_component_preview::Result& result,const PersonalizationSettings& appearance)
+{
+    calendar::CalendarEvent event;event.id="offline-calendar-editor";event.revision=2;
+    event.title=_L("settings.calendar.events");event.date="2026-09-26";event.startMinutes=630;event.endMinutes=690;
+    event.reminderMinutes=15;event.notes=_L("settings.calendar.pageDescription");
+    for(const bool confirmation:{false,true})
+    {
+        const std::string name=confirmation?"delete-confirmation":"editor";
+        const auto rendered=RenderSystemCalendarEditorPreview(event,appearance,confirmation,static_cast<unsigned>(request.dpi));
+        Require(rendered.width>0&&rendered.height>0&&rendered.pixels.size()==static_cast<std::size_t>(rendered.width)*rendered.height,
+            "native calendar editor did not render its actual form");
+        if(appearance.cornerRadius>0)Require((rendered.pixels[0]>>24)==0,"calendar editor preview lost the live rounded window mask");
+        const auto path=request.outputDirectory/(request.component+"-"+name+".png");
+        if(!preview_png::Save(path,rendered.width,rendered.height,rendered.pixels,result.error))throw std::runtime_error(result.error);
+        result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,
+            static_cast<int>(std::lround(appearance.cornerRadius*request.dpi/96.f)),rendered.width,rendered.height,0,0});
+    }
+}
 void CheckFeedbackLayouts()
 {
     auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
@@ -773,11 +822,23 @@ void CheckFeedbackLayouts()
     SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
     Require(model.Invoke("system.settings")&&state->nativeControls==1,"overview settings button did not use the native control-center boundary");
     model.Select("audio");CheckLayout(model.View());
+    for(const auto* direction:{"output","input"})
+    {
+        const auto prefix="audio."+std::string(direction);const auto& number=Node(model.View(),prefix+".value");
+        const auto& mute=Node(model.View(),prefix+".mute");const auto& label=Node(model.View(),prefix+".label");
+        const auto slider=std::find_if(model.View().nodes.begin(),model.View().nodes.end(),[&](const auto& n){return n.id.starts_with(prefix+".volume:");});
+        Require(slider!=model.View().nodes.end()&&number.trailing&&number.bounds.right==slider->bounds.right-10&&label.bounds.right+8<=number.bounds.left&&
+            (mute.bounds.left+mute.bounds.right)/2==40&&slider->bounds.bottom<Node(model.View(),"output.heading").bounds.top,
+            "audio adjustments did not align their value/icon columns or remain before the endpoint lists");
+    }
     Require(model.View().Find("audio.output.device:virtual-output")&&!model.View().Find("audio.output.device:historical")&&
         !model.View().Find("audio.output.device:unnamed"),"audio presentation exposed stale/unnamed devices or filtered a real virtual endpoint");
     for(const auto* page:{"wifi","bluetooth"})
     {
         model.Select(page);const auto radio="radio:"+std::string(page);const auto& toggle=Node(model.View(),radio);
+        if(std::string_view(page)=="wifi")Require(Node(model.View(),"wifi.scan").role==ui::Role::Icon&&Node(model.View(),"wifi.scan").text.empty()&&
+            !Node(model.View(),"wifi.scan").tooltip.empty()&&!Node(model.View(),"wifi.scan").accessibilityLabel.empty(),
+            "scan action retained a truncated fixed-width label or lost its accessible tooltip");
         Require(toggle.switchStyle&&toggle.role==ui::Role::Toggle,"detail page omitted its real switch control");
         ui::Input input;input.Sync(model.View());Require(input.Focus(radio),"detail switch lost keyboard focus");
         const auto action=model.HandleKey(input,VK_SPACE,false);
@@ -868,7 +929,7 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
     const native_component_preview::Request& request, const ui::Scene& scene,
     const PersonalizationSettings& appearance, const SystemPanel::Background& background,
     const widget_preview::Wallpaper& stage, int left, int top,const ui::Palette* palette=nullptr,
-    std::string_view focused={},std::string_view hovered={})
+    std::string_view focused={},std::string_view hovered={},std::string_view pressed={})
 {
     const float scale = static_cast<float>(request.dpi) / 96.f;
     ComPtr<ID2D1DeviceContext> context; Require(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&context));
@@ -891,7 +952,7 @@ std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,
                 static_cast<LONG>(std::lround(card.right*scale)),static_cast<LONG>(std::lround(card.bottom*scale))},appearance,scale);
     context->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*
         D2D1::Matrix3x2F::Translation(static_cast<float>(left),static_cast<float>(top)));
-    const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance),hovered,focused);
+    const auto contentResult = ui::Draw(context.Get(),text,scene,palette?*palette:SystemPanelPalette(appearance),hovered,focused,pressed);
     const auto drawResult = context->EndDraw(); context->SetTarget(nullptr); Require(contentResult); Require(drawResult);
     ComPtr<ID2D1Bitmap1> readback;
     Require(context->CreateBitmap(size,nullptr,0,D2D1::BitmapProperties1(
@@ -924,9 +985,69 @@ void CheckBatteryStates(ID2D1Device* device, IDWriteFactory* text,
         Node(model.View(),"battery").tooltip!=chargingTip&&full!=filling,"full battery remained indistinguishable from charging");
     const auto green=[](const auto& pixels){return std::count_if(pixels.begin(),pixels.end(),[](auto p){return ((p>>8)&255)>((p>>16)&255)+30&&((p>>8)&255)>(p&255)+30;});};
     Require(green(full)>8&&green(filling)>8,"charging/full battery did not render its green fill");
+    const auto isGreen=[](auto pixel){return ((pixel>>8)&255)>((pixel>>16)&255)+30&&((pixel>>8)&255)>(pixel&255)+30;};
+    for(int y=0;y<request.canvasHeight;++y)for(int x=0;x<request.canvasWidth;++x)
+        if(isGreen(full[static_cast<std::size_t>(y)*request.canvasWidth+x]))
+            Require(x>=2&&x<=16&&y>=21&&y<=26,"battery green paint escaped its internal fill into the outline or electrode");
+    Require((full[24*240]>>24)>0&&!isGreen(full[24*240])&&(full[24*240+19]>>24)>0&&!isGreen(full[24*240+19]),
+        "battery outline/electrode lost foreground color or the glyph retained its old left inset");
+    charging=true;percent=30;const auto partial=capture();
+    Require(green(partial)>0&&green(partial)<green(filling),"charging battery fill ignored the real percentage");
+    ui::Scene highContrast;highContrast.width=240;highContrast.height=48;auto battery=Node(model.View(),"battery");battery.bounds={0,0,240,48};highContrast.nodes.push_back(battery);
+    auto palette=SystemPanelPalette(appearance);palette.highContrast=true;palette.text=D2D1::ColorF(0xffff00);
+    const auto contrast=Render(device,text,request,highContrast,appearance,background,{},0,0,&palette);
+    Require(green(contrast)==0&&(contrast[24*240]>>24)>0,"high-contrast battery kept fixed green fill or omitted its system foreground outline");
+    charging=false;
     percent=80;const auto limited=capture();
     Require(!Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&limited!=full,"AC charge limit was mislabeled as full/charging");
-    known=false;capture();Require(Node(model.View(),"battery").text==L"—"&&!Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph,"unknown battery rendered a confirmed level or state");
+    known=false;const auto unknown=capture();Require(Node(model.View(),"battery").text==L"—"&&Node(model.View(),"battery").value<0&&
+        !Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&green(unknown)==0,
+        "unknown battery rendered a confirmed level or state");
+}
+
+void CheckMediaPending(ID2D1Device* device,IDWriteFactory* text,
+    native_component_preview::Request request,const PersonalizationSettings& appearance,const SystemPanel::Background& background)
+{
+    auto state=std::make_shared<PreviewState>();auto source=FixtureSource(state);const auto media=source.media;
+    bool playing=true;std::uint64_t task=0;source.media=[&]{auto snapshot=media();if(snapshot)for(auto& session:snapshot->sessions)session.playbackStatus=playing?"playing":"paused";return snapshot;};
+    source.start=[&](system_control::Request action){Require(action.name=="media.toggle","media pending fixture dispatched an unrelated command");return ++task;};
+    SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
+    const auto initial=Node(model.View(),"media.toggle");const auto title=Node(model.View(),"media.title");
+    ui::Scene transport;transport.width=40;transport.height=40;auto button=initial;button.bounds={4,4,36,36};transport.nodes.push_back(button);
+    request.canvasWidth=40;request.canvasHeight=40;request.dpi=96;request.transparent=request.contentOnly=true;
+    ui::Input input;Require(input.Press(transport,{20,20}),"media icon did not accept its initial press");
+    const auto idle=Render(device,text,request,transport,appearance,background,{},0,0);
+    Require(Render(device,text,request,transport,appearance,background,{},0,0,nullptr,{},{},input.Pressed())!=idle,
+        "media control lacked immediate pointer press feedback");
+    Require(model.Invoke("media.toggle")&&task==1&&!model.Invoke("media.toggle"),"media pending did not guard repeated commands");
+    const auto& pending=Node(model.View(),"media.toggle");const auto& pendingTitle=Node(model.View(),"media.title");
+    Require(pending.glyph==initial.glyph&&pending.text.empty()&&pending.detail.empty()&&pending.tooltip==initial.tooltip&&!pending.busy&&
+        pendingTitle.text==title.text&&pendingTitle.detail==title.detail&&pendingTitle.tooltip==title.tooltip,
+        "media pending replaced its transport glyph or song/action text with working feedback");
+    system_control::Completion done;done.id=task;done.ok=true;playing=false;state->completions.push_back(done);model.Refresh();
+    Require(Node(model.View(),"media.toggle").enabled&&Node(model.View(),"media.toggle").glyph!=initial.glyph,
+        "completed media command failed to restore input or show actual playback readback");
+}
+
+void CheckNumericAlignment(ID2D1Device* device,IDWriteFactory* text,
+    native_component_preview::Request request,const PersonalizationSettings& appearance,const SystemPanel::Background& background)
+{
+    request.canvasWidth=120;request.canvasHeight=96;request.dpi=96;request.transparent=request.contentOnly=true;
+    ui::Scene scene;scene.width=120;scene.height=96;const wchar_t* values[]{L"9%",L"42%",L"100%"};
+    for(int row=0;row<3;++row)
+    {
+        ui::Node number;number.id="value:"+std::to_string(row);number.bounds={16,static_cast<float>(row*32),104,static_cast<float>(row*32+28)};
+        number.text=values[row];number.trailing=true;scene.nodes.push_back(number);
+    }
+    const auto pixels=Render(device,text,request,scene,appearance,background,{},0,0);
+    int left[3]{120,120,120},right[3]{-1,-1,-1};
+    for(int row=0;row<3;++row)for(int y=row*32;y<row*32+28;++y)for(int x=0;x<120;++x)
+        if((pixels[static_cast<std::size_t>(y)*120+x]>>24)>80){left[row]=(std::min)(left[row],x);right[row]=(std::max)(right[row],x);}
+    Require(left[0]>left[2]&&right[0]>98&&std::abs(right[0]-right[1])<=1&&std::abs(right[1]-right[2])<=1,
+        "percentage widths moved the numeric column's right edge");
+    auto leading=scene;for(auto& number:leading.nodes)number.trailing=false;
+    Require(!scene.SameContent(leading)&&Render(device,text,request,leading,appearance,background,{},0,0)!=pixels,
+        "numeric alignment oracle or scene invalidation cannot distinguish the old leading-aligned values");
 }
 
 void CheckFocusModality(ID2D1Device* device, IDWriteFactory* text,
@@ -1086,6 +1207,13 @@ void CheckChartAndSwitchPixels(ID2D1Device* device,IDWriteFactory* text,
     const auto busy=Render(device,text,request,scene,appearance,background,{},0,0);
     Require(!scene.nodes[3].selected&&busy[126*240+40]!=pixels[126*240+40],
         "pending compact switch lacked a visible progress cue or changed its true checked state");
+    ui::Scene scan;scan.width=240;scan.height=160;ui::Node scanIcon;scanIcon.id="wifi.scan";scanIcon.role=ui::Role::Icon;
+    scanIcon.bounds={84,108,120,144};scanIcon.glyph=L"\uE72C";scan.nodes.push_back(scanIcon);
+    const auto readyScan=Render(device,text,request,scan,appearance,background,{},0,0);
+    scan.nodes.front().busy=true;scan.nodes.front().enabled=false;
+    const auto busyScan=Render(device,text,request,scan,appearance,background,{},0,0);
+    Require(busyScan!=readyScan&&(busyScan[126*240+102]>>24)>80,
+        "icon-only scan pending lost its visible progress cue");
     ui::Scene rounded;rounded.width=240;rounded.height=160;rounded.cards={{0,0,240,160}};
     ui::Node full;full.id="full-chart";full.role=ui::Role::Chart;full.bounds={0,0,240,90};full.fillPaths=true;full.paths={{{0,0},{240,0}}};rounded.nodes.push_back(std::move(full));
     auto roundedAppearance=appearance;roundedAppearance.cornerRadius=72;
@@ -1247,6 +1375,8 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 CheckFeedbackLayouts();
                 CheckFocusModality(device,text,request,appearance,background);
                 CheckBatteryStates(device,text,request,appearance,background);
+                CheckMediaPending(device,text,request,appearance,background);
+                CheckNumericAlignment(device,text,request,appearance,background);
                 CheckDeviceCardHover(device,text,request,appearance,background);
                 CheckSplitOpacity(device,text,request,appearance,background);
                 CheckSelectedDetailContrast(device,text,request,appearance,background);
@@ -1258,6 +1388,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
             }
             if (trayPanel && preset == "grid") { CheckTrayInput(model.View());CheckTrayDropTargets(trayFixture); }
             if (calendarPanel && preset == "agenda") CheckCalendarResponsive();
+            if (calendarPanel && preset == "agenda") {CheckCalendarManagement();CheckCalendarEditorVisuals(request,result,appearance);}
             if (resources && preset == "gpu")
                 Require(model.Invoke("gpu.select") && model.Invoke("gpu:gpu-preview-1") &&
                     Node(model.View(),"resource.card:0").text == L"61%", "GPU selection did not switch reading and history");

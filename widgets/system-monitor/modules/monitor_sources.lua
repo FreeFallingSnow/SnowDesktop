@@ -1,5 +1,4 @@
 local M = {}
-local gpuDetails = setmetatable({}, { __mode = "k" })
 
 M.defaults = {
     cpu = true, memory = true, gpu = true, vram = true,
@@ -32,13 +31,16 @@ local sources = {
         age = 1000, hidden = "pause", permission = "system.storage.read" },
 }
 
-function M.reconcile(handles, cardShown, hasFeature, hasPermission, subscribe)
+-- The caller owns this capability value alongside its handles. Keeping it out
+-- of the handle table lets disposal iterate only subscriptions, and needs no
+-- weak tables or metatable functions unavailable in the widget sandbox.
+function M.reconcile(handles, cardShown, hasFeature, hasPermission, subscribe,
+        previousGpuDetails)
     local details = hasFeature("data.system.gpu.details") == true
-    if handles.gpu and gpuDetails[handles] ~= details then
+    if handles.gpu and previousGpuDetails ~= details then
         handles.gpu:unsubscribe()
         handles.gpu = nil
     end
-    gpuDetails[handles] = details
     for _, source in ipairs(sources) do
         local wanted = (cardShown(source.card) or
             (source.sharedCard and cardShown(source.sharedCard))) and
@@ -60,6 +62,7 @@ function M.reconcile(handles, cardShown, hasFeature, hasPermission, subscribe)
             handles[source.key] = nil
         end
     end
+    return details
 end
 
 return M

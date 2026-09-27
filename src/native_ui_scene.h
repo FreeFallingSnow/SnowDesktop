@@ -30,9 +30,9 @@ struct Node
     D2D1_RECT_F bounds{}, clip{};
     std::wstring text, detail, glyph, tooltip, accessibilityLabel;
     float fontSize = 14, value = 0;
-    bool enabled = true, selected = false, accent = false, centered = false, bold = false;
+    bool enabled = true, selected = false, accent = false, centered = false, trailing = false, bold = false;
     bool outlined = false, secondary = false, charging = false, positiveGlyph = false;
-    bool wrap = false, joinLeft = false, joinRight = false, switchStyle = false, busy = false;
+    bool wrap = false, joinLeft = false, joinRight = false, switchStyle = false, busy = false, batteryStyle = false;
     std::shared_ptr<const Image> image;
     std::vector<std::vector<D2D1_POINT_2F>> paths;
     // Style belongs to each continuous sample segment, including after gaps.

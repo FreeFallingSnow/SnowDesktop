@@ -22,6 +22,7 @@ struct StatusBarItem
     std::array<std::wstring, 3> controlTips;
     std::array<std::wstring, 3> controlGlyphs;
     StatusBarBatteryTone batteryTone = StatusBarBatteryTone::Normal;
+    int batteryLevel = -1;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.

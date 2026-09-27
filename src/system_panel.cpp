@@ -134,6 +134,18 @@ struct SystemPanel::Impl
         if(modal){pending=std::move(request);return;}
         if(!Ensure())return;current=std::move(request);const auto& r=*current;monitor=MonitorFromRect(&r.anchor,MONITOR_DEFAULTTONEAREST);scale=GetDpiForWindow(r.owner)/96.f;
         auto source=LiveSystemPanelSource(r.data);source.calendar=calendar;source.tray=[service=r.tray]{return service?service->Current():tray::Snapshot{};};
+        if(calendar.edit)source.calendar.edit=[this,life=lifetime,edit=calendar.edit](HWND,calendar::CalendarEvent& event,const PersonalizationSettings&,std::shared_ptr<PromptState> state){
+            if(!life->alive||modal||!showing||closing||!current||!state)return false;
+            tooltip.Hide();modal=true;const auto activeModel=model;promptState=state;
+            const auto appearance=current->appearance;
+            state->valid=[this,life,activeModel,valid=state->valid]{return life->alive&&showing&&!closing&&model==activeModel&&(!valid||valid());};
+            bool result=false;
+            try{result=edit(window,event,appearance,state);}catch(...){state->cancelled=true;}
+            if(!life->alive)return false;
+            promptState.reset();modal=false;
+            if(!showing&&!destroying&&(pending||afterClose))PostMessageW(window,kOpenPending,++closeGeneration,0);
+            return result&&!state->cancelled&&showing&&!closing&&model==activeModel;
+        };
         source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
         source.prompt=[this,life=lifetime](auto& request)

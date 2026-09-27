@@ -64,9 +64,9 @@ bool Scene::SameContent(const Scene& other)const
         if(a.id!=b.id||a.hoverGroup!=b.hoverGroup||a.role!=b.role||!SameRect(a.bounds,b.bounds)||!SameRect(a.clip,b.clip)||
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
             a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
-            a.accent!=b.accent||a.centered!=b.centered||a.bold!=b.bold||a.outlined!=b.outlined||
+            a.accent!=b.accent||a.centered!=b.centered||a.trailing!=b.trailing||a.bold!=b.bold||a.outlined!=b.outlined||
             a.secondary!=b.secondary||a.charging!=b.charging||a.positiveGlyph!=b.positiveGlyph||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
-            a.switchStyle!=b.switchStyle||a.busy!=b.busy||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
+            a.switchStyle!=b.switchStyle||a.busy!=b.busy||a.batteryStyle!=b.batteryStyle||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
             bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
         if(a.image&&a.image!=b.image&&(a.image->width!=b.image->width||a.image->height!=b.image->height||
             a.image->stride!=b.image->stride||a.image->pixels!=b.image->pixels))return false;
@@ -209,18 +209,18 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
     ComPtr<ID2D1SolidColorBrush> brush; HRESULT hr = dc->CreateSolidColorBrush(p.text, &brush); if (FAILED(hr)) return hr;
     ComPtr<ID2D1Factory> geometryFactory;dc->GetFactory(&geometryFactory);
     ComPtr<ID2D1StrokeStyle> dashed;
-    std::map<std::tuple<float,bool,bool,bool,bool>,ComPtr<IDWriteTextFormat>> formats;
+    std::map<std::tuple<float,bool,bool,bool,bool,bool>,ComPtr<IDWriteTextFormat>> formats;
     auto color = [&](D2D1_COLOR_F value, bool enabled = true) { if (!enabled) value.a *= .4f; brush->SetColor(value); };
-    auto text = [&](std::wstring_view value, D2D1_RECT_F r, float size, D2D1_COLOR_F ink, bool bold, bool center, bool glyph, bool wrap=false) {
+    auto text = [&](std::wstring_view value, D2D1_RECT_F r, float size, D2D1_COLOR_F ink, bool bold, bool center, bool glyph, bool wrap=false, bool trailing=false) {
         if (value.empty() || r.right <= r.left || r.bottom <= r.top) return;
-        auto& format=formats[{size,bold,center,glyph,wrap}];
+        auto& format=formats[{size,bold,center,glyph,wrap,trailing}];
         if(!format)
         {
         if (FAILED(factory->CreateTextFormat(glyph ? L"Segoe MDL2 Assets" : L"Segoe UI", nullptr,
             bold ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, size, L"", &format))) return;
         format->SetWordWrapping(wrap?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP); format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        format->SetTextAlignment(center ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetTextAlignment(center ? DWRITE_TEXT_ALIGNMENT_CENTER : trailing ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
         ComPtr<IDWriteInlineObject> ellipsis; factory->CreateEllipsisTrimmingSign(format.Get(), &ellipsis);
         DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0}; format->SetTrimming(&trimming, ellipsis.Get());
         }
@@ -330,7 +330,22 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
         {
             D2D1_RECT_F label = r;
             const bool iconOnly = n.text.empty();
-            if(n.charging)
+            if(n.busy&&n.role==Role::Icon)
+            {
+                color(ink);
+                for(int dot=-1;dot<=1;++dot)
+                    dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F((r.left+r.right)/2+dot*6.f,(r.top+r.bottom)/2),1.5f,1.5f),brush.Get());
+            }
+            else if(n.batteryStyle)
+            {
+                const auto frame=D2D1::RectF(r.left,(r.top+r.bottom-20)/2,r.left+20,(r.top+r.bottom+20)/2);
+                if(std::isfinite(n.value)&&n.value>=0&&n.value<=1)
+                    DrawStatusBarBattery(dc,brush.Get(),frame,n.value*100,n.charging,ink,
+                        (n.charging||n.positiveGlyph)&&!p.highContrast?D2D1::ColorF(0x34c759):ink);
+                else text(n.glyph,frame,18,ink,false,true,true);
+                label.left+=32;
+            }
+            else if(n.charging)
             {
                 if(auto geometry=CreateChargingBatteryGeometry(geometryFactory.Get()))
                 {
@@ -364,11 +379,11 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 if (!n.detail.empty())
                 {
                     const float mid=(r.top+r.bottom)/2;
-                    text(n.text,{label.left,r.top+4,label.right,mid+3},n.fontSize,ink,n.bold,n.centered,false);
+                    text(n.text,{label.left,r.top+4,label.right,mid+3},n.fontSize,ink,n.bold,n.centered,false,false,n.trailing);
                     auto secondary=n.accent||(n.role==Role::Toggle&&n.selected)?p.accentText:p.secondary; if(!n.enabled)secondary.a*=.4f;
-                    text(n.detail,{label.left,mid+1,label.right,r.bottom-4},12,secondary,false,n.centered,false);
+                    text(n.detail,{label.left,mid+1,label.right,r.bottom-4},12,secondary,false,n.centered,false,false,n.trailing);
                 }
-                else text(n.text,label,n.fontSize,ink,n.bold,n.centered,false,n.wrap);
+                else text(n.text,label,n.fontSize,ink,n.bold,n.centered,false,n.wrap,n.trailing);
             }
         }
         if (!n.id.empty() && n.id == focused && n.Interactive())

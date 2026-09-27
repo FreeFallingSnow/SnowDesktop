@@ -375,6 +375,9 @@ set(SNOWDESKTOP_SOURCES
     src/system_panel.h
     src/system_panel_model.cpp
     src/system_panel_model.h
+    src/system_calendar_editor.cpp
+    src/system_calendar_editor.h
+    src/system_calendar_editor_state.h
     src/system_panel_preview.cpp
     src/system_panel_preview.h
     src/winui/status_bar_page_presenter.h

@@ -1,5 +1,6 @@
 -- system-monitor/main.lua - API v2 system data subscriptions
 local subscriptions = {}
+local gpuSubscriptionDetails
 local cardLayout = module.require("modules/card_layout.lua")
 local monitorData = module.require("modules/monitor_data.lua")
 local monitorSources = module.require("modules/monitor_sources.lua")
@@ -274,8 +275,9 @@ local function drawCard(x, y, width, height, info, palette)
 end
 
 local function reconcileSubscriptions()
-    monitorSources.reconcile(subscriptions, showCard,
-        widget.hasFeature, widget.hasPermission, data.subscribe)
+    gpuSubscriptionDetails = monitorSources.reconcile(subscriptions, showCard,
+        widget.hasFeature, widget.hasPermission, data.subscribe,
+        gpuSubscriptionDetails)
 end
 
 local function setup()
@@ -732,6 +734,7 @@ local function dispose(_context, _model)
         handle:unsubscribe()
     end
     subscriptions = {}
+    gpuSubscriptionDetails = nil
 end
 
 return widget.define({

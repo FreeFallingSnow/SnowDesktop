@@ -153,6 +153,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             audio->volume < .5 ? kSpeakerLow : kSpeaker,
         battery.glyph};
     control.batteryTone = battery.tone;
+    control.batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
     control.controlTips[0] = networkTip;
     control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
         (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
@@ -170,7 +171,8 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
         // Keep refreshing that metadata without invalidating the DComp surface.
         if (a.icon) return a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
             a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
-        return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs && a.batteryTone == b.batteryTone;
+        return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
+            a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel;
     });
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
@@ -341,9 +343,22 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                             else if (item.batteryTone == StatusBarBatteryTone::Saver)
                                 brush->SetColor(D2D1::ColorF(a.contentTheme == 1 ? 0x9d5d00 : 0xffcf66));
                         }
-                        const auto& glyph = item.controlGlyphs[part];
-                        context->DrawText(glyph.c_str(), static_cast<UINT32>(glyph.size()), part == 2 ? batteryFormat.Get() : iconFormat.Get(),
-                            D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        if (part == 2 && item.batteryLevel >= 0)
+                        {
+                            // Keep the neutral outline legible on both themes;
+                            // charging/full/low colors belong to the fill only.
+                            const float top = (rect.top + rect.bottom - 20 * scale) / 2;
+                            DrawStatusBarBattery(context, brush.Get(),
+                                D2D1::RectF(left + 4 * scale, top, left + 24 * scale, top + 20 * scale),
+                                item.batteryLevel * 10., item.batteryTone == StatusBarBatteryTone::Charging,
+                                color, brush->GetColor());
+                        }
+                        else
+                        {
+                            const auto& glyph = item.controlGlyphs[part];
+                            context->DrawText(glyph.c_str(), static_cast<UINT32>(glyph.size()), part == 2 ? batteryFormat.Get() : iconFormat.Get(),
+                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        }
                         brush->SetColor(color);
                     }
                 }
