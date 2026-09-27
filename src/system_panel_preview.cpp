@@ -643,12 +643,13 @@ void CheckPendingActions()
         const bool wifi=std::string_view(page)=="wifi";
         auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
         auto source=FixtureSource(state);const auto read=source.current;
-        bool connected=false,present=true;std::uint64_t nextId=100;
+        bool connected=false,present=true,radioOn=true;std::uint64_t nextId=100;
         struct Started {std::uint64_t id;std::string name;};std::vector<Started> started;
         source.current=[&](std::string_view topic) {
             auto snapshot=read(topic);
             if(snapshot&&topic==(wifi?"network.wifi":"bluetooth.devices"))
             {
+                snapshot->value.object[wifi?"interfaces":"radios"].array.front().object["enabled"]=j::Boolean(radioOn);
                 auto& entries=wifi?snapshot->value.object["interfaces"].array.front().object["networks"].array:
                     snapshot->value.object["devices"].array;
                 if(!present)entries.clear();else entries.front().object["connected"]=j::Boolean(connected);
@@ -709,8 +710,10 @@ void CheckPendingActions()
             "compact switch lacked immediate visible feedback, shifted layout or optimistically changed device state");
         const auto radioTask=started.back().id;const auto radioCount=started.size();
         Require(!model.Invoke(radio)&&started.size()==radioCount,"compact switch dispatched a duplicate radio task");
-        complete(radioTask,true);Require(Node(model.View(),radio).enabled&&Node(model.View(),"title").detail.empty(),
-            "completed compact switch retained pending feedback");
+        radioOn=false;complete(radioTask,true);
+        Require(Node(model.View(),radio).enabled&&!Node(model.View(),radio).selected&&Node(model.View(),"title").detail.empty(),
+            "completed compact switch retained pending feedback or failed to show actual radio readback");
+        radioOn=true;model.Refresh(); // A later external re-enable makes connection available again.
         Require(model.Invoke(command),"reappeared device could not start a new task");
         const auto afterClose=started.back().id;model.Close();const auto reads=state->reads;
         complete(afterClose,false);

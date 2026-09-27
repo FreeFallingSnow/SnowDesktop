@@ -212,7 +212,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             const float paddingDip = item.key == "memory" ? 12.f : item.glyph.empty() ? 16.f : 36.f;
             return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 32.f * scale, 260.f * scale);
         };
-        std::optional<std::size_t> clockIndex, notificationIndex;
+        std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex;
         std::vector<std::size_t> leftIndices, rightIndices;
         std::vector<LONG> widths(items.size()), rightWidths;
         LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0;
@@ -223,8 +223,12 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
             else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }
             else if (item.left) leftIndices.push_back(i);
-            else { rightIndices.push_back(i); rightWidths.push_back(widths[i]); }
-            if (item.key == "controlCenter") controlWidth = widths[i];
+            else
+            {
+                if (item.key == "controlCenter")
+                { controlWidth = widths[i]; controlRightIndex = rightWidths.size(); }
+                rightIndices.push_back(i); rightWidths.push_back(widths[i]);
+            }
         }
         const LONG viewportWidth = static_cast<LONG>(w), viewportHeight = static_cast<LONG>(h);
         const LONG edgePadding = static_cast<LONG>(padding);
@@ -243,15 +247,19 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         const auto arrange = [&] { return StatusBarHorizontalLayout(viewportWidth, viewportHeight,
             rightPadding, std::span<const LONG>{}, centerWidth, rightWidths); };
         auto bounds = arrange();
-        if (mergedDock && IsRectEmpty(&bounds[1]))
+        const auto missingMergedControl = [&] {
+            return IsRectEmpty(&bounds[1]) ||
+                (controlRightIndex && IsRectEmpty(&bounds[*controlRightIndex + 2]));
+        };
+        if (mergedDock && missingMergedControl())
         {
             // Keep a complete notification target when the date no longer
             // fits beside the Dock. Optional tray icons yield before it does.
             clockWidth = 0; rightWidths[0] = notificationWidth; bounds = arrange();
-            for (std::size_t i = 0; IsRectEmpty(&bounds[1]) && i < rightIndices.size(); ++i)
+            for (std::size_t i = 0; missingMergedControl() && i < rightIndices.size(); ++i)
                 if (items[rightIndices[i]].key != "controlCenter")
                 { rightWidths[i + 1] = 0; bounds = arrange(); }
-            if (IsRectEmpty(&bounds[1]))
+            if (missingMergedControl())
             {
                 // The Dock reservation never shrinks. Spend the remaining
                 // right-side padding before dropping an essential button.

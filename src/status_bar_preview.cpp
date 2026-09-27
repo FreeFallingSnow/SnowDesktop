@@ -99,7 +99,7 @@ const StatusBarItem& Item(const std::vector<StatusBarItem>& items, std::string_v
     return *found;
 }
 void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged,
-    bool expectNotification = true)
+    bool expectNotification = true) try
 {
     const auto clock = std::find_if(items.begin(), items.end(), [](const auto& item) { return item.key == "clock"; });
     const bool dateVisible = clock != items.end() && !IsRectEmpty(&clock->bounds);
@@ -115,11 +115,13 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
     }
     else if (!merged) Require(std::abs(notification.left + notification.right - width) <= 1,
         "notification button must remain centered when the date is absent");
-    Require(!IsRectEmpty(&Item(items, "controlCenter").bounds) && (!IsRectEmpty(&notification) == expectNotification),
-        "narrow status bar removed essential controls");
+    const auto& controls = Item(items, "controlCenter").bounds;
+    if (IsRectEmpty(&controls) || (!IsRectEmpty(&notification) != expectNotification))
+        throw std::runtime_error("narrow status bar removed essential controls: control=[" +
+            std::to_string(controls.left) + "," + std::to_string(controls.right) + "] notification=[" +
+            std::to_string(notification.left) + "," + std::to_string(notification.right) + "]");
     if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(32.f * scale)),
         "notification button must remain a complete independent hit target");
-    const auto& controls = Item(items, "controlCenter").bounds;
     Require(controls.right - controls.left == static_cast<LONG>(std::ceil(92.f * scale)),
         "system control group must remain complete at narrow widths");
     std::vector<RECT> rectangles;
@@ -161,6 +163,13 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
             "status bar fixed width clips visible text");
     }
     Require(!HitTestStatusBarItems(items, {0, height / 2}), "blank bar padding must route to dismissal");
+}
+catch (const std::exception& error)
+{
+    throw std::runtime_error(std::string(error.what()) + " [width=" + std::to_string(width) +
+        " height=" + std::to_string(height) + " scale=" + std::to_string(scale) +
+        " merged=" + (merged ? "true" : "false") +
+        " expectNotification=" + (expectNotification ? "true" : "false") + "]");
 }
 }
 
