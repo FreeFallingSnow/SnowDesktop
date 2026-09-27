@@ -52,7 +52,10 @@ inline UINT Track(HMENU menu, UINT flags, POINT screenPoint, HWND forwardingOwne
         GetWindowThreadProcessId(nativeOwner, nullptr) != GetCurrentThreadId() ||
         (GetWindowLongPtrW(nativeOwner, GWL_STYLE) & WS_CHILD) != 0 ||
         GetAncestor(nativeOwner, GA_ROOT) != nativeOwner ||
-        GetParent(nativeOwner) == HWND_MESSAGE))
+        // Message-only HWNDs have a real message-root parent, not the
+        // HWND_MESSAGE creation sentinel. Owned top-level windows still have
+        // the thread's desktop as GA_PARENT, independent of GW_OWNER.
+        GetAncestor(nativeOwner, GA_PARENT) != GetDesktopWindow()))
         return 0;
 
     const HINSTANCE instance = GetModuleHandleW(nullptr);

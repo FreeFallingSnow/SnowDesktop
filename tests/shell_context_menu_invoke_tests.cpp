@@ -148,8 +148,8 @@ void TestNativeCascadeOnPrivateDesktop()
         ULONGLONG displayDeadline = 0;
         ~LazyCascade()
         {
-            if (window) DestroyWindow(window);
             if (dockOwner) DestroyWindow(dockOwner);
+            if (window) DestroyWindow(window);
             if (menu) DestroyMenu(menu);
         }
         static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
@@ -214,7 +214,7 @@ void TestNativeCascadeOnPrivateDesktop()
         WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, &cascade);
     Expect(cascade.window != nullptr, "create isolated cascade owner");
     cascade.dockOwner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Source Dock",
-        WS_POPUP, -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, nullptr);
+        WS_POPUP, -32000, -32000, 1, 1, cascade.window, nullptr, cls.hInstance, nullptr);
     Expect(cascade.dockOwner != nullptr, "create a distinct source Dock owner");
     ShowWindow(cascade.dockOwner, SW_SHOWNOACTIVATE);
     cascade.displayDeadline = GetTickCount64() + 2000;
@@ -271,11 +271,22 @@ void TestNativeCascadeOnPrivateDesktop()
     Expect(child && messageOnly, "create invalid native owner fixtures");
     cascade.cancelled.store(false);
     for (const HWND invalid : { child, messageOnly })
-        Expect(snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
+    {
+        // If ownership validation regresses, cancel the erroneously opened
+        // real menu and fail its initialization assertion instead of hanging.
+        cascade.displayed = false;
+        cascade.resetDuringClose = false;
+        cascade.displayDeadline = GetTickCount64() + 2000;
+        Expect(SetTimer(cascade.window, 1, 30, nullptr) != 0, "bound an invalid-owner regression");
+        const UINT command = snowdesktop::shell_popup_menu_tracker::Track(cascade.menu,
             TPM_RETURNCMD, {100, 100}, cascade.window, false,
-            cascade.tracker, cascade.cancelled, invalid) == 0 &&
+            cascade.tracker, cascade.cancelled, invalid);
+        KillTimer(cascade.window, 1);
+        Expect(command == 0 &&
             cascade.initializationCount == before && cascade.tracker.load() == nullptr,
-            "child/message-only HWNDs cannot acquire native menu ownership");
+            invalid == messageOnly ? "message-only HWND cannot acquire native menu ownership" :
+                "child HWND cannot acquire native menu ownership");
+    }
     DestroyWindow(child);
     DestroyWindow(messageOnly);
 
@@ -293,10 +304,14 @@ void TestNativeCascadeOnPrivateDesktop()
         if (window) DestroyWindow(window);
     });
     const HWND foreignOwner = foreignReady.get_future().get();
-    const bool rejectedForeign = foreignOwner && snowdesktop::shell_popup_menu_tracker::Track(
+    cascade.displayed = false;
+    cascade.displayDeadline = GetTickCount64() + 2000;
+    const bool boundedForeign = SetTimer(cascade.window, 1, 30, nullptr) != 0;
+    const bool rejectedForeign = boundedForeign && foreignOwner && snowdesktop::shell_popup_menu_tracker::Track(
         cascade.menu, TPM_RETURNCMD, {100, 100}, cascade.window, false,
         cascade.tracker, cascade.cancelled, foreignOwner) == 0 &&
         cascade.initializationCount == before && cascade.tracker.load() == nullptr;
+    KillTimer(cascade.window, 1);
     foreignRelease.set_value();
     foreign.join();
     Expect(rejectedForeign, "a real top-level HWND on another thread cannot join the menu's input queue");
