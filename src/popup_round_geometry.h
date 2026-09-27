@@ -44,7 +44,12 @@ inline HRGN CreateWindowFence(const RECT& frame, float radius, float offsetY = 0
     const auto fence = WindowFence(frame, offsetY);
     const auto shape = Resolve(frame, radius, offsetY);
     const int diameter = static_cast<int>(std::floor((std::max)(0.f, shape.radiusX - 1.f) * 2));
-    return diameter > 0 ? CreateRoundRectRgn(fence.left, fence.top, fence.right, fence.bottom, diameter, diameter)
+    // Unlike CreateRectRgn, GDI's rounded primitive drops the final right and
+    // bottom raster coordinates. Advance those endpoints so its actual region
+    // has the requested fence extent, including the half-pixel D2D stroke.
+    const auto right = fence.right < (std::numeric_limits<LONG>::max)() ? fence.right + 1 : fence.right;
+    const auto bottom = fence.bottom < (std::numeric_limits<LONG>::max)() ? fence.bottom + 1 : fence.bottom;
+    return diameter > 0 ? CreateRoundRectRgn(fence.left, fence.top, right, bottom, diameter, diameter)
         : CreateRectRgnIndirect(&fence);
 }
 

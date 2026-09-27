@@ -157,6 +157,7 @@ int CheckPopupRoundedEdgeCoverage()
                     }
                 }
             readable->Unmap();
+            if(lost)std::cerr<<"rounded coverage scale="<<scale<<" lostPixels="<<lost<<'\n';
             check(lost == 0, "the current HWND fence still cuts antialiased rounded-edge pixels");
         }
         check(!rounded::Contains(shape, {shape.rect.left, shape.rect.top}) &&
@@ -385,9 +386,11 @@ int RunDesktopBackdropCompositorTests()
             "the hidden glass HWND follows popup growth, shrinkage and movement");
         HRGN region = CreateRectRgn(0, 0, 0, 0);
         check(region && GetWindowRgn(helper, region) != ERROR &&
-                PtInRegion(region, width - 1, height - 1) &&
+                PtInRegion(region, width - 1, height / 2) &&
+                PtInRegion(region, width / 2, height - 1) &&
+                !PtInRegion(region, width - 1, height - 1) &&
                 !PtInRegion(region, width + 2, height + 2),
-            "glass clipping includes the new corner and excludes stale outer bounds");
+            "glass clipping includes resized edges while excluding transparent corners and stale outer bounds");
         if (region) DeleteObject(region);
         check(glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
             "resizing a retained popup does not accumulate panels or blur factories");
