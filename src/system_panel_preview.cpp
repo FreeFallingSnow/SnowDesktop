@@ -774,6 +774,25 @@ void CheckControlRadioTransitions()
 
 void CheckControlVisibleFeedback()
 {
+    // A rejected or generically failed slider command must restore its actual
+    // value without inserting an error row or leaving an optimistic value.
+    for(const bool accepted:{false,true})
+    {
+        auto state=std::make_shared<PreviewState>();state->emptyMedia=true;
+        auto source=FixtureSource(state);
+        source.start=[accepted](system_control::Request)->std::uint64_t{return accepted?1:0;};
+        SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
+        const auto slider="audio.output.volume:"+state->outputEndpoint;
+        const auto actual=Node(model.View(),slider).value,height=model.View().height;
+        Require(model.Invoke(slider,.75f),"generic-failure fixture could not adjust its volume");
+        if(accepted)
+        {
+            system_control::Completion completion;completion.id=1;completion.error="unavailable";
+            state->completions.push_back(completion);model.Refresh();
+        }
+        Require(!model.View().Find("status")&&model.View().height==height&&Node(model.View(),slider).value==actual,
+            "generic control failure inserted a banner or retained a value not confirmed by the device");
+    }
     auto state=std::make_shared<PreviewState>();state->emptyMedia=true;state->manySection="wifi";
     auto source=FixtureSource(state);std::uint64_t task=0;
     source.start=[&](system_control::Request){return ++task;};
@@ -928,7 +947,7 @@ void CheckPendingActions()
         const auto command=std::string(page)+".connect:"+suffix;
         const auto card=std::string(page)+".card:"+suffix;
         const auto expand=[&] {if(!model.View().Find(command))Require(model.Invoke(row),"pending fixture could not expand its device");};
-        expand();const auto height=model.View().height;
+        expand();const auto height=model.View().height;const auto initialDetail=Node(model.View(),row).detail;
         Require(!Node(model.View(),card).outlined,"mouse-expanded device card retained its accent outline");
         const auto count=started.size();
         Require(model.Invoke(command)&&started.size()==count+1,"connect button did not start exactly one device task");
@@ -946,7 +965,8 @@ void CheckPendingActions()
             "re-expanded device duplicated pending text instead of restoring its button feedback");
         complete(task,false);
         Require(Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.connect")&&
-            Node(model.View(),row).detail==_LW("controlCenter.failed"),"failed connection did not restore the true device state and actionable failure");
+            Node(model.View(),row).detail==initialDetail&&!model.View().Find("status"),
+            "generic connection failure replaced the true device state with an error message");
         Require(model.Invoke(command),"failed connection could not be retried");const auto successful=started.back().id;
         connected=true;complete(successful,true);
         Require(Node(model.View(),command).enabled&&Node(model.View(),command).text==_LW("controlCenter.disconnect")&&

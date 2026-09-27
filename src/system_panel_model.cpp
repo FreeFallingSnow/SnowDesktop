@@ -165,7 +165,6 @@ void SystemPanelModel::Start(std::string task,system_control::Arguments args,std
     feedback_.Track(key,id);lastStarted_=id;
     if(id&&binding){pending.task=id;pendingActions_[binding->group]=std::move(pending);}
     ClearError();
-    if(!id){error_=_LW("controlCenter.failed");if(binding){errorControl_=controlId;errorGroup_=binding->group;errorTarget_=binding->target;}}
 }
 void SystemPanelModel::BindAction(std::string control,std::string group,std::string target,std::string indicator,std::string radioGroup)
 {actionBindings_[std::move(control)]={std::move(group),std::move(target),std::move(indicator),std::move(radioGroup)};}
@@ -671,8 +670,11 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         if(feedback_.Take(completion.id)&&relevant&&!completion.ok&&completion.error!="canceled")
         {
             ClearError();
-            error_=_LW(completion.error=="accessDenied"?"controlCenter.accessDenied":completion.error=="timeout"?"controlCenter.timeout":"controlCenter.failed");
-            if(origin){errorControl_=origin->control;errorTarget_=origin->target;errorGroup_=actionBindings_.at(errorControl_).group;}
+            // Generic failures provide no useful next step. Restore the real
+            // device state without adding a banner or replacing its details.
+            if(completion.error=="accessDenied")error_=_LW("controlCenter.accessDenied");
+            else if(completion.error=="timeout")error_=_LW("controlCenter.timeout");
+            if(!error_.empty()&&origin){errorControl_=origin->control;errorTarget_=origin->target;errorGroup_=actionBindings_.at(errorControl_).group;}
         }
     }
     ApplyError(y);
