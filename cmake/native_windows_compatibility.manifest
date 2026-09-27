@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!-- Layered child HWNDs require Windows 8+ compatibility awareness.
+       The native host already requires Windows 10 19041; this fragment opts
+       into that supported OS without changing UAC, DPI or assembly bindings.
+       https://learn.microsoft.com/windows/win32/winmsg/using-windows -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+</assembly>

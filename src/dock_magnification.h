@@ -47,6 +47,14 @@ inline constexpr bool ShouldSuppressMagnification(
         widgetResizeActive;
 }
 
+// Shared full-width chrome does not pin the Dock's magnification to an edge.
+// Its icons use the same centered growth and displacement as an island Dock.
+inline constexpr bool UsesEdgeAnchoredMagnification(
+    bool edgeAttached, bool mergedWithStatusBar)
+{
+    return edgeAttached && !mergedWithStatusBar;
+}
+
 inline int FocusSwitchHysteresisPixels(int itemPitch)
 {
     return std::clamp(
@@ -293,6 +301,19 @@ inline int SingleFocusAxisShift(
     const int growth = GrowthForScale(focusScale, baseIconSize);
     return centerDistanceFromFocus < 0
         ? -(growth / 2) : growth - growth / 2;
+}
+
+inline int IslandAxisShift(
+    int effect, int baseCenter, int focusCenter, int pointerAxis,
+    int itemPitch, int baseIconSize, float focusScale)
+{
+    if (effect == 0)
+        return 0;
+    if (effect == 1)
+        return SingleFocusAxisShift(
+            baseCenter - focusCenter, baseIconSize, focusScale);
+    return AxisShiftForDistance(
+        baseCenter - pointerAxis, itemPitch, baseIconSize, focusScale);
 }
 
 inline int PackedAxisShift(

@@ -393,6 +393,20 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
     return passiveDragRevealedThisSample;
 }
 
+bool DesktopApp::DismissMergedDockBackground(PersistentDockHost& host, POINT desktopPoint, POINT screenPoint)
+{
+    if (!host.active || !host.container || !host.container->IsMergedWithStatusBar() ||
+        !host.mergedPresentation.inputEnabled || !statusBar_ ||
+        dragSession_.IsActive() || dragDropController_.IsTransportActive()) return false;
+    const auto& dock = *host.container;
+    if (dock.IsWindowsButtonPoint(desktopPoint) || dock.IsSearchPoint(desktopPoint) ||
+        dock.EntryAtPoint(desktopPoint) || dock.RunningItemAtPoint(desktopPoint) ||
+        dock.FrequentItemAtPoint(desktopPoint)) return false;
+    // Called from the actual Dock HWND's down message, not from a global
+    // pointer sample: overlapping popup controls keep their own input route.
+    return statusBar_->DismissMergedBackground(host.monitor, screenPoint);
+}
+
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
     // Poll only cheap, already-owned surface state. Hold release does not

@@ -322,11 +322,14 @@ bool DockContainer::IsEdgeAttached() const
 
 bool DockContainer::IsMergedWithStatusBar() const
 {
-    if (!app_ || !app_->statusBar_) return false;
+    if (!app_ || !app_->statusBar_ || !IsEdgeAttached()) return false;
     RECT screen = area_;
     OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
     const auto merged = app_->statusBar_->MergedDockArea(MonitorFromRect(&screen, MONITOR_DEFAULTTONULL));
-    return merged && EqualRect(&screen, &*merged);
+    // The bar negotiates its new bounds before the asynchronous Dock relayout.
+    // Keep the logical association through that gap; comparing transient
+    // rectangles can briefly reveal a standalone, clipped Dock instead.
+    return merged.has_value();
 }
 
 bool DockContainer::SharesStatusBarAppearance() const
@@ -710,6 +713,12 @@ bool DockContainer::IsMagnificationSuppressed() const
             app_->IsDockContainerInteractionVisible(this));
 }
 
+bool DockContainer::UsesEdgeAnchoredMagnification() const
+{
+    return snowdesktop::dock_magnification::UsesEdgeAnchoredMagnification(
+        IsEdgeAttached(), IsMergedWithStatusBar());
+}
+
 float DockContainer::GetMaximumMagnificationScale() const
 {
     if (!app_ || IsMagnificationSuppressed())
@@ -850,7 +859,7 @@ RECT DockContainer::ResolveMagnificationFocusRect(POINT pointer) const
                 ItemPitch() / 2 +
                 ScaledSeparatorGap();
             if (!IsRectEmpty(&nearest) &&
-                (!IsEdgeAttached() ||
+                (!UsesEdgeAnchoredMagnification() ||
                     nearestAxisDistance <=
                         separatorReach))
             {
@@ -971,7 +980,7 @@ float DockContainer::GetMagnificationScale(
 {
     if (!app_ || IsRectEmpty(&focusRect))
         return 1.0f;
-    if (IsEdgeAttached())
+    if (UsesEdgeAnchoredMagnification())
     {
         const MagnificationZone baseZone =
             GetMagnificationZone(baseRect);
@@ -1001,7 +1010,7 @@ int DockContainer::GetMagnificationAxisShift(
     if (!app_ || IsRectEmpty(&focusRect) ||
         GetCurrentMagnificationScale() <= 1.0f)
         return 0;
-    if (IsEdgeAttached())
+    if (UsesEdgeAnchoredMagnification())
     {
         const MagnificationZone baseZone =
             GetMagnificationZone(baseRect);
@@ -1052,20 +1061,13 @@ int DockContainer::GetMagnificationAxisShift(
     const int baseCenter = IsVertical()
         ? (baseRect.top + baseRect.bottom) / 2
         : (baseRect.left + baseRect.right) / 2;
-    if (app_->dockSettings_.hoverEffect == 1)
-    {
-        const int focusCenter = IsVertical()
-            ? (focusRect.top + focusRect.bottom) / 2
-            : (focusRect.left + focusRect.right) / 2;
-        return snowdesktop::dock_magnification::SingleFocusAxisShift(
-            baseCenter - focusCenter, ItemIconSize(),
-            GetCurrentMagnificationScale());
-    }
-    return snowdesktop::dock_magnification::AxisShiftForDistance(
-        baseCenter -
-            (IsVertical()
-                ? pointer.y : pointer.x),
-        ItemPitch(), ItemIconSize(), GetCurrentMagnificationScale());
+    const int focusCenter = IsVertical()
+        ? (focusRect.top + focusRect.bottom) / 2
+        : (focusRect.left + focusRect.right) / 2;
+    return snowdesktop::dock_magnification::IslandAxisShift(
+        app_->dockSettings_.hoverEffect, baseCenter, focusCenter,
+        IsVertical() ? pointer.y : pointer.x, ItemPitch(), ItemIconSize(),
+        GetCurrentMagnificationScale());
 }
 
 RECT DockContainer::GetElementVisualRect(
@@ -1479,7 +1481,7 @@ RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
             if (slots[index]) includeScrollable(slots[index]->GetBounds());
 
     const RECT focus = ResolveMagnificationFocusRect(pointer);
-    const bool scrollWaveControlsViewport = !IsEdgeAttached() ||
+    const bool scrollWaveControlsViewport = !UsesEdgeAnchoredMagnification() ||
         GetMagnificationZone(focus) == MagnificationZone::Leading;
     if (scrollWaveControlsViewport && !IsRectEmpty(&firstScrollable) &&
         !IsRectEmpty(&lastScrollable))

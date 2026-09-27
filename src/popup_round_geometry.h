@@ -3,6 +3,7 @@
 #include <d2d1.h>
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 namespace snowdesktop::popup_round_geometry
@@ -43,14 +44,21 @@ inline HRGN CreateWindowFence(const RECT& frame, float radius, float offsetY = 0
 {
     const auto fence = WindowFence(frame, offsetY);
     const auto shape = Resolve(frame, radius, offsetY);
-    const int diameter = static_cast<int>(std::floor((std::max)(0.f, shape.radiusX - 1.f) * 2));
-    // Unlike CreateRectRgn, GDI's rounded primitive drops the final right and
-    // bottom raster coordinates. Advance those endpoints so its actual region
-    // has the requested fence extent, including the half-pixel D2D stroke.
-    const auto right = fence.right < (std::numeric_limits<LONG>::max)() ? fence.right + 1 : fence.right;
-    const auto bottom = fence.bottom < (std::numeric_limits<LONG>::max)() ? fence.bottom + 1 : fence.bottom;
-    return diameter > 0 ? CreateRoundRectRgn(fence.left, fence.top, right, bottom, diameter, diameter)
-        : CreateRectRgnIndirect(&fence);
+    // A second rounded GDI raster mask cannot reproduce D2D's fractional AA
+    // coverage, even when its integer radius is reduced. Only cut triangles
+    // guaranteed to be outside the actual rounded contour. The circle's 45deg
+    // tangent lies (2-sqrt(2))*radius from a corner; two extra physical pixels
+    // leave room for the centered stroke, AA and GDI's integer edge coverage.
+    // D2D/Composition still draw and clip the visible smooth rounded corners.
+    const LONG cut = static_cast<LONG>(std::floor((std::max)(0.,
+        (2. - std::sqrt(2.)) * shape.radiusX - 2.)));
+    if (!cut) return CreateRectRgnIndirect(&fence);
+    const POINT outline[]{
+        {fence.left + cut, fence.top}, {fence.right - cut, fence.top},
+        {fence.right, fence.top + cut}, {fence.right, fence.bottom - cut},
+        {fence.right - cut, fence.bottom}, {fence.left + cut, fence.bottom},
+        {fence.left, fence.bottom - cut}, {fence.left, fence.top + cut}};
+    return CreatePolygonRgn(outline, static_cast<int>(std::size(outline)), WINDING);
 }
 
 inline bool Contains(const D2D1_ROUNDED_RECT& rounded, D2D1_POINT_2F point)

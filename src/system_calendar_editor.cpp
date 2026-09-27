@@ -5,6 +5,7 @@
 #include <oleacc.h>
 #include "system_panel_model.h"
 #include "native_form_style.h"
+#include <dcomp.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,8 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <exception>
+#include <thread>
 
 namespace snowdesktop
 {
@@ -325,12 +328,12 @@ struct PreviewApartment
 };
 struct PreviewParent
 {
-    HWND window=nullptr;SystemCalendarInputs* inputs=nullptr;
-    PreviewParent(int width,int height)
+    HWND window=nullptr;SystemCalendarInputs* inputs=nullptr;int colorRequests=0;
+    PreviewParent(int width,int height,DWORD extendedStyle=WS_EX_NOREDIRECTIONBITMAP)
     {
         WNDCLASSW cls{};cls.hInstance=GetModuleHandleW(nullptr);cls.lpfnWndProc=Procedure;cls.lpszClassName=L"SnowDesktopCalendarInputsPreview";
         if(!RegisterClassW(&cls)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS)throw std::runtime_error("calendar input preview class unavailable");
-        window=CreateWindowExW(0,cls.lpszClassName,L"",WS_POPUP,0,0,width,height,nullptr,nullptr,cls.hInstance,this);
+        window=CreateWindowExW(extendedStyle,cls.lpszClassName,L"",WS_POPUP|WS_CLIPCHILDREN,0,0,width,height,nullptr,nullptr,cls.hInstance,this);
         if(!window)throw std::runtime_error("calendar input preview parent unavailable");
     }
     ~PreviewParent(){inputs=nullptr;if(window)DestroyWindow(window);}
@@ -342,7 +345,8 @@ struct PreviewParent
         {
             if(m==WM_COMMAND&&self->inputs->HandleCommand(wp,lp))return 0;
             if(m==WM_CTLCOLOREDIT||m==WM_CTLCOLORSTATIC)
-                if(const auto brush=self->inputs->ControlColor(reinterpret_cast<HWND>(lp),reinterpret_cast<HDC>(wp)))return reinterpret_cast<LRESULT>(brush);
+                if(const auto brush=self->inputs->ControlColor(reinterpret_cast<HWND>(lp),reinterpret_cast<HDC>(wp)))
+                {++self->colorRequests;return reinterpret_cast<LRESULT>(brush);}
         }
         return DefWindowProcW(w,m,wp,lp);
     }
@@ -369,6 +373,81 @@ struct PreviewMutations
 HWND PreviewInput(const PreviewParent& parent,const SystemCalendarInputs& inputs,std::string_view id)
 {for(auto w=GetWindow(parent.window,GW_CHILD);w;w=GetWindow(w,GW_HWNDNEXT))if(inputs.FieldId(w)==id)return w;return nullptr;}
 void Require(bool result,const char* message){if(!result)throw std::runtime_error(message);}
+void CheckRedirectedInputPaint()
+{
+    // The ordinary hidden-parent WM_PRINT preview cannot expose a missing GDI
+    // redirection surface. Exercise normal WM_PAINT on our own non-input
+    // desktop instead. It is never switched onto the user's screen.
+    std::exception_ptr failure;
+    std::thread worker([&]{try{
+        struct Desktop
+        {
+            HDESK original=GetThreadDesktop(GetCurrentThreadId()),isolated=nullptr;
+            Desktop()
+            {
+                const auto name=L"SnowDesktop.CalendarPaint."+std::to_wstring(GetCurrentProcessId())+L"."+std::to_wstring(GetCurrentThreadId());
+                isolated=CreateDesktopW(name.c_str(),nullptr,nullptr,0,GENERIC_ALL,nullptr);
+                if(!isolated)throw std::runtime_error("calendar paint isolated desktop unavailable");
+                if(!SetThreadDesktop(isolated)){CloseDesktop(isolated);isolated=nullptr;throw std::runtime_error("calendar paint desktop attachment failed");}
+            }
+            ~Desktop(){SetThreadDesktop(original);if(isolated)CloseDesktop(isolated);}
+        } desktop;
+        PreviewApartment apartment;
+        for(const int theme:{0,1})
+        {
+            PreviewParent parent(360,240);PersonalizationSettings appearance;appearance.contentTheme=theme;
+            SystemCalendarInputs inputs(parent.window,{},{});PreviewBinding binding(parent,inputs);
+            const std::vector<SystemCalendarInputField> fields{
+                {"calendar.edit.title",L"Title",L"Painted title",{16,16,344,52},{0,0,360,240},false,true,512},
+                {"calendar.edit.notes",L"Notes",L"Painted notes\r\nSecond line",{16,70,344,166},{0,0,360,240},true,true,8192}};
+            inputs.Sync(fields,appearance,96);
+            Microsoft::WRL::ComPtr<IDCompositionDevice> composition;
+            Require(SUCCEEDED(DCompositionCreateDevice(nullptr,IID_PPV_ARGS(&composition))),"calendar paint composition unavailable");
+            Microsoft::WRL::ComPtr<IDCompositionTarget> target;
+            Require(SUCCEEDED(composition->CreateTargetForHwnd(parent.window,FALSE,&target)),"calendar paint target unavailable");
+            Microsoft::WRL::ComPtr<IDCompositionVisual> root;
+            Require(SUCCEEDED(composition->CreateVisual(&root))&&SUCCEEDED(target->SetRoot(root.Get()))&&
+                SUCCEEDED(composition->Commit()),"calendar paint composition tree unavailable");
+            ShowWindow(parent.window,SW_SHOWNOACTIVATE);
+            const auto palette=native_form::ResolvePalette(appearance);
+            for(const auto& field:fields)
+            {
+                const auto control=PreviewInput(parent,inputs,field.id);
+                Require(control!=nullptr,"calendar paint native input missing");
+                struct PaintProbe
+                {
+                    HWND window;unsigned paints=0;
+                    explicit PaintProbe(HWND value):window(value)
+                    {if(!SetWindowSubclass(window,Procedure,kInputSubclass+2,reinterpret_cast<DWORD_PTR>(this)))throw std::runtime_error("calendar paint observer unavailable");}
+                    ~PaintProbe(){RemoveWindowSubclass(window,Procedure,kInputSubclass+2);}
+                    static LRESULT CALLBACK Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data)
+                    {
+                        if(m==WM_PAINT&&wp==0)++reinterpret_cast<PaintProbe*>(data)->paints;
+                        return DefSubclassProc(w,m,wp,lp);
+                    }
+                } probe(control);
+                const auto colors=parent.colorRequests;
+                RedrawWindow(control,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_FRAME|RDW_UPDATENOW);
+                GdiFlush();
+                Require(probe.paints>0&&parent.colorRequests>colors,"native calendar input skipped WM_PAINT or its theme callback");
+                struct WindowDc{HWND window;HDC dc;~WindowDc(){if(dc)ReleaseDC(window,dc);}} pixels{control,GetDC(control)};
+                Require(pixels.dc!=nullptr,"calendar paint native surface unreadable");
+                RECT client{};GetClientRect(control,&client);
+                Require(GetPixel(pixels.dc,client.right-12,client.bottom-8)==palette.field,
+                    "normal calendar EDIT painting did not retain its theme background");
+                bool text=false;
+                for(int y=0;y<(std::min)(client.bottom,30L)&&!text;++y)
+                    for(int x=0;x<(std::min)(client.right-16,180L);++x)
+                    {
+                        const auto color=GetPixel(pixels.dc,x,y);
+                        if(color!=CLR_INVALID&&color!=palette.field){text=true;break;}
+                    }
+                Require(text,"normal calendar EDIT painting lost its native text");
+            }
+        }
+    }catch(...){failure=std::current_exception();}});
+    worker.join();if(failure)std::rethrow_exception(failure);
+}
 }
 void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>& fields,const PersonalizationSettings& appearance,
     UINT dpi,int width,int height,std::vector<std::uint32_t>& pixels)
@@ -402,6 +481,7 @@ void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>& fi
 }
 void CheckSystemCalendarInputs()
 {
+    CheckRedirectedInputPaint();
     {
         PersonalizationSettings glass;glass.contentTheme=0;glass.widgetAlpha=.25f;
         const std::uint32_t untouched=0x40101010u;
@@ -425,6 +505,29 @@ void CheckSystemCalendarInputs()
         {"calendar.edit.notes",L"Notes",L"Short notes",{16,70,344,166},{0,0,360,240},true,true,8192}};
     inputs.Sync(fields,appearance,96);const auto title=PreviewInput(parent,inputs,fields[0].id),notes=PreviewInput(parent,inputs,fields[1].id);
     Require(title&&notes&&GetParent(title)==parent.window&&(GetWindowLongPtrW(title,GWL_STYLE)&WS_CHILD)&&!(GetWindowLongPtrW(title,GWL_STYLE)&WS_POPUP),"calendar input created a separate top-level window");
+    // WM_PRINT can succeed even when a NOREDIRECTIONBITMAP parent has no GDI
+    // surface to present. Exercise the native composition-surface contract too.
+    // This keeps the ordinary HWND/EDIT rendering path, not a preview bitmap.
+    Microsoft::WRL::ComPtr<IDCompositionDevice> composition;
+    Require(SUCCEEDED(DCompositionCreateDevice(nullptr,IID_PPV_ARGS(&composition))),"calendar input composition probe unavailable");
+    Microsoft::WRL::ComPtr<IDCompositionTarget> target;
+    Require(SUCCEEDED(composition->CreateTargetForHwnd(parent.window,FALSE,&target)),"calendar input child-clipping target unavailable");
+    for(const auto control:{title,notes})
+    {
+        COLORREF color=0;BYTE opacity=0;DWORD flags=0;
+        Require((GetWindowLongPtrW(control,GWL_EXSTYLE)&WS_EX_LAYERED)&&
+                GetLayeredWindowAttributes(control,&color,&opacity,&flags)&&flags==LWA_ALPHA&&opacity==255,
+            "native calendar EDIT has no opaque GDI surface under its composition-only parent");
+        Microsoft::WRL::ComPtr<IUnknown> redirected;
+        Require(SUCCEEDED(composition->CreateSurfaceFromHwnd(control,&redirected))&&redirected,
+            "native calendar EDIT cannot provide its actual redirected window surface");
+    }
+    {
+        PreviewParent ordinaryParent(120,80,0);SystemCalendarInputs ordinary(ordinaryParent.window,{},{});PreviewBinding ordinaryBinding(ordinaryParent,ordinary);
+        ordinary.Sync({fields.front()},appearance,96);const auto control=PreviewInput(ordinaryParent,ordinary,fields.front().id);
+        Require(control&&!(GetWindowLongPtrW(control,GWL_EXSTYLE)&WS_EX_LAYERED),
+            "ordinary native forms must keep their existing GDI redirection path");
+    }
     {
         PreviewMutations titleChanges(title),notesChanges(notes);inputs.Sync(fields,appearance,96);inputs.Pose(0,true);
         Require(titleChanges.count==0&&notesChanges.count==0,"unchanged calendar refresh reset or repainted native inputs");

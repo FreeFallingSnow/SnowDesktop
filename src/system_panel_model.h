@@ -4,6 +4,7 @@
 #include "tray_service.h"
 #include "calendar_service.h"
 #include "system_calendar_editor_state.h"
+#include "native_date_time_picker.h"
 #include "system_controls.h"
 #include "system_control_feedback.h"
 #include "widget_system_data_provider.h"
@@ -89,6 +90,7 @@ public:
     const StatusBarSettings& Settings() const { return settings_; }
     const std::string& Page() const { return page_; }
     bool CalendarEditing() const;
+    std::string CalendarFocusTarget() const;
     std::vector<SystemCalendarInputField> CalendarInputFields() const;
     bool SetCalendarInput(std::string_view id, std::wstring text);
     bool CalendarBack();
@@ -107,6 +109,9 @@ private:
     std::map<std::string,std::wstring> calendarText_;
     bool calendarConfirmDelete_=false, calendarReminderOpen_=false;
     float calendarReturnScroll_=0;
+    std::optional<native_ui::DateTimePicker> calendarPicker_;
+    std::string calendarPickerField_, calendarFocus_;
+    float calendarEditorScroll_=0;
     std::map<std::string,std::function<void(std::optional<float>)>> actions_;
     system_control::ControlFeedback feedback_;
     struct PendingValue { std::uint64_t task = 0; float value = 0; std::string target; };
@@ -158,6 +163,9 @@ private:
     void Calendar();
     void EditCalendar(calendar::CalendarEvent);
     void CalendarEditor();
+    void OpenCalendarPicker(std::string field);
+    void CalendarPicker();
+    void CalendarPickerCommand(std::string_view id);
     void SaveCalendar();
     void RemoveCalendar();
     void LeaveCalendarEditor(bool followSavedDate);

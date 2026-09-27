@@ -41,6 +41,32 @@ inline HFONT CreateFormFont(UINT dpi,int dip=13,int weight=FW_NORMAL)
     return CreateFontW(-Scale(dip,dpi),0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
 }
+// Ordinary GDI children draw into their top-level parent's redirection bitmap.
+// A DirectComposition host can intentionally have no such bitmap. Give only
+// those children a native, opaque redirected surface; EDIT still owns painting,
+// caret, selection, IME and accessibility. No captured bitmap is presented.
+inline bool EnsureOpaqueChildRedirection(HWND window)
+{
+    if(!window)return false;
+    if(!(GetWindowLongPtrW(window,GWL_STYLE)&WS_CHILD))return true;
+    bool required=false;
+    for(auto parent=GetParent(window);parent;)
+    {
+        if(GetWindowLongPtrW(parent,GWL_EXSTYLE)&WS_EX_NOREDIRECTIONBITMAP){required=true;break;}
+        if(!(GetWindowLongPtrW(parent,GWL_STYLE)&WS_CHILD))break;
+        parent=GetParent(parent);
+    }
+    if(!required)return true;
+    const auto style=GetWindowLongPtrW(window,GWL_EXSTYLE);
+    if(!(style&WS_EX_LAYERED))
+    {
+        SetLastError(ERROR_SUCCESS);
+        if(!SetWindowLongPtrW(window,GWL_EXSTYLE,style|WS_EX_LAYERED)&&GetLastError()!=ERROR_SUCCESS)return false;
+    }
+    COLORREF key=0;BYTE opacity=0;DWORD flags=0;
+    if(GetLayeredWindowAttributes(window,&key,&opacity,&flags)&&flags==LWA_ALPHA&&opacity==255)return true;
+    return SetLayeredWindowAttributes(window,0,255,LWA_ALPHA)!=FALSE;
+}
 namespace detail
 {
 inline void Fill(HDC dc,const RECT& rect,COLORREF color)
@@ -349,7 +375,7 @@ inline LRESULT CALLBACK EditProcedure(HWND window,UINT message,WPARAM wp,LPARAM 
 // notifications and the standard accessibility provider remain unchanged.
 inline bool AttachEdit(HWND window,const Palette& palette,UINT dpi,float radiusDip=6.f)
 {
-    if(!window)return false;
+    if(!window||!EnsureOpaqueChildRedirection(window))return false;
     wchar_t className[16]{};if(!GetClassNameW(window,className,static_cast<int>(std::size(className)))||lstrcmpiW(className,L"EDIT")!=0)return false;
     auto* state=detail::State(window);
     if(!state)

@@ -780,11 +780,20 @@ set_source_files_properties(
     PROPERTIES
         VS_SETTINGS "DependentUpon=SettingsShell.xaml;SubType=Code")
 
+# CMake merges .manifest target sources with the linker/Windows App SDK
+# manifests. Opt in only native HWND hosts and their matching preview tests;
+# preserve generated UAC, WinRT activation and common-controls declarations.
+function(snowdesktop_enable_native_window_compatibility TARGET_NAME)
+    target_sources(${TARGET_NAME} PRIVATE
+        "${CMAKE_SOURCE_DIR}/cmake/native_windows_compatibility.manifest")
+endfunction()
+
 add_executable(SnowDesktop WIN32
     ${SNOWDESKTOP_SOURCES}
     src/resource.rc
     "${SNOWDESKTOP_EXE_VERSION_RESOURCE}"
 )
+snowdesktop_enable_native_window_compatibility(SnowDesktop)
 
 # Error messages must survive a missing or damaged distribution/lang tree.
 # Keep lang/*.json as the only translation source, embedded at configure time.
@@ -1033,7 +1042,7 @@ if (BUILD_TESTING)
             COMMAND_ARGUMENTS
             LABELS)
         cmake_parse_arguments(
-            SNOW_TEST "" "" "${multiValueArgs}" ${ARGN})
+            SNOW_TEST "NATIVE_WINDOW_COMPATIBILITY" "" "${multiValueArgs}" ${ARGN})
 
         if (NOT SNOW_TEST_SOURCES)
             message(FATAL_ERROR
@@ -1041,6 +1050,9 @@ if (BUILD_TESTING)
         endif()
 
         add_executable(${TEST_TARGET} ${SNOW_TEST_SOURCES})
+        if (SNOW_TEST_NATIVE_WINDOW_COMPATIBILITY)
+            snowdesktop_enable_native_window_compatibility(${TEST_TARGET})
+        endif()
         # Keep every CTest binary, symbol file, and import library outside the
         # runnable product root. Generator expressions prevent Visual Studio
         # from appending a second configuration directory.
@@ -1860,6 +1872,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopWidgetAuthorPreviewCliTests
         widget_author_preview_cli
+        NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/widget_author_preview_cli_tests.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 windowscodecs
@@ -2225,6 +2238,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopDockAndWindowRulesTests
         dock_and_window_rules
+        NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock_and_window_rules_tests.cpp
             tests/taskbar_native_tests.cpp
@@ -2302,6 +2316,7 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopComponentPreviewTests
         component_preview
+        NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/component_preview_tests.cpp
             tests/widget_background_cache_tests.cpp

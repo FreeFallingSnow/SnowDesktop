@@ -3,10 +3,14 @@
 
 // Dock and running-application context menus.
 
-void DesktopApp::ShowDockContextMenu(POINT screenPoint)
+namespace
 {
-    PrepareMenuIconsForPoint(screenPoint);
+constexpr UINT kDockStatusBarSettingsCommand = 1;
+constexpr UINT kDockTaskManagerCommand = 2;
+}
 
+HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
+{
     HMENU menu = CreatePopupMenu();
     HMENU positionMenu = CreatePopupMenu();
     HMENU layoutMenu = CreatePopupMenu();
@@ -15,7 +19,7 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         if (positionMenu) DestroyMenu(positionMenu);
         if (layoutMenu) DestroyMenu(layoutMenu);
         if (menu) DestroyMenu(menu);
-        return;
+        return nullptr;
     }
 
     AppendMenuW(positionMenu, MF_STRING, kContextDockPositionBottom, _LW("app.dock.bottom"));
@@ -63,6 +67,11 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
+    if (includeStatusBar)
+    {
+        AppendMenuW(menu, MF_STRING, kDockStatusBarSettingsCommand, _LW("statusBar.menu.settings"));
+        AppendMenuW(menu, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
+    }
 
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
@@ -75,12 +84,48 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden,
         MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
+    if (includeStatusBar)
+    {
+        SetMenuItemIcon(menu, kDockStatusBarSettingsCommand, L"\uF6A9", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(menu, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
+    }
+    return menu;
+}
 
+void DesktopApp::ShowDockContextMenu(POINT screenPoint)
+{
+    POINT clientPoint = screenPoint;
+    if (statusBar_ && hwnd_ && ScreenToClient(hwnd_, &clientPoint))
+    {
+        const DockContainer* dock = GetDockContainerAtPoint(clientPoint);
+        if (dock && dock->IsMergedWithStatusBar())
+        {
+            const HMONITOR monitor = MonitorFromPoint(screenPoint, MONITOR_DEFAULTTONEAREST);
+            if (const HWND owner = statusBar_->InteractionWindow(monitor))
+            {
+                // Both parts of the merged strip share the same activation
+                // hold and menu lifetime; never restore the desktop band here.
+                ActivateStatusBar(snowdesktop::StatusBarAction::Menu, owner,
+                    RECT{screenPoint.x, screenPoint.y, screenPoint.x + 1, screenPoint.y + 1});
+            }
+            return;
+        }
+    }
+    PrepareMenuIconsForPoint(screenPoint);
+    HMENU menu = CreateDockContextMenu(false);
+    if (!menu) return;
     RestoreInteractionInputFocus();
     const UINT command = ShowModernMenu(menu, screenPoint, hwnd_, true);
     DestroyMenu(menu);
     ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+    if (command != kContextDockDetailedSettings)
+        RestoreInteractionInputFocus();
+    ExecuteDockContextMenuCommand(command, hwnd_);
+}
 
+void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
+{
     DockSettings updated = dockSettings_;
     bool layoutChanged = false;
     switch (command)
@@ -112,7 +157,6 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         updated.keepWhenDesktopHidden = false;
         break;
     case kContextDockDetailedSettings:
-        RestoreDesktopWindowLayer();
         if (settingsController_)
         {
             (void)settingsController_->SynchronizeGeneral(generalSettings_);
@@ -121,14 +165,18 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
             snowdesktop::SettingsPage::DockAndTaskbar));
         return;
+    case kDockStatusBarSettingsCommand:
+        ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
+            snowdesktop::SettingsPage::StatusBar));
+        return;
+    case kDockTaskManagerCommand:
+        if (reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", L"taskmgr.exe",
+                nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            MessageBeep(MB_ICONWARNING);
+        return;
     default:
-        RestoreDesktopWindowLayer();
-        RestoreInteractionInputFocus();
         return;
     }
-
-    RestoreDesktopWindowLayer();
-    RestoreInteractionInputFocus();
 
     dockSettings_ = updated;
     SaveDockSettings(GetDockSettingsPath().c_str(), dockSettings_);

@@ -1055,20 +1055,27 @@ void CheckCalendarManagement()
         Require(found!=fields.end(),"calendar embedded input descriptor is missing");return *found;
     };
     Require(model.Invoke("calendar.add")&&model.CalendarEditing()&&model.View().width==720&&
-        model.CalendarInputFields().size()==5&&field("calendar.edit.date").text==L"2026-09-26"&&
+        model.CalendarInputFields().size()==2&&Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&
         !model.View().Find("calendar.month"),"calendar add did not become a secondary page in the same panel");
-    Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.SetCalendarInput("calendar.edit.date",L"2026-"),
-        "calendar rejected intermediate native edit text");
+    Require(model.SetCalendarInput("calendar.edit.title",L"Unsaved draft")&&model.Invoke("calendar.edit.date")&&
+        model.CalendarInputFields().empty()&&model.CalendarEditing()&&model.View().Find("picker.day:2026-09-26")&&
+        !model.Invoke("calendar.edit.save"),"date selection did not stay inside the panel with a separate unsaved draft");
+    Require(model.Invoke("picker.day:2026-09-28")&&model.CalendarBack()&&
+        Node(model.View(),"calendar.edit.date").text==L"2026-09-26"&&field("calendar.edit.title").text==L"Unsaved draft"&&
+        model.CalendarFocusTarget()=="calendar.edit.date","canceling a date choice lost text or changed the form value");
+    Require(model.Invoke("calendar.edit.start")&&model.Invoke("picker.hour:11")&&model.Invoke("picker.minute:30")&&
+        model.Invoke("picker.confirm")&&Node(model.View(),"calendar.edit.start").text==L"11:30"&&
+        model.CalendarFocusTarget()=="calendar.edit.start","shared time control did not return its confirmed value and focus");
     model.Refresh(800,720);
-    Require(field("calendar.edit.date").text==L"2026-"&&model.Invoke("calendar.edit.save")&&saves==0&&
-        model.CalendarEditing()&&model.View().Find("calendar.edit.error"),"invalid partial date was lost or reached persistence");
+    Require(model.Invoke("calendar.edit.save")&&saves==0&&field("calendar.edit.title").text==L"Unsaved draft"&&
+        model.CalendarEditing()&&model.View().Find("calendar.edit.error"),"reversed time range was lost or reached persistence");
     Require(model.CalendarBack()&&!model.CalendarEditing()&&events.empty()&&
         Node(model.View(),"calendar.selected").text==L"2026-09-26","back changed the calendar selection or saved a discarded draft");
 
     Require(model.Invoke("calendar.add")&&model.SetCalendarInput("calendar.edit.title",L"Direct event"),"calendar create setup failed");
-    Require(model.Invoke("calendar.edit.allDay")&&!field("calendar.edit.start").enabled&&
-        !model.SetCalendarInput("calendar.edit.start",L"broken"),"all-day disabled times retained editable input");
-    Require(model.Invoke("calendar.edit.allDay")&&field("calendar.edit.start").text==L"09:00","all-day toggle discarded the raw time draft");
+    Require(model.Invoke("calendar.edit.allDay")&&!Node(model.View(),"calendar.edit.start").enabled&&
+        !model.Invoke("calendar.edit.start")&&!model.SetCalendarInput("calendar.edit.start",L"broken"),"all-day disabled times retained editable input");
+    Require(model.Invoke("calendar.edit.allDay")&&Node(model.View(),"calendar.edit.start").text==L"09:00","all-day toggle discarded the time draft");
     Require(model.Invoke("calendar.edit.reminder")&&model.Invoke("calendar.edit.reminder:15")&&
         Node(model.View(),"calendar.edit.reminder").text==_LW("settings.calendar.reminder.15"),"same-page reminder selection lost its value");
     Require(model.Invoke("calendar.edit.save")&&!model.CalendarEditing()&&events.size()==1&&events.front().reminderMinutes==15&&
@@ -1082,7 +1089,8 @@ void CheckCalendarManagement()
     const auto contextResult=context.Release(model.View(),point,true);
     Require(contextResult.kind==ui::InputResult::Kind::Context&&contextResult.id==originalNode&&
         model.CalendarEventCommand(contextResult.id,false),"right-click context lost its stable calendar event identity");
-    Require(model.SetCalendarInput("calendar.edit.title",L"Changed here")&&model.SetCalendarInput("calendar.edit.date",L"2026-09-28")&&
+    Require(model.SetCalendarInput("calendar.edit.title",L"Changed here")&&model.Invoke("calendar.edit.date")&&
+        model.Invoke("picker.day:2026-09-28")&&model.Invoke("picker.confirm")&&
         model.SetCalendarInput("calendar.edit.notes",L"Keep this draft"),"calendar edit did not accept its existing event draft");
     failSave=true;
     Require(model.Invoke("calendar.edit.save")&&model.CalendarEditing()&&field("calendar.edit.notes").text==L"Keep this draft"&&
@@ -1137,8 +1145,18 @@ void CheckCalendarManagement()
         Require(narrow.MaximumScroll()>0&&narrow.Reveal("calendar.edit.save"),"short editor lost scroll access to saving");
         const auto& save=Node(narrow.View(),"calendar.edit.save");
         Require(save.bounds.top>=save.clip.top&&save.bounds.bottom<=save.clip.bottom,"calendar save could not be revealed");
+        Require(narrow.Invoke("calendar.edit.start")&&narrow.Invoke("picker.minutes"),"constrained shared time picker did not open");
+        CheckLayout(narrow.View());Require(narrow.Reveal("picker.minute:59"),"last minute option cannot be reached in a short viewport");
+        const auto& minute=Node(narrow.View(),"picker.minute:59");
+        Require(minute.bounds.top>=minute.clip.top&&minute.bounds.bottom<=minute.clip.bottom&&narrow.CalendarBack(),"time option escaped its scroll viewport");
         Require(narrow.CalendarBack(),"short editor lost its back route");
     }
+    const auto leapDays=ui::DateTimePicker::MonthDates("2024-02-01");
+    Require(std::find(leapDays.begin(),leapDays.end(),std::optional<std::string>("2024-02-29"))!=leapDays.end(),
+        "shared calendar selection lost a leap day");
+    ui::DateTimePicker first(std::string("0001-01-01")),last(std::string("9999-12-31"));
+    Require(first.Invoke("picker.previous",{})==ui::DateTimePicker::Result::None&&
+        last.Invoke("picker.next",{})==ui::DateTimePicker::Result::None,"shared calendar selection escaped the service date range");
 }
 void CheckFeedbackLayouts()
 {
@@ -1314,9 +1332,9 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
     event.title=_L("settings.calendar.events");event.date="2026-09-26";event.startMinutes=630;event.endMinutes=690;
     event.reminderMinutes=15;event.notes=_L("settings.calendar.pageDescription");
     const float scale=static_cast<float>(request.dpi)/96.f;
-    for(int page=0;page<5;++page)
+    for(int page=0;page<7;++page)
     {
-        const bool creating=page==0,confirmation=page==2,overflow=page==3,narrow=page==4;
+        const bool creating=page==0,confirmation=page==2,overflow=page==3,narrow=page==4,datePicker=page==5,timePicker=page==6,picker=datePicker||timePicker;
         auto source=FixtureSource(std::make_shared<PreviewState>());
         source.calendar.events=[event](const std::string& date){return date==event.date?std::vector{event}:std::vector<calendar::CalendarEvent>{};};
         source.calendar.mutations.current=[event](const auto&){return std::optional(event);};
@@ -1334,6 +1352,11 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
             Require(model.SetCalendarInput("calendar.edit.notes",std::move(notes)),"long calendar notes did not reach the page draft");
         }
         if(!creating)model.Reveal("calendar.edit.notes");
+        if(picker)
+        {
+            Require(model.Invoke(datePicker?"calendar.edit.date":"calendar.edit.start"),"calendar visual fixture did not enter its shared picker");
+            if(timePicker)Require(model.Invoke("picker.minutes"),"time visual fixture did not expose minute choices");
+        }
         const auto& scene=model.View();CheckLayout(scene);
         for(const auto* id:{"calendar.edit.save","calendar.edit.cancel","calendar.edit.delete","calendar.edit.confirmDelete","calendar.edit.cancelDelete"})
             if(const auto* action=scene.Find(id))
@@ -1347,12 +1370,12 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                     "calendar primary and destructive action labels must not be truncated");
             }
         Require(model.CalendarEditing()&&scene.cards.size()==1&&!scene.Find("calendar.month")&&
-            Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15"),
+            (picker?scene.Find("picker.confirm")!=nullptr:Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15")),
             "calendar secondary page lost its shared card or reminder selection");
         const int width=static_cast<int>(std::ceil(scene.width*scale)),height=static_cast<int>(std::ceil(scene.height*scale));
         const int left=(request.canvasWidth-width)/2,top=(request.canvasHeight-height)/2;
         auto pixels=Render(device,text,request,scene,appearance,background,stage,left,top);
-        auto fields=model.CalendarInputFields();Require(fields.size()==5,"calendar secondary page lost an embedded native input");
+        auto fields=model.CalendarInputFields();Require(fields.size()==(picker?0u:2u),"calendar secondary page lost an embedded native input or overlaid a date/time picker");
         for(auto& field:fields)
         {
             const float dx=static_cast<float>(left)/scale,dy=static_cast<float>(top)/scale;
@@ -1364,8 +1387,8 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         // text and actual notes scrolling, over the production scene itself.
         const auto scenePixels=pixels;
         OverlaySystemCalendarInputs(fields,appearance,static_cast<UINT>(request.dpi),request.canvasWidth,request.canvasHeight,pixels);
-        Require(pixels!=scenePixels,"calendar page preview omitted its real embedded input controls");
-        if(!creating)
+        Require(picker||pixels!=scenePixels,"calendar page preview omitted its real embedded input controls");
+        if(!creating&&!picker)
         {
             auto emptyNotes=fields;const auto notes=std::find_if(emptyNotes.begin(),emptyNotes.end(),[](const auto& field){return field.id=="calendar.edit.notes";});
             Require(notes!=emptyNotes.end()&&!notes->text.empty(),"calendar notes fixture has no actual text");notes->text.clear();
@@ -1379,7 +1402,7 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
                 if(pixels[static_cast<std::size_t>(y)*request.canvasWidth+x]!=withoutNotes[static_cast<std::size_t>(y)*request.canvasWidth+x]){visibleText=true;break;}
             Require(visibleText,"calendar notes text did not appear in the actual native EDIT overlay");
         }
-        const std::string name=creating?"new-event":confirmation?"delete-confirmation":overflow?"editor-notes-overflow":narrow?"editor-narrow":"editor";
+        const std::string name=creating?"new-event":confirmation?"delete-confirmation":overflow?"editor-notes-overflow":narrow?"editor-narrow":datePicker?"date-picker":timePicker?"time-picker":"editor";
         const auto path=request.outputDirectory/(request.component+"-"+name+".png");
         if(!preview_png::Save(path,request.canvasWidth,request.canvasHeight,pixels,result.error))throw std::runtime_error(result.error);
         result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,

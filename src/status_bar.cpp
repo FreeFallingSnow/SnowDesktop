@@ -276,6 +276,7 @@ struct StatusBar::Impl
             if (GetCapture() == hwnd) ReleaseCapture();
             if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
             ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
+            paintDirty = true;
             for (const auto& item : items) if (item.icon && owner.tray)
                 owner.tray->SetGeometry(item.icon->key, {});
             backdrop.HidePopupWindowPair(hwnd);
@@ -342,16 +343,33 @@ struct StatusBar::Impl
             return !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
                 (!mergedDockHeight || mergedPresentation.inputEnabled);
         }
-        void ApplyDockPose()
+        void ApplyDockPose(float opacity)
         {
             if (!mergedDockHeight || !visual || !owner.composition) return;
             if (!mergedOpacity) owner.composition->CreateEffectGroup(&mergedOpacity);
             if (mergedOpacity)
             {
-                mergedOpacity->SetOpacity(mergedPresentation.opacity);
+                mergedOpacity->SetOpacity(opacity);
                 visual->SetEffect(mergedOpacity.Get());
             }
-            backdrop.SetVisualOpacity(mergedPresentation.opacity);
+            backdrop.SetVisualOpacity(opacity);
+        }
+        bool PrepareDockPresentation(const StatusBarDockPresentation& frame)
+        {
+            if (!mergedDockHeight || closing || failed || !positioned) return false;
+            if (!frame.visible) return true;
+            const bool hidden = !IsWindowVisible(hwnd);
+            if (hidden) paintDirty = true;
+            if (paintDirty || !surface || !backgroundSurface) Paint(true);
+            if (paintDirty || backgroundDirty || !surface || !backgroundSurface || !visual || !owner.composition)
+                return false;
+            if (hidden)
+            {
+                ApplyDockPose(frame.opacity);
+                const auto result = owner.composition->Commit();
+                if (FAILED(result)) { PaintError(result); return false; }
+            }
+            return true;
         }
         void ApplyDockPresentation(const StatusBarDockPresentation& frame)
         {
@@ -372,7 +390,7 @@ struct StatusBar::Impl
             }
             if (!IsWindowVisible(hwnd)) Show();
             else if (paintDirty) Paint();
-            ApplyDockPose();
+            ApplyDockPose(mergedPresentation.opacity);
             backdrop.SetPopupWindowPairZOrder(hwnd, frame.insertAfter, frame.topmost);
             backdrop.SetVisible(appearance.glassEnabled && !HighContrast());
             backdrop.CommitVisualChanges();
@@ -380,6 +398,10 @@ struct StatusBar::Impl
         void Show()
         {
             if (fullscreen || failed || !positioned) return;
+            // Fill retained content and the full strip before any native show.
+            // This also covers startup or a device reset with animations off.
+            Paint(true);
+            if (paintDirty || !surface || !backgroundSurface) return;
             if (!IsWindowVisible(hwnd) || (!mergedDockHeight && !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST)))
             {
                 // Restoration must stay beneath the actual merged Dock and
@@ -389,9 +411,8 @@ struct StatusBar::Impl
                 SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                 if (appearance.glassEnabled && !HighContrast()) backdrop.ShowPopupWindowPair(hwnd);
-                paintDirty = true;
             }
-            Paint();
+            SyncTooltip();
         }
         void Place()
         {
@@ -496,9 +517,10 @@ struct StatusBar::Impl
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
-        void Paint()
+        void Paint(bool prepareHidden = false)
         {
-            if (closing || painting || fullscreen || failed || !IsWindowVisible(hwnd) || !owner.composition || !owner.text) return;
+            if (closing || painting || failed || (!prepareHidden && (fullscreen || !IsWindowVisible(hwnd))) ||
+                !owner.composition || !owner.text) return;
             auto previousItems = std::move(items);
             BuildItems();
             if (interaction.Reconcile(previousItems, items))
@@ -600,7 +622,7 @@ struct StatusBar::Impl
             if (SUCCEEDED(result))
             {
                 contentVisual->SetContent(surface.Get());
-                ApplyDockPose();
+                ApplyDockPose(mergedPresentation.opacity);
                 const auto commit = owner.composition->Commit();
                 if (FAILED(commit)) PaintError(commit);
                 else { paintDirty = false; lastPaintError = S_OK; SyncTooltip(); }
@@ -1119,6 +1141,42 @@ void StatusBar::ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDoc
         (void)id;
         if (window && window->monitor == monitor) window->ApplyDockPresentation(frame);
     }
+}
+bool StatusBar::PrepareMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame)
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor) return window->PrepareDockPresentation(frame);
+    }
+    return false;
+}
+HWND StatusBar::InteractionWindow(HMONITOR monitor) const
+{
+    if (impl_->removingWindows) return nullptr;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && window->InputAvailable()) return window->hwnd;
+    }
+    return nullptr;
+}
+bool StatusBar::DismissMergedBackground(HMONITOR monitor, POINT screen)
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || !window->mergedDockHeight ||
+            !window->InputAvailable() || !PtInRect(&window->placedBounds, screen)) continue;
+        POINT local = screen;
+        ScreenToClient(window->hwnd, &local);
+        if (HitTestStatusBarItems(window->items, local)) return false;
+        window->DismissSurfaces();
+        return true;
+    }
+    return false;
 }
 bool StatusBar::IsInteractionAvailable(HMONITOR monitor) const
 {

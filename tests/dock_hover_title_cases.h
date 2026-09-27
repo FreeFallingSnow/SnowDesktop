@@ -27,4 +27,37 @@ void CheckDockHoverTitleCases()
                 hover::ShouldSuppressMagnification(false, true, false, inputAvailable) &&
                 hover::ShouldSuppressMagnification(false, false, true, inputAvailable),
             "dragging or moving/resizing a widget must suppress Dock hover in either visibility state");
+
+    Check(hover::UsesEdgeAnchoredMagnification(true, false) &&
+            !hover::UsesEdgeAnchoredMagnification(false, false) &&
+            !hover::UsesEdgeAnchoredMagnification(true, true),
+        "merging the strip must select island magnification without changing ordinary edge Dock behavior");
+    for (const int effect : {0, 1, 2})
+    {
+        constexpr int center = 238, pitch = 76, iconSize = 64;
+        const float maximum = hover::ResolveFocusScale(effect, 1.6f, true);
+        const int focusShift = hover::IslandAxisShift(effect,
+            center, center, center, pitch, iconSize, maximum);
+        const int leftShift = hover::IslandAxisShift(effect,
+            center - pitch, center, center, pitch, iconSize, maximum);
+        const int rightShift = hover::IslandAxisShift(effect,
+            center + pitch, center, center, pitch, iconSize, maximum);
+        Check(focusShift == 0 && leftShift == -rightShift &&
+                (effect == 0 ? rightShift == 0 : rightShift > 0),
+            "island growth keeps the focused icon centered and makes both neighbors yield outward");
+        const float neighborScale = hover::ScaleForEffect(effect,
+            false, static_cast<float>(pitch), pitch, maximum);
+        Check(effect == 2 ? neighborScale > 1.0f : neighborScale == 1.0f,
+            "merged island geometry must preserve none, single-icon and wave growth settings");
+        const RECT focusBase{200, 200, 276, 276};
+        for (const auto position : {DockPosition::Top, DockPosition::Bottom})
+        {
+            const RECT focusVisual = hover::MagnifyRect(focusBase, position,
+                maximum, iconSize, focusShift);
+            Check(focusVisual.left + focusVisual.right == focusBase.left + focusBase.right &&
+                    (position == DockPosition::Top ? focusVisual.top == focusBase.top :
+                        focusVisual.bottom == focusBase.bottom),
+                "merged island growth stays centered on its slot and lifts toward the desktop");
+        }
+    }
 }

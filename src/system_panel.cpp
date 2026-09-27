@@ -352,10 +352,10 @@ struct SystemPanel::Impl
     void FocusCalendarPage(bool keyboard)
     {
         if(!model||!model->CalendarEditing())return;
-        if(model->View().Find("calendar.edit.confirmDelete"))
-        {if(model->Reveal("calendar.edit.cancelDelete"))Arrange();input.Focus("calendar.edit.cancelDelete",keyboard);SetFocus(window);}
-        else
-        {if(model->Reveal("calendar.edit.title"))Arrange();if(calendarInputs&&calendarInputs->Focus("calendar.edit.title",keyboard))input.Focus("calendar.edit.title",keyboard);}
+        auto id=model->CalendarFocusTarget();
+        if(!model->View().Find(id))id="picker.confirm";
+        if(model->Reveal(id))Arrange();input.Focus(id,keyboard);
+        if(!calendarInputs||!calendarInputs->Focus(id,keyboard))SetFocus(window);
     }
     void Result(ui::InputResult result,POINT screen,bool keyboard=false)
     {
@@ -372,7 +372,9 @@ struct SystemPanel::Impl
         }
         if(result.kind==ui::InputResult::Kind::Context){CalendarContext(result.id,screen);return;}
         if(calendarInputs&&calendarInputs->Focus(result.id,keyboard)){input.Focus(result.id,keyboard);Paint();return;}
-        const auto life=lifetime;auto activeModel=model;const bool editing=activeModel->CalendarEditing();activeModel->Invoke(result.id,result.kind==ui::InputResult::Kind::Value?std::optional(result.value):std::nullopt);if(life->alive&&model){Arrange();if((!editing&&model->CalendarEditing())||result.id=="calendar.edit.delete")FocusCalendarPage(keyboard);if(model->View().Find("calendar.edit.error")&&model->Reveal("calendar.edit.error"))Arrange();Paint();}
+        const auto life=lifetime;auto activeModel=model;const auto calendarFocus=activeModel->CalendarFocusTarget();
+        activeModel->Invoke(result.id,result.kind==ui::InputResult::Kind::Value?std::optional(result.value):std::nullopt);
+        if(life->alive&&model){Arrange();if(calendarFocus!=model->CalendarFocusTarget())FocusCalendarPage(keyboard);if(model->View().Find("calendar.edit.error")&&model->Reveal("calendar.edit.error"))Arrange();Paint();}
     }
     static LRESULT CALLBACK Procedure(HWND w,UINT m,WPARAM wp,LPARAM lp)
     {
@@ -469,7 +471,7 @@ struct SystemPanel::Impl
             if(m==WM_SETFOCUS||m==WM_KILLFOCUS){self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}
             if(m==WM_KEYDOWN)
             {
-                if(wp==VK_ESCAPE){if(self->model->CalendarBack()){self->Arrange();self->Paint();}else{self->pending.reset();self->Animate(false);}return 0;}
+                if(wp==VK_ESCAPE){if(self->model->CalendarBack()){self->Arrange();self->FocusCalendarPage(true);self->Paint();}else{self->pending.reset();self->Animate(false);}return 0;}
                 self->input.Cancel();self->scrollbarDragging=false;if(GetCapture()==w)ReleaseCapture();
                 const auto result=self->model->HandleKey(self->input,static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);self->Arrange();POINT p{};
                 if(const auto* n=self->model->View().Find(result.id)){p={static_cast<LONG>(n->bounds.left*self->scale),static_cast<LONG>(n->bounds.bottom*self->scale)};ClientToScreen(w,&p);}
@@ -488,7 +490,14 @@ void SystemPanel::Show(StatusBarAction a,HWND owner,RECT anchor,const Personaliz
 void SystemPanel::Hide(){impl_->pending.reset();impl_->afterClose={};if(impl_->showing)impl_->Animate(false);}
 void SystemPanel::CloseThen(std::function<void()> next){impl_->pending.reset();impl_->afterClose=std::move(next);if(impl_->showing||impl_->modal)impl_->Animate(false);else if(auto fn=std::move(impl_->afterClose)){impl_->afterClose={};fn();}}
 bool SystemPanel::IsOpen()const{return impl_->showing||impl_->modal;}
-bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const{return IsOpen()&&monitor&&impl_->monitor==monitor;}
+bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const
+{
+    if(!monitor)return false;
+    if(IsOpen()&&impl_->monitor==monitor)return true;
+    // A queued replacement owns the same interaction hold between the close
+    // endpoint and kOpenPending; that message gap must not hide the merged bar.
+    return impl_->pending&&MonitorFromRect(&impl_->pending->anchor,MONITOR_DEFAULTTONEAREST)==monitor;
+}
 bool SystemPanel::ContainsPoint(POINT screen)const
 {
     if(!IsOpen())return false;
@@ -509,7 +518,11 @@ bool SystemPanel::ContainsPoint(POINT screen)const
 }
 void SystemPanel::UpdateSettings(const StatusBarSettings& settings)
 {if(impl_->current)impl_->current->settings=settings;if(impl_->model){impl_->model->UpdateSettings(settings);impl_->paintDirty=true;}}
-void SystemPanel::HideForMonitor(HMONITOR m){if(impl_->monitor==m){impl_->pending.reset();impl_->afterClose={};impl_->HideNow();}}
+void SystemPanel::HideForMonitor(HMONITOR m)
+{
+    if(impl_->pending&&MonitorFromRect(&impl_->pending->anchor,MONITOR_DEFAULTTONEAREST)==m)impl_->pending.reset();
+    if(impl_->monitor==m){impl_->pending.reset();impl_->afterClose={};impl_->HideNow();}
+}
 bool SystemPanel::PreTranslateMessage(MSG*){return false;}
 bool SystemPanel::DropTrayIcon(std::string_view key,POINT p){if(!impl_->showing||impl_->closing||impl_->modal||impl_->slide.IsAnimating()||!impl_->model)return false;ScreenToClient(impl_->window,&p);const bool ok=impl_->model->Drop(key,{p.x/impl_->scale,p.y/impl_->scale});if(ok){impl_->Arrange();impl_->Paint();}return ok;}
 bool SystemPanel::PreviewTrayDrop(std::string_view key,POINT p)

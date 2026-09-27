@@ -794,9 +794,10 @@ void SystemPanelModel::Calendar()
         auto& n=Add("calendar.column:"+std::to_string(i),ui::Role::Text,Rect(monthLeft+i*cell,gridTop,cell-4,22),_LW(key.c_str()));
         n.centered=n.secondary=true;n.fontSize=12;
     }
+    const auto dates=ui::DateTimePicker::MonthDates(month_);
     for(int i=0;i<42;++i)
     {
-        const auto date=calendar::CalendarService::AddDays(month_,i-offset);if(!date)continue;
+        const auto& date=dates[i];if(!date)continue;
         const auto d=calendar::CalendarService::GetDateInfo(*date);if(!d)continue;
         auto& n=Add("date:"+*date,ui::Role::ListItem,Rect(monthLeft+(i%7)*cell,gridTop+28+(i/7)*34.f,cell-4,30),std::to_wstring(d->day));
         n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;
@@ -874,6 +875,7 @@ void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
     if(closed_||!source_.calendar.mutations.save)return;
     calendarReturnScroll_=scroll_;scroll_=0;++navigation_;page_="calendar-edit";calendarNotice_.clear();
     calendarConfirmDelete_=calendarReminderOpen_=false;
+    calendarPicker_.reset();calendarPickerField_.clear();calendarFocus_="calendar.edit.title";
     calendarEditor_=std::make_shared<SystemCalendarEditorState>();
     calendarEditor_->original=event;calendarEditor_->draft=std::move(event);
     calendarEditor_->actions=source_.calendar.mutations;
@@ -888,26 +890,32 @@ void SystemPanelModel::EditCalendar(calendar::CalendarEvent event)
 }
 bool SystemPanelModel::CalendarEditing() const
 {return !closed_&&action_==StatusBarAction::Calendar&&page_=="calendar-edit"&&calendarEditor_;}
+std::string SystemPanelModel::CalendarFocusTarget() const
+{
+    if(!CalendarEditing())return {};
+    if(calendarPicker_)return calendarPicker_->FocusTarget();
+    return calendarConfirmDelete_?"calendar.edit.cancelDelete":calendarFocus_;
+}
 std::vector<SystemCalendarInputField> SystemPanelModel::CalendarInputFields() const
 {
-    std::vector<SystemCalendarInputField> fields;if(!CalendarEditing())return fields;
-    for(const auto* suffix:{"title","date","start","end","notes"})
+    std::vector<SystemCalendarInputField> fields;if(!CalendarEditing()||calendarPicker_)return fields;
+    for(const auto* suffix:{"title","notes"})
     {
         const std::string id="calendar.edit."+std::string(suffix);
         const auto* node=scene_.Find(id);const auto value=calendarText_.find(id);
         if(!node||value==calendarText_.end())continue;
-        const bool notes=std::string_view(suffix)=="notes",date=std::string_view(suffix)=="date";
+        const bool notes=std::string_view(suffix)=="notes";
         fields.push_back({id,node->accessibilityLabel,value->second,node->bounds,node->clip,notes,node->enabled,
-            notes?8192:date?10:std::string_view(suffix)=="title"?512:5});
+            notes?8192:512});
     }
     return fields;
 }
 bool SystemPanelModel::SetCalendarInput(std::string_view id,std::wstring text)
 {
-    if(!CalendarEditing()||calendarConfirmDelete_)return false;
+    if(!CalendarEditing()||calendarConfirmDelete_||calendarPicker_||
+        (id!="calendar.edit.title"&&id!="calendar.edit.notes"))return false;
     const auto found=calendarText_.find(std::string(id));if(found==calendarText_.end())return false;
-    if(calendarEditor_->draft.allDay&&(id=="calendar.edit.start"||id=="calendar.edit.end"))return false;
-    // Preserve partial dates/times and IME text verbatim. Validation belongs to
+    // Preserve native text and IME text verbatim. Validation belongs to
     // Save, and typing must not rebuild or reset the live native EDIT selection.
     found->second=std::move(text);return true;
 }
@@ -919,11 +927,13 @@ void SystemPanelModel::LeaveCalendarEditor(bool followSavedDate)
     else scroll_=calendarReturnScroll_;
     ++navigation_;page_.clear();calendarEditor_.reset();calendarText_.clear();
     calendarConfirmDelete_=calendarReminderOpen_=false;
+    calendarPicker_.reset();calendarPickerField_.clear();calendarFocus_.clear();
 }
 bool SystemPanelModel::CalendarBack()
 {
     if(!CalendarEditing())return false;
-    if(calendarConfirmDelete_){calendarConfirmDelete_=false;calendarEditor_->error.clear();}
+    if(calendarPicker_){calendarPicker_.reset();calendarFocus_=calendarPickerField_;calendarPickerField_.clear();scroll_=calendarEditorScroll_;}
+    else if(calendarConfirmDelete_){calendarConfirmDelete_=false;calendarEditor_->error.clear();}
     else if(calendarReminderOpen_)calendarReminderOpen_=false;
     else LeaveCalendarEditor(false);
     Refresh(available_);return true;
@@ -952,7 +962,7 @@ bool SystemPanelModel::CalendarEventCommand(std::string_view nodeId,bool remove)
 }
 void SystemPanelModel::SaveCalendar()
 {
-    if(!CalendarEditing()||calendarConfirmDelete_)return;
+    if(!CalendarEditing()||calendarConfirmDelete_||calendarPicker_)return;
     const auto editor=calendarEditor_;
     const auto utf8=[](const std::wstring& value)->std::optional<std::string>{
         if(value.empty())return std::string{};
@@ -986,6 +996,7 @@ void SystemPanelModel::RemoveCalendar()
 void SystemPanelModel::CalendarEditor()
 {
     const auto editor=calendarEditor_;if(!editor)return;
+    if(calendarPicker_){CalendarPicker();return;}
     scene_.width=(std::min)(720.f,availableWidth_);bodyLeft_=0;bodyStart_=56;
     Add("calendar.edit.back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("settings.shell.back");
     Command("calendar.edit.back",[this]{CalendarBack();});
@@ -997,8 +1008,10 @@ void SystemPanelModel::CalendarEditor()
         const std::string id="calendar.edit."+std::string(suffix),key="settings.calendar."+std::string(suffix);
         const auto label=_LW(key.c_str());
         auto& caption=Add(id+".label",ui::Role::Text,Rect(x,y,w,20),label);caption.fontSize=13;caption.secondary=true;
-        auto& node=Add(id,ui::Role::Button,Rect(x,y+24,w,h));node.accessibilityLabel=node.tooltip=label;
+        const bool picker=std::string_view(suffix)=="date"||std::string_view(suffix)=="start"||std::string_view(suffix)=="end";
+        auto& node=Add(id,ui::Role::Button,Rect(x,y+24,w,h),picker?calendarText_.at(id):std::wstring{});node.accessibilityLabel=node.tooltip=label;
         node.enabled=enabled&&!calendarConfirmDelete_;
+        if(picker){node.tooltip=node.accessibilityLabel=std::wstring(label)+L" · "+node.text;Command(id,[this,id]{OpenCalendarPicker(id);});}
     };
     field("title",16,64,leftWidth,36);
     field("date",right,wide?64.f:136.f,rightWidth,36);
@@ -1060,6 +1073,46 @@ void SystemPanelModel::CalendarEditor()
         Command(save.id,[this]{SaveCalendar();});
     }
     Finish(footer+36,false);
+}
+void SystemPanelModel::OpenCalendarPicker(std::string field)
+{
+    if(!CalendarEditing()||calendarConfirmDelete_||calendarPicker_)return;
+    if(field=="calendar.edit.date")
+    {
+        const auto& text=calendarText_.at(field);calendarPicker_.emplace(std::string(text.begin(),text.end()));
+    }
+    else if((field=="calendar.edit.start"||field=="calendar.edit.end")&&!calendarEditor_->draft.allDay)
+    {
+        const auto value=ParseCalendarEditorTime(calendarText_.at(field));if(!value)return;calendarPicker_.emplace(*value);
+    }
+    else return;
+    calendarPickerField_=std::move(field);calendarEditorScroll_=scroll_;calendarReminderOpen_=false;scroll_=0;
+}
+void SystemPanelModel::CalendarPicker()
+{
+    const auto key="settings.calendar."+calendarPickerField_.substr(14);
+    const auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
+    scene_=calendarPicker_->Build((std::min)(720.f,availableWidth_),_LW(key.c_str()),today);
+    bodyLeft_=0;bodyStart_=56;
+    for(const auto& node:scene_.nodes)if(node.Interactive())Command(node.id,[this,id=node.id]{CalendarPickerCommand(id);});
+    Finish(scene_.height,false);
+}
+void SystemPanelModel::CalendarPickerCommand(std::string_view id)
+{
+    if(!CalendarEditing()||!calendarPicker_)return;
+    const auto today=source_.calendar.today?source_.calendar.today():calendar::CalendarService::CurrentLocalNow().date;
+    const auto result=calendarPicker_->Invoke(id,today);
+    if(result==ui::DateTimePicker::Result::Confirmed)
+    {
+        calendarText_[calendarPickerField_]=calendarPicker_->Type()==ui::DateTimePicker::Kind::Date?
+            Wide(calendarPicker_->Date()):ui::DateTimePicker::TimeText(calendarPicker_->Minutes());
+        calendarEditor_->error.clear();
+    }
+    if(result==ui::DateTimePicker::Result::Confirmed||result==ui::DateTimePicker::Result::Cancelled)
+    {
+        calendarFocus_=calendarPickerField_;calendarPicker_.reset();calendarPickerField_.clear();scroll_=calendarEditorScroll_;
+    }
+    else if(result==ui::DateTimePicker::Result::Changed)scroll_=0;
 }
 void SystemPanelModel::Resources()
 {

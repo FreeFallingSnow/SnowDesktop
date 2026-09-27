@@ -1332,8 +1332,10 @@ int main(int argc, char** argv)
             Check(IsRectEmpty(&noDate.clock) && noDate.notifications.right == 628 * scale,
                 "disabled merged dates must leave notifications at the complete bar's right edge");
         }
+        const auto messagesBeforeClose = messages.size();
         reservation.Remove(); reservation.Remove();
-        Check(std::count(messages.begin(), messages.end(), static_cast<DWORD>(ABM_REMOVE)) == 1,
+        Check(!reservation.Registered() && messages.size() == messagesBeforeClose + 1 &&
+                messages.back() == ABM_REMOVE,
             "closing an AppBar releases its reservation exactly once");
         messages.clear();
         snowdesktop::StatusBarAppBar rejected([&](DWORD message, APPBARDATA&) -> UINT_PTR {

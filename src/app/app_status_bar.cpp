@@ -9,10 +9,64 @@
 #include "../taskbar_monitor.h"
 #include "../taskbar_hook/taskbar_native.h"
 
+namespace
+{
+void TraceStatusBarShellActivation(snowdesktop::StatusBarAction action,
+    std::uint64_t generation, const wchar_t* phase, double started,
+    const wchar_t* result = L"-", double callMilliseconds = 0,
+    UINT requested = 0, UINT sent = 0) noexcept try
+{
+    if (started < 0) return;
+    wchar_t inputState[448]{};
+    if (wcscmp(phase, L"queued") == 0 || wcscmp(phase, L"send-input") == 0 ||
+        wcscmp(phase, L"finished") == 0)
+    {
+        // These are input-state snapshots only; do not synchronously query
+        // foreign window text/classes or consume queue-status change bits.
+        const DWORD uiThread = GetCurrentThreadId();
+        const HWND foreground = GetForegroundWindow();
+        const DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+        GUITHREADINFO uiInfo{};
+        uiInfo.cbSize = sizeof(uiInfo);
+        const bool uiKnown = GetGUIThreadInfo(uiThread, &uiInfo) != FALSE;
+        GUITHREADINFO foregroundInfo{};
+        foregroundInfo.cbSize = sizeof(foregroundInfo);
+        const bool foregroundKnown = foregroundThread == uiThread ?
+            (foregroundInfo = uiInfo, uiKnown) :
+            (foregroundThread && GetGUIThreadInfo(foregroundThread, &foregroundInfo) != FALSE);
+        swprintf_s(inputState,
+            L" foreground=%p foregroundThread=%lu uiThread=%lu uiKnown=%u uiFlags=0x%08lX uiActive=%p uiFocus=%p uiCapture=%p foregroundKnown=%u foregroundFlags=0x%08lX foregroundActive=%p foregroundFocus=%p foregroundCapture=%p",
+            static_cast<void*>(foreground), foregroundThread, uiThread, static_cast<unsigned>(uiKnown),
+            uiInfo.flags, static_cast<void*>(uiInfo.hwndActive), static_cast<void*>(uiInfo.hwndFocus),
+            static_cast<void*>(uiInfo.hwndCapture), static_cast<unsigned>(foregroundKnown),
+            foregroundInfo.flags, static_cast<void*>(foregroundInfo.hwndActive),
+            static_cast<void*>(foregroundInfo.hwndFocus), static_cast<void*>(foregroundInfo.hwndCapture));
+    }
+    wchar_t message[768]{};
+    swprintf_s(message,
+        L"StatusBarShellActivation action=%u generation=%llu phase=%ls elapsedMs=%.3f result=%ls callMs=%.3f requested=%u sent=%u%ls",
+        static_cast<unsigned>(action), static_cast<unsigned long long>(generation), phase,
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started,
+        result, callMilliseconds, requested, sent, inputState);
+    WriteDiagnosticLogEntry(message);
+}
+catch (...) { /* Diagnostics must not change activation or release behavior. */ }
+}
+
 struct DesktopApp::StatusBarActivationHold
 {
     std::function<void()> release;
-    ~StatusBarActivationHold() { if (release) release(); }
+    double shortcutStartedMilliseconds = -1;
+    snowdesktop::StatusBarAction shortcutAction = snowdesktop::StatusBarAction::None;
+    std::uint64_t shortcutGeneration = 0;
+    bool shortcutFinished = false;
+    ~StatusBarActivationHold()
+    {
+        if (release) release();
+        if (!shortcutFinished)
+            TraceStatusBarShellActivation(shortcutAction, shortcutGeneration,
+                L"released", shortcutStartedMilliseconds, L"without-completion");
+    }
 };
 
 snowdesktop::TrayDragFeedback DesktopApp::MakeStatusBarTrayDragFeedback()
@@ -64,6 +118,14 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     statusBarActivationToken_ = 0;
     const auto generation = ++*statusBarActivationGeneration_;
     statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+    const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter
+        ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
+    TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
+    const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
+    if ((action == Action::Menu || action == Action::SystemMenu) &&
+        action == statusBarMenuAction_ && statusBarMenuMonitor_ == statusBarActivationMonitor_ &&
+        statusBarMenuOwner_ && activeMenu && GetWindow(activeMenu, GW_OWNER) == statusBarMenuOwner_)
+        action = Action::Dismiss;
     // The no-activate bar does not cause WM_ACTIVATE on an open surface.
     // A blank-area click must therefore explicitly dismiss it, including any
     // replacement action still waiting for a nested menu loop to unwind.
@@ -80,11 +142,15 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         !IsWindow(owner) || !IsWindowVisible(owner) ||
         !statusBar_->IsInteractionAvailable(statusBarActivationMonitor_))
     {
+        TraceStatusBarShellActivation(action, generation, L"rejected", shortcutStarted, L"unavailable");
         statusBarActivationMonitor_ = nullptr;
         return;
     }
     const std::weak_ptr<std::uint64_t> lifetime = statusBarActivationGeneration_;
     auto hold = std::make_shared<StatusBarActivationHold>();
+    hold->shortcutStartedMilliseconds = shortcutStarted;
+    hold->shortcutAction = action;
+    hold->shortcutGeneration = generation;
     hold->release = [this, lifetime, generation] {
         const auto state = lifetime.lock();
         if (state && *state == generation) statusBarActivationMonitor_ = nullptr;
@@ -112,6 +178,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             statusBar_->IsInteractionAvailable(monitor);
     };
     if (!current() || action == Action::None) return;
+    TraceStatusBarShellActivation(action, generation, L"continue", hold->shortcutStartedMilliseconds);
     const auto resume = [this, current, generation, action, owner, anchor, hold] {
         if (!current()) return;
         statusBar_->PostActivation(owner, [this, current, generation, action, owner, anchor, hold] {
@@ -122,6 +189,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     // menu focus restoration has finished before opening another surface.
     if (snowdesktop::modern_menu::IsActive())
     {
+        TraceStatusBarShellActivation(action, generation, L"wait-menu", hold->shortcutStartedMilliseconds);
         snowdesktop::modern_menu::DismissActive();
         statusBarActivationToken_ = uiAnimationScheduler_.ScheduleInterval(16, [this, lifetime, current, resume](auto token) {
             if (lifetime.expired()) return;
@@ -140,6 +208,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     }
     if (action != Action::QuickSearch && (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden()))
     {
+        TraceStatusBarShellActivation(action, generation, L"wait-quick-navigation", hold->shortcutStartedMilliseconds);
         quickNavigationPostCloseAction_ = resume;
         if (quickNavigationOpen_) CloseQuickNavigation();
         return;
@@ -149,6 +218,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         action == Action::Notifications || action == Action::SystemControlCenter;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
+        TraceStatusBarShellActivation(action, generation, L"wait-system-panel", hold->shortcutStartedMilliseconds);
         systemPanel_->CloseThen(resume);
         return;
     }
@@ -161,11 +231,24 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         const HWND foreground = GetForegroundWindow();
         statusBarActivationToken_ = snowdesktop::ScheduleStatusBarShellShortcut(uiAnimationScheduler_, key, {
             [](int code) { return (GetAsyncKeyState(code) & 0x8000) != 0; },
-            [](UINT count, INPUT* input, int size) { return SendInput(count, input, size); },
+            [action, generation, started = hold->shortcutStartedMilliseconds](UINT count, INPUT* input, int size) {
+                TraceStatusBarShellActivation(action, generation, L"send-input-begin", started);
+                const double before = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                const UINT sent = SendInput(count, input, size);
+                const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - before;
+                TraceStatusBarShellActivation(action, generation, L"send-input", started,
+                    sent == count ? L"accepted" : L"incomplete", elapsed, count, sent);
+                return sent;
+            },
             [this, current, foreground](auto token) {
                 return current() && token == statusBarActivationToken_ && GetForegroundWindow() == foreground;
             },
-            [this, lifetime, generation, hold](auto token, snowdesktop::StatusBarShortcutResult result) {
+            [this, lifetime, generation, action, hold](auto token, snowdesktop::StatusBarShortcutResult result) {
+                const wchar_t* outcome = result == snowdesktop::StatusBarShortcutResult::Sent ? L"sent" :
+                    result == snowdesktop::StatusBarShortcutResult::Cancelled ? L"canceled" :
+                    result == snowdesktop::StatusBarShortcutResult::TimedOut ? L"timed-out" : L"failed";
+                hold->shortcutFinished = true;
+                TraceStatusBarShellActivation(action, generation, L"finished", hold->shortcutStartedMilliseconds, outcome);
                 const auto state = lifetime.lock();
                 if (!state || *state != generation) return;
                 if (token != statusBarActivationToken_) return;
@@ -198,9 +281,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         }
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
+        statusBarMenuAction_ = action;
         const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
         statusBarMenuMonitor_ = nullptr;
         statusBarMenuOwner_ = nullptr;
+        statusBarMenuAction_ = Action::None;
         DestroyMenu(menu);
         ClearMenuIcons();
         if (!current()) return;
@@ -226,27 +311,28 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     else if (action == Action::Menu)
     {
         if (systemPanel_) systemPanel_->Hide();
-        HMENU menu = CreatePopupMenu();
-        if (!menu) return;
         PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
-        AppendMenuW(menu, MF_STRING, 1, _LW("statusBar.menu.settings"));
-        AppendMenuW(menu, MF_STRING, 2, _LW("statusBar.taskManager"));
-        SetMenuItemIcon(menu,1,L"\uF6A9",MenuIconFont::FluentRegular);
-        SetMenuItemIcon(menu,2,L"\uE49D",MenuIconFont::FluentRegular);
+        const bool merged = statusBar_ && statusBar_->MergedStripBounds(monitor).has_value();
+        HMENU menu = merged ? CreateDockContextMenu(true) : CreatePopupMenu();
+        if (!menu) { ClearMenuIcons(); return; }
+        if (!merged)
+        {
+            AppendMenuW(menu, MF_STRING, 1, _LW("statusBar.menu.settings"));
+            AppendMenuW(menu, MF_STRING, 2, _LW("statusBar.taskManager"));
+            SetMenuItemIcon(menu,1,L"\uF6A9",MenuIconFont::FluentRegular);
+            SetMenuItemIcon(menu,2,L"\uE49D",MenuIconFont::FluentRegular);
+        }
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
+        statusBarMenuAction_ = action;
         const UINT command = ShowModernMenu(menu, {anchor.left, anchor.bottom}, owner);
         statusBarMenuMonitor_ = nullptr;
         statusBarMenuOwner_ = nullptr;
+        statusBarMenuAction_ = Action::None;
         DestroyMenu(menu);
         ClearMenuIcons();
         if (!current()) return;
-        if (command == 1) ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::StatusBar));
-        else if (command == 2)
-        {
-            if (reinterpret_cast<INT_PTR>(ShellExecuteW(owner, L"open", L"taskmgr.exe", nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-                MessageBeep(MB_ICONWARNING);
-        }
+        ExecuteDockContextMenuCommand(command, owner);
     }
     else if (action == Action::QuickSearch)
     {

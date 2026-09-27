@@ -604,6 +604,13 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
     auto frame = snowdesktop::MergedDockPresentationFrame(host.mergedAnimation);
     frame.topmost = host.mergedPresentation.topmost;
     frame.insertAfter = host.hwnd;
+    if (frame.visible && (!statusBar_ || !statusBar_->PrepareMergedDockPresentation(host.monitor, frame)))
+    {
+        // Never reveal just the central Dock while the full-width background
+        // and status controls still lack a valid first composition frame.
+        frame.visible = frame.inputEnabled = false;
+        frame.opacity = 0.f;
+    }
     host.mergedPresentation = frame;
     if (host.dcompVisual && dcompDevice_)
     {
@@ -615,6 +622,9 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
         }
     }
     host.backdrop.SetVisualOpacity(frame.opacity);
+    // The complete strip is prepared above and revealed before its central
+    // icon surface, so a first/no-animation frame cannot show a partial Dock.
+    if (statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, frame);
     if (frame.visible)
     {
         if (!IsWindowVisible(host.hwnd))
@@ -628,7 +638,6 @@ void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
         }
     }
     else host.backdrop.HidePopupWindowPair(host.hwnd);
-    if (statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, frame);
     host.backdrop.CommitVisualChanges();
     CommitCompositionAnimationFrame();
 }
@@ -856,6 +865,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         floatingDockBackdropCompositor_ =
             host.backdrop;
     const bool floatingLayerTopmost =
+        host.container->IsMergedWithStatusBar() ||
         snowdesktop::floating_dock_rules::
             ShouldFloatingDockBeTopmost(
                 promoted,

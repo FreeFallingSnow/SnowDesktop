@@ -157,6 +157,7 @@ private:
     };
 
     bool IsMagnificationSuppressed() const;
+    bool UsesEdgeAnchoredMagnification() const;
     float GetMaximumMagnificationScale() const;
     float GetCurrentMagnificationScale() const;
     int GetLaunchAnimationPadding(bool reserveForLaunch = false) const;

@@ -70,8 +70,13 @@ public:
     void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
     void SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider);
     void RefreshDockState(HMONITOR monitor);
+    // Prepare the first complete strip frame without revealing either HWND.
+    bool PrepareMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
     void ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
     bool IsInteractionAvailable(HMONITOR monitor) const;
+    HWND InteractionWindow(HMONITOR monitor) const;
+    // The Dock routes its own blank background through the same dismiss path.
+    bool DismissMergedBackground(HMONITOR monitor, POINT screen);
     bool HasInteractionSession(HMONITOR monitor) const;
     bool ContainsPoint(POINT screen) const;
     RECT AvailableWorkArea(HMONITOR monitor, RECT screenWorkArea) const;

@@ -1235,6 +1235,7 @@ private:
     bool UpdatePassiveDragRevealHosts(
         POINT cursorScreen);
     void UpdateFloatingDockEdgeSwipe();
+    bool DismissMergedDockBackground(PersistentDockHost& host, POINT desktopPoint, POINT screenPoint);
     DockContainer* SelectFloatingDockContainerAtCursor() const;
     DockContainer* SelectFloatingDockContainerForMonitor(
         HMONITOR monitor) const;
@@ -1953,6 +1954,8 @@ private:
         bool hovered);
     /** @brief 显示 Dock 栏体上下文菜单。 @param screenPoint 屏幕坐标 */
     void ShowDockContextMenu(POINT screenPoint);
+    HMENU CreateDockContextMenu(bool includeStatusBar);
+    void ExecuteDockContextMenuCommand(UINT command, HWND owner);
     /** @brief 显示 Dock 运行区应用上下文菜单。 */
     void ShowDockRunningAppContextMenu(
         POINT screenPoint, size_t runningIndex);
@@ -3421,6 +3424,7 @@ private:
     HMONITOR statusBarActivationMonitor_ = nullptr;
     HMONITOR statusBarMenuMonitor_ = nullptr;
     HWND statusBarMenuOwner_ = nullptr;
+    snowdesktop::StatusBarAction statusBarMenuAction_ = snowdesktop::StatusBarAction::None;
     HMONITOR statusBarQuickNavigationMonitor_ = nullptr;
     std::unique_ptr<snowdesktop::SystemPanel> systemPanel_;
     std::unique_ptr<WidgetEngine> widgetEngine_;

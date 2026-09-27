@@ -310,16 +310,18 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         ~LayerUpdateScope() { active = false; }
     } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
-    // Keep the last band during fade-out. A target-policy change must not
-    // independently sink one of the two still-visible surfaces.
-    if (merged && host.mergedPresentationActive && host.mergedAnimation.IsClosing()) return;
-    const auto publishMergedBand = [&](bool topmost) {
-        if (!merged) return;
-        host.mergedPresentation.topmost = topmost;
+    if (merged)
+    {
+        // The visible merged strip is one topmost surface. Summon/hover policy
+        // still owns its visibility; menu holds never move it between bands.
+        host.mergedPresentation.topmost = true;
         host.mergedPresentation.insertAfter = host.hwnd;
+        host.backdrop.SetPopupWindowPairZOrder(host.hwnd, HWND_TOPMOST, true);
         if (statusBar_ && host.mergedPresentationActive)
             statusBar_->ApplyMergedDockPresentation(host.monitor, host.mergedPresentation);
-    };
+        ApplyDragPreviewLayerPolicy();
+        return;
+    }
     const HWND transitionWindow = dockWindowTransition_
         ? dockWindowTransition_->GetPresentationWindow() : nullptr;
     const HWND navigationWindow =
@@ -343,7 +345,6 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         // input or focus state. Always move the content/backdrop as a pair.
         host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd, HWND_TOPMOST, true);
-        publishMergedBand(true);
         if (!wasTopmost)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-promoted-for-animation", host.hwnd);
@@ -376,9 +377,7 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         ApplyDragPreviewLayerPolicy();
         return;
     }
-    const bool promoted =
-        IsPersistentDockHostEffectivelyFloating(host) ||
-        (merged && statusBar_ && statusBar_->HasInteractionSession(host.monitor));
+    const bool promoted = IsPersistentDockHostEffectivelyFloating(host);
     const bool systemShowDesktopGuard =
         systemShowDesktopDockLayerGuardActive_ &&
         ShouldShowPersistentDockHost(host);
@@ -419,7 +418,6 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
             // If Explorer's desktop anchor is unavailable, explicitly demote.
             insertAfter ? insertAfter : HWND_NOTOPMOST,
             false);
-        publishMergedBand(false);
         if (wasTopmost)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-returned-to-desktop-band", host.hwnd);
@@ -436,7 +434,6 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         shouldBeTopmost
             ? HWND_TOPMOST : HWND_NOTOPMOST,
         shouldBeTopmost);
-    publishMergedBand(shouldBeTopmost);
     if (wasTopmost != shouldBeTopmost)
         snowdesktop::dock_taskbar_diagnostics::Record(
             systemShowDesktopGuard ? L"dock-show-desktop-band" : L"dock-normal-layer-policy",

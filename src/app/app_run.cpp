@@ -20,6 +20,54 @@
 
 namespace
 {
+void LogSlowMessageLoopCall(const wchar_t* phase, double started, const MSG* message = nullptr) noexcept try
+{
+    const double elapsed = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() - started;
+    if (elapsed <= 50.0) return;
+    // Wall time includes any nested modal loop. Record no text, key payloads or
+    // window titles; a slow entry is a timing observation, not a hang verdict.
+    wchar_t line[224]{};
+    swprintf_s(line, L"MessageLoopSlowCall phase=%ls elapsedMs=%.3f hwnd=%p message=0x%04X timer=%llu",
+        phase, elapsed, message ? static_cast<void*>(message->hwnd) : nullptr,
+        message ? message->message : 0U,
+        message && message->message == WM_TIMER ? static_cast<unsigned long long>(message->wParam) : 0ULL);
+    WriteDiagnosticLogEntry(line);
+}
+catch (...) { /* Diagnostics must not interrupt the message pump. */ }
+
+void LogDelayedInputMessage(const MSG& message) noexcept try
+{
+    switch (message.message)
+    {
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+    case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+    case WM_MBUTTONDOWN: case WM_MBUTTONUP:
+    case WM_XBUTTONDOWN: case WM_XBUTTONUP:
+        break;
+    default:
+        return;
+    }
+    const DWORD now = GetTickCount();
+    // MSG::time and GetTickCount share the wrapping 32-bit millisecond clock.
+    const DWORD age = now - message.time;
+    if (age <= 250) return;
+    static bool logged = false;
+    static DWORD lastLog = 0;
+    static std::uint64_t delayedCount = 0;
+    ++delayedCount;
+    // Always retain the first delayed click; a released backlog must not flood
+    // the synchronous diagnostic sink. No coordinates or button payloads.
+    if (logged && now - lastLog < 1000) return;
+    logged = true;
+    lastLog = now;
+    wchar_t line[192]{};
+    swprintf_s(line, L"InputMessageDelayed ageMs=%lu hwnd=%p message=0x%04X delayedCount=%llu",
+        age, static_cast<void*>(message.hwnd), message.message,
+        static_cast<unsigned long long>(delayedCount));
+    WriteDiagnosticLogEntry(line);
+}
+catch (...) { /* Diagnostics must not interrupt the message pump. */ }
+
 LuaWidgetFilePickerResult ShowLuaWidgetFilePicker(HWND owner,
     const LuaWidgetFilePickerRequest& request)
 {
@@ -1633,6 +1681,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // PeekMessage itself dispatches sent messages, including an exit
             // requested by a nested tray/settings callback.
             if (exitRequested_) break;
+            LogDelayedInputMessage(msg);
             const bool nativeDragActive =
                 snowdesktop::drag_input_rules::IsNativeDragActive(
                     dragSession_.IsActive(),
@@ -1683,7 +1732,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             if (!settingsMessageHandled && !systemPanelMessageHandled)
             {
                 TranslateMessage(&msg);
+                const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
                 DispatchMessageW(&msg);
+                LogSlowMessageLoopCall(L"DispatchMessage", dispatchStarted, &msg);
             }
             if (exitRequested_) break;
             FinishWidgetGroupTransitions();
@@ -1698,8 +1749,12 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // Pointer-driven desktop/Dock pixels must enter their own DComp
             // channel first. Quick Navigation is flushed independently so a
             // panel animation transaction cannot delay this presentation.
+            const double commitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingCompositionCommit();
+            LogSlowMessageLoopCall(L"FlushComposition", commitStarted, &msg);
+            const double quickCommitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingQuickNavigationCompositionCommit();
+            LogSlowMessageLoopCall(L"FlushQuickNavigation", quickCommitStarted, &msg);
             ++processedMessages;
         }
         if (!running || exitRequested_) break;
@@ -1713,10 +1768,16 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
             // iteration is sufficient and never creates catch-up bursts. The
             // initial wait result must be retained because the high-resolution
             // waitable timer is auto-reset and that wait consumes its signal.
+            const double dispatchStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             uiAnimationScheduler_.DispatchDue();
+            LogSlowMessageLoopCall(L"DispatchDue", dispatchStarted);
             FinishWidgetGroupTransitions();
+            const double commitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingCompositionCommit();
+            LogSlowMessageLoopCall(L"FlushComposition", commitStarted);
+            const double quickCommitStarted = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
             FlushPendingQuickNavigationCompositionCommit();
+            LogSlowMessageLoopCall(L"FlushQuickNavigation", quickCommitStarted);
         }
     }
     WriteDiagnosticLogEntry(L"Application message loop stopped");

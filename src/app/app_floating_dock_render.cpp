@@ -334,6 +334,10 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     }
     case WM_LBUTTONDOWN:
+    {
+        POINT screenPoint{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ClientToScreen(hwnd, &screenPoint);
+        if (DismissMergedDockBackground(host, desktopPoint(), screenPoint)) return 0;
         // Persistent Dock Hosts deliberately use WS_EX_NOACTIVATE, so a
         // pointer press on their empty surface does not deactivate the
         // foreground modern menu. Dismiss the current menu explicitly before
@@ -347,6 +351,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingPersistentDockHost_ = nullptr;
         InvalidateFloatingDockWindow(host, true);
         return 0;
+    }
     case WM_LBUTTONUP:
         SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
