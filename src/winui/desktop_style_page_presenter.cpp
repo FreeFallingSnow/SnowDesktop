@@ -463,7 +463,10 @@ struct DesktopStylePagePresenter::Impl
         const int selected = presets.SelectedIndex();
         presets.Items().Clear();
         for (const auto key : kPresets)
-            presets.Items().Append(winrt::box_value(L("settings.desktopStyle." + std::string(key) + ".title")));
+        {
+            const std::string titleKey = "settings.desktopStyle." + std::string(key) + ".title";
+            presets.Items().Append(winrt::box_value(L(titleKey)));
+        }
         presets.SelectedIndex(selected >= 0 ? selected : 0);
         presetRow.SetText(L("settings.desktopStyle.presets"), L("settings.desktopStyle.presets.description"));
         muxa::AutomationProperties::SetName(presets, presetRow.label.Text());
