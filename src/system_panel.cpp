@@ -125,8 +125,8 @@ struct SystemPanel::Impl
         const ui::Node* node=nullptr;POINT point{};
         if(showing&&!closing&&!modal&&!slide.IsAnimating()&&model&&input.Pressed().empty()&&!scrollbarDragging&&GetCursorPos(&point))
         {
-            const auto target=WindowFromPoint(point);
-            if(target==window||(calendarInputs&&calendarInputs->Contains(target)))
+            const auto pointerWindow=WindowFromPoint(point);
+            if(pointerWindow==window||(calendarInputs&&calendarInputs->Contains(pointerWindow)))
                 if(ScreenToClient(window,&point)&&ContainsClientPoint(point))node=model->View().Hit({static_cast<float>(point.x)/scale,static_cast<float>(point.y)/scale},false);
         }
         Tip(node);const auto id=node?node->id:std::string{};

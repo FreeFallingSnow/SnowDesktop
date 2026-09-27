@@ -12,9 +12,11 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <exception>
 #include <thread>
+#include <utility>
 
 namespace snowdesktop
 {
@@ -33,6 +35,31 @@ struct InputRegion
     InputRegion(const InputRegion&)=delete;
     InputRegion& operator=(const InputRegion&)=delete;
 };
+HRGN CreateInputFrameRegion(LONG width,LONG height,UINT dpi)
+{
+    // GDI's stroked RoundRect does not have CreateRoundRectRgn's raster
+    // footprint, even with matching endpoints. Derive both the fill and pen
+    // footprint from the same GDI path used by the native EDIT frame instead.
+    struct PathDc
+    {
+        HDC dc=CreateCompatibleDC(nullptr);HPEN pen=nullptr;HGDIOBJ oldPen=nullptr;
+        ~PathDc(){if(oldPen)SelectObject(dc,oldPen);if(pen)DeleteObject(pen);if(dc)DeleteDC(dc);}
+    } path;
+    const int diameter=2*native_form::detail::Radius(kInputRadius,dpi);
+    path.pen=CreatePen(PS_SOLID,(std::max)(1,native_form::Scale(1,dpi)),0);
+    if(!path.dc||!path.pen)throw std::runtime_error("native input frame path unavailable");
+    path.oldPen=SelectObject(path.dc,path.pen);
+    const auto record=[&]{
+        if(!BeginPath(path.dc)||!RoundRect(path.dc,0,0,width,height,diameter,diameter)||!EndPath(path.dc))
+            throw std::runtime_error("native input frame path recording failed");
+    };
+    record();InputRegion fill(PathToRegion(path.dc));
+    record();if(!WidenPath(path.dc))throw std::runtime_error("native input frame stroke path unavailable");
+    InputRegion stroke(PathToRegion(path.dc));
+    if(CombineRgn(fill.value,fill.value,stroke.value,RGN_OR)==ERROR)
+        throw std::runtime_error("native input frame region unavailable");
+    return std::exchange(fill.value,nullptr);
+}
 std::wstring InputText(HWND window)
 {
     std::wstring text(static_cast<std::size_t>((std::max)(0,GetWindowTextLengthW(window)))+1,L'\0');
@@ -235,10 +262,7 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         RECT region=visible;OffsetRect(&region,-bounds.left,-bounds.top);
         if(!entry->positioned||resized||entry->regionDpi!=dpi||!EqualRect(&region,&entry->region))
         {
-            const int diameter=2*native_form::detail::Radius(kInputRadius,dpi);
-            // RoundRect paints the last physical edge pixel. Region ellipse
-            // endpoints need the extra unit; the viewport clip bounds it again.
-            InputRegion shape(CreateRoundRectRgn(0,0,bounds.right-bounds.left+1,bounds.bottom-bounds.top+1,diameter,diameter));
+            InputRegion shape(CreateInputFrameRegion(bounds.right-bounds.left,bounds.bottom-bounds.top,dpi));
             InputRegion clipRegion(CreateRectRgn(region.left,region.top,region.right,region.bottom));
             if(CombineRgn(shape.value,shape.value,clipRegion.value,RGN_AND)==ERROR||!SetWindowRgn(entry->window,shape.value,TRUE))
                 throw std::runtime_error("native input clipped region unavailable");
@@ -555,7 +579,7 @@ void CheckRedirectedInputPaint()
 void CheckRoundedInputFootprint()
 {
     PreviewApartment apartment;
-    for(const UINT dpi:{96u,144u,192u})for(const int theme:{0,1})
+    for(const UINT dpi:{96u,120u,144u,192u,288u})for(const int theme:{0,1})
     {
         const float scale=static_cast<float>(dpi)/96.f;
         const int width=static_cast<int>(120*scale),height=static_cast<int>(80*scale);
@@ -591,11 +615,19 @@ void CheckRoundedInputFootprint()
         const auto rgb=[](COLORREF c){return(static_cast<std::uint32_t>(GetRValue(c))<<16)|
             (static_cast<std::uint32_t>(GetGValue(c))<<8)|GetBValue(c);};
         const auto* native=static_cast<const std::uint32_t*>(dib.pixels);bool right=false,bottom=false;
+        const auto pixelFailure=[&](const char* message,LONG x,LONG y,std::uint32_t color){
+            std::ostringstream detail;detail<<message<<"; dpi="<<dpi<<" theme="<<theme<<" size="<<fieldWidth<<'x'<<fieldHeight
+                <<" pixel=("<<x<<','<<y<<") argb=0x"<<std::hex<<color;
+            throw std::runtime_error(detail.str());
+        };
         for(LONG y=0;y<fieldHeight;++y)for(LONG x=0;x<fieldWidth;++x)
         {
             const auto color=native[static_cast<std::size_t>(y)*fieldWidth+x]&0xffffffu;
+            if(palette.background!=palette.field&&palette.background!=palette.border&&
+                color==rgb(palette.background)&&PtInRegion(region.value,x,y))
+                pixelFailure("rounded native input region retained background outside its actual GDI frame",x,y,color);
             if(color!=rgb(palette.field)&&color!=rgb(palette.border))continue;
-            Require(PtInRegion(region.value,x,y)!=FALSE,"rounded native input region clipped its actual GDI field or border");
+            if(!PtInRegion(region.value,x,y))pixelFailure("rounded native input region clipped its actual GDI field or border",x,y,color);
             right=right||x==fieldWidth-1;bottom=bottom||y==fieldHeight-1;
         }
         Require(right&&bottom,"native input footprint oracle did not inspect its physical right/bottom edges");
@@ -609,9 +641,11 @@ void CheckRoundedInputFootprint()
             {
                 const auto pixel=image[static_cast<std::size_t>(y+bounds.top)*width+x+bounds.left];
                 if(PtInRegion(region.value,x,y))
-                    Require(pixel==(native[static_cast<std::size_t>(y)*fieldWidth+x]|0xff000000u),
-                        "native input preview differs from its real child frame");
-                else Require(pixel==backdrop,"native input preview overwrote the card/hover behind a clipped corner");
+                {
+                    if(pixel!=(native[static_cast<std::size_t>(y)*fieldWidth+x]|0xff000000u))
+                        pixelFailure("native input preview differs from its real child frame",x,y,pixel);
+                }
+                else if(pixel!=backdrop)pixelFailure("native input preview overwrote the card/hover behind a clipped corner",x,y,pixel);
             }
         }
     }
