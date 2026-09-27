@@ -381,13 +381,41 @@ void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>& fi
     dib.dc=CreateCompatibleDC(nullptr);void* data=nullptr;dib.bitmap=CreateDIBSection(dib.dc,&info,DIB_RGB_COLORS,&data,nullptr,0);
     if(!dib.dc||!dib.bitmap||!data)throw std::runtime_error("calendar input overlay bitmap unavailable");dib.old=SelectObject(dib.dc,dib.bitmap);
     const auto bytes=pixels.size()*sizeof(std::uint32_t);std::memcpy(data,pixels.data(),bytes);inputs.Print(dib.dc);GdiFlush();
-    // GDI writes BGR into the existing opaque card. Preserve the scene's alpha,
-    // including transparent rounded outer corners outside the input clips.
+    // EDIT is an opaque child HWND. GDI produces straight RGB, so applying the
+    // translucent scene's alpha would brighten it when PNG unpremultiplies.
+    // Only replace the real clipped child footprint; the surrounding glass
+    // and rounded panel corners keep their original premultiplied pixels.
     const auto* output=static_cast<const std::uint32_t*>(data);
-    for(std::size_t i=0;i<pixels.size();++i)pixels[i]=(output[i]&0x00ffffffu)|(pixels[i]&0xff000000u);
+    const RECT canvas{0,0,width,height};
+    for(const auto& field:fields)
+    {
+        const auto bounds=Pixels(field.bounds,static_cast<float>(dpi)/96.f,0);
+        const auto clip=Pixels(field.clip,static_cast<float>(dpi)/96.f,0);
+        RECT visible{},cropped{};
+        if(!IntersectRect(&visible,&bounds,&clip)||!IntersectRect(&cropped,&visible,&canvas))continue;
+        for(LONG y=cropped.top;y<cropped.bottom;++y)for(LONG x=cropped.left;x<cropped.right;++x)
+        {
+            const auto index=static_cast<std::size_t>(y)*width+x;
+            pixels[index]=output[index]|0xff000000u;
+        }
+    }
 }
 void CheckSystemCalendarInputs()
 {
+    {
+        PersonalizationSettings glass;glass.contentTheme=0;glass.widgetAlpha=.25f;
+        const std::uint32_t untouched=0x40101010u;
+        std::vector<std::uint32_t> image(120*80,untouched);
+        const std::vector<SystemCalendarInputField> sample{
+            {"calendar.edit.title",L"Title",L"",{16,16,100,50},{20,20,96,46},false,true,512}};
+        OverlaySystemCalendarInputs(sample,glass,96,120,80,image);
+        const auto field=native_form::ResolvePalette(glass).field;
+        const auto opaque=0xff000000u|(static_cast<std::uint32_t>(GetRValue(field))<<16)|
+            (static_cast<std::uint32_t>(GetGValue(field))<<8)|GetBValue(field);
+        Require(image[30*120+60]==opaque,"native input overlay must preserve its opaque theme color over translucent glass");
+        Require(image[10*120+10]==untouched&&image[30*120+18]==untouched,
+            "native input overlay must preserve glass outside the clipped child footprint");
+    }
     PreviewApartment apartment;PreviewParent parent(360,240);PersonalizationSettings appearance;
     std::wstring observed;int changes=0,keys=0;SystemCalendarInputs* current=nullptr;
     SystemCalendarInputs inputs(parent.window,[&](std::string,std::wstring text){++changes;observed=std::move(text);},
