@@ -1452,10 +1452,10 @@ void CheckControlRadioPixels(const std::filesystem::path& overviewPath,
     // Sample empty interiors of both top radio tiles, away from labels and
     // edges. A lost checked-state fill can leave white text on a neutral light
     // tile. Compare the two rendered states without hard-coding system accent.
-    for (const double offset : {32., 240.})
+    for (const double offset : {32., 212.})
     {
         const auto sample = [offset](const RgbaBitmap& bitmap, const RECT& bounds) {
-            const double scale = (bounds.right - bounds.left) / 440.;
+            const double scale = (bounds.right - bounds.left) / 384.;
             return PixelAt(bitmap, static_cast<UINT>(std::lround(bounds.left + offset * scale)),
                 static_cast<UINT>(std::lround(bounds.top + 32 * scale)));
         };
@@ -1491,7 +1491,7 @@ void TestControlPanelPreview(const std::filesystem::path& snowwidget,
             const auto bounds = PanelPixels(bitmap); const double scale = dark ? 1.5 : 1.;
             const bool longList = std::wstring_view(page).ends_with(L"-many");
             Check(FitsNativePanelCanvas(bitmap, bounds), "control pages stay centered in the independent padded canvas");
-            Check(HasNativePanelSize(bounds, scale, 440, 128, longList ? 952 / scale : (std::min)(740., 952 / scale)),
+            Check(HasNativePanelSize(bounds, scale, 384, 128, longList ? 952 / scale : (std::min)(740., 952 / scale)),
                 "control pages retain shared width and size their content within the popup viewport");
             Check(HasFourRoundedCorners(bitmap, bounds), "all control subpages preserve the bottom corners");
             std::vector<RECT> cards;
