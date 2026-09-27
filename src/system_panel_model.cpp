@@ -1043,7 +1043,8 @@ void SystemPanelModel::CalendarEditor()
     }
     else
     {
-        const bool existing=!editor->original.id.empty();const float buttonWidth=(width-(existing?24.f:12.f))/(existing?3.f:2.f);
+        const bool existing=!editor->original.id.empty(),separateSave=existing&&!wide;
+        const float buttonWidth=(width-(existing&&!separateSave?24.f:12.f))/(existing&&!separateSave?3.f:2.f);
         float x=16;
         if(existing)
         {
@@ -1052,7 +1053,8 @@ void SystemPanelModel::CalendarEditor()
         }
         Add("calendar.edit.cancel",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.dialog.cancel"));
         Command("calendar.edit.cancel",[this]{LeaveCalendarEditor(false);});x+=buttonWidth+12;
-        auto& save=Add("calendar.edit.save",ui::Role::Button,Rect(x,footer,buttonWidth,36),_LW("settings.calendar.save"));save.accent=true;
+        if(separateSave){x=16;footer+=44;}
+        auto& save=Add("calendar.edit.save",ui::Role::Button,Rect(x,footer,separateSave?width:buttonWidth,36),_LW("settings.calendar.save"));save.accent=true;
         Command(save.id,[this]{SaveCalendar();});
     }
     Finish(footer+36,false);

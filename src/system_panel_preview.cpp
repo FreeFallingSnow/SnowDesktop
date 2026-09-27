@@ -1315,6 +1315,17 @@ void CheckCalendarPageVisuals(ID2D1Device* device,IDWriteFactory* text,
         }
         if(!creating)model.Reveal("calendar.edit.notes");
         const auto& scene=model.View();CheckLayout(scene);
+        for(const auto* id:{"calendar.edit.save","calendar.edit.cancel","calendar.edit.delete","calendar.edit.confirmDelete","calendar.edit.cancelDelete"})
+            if(const auto* action=scene.Find(id))
+            {
+                ComPtr<IDWriteTextFormat> format;ComPtr<IDWriteTextLayout> layout;
+                Require(text->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL,action->fontSize,L"",&format));
+                Require(text->CreateTextLayout(action->text.data(),static_cast<UINT32>(action->text.size()),format.Get(),4096,256,&layout));
+                DWRITE_TEXT_METRICS metrics{};Require(layout->GetMetrics(&metrics));
+                Require(metrics.widthIncludingTrailingWhitespace<=action->bounds.right-action->bounds.left-24,
+                    "calendar primary and destructive action labels must not be truncated");
+            }
         Require(model.CalendarEditing()&&scene.cards.size()==1&&!scene.Find("calendar.month")&&
             Node(scene,"calendar.edit.reminder").text==_LW(creating?"settings.calendar.reminder.-1":"settings.calendar.reminder.15"),
             "calendar secondary page lost its shared card or reminder selection");
