@@ -243,6 +243,9 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 &dockScreenRect,
                 virtualLeft_, virtualTop_);
         }
+        const bool merged = host.container->IsMergedWithStatusBar();
+        if (merged && statusBar_)
+            if (const auto strip = statusBar_->MergedStripBounds(host.monitor)) dockScreenRect = *strip;
 
         UINT dpiX = 96;
         UINT dpiY = 96;
@@ -271,7 +274,10 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
                 ShouldPassivelyRevealDockForDragAtEdge(
                     pointerInEdgeProjection,
                     internalDragActive,
-                    oleDragActive);
+                    oleDragActive) ||
+            (merged && pointerInEdgeProjection &&
+                (!dockSettings_.floatingEdgeSwipeBlockFullscreen ||
+                    !statusBar_ || !statusBar_->IsFullscreen(host.monitor)));
         const bool pointerInEdgeCorridor =
             snowdesktop::floating_dock_rules::
                 IsPointInDockEdgeCorridor(
@@ -301,6 +307,8 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
             previewAssociated;
         const bool keepPassiveDragReveal =
             associatedSurfaceActive ||
+            (merged && ((statusBar_ && statusBar_->HasInteractionSession(host.monitor)) ||
+                pointerInEdgeCorridor || PtInRect(&dockScreenRect, cursorScreen))) ||
             (dragRevealActive &&
                 pointerInEdgeCorridor);
         const bool leaveDelayElapsed =
@@ -387,6 +395,25 @@ bool DesktopApp::UpdatePassiveDragRevealHosts(
 
 void DesktopApp::UpdateFloatingDockEdgeSwipe()
 {
+    // Poll only cheap, already-owned surface state. Hold release does not
+    // require another physical button-down or a fullscreen/window scan.
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (!ownedHost || !ownedHost->active || !ownedHost->container ||
+            !ownedHost->container->IsMergedWithStatusBar()) continue;
+        auto& host = *ownedHost;
+        const bool held = statusBar_ && statusBar_->HasInteractionSession(host.monitor);
+        if (held != host.mergedInteractionHeld)
+        {
+            host.mergedInteractionHeld = held;
+            if (!held && host.mergedCloseAfterInteraction)
+            {
+                host.mergedCloseAfterInteraction = false;
+                CloseFloatingDock(host, FloatingDockCloseFocusPolicy::PreserveCurrent);
+            }
+            UpdatePersistentDockHostVisibility(host);
+        }
+    }
     if (desktopPassthroughActive_)
     {
         floatingDockEdgeSwipeDetector_.Reset();
@@ -501,18 +528,45 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
                 DockAssociatedPopupInteractionRect(
                     popupAnchoredToDock_,
                     floatingPopupCollectionRegion_);
-        const auto pointerMonitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL);
-        const bool barSession = statusBar_ && std::any_of(
-            persistentDockHosts_.begin(), persistentDockHosts_.end(), [this, pointerMonitor](const auto& host) {
-                return host && host->promoted && host->container &&
-                    host->monitor == pointerMonitor &&
-                    host->container->IsMergedWithStatusBar() &&
-                    statusBar_->HasInteractionSession(host->monitor);
-            });
+        const bool onBar = statusBar_ && statusBar_->ContainsPoint(cursor);
+        const bool onPanel = systemPanel_ && systemPanel_->ContainsPoint(cursor);
+        bool onOwnedMenu = false;
+        const HWND menu = snowdesktop::modern_menu::ActiveRootWindow();
+        if (menu && statusBarMenuOwner_ && GetWindow(menu, GW_OWNER) == statusBarMenuOwner_)
+        {
+            HWND target = GetAncestor(WindowFromPoint(cursor), GA_ROOT);
+            for (unsigned depth = 0; target && depth < 16; ++depth, target = GetWindow(target, GW_OWNER))
+                if (target == menu) { onOwnedMenu = true; break; }
+        }
+        const bool onNavigation = quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar &&
+            PtInRect(&quickNavigationInteractionRect, desktopPoint);
+        bool barSession = false;
+        for (const auto& ownedHost : persistentDockHosts_)
+        {
+            if (!ownedHost || !ownedHost->promoted || !ownedHost->container ||
+                !ownedHost->container->IsMergedWithStatusBar() || !statusBar_ ||
+                !statusBar_->HasInteractionSession(ownedHost->monitor)) continue;
+            auto& host = *ownedHost;
+            barSession = true;
+            const bool ownSurface = (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
+                (onPanel && systemPanel_->IsOpenForMonitor(host.monitor)) ||
+                (onOwnedMenu && statusBarMenuMonitor_ == host.monitor) ||
+                (onNavigation && statusBarQuickNavigationMonitor_ == host.monitor) ||
+                PtInRect(&host.dockRect, desktopPoint);
+            if (!ownSurface && !dragSession_.IsActive() && !dragDropController_.IsTransportActive())
+            {
+                // Preserve the outside down even while the owned popup is
+                // fading out. Release this monitor's promotion after its hold
+                // ends; a second button-down is neither required nor invented.
+                host.mergedCloseAfterInteraction = true;
+                host.mergedInteractionHeld = true;
+                CancelStatusBarActivation(host.monitor, false);
+            }
+        }
         // The bar and its owned surface are one interaction session with the
         // merged Dock. Its own dismissal logic releases this hold; the global
         // pointer sampler must not tear the owner down between down and up.
-        if (!barSession && !(statusBar_ && statusBar_->ContainsPoint(cursor)) &&
+        if (!barSession && !onBar &&
             !IsPointOnPromotedDock(desktopPoint) &&
             snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(

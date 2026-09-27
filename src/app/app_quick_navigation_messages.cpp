@@ -502,6 +502,11 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
                 quickNavTabDragDeltaX_ = 0;
                 quickNavTabDragging_ = false;
             }
+            // A bar action may be waiting for this surface's closing animation.
+            // An external activation cancels that handoff even when open_ is
+            // already false and CloseQuickNavigation would otherwise do nothing.
+            if (statusBarActivationMonitor_ && quickNavigationPostCloseAction_)
+                CancelStatusBarActivation(statusBarActivationMonitor_);
             CloseQuickNavigation();
             return 0;
         }
@@ -582,6 +587,8 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
                 ShouldCloseOnDeactivate(
                     retainedInteraction))
         {
+            if (app->statusBarActivationMonitor_ && app->quickNavigationPostCloseAction_)
+                app->CancelStatusBarActivation(app->statusBarActivationMonitor_);
             app->CloseQuickNavigation();
             return 0;
         }

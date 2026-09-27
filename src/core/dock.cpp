@@ -331,11 +331,9 @@ bool DockContainer::IsMergedWithStatusBar() const
 
 bool DockContainer::SharesStatusBarAppearance() const
 {
-    if (!IsMergedWithStatusBar()) return false;
-    RECT screen = area_;
-    OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
-    const auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONULL);
-    return monitor && app_->statusBar_->IsInteractionAvailable(monitor);
+    // Input is deliberately disabled while the shared strip animates. That
+    // must not switch the Dock back to a second, independently drawn chrome.
+    return IsMergedWithStatusBar();
 }
 
 void DockContainer::RefreshEntryGroupCounts() const
@@ -700,7 +698,7 @@ std::vector<RECT> DockContainer::GetElementBaseRects() const
 
 bool DockContainer::IsMagnificationSuppressed() const
 {
-    if (!app_ || IsMergedWithStatusBar())
+    if (!app_)
         return true;
     return snowdesktop::dock_magnification::
         ShouldSuppressMagnification(
@@ -708,7 +706,8 @@ bool DockContainer::IsMagnificationSuppressed() const
             app_->widgetAction_ ==
                 DesktopApp::WidgetAction::Move,
             app_->widgetAction_ ==
-                DesktopApp::WidgetAction::Resize);
+                DesktopApp::WidgetAction::Resize,
+            app_->IsDockContainerInteractionVisible(this));
 }
 
 float DockContainer::GetMaximumMagnificationScale() const

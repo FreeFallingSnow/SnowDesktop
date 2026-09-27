@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -71,5 +72,60 @@ inline std::vector<RECT> StatusBarHorizontalLayout(LONG width, LONG height,
 {
     return StatusBarHorizontalLayout(width, height, padding,
         std::span<const LONG>(&leftWidth, 1), clockWidth, rightWidths);
+}
+struct MergedStatusBarLayout
+{
+    RECT center{}, clock{}, notifications{};
+    std::vector<RECT> right;
+};
+// The Dock keeps its symmetric reservation. The clock and notification target
+// form the last group on the complete bar; tray items never follow them.
+inline MergedStatusBarLayout LayoutMergedStatusBar(LONG width, LONG height, float scale,
+    LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
+    std::optional<std::size_t> controlIndex)
+{
+    MergedStatusBarLayout result;
+    result.center = MergedStatusBarCenter(width, height, scale);
+    const LONG centerWidth = result.center.right - result.center.left;
+    clockWidth = std::max(0L, clockWidth);
+    notificationWidth = std::max(0L, notificationWidth);
+    if (controlIndex && *controlIndex >= rightWidths.size()) controlIndex.reset();
+    const LONG controlWidth = controlIndex ? std::max(0L, rightWidths[*controlIndex]) : 0;
+    std::vector<LONG> widths(rightWidths.begin(), rightWidths.end());
+    widths.push_back(clockWidth + notificationWidth);
+    LONG edge = std::max(0L, padding);
+    const auto arrange = [&] { return StatusBarHorizontalLayout(width, height, edge,
+        std::span<const LONG>{}, centerWidth, widths); };
+    auto bounds = arrange();
+    const auto missingControl = [&] { return controlWidth && IsRectEmpty(&bounds[*controlIndex + 1]); };
+    const auto missingEssential = [&] {
+        return (notificationWidth && IsRectEmpty(&bounds.back())) || missingControl();
+    };
+    if (missingEssential())
+    {
+        // Retain the existing narrow-layout rule: first remove the date as a
+        // whole, then optional tray items, without clipping any hit target.
+        clockWidth = 0; widths.back() = notificationWidth; bounds = arrange();
+        for (std::size_t i = 0; missingEssential() && i < rightWidths.size(); ++i)
+            if (!controlIndex || i != *controlIndex) { widths[i] = 0; bounds = arrange(); }
+        if (missingEssential())
+        {
+            const LONG available = width - result.center.right;
+            edge = std::min(edge, std::max(0L, (available - notificationWidth - controlWidth) / 2));
+            bounds = arrange();
+        }
+        // At an extreme width where only the system controls fit, keep their
+        // existing priority. A visible notification still always ends the bar.
+        if (missingControl()) { widths.back() = 0; bounds = arrange(); }
+    }
+    result.center = bounds.front();
+    result.right.assign(bounds.begin() + 1, bounds.end() - 1);
+    const auto group = bounds.back();
+    if (!IsRectEmpty(&group))
+    {
+        if (clockWidth) result.clock = {group.left, 0, group.left + clockWidth, height};
+        if (notificationWidth) result.notifications = {group.left + clockWidth, 0, group.right, height};
+    }
+    return result;
 }
 }

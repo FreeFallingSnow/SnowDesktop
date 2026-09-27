@@ -770,6 +770,12 @@ private:
         ULONGLONG passiveLeaveStartTick = 0;
         bool revealPending = false;
         bool frameReady = false;
+        snowdesktop::quick_navigation_animation_rules::State mergedAnimation;
+        snowdesktop::UiScheduleToken mergedAnimationToken = 0;
+        snowdesktop::StatusBarDockPresentation mergedPresentation;
+        bool mergedPresentationActive = false, updatingMergedPresentation = false;
+        bool mergedInteractionHeld = false, mergedCloseAfterInteraction = false;
+        ComPtr<IDCompositionEffectGroup> mergedOpacity;
         bool compositionRenderRecoveryPending = false;
         bool compositionPaintInProgress = false;
         bool dropTargetRegistered = false;
@@ -1112,7 +1118,7 @@ private:
     struct StatusBarActivationHold;
     void ContinueStatusBarActivation(snowdesktop::StatusBarAction action, HWND owner, RECT anchor,
         std::uint64_t generation, std::shared_ptr<StatusBarActivationHold> hold);
-    void CancelStatusBarActivation(HMONITOR monitor = nullptr);
+    void CancelStatusBarActivation(HMONITOR monitor = nullptr, bool immediate = true);
     snowdesktop::TrayDragFeedback MakeStatusBarTrayDragFeedback();
     /** @brief 将已重算的预留区域应用到现有 Dock 容器。 */
     bool SynchronizeDockContainerAreas();
@@ -1187,6 +1193,8 @@ private:
     void UpdatePersistentDockHostVisibility();
     void UpdatePersistentDockHostVisibility(
         PersistentDockHost& host);
+    void ApplyMergedDockPresentationFrame(PersistentDockHost& host);
+    void ResetMergedDockPresentation(PersistentDockHost& host);
     void ShowFloatingDock(
         HMONITOR preferredMonitor = nullptr);
     bool EnsureFloatingDockVisibleForAssociatedSurface(

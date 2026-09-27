@@ -35,6 +35,7 @@
 #include "desktop_keyboard_rules.h"
 #include "floating_dock_rules.h"
 #include "status_bar_appbar.h"
+#include "merged_dock_presentation.h"
 #include "status_bar_layout.h"
 #include "status_bar_presentation.h"
 #include "status_bar_interaction.h"
@@ -102,6 +103,7 @@ void Check(bool condition, const char* message)
 
 #include "dock_refresh_cache_cases.h"
 #include "dock_magnification_entry_cases.h"
+#include "dock_hover_title_cases.h"
 
 #include "grid_drag_geometry_cases.h"
 
@@ -1087,16 +1089,59 @@ void CheckStatusBarFullscreenDockSession()
     Check(firstMonitor.Observe(fullWindow, false, false, false),
         "closing Dock cannot reveal the bar when the fullscreen application remains visible");
 
-    Check(StatusBarHiddenForFullscreen(true, false, true, true),
-        "a separate bar stays hidden even when Dock or a bar action is active");
-    Check(StatusBarHiddenForFullscreen(true, true, false, false),
-        "passive merged chrome stays hidden in fullscreen");
-    Check(!StatusBarHiddenForFullscreen(true, true, true, false),
-        "explicit Dock promotion reveals merged bar controls");
-    Check(!StatusBarHiddenForFullscreen(true, true, false, true),
-        "a pending activation or owned popup keeps the merged bar available after Dock closes");
-    Check(!StatusBarHiddenForFullscreen(false, true, false, false),
-        "ordinary desktop merged chrome does not depend on a floating session");
+    namespace policy = floating_dock_rules;
+    for (const bool fullscreen : {false, true})
+    {
+        Check(!policy::ShouldShowMergedStatusBarDockHost(true, false, true, true, false, false,
+                false, fullscreen, false),
+            "an idle summon-only merged surface is hidden on desktop as well as in fullscreen");
+        Check(policy::ShouldShowMergedStatusBarDockHost(true, true, true, false, true, false,
+                false, fullscreen, false),
+            "manual or passive Dock promotion reveals the whole merged surface through ordinary Dock policy");
+        Check(policy::ShouldShowMergedStatusBarDockHost(true, false, true, false, true, false,
+                false, fullscreen, true),
+            "a pending activation or owned popup holds its monitor's whole merged Dock");
+        Check(!policy::ShouldShowMergedStatusBarDockHost(true, false, true, false, true, false,
+                false, fullscreen, false),
+            "releasing the last owned surface returns the merged Dock to summon-only hiding");
+        Check(!policy::ShouldShowMergedStatusBarDockHost(true, true, true, true, false, false,
+                true, fullscreen, true) &&
+            !policy::ShouldShowMergedStatusBarDockHost(false, true, true, true, false, false,
+                false, fullscreen, true),
+            "passthrough and an inactive host override both promotion and a stale interaction hold");
+    }
+    Check(policy::ShouldShowMergedStatusBarDockHost(true, false, false, true, false, false,
+            false, false, false) &&
+        !policy::ShouldShowMergedStatusBarDockHost(true, false, false, false, false, false,
+            false, false, false) &&
+        !policy::ShouldShowMergedStatusBarDockHost(true, false, false, true, true, false,
+            false, false, false) &&
+        policy::ShouldShowMergedStatusBarDockHost(true, false, false, true, true, true,
+            false, false, false),
+        "merging preserves ordinary desktop visibility, hidden icons and keep-when-hidden policy");
+    Check(ReserveStatusBarSpace(true, false) && !ReserveStatusBarSpace(true, true) &&
+        ReserveStatusBarSpace(false, true),
+        "only summon-only merged mode releases the strip reservation; island/separate bars reserve normally");
+    quick_navigation_animation_rules::State timeline;
+    timeline.Configure(quick_navigation_animation_rules::Effect::Fade, 1.0);
+    Check(!MergedDockPresentationFrame(timeline).visible && !MergedDockPresentationFrame(timeline).inputEnabled,
+        "both surfaces start hidden and reject input");
+    timeline.Open(100); timeline.Advance(170);
+    const auto opening = MergedDockPresentationFrame(timeline);
+    Check(opening.visible && !opening.inputEnabled && opening.opacity > 0 && opening.opacity < 1,
+        "one in-flight merged frame fades both surfaces while suppressing hit targets and titles");
+    timeline.Close(170);
+    Check(MergedDockPresentationFrame(timeline).opacity == opening.opacity,
+        "reversing the Dock timeline preserves opacity instead of restarting a second bar animation");
+    timeline.Advance(195); timeline.Open(195); timeline.Advance(400);
+    Check(MergedDockPresentationFrame(timeline).inputEnabled && MergedDockPresentationFrame(timeline).opacity == 1,
+        "only the settled endpoint restores Dock magnification and status-bar input");
+    timeline.Close(400); timeline.Advance(600);
+    Check(!MergedDockPresentationFrame(timeline).visible && !MergedDockPresentationFrame(timeline).inputEnabled,
+        "the closing endpoint hides both HWND pairs and leaves no input surface");
+    timeline.Configure(quick_navigation_animation_rules::Effect::None, 1.0); timeline.Open(700);
+    Check(MergedDockPresentationFrame(timeline).inputEnabled && MergedDockPresentationFrame(timeline).opacity == 1,
+        "disabled animations reveal the merged surface immediately without waiting for a frame");
     const RECT monitorArea{1920, 0, 3840, 1080}, strip{1920, 1016, 3840, 1080};
     const auto available = ConstrainStatusBarWorkArea(monitorArea, strip, ABE_BOTTOM);
     Check(available.bottom == strip.top && available.left == monitorArea.left && available.right == monitorArea.right,
@@ -1218,6 +1263,16 @@ int main(int argc, char** argv)
                 approved.left == -1880 && approved.right == -20 && approved.bottom == 48,
             "status bar must use the final Shell-approved rectangle");
         Check(reservation.Registered(), "hiding a registered bar must not require removing its reservation");
+        reservation.Remove();
+        Check(!reservation.Registered() && messages.back() == ABM_REMOVE,
+            "changing to summon-only merged mode removes the old thick reservation once");
+        const auto removedCount = messages.size();
+        reservation.Remove();
+        Check(messages.size() == removedCount,
+            "subsequent hidden animation frames must not send repeated Shell removals");
+        Check(reservation.Place(window, WM_APP + 1, ABE_TOP, 32, {-1920, 0, 0, 1080}) &&
+            reservation.Bounds().bottom == 32,
+            "leaving merged mode restores the separate bar's own reservation thickness");
         const auto layout = snowdesktop::StatusBarHorizontalLayout(1920, 32, 8, 110, 180,
             std::array<LONG, 3>{60, 80, 32});
         Check(layout[1].left == 870 && layout[1].right == 1050 && layout[4].right == 1912 && layout[0].left == 8,
@@ -1248,6 +1303,34 @@ int main(int argc, char** argv)
                 RECT overlap{};
                 Check(!IntersectRect(&overlap, &merged[i], &center), "merged side controls cannot cover the Dock viewport");
             }
+        }
+        for (const LONG scale : {1L, 2L, 3L})
+        {
+            const std::array<LONG, 4> right{32 * scale, 32 * scale, 32 * scale, 92 * scale};
+            const auto wide = snowdesktop::LayoutMergedStatusBar(1920 * scale, 64 * scale,
+                static_cast<float>(scale), 12 * scale, 104 * scale, 32 * scale, right, 3);
+            Check(wide.notifications.right == 1908 * scale && wide.clock.right == wide.notifications.left &&
+                    wide.clock.right - wide.clock.left == 104 * scale,
+                "merged clock and notification group must end the complete bar at every DPI");
+            for (const auto& item : wide.right)
+                Check(!IsRectEmpty(&item) && item.right <= wide.clock.left,
+                    "merged tray and controls must precede the rightmost clock group");
+            const auto compactMerged = snowdesktop::LayoutMergedStatusBar(320 * scale, 64 * scale,
+                static_cast<float>(scale), 12 * scale, 104 * scale, 32 * scale, right, 3);
+            Check(IsRectEmpty(&compactMerged.clock) && compactMerged.right.back().right - compactMerged.right.back().left == 92 * scale &&
+                    compactMerged.notifications.right - compactMerged.notifications.left == 32 * scale &&
+                    compactMerged.right.back().right <= compactMerged.notifications.left &&
+                    compactMerged.notifications.right >= 308 * scale,
+                "crowded merged bars retain whole controls before the rightmost notification target");
+            const auto tiny = snowdesktop::LayoutMergedStatusBar(240 * scale, 64 * scale,
+                static_cast<float>(scale), 12 * scale, 104 * scale, 32 * scale, right, 3);
+            Check(IsRectEmpty(&tiny.clock) && IsRectEmpty(&tiny.notifications) &&
+                    tiny.right.back().right - tiny.right.back().left == 92 * scale,
+                "extreme merged widths must not split the system control target to fit notifications");
+            const auto noDate = snowdesktop::LayoutMergedStatusBar(640 * scale, 64 * scale,
+                static_cast<float>(scale), 12 * scale, 0, 32 * scale, right, 3);
+            Check(IsRectEmpty(&noDate.clock) && noDate.notifications.right == 628 * scale,
+                "disabled merged dates must leave notifications at the complete bar's right edge");
         }
         reservation.Remove(); reservation.Remove();
         Check(std::count(messages.begin(), messages.end(), static_cast<DWORD>(ABM_REMOVE)) == 1,
@@ -4607,14 +4690,6 @@ int main(int argc, char** argv)
             floatingDock::ShouldShowPersistentDockHost(
               true, true, true, false, true, false),
         "summon-only mode must hide idle Hosts but retain every manually or passively floating Host");
-    Check(floatingDock::ShouldShowMergedStatusBarDockHost(true, false, false, false) &&
-            floatingDock::ShouldShowMergedStatusBarDockHost(true, true, true, false) &&
-            !floatingDock::ShouldShowMergedStatusBarDockHost(true, false, true, false),
-        "merged Dock stays beside the visible bar but fullscreen permits only explicit promotion");
-    for (bool fullscreen : {false, true})
-        Check(!floatingDock::ShouldShowMergedStatusBarDockHost(true, true, fullscreen, true) &&
-                !floatingDock::ShouldShowMergedStatusBarDockHost(false, true, fullscreen, false),
-            "merged Dock promotion must preserve passthrough and inactive-host hiding");
     Check(floatingDock::ShouldStartSystemShowDesktopLayerGuard(
               true, true, 1000, 1400) &&
             !floatingDock::ShouldStartSystemShowDesktopLayerGuard(
@@ -5778,6 +5853,7 @@ int main(int argc, char** argv)
 
     namespace magnification = snowdesktop::dock_magnification;
     CheckDockMagnificationEntry();
+    CheckDockHoverTitleCases();
     Check(magnification::ResolveFocusScale(0, 2.0f, true) == 1.0f &&
             magnification::ResolveFocusScale(2, 2.0f, false) == 1.0f &&
             magnification::ResolveFocusScale(2, 0.5f, true) == 1.0f &&
@@ -6567,6 +6643,10 @@ int main(int argc, char** argv)
              "void DesktopApp::UpdateFloatingDockEdgeSwipe()",
              {"ShowFloatingDock(", "BeginFloatingDockKeyboardSession(", "SetForegroundWindow(",
               "RefocusFloatingDockKeyboardSession(", "EnsureFloatingDockInputWindow("}},
+            {"src/app/app_floating_dock_window.cpp", "void DesktopApp::ApplyMergedDockPresentationFrame(",
+             "void DesktopApp::ResetMergedDockPresentation(",
+             {"RefreshDockState(", "SyncStatusBar(", "UpdateFloatingDockWindowBounds(",
+              "StartAnimation(", "ABM_", "MonitorFullscreenSource("}},
             {"src/app/app_popup_lifecycle.cpp", "void DesktopApp::FinalizeCloseCollectionPopup()",
              "void DesktopApp::ClearDockFolderPopupEntries()",
              {"UpdateFloatingDockWindowBounds(", "InvalidateFloatingDockWindow(",

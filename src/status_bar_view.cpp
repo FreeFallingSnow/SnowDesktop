@@ -220,6 +220,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         for (std::size_t i = 0; i < items.size(); ++i)
         {
             auto& item = items[i]; item.bounds = {};
+            // The fused surface already has the Dock's search button. Keep the
+            // user's standalone search setting and item identity unchanged.
+            if (mergedDock && item.action == StatusBarAction::QuickSearch) continue;
             widths[i] = static_cast<LONG>(std::ceil(extentOf(item)));
             if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
             else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }
@@ -237,62 +240,41 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         // its trailing notification button without shifting the date left.
         if (!mergedDock && clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
             clockWidth = 0;
-        LONG centerWidth = clockWidth ? clockWidth + 2 * notificationWidth : notificationWidth;
+        LONG leftLimit = 0;
         if (mergedDock)
         {
-            const auto center = MergedStatusBarCenter(viewportWidth, viewportHeight, scale);
-            centerWidth = center.right - center.left;
-            rightWidths.insert(rightWidths.begin(), clockWidth + notificationWidth);
+            const auto layout = LayoutMergedStatusBar(viewportWidth, viewportHeight, scale,
+                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex);
+            if (clockIndex) items[*clockIndex].bounds = layout.clock;
+            if (notificationIndex) items[*notificationIndex].bounds = layout.notifications;
+            for (std::size_t i = 0; i < rightIndices.size(); ++i)
+                items[rightIndices[i]].bounds = layout.right[i];
+            leftLimit = layout.center.left - edgePadding;
         }
-        LONG rightPadding = edgePadding;
-        const auto arrange = [&] { return StatusBarHorizontalLayout(viewportWidth, viewportHeight,
-            rightPadding, std::span<const LONG>{}, centerWidth, rightWidths); };
-        auto bounds = arrange();
-        const auto missingMergedControl = [&] {
-            return IsRectEmpty(&bounds[1]) ||
-                (controlRightIndex && IsRectEmpty(&bounds[*controlRightIndex + 2]));
-        };
-        if (mergedDock && missingMergedControl())
+        else
         {
-            // Keep a complete notification target when the date no longer
-            // fits beside the Dock. Optional tray icons yield before it does.
-            clockWidth = 0; rightWidths[0] = notificationWidth; bounds = arrange();
-            for (std::size_t i = 0; missingMergedControl() && i < rightIndices.size(); ++i)
-                if (items[rightIndices[i]].key != "controlCenter")
-                { rightWidths[i + 1] = 0; bounds = arrange(); }
-            if (missingMergedControl())
+            const LONG centerWidth = clockWidth ? clockWidth + 2 * notificationWidth : notificationWidth;
+            const auto bounds = StatusBarHorizontalLayout(viewportWidth, viewportHeight,
+                edgePadding, std::span<const LONG>{}, centerWidth, rightWidths);
+            RECT dateAndNotification = bounds[0];
+            if (!IsRectEmpty(&dateAndNotification))
             {
-                // The Dock reservation never shrinks. Spend the remaining
-                // right-side padding before dropping an essential button.
-                const LONG available = viewportWidth - bounds[0].right;
-                rightPadding = (std::min)(edgePadding,
-                    (std::max)(0L, (available - notificationWidth - controlWidth) / 2));
-                bounds = arrange();
-                // If even zero padding cannot fit both, the existing reverse
-                // packing keeps the complete system control group first, then
-                // notifications only if they fit. Never clip a partial target.
+                if (clockWidth && clockIndex)
+                {
+                    const LONG dateLeft = dateAndNotification.left + notificationWidth;
+                    items[*clockIndex].bounds = {dateLeft, 0, dateLeft + clockWidth, viewportHeight};
+                    dateAndNotification.left = dateLeft + clockWidth;
+                }
+                if (notificationIndex) items[*notificationIndex].bounds = dateAndNotification;
             }
-        }
-        RECT dateAndNotification = mergedDock ? bounds[1] : bounds[0];
-        if (!IsRectEmpty(&dateAndNotification))
-        {
-            if (clockWidth && clockIndex)
-            {
-                const LONG dateLeft = dateAndNotification.left + (mergedDock ? 0 : notificationWidth);
-                items[*clockIndex].bounds = {dateLeft, 0, dateLeft + clockWidth, viewportHeight};
-                dateAndNotification.left = dateLeft + clockWidth;
-            }
-            if (notificationIndex)
-                items[*notificationIndex].bounds = dateAndNotification;
+            leftLimit = (clockWidth && clockIndex ? items[*clockIndex].bounds.left : bounds[0].left) - edgePadding;
+            for (std::size_t i = 0; i < rightIndices.size(); ++i)
+                items[rightIndices[i]].bounds = bounds[i + 1];
         }
         LONG leftCursor = edgePadding;
-        const LONG leftLimit = (mergedDock ? bounds[0].left :
-            clockWidth && clockIndex ? items[*clockIndex].bounds.left : bounds[0].left) - edgePadding;
         for (const auto i : leftIndices)
             if (leftCursor + widths[i] <= leftLimit)
             { items[i].bounds = {leftCursor, 0, leftCursor + widths[i], viewportHeight}; leftCursor += widths[i]; }
-        for (std::size_t i = 0; i < rightIndices.size(); ++i)
-            items[rightIndices[i]].bounds = bounds[i + (mergedDock ? 2 : 1)];
         if (mergedDock)
             for (auto& item : items)
                 item.bounds = StatusBarCompactTarget(item.bounds, scale, item.key == "clock");

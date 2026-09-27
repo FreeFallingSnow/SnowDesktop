@@ -1,5 +1,6 @@
 #pragma once
 #include "status_bar_appearance.h"
+#include "merged_dock_presentation.h"
 #include <windows.h>
 #include <functional>
 #include <memory>
@@ -29,6 +30,7 @@ struct StatusBarMonitor
     std::wstring id;
     HMONITOR monitor = nullptr;
     int mergedDockHeight = 0; // Physical pixels; zero means separate.
+    bool reserveSpace = true; // Summon-only merged Dock keeps geometry without a Shell reservation.
 };
 struct StatusBarDockState
 {
@@ -68,6 +70,7 @@ public:
     void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
     void SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider);
     void RefreshDockState(HMONITOR monitor);
+    void ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame);
     bool IsInteractionAvailable(HMONITOR monitor) const;
     bool HasInteractionSession(HMONITOR monitor) const;
     bool ContainsPoint(POINT screen) const;
@@ -79,6 +82,7 @@ public:
     bool PreviewTrayDrop(std::string_view key, POINT screen);
     void SetTrayDragFeedback(TrayDragFeedback feedback);
     std::optional<RECT> MergedDockArea(HMONITOR monitor) const;
+    std::optional<RECT> MergedStripBounds(HMONITOR monitor) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);
     // Application-owned window observations; must not enable taskbar effects.
     void SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider);

@@ -105,6 +105,15 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
     const auto clock = std::find_if(items.begin(), items.end(), [](const auto& item) { return item.key == "clock"; });
     const bool dateVisible = clock != items.end() && !IsRectEmpty(&clock->bounds);
     const auto& notification = Item(items, "notifications").bounds;
+    LONG launchEnd = 0;
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        const auto& item = items[i];
+        if (item.key == "menu" || item.key == "quickSearch") launchEnd = std::max(launchEnd, item.bounds.right);
+        if (merged && item.key == "quickSearch")
+            Require(IsRectEmpty(&item.bounds) && !ResolveStatusBarInvocation(items, i, false),
+                "merged status bar must not expose a duplicate Dock search action");
+    }
     if (clock != items.end() && width >= (merged ? 1600 : 640) * scale)
         Require(dateVisible, "date disappeared despite sufficient status bar width");
     if (dateVisible)
@@ -123,6 +132,15 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
             std::to_string(notification.left) + "," + std::to_string(notification.right) + "]");
     if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(32.f * scale)),
         "notification button must remain a complete independent hit target");
+    if (merged && expectNotification)
+    {
+        Require(notification.right >= width - static_cast<LONG>(12.f * scale) && notification.right <= width,
+            "merged notifications must be anchored to the complete bar's right edge");
+        for (const auto& item : items)
+            if (item.key != "clock" && item.key != "notifications" && !IsRectEmpty(&item.bounds))
+                Require(item.bounds.right <= (dateVisible ? clock->bounds.left : notification.left),
+                    "a tray or system item was placed after the merged date and notifications");
+    }
     Require(controls.right - controls.left == static_cast<LONG>(std::ceil(92.f * scale)),
         "system control group must remain complete at narrow widths");
     std::vector<RECT> rectangles;
@@ -141,9 +159,9 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         }
         if (item.key == "cpu" || item.key == "memory" || item.key == "gpu" || item.key == "traffic")
         {
-            const LONG informationEnd = dateVisible ? clock->bounds.left : merged ?
-                MergedStatusBarCenter(width, height, scale).left : notification.left;
-            Require(item.left && r.right < informationEnd && r.left >= Item(items, "quickSearch").bounds.right,
+            const LONG informationEnd = merged ? MergedStatusBarCenter(width, height, scale).left :
+                dateVisible ? clock->bounds.left : notification.left;
+            Require(item.left && r.right < informationEnd && r.left >= launchEnd,
                 "system information must follow the launch buttons on the left");
             if (item.key != "memory")
                 Require(r.right - r.left <= (item.key == "traffic" ? 152 : 68) * scale + 1,
@@ -416,12 +434,15 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     dropped.pinnedTrayItems.size()==1,"only the overflow button must unpin the dragged icon");
                 // Exercise the real renderer's fallback paths without adding
                 // CLI presets or altering the exported normal frame.
-                const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale) {
+                const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale, bool search = true) {
                     auto compactSettings = settings; compactSettings.clock = date;
+                    compactSettings.quickSearch = search;
                     compactSettings.cpu = compactSettings.memory = compactSettings.gpu = compactSettings.traffic = true;
                     auto compact = BuildStatusBarItems(compactSettings, data);
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "clock"; }) == date,
                         "the existing date visibility flag must be respected");
+                    Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "quickSearch"; }) == search,
+                        "merged presentation must not rewrite the stored standalone search choice");
                     const UINT testWidth = static_cast<UINT>(std::lround(logicalWidth * testScale));
                     const UINT testHeight = static_cast<UINT>(std::lround((merged ? 64 : 32) * testScale));
                     ComPtr<ID2D1Bitmap1> scratch;
@@ -435,12 +456,17 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     const bool notificationFits = !merged || static_cast<LONG>(testWidth) - dockCenter.right >=
                         static_cast<LONG>(std::ceil(32.f * testScale) + std::ceil(92.f * testScale));
                     CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged, notificationFits);
-                    if (date && (logicalWidth == 320 || (merged && logicalWidth <= 640)))
+                    if (!merged && search && logicalWidth >= 640)
+                        Require(!IsRectEmpty(&Item(compact, "quickSearch").bounds),
+                            "standalone status bar lost its enabled search entry");
+                    if (date && (logicalWidth == 320 || (merged && logicalWidth <= 480)))
                         Require(IsRectEmpty(&Item(compact, "clock").bounds),
                             "crowded date must yield as a whole while its notification target remains available");
                 };
                 compactLayout(false, false, 640, scale);
+                compactLayout(false, false, 640, scale, false);
                 compactLayout(false, true, 640, scale);
+                compactLayout(false, true, 640, scale, false);
                 compactLayout(true, true, 640, scale);
                 compactLayout(true, true, 480, 1.5f * scale);
                 compactLayout(true, true, 1920, 1.25f * scale);

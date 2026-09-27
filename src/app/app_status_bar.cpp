@@ -33,7 +33,7 @@ snowdesktop::TrayDragFeedback DesktopApp::MakeStatusBarTrayDragFeedback()
         }};
 }
 
-void DesktopApp::CancelStatusBarActivation(HMONITOR monitor)
+void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
 {
     if (!monitor || monitor == statusBarActivationMonitor_)
     {
@@ -51,8 +51,9 @@ void DesktopApp::CancelStatusBarActivation(HMONITOR monitor)
         CloseQuickNavigation();
     if (systemPanel_)
     {
-        if (monitor) systemPanel_->HideForMonitor(monitor);
-        else systemPanel_->Hide();
+        if (!immediate && (!monitor || systemPanel_->IsOpenForMonitor(monitor))) systemPanel_->Hide();
+        else if (monitor && immediate) systemPanel_->HideForMonitor(monitor);
+        else if (!monitor) systemPanel_->Hide();
     }
 }
 
@@ -474,7 +475,8 @@ void DesktopApp::SyncStatusBar()
                 mergedHeight = std::max(1, static_cast<int>(std::round(GetGridPageItemIconSize(page) * scale))) +
                     2 * std::max(1, static_cast<int>(std::round(kDockSpacing * scale)));
             }
-            monitors.push_back({page.monitorId, monitor, mergedHeight});
+            monitors.push_back({page.monitorId, monitor, mergedHeight,
+            snowdesktop::ReserveStatusBarSpace(mergedHeight != 0, dockSettings_.showOnlyWhenSummoned)});
         }
     }
     statusBar_->Configure(generalSettings_.statusBar, personalizationSettings_, monitors,

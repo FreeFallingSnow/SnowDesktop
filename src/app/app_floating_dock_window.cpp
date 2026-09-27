@@ -116,8 +116,11 @@ bool DesktopApp::ShouldShowPersistentDockHost(
     if (host.container && host.container->IsMergedWithStatusBar())
         return statusBar_ && host.monitor && statusBar_->MergedDockArea(host.monitor) &&
             snowdesktop::floating_dock_rules::ShouldShowMergedStatusBarDockHost(
-                host.active, host.promoted, statusBar_->IsFullscreen(host.monitor),
-                desktopPassthroughActive_);
+                host.active && generalSettings_.dockEnabled,
+                IsPersistentDockHostEffectivelyFloating(host), dockSettings_.showOnlyWhenSummoned,
+                customDesktopVisible_, desktopIconsHidden_, dockSettings_.keepWhenDesktopHidden,
+                desktopPassthroughActive_, statusBar_->IsFullscreen(host.monitor),
+                statusBar_->HasInteractionSession(host.monitor));
     return snowdesktop::floating_dock_rules::
         ShouldShowPersistentDockHost(
             host.active,
@@ -136,6 +139,8 @@ bool DesktopApp::IsDockContainerInteractionVisible(
         return false;
     const PersistentDockHost* host =
         FindPersistentDockHost(container);
+    if (host && host->active && container->IsMergedWithStatusBar())
+        return host->mergedPresentation.inputEnabled;
     // Before graphics initialization, or after a Host creation failure, the
     // Dock falls back to the desktop foreground surface. Only an active
     // persistent Host can make that same logical container non-interactive.
@@ -481,6 +486,88 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
 {
     if (!host.hwnd || !IsWindow(host.hwnd))
         return;
+    if (host.updatingMergedPresentation) return;
+    const bool merged = host.container && host.container->IsMergedWithStatusBar();
+    if (merged)
+    {
+        host.updatingMergedPresentation = true;
+        struct UpdateScope { bool& active; ~UpdateScope() { active = false; } } scope{host.updatingMergedPresentation};
+        const bool unavailable = !host.active || !host.frameReady || desktopStartupPresentationPending_ ||
+            desktopPassthroughActive_ || !generalSettings_.dockEnabled;
+        if (unavailable)
+        {
+            if (host.mergedPresentation.visible) CancelStatusBarActivation(host.monitor);
+            ResetMergedDockPresentation(host);
+            host.backdrop.HidePopupWindowPair(host.hwnd);
+            return;
+        }
+        if (!host.mergedPresentationActive)
+        {
+            host.mergedAnimation.ResetHidden();
+            host.mergedPresentationActive = true;
+        }
+        namespace motion = snowdesktop::animation;
+        namespace animation = snowdesktop::quick_navigation_animation_rules;
+        // Use one opacity timeline for the entire merged surface. Native HWND
+        // regions keep the normal magnification/bounce/title allocation.
+        host.mergedAnimation.Configure(motion::RuntimeAnimationsEnabled() && motion::RuntimePopupEffect() != 0
+            ? animation::Effect::Fade : animation::Effect::None, motion::RuntimeDurationScale());
+        const bool shouldShow = ShouldShowPersistentDockHost(host);
+        const bool changed = shouldShow != host.mergedAnimation.IsInteractive();
+        if (changed)
+        {
+            const auto now = static_cast<std::uint64_t>(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+            if (shouldShow) host.mergedAnimation.Open(now);
+            else host.mergedAnimation.Close(now);
+            host.mergedPresentation.inputEnabled = false;
+            host.tooltipRect = {};
+            if (GetCapture() == host.hwnd) ReleaseCapture();
+            if (rightButtonDownDockHost_ == &host) rightButtonDownDockHost_ = nullptr;
+            if (floatingDockHost_ == &host)
+            {
+                floatingDockHoverTargetOwner_ = nullptr;
+                floatingDockHoverTargetIndex_ = 0;
+                floatingDockHoverTargetKind_ = 0;
+            }
+            if (MonitorFromRect(&dockWindowPreviewAnchorScreen_, MONITOR_DEFAULTTONULL) == host.monitor)
+                HideDockWindowPreview();
+            // Clear the old title and magnified region at the transition
+            // boundary, never by negotiating geometry on animation frames.
+            UpdateFloatingDockWindowBounds(host, false, true);
+            InvalidateFloatingDockWindow(host, true);
+        }
+        ApplyFloatingDockLayerPolicy(host);
+        ApplyMergedDockPresentationFrame(host);
+        if (host.mergedAnimation.IsAnimating() && !host.mergedAnimationToken)
+        {
+            const HWND window = host.hwnd;
+            host.mergedAnimationToken = uiAnimationScheduler_.StartAnimation(
+                snowdesktop::UiAnimationSurface::FloatingDock, [this, window](double tick) {
+                    auto* current = FindPersistentDockHost(window);
+                    if (!current || !current->mergedPresentationActive || !current->active) return false;
+                    current->mergedAnimation.Advance(static_cast<std::uint64_t>(tick));
+                    const bool running = current->mergedAnimation.IsAnimating();
+                    if (!running) current->mergedAnimationToken = 0;
+                    ApplyMergedDockPresentationFrame(*current);
+                    if (!running)
+                    {
+                        ApplyFloatingDockLayerPolicy(*current);
+                        // Recreate title/hit regions only once at the stable
+                        // endpoint. ApplyFrame itself performs no layout work.
+                        UpdateFloatingDockWindowBounds(*current, false, true);
+                        InvalidateFloatingDockWindow(*current, true);
+                    }
+                    return running;
+                });
+        }
+        else if (!host.mergedAnimation.IsAnimating() && host.mergedAnimationToken)
+        {
+            uiAnimationScheduler_.Cancel(host.mergedAnimationToken);
+            host.mergedAnimationToken = 0;
+        }
+        return;
+    }
+    if (host.mergedPresentationActive) ResetMergedDockPresentation(host);
     const bool shouldShow =
         !desktopStartupPresentationPending_ &&
         ShouldShowPersistentDockHost(host);
@@ -512,6 +599,55 @@ void DesktopApp::UpdatePersistentDockHostVisibility(
         ApplyFloatingDockLayerPolicy(host);
 }
 
+void DesktopApp::ApplyMergedDockPresentationFrame(PersistentDockHost& host)
+{
+    auto frame = snowdesktop::MergedDockPresentationFrame(host.mergedAnimation);
+    frame.topmost = host.mergedPresentation.topmost;
+    frame.insertAfter = host.hwnd;
+    host.mergedPresentation = frame;
+    if (host.dcompVisual && dcompDevice_)
+    {
+        if (!host.mergedOpacity) dcompDevice_->CreateEffectGroup(&host.mergedOpacity);
+        if (host.mergedOpacity)
+        {
+            host.mergedOpacity->SetOpacity(frame.opacity);
+            host.dcompVisual->SetEffect(host.mergedOpacity.Get());
+        }
+    }
+    host.backdrop.SetVisualOpacity(frame.opacity);
+    if (frame.visible)
+    {
+        if (!IsWindowVisible(host.hwnd))
+        {
+            // Commit the hidden first frame before either native pair is
+            // revealed, so a retained opaque Dock frame cannot flash once.
+            CommitCompositionAnimationFrame();
+            FlushPendingCompositionCommit();
+            if (host.backdrop.IsAvailable()) host.backdrop.ShowPopupWindowPair(host.hwnd);
+            else ShowWindow(host.hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
+    else host.backdrop.HidePopupWindowPair(host.hwnd);
+    if (statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, frame);
+    host.backdrop.CommitVisualChanges();
+    CommitCompositionAnimationFrame();
+}
+
+void DesktopApp::ResetMergedDockPresentation(PersistentDockHost& host)
+{
+    if (host.mergedAnimationToken) uiAnimationScheduler_.Cancel(host.mergedAnimationToken);
+    host.mergedAnimationToken = 0;
+    host.mergedAnimation.ResetHidden();
+    host.mergedPresentation = {};
+    host.mergedPresentationActive = false;
+    host.mergedInteractionHeld = false;
+    host.mergedCloseAfterInteraction = false;
+    if (statusBar_) statusBar_->ApplyMergedDockPresentation(host.monitor, {});
+    if (host.dcompVisual) host.dcompVisual->SetEffect(nullptr);
+    host.mergedOpacity.Reset();
+    host.backdrop.SetVisualOpacity(1.f);
+}
+
 void DesktopApp::UpdatePersistentDockHostVisibility()
 {
     for (const auto& host : persistentDockHosts_)
@@ -522,6 +658,7 @@ void DesktopApp::UpdatePersistentDockHostVisibility()
 void DesktopApp::ResetFloatingDockCompositionResources(
     PersistentDockHost& host)
 {
+    ResetMergedDockPresentation(host);
     host.frameReady = false;
     brushCache_.clear();
     brushCacheContext_ = nullptr;

@@ -21,6 +21,8 @@ public:
     void CloseThen(std::function<void()>);
     bool IsOpen() const;
     bool IsOpenForMonitor(HMONITOR monitor) const;
+    // Includes visible cards and the active prompt/retained tray menu.
+    bool ContainsPoint(POINT screen) const;
     void UpdateSettings(const StatusBarSettings&);
     bool PreTranslateMessage(MSG*);
     bool DropTrayIcon(std::string_view,POINT);

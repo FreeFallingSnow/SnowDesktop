@@ -49,6 +49,7 @@ void DesktopApp::ShowFloatingDock(
     // Host promotes only its content/backdrop pair and leaves other promoted
     // monitors untouched.
     floatingDockHost_->promoted = true;
+    floatingDockHost_->mergedCloseAfterInteraction = false;
     floatingDockHost_->passivelyRevealed = false;
     floatingDockHost_->passiveRevealTick = 0;
     floatingDockHost_->passiveLeaveStartTick = 0;

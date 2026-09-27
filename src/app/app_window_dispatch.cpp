@@ -272,6 +272,11 @@ LRESULT CALLBACK DesktopApp::InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 
 LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (hwnd == floatingDockInputHwnd_ && floatingDockHost_ && floatingDockHost_->container &&
+        floatingDockHost_->container->IsMergedWithStatusBar() &&
+        !floatingDockHost_->mergedPresentation.inputEnabled &&
+        ((msg >= WM_KEYFIRST && msg <= WM_KEYLAST) || msg == WM_IME_STARTCOMPOSITION ||
+            msg == WM_IME_COMPOSITION || msg == WM_IME_CHAR || msg == WM_CONTEXTMENU)) return 0;
     auto focusedSearchWidget =
         [this]() -> ScrollingItemWidget* {
         for (auto& container : containers_)

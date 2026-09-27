@@ -139,7 +139,7 @@ public:
     void SetReservedArea(RECT area);
     // Stable layout relationship, including while the bar is fullscreen-hidden.
     bool IsMergedWithStatusBar() const;
-    // Shared chrome follows Dock whenever the merged bar is actually available.
+    // Shared chrome is a layout relationship, independent of animation/input.
     bool SharesStatusBarAppearance() const;
     bool IsMagnificationAnimating() const;
     bool AdvanceMagnificationAnimation(double nowMilliseconds);

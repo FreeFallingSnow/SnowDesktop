@@ -152,14 +152,19 @@ struct StatusBar::Impl
         ComPtr<IDCompositionTarget> target;
         ComPtr<IDCompositionVisual2> visual;
         ComPtr<IDCompositionVisual2> contentVisual;
+        ComPtr<IDCompositionEffectGroup> mergedOpacity;
+        StatusBarDockPresentation mergedPresentation;
         ComPtr<IDCompositionSurface> backgroundSurface;
         ComPtr<IDCompositionSurface> surface;
         UINT width = 0, height = 0, dpi = 96;
         int mergedDockHeight = 0;
+        bool reserveSpace = true, positioned = false;
+        RECT placedBounds{};
         DWORD explorerPid = 0;
         bool placing = false, queued = false, fullscreen = false, failed = false, closing = false;
         bool fullscreenObserved = false; // fullscreen is the effective hide/input gate.
         bool checkingFullscreen = false;
+        bool lastDockInteraction = false, lastDockPromoted = false;
         StatusBarFullscreenState fullscreenState;
         DWORD dockFullscreenProcess = 0;
         bool appearanceDirty = true, paintDirty = true, painting = false;
@@ -231,7 +236,7 @@ struct StatusBar::Impl
         }
         void SyncTooltip(bool immediate = false)
         {
-            if (closing || fullscreen || failed || !IsWindowVisible(hwnd) || GetCapture() ||
+            if (!InputAvailable() || GetCapture() ||
                 !interaction.hovered || *interaction.hovered >= items.size())
             { tooltip.Hide(); return; }
             const auto& item = items[*interaction.hovered];
@@ -263,7 +268,7 @@ struct StatusBar::Impl
                 owner.settings.position == DockPosition::Bottom ? NativeTooltipPlacement::Above : NativeTooltipPlacement::Below,
                 immediate);
         }
-        void Hide()
+        void Hide(bool notify = true)
         {
             activation.Cancel();
             EndDragFeedback(); dropIndicator.reset();
@@ -277,8 +282,7 @@ struct StatusBar::Impl
             backdrop.SetPopupTopmost(false);
             SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW);
-            if (owner.hidden) owner.hidden(monitor);
-            if (mergedDockHeight && owner.dockChanged) owner.dockChanged(false);
+            if (notify && owner.hidden) owner.hidden(monitor);
         }
         void CheckFullscreen()
         {
@@ -287,13 +291,23 @@ struct StatusBar::Impl
             struct CheckScope { bool& active; ~CheckScope() { active = false; } } checkScope{checkingFullscreen};
             const auto observed = MonitorFullscreenSource(monitor);
             const auto dock = owner.dockStateProvider ? owner.dockStateProvider(monitor) : StatusBarDockState{};
+            const bool previousObservation = fullscreenObserved;
             DWORD foregroundProcess = 0;
             GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
             fullscreenObserved = fullscreenState.Observe(observed, dock.promoted || dock.interacting,
                 foregroundProcess == GetCurrentProcessId(),
                 DockFullscreenSourceEligible(fullscreenState.DockSource(), dockFullscreenProcess, monitor));
-            const bool next = StatusBarHiddenForFullscreen(fullscreenObserved,
-                mergedDockHeight > 0, dock.promoted, dock.interacting);
+            if (mergedDockHeight)
+            {
+                // The Dock alone owns presentation. Observations may ask it
+                // to recompute policy, but may never restore this HWND.
+                const bool changed = previousObservation != fullscreenObserved ||
+                    lastDockInteraction != dock.interacting || lastDockPromoted != dock.promoted;
+                lastDockInteraction = dock.interacting; lastDockPromoted = dock.promoted;
+                if (changed && owner.dockChanged) owner.dockChanged(false);
+                return;
+            }
+            const bool next = fullscreenObserved;
             const HWND source = fullscreenState.Source();
             const bool changed = next != fullscreen;
             fullscreen = next;
@@ -320,23 +334,62 @@ struct StatusBar::Impl
                 if (!IsRectEmpty(&dockBounds))
                     MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&dockBounds), 2);
             }
-            return StatusBarOwnsPointer(!fullscreen && !failed && IsWindowVisible(hwnd),
+            return StatusBarOwnsPointer(InputAvailable(),
                 client, dockBounds, clientPoint);
+        }
+        bool InputAvailable() const
+        {
+            return !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
+                (!mergedDockHeight || mergedPresentation.inputEnabled);
+        }
+        void ApplyDockPose()
+        {
+            if (!mergedDockHeight || !visual || !owner.composition) return;
+            if (!mergedOpacity) owner.composition->CreateEffectGroup(&mergedOpacity);
+            if (mergedOpacity)
+            {
+                mergedOpacity->SetOpacity(mergedPresentation.opacity);
+                visual->SetEffect(mergedOpacity.Get());
+            }
+            backdrop.SetVisualOpacity(mergedPresentation.opacity);
+        }
+        void ApplyDockPresentation(const StatusBarDockPresentation& frame)
+        {
+            if (!mergedDockHeight || closing) return;
+            if (mergedPresentation.inputEnabled && !frame.inputEnabled)
+            {
+                EndDragFeedback(); ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
+                pressedTray.clear(); trayDragging = false; if (GetCapture() == hwnd) ReleaseCapture();
+                if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
+                paintDirty = true;
+            }
+            mergedPresentation = frame;
+            fullscreen = !frame.visible;
+            if (!frame.visible || failed || !positioned)
+            {
+                if (IsWindowVisible(hwnd)) Hide(false);
+                return;
+            }
+            if (!IsWindowVisible(hwnd)) Show();
+            else if (paintDirty) Paint();
+            ApplyDockPose();
+            backdrop.SetPopupWindowPairZOrder(hwnd, frame.insertAfter, frame.topmost);
+            backdrop.SetVisible(appearance.glassEnabled && !HighContrast());
+            backdrop.CommitVisualChanges();
         }
         void Show()
         {
-            if (fullscreen || failed || !appbar.Registered()) return;
-            if (!IsWindowVisible(hwnd) || !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST))
+            if (fullscreen || failed || !positioned) return;
+            if (!IsWindowVisible(hwnd) || (!mergedDockHeight && !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST)))
             {
-                const auto dock = owner.dockStateProvider ? owner.dockStateProvider(monitor) : StatusBarDockState{};
                 // Restoration must stay beneath the actual merged Dock and
                 // its owned menu, even when that pair is already topmost.
-                backdrop.SetPopupWindowPairZOrder(hwnd, dock.window ? dock.window : HWND_TOPMOST, true);
+                backdrop.SetPopupWindowPairZOrder(hwnd, mergedDockHeight ? mergedPresentation.insertAfter : HWND_TOPMOST,
+                    mergedDockHeight ? mergedPresentation.topmost : true);
                 SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                 if (appearance.glassEnabled && !HighContrast()) backdrop.ShowPopupWindowPair(hwnd);
                 paintDirty = true;
-                if (mergedDockHeight && owner.dockChanged) owner.dockChanged(false);
             }
             Paint();
         }
@@ -356,7 +409,18 @@ struct StatusBar::Impl
             const bool vertical = edge == ABE_LEFT || edge == ABE_RIGHT;
             const int thickness = std::max(mergedDockHeight, static_cast<int>(std::lround(
                 (vertical ? 48.f : 32.f) * owner.settings.scale * dpi / 96.f)));
-            const bool placed = appbar.Place(hwnd, kAppBar, edge, thickness, info.rcMonitor);
+            bool placed = false;
+            if (reserveSpace)
+            {
+                placed = appbar.Place(hwnd, kAppBar, edge, thickness, info.rcMonitor);
+                if (placed) placedBounds = appbar.Bounds();
+            }
+            else
+            {
+                appbar.Remove(); placedBounds = info.rcMonitor;
+                StatusBarAppBar::SetThickness(placedBounds, edge, thickness); placed = true;
+            }
+            positioned = placed;
             if (!placed)
             {
                 if (!failed && owner.error) owner.error(_LW("statusBar.registrationFailed"));
@@ -366,7 +430,7 @@ struct StatusBar::Impl
                 return;
             }
             failed = false;
-            const RECT rect = appbar.Bounds();
+            const RECT rect = placedBounds;
             RECT previous{};
             GetWindowRect(hwnd, &previous);
             const bool moved = !EqualRect(&rect, &previous);
@@ -374,11 +438,11 @@ struct StatusBar::Impl
             {
                 EndDragFeedback();pressedTray.clear();trayDragging=false;if(GetCapture()==hwnd)ReleaseCapture();
                 ClearHover(); interaction.CancelPointer();
-                const BOOL positioned=SetWindowPos(hwnd, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                const BOOL placedWindow=SetWindowPos(hwnd, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                     SWP_NOACTIVATE | SWP_NOZORDER);
                 wchar_t message[320]{};
                 swprintf_s(message,L"StatusBar placement monitor=%p bar=%p dpi=%u bounds=%ld,%ld,%ld,%ld positioned=%d error=%lu",monitor,hwnd,dpi,
-                    rect.left,rect.top,rect.right,rect.bottom,positioned,positioned?0:GetLastError());
+                    rect.left,rect.top,rect.right,rect.bottom,placedWindow,placedWindow?0:GetLastError());
                 WriteDiagnosticLogEntry(message);
             }
             if ((moved || appearanceDirty) && appearance.glassEnabled && !HighContrast())
@@ -400,9 +464,13 @@ struct StatusBar::Impl
             // InitializePopup starts hidden. Updating glass while the bar
             // itself is visible must reveal its new helper after checking the
             // current fullscreen state, not the state before this placement.
-            backdrop.SetPopupTopmost(!fullscreen);
-            backdrop.SetVisible(!fullscreen && appearance.glassEnabled && !HighContrast());
-            if (!fullscreen) Show();
+            if (mergedDockHeight) ApplyDockPresentation(mergedPresentation);
+            else
+            {
+                backdrop.SetPopupTopmost(!fullscreen);
+                backdrop.SetVisible(!fullscreen && appearance.glassEnabled && !HighContrast());
+                if (!fullscreen) Show();
+            }
             if (moved && owner.dockChanged) owner.dockChanged(true);
         }
         void BuildItems()
@@ -532,6 +600,7 @@ struct StatusBar::Impl
             if (SUCCEEDED(result))
             {
                 contentVisual->SetContent(surface.Get());
+                ApplyDockPose();
                 const auto commit = owner.composition->Commit();
                 if (FAILED(commit)) PaintError(commit);
                 else { paintDirty = false; lastPaintError = S_OK; SyncTooltip(); }
@@ -558,13 +627,13 @@ struct StatusBar::Impl
             ClearHover(); interaction.CancelPointer();
             paintDirty = true; Paint();
             const auto onActivated = owner.activate;
-            if (!fullscreen && onActivated)
-                onActivated(StatusBarAction::Dismiss, hwnd, appbar.Bounds());
+            if (InputAvailable() && onActivated)
+                onActivated(StatusBarAction::Dismiss, hwnd, placedBounds);
         }
         void ActivateItem(std::optional<std::size_t> index, bool context = false)
         {
             const auto invocation = ResolveStatusBarInvocation(items, index, context);
-            if (fullscreen || !invocation || !owner.activate) return;
+            if (!InputAvailable() || !invocation || !owner.activate) return;
             RECT anchor = invocation->bounds;
             if (mergedDockHeight && !invocation->isTray)
             { anchor.top = 0; anchor.bottom = static_cast<LONG>(height); }
@@ -612,7 +681,7 @@ struct StatusBar::Impl
         void ReturnTrayFocus(std::uint64_t serial)
         {
             if (!owner.tray) return;
-            if (fullscreen || closing || failed || !IsWindowVisible(hwnd))
+            if (!InputAvailable())
             { owner.tray->CancelFocusReturn(hwnd); return; }
             const auto delivery = owner.tray->TakeFocusReturn(hwnd, serial);
             if (!delivery) return;
@@ -634,9 +703,10 @@ struct StatusBar::Impl
             }
             if (!self) return DefWindowProcW(window, message, wp, lp);
             if (self->closing) return DefWindowProcW(window, message, wp, lp);
-            if ((self->fullscreen || self->failed || !IsWindowVisible(window)) &&
+            if (!self->InputAvailable() &&
                 ((message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == WM_CONTEXTMENU ||
-                    message == WM_KEYDOWN || message == WM_KEYUP || message == WM_CHAR)) return 0;
+                    message == WM_KEYDOWN || message == WM_KEYUP || message == WM_CHAR ||
+                    message == WM_SYSKEYDOWN || message == WM_SYSKEYUP || message == WM_SYSCHAR)) return 0;
             if (message == tray::FocusReturnMessage())
             { self->ReturnTrayFocus(static_cast<std::uint64_t>(wp)); return 0; }
             if (message == self->owner.taskbarCreated)
@@ -667,7 +737,7 @@ struct StatusBar::Impl
             case kActivate:
             {
                 auto callback = self->activation.Take();
-                if (callback && !self->fullscreen && !self->failed && IsWindowVisible(window)) callback();
+                if (callback && self->InputAvailable()) callback();
                 // Activation may destroy the bar or enter a modal window loop.
                 return 0;
             }
@@ -933,7 +1003,7 @@ struct StatusBar::Impl
         if (removingWindows || !tray || key.empty()) return {};
         for (const auto& [id, window] : windows)
         {
-            if (!window || window->fullscreen || window->failed || window->closing || !IsWindowVisible(window->hwnd)) continue;
+            if (!window || !window->InputAvailable()) continue;
             RECT bounds{}; GetWindowRect(window->hwnd, &bounds);
             if (!PtInRect(&bounds, point)) continue;
             POINT local = point; ScreenToClient(window->hwnd, &local);
@@ -1015,7 +1085,7 @@ void StatusBar::ReleaseGraphicsResources()
         window->backdrop.Reset();
         if (window->target) (void)window->target->SetRoot(nullptr);
         window->surface.Reset(); window->backgroundSurface.Reset();
-        window->contentVisual.Reset(); window->visual.Reset(); window->target.Reset();
+        window->contentVisual.Reset(); window->visual.Reset(); window->mergedOpacity.Reset(); window->target.Reset();
         window->appearanceDirty = window->backgroundDirty = window->paintDirty = true;
     }
     self.composition.Reset(); self.text.Reset();
@@ -1041,6 +1111,15 @@ void StatusBar::RefreshDockState(HMONITOR monitor)
         if (window && window->monitor == monitor) window->CheckFullscreen();
     }
 }
+void StatusBar::ApplyMergedDockPresentation(HMONITOR monitor, const StatusBarDockPresentation& frame)
+{
+    if (impl_->removingWindows) return;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor) window->ApplyDockPresentation(frame);
+    }
+}
 bool StatusBar::IsInteractionAvailable(HMONITOR monitor) const
 {
     if (impl_->removingWindows) return false;
@@ -1048,7 +1127,7 @@ bool StatusBar::IsInteractionAvailable(HMONITOR monitor) const
     {
         (void)id;
         if (window && window->monitor == monitor)
-            return !window->closing && !window->fullscreen && !window->failed && IsWindowVisible(window->hwnd);
+            return window->InputAvailable();
     }
     return false;
 }
@@ -1091,7 +1170,7 @@ void StatusBar::PrepareDockReveal(HMONITOR monitor)
         if (const HWND source = window->fullscreenState.DockSource())
             GetWindowThreadProcessId(source, &window->dockFullscreenProcess);
         // Also repair an independently restacked glass helper before showing Dock.
-        if (window->fullscreen) window->Hide();
+        if (!window->mergedDockHeight && window->fullscreen) window->Hide();
     }
 }
 void StatusBar::SetGraphicsFailureHandler(std::function<void(HRESULT)> handler) { impl_->graphicsFailure = std::move(handler); }
@@ -1119,11 +1198,21 @@ std::optional<RECT> StatusBar::MergedDockArea(HMONITOR monitor) const
     {
         (void)id;
         if (!window || window->monitor != monitor || !window->mergedDockHeight || window->failed ||
-            !window->appbar.Registered()) continue;
-        const auto bounds = window->appbar.Bounds();
+            !window->positioned) continue;
+        const auto bounds = window->placedBounds;
         auto center = MergedStatusBarCenter(bounds.right - bounds.left, bounds.bottom - bounds.top,
             window->dpi / 96.f * impl_->settings.scale);
         OffsetRect(&center, bounds.left, bounds.top); return center;
+    }
+    return {};
+}
+std::optional<RECT> StatusBar::MergedStripBounds(HMONITOR monitor) const
+{
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && window->mergedDockHeight &&
+            !window->failed && window->positioned) return window->placedBounds;
     }
     return {};
 }
@@ -1142,8 +1231,7 @@ bool StatusBar::PostActivation(HWND owner, std::function<void()> callback)
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
-        if (!window || window->hwnd != owner || window->closing || window->fullscreen ||
-            window->failed || !IsWindowVisible(owner)) continue;
+        if (!window || window->hwnd != owner || !window->InputAvailable()) continue;
         return window->activation.Post(owner, kActivate, std::move(callback));
     }
     return false;
@@ -1214,7 +1302,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
          window->surface.Reset();window->backgroundSurface.Reset();window->appearanceDirty=window->backgroundDirty=window->paintDirty=true;}
         window->monitor = monitor.monitor;
         window->tooltip.Configure(window->hwnd, composition, text, self.tooltipAppearance, self.drawTooltipBackground);
-        const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight;
+        const bool mergedChanged = window->mergedDockHeight != monitor.mergedDockHeight || window->reserveSpace != monitor.reserveSpace;
         if (mergedChanged || changed)
         {
             window->EndDragFeedback(); window->ClearHover(); window->interaction.CancelPointer();
@@ -1222,6 +1310,20 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             if (GetCapture() == window->hwnd) ReleaseCapture();
         }
         window->mergedDockHeight = monitor.mergedDockHeight;
+        window->reserveSpace = monitor.reserveSpace;
+        if (mergedChanged)
+        {
+            window->mergedPresentation = {};
+            if (monitor.mergedDockHeight) { window->fullscreen = true; window->Hide(false); }
+            else
+            {
+                if (window->visual) { window->visual->SetOffsetX(0.f); window->visual->SetOffsetY(0.f); window->visual->SetEffect(nullptr); }
+                window->backdrop.SetVisualOpacity(1.f);
+                const RECT frame{0, 0, static_cast<LONG>(window->width), static_cast<LONG>(window->height)};
+                window->backdrop.SetPanelTransform(reinterpret_cast<std::uintptr_t>(window.get()),
+                    D2D1::Matrix4x4F(), frame);
+            }
+        }
         window->UpdateAppearance();
         window->appearanceDirty = window->appearanceDirty || changed || mergedChanged;
         window->paintDirty = window->paintDirty || changed || mergedChanged;

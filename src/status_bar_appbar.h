@@ -124,12 +124,6 @@ private:
     HWND dockSource_ = nullptr;
 };
 
-inline bool StatusBarHiddenForFullscreen(bool fullscreen, bool merged,
-    bool dockPromoted, bool barInteraction)
-{
-    return fullscreen && !(merged && (dockPromoted || barInteraction));
-}
-
 // AppBar registration is authoritative even while its window is hidden or
 // a Dock reservation is being undone. Applying this twice is idempotent.
 inline RECT ConstrainStatusBarWorkArea(RECT area, RECT reserved, UINT edge)

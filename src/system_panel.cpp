@@ -15,6 +15,7 @@
 #include <wrl/client.h>
 #include <windowsx.h>
 #include <commctrl.h>
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -75,6 +76,16 @@ struct SystemPanel::Impl
     bool Glass()const{return current&&current->appearance.glassEnabled&&!HighContrast();}
     float SlideOffset()const
     {return current?(current->settings.position==DockPosition::Bottom?1.f:-1.f)*(1-quick_navigation_animation_rules::EaseInOutSmooth(slide.GetVisual().progress))*height:0;}
+    bool ContainsClientPoint(POINT point)const
+    {
+        if(!current)return false;
+        RECT client{};GetClientRect(window,&client);if(!PtInRect(&client,point))return false;
+        const D2D1_POINT_2F local{static_cast<float>(point.x),static_cast<float>(point.y)};
+        const float offset=SlideOffset();
+        return std::any_of(cards.begin(),cards.end(),[&](const auto& card){
+            return popup_round_geometry::Contains(popup_round_geometry::Resolve(card,current->appearance.cornerRadius*scale,offset),local);
+        });
+    }
     void EndDragFeedback()
     {if(std::exchange(trayPreview,false)&&dragFeedback.end)dragFeedback.end();}
     void MoveDragFeedback(POINT screen)
@@ -378,10 +389,7 @@ struct SystemPanel::Impl
             if(m==WM_NCHITTEST&&self->current)
             {
                 POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ScreenToClient(w,&point);
-                const float offset=self->SlideOffset();
-                const D2D1_POINT_2F local{static_cast<float>(point.x),static_cast<float>(point.y)};
-                for(const auto& card:self->cards)if(popup_round_geometry::Contains(popup_round_geometry::Resolve(card,self->current->appearance.cornerRadius*self->scale,offset),local))return HTCLIENT;
-                return HTTRANSPARENT;
+                return self->ContainsClientPoint(point)?HTCLIENT:HTTRANSPARENT;
             }
             if(m==WM_GETOBJECT&&self->accessibility){LRESULT result=0;if(self->accessibility->TryHandleGetObject(w,wp,lp,result))return result;}
             if(m==WM_PAINT){PAINTSTRUCT p{};BeginPaint(w,&p);self->Paint();EndPaint(w,&p);return 0;}
@@ -481,6 +489,24 @@ void SystemPanel::Hide(){impl_->pending.reset();impl_->afterClose={};if(impl_->s
 void SystemPanel::CloseThen(std::function<void()> next){impl_->pending.reset();impl_->afterClose=std::move(next);if(impl_->showing||impl_->modal)impl_->Animate(false);else if(auto fn=std::move(impl_->afterClose)){impl_->afterClose={};fn();}}
 bool SystemPanel::IsOpen()const{return impl_->showing||impl_->modal;}
 bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const{return IsOpen()&&monitor&&impl_->monitor==monitor;}
+bool SystemPanel::ContainsPoint(POINT screen)const
+{
+    if(!IsOpen())return false;
+    const auto contains=[&](HWND window){RECT bounds{};return window&&IsWindowVisible(window)&&GetWindowRect(window,&bounds)&&PtInRect(&bounds,screen);};
+    if(impl_->promptState&&contains(impl_->promptState->window))return true;
+    const HWND menu=modern_menu::ActiveRootWindow();
+    if(impl_->calendarMenu&&menu&&GetWindow(menu,GW_OWNER)==impl_->window)
+    {
+        HWND target=GetAncestor(WindowFromPoint(screen),GA_ROOT);
+        for(unsigned depth=0;target&&depth<16;++depth,target=GetWindow(target,GW_OWNER))
+            if(target==menu)return true;
+    }
+    for(const auto& popup:impl_->context.popups)
+        if(impl_->context.LivePopup(popup)&&contains(reinterpret_cast<HWND>(popup.window)))return true;
+    if(!impl_->window||!IsWindowVisible(impl_->window))return false;
+    POINT client=screen;if(!ScreenToClient(impl_->window,&client))return false;
+    return impl_->ContainsClientPoint(client);
+}
 void SystemPanel::UpdateSettings(const StatusBarSettings& settings)
 {if(impl_->current)impl_->current->settings=settings;if(impl_->model){impl_->model->UpdateSettings(settings);impl_->paintDirty=true;}}
 void SystemPanel::HideForMonitor(HMONITOR m){if(impl_->monitor==m){impl_->pending.reset();impl_->afterClose={};impl_->HideNow();}}
