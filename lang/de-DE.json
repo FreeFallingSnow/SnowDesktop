@@ -1512,7 +1512,7 @@
     "settings.animation.hover": "Effekt beim Zeigen",
     "settings.animation.hover.description": "Beim Zeigen ein Symbol oder benachbarte Symbole vergrößern.",
     "settings.animation.hoverScale": "Vergrößerung beim Zeigen (%)",
-    "settings.animation.hoverScale.description": "Nur beim Welleneffekt einstellbar. Originalgröße: 100 %; die leichte Vergrößerung eines einzelnen Symbols ist auf 112 % festgelegt.",
+    "settings.animation.hoverScale.description": "Nur beim Welleneffekt einstellbar. Originalgröße: 100 %; feste leichte Vergrößerung eines einzelnen Symbols: 112 %.",
     "settings.animation.launch": "Animation beim App-Start",
     "settings.animation.launch.description": "Symboleffekt beim Start einer App über das Dock.",
     "settings.animation.window": "Fenster minimieren und wiederherstellen",

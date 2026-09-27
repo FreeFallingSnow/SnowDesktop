@@ -1367,6 +1367,19 @@ void CheckCalendarResponsive()
             Require(originalDay.top==movedDay.top&&originalDay.bottom==movedDay.bottom&&model.ScrollOffset()==offset&&
                 model.ScrollViewport().left>originalDay.right,"wide agenda scrolling moved the month or focusing the fixed month reset agenda scroll");
         }
+        // Fixed-height output must retain access to the final event, rather
+        // than merely clipping a list that can never scroll fully into view.
+        model.Scroll(model.MaximumScroll());
+        constexpr auto lastEvent="event:2026-09-28:preview-weekend";
+        const auto& last=Node(model.View(),lastEvent);const auto visible=model.ScrollViewport();
+        Require(last.bounds.left>=visible.left&&last.bounds.right<=visible.right&&
+            last.bounds.top>=visible.top&&last.bounds.bottom<=visible.bottom,
+            "the final agenda event is clipped at maximum scroll");
+        ui::Input agendaInput;const auto eventPoint=VisibleCenter(model.View(),lastEvent);
+        Require(agendaInput.Press(model.View(),eventPoint),"the final agenda event cannot receive a pointer press");
+        const auto eventAction=agendaInput.Release(model.View(),eventPoint);
+        Require(eventAction.kind==ui::InputResult::Kind::Invoke&&eventAction.id==lastEvent,
+            "the final agenda event cannot be activated after scrolling");
         model.Refresh(300);Require(model.View().width<=width,"internal refresh forgot its monitor width budget");
     }
     state->agenda=false;model.Refresh(300,900);

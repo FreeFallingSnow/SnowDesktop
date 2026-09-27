@@ -1410,7 +1410,7 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
             L"--canvas-width", L"1000", L"--canvas-height", L"1000", L"--padding", L"24", L"--host", host.wstring()});
         if (exitCode != 0) std::cerr << json << '\n';
         Check(exitCode == 0 && json.find("\"ok\":true") != std::string::npos, "production calendar panel renders offline");
-        LONG emptyHeight = 0;
+        RECT emptyBounds{};
         for (const bool agenda : {false, true})
         {
             auto bitmap = ReadPng(output / (agenda ? L"calendar-panel-agenda.png" : L"calendar-panel-empty.png"));
@@ -1421,8 +1421,12 @@ void TestCalendarPanelPreview(const std::filesystem::path& snowwidget,
             Check(HasNativePanelSize(bounds, scale, calendarWidth, 300, 952. / scale),
                 "calendar uses a compact month-and-agenda panel and adapts to the independent available width");
             Check(HasFourRoundedCorners(bitmap, bounds), "calendar panel preserves all four corners including the bottom edge");
-            if (!agenda) emptyHeight = bounds.bottom - bounds.top;
-            else Check(bounds.bottom - bounds.top > emptyHeight + 16, "agenda rows contribute to actual panel measurement");
+            // The agenda now scrolls inside a panel fixed to the month height.
+            // Its last row's visibility and pointer access are checked through
+            // the production preview's CheckCalendarResponsive input path.
+            if (!agenda) emptyBounds = bounds;
+            else Check(EqualRect(&bounds, &emptyBounds) != FALSE,
+                "agenda overflow preserves the empty calendar's fixed panel bounds");
             // Independent output mutation: a square bottom corner must fail,
             // which the old top-only visual checks could not detect.
             const auto bottomLeft = (static_cast<std::size_t>(bounds.bottom - 1) * bitmap.width + bounds.left) * 4 + 3;

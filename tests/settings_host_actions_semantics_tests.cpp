@@ -220,16 +220,48 @@ int main(int argc, char** argv)
               "generalSettings_.autoStartEnabled = autoStartEnabled;"),
         "persisted General reloads preserve the Windows-owned auto-start projection");
 
-    const std::string_view general = Between(commit,
-        "if (HasSettingsDomain(domains, SettingsDomain::General))",
+    // Exclude the shortcut-only early returns: a combined preset publishes
+    // both mirrors before entering the normal commit's side-effect blocks.
+    const std::string_view normalCommit = Between(commit,
+        "DockSettings requestedDockSettings = snapshot.values.dock;",
         "if (HasSettingsDomain(domains, SettingsDomain::Category))");
-    Check(!general.empty(), "General commit block is discoverable");
-    Check(AppearsBefore(general,
+    const std::string_view effects = Between(normalCommit,
+        "if (HasSettingsDomain(domains, SettingsDomain::Personalization))",
+        "if (HasSettingsDomain(domains, SettingsDomain::Category))");
+    const std::string_view general = Between(effects,
+        "if (generalCommitted)",
+        "if (HasSettingsDomain(domains, SettingsDomain::Category))");
+    Check(!normalCommit.empty() && !effects.empty() && !general.empty(),
+        "normal commit preparation and General effects are discoverable");
+    Check(AppearsBefore(normalCommit,
             "const bool dockEnabledChanged",
             "app_.generalSettings_ = snapshot.values.general;") &&
+            normalCommit.find(
+                "app_.generalSettings_.dockEnabled != snapshot.values.general.dockEnabled") !=
+                std::string_view::npos &&
             general.find("if (dockEnabledChanged)") !=
                 std::string_view::npos,
         "General commits detect Dock enablement changes before replacing state");
+    for (const std::string_view effect : {
+             "app_.ApplyPersistentDockHostAppearance();",
+             "app_.SyncStatusBar();", "app_.ApplyAnimationPreferences();",
+             "app_.ApplyFloatingDockHotkey();", "app_.UpdateLayoutWorkArea();"})
+    {
+        Check(AppearsBefore(normalCommit,
+                  "app_.dockSettings_ = requestedDockSettings;", effect) &&
+                AppearsBefore(normalCommit,
+                  "app_.generalSettings_ = snapshot.values.general;", effect),
+            "both committed mirrors precede shared surface, animation, hotkey and layout effects");
+    }
+    const std::string_view dockOnly = Between(effects,
+        "if (!generalCommitted)", "\n            }\n        }");
+    Check(dockOnly.find("app_.SyncStatusBar();") != std::string_view::npos &&
+            dockOnly.find("app_.UpdateLayoutWorkArea();") != std::string_view::npos &&
+            dockOnly.find("app_.LayoutItems();") != std::string_view::npos &&
+            dockOnly.find("app_.SaveLayoutSlots();") != std::string_view::npos &&
+            AppearsBefore(general, "if (dockCommitted || dockEnabledChanged)",
+                "app_.UpdateLayoutWorkArea();"),
+        "combined General and Dock commits use the General layout pass while Dock-only commits retain theirs");
     Check(general.find(
             "desktop.dockEnabled =\n                        app_.generalSettings_.dockEnabled;") !=
                 std::string_view::npos &&
@@ -248,7 +280,8 @@ int main(int argc, char** argv)
                 "app_.SaveLayoutSlots();",
                 "app_.InvalidateDragStaticScene();"),
         "General Dock enablement changes relayout and persist in runtime order");
-    Check(general.find("if (!app_.generalSettings_.dockEnabled)\n") !=
+    Check(general.find(
+              "if (dockEnabledChanged && !app_.generalSettings_.dockEnabled)\n") !=
                 std::string_view::npos,
         "disabling the Dock restores its entries to the desktop before saving");
 
