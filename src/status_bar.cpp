@@ -309,7 +309,7 @@ struct StatusBar::Impl
                 if (changed && owner.dockChanged) owner.dockChanged(false);
                 return;
             }
-            const bool next = fullscreenObserved;
+            const bool next = fullscreenState.ShouldHide(dock.interacting);
             const HWND source = fullscreenState.Source();
             const bool changed = next != fullscreen;
             fullscreen = next;
@@ -754,7 +754,11 @@ struct StatusBar::Impl
                         self->keyboardFocusVisible = true; self->ClearHover(); self->paintDirty = true; self->Paint();
                     },
                     [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
-                    [&] { self->DismissSurfaces(); })) return 0;
+                    [&] {
+                        self->fullscreenState.DismissReveal();
+                        PostMessageW(window, kFullscreen, 0, 0);
+                        self->DismissSurfaces();
+                    })) return 0;
             }
             switch (message)
             {
@@ -1214,7 +1218,7 @@ bool StatusBar::ContainsPoint(POINT screen) const
     for (const auto& [id, window] : impl_->windows)
     {
         (void)id;
-        if (!window || !window->mergedDockHeight || window->closing) continue;
+        if (!window || window->closing) continue;
         auto local = screen; ScreenToClient(window->hwnd, &local);
         if (window->OwnsPointer(local)) return true;
     }
@@ -1237,12 +1241,36 @@ void StatusBar::PrepareDockReveal(HMONITOR monitor)
         (void)id;
         if (!window || window->monitor != monitor) continue;
         window->CheckFullscreen();
-        window->fullscreenState.BeginDockReveal();
+        window->fullscreenState.BeginDockReveal(!window->mergedDockHeight);
         window->dockFullscreenProcess = 0;
         if (const HWND source = window->fullscreenState.DockSource())
             GetWindowThreadProcessId(source, &window->dockFullscreenProcess);
-        // Also repair an independently restacked glass helper before showing Dock.
-        if (!window->mergedDockHeight && window->fullscreen) window->Hide();
+        // The independent bar can now accept the whole down/up/open sequence,
+        // even if Dock's own hover or launch session ends in the meantime.
+        if (!window->mergedDockHeight) window->CheckFullscreen();
+    }
+}
+bool StatusBar::HasTemporaryReveal(HMONITOR monitor) const
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor && !window->mergedDockHeight)
+            return window->fullscreenState.Revealed();
+    }
+    return false;
+}
+void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
+{
+    if (impl_->removingWindows) return;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (!window || window->monitor != monitor || !window->fullscreenState.Revealed()) continue;
+        window->fullscreenState.DismissReveal();
+        // Let the existing popup close path consume the outside down first.
+        PostMessageW(window->hwnd, kFullscreen, 0, 0);
     }
 }
 void StatusBar::SetGraphicsFailureHandler(std::function<void(HRESULT)> handler) { impl_->graphicsFailure = std::move(handler); }
@@ -1385,6 +1413,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         window->reserveSpace = monitor.reserveSpace;
         if (mergedChanged)
         {
+            window->fullscreenState.DismissReveal();
             window->mergedPresentation = {};
             if (monitor.mergedDockHeight) { window->fullscreen = true; window->Hide(false); }
             else

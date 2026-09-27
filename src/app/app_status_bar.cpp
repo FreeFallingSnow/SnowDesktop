@@ -226,6 +226,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                         return {};
                     },
                     [this](const std::string& id){if(exitRequested_||!widgetEngine_)return snowdesktop::calendar::MutationResult{false,{},0,"canceled"};return widgetEngine_->RuntimeCalendarRemove(id);}
+                }, [this](const std::string& from,const std::string& to) {
+                    return widgetEngine_?widgetEngine_->RuntimeCalendarEvents(from,to):
+                        std::vector<snowdesktop::calendar::CalendarEvent>{};
                 }}, [this](std::string_view key, POINT screen) {
                     return statusBar_ && statusBar_->DropTrayIcon(key, screen);
                 }, &uiAnimationScheduler_, dcompDevice_.Get(), dwriteFactory_.Get(),

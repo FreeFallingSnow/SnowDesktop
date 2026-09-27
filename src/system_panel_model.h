@@ -25,6 +25,8 @@ struct SystemCalendarActions
     std::function<std::map<std::string,std::string>(const std::string&,const std::string&)> secondaryDates;
     std::function<std::string()> secondaryRevision;
     SystemCalendarEditorActions mutations;
+    // Read the shared in-memory event snapshot once for both month markers and agenda.
+    std::function<std::vector<calendar::CalendarEvent>(const std::string&,const std::string&)> eventsInRange;
 };
 // Native EDIT children share the calendar panel's layout, draft and lifetime.
 // Bounds and clip are in panel-local DIPs, after scrolling.

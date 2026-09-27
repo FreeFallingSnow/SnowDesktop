@@ -29,8 +29,8 @@ void DesktopApp::ShowFloatingDock(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
     }
     // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
-    // the keyboard proxy can change foreground ownership. The bar remains
-    // registered; only this monitor's Dock may become visible.
+    // the keyboard proxy can change foreground ownership. The independently
+    // revealed bar remains usable until its own outside dismissal.
     if (statusBar_) statusBar_->PrepareDockReveal(targetMonitor);
     HideDockWindowPreview();
     if (!SyncPersistentDockHost(targetMonitor))

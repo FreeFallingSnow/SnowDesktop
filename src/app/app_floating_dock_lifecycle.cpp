@@ -505,10 +505,10 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     const bool passiveDragRevealedThisSample =
         UpdatePassiveDragRevealHosts(cursor);
 
-    if (floatingDockVisible_ && pointerPressed &&
+    if ((floatingDockVisible_ || statusBar_) && pointerPressed &&
         !passiveDragRevealedThisSample)
     {
-        if (leftButtonPressed &&
+        if (floatingDockVisible_ && leftButtonPressed &&
             TryActivateDockPopupFromMenuPointerPress(
                 desktopPoint,
                 cursor,
@@ -562,32 +562,40 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
         const bool onNavigation = quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar &&
             PtInRect(&quickNavigationInteractionRect, desktopPoint);
         bool barSession = false;
+        bool onRevealedDockSurface = false;
         for (const auto& ownedHost : persistentDockHosts_)
         {
-            if (!ownedHost || !ownedHost->promoted || !ownedHost->container ||
-                !ownedHost->container->IsMergedWithStatusBar() || !statusBar_ ||
-                !statusBar_->HasInteractionSession(ownedHost->monitor)) continue;
+            if (!ownedHost || !ownedHost->active || !ownedHost->container || !statusBar_) continue;
             auto& host = *ownedHost;
-            barSession = true;
+            const bool merged = host.container->IsMergedWithStatusBar();
+            const bool heldMerged = merged && host.promoted && statusBar_->HasInteractionSession(host.monitor);
+            const bool separateReveal = !merged && statusBar_->HasTemporaryReveal(host.monitor);
+            if (!heldMerged && !separateReveal) continue;
+            barSession = barSession || heldMerged;
             const bool ownSurface = (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
                 (onPanel && systemPanel_->IsOpenForMonitor(host.monitor)) ||
                 (onOwnedMenu && statusBarMenuMonitor_ == host.monitor) ||
                 (onNavigation && statusBarQuickNavigationMonitor_ == host.monitor) ||
-                PtInRect(&host.dockRect, desktopPoint);
+                (IsWindowVisible(host.hwnd) && PtInRect(&host.dockRect, desktopPoint));
+            onRevealedDockSurface = onRevealedDockSurface || (separateReveal && host.promoted && ownSurface);
             if (!ownSurface && !dragSession_.IsActive() && !dragDropController_.IsTransportActive())
             {
                 // Preserve the outside down even while the owned popup is
                 // fading out. Release this monitor's promotion after its hold
                 // ends; a second button-down is neither required nor invented.
-                host.mergedCloseAfterInteraction = true;
-                host.mergedInteractionHeld = true;
+                if (heldMerged)
+                {
+                    host.mergedCloseAfterInteraction = true;
+                    host.mergedInteractionHeld = true;
+                }
+                else statusBar_->DismissTemporaryReveal(host.monitor);
                 CancelStatusBarActivation(host.monitor, false);
             }
         }
         // The bar and its owned surface are one interaction session with the
         // merged Dock. Its own dismissal logic releases this hold; the global
         // pointer sampler must not tear the owner down between down and up.
-        if (!barSession && !onBar &&
+        if (floatingDockVisible_ && !barSession && !onBar && !onRevealedDockSurface &&
             !IsPointOnPromotedDock(desktopPoint) &&
             snowdesktop::floating_dock_rules::
                 ShouldDismissForPointerDown(

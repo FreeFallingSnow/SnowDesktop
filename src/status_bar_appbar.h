@@ -102,26 +102,40 @@ inline bool StatusBarFullscreenCandidate(LONG_PTR style, LONG_PTR extendedStyle,
 // Shared by the production fullscreen observer and its lifecycle regression.
 // An explicit Dock summon may activate our input proxy and minimize an
 // exclusive-fullscreen application. Keep that observation separate from the
-// merged bar's explicit reveal policy. Retain it during this interaction;
-// closing the Dock, switching applications or restoring the source to an
-// ordinary window ends the retention. nullopt is an observation failure.
+// merged bar's explicit reveal policy. An independently revealed status bar
+// owns its lifetime after Dock closes. Switching applications or restoring the
+// source to an ordinary window ends retention. nullopt is an observation failure.
 class StatusBarFullscreenState final
 {
 public:
     bool Observe(std::optional<HWND> source, bool dockPromoted,
         bool foregroundOwned, bool retainedSourceEligible)
     {
-        if (!dockPromoted || !foregroundOwned || !retainedSourceEligible)
+        if ((!dockPromoted && !revealed_) || !foregroundOwned || !retainedSourceEligible)
             dockSource_ = nullptr;
         if (source) source_ = *source;
-        return source_ != nullptr || dockSource_ != nullptr;
+        // A reveal is prepared before Dock changes focus. A refresh in that
+        // interval must retain the still-observed source for the later handoff.
+        if (revealed_ && source_) dockSource_ = source_;
+        const bool fullscreen = source_ != nullptr || dockSource_ != nullptr;
+        if (!fullscreen) revealed_ = false;
+        return fullscreen;
     }
-    void BeginDockReveal() { if (source_) dockSource_ = source_; }
+    void BeginDockReveal(bool revealIndependentBar = false)
+    {
+        if (!source_) return;
+        dockSource_ = source_;
+        if (revealIndependentBar) revealed_ = true;
+    }
+    bool Revealed() const { return revealed_; }
+    void DismissReveal() { revealed_ = false; }
+    bool ShouldHide(bool interacting) const { return Source() && !revealed_ && !interacting; }
     HWND DockSource() const { return dockSource_; }
     HWND Source() const { return source_ ? source_ : dockSource_; }
 private:
     HWND source_ = nullptr;
     HWND dockSource_ = nullptr;
+    bool revealed_ = false;
 };
 
 // AppBar registration is authoritative even while its window is hidden or

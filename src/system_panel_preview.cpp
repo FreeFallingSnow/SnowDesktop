@@ -1328,7 +1328,8 @@ void CheckCalendarResponsive()
         const auto month=Node(scene,"calendar.month").bounds,agenda=Node(scene,"calendar.selected").bounds;
         Require(!scene.Find("calendar.day")&&!scene.Find("calendar.todayLabel")&&month.left==16&&month.top==16,
             "calendar retained the removed today summary or its reserved space");
-        if(width>=560)Require(agenda.left>Node(scene,"date:2026-09-27").bounds.right&&agenda.top==month.top,"wide calendar did not use month/agenda columns");
+        if(width>=560)Require(agenda.left>Node(scene,"date:2026-09-27").bounds.right&&agenda.top==month.top&&
+            agenda.left-32==scene.width-agenda.left-16,"wide calendar did not use equal month/agenda columns");
         else Require(agenda.top>Node(scene,"date:2026-09-30").bounds.bottom,"narrow calendar did not move its agenda below the month");
         Require(model.MaximumScroll()>0,"short calendar viewport lost scroll access to agenda");
         model.Reveal("calendar.manage");const auto& manage=Node(model.View(),"calendar.manage");
@@ -1366,6 +1367,23 @@ void CheckCalendarResponsive()
         SystemPanelModel edge(std::move(boundary),{},StatusBarAction::Calendar);
         Require(!Node(edge.View(),date[0]=='0'?"calendar.previous":"calendar.next").enabled,"calendar navigation escaped the supported date range");
     }
+    auto markedSource=FixtureSource(std::make_shared<PreviewState>());
+    std::vector<calendar::CalendarEvent> markedEvents;
+    for(const auto* date:{"2026-08-31","2026-09-26","2026-10-01"})
+    {calendar::CalendarEvent event;event.id=date;event.date=date;markedEvents.push_back(std::move(event));}
+    unsigned eventBatches=0;
+    markedSource.calendar.events=[](const std::string&)->std::vector<calendar::CalendarEvent>{throw std::runtime_error("batch calendar must not fall back to per-day reads");};
+    markedSource.calendar.eventsInRange=[&](const std::string& from,const std::string& to){
+        ++eventBatches;std::vector<calendar::CalendarEvent> result;
+        for(const auto& event:markedEvents)if(event.date>=from&&event.date<=to)result.push_back(event);return result;
+    };
+    SystemPanelModel marked(std::move(markedSource),{},StatusBarAction::Calendar);
+    Require(eventBatches==1&&Node(marked.View(),"date:2026-08-31").marked&&Node(marked.View(),"date:2026-09-26").marked&&
+        Node(marked.View(),"date:2026-10-01").marked&&!Node(marked.View(),"date:2026-09-27").marked,
+        "one calendar batch did not mark the real event dates across month boundaries");
+    markedEvents[1].date="2026-09-27";markedEvents.erase(markedEvents.begin());marked.Refresh();
+    Require(eventBatches==2&&!Node(marked.View(),"date:2026-08-31").marked&&!Node(marked.View(),"date:2026-09-26").marked&&
+        Node(marked.View(),"date:2026-09-27").marked,"event edits or deletions left stale calendar dots");
 }
 
 std::vector<std::uint32_t> Render(ID2D1Device* device, IDWriteFactory* text,

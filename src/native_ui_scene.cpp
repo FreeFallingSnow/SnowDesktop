@@ -65,7 +65,7 @@ bool Scene::SameContent(const Scene& other)const
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
             a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.trailing!=b.trailing||a.bold!=b.bold||a.outlined!=b.outlined||
-            a.secondary!=b.secondary||a.charging!=b.charging||a.positiveGlyph!=b.positiveGlyph||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
+            a.secondary!=b.secondary||a.charging!=b.charging||a.positiveGlyph!=b.positiveGlyph||a.marked!=b.marked||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
             a.switchStyle!=b.switchStyle||a.busy!=b.busy||a.batteryStyle!=b.batteryStyle||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
             bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
         if(a.image&&a.image!=b.image&&(a.image->width!=b.image->width||a.image->height!=b.image->height||
@@ -385,6 +385,11 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 }
                 else text(n.text,label,n.fontSize,ink,n.bold,n.centered,false,n.wrap,n.trailing);
             }
+        }
+        if(n.marked)
+        {
+            color(n.accent?p.accentText:p.accent,n.enabled);
+            dc->FillEllipse(D2D1::Ellipse(D2D1::Point2F((r.left+r.right)/2,r.bottom-4),1.5f,1.5f),brush.Get());
         }
         if (!n.id.empty() && n.id == focused && n.Interactive())
         { color(p.accent); auto focus=r; focus.left+=2;focus.top+=2;focus.right-=2;focus.bottom-=2; dc->DrawRoundedRectangle(D2D1::RoundedRect(focus,5,5),brush.Get(),2); }

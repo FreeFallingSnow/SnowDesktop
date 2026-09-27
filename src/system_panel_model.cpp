@@ -269,7 +269,9 @@ void SystemPanelModel::ApplyPendingActions()
 void SystemPanelModel::OpenSettings(const wchar_t* uri)
 {if(closed_)return;const auto open=source_.settings;if(open)open(uri);}
 ui::Node& SystemPanelModel::Add(std::string id,ui::Role role,D2D1_RECT_F rect,std::wstring text,std::wstring glyph)
-{ ui::Node node;node.id=std::move(id);node.role=role;node.bounds=rect;node.text=std::move(text);node.glyph=std::move(glyph);node.tooltip=node.text;scene_.nodes.push_back(std::move(node));return scene_.nodes.back(); }
+{ ui::Node node;node.id=std::move(id);node.role=role;node.bounds=rect;node.text=std::move(text);node.glyph=std::move(glyph);node.tooltip=node.text;
+  if(action_!=StatusBarAction::Calendar&&action_!=StatusBarAction::Tray&&!IsSystemResourceAction(action_))node.fontSize=13;
+  scene_.nodes.push_back(std::move(node));return scene_.nodes.back(); }
 void SystemPanelModel::Command(std::string id,std::function<void()> fn)
 { actions_[std::move(id)]=[fn=std::move(fn)](auto){fn();}; }
 bool SystemPanelModel::Invoke(std::string_view id,std::optional<float> value)
@@ -509,7 +511,7 @@ void SystemPanelModel::Header(std::wstring title)
     Add("back",ui::Role::Icon,Rect(12,10,36,36),L"",L"\uE76B").tooltip=_LW("controlCenter.overview");Command("back",[this]{if(!ControlBack())Select(page_=="wifi-adapters"?"wifi":"");});
     const wchar_t* uri=page_=="audio"?L"ms-settings:sound":page_=="brightness"?L"ms-settings:display":page_.starts_with("wifi")?L"ms-settings:network-wifi":page_=="bluetooth"?L"ms-settings:bluetooth":page_=="power"?L"ms-settings:powersleep":nullptr;
     const float settingsLeft=scene_.width-(page_=="wifi"||page_=="bluetooth"?112.f:52.f);
-    auto& node=Add("title",ui::Role::Text,Rect(58,10,uri?settingsLeft-(page_=="wifi"?110.f:70.f):scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=17;
+    auto& node=Add("title",ui::Role::Text,Rect(58,10,uri?settingsLeft-(page_=="wifi"?110.f:70.f):scene_.width-126,36),std::move(title));node.bold=true;node.fontSize=16;
     if(uri)
     {
         auto& settings=Add("header.settings",ui::Role::Icon,Rect(settingsLeft,10,36,36),L"",L"\uE713");
@@ -550,7 +552,7 @@ void SystemPanelModel::Volume(std::string_view direction,float& y)
     const auto label=std::wstring(_LW(direction=="input"?"controlCenter.input":"statusBar.volume"));
     const float sliderRight=scene_.width-(page_.empty()?58.f:16.f),valueRight=sliderRight-10;
     Add(prefix+".label",ui::Role::Text,Rect(16,y,valueRight-76,22),label).fontSize=12;
-    auto& number=Add(prefix+".value",ui::Role::Text,Rect(valueRight-52,y,52,22),valid?Percent(volume*100):L"—");number.fontSize=12;number.trailing=true;y+=24;
+    auto& number=Add(prefix+".value",ui::Role::Text,Rect(valueRight-52,y,52,22),valid?Percent(volume*100):L"—");number.fontSize=12;number.trailing=true;y+=22;
     const wchar_t* speaker=muted?L"\uE74F":volume<=0?L"\uE992":volume<.34f?L"\uE993":volume<.67f?L"\uE994":L"\uE995";
     auto& mute=Add(prefix+".mute",ui::Role::Icon,Rect(20,y,40,40),L"",direction=="input"?(muted?L"\uF781":L"\uE720"):speaker);
     mute.enabled=valid;mute.tooltip=label+L" · "+_LW(muted?"controlCenter.unmute":"controlCenter.mute");
@@ -560,7 +562,7 @@ void SystemPanelModel::Volume(std::string_view direction,float& y)
     auto& slider=Add(sliderId,ui::Role::Slider,Rect(68,y,sliderRight-68,40));slider.enabled=valid;slider.value=volume;slider.tooltip=slider.accessibilityLabel=label;
     sliderTargets_[sliderId]=valid?endpoint:std::string{};valueControls_[prefix+".value"]=sliderId;
     actions_[sliderId]=[this,prefix,endpoint](auto value){const auto s=source_.current?source_.current(prefix+".volume"):std::nullopt;if(value&&s&&s->available&&j::String(s->value,"endpointId")==endpoint&&InRange(Number(s->value,"volume")))Start(prefix+".setVolume",{{"volume",std::to_string(*value)}});};
-    if(page_.empty()){Add("audio.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.audioControls");Command("audio.more",[this]{Select("audio");});}y+=50;
+    if(page_.empty()){Add("audio.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.audioControls");Command("audio.more",[this]{Select("audio");});}y+=46;
 }
 void SystemPanelModel::Overview(float& y)
 {
@@ -570,12 +572,12 @@ void SystemPanelModel::Overview(float& y)
     for(std::size_t i=0;i<radios.size();++i)
     {
         const auto& key=radios[i];const float left=16+static_cast<float>(i)*(radioWidth+8);
-        Radio(key,Rect(left,y,radioWidth-32,64),false);scene_.nodes.back().joinRight=true;
-        auto& more=Add(key+".more",ui::Role::Button,Rect(left+radioWidth-32,y,32,64),L"",L"\uE76C");
+        Radio(key,Rect(left,y,radioWidth-32,56),false);scene_.nodes.back().joinRight=true;
+        auto& more=Add(key+".more",ui::Role::Button,Rect(left+radioWidth-32,y,32,56),L"",L"\uE76C");
         more.accent=scene_.Find("radio:"+key)->selected;more.joinLeft=true;more.tooltip=_LW(key=="bluetooth"?"statusBar.bluetoothControls":"statusBar.wifiControls");
         Command(key+".more",[this,key]{Select(key);});
     }
-    if(!radios.empty())y+=82;
+    if(!radios.empty())y+=68;
     if(settings_.audioControls)Volume("output",y);
     if(settings_.brightnessControls)
     {
@@ -584,15 +586,15 @@ void SystemPanelModel::Overview(float& y)
     const bool valid=m!=monitors.end();const auto id=valid?j::String(*m,"id"):std::string{};
     const float level=valid?static_cast<float>(j::Numeric(*m,"brightness")):0;
     Add("brightness.label",ui::Role::Text,Rect(16,y,scene_.width-144,22),_LW("statusBar.brightnessControls")).fontSize=12;
-    auto& number=Add("brightness.value",ui::Role::Text,Rect(scene_.width-120,y,52,22),valid?Percent(level):L"—");number.fontSize=12;number.trailing=true;y+=24;
+    auto& number=Add("brightness.value",ui::Role::Text,Rect(scene_.width-120,y,52,22),valid?Percent(level):L"—");number.fontSize=12;number.trailing=true;y+=22;
     Add("brightness.icon",ui::Role::Text,Rect(20,y,40,40),L"",L"\uE706");
     const auto sliderId="brightness.level:"+id;
     auto& slider=Add(sliderId,ui::Role::Slider,Rect(68,y,scene_.width-126,40));slider.enabled=valid;slider.value=level/100;slider.tooltip=slider.accessibilityLabel=_LW("statusBar.brightnessControls");
     sliderTargets_[sliderId]=valid?id:std::string{};valueControls_["brightness.value"]=sliderId;
     actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};
-    Add("brightness.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.brightnessControls");Command("brightness.more",[this]{Select("brightness");});y+=54;
+    Add("brightness.more",ui::Role::Icon,Rect(scene_.width-52,y,36,40),L"",L"\uE76C").tooltip=_LW("statusBar.brightnessControls");Command("brightness.more",[this]{Select("brightness");});y+=48;
     }
-    Add("divider",ui::Role::Separator,Rect(16,y,scene_.width-32,1));y+=12;
+    Add("divider",ui::Role::Separator,Rect(16,y,scene_.width-32,1));y+=8;
     if(settings_.powerControls)
     {
     const auto power=Current("system.power.plans");const auto* battery=power.Find("batteryPercent");
@@ -615,17 +617,17 @@ void SystemPanelModel::Audio(float& y)
     // Keep both everyday adjustments ahead of arbitrarily long endpoint lists.
     // Device selection remains complete in the same accessible scroll flow.
     Volume("output",y);Volume("input",y);
-    Add("audio.divider",ui::Role::Separator,Rect(16,y,scene_.width-32,1));y+=16;
+    Add("audio.divider",ui::Role::Separator,Rect(16,y,scene_.width-32,1));y+=12;
     for(const auto* direction:{"output","input"})
     {
-        Add(std::string(direction)+".heading",ui::Role::Text,Rect(16,y,scene_.width-32,28),_LW(std::string_view(direction)=="input"?"controlCenter.input":"controlCenter.output")).bold=true;y+=34;
+        Add(std::string(direction)+".heading",ui::Role::Text,Rect(16,y,scene_.width-32,24),_LW(std::string_view(direction)=="input"?"controlCenter.input":"controlCenter.output")).bold=true;y+=30;
         const auto prefix="audio."+std::string(direction);const auto active=j::String(Current((prefix+".volume").c_str()),"endpointId");
         bool found=false;for(const auto& d:system_control::AudioPresentationDevices(value,direction))
         {
             found=true;const auto endpoint=j::String(d,"id"),id=prefix+".device:"+endpoint;
-            auto& node=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,48),Wide(j::String(d,"name")),std::string_view(direction)=="input"?L"\uE720":L"\uE767");node.selected=endpoint==active;
+            auto& node=Add(id,ui::Role::ListItem,Rect(16,y,scene_.width-32,44),Wide(j::String(d,"name")),std::string_view(direction)=="input"?L"\uE720":L"\uE767");node.selected=endpoint==active;
             BindAction(id,prefix+".selectDevice",endpoint);
-            Command(id,[this,prefix,endpoint]{Start(prefix+".selectDevice",{{"endpointId",endpoint}});});y+=50;
+            Command(id,[this,prefix,endpoint]{Start(prefix+".selectDevice",{{"endpointId",endpoint}});});y+=48;
         }
         if(!found){Add(prefix+".empty",ui::Role::Text,Rect(16,y,scene_.width-32,32),_LW("controlCenter.unavailable"));y+=36;}
         y+=8;
@@ -637,12 +639,12 @@ void SystemPanelModel::Brightness(float& y)
     for(const auto& m:monitors)
     {
         const auto id=j::String(m,"id");const bool valid=!id.empty()&&j::Flag(m,"available")&&InRange(Number(m,"brightness"),100);
-        Add("display:"+id,ui::Role::Text,Rect(16,y,scene_.width-102,34),Wide(j::String(m,"name")),L"\uE7F4");
-        Add("display.value:"+id,ui::Role::Text,Rect(scene_.width-78,y,52,34),valid?Percent(Number(m,"brightness")):L"—").trailing=true;y+=38;
+        Add("display:"+id,ui::Role::Text,Rect(16,y,scene_.width-102,30),Wide(j::String(m,"name")),L"\uE7F4");
+        Add("display.value:"+id,ui::Role::Text,Rect(scene_.width-78,y,52,30),valid?Percent(Number(m,"brightness")):L"—").trailing=true;y+=32;
         const auto sliderId="display.level:"+id;
         auto& slider=Add(sliderId,ui::Role::Slider,Rect(16,y,scene_.width-32,40));slider.enabled=valid;slider.value=valid?static_cast<float>(Number(m,"brightness")/100):0;slider.tooltip=slider.accessibilityLabel=Wide(j::String(m,"name"))+L" · "+_LW("statusBar.brightnessControls");
         sliderTargets_[sliderId]=valid?id:std::string{};valueControls_["display.value:"+id]=sliderId;
-        actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};y+=58;
+        actions_[sliderId]=[this,id](auto v){const auto current=Current("system.display.brightness");const auto& displays=Items(current,"monitors");if(v&&std::any_of(displays.begin(),displays.end(),[&](const auto& d){return j::String(d,"id")==id&&j::Flag(d,"available");}))Start("system.display.setBrightness",{{"monitorId",id},{"brightness",std::to_string(*v*100)}});};y+=48;
     }
     if(monitors.empty()){Add("empty",ui::Role::Text,Rect(16,y,scene_.width-32,56),_LW("controlCenter.unsupportedHint"));y+=64;}
 }
@@ -673,12 +675,12 @@ void SystemPanelModel::WifiPage(float& y)
     {
         const auto id=j::String(n,"id"),profile=j::String(n,"profileName");const bool connected=j::Flag(n,"connected"),open=id==network_;
         const auto card="wifi.card:"+id;const float cardTop=y;
-        Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?100.f:56.f)).hoverGroup=card;
-        auto& row=Add("wifi.network:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,56),Wide(j::String(n,"ssid")),L"\uE701");row.detail=(connected?std::wstring(_LW("controlCenter.connected"))+L" · ":L"")+Percent(j::Numeric(n,"signal"));
+        Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?96.f:52.f)).hoverGroup=card;
+        auto& row=Add("wifi.network:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,52),Wide(j::String(n,"ssid")),L"\uE701");row.detail=(connected?std::wstring(_LW("controlCenter.connected"))+L" · ":L"")+Percent(j::Numeric(n,"signal"));
         row.hoverGroup=card;
         BindAction("wifi.connect:"+id,"wifi.connection:"+interface_,id,row.id,radioGroup);
         if(!profile.empty())BindAction("wifi.forget:"+id,"wifi.forget:"+interface_,profile,row.id,radioGroup);
-        Command(row.id,[this,id]{CancelControlInput();network_=network_==id?std::string{}:id;});y+=56;
+        Command(row.id,[this,id]{CancelControlInput();network_=network_==id?std::string{}:id;});y+=52;
         if(open)
         {
             const bool editing=controlDraft_&&controlDraft_->request.name=="network.wifi.connect"&&!controlDraft_->hidden&&controlDraft_->request.arguments["networkId"]==id;
@@ -723,13 +725,13 @@ void SystemPanelModel::Bluetooth(float& y)
         const auto radioGroup=radioId.empty()?std::string("bluetooth.unknown"):"bluetooth.radio:"+radioId;
         const bool devicePowered=radioId.empty()?powered:std::any_of(radios.begin(),radios.end(),[&](const auto& r){return j::String(r,"id")==radioId&&j::Flag(r,"available")&&j::Flag(r,"enabled");});
         const auto card="bluetooth.card:"+id;
-        Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?106.f:62.f)).hoverGroup=card;
-        auto& row=Add("bluetooth.device:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,62),Wide(j::String(d,"name")),L"\uE702");
+        Add(card,ui::Role::Card,Rect(16,y,scene_.width-32,open?98.f:54.f)).hoverGroup=card;
+        auto& row=Add("bluetooth.device:"+id,ui::Role::ListItem,Rect(16,y,scene_.width-32,54),Wide(j::String(d,"name")),L"\uE702");
         row.hoverGroup=card;
         row.enabled=devicePowered;
         if(supported)BindAction("bluetooth.connect:"+id,"bluetooth.connection:"+id,id,row.id,radioGroup);
         row.detail=_LW(connected?"controlCenter.connected":"controlCenter.connect");if(const auto* level=d.Find("batteryPercent");level&&level->IsNumber())row.detail+=L" · "+Percent(level->number);
-        Command(row.id,[this,id]{bluetooth_=bluetooth_==id?std::string{}:id;});y+=62;
+        Command(row.id,[this,id]{bluetooth_=bluetooth_==id?std::string{}:id;});y+=54;
         if(open)
         {
             const float buttonWidth=(std::min)(supported?134.f:196.f,scene_.width-48);
@@ -794,7 +796,7 @@ void SystemPanelModel::Media(float& y)
 }
 void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeight)
 {
-    float mediaHeight=0;if(withMedia&&mediaState_&&mediaState_->available&&!mediaState_->sessions.empty())mediaHeight=56;
+    float mediaHeight=0;if(withMedia&&mediaState_&&mediaState_->available&&!mediaState_->sessions.empty())mediaHeight=48;
     const float maxBody=(std::max)(32.f,available_-mediaHeight-(mediaHeight?8:0));
     const float end=(std::min)((std::max)(bodyEnd+8,minimumBodyHeight),maxBody);maxScroll_=(std::max)(0.f,bodyEnd+8-end);scroll_=std::clamp(scroll_,0.f,maxScroll_);
     if(end<bodyStart_+48)bodyStart_=0;
@@ -802,7 +804,7 @@ void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeig
     for(auto& n:scene_.nodes)if(n.bounds.top>=bodyStart_&&n.bounds.left>=bodyLeft_){n.clip=clip;n.bounds.top-=scroll_;n.bounds.bottom-=scroll_;for(auto& path:n.paths)for(auto& p:path)p.y-=scroll_;}
     scene_.cards.push_back(Rect(0,0,scene_.width,end));scene_.height=end;
     if(maxScroll_>0){const auto axis=ScrollbarGeometry();Add("scrollbar",ui::Role::Scrollbar,Rect(scene_.width-4,static_cast<float>(axis.thumbStart),2,static_cast<float>(axis.ThumbExtent())));}
-    if(mediaHeight){float y=end+20;Media(y);scene_.cards.push_back(Rect(0,end+8,scene_.width,mediaHeight));scene_.height=end+8+mediaHeight;}
+    if(mediaHeight){float y=end+16;Media(y);scene_.cards.push_back(Rect(0,end+8,scene_.width,mediaHeight));scene_.height=end+8+mediaHeight;}
 }
 void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
 {
@@ -836,6 +838,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
         }
     }
     if(action_==StatusBarAction::Tray){Tray();return;}if(action_==StatusBarAction::Calendar){Calendar();return;}if(IsSystemResourceAction(action_)){Resources();return;}
+    scene_.width=384;
     // The old offline "media" preset still selects the overview; media has no detail page.
     if(page_=="media")page_.clear();
     PrepareMedia();
@@ -857,7 +860,7 @@ void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
     const bool standalone=controlDraft_&&controlDraft_->returnRoute==ControlDraft::ReturnRoute::ClosePanel;
     if(standalone)
     {
-        auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(title));heading.bold=true;heading.fontSize=17;bodyStart_=56;
+        auto& heading=Add("title",ui::Role::Text,Rect(16,10,scene_.width-32,36),_LW(title));heading.bold=true;heading.fontSize=16;bodyStart_=56;
     }
     else if(!page_.empty())Header(_LW(page_=="wifi-hidden"?"controlCenter.hiddenNetwork":title));float y=bodyStart_;
     if(controlDraft_&&controlDraft_->request.name!="network.wifi.connect")ControlForm(y);
@@ -968,11 +971,26 @@ void SystemPanelModel::Calendar()
     if(!month)return;
     const bool two=scene_.width>=560;
     const float monthLeft=16,monthTop=16;
-    const float monthWidth=two?(std::min)(308.f,(scene_.width-48)*.52f):scene_.width-32,toolbar=monthWidth<280?72.f:36.f;
+    const float monthWidth=two?(scene_.width-48)/2:scene_.width-32,toolbar=monthWidth<280?72.f:36.f;
     const float buttonsTop=monthTop+(toolbar>36?36.f:0.f),gridTop=monthTop+toolbar+12;
     const int offset=(month->weekday+5)%7;
     const auto first=calendar::CalendarService::AddDays(month_,-offset).value_or(month_);
     const auto last=calendar::CalendarService::AddDays(month_,41-offset).value_or("9999-12-31");
+    const auto dates=ui::DateTimePicker::MonthDates(month_);
+    std::set<std::string> requestedDates;
+    for(const auto& date:dates)if(date)requestedDates.insert(*date);
+    for(int i=0;i<3;++i)if(const auto date=calendar::CalendarService::AddDays(date_,i))requestedDates.insert(*date);
+    std::map<std::string,std::vector<calendar::CalendarEvent>> eventsByDate;
+    if(source_.calendar.eventsInRange&&!requestedDates.empty())
+    {
+        // The live callback filters CalendarService's memory snapshot once;
+        // month dots and the selected/nearby agenda observe the same revision.
+        const auto events=source_.calendar.eventsInRange(*requestedDates.begin(),*requestedDates.rbegin());
+        if(closed_)return;
+        for(const auto& event:events)if(requestedDates.contains(event.date))eventsByDate[event.date].push_back(event);
+    }
+    else if(source_.calendar.events)
+        for(const auto& date:requestedDates)eventsByDate[date]=source_.calendar.events(date);
     const auto language=Locale::Instance().GetEffectiveLanguage();const auto locale=Wide(language);
     const auto annotationKey=first+":"+last+":"+language+":"+(source_.calendar.secondaryRevision?source_.calendar.secondaryRevision():std::string{});
     if(annotationKey!=calendarAnnotationKey_)
@@ -1004,13 +1022,13 @@ void SystemPanelModel::Calendar()
         auto& n=Add("calendar.column:"+std::to_string(i),ui::Role::Text,Rect(monthLeft+i*cell,gridTop,cell-4,22),_LW(key.c_str()));
         n.centered=n.secondary=true;n.fontSize=12;
     }
-    const auto dates=ui::DateTimePicker::MonthDates(month_);
     for(int i=0;i<42;++i)
     {
         const auto& date=dates[i];if(!date)continue;
         const auto d=calendar::CalendarService::GetDateInfo(*date);if(!d)continue;
         auto& n=Add("date:"+*date,ui::Role::ListItem,Rect(monthLeft+(i%7)*cell,gridTop+28+(i/7)*34.f,cell-4,30),std::to_wstring(d->day));
         n.centered=true;n.outlined=*date==date_;n.selected=n.accent=*date==today;n.secondary=d->month!=month->month;n.fontSize=13;
+        n.marked=eventsByDate.contains(*date)&&!eventsByDate.at(*date).empty();
         SYSTEMTIME time{};time.wYear=static_cast<WORD>(d->year);time.wMonth=static_cast<WORD>(d->month);time.wDay=static_cast<WORD>(d->day);wchar_t weekday[96]{};
         GetDateFormatEx(locale.c_str(),0,&time,L"dddd",weekday,96,nullptr);
         n.tooltip=Wide(*date);if(weekday[0])n.tooltip+=L" · "+std::wstring(weekday);
@@ -1041,7 +1059,7 @@ void SystemPanelModel::Calendar()
     for(int i=0;i<3;++i)if(const auto date=calendar::CalendarService::AddDays(date_,i))
     {
         agenda[i].first=*date;
-        if(source_.calendar.events)agenda[i].second=source_.calendar.events(*date);
+        if(const auto found=eventsByDate.find(*date);found!=eventsByDate.end())agenda[i].second=found->second;
         hasEvents=hasEvents||!agenda[i].second.empty();
     }
     // The selected date is first; the following two days provide nearby agenda

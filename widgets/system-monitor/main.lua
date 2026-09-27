@@ -401,15 +401,15 @@ local function buildCards()
         local total = gpu and gpu.dedicatedMemoryBytes or 0
         local used = gpu and gpu.dedicatedUsedBytes or nil
         local percent = total > 0 and used and clamp(used / total * 100) or nil
-        local details = { gpuIdentity }
+        local details = {}
         if gpu then
-            details[#details + 1] = l10n.tr(gpuDetails and
-                "lua_widget.system_monitor.gpu_vram_total" or
-                "lua_widget.system_monitor.gpu_details_unavailable")
             if total > 0 then
                 details[#details + 1] = (used and formatBytes(used) or "—") ..
                     " / " .. formatBytes(total)
             end
+            details[#details + 1] = l10n.tr(gpuDetails and
+                "lua_widget.system_monitor.gpu_vram_total" or
+                "lua_widget.system_monitor.gpu_details_unavailable")
         end
         cards[#cards + 1] = {
             id = "vram",

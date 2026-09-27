@@ -1089,6 +1089,23 @@ void CheckStatusBarFullscreenDockSession()
     Check(firstMonitor.Observe(fullWindow, false, false, false),
         "closing Dock cannot reveal the bar when the fullscreen application remains visible");
 
+    // Regression: Dock closed between the independent bar press and popup
+    // opening, hiding its owner and canceling the queued action.
+    firstMonitor.BeginDockReveal(true);
+    Check(!firstMonitor.ShouldHide(false) && !secondMonitor.Revealed(),
+        "a fullscreen summon reveals only its own independent status bar");
+    firstMonitor.Observe(fullWindow, true, false, true);
+    Check(firstMonitor.Observe(HWND{}, false, true, true) && !firstMonitor.ShouldHide(false),
+        "closing Dock must leave the independently revealed bar available for its next click");
+    firstMonitor.DismissReveal();
+    Check(firstMonitor.ShouldHide(false) && !firstMonitor.ShouldHide(true),
+        "own dismissal hides the bar only after its popup or queued action has finished");
+    firstMonitor.Observe(fullWindow, false, false, false); firstMonitor.BeginDockReveal(true);
+    Check(!firstMonitor.Observe(HWND{}, false, false, false) && !firstMonitor.Revealed(),
+        "leaving fullscreen retires the old independent reveal session");
+    firstMonitor.Observe(fullWindow, false, false, false);
+    Check(firstMonitor.ShouldHide(false), "a later fullscreen session must not inherit a previous reveal");
+
     namespace policy = floating_dock_rules;
     for (const bool fullscreen : {false, true})
     {

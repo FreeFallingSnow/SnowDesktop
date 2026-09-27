@@ -31,7 +31,7 @@ struct Node
     std::wstring text, detail, glyph, tooltip, accessibilityLabel;
     float fontSize = 14, value = 0;
     bool enabled = true, selected = false, accent = false, centered = false, trailing = false, bold = false;
-    bool outlined = false, secondary = false, charging = false, positiveGlyph = false;
+    bool outlined = false, secondary = false, charging = false, positiveGlyph = false, marked = false;
     bool wrap = false, joinLeft = false, joinRight = false, switchStyle = false, busy = false, batteryStyle = false;
     std::shared_ptr<const Image> image;
     std::vector<std::vector<D2D1_POINT_2F>> paths;

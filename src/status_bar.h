@@ -67,6 +67,9 @@ public:
     bool PostActivation(HWND owner, std::function<void()> callback);
     // UI-thread summon boundary: sample before any Dock window/focus changes.
     void PrepareDockReveal(HMONITOR monitor);
+    // Separate fullscreen bars dismiss from their own interaction, not Dock close.
+    bool HasTemporaryReveal(HMONITOR monitor) const;
+    void DismissTemporaryReveal(HMONITOR monitor);
     void SetDockStateProvider(std::function<StatusBarDockState(HMONITOR)> provider);
     void SetMergedAppearanceProvider(std::function<PersonalizationSettings(HMONITOR)> provider);
     void RefreshDockState(HMONITOR monitor);
