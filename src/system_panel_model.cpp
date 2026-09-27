@@ -1082,7 +1082,7 @@ void SystemPanelModel::Calendar()
     if(const auto selected=calendarAnnotations_.find(date_);selected!=calendarAnnotations_.end())
     {
         const auto text=Wide(selected->second);
-        if(!text.empty()){auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y,agendaWidth,36),text);n.fontSize=12;n.secondary=n.wrap=true;y+=40;}
+        if(!text.empty()){auto& n=Add("calendar.selectedSecondary",ui::Role::Text,Rect(agendaLeft,y-16,agendaWidth,36),text);n.fontSize=12;n.secondary=n.wrap=true;y+=40;}
     }
     if(!calendarNotice_.empty())
     {
