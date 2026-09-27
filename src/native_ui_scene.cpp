@@ -65,7 +65,7 @@ bool Scene::SameContent(const Scene& other)const
             a.text!=b.text||a.detail!=b.detail||a.glyph!=b.glyph||a.tooltip!=b.tooltip||a.accessibilityLabel!=b.accessibilityLabel||
             a.fontSize!=b.fontSize||a.value!=b.value||a.enabled!=b.enabled||a.selected!=b.selected||
             a.accent!=b.accent||a.centered!=b.centered||a.trailing!=b.trailing||a.bold!=b.bold||a.outlined!=b.outlined||
-            a.secondary!=b.secondary||a.charging!=b.charging||a.positiveGlyph!=b.positiveGlyph||a.marked!=b.marked||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
+            a.secondary!=b.secondary||a.charging!=b.charging||a.pluggedIn!=b.pluggedIn||a.positiveGlyph!=b.positiveGlyph||a.marked!=b.marked||a.wrap!=b.wrap||a.joinLeft!=b.joinLeft||a.joinRight!=b.joinRight||
             a.switchStyle!=b.switchStyle||a.busy!=b.busy||a.batteryStyle!=b.batteryStyle||a.dashedPaths!=b.dashedPaths||a.fillPaths!=b.fillPaths||a.chartGrid!=b.chartGrid||
             bool(a.image)!=bool(b.image)||a.paths.size()!=b.paths.size())return false;
         if(a.image&&a.image!=b.image&&(a.image->width!=b.image->width||a.image->height!=b.image->height||
@@ -340,7 +340,7 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
             {
                 const auto frame=D2D1::RectF(r.left,(r.top+r.bottom-20)/2,r.left+20,(r.top+r.bottom+20)/2);
                 if(std::isfinite(n.value)&&n.value>=0&&n.value<=1)
-                    DrawStatusBarBattery(dc,brush.Get(),frame,n.value*100,n.charging,ink,
+                    DrawStatusBarBattery(dc,brush.Get(),frame,n.value*100,n.charging,n.pluggedIn,ink,
                         (n.charging||n.positiveGlyph)&&!p.highContrast?D2D1::ColorF(0x34c759):ink);
                 else text(n.glyph,frame,18,ink,false,true,true);
                 label.left+=32;

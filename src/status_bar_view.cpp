@@ -156,6 +156,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             audio->volume < .5 ? kSpeakerLow : kSpeaker,
         battery.glyph};
     control.batteryTone = battery.tone;
+    control.batteryPluggedIn = battery.pluggedIn;
     control.batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
     control.controlTips[0] = networkTip;
     control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
@@ -175,7 +176,7 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
         if (a.icon) return a.icon->key == b.icon->key && a.icon->width == b.icon->width &&
             a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
         return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
-            a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel &&
+            a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
             a.flipGlyph == b.flipGlyph;
     });
 }
@@ -339,7 +340,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                             const float top = (rect.top + rect.bottom - 20 * scale) / 2;
                             DrawStatusBarBattery(context, brush.Get(),
                                 D2D1::RectF(left + 4 * scale, top, left + 24 * scale, top + 20 * scale),
-                                item.batteryLevel * 10., item.batteryTone == StatusBarBatteryTone::Charging,
+                                item.batteryLevel * 10., item.batteryTone == StatusBarBatteryTone::Charging, item.batteryPluggedIn,
                                 color, brush->GetColor());
                         }
                         else

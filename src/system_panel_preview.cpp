@@ -1700,16 +1700,16 @@ void CheckBatteryStates(ID2D1Device* device, IDWriteFactory* text,
 {
     request.canvasWidth=240;request.canvasHeight=48;request.dpi=96;request.transparent=request.contentOnly=true;
     auto state=std::make_shared<PreviewState>();auto source=FixtureSource(state);const auto read=source.current;
-    double percent=100;bool charging=true,known=true;
+    double percent=100;bool charging=true,known=true,onAC=true;
     source.current=[&](auto topic){auto result=read(topic);if(result&&topic=="system.power.plans"){
         result->value.object["batteryPresent"]=j::Boolean(known);result->value.object["batteryPercent"]=j::Number(percent);
-        result->value.object["charging"]=j::Boolean(charging);result->value.object["onAC"]=j::Boolean(true);}return result;};
+        result->value.object["charging"]=j::Boolean(charging);result->value.object["onAC"]=j::Boolean(onAC);}return result;};
     SystemPanelModel model(std::move(source),{},StatusBarAction::ControlCenter);
     const auto capture=[&]{model.Refresh();ui::Scene scene;scene.width=240;scene.height=48;auto battery=Node(model.View(),"battery");battery.bounds={0,0,240,48};scene.nodes.push_back(battery);return Render(device,text,request,scene,appearance,background,{},0,0);};
     const auto filling=capture();const auto chargingTip=Node(model.View(),"battery").tooltip;
     Require(Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph,"100% while charging lost its charging state");
     charging=false;const auto full=capture();
-    Require(!Node(model.View(),"battery").charging&&Node(model.View(),"battery").positiveGlyph&&
+    Require(!Node(model.View(),"battery").charging&&Node(model.View(),"battery").positiveGlyph&&Node(model.View(),"battery").pluggedIn&&
         Node(model.View(),"battery").tooltip!=chargingTip&&full!=filling,"full battery remained indistinguishable from charging");
     const auto green=[](const auto& pixels){return std::count_if(pixels.begin(),pixels.end(),[](auto p){return ((p>>8)&255)>((p>>16)&255)+30&&((p>>8)&255)>(p&255)+30;});};
     Require(green(full)>8&&green(filling)>8,"charging/full battery did not render its green fill");
@@ -1727,7 +1727,9 @@ void CheckBatteryStates(ID2D1Device* device, IDWriteFactory* text,
     Require(green(contrast)==0&&(contrast[24*240]>>24)>0,"high-contrast battery kept fixed green fill or omitted its system foreground outline");
     charging=false;
     percent=80;const auto limited=capture();
-    Require(!Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&limited!=full,"AC charge limit was mislabeled as full/charging");
+    Require(!Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&Node(model.View(),"battery").pluggedIn&&limited!=full,"AC charge limit was mislabeled as full/charging");
+    onAC=false;const auto unplugged=capture();
+    Require(!Node(model.View(),"battery").pluggedIn&&unplugged!=limited,"unplugging at the same percentage left the power mark visible");
     known=false;const auto unknown=capture();Require(Node(model.View(),"battery").text==L"—"&&Node(model.View(),"battery").value<0&&
         !Node(model.View(),"battery").charging&&!Node(model.View(),"battery").positiveGlyph&&green(unknown)==0,
         "unknown battery rendered a confirmed level or state");

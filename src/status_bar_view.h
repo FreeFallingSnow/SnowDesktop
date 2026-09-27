@@ -24,6 +24,7 @@ struct StatusBarItem
     StatusBarBatteryTone batteryTone = StatusBarBatteryTone::Normal;
     int batteryLevel = -1;
     bool flipGlyph = false;
+    bool batteryPluggedIn = false;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.

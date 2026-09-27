@@ -31,6 +31,7 @@ struct StatusBarBatteryVisual
     const wchar_t* glyph = status_bar_glyphs::kUnknown;
     const char* label = "statusBar.battery";
     StatusBarBatteryTone tone = StatusBarBatteryTone::Normal;
+    bool pluggedIn = false;
 };
 inline StatusBarBatteryVisual ResolveStatusBarBatteryVisual(double percent,
     bool charging, bool onAC, bool saver = false)
@@ -38,6 +39,7 @@ inline StatusBarBatteryVisual ResolveStatusBarBatteryVisual(double percent,
     const int level = StatusBarBatteryLevel(percent);
     if (level < 0) return {};
     StatusBarBatteryVisual result;
+    result.pluggedIn = onAC;
     result.glyph = (charging ? StatusBarChargingGlyphs : StatusBarBatteryGlyphs)[static_cast<std::size_t>(level)];
     // The OS charging flag wins even at 100%. AC alone also covers charge
     // limits and paused charging, so it must not imply a bolt or a full battery.
@@ -54,7 +56,7 @@ inline StatusBarBatteryVisual ResolveStatusBarBatteryVisual(double percent,
 // independent of its fill color; only a confirmed percentage fills the body.
 // The caller supplies high-contrast colors and reuses its existing brush.
 inline void DrawStatusBarBattery(ID2D1RenderTarget* context,ID2D1SolidColorBrush* brush,
-    D2D1_RECT_F bounds,double percent,bool charging,D2D1_COLOR_F foreground,D2D1_COLOR_F fill)
+    D2D1_RECT_F bounds,double percent,bool charging,bool pluggedIn,D2D1_COLOR_F foreground,D2D1_COLOR_F fill)
 {
     if(!context||!brush||bounds.right<=bounds.left||bounds.bottom<=bounds.top)return;
     const float sx=(bounds.right-bounds.left)/20,sy=(bounds.bottom-bounds.top)/20;
@@ -70,17 +72,44 @@ inline void DrawStatusBarBattery(ID2D1RenderTarget* context,ID2D1SolidColorBrush
     brush->SetColor(foreground);
     context->DrawRoundedRectangle(D2D1::RoundedRect(rect(.75f,5.5f,17.75f,14.5f),2*unit,2*unit),brush,1.25f*unit);
     context->FillRoundedRectangle(D2D1::RoundedRect(rect(18.75f,8.25f,20,11.75f),.5f*unit,.5f*unit),brush);
-    if(known&&charging)
+    if(known&&(charging||pluggedIn))
     {
-        Microsoft::WRL::ComPtr<ID2D1Factory> factory;context->GetFactory(&factory);
-        Microsoft::WRL::ComPtr<ID2D1PathGeometry> bolt;Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
-        if(factory&&SUCCEEDED(factory->CreatePathGeometry(&bolt))&&SUCCEEDED(bolt->Open(&sink)))
+        // Power marks stay inside the body instead of crossing its outline.
+        // AC without active charging uses a plug, including charge limits/full.
+        Microsoft::WRL::ComPtr<ID2D1PathGeometry> bolt;
+        if(charging)
         {
-            sink->BeginFigure(point(11,2.5f),D2D1_FIGURE_BEGIN_FILLED);
-            const D2D1_POINT_2F points[]{point(6.5f,10.5f),point(9,10.5f),point(8.5f,17.5f),point(13.5f,8.5f),point(11,8.5f)};
-            sink->AddLines(points,static_cast<UINT32>(std::size(points)));sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-            if(SUCCEEDED(sink->Close()))context->FillGeometry(bolt.Get(),brush);
+            Microsoft::WRL::ComPtr<ID2D1Factory> factory;context->GetFactory(&factory);
+            Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+            if(factory&&SUCCEEDED(factory->CreatePathGeometry(&bolt))&&SUCCEEDED(bolt->Open(&sink)))
+            {
+                sink->BeginFigure(point(10.5f,6.5f),D2D1_FIGURE_BEGIN_FILLED);
+                const D2D1_POINT_2F points[]{point(7.25f,10.25f),point(9,10.25f),point(8.25f,13.5f),point(11.5f,9.5f),point(9.75f,9.5f)};
+                sink->AddLines(points,static_cast<UINT32>(std::size(points)));sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                if(FAILED(sink->Close()))bolt.Reset();
+            }
+            else bolt.Reset();
         }
+        const auto drawMark=[&]{
+            if(charging){if(bolt)context->FillGeometry(bolt.Get(),brush);}
+            else
+            {
+                context->DrawLine(point(8,6.75f),point(8,9),brush,1.25f*unit);
+                context->DrawLine(point(10.5f,6.75f),point(10.5f,9),brush,1.25f*unit);
+                context->FillRoundedRectangle(D2D1::RoundedRect(rect(7.25f,8.5f,11.25f,11.5f),unit,unit),brush);
+                context->DrawLine(point(9.25f,11),point(9.25f,13.25f),brush,1.25f*unit);
+            }
+        };
+        brush->SetColor(foreground);drawMark();
+        if(percent>0)
+        {
+            // Contrast only against the filled part. The rest keeps the
+            // foreground color, including high contrast and low charge levels.
+            context->PushAxisAlignedClip(rect(2.5f,7.25f,2.5f+13.5f*static_cast<float>(percent/100),12.75f),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            const float luminance=.2126f*fill.r+.7152f*fill.g+.0722f*fill.b;
+            brush->SetColor(D2D1::ColorF(luminance>.5f?0x151515:0xffffff));drawMark();context->PopAxisAlignedClip();
+        }
+        brush->SetColor(foreground);
     }
 }
 inline constexpr wchar_t ChargingBatteryPath[] = L"M6.2334 6.17578C5.81383 7.00817 6.41657 7.99587 7.35352 7.9961H8V9.66602C8.00001 11.0629 9.88418 11.5187 10.5176 10.2666L12.7656 5.82031C12.902 5.54975 12.9288 5.2637 12.873 5H16C17.6569 5 19 6.34315 19 8C19.5523 8 20 8.44772 20 9V11C20 11.5523 19.5523 12 19 12L18.9961 12.1543C18.9158 13.7394 17.6051 15 16 15H3C1.34315 15 7.02247e-06 13.6569 0 12V8C6.44266e-08 6.34315 1.34315 5 3 5H6.82812L6.2334 6.17578ZM9.37305 2.18164C9.52978 1.87172 9.99775 1.98294 9.99805 2.33008V5.00098H11.6445C11.8346 5.00098 11.9578 5.20151 11.8721 5.3711L9.62402 9.81641C9.46715 10.1262 9.00001 10.0143 9 9.66699V6.99707H7.35254C7.16285 6.99684 7.03973 6.79635 7.125 6.62696L9.37305 2.18164Z";

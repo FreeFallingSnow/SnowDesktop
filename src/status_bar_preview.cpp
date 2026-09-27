@@ -313,7 +313,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     "unknown battery level must not be drawn as an empty or full battery");
                 changedBattery.power->batteryPercent = 100; changedBattery.power->acPower = true;
                 const auto charged = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
-                Require(charged.batteryTone == StatusBarBatteryTone::FullyCharged &&
+                Require(charged.batteryTone == StatusBarBatteryTone::FullyCharged && charged.batteryPluggedIn &&
                     charged.controlGlyphs[2] == status_bar_glyphs::kBatteryFull &&
                     charged.controlTips[2].find(_LW("statusBar.fullyCharged")) != std::wstring::npos,
                     "AC at 100 percent without charging must show a full battery and a fully charged tooltip");
@@ -327,9 +327,13 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     "finishing a charge at the same percentage must remove the bolt and repaint the battery");
                 changedBattery.power->charging = false; changedBattery.power->batteryPercent = 80;
                 const auto limited = Item(BuildStatusBarItems(settings, changedBattery), "controlCenter");
-                Require(limited.batteryTone == StatusBarBatteryTone::Normal && limited.controlGlyphs[2] != charged.controlGlyphs[2] &&
+                Require(limited.batteryTone == StatusBarBatteryTone::Normal && limited.batteryPluggedIn && limited.controlGlyphs[2] != charged.controlGlyphs[2] &&
                     limited.controlTips[2].find(_LW("statusBar.pluggedIn")) != std::wstring::npos,
                     "charge-limited AC state must retain its real fill without claiming charging or full");
+                auto unplugged = changedBattery; unplugged.power->acPower = false;
+                Require(!Item(BuildStatusBarItems(settings, unplugged), "controlCenter").batteryPluggedIn &&
+                    !SameStatusBarContent(BuildStatusBarItems(settings, changedBattery), BuildStatusBarItems(settings, unplugged)),
+                    "AC removal at the same percentage must repaint the compact power mark");
                 changedBattery.power->batteryPercent = 99.9;
                 Require(Item(BuildStatusBarItems(settings, changedBattery), "controlCenter").controlGlyphs[2] != charged.controlGlyphs[2],
                     "rounding the percentage must not claim the full battery level");

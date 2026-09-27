@@ -607,6 +607,7 @@ void SystemPanelModel::Overview(float& y)
     auto& batteryNode=Add("battery",ui::Role::Text,Rect(16,y,scene_.width-128,36),valid?Percent(battery->number):L"—",std::wstring(1,glyph));
     batteryNode.batteryStyle=true;batteryNode.value=valid?static_cast<float>(battery->number/100):-1;
     batteryNode.charging=visual.tone==StatusBarBatteryTone::Charging;
+    batteryNode.pluggedIn=visual.pluggedIn;
     batteryNode.positiveGlyph=visual.tone==StatusBarBatteryTone::FullyCharged;
     batteryNode.tooltip=batteryNode.accessibilityLabel=std::wstring(_LW(visual.label))+L" · "+batteryNode.text;
     Add("power.more",ui::Role::Icon,Rect(scene_.width-100,y,36,36),L"",L"\uE7E8").tooltip=_LW("statusBar.powerControls");Command("power.more",[this]{Select("power");});
