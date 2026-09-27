@@ -1383,6 +1383,20 @@ void CheckInlineControlForms(ID2D1Device* device,IDWriteFactory* text,
         {
             const auto withoutInputs=pixels;OverlaySystemCalendarInputs(fields,appearance,request.dpi,request.canvasWidth,request.canvasHeight,pixels);
             Require(pixels!=withoutInputs,"control panel preview omitted the real native EDIT children");
+            if(mode==0)
+            {
+                const auto& password=fields.back();
+                auto hovered=Render(device,text,request,model.View(),appearance,background,stage,left,top,nullptr,{},password.id);
+                const auto withoutHoverInputs=hovered;OverlaySystemCalendarInputs(fields,appearance,request.dpi,request.canvasWidth,request.canvasHeight,hovered);
+                const int x0=static_cast<int>(std::floor(password.bounds.left*scale)),y0=static_cast<int>(std::floor(password.bounds.top*scale));
+                const int x1=static_cast<int>(std::ceil(password.bounds.right*scale))-1,y1=static_cast<int>(std::ceil(password.bounds.bottom*scale))-1;
+                for(const int y:{y0,y1})for(const int x:{x0,x1})
+                {
+                    const auto index=static_cast<std::size_t>(y)*request.canvasWidth+x;
+                    Require(pixels[index]==withoutInputs[index]&&hovered[index]==withoutHoverInputs[index],
+                        "inline native password corners covered the real idle/hover card background");
+                }
+            }
         }
         const std::string name=mode==0?"inline-wifi-password":mode==1?"hidden-network-page":mode==2?"inline-forget-confirmation":"inline-power-confirmation";
         const auto path=request.outputDirectory/(request.component+"-"+name+".png");
@@ -1839,13 +1853,28 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 calendarPanel ? StatusBarAction::Calendar : preset == "memory" ? StatusBarAction::Memory :
                 preset == "gpu" || preset == "gpu-partial" ? StatusBarAction::Gpu :
                 preset == "traffic" ? StatusBarAction::Traffic : StatusBarAction::Cpu;
-            SystemPanelModel model(FixtureSource(state),settings,action);
+            SystemPanelModel model(FixtureSource(state),settings,action);std::string renderedHover;
             model.Refresh(available,availableWidth);
             if (controls)
             {
                 model.Select(preset == "overview" || preset == "unavailable" || preset == "bluetooth-off" || preset == "media-empty" ? "" :
                     !state->manySection.empty() ? state->manySection : preset);
                 model.Refresh(available,availableWidth); // Drain deterministic fixture scan completion before rendering.
+                if(preset=="bluetooth"||preset=="bluetooth-many")
+                {
+                    const std::string row="bluetooth.device:bluetooth-device-preview";
+                    ui::Input input;const auto point=VisibleCenter(model.View(),row);
+                    Require(input.Press(model.View(),point),"Bluetooth visual fixture could not press its first device");
+                    const auto expanded=input.Release(model.View(),point);
+                    Require(expanded.kind==ui::InputResult::Kind::Invoke&&expanded.id==row&&model.Invoke(expanded.id),
+                        "Bluetooth visual fixture did not expand through its production input action");
+                    const auto& card=Node(model.View(),"bluetooth.card:bluetooth-device-preview");
+                    const auto& button=Node(model.View(),"bluetooth.connect:bluetooth-device-preview");
+                    Require(button.bounds.right==card.bounds.right-8&&button.bounds.right-button.bounds.left<=196&&
+                        button.bounds.left>card.bounds.left+48&&button.hoverGroup==card.id,
+                        "Bluetooth preview lost its compact right-aligned action or shared whole-card hover");
+                    renderedHover=row;
+                }
             }
             if (resources && preset == "gpu-partial")
             {
@@ -1907,7 +1936,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 "preview canvas is too small for the native panel");
             const int left = (request.canvasWidth-width)/2, top = (request.canvasHeight-height)/2;
             result.stage = "panel.render."+preset;
-            const auto pixels = Render(device,text,request,scene,appearance,background,stage,left,top);
+            const auto pixels = Render(device,text,request,scene,appearance,background,stage,left,top,nullptr,{},renderedHover);
             const auto path = request.outputDirectory/(request.component+"-"+preset+".png");
             result.stage = "panel.png."+preset;
             if (!preview_png::Save(path,request.canvasWidth,request.canvasHeight,pixels,result.error)) return result;

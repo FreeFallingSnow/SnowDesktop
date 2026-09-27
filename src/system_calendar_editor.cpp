@@ -21,6 +21,18 @@ namespace snowdesktop
 namespace
 {
 constexpr UINT_PTR kInputSubclass=0x43414c49;
+constexpr float kInputRadius=6.f;
+struct InputRegion
+{
+    HRGN value=nullptr;
+    explicit InputRegion(HRGN region):value(region)
+    {if(!value)throw std::runtime_error("native input region unavailable");}
+    explicit InputRegion(HWND window):InputRegion(CreateRectRgn(0,0,0,0))
+    {if(GetWindowRgn(window,value)==ERROR)throw std::runtime_error("native input window region unavailable");}
+    ~InputRegion(){if(value)DeleteObject(value);}
+    InputRegion(const InputRegion&)=delete;
+    InputRegion& operator=(const InputRegion&)=delete;
+};
 std::wstring InputText(HWND window)
 {
     std::wstring text(static_cast<std::size_t>((std::max)(0,GetWindowTextLengthW(window)))+1,L'\0');
@@ -52,9 +64,9 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         UINT suppressChar=0;
         std::uint64_t changes=0;
         RECT placed{},region{};
-        bool positioned=false;
+        bool positioned=false;UINT regionDpi=0;
     };
-    HWND parent=nullptr;Change change;Key key;
+    HWND parent=nullptr;Change change;Key key;PointerChanged pointerChanged;
     bool alive=true,interactive=true,styled=false;
     UINT dpi=96,nextControl=0x6000;
     float offset=0;
@@ -63,7 +75,7 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
     std::map<std::string,std::shared_ptr<Entry>> entries;
     Microsoft::WRL::ComPtr<IAccPropServices> accessibility;
 
-    Impl(HWND p,Change changed,Key keyed):parent(p),change(std::move(changed)),key(std::move(keyed))
+    Impl(HWND p,Change changed,Key keyed,PointerChanged pointer):parent(p),change(std::move(changed)),key(std::move(keyed)),pointerChanged(std::move(pointer))
     {CoCreateInstance(CLSID_AccPropServices,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(accessibility.GetAddressOf()));}
     ~Impl(){Dispose();if(font)DeleteObject(font);}
     static bool HandlesKey(const Entry& entry,UINT value,bool ctrl)
@@ -76,8 +88,9 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         auto* holder=reinterpret_cast<std::shared_ptr<Entry>*>(data);const auto entry=*holder;
         if(message==WM_NCDESTROY)
         {
+            const auto owner=entry->owner.lock();const auto pointer=owner&&owner->alive?owner->pointerChanged:PointerChanged{};
             RemoveWindowSubclass(window,Procedure,kInputSubclass);entry->window=nullptr;delete holder;
-            return DefSubclassProc(window,message,wp,lp);
+            const auto result=DefSubclassProc(window,message,wp,lp);if(pointer)pointer();return result;
         }
         const auto owner=entry->owner.lock();
         if(!owner||!owner->alive)return DefSubclassProc(window,message,wp,lp);
@@ -106,7 +119,19 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
             (entry->suppressChar==static_cast<UINT>(wp)||(entry->suppressChar==VK_RETURN&&wp==L'\n')))
         {entry->suppressChar=0;return 0;}
         if(message==WM_KEYUP&&entry->suppressChar==static_cast<UINT>(wp))entry->suppressChar=0;
+        const bool pointerMove=message==WM_MOUSEMOVE||message==WM_NCMOUSEMOVE;
+        if(pointerMove&&owner->pointerChanged)
+        {
+            TRACKMOUSEEVENT tracking{sizeof(tracking),TME_LEAVE|(message==WM_NCMOUSEMOVE?TME_NONCLIENT:0u),window,0};
+            TrackMouseEvent(&tracking);
+        }
         const auto result=DefSubclassProc(window,message,wp,lp);
+        if((pointerMove||message==WM_MOUSELEAVE||message==WM_NCMOUSELEAVE)&&owner->alive&&entry->window)
+        {
+            // Notify only. EDIT keeps its own selection, capture, cursor and
+            // default message processing; the panel coalesces a visual refresh.
+            const auto pointer=owner->pointerChanged;if(pointer)pointer();
+        }
         if(message==WM_IME_ENDCOMPOSITION&&owner->alive&&entry->window)
         {
             entry->composing=false;
@@ -141,7 +166,7 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         auto old=std::move(entries);entries.clear();
         for(const auto& [id,entry]:old){(void)id;Destroy(entry);}
     }
-    void Dispose(){if(!alive)return;alive=false;change={};key={};Clear();}
+    void Dispose(){if(!alive)return;alive=false;change={};key={};pointerChanged={};Clear();}
     std::shared_ptr<Entry> Find(HWND window) const
     {
         if(!window)return {};
@@ -174,16 +199,18 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         entry->window=CreateWindowExW(0,L"EDIT",L"",style,0,0,1,1,parent,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(nextControl++)),GetModuleHandleW(nullptr),nullptr);
         if(!entry->window)throw std::runtime_error("calendar input unavailable");
-        if(!SetWindowSubclass(entry->window,Procedure,kInputSubclass,reinterpret_cast<DWORD_PTR>(holder.get())))
-        {DestroyWindow(entry->window);throw std::runtime_error("calendar input handler unavailable");}
-        holder.release();
         try
         {
             SendMessageW(entry->window,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);
             native_form::EditStyleFailure failure;
-            if(!native_form::AttachEdit(entry->window,palette,dpi,6.f,&failure))
+            if(!native_form::AttachEdit(entry->window,palette,dpi,kInputRadius,&failure))
                 throw std::runtime_error(std::string("calendar input style unavailable: ")+
                     (failure.operation?failure.operation:"unknown")+"; win32="+std::to_string(failure.error));
+            // Observe before the styling subclass consumes nonclient hover or
+            // scrollbar messages. EDIT and styling still receive them normally.
+            if(!SetWindowSubclass(entry->window,Procedure,kInputSubclass,reinterpret_cast<DWORD_PTR>(holder.get())))
+                throw std::runtime_error("calendar input handler unavailable");
+            holder.release();
             SendMessageW(entry->window,EM_SETLIMITTEXT,static_cast<WPARAM>((std::max)(0,field.limit)),0);
             entry->muting=true;SetWindowTextW(entry->window,field.password?L"":field.text.c_str());entry->muting=false;Name(entry);
         }
@@ -198,16 +225,24 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         RECT visible{};const bool shown=IntersectRect(&visible,&bounds,&clip)!=FALSE;
         const bool enabled=interactive&&entry->field.enabled&&shown;
         if((IsWindowEnabled(entry->window)!=FALSE)!=enabled)EnableWindow(entry->window,enabled);
+        const bool resized=bounds.right-bounds.left!=entry->placed.right-entry->placed.left||
+            bounds.bottom-bounds.top!=entry->placed.bottom-entry->placed.top;
         if(!entry->positioned||!EqualRect(&bounds,&entry->placed))
         {
             SetWindowPos(entry->window,nullptr,bounds.left,bounds.top,(std::max)(1L,bounds.right-bounds.left),(std::max)(1L,bounds.bottom-bounds.top),SWP_NOACTIVATE|SWP_NOZORDER);
             entry->placed=bounds;
         }
         RECT region=visible;OffsetRect(&region,-bounds.left,-bounds.top);
-        if(!entry->positioned||!EqualRect(&region,&entry->region))
+        if(!entry->positioned||resized||entry->regionDpi!=dpi||!EqualRect(&region,&entry->region))
         {
-            const auto shape=CreateRectRgn(region.left,region.top,region.right,region.bottom);
-            if(shape&&!SetWindowRgn(entry->window,shape,TRUE))DeleteObject(shape);entry->region=region;
+            const int diameter=2*native_form::detail::Radius(kInputRadius,dpi);
+            // RoundRect paints the last physical edge pixel. Region ellipse
+            // endpoints need the extra unit; the viewport clip bounds it again.
+            InputRegion shape(CreateRoundRectRgn(0,0,bounds.right-bounds.left+1,bounds.bottom-bounds.top+1,diameter,diameter));
+            InputRegion clipRegion(CreateRectRgn(region.left,region.top,region.right,region.bottom));
+            if(CombineRgn(shape.value,shape.value,clipRegion.value,RGN_AND)==ERROR||!SetWindowRgn(entry->window,shape.value,TRUE))
+                throw std::runtime_error("native input clipped region unavailable");
+            shape.value=nullptr;entry->region=region;entry->regionDpi=dpi;
         }
         entry->positioned=true;
         const bool currentlyShown=(GetWindowLongPtrW(entry->window,GWL_STYLE)&WS_VISIBLE)!=0;
@@ -287,8 +322,8 @@ struct SystemCalendarInputs::Impl:std::enable_shared_from_this<Impl>
         return true;
     }
 };
-SystemCalendarInputs::SystemCalendarInputs(HWND parent,Change change,Key key)
-    :impl_(std::make_shared<Impl>(parent,std::move(change),std::move(key))){}
+SystemCalendarInputs::SystemCalendarInputs(HWND parent,Change change,Key key,PointerChanged pointer)
+    :impl_(std::make_shared<Impl>(parent,std::move(change),std::move(key),std::move(pointer))){}
 SystemCalendarInputs::~SystemCalendarInputs(){const auto impl=impl_;impl->Dispose();}
 void SystemCalendarInputs::Sync(const std::vector<SystemCalendarInputField>& fields,const PersonalizationSettings& appearance,UINT dpi)
 {const auto impl=impl_;impl->Sync(fields,appearance,dpi);}
@@ -333,8 +368,9 @@ void SystemCalendarInputs::Print(HDC dc) const
     for(const auto& [id,entry]:impl->entries)
     {
         (void)id;if(!entry->window||!(GetWindowLongPtrW(entry->window,GWL_STYLE)&WS_VISIBLE))continue;
-        const int saved=SaveDC(dc);POINT origin{};GetViewportOrgEx(dc,&origin);const auto& frame=entry->placed;const auto& clip=entry->region;
-        IntersectClipRect(dc,frame.left+clip.left,frame.top+clip.top,frame.left+clip.right,frame.top+clip.bottom);
+        InputRegion region(entry->window);
+        const int saved=SaveDC(dc);POINT origin{};GetViewportOrgEx(dc,&origin);const auto& frame=entry->placed;
+        OffsetRgn(region.value,origin.x+frame.left,origin.y+frame.top);ExtSelectClipRgn(dc,region.value,RGN_AND);
         SetViewportOrgEx(dc,origin.x+frame.left,origin.y+frame.top,nullptr);
         SendMessageW(entry->window,WM_PRINT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT|PRF_NONCLIENT|PRF_ERASEBKGND);RestoreDC(dc,saved);
     }
@@ -516,6 +552,70 @@ void CheckRedirectedInputPaint()
     }catch(...){failure=std::current_exception();}});
     worker.join();if(failure)std::rethrow_exception(failure);
 }
+void CheckRoundedInputFootprint()
+{
+    PreviewApartment apartment;
+    for(const UINT dpi:{96u,144u,192u})for(const int theme:{0,1})
+    {
+        const float scale=static_cast<float>(dpi)/96.f;
+        const int width=static_cast<int>(120*scale),height=static_cast<int>(80*scale);
+        PreviewParent parent(width,height);PersonalizationSettings appearance;appearance.contentTheme=theme;
+        SystemCalendarInputs inputs(parent.window,{},{});PreviewBinding binding(parent,inputs);
+        const std::vector<SystemCalendarInputField> fields{
+            {"control.password:footprint",L"Password",L"",{16,16,104,52},{0,0,120,80},false,true,63,true}};
+        inputs.Sync(fields,appearance,dpi);const auto control=PreviewInput(parent,inputs,fields.front().id);
+        Require(control!=nullptr,"rounded input footprint lost its native child");
+        InputRegion region(control);const auto bounds=Pixels(fields.front().bounds,scale,0);
+        const LONG fieldWidth=bounds.right-bounds.left,fieldHeight=bounds.bottom-bounds.top;
+        Require(!PtInRegion(region.value,0,0)&&!PtInRegion(region.value,fieldWidth-1,0)&&
+            !PtInRegion(region.value,0,fieldHeight-1)&&!PtInRegion(region.value,fieldWidth-1,fieldHeight-1),
+            "rounded native input still covers its card with rectangular corners");
+        struct Dib
+        {
+            HDC dc=CreateCompatibleDC(nullptr);HBITMAP bitmap=nullptr;HGDIOBJ old=nullptr;void* pixels=nullptr;
+            Dib(LONG w,LONG h)
+            {
+                BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=w;
+                info.bmiHeader.biHeight=-h;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
+                bitmap=CreateDIBSection(dc,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
+                if(dc&&bitmap)old=SelectObject(dc,bitmap);
+            }
+            ~Dib(){if(old)SelectObject(dc,old);if(bitmap)DeleteObject(bitmap);if(dc)DeleteDC(dc);}
+        } dib(fieldWidth,fieldHeight);
+        Require(dib.dc&&dib.bitmap&&dib.pixels,"native input footprint surface unavailable");
+        // WM_PRINT directly into an unclipped DC is the independent native
+        // frame oracle. The window region must contain every painted border
+        // and field pixel, including the right/bottom physical edge.
+        SendMessageW(control,WM_PRINT,reinterpret_cast<WPARAM>(dib.dc),PRF_CLIENT|PRF_NONCLIENT|PRF_ERASEBKGND);GdiFlush();
+        const auto palette=native_form::ResolvePalette(appearance);
+        const auto rgb=[](COLORREF c){return(static_cast<std::uint32_t>(GetRValue(c))<<16)|
+            (static_cast<std::uint32_t>(GetGValue(c))<<8)|GetBValue(c);};
+        const auto* native=static_cast<const std::uint32_t*>(dib.pixels);bool right=false,bottom=false;
+        for(LONG y=0;y<fieldHeight;++y)for(LONG x=0;x<fieldWidth;++x)
+        {
+            const auto color=native[static_cast<std::size_t>(y)*fieldWidth+x]&0xffffffu;
+            if(color!=rgb(palette.field)&&color!=rgb(palette.border))continue;
+            Require(PtInRegion(region.value,x,y)!=FALSE,"rounded native input region clipped its actual GDI field or border");
+            right=right||x==fieldWidth-1;bottom=bottom||y==fieldHeight-1;
+        }
+        Require(right&&bottom,"native input footprint oracle did not inspect its physical right/bottom edges");
+        // Different idle/hover backdrops must survive unchanged outside the
+        // actual HWND region. The preview must not invent a second round mask.
+        for(const std::uint32_t backdrop:{0x40102030u,0xc0907060u})
+        {
+            std::vector<std::uint32_t> image(static_cast<std::size_t>(width)*height,backdrop);
+            OverlaySystemCalendarInputs(fields,appearance,dpi,width,height,image);
+            for(LONG y=0;y<fieldHeight;++y)for(LONG x=0;x<fieldWidth;++x)
+            {
+                const auto pixel=image[static_cast<std::size_t>(y+bounds.top)*width+x+bounds.left];
+                if(PtInRegion(region.value,x,y))
+                    Require(pixel==(native[static_cast<std::size_t>(y)*fieldWidth+x]|0xff000000u),
+                        "native input preview differs from its real child frame");
+                else Require(pixel==backdrop,"native input preview overwrote the card/hover behind a clipped corner");
+            }
+        }
+    }
+}
 }
 void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>& fields,const PersonalizationSettings& appearance,
     UINT dpi,int width,int height,std::vector<std::uint32_t>& pixels)
@@ -534,14 +634,15 @@ void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>& fi
     // and rounded panel corners keep their original premultiplied pixels.
     const auto* output=static_cast<const std::uint32_t*>(data);
     const RECT canvas{0,0,width,height};
-    for(const auto& field:fields)
+    for(auto window=GetWindow(parent.window,GW_CHILD);window;window=GetWindow(window,GW_HWNDNEXT))
     {
-        const auto bounds=Pixels(field.bounds,static_cast<float>(dpi)/96.f,0);
-        const auto clip=Pixels(field.clip,static_cast<float>(dpi)/96.f,0);
-        RECT visible{},cropped{};
-        if(!IntersectRect(&visible,&bounds,&clip)||!IntersectRect(&cropped,&visible,&canvas))continue;
+        if(!inputs.Contains(window)||!(GetWindowLongPtrW(window,GWL_STYLE)&WS_VISIBLE))continue;
+        InputRegion region(window);RECT bounds{};GetWindowRect(window,&bounds);
+        MapWindowPoints(nullptr,parent.window,reinterpret_cast<POINT*>(&bounds),2);
+        RECT cropped{};if(!IntersectRect(&cropped,&bounds,&canvas))continue;
         for(LONG y=cropped.top;y<cropped.bottom;++y)for(LONG x=cropped.left;x<cropped.right;++x)
         {
+            if(!PtInRegion(region.value,x-bounds.left,y-bounds.top))continue;
             const auto index=static_cast<std::size_t>(y)*width+x;
             pixels[index]=output[index]|0xff000000u;
         }
@@ -550,17 +651,17 @@ void OverlaySystemCalendarInputs(const std::vector<SystemCalendarInputField>& fi
 void CheckSystemControlPasswordInput()
 {
     PreviewApartment apartment;PreviewParent parent(360,140);PersonalizationSettings appearance;
-    system_control::Secret captured;unsigned changes=0;
+    system_control::Secret captured;unsigned changes=0,pointerChanges=0;
     SystemCalendarInputs inputs(parent.window,[&](std::string,std::wstring value){
         captured=system_control::Secret(value);if(!value.empty())SecureZeroMemory(value.data(),value.size()*sizeof(wchar_t));++changes;
-    },{});PreviewBinding binding(parent,inputs);
+    },{},[&]{++pointerChanges;});PreviewBinding binding(parent,inputs);
     const std::vector<SystemCalendarInputField> fields{
         {"control.password:offline",L"Password",L"",{16,16,344,52},{0,0,360,140},false,true,63,true}};
     inputs.Sync(fields,appearance,96);const auto password=PreviewInput(parent,inputs,fields.front().id);
     Require(password&&GetParent(password)==parent.window&&(GetWindowLongPtrW(password,GWL_STYLE)&ES_PASSWORD)&&
         SendMessageW(password,EM_GETPASSWORDCHAR,0,0)!=0,"embedded password lost its real protected EDIT or created a separate window");
     Microsoft::WRL::ComPtr<IAccessible> accessible;
-    Require(SUCCEEDED(AccessibleObjectFromWindow(password,OBJID_CLIENT,IID_PPV_ARGS(&accessible)))&&accessible,
+    Require(SUCCEEDED(AccessibleObjectFromWindow(password,static_cast<DWORD>(OBJID_CLIENT),IID_PPV_ARGS(&accessible)))&&accessible,
         "embedded password has no native accessibility provider");
     VARIANT child{};child.vt=VT_I4;child.lVal=CHILDID_SELF;VARIANT state{};VariantInit(&state);
     const auto status=accessible->get_accState(child,&state);const bool protectedState=SUCCEEDED(status)&&state.vt==VT_I4&&(state.lVal&STATE_SYSTEM_PROTECTED);VariantClear(&state);
@@ -576,13 +677,28 @@ void CheckSystemControlPasswordInput()
         "protected copy/cut changed the clipboard or deleted the in-panel secret");
     BSTR value=nullptr;const auto read=accessible->get_accValue(child,&value);const bool leaked=SUCCEEDED(read)&&value&&std::wstring_view(value)==L"offline-only-password";if(value)SysFreeString(value);
     Require(!leaked,"native protected accessibility exposed a password value");
+    // Deliver the actual client and styled nonclient messages to a hidden
+    // EDIT. This catches a styling subclass swallowing the hover bridge.
+    const auto capture=GetCapture();const auto changesBefore=changes;
+    SendMessageW(password,EM_SETSEL,2,5);
+    for(const UINT message:{WM_MOUSEMOVE,WM_NCMOUSEMOVE,WM_MOUSELEAVE,WM_NCMOUSELEAVE})
+    {
+        const auto before=pointerChanges;SendMessageW(password,message,0,0);
+        Require(pointerChanges==before+1,"native EDIT client/nonclient pointer change did not reach its panel bridge");
+    }
+    DWORD start=0,end=0;SendMessageW(password,EM_GETSEL,reinterpret_cast<WPARAM>(&start),reinterpret_cast<LPARAM>(&end));
+    Require(GetCapture()==capture&&changes==changesBefore&&start==2&&end==5&&GetWindowTextLengthW(password)==21,
+        "native EDIT hover bridge changed capture, selection or protected input");
+    const auto beforeClose=pointerChanges;
     inputs.Clear();captured.Clear();
-    Require(!IsWindow(password)&&!GetWindow(parent.window,GW_CHILD),"cancel retained the protected child or its undo buffer");
+    Require(!IsWindow(password)&&!GetWindow(parent.window,GW_CHILD)&&pointerChanges>beforeClose,
+        "cancel retained the protected child/undo buffer or omitted the pointer refresh after removal");
 }
 void CheckSystemCalendarInputs()
 {
     CheckChildRedirectionErrors();
     CheckRedirectedInputPaint();
+    CheckRoundedInputFootprint();
     {
         PersonalizationSettings glass;glass.contentTheme=0;glass.widgetAlpha=.25f;
         const std::uint32_t untouched=0x40101010u;

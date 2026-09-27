@@ -19,7 +19,8 @@ class SystemCalendarInputs
 public:
     using Change=std::function<void(std::string,std::wstring)>;
     using Key=std::function<void(std::string,UINT,bool,bool)>;
-    SystemCalendarInputs(HWND parent,Change,Key);
+    using PointerChanged=std::function<void()>;
+    SystemCalendarInputs(HWND parent,Change,Key,PointerChanged={});
     ~SystemCalendarInputs();
     SystemCalendarInputs(const SystemCalendarInputs&)=delete;
     SystemCalendarInputs& operator=(const SystemCalendarInputs&)=delete;
