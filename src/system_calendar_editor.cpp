@@ -435,9 +435,12 @@ void CheckRedirectedInputPaint()
                 RECT client{};GetClientRect(control,&client);
                 Require(GetPixel(pixels.dc,client.right-12,client.bottom-8)==palette.field,
                     "normal calendar EDIT painting did not retain its theme background");
+                RECT textBounds{};SendMessageW(control,EM_GETRECT,0,reinterpret_cast<LPARAM>(&textBounds));
                 bool text=false;
-                for(int y=0;y<(std::min)(client.bottom,30L)&&!text;++y)
-                    for(int x=0;x<(std::min)(client.right-16,180L);++x)
+                // Inspect only the native text formatting area. A themed
+                // border must not be mistaken for successfully painted text.
+                for(int y=textBounds.top;y<(std::min)(textBounds.bottom,textBounds.top+30)&&!text;++y)
+                    for(int x=textBounds.left;x<(std::min)(textBounds.right,textBounds.left+180);++x)
                     {
                         const auto color=GetPixel(pixels.dc,x,y);
                         if(color!=CLR_INVALID&&color!=palette.field){text=true;break;}

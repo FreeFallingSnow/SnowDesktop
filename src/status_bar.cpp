@@ -358,12 +358,12 @@ struct StatusBar::Impl
         {
             if (!mergedDockHeight || closing || failed || !positioned) return false;
             if (!frame.visible) return true;
-            const bool hidden = !IsWindowVisible(hwnd);
-            if (hidden) paintDirty = true;
+            const bool windowHidden = !IsWindowVisible(hwnd);
+            if (windowHidden) paintDirty = true;
             if (paintDirty || !surface || !backgroundSurface) Paint(true);
             if (paintDirty || backgroundDirty || !surface || !backgroundSurface || !visual || !owner.composition)
                 return false;
-            if (hidden)
+            if (windowHidden)
             {
                 ApplyDockPose(frame.opacity);
                 const auto result = owner.composition->Commit();

@@ -1079,7 +1079,11 @@ void SystemPanelModel::OpenCalendarPicker(std::string field)
     if(!CalendarEditing()||calendarConfirmDelete_||calendarPicker_)return;
     if(field=="calendar.edit.date")
     {
-        const auto& text=calendarText_.at(field);calendarPicker_.emplace(std::string(text.begin(),text.end()));
+        const auto& text=calendarText_.at(field);std::string date;date.reserve(text.size());
+        // The form holds an ISO date. Reject unexpected non-ASCII input rather
+        // than silently truncating UTF-16 when handing it to the date control.
+        for(const auto value:text){if(value>L'\x7f')return;date.push_back(static_cast<char>(value));}
+        calendarPicker_.emplace(std::move(date));
     }
     else if((field=="calendar.edit.start"||field=="calendar.edit.end")&&!calendarEditor_->draft.allDay)
     {
