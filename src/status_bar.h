@@ -81,6 +81,10 @@ public:
     // The Dock routes its own blank background through the same dismiss path.
     bool DismissMergedBackground(HMONITOR monitor, POINT screen);
     bool HasInteractionSession(HMONITOR monitor) const;
+    // UI-thread tray menu retention; queries never notify Dock policy callbacks.
+    bool HasTrayMenuSession(HMONITOR monitor) const;
+    bool ContainsTrayMenuPoint(HMONITOR monitor, POINT screen) const;
+    void CancelTrayMenuSession(HMONITOR monitor = nullptr);
     bool ContainsPoint(POINT screen) const;
     RECT AvailableWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
     std::shared_ptr<tray::Service> Tray() const;

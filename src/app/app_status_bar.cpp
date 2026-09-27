@@ -89,6 +89,7 @@ snowdesktop::TrayDragFeedback DesktopApp::MakeStatusBarTrayDragFeedback()
 
 void DesktopApp::CancelStatusBarActivation(HMONITOR monitor, bool immediate)
 {
+    if (statusBar_) statusBar_->CancelTrayMenuSession(monitor);
     if (!monitor || monitor == statusBarActivationMonitor_)
     {
         ++*statusBarActivationGeneration_;
@@ -491,7 +492,8 @@ void DesktopApp::SyncStatusBar()
                 (statusBarQuickNavigationMonitor_ == monitor &&
                     quickNavigationInvocationSource_ == QuickNavigationInvocationSource::StatusBar &&
                     (quickNavigationOpen_ || !quickNavigationAnimation_.IsHidden())) ||
-                (systemPanel_ && systemPanel_->IsOpenForMonitor(monitor));
+                (systemPanel_ && systemPanel_->IsOpenForMonitor(monitor)) ||
+                (statusBar_ && statusBar_->HasTrayMenuSession(monitor));
             for (const auto& host : persistentDockHosts_)
             {
                 if (!host || !host->active || host->monitor != monitor || !host->container ||

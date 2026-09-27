@@ -585,7 +585,6 @@ bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const
 bool SystemPanel::ContainsPoint(POINT screen)const
 {
     if(!IsOpen())return false;
-    const auto contains=[&](HWND window){RECT bounds{};return window&&IsWindowVisible(window)&&GetWindowRect(window,&bounds)&&PtInRect(&bounds,screen);};
     const HWND menu=modern_menu::ActiveRootWindow();
     if(impl_->calendarMenu&&menu&&GetWindow(menu,GW_OWNER)==impl_->window)
     {
@@ -593,8 +592,7 @@ bool SystemPanel::ContainsPoint(POINT screen)const
         for(unsigned depth=0;target&&depth<16;++depth,target=GetWindow(target,GW_OWNER))
             if(target==menu)return true;
     }
-    for(const auto& popup:impl_->context.popups)
-        if(impl_->context.LivePopup(popup)&&contains(reinterpret_cast<HWND>(popup.window)))return true;
+    if(impl_->context.ContainsPoint(screen))return true;
     if(!impl_->window||!IsWindowVisible(impl_->window))return false;
     POINT client=screen;if(!ScreenToClient(impl_->window,&client))return false;
     return impl_->ContainsClientPoint(client);

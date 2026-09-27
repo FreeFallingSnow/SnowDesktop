@@ -92,6 +92,30 @@ struct MenuRetentionSession
             (!observedMenuThread&&!Related(info.hwndMenuOwner)))return false;
         menuOwner=info.hwndMenuOwner;menuThread=thread;return true;
     }
+    bool ContainsPoint(POINT screen)const
+    {
+        if(!tracker.Armed()||!BelongsToTarget(target)||
+            GetWindowThreadProcessId(target,nullptr)!=targetThread)return false;
+        const auto contains=[&](HWND window){RECT bounds{};return window&&IsWindowVisible(window)&&
+            GetWindowRect(window,&bounds)&&PtInRect(&bounds,screen);};
+        for(const auto& popup:popups)
+            if(LivePopup(popup)&&contains(reinterpret_cast<HWND>(popup.window)))return true;
+        // Placement discovery is deliberately short-lived. A submenu opened
+        // later still belongs to the already-confirmed native menu session.
+        if(!menuOwner||!menuThread)return false;
+        const HWND hit=WindowFromPoint(screen);
+        const HWND window=hit?GetAncestor(hit,GA_ROOT):nullptr;
+        DWORD processId=0;
+        if(!window||GetWindowThreadProcessId(window,&processId)!=menuThread||
+            processId!=process||!contains(window))return false;
+        wchar_t name[64]{};GetClassNameW(window,name,static_cast<int>(std::size(name)));
+        if(wcscmp(name,L"#32768")!=0)return false;
+        GUITHREADINFO info{sizeof(info)};
+        return GetGUIThreadInfo(menuThread,&info)&&
+            (info.flags&(GUI_INMENUMODE|GUI_POPUPMENUMODE|GUI_SYSTEMMENUMODE))&&
+            info.hwndMenuOwner==menuOwner&&BelongsToTarget(menuOwner)&&
+            GetWindowThreadProcessId(menuOwner,nullptr)==menuThread;
+    }
     bool Active(HWND foreground,const MenuPopupBindings& observed)
     {
         if(!tracker.Armed())return false;

@@ -9,6 +9,7 @@
 #include "panel_gradient_renderer.h"
 #include "l10n.h"
 #include "tray_service.h"
+#include "tray_focus.h"
 #include "tray_order.h"
 #include "diagnostic_log.h"
 #include "status_bar_layout.h"
@@ -38,7 +39,7 @@ namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45;
-constexpr UINT_PTR kClockTimer = 1;
+constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2;
 std::map<HWND, bool> liveBars; // All access, including out-of-context hooks, on the UI thread.
 void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD event, HWND target, LONG object, LONG, DWORD, DWORD time)
 {
@@ -178,6 +179,8 @@ struct StatusBar::Impl
         StatusBarInteraction interaction;
         bool keyboardFocusVisible = false;
         std::string pressedTray;
+        std::string trayMenuKey;
+        tray::MenuRetentionSession trayMenu;
         POINT trayPress{};
         bool trayDragging = false;
         bool trayExpanded = false;
@@ -192,6 +195,7 @@ struct StatusBar::Impl
         ~Window()
         {
             closing = true;
+            CancelTrayMenu();
             // Owner ends cross-window feedback before erasing this map entry.
             trayPreview = false;
             if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
@@ -272,6 +276,7 @@ struct StatusBar::Impl
         void Hide(bool notify = true)
         {
             activation.Cancel();
+            CancelTrayMenu();
             EndDragFeedback(); dropIndicator.reset();
             pressedTray.clear(); trayDragging = false;
             if (GetCapture() == hwnd) ReleaseCapture();
@@ -377,6 +382,7 @@ struct StatusBar::Impl
             if (!mergedDockHeight || closing) return;
             if (mergedPresentation.inputEnabled && !frame.inputEnabled)
             {
+                CancelTrayMenu();
                 EndDragFeedback(); ClearHover(); interaction.CancelPointer(); keyboardFocusVisible = false;
                 pressedTray.clear(); trayDragging = false; if (GetCapture() == hwnd) ReleaseCapture();
                 if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
@@ -644,8 +650,72 @@ struct StatusBar::Impl
             surface.Reset();
             if (owner.graphicsFailure) owner.graphicsFailure(result);
         }
+        bool CancelTrayMenu()
+        {
+            const bool armed = trayMenu.tracker.Armed();
+            trayMenu.Reset(); trayMenuKey.clear();
+            if (hwnd) KillTimer(hwnd, kTrayMenuTimer);
+            return armed;
+        }
+        bool ArmTrayMenu(const std::string& key)
+        {
+            if (!owner.tray) return CancelTrayMenu();
+            const auto snapshot = owner.tray->Current();
+            for (const auto& icon : snapshot.icons)
+            {
+                if (icon.key != key || (icon.state & NIS_HIDDEN)) continue;
+                const HWND callback = reinterpret_cast<HWND>(icon.identity.window);
+                // Down/up are one gesture: keep any already-observed menu owner.
+                if (trayMenu.tracker.Armed() && trayMenuKey == key && trayMenu.target == callback &&
+                    trayMenu.process == icon.identity.process && trayMenu.BelongsToTarget(callback) &&
+                    GetWindowThreadProcessId(callback, nullptr) == trayMenu.targetThread) return false;
+                const bool changed = CancelTrayMenu();
+                // NOACTIVATE leaves the previous foreground in place while the
+                // asynchronous callback starts. It is only the bounded discovery
+                // origin; the real focus-return ticket still targets this bar.
+                const HWND foreground = GetForegroundWindow();
+                trayMenu.Arm(callback, icon.identity.process, foreground ? foreground : hwnd, hwnd);
+                if (trayMenu.tracker.Armed())
+                {
+                    trayMenuKey = key;
+                    SetTimer(hwnd, kTrayMenuTimer, 50, nullptr);
+                    return true;
+                }
+                return changed;
+            }
+            return CancelTrayMenu();
+        }
+        bool ActiveTrayMenu()
+        {
+            // Called by dockStateProvider: never notify/reenter its owner here.
+            if (!trayMenu.tracker.Armed()) return false;
+            if (!InputAvailable() || !owner.tray || !FindStatusBarTrayFocus(items, trayMenuKey))
+            { CancelTrayMenu(); return false; }
+            return trayMenu.Active(GetForegroundWindow(), owner.tray->MenuPopups(trayMenu.target));
+        }
+        void PollTrayMenu()
+        {
+            const bool armed = trayMenu.tracker.Armed();
+            ActiveTrayMenu();
+            if (!trayMenu.tracker.Armed() || trayMenu.tracker.ObservedMenu())
+                KillTimer(hwnd, kTrayMenuTimer);
+            // Discovery polling stops after observation. Existing foreground and
+            // clock dispatch, plus the Dock's policy queries, track menu closure.
+            if (armed && !trayMenu.tracker.Armed() && owner.dockChanged) owner.dockChanged(false);
+        }
+        void ActivateTray(const std::string& key, tray::Activation action, POINT point, bool leftClick = false)
+        {
+            if (!owner.tray) return;
+            bool changed = ArmTrayMenu(key);
+            bool accepted = false;
+            if (leftClick) accepted = owner.tray->Activate(key, tray::Activation::LeftDown, point, {hwnd, hwnd});
+            accepted = owner.tray->Activate(key, action, point, {hwnd, hwnd}) || accepted;
+            if (!accepted) changed = CancelTrayMenu() || changed;
+            if (changed && owner.dockChanged) owner.dockChanged(false);
+        }
         void DismissSurfaces()
         {
+            CancelTrayMenu();
             if (owner.tray) owner.tray->CancelFocusReturn();
             keyboardFocusVisible = false;
             ClearHover(); interaction.CancelPointer();
@@ -667,11 +737,12 @@ struct StatusBar::Impl
                 if (owner.tray)
                 {
                     owner.tray->SetGeometry(invocation->trayKey, anchor);
-                    owner.tray->Activate(invocation->trayKey, invocation->trayAction, {anchor.left, anchor.top}, {hwnd, hwnd});
+                    ActivateTray(invocation->trayKey, invocation->trayAction, {anchor.left, anchor.top});
                 }
                 return;
             }
             const auto action = invocation->action;
+            CancelTrayMenu();
             if (owner.tray) owner.tray->CancelFocusReturn();
             ClearHover();
             paintDirty = true; Paint();
@@ -691,13 +762,15 @@ struct StatusBar::Impl
                 if (message == WM_LBUTTONDOWN)
                 {
                     pressedTray = item.icon->key; trayPress = point; trayDragging = false;
-                    SetCapture(hwnd); return true;
+                    SetCapture(hwnd);
+                    if (CancelTrayMenu() && owner.dockChanged) owner.dockChanged(false);
+                    return true;
                 }
                 const auto action = message == WM_LBUTTONDOWN ? tray::Activation::LeftDown :
                     message == WM_LBUTTONUP ? tray::Activation::LeftUp :
                     message == WM_LBUTTONDBLCLK ? tray::Activation::DoubleClick :
                     message == WM_RBUTTONDOWN ? tray::Activation::RightDown : tray::Activation::RightUp;
-                owner.tray->Activate(item.icon->key, action, point, {hwnd, hwnd});
+                ActivateTray(item.icon->key, action, point);
                 return true;
             }
             return false;
@@ -739,9 +812,11 @@ struct StatusBar::Impl
                 GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &pid);
                 if (pid && pid != self->explorerPid)
                 {
+                    const bool canceledMenu = self->CancelTrayMenu();
                     self->explorerPid = pid;
                     self->appbar.ExplorerRestarted();
                     self->QueuePlace();
+                    if (canceledMenu && self->owner.dockChanged) self->owner.dockChanged(false);
                 }
                 return 0;
             }
@@ -751,7 +826,12 @@ struct StatusBar::Impl
                     self->interaction, self->items,
                     [&] {
                         if (self->owner.tray) self->owner.tray->CancelFocusReturn();
+                        const auto focused = self->interaction.focused;
+                        const bool sameTray = focused && *focused < self->items.size() && self->items[*focused].icon &&
+                            self->items[*focused].icon->key == self->trayMenuKey;
+                        const bool canceledMenu = !sameTray && self->CancelTrayMenu();
                         self->keyboardFocusVisible = true; self->ClearHover(); self->paintDirty = true; self->Paint();
+                        if (canceledMenu && self->owner.dockChanged) self->owner.dockChanged(false);
                     },
                     [&](bool context) { self->ActivateItem(self->interaction.focused, context); },
                     [&] {
@@ -773,6 +853,7 @@ struct StatusBar::Impl
             case kForeground:
                 if (self->owner.tray) self->owner.tray->ObserveForeground(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
                 if (self->UpdateAppearance()) self->QueuePlace();
+                self->PollTrayMenu();
                 return 0;
             case kFullscreen:
                 if (auto found = liveBars.find(window); found != liveBars.end()) found->second = false;
@@ -793,7 +874,9 @@ struct StatusBar::Impl
                     self->CheckFullscreen();
                     if (self->UpdateAppearance()) self->QueuePlace();
                     else self->Paint();
+                    self->PollTrayMenu();
                 }
+                else if (wp == kTrayMenuTimer) self->PollTrayMenu();
                 return 0;
             case WM_DPICHANGED:
             case WM_DISPLAYCHANGE:
@@ -843,6 +926,7 @@ struct StatusBar::Impl
                 }
                 const UINT trayMessage = message == WM_LBUTTONDBLCLK && !doubleClick ? WM_LBUTTONDOWN : message;
                 if (self->TrayMouse(trayMessage, point)) return 0;
+                if (self->CancelTrayMenu() && self->owner.dockChanged) self->owner.dockChanged(false);
                 break;
             }
             case WM_RBUTTONUP:
@@ -868,8 +952,7 @@ struct StatusBar::Impl
                         return item.icon && item.icon->key == key && PtInRect(&item.bounds, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
                     }))
                     {
-                        self->owner.tray->Activate(key, tray::Activation::LeftDown, screen, {window, window});
-                        self->owner.tray->Activate(key, tray::Activation::LeftUp, screen, {window, window});
+                        self->ActivateTray(key, tray::Activation::LeftUp, screen, true);
                     }
                     return 0;
                 }
@@ -890,6 +973,7 @@ struct StatusBar::Impl
                 for (const auto& item : self->items)
                     if (item.icon && PtInRect(&item.bounds, point)) return 0;
                 ClientToScreen(window, &point);
+                self->CancelTrayMenu();
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
                 self->ClearHover();
                 auto onActivated = self->owner.activate;
@@ -965,8 +1049,13 @@ struct StatusBar::Impl
                     {
                         const float x = (point.x - item.bounds.left) / (self->dpi / 96.f * self->owner.settings.scale);
                         if (StatusBarControlPart(x) != 1) return 0;
+                        const bool canceledMenu = self->CancelTrayMenu();
                         const auto sample = self->owner.data->AudioOutputVolume();
-                        if (!sample || !sample->available) return 0;
+                        if (!sample || !sample->available)
+                        {
+                            if (canceledMenu && self->owner.dockChanged) self->owner.dockChanged(false);
+                            return 0;
+                        }
                         auto& wheel = self->owner.volumeWheel;
                         if (wheel.task && wheel.endpoint != sample->endpointId)
                         { self->owner.data->Controls()->Cancel(wheel.task); wheel.Reset(); }
@@ -981,6 +1070,7 @@ struct StatusBar::Impl
                             self->SyncTooltip(true);
                             TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window, 0}; TrackMouseEvent(&tracking);
                         }
+                        if (canceledMenu && self->owner.dockChanged) self->owner.dockChanged(false);
                         return 0;
                     }
                 break;
@@ -1211,6 +1301,39 @@ bool StatusBar::HasInteractionSession(HMONITOR monitor) const
 {
     return !impl_->removingWindows && impl_->dockStateProvider &&
         impl_->dockStateProvider(monitor).interacting;
+}
+bool StatusBar::HasTrayMenuSession(HMONITOR monitor) const
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor) return window->ActiveTrayMenu();
+    }
+    return false;
+}
+bool StatusBar::ContainsTrayMenuPoint(HMONITOR monitor, POINT screen) const
+{
+    if (impl_->removingWindows) return false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->monitor == monitor)
+            return window->ActiveTrayMenu() && window->trayMenu.ContainsPoint(screen);
+    }
+    return false;
+}
+void StatusBar::CancelTrayMenuSession(HMONITOR monitor)
+{
+    if (impl_->removingWindows) return;
+    bool changed = false;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && (!monitor || window->monitor == monitor)) changed = window->CancelTrayMenu() || changed;
+    }
+    // Clear every requested window before invoking policy, which can query us.
+    if (changed && impl_->dockChanged) impl_->dockChanged(false);
 }
 bool StatusBar::ContainsPoint(POINT screen) const
 {

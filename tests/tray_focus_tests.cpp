@@ -6,10 +6,12 @@
 #include <cstdlib>
 #include <future>
 #include <thread>
+#include <utility>
 
 namespace foreground_fixture
 {
 HWND current = nullptr;
+HWND pointedWindow = nullptr;
 bool permission = true, activation = true, nativeReturn = false, nativePermission = false;
 DWORD menuThread = 0;
 HWND menuOwner = nullptr;
@@ -20,6 +22,7 @@ BOOL WINAPI Gui(DWORD thread, LPGUITHREADINFO info)
     info->hwndMenuOwner = menuOwner; return TRUE;
 }
 HWND WINAPI Get() { return current; }
+HWND WINAPI Pointed(POINT) { return pointedWindow; }
 BOOL WINAPI Grant(DWORD) { return permission; }
 BOOL WINAPI Set(HWND window)
 {
@@ -28,13 +31,14 @@ BOOL WINAPI Set(HWND window)
 }
 }
 // The inactive test desktop cannot own global foreground. Replace only those
-// OS calls; compile the production collector and restore guard unchanged. Keep
+// OS calls and point lookup; compile the production collector and guards unchanged. Keep
 // real HWND ownership/visibility, subclassing, worker and shared-memory queue.
 #define GetForegroundWindow foreground_fixture::Get
 #define AllowSetForegroundWindow foreground_fixture::Grant
 #define SetForegroundWindow foreground_fixture::Set
 #define RestoreFocus FixtureRestoreFocus
 #define GetGUIThreadInfo foreground_fixture::Gui
+#define WindowFromPoint foreground_fixture::Pointed
 #define MenuRetentionSession FixtureMenuRetentionSession
 #define SnowDesktopTrayHookProc FixtureTrayHookProc
 #include "tray_focus.h"
@@ -43,6 +47,7 @@ BOOL WINAPI Set(HWND window)
 #undef RestoreFocus
 #undef MenuRetentionSession
 #undef GetGUIThreadInfo
+#undef WindowFromPoint
 #undef SetForegroundWindow
 #undef AllowSetForegroundWindow
 #undef GetForegroundWindow
@@ -68,6 +73,76 @@ LRESULT CALLBACK ShellFixture(HWND window, UINT message, WPARAM wp, LPARAM lp)
         return TRUE;
     }
     return DefWindowProcW(window, message, wp, lp);
+}
+
+void CheckRetainedMenuHit(HWND app, HWND bar, HWND other, HWND differentThreadMenu,
+    ATOM menuClass)
+{
+    using namespace snowdesktop::tray;
+    FixtureMenuRetentionSession session;
+    const DWORD pid = GetCurrentProcessId();
+    foreground_fixture::menuOwner = app;
+    foreground_fixture::menuThread = GetCurrentThreadId();
+    session.Arm(app, pid, bar, bar);
+    session.tracker.Arm(GetTickCount() - MenuRetentionTracker::kDiscoveryMs - 1);
+    Require(session.Active(app, {}) && session.menuOwner == app && !session.popups[0].window,
+        "a live native menu survives discovery without any placement binding");
+
+    // This process-local #32768 class is a real HWND type/ownership boundary
+    // substitute, not a TrackPopupMenu or third-party runtime acceptance test.
+    // It is created after discovery has expired, like a delayed submenu.
+    const auto submenu = CreateWindowW(MAKEINTATOM(menuClass), L"", WS_POPUP,
+        280, 250, 160, 80, app, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Require(submenu != nullptr, "create isolated late native-menu type fixture");
+    ShowWindow(submenu, SW_SHOWNOACTIVATE);
+    wchar_t actualClass[32]{};
+    Require(GetClassNameW(submenu, actualClass, 32) && wcscmp(actualClass, L"#32768") == 0,
+        "late-menu fixture retains the actual native menu class name");
+    const POINT inside{300, 270};
+    foreground_fixture::pointedWindow = submenu;
+    Require(session.ContainsPoint(inside), "LATE_NATIVE_SUBMENU_MUST_REMAIN_INSIDE");
+    Require(!session.ContainsPoint({500, 500}), "a menu candidate cannot claim a point outside its real bounds");
+
+    foreground_fixture::pointedWindow = other;
+    Require(!session.ContainsPoint({240, 120}), "SAME_PROCESS_ORDINARY_WINDOW_MUST_REMAIN_OUTSIDE");
+    foreground_fixture::pointedWindow = differentThreadMenu;
+    Require(!session.ContainsPoint({660, 120}), "a native-menu type on another thread cannot join the confirmed menu");
+    foreground_fixture::pointedWindow = submenu;
+    foreground_fixture::menuOwner = other;
+    Require(!session.ContainsPoint(inside), "a different same-thread menu owner invalidates the previous menu hit evidence");
+    foreground_fixture::menuOwner = app;
+    foreground_fixture::menuThread = GetWindowThreadProcessId(differentThreadMenu, nullptr);
+    Require(!session.ContainsPoint(inside), "changed native menu thread cannot reuse the confirmed session");
+    foreground_fixture::menuThread = GetCurrentThreadId();
+    foreground_fixture::menuOwner = nullptr;
+    Require(!session.ContainsPoint(inside), "an ended menu cannot keep intercepting outside clicks before the next timer");
+    foreground_fixture::menuOwner = app;
+    session.Reset();
+    Require(!session.ContainsPoint(inside), "an unarmed session cannot adopt an active menu");
+    session.Arm(app, pid, bar, bar);
+    Require(!session.ContainsPoint(inside), "an armed but unconfirmed session cannot adopt a same-process menu");
+    Require(session.Active(app, {}), "reconfirm native owner for stale HWND check");
+    DestroyWindow(submenu);
+    Require(!session.ContainsPoint(inside), "a destroyed late-menu HWND cannot retain the interaction surface");
+
+    // Previously observed custom menus keep the stricter recorded HWND, owner,
+    // thread and visibility checks; accepting native submenus must not widen it.
+    foreground_fixture::menuOwner = nullptr;
+    foreground_fixture::pointedWindow = nullptr;
+    session.Arm(app, pid, bar, bar);
+    MenuPopupBindings observed{};
+    observed[0] = {reinterpret_cast<std::uint64_t>(other), 0, pid, GetCurrentThreadId(),
+        GetWindowLongPtrW(other, GWL_STYLE), GetWindowLongPtrW(other, GWL_EXSTYLE), false};
+    Require(session.Active(bar, observed) && session.ContainsPoint({240, 120}),
+        "an observed custom popup remains inside without pretending to be a native menu");
+    ShowWindow(other, SW_HIDE);
+    Require(!session.ContainsPoint({240, 120}), "hidden custom popup cannot claim its previous bounds");
+    ShowWindow(other, SW_SHOWNOACTIVATE);
+    SetWindowLongPtrW(other, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(app));
+    Require(GetWindow(other, GW_OWNER) == app && !session.ContainsPoint({240, 120}),
+        "changed custom popup owner invalidates its recorded menu identity");
+    SetWindowLongPtrW(other, GWLP_HWNDPARENT, 0);
+    foreground_fixture::menuThread = 0;
 }
 }
 
@@ -98,19 +173,30 @@ void RunTrayFocusWindowTests()
     // Keep real HWND/process/thread/visibility checks, replacing only native
     // menu-loop introspection. Every window stays on this inactive desktop.
     const auto desktop = GetThreadDesktop(GetCurrentThreadId());
+    WNDCLASSW menuDefinition{};
+    menuDefinition.hInstance = definition.hInstance;
+    menuDefinition.lpszClassName = L"#32768";
+    menuDefinition.lpfnWndProc = DefWindowProcW;
+    const auto menuClass = RegisterClassW(&menuDefinition);
+    Require(menuClass != 0, "register isolated native-menu type substitute");
     const auto stopWindow = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     Require(stopWindow != nullptr, "create isolated secondary-window stop event");
-    std::promise<HWND> created;auto readyWindow = created.get_future();
+    std::promise<std::pair<HWND, HWND>> created;auto readyWindow = created.get_future();
     std::thread secondary([&] {
-        if (!SetThreadDesktop(desktop)) { created.set_value(nullptr); return; }
+        if (!SetThreadDesktop(desktop)) { created.set_value({}); return; }
         const auto mainWindow = CreateWindowW(L"STATIC", L"", WS_POPUP, 440, 100, 200, 100,
             nullptr, nullptr, definition.hInstance, nullptr);
         if (mainWindow) ShowWindow(mainWindow, SW_SHOWNOACTIVATE);
-        created.set_value(mainWindow);
-        if (mainWindow) { WaitForSingleObject(stopWindow, 10000); DestroyWindow(mainWindow); }
+        const auto menuWindow = CreateWindowW(MAKEINTATOM(menuClass), L"", WS_POPUP,
+            640, 100, 160, 80, mainWindow, nullptr, definition.hInstance, nullptr);
+        if (menuWindow) ShowWindow(menuWindow, SW_SHOWNOACTIVATE);
+        created.set_value({mainWindow, menuWindow});
+        WaitForSingleObject(stopWindow, 10000);
+        if (menuWindow) DestroyWindow(menuWindow);
+        if (mainWindow) DestroyWindow(mainWindow);
     });
-    const auto mainOnOtherThread = readyWindow.get();
-    Require(mainOnOtherThread != nullptr, "create secondary app window on the isolated desktop");
+    const auto [mainOnOtherThread, menuOnOtherThread] = readyWindow.get();
+    Require(mainOnOtherThread && menuOnOtherThread, "create secondary app and menu-type windows on the isolated desktop");
     FixtureMenuRetentionSession retention;
     retention.Arm(app, pid, bar, bar);
     Require(retention.Active(nullptr, {}) && retention.tracker.Armed(),
@@ -130,7 +216,9 @@ void RunTrayFocusWindowTests()
     ShowWindow(other, SW_HIDE);
     Require(!retention.Active(mainOnOtherThread, observed), "a hidden popup cannot retain the panel using stale SHOW evidence");
     ShowWindow(other, SW_SHOWNOACTIVATE);
+    CheckRetainedMenuHit(app, bar, other, menuOnOtherThread, menuClass);
     SetEvent(stopWindow); secondary.join(); CloseHandle(stopWindow);
+    UnregisterClassW(MAKEINTATOM(menuClass), definition.hInstance);
 
     const auto mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
         static_cast<DWORD>(sizeof(SharedState)), ObjectName(pid, L"State").c_str());

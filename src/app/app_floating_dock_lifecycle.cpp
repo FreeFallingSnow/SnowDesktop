@@ -573,6 +573,7 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             if (!heldMerged && !separateReveal) continue;
             barSession = barSession || heldMerged;
             const bool ownSurface = (onBar && MonitorFromPoint(cursor, MONITOR_DEFAULTTONULL) == host.monitor) ||
+                (statusBar_ && statusBar_->ContainsTrayMenuPoint(host.monitor, cursor)) ||
                 (onPanel && systemPanel_->IsOpenForMonitor(host.monitor)) ||
                 (onOwnedMenu && statusBarMenuMonitor_ == host.monitor) ||
                 (onNavigation && statusBarQuickNavigationMonitor_ == host.monitor) ||
