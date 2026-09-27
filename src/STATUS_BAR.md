@@ -15,6 +15,7 @@ UI 审计已读取当前生产图片与代码：扫描按钮英文截断、长�
 - 组件源包的 `snowwidget test` 17/17、validate 与四个生产 WidgetEngine 预览通过；lint 零错误，只有未声明发行预览图的元数据提示。失效版本的 `test.load` 与 `engine.load` 原始失败、同一宿主修订后结果见 `.codex-probes/statusbar-implementation/system-monitor-sandbox-verification.json`。标准构建同步尚待执行。
 - 通知链补充只读审查：59 的 HWND 单槽、关闭后重新投递与平衡快捷键仍有效；当前日志中四次菜单会话均有退出和焦点恢复，没有新的失败／超时证据。未对系统通知实际连点，不能关闭 F31；不加入猜测性的延迟或重复注入。
 - 60 编译节点：`scripts/build.bat --reload-shell` 首轮因日程预览字节像素数组与 PNG 的 32 位像素接口不匹配而失败；统一类型后 `scripts/build.bat` 退出 0，Release 宿主生成，零编译／链接警告（`60-native-build.log`／`60-native-build2.log`）。日程编辑新增／改期／确认删除、同主题原生表单、媒体无等待文字、扫描与音频布局、电池轮廓／内部填充、系统监控沙箱兼容均进入本节点；新的生产图、完整回归和桌面场景此时仍待执行。
+- **60 视觉验收未通过**：`ed09affe` 的 98 张生产离屏图及内置检查通过（`60-offline-measurements.json`），但实际目检发现日程编辑器深色“全天”文字为黑色、提醒下拉框空白且保持白底、圆角按钮外侧有白色残角。现有断言没有覆盖这些可见缺陷，不能把导出成功当作视觉通过。保留 `calendar-render-60/dark/calendar-panel-editor.png` 和浅色删除确认图作为反例；完整回归尚未运行，下一候选先修正绘制和对应检查。
 
 ### 需求复核与稳定性集中候选 59（自动验证通过，实机待验）
 
