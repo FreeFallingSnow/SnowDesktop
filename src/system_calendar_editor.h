@@ -18,6 +18,7 @@ struct SystemCalendarEditorPreview
 {
     int width=0,height=0;
     std::vector<std::uint32_t> pixels;
+    std::wstring reminderSelection;
 };
 SystemCalendarEditorPreview RenderSystemCalendarEditorPreview(
     const calendar::CalendarEvent&, const PersonalizationSettings&,

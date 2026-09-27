@@ -83,10 +83,45 @@ struct Editor
         if(m==WM_NCDESTROY)RemoveWindowSubclass(w,ButtonProcedure,1);
         return DefSubclassProc(w,m,wp,lp);
     }
+    static LRESULT CALLBACK NativeFaceProcedure(HWND w,UINT m,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR data)
+    {
+        auto* self=reinterpret_cast<Editor*>(data);
+        // Keep the native checkbox/combo styles, state, keyboard handling and
+        // accessibility providers. Only their visible surface is theme-owned.
+        if(m==WM_PAINT)
+        {
+            PAINTSTRUCT paint{};const auto dc=BeginPaint(w,&paint);
+            try{self->DrawControlFace(w,dc);}catch(...){}
+            EndPaint(w,&paint);return 0;
+        }
+        if(m==WM_PRINT||m==WM_PRINTCLIENT)
+        {try{self->DrawControlFace(w,reinterpret_cast<HDC>(wp));}catch(...){}return 0;}
+        if(m==WM_ERASEBKGND)
+        {RECT r{};GetClientRect(w,&r);FillRect(reinterpret_cast<HDC>(wp),&r,self->backgroundBrush);return 1;}
+        if(m==WM_NCDESTROY)RemoveWindowSubclass(w,NativeFaceProcedure,2);
+        const auto result=DefSubclassProc(w,m,wp,lp);
+        if(m==WM_SETFOCUS||m==WM_KILLFOCUS||m==WM_UPDATEUISTATE||m==WM_ENABLE||m==BM_SETCHECK||m==CB_SETCURSEL||m==WM_KEYUP||m==WM_LBUTTONUP)
+            InvalidateRect(w,nullptr,FALSE);
+        return result;
+    }
     static LRESULT CALLBACK ViewportProcedure(HWND w,UINT m,WPARAM wp,LPARAM lp)
     {
         if(m==WM_ERASEBKGND){auto* e=reinterpret_cast<Editor*>(GetWindowLongPtrW(w,GWLP_USERDATA));if(e){RECT r{};GetClientRect(w,&r);FillRect(reinterpret_cast<HDC>(wp),&r,e->backgroundBrush);return 1;}}
-        if(m==WM_COMMAND||m==WM_DRAWITEM||m==WM_MEASUREITEM||m==WM_CTLCOLORSTATIC||m==WM_CTLCOLOREDIT||m==WM_CTLCOLORLISTBOX||m==WM_VSCROLL||m==WM_MOUSEWHEEL)
+        // Native children send owner-draw messages to this immediate parent.
+        // A dialog's TRUE means "handled", not the LRESULT to forward; preserve
+        // the control's actual result instead of returning a stale DWLP_MSGRESULT.
+        if(m==WM_DRAWITEM||m==WM_MEASUREITEM)
+        {
+            auto* self=reinterpret_cast<Editor*>(GetWindowLongPtrW(w,GWLP_USERDATA));
+            if(self)try
+            {
+                if(m==WM_DRAWITEM)self->DrawItem(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));
+                else reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=self->Px(28);
+                return TRUE;
+            }
+            catch(...){return FALSE;}
+        }
+        if(m==WM_COMMAND||m==WM_CTLCOLORBTN||m==WM_CTLCOLORSTATIC||m==WM_CTLCOLOREDIT||m==WM_CTLCOLORLISTBOX||m==WM_VSCROLL||m==WM_MOUSEWHEEL)
             return SendMessageW(GetParent(w),m,wp,lp);
         return DefWindowProcW(w,m,wp,lp);
     }
@@ -143,11 +178,13 @@ struct Editor
         Label("settings.calendar.title",0,0,full);Field(kTitle,Wide(session.draft.title),0,24,full);
         Label("settings.calendar.date",0,70,half);Field(kDate,Wide(session.draft.date),0,94,half);
         const auto allDay=Child(L"BUTTON",_LW("settings.calendar.allDay"),WS_TABSTOP|BS_AUTOCHECKBOX,half+12,94,half,32,kAllDay);
+        SetWindowSubclass(allDay,NativeFaceProcedure,2,reinterpret_cast<DWORD_PTR>(this));
         SendMessageW(allDay,BM_SETCHECK,session.draft.allDay?BST_CHECKED:BST_UNCHECKED,0);
         Label("settings.calendar.start",0,140,half);Field(kStart,Time(session.draft.startMinutes),0,164,half);
         Label("settings.calendar.end",half+12,140,half);Field(kEnd,Time(session.draft.endMinutes),half+12,164,half);
         Label("settings.calendar.reminder",0,210,full);
         const auto reminder=Child(L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,0,234,full,240,kReminder);
+        SetWindowSubclass(reminder,NativeFaceProcedure,2,reinterpret_cast<DWORD_PTR>(this));
         for(std::size_t i=0;i<SystemCalendarReminderMinutes.size();++i)
         {
             const auto key="settings.calendar.reminder."+std::to_string(SystemCalendarReminderMinutes[i]);
@@ -204,6 +241,56 @@ struct Editor
         RECT error{Px(20),Px(height-100),Px(width-20),Px(height-56)};
         DrawTextW(dc,message.c_str(),-1,&error,DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,previous);
     }
+    void DrawControlFace(HWND control,HDC dc)
+    {
+        const bool combo=GetDlgCtrlID(control)==kReminder;
+        std::wstring label;
+        if(combo)
+        {
+            const auto selected=SendMessageW(control,CB_GETCURSEL,0,0);
+            const auto length=selected>=0?SendMessageW(control,CB_GETLBTEXTLEN,selected,0):CB_ERR;
+            if(length>=0&&length<4096)
+            {
+                label.resize(static_cast<std::size_t>(length)+1);
+                const auto copied=SendMessageW(control,CB_GETLBTEXT,selected,reinterpret_cast<LPARAM>(label.data()));
+                label.resize(copied>=0?static_cast<std::size_t>(copied):0);
+            }
+        }
+        else label=Text(control);
+        RECT client{};GetClientRect(control,&client);const int saved=SaveDC(dc);
+        FillRect(dc,&client,backgroundBrush);SelectObject(dc,font);SetBkMode(dc,TRANSPARENT);
+        const bool enabled=IsWindowEnabled(control)&&IsWindowEnabled(viewport);
+        const bool checked=!combo&&SendMessageW(control,BM_GETCHECK,0,0)==BST_CHECKED;
+        const COLORREF ink=enabled?foreground:secondary;
+        const auto fill=CreateSolidBrush(checked?accent:field);
+        const auto edge=CreatePen(PS_SOLID,(std::max)(1,Px(1)),border);
+        SelectObject(dc,fill);SelectObject(dc,edge);
+        RECT box=client,text=client;
+        if(combo)
+        {
+            RoundRect(dc,box.left,box.top,box.right,box.bottom,Px(8),Px(8));
+            text.left+=Px(8);text.right-=Px(32);
+        }
+        else
+        {
+            box.left=Px(1);box.right=box.left+Px(16);box.top=(client.bottom-Px(16))/2;box.bottom=box.top+Px(16);
+            RoundRect(dc,box.left,box.top,box.right,box.bottom,Px(4),Px(4));text.left=box.right+Px(9);
+        }
+        const auto stroke=CreatePen(PS_SOLID,(std::max)(1,Px(2)),checked?accentText:ink);SelectObject(dc,stroke);
+        if(combo)
+        {
+            const int x=client.right-Px(16),y=client.bottom/2;
+            const POINT arrow[]{{x-Px(4),y-Px(2)},{x,y+Px(2)},{x+Px(4),y-Px(2)}};Polyline(dc,arrow,3);
+        }
+        else if(checked)
+        {
+            const POINT check[]{{box.left+Px(3),box.top+Px(8)},{box.left+Px(7),box.top+Px(12)},{box.left+Px(13),box.top+Px(4)}};Polyline(dc,check,3);
+        }
+        SetTextColor(dc,ink);DrawTextW(dc,label.c_str(),-1,&text,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS|DT_NOPREFIX);
+        if(GetFocus()==control&&!(SendMessageW(control,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS))
+        {RECT focus=client;InflateRect(&focus,-Px(3),-Px(3));DrawFocusRect(dc,&focus);}
+        RestoreDC(dc,saved);DeleteObject(stroke);DeleteObject(edge);DeleteObject(fill);
+    }
     void DrawItem(const DRAWITEMSTRUCT& item)
     {
         const bool combo=item.CtlID==kReminder;
@@ -213,15 +300,19 @@ struct Editor
         std::wstring label;
         if(combo&&item.itemID<SystemCalendarReminderMinutes.size())label=_LW(("settings.calendar.reminder."+std::to_string(SystemCalendarReminderMinutes[item.itemID])).c_str());
         else if(!combo)label=Text(item.hwndItem);
+        const int saved=SaveDC(item.hDC);
         const auto brush=CreateSolidBrush(highlight?accent:field);
         const auto pen=CreatePen(PS_SOLID,Px(1),selected?accent:border);
+        // The native BUTTON may have erased with COLOR_BTNFACE. Cover its whole
+        // client rect before the rounded face so no system-colored corners remain.
+        FillRect(item.hDC,&item.rcItem,combo?fieldBrush:backgroundBrush);
         const auto oldBrush=SelectObject(item.hDC,brush),oldPen=SelectObject(item.hDC,pen),oldFont=SelectObject(item.hDC,font);
         if(combo)Rectangle(item.hDC,item.rcItem.left,item.rcItem.top,item.rcItem.right,item.rcItem.bottom);
         else RoundRect(item.hDC,item.rcItem.left,item.rcItem.top,item.rcItem.right,item.rcItem.bottom,Px(8),Px(8));
         SetBkMode(item.hDC,TRANSPARENT);SetTextColor(item.hDC,highlight?accentText:foreground);
         RECT text=item.rcItem;InflateRect(&text,-Px(8),0);DrawTextW(item.hDC,label.c_str(),-1,&text,DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS|DT_NOPREFIX|(combo?DT_LEFT:DT_CENTER));
-        if(item.itemState&ODS_FOCUS){RECT focus=item.rcItem;InflateRect(&focus,-Px(3),-Px(3));DrawFocusRect(item.hDC,&focus);}
-        SelectObject(item.hDC,oldFont);SelectObject(item.hDC,oldPen);SelectObject(item.hDC,oldBrush);DeleteObject(pen);DeleteObject(brush);
+        if((item.itemState&ODS_FOCUS)&&!(item.itemState&ODS_NOFOCUSRECT)){RECT focus=item.rcItem;InflateRect(&focus,-Px(3),-Px(3));DrawFocusRect(item.hDC,&focus);}
+        SelectObject(item.hDC,oldFont);SelectObject(item.hDC,oldPen);SelectObject(item.hDC,oldBrush);RestoreDC(item.hDC,saved);DeleteObject(pen);DeleteObject(brush);
     }
     void Error()
     {
@@ -269,14 +360,14 @@ struct Editor
             if(m==WM_PAINT){PAINTSTRUCT paint{};const auto dc=BeginPaint(w,&paint);self->Paint(dc);EndPaint(w,&paint);return TRUE;}
             if(m==WM_PRINTCLIENT){self->Paint(reinterpret_cast<HDC>(wp));return TRUE;}
             if(m==WM_ERASEBKGND)return TRUE;
-            if(m==WM_CTLCOLOREDIT||m==WM_CTLCOLORSTATIC||m==WM_CTLCOLORLISTBOX)
+            if(m==WM_CTLCOLOREDIT||m==WM_CTLCOLORSTATIC||m==WM_CTLCOLORLISTBOX||m==WM_CTLCOLORBTN)
             {
-                const auto dc=reinterpret_cast<HDC>(wp);const bool input=m!=WM_CTLCOLORSTATIC;
+                const auto dc=reinterpret_cast<HDC>(wp);const bool input=m==WM_CTLCOLOREDIT||m==WM_CTLCOLORLISTBOX;
                 SetTextColor(dc,self->foreground);SetBkColor(dc,input?self->field:self->background);
                 return reinterpret_cast<INT_PTR>(input?self->fieldBrush:self->backgroundBrush);
             }
-            if(m==WM_MEASUREITEM){reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=self->Px(28);return TRUE;}
-            if(m==WM_DRAWITEM){self->DrawItem(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;}
+            if(m==WM_MEASUREITEM){reinterpret_cast<MEASUREITEMSTRUCT*>(lp)->itemHeight=self->Px(28);SetWindowLongPtrW(w,DWLP_MSGRESULT,TRUE);return TRUE;}
+            if(m==WM_DRAWITEM){self->DrawItem(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));SetWindowLongPtrW(w,DWLP_MSGRESULT,TRUE);return TRUE;}
             if(m==WM_TIMER&&wp==1&&!self->Valid()){self->End(IDCANCEL);return TRUE;}
             if(m==WM_DPICHANGED)
             {
@@ -345,6 +436,7 @@ struct Editor
                     else if(self->session.Remove())self->End(IDOK);else self->Error();return TRUE;
                 }
                 if(id==kAllDay&&HIWORD(wp)==BN_CLICKED){const bool enabled=SendMessageW(self->Control(kAllDay),BM_GETCHECK,0,0)!=BST_CHECKED;EnableWindow(self->Control(kStart),enabled);EnableWindow(self->Control(kEnd),enabled);return TRUE;}
+                if(id==kReminder&&HIWORD(wp)==CBN_SELCHANGE){InvalidateRect(self->Control(kReminder),nullptr,FALSE);return TRUE;}
             }
             if(m==WM_CLOSE){self->End(IDCANCEL);return TRUE;}
             if(m==WM_NCHITTEST)
@@ -392,6 +484,17 @@ SystemCalendarEditorPreview RenderSystemCalendarEditorPreview(const calendar::Ca
     if(!window||!IsWindow(window))throw std::runtime_error("calendar editor preview form unavailable");
     struct WindowGuard{HWND value;~WindowGuard(){DestroyWindow(value);}} guard{window};
     SystemCalendarEditorPreview result;result.width=editor.Px(editor.width);result.height=editor.Px(editor.height);
+    const auto selected=SendMessageW(editor.Control(kReminder),CB_GETCURSEL,0,0);
+    if(selected>=0)
+    {
+        const auto length=SendMessageW(editor.Control(kReminder),CB_GETLBTEXTLEN,selected,0);
+        if(length>=0&&length<4096)
+        {
+            result.reminderSelection.resize(static_cast<std::size_t>(length)+1);
+            const auto copied=SendMessageW(editor.Control(kReminder),CB_GETLBTEXT,selected,reinterpret_cast<LPARAM>(result.reminderSelection.data()));
+            result.reminderSelection.resize(copied>=0?static_cast<std::size_t>(copied):0);
+        }
+    }
     BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=result.width;info.bmiHeader.biHeight=-result.height;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
     struct BitmapGuard
     {
@@ -427,6 +530,13 @@ SystemCalendarEditorPreview RenderSystemCalendarEditorPreview(const calendar::Ca
         else result.pixels[i]|=0xff000000u;
     }
     if(shape)DeleteObject(shape);
+    // Exercise the same immediate-parent callback used by the real dropdown
+    // list without showing a popup or targeting any existing desktop window.
+    DRAWITEMSTRUCT dropdown{};dropdown.CtlType=ODT_COMBOBOX;dropdown.CtlID=kReminder;
+    dropdown.itemID=static_cast<UINT>(selected);dropdown.itemAction=ODA_DRAWENTIRE;
+    dropdown.hwndItem=editor.Control(kReminder);dropdown.hDC=dc;dropdown.rcItem={0,0,editor.Px(240),editor.Px(28)};
+    if(SendMessageW(editor.viewport,WM_DRAWITEM,kReminder,reinterpret_cast<LPARAM>(&dropdown))!=TRUE)
+        throw std::runtime_error("calendar reminder parent lost its owner-draw result");
     // Exercise the real dialog's default-key route after capturing the image.
     // The only effect callback here is an isolated, always-failing fixture.
     const auto defaultButton=SendMessageW(window,DM_GETDEFID,0,0);

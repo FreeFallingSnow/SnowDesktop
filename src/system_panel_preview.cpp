@@ -800,6 +800,30 @@ void CheckCalendarEditorVisuals(const native_component_preview::Request& request
         if(!preview_png::Save(path,rendered.width,rendered.height,rendered.pixels,result.error))throw std::runtime_error(result.error);
         result.outputs.push_back({request.component,name,path,false,false,false,false,false,false,
             static_cast<int>(std::lround(appearance.cornerRadius*request.dpi/96.f)),rendered.width,rendered.height,0,0});
+        Require(rendered.reminderSelection==_LW("settings.calendar.reminder.15"),
+            "calendar reminder lost its selected native text");
+        const auto px=[&](int value){return MulDiv(value,static_cast<int>(request.dpi),96);};
+        const auto pixel=[&](int x,int y){return rendered.pixels[static_cast<std::size_t>(y)*rendered.width+x]&0xffffffu;};
+        const auto contrast=[](std::uint32_t a,std::uint32_t b){int difference=0;for(const int shift:{0,8,16})difference=(std::max)(difference,std::abs(static_cast<int>((a>>shift)&255)-static_cast<int>((b>>shift)&255)));return difference;};
+        const auto contrasting=[&](RECT region,std::uint32_t background){
+            int count=0;for(int y=px(region.top);y<px(region.bottom);++y)for(int x=px(region.left);x<px(region.right);++x)
+                if(contrast(pixel(x,y),background)>64)++count;return count;
+        };
+        const auto panel=pixel(px(200),px(70)),reminder=pixel(px(40),px(294));
+        // The checkbox box and combo arrow are outside these regions: only
+        // readable caption/selection ink can satisfy these independent checks.
+        Require(contrasting({268,152,440,180},panel)>px(12),
+            "calendar all-day caption disappeared into the background");
+        Require(contrasting({30,296,400,316},reminder)>px(12),
+            "calendar reminder selected text is visually blank");
+        if(appearance.contentTheme==0)Require(contrast(reminder,panel)<80,
+            "dark calendar reminder retained the system white surface");
+        for(const int left:{20,200,332})
+        {
+            if(confirmation&&left==332)continue;
+            for(const int x:{px(left),px(left+120)-1})for(const int y:{px(504),px(538)-1})
+                Require(contrast(pixel(x,y),panel)<12,"calendar rounded button left system-colored corner pixels");
+        }
     }
 }
 void CheckFeedbackLayouts()
