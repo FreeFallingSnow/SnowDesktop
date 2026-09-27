@@ -17,6 +17,7 @@ inline constexpr std::size_t kCapacity = 128, kGeometries = 512, kIconSize = 64;
 inline constexpr DWORD kBootstrapIcon = 0x53440001;
 inline constexpr wchar_t kAttachMessage[] = L"SnowDesktop.Tray.Attach.v2";
 inline constexpr wchar_t kDetachMessage[] = L"SnowDesktop.Tray.Detach.v2";
+inline constexpr wchar_t kReregisterMessage[] = L"SnowDesktop.Tray.Reregister.v2";
 inline std::wstring ObjectName(DWORD owner, const wchar_t* suffix)
 { return L"Local\\SnowDesktop.Tray.v2." + std::to_wstring(owner) + L"." + suffix; }
 
@@ -39,6 +40,52 @@ struct Notification
     DWORD operation = 0, flags = 0, callback = 0, state = 0, stateMask = 0, version = 0;
     Identity identity;
     wchar_t tip[128]{};
+};
+// Explorer's window thread owns this bounded, short-lived handshake. It does
+// not infer a version: an acknowledged duplicate ADD lets the application
+// submit its own NIM_SETVERSION through Explorer's ordinary validation.
+class ReregisterSession
+{
+public:
+    bool Arm(DWORD owner, std::uint64_t epoch, DWORD expectedOwner,
+        std::uint64_t expectedEpoch, ULONGLONG now)
+    {
+        if (!owner || owner != expectedOwner || !epoch || epoch != expectedEpoch) return false;
+        // A delayed/repeated control message cannot extend this generation's
+        // lifetime or reset acknowledgements that it already consumed.
+        if (epoch_ == epoch) return now >= started_ && now - started_ < 5000;
+        epoch_ = epoch; started_ = now; count_ = 0;
+        return true;
+    }
+    bool Eligible(const Notification& request, std::uint64_t currentEpoch, ULONGLONG now) const
+    {
+        if (!epoch_ || currentEpoch != epoch_ || request.epoch != epoch_ ||
+            now < started_ || now - started_ >= 5000 || count_ == acknowledged_.size() ||
+            request.operation != NIM_ADD || (request.flags & NIF_GUID) || HasGuid(request.identity.guid) ||
+            !request.identity.window || !request.identity.process ||
+            (request.flags & (NIF_MESSAGE | NIF_ICON)) != (NIF_MESSAGE | NIF_ICON) ||
+            request.callback < WM_USER || request.callback > 0xffff) return false;
+        for (std::size_t i = 0; i < count_; ++i)
+            if (SameIdentity(acknowledged_[i], request.identity)) return false;
+        return true;
+    }
+    bool Acknowledge(const Notification& request, std::uint64_t currentEpoch, ULONGLONG now)
+    {
+        if (!Eligible(request, currentEpoch, now)) return false;
+        acknowledged_[count_++] = request.identity;
+        return true;
+    }
+    static bool SameOwner(const Identity& identity, DWORD beforeProcess, DWORD beforeThread,
+        DWORD afterProcess, DWORD afterThread)
+    {
+        return identity.window && identity.process && beforeProcess == identity.process &&
+            afterProcess == beforeProcess && beforeThread && beforeThread == afterThread;
+    }
+private:
+    std::uint64_t epoch_ = 0;
+    ULONGLONG started_ = 0;
+    std::array<Identity, kGeometries> acknowledged_{};
+    std::size_t count_ = 0;
 };
 struct Event : Notification
 {

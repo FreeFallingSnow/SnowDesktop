@@ -15,18 +15,22 @@ static std::wstring hookPath;
 namespace snowdesktop::deployment { std::wstring GetTaskbarHookPath() { return hookPath; } }
 void WriteDiagnosticLogEntry(const wchar_t* text, DiagnosticLogLevel) { std::wcout << text << std::endl; }
 constexpr UINT kCallback = WM_APP + 100, kCommand = WM_APP + 101;
+constexpr UINT kColdIconId = 78;
 constexpr GUID kIconGuid{0xe1e77079,0x1b5b,0x40f7,{0xaa,0x72,0x82,0xb4,0x19,0x6c,0x62,0x05}};
 struct State
 {
     DWORD owner = 0;
     volatile LONG ready = 0, errors = 0, count = 0;
+    volatile LONG coldAddFailures = 0, coldVersionRequests = 0;
     HWND window = nullptr;
     Callback callbacks[64]{};
 };
 static State* state = nullptr;
 static UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 static NOTIFYICONDATAW iconData{};
+static NOTIFYICONDATAW coldIconData{};
 static bool present = false;
+static bool coldPresent = false;
 void Check(bool value, const char* what)
 { if (!value) throw std::runtime_error(what); std::cout << "PASS " << what << std::endl; }
 void Notify(DWORD operation)
@@ -41,9 +45,23 @@ void Add()
     if (!Shell_NotifyIconW(NIM_ADD, &iconData)) Notify(NIM_MODIFY);
     iconData.uVersion = NOTIFYICON_VERSION_4; Notify(NIM_SETVERSION); present = true;
 }
+void AddCold()
+{
+    // Qt-like caller policy, with no Qt dependency: SETVERSION follows only a
+    // successful ADD. The live collector must recover this pre-existing icon
+    // without reading a version from ADD's otherwise irrelevant union field.
+    coldIconData.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
+    coldIconData.uVersion = NOTIFYICON_VERSION_4;
+    if (!Shell_NotifyIconW(NIM_ADD, &coldIconData))
+    { InterlockedIncrement(&state->coldAddFailures); return; }
+    coldPresent = true;
+    InterlockedIncrement(&state->coldVersionRequests);
+    if (!Shell_NotifyIconW(NIM_SETVERSION, &coldIconData)) InterlockedIncrement(&state->errors);
+}
 LRESULT CALLBACK ClientProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
 {
-    if (message == taskbarCreated && present) { Add(); return 0; }
+    if (message == taskbarCreated)
+    { if (present) Add(); if (coldPresent) AddCold(); return 0; }
     if (message == kCallback)
     {
         const auto count = Read(state->count);
@@ -65,6 +83,7 @@ LRESULT CALLBACK ClientProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
         else if (wp == 5) PostQuitMessage(0);
         else if (wp == 6)
         { iconData.uFlags = NIF_GUID | NIF_STATE; iconData.dwStateMask = NIS_HIDDEN; iconData.dwState = 0; Notify(NIM_MODIFY); }
+        else if (wp == 7) AddCold();
         return 1;
     }
     if (message == WM_TIMER)
@@ -84,9 +103,14 @@ int Client(const wchar_t* mapping)
     RegisterClassW(&wc);
     state->window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, wc.lpszClassName, L"Tray fixture", WS_POPUP, 0,0,1,1,nullptr,nullptr,wc.hInstance,nullptr);
     iconData.cbSize = sizeof(iconData); iconData.hWnd = state->window; iconData.uID = 77; iconData.guidItem = kIconGuid; iconData.uCallbackMessage = kCallback;
-    Add(); SetTimer(state->window, 1, 1000, nullptr); InterlockedExchange(&state->ready, 1);
+    coldIconData.cbSize = sizeof(coldIconData); coldIconData.hWnd = state->window;
+    coldIconData.uID = kColdIconId; coldIconData.uCallbackMessage = kCallback + 2;
+    coldIconData.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wcscpy_s(coldIconData.szTip, L"SnowDesktop isolated cold registration fixture");
+    Add(); AddCold(); SetTimer(state->window, 1, 1000, nullptr); InterlockedExchange(&state->ready, 1);
     MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
     if (present) Notify(NIM_DELETE);
+    if (coldPresent && !Shell_NotifyIconW(NIM_DELETE, &coldIconData)) InterlockedIncrement(&state->errors);
     DestroyWindow(state->window); UnmapViewOfFile(state); CloseHandle(shared); return 0;
 }
 template<class Predicate> bool Await(Predicate predicate, unsigned milliseconds = 6000)
@@ -158,12 +182,43 @@ int TryRunTrayLiveTests()
     try
     {
         Fixture fixture; fixture.Start();
+        Check(Read(fixture.value->coldVersionRequests) == 1 && Read(fixture.value->coldAddFailures) == 0,
+            "cold legacy-key fixture registered version 4 before the collector existed");
+        fixture.Command(7);
+        Check(Read(fixture.value->coldVersionRequests) == 1 && Read(fixture.value->coldAddFailures) == 1,
+            "without recovery a real duplicate ADD fails and the caller skips SETVERSION");
+        NOTIFYICONIDENTIFIER coldIdentifier{}; coldIdentifier.cbSize = sizeof(coldIdentifier);
+        coldIdentifier.hWnd = fixture.value->window; coldIdentifier.uID = kColdIconId;
+        RECT coldRect{};
+        const bool nativeGeometryAvailable = Await([&] {
+            return Shell_NotifyIconGetRect(&coldIdentifier, &coldRect) == S_OK && !IsRectEmpty(&coldRect);
+        }, 2000);
+        if (!nativeGeometryAvailable)
+        {
+            std::cerr << "SKIP: Explorer does not expose S_OK nonempty geometry for the isolated cold icon; recovery must fail closed\n";
+            return 77;
+        }
         const auto find=[&](const Snapshot& snapshot)->std::optional<Icon> {
             for(const auto& icon:snapshot.icons) if(icon.identity.guid==kIconGuid) return icon;
             return {};
         };
+        const auto findCold = [&](const Snapshot& snapshot) -> std::optional<Icon> {
+            for (const auto& icon : snapshot.icons)
+                if (!HasGuid(icon.identity.guid) && icon.identity.window == reinterpret_cast<std::uint64_t>(fixture.value->window) &&
+                    icon.identity.process == fixture.process.dwProcessId && icon.identity.id == kColdIconId) return icon;
+            return {};
+        };
         {
             Service service;
+            Check(Await([&] {
+                const auto icon = findCold(service.Current());
+                return icon && icon->version == 4 && !icon->pixels.empty() && Read(fixture.value->coldVersionRequests) == 2;
+            }), "bounded duplicate ADD acknowledgement lets the original caller restore version 4 after late collector attachment");
+            Check(Read(fixture.value->coldAddFailures) == 1,
+                "re-registration succeeds without a second failed ADD or an unconditional caller-side version fallback");
+            fixture.Command(7);
+            Check(Read(fixture.value->coldVersionRequests) == 2 && Read(fixture.value->coldAddFailures) == 2,
+                "the same recovery session cannot acknowledge the cold icon twice");
             Check(Await([&]{auto icon=find(service.Current());return icon && icon->version==4 && !icon->pixels.empty();}),"initial TaskbarCreated re-registration yields pixels and version 4");
             const auto original=find(service.Current()).value();
             fixture.Command(1);

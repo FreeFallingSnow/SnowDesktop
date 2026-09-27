@@ -213,7 +213,11 @@ struct SystemPanel::Impl
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
         tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};scrollbarDragging=false;paintDirty=true;
-        model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);
+        model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
+        // HideNow clears these rectangles. Reopening the same layout need not
+        // move or reshape the HWND, so Arrange alone may not publish them.
+        PublishGeometry();
+        Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);
         ReportTrayState(showing&&!closing&&current&&current->action==StatusBarAction::Tray&&IsWindowVisible(window)?monitor:nullptr);
     }
     void ReportTrayState(HMONITOR expanded)
@@ -429,6 +433,7 @@ struct SystemPanel::Impl
         {
             const auto key=result.id.substr(5);if(result.kind==ui::InputResult::Kind::Drag){POINT local=screen;ScreenToClient(window,&local);const auto life=lifetime;auto activeModel=model;const bool dropped=activeModel->Drop(key,{local.x/scale,local.y/scale});if(!life->alive)return;if(!dropped&&model==activeModel&&dropOutside){const auto drop=dropOutside;drop(key,screen);}if(life->alive){Arrange();Paint();}return;}
             const auto life=lifetime;auto service=current->tray;const auto source=window,bar=current->owner;
+            PublishGeometry();
             ArmContext(key);
             bool accepted=false;
             if(keyboard)accepted=service->Activate(key,result.kind==ui::InputResult::Kind::Context?tray::Activation::ContextKeyboard:tray::Activation::Keyboard,screen,{bar,source});
@@ -534,7 +539,7 @@ struct SystemPanel::Impl
                 {
                     POINT screen{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};ClientToScreen(w,&screen);
                     const auto key=node->id.substr(5);const auto service=self->current->tray;const auto owner=self->current->owner;
-                    self->ArmContext(key);const bool accepted=service->Activate(key,tray::Activation::DoubleClick,screen,{owner,w});
+                    self->PublishGeometry();self->ArmContext(key);const bool accepted=service->Activate(key,tray::Activation::DoubleClick,screen,{owner,w});
                     if(life->alive&&!accepted)self->context.Reset();
                 }
                 return 0;

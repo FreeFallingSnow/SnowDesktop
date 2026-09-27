@@ -8,6 +8,13 @@ namespace snowdesktop::tray
 namespace
 {
 constexpr UINT_PTR kSubclass = 0x53445452;
+thread_local bool nativeGeometryQuery = false;
+struct NativeGeometryQuery
+{
+    bool previous = nativeGeometryQuery;
+    NativeGeometryQuery() { nativeGeometryQuery = true; }
+    ~NativeGeometryQuery() { nativeGeometryQuery = previous; }
+};
 struct Pending : Notification
 {
     // Do not copy a 16 KiB pixel array in the Explorer callback.
@@ -22,6 +29,7 @@ struct Collector
     std::array<Pending, 256> queue{};
     std::size_t head = 0, tail = 0;
     volatile LONG stopping = 0;
+    ReregisterSession reregister;
     ~Collector()
     {
         for (auto& event : queue) if (event.icon) DestroyIcon(event.icon);
@@ -217,6 +225,14 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
     auto* holder = reinterpret_cast<std::shared_ptr<Collector>*>(data);
     const auto keepAlive = *holder;
     auto& self = *keepAlive;
+    if (message == RegisterWindowMessageW(kReregisterMessage))
+    {
+        if (Read(self.stopping) || Read(self.shared->stop) ||
+            WaitForSingleObject(self.owner, 0) != WAIT_TIMEOUT || wp != self.shared->owner ||
+            lp != static_cast<LPARAM>(Read(self.shared->epoch))) return FALSE;
+        return self.reregister.Arm(self.shared->owner, static_cast<std::uint64_t>(lp),
+            self.shared->owner, static_cast<std::uint64_t>(Read(self.shared->epoch)), GetTickCount64()) ? TRUE : FALSE;
+    }
     if ((message == RegisterWindowMessageW(kDetachMessage) && wp == self.shared->owner &&
             lp == static_cast<LPARAM>(Read(self.shared->epoch))) || message == WM_NCDESTROY)
     {
@@ -248,7 +264,8 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 pending.callback = decoded.callback; pending.state = decoded.state;
                 pending.stateMask = decoded.stateMask; pending.version = decoded.version;
                 pending.identity = decoded.identity;
-                GetWindowThreadProcessId(reinterpret_cast<HWND>(pending.identity.window), &pending.identity.process);
+                const DWORD notificationThread = GetWindowThreadProcessId(
+                    reinterpret_cast<HWND>(pending.identity.window), &pending.identity.process);
                 if (pending.operation == NIM_SETFOCUS)
                 {
                     FocusTicket ticket;
@@ -287,7 +304,41 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 // Duplicate ADD remains a useful registration supplement after
                 // our synthetic TaskbarCreated; the model preserves its version.
                 const LRESULT nativeResult = DefSubclassProc(window, message, wp, lp);
-                if (nativeResult || pending.operation == NIM_ADD) self.Push(pending);
+                bool duplicate = false;
+                if (!nativeResult && pending.icon && !Read(self.stopping) && !Read(self.shared->stop) &&
+                    self.reregister.Eligible(pending, static_cast<std::uint64_t>(Read(self.shared->epoch)), GetTickCount64()))
+                {
+                    const auto target = reinterpret_cast<HWND>(pending.identity.window);
+                    DWORD beforeProcess = 0;
+                    const DWORD beforeThread = GetWindowThreadProcessId(target, &beforeProcess);
+                    if (ReregisterSession::SameOwner(pending.identity, pending.identity.process,
+                        notificationThread, beforeProcess, beforeThread))
+                    {
+                        NOTIFYICONIDENTIFIER identifier{};
+                        identifier.cbSize = sizeof(identifier); identifier.hWnd = target;
+                        identifier.uID = pending.identity.id;
+                        RECT nativeRect{};
+                        HRESULT result;
+                        {
+                            // Do not mistake our mirrored rectangle for proof
+                            // that Explorer already owns this exact icon.
+                            NativeGeometryQuery query;
+                            result = Shell_NotifyIconGetRect(&identifier, &nativeRect);
+                        }
+                        DWORD afterProcess = 0;
+                        const DWORD afterThread = GetWindowThreadProcessId(target, &afterProcess);
+                        duplicate = result == S_OK && !IsRectEmpty(&nativeRect) &&
+                            ReregisterSession::SameOwner(pending.identity, beforeProcess, beforeThread,
+                                afterProcess, afterThread);
+                    }
+                }
+                if (nativeResult || pending.operation == NIM_ADD)
+                {
+                    const bool queued = self.Push(pending); // Push owns the copied HICON, also on failure.
+                    if (duplicate && queued && !Read(self.stopping) && !Read(self.shared->stop) &&
+                        self.reregister.Acknowledge(pending, static_cast<std::uint64_t>(Read(self.shared->epoch)),
+                            GetTickCount64())) return TRUE;
+                }
                 else if (pending.icon) DestroyIcon(pending.icon);
                 return nativeResult;
             }
@@ -298,7 +349,7 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 InterlockedIncrement(&self.shared->rejected);
             }
         }
-        else if (copy->dwData == 3 && copy->cbData == sizeof(IconIdentifier32))
+        else if (!nativeGeometryQuery && copy->dwData == 3 && copy->cbData == sizeof(IconIdentifier32))
         {
             IconIdentifier32 wire{};
             if (CopyBytes(copy->lpData, &wire, sizeof(wire)) && (wire.message == 1 || wire.message == 2))

@@ -171,6 +171,53 @@ int RunTrayModelTests()
     check(!SameIdentity(a, b) && Key(a) != Key(b), "reused window and icon IDs from another process do not collide");
 
     {
+        // A synthetic TaskbarCreated must not turn unrelated ADD failures into
+        // success. Native existence and queue acceptance remain collector-side
+        // checks; this policy bounds which registration may receive that ack.
+        ReregisterSession session;
+        Notification request;
+        request.epoch = 30; request.operation = NIM_ADD; request.identity = a;
+        request.flags = NIF_MESSAGE | NIF_ICON; request.callback = WM_APP + 3;
+        check(!session.Eligible(request, 30, 100), "duplicate ADD cannot be acknowledged before a recovery session");
+        check(!session.Arm(9, 30, 10, 30, 100) && !session.Arm(10, 29, 10, 30, 100),
+            "only the current host and queue generation may arm re-registration");
+        check(session.Arm(10, 30, 10, 30, 100) && session.Eligible(request, 30, 101),
+            "a complete legacy-key registration is eligible during the explicit recovery window");
+        check(!session.Eligible(request, 31, 101) && !session.Eligible(request, 30, 5100) &&
+            !session.Eligible(request, 30, 99), "epoch changes, expiry and invalid time reject duplicate acknowledgements");
+        auto invalid = request; invalid.epoch = 29;
+        check(!session.Eligible(invalid, 30, 101), "an old notification cannot join a new recovery generation");
+        invalid = request; invalid.flags |= NIF_GUID;
+        check(!session.Eligible(invalid, 30, 101), "GUID lookup alone cannot prove the original callback owner");
+        invalid = request; invalid.identity.guid.Data1 = 1;
+        check(!session.Eligible(invalid, 30, 101), "a nonempty GUID cannot bypass owner proof by omitting its flag");
+        invalid = request; invalid.operation = NIM_MODIFY;
+        check(!session.Eligible(invalid, 30, 101), "recovery never rewrites a failed MODIFY result");
+        invalid = request; invalid.flags = NIF_MESSAGE;
+        check(!session.Eligible(invalid, 30, 101), "partial ADD cannot be acknowledged as a full registration");
+        invalid = request; invalid.callback = 0;
+        check(!session.Eligible(invalid, 30, 101), "a missing callback cannot be made actionable by recovery");
+        check(ReregisterSession::SameOwner(a, 10, 20, 10, 20) &&
+            !ReregisterSession::SameOwner(a, 10, 20, 11, 20) &&
+            !ReregisterSession::SameOwner(a, 10, 20, 10, 21) &&
+            !ReregisterSession::SameOwner(a, 10, 0, 10, 0),
+            "a destroyed, recycled or different-thread owner invalidates native lookup evidence");
+        check(session.Acknowledge(request, 30, 102) && !session.Acknowledge(request, 30, 103),
+            "one icon cannot consume repeated duplicate ADD acknowledgements in the same session");
+        check(session.Arm(10, 30, 10, 30, 104) && !session.Eligible(request, 30, 105) &&
+            !session.Arm(10, 30, 10, 30, 5100),
+            "repeated control messages cannot reset per-icon acknowledgement or extend the recovery deadline");
+        auto other = request; ++other.identity.id;
+        check(session.Eligible(other, 30, 104), "the same HWND's other icon retains its independent recovery slot");
+        ++other.identity.window; other.identity.id = request.identity.id;
+        check(session.Eligible(other, 30, 104), "another HWND with the same icon ID is a distinct registration");
+        other = request; other.identity.process = 0;
+        check(!session.Eligible(other, 30, 104), "a missing live process never qualifies for recovery");
+        session.Arm(10, 31, 10, 31, 200); request.epoch = 31;
+        check(session.Acknowledge(request, 31, 201), "a new explicit recovery round may restore the same icon again");
+    }
+
+    {
         std::vector<Icon> registrations;
         Event registration;
         registration.operation = NIM_ADD; registration.identity = {wire.icon.guid, 42, 7, 99};
@@ -230,14 +277,24 @@ int RunTrayModelTests()
         arm(); const auto corrected = placement.Observe(popup, 102);
         check(corrected && corrected->x == -1900 && corrected->y == 32,
             "a nearby new popup fits the clicked monitor work area with signed coordinates");
+        popup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        check(!placement.Observe(popup, 103) && !placement.Observe(popup, 104),
+            "repeated geometry while the same async correction is pending does not issue more moves");
         for (unsigned i = 0; i < 2; ++i)
-        { popup.event = EVENT_OBJECT_LOCATIONCHANGE; check(placement.Observe(popup, 103 + i).has_value(), "bounded correction allows a menu layout retry"); }
-        check(!placement.Observe(popup, 106), "a popup that fights placement is not moved indefinitely");
+        {
+            popup.bounds = {-1900, 32, -1700, 352};
+            check(!placement.Observe(popup, 105 + i * 2), "observed corrected bounds acknowledge the async placement");
+            popup.bounds = {-1900, -260, -1700, 60};
+            check(placement.Observe(popup, 106 + i * 2).has_value(), "a menu that later lays itself out again gets a bounded retry");
+        }
+        popup.bounds = {-1900, 32, -1700, 352}; placement.Observe(popup, 109);
+        popup.bounds = {-1900, -260, -1700, 60};
+        check(!placement.Observe(popup, 110), "a popup that fights placement is not moved indefinitely");
         check(placement.Bindings()[0].window == popup.window,
             "exhausting movement does not discard the concrete menu retention binding");
         auto secondPopup = popup; secondPopup.window = 2; secondPopup.event = EVENT_OBJECT_SHOW;
-        check(!placement.Observe(secondPopup, 107) && placement.Bindings()[1].window == 2,
-            "a second real menu can be retained without extending the movement budget");
+        check(placement.Observe(secondPopup, 111).has_value() && placement.Bindings()[1].window == 2,
+            "a second real menu retains its own correction budget after the root exhausts its retries");
         arm();
         check(!placement.Observe(popup, 102), "location-only events cannot nominate existing windows");
         check(!placement.Bindings()[0].window, "an old popup cannot acquire retention from location alone");
@@ -291,6 +348,114 @@ int RunTrayModelTests()
         popup.event = EVENT_OBJECT_LOCATIONCHANGE;
         check(!placement.Observe(popup, 104), "a hidden menu loses its location-change binding");
         check(!placement.Bindings()[0].window, "a hidden menu is absent from retained popup evidence");
+
+        // Replay the observed ordering without recognizing a framework/class:
+        // a transparent shadow appears first; the owner is initially invisible
+        // above the screen, then SHOW supplies its already-correct placement.
+        placement.Arm(99, {1690, 16}, {0, 32, 1920, 1080}, 100, {}, {1674, 0, 1706, 32});
+        MenuPopupObservation observed{};
+        observed.window = 10; observed.process = 99; observed.thread = 9;
+        observed.event = EVENT_OBJECT_SHOW; observed.eventTime = 101;
+        observed.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+        observed.extendedStyle = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT;
+        observed.visible = true; observed.targetRelated = true; observed.owner = 11;
+        observed.bounds = {1466, -446, 1910, 233};
+        check(!placement.Observe(observed, 102) && !placement.Bindings()[0].window,
+            "an out-of-bounds transparent shadow cannot become the root menu or consume its budget");
+        observed.window = 11; observed.owner = 0; observed.visible = false;
+        observed.event = EVENT_OBJECT_LOCATIONCHANGE;
+        observed.style &= ~static_cast<LONG_PTR>(WS_VISIBLE);
+        observed.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
+        observed.bounds = {1538, -398, 1838, 137};
+        check(!placement.Observe(observed, 103), "pre-SHOW invisible owner geometry cannot nominate a menu");
+        observed.event = EVENT_OBJECT_SHOW; observed.visible = true; observed.style |= WS_VISIBLE;
+        observed.bounds = {1538, 32, 1838, 567};
+        check(!placement.Observe(observed, 104) && placement.Bindings()[0].window == 11,
+            "the visible root is retained without moving its already correct top-edge placement");
+        observed.bounds = {1538, 500, 1838, 1035};
+        const auto followedRoot = placement.Observe(observed, 105);
+        check(followedRoot && followedRoot->x == 1538 && followedRoot->y == 32,
+            "the same gesture-bound root follows a later jump to the bottom while preserving its already aligned x coordinate");
+        check(!placement.Observe(observed, 106), "a repeated root SHOW coalesces the same pending destination");
+        observed.event = EVENT_OBJECT_HIDE; observed.visible = false; placement.Observe(observed, 107);
+        observed.event = EVENT_OBJECT_SHOW; observed.visible = true;
+        check(!placement.Observe(observed, 108) && !placement.Bindings()[0].window,
+            "a hidden ownerless root cannot reuse its old near-anchor evidence for a new distant SHOW");
+
+        // Captured ownerless root geometry and active/foreground identity,
+        // with controlled icon/work bounds. No application or framework names
+        // participate in recognition; this evidence is context-gesture only.
+        MenuPopupObservation activePopup{};
+        activePopup.window = 463372; activePopup.process = 20392;
+        activePopup.thread = activePopup.notificationThread = 6768;
+        activePopup.event = EVENT_OBJECT_SHOW; activePopup.eventTime = 101;
+        activePopup.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+        activePopup.extendedStyle = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        activePopup.visible = true; activePopup.targetRelated = true;
+        activePopup.foregroundWindow = activePopup.activeWindow = activePopup.window;
+        activePopup.bounds = {1472, 634, 1772, 1169};
+        const auto armContext = [&](bool context) {
+            placement.Arm(20392, {1837, 137}, {0, 32, 1920, 1080}, 100,
+                {}, {1816, 116, 1856, 156}, context);
+        };
+        armContext(true);
+        const auto activeRoot = placement.Observe(activePopup, 102);
+        check(activeRoot && activeRoot->x == 1472 && activeRoot->y == 156,
+            "a fresh active foreground tool popup on the callback UI thread follows an explicit context gesture");
+        armContext(false);
+        check(!placement.Observe(activePopup, 102) && !placement.Bindings()[0].window,
+            "left-click activation does not grant a distant ownerless tool window menu placement");
+        armContext(true); activePopup.activeWindow = 0;
+        check(!placement.Observe(activePopup, 102), "foreground alone without the candidate as GUI active is insufficient");
+        armContext(true); activePopup.activeWindow = activePopup.window; activePopup.foregroundWindow = 8;
+        check(!placement.Observe(activePopup, 102), "GUI active without current foreground is insufficient");
+        armContext(true); activePopup.foregroundWindow = activePopup.window; activePopup.thread = 6769;
+        check(!placement.Observe(activePopup, 102), "a foreground tool popup on another same-process UI thread is not the callback menu");
+        armContext(true); activePopup.thread = activePopup.notificationThread;
+        activePopup.extendedStyle &= ~static_cast<LONG_PTR>(WS_EX_TOOLWINDOW);
+        check(!placement.Observe(activePopup, 102), "active context evidence cannot relocate a non-tool application popup");
+        armContext(true); activePopup.extendedStyle |= WS_EX_TOOLWINDOW;
+        activePopup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        check(!placement.Observe(activePopup, 102), "active context evidence still requires a new SHOW nomination");
+
+        // A menu rooted at the old taskbar may still be wholly inside rcWork.
+        // Only concrete owner/menu-thread evidence permits moving it from far
+        // away; this is not a general same-process popup mover.
+        const RECT icon{-1890, 36, -1850, 64};
+        placement.Arm(99, {-1870, 50}, {-1920, 32, 0, 1080}, 100, {}, icon);
+        popup.event = EVENT_OBJECT_SHOW; popup.bounds = {-420, 760, -220, 1080};
+        popup.strongTargetRelated = false;
+        check(!placement.Observe(popup, 102) && !placement.Bindings()[0].window,
+            "a distant weakly related popup is not re-anchored merely because it shares the target thread");
+        popup.strongTargetRelated = true;
+        const auto anchored = placement.Observe(popup, 103);
+        check(anchored && anchored->x == -1870 && anchored->y == 64,
+            "a strongly identified root menu at the old bottom edge follows the top icon even when already on screen");
+        popup.bounds = {-1870, 64, -1670, 384}; popup.event = EVENT_OBJECT_LOCATIONCHANGE;
+        check(!placement.Observe(popup, 104), "a root menu already reasonably anchored is left in place");
+        auto submenu = popup; submenu.window = 3; submenu.owner = popup.window;
+        submenu.parentMenu = popup.window; submenu.strongTargetRelated = false;
+        submenu.event = EVENT_OBJECT_SHOW; submenu.bounds = {-1670, 160, -1470, 480};
+        check(!placement.Observe(submenu, 105) && placement.Bindings()[1].window == 3,
+            "an owner-linked submenu away from the gesture preserves its side-by-side placement");
+        submenu.event = EVENT_OBJECT_LOCATIONCHANGE; submenu.bounds = {-120, 900, 80, 1220};
+        const auto submenuFit = placement.Observe(submenu, 106);
+        check(submenuFit && submenuFit->x == -200 && submenuFit->y == 760,
+            "an existing submenu is clamped at the screen edge without being re-anchored over its root");
+
+        placement.Arm(99, {-1870, 50}, {-1920, 32, 0, 1080}, 100, {}, icon);
+        popup.event = EVENT_OBJECT_SHOW; popup.bounds = {};
+        check(!placement.Observe(popup, 102), "a root SHOW without usable geometry waits for layout");
+        popup.bounds = {-1900, -260, -1700, 60};
+        const auto secondShow = placement.Observe(popup, 103);
+        check(secondShow && secondShow->x == -1900 && secondShow->y == 64,
+            "a repeated SHOW supplies final geometry and a top-edge root opens below its icon");
+
+        placement.Arm(99, {-1870, 1050}, {-1920, 32, 0, 1080}, 100, {}, {-1890, 1036, -1850, 1064});
+        popup.bounds = {-420, 32, -220, 352};
+        const auto aboveBottom = placement.Observe(popup, 102);
+        check(aboveBottom && aboveBottom->x == -1870 && aboveBottom->y == 716,
+            "a distant strong root follows a bottom icon by opening above it without changing size");
     }
     {
         MenuRetentionTracker menu;

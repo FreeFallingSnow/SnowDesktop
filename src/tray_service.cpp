@@ -198,12 +198,22 @@ struct Service::Impl
     }
     void Reregister(const std::shared_ptr<Connection>& current)
     {
+        DWORD_PTR armed = 0;
+        // Prepare the collector before asking existing applications to ADD
+        // again. This bounded handshake runs on the service worker, never the
+        // host UI thread, and does not choose a callback protocol for them.
+        if (!SendMessageTimeoutW(current->window, RegisterWindowMessageW(kReregisterMessage),
+                current->shared->owner, static_cast<LPARAM>(Read(current->shared->epoch)),
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 200, &armed) || !armed)
+        {
+            WriteDiagnosticLogEntry(L"Tray re-registration skipped: collector handshake unavailable", DiagnosticLogLevel::Warning);
+            return;
+        }
         DWORD recipients = BSM_APPLICATIONS;
         // Asynchronous broadcast follows successful collection attachment. It
         // never restarts Explorer and does not wait on third-party windows.
         BroadcastSystemMessageW(BSF_POSTMESSAGE | BSF_IGNORECURRENTTASK, &recipients,
             RegisterWindowMessageW(L"TaskbarCreated"), 0, 0);
-        (void)current;
     }
     void Run(std::stop_token token)
     {
@@ -258,6 +268,21 @@ struct Service::Impl
                     if (Apply(snapshot.icons, event))
                     {
                         for (auto& icon : snapshot.icons) ResolveApplication(icon);
+                        if (event.operation == NIM_ADD || event.operation == NIM_SETVERSION ||
+                            event.operation == kBootstrapIcon)
+                        {
+                            const auto registered = std::find_if(snapshot.icons.begin(), snapshot.icons.end(),
+                                [&](const auto& icon) { return SameIdentity(icon.identity, event.identity); });
+                            if (registered != snapshot.icons.end())
+                            {
+                                wchar_t message[256]{};
+                                swprintf_s(message, L"Tray registration pid=%lu id=%lu hwnd=%p operation=%lu effectiveVersion=%lu callback=%lu",
+                                    registered->identity.process, registered->identity.id,
+                                    reinterpret_cast<HWND>(registered->identity.window), event.operation,
+                                    registered->version, registered->callback);
+                                WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+                            }
+                        }
                         ++snapshot.revision;
                     }
                 }
@@ -344,7 +369,17 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
     }
     DWORD pid = 0;
     const HWND target = reinterpret_cast<HWND>(icon.identity.window);
-    if (!GetWindowThreadProcessId(target, &pid) || pid != icon.identity.process || !icon.callback) return false;
+    if (!GetWindowThreadProcessId(target, &pid) || pid != icon.identity.process || !icon.callback)
+    {
+        if (action != Activation::Hover && action != Activation::Leave)
+        {
+            wchar_t message[192]{};
+            swprintf_s(message, L"Tray activation rejected pid=%lu actualPid=%lu id=%lu hwnd=%p callback=%lu action=%u",
+                icon.identity.process, pid, icon.identity.id, target, icon.callback, static_cast<unsigned>(action));
+            WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Warning);
+        }
+        return false;
+    }
     const bool gesture = action != Activation::Hover && action != Activation::Leave;
     std::uint64_t serial = 0;
     if (gesture)
@@ -382,7 +417,8 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         if (originProcess == GetCurrentProcessId() && IsWindowVisible(origin.target))
             GetWindowRect(origin.target, &barBounds);
         impl_->menuPlacement.Arm(target, anchor, geometry,
-            action == Activation::LeftUp || action == Activation::RightUp, barBounds);
+            action == Activation::LeftUp || action == Activation::RightUp, barBounds,
+            action == Activation::RightDown || action == Activation::RightUp || action == Activation::ContextKeyboard);
     }
     bool accepted = true;
     DWORD error = ERROR_SUCCESS;
@@ -393,9 +429,11 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
     }
     if (gesture && action != Activation::LeftDown && action != Activation::RightDown)
     {
-        wchar_t message[192]{};
-        swprintf_s(message, L"Tray activation action=%u version=%lu geometry=%u foregroundGrant=%u accepted=%u error=%lu",
+        wchar_t message[384]{};
+        swprintf_s(message, L"Tray activation pid=%lu id=%lu hwnd=%p callback=%lu action=%u version=%lu geometry=%u rect=(%ld,%ld,%ld,%ld) anchor=(%ld,%ld) foregroundGrant=%u accepted=%u error=%lu",
+            icon.identity.process, icon.identity.id, target, icon.callback,
             static_cast<unsigned>(action), icon.version, IsRectEmpty(&geometry) ? 0u : 1u,
+            geometry.left, geometry.top, geometry.right, geometry.bottom, anchor.x, anchor.y,
             foregroundGranted ? 1u : 0u, accepted ? 1u : 0u, error);
         WriteDiagnosticLogEntry(message, accepted ? DiagnosticLogLevel::Debug : DiagnosticLogLevel::Warning);
     }
