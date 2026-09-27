@@ -54,15 +54,15 @@ void TestPowerStatusTruth()
         Check(!DecodeSystemPowerStatus(1, 1, static_cast<std::uint8_t>(percent), 0).batteryPercent,
             "invalid battery percentages must not be clamped into a full battery");
     const auto charging = DecodeSystemPowerStatus(9, 1, 100, 1);
-    Check(charging.batteryPresent == true && charging.charging == true && charging.batteryPercent == 100 && charging.saver,
+    Check(charging.batteryPresent == true && charging.charging == true && charging.batteryPercent == 100u && charging.saver,
         "the real charging bit remains authoritative at 100 percent");
     const auto full = DecodeSystemPowerStatus(1, 1, 100, 0);
     const auto limited = DecodeSystemPowerStatus(1, 1, 80, 0);
-    Check(full.charging == false && full.onAC == true && full.batteryPercent == 100 &&
-        limited.charging == false && limited.onAC == true && limited.batteryPercent == 80,
+    Check(full.charging == false && full.onAC == true && full.batteryPercent == 100u &&
+        limited.charging == false && limited.onAC == true && limited.batteryPercent == 80u,
         "AC online must preserve the distinction between charged and charge-limited states");
     const auto offline = DecodeSystemPowerStatus(0, 0, 0, 0);
-    Check(offline.onAC == false && offline.charging == false && offline.batteryPercent == 0,
+    Check(offline.onAC == false && offline.charging == false && offline.batteryPercent == 0u,
         "a measured empty battery is valid data");
     for (const auto ac : {2, 254, 255})
     {
